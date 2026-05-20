@@ -21,7 +21,7 @@ use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, Instant};
 
-use super::zle_h::{widget as Widget, ZLE_LASTCOL, ZLE_NOTCOMMAND};
+use super::zle_h::{widget, ZLE_LASTCOL, ZLE_NOTCOMMAND};
 use super::zle_keymap::Keymap;
 use super::zle_thingy::Thingy;
 use crate::ported::builtin::LASTVAL;
@@ -45,7 +45,7 @@ use crate::ported::zsh_h::{
     ZLE_CMD_TRASH, ZLRF_HISTORY,
 };
 
-use crate::ported::zle::zle_h::{change, modifier, widget};
+use crate::ported::zle::zle_h::{change, modifier};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_misc::*, zle_move::*, zle_params::*,
@@ -2420,7 +2420,7 @@ pub static KUNGETBUF: std::sync::Mutex<VecDeque<u8>> = std::sync::Mutex::new(Vec
 /// Port of `int baud` from `Src/Zle/zle_main.c`.
 pub static BAUD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(38400);
 /// Port of `Widget compwidget` from `Src/Zle/zle_tricky.c`.
-pub static COMPWIDGET: std::sync::Mutex<Option<Widget>> = std::sync::Mutex::new(None);
+pub static COMPWIDGET: std::sync::Mutex<Option<widget>> = std::sync::Mutex::new(None);
 /// Port of `int hascompmod` from `Src/Zle/zle_tricky.c`.
 pub static HASCOMPMOD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Port of `int SHTTY` from `Src/Zle/zle_main.c`.

@@ -22,7 +22,7 @@ use crate::ported::params::{setiparam, setsparam};
 use crate::ported::zle::compcore::{
     ZLECS as ZLECS_C, ZLELINE as ZLELINE_C, ZMULT as ZMULT_C,
 };
-use crate::ported::zle::zle_h::{WidgetImpl as WidgetFunc, MOD_MULT, MOD_NEG, MOD_TMULT};
+use crate::ported::zle::zle_h::{WidgetImpl, MOD_MULT, MOD_NEG, MOD_TMULT};
 use crate::ported::zle::zle_hist::{ISEARCH_ACTIVE, ISEARCH_ENDPOS, ISEARCH_STARTPOS};
 use crate::ported::zle::zle_keymap::{addkeybuf, freekeynode, KeyBinding};
 use crate::ported::zle::zle_main::{zleaftertrap, zlebeforetrap, ZLECONTEXT};
@@ -320,10 +320,10 @@ pub fn get_widgetfunc() -> String {
         return ".internal".to_string();
     }
     // No NCOMP comp.func/wid in current Widget shape (would be in
-    // WidgetFunc::Comp variant); collapse to the User-fn case.
+    // WidgetImpl::Comp variant); collapse to the User-fn case.
     match &w.u {
-        WidgetFunc::UserFunc(name) => name.clone(),
-        WidgetFunc::Internal(_) => ".internal".to_string(),
+        WidgetImpl::UserFunc(name) => name.clone(),
+        WidgetImpl::Internal(_) => ".internal".to_string(),
         _ => ".internal".to_string(),
     }
 }

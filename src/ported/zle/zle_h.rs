@@ -363,13 +363,6 @@ pub type ZleIntFunc = fn(args: &[String]) -> i32; // c:189
 ///     } u;
 /// };
 /// ```
-// Legacy aliases preserved for back-compat with files that historically
-// imported `Widget` / `WidgetFunc` (PascalCase) from the deleted
-// `widget.rs` shim. New code should use `widget` / `WidgetImpl`
-// directly.
-pub use self::WidgetImpl as WidgetFunc;
-
-pub type Widget = widget;
 
 pub struct widget {
     // c:191

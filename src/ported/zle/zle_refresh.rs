@@ -2,8 +2,8 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_refresh.c
 
-use std::fmt::Write as FmtWrite;
-use std::io::{self, Write};
+use std::fmt::Write;
+use std::io;
 use std::sync::atomic::Ordering;
 
 use super::zle_h::{REFRESH_ELEMENT, REFRESH_STRING};
@@ -314,7 +314,6 @@ impl RefreshState {
     }
 }
 use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
-use HighlightCategory as HC;
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
@@ -368,13 +367,13 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
         if *entry == "none" {
             // zle_refresh.c:355-360 — `none` clears every category.
             for cat in [
-                HC::Region,
-                HC::Isearch,
-                HC::Suffix,
-                HC::Paste,
-                HC::Default,
-                HC::Special,
-                HC::Ellipsis,
+                HighlightCategory::Region,
+                HighlightCategory::Isearch,
+                HighlightCategory::Suffix,
+                HighlightCategory::Paste,
+                HighlightCategory::Default,
+                HighlightCategory::Special,
+                HighlightCategory::Ellipsis,
             ] {
                 manager.category_attrs.insert(cat, TextAttr::default());
                 seen.insert(cat);
@@ -386,13 +385,13 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
             None => continue,
         };
         let cat = match prefix {
-            "region" => HC::Region,
-            "isearch" => HC::Isearch,
-            "suffix" => HC::Suffix,
-            "paste" => HC::Paste,
-            "default" => HC::Default,
-            "special" => HC::Special,
-            "ellipsis" => HC::Ellipsis,
+            "region" => HighlightCategory::Region,
+            "isearch" => HighlightCategory::Isearch,
+            "suffix" => HighlightCategory::Suffix,
+            "paste" => HighlightCategory::Paste,
+            "default" => HighlightCategory::Default,
+            "special" => HighlightCategory::Special,
+            "ellipsis" => HighlightCategory::Ellipsis,
             _ => continue,
         };
         manager.category_attrs.insert(cat, match_highlight(rest));
@@ -412,19 +411,19 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
         bold: true,
         ..TextAttr::default()
     };
-    if !seen.contains(&HC::Region) {
-        manager.category_attrs.insert(HC::Region, default_standout);
+    if !seen.contains(&HighlightCategory::Region) {
+        manager.category_attrs.insert(HighlightCategory::Region, default_standout);
     }
-    if !seen.contains(&HC::Isearch) {
+    if !seen.contains(&HighlightCategory::Isearch) {
         manager
             .category_attrs
-            .insert(HC::Isearch, default_underline);
+            .insert(HighlightCategory::Isearch, default_underline);
     }
-    if !seen.contains(&HC::Suffix) {
-        manager.category_attrs.insert(HC::Suffix, default_bold);
+    if !seen.contains(&HighlightCategory::Suffix) {
+        manager.category_attrs.insert(HighlightCategory::Suffix, default_bold);
     }
-    if !seen.contains(&HC::Special) {
-        manager.category_attrs.insert(HC::Special, default_standout);
+    if !seen.contains(&HighlightCategory::Special) {
+        manager.category_attrs.insert(HighlightCategory::Special, default_standout);
     }
 }
 
