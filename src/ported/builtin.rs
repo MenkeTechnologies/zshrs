@@ -22,79 +22,61 @@
 //! the comment cites the file; when it lives in `vm_helper`'s
 //! `Executor` impl, that's noted too.
 
-use crate::ported::compat::zgetcwd;
-use crate::ported::exec::TRAP_STATE;
-use crate::ported::hashnameddir::{nameddirtab, printnameddirnode};
-use crate::ported::hashtable::{cmdnamtab_lock, dircache_set, hnamcmp, reswdtab_lock};
-use crate::ported::hashtable::{aliastab_lock, sufaliastab_lock, Alias};
-use crate::ported::jobs::bin_fg;
-use crate::ported::module::MATHFUNCS;
-use crate::ported::options::{dosetopt, emulation};
-use crate::ported::params::{locallevel as locallevel_param, paramtab, setaparam, setiparam, unsetparam};
-use crate::ported::utils::fprintdir;
-use crate::ported::math::mathevali;
-use crate::ported::math::{matheval, mnumber, MN_INTEGER};
-use crate::ported::mem::{queue_signals, unqueue_signals};
-use crate::ported::modules::parameter::DIRSTACK;
-use crate::ported::options::optlookup;
-use crate::ported::params::{getsparam, setsparam};
-use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::utils::{getkeystring, getkeystring_with, quotedzputs, GETKEYS_PRINT};
-use crate::ported::zsh_h::eprog;
-use crate::ported::zsh_h::nameddir;
-use crate::ported::zsh_h::DISABLED;
-use crate::ported::zsh_h::EMULATE_ZSH;
-use crate::ported::zsh_h::HIST_FOREIGN;
-use crate::ported::zsh_h::MFF_STR;
-use crate::ported::zsh_h::PM_LOADDIR;
-use crate::ported::zsh_h::{options, BINF_KEEPNUM, ERRFLAG_ERROR, MAX_OPS, XTRACE};
-use crate::ported::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX};
-use crate::ported::zsh_h::{EMULATE_CSH, EMULATE_SH};
-use crate::ported::zsh_h::{
-    EMULATE_KSH, EMULATION, PM_ARRAY, PM_HASHED, PM_HIDEVAL, PM_LOCAL, PM_LOWER, PM_NAMEREF,
-    PM_READONLY, PM_TIED, PM_UPPER, PRINT_LINE, PRINT_NAMEONLY, PRINT_POSIX_EXPORT,
-    PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WITH_NAMESPACE, TYPESET_OPTSTR,
-};
-use crate::ported::zsh_h::{FS_FUNC, PM_ABSPATH_USED};
-use crate::ported::zsh_h::{HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS};
-use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG, PM_EFLOAT, PM_FFLOAT, PM_INTEGER};
-use crate::ported::zsh_h::{OPT_ISSET, OPT_MINUS, PM_UNDEFINED};
-use crate::ported::zsh_h::{
-    OPT_PLUS, PM_CUR_FPATH, PM_KSHSTORED, PM_TAGGED, PM_TAGGED_LOCAL, PM_UNALIASED, PM_WARNNESTED,
-    PM_ZSHSTORED,
-};
-use crate::ported::zsh_h::{PM_LEFT, PM_RIGHT_B, PM_RIGHT_Z};
-use crate::ported::zsh_h::{
-    PRINT_LIST, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE,
-};
-use crate::ported::zsh_h::{PRINT_WHENCE_CSH, PRINT_WHENCE_WORD};
-use crate::ported::zsh_h::{STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED};
 use std::collections::HashMap;
 use std::io::Read;
-use std::sync::atomic::Ordering;
-use std::sync::OnceLock;
+use std::sync::atomic::{Ordering, Ordering::Relaxed};
+use std::sync::{Mutex, OnceLock};
+#[allow(unused_imports)]
+use std::{env, fs, io, io::Write, path::Path, path::PathBuf};
 
-// Names lifted out of inside-fn `use` statements (PORT.md
-// 'no imports inside FNs ever'). Names already imported elsewhere
-// (BINF_PREFIX, EMULATE_CSH, ERRFLAG_ERROR, ZEXIT_*, PM_TYPE) are
-// not re-imported.
+use indexmap::IndexMap;
+
 use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
 use crate::parse::{Redirect, ShellCommand};
-#[allow(unused_imports)]
-use crate::ported::options::ZSH_OPTIONS_SET;
-// === Imports needed by the methods moved from vm_helper (below) ===
-use crate::ported::utils::{errflag, zerr, zerrnam, zwarn, zwarnnam};
+use crate::ported::compat::zgetcwd;
+use crate::ported::exec::TRAP_STATE;
+use crate::ported::hashnameddir::{nameddirtab, printnameddirnode};
+use crate::ported::hashtable::{
+    aliastab_lock, cmdnamtab_lock, dircache_set, hnamcmp, reswdtab_lock, shfunctab_lock,
+    sufaliastab_lock, Alias,
+};
+use crate::ported::hist::{readhistfile, savehistfile};
+use crate::ported::init::sourcelevel as sourcelevel_init;
+use crate::ported::jobs::{bin_fg, removetrapnode};
+use crate::ported::math::{matheval, mathevali, mnumber, MN_INTEGER};
+use crate::ported::mem::{queue_signals, unqueue_signals};
+use crate::ported::module::MATHFUNCS;
+use crate::ported::modules::parameter::{DIRSTACK, FUNCSTACK};
+use crate::ported::options::{dosetopt, emulation, optlookup, ZSH_OPTIONS_SET};
+use crate::ported::params::{
+    getsparam, locallevel as locallevel_param, paramtab, setaparam, setiparam, setsparam,
+    unsetparam,
+};
+use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::signals::settrap;
+use crate::ported::utils::{
+    errflag, fprintdir, getkeystring, getkeystring_with, lchdir, quotedzputs, zerr, zerrnam, zwarn,
+    zwarnnam, GETKEYS_PRINT,
+};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
+use crate::ported::zle::compctl::compctlread;
+use crate::ported::zsh_h::{
+    eprog, nameddir, options, ALIAS_GLOBAL, ALIAS_SUFFIX, BINF_KEEPNUM, DISABLED, EMULATE_CSH,
+    EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, HFILE_APPEND,
+    HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, MAX_OPS, MFF_STR, OPT_ARG, OPT_HASARG,
+    OPT_ISSET, OPT_MINUS, OPT_PLUS, PM_ABSPATH_USED, PM_ARRAY, PM_CUR_FPATH, PM_EFLOAT, PM_FFLOAT,
+    PM_HASHED, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER,
+    PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED,
+    PM_UNALIASED, PM_UNDEFINED, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, PRINT_LINE, PRINT_LIST,
+    PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET,
+    PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE,
+    PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED,
+    TYPESET_OPTSTR, XTRACE,
+};
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
-#[allow(unused_imports)]
-use indexmap::IndexMap;
-use std::sync::atomic::Ordering::Relaxed;
-use std::sync::Mutex;
-#[allow(unused_imports)]
-use std::{env, fs, io, io::Write, path::Path, path::PathBuf};
 
 // ---------------------------------------------------------------------------
 // BIN_* dispatch IDs.
@@ -761,7 +743,7 @@ pub fn bin_enable(
             // shfunctab entry; ports to disableshfuncnode/enableshfuncnode
             // which also unsettrap/settrap TRAP* fns.
             Tab::Shfunc => {
-                let exists = crate::ported::hashtable::shfunctab_lock()
+                let exists = shfunctab_lock()
                     .read()
                     .map(|t| t.get_including_disabled(nm).is_some())
                     .unwrap_or(false);
@@ -810,7 +792,7 @@ pub fn bin_enable(
                 .read()
                 .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
                 .unwrap_or_default(),
-            Tab::Shfunc => crate::ported::hashtable::shfunctab_lock()
+            Tab::Shfunc => shfunctab_lock()
                 .read()
                 .map(|t| t.iter().map(|(n, _)| n.clone()).collect())
                 .unwrap_or_default(),
@@ -1688,13 +1670,13 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {
     // c:1172-1183 — try lchdir(buf); on failure and (pfix || dest abs) was
     //               not the input shape that allows fallback, give up.
     let _ = hard;
-    if crate::ported::utils::lchdir(&buf).is_ok() {
+    if lchdir(&buf).is_ok() {
         return Some(buf);
     }
     // c:1173 — fallback: try `dest` alone when pfix was non-empty
     //          and dest isn't already absolute.
     if !pfix.is_empty() && !dest.starts_with('/') {
-        if crate::ported::utils::lchdir(dest).is_ok() {
+        if lchdir(dest).is_ok() {
             return Some(dest.to_string());
         }
     }
@@ -1987,7 +1969,7 @@ pub fn bin_fc(
             };
             if should_read {
                 // c:1477
-                crate::ported::hist::readhistfile(
+                readhistfile(
                     // c:1478
                     Some(&hf),
                     1,
@@ -2041,7 +2023,7 @@ pub fn bin_fc(
         } else {
             0
         };
-        crate::ported::hist::readhistfile(
+        readhistfile(
             // c:1505
             path.as_deref(),
             1,
@@ -2058,7 +2040,7 @@ pub fn bin_fc(
         } else {
             0
         };
-        crate::ported::hist::savehistfile(
+        savehistfile(
             // c:1511
             path.as_deref(),
             flags,
@@ -2073,7 +2055,7 @@ pub fn bin_fc(
         if OPT_ISSET(ops, b'I') {
             flags |= HFILE_SKIPOLD as i32;
         } // c:1518
-        crate::ported::hist::savehistfile(
+        savehistfile(
             // c:1517
             path.as_deref(),
             flags,
@@ -3320,12 +3302,12 @@ pub fn bin_typeset(
             && (!first_is_digit || arg_name == "0");
         if !pname_valid {
             if first_is_digit {
-                crate::ported::utils::zerrnam(
+                zerrnam(
                     name, // c:2548
                     &format!("not an identifier: {}", arg_name),
                 );
             } else {
-                crate::ported::utils::zerrnam(
+                zerrnam(
                     name, // c:2550
                     &format!("not valid in this context: {}", arg_name),
                 );
@@ -3725,7 +3707,7 @@ pub fn add_autoload_function(
         // it has PM_LOADDIR|PM_ABSPATH_USED build "<dir>/<funcname>" and
         // access(R_OK), inherit the dir on hit.
         let calling_f: Option<String> = {
-            let stack = crate::ported::modules::parameter::FUNCSTACK
+            let stack = FUNCSTACK
                 .lock()
                 .map(|s| s.clone())
                 .unwrap_or_default();
@@ -3963,7 +3945,7 @@ pub fn bin_functions(
             if sigidx != -1 {
                 // c:3439
                 // c:3440 — `if (settrap(sigidx, NULL, ZSIG_FUNC))`.
-                if crate::ported::signals::settrap(sigidx, None, ZSIG_FUNC) != 0 {
+                if settrap(sigidx, None, ZSIG_FUNC) != 0 {
                     // c:3440
                     // freeeprog(newsh->funcdef) — funcdef Drop covers it.
                     // dircache_set(&newsh->filename, NULL);
@@ -3971,7 +3953,7 @@ pub fn bin_functions(
                     return 1; // c:3445
                 }
                 // c:3447 — `removetrapnode(sigidx);` — clear any prior trap.
-                crate::ported::jobs::removetrapnode(sigidx); // c:3447
+                removetrapnode(sigidx); // c:3447
             }
         }
         // c:3450 — `shfunctab->addnode(shfunctab, ztrdup(s), &newsh->node);`
@@ -4222,7 +4204,7 @@ pub fn bin_functions(
         queue_signals(); // c:3624
                          // c:3625-3633 — walk funcstack to find the enclosing FS_FUNC frame.
         let funcname: Option<String> = {
-            let stack = crate::ported::modules::parameter::FUNCSTACK
+            let stack = FUNCSTACK
                 .lock()
                 .map(|s| s.clone())
                 .unwrap_or_default();
@@ -4408,7 +4390,7 @@ pub fn bin_functions(
                 if sigidx != -1 {
                     // c:3729
                     // c:3733 — `removetrapnode(sigidx);`
-                    crate::ported::jobs::removetrapnode(sigidx); // c:3733
+                    removetrapnode(sigidx); // c:3733
                 }
             }
             // c:3737-3759 — absolute path /dir/base form: install dir on
@@ -4469,7 +4451,7 @@ pub fn bin_functions(
             if sigidx != -1 {
                 // c:3769
                 // c:3770 — `if (settrap(sigidx, NULL, ZSIG_FUNC)) { ... }`
-                if crate::ported::signals::settrap(sigidx, None, ZSIG_FUNC) != 0 {
+                if settrap(sigidx, None, ZSIG_FUNC) != 0 {
                     // c:3770
                     // c:3771 — `shfunctab->removenode(shfunctab, *argv);`
                     if let Ok(mut t) = shfunctab_table().lock() {
@@ -6066,7 +6048,7 @@ pub fn bin_shift(
             // used `parse::<i32>()` which rejects any non-trivial
             // arithmetic: `shift 1+2` would silently return ret=1
             // instead of shifting by 3. Route through mathevali.
-            num = crate::ported::math::mathevali(first).unwrap_or_else(|_| {
+            num = mathevali(first).unwrap_or_else(|_| {
                 ret = 1;
                 0
             }) as i32; // c:5601
@@ -6273,7 +6255,7 @@ pub fn bin_getopts(
             setsparam("OPTARG", &optbuf); // c:5734
         } else {
             let prefix = if plus { "+" } else { "-" };
-            crate::ported::utils::zwarn(&format!("bad option: {}{}", prefix, opch as char)); // c:5736
+            zwarn(&format!("bad option: {}{}", prefix, opch as char)); // c:5736
             setsparam("OPTARG", "");
         }
         ZOPTIND.store(zoptind, Ordering::Relaxed);
@@ -6305,7 +6287,7 @@ pub fn bin_getopts(
                     setsparam(&var, "?");
                     setsparam("OPTARG", "");
                     let prefix = if plus { "+" } else { "-" };
-                    crate::ported::utils::zwarn(&format!(
+                    zwarn(&format!(
                         "argument expected after {}{} option",
                         prefix, opch as char
                     )); // c:5760
@@ -6839,7 +6821,7 @@ pub fn bin_dot(
     // Restore the prior argzero (paired with the FUNCTIONARGZERO
     // save at the top of bin_dot).
     if let Some(prev) = saved_argzero.clone() {
-        crate::ported::utils::set_argzero(prev);
+        set_argzero(prev);
     }
 
     // c:6130-6137 — error path. C: `if (ret == SOURCE_NOT_FOUND)`
@@ -6898,7 +6880,7 @@ pub fn bin_dot(
     RETFLAG.store(0, Ordering::Relaxed); // c:5842 unwind
                                          // c:6149 again — restore argzero on the success path as well.
     if let Some(prev) = saved_argzero {
-        crate::ported::utils::set_argzero(prev);
+        set_argzero(prev);
     }
     result
 }
@@ -7000,7 +6982,7 @@ pub fn bin_emulate(
 
         // Build the cmdopts view that c:6286-6292 manipulates.
         let mut cmdopts: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
-        for n in crate::ported::options::ZSH_OPTIONS_SET.iter() {
+        for n in ZSH_OPTIONS_SET.iter() {
             cmdopts.insert(
                 n.to_string(),
                 crate::ported::options::opt_state_get(n).unwrap_or(false),
@@ -7133,10 +7115,10 @@ pub fn bin_read(
     // c:6453-6455 — `return compctlreadptr(name, args, ops, reply)`.
     // The compctlreadptr function pointer is set by the zsh/compctl
     // module's load hook; Rust dispatches to the static
-    // crate::ported::zle::compctl::compctlread port (zle/compctl.rs:1235).
+    // compctlread port (zle/compctl.rs:1235).
     if OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'c') {
         // c:6453
-        return crate::ported::zle::compctl::compctlread(name, &args[argi..]);
+        return compctlread(name, &args[argi..]);
     }
 
     // Optional explicit input FD via -u.
@@ -9338,7 +9320,7 @@ fn getsigidx(name: &str) -> i32 {
 /// from `Src/pattern.c:4171`. Local builtin.rs shim that delegates to
 /// the canonical pattern.rs port. Static-link path: the actual
 /// zpc_strings/zpc_disables manipulation lives in
-/// `crate::ported::pattern::pat_enables`.
+/// `pat_enables`.
 fn pat_enables(name: &str, argv: &[String], on: bool) -> i32 {
     // c:4171
     let patp: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
