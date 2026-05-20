@@ -11,6 +11,7 @@ use std::io::{self, Read, Write};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use crate::ported::zsh_h::ASSPM_AUGMENT;
 use crate::ported::zle::zle_h::{
     CURC_DEFAULT, CURC_INSERT, CURC_PENDING, CURC_REGION_END, CURC_REGION_START, CURF_BAR,
     CURF_BLINK, CURF_BLOCK, CURF_BLUE_SHIFT, CURF_COLOR, CURF_COLOR_MASK, CURF_GREEN_SHIFT,
@@ -263,7 +264,6 @@ static VERVAR: &str = ".term.version"; // c:134
 /// WARNING: param names don't match C — Rust=(sequence, numbers, capture) vs C=(sequence, numbers, len, capture, clen, output)
 pub fn handle_query(sequence: i32, numbers: &[i32], capture: &str) {
     // c:474
-    use crate::ported::zsh_h::ASSPM_AUGMENT;
     match sequence {
         // c:482
         1 => {
@@ -1032,9 +1032,6 @@ mod tests {
         let _g = crate::ported::zle::zle_main::zle_test_setup();
         // c:488-491 — CURF_DEFAULT/UNDERLINE/Bar/BLOCK occupy the
         // low 2 bits per Src/Zle/zle.h.
-        use crate::ported::zle::zle_h::{
-            CURF_BAR, CURF_BLOCK, CURF_DEFAULT, CURF_SHAPE_MASK, CURF_UNDERLINE,
-        };
         assert_eq!(CURF_DEFAULT, 0);
         assert_eq!(CURF_UNDERLINE, 1);
         assert_eq!(CURF_BAR, 2);
