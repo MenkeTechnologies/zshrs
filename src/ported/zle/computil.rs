@@ -19,7 +19,7 @@
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::Ordering;
 
-use crate::ported::builtin::LOCALLEVEL;
+use crate::ported::params::locallevel;
 use crate::ported::glob::{hasbraces, remnulargs, tokenize, xpandbraces};
 use crate::ported::lex::untokenize;
 use crate::ported::mem::ztrdup;
@@ -6366,7 +6366,7 @@ pub fn arrcontains(a: &[String], s: &str, colon: bool) -> i32 {
 ///                                          UNUSED(Options ops),
 ///                                          UNUSED(int func))` from
 /// `Src/Zle/computil.c:3831-3958`. Full subcommand dispatch for
-/// `comptags -i/-C/-T/-N/-R/-S/-A`. Reads `LOCALLEVEL` to index
+/// `comptags -i/-C/-T/-N/-R/-S/-A`. Reads `locallevel` to index
 /// `comptags[]`; `--` suffix decrements the level by one.
 pub fn bin_comptags(
     nam: &str,
@@ -6390,7 +6390,7 @@ pub fn bin_comptags(
         return 1;
     }
 
-    let level: i32 = LOCALLEVEL.load(Ordering::Relaxed)                      // c:3844
+    let level: i32 = locallevel.load(Ordering::Relaxed)                      // c:3844
         - if a0.len() > 2 { 1 } else { 0 };
     if level < 0 || (level as usize) >= MAX_TAGS {
         // c:3845
@@ -8912,12 +8912,12 @@ mod tests {
         let _g = zle_test_setup();
         inittyptab();
         let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
-        let saved_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+        let saved_locallevel = locallevel.load(Ordering::Relaxed);
         // Reset slot 0 + locallevel.
         if let Ok(mut tab) = comptags.lock() {
             tab[0] = None;
         }
-        LOCALLEVEL.store(0, Ordering::Relaxed);
+        locallevel.store(0, Ordering::Relaxed);
         INCOMPFUNC.store(1, Ordering::Relaxed);
 
         let ops = options {
@@ -8943,7 +8943,7 @@ mod tests {
             .and_then(|t| t.context.clone());
         // Restore the globals before assertion-fail can leave them mutated.
         INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
-        LOCALLEVEL.store(saved_locallevel, Ordering::Relaxed);
+        locallevel.store(saved_locallevel, Ordering::Relaxed);
         assert_eq!(ctx.as_deref(), Some("my-ctx"));
     }
 

@@ -1878,7 +1878,7 @@ pub fn bin_fc(
         let mut shs: i64; // c:1444
                           // c:1445 — `int level = OPT_ISSET(ops,'a') ? locallevel : -1;`
         let level: i32 = if OPT_ISSET(ops, b'a') {
-            LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed)
+            locallevel_param.load(std::sync::atomic::Ordering::Relaxed)
         } else {
             -1
         };
@@ -2987,9 +2987,9 @@ pub fn bin_typeset(
             // Suppress the emit when invoked as `local`/`private` inside
             // a function — those scope to the frame and don't merit a
             // top-level state-mutation row. local_scope_depth is tracked
-            // by the executor; defer to the global LOCALLEVEL counter.
+            // by the executor; defer to the global locallevel_param counter.
             let is_locallike = matches!(name, "local" | "private");
-            let inside_function = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed) > 0;
+            let inside_function = locallevel_param.load(std::sync::atomic::Ordering::Relaxed) > 0;
             if !is_locallike || !inside_function {
                 let mut tied_seen = 0usize;
                 for a in argv {
@@ -3216,7 +3216,7 @@ pub fn bin_typeset(
         if OPT_MINUS(&ops, b'x') {
             // c:2802
             let globalexport = isset(optlookup("globalexport"));
-            let locallevel = LOCALLEVEL.load(std::sync::atomic::Ordering::Relaxed);
+            let locallevel = locallevel_param.load(std::sync::atomic::Ordering::Relaxed);
             if globalexport {
                 // c:2803
                 ops.ind[b'g' as usize] = 1; // c:2804
@@ -6368,8 +6368,8 @@ pub fn bin_break(
         x if x == BIN_RETURN => {
             let interactive = isset(optlookup("interactive"));
             let shinstdin = isset(optlookup("shinstdin"));
-            let locallevel = LOCALLEVEL.load(Ordering::Relaxed);
-            let sourcelevel = SOURCELEVEL.load(Ordering::Relaxed);
+            let locallevel = locallevel_param.load(Ordering::Relaxed);
+            let sourcelevel = crate::ported::init::sourcelevel.load(Ordering::Relaxed);
             // c:5840-5841 — `if ((interactive && shinstdin) || locallevel || sourcelevel)`
             if (interactive && shinstdin) || locallevel != 0 || sourcelevel != 0 {
                 // c:5840
@@ -6431,7 +6431,7 @@ pub fn bin_break(
             // Reusing the BIN_EXIT branch below by setting `func` to
             // BIN_EXIT isn't possible mid-match; inline the same
             // guard logic here.
-            let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+            let cur_locallevel = locallevel_param.load(Ordering::Relaxed);
             let forklevel = FORKLEVEL.load(Ordering::Relaxed);
             let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {
@@ -6482,7 +6482,7 @@ pub fn bin_break(
         // a function would terminate without running EXIT traps or
         // unwinding the function stack.
         x if x == BIN_EXIT => {
-            let cur_locallevel = LOCALLEVEL.load(Ordering::Relaxed);
+            let cur_locallevel = locallevel_param.load(Ordering::Relaxed);
             let forklevel = FORKLEVEL.load(Ordering::Relaxed);
             let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {
@@ -6831,7 +6831,7 @@ pub fn bin_dot(
     // through `lastval`; missing read returns SOURCE_ERROR (128-2 =
     // 126) per c:6143.
     //
-    // SOURCELEVEL bump (Src/init.c:1606 `sourcelevel++;` /
+    // crate::ported::init::sourcelevel bump (Src/init.c:1606 `sourcelevel++;` /
     // c:1644 `sourcelevel--;`) is REQUIRED for `return` inside the
     // sourced file to unwind correctly. bin_break (Src/builtin.c:5840)
     // checks `(interactive && shinstdin) || locallevel || sourcelevel`
@@ -6840,7 +6840,7 @@ pub fn bin_dot(
     // unwinding to the source caller. Also clear RETFLAG after the
     // sourced script returns so the unwind doesn't propagate to the
     // outer compile unit.
-    SOURCELEVEL.fetch_add(1, Ordering::Relaxed); // c:1606
+    crate::ported::init::sourcelevel.fetch_add(1, Ordering::Relaxed); // c:1606
     let result = match std::fs::read_to_string(&path) {
         // c:6140
         Ok(src) => {
@@ -6849,7 +6849,7 @@ pub fn bin_dot(
         // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
         Err(_) => 128 - 2,
     };
-    SOURCELEVEL.fetch_sub(1, Ordering::Relaxed); // c:1644
+    crate::ported::init::sourcelevel.fetch_sub(1, Ordering::Relaxed); // c:1644
                                                  // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
                                                  // sourced file's execute_script unwinds, the return has been
                                                  // serviced; clear the flag so the outer compile unit's main loop
@@ -8884,7 +8884,7 @@ pub static LOOPS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::n
 pub static BREAKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static CONTFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static RETFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-// Same single-storage rationale as LOCALLEVEL above — C zsh has
+// Same single-storage rationale as locallevel_param above — C zsh has
 // only ONE `int sourcelevel;` global (Src/init.c:60). The canonical
 // Rust port is `sourcelevel_init` (lowercase,
 // matches C name). Re-export that single storage so the bin_break
@@ -8892,17 +8892,15 @@ pub static RETFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32:
 // this, `bin_dot` could increment one global while `bin_break`
 // inspected the other and `return` inside a sourced file would
 // fall through to `zexit` (Src/builtin.c:5858).
-pub use crate::ported::init::sourcelevel as SOURCELEVEL;
-// `LOCALLEVEL` was previously a SEPARATE AtomicI32 here, but C
+// `locallevel_param` was previously a SEPARATE AtomicI32 here, but C
 // zsh has only ONE `int locallevel;` global (Src/params.c:54).
 // The canonical Rust port is `locallevel_param`
 // (lowercase, matches C name). Re-export that single storage so
 // every reader and writer addresses the same atomic — without
-// this, `LOCALLEVEL.store(0)` in zle/computil.rs would zero one
+// this, `locallevel_param.store(0)` in zle/computil.rs would zero one
 // global while `params::locallevel.fetch_add(1)` in vm_helper
 // incremented a DIFFERENT global, leaving the two views out of
 // sync indefinitely.
-pub use crate::ported::params::locallevel as LOCALLEVEL;
 // `ZEXIT_NORMAL` re-exported from canonical zsh_h.rs (port of the
 // `enum { ZEXIT_NORMAL, ZEXIT_SIGNAL, ZEXIT_DEFERRED }` in Src/zsh.h).
 // Same single-source-of-truth pattern as TERM_UNKNOWN / HISTFLAG_*
