@@ -25,6 +25,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+
 use crate::compat::zgetcwd;
 use crate::hist::hist_ring;
 use crate::jobs::getsigidx;
@@ -1795,7 +1797,6 @@ pub fn freehistdata(idx: usize, unlink: i32) {
 /// HashMap-value (i32). Add/remove via the (name, value) pair.
 pub fn dircache_set(name: &mut Option<String>, value: Option<&str>) {
     // c:1537
-    use std::sync::atomic::Ordering;
     let mut cache = dircache_lock().lock().expect("dircache poisoned");
 
     if value.is_none() {
@@ -2307,6 +2308,8 @@ pub fn dircache_lock() -> &'static std::sync::Mutex<Vec<dircache_entry>> {
 
 #[cfg(test)]
 mod tests {
+    use std::cmp::Ordering;
+
     use super::*;
 
     #[test]
@@ -2325,7 +2328,6 @@ mod tests {
     #[test]
     fn hnamcmp_uses_ztrcmp_meta_aware_compare() {
         let _g = crate::test_util::global_state_lock();
-        use std::cmp::Ordering;
         // Plain ASCII: same as str::cmp.
         assert_eq!(hnamcmp("apple", "banana"), Ordering::Less);
         assert_eq!(hnamcmp("banana", "apple"), Ordering::Greater);
@@ -2430,7 +2432,6 @@ mod tests {
     #[test]
     fn histstrcmp_inblank_is_narrow_space_tab_only() {
         let _g = crate::test_util::global_state_lock();
-        use std::cmp::Ordering;
         // c:1411-1413 — runs of inblank collapse to a single boundary.
         assert_eq!(
             histstrcmp("hello\tworld", "hello world", false),
@@ -2473,7 +2474,6 @@ mod tests {
     #[test]
     fn histstrcmp_strips_leading_and_trailing_inblank() {
         let _g = crate::test_util::global_state_lock();
-        use std::cmp::Ordering;
         assert_eq!(
             histstrcmp("  cmd", "\tcmd", false),
             Ordering::Equal,

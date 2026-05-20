@@ -4627,7 +4627,6 @@ static REALPARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> = OnceLock::
 ///   - element-wise `a[k]=v` slice path (c:3373-3389)
 pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // c:3357
-    use crate::ported::utils::ERRFLAG_ERROR;
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
         zerr(&format!("not an identifier: {}", name));
