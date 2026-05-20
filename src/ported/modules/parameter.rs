@@ -13,7 +13,8 @@
 //! Provides special parameters: $commands, $functions, $aliases, $builtins,
 //! $modules, $dirstack, $history, $historywords, $options, $nameddirs, $userdirs
 
-use crate::ported::hashnameddir::nameddirtab;
+use crate::ported::builtin::BUILTINS;
+use crate::ported::hashnameddir::{addnameddirnode, nameddirtab};
 use crate::ported::hashtable::{
     aliastab_lock, cmdnam_hashed, cmdnamtab_lock, createaliasnode, shfunctab_lock,
     sufaliastab_lock,
@@ -21,10 +22,10 @@ use crate::ported::hashtable::{
 use crate::ported::hist::hist_ring;
 use crate::ported::jobs::{getjob, selectjobtab, sigmsg};
 use crate::ported::module::MODULESTAB;
-use crate::ported::options::{dosetopt, optlookup};
-use crate::ported::params::{deleteparamtable, getstrvalue, realparamtab};
+use crate::ported::options::{dosetopt, opt_state_set, optlookup};
+use crate::ported::params::{deleteparamtable, getsparam, getstrvalue, realparamtab};
 use crate::ported::utils::zwarn;
-use crate::ported::zsh_h::{hashtable, value, INTERACTIVE, ND_USERNAME,
+use crate::ported::zsh_h::{hashtable, opt_name, param, value, INTERACTIVE, ND_USERNAME,
     hashnode, nameddir, param as ParamStruct, HashNode, HashTable, Param, ALIAS_GLOBAL,
     ALIAS_SUFFIX, DISABLED,
     PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL,
@@ -426,7 +427,7 @@ pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {
                 // C: `*(cmd->u.name)` reads first entry of $path array.
                 //     paramtab read; was OS env split.
                 .unwrap_or_else(|| {
-                    crate::ported::params::getsparam("PATH")
+                    getsparam("PATH")
                         .and_then(|p| p.split(':').next().map(|s| s.to_string()))
                         .unwrap_or_default()
                 });
@@ -510,7 +511,7 @@ pub fn scanpmcommands(
                         // C: `*(cmd->u.name)` — first entry of $path array.
                         //     Read shell-side $PATH from paramtab (was OS env).
                         .unwrap_or_else(|| {
-                            crate::ported::params::getsparam("PATH")
+                            getsparam("PATH")
                                 .and_then(|p| p.split(':').next().map(|s| s.to_string()))
                                 .unwrap_or_default()
                         });
@@ -1117,7 +1118,7 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, _dis: i32) -> Option<Param> {
     // table in builtin.rs is the canonical source. Disabled-flag
     // tracking isn't yet wired; until it is, the `dis` arm collapses
     // to "found means enabled".
-    let entry = crate::ported::builtin::BUILTINS
+    let entry = BUILTINS
         .iter() // c:784
         .find(|b| b.node.nam == name);
     let (value, found) = if let Some(_bn) = entry {
@@ -1200,7 +1201,7 @@ pub fn scanbuiltins(
     // (the Rust canonical source for builtin entries).
     let _ = flags;
     if let Some(f) = func {
-        for b in crate::ported::builtin::BUILTINS.iter() {
+        for b in BUILTINS.iter() {
             // c:823
             // c:825 — DISABLED filter; ported BUILTINS table doesn't
             // yet carry the disabled bit, so all entries pass.
@@ -2277,7 +2278,7 @@ pub fn setpmnameddir(pm: Param, value: String) {
         diff: 0,
     };
     // c:1544 — nameddirtab->addnode(nameddirtab, ztrdup(pm->node.nam), nd);
-    crate::ported::hashnameddir::addnameddirnode(&pm.node.nam, nd);
+    addnameddirnode(&pm.node.nam, nd);
 }
 
 /// Port of `unsetpmnameddir(Param pm, UNUSED(int exp))` from Src/Modules/parameter.c:1534.
@@ -2366,7 +2367,7 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
                     dir: val, // c:1576 nd->dir = ztrdup(val)
                     diff: 0,
                 };
-                crate::ported::hashnameddir::addnameddirnode(&node.nam, nd); // c:1577
+                addnameddirnode(&node.nam, nd); // c:1577
             }
             hn = next; // c:1561 hn = next
         }
@@ -2379,8 +2380,8 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
         // c:1584
         INTERACTIVE,
     );
-    crate::ported::options::opt_state_set(
-        &crate::ported::zsh_h::opt_name(INTERACTIVE),
+    opt_state_set(
+        &opt_name(INTERACTIVE),
         false,
     ); // c:1585
     if !ht.is_null() {
@@ -2388,8 +2389,8 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
         let owned: HashTable = unsafe { std::ptr::read(ht) }; // move Box out
         deleteparamtable(Some(owned)); // c:1588
     }
-    crate::ported::options::opt_state_set(
-        &crate::ported::zsh_h::opt_name(INTERACTIVE),
+    opt_state_set(
+        &opt_name(INTERACTIVE),
         saved_interactive,
     ); // c:1589
 }
