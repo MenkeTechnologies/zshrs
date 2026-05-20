@@ -40,7 +40,7 @@ use crate::ported::exec::{getfpfunc, loadautofn, FORKLEVEL, TRAP_RETURN, TRAP_ST
 use crate::ported::hashnameddir::{emptynameddirtable, nameddirtab, printnameddirnode};
 use crate::ported::hashtable::{
     aliastab_lock, cmdnamtab_lock, createaliasnode, dircache_set, emptycmdnamtable, hnamcmp,
-    printaliasnode, reswdtab_lock, shfunctab_lock, sufaliastab_lock,
+    printaliasnode, printcmdnamnode, reswdtab_lock, shfunctab_lock, sufaliastab_lock,
 };
 use crate::ported::hist::{readhistfile, savehistfile};
 use crate::ported::jobs::{bin_fg, removetrapnode};
@@ -5282,14 +5282,10 @@ pub fn bin_hash(
             // c:4270 — cmdnamtab walk (the default `ht`). PATH lookup
             // arr is empty in the printnode call site because per-node
             // hashed entries carry their own resolved path.
-            let path_arr: Vec<String> = Vec::new();
             if let Ok(t) = cmdnamtab_lock().read() {
                 for (_n, cn) in t.iter() {
-                    // c:4270
-                    print!(
-                        "{}",
-                        crate::ported::hashtable::printcmdnamnode(cn, &path_arr, printflags as u32)
-                    );
+                    // c:4270 — `scanhashtable(cmdnamtab, ..., printcmdnamnode, ...)`
+                    printcmdnamnode(cn, printflags);
                 }
             }
         }
@@ -5697,7 +5693,7 @@ pub fn bin_alias(
                 if (a.node.flags & flags1 as i32) == flags1 as i32
                     && (a.node.flags & flags2 as i32) == 0
                 {
-                    print!("{}", printaliasnode(a, printflags as u32));
+                    printaliasnode(a, printflags);
                 }
             }
         }
@@ -5730,7 +5726,7 @@ pub fn bin_alias(
                             && (a.node.flags & flags2 as i32) == 0
                             && pattry(&prog, &a.node.nam)
                         {
-                            print!("{}", printaliasnode(a, printflags as u32));
+                            printaliasnode(a, printflags);
                         }
                     }
                 }
@@ -5792,7 +5788,7 @@ pub fn bin_alias(
                     || (OPT_ISSET(ops, b'g') && (fl & ALIAS_GLOBAL as u32) != 0);
                 if show {
                     let a = createaliasnode(&nm, &txt, fl);
-                    print!("{}", printaliasnode(&a, printflags as u32));
+                    printaliasnode(&a, printflags);
                 }
             }
             None => {

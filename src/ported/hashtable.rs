@@ -23,15 +23,17 @@ use crate::ported::zsh_h::{
 };
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use crate::compat::zgetcwd;
-use crate::hist::hist_ring;
+use crate::hist::{hashchar, hist_ring};
 use crate::jobs::getsigidx;
 use crate::signals::{settrap, unsettrap};
-use crate::utils::{quotedzputs, xsymlink, ztrcmp};
-use crate::zsh_h::{cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, HASHED, HIST_DUP, HIST_TMPSTORE, PM_LOADDIR, PM_TAGGED, PM_UNDEFINED, ZSIG_FUNC};
+use crate::text::{getpermtext, zoutputtab};
+use crate::utils::{nicezputs, quotedzputs, xsymlink, zputs, ztrcmp, zwarn};
+use crate::zsh_h::{cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, EF_RUN, HASHED, HIST_DUP, HIST_TMPSTORE, PM_CUR_FPATH, PM_KSHSTORED, PM_LOADDIR, PM_TAGGED, PM_TAGGED_LOCAL, PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED, PRINT_LIST, PRINT_NAMEONLY, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, ZSIG_FUNC};
 
 
 
@@ -783,17 +785,6 @@ pub fn emptyhashtable<T>(ht: &mut HashMap<String, T>) {
     ht.clear();
 }
 
-/// Print flags for whence/type commands
-pub mod print_flags {
-    pub const NAMEONLY: u32 = 1 << 0;
-    pub const WHENCE_WORD: u32 = 1 << 1;
-    pub const WHENCE_SIMPLE: u32 = 1 << 2;
-    pub const WHENCE_CSH: u32 = 1 << 3;
-    pub const WHENCE_VERBOSE: u32 = 1 << 4;
-    pub const WHENCE_FUNCDEF: u32 = 1 << 5;
-    pub const LIST: u32 = 1 << 6;
-}
-
 // Print info about hash table                                             // c:527
 /// Port of `printhashtabinfo(HashTable ht)` from `Src/hashtable.c:78`.
 ///
@@ -927,61 +918,112 @@ pub fn freecmdnamnode(hn: &str) {
         .remove(hn);
 }
 
-/// Format a command name entry for output
-/// Format a `$cmdtab` entry for `hash` listing.
-/// Port of `printcmdnamnode(HashNode hn, int printflags)` from Src/hashtable.c (the C
-/// source's per-command formatter `bin_hash()` invokes).
-/// WARNING: param names don't match C — Rust=(cmd, _path, print_flags) vs C=(hn, printflags)
-pub fn printcmdnamnode(cmd: &cmdnam, _path: &[String], print_flags: u32) -> String {
-    let name = &cmd.node.nam;
-    let is_hashed = (cmd.node.flags & HASHED as i32) != 0;
-    // Resolved path either from cn->u.cmd (HASHED) or from first
-    // entry of cn->u.name (unhashed PATH-array slice).
-    let resolved = || -> Option<String> {
-        if is_hashed {
-            cmd.cmd.clone()
-        } else {
-            cmd.name
-                .as_ref()
-                .and_then(|v| v.first())
-                .map(|seg| format!("{}/{}", seg, name))
-        }
-    };
+/// Port of `printcmdnamnode(HashNode hn, int printflags)` from `Src/hashtable.c:739`.
+///
+/// Emits one cmdnamtab entry for `hash` / `whence`. Each branch
+/// returns; PRINT_LIST falls through to the tail that emits
+/// `quotedzputs(nam) '=' quotedzputs(u.cmd|*u.name '/' nam) '\n'`.
+pub fn printcmdnamnode(hn: &cmdnam, printflags: i32) {
+    // c:741 — `Cmdnam cn = (Cmdnam) hn;` — Rust types give us cmdnam.
 
-    if print_flags & print_flags::WHENCE_WORD != 0 {
-        let kind = if is_hashed { "hashed" } else { "command" };
-        return format!("{}: {}\n", name, kind);
-    }
-    if print_flags & (print_flags::WHENCE_CSH | print_flags::WHENCE_SIMPLE) != 0 {
-        if let Some(p) = resolved() {
-            return format!("{}\n", p);
-        }
-        return format!("{}\n", name);
-    }
-    if print_flags & print_flags::WHENCE_VERBOSE != 0 {
-        if is_hashed {
-            if let Some(p) = resolved() {
-                return format!("{} is hashed to {}\n", name, p);
-            }
-        } else if let Some(p) = resolved() {
-            return format!("{} is {}\n", name, p);
-        }
-        return format!("{} is {}\n", name, name);
-    }
-    if print_flags & print_flags::LIST != 0 {
-        let prefix = if name.starts_with('-') {
-            "hash -- "
+    // c:743-747 — PRINT_WHENCE_WORD branch.
+    if (printflags & PRINT_WHENCE_WORD) != 0 {
+        // c:744-745 — `printf("%s: %s\n", nam, HASHED ? "hashed" : "command");`
+        let kind = if (hn.node.flags & HASHED as i32) != 0 {
+            "hashed"
         } else {
-            "hash "
+            "command"
         };
-        if let Some(p) = resolved() {
-            return format!("{}{}={}\n", prefix, name, p);
+        println!("{}: {}", hn.node.nam, kind); // c:744
+        return; // c:746
+    }
+
+    // c:749-760 — PRINT_WHENCE_CSH | PRINT_WHENCE_SIMPLE branch.
+    if (printflags & (PRINT_WHENCE_CSH | PRINT_WHENCE_SIMPLE)) != 0 {
+        if (hn.node.flags & HASHED as i32) != 0 {
+            // c:750
+            // c:751-752 — `zputs(u.cmd, stdout); putchar('\n');`
+            if let Some(cmd) = &hn.cmd {
+                let _ = zputs(cmd); // c:751
+            }
+            println!(); // c:752
+        } else {
+            // c:753
+            // c:754-757 — `zputs(*u.name); putchar('/'); zputs(nam); putchar('\n');`
+            if let Some(name_arr) = &hn.name {
+                if let Some(first) = name_arr.first() {
+                    let _ = zputs(first); // c:754
+                }
+            }
+            print!("/"); // c:755
+            let _ = zputs(&hn.node.nam); // c:756
+            println!(); // c:757
+        }
+        return; // c:759
+    }
+
+    // c:762-777 — PRINT_WHENCE_VERBOSE branch.
+    if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
+        if (hn.node.flags & HASHED as i32) != 0 {
+            // c:763
+            // c:764-767 — `nicezputs(nam); printf(" is hashed to "); nicezputs(u.cmd); putchar('\n');`
+            print!("{}", nicezputs(&hn.node.nam)); // c:764
+            print!(" is hashed to "); // c:765
+            if let Some(cmd) = &hn.cmd {
+                print!("{}", nicezputs(cmd)); // c:766
+            }
+            println!(); // c:767
+        } else {
+            // c:768
+            // c:769-774 — `nicezputs(nam); printf(" is "); nicezputs(*u.name); putchar('/'); nicezputs(nam); putchar('\n');`
+            print!("{}", nicezputs(&hn.node.nam)); // c:769
+            print!(" is "); // c:770
+            if let Some(name_arr) = &hn.name {
+                if let Some(first) = name_arr.first() {
+                    print!("{}", nicezputs(first)); // c:771
+                }
+            }
+            print!("/"); // c:772
+            print!("{}", nicezputs(&hn.node.nam)); // c:773
+            println!(); // c:774
+        }
+        return; // c:776
+    }
+
+    // c:779-784 — PRINT_LIST prefix block; falls through to the tail.
+    if (printflags & PRINT_LIST) != 0 {
+        // c:779
+        print!("hash "); // c:780
+                         // c:782-783 — `-- ` for names starting with `-`.
+        if hn.node.nam.starts_with('-') {
+            // c:782
+            print!("-- "); // c:783
         }
     }
-    if let Some(p) = resolved() {
-        return format!("{}={}\n", name, p);
+
+    // c:786-798 — common tail. HASHED uses u.cmd, !HASHED splices first
+    // u.name PATH segment + '/' + nam.
+    if (hn.node.flags & HASHED as i32) != 0 {
+        // c:786
+        print!("{}", quotedzputs(&hn.node.nam)); // c:787
+        print!("="); // c:788
+        if let Some(cmd) = &hn.cmd {
+            print!("{}", quotedzputs(cmd)); // c:789
+        }
+        println!(); // c:790
+    } else {
+        // c:791
+        print!("{}", quotedzputs(&hn.node.nam)); // c:792
+        print!("="); // c:793
+        if let Some(name_arr) = &hn.name {
+            if let Some(first) = name_arr.first() {
+                print!("{}", quotedzputs(first)); // c:794
+            }
+        }
+        print!("/"); // c:795
+        print!("{}", quotedzputs(&hn.node.nam)); // c:796
+        println!(); // c:797
     }
-    format!("{}={}\n", name, name)
 }
 
 /// Port of `createshfunctable()` from `Src/hashtable.c:812`.
@@ -1111,66 +1153,152 @@ pub fn freeshfuncnode(hn: &str) {
         .remove(hn);
 }
 
-/// Format a shell function for output
-/// Format a `$shfunctab` entry for `functions` listing.
-/// Port of `printshfuncnode(HashNode hn, int printflags)` from Src/builtin.c — emits the
-/// declaration / source-text combination `functions -t`/`-T`/
-/// `+/-`/etc. variants produce.
-pub fn printshfuncnode(func: &shfunc, print_flags: u32) -> String {
-    let name = &func.node.nam;
+/// Port of `printshfuncnode(HashNode hn, int printflags)` from `Src/hashtable.c:914`.
+///
+/// Emits one shfunctab entry for `functions` / `whence` / `typeset -f`.
+/// PRINT_NAMEONLY and the PRINT_WHENCE_* variants return early; the
+/// default body emits the full re-parseable `name () { body }` form
+/// including autoload-stub, traced markers, and trailing redirections.
+pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
+    // c:916 — `Shfunc f = (Shfunc) hn;` — Rust types give us shfunc.
+    // c:917 — `char *t = 0;` — declared but only used by the funcdef/redir
+    // branches; Rust scope-locals the `t` binding inside each branch.
 
-    if print_flags & print_flags::NAMEONLY != 0
-        || (print_flags & print_flags::WHENCE_SIMPLE != 0
-            && print_flags & print_flags::WHENCE_FUNCDEF == 0)
+    // c:919-925 — PRINT_NAMEONLY (or PRINT_WHENCE_SIMPLE without FUNCDEF):
+    // `zputs(nam); putchar('\n'); return;`
+    if (printflags & PRINT_NAMEONLY) != 0
+        || ((printflags & PRINT_WHENCE_SIMPLE) != 0
+            && (printflags & PRINT_WHENCE_FUNCDEF) == 0)
     {
-        return format!("{}\n", name);
+        let _ = zputs(&hn.node.nam); // c:922
+        println!(); // c:923
+        return; // c:924
     }
 
-    if print_flags & (print_flags::WHENCE_VERBOSE | print_flags::WHENCE_WORD) != 0
-        && print_flags & print_flags::WHENCE_FUNCDEF == 0
+    // c:927-944 — PRINT_WHENCE_VERBOSE | PRINT_WHENCE_WORD (without FUNCDEF):
+    // nicezputs(nam) ":" function | " is an autoload shell function" | " is a shell function"
+    // [" from " quotedzputs(filename) [(PM_LOADDIR) "/" quotedzputs(nam)]] '\n'
+    if (printflags & (PRINT_WHENCE_VERBOSE | PRINT_WHENCE_WORD)) != 0
+        && (printflags & PRINT_WHENCE_FUNCDEF) == 0
     {
-        if print_flags & print_flags::WHENCE_WORD != 0 {
-            return format!("{}: function\n", name);
-        }
-
-        let kind = if (func.node.flags & PM_UNDEFINED as i32) != 0 {
-            "is an autoload shell function"
+        print!("{}", nicezputs(&hn.node.nam)); // c:929
+        // c:930-933 — printf one of three strings via nested ternary.
+        let msg = if (printflags & PRINT_WHENCE_WORD) != 0 {
+            ": function" // c:930
+        } else if (hn.node.flags & PM_UNDEFINED as i32) != 0 {
+            " is an autoload shell function" // c:932
         } else {
-            "is a shell function"
+            " is a shell function" // c:933
         };
-
-        let mut result = format!("{} {}", name, kind);
-        if let Some(ref filename) = func.filename {
-            result.push_str(&format!(" from {}", filename));
-        }
-        result.push('\n');
-        return result;
-    }
-
-    let mut result = format!("{} () {{\n", name);
-
-    if (func.node.flags & PM_UNDEFINED as i32) != 0 {
-        result.push_str("\t# undefined\n");
-        if (func.node.flags & PM_TAGGED as i32) != 0 {
-            result.push_str("\t# traced\n");
-        }
-        result.push_str("\tbuiltin autoload -X");
-        if let Some(ref filename) = func.filename {
-            if (func.node.flags & PM_LOADDIR as i32) != 0 {
-                result.push_str(&format!(" {}", filename));
+        print!("{}", msg);
+        // c:934-941 — verbose-with-filename suffix.
+        if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
+            if let Some(filename) = &hn.filename {
+                // c:934
+                print!(" from "); // c:935
+                print!("{}", quotedzputs(filename)); // c:936
+                if (hn.node.flags & PM_LOADDIR as i32) != 0 {
+                    // c:937
+                    print!("/"); // c:938
+                    print!("{}", quotedzputs(&hn.node.nam)); // c:939
+                }
             }
         }
-    } else if let Some(ref body) = func.body {
-        if (func.node.flags & PM_TAGGED as i32) != 0 {
-            result.push_str("\t# traced\n");
+        println!(); // c:942
+        return; // c:943
+    }
+
+    // c:946 — `quotedzputs(nam, stdout);`
+    print!("{}", quotedzputs(&hn.node.nam));
+
+    // c:947-987 — funcdef-present branch (or PM_UNDEFINED stub) vs empty `() { }`.
+    if hn.funcdef.is_some() || (hn.node.flags & PM_UNDEFINED as i32) != 0 {
+        // c:947
+        print!(" () {{\n"); // c:948
+        let _ = zoutputtab(&mut io::stdout()); // c:949
+                                               // c:950-954 — `# undefined` marker or getpermtext body.
+        let mut t: Option<String>;
+        if (hn.node.flags & PM_UNDEFINED as i32) != 0 {
+            // c:950
+            println!("{} undefined", hashchar.load(Ordering::Relaxed) as u8 as char); // c:951
+            let _ = zoutputtab(&mut io::stdout()); // c:952
+            t = None;
+        } else {
+            // c:953
+            t = hn.funcdef.as_ref().map(|fd| getpermtext(fd.clone(), None, 1)); // c:954
         }
-        for line in body.lines() {
-            result.push_str(&format!("\t{}\n", line));
+        // c:955-958 — PM_TAGGED | PM_TAGGED_LOCAL → `# traced` marker.
+        if (hn.node.flags & (PM_TAGGED | PM_TAGGED_LOCAL) as i32) != 0 {
+            println!("{} traced", hashchar.load(Ordering::Relaxed) as u8 as char); // c:956
+            let _ = zoutputtab(&mut io::stdout()); // c:957
+        }
+        // c:959-983 — no funcdef text → autoload stub; else emit text.
+        if t.is_none() {
+            // c:959
+            // c:960-964 — `fopt = "UtTkzc"; flgs[] = { PM_UNALIASED, PM_TAGGED,
+            //               PM_TAGGED_LOCAL, PM_KSHSTORED, PM_ZSHSTORED, PM_CUR_FPATH, 0 };`
+            let fopt: &[u8] = b"UtTkzc"; // c:960
+            let flgs: [u32; 6] = [
+                // c:961-964
+                PM_UNALIASED,
+                PM_TAGGED,
+                PM_TAGGED_LOCAL,
+                PM_KSHSTORED,
+                PM_ZSHSTORED,
+                PM_CUR_FPATH,
+            ];
+            let _ = zputs("builtin autoload -X"); // c:967
+                                                  // c:968-969 — emit each fopt char whose flag is set.
+            for fl in 0..fopt.len() {
+                // c:968
+                if (hn.node.flags & flgs[fl] as i32) != 0 {
+                    // c:969
+                    print!("{}", fopt[fl] as char); // c:969
+                }
+            }
+            // c:970-973 — PM_LOADDIR with filename → ' ' + zputs(filename).
+            if let Some(filename) = &hn.filename {
+                if (hn.node.flags & PM_LOADDIR as i32) != 0 {
+                    // c:970
+                    print!(" "); // c:971
+                    let _ = zputs(filename); // c:972
+                }
+            }
+        } else {
+            // c:974
+            // c:975 — `zputs(t, stdout);`
+            let body = t.take().unwrap();
+            let _ = zputs(&body); // c:975
+                                  // c:977-982 — funcdef.flags & EF_RUN → run-time suffix.
+            let ef_run = hn
+                .funcdef
+                .as_ref()
+                .map(|fd| (fd.flags & EF_RUN) != 0)
+                .unwrap_or(false);
+            if ef_run {
+                // c:977
+                println!(); // c:978
+                let _ = zoutputtab(&mut io::stdout()); // c:979
+                print!("{}", quotedzputs(&hn.node.nam)); // c:980
+                print!(" \"$@\""); // c:981
+            }
+        }
+        print!("\n}}"); // c:984
+    } else {
+        // c:985
+        print!(" () {{ }}"); // c:986
+    }
+    // c:988-994 — redir present → emit its text.
+    if let Some(redir) = &hn.redir {
+        // c:988
+        let t = getpermtext(redir.clone(), None, 1); // c:989
+        if !t.is_empty() {
+            // c:990
+            let _ = zputs(&t); // c:991
         }
     }
 
-    result.push_str("}\n");
-    result
+    println!(); // c:996
 }
 
 /// Port of `scanmatchshfunc(Patprog pprog, int sorted, int flags1, int flags2, ScanFunc scanfunc, int scanflags, int expand)` from `Src/hashtable.c:1013`.
@@ -1214,19 +1342,29 @@ where
 
 /// Port of `printshfuncexpand(HashNode hn, int printflags, int expand)` from `Src/hashtable.c:1042`.
 ///
-/// C body wraps `printshfuncnode` to expand tabs in the function
-/// body for prompt-display purposes (`functions -e`). Rust port
-/// returns the formatted entry as a string.
-/// WARNING: param names don't match C — Rust=(nam, _flags) vs C=(hn, printflags, expand)
-pub fn printshfuncexpand(nam: &str, _flags: i32) -> Option<String> {
-    let tab = shfunctab_lock().read().expect("shfunctab poisoned");
-    let func = tab.get_including_disabled(nam)?;
-    let body = func.body.clone().unwrap_or_default();
-    Some(format!(
-        "{} () {{\n\t{}\n}}",
-        nam,
-        body.replace('\t', "    ")
-    ))
+/// C body:
+/// ```c
+/// int save_expand;
+/// save_expand = text_expand_tabs;
+/// text_expand_tabs = expand;
+/// shfunctab->printnode(hn, printflags);
+/// text_expand_tabs = save_expand;
+/// ```
+///
+/// Briefly toggles `text_expand_tabs` around the printnode call so
+/// the body indentation comes out either tab- or space-formatted
+/// per the caller's `expand` arg.
+pub fn printshfuncexpand(hn: &shfunc, printflags: i32, expand: i32) {
+    // c:1044 — `int save_expand;`
+    let save_expand: i32; // c:1044
+                          // c:1046 — `save_expand = text_expand_tabs;`
+    save_expand = crate::text::TEXT_EXPAND_TABS.load(Ordering::Relaxed); // c:1046
+                                                                         // c:1047 — `text_expand_tabs = expand;`
+    crate::text::TEXT_EXPAND_TABS.store(expand, Ordering::Relaxed); // c:1047
+                                                                    // c:1048 — `shfunctab->printnode(hn, printflags);`
+    printshfuncnode(hn, printflags); // c:1048
+                                     // c:1049 — `text_expand_tabs = save_expand;`
+    crate::text::TEXT_EXPAND_TABS.store(save_expand, Ordering::Relaxed); // c:1049
 }
 
 /// Port of `getshfuncfile(shfunc shf)` from `Src/hashtable.c:1059`.
@@ -1252,24 +1390,43 @@ pub fn createreswdtable() {
 
 /// Port of `printreswdnode(HashNode hn, int printflags)` from `Src/hashtable.c:1147`.
 ///
-/// C body emits `whence`-style output for one reserved word with
-/// flags-based dispatch:
+/// C body:
 /// ```c
-/// if (PRINT_WHENCE_WORD) printf("%s: reserved\n", nam);
-/// else if (PRINT_WHENCE_CSH) printf("%s: shell reserved word\n", nam);
-/// else if (PRINT_WHENCE_VERBOSE) printf("%s is a reserved word\n", nam);
-/// else printf("%s\n", nam);
+/// Reswd rw = (Reswd) hn;
+/// if (printflags & PRINT_WHENCE_WORD) {
+///     printf("%s: reserved\n", rw->node.nam);
+///     return;
+/// }
+/// if (printflags & PRINT_WHENCE_CSH) {
+///     printf("%s: shell reserved word\n", rw->node.nam);
+///     return;
+/// }
+/// if (printflags & PRINT_WHENCE_VERBOSE) {
+///     printf("%s is a reserved word\n", rw->node.nam);
+///     return;
+/// }
+/// /* default is name only */
+/// printf("%s\n", rw->node.nam);
 /// ```
-pub fn printreswdnode(hn: &str, printflags: u32) -> String {
-    if printflags & print_flags::WHENCE_WORD != 0 {
-        format!("{}: reserved", hn)
-    } else if printflags & print_flags::WHENCE_CSH != 0 {
-        format!("{}: shell reserved word", hn)
-    } else if printflags & print_flags::WHENCE_VERBOSE != 0 {
-        format!("{} is a reserved word", hn)
-    } else {
-        hn.to_string()
+pub fn printreswdnode(hn: &reswd, printflags: i32) {
+    // c:1149 — `Reswd rw = (Reswd) hn;` — Rust types already give us reswd.
+    // c:1151-1154 — PRINT_WHENCE_WORD branch.
+    if (printflags & PRINT_WHENCE_WORD) != 0 {
+        println!("{}: reserved", hn.node.nam); // c:1152
+        return; // c:1153
     }
+    // c:1156-1159 — PRINT_WHENCE_CSH branch.
+    if (printflags & PRINT_WHENCE_CSH) != 0 {
+        println!("{}: shell reserved word", hn.node.nam); // c:1157
+        return; // c:1158
+    }
+    // c:1161-1164 — PRINT_WHENCE_VERBOSE branch.
+    if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
+        println!("{} is a reserved word", hn.node.nam); // c:1162
+        return; // c:1163
+    }
+    // c:1166-1167 — default: name only.
+    println!("{}", hn.node.nam); // c:1167
 }
 
 /// Port of `void createaliastable(HashTable ht)` from `Src/hashtable.c:1186`.
@@ -1470,87 +1627,107 @@ pub fn freealiasnode(hn: &str) {
 
 /// Port of `printaliasnode(HashNode hn, int printflags)` from `Src/hashtable.c:1256`.
 ///
-/// C body emits `whence`-style output for one alias with
-/// PRINT_NAMEONLY / PRINT_WHENCE_WORD / PRINT_WHENCE_SIMPLE /
-/// PRINT_WHENCE_CSH / PRINT_WHENCE_VERBOSE / PRINT_LIST flag
-/// dispatch.
-pub fn printaliasnode(hn: &crate::ported::zsh_h::alias, printflags: u32) -> String {
-    let nam = &hn.node.nam;
-    let af = hn.node.flags;
-    let is_suffix = (af & ALIAS_SUFFIX as i32) != 0;
-    let is_global = (af & ALIAS_GLOBAL as i32) != 0;
-    // c:1260-1263 — PRINT_NAMEONLY: `zputs(nam); putchar('\n');`
-    if printflags & print_flags::NAMEONLY != 0 {
-        return format!("{}\n", nam);
+/// Emits `whence`-style output for one alias with PRINT_NAMEONLY /
+/// PRINT_WHENCE_WORD / PRINT_WHENCE_SIMPLE / PRINT_WHENCE_CSH /
+/// PRINT_WHENCE_VERBOSE / PRINT_LIST flag dispatch. PRINT_LIST falls
+/// through to the tail `quotedzputs(nam) '=' quotedzputs(text) '\n'`;
+/// every other branch returns early.
+pub fn printaliasnode(hn: &crate::ported::zsh_h::alias, printflags: i32) {
+    // c:1258 — `Alias a = (Alias) hn;` — Rust types already give us alias.
+
+    // c:1260-1264 — PRINT_NAMEONLY branch.
+    if (printflags & PRINT_NAMEONLY) != 0 {
+        let _ = zputs(&hn.node.nam); // c:1261
+        println!(); // c:1262
+        return; // c:1263
     }
-    // c:1266-1273 — PRINT_WHENCE_WORD: `printf("%s: <kind> alias\n", nam);`
-    if printflags & print_flags::WHENCE_WORD != 0 {
-        let kind = if is_suffix {
-            "suffix alias" // c:1268
-        } else if is_global {
-            "global alias" // c:1270
+
+    // c:1266-1274 — PRINT_WHENCE_WORD branch.
+    if (printflags & PRINT_WHENCE_WORD) != 0 {
+        if (hn.node.flags & ALIAS_SUFFIX as i32) != 0 {
+            println!("{}: suffix alias", hn.node.nam); // c:1268
+        } else if (hn.node.flags & ALIAS_GLOBAL as i32) != 0 {
+            println!("{}: global alias", hn.node.nam); // c:1270
         } else {
-            "alias" // c:1272
-        };
-        return format!("{}: {}\n", nam, kind);
-    }
-    // c:1276-1279 — PRINT_WHENCE_SIMPLE: `zputs(text); putchar('\n');`
-    if printflags & print_flags::WHENCE_SIMPLE != 0 {
-        return format!("{}\n", hn.text);
-    }
-    // c:1282-1293 — PRINT_WHENCE_CSH: nicezputs(nam) ":" [suffix|globally]
-    // "aliased to " nicezputs(text) '\n'.
-    if printflags & print_flags::WHENCE_CSH != 0 {
-        let qual = if is_suffix {
-            "suffix " // c:1286
-        } else if is_global {
-            "globally " // c:1288
-        } else {
-            ""
-        };
-        return format!("{}: {}aliased to {}\n", nam, qual, hn.text);
-    }
-    // c:1295-1307 — PRINT_WHENCE_VERBOSE: nicezputs(nam) " is a"
-    // [" suffix"|" global"|"n"] " alias for " nicezputs(text) '\n'.
-    if printflags & print_flags::WHENCE_VERBOSE != 0 {
-        let qual = if is_suffix {
-            " suffix" // c:1299
-        } else if is_global {
-            " global" // c:1301
-        } else {
-            "n" // c:1303
-        };
-        return format!("{} is a{} alias for {}\n", nam, qual, hn.text);
-    }
-    if printflags & print_flags::LIST != 0 {
-        // c:1320 — `printf("alias ");`
-        let mut out = String::from("alias ");
-        // c:1321-1324 — `-s `/`-g ` prefix.
-        if is_suffix {
-            out.push_str("-s "); // c:1322
-        } else if is_global {
-            out.push_str("-g "); // c:1324
+            println!("{}: alias", hn.node.nam); // c:1272
         }
-        // c:1328-1329 — `-- ` for names starting with `-`/`+`.
-        if nam.starts_with('-') || nam.starts_with('+') {
-            out.push_str("-- "); // c:1329
-        }
-        // c:1332-1336 — `quotedzputs(nam); putchar('='); quotedzputs(text); putchar('\n');`
-        out.push_str(&quotedzputs(nam)); // c:1332
-        out.push('='); // c:1333
-        out.push_str(&quotedzputs(&hn.text)); // c:1334
-        out.push('\n'); // c:1336
-        return out;
+        return; // c:1273
     }
-    // Default branch (no print-flag bits set) — same body as LIST minus
-    // the `alias [-sg] [--]` prefix. C `printaliasnode` at hashtable.c:
-    // 1332-1336 emits `quotedzputs(nam) '=' quotedzputs(text) '\n'`.
-    let mut out = String::new();
-    out.push_str(&quotedzputs(nam)); // c:1332
-    out.push('='); // c:1333
-    out.push_str(&quotedzputs(&hn.text)); // c:1334
-    out.push('\n'); // c:1336
-    out
+
+    // c:1276-1280 — PRINT_WHENCE_SIMPLE branch.
+    if (printflags & PRINT_WHENCE_SIMPLE) != 0 {
+        let _ = zputs(&hn.text); // c:1277
+        println!(); // c:1278
+        return; // c:1279
+    }
+
+    // c:1282-1293 — PRINT_WHENCE_CSH branch.
+    if (printflags & PRINT_WHENCE_CSH) != 0 {
+        print!("{}", nicezputs(&hn.node.nam)); // c:1283
+        print!(": "); // c:1284
+        if (hn.node.flags & ALIAS_SUFFIX as i32) != 0 {
+            print!("suffix "); // c:1286
+        } else if (hn.node.flags & ALIAS_GLOBAL as i32) != 0 {
+            print!("globally "); // c:1288
+        }
+        print!("aliased to "); // c:1289
+        print!("{}", nicezputs(&hn.text)); // c:1290
+        println!(); // c:1291
+        return; // c:1292
+    }
+
+    // c:1295-1308 — PRINT_WHENCE_VERBOSE branch.
+    if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
+        print!("{}", nicezputs(&hn.node.nam)); // c:1296
+        print!(" is a"); // c:1297
+        if (hn.node.flags & ALIAS_SUFFIX as i32) != 0 {
+            print!(" suffix"); // c:1299
+        } else if (hn.node.flags & ALIAS_GLOBAL as i32) != 0 {
+            print!(" global"); // c:1301
+        } else {
+            print!("n"); // c:1303
+        }
+        print!(" alias for "); // c:1304
+        print!("{}", nicezputs(&hn.text)); // c:1305
+        println!(); // c:1306
+        return; // c:1307
+    }
+
+    // c:1310-1330 — PRINT_LIST prefix block (falls through to the
+    // tail quotedzputs body below; default-no-flags also reaches the
+    // tail by skipping this block).
+    if (printflags & PRINT_LIST) != 0 {
+        // c:1312-1316 — Fast fail on `=` in name (unrepresentable
+        // `alias name=...` round-trip).
+        if hn.node.nam.contains('=') {
+            // c:1313
+            zwarn(&format!(
+                "invalid alias '{}' encountered while printing aliases",
+                hn.node.nam
+            ));
+            return; // c:1316
+        }
+        print!("alias "); // c:1320
+        if (hn.node.flags & ALIAS_SUFFIX as i32) != 0 {
+            // c:1321
+            print!("-s "); // c:1322
+        } else if (hn.node.flags & ALIAS_GLOBAL as i32) != 0 {
+            // c:1323
+            print!("-g "); // c:1324
+        }
+        // c:1326-1329 — `-- ` so a name starting with `-`/`+` isn't
+        // interpreted as an option when the listing is re-executed.
+        if hn.node.nam.starts_with('-') || hn.node.nam.starts_with('+') {
+            // c:1328
+            print!("-- "); // c:1329
+        }
+    }
+
+    // c:1332-1336 — common tail: quotedzputs(nam) '=' quotedzputs(text) '\n'.
+    print!("{}", quotedzputs(&hn.node.nam)); // c:1332
+    print!("="); // c:1333
+    print!("{}", quotedzputs(&hn.text)); // c:1334
+    println!(); // c:1336
 }
 
 /// Port of `createhisttable()` from `Src/hashtable.c:1345`.
@@ -2076,108 +2253,6 @@ pub fn shfunc_autoload(name: &str) -> shfunc {
     }
 }
 
-/// Format a reserved word for output
-/// Format a reserved-word entry.
-/// Port of `printreswdnode(HashNode hn, int printflags)` from Src/lex.c (the C source's
-/// formatter for the `reswdtab` HashTable).
-pub fn format_reswd(rw: &reswd, print_flags: u32) -> String {
-    let name = &rw.node.nam;
-
-    if print_flags & print_flags::WHENCE_WORD != 0 {
-        return format!("{}: reserved\n", name);
-    }
-
-    if print_flags & print_flags::WHENCE_CSH != 0 {
-        return format!("{}: shell reserved word\n", name);
-    }
-
-    if print_flags & print_flags::WHENCE_VERBOSE != 0 {
-        return format!("{} is a reserved word\n", name);
-    }
-
-    format!("{}\n", name)
-}
-
-/// Format an alias for output
-pub fn format_alias(alias: &crate::ported::zsh_h::alias, print_flags: u32) -> String {
-    let name = &alias.node.nam;
-    let text = &alias.text;
-    let af = alias.node.flags;
-    let is_suffix = (af & ALIAS_SUFFIX as i32) != 0;
-    let is_global = (af & ALIAS_GLOBAL as i32) != 0;
-
-    if print_flags & print_flags::NAMEONLY != 0 {
-        return format!("{}\n", name);
-    }
-
-    if print_flags & print_flags::WHENCE_WORD != 0 {
-        let kind = if is_suffix {
-            "suffix alias"
-        } else if is_global {
-            "global alias"
-        } else {
-            "alias"
-        };
-        return format!("{}: {}\n", name, kind);
-    }
-
-    if print_flags & print_flags::WHENCE_SIMPLE != 0 {
-        return format!("{}\n", text);
-    }
-
-    if print_flags & print_flags::WHENCE_CSH != 0 {
-        let kind = if is_suffix {
-            "suffix "
-        } else if is_global {
-            "globally "
-        } else {
-            ""
-        };
-        return format!("{}: {}aliased to {}\n", name, kind, text);
-    }
-
-    if print_flags & print_flags::WHENCE_VERBOSE != 0 {
-        let kind = if is_suffix {
-            " suffix"
-        } else if is_global {
-            " global"
-        } else {
-            "n"
-        };
-        return format!("{} is a{} alias for {}\n", name, kind, text);
-    }
-
-    if print_flags & print_flags::LIST != 0 {
-        if name.contains('=') {
-            return format!("# invalid alias '{}'\n", name);
-        }
-
-        let mut result = String::from("alias ");
-        if is_suffix {
-            result.push_str("-s ");
-        } else if is_global {
-            result.push_str("-g ");
-        }
-
-        if name.starts_with('-') || name.starts_with('+') {
-            result.push_str("-- ");
-        }
-
-        result.push_str(&format!(
-            "{}={}\n",
-            quotedzputs(name),
-            quotedzputs(text)
-        ));
-        return result;
-    }
-
-    format!(
-        "{}={}\n",
-        quotedzputs(name),
-        quotedzputs(text)
-    )
-}
-
 // -----------------------------------------------------------
 // cmdnamtab / aliastab / sufaliastab / reswdtab / histtab
 // global singletons. Match C's `mod_export HashTable cmdnamtab;`
@@ -2606,31 +2681,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_format_alias() {
-        let _g = crate::test_util::global_state_lock();
-        let alias = createaliasnode("ll", "ls -l", 0);
-        let output = format_alias(&alias, print_flags::WHENCE_VERBOSE);
-        assert!(output.contains("is an alias for"));
-
-        let global = createaliasnode("G", "| grep", ALIAS_GLOBAL as u32);
-        let output = format_alias(&global, print_flags::WHENCE_WORD);
-        assert!(output.contains("global alias"));
-    }
-
-    #[test]
-    fn test_format_reswd() {
-        let _g = crate::test_util::global_state_lock();
-        let table = reswd_table::new();
-        let if_rw = table.get("if").unwrap();
-
-        let output = format_reswd(if_rw, print_flags::WHENCE_VERBOSE);
-        assert!(output.contains("is a reserved word"));
-
-        let output = format_reswd(if_rw, print_flags::WHENCE_WORD);
-        assert!(output.contains("reserved"));
-    }
-
     // -------------------------------------------------------------
     // Tests for the global shfunctab singleton & GSU callbacks.
     //
@@ -2837,23 +2887,36 @@ mod tests {
     }
 
     #[test]
-    fn test_printaliasnode_formats() {
+    fn test_printaliasnode_smoke() {
+        // printaliasnode writes directly to stdout (matches C's void
+        // return / writes-to-stdout signature). The behavioural parity
+        // assertions live in `tests/builtin_c_parity.rs::alias_builtin`,
+        // which compares against `/bin/zsh -fc 'alias gst'` byte-for-byte.
+        // This unit test just exercises every flag branch to make sure
+        // none panics / borrows incorrectly.
         let _g = crate::test_util::global_state_lock();
         let a = createaliasnode("ll", "ls -la", 0);
-        let out = printaliasnode(&a, print_flags::WHENCE_VERBOSE);
-        assert!(out.contains("ll is an alias for ls -la"));
-        let list = printaliasnode(&a, print_flags::LIST);
-        assert!(list.starts_with("alias "));
-        assert!(list.contains("ll=ls -la"));
+        printaliasnode(&a, PRINT_NAMEONLY);
+        printaliasnode(&a, PRINT_WHENCE_WORD);
+        printaliasnode(&a, PRINT_WHENCE_SIMPLE);
+        printaliasnode(&a, PRINT_WHENCE_CSH);
+        printaliasnode(&a, PRINT_WHENCE_VERBOSE);
+        printaliasnode(&a, PRINT_LIST);
+        printaliasnode(&a, 0);
     }
 
     #[test]
-    fn test_printreswdnode_formats() {
+    fn test_printreswdnode_smoke() {
+        // printreswdnode writes directly to stdout (matches C's void
+        // return / write-to-stdout signature at hashtable.c:1147).
+        // Smoke-test every flag branch to make sure none panics.
         let _g = crate::test_util::global_state_lock();
-        let out = printreswdnode("if", print_flags::WHENCE_WORD);
-        assert_eq!(out, "if: reserved");
-        let v = printreswdnode("if", print_flags::WHENCE_VERBOSE);
-        assert_eq!(v, "if is a reserved word");
+        let table = reswd_table::new();
+        let if_rw = table.get("if").unwrap();
+        printreswdnode(if_rw, PRINT_WHENCE_WORD);
+        printreswdnode(if_rw, PRINT_WHENCE_CSH);
+        printreswdnode(if_rw, PRINT_WHENCE_VERBOSE);
+        printreswdnode(if_rw, 0);
     }
 
     #[test]
