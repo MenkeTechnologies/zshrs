@@ -1445,8 +1445,6 @@ expand_prompt
 expand_prompt_default
 expand_range
 firstfdhead_offset
-format_alias
-format_reswd
 freedump_locked
 glob_emit_path
 goto_compend
