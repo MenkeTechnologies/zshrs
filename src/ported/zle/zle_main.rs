@@ -14,7 +14,15 @@
 //! - bin_vared() - vared builtin
 //! - zle_main_entry() - module entry point
 
-use crate::ported::utils::zwarnnam;
+use crate::ported::builtin::LASTVAL;
+use crate::ported::builtins::sched::zleactive;
+use crate::ported::init::SHTTY;
+use crate::ported::utils::{write_loop, zwarnnam};
+use crate::ported::zle::zle_keymap::{curkeymapname, selectkeymap};
+use crate::ported::zle::zle_misc::DONE;
+use crate::ported::zsh_h::{
+    hookdef, module, OPT_ARG_SAFE, OPT_ISSET, PM_ARRAY, PM_HASHED, PM_SCALAR,
+};
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -107,7 +115,7 @@ pub fn zsetterm() -> io::Result<()> {
 /// the loop already read but isn't ready to consume.
 pub fn ungetbyte(ch: u8) {
     // c:348
-    crate::ported::zle::zle_main::KUNGETBUF
+    KUNGETBUF
         .lock()
         .unwrap()
         .push_front(ch);
@@ -121,7 +129,7 @@ pub fn ungetbyte(ch: u8) {
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, len)
 pub fn ungetbytes(s: &[u8]) {
     for &b in s.iter().rev() {
-        crate::ported::zle::zle_main::KUNGETBUF
+        KUNGETBUF
             .lock()
             .unwrap()
             .push_front(b);
@@ -304,7 +312,7 @@ fn calc_timeout(do_keytmout: bool) -> ztmout {
 /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, cptr, full)
 pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     // Check unget buffer first
-    if let Some(b) = crate::ported::zle::zle_main::KUNGETBUF
+    if let Some(b) = KUNGETBUF
         .lock()
         .unwrap()
         .pop_front()
@@ -556,9 +564,9 @@ pub fn redrawhook() {
 /// keymap-trie walk is a follow-up port.
 pub fn zlecore() {
     // c:1110
-    crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
+    DONE.store(0, std::sync::atomic::Ordering::SeqCst);
 
-    while crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+    while DONE.load(std::sync::atomic::Ordering::SeqCst) == 0 {
         // EOF handling: empty line + Ctrl-D (eofchar) => terminate.
         // Mirrors zle_main.c:1139-1150 (lastchar == eofchar guard).
         // We can only check this *after* reading a char, so the
@@ -572,7 +580,7 @@ pub fn zlecore() {
             Some(t) => t,
             None => {
                 EOFSENT.store(1, std::sync::atomic::Ordering::SeqCst);
-                crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+                DONE.store(1, std::sync::atomic::Ordering::SeqCst);
                 continue;
             }
         };
@@ -588,7 +596,7 @@ pub fn zlecore() {
                 != 0
         {
             EOFSENT.store(1, std::sync::atomic::Ordering::SeqCst);
-            crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+            DONE.store(1, std::sync::atomic::Ordering::SeqCst);
             continue;
         }
 
@@ -659,8 +667,8 @@ pub fn zleread(
     // `RAW_LP`/`RAW_RP` statics (zle_main.rs).
     *crate::ported::zle::zle_main::RAW_LP.lock().unwrap() = lprompt.to_string();
     *crate::ported::zle::zle_main::RAW_RP.lock().unwrap() = rprompt.to_string();
-    *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(lprompt);
-    *crate::ported::zle::zle_main::RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(rprompt);
+    *LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(lprompt);
+    *RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(rprompt);
     crate::ported::zle::zle_main::ZLEREADFLAGS.store(flags, std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::ZLECONTEXT.store(context, std::sync::atomic::Ordering::SeqCst);
 
@@ -669,7 +677,7 @@ pub fn zleread(
     ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
     ZLELL.store(0, std::sync::atomic::Ordering::SeqCst);
     crate::ported::zle::zle_main::MARK.store(0, std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
+    DONE.store(0, std::sync::atomic::Ordering::SeqCst);
 
     // Set up terminal
     zsetterm()?;
@@ -680,9 +688,9 @@ pub fn zleread(
     // fallback for non-interactive paths.
     {
         use std::sync::atomic::Ordering;
-        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let fd = SHTTY.load(Ordering::Relaxed);
         let out = if fd >= 0 { fd } else { 1 };
-        let _ = crate::ported::utils::write_loop(out, lprompt.as_bytes());
+        let _ = write_loop(out, lprompt.as_bytes());
     }
 
     // Enter core loop
@@ -752,7 +760,7 @@ pub fn execzlefunc(name: &str, args: &[String]) -> i32 {
         });
         // c:1530 — capture LASTVAL after the call. dispatch_function_call
         // sets LASTVAL itself; mirror the return through.
-        crate::ported::builtin::LASTVAL.store(rc, std::sync::atomic::Ordering::Relaxed);
+        LASTVAL.store(rc, std::sync::atomic::Ordering::Relaxed);
         return rc;
     }
 
@@ -785,8 +793,8 @@ pub fn initmodifier() {
 /// non-prefix widget, so reset the modifier to its default state via
 /// `initmodifier`.
 pub fn handleprefixes() {
-    if (crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0) {
-        crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
+    if (PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) != 0) {
+        PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
         if ZMOD.lock().unwrap().flags & MOD_TMULT != 0 {
             ZMOD.lock().unwrap().flags &= !MOD_TMULT;
             ZMOD.lock().unwrap().flags |= MOD_MULT;
@@ -867,8 +875,6 @@ pub fn bin_vared(
     ops: &crate::ported::zsh_h::options,
     _func: i32,
 ) -> i32 {
-    use crate::ported::utils::zwarnnam;
-    use crate::ported::zsh_h::{OPT_ARG_SAFE, OPT_ISSET, PM_ARRAY, PM_HASHED, PM_SCALAR};
     let mut type_: u32 = PM_SCALAR; // c:1685
                                     // c:1691 — `if ((interact && unset(USEZLE)) || !strcmp(term, "emacs"))`.
                                     // C reads the `term` global (Src/init.c:777) which is the shell's
@@ -882,7 +888,7 @@ pub fn bin_vared(
         return 1; // c:1693
     }
     // c:1695 — refuse recursive ZLE.
-    if crate::ported::builtins::sched::zleactive.load(
+    if zleactive.load(
         // c:1695
         std::sync::atomic::Ordering::Relaxed,
     ) != 0
@@ -972,14 +978,14 @@ pub fn bin_vared(
     let current = crate::ported::params::getsparam(varname).unwrap_or_default();
     {
         use std::sync::atomic::Ordering;
-        let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let fd = SHTTY.load(Ordering::Relaxed);
         let out = if fd >= 0 { fd } else { 1 };
         if !prompt.is_empty() {
-            let _ = crate::ported::utils::write_loop(out, prompt.as_bytes());
+            let _ = write_loop(out, prompt.as_bytes());
         }
-        let _ = crate::ported::utils::write_loop(out, current.as_bytes());
+        let _ = write_loop(out, current.as_bytes());
         if !rprompt.is_empty() {
-            let _ = crate::ported::utils::write_loop(out, rprompt.as_bytes());
+            let _ = write_loop(out, rprompt.as_bytes());
         }
     }
     let mut input = String::new();
@@ -1103,13 +1109,13 @@ pub fn recursiveedit() -> i32 {
     //                       errflag = done = eofsent = 0; return locerror`.
     // zlecore needs the editor mainloop substrate; we faithfully
     // bump/decrement zle_recursive and reset errflag/done.
-    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
-    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     let cur_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
     let locerror = if cur_errflag != 0 { 1 } else { 0 };
     crate::ported::utils::errflag.store(0, Ordering::Relaxed);
-    crate::ported::zle::zle_misc::DONE.store(0, Ordering::SeqCst); // c:1993
+    DONE.store(0, Ordering::SeqCst); // c:1993
     locerror // c:1995
 }
 
@@ -1135,10 +1141,10 @@ pub fn reexpandprompt() {
         //          (markers[0] = lprompt status, markers[2] = rprompt status —
         //           Rust port doesn't surface markers yet, so they collapse.)
         // c:2012 — int local_lastval = lastval;
-        let local_lastval = crate::ported::builtin::LASTVAL.load(Ordering::SeqCst);
+        let local_lastval = LASTVAL.load(Ordering::SeqCst);
         // c:2013 — lastval = pre_zle_status;
         let pre_zs = crate::ported::zle::zle_main::PRE_ZLE_STATUS.load(Ordering::SeqCst);
-        crate::ported::builtin::LASTVAL.store(pre_zs, Ordering::SeqCst);
+        LASTVAL.store(pre_zs, Ordering::SeqCst);
 
         // c:2015-2038 — do { ... } while (looping != reexpanding);
         //               The loop guards against SIGWINCH-during-promptexpand.
@@ -1159,7 +1165,7 @@ pub fn reexpandprompt() {
             let new_lp = crate::prompt::expand_prompt(&raw_lp);
             // c:2026 — pmpt_attr = txtcurrentattrs;   (not yet ported)
             // c:2027-2028 — free(lpromptbuf); lpromptbuf = new_lprompt;
-            *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = new_lp;
+            *LPROMPT.lock().unwrap() = new_lp;
 
             // c:2030-2031 — if (looping != reexpanding) continue;
             if LOOPING.with(|c| c.get()) != REEXPANDING.with(|c| c.get()) {
@@ -1171,7 +1177,7 @@ pub fn reexpandprompt() {
             let new_rp = crate::prompt::expand_prompt(&raw_rp);
             // c:2034-2035 — rpmpt_attr / prompt_attr computation (not yet ported)
             // c:2036-2037 — free(rpromptbuf); rpromptbuf = new_rprompt;
-            *crate::ported::zle::zle_main::RPROMPT.lock().unwrap() = new_rp;
+            *RPROMPT.lock().unwrap() = new_rp;
 
             // c:2038 — } while (looping != reexpanding);
             if LOOPING.with(|c| c.get()) == REEXPANDING.with(|c| c.get()) {
@@ -1180,7 +1186,7 @@ pub fn reexpandprompt() {
         }
 
         // c:2040 — lastval = local_lastval;
-        crate::ported::builtin::LASTVAL.store(local_lastval, Ordering::SeqCst);
+        LASTVAL.store(local_lastval, Ordering::SeqCst);
         ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     } else {
         // c:2041-2042 — } else looping = reexpanding;
@@ -1217,7 +1223,7 @@ pub fn zle_resetprompt() {
     // c:2060 — `reexpandprompt()`. Flag drives the deferred re-expand
     // in zlecore (reads ZLE_RESET_NEEDED + clears it).
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
-    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
+    if zleactive.load(Ordering::Relaxed) != 0 {
         // c:2062 — `redisplay(NULL)`. The next zlecore tick observes
         // ZLE_RESET_NEEDED and invokes redisplay against the
         // file-scope ZLE statics.
@@ -1248,9 +1254,9 @@ pub fn trashzle() {
     // c:2091 — applytextattributes(0) → CSI 0m resets all SGR.
     // Write both blobs to SHTTY (stdout fallback) so the prompt
     // teardown reaches the same destination as the prompt write.
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let fd = SHTTY.load(Ordering::Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
-    let _ = crate::ported::utils::write_loop(out, b"\r\x1b[K\x1b[0m");
+    let _ = write_loop(out, b"\r\x1b[K\x1b[0m");
     ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -1272,11 +1278,11 @@ pub fn trashzle() {
 /// Both params are unused (C: `UNUSED(Hookdef dummy), UNUSED(void *dat)`).
 pub fn zlebeforetrap(
     // c:2104
-    _dummy: *mut crate::ported::zsh_h::hookdef,
+    _dummy: *mut hookdef,
     _dat: *mut std::ffi::c_void,
 ) -> i32 {
     use std::sync::atomic::Ordering;
-    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
+    if zleactive.load(Ordering::Relaxed) != 0 {
         // c:2106
         // c:2107 — `startparamscope()`. Push a param scope so trap
         // function locals don't leak into the outer shell state.
@@ -1328,11 +1334,11 @@ pub fn zlebeforetrap(
 /// (C: `UNUSED(Hookdef dummy), UNUSED(void *dat)`).
 pub fn zleaftertrap(
     // c:2114
-    _dummy: *mut crate::ported::zsh_h::hookdef,
+    _dummy: *mut hookdef,
     _dat: *mut std::ffi::c_void,
 ) -> i32 {
     use std::sync::atomic::Ordering;
-    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
+    if zleactive.load(Ordering::Relaxed) != 0 {
         // c:2116
         crate::ported::params::endparamscope(); // c:2117
     }
@@ -1343,7 +1349,7 @@ pub fn zleaftertrap(
 /// `Src/Zle/zle_main.c:2243`. Module-load init: registers thingies +
 /// queries terminal capabilities + assigns `$zle_bracketed_paste`.
 #[allow(unused_variables)]
-pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn setup_(m: *const module) -> i32 {
     // c:zle_main.c setup_
     // c:2252 — `init_thingies()` registers the built-in widgets.
     crate::ported::zle::zle_thingy::init_thingies();
@@ -1364,7 +1370,7 @@ pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {
 /// from `Src/Zle/zle_main.c:2286`. Returns the module's
 /// feature-name array via `featuresarray(m, &module_features)`,
 /// matching the C body line-for-line.
-pub fn features_(_m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 {
+pub fn features_(_m: *const module, features: &mut Vec<String>) -> i32 {
     // c:2286
     // c:2287-2288 — `*features = featuresarray(m, &module_features); return 0`.
     // zle_main.c registers builtins ("zle", "bindkey", "vared"), conddefs
@@ -1407,7 +1413,7 @@ pub fn features_(_m: *const crate::ported::zsh_h::module, features: &mut Vec<Str
 
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from Src/Zle/zle_main.c:2294.
 #[allow(unused_variables)]
-pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:zle_main.c enables_ — `return handlefeatures(m, &module_features, enables)`.
     // Module-features substrate is shared across all module loaders;
     // returns the feature-mask handler.
@@ -1434,7 +1440,7 @@ pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec
 /// addhookdefs(m, zlehooks, sizeof(zlehooks)/sizeof(*zlehooks));
 /// return 0;
 /// ```
-pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn boot_(_m: *const module) -> i32 {
     // c:2301
     // c:2303-2304 — `addhookfunc("before_trap", zlebeforetrap);
     //                addhookfunc("after_trap",  zleaftertrap);`
@@ -1463,7 +1469,7 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {
     ]
     // c:1707
     {
-        let h = Box::into_raw(Box::new(crate::ported::zsh_h::hookdef {
+        let h = Box::into_raw(Box::new(hookdef {
             next: std::ptr::null_mut(),
             name: name.to_string(),
             def: None,
@@ -1489,10 +1495,10 @@ pub fn boot_(_m: *const crate::ported::zsh_h::module) -> i32 {
 /// // delete keymaps + restore old entry points
 /// return 0;
 /// ```
-pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn cleanup_(_m: *const module) -> i32 {
     // c:2312
     // c:2314 — refuse to unload while ZLE is active.
-    if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
+    if zleactive.load(Ordering::Relaxed) != 0 {
         return 1;
     }
     // c:2318-2319 — `deletehookfunc("before_trap", zlebeforetrap);
@@ -1513,7 +1519,7 @@ pub fn cleanup_(_m: *const crate::ported::zsh_h::module) -> i32 {
 /// search spots, vi-buffer slots, killring entries, clwords array,
 /// and runs the refresh-state finalizer.
 #[allow(unused_variables)]
-pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn finish_(m: *const module) -> i32 {
     // c:zle_main.c finish_
     // c:2338 — `free_isrch_spots()`.
     crate::ported::zle::zle_hist::free_isrch_spots();
@@ -1981,7 +1987,7 @@ mod ztmout_findfunc_tests {
 /// Port of `invicmdmode()` from Src/Zle/zle_main.c (the C macro just
 /// compares the active keymap pointer against `vicmd`).
 pub fn in_vi_cmd_mode() -> bool {
-    *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd"
+    *curkeymapname() == "vicmd"
 }
 
 /// Read a multi-byte key sequence from input and resolve it against
@@ -2148,9 +2154,9 @@ fn do_self_insert(c: char) {
 /// returns. Returns 1 if the inner edit aborted with errflag set,
 /// matching the C `locerror` path at zle_main.c:1992.
 pub fn recursive_edit() -> i32 {
-    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RECURSIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let old_done =
-        crate::ported::zle::zle_misc::DONE.load(std::sync::atomic::Ordering::SeqCst) != 0;
+        DONE.load(std::sync::atomic::Ordering::SeqCst) != 0;
     let old_eofsent = EOFSENT.load(std::sync::atomic::Ordering::SeqCst);
 
     // Mirror zle_main.c:1984-1986 — refresh before entering the
@@ -2158,7 +2164,7 @@ pub fn recursive_edit() -> i32 {
     redrawhook();
     zrefresh();
 
-    crate::ported::zle::zle_misc::DONE.store(0, std::sync::atomic::Ordering::SeqCst);
+    DONE.store(0, std::sync::atomic::Ordering::SeqCst);
     EOFSENT.store(0, std::sync::atomic::Ordering::SeqCst);
     zlecore();
 
@@ -2168,12 +2174,12 @@ pub fn recursive_edit() -> i32 {
     // via abort_line?" — approximated by checking eofsent.
     let locerror = EOFSENT.load(std::sync::atomic::Ordering::SeqCst);
 
-    crate::ported::zle::zle_misc::DONE.store(
+    DONE.store(
         if old_done { 1 } else { 0 },
         std::sync::atomic::Ordering::SeqCst,
     );
     EOFSENT.store(old_eofsent, std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_main::ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    ZLE_RECURSIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
 
     locerror
 }
@@ -2182,7 +2188,7 @@ pub fn recursive_edit() -> i32 {
 /// Port of `acceptline(UNUSED(char **args))` from Src/Zle/zle_misc.c:401 — the C source
 /// just sets the global `done` flag.
 pub fn finish_line() {
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Abort the current line edit and exit zlecore with an empty buffer.
@@ -2194,7 +2200,7 @@ pub fn abort_line() {
     ZLELINE.lock().unwrap().clear();
     ZLECS.store(0, std::sync::atomic::Ordering::SeqCst);
     ZLELL.store(0, std::sync::atomic::Ordering::SeqCst);
-    crate::ported::zle::zle_misc::DONE.store(1, std::sync::atomic::Ordering::SeqCst);
+    DONE.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 // `save_keymap` / `restore_keymap` + `SavedKeymap` struct deleted —
@@ -2261,7 +2267,7 @@ fn display_msg(msg: &str) {
 
 /// The expanded left prompt string (post-`reexpandprompt`).
 pub fn prompt() -> String {
-    crate::ported::zle::zle_main::LPROMPT
+    LPROMPT
         .lock()
         .unwrap()
         .clone()
@@ -2269,7 +2275,7 @@ pub fn prompt() -> String {
 
 /// The expanded right prompt string (RPS1-equivalent).
 pub fn rprompt() -> String {
-    crate::ported::zle::zle_main::RPROMPT
+    RPROMPT
         .lock()
         .unwrap()
         .clone()
@@ -2277,7 +2283,7 @@ pub fn rprompt() -> String {
 
 /// Set prompt
 pub fn set_prompt(prompt: &str) {
-    *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = prompt.to_string();
+    *LPROMPT.lock().unwrap() = prompt.to_string();
     ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -2302,12 +2308,12 @@ pub fn is_neg() -> bool {
 
 /// Vi command mode flag
 pub fn is_vicmd() -> bool {
-    *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd"
+    *curkeymapname() == "vicmd"
 }
 
 /// Vi insert mode flag
 pub fn is_viins() -> bool {
-    *crate::ported::zle::zle_keymap::curkeymapname() == "viins"
+    *curkeymapname() == "viins"
 }
 
 /// Cross-call flag for `zle_resetprompt`. Read + cleared by the
@@ -2449,7 +2455,7 @@ pub static VIBUF: std::sync::OnceLock<std::sync::Mutex<[Vec<ZleChar>; 36]>> =
 
 /// Emacs mode flag
 pub fn is_emacs() -> bool {
-    let n = crate::ported::zle::zle_keymap::curkeymapname();
+    let n = curkeymapname();
     *n == "emacs" || *n == "main"
 }
 /// Port of `LinkList kring` from `Src/Zle/zle_misc.c`.
@@ -2587,13 +2593,13 @@ mod tests {
         let _g = zle_test_setup();
         ZMOD.lock().unwrap().flags |= MOD_TMULT;
         ZMOD.lock().unwrap().tmult = 7;
-        crate::ported::zle::zle_main::PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
+        PREFIXFLAG.store(1, std::sync::atomic::Ordering::SeqCst);
         handleprefixes();
         assert!(ZMOD.lock().unwrap().flags & MOD_MULT != 0);
         assert!(!ZMOD.lock().unwrap().flags & MOD_TMULT != 0);
         assert_eq!(ZMOD.lock().unwrap().mult, 7);
         assert!(
-            crate::ported::zle::zle_main::PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) == 0
+            PREFIXFLAG.load(std::sync::atomic::Ordering::SeqCst) == 0
         );
     }
 
@@ -2603,7 +2609,7 @@ mod tests {
         let _g = zle_test_setup();
         ZMOD.lock().unwrap().flags |= MOD_MULT;
         ZMOD.lock().unwrap().mult = 9;
-        crate::ported::zle::zle_main::PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
+        PREFIXFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
         handleprefixes();
         // initmodifier resets to defaults: mult=1, no flags.
         assert_eq!(ZMOD.lock().unwrap().mult, 1);
@@ -2614,7 +2620,7 @@ mod tests {
     fn get_key_cmd_resolves_single_byte_binding() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
+        selectkeymap("emacs", 1);
         ungetbytes(b"\x05"); // Ctrl-E — emacs default = end-of-line
         let t = get_key_cmd().expect("should resolve Ctrl-E");
         assert_eq!(t.nam, "end-of-line");
@@ -2624,7 +2630,7 @@ mod tests {
     fn get_key_cmd_resolves_multi_byte_sequence() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
+        selectkeymap("emacs", 1);
         // ESC-d is bind to kill-word in zle_bindings.c emacs table.
         // Push the bytes and resolve — multi-byte traversal kicks in.
         ungetbytes(b"\x1bd");
@@ -2641,7 +2647,7 @@ mod tests {
     fn get_key_cmd_returns_none_on_eof() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        crate::ported::zle::zle_keymap::selectkeymap("emacs", 1);
+        selectkeymap("emacs", 1);
         // No bytes fed, no terminal attached — getbyte should return None.
         let result = get_key_cmd();
         // In test context with no real tty, getbyte may block; but our
@@ -2684,9 +2690,9 @@ mod tests {
     fn in_vi_cmd_mode_reflects_active_keymap_name() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        *crate::ported::zle::zle_keymap::curkeymapname() = "emacs".to_string();
+        *curkeymapname() = "emacs".to_string();
         assert!(!in_vi_cmd_mode());
-        *crate::ported::zle::zle_keymap::curkeymapname() = "vicmd".to_string();
+        *curkeymapname() = "vicmd".to_string();
         assert!(in_vi_cmd_mode());
     }
 
@@ -2697,9 +2703,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // c:375 — non-Meta bytes pushed back in reverse.
-        crate::ported::zle::zle_main::zle_reset();
-        // Pre-clear unget_buf in case { crate::ported::zle::zle_main::zle_reset() } leaves anything.
-        crate::ported::zle::zle_main::KUNGETBUF
+        zle_reset();
+        // Pre-clear unget_buf in case { zle_reset() } leaves anything.
+        KUNGETBUF
             .lock()
             .unwrap()
             .clear();
@@ -2707,21 +2713,21 @@ mod tests {
         // After backward walk: ungetbyte('c'), then 'b', then 'a'
         // → unget_buf front = ['a', 'b', 'c'] in read order.
         assert_eq!(
-            crate::ported::zle::zle_main::KUNGETBUF
+            KUNGETBUF
                 .lock()
                 .unwrap()
                 .pop_front(),
             Some(b'a')
         );
         assert_eq!(
-            crate::ported::zle::zle_main::KUNGETBUF
+            KUNGETBUF
                 .lock()
                 .unwrap()
                 .pop_front(),
             Some(b'b')
         );
         assert_eq!(
-            crate::ported::zle::zle_main::KUNGETBUF
+            KUNGETBUF
                 .lock()
                 .unwrap()
                 .pop_front(),
@@ -2736,20 +2742,20 @@ mod tests {
         // c:370-373 — `\x83 X` decodes to (X XOR 0x20). Meta = 0x83.
         // Encode 'a' meta-quoted: 0x83 followed by 'a' XOR 0x20 = 0x41.
         // So [0x83, 0x41] → emit 0x41 ^ 0x20 = 0x61 = 'a'.
-        crate::ported::zle::zle_main::zle_reset();
-        crate::ported::zle::zle_main::KUNGETBUF
+        zle_reset();
+        KUNGETBUF
             .lock()
             .unwrap()
             .clear();
         ungetbytes_unmeta(&[0x83, 0x41]);
         assert_eq!(
-            crate::ported::zle::zle_main::KUNGETBUF
+            KUNGETBUF
                 .lock()
                 .unwrap()
                 .pop_front(),
             Some(b'a')
         );
-        assert!(crate::ported::zle::zle_main::KUNGETBUF
+        assert!(KUNGETBUF
             .lock()
             .unwrap()
             .is_empty());
@@ -2761,34 +2767,34 @@ mod tests {
         let _g = zle_test_setup();
         // 'X' + Meta + 'a'XOR0x20 + 'Z' → 3 chars: 'X', 'a', 'Z'.
         // Encoded: [0x58, 0x83, 0x41, 0x5a].
-        crate::ported::zle::zle_main::zle_reset();
-        crate::ported::zle::zle_main::KUNGETBUF
+        zle_reset();
+        KUNGETBUF
             .lock()
             .unwrap()
             .clear();
         ungetbytes_unmeta(&[0x58, 0x83, 0x41, 0x5a]);
         assert_eq!(
-            crate::ported::zle::zle_main::KUNGETBUF
+            KUNGETBUF
                 .lock()
                 .unwrap()
                 .pop_front(),
             Some(b'X')
         );
         assert_eq!(
-            crate::ported::zle::zle_main::KUNGETBUF
+            KUNGETBUF
                 .lock()
                 .unwrap()
                 .pop_front(),
             Some(b'a')
         );
         assert_eq!(
-            crate::ported::zle::zle_main::KUNGETBUF
+            KUNGETBUF
                 .lock()
                 .unwrap()
                 .pop_front(),
             Some(b'Z')
         );
-        assert!(crate::ported::zle::zle_main::KUNGETBUF
+        assert!(KUNGETBUF
             .lock()
             .unwrap()
             .is_empty());
@@ -2798,12 +2804,12 @@ mod tests {
     fn ungetbytes_unmeta_empty_input() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        crate::ported::zle::zle_main::KUNGETBUF
+        KUNGETBUF
             .lock()
             .unwrap()
             .clear();
         ungetbytes_unmeta(b"");
-        assert!(crate::ported::zle::zle_main::KUNGETBUF
+        assert!(KUNGETBUF
             .lock()
             .unwrap()
             .is_empty());
