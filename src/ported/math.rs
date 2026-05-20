@@ -18,6 +18,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+use crate::ported::zsh_h::Nularg;
+
 /// Re-export of `mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
 pub use crate::ported::zsh_h::mnumber;
 /// Re-export of `MN_FLOAT` (defined in zsh_h.rs as the Src/zsh.h:104 port).
@@ -2575,7 +2577,6 @@ pub(crate) fn bop(tk: i32) {
 ///      outer call's mtok mid-parse.
 pub fn matheval(s: &str) -> Result<mnumber, String> {
     // c:1480
-    use crate::ported::zsh_h::Nularg;
     // c:1483 — `int xmtok = mtok;` save.
     let xmtok = M_MTOK.with(|c| c.get()); // c:1483
 

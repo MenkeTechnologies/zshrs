@@ -2,6 +2,7 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_bindings.c
 
+use super::zle_keymap::KM_IMMUTABLE;
 use super::zle_thingy::Thingy;
 
 #[allow(unused_imports)]
@@ -196,7 +197,6 @@ pub fn getkeystring(s: &str) -> Vec<u8> {
 /// WARNING: param names don't match C — Rust=(keymap, seq, widget) vs C=(km, seq, bind, str)
 pub fn bindkey(keymap: &str, seq: &str, widget: &str) -> bool {
     // c:566
-    use crate::ported::zle::zle_keymap::KM_IMMUTABLE;
     let seq_bytes = getkeystring(seq); // c:569 seq[0]
     let mut tab = crate::ported::zle::zle_keymap::keymapnamtab()
         .lock()

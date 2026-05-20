@@ -95,7 +95,6 @@ where
 /// the line; return 1 for `y`/`Y`, 0 otherwise.
 pub fn ask() -> i32 {
     // c:41
-    use std::io::Read;
     let mut bytes = std::io::stdin().lock().bytes();
     let a = bytes.next().and_then(|r| r.ok()).unwrap_or(0); // c:43 getchar
     for c in bytes.by_ref() {

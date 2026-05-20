@@ -510,7 +510,6 @@ mod tests {
     /// `output_strftime(name, argv, ops, func)` signature, with
     /// flag `flag` set and (optionally) -s SCALAR slot encoded.
     fn ops_for(flags: &[u8], scalar: Option<&str>) -> crate::ported::zsh_h::options {
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let mut ops = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),

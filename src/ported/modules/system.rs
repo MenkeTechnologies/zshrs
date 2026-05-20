@@ -1609,7 +1609,6 @@ mod tests {
     }
 
     fn empty_ops() -> crate::ported::zsh_h::options {
-        use crate::ported::zsh_h::{options, MAX_OPS};
         options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),

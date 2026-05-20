@@ -914,7 +914,6 @@ mod tests {
     }
 
     fn ops_with_flag(c: u8) -> crate::ported::zsh_h::options {
-        use crate::ported::zsh_h::{options, MAX_OPS};
         let mut o = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),

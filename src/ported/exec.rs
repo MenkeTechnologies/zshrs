@@ -32,7 +32,9 @@ use std::sync::atomic::Ordering;
 
 use crate::fusevm_bridge::with_executor;
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-use crate::ported::zsh_h::PM_UNDEFINED;
+use crate::ported::zsh_h::{
+    BINF_BUILTIN, BINF_COMMAND, BINF_PREFIX, PM_UNDEFINED, WC_SIMPLE, WC_TYPESET,
+};
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
 /// a trap handler is currently being processed and, paired with
@@ -446,7 +448,6 @@ pub struct execcmd_dispatch {
 /// mirrors `eparams->type` (`WC_SIMPLE` vs `WC_TYPESET`).
 pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
     // c:2900 (Src/exec.c)
-    use crate::ported::zsh_h::{BINF_BUILTIN, BINF_COMMAND, BINF_PREFIX, WC_SIMPLE, WC_TYPESET};
 
     // c:2904-2916 — locals.
     let mut hn: Option<&'static crate::ported::zsh_h::builtin> = None; // c:2904
