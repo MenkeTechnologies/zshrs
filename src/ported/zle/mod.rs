@@ -49,10 +49,7 @@ pub mod zle_vi;
 pub mod zle_word;
 pub mod zleparameter;
 
-// Canonical re-exports. `Widget` / `WidgetFunc` legacy aliases live on
-// `zle_h` itself (via `pub type Widget = widget; pub use
-// WidgetImpl as WidgetFunc;`) so existing call sites keep resolving.
-pub use zle_h::{widget as Widget, WidgetImpl as WidgetFunc};
+pub use zle_h::{widget, WidgetImpl};
 pub use zle_keymap::Keymap;
 pub use zle_thingy::Thingy;
 

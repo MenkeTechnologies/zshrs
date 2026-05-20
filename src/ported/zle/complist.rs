@@ -836,7 +836,6 @@ pub fn compprintfmt(
                     // c:1141
                     let s = n.to_string();
                     if dopr == 1 {
-                        use std::sync::atomic::Ordering as O;
                         let fd = SHTTY.load(Ordering::Relaxed);
                         let out_fd = if fd >= 0 { fd } else { 1 };
                         let _ = write_loop(out_fd, s.as_bytes());
@@ -858,7 +857,6 @@ pub fn compprintfmt(
                         format!("{}%", mlbeg.max(0) * 100 / mlines.max(1))
                     };
                     if dopr == 1 {
-                        use std::sync::atomic::Ordering as O;
                         let fd = SHTTY.load(Ordering::Relaxed);
                         let out_fd = if fd >= 0 { fd } else { 1 };
                         let _ = write_loop(out_fd, s.as_bytes());
@@ -874,7 +872,6 @@ pub fn compprintfmt(
         } else {
             // c:literal char
             if dopr == 1 {
-                use std::sync::atomic::Ordering as O;
                 let fd = SHTTY.load(Ordering::Relaxed);
                 let out_fd = if fd >= 0 { fd } else { 1 };
                 let mut buf = [0u8; 4];
@@ -1529,7 +1526,6 @@ pub fn clprintm(
                 // c:1747-1748 — pad with `width-2` spaces
                 let pad = (width - 2).max(0) as usize;
                 let pad_str = " ".repeat(pad);
-                use std::sync::atomic::Ordering as O;
                 let fd = SHTTY.load(Ordering::Relaxed);
                 let out_fd = if fd >= 0 { fd } else { 1 };
                 let _ = write_loop(out_fd, pad_str.as_bytes());
@@ -1634,7 +1630,6 @@ pub fn clprintm(
             .unwrap_or_else(|| m_ref.str.as_deref().unwrap_or(""));
         // Emit raw — full clnicezputs (escape-aware writer) deferred;
         // the cell still receives the visible text.
-        use std::sync::atomic::Ordering as O;
         let fd = SHTTY.load(Ordering::Relaxed);
         let out_fd = if fd >= 0 { fd } else { 1 };
         let _ = write_loop(out_fd, display.as_bytes());

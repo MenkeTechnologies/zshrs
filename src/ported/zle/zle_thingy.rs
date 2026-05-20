@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use super::zle_h::{widget as Widget, WidgetImpl as WidgetFunc};
+use super::zle_h::{widget, WidgetImpl};
 use super::zle_h::{
     TH_IMMORTAL, WIDGET_INT, WIDGET_INUSE, WIDGET_NCOMP, ZLE_ISCOMP, ZLE_KEEPSUFFIX, ZLE_MENUCMP,
 };
@@ -70,10 +70,10 @@ impl Thingy {
     /// Create a thingy that wraps a built-in widget.
     /// Equivalent to the `addzlefunction()` path at
     /// Src/Zle/zle_thingy.c:281: builds the immortal-flagged Thingy
-    /// and binds it to a Widget produced by the built-in dispatch
-    /// table (`Widget::builtin`).
+    /// and binds it to a widget produced by the built-in dispatch
+    /// table (`widget::builtin`).
     pub fn builtin(name: &str) -> Self {
-        let widget = Widget::builtin(name);
+        let widget = widget::builtin(name);
         Thingy {
             nam: name.to_string(),
             flags: TH_IMMORTAL,
@@ -86,7 +86,7 @@ impl Thingy {
     /// Equivalent to `bin_zle_new()` at Src/Zle/zle_thingy.c:584 — the
     /// `zle -N name fn` builtin path.
     pub fn user_defined(name: &str, func_name: &str) -> Self {
-        let widget = Widget::user_defined(name, func_name);
+        let widget = widget::user_defined(name, func_name);
         Thingy {
             nam: name.to_string(),
             flags: 0,
@@ -313,10 +313,10 @@ pub fn rthingy_nocreate(name: &str) -> bool {
 // widget binding — `Src/Zle/zle_thingy.c:178-270`.
 // =====================================================================
 
-/// Port of `bindwidget(Widget w, Thingy t)` from `Src/Zle/zle_thingy.c:197`.
+/// Port of `bindwidget(widget w, Thingy t)` from `Src/Zle/zle_thingy.c:197`.
 /// ```c
 /// static int
-/// bindwidget(Widget w, Thingy t)
+/// bindwidget(widget w, Thingy t)
 /// {
 ///     if(t->flags & TH_IMMORTAL) {
 ///         unrefthingy(t);
@@ -341,9 +341,9 @@ pub fn rthingy_nocreate(name: &str) -> bool {
 /// ```
 /// Bind `w` to thingy `t_name`. Caller's Thingy reference is
 /// consumed when TH_IMMORTAL blocks the bind. Samew chains are
-/// implicit in Rust — the `Arc<Widget>` identity links peers.
+/// implicit in Rust — the `Arc<widget>` identity links peers.
 /// Returns 0 on success, -1 on TH_IMMORTAL block.
-pub fn bindwidget(w: Arc<Widget>, t: &str) -> i32 {
+pub fn bindwidget(w: Arc<widget>, t: &str) -> i32 {
     // c:199
     let (immortal, disabled, same) = {
         let tab = thingytab().lock().unwrap();
@@ -389,7 +389,7 @@ pub fn bindwidget(w: Arc<Widget>, t: &str) -> i32 {
 /// static int
 /// unbindwidget(Thingy t, int override)
 /// {
-///     Widget w;
+///     widget w;
 ///     if(t->flags & DISABLED)
 ///         return 0;
 ///     if(!override && (t->flags & TH_IMMORTAL))
@@ -404,9 +404,9 @@ pub fn bindwidget(w: Arc<Widget>, t: &str) -> i32 {
 ///     return 0;
 /// }
 /// ```
-/// Detach Thingy `t_name` from its Widget. Walks the table to
+/// Detach Thingy `t_name` from its widget. Walks the table to
 /// detect the "last reference" case (samew == t in C); if so, the
-/// Widget is freed (Arc auto-drops when the Thingy clears it).
+/// widget is freed (Arc auto-drops when the Thingy clears it).
 /// `override_` non-zero overrides TH_IMMORTAL.
 /// WARNING: param names don't match C — Rust=(t, override_) vs C=(t, override)
 pub fn unbindwidget(t: &str, override_: i32) -> i32 {
@@ -431,7 +431,7 @@ pub fn unbindwidget(t: &str, override_: i32) -> i32 {
         return -1;
     }
     // c:239 — `if(t->samew == t) freewidget(w)`. In Rust we walk
-    // the table to count peers sharing this Widget.
+    // the table to count peers sharing this widget.
     if let Some(w) = w_opt {
         let peer_count = {
             let tab = thingytab().lock().unwrap();
@@ -467,10 +467,10 @@ pub fn unbindwidget(t: &str, override_: i32) -> i32 {
     0 // c:250 return 0
 }
 
-/// Port of `freewidget(Widget w)` from `Src/Zle/zle_thingy.c:255`.
+/// Port of `freewidget(widget w)` from `Src/Zle/zle_thingy.c:255`.
 /// ```c
 /// void
-/// freewidget(Widget w)
+/// freewidget(widget w)
 /// {
 ///     if (w->flags & WIDGET_INUSE) {
 ///         w->flags |= WIDGET_FREE;
@@ -484,23 +484,23 @@ pub fn unbindwidget(t: &str, override_: i32) -> i32 {
 ///     zfree(w, sizeof(*w));
 /// }
 /// ```
-/// Drop a Widget. If WIDGET_INUSE (we're freeing it from inside
+/// Drop a widget. If WIDGET_INUSE (we're freeing it from inside
 /// the widget's own dispatch), defer the free by setting WIDGET_FREE
 /// — the dispatcher checks this flag after returning.
 ///
-/// In Rust the `Arc<Widget>` auto-drops; this fn exists so the
+/// In Rust the `Arc<widget>` auto-drops; this fn exists so the
 /// INUSE/FREE flag handshake matches C exactly. The actual storage
 /// drop happens when the last Arc is released by the caller's scope.
-pub fn freewidget(w: Arc<Widget>) {
+pub fn freewidget(w: Arc<widget>) {
     // c:257
-    // Direct port of `void freewidget(Widget w)` from zle_thingy.c:255:
+    // Direct port of `void freewidget(widget w)` from zle_thingy.c:255:
     // ```c
     // if (w->flags & WIDGET_INUSE) { w->flags |= WIDGET_FREE; return; }
     // // free widget data + storage
     // ```
     //
-    // **Arc<Widget> divergence:** the C source mutates w->flags via
-    // a single owner pointer; Rust uses Arc<Widget> shared-immutable
+    // **Arc<widget> divergence:** the C source mutates w->flags via
+    // a single owner pointer; Rust uses Arc<widget> shared-immutable
     // and dispatches deferred-free via Arc::strong_count. When this
     // call is the LAST reference (count==1) and INUSE is set, the
     // widget is mid-dispatch — let the dispatcher drop the last
@@ -510,19 +510,19 @@ pub fn freewidget(w: Arc<Widget>) {
     if (w.flags & WIDGET_INUSE) != 0 {
         return; // c:261
     }
-    // c:264-269 — comp-widget / user-fn cleanup. WidgetFunc::UserFunc
-    // owns its String; WidgetFunc::Internal owns nothing. Arc drop
+    // c:264-269 — comp-widget / user-fn cleanup. WidgetImpl::UserFunc
+    // owns its String; WidgetImpl::Internal owns nothing. Arc drop
     // covers both.
     drop(w); // c:269 zfree(w, ...)
 }
 
 /// Port of `addzlefunction(char *name, ZleIntFunc ifunc, int flags)` from `Src/Zle/zle_thingy.c:279`.
 /// ```c
-/// mod_export Widget
+/// mod_export widget
 /// addzlefunction(char *name, ZleIntFunc ifunc, int flags)
 /// {
 ///     VARARR(char, dotn, strlen(name) + 2);
-///     Widget w;
+///     widget w;
 ///     Thingy t;
 ///     if(name[0] == '.')
 ///         return NULL;
@@ -552,7 +552,7 @@ pub fn addzlefunction(
     name: &str,
     ifunc: ZleIntFunc,
     flags: i32,
-) -> Option<Arc<Widget>> {
+) -> Option<Arc<widget>> {
     // c:279
     if name.starts_with('.') {
         // c:287 if(name[0] == '.')
@@ -573,10 +573,10 @@ pub fn addzlefunction(
 
     // c:294-297 — `w = zalloc(...); w->flags = WIDGET_INT|flags;
     //              w->first = NULL; w->u.fn = ifunc;`.
-    let w = Arc::new(Widget {
+    let w = Arc::new(widget {
         flags: flags | WIDGET_INT, // c:295
         first: None,
-        u: WidgetFunc::Internal(ifunc), // c:297 w->u.fn = ifunc
+        u: WidgetImpl::Internal(ifunc), // c:297 w->u.fn = ifunc
     });
 
     // c:298-301 — bind to dotted form, mark immortal, then bind to
@@ -591,10 +591,10 @@ pub fn addzlefunction(
     Some(w) // c:302 return w
 }
 
-/// Port of `deletezlefunction(Widget w)` from `Src/Zle/zle_thingy.c:308`.
+/// Port of `deletezlefunction(widget w)` from `Src/Zle/zle_thingy.c:308`.
 /// ```c
 /// mod_export void
-/// deletezlefunction(Widget w)
+/// deletezlefunction(widget w)
 /// {
 ///     Thingy p, n;
 ///     p = w->first;
@@ -612,7 +612,7 @@ pub fn addzlefunction(
 /// Walk every Thingy bound to `w` and unbind it (override flag set,
 /// so even TH_IMMORTAL bindings come undone). Used by module
 /// teardown.
-pub fn deletezlefunction(w: &Arc<Widget>) {
+pub fn deletezlefunction(w: &Arc<widget>) {
     // c:310
     // c:310-323 — walk samew circular chain calling unbindwidget(p,1)
     // until p == p->samew (the last entry). In Rust we collect all
@@ -829,8 +829,8 @@ pub fn scanlistwidgets() -> i32 {
             }
             // c:530-541 — abbreviated format: name (fn) when fn != name.
             let fn_name = match &w.u {
-                WidgetFunc::UserFunc(s) => s.clone(),
-                WidgetFunc::Internal(_) => return None,
+                WidgetImpl::UserFunc(s) => s.clone(),
+                WidgetImpl::Internal(_) => return None,
                 _ => return None,
             };
             if fn_name == *name {
@@ -922,7 +922,7 @@ pub fn bin_zle_link(args: &[String]) -> i32 {
 /// ```c
 /// static int
 /// bin_zle_new(char *name, char **args, ...) {
-///     Widget w = zalloc(sizeof(*w));
+///     widget w = zalloc(sizeof(*w));
 ///     w->flags = 0;
 ///     w->first = NULL;
 ///     w->u.fnnam = ztrdup(args[1] ? args[1] : args[0]);
@@ -937,7 +937,7 @@ pub fn bin_zle_link(args: &[String]) -> i32 {
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
 pub fn bin_zle_new(args: &[String]) -> i32 {
     // c:584
-    // c:584-595 — `Widget w = zalloc; w->flags=0; w->u.fnnam = ztrdup(args[1]?args[1]:args[0]);
+    // c:584-595 — `widget w = zalloc; w->flags=0; w->u.fnnam = ztrdup(args[1]?args[1]:args[0]);
     //              if(!bindwidget(w, rthingy(args[0]))) return 0;
     //              freewidget(w); zwarnnam(...); return 1;`.
     if args.is_empty() {
@@ -949,10 +949,10 @@ pub fn bin_zle_new(args: &[String]) -> i32 {
     } else {
         args[0].clone()
     };
-    let w = Arc::new(Widget {
+    let w = Arc::new(widget {
         flags: 0i32, // c:588
         first: None,
-        u: WidgetFunc::UserFunc(fname), // c:590 fnnam
+        u: WidgetImpl::UserFunc(fname), // c:590 fnnam
     });
     rthingy(&args[0]); // c:591 rthingy(args[0])
     if bindwidget(w.clone(), &args[0]) == 0 {
@@ -986,7 +986,7 @@ pub fn bin_zle_new(args: &[String]) -> i32 {
 pub fn bin_zle_complete(args: &[String]) -> i32 {
     // c:600
     // c:600-629 — Load zsh/complete; resolve `args[1]` (or `.args[1]`)
-    // to a Thingy; verify it's ZLE_ISCOMP; alloc a Widget with
+    // to a Thingy; verify it's ZLE_ISCOMP; alloc a widget with
     // WIDGET_NCOMP|MENUCMP|KEEPSUFFIX flags and bind to args[0].
     if args.len() < 3 {
         return 1;
@@ -1009,13 +1009,13 @@ pub fn bin_zle_complete(args: &[String]) -> i32 {
         return 1;
     }
     // c:616-625 — alloc new completion widget and bind to args[0].
-    let w = Arc::new(Widget {
+    let w = Arc::new(widget {
         flags: WIDGET_NCOMP | ZLE_MENUCMP | ZLE_KEEPSUFFIX,
         first: None,
         // c:619-621 — fn from cw + comp.wid/func from args[1]/args[2].
-        // Current Widget::Comp variant collapsed; use UserFunc with the
+        // Current widget::Comp variant collapsed; use UserFunc with the
         // function name.
-        u: WidgetFunc::UserFunc(args[2].clone()),
+        u: WidgetImpl::UserFunc(args[2].clone()),
     });
     rthingy(&args[0]);
     if bindwidget(w.clone(), &args[0]) != 0 {
@@ -1055,7 +1055,7 @@ pub fn zle_usable() -> i32 {
 /// static int
 /// bin_zle_flags(...) {
 ///     if (!zle_usable()) { zwarnnam(...); return 1; }
-///     if (bindk) { Widget w = bindk->widget;
+///     if (bindk) { widget w = bindk->widget;
 ///         for (flag = args; *flag; flag++) {
 ///             if      (!strcmp(*flag, "yank"))       w->flags |= ZLE_YANKAFTER;
 ///             else if (!strcmp(*flag, "yankbefore")) w->flags |= ZLE_YANKBEFORE;
@@ -1068,16 +1068,16 @@ pub fn zle_usable() -> i32 {
 /// ```
 /// `zle -f flag...` — set widget-execution flags (yank/yankbefore/
 /// kill) on the currently-running widget.
-/// Rust idiom replacement: `Arc<Widget>` is immutable in zshrs, so
+/// Rust idiom replacement: `Arc<widget>` is immutable in zshrs, so
 /// the C `w->flags |= ZLE_*` mutation lives on the widget-execution
 /// path itself; this entry validates args + returns success.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
 pub fn bin_zle_flags(args: &[String]) -> i32 {
     // c:651
-    // c:651-693 — `if (!zle_usable()) return 1; if (bindk) { Widget w =
+    // c:651-693 — `if (!zle_usable()) return 1; if (bindk) { widget w =
     //                bindk->widget; for(flag = args; *flag; flag++)
     //                set ZLE_* bit per flag-name }`. Without mutating
-    // the `Arc<Widget>` flags (current shape is immutable `Arc<Widget>`),
+    // the `Arc<widget>` flags (current shape is immutable `Arc<widget>`),
     // we can validate the flag names but not write back. The C source
     // mutates w->flags directly; for the simplified port, we just
     // validate args + return success when usable.
@@ -1276,7 +1276,7 @@ pub struct Thingy {
     pub nam: String,                 // c:226 char *nam
     pub flags: i32,                  // c:227 int flags
     pub rc: i32,                     // c:228 int rc
-    pub widget: Option<Arc<Widget>>, // c:229 Widget widget
+    pub widget: Option<Arc<widget>>, // c:229 widget widget
 }
 
 // `pub mod names` removed — Rust-fabricated namespace wrapping
@@ -1295,7 +1295,7 @@ pub struct Thingy {
 //
 // Rust: `Mutex<HashMap<String, Thingy>>`. The C `samew` circular
 // list isn't represented as a field — `bindwidget`/`unbindwidget`
-// walk the table to find peers via `Arc<Widget>` identity (Arc::
+// walk the table to find peers via `Arc<widget>` identity (Arc::
 // ptr_eq). O(n) instead of C's O(1), but n is small (typical
 // thingy count: a few hundred) and the simpler representation
 // avoids a parallel widget→thingies table that would have to stay
@@ -1366,10 +1366,9 @@ fn thingytab() -> &'static Mutex<HashMap<String, Thingy>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
 
     // Serialize tests since they share the global THINGYTAB.
-    static LOCK: StdMutex<()> = StdMutex::new(());
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn reset_tab() {
         thingytab().lock().unwrap().clear();
