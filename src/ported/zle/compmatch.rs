@@ -24,9 +24,12 @@
 // `comp_h.rs` and used by the real porters of `match_str` /
 // `pattern_match` / `add_match_str` etc. below.
 
-use crate::ported::zle::comp_h::{Cline, Cmatcher, Cmlist, Cpattern, CLF_LINE, CLF_MATCHED, CLF_SUF, CMF_RIGHT};
+use crate::ported::zle::comp_h::{
+    Cline, Cmatcher, Cmlist, Cpattern, CLF_JOIN, CLF_LINE, CLF_MATCHED, CLF_SUF, CMF_LINE,
+    CMF_RIGHT,
+};
 use crate::ported::zle::compcore::mstack;
-use crate::ported::zle::zle_h::brinfo;
+use crate::ported::zle::zle_h::{brinfo, ZC_tolower};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*,
@@ -834,7 +837,7 @@ pub fn add_match_sub(
 
     // c:450-453 — `if (m && (m->flags & CMF_LINE)) { wl = m->llen; w = l; }`.
     let (eff_w, eff_wl) = match m {
-        Some(mat) if (mat.flags & crate::ported::zle::comp_h::CMF_LINE) != 0 => (l, mat.llen),
+        Some(mat) if (mat.flags & CMF_LINE) != 0 => (l, mat.llen),
         _ => (w, wl),
     };
 

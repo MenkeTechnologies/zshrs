@@ -29,21 +29,22 @@
 //! port out of compcore.rs (where it had been parked under the
 //! freeze).
 
+use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
+use std::sync::Mutex;
+
+use crate::ported::glob::{remnulargs, tokenize};
+use crate::ported::params::{createparam, paramtab};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zle::comp_h::{
-    CAF_MATSORT, Cmatcher,
-    Cpattern, CMF_HIDE, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT, CPAT_CCLASS, CPAT_CHAR,
-    CPAT_EQUIV, CPAT_NCLASS,
+    Cmatcher, Cpattern, CAF_MATSORT, CMF_HIDE, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT,
+    CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
 };
 use crate::ported::zle::{compcore, compresult};
 use crate::ported::zsh_h::{
-    module, param, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY, PM_REMOVABLE, PM_SCALAR,
-    PM_SINGLE, PM_SPECIAL, PM_TYPE,
+    module, options, param, PAT_HEAPDUP, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY,
+    PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE, PM_UNSET,
 };
-use std::sync::atomic::Ordering;
-use std::sync::atomic::{AtomicI32, AtomicI64};
-use std::sync::Mutex;
 
 // =====================================================================
 // Cmlist / Cmatcher / Cpattern allocators + freers — Src/Zle/complete.c.
@@ -873,7 +874,7 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {
 pub fn bin_compadd(
     name: &str,
     argv: &[String], // c:603
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
@@ -1129,7 +1130,7 @@ pub fn do_comp_vars(
                 return 0;
             } // c:965
               // c:968 — singsub(&sa); — caller already expanded.
-            let pp = patcompile(sa, crate::ported::zsh_h::PAT_HEAPDUP, None); // c:969
+            let pp = patcompile(sa, PAT_HEAPDUP, None); // c:969
                                                                               // c:971-977 — walk compwords backward looking for sa match.
             i -= 1; // c:971
             while i >= 0 {
@@ -1147,7 +1148,7 @@ pub fn do_comp_vars(
             if t != 0 && !sb.is_empty() {
                 // c:980
                 let mut tt = 0i32;
-                let pp2 = patcompile(sb, crate::ported::zsh_h::PAT_HEAPDUP, None); // c:983
+                let pp2 = patcompile(sb, PAT_HEAPDUP, None); // c:983
                 i += 1; // c:984
                 while i < l {
                     if let Some(ref prog) = pp2 {
@@ -1213,7 +1214,7 @@ pub fn do_comp_vars(
             if na == 0 {
                 return 0;
             } // c:1045
-            let pp = match patcompile(sa, crate::ported::zsh_h::PAT_HEAPDUP, None) {
+            let pp = match patcompile(sa, PAT_HEAPDUP, None) {
                 // c:1047
                 Some(p) => p,
                 None => return 0,
@@ -1321,7 +1322,7 @@ pub fn do_comp_vars(
 pub fn bin_compset(
     name: &str,
     argv: &[String], // c:1137
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     let mut test = 0i32; // c:1141
@@ -1399,12 +1400,12 @@ pub fn bin_compset(
             // pattern fields hold real `Star`/`Quest`/etc. markers
             // before the downstream pattern_match.
             let mut sa_buf = sa_ref.to_string();
-            crate::ported::glob::tokenize(&mut sa_buf);
-            crate::ported::glob::remnulargs(&mut sa_buf);
+            tokenize(&mut sa_buf);
+            remnulargs(&mut sa_buf);
             if let Some(sb_inner) = sb_ref {
                 let mut sb_buf = sb_inner.to_string();
-                crate::ported::glob::tokenize(&mut sb_buf);
-                crate::ported::glob::remnulargs(&mut sb_buf);
+                tokenize(&mut sb_buf);
+                remnulargs(&mut sb_buf);
             }
             let _ = sa_buf;
             nb = 0;
@@ -1475,7 +1476,7 @@ pub fn addcompparams(cp: &[compparam], pp: &mut Vec<*mut param>) {
         // c:1299
         let flags = entry.r#type | PM_SPECIAL as i32 | PM_REMOVABLE as i32 | PM_LOCAL as i32;
         // c:1300 — createparam(name, type | SPECIAL|REMOVABLE|LOCAL).
-        let pm = crate::ported::params::createparam(entry.name, flags);
+        let pm = createparam(entry.name, flags);
         if let Some(mut pm_val) = pm {
             // c:1307 — `pm->level = locallevel + 1`. locallevel not
             // exposed; the level field defaults to 0 which is fine
@@ -1507,7 +1508,7 @@ pub fn makecompparams() {
 
     // c:1340 — createparam(COMPSTATENAME, PM_SPECIAL|PM_REMOVABLE|
     //          PM_SINGLE|PM_LOCAL|PM_HASHED).
-    let _ = crate::ported::params::createparam(
+    let _ = createparam(
         "compstate",
         (PM_SPECIAL | PM_REMOVABLE | PM_SINGLE | PM_LOCAL | PM_HASHED) as i32,
     );
@@ -2103,9 +2104,9 @@ pub fn compunsetfn(pm: *mut param, exp: i32) {
           // entry. Driven via paramtab: set PM_UNSET on each compkparams
           // name so subsequent get_*'s see "unset".
         for entry in COMPKPARAMS {
-            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Ok(mut tab) = paramtab().write() {
                 if let Some(p) = tab.get_mut(entry.name) {
-                    p.node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
+                    p.node.flags |= PM_UNSET as i32;
                 }
             }
         }
@@ -2115,9 +2116,9 @@ pub fn compunsetfn(pm: *mut param, exp: i32) {
     // entry, mark that slot in paramtab as PM_UNSET.
     for entry in COMPRPARAMS {
         if entry.name == name {
-            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Ok(mut tab) = paramtab().write() {
                 if let Some(p) = tab.get_mut(entry.name) {
-                    p.node.flags |= crate::ported::zsh_h::PM_UNSET as i32;
+                    p.node.flags |= PM_UNSET as i32;
                 }
             }
             break;
@@ -2145,7 +2146,7 @@ pub fn comp_setunset(
             // c:1533
             if rset != 0 || runset != 0 {
                 // c:1533
-                if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Ok(mut tab) = paramtab().write() {
                     if let Some(p) = tab.get_mut(entry.name) {
                         if rset & 1 != 0 {
                             // c:1535
@@ -2169,7 +2170,7 @@ pub fn comp_setunset(
         // c:1542
         for entry in COMPKPARAMS {
             if kset != 0 || kunset != 0 {
-                if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Ok(mut tab) = paramtab().write() {
                     if let Some(p) = tab.get_mut(entry.name) {
                         if kset & 1 != 0 {
                             // c:1545

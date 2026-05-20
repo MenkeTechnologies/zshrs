@@ -26,7 +26,12 @@ use std::sync::Mutex;
 // callers within compctl.rs reference the legit names. The four
 // types (Compctlp/Patcomp/Compcond/Compctl + CompcondData) are
 // direct ports of the C structs declared in Src/Zle/compctl.h.
-use crate::ported::zle::comp_h::Cmlist;
+use std::os::unix::fs::PermissionsExt;
+
+use crate::ported::builtin::findcmd;
+use crate::ported::pattern::patmatch;
+use crate::ported::utils::errflag;
+use crate::ported::zle::comp_h::{Aminfo, Cmlist};
 use crate::ported::zle::compctl_h::{
     Compcond, CompcondData, Compctl, CCT_CURPAT, CCT_CURPRE, CCT_CURSTR, CCT_CURSUB, CCT_CURSUBC,
     CCT_CURSUF, CCT_NUMWORDS, CCT_POS, CCT_QUOTE, CCT_RANGEPAT, CCT_RANGESTR, CCT_WORDPAT,
@@ -36,7 +41,7 @@ use crate::ported::zle::compctl_h::{
     CC_QUOTEFLAG, CC_READONLYS, CC_REMOVE, CC_RESWDS, CC_RUNNING, CC_SCALARS, CC_SHFUNCS,
     CC_SPECIALS, CC_STOPPED, CC_UNIQALL, CC_UNIQCON, CC_USERS, CC_VARS, CC_XORCONT,
 };
-use std::os::unix::fs::PermissionsExt;
+use crate::ported::zle::complete::parse_cmatcher;
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
@@ -320,7 +325,7 @@ pub(crate) fn set_gmatcher(name: &str, argv: &[String]) -> i32 {
     let mut tail_ref: *mut Option<Box<Cmlist>> = &mut head;
     for word in argv {
         // c:317 while (*argv)
-        let m = match crate::ported::zle::complete::parse_cmatcher(name, word) {
+        let m = match parse_cmatcher(name, word) {
             Some(m) => m,     // c:319 parse_cmatcher
             None => return 1, // c:319 == pcm_err
         };
@@ -621,7 +626,7 @@ pub(crate) fn get_compctl(
                             // compctl parse on a malformed matcher
                             // per C c:731-735.
                             if let Some(s) = val {
-                                if crate::ported::zle::complete::parse_cmatcher(name, &s).is_none()
+                                if parse_cmatcher(name, &s).is_none()
                                 {
                                     eprintln!("{}: bad matcher specification `{}'", name, s);
                                     return 1;
@@ -1500,13 +1505,13 @@ pub(crate) fn ccmakehookfn(_dat: ()) -> i32 {
         .get_or_init(|| std::sync::Mutex::new(None))
         .lock()
     {
-        *g = Some(crate::ported::zle::comp_h::Aminfo::default());
+        *g = Some(Aminfo::default());
     }
     if let Ok(mut g) = crate::ported::zle::compcore::fainfo
         .get_or_init(|| std::sync::Mutex::new(None))
         .lock()
     {
-        *g = Some(crate::ported::zle::comp_h::Aminfo::default());
+        *g = Some(Aminfo::default());
     }
     // c:1817 — `if (!validlist) lastambig = 0`.
     crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Ordering::Relaxed);
@@ -1840,7 +1845,7 @@ pub(crate) fn addmatch(s: &str, _t: Option<&str>) {
     if file_thread {
         // c:1988 — for -7 (CMD_NAME), filter via `findcmd` so only
         // commands that actually resolve get accepted.
-        if aw == -7 && crate::ported::builtin::findcmd(s, 0, 0).is_none() {
+        if aw == -7 && findcmd(s, 0, 0).is_none() {
             return;
         }
         MATCH_LIST.with(|r| r.borrow_mut().push(s.to_string()));
@@ -1906,13 +1911,13 @@ pub(crate) fn getreal(str_in: &str) -> String {
     // c:2140 — noerrs = ne;
     *NOERRS.lock().expect("NOERRS poisoned") = ne;
     // c:2141-2143 — if (!errflag && nonempty(l) && first non-empty) → use expanded.
-    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) == 0
+    if errflag.load(std::sync::atomic::Ordering::Relaxed) == 0
         && !s.is_empty()
     {
         return s;
     }
     // c:2144 — errflag &= ~ERRFLAG_ERROR;
-    crate::ported::utils::errflag.fetch_and(
+    errflag.fetch_and(
         !crate::ported::utils::ERRFLAG_ERROR,
         std::sync::atomic::Ordering::Relaxed,
     );
@@ -2364,7 +2369,7 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
         // c:2537
         None // c:2538 NULL
     } else {
-        crate::ported::builtin::findcmd(&cmdstr, 1, 0) // c:2540
+        findcmd(&cmdstr, 1, 0) // c:2540
     };
 
     let pats = PATCOMPS.read().unwrap().clone();
@@ -2372,9 +2377,9 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
         // c:2542
         // c:2543 patcompile(pc->pat) — Rust patmatch compiles inline.
         // c:2544-2545 — pattry(pat, cmdstr) || (s && pattry(pat, s)).
-        let matches = crate::ported::pattern::patmatch(pat, &cmdstr)         // c:2544
+        let matches = patmatch(pat, &cmdstr)         // c:2544
             || s_resolved.as_deref()
-                .map(|sr| crate::ported::pattern::patmatch(pat, sr))         // c:2545
+                .map(|sr| patmatch(pat, sr))         // c:2545
                 .unwrap_or(false);
         if matches {
             makecomplistcc(cc, os, incmd); // c:2546
