@@ -2484,17 +2484,17 @@ pub fn paramsubst(
                                  // of paramsubst so the temp doesn't leak. Direct port of the
                                  // multsub-driven word list C zsh threads through subst.c.
         let mut subexp_array_temp: Option<String> = None;
-        let mut flag_p_indirect = false; // c:2295 (P)
+        let mut aspar = false; // c:2295 (P)
                                          // (A) — array-assign mode for `${(A)var=val}`. (AA) →
                                          // associative-assign: split val into key/value pairs.
                                          // Direct port of `int arrasg = 0; case 'A': ++arrasg;`
                                          // at subst.c:2161. Counter (not bool) so the AA double-
                                          // form is distinguishable.
-        let mut flag_arrasg: i32 = 0; // c:1793
-        let mut flag_typeinfo = false; // c:2807 (t)
+        let mut arrasg: i32 = 0; // c:1793
+        let mut wantt = false; // c:2807 (t)
         let mut flag_keys = false; // c:2247 (k)
         let mut flag_values = false; // c:2256 (v)
-        let mut flag_evalchar = false; // c:1673 (#) char-eval
+        let mut evalchar = false; // c:1673 (#) char-eval
                                        // (l:N::PRE:) left-pad / (r:N::POST:) right-pad parsed values.
                                        // Port of subst.c:2319-2375 l/r flag arm.
         let mut prenum: i64 = 0; // c:1776 (zlong prenum)
@@ -2516,9 +2516,9 @@ pub fn paramsubst(
         let mut sort_signed = false; // c:2219 (-/Dash)
         let mut sort_index_order = false; // c:2225 (a)
         let mut unique = false; // c:2476 (u)
-        let mut flag_eval = false; // c:2268 (e)
+        let mut eval = false; // c:2268 (e)
         let mut flag_unquote = false; // c:2261 (Q)
-        let mut flag_error = false; // c:2264 (X)
+        let mut quoteerr = false; // c:2264 (X)
         let mut flag_visible = false; // c:2232 (V)
         let mut flag_char_count = false; // c:2275 (c)
         let mut flag_word_count = false; // c:2278 (w)
@@ -2619,16 +2619,16 @@ pub fn paramsubst(
                         } // c:2253
                     } // c:2253
                     'A' => {
-                        flag_arrasg += 1;
+                        arrasg += 1;
                     } // c:2161 (A array-assign; AA associative-assign)
                     '@' => {
                         flag_at = true;
                     } // c:2167
                     'P' => {
-                        flag_p_indirect = true;
+                        aspar = true;
                     } // c:2295
                     't' => {
-                        flag_typeinfo = true;
+                        wantt = true;
                     } // c:2807
                     '!' => {
                         // c:2385-2388
@@ -2658,7 +2658,7 @@ pub fn paramsubst(
                         hvals = SCANPM_WANTVALS;
                     } // c:2256
                     '#' => {
-                        flag_evalchar = true;
+                        evalchar = true;
                     } // c:1673 (# evalchar)
                     'l' | 'r' => {
                         // c:2319 (l/r pad)
@@ -2824,13 +2824,13 @@ pub fn paramsubst(
                         sub_flags_bits |= SUB_SUBSTR;
                     } // c:2186 (S)
                     'e' => {
-                        flag_eval = true;
+                        eval = true;
                     } // c:2268 (e)
                     'Q' => {
                         flag_unquote = true;
                     } // c:2261 (Q)
                     'X' => {
-                        flag_error = true;
+                        quoteerr = true;
                     } // c:2264 (X)
                     'D' => {
                         flag_d_dir = true;
@@ -3082,9 +3082,8 @@ pub fn paramsubst(
                 }
                 continue;
             }
-            if c == '+' {
-                let nxt = body_chars.get(idx + 1).copied().unwrap_or('\0');
-                let aspar = flag_p_indirect;
+            if c == '+' {                                                    // c:2199
+                let nxt = body_chars.get(idx + 1).copied().unwrap_or('\0');  // c:2199
                 let ok = nxt.is_ascii_alphanumeric()
                     || nxt == '_'
                     || matches!(nxt, '@' | '*' | '#' | '?')
@@ -3327,7 +3326,7 @@ pub fn paramsubst(
         // Direct port of subst.c:2730+ aspar arm. The C source's
         // val pointer is the resolved name string regardless of
         // whether it came from a parameter or a sub-expression.
-        if flag_p_indirect {
+        if aspar {
             // c:2730
             // If a sub-expression already produced the resolved
             // text (subexp arm above), use THAT as the indirect
@@ -3965,9 +3964,9 @@ pub fn paramsubst(
                 // set/empty. Direct port of subst.c case '=' / ':=' /
                 // '::=' which call assignsparam (params.c:3193) /
                 // assignaparam (params.c:3357) / sethparam
-                // (params.c:3602) based on the `flag_arrasg` flag.
+                // (params.c:3602) based on the `arrasg` flag.
                 value = singsub(default);
-                if flag_arrasg == 1 {
+                if arrasg == 1 {
                     // c:3263 (A)
                     let ifs = vars_get("IFS")
                         .unwrap_or_else(|| " \t\n".to_string());
@@ -3977,7 +3976,7 @@ pub fn paramsubst(
                         .map(|s| s.to_string())
                         .collect();
                     exec_assignaparam(&var_name, parts);
-                } else if flag_arrasg == 2 {
+                } else if arrasg == 2 {
                     // c:3263 (AA)
                     let ifs = vars_get("IFS")
                         .unwrap_or_else(|| " \t\n".to_string());
@@ -3999,7 +3998,7 @@ pub fn paramsubst(
                 // c:3245
                 if !is_set || raw_value.is_empty() {
                     value = singsub(default);
-                    if flag_arrasg == 1 {
+                    if arrasg == 1 {
                         // c:3263 (A)
                         let ifs = vars_get("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
@@ -4009,7 +4008,7 @@ pub fn paramsubst(
                             .map(|s| s.to_string())
                             .collect();
                         exec_assignaparam(&var_name, parts);
-                    } else if flag_arrasg == 2 {
+                    } else if arrasg == 2 {
                         // c:3263 (AA)
                         let ifs = vars_get("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
@@ -4035,7 +4034,7 @@ pub fn paramsubst(
                 // only checks vunset, not !*val.
                 if !is_set {
                     value = singsub(default);
-                    if flag_arrasg == 1 {
+                    if arrasg == 1 {
                         // c:3263 (A)
                         let ifs = vars_get("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
@@ -4045,7 +4044,7 @@ pub fn paramsubst(
                             .map(|s| s.to_string())
                             .collect();
                         exec_assignaparam(&var_name, parts);
-                    } else if flag_arrasg == 2 {
+                    } else if arrasg == 2 {
                         // c:3263 (AA)
                         let ifs = vars_get("IFS")
                             .unwrap_or_else(|| " \t\n".to_string());
@@ -4767,7 +4766,7 @@ pub fn paramsubst(
         }
         // Apply post-processing flags to the substituted value.
         // C lines 3950-4070 — case mods, quoting, etc.
-        if flag_typeinfo {
+        if wantt {
             // c:2807
             // ${(t)var} — emit type tag. var_attrs takes
             // precedence (carries typeset flags); fall back to
@@ -5084,7 +5083,7 @@ pub fn paramsubst(
         // (#) evalchar — interpret each value as a math expression
         // and emit the char with that codepoint. Direct port of
         // subst.c:1673 evalchar arm + substevalchar.
-        if flag_evalchar {
+        if evalchar {
             // c:1673
             let eval_one = |s: &str| -> String { substevalchar(s.trim()).unwrap_or_default() };
             if let Some(parts) = split_parts.clone() {
@@ -5102,7 +5101,7 @@ pub fn paramsubst(
 
         // (e) eval — re-substitute the result. Per-element on arrays.
         // Direct port of subst.c:2268 eval bit which iterates aval.
-        if flag_eval {
+        if eval {
             // c:2268
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| singsub(s)).collect();
@@ -5435,7 +5434,7 @@ pub fn paramsubst(
 
         // (X) error on unset/empty — emit error if value is empty.
         // Port of subst.c:2264 (quoteerr=1).
-        if flag_error && value.is_empty() && !is_set {
+        if quoteerr && value.is_empty() && !is_set {
             // c:2264
             zerr(&format!("{}: parameter not set or null", var_name)); // c:N/A
             errflag_set_error();
