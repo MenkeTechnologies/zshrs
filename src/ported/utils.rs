@@ -104,10 +104,17 @@ pub fn set_widearray(mb_array: &str) -> Vec<char> {
 /// ```
 /// WARNING: param names don't match C — Rust=(cmd, msg) vs C=(cmd, fmt, ap)
 fn zwarning(cmd: Option<&str>, msg: &str) {
-    // C: if (isatty(2)) zleentry(ZLE_CMD_TRASH);
-    // ZLE trash-line is pending the zle_main.c port; skip without
-    // affecting the error-emission path.
-    let _ = unsafe { libc::isatty(2) };
+    // c:96 — `if (isatty(2)) zleentry(ZLE_CMD_TRASH);`
+    // Flush any in-flight ZLE redraw state before the warning lands
+    // on stderr — without this, half-painted edit lines bleed into
+    // the diagnostic. Previously: `let _ = isatty(2);` (the result
+    // was discarded; the canonical zleentry port at init.rs:905 was
+    // never actually called from the warning path).
+    if unsafe { libc::isatty(2) } != 0 {                                     // c:96
+        let _ = crate::ported::init::zleentry(                               // c:96
+            crate::ported::zsh_h::ZLE_CMD_TRASH                              // c:96
+        );
+    }
     let scriptname = scriptname_lock().lock().unwrap().clone();
     let argzero = argzero_lock().lock().unwrap().clone();
     let locallevel = crate::ported::params::locallevel
