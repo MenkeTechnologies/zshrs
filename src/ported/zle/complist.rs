@@ -656,7 +656,7 @@ pub fn clprintfmt(p: &str, ml: i32) -> i32 {
     // C body c:673-712 — colored variant of printfmt that uses mcolors
     //                    for %F/%B etc. Without the mcolors substrate
     //                    we delegate to the plain printfmt.
-    crate::ported::zle::zle_tricky::printfmt(p, ml, true, true)
+    printfmt(p, ml, true, true)
 }
 
 /// Port of `int clnicezputs(int do_colors, char *s, int ml)` from
@@ -976,7 +976,7 @@ pub fn compprintlist(showall: i32) -> i32 {
     let mlend = MLEND.load(Ordering::SeqCst);
     let mnew = MNEW.load(Ordering::SeqCst);
     let mhasstat = MHASSTAT.load(Ordering::SeqCst);
-    let zterm_lines = crate::ported::utils::adjustlines() as i32;
+    let zterm_lines = adjustlines() as i32;
     let nlnct = NLNCT.load(Ordering::SeqCst);
     let invcount = crate::ported::zle::compresult::INVCOUNT.load(Ordering::SeqCst);
 
@@ -1029,7 +1029,7 @@ pub fn compprintlist(showall: i32) -> i32 {
     }
 
     // c:1403-1679 — walk amatches groups.
-    let groups: Vec<crate::ported::zle::comp_h::Cmgroup> = {
+    let groups: Vec<Cmgroup> = {
         crate::ported::zle::compcore::amatches
             .get_or_init(|| std::sync::Mutex::new(Vec::new()))
             .lock()
@@ -1439,7 +1439,7 @@ pub fn compprintlist(showall: i32) -> i32 {
     }
     // c:1681 end:
     MSTATPRINTED.store(0, Ordering::SeqCst); // c:1682
-    crate::ported::zle::zle_refresh::LASTLISTLEN.store(0, Ordering::SeqCst); // c:1683
+    LASTLISTLEN.store(0, Ordering::SeqCst); // c:1683
     if nlnct <= 1 {
         MSCROLL.store(0, Ordering::SeqCst);
     } // c:1684
@@ -1497,8 +1497,8 @@ pub static LAST_NLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 /// ```
 /// WARNING: param names don't match C — Rust=(g, m, mc, ml, lastc, width) vs C=(g, mp, mc, ml, lastc, width)
 pub fn clprintm(
-    g: Option<&crate::ported::zle::comp_h::Cmgroup>,
-    m: Option<&crate::ported::zle::comp_h::Cmatch>,
+    g: Option<&Cmgroup>,
+    m: Option<&Cmatch>,
     mc: i32,
     ml: i32,
     lastc: i32,
@@ -1509,7 +1509,7 @@ pub fn clprintm(
 
     let mselect = MSELECT.load(Ordering::SeqCst);
     let mcols = MCOLS.load(Ordering::SeqCst);
-    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    let zterm_columns = adjustcolumns() as i32;
     let mlines_v = MLINES.load(Ordering::SeqCst); // c:1735
 
     // c:1735-1737 — DPUTS2(mselect >= 0 && ml >= mlines,
@@ -1571,7 +1571,7 @@ pub fn clprintm(
 
     // c:1760 — `if (m->disp && (m->flags & CMF_DISPLINE))`
     let displine =
-        m_ref.disp.is_some() && (m_ref.flags & crate::ported::zle::comp_h::CMF_DISPLINE) != 0;
+        m_ref.disp.is_some() && (m_ref.flags & CMF_DISPLINE) != 0;
     if displine {
         // c:1760
         // c:1761-1777 — write mtab cells for whole-line display.
@@ -1763,7 +1763,7 @@ pub fn singledraw() -> i32 {
     let moline = MOLINE.load(Ordering::SeqCst);
     let mocol = MOCOL.load(Ordering::SeqCst);
     let molbeg = MOLBEG.load(Ordering::SeqCst);
-    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    let zterm_columns = adjustcolumns() as i32;
 
     let t1 = mline - mlbeg; // c:1939
     let t2 = moline - molbeg; // c:1940
@@ -1797,7 +1797,7 @@ pub fn singledraw() -> i32 {
 
     if md1 != 0 {
         // c:1952
-        crate::ported::zle::zle_refresh::tc_downcurs(md1 as usize); // c:1953
+        tc_downcurs(md1 as usize); // c:1953
     }
     if mc1 != 0 {
         // c:1954
@@ -1834,7 +1834,7 @@ pub fn singledraw() -> i32 {
     // c:1964-1965 — relative down-move to second cell.
     if md2 != md1 {
         // c:1964
-        crate::ported::zle::zle_refresh::tc_downcurs((md2 - md1) as usize); // c:1965
+        tc_downcurs((md2 - md1) as usize); // c:1965
     }
     if mc2 != 0 {
         // c:1966
@@ -1925,8 +1925,8 @@ pub fn complistmatches() -> i32 {
     }
 
     // c:2007-2012 — early-exit: list too tall or errflag set.
-    let zterm_lines = crate::ported::utils::adjustlines() as i32;
-    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    let zterm_lines = adjustlines() as i32;
+    let zterm_columns = adjustcolumns() as i32;
     let nlnct = NLNCT.load(Ordering::SeqCst);
     let mselect = MSELECT.load(Ordering::SeqCst);
     let minfo_asked = crate::ported::zle::compcore::MINFO
@@ -1939,7 +1939,7 @@ pub fn complistmatches() -> i32 {
         || nlnct >= zterm_lines
         || errflag_v != 0
     {
-        crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::SeqCst); // c:2009
+        SHOWINGLIST.store(0, Ordering::SeqCst); // c:2009
         NOSELECT.store(1, Ordering::SeqCst); // c:2011
         return 1;
     }
@@ -1972,8 +1972,8 @@ pub fn complistmatches() -> i32 {
     let usezle = crate::ported::zsh_h::isset(crate::ported::zsh_h::USEZLE);
     if listdat_nlines == 0 || (mselect >= 0 && !(usezle/* && !termflags && complastprompt valid */))
     {
-        crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::SeqCst);
-        crate::ported::zle::zle_refresh::LISTSHOWN.store(0, Ordering::SeqCst);
+        SHOWINGLIST.store(0, Ordering::SeqCst);
+        LISTSHOWN.store(0, Ordering::SeqCst);
         NOSELECT.store(1, Ordering::SeqCst);
         crate::ported::mem::popheap();
         return 1;
@@ -1992,10 +1992,10 @@ pub fn complistmatches() -> i32 {
     let listprompt = getsparam("LISTPROMPT");
     if mselect >= 0 || MLBEG.load(Ordering::SeqCst) >= 0 || listprompt.is_some() {
         // c:2053 — trashzle()
-        crate::ported::zle::zle_main::trashzle();
-        crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::SeqCst);
-        crate::ported::zle::zle_refresh::LISTSHOWN.store(0, Ordering::SeqCst);
-        crate::ported::zle::zle_refresh::LASTLISTLEN.store(0, Ordering::SeqCst);
+        trashzle();
+        SHOWINGLIST.store(0, Ordering::SeqCst);
+        LISTSHOWN.store(0, Ordering::SeqCst);
+        LASTLISTLEN.store(0, Ordering::SeqCst);
         if listprompt.is_some() {
             // c:2060
             // c:2061 — clearflag = (USEZLE && !termflags && dolastprompt)
@@ -2258,7 +2258,7 @@ pub fn setmstatus(
             *lenp_ref = lastend - wb;
         } // c:2214
 
-        let zml = crate::ported::zle::compcore::ZLEMETALINE
+        let zml = ZLEMETALINE
             .get()
             .and_then(|m| m.lock().ok().map(|g| g.clone()))
             .unwrap_or_default();
@@ -2280,9 +2280,9 @@ pub fn setmstatus(
 
         // c:2228-2232 — replace line with sline.
         ZLEMETACS.store(0, Ordering::SeqCst); // c:2228
-        crate::ported::zle::zle_utils::foredel(zlemetall, 0); // c:2229 CUT_RAW
-        crate::ported::zle::zle_utils::spaceinline(sll); // c:2230
-        if let Some(zml_mutex) = crate::ported::zle::compcore::ZLEMETALINE.get() {
+        foredel(zlemetall, 0); // c:2229 CUT_RAW
+        spaceinline(sll); // c:2230
+        if let Some(zml_mutex) = ZLEMETALINE.get() {
             if let Ok(mut g) = zml_mutex.lock() {
                 if g.len() >= sll as usize {
                     let head: String = sline.chars().take(sll as usize).collect();
@@ -2310,7 +2310,7 @@ pub fn setmstatus(
 
     let pl = p.len() as i32; // c:2237
     let sl = s.len() as i32; // c:2238
-    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    let zterm_columns = adjustcolumns() as i32;
     let max = if zterm_columns < MAX_STATUS as i32 {
         // c:2239
         zterm_columns
@@ -2434,7 +2434,7 @@ pub fn msearch() -> i32 {
     let mut p = (y * mcols + x).max(0) as usize; // c:2319
 
     let needle = MSEARCHSTR.lock().unwrap().clone();
-    let mtab_snapshot: Vec<Option<crate::ported::zle::comp_h::Cmatch>> =
+    let mtab_snapshot: Vec<Option<Cmatch>> =
         MTAB.lock().unwrap().clone();
 
     loop {
@@ -2572,7 +2572,7 @@ pub fn domenuselect() -> i32 {
     // Without the Chdata param + fdat static wired here, skip.
 
     // c:2427-2432 — `if (zlemetaline != NULL) wasmeta = 1; else metafy_line();`
-    _wasmeta = if crate::ported::zle::compcore::ZLEMETALINE.get().is_some() {
+    _wasmeta = if ZLEMETALINE.get().is_some() {
         1
     } else {
         // c:2431 — metafy_line(); zshrs's line is already UTF-8 native.
@@ -2585,12 +2585,12 @@ pub fn domenuselect() -> i32 {
         let parsed: i32 = s.trim().parse().unwrap_or(0);
         if parsed == 0 {
             // c:2435
-            let zterm_lines = crate::ported::utils::adjustlines() as i32;
+            let zterm_lines = adjustlines() as i32;
             let nlnct = NLNCT.load(Ordering::SeqCst);
             step = (zterm_lines - nlnct) >> 1; // c:2436
         } else if parsed < 0 {
             // c:2437
-            let zterm_lines = crate::ported::utils::adjustlines() as i32;
+            let zterm_lines = adjustlines() as i32;
             let nlnct = NLNCT.load(Ordering::SeqCst);
             step = parsed + zterm_lines - nlnct;
             if step < 0 {
@@ -2609,19 +2609,19 @@ pub fn domenuselect() -> i32 {
             mode = 1; /* MM_INTER */
             // c:2453
             // c:2454-2458 — restore origline so the user sees what they typed.
-            let origline = crate::ported::zle::zle_tricky::ORIGLINE
+            let origline = ORIGLINE
                 .get()
                 .and_then(|m| m.lock().ok().map(|g| g.clone()))
                 .unwrap_or_default();
             let l = origline.len() as i32;
             ZLEMETACS.store(0, Ordering::SeqCst);
-            crate::ported::zle::zle_utils::foredel(
+            foredel(
                 // c:2455
                 crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst),
                 0,
             );
-            crate::ported::zle::zle_utils::spaceinline(l); // c:2456
-            if let Some(m) = crate::ported::zle::compcore::ZLEMETALINE.get() {
+            spaceinline(l); // c:2456
+            if let Some(m) = ZLEMETALINE.get() {
                 if let Ok(mut g) = m.lock() {
                     if g.len() >= l as usize {
                         g.replace_range(..l as usize, &origline); // c:2457
@@ -2632,7 +2632,7 @@ pub fn domenuselect() -> i32 {
             }
             ZLEMETACS.store(
                 // c:2458
-                crate::ported::zle::zle_tricky::ORIGCS.load(Ordering::SeqCst),
+                ORIGCS.load(Ordering::SeqCst),
                 Ordering::SeqCst,
             );
             let _ = setmstatus(&mut status, "", 0, 0, None, None, None); // c:2459
@@ -2670,7 +2670,7 @@ pub fn menuselect() -> i32 {
     //                      COMP_COMPLETE then enters domenuselect()
     //                      via the menu_start hook. Without mtab[][]
     //                      we delegate to the basic menucomplete entry.
-    crate::ported::zle::zle_tricky::menucomplete()
+    menucomplete()
 }
 
 /// Port of `setup_(UNUSED(Module m))` from Src/Zle/complist.c:3511.
@@ -2931,7 +2931,7 @@ pub static MCOLORS: std::sync::LazyLock<std::sync::Mutex<listcols>> =
 /// Each cell holds the Cmatch displayed at (row, col) in the listing,
 /// or None for empty padding cells.
 pub static MTAB: std::sync::LazyLock<
-    std::sync::Mutex<Vec<Option<crate::ported::zle::comp_h::Cmatch>>>,
+    std::sync::Mutex<Vec<Option<Cmatch>>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new())); // c:102
 
 /// Port of `static Cmatch **mmtabp` from `Src/Zle/complist.c:102`.
@@ -2942,7 +2942,7 @@ pub static MMTABP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsi
 /// parallel 2-D array of groups: same layout as `mtab`, with each
 /// cell holding the Cmgroup the match-at-that-cell belongs to.
 pub static MGTAB: std::sync::LazyLock<
-    std::sync::Mutex<Vec<Option<crate::ported::zle::comp_h::Cmgroup>>>,
+    std::sync::Mutex<Vec<Option<Cmgroup>>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new())); // c:111
 
 /// Port of `static Cmgroup *mgtabp` from `Src/Zle/complist.c:111`.

@@ -892,7 +892,7 @@ pub fn bin_compadd(
     _ops: &crate::ported::zsh_h::options,
     _func: i32,
 ) -> i32 {
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:608
         zwarnnam(name, "can only be called from completion function"); // c:609
         return 1; // c:610
@@ -999,7 +999,7 @@ pub fn bin_compadd(
     }
     // c:822 — `args = argv` (residual after flags).
     let matches = &argv[idx..];
-    crate::ported::zle::compcore::addmatches(&mut dat, matches) // c:828
+    compcore::addmatches(&mut dat, matches) // c:828
 }
 
 // =====================================================================
@@ -1070,8 +1070,8 @@ pub fn restrict_range(b: i32, e: i32) {
             .cloned()
             .collect();
         *words = new_words; // c:930 freearray + assign
-        let cur = COMPCURRENT.load(std::sync::atomic::Ordering::Relaxed);
-        COMPCURRENT.store(cur - b, std::sync::atomic::Ordering::Relaxed); // c:931 compcurrent -= b
+        let cur = COMPCURRENT.load(Ordering::Relaxed);
+        COMPCURRENT.store(cur - b, Ordering::Relaxed); // c:931 compcurrent -= b
     }
 }
 
@@ -1343,7 +1343,7 @@ pub fn bin_compset(
     let mut test = 0i32; // c:1141
     let mut na = 0i32;
     let mut nb;
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:1144
         zwarnnam(name, "can only be called from completion function"); // c:1145
         return 1; // c:1146
@@ -1362,7 +1362,7 @@ pub fn bin_compset(
         b'P' => test = CVT_PREPAT,   // c:1157
         b's' => test = CVT_SUFNUM,   // c:1158
         b'S' => test = CVT_SUFPAT,   // c:1159
-        b'q' => return crate::ported::zle::compcore::set_comp_sep() as i32, // c:1160
+        b'q' => return compcore::set_comp_sep() as i32, // c:1160
         _ => {
             // c:1161
             zwarnnam(name, &format!("bad option -{}", opt as char)); // c:1162
@@ -1591,11 +1591,11 @@ pub fn set_compstate(
 #[allow(unused_variables)]
 pub fn get_nmatches(pm: *mut param) -> i64 {
     // c:1401
-    if crate::ported::zle::compcore::permmatches(0) != 0 {
+    if compcore::permmatches(0) != 0 {
         // c:1403
         return 0;
     }
-    NMATCHES_GLOBAL.load(std::sync::atomic::Ordering::Relaxed) // c:1404 nmatches
+    NMATCHES_GLOBAL.load(Ordering::Relaxed) // c:1404 nmatches
 }
 
 /// Direct port of `zlong get_listlines(UNUSED(Param pm))` from
@@ -1613,11 +1613,11 @@ pub fn get_nmatches(pm: *mut param) -> i64 {
 #[allow(unused_variables)]
 pub fn get_listlines(pm: *mut param) -> i64 {
     // c:1408
-    let _ = crate::ported::zle::compresult::calclist(0); // c:1410 list_lines
-    crate::ported::zle::compcore::listdat
+    let _ = compresult::calclist(0); // c:1410 list_lines
+    compcore::listdat
         .get()
         .and_then(|m| m.lock().ok().map(|g| g.nlines as i64))
-        .unwrap_or_else(|| COMPLISTLINES.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or_else(|| COMPLISTLINES.load(Ordering::Relaxed))
 }
 
 /// Direct port of `set_complist(UNUSED(Param pm), char *v)` from `Src/Zle/complete.c:1415`.
@@ -1626,7 +1626,7 @@ pub fn get_listlines(pm: *mut param) -> i64 {
 #[allow(unused_variables)]
 pub fn set_complist(pm: *mut param, v: &str) {
     // c:1415
-    crate::ported::zle::compresult::comp_list(Some(v)); // c:1417
+    compresult::comp_list(Some(v)); // c:1417
 }
 
 /// Direct port of `get_complist(UNUSED(Param pm))` from `Src/Zle/complete.c:1422`.
@@ -1681,7 +1681,7 @@ static ORDEROPTS: &[OrderOpt] = &[
     OrderOpt {
         name: "match",
         abbrev: 3,
-        oflag: crate::ported::zle::comp_h::CAF_MATSORT,
+        oflag: CAF_MATSORT,
     }, // c:563
     OrderOpt {
         name: "numeric",
@@ -1707,7 +1707,7 @@ pub fn get_unambig(pm: *mut param) -> String {
     // c:1429
     // c:1431 — `unambig_data(NULL, NULL, NULL); return scache`.
     if let Some(s) = compcore::ainfo
-        .get_or_init(|| std::sync::Mutex::new(None))
+        .get_or_init(|| Mutex::new(None))
         .lock()
         .ok()
         .and_then(|g| g.as_ref().and_then(|a| a.line.clone()))
@@ -1717,7 +1717,7 @@ pub fn get_unambig(pm: *mut param) -> String {
         return s;
     }
     let strs: Vec<String> = compcore::amatches
-        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
         .ok()
         .map(|g| {
@@ -1771,13 +1771,13 @@ pub struct compparam {
 const COMPRPARAMS: &[compparam] = &[
     compparam {
         name: "words",
-        r#type: crate::ported::zsh_h::PM_ARRAY as i32,
+        r#type: PM_ARRAY as i32,
         var: 0,
         gsu: 0,
     },
     compparam {
         name: "redirections",
-        r#type: crate::ported::zsh_h::PM_ARRAY as i32,
+        r#type: PM_ARRAY as i32,
         var: 0,
         gsu: 0,
     },
@@ -2000,7 +2000,7 @@ const COMPKPARAMS: &[compparam] = &[
 pub fn get_unambig_pos(pm: *mut param) -> String {
     // c:1447
     if let Some(s) = compcore::ainfo
-        .get_or_init(|| std::sync::Mutex::new(None))
+        .get_or_init(|| Mutex::new(None))
         .lock()
         .ok()
         .and_then(|g| g.as_ref().and_then(|a| a.line.clone()))
@@ -2010,7 +2010,7 @@ pub fn get_unambig_pos(pm: *mut param) -> String {
         return format!("{}", s.chars().count());
     }
     let strs: Vec<String> = compcore::amatches
-        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .get_or_init(|| Mutex::new(Vec::new()))
         .lock()
         .ok()
         .map(|g| {
@@ -2072,7 +2072,7 @@ pub fn get_compqstack(pm: *mut param) -> String {
     let mut out = String::with_capacity(stack.len());
     for cqp in stack.chars() {
         let cqp_byte = cqp as i32;
-        let s = crate::ported::zle::compcore::comp_quoting_string(cqp_byte);
+        let s = compcore::comp_quoting_string(cqp_byte);
         // c:1483 — take only the first char of each printable form.
         if let Some(first) = s.chars().next() {
             out.push(first);
@@ -2249,7 +2249,7 @@ pub fn comp_wrapper(
         .unwrap_or_default(); // c:1588
 
     // c:1591 — runshfunc(prog, w, name).
-    let _ = crate::ported::zle::compcore::shfunc_call(name);
+    let _ = compcore::shfunc_call(name);
 
     // c:1593 — if comprestore == "auto", restore. Default is "auto" per
     // c:1576 (set in comp_wrapper itself before runshfunc).
@@ -2282,7 +2282,7 @@ pub fn comp_wrapper(
 /// ```
 pub fn comp_check() -> i32 {
     // c:1651
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:1651
         crate::ported::utils::zerr(
             // c:1654
@@ -2336,7 +2336,7 @@ pub fn cond_range(a: &[String], id: i32) -> i32 {
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {
     // c:1720
-    crate::ported::zle::compcore::hasperm.store(0, Ordering::Relaxed); // c:1722
+    compcore::hasperm.store(0, Ordering::Relaxed); // c:1722
     let clear = |g: &'static std::sync::OnceLock<Mutex<String>>| {
         if let Ok(mut s) = g.get_or_init(|| Mutex::new(String::new())).lock() {
             s.clear();

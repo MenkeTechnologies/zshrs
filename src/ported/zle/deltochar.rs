@@ -53,17 +53,17 @@ pub fn deltochar() -> i32 {
         Some(ch) => ch,
         None => return 1,
     };
-    let mut dest = crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:42
+    let mut dest = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:42
     let mut ok = 0i32; // c:42
-    let mut n: i32 = if crate::ported::zle::zle_main::ZMOD.lock().unwrap().flags
-        & crate::ported::zle::zle_h::MOD_MULT
+    let mut n: i32 = if ZMOD.lock().unwrap().flags
+        & MOD_MULT
         != 0
     {
-        crate::ported::zle::zle_main::ZMOD.lock().unwrap().mult
+        ZMOD.lock().unwrap().mult
     } else {
         1
     }; // c:42 zmult
-    let zap = crate::ported::zle::zle_main::BINDK
+    let zap = BINDK
         .lock()
         .unwrap()
         .as_ref()
@@ -73,13 +73,13 @@ pub fn deltochar() -> i32 {
     if n > 0 {
         // c:45
         while n > 0
-            && dest != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+            && dest != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
         {
             // c:46 while (n-- && dest != zlell)
             n -= 1;
             while dest
-                != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-                && crate::ported::zle::zle_main::ZLELINE
+                != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+                && ZLELINE
                     .lock()
                     .unwrap()
                     .get(dest)
@@ -88,7 +88,7 @@ pub fn deltochar() -> i32 {
             {
                 dest += 1; // c:48 INCPOS(dest)
             }
-            if dest != crate::ported::zle::zle_main::ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+            if dest != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
             {
                 // c:50
                 if !zap || n > 0 {
@@ -98,10 +98,10 @@ pub fn deltochar() -> i32 {
                 if n == 0 {
                     // c:53
                     let ct = (dest as i32)
-                        - (crate::ported::zle::zle_main::ZLECS
+                        - (ZLECS
                             .load(std::sync::atomic::Ordering::SeqCst)
                             as i32); // c:54 dest - zlecs
-                    crate::ported::zle::zle_utils::forekill(ct, 0); // c:54 CUT_RAW
+                    forekill(ct, 0); // c:54 CUT_RAW
                     ok += 1; // c:55
                 }
             }
@@ -116,7 +116,7 @@ pub fn deltochar() -> i32 {
             // c:63 while (n++ && dest != 0)
             n += 1;
             while dest != 0
-                && crate::ported::zle::zle_main::ZLELINE
+                && ZLELINE
                     .lock()
                     .unwrap()
                     .get(dest)
@@ -125,7 +125,7 @@ pub fn deltochar() -> i32 {
             {
                 dest -= 1; // c:65 DECPOS(dest)
             }
-            if crate::ported::zle::zle_main::ZLELINE
+            if ZLELINE
                 .lock()
                 .unwrap()
                 .get(dest)
@@ -136,12 +136,12 @@ pub fn deltochar() -> i32 {
                 if n == 0 {
                     // c:68
                     let zap_adj = if zap { 1 } else { 0 }; // c:70 trailing combining-char adjust
-                    let ct = (crate::ported::zle::zle_main::ZLECS
+                    let ct = (ZLECS
                         .load(std::sync::atomic::Ordering::SeqCst)
                         as i32)
                         - (dest as i32)
                         - zap_adj;
-                    crate::ported::zle::zle_utils::backkill(ct, 0); // c:70 CUT_RAW|CUT_FRONT
+                    backkill(ct, 0); // c:70 CUT_RAW|CUT_FRONT
                     ok += 1; // c:71
                 }
                 if dest > 0 {
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn deltochar_returns_one_when_no_input_available() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         assert_eq!(deltochar(), 1);
     }
 
