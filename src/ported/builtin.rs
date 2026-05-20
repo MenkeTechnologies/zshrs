@@ -56,8 +56,8 @@ use crate::ported::params::{
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals::settrap;
 use crate::ported::utils::{
-    errflag, fprintdir, getkeystring, getkeystring_with, lchdir, quotedzputs, zerr, zerrnam, zwarn,
-    zwarnnam, GETKEYS_PRINT,
+    argzero, errflag, fprintdir, getkeystring, getkeystring_with, lchdir, quotedzputs, set_argzero,
+    zerr, zerrnam, zwarn, zwarnnam, GETKEYS_PRINT,
 };
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
@@ -8923,7 +8923,6 @@ pub use crate::ported::init::sourcelevel as SOURCELEVEL;
 // incremented a DIFFERENT global, leaving the two views out of
 // sync indefinitely.
 pub use crate::ported::params::locallevel as LOCALLEVEL;
-use crate::utils::{argzero, set_argzero};
 // `ZEXIT_NORMAL` re-exported from canonical zsh_h.rs (port of the
 // `enum { ZEXIT_NORMAL, ZEXIT_SIGNAL, ZEXIT_DEFERRED }` in Src/zsh.h).
 // Same single-source-of-truth pattern as TERM_UNKNOWN / HISTFLAG_*

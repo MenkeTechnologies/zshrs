@@ -13,11 +13,9 @@ use crate::ported::params::{getsparam, TERMFLAGS};
 use crate::ported::signals::{install_handler, intr, queue_signals, signal_ignore, unqueue_signals};
 use crate::ported::utils::{errflag, movefd, unmeta};
 use crate::ported::zsh_h::{
-    interact, Eprog,
-};
-use crate::zsh_h::{
-    eprog, islogin, isset, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP,
-    HIST_TMPSTORE, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, ZEXIT_NORMAL,
+    eprog, interact, islogin, isset, Eprog, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP,
+    HISTIGNOREDUPS, HIST_DUP, HIST_TMPSTORE, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN,
+    SINGLECOMMAND, ZEXIT_NORMAL,
 };
 // =========================================================================
 // File-scope globals from init.c

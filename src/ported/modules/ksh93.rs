@@ -33,8 +33,8 @@ use crate::ported::string::dupstring;
 use crate::ported::zsh_h::{
     eprog, funcwrap, module, param, EMULATE_KSH, EMULATION, PM_LOCAL, PM_NAMEREF, PM_READONLY,
     PM_UNSET,
+    PARAMDEF
 };
-use crate::ported::zsh_h::{PARAMDEF, PM_NAMEREF as PMN};
 use crate::ported::ztype_h::INAMESPC;
 
 // =====================================================================
@@ -548,8 +548,8 @@ pub fn cleanup_(m: *const module) -> i32 {
             0,
             0,
         ), // c:119
-        PARAMDEF(".sh.file", (PMN | PM_READONLY) as i32, 0, 0),        // c:121
-        PARAMDEF(".sh.lineno", (PMN | PM_READONLY) as i32, 0, 0),      // c:122
+        PARAMDEF(".sh.file", (PM_NAMEREF | PM_READONLY) as i32, 0, 0),        // c:121
+        PARAMDEF(".sh.lineno", (PM_NAMEREF | PM_READONLY) as i32, 0, 0),      // c:122
         PARAMDEF(".sh.match", (PM_ARRAY | PM_READONLY) as i32, 0, 0),  // c:123
         PARAMDEF(
             ".sh.name",
@@ -563,8 +563,8 @@ pub fn cleanup_(m: *const module) -> i32 {
             0,
             0,
         ), // c:126
-        PARAMDEF(".sh.subshell", (PMN | PM_READONLY) as i32, 0, 0),    // c:128
-        PARAMDEF(".sh.version", (PMN | PM_READONLY) as i32, 0, 0),     // c:130
+        PARAMDEF(".sh.subshell", (PM_NAMEREF | PM_READONLY) as i32, 0, 0),    // c:128
+        PARAMDEF(".sh.version", (PM_NAMEREF | PM_READONLY) as i32, 0, 0),     // c:130
     ];
 
     /* Clean up namerefs, otherwise deleteparamdef() is confused */

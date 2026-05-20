@@ -18,7 +18,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::zle_bindings::{EMACSBIND, METABIND, VICMDBIND, VIINSBIND};
+use super::zle_main::zle_test_setup;
 use super::zle_thingy::Thingy;
+use crate::ported::utils::inittyptab;
+#[cfg(test)]
+use crate::ported::ztype_h::TYPTAB_TEST_LOCK;
 use std::io::Write;
 
 // =====================================================================
@@ -96,7 +100,7 @@ pub const KM_IMMUTABLE: i32 = 1 << 1; // c:83
 pub struct remprefstate {
     // c:108
     /// Target keymap (Arc handle for shared ownership).
-    pub km: std::sync::Arc<Keymap>, // c:109
+    pub km: Arc<Keymap>, // c:109
     /// Byte prefix to match against each multi-key binding.
     pub prefix: Vec<u8>, // c:110
     /// `prefix.len()` cached for the scan inner loop (kept as a field
@@ -245,7 +249,7 @@ pub fn unrefkeymap_by_name(name: &str) {
     let arc_to_remove = tab.get(name).map(|kmn| kmn.keymap.clone());
     let shared_count = if let Some(ref arc) = arc_to_remove {
         tab.values()
-            .filter(|kmn| std::sync::Arc::ptr_eq(&kmn.keymap, arc))
+            .filter(|kmn| Arc::ptr_eq(&kmn.keymap, arc))
             .count()
     } else {
         0
@@ -1250,11 +1254,11 @@ pub fn bin_bindkey_bind(name: &str, args: &[String], func: char) -> i32 {
     }
 
     // Rebuild the Arc + propagate to every name that shared the old.
-    let new_arc = std::sync::Arc::new(km);
+    let new_arc = Arc::new(km);
     if let Ok(mut tab) = keymapnamtab().lock() {
         let names_to_update: Vec<String> = tab
             .iter()
-            .filter(|(_, kmn)| std::sync::Arc::ptr_eq(&kmn.keymap, &old_arc))
+            .filter(|(_, kmn)| Arc::ptr_eq(&kmn.keymap, &old_arc))
             .map(|(n, _)| n.clone())
             .collect();
         for n in names_to_update {
@@ -1445,7 +1449,7 @@ pub fn getrestchar_keybuf() -> i32 {
     // c:1504
     // C body (c:1675): `return getrestchar(getkeybuf(0), NULL, NULL)`.
     let c = getkeybuf(0);
-    crate::ported::zle::zle_main::getrestchar(c)
+    getrestchar(c)
 }
 
 /// Port of `getkeymapcmd(Keymap km, Thingy *funcp, char **strp)` from
@@ -1505,7 +1509,7 @@ pub fn getkeybuf(w: i32) -> i32 {
     // getbyte() needs the input substrate; without it, drain from
     // unget_buf which addkeybuf-style writers can populate.
     let _ = w; // would be `(long)w` to getbyte's timeout arg
-    if let Some(b) = crate::ported::zle::zle_main::KUNGETBUF
+    if let Some(b) = KUNGETBUF
         .lock()
         .unwrap()
         .pop_front()
@@ -1523,7 +1527,7 @@ pub fn ungetkeycmd() {
     // c:1759
     // C body (c:1761): `ungetbytes_unmeta(keybuf, keybuflen)`.
     let buf = keybuf.lock().unwrap().clone();
-    crate::ported::zle::zle_main::ungetbytes_unmeta(&buf);
+    ungetbytes_unmeta(&buf);
 }
 
 /// Port of `getkeycmd()` from Src/Zle/zle_keymap.c:1768.
@@ -1585,8 +1589,8 @@ pub fn readcommand() -> i32 {
 /// Name of the currently active keymap (driven by `bindkey -A` and the
 /// `KEYMAP` parameter). The Rust port wraps in OnceLock<Mutex<>> for
 /// thread-safe access from widget bodies.
-pub static CURKEYMAPNAME: std::sync::OnceLock<std::sync::Mutex<String>> =
-    std::sync::OnceLock::new(); // c:126
+pub static CURKEYMAPNAME: OnceLock<Mutex<String>> =
+    OnceLock::new(); // c:126
 
 /// Port of `Keymap curkeymap` from `Src/Zle/zle_keymap.c:124`. The
 /// currently active keymap (per `bindkey -A` selection or KEYMAP
@@ -1655,7 +1659,7 @@ pub static LOCALKEYMAP: Mutex<Option<Arc<Keymap>>> = Mutex::new(None); // c:526
 /// with "main".
 pub fn curkeymapname() -> std::sync::MutexGuard<'static, String> {
     CURKEYMAPNAME
-        .get_or_init(|| std::sync::Mutex::new(String::from("main")))
+        .get_or_init(|| Mutex::new(String::from("main")))
         .lock()
         .unwrap()
 }
@@ -1857,7 +1861,7 @@ mod tests {
     #[test]
     fn emacs_default_has_quoted_insert_undo_yank_pop() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         createkeymapnamtab();
         default_bindings();
 
@@ -1881,7 +1885,7 @@ mod tests {
     #[test]
     fn emacs_default_has_history_search_and_insert_last_word() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         createkeymapnamtab();
         default_bindings();
 
@@ -1911,7 +1915,7 @@ mod tests {
     #[test]
     fn vicmd_default_has_visual_marks_indent() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         createkeymapnamtab();
         default_bindings();
 
@@ -1952,7 +1956,7 @@ mod tests {
         // beginning-of-line; `^V` → quoted-insert). Those were
         // overridden by the C-faithful `VIINSBIND` table port
         // (`Src/Zle/zle_bindings.c:256-289`).
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         createkeymapnamtab();
         default_bindings();
         let km = openkeymap("viins").expect("viins keymap created");
@@ -1992,7 +1996,7 @@ mod tests {
     #[test]
     fn refkeymap_increments_rc() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:470 — `km->rc++`. Default Keymap starts with rc=0.
         let mut km = Keymap::default();
         assert_eq!(km.rc, 0);
@@ -2005,7 +2009,7 @@ mod tests {
     #[test]
     fn unrefkeymap_decrements_returns_new_count() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:482 — `--km->rc`. With rc=3 → returns 2.
         let mut km = Keymap::default();
         km.rc = 3;
@@ -2019,7 +2023,7 @@ mod tests {
     #[test]
     fn unrefkeymap_returns_zero_at_last_ref() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:482-484 — `if (!--km->rc) { deletekeymap(km); return 0; }`.
         // rc=1 → -- → 0 → returns 0 (deletion signal).
         let mut km = Keymap::default();
@@ -2037,7 +2041,7 @@ mod tests {
     #[test]
     fn keyisprefix_empty_seq() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:687-688 — empty input → always prefix → 1.
         let km = Keymap::default();
         assert_eq!(keyisprefix(&km, b""), 1);
@@ -2046,7 +2050,7 @@ mod tests {
     #[test]
     fn keyisprefix_single_byte_bound_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:689-692 — single byte that has a first[] binding is NOT
         // a prefix; it IS the binding.
         let mut km = Keymap::default();
@@ -2057,7 +2061,7 @@ mod tests {
     #[test]
     fn keyisprefix_single_byte_unbound() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:694-695 — fall through to multi lookup; no match → 0.
         let km = Keymap::default();
         assert_eq!(keyisprefix(&km, b"x"), 0);
@@ -2066,7 +2070,7 @@ mod tests {
     #[test]
     fn keyisprefix_seq_is_real_prefix() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:694-695 — multi has prefixct > 0 → 1.
         // bind_seq("ab", X) marks "a" as a prefix (prefixct=1).
         let mut km = Keymap::default();
@@ -2078,7 +2082,7 @@ mod tests {
     #[test]
     fn keyisprefix_seq_is_complete_binding() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:694-695 — when seq itself IS a binding (not a prefix),
         // multi[seq] has prefixct=0 → 0.
         let mut km = Keymap::default();
@@ -2090,7 +2094,7 @@ mod tests {
     #[test]
     fn keyisprefix_meta_pair_decoded() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // c:690 — `seq[0]==Meta` (0x83) → use seq[1]^32 as single byte.
         // Bind 'A' (0x41) in first[]. Seq [0x83, 0x61] decodes to
         // 0x61^0x20 = 0x41 = 'A'. So this is single-byte 'A'.
@@ -2107,7 +2111,7 @@ mod tests {
         // c:664-669 — `if (ztrlen(seq) == 1) { f = seq[0]; if (km->first[f])
         // return bind; }`. Bind 'q' in first[], call keybind with "q",
         // expect the Thingy back and no send-string.
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut km = Keymap::default();
         km.bind_char(b'q', Thingy::new("quit-widget"));
         let (bind, send) = keybind(&km, b"q");
@@ -2122,7 +2126,7 @@ mod tests {
         // c:665 — `seq[0]==Meta ? seq[1]^32 : seq[0]`. [0x83, 0x61]
         // decodes to 0x41 = 'A'. Verify it lands on the first[] entry
         // for 'A' just like a literal 'A' byte would.
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut km = Keymap::default();
         km.bind_char(b'A', Thingy::new("uppercase-A-widget"));
         let (bind, _) = keybind(&km, &[0x83, 0x61]);
@@ -2137,7 +2141,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:670-671 — single-byte but km->first[f] is None, falls
         // through to the multi-byte lookup which also misses → (None, None).
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let km = Keymap::default();
         let (bind, send) = keybind(&km, b"z");
         assert!(
@@ -2152,7 +2156,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:670-674 — `k = km->multi->getnode(km->multi, seq)`. Bind
         // a multi-byte sequence in `multi`, expect the lookup to find it.
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut km = Keymap::default();
         km.multi.insert(
             b"\x1b[A".to_vec(),
@@ -2171,7 +2175,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:673-674 — `*strp = k->str; return k->bind`. Send-string
         // entries (`bindkey -s`) have bind=None + str=Some.
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         let mut km = Keymap::default();
         km.multi.insert(
             b"\x1b[Z".to_vec(),
@@ -2191,7 +2195,7 @@ mod tests {
     #[test]
     fn init_keymaps_seeds_keybuf_and_clears_lastnamed() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         // After init: keybuf is allocated (non-empty Vec), lastnamed is None
         // (the `t_undefinedkey` sentinel in Rust convention).
         init_keymaps();
@@ -2208,7 +2212,7 @@ mod tests {
     #[test]
     fn cleanup_keymaps_drains_namtab_and_keybuf() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
+        let _g = zle_test_setup();
         init_keymaps();
         assert!(!keybuf.lock().unwrap().is_empty());
         cleanup_keymaps();
@@ -2229,11 +2233,11 @@ mod tests {
     #[test]
     fn addkeybuf_encodes_nul_byte_per_imeta() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+        let _g = zle_test_setup();
+        let _tg = TYPTAB_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        crate::ported::utils::inittyptab();
+        inittyptab();
         keybuf.lock().unwrap().clear();
         addkeybuf(0);
         // c:1722-1723 — Meta=0x83, NUL ^ 0x20 = 0x20.
@@ -2251,11 +2255,11 @@ mod tests {
     #[test]
     fn addkeybuf_encodes_meta_byte_itself() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+        let _g = zle_test_setup();
+        let _tg = TYPTAB_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        crate::ported::utils::inittyptab();
+        inittyptab();
         keybuf.lock().unwrap().clear();
         addkeybuf(0x83);
         assert_eq!(
@@ -2272,11 +2276,11 @@ mod tests {
     #[test]
     fn addkeybuf_encodes_pound_token_byte() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+        let _g = zle_test_setup();
+        let _tg = TYPTAB_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        crate::ported::utils::inittyptab();
+        inittyptab();
         keybuf.lock().unwrap().clear();
         addkeybuf(0x84);
         assert_eq!(
@@ -2295,11 +2299,11 @@ mod tests {
     #[test]
     fn addkeybuf_passes_through_non_imeta_high_byte() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+        let _g = zle_test_setup();
+        let _tg = TYPTAB_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        crate::ported::utils::inittyptab();
+        inittyptab();
         keybuf.lock().unwrap().clear();
         addkeybuf(0xa3);
         assert_eq!(
@@ -2324,11 +2328,11 @@ mod tests {
     #[test]
     fn addkeybuf_ascii_passes_through_literally() {
         let _g = crate::test_util::global_state_lock();
-        let _g = crate::ported::zle::zle_main::zle_test_setup();
-        let _tg = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+        let _g = zle_test_setup();
+        let _tg = TYPTAB_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        crate::ported::utils::inittyptab();
+        inittyptab();
         for c in [0x01u8, 0x1f, 0x20, b'A', b'z', 0x7e, 0x7f] {
             keybuf.lock().unwrap().clear();
             addkeybuf(c as i32);
