@@ -665,7 +665,11 @@ pub fn cmdpush(cmdtok: u8) {                                                 // 
 /// a `BUG: cmdstack empty` debug print and continues).
 pub fn cmdpop() {
     CMDSTACK.with(|s| {
-        s.borrow_mut().pop();
+        let mut st = s.borrow_mut();
+        // c:1635 — DPUTS(1, "BUG: cmdstack empty") in the C empty-stack
+        // branch. The C source still pops + continues; same here.
+        crate::DPUTS!(st.is_empty(), "BUG: cmdstack empty");                 // c:1635
+        st.pop();
     });
 }
 
