@@ -26,6 +26,8 @@ use std::sync::atomic::Ordering as O;
 
 use crate::ported::init::SHTTY;
 use crate::ported::params::getsparam;
+use crate::ported::zsh_h::Patprog;
+use crate::ported::zle::zle_refresh::{tcmultout, CLEARFLAG};
 use crate::ported::utils::{errflag, write_loop};
 use crate::ported::zle::comp_h::{CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST};
 use crate::ported::zle::compcore::ZLEMETACS;
@@ -153,7 +155,7 @@ pub fn filecol(col: &str) -> filecol {
 pub struct filecol {
     // c:215
     /// Group pattern (NULL → applies to all groups).
-    pub prog: Option<crate::ported::zsh_h::Patprog>, // c:216
+    pub prog: Option<Patprog>, // c:216
     /// Color string (ANSI escape-code body).
     pub col: String, // c:217
     /// Next entry chained for the same color slot.
@@ -168,9 +170,9 @@ pub struct filecol {
 pub struct patcol {
     // c:225
     /// Group pattern (NULL → all groups).
-    pub prog: Option<crate::ported::zsh_h::Patprog>, // c:226
+    pub prog: Option<Patprog>, // c:226
     /// Pattern for match.
-    pub pat: Option<crate::ported::zsh_h::Patprog>, // c:227
+    pub pat: Option<Patprog>, // c:227
     /// Color strings indexed by submatch position (MAX_POS + 1 slots).
     pub cols: Vec<String>, // c:228
     /// Next entry in the patcol chain.
@@ -184,7 +186,7 @@ pub struct patcol {
 pub struct extcol {
     // c:236
     /// Group pattern (NULL → all groups).
-    pub prog: Option<crate::ported::zsh_h::Patprog>, // c:237
+    pub prog: Option<Patprog>, // c:237
     /// File extension (e.g. ".tar").
     pub ext: String, // c:238
     /// Terminal color string.
@@ -1797,7 +1799,7 @@ pub fn singledraw() -> i32 {
     }
     if mc1 != 0 {
         // c:1954
-        crate::ported::zle::zle_refresh::tcmultout("TCRIGHT", mc1); // c:1955
+        tcmultout("TCRIGHT", mc1); // c:1955
     }
 
     // c:1957-1959 — `g = mgtab[ml1 * zterm_columns + mc1];
@@ -1820,7 +1822,7 @@ pub fn singledraw() -> i32 {
     let mlprinted = MLPRINTED.load(Ordering::SeqCst);
     if mlprinted != 0 {
         // c:1960
-        crate::ported::zle::zle_refresh::tcmultout("TCUP", mlprinted); // c:1961
+        tcmultout("TCUP", mlprinted); // c:1961
     }
     // c:1962 — putc('\r', shout)
     let fd = SHTTY.load(O::Relaxed);
@@ -1834,7 +1836,7 @@ pub fn singledraw() -> i32 {
     }
     if mc2 != 0 {
         // c:1966
-        crate::ported::zle::zle_refresh::tcmultout("TCRIGHT", mc2); // c:1967
+        tcmultout("TCRIGHT", mc2); // c:1967
     }
 
     let idx2 = (ml2 * zterm_columns + mc2) as usize;
@@ -1854,7 +1856,7 @@ pub fn singledraw() -> i32 {
 
     if mlprinted != 0 {
         // c:1972
-        crate::ported::zle::zle_refresh::tcmultout("TCUP", mlprinted); // c:1973
+        tcmultout("TCUP", mlprinted); // c:1973
     }
     let _ = write_loop(out_fd, b"\r"); // c:1974
 
@@ -1977,7 +1979,7 @@ pub fn complistmatches() -> i32 {
 
     // c:2041-2042 — `if (inselect || mlbeg >= 0) clearflag = 0;`
     if INSELECT.load(Ordering::SeqCst) != 0 || MLBEG.load(Ordering::SeqCst) >= 0 {
-        crate::ported::zle::zle_refresh::CLEARFLAG.store(0, Ordering::SeqCst);
+        CLEARFLAG.store(0, Ordering::SeqCst);
     }
 
     // c:2044-2045 — `mscroll = 0; mlistp = NULL;`
@@ -1995,12 +1997,12 @@ pub fn complistmatches() -> i32 {
         if listprompt.is_some() {
             // c:2060
             // c:2061 — clearflag = (USEZLE && !termflags && dolastprompt)
-            crate::ported::zle::zle_refresh::CLEARFLAG
+            CLEARFLAG
                 .store(if usezle { 1 } else { 0 }, Ordering::SeqCst);
             MSCROLL.store(1, Ordering::SeqCst); // c:2062
         } else {
             // c:2063
-            crate::ported::zle::zle_refresh::CLEARFLAG.store(1, Ordering::SeqCst); // c:2064
+            CLEARFLAG.store(1, Ordering::SeqCst); // c:2064
                                                                                    // c:2065 — minfo.asked = listdat.nlines + nlnct <= zterm_lines
             if let Some(m) = crate::ported::zle::compcore::MINFO.get() {
                 if let Ok(mut g) = m.lock() {
@@ -2070,7 +2072,7 @@ pub fn complistmatches() -> i32 {
     let inselect = INSELECT.load(Ordering::SeqCst);
     let mlbeg_cur = MLBEG.load(Ordering::SeqCst);
     let molbeg = MOLBEG.load(Ordering::SeqCst);
-    let clearflag = crate::ported::zle::zle_refresh::CLEARFLAG.load(Ordering::SeqCst);
+    let clearflag = CLEARFLAG.load(Ordering::SeqCst);
     if !mnew && inselect != 0 && cur_onlnct == nlnct                         // c:2106
         && mlbeg_cur >= 0 && mlbeg_cur == molbeg
     {

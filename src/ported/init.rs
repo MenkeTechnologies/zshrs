@@ -4,9 +4,11 @@
 
 use crate::ported::hist::{curhist, curline, hist_ring, histlinect, stophist};
 use crate::ported::lex::ENDINPUT;
+use crate::ported::builtin::STOPMSG;
+use crate::ported::hist::hend;
 use crate::ported::params::getsparam;
-use crate::ported::signals::{install_handler, signal_ignore};
-use crate::ported::utils::errflag;
+use crate::ported::signals::{install_handler, signal_ignore, unqueue_signals};
+use crate::ported::utils::{errflag, movefd, unmeta};
 use crate::zsh_h::{
     islogin, isset, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP,
     HIST_TMPSTORE, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, ZEXIT_NORMAL,
@@ -392,24 +394,24 @@ pub fn init_io(_cmd: Option<&str>) {
                     cstr.as_ptr(), // c:627
                     libc::O_RDWR | libc::O_NOCTTY,
                 );
-                SHTTY.store(crate::ported::utils::movefd(fd), Ordering::SeqCst);
+                SHTTY.store(movefd(fd), Ordering::SeqCst);
             }
             if SHTTY.load(Ordering::SeqCst) == -1 {
                 // c:658
-                SHTTY.store(crate::ported::utils::movefd(libc::dup(0)), Ordering::SeqCst);
+                SHTTY.store(movefd(libc::dup(0)), Ordering::SeqCst);
                 // c:659
             }
         }
         if SHTTY.load(Ordering::SeqCst) == -1 && libc::isatty(1) != 0 {
             // c:662
-            SHTTY.store(crate::ported::utils::movefd(libc::dup(1)), Ordering::SeqCst);
+            SHTTY.store(movefd(libc::dup(1)), Ordering::SeqCst);
             // c:663
         }
         if SHTTY.load(Ordering::SeqCst) == -1 {
             // c:667
             let dev_tty = std::ffi::CString::new("/dev/tty").unwrap();
             let fd = libc::open(dev_tty.as_ptr(), libc::O_RDWR | libc::O_NOCTTY); // c:668
-            SHTTY.store(crate::ported::utils::movefd(fd), Ordering::SeqCst);
+            SHTTY.store(movefd(fd), Ordering::SeqCst);
         }
         if SHTTY.load(Ordering::SeqCst) != -1 {
             // c:675
@@ -752,10 +754,10 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     // ZSH_EXEPATH                                                           // c:1315
     {
         let exename = argv0.lock().unwrap().clone(); // c:1318
-        let exename = crate::ported::utils::unmeta(&exename); // c:1318
+        let exename = unmeta(&exename); // c:1318
                                                               // c:1319 — `cwd = pwd;` (the in-shell logical cwd global).
                                                               //          Read paramtab; was reading OS env which can lag.
-        let cwd = getsparam("PWD").map(|s| crate::ported::utils::unmeta(&s));
+        let cwd = getsparam("PWD").map(|s| unmeta(&s));
         let mypath = getmypath(
             Some(&exename), // c:1320
             cwd.as_deref(),
@@ -781,7 +783,7 @@ fn setupshin(runscript: Option<&str>) {
     // c:1340
     if let Some(script) = runscript {
         // c:1340
-        let funmeta = crate::ported::utils::unmeta(script); // c:1346
+        let funmeta = unmeta(script); // c:1346
         let mut sfname: Option<String> = None; // c:1343
         if std::path::Path::new(&funmeta).is_file() {
             // c:1350-1352
@@ -997,7 +999,7 @@ pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {
 /// in-process bytecode walk.
 pub fn source(s: &str) -> i32 {
     // c:1551
-    let _us = crate::ported::utils::unmeta(s); // c:1551
+    let _us = unmeta(s); // c:1551
     let path = std::path::Path::new(&_us);
     if !path.exists() {
         // c:1565-1568
@@ -1039,12 +1041,12 @@ pub fn sourcehome(s: &str) {
         // c:1685-1689
         Some(h) => h,
         None => {
-            crate::ported::signals::unqueue_signals();
+            unqueue_signals();
             return;
         }
     };
     let buf = format!("{}/{}", h, s); // c:1713
-    crate::ported::signals::unqueue_signals(); // c:1713
+    unqueue_signals(); // c:1713
     source(&buf); // c:1713
 }
 
@@ -1275,7 +1277,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         crate::ported::mem::freeheap(); // c:123
         if stophist.load(Ordering::SeqCst) == 3 {
             // c:124 stophist == 3
-            crate::ported::hist::hend(None); // c:125 hend(NULL)
+            hend(None); // c:125 hend(NULL)
         }
         crate::ported::hist::hbegin(1); // c:126 hbegin(1)
         if isset(SHINSTDIN) {
@@ -1305,7 +1307,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         prog = crate::ported::parse::parse_event(ENDINPUT as i32); // c:156
         if prog.is_none() {
             // c:156
-            crate::ported::hist::hend(None); // c:158
+            hend(None); // c:158
                                              // c:159-161 — break on clean EOF / non-toplevel LEXERR / justonce
             let tok_v = crate::ported::lex::tok(); // c:159 tok
             let errflag_v = errflag.load(Ordering::SeqCst);
@@ -1317,7 +1319,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             }
             if crate::ported::hist::exit_pending.load(Ordering::SeqCst) {
                 // c:163 exit_pending
-                crate::ported::builtin::STOPMSG.store(1, Ordering::SeqCst); // c:169 stopmsg = 1
+                STOPMSG.store(1, Ordering::SeqCst); // c:169 stopmsg = 1
                 crate::ported::builtin::zexit(
                     // c:170 zexit(exit_val, ZEXIT_NORMAL)
                     crate::ported::builtin::EXIT_VAL.load(Ordering::SeqCst),
@@ -1336,7 +1338,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         // history line. zshrs's `hend` takes Option<&[u8]>; sentinel
         // non-empty slice signals "program present" to the commit path.
         let prog_bytes: Vec<u8> = format!("{:?}", prog_inner).into_bytes();
-        let hend_ret = crate::ported::hist::hend(Some(&prog_bytes)); // c:176
+        let hend_ret = hend(Some(&prog_bytes)); // c:176
         if hend_ret != 0 {
             let _toksav = crate::ported::lex::tok(); // c:177
             non_empty = 1; // c:179
@@ -1423,9 +1425,9 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                     crate::ported::zsh_h::ZLE_CMD_PREEXEC,
                 );
             }
-            if crate::ported::builtin::STOPMSG.load(Ordering::SeqCst) != 0 {
+            if STOPMSG.load(Ordering::SeqCst) != 0 {
                 // c:218
-                crate::ported::builtin::STOPMSG.fetch_sub(1, Ordering::SeqCst); // c:219
+                STOPMSG.fetch_sub(1, Ordering::SeqCst); // c:219
             }
             // c:220 — `execode(prog, 0, 0, toplevel ? "toplevel" : "file");`
             // No fusevm bridge for parse-tree execution in src/ported yet;
@@ -1492,7 +1494,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         crate::ported::context::zcontext_restore(); // c:247
     }
     crate::ported::mem::popheap(); // c:248
-    crate::ported::signals::unqueue_signals(); // c:249
+    unqueue_signals(); // c:249
 
     if err != 0 {
         return 2; /* LOOP_ERROR */

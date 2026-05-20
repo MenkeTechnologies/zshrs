@@ -510,7 +510,7 @@ mod tests {
     /// Build an `Options` struct populated for the canonical
     /// `output_strftime(name, argv, ops, func)` signature, with
     /// flag `flag` set and (optionally) -s SCALAR slot encoded.
-    fn ops_for(flags: &[u8], scalar: Option<&str>) -> crate::ported::zsh_h::options {
+    fn ops_for(flags: &[u8], scalar: Option<&str>) -> options {
         let mut ops = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
@@ -628,7 +628,7 @@ mod tests {
     fn getcurrentrealtime_advances_forward() {
         let _g = crate::test_util::global_state_lock();
         let a = getcurrentrealtime();
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(10));
         let b = getcurrentrealtime();
         assert!(b >= a, "realtime went backward: {} -> {}", a, b);
         assert!(
@@ -644,7 +644,7 @@ mod tests {
     fn getcurrentsecs_advances_or_stays_equal() {
         let _g = crate::test_util::global_state_lock();
         let a = getcurrentsecs();
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(20));
         let b = getcurrentsecs();
         assert!(b >= a, "seconds went backward: {} -> {}", a, b);
     }

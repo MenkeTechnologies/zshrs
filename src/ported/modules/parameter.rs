@@ -1259,7 +1259,7 @@ fn getreswords(dis: i32) -> Vec<String> {
     let mut ret: Vec<String> = Vec::with_capacity(g.iter().count() + 1); // c:866
     for (name, node) in g.iter() {
         // c:868-871
-        let disabled = (node.node.flags & crate::ported::zsh_h::DISABLED as i32) != 0;
+        let disabled = (node.node.flags & DISABLED as i32) != 0;
         let pass = if dis != 0 { disabled } else { !disabled }; // c:870
         if pass {
             ret.push(name.clone()); // c:871 dupstring
@@ -1285,7 +1285,7 @@ pub fn reswordsgetfn(pm: *mut ParamStruct) -> Vec<String> {
 #[allow(unused_variables)]
 pub fn disreswordsgetfn(pm: *mut ParamStruct) -> Vec<String> {
     // c:885
-    getreswords(crate::ported::zsh_h::DISABLED) // c:885
+    getreswords(DISABLED) // c:885
 }
 
 /// Port of `getpatchars(int dis)` from Src/Modules/parameter.c:894.
@@ -1978,11 +1978,11 @@ pub fn scanpmjobtexts(
 pub fn pmjobstate(_jtab: *mut std::ffi::c_void, job: i32) -> String {
     // c:1340
     let curjob = *crate::ported::jobs::CURJOB
-        .get_or_init(|| std::sync::Mutex::new(-1))
+        .get_or_init(|| Mutex::new(-1))
         .lock()
         .unwrap();
     let prevjob = *crate::ported::jobs::PREVJOB
-        .get_or_init(|| std::sync::Mutex::new(-1))
+        .get_or_init(|| Mutex::new(-1))
         .lock()
         .unwrap();
     // c:1346-1351 — current/prev marker.
@@ -2872,7 +2872,7 @@ pub fn assignaliasdefs(
     if !pm.is_null() {
         let name = unsafe { (*pm).node.nam.clone() };
         let m = ALIAS_GSU_HANDLER
-            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+            .get_or_init(|| Mutex::new(HashMap::new()));
         if let Ok(mut g) = m.lock() {
             g.insert(name, handler.to_string());
         }
@@ -3350,21 +3350,21 @@ pub fn finish_(m: *const module) -> i32 {
 // ported in src/ported/params.rs and assignaliasdefs() can write
 // `pm->gsu.s = &pmralias_gsu` directly. !!!
 // =====================================================================
-static ALIAS_GSU_HANDLER: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, String>>,
-> = std::sync::OnceLock::new();
+static ALIAS_GSU_HANDLER: OnceLock<
+    Mutex<HashMap<String, String>>,
+> = OnceLock::new();
 
 // File-static globals for parameter.c port — c:38-44, src/init.c.
 // `dirstack` lives in src/exec.c globals; `funcstack` in src/init.c.
 // Mirror as Mutex<Vec<...>> for cross-thread safety.
-pub static DIRSTACK: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static DIRSTACK: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub static INCLEANUP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `funcstack` global from Src/exec.c:340 — head of the active shell
 // function call stack. Rust port mirrors the chain as Vec snapshot
 // (the C source walks `funcstack->prev` to produce array params).
-pub static FUNCSTACK: std::sync::Mutex<Vec<crate::ported::zsh_h::funcstack>> =
-    std::sync::Mutex::new(Vec::new());
+pub static FUNCSTACK: Mutex<Vec<crate::ported::zsh_h::funcstack>> =
+    Mutex::new(Vec::new());
 
 // =====================================================================
 // !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!

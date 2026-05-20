@@ -516,12 +516,12 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
             // width — a tcap-based prompt would wrap a column early.
             // Pair the wrapping with countprompt's recognition; both
             // sides now use the canonical bytes.
-            out.push(crate::ported::zsh_h::Inpar); // c:1097 Inpar marker
+            out.push(Inpar); // c:1097 Inpar marker
             out.push_str(&cap_str); // c:1099
                                     // c:1101-1106 — glitch detection (sg / ug termcap nums).
                                     // tgetnum() not yet ported as a free fn; assume 0 (no glitch)
                                     // which matches modern terminals.
-            out.push(crate::ported::zsh_h::Outpar); // c:1112 Outpar marker
+            out.push(Outpar); // c:1112 Outpar marker
         }
         _ => {
             // c:1090 default
@@ -862,11 +862,11 @@ pub fn applytextattributes(flags: i32) -> String {
 /// detects them as changed, then stash newattrs in pending.
 pub fn treplaceattrs(newattrs: zattr) {
     // c:1719
-    if newattrs == crate::ported::zsh_h::TXT_ERROR {
+    if newattrs == TXT_ERROR {
         // c:1721
         return; // c:1722
     }
-    let unknown = txtunknownattrs.load(std::sync::atomic::Ordering::SeqCst); // c:1724
+    let unknown = txtunknownattrs.load(Ordering::SeqCst); // c:1724
     if unknown != 0 {
         // c:1724
         let mut cur = current_attrs_lock().lock().expect("current_attrs poisoned");
@@ -906,7 +906,7 @@ pub static txtunknownattrs: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 pub fn tsetattrs(newattrs: zattr) -> String {
     // c:1737
     // c:1740 — txtcurrentattrs &= ~(newattrs & txtunknownattrs);
-    let unknown = txtunknownattrs.load(std::sync::atomic::Ordering::Relaxed);
+    let unknown = txtunknownattrs.load(Ordering::Relaxed);
     {
         let mut cur = current_attrs_lock().lock().expect("current_attrs poisoned");
         *cur &= !(newattrs & unknown as zattr);
@@ -1136,13 +1136,13 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
         // promptexpand) skipped the `s = 0` flag flip and counted
         // the escape bytes as visible width. Multi-line prompts
         // with `%{...%}` wrap at wrong columns.
-        if c == crate::ported::zsh_h::Inpar {
+        if c == Inpar {
             // c:1179 Inpar
             visible = false; // c:1180 s = 0
-        } else if c == crate::ported::zsh_h::Outpar {
+        } else if c == Outpar {
             // c:1181 Outpar
             visible = true; // c:1182 s = 1
-        } else if c == crate::ported::zsh_h::Nularg {
+        } else if c == Nularg {
             // c:1183 Nularg
             w += 1; // c:1184
         } else if visible {
@@ -3074,14 +3074,14 @@ mod tests {
         // Empty / unset → false (c:1944).
         let _ = crate::ported::params::setaparam(".term.extensions", vec![]);
         assert!(
-            !super::truecolor_terminal(),
+            !truecolor_terminal(),
             "empty .term.extensions must report off"
         );
 
         // truecolor present → true (c:1940-1942 with result=1).
         let _ = crate::ported::params::setaparam(".term.extensions", vec!["truecolor".to_string()]);
         assert!(
-            super::truecolor_terminal(),
+            truecolor_terminal(),
             ".term.extensions=(truecolor) must report on"
         );
 
@@ -3089,7 +3089,7 @@ mod tests {
         let _ =
             crate::ported::params::setaparam(".term.extensions", vec!["-truecolor".to_string()]);
         assert!(
-            !super::truecolor_terminal(),
+            !truecolor_terminal(),
             ".term.extensions=(-truecolor) must report off"
         );
 
@@ -3150,9 +3150,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut cur = 0usize;
         let attr = match_colour(Some(&mut cur), "red", true, 0);
-        assert_ne!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_ne!(attr, TXT_ERROR);
         assert_eq!(attr & TXTFGCOLOUR, TXTFGCOLOUR);
-        let idx = (attr >> crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT) & 0xff;
+        let idx = (attr >> TXT_ATTR_FG_COL_SHIFT) & 0xff;
         assert_eq!(idx, 1, "red index 1");
         assert_eq!(cur, 3, "consumed exactly 'red'");
     }
@@ -3192,9 +3192,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut cur = 0usize;
         let attr = match_colour(Some(&mut cur), "12", false, 0);
-        assert_ne!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_ne!(attr, TXT_ERROR);
         assert_eq!(attr & TXTBGCOLOUR, TXTBGCOLOUR);
-        let idx = (attr >> crate::ported::zsh_h::TXT_ATTR_BG_COL_SHIFT) & 0xff;
+        let idx = (attr >> TXT_ATTR_BG_COL_SHIFT) & 0xff;
         assert_eq!(idx, 12);
     }
 
@@ -3205,7 +3205,7 @@ mod tests {
         let mut cur = 0usize;
         assert_eq!(
             match_colour(Some(&mut cur), "500", true, 0),
-            crate::ported::zsh_h::TXT_ERROR
+            TXT_ERROR
         );
     }
 
@@ -3216,13 +3216,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut cur = 0usize;
         let attr = match_colour(Some(&mut cur), "#ff8040", true, 0);
-        assert_ne!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_ne!(attr, TXT_ERROR);
         assert_eq!(attr & TXTFGCOLOUR, TXTFGCOLOUR);
         assert_eq!(
-            attr & crate::ported::zsh_h::TXT_ATTR_FG_24BIT,
-            crate::ported::zsh_h::TXT_ATTR_FG_24BIT
+            attr & TXT_ATTR_FG_24BIT,
+            TXT_ATTR_FG_24BIT
         );
-        let pixel = (attr >> crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT) & 0xffffff;
+        let pixel = (attr >> TXT_ATTR_FG_COL_SHIFT) & 0xffffff;
         assert_eq!(pixel, 0xff8040);
         assert_eq!(cur, 7);
     }
@@ -3234,9 +3234,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut cur = 0usize;
         let attr = match_colour(Some(&mut cur), "#f8a", true, 0);
-        assert_ne!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_ne!(attr, TXT_ERROR);
         // #f8a → r=0xff, g=0x88, b=0xaa per the nibble-doubling C body.
-        let pixel = (attr >> crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT) & 0xffffff;
+        let pixel = (attr >> TXT_ATTR_FG_COL_SHIFT) & 0xffffff;
         // c:1977 — r = (col>>8) | ((col>>8)<<4) where col=0xf8a, col>>8=0xf → r=0xff
         // c:1978-1979 — g = ((col & 0xf0) >> 4); g |= g<<4 → g=0x88
         // c:1980-1981 — b = col & 0xf; b |= b<<4 → b=0xaa
@@ -3253,7 +3253,7 @@ mod tests {
         // enter the hex branch. If false, we fall to the named-colour
         // branch (which would also fail). For input "#x" we expect error.
         let attr = match_colour(Some(&mut cur), "#x", true, 0);
-        assert_eq!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_eq!(attr, TXT_ERROR);
     }
 
     /// `match_colour` cursor MUST NOT advance on TXT_ERROR — the C
@@ -3270,7 +3270,7 @@ mod tests {
         // a useful error.
         let mut cur = 0usize;
         let attr = match_colour(Some(&mut cur), "500extra", true, 0);
-        assert_eq!(attr, crate::ported::zsh_h::TXT_ERROR);
+        assert_eq!(attr, TXT_ERROR);
         assert_eq!(cur, 0, "cursor must stay at 0 on TXT_ERROR; got {}", cur);
     }
 
@@ -3480,10 +3480,10 @@ mod tests {
     #[test]
     fn tsetattrs_fg_color_replaces_fg_mask() {
         let _g = crate::test_util::global_state_lock();
-        let palette_idx_5: zattr = (5u64 << crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT)
-            & crate::ported::zsh_h::TXT_ATTR_FG_COL_MASK;
-        let palette_idx_2: zattr = (2u64 << crate::ported::zsh_h::TXT_ATTR_FG_COL_SHIFT)
-            & crate::ported::zsh_h::TXT_ATTR_FG_COL_MASK;
+        let palette_idx_5: zattr = (5u64 << TXT_ATTR_FG_COL_SHIFT)
+            & TXT_ATTR_FG_COL_MASK;
+        let palette_idx_2: zattr = (2u64 << TXT_ATTR_FG_COL_SHIFT)
+            & TXT_ATTR_FG_COL_MASK;
         // Pre-seed pending with idx=5
         set_pending_text_attrs(TXTFGCOLOUR | palette_idx_5);
         // tsetattrs with idx=2 should wholesale-replace, not OR

@@ -4883,9 +4883,10 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use tempfile::TempDir;
+    use crate::builtin::LASTVAL;
     use crate::options::{opt_state_set, opt_state_unset};
     use crate::utils::errflag;
-    use crate::zsh_h::{redir, REDIR_WRITE};
+    use crate::zsh_h::{redir, REDIR_CLOSE, REDIR_MERGEOUT, REDIR_WRITE};
 
     fn setup_test_dir() -> TempDir {
         let dir = TempDir::new().unwrap();

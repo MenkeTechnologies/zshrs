@@ -4036,7 +4036,7 @@ fn patmatchrange(
 
 #[cfg(test)]
 mod tests {
-    use crate::zle::comp_h::{CPAT_ANY, CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV};
+    use crate::zle::comp_h::{CMF_LEFT, CPAT_ANY, CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS};
     use crate::zsh_h::{PP_LOWER, PP_UPPER};
     use super::*;
 
