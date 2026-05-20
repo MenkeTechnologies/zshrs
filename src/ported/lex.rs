@@ -2597,6 +2597,11 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     crate::ported::hist::strinend();
     // c:1727 `inpop();`
     crate::ported::input::inpop();
+    // c:1730 — DPUTS(cmdsp, "BUG: parsestr: cmdstack not empty.")
+    crate::DPUTS!(                                                            // c:1730
+        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()),    // c:1730
+        "BUG: parsestr: cmdstack not empty."                                 // c:1730
+    );
     // c:1729 `zcontext_restore();`
     crate::ported::context::zcontext_restore();
     if parse_err {
@@ -2649,10 +2654,17 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     });
     let parse_err = dquote_parse(endchar, false).is_err();
     let toklen = LEX_LEXBUF.with_borrow(|b| b.len) as usize;
+    // c:1771 — DPUTS(toklen > l, "Bad length for parsed subscript")
+    crate::DPUTS!(toklen > l, "Bad length for parsed subscript");            // c:1771
     // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
     // `zcontext_restore();`
     crate::ported::hist::strinend();
     crate::ported::input::inpop();
+    // c:1785 — DPUTS(cmdsp, "BUG: parse_subscript: cmdstack not empty.")
+    crate::DPUTS!(                                                            // c:1785
+        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()),    // c:1785
+        "BUG: parse_subscript: cmdstack not empty."                          // c:1785
+    );
     crate::ported::context::zcontext_restore();
     if parse_err {
         return None;
@@ -2719,6 +2731,11 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     crate::ported::hist::strinend();
     // c:1815 `inpop();`
     crate::ported::input::inpop();
+    // c:1816 — DPUTS(cmdsp, "BUG: parse_subst_string: cmdstack not empty.")
+    crate::DPUTS!(                                                            // c:1816
+        crate::ported::prompt::CMDSTACK.with(|s| !s.borrow().is_empty()),    // c:1816 cmdsp != 0
+        "BUG: parse_subst_string: cmdstack not empty."                       // c:1816
+    );
     // c:1817 `zcontext_restore();`
     crate::ported::context::zcontext_restore();
     // c:1819 — `errflag = err | (errflag & ERRFLAG_INT);`. Restore the
