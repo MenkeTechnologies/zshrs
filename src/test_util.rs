@@ -31,8 +31,15 @@ fn lock() -> &'static Mutex<()> {
 /// etc.) hold this guard for their duration to serialize against
 /// other stateful tests.
 pub fn global_state_lock() -> MutexGuard<'static, ()> {
-    match lock().lock() {
+    let g = match lock().lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
-    }
+    };
+    // `assignstrvalue` (and downstream `setsparam`/`setiparam`/etc.)
+    // bails out at the top with `if unset(EXECOPT) return;`. The
+    // option default is OFF in test builds, so without enabling it
+    // here every test that calls a param-setter sees a no-op write.
+    // Real shells enable EXECOPT at init via `parseargs` (init.c:404).
+    crate::ported::options::opt_state_set("exec", true);
+    g
 }

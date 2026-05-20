@@ -21,19 +21,18 @@ use crate::ported::builtin::{zexit, BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT, 
 use crate::ported::options::optlookup;
 use crate::ported::params::locallevel as LOCALLEVEL;
 use crate::ported::exec::{TRAP_RETURN, TRAP_STATE};
-use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-use crate::zsh_h::{
-    isset, AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_INT, INTERACTIVE,
-    POSIXTRAPS, PRIVILEGED, SFC_SIGNAL, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_SIGNAL,
-    ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED,
-};
+use crate::ported::utils::{errflag, ERRFLAG_ERROR, RESETNEEDED};
+use crate::zsh_h::{isset, AFTERTRAPHOOK, BEFORETRAPHOOK, EMULATE_SH, EMULATION, ERRFLAG_INT, INTERACTIVE, POSIXTRAPS, PRIVILEGED, SFC_SIGNAL, TRAPSASYNC, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_SIGNAL, ZLE_CMD_REFRESH, ZSIG_FUNC, ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED};
 use nix::sys::signal::{sigprocmask, SigmaskHow};
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal as NixSignal};
 use nix::unistd::getpid;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-
+use crate::context::{zcontext_restore, zcontext_save};
+use crate::init::zleentry;
+use crate::jobs::gettrapnode;
+use crate::mem::{zsfree, ztrdup};
 // getsigidx / getsigname live in `jobs.rs` per C source split:
 // `getsigidx` at `Src/jobs.c:3047`, `getsigname` at `Src/jobs.c:3087`.
 // Re-export from the canonical home so callers using
@@ -890,6 +889,9 @@ pub fn removetrap(sig: i32) {
 // across all callers (instead of split between two parallel
 // SignalQueue/QUEUEING_ENABLED counters).
 pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
+use crate::r#loop::try_tryflag;
+use crate::sched::zleactive;
+use crate::utils::getshfunc;
 
 /// Remove a trap completely and reset to default disposition.
 /// Port of `removetrap(int sig)` from Src/signals.c:772.
@@ -1151,7 +1153,7 @@ pub fn handletrap(sig: i32) -> i32 {
 pub fn queue_traps(wait_cmd: i32) {
     // c:1024
     // c:1026 — both gates must be off for queueing to be enabled.
-    if !isset(crate::ported::zsh_h::TRAPSASYNC) && wait_cmd == 0 {
+    if !isset(TRAPSASYNC) && wait_cmd == 0 {
         trap_queueing_enabled.store(1, Ordering::SeqCst); // c:1031
     }
 }
@@ -1243,7 +1245,7 @@ pub fn dotrap(sig: i32) -> i32 {
     if trapped & ZSIG_FUNC != 0 {
         let signame = getsigname(sig);
         let trap_fn = format!("TRAP{}", signame);
-        if crate::ported::utils::getshfunc(&trap_fn).is_some() {
+        if getshfunc(&trap_fn).is_some() {
             // c:1252-1255 — `dotrapargs(sig, sigtrapped+sig, funcprog)`.
             //              Drives the shfunc with `$1 = sig`. With the
             //              executor not directly callable from this
@@ -1369,7 +1371,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         }
     }
 
-    crate::ported::context::zcontext_save(); // c:1126
+    zcontext_save(); // c:1126
                                              // c:1128 — `execsave()` saves trap_return/trap_state. Without a
                                              // canonical `execsave` port yet, snapshot the two atomics inline.
     let saved_trap_state = TRAP_STATE.load(Ordering::SeqCst); // c:1128 execsave
@@ -1390,13 +1392,13 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
                                                     // c:1133 incompfunc snapshot — not yet a public global; preserved
                                                     // here as a local to mirror the C save/restore.
         let old_incompfunc: i32 = 0;
-        let hn = crate::ported::jobs::gettrapnode(sig, false); // c:1134
+        let hn = gettrapnode(sig, false); // c:1134
 
         let mut args: Vec<String> = Vec::new(); // c:1136 znewlinklist
                                                 // c:1144-1149 — pick the right TRAPxxx name from the function table
                                                 // (multi-named aliases) or build the canonical TRAP<SIGNAME>.
         let name = match hn {
-            Some(n) => crate::ported::mem::ztrdup(&n), // c:1145 ztrdup(hn->nam)
+            Some(n) => ztrdup(&n), // c:1145 ztrdup(hn->nam)
             None => {
                 // c:1146
                 format!("TRAP{}", getsigname(sig)) // c:1147-1148
@@ -1423,7 +1425,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         SFCONTEXT.store(osc, Ordering::SeqCst); // c:1161
                                                 // c:1162 — restore incompfunc (no-op until ported).
         let _ = args; // c:1163 freelinklist(args)
-        crate::ported::mem::zsfree(name); // c:1164 zsfree(name)
+        zsfree(name); // c:1164 zsfree(name)
     } else {
         // c:1165
         TRAP_RETURN.store(-2, Ordering::SeqCst); // c:1166 trap_return = -2
@@ -1450,7 +1452,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     // c:1180 — `execrestore()` restores trap_return/trap_state.
     TRAP_STATE.store(saved_trap_state, Ordering::SeqCst); // c:1180
     TRAP_RETURN.store(saved_trap_return, Ordering::SeqCst); // c:1180
-    crate::ported::context::zcontext_restore(); // c:1181
+    zcontext_restore(); // c:1181
 
     if new_trap_state == TRAP_STATE_FORCE_RETURN                             // c:1183
         && !(isfunc != 0 && new_trap_return == 0)
@@ -1487,7 +1489,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
             // c:1210 — keep pre-trap lastval.
             LASTVAL.store(olastval, Ordering::SeqCst); // c:1213
         }
-        if crate::ported::r#loop::try_tryflag.load(Ordering::SeqCst) != 0 {
+        if try_tryflag.load(Ordering::SeqCst) != 0 {
             // c:1215 try_tryflag
             if traperr != 0 {
                 // c:1216
@@ -1516,10 +1518,10 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     }
 
     // c:1231 — `if (zleactive && resetneeded) zleentry(ZLE_CMD_REFRESH);`
-    if crate::ported::builtins::sched::zleactive.load(Ordering::SeqCst) != 0
-        && crate::ported::utils::RESETNEEDED.load(Ordering::SeqCst) != 0
+    if zleactive.load(Ordering::SeqCst) != 0
+        && RESETNEEDED.load(Ordering::SeqCst) != 0
     {
-        let _ = crate::ported::init::zleentry(crate::ported::zsh_h::ZLE_CMD_REFRESH);
+        let _ = zleentry(ZLE_CMD_REFRESH);
     }
 
     if *sigtr != ZSIG_IGNORED {

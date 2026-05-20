@@ -280,7 +280,7 @@ pub fn loadautofn(
             existing.body = Some(body);
             existing.filename = dir_path;
         } else {
-            tab.add(crate::ported::hashtable::ShFunc {
+            tab.add(crate::ported::zsh_h::shfunc {
                 node: crate::ported::zsh_h::hashnode {
                     next: None,
                     nam: name.clone(),

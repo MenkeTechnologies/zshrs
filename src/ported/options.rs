@@ -9,7 +9,6 @@
 //! - setopt/unsetopt builtins
 
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h as zh;
 use crate::ported::zsh_h::EMULATE_FULLY;
 use crate::ported::zsh_h::OPT_SIZE;
 use crate::ported::zsh_h::{
@@ -259,10 +258,10 @@ pub fn emulate(mode: &str, fully: bool) {
         ch
     };
     let new_emu = match ch {
-        'c' => crate::ported::zsh_h::EMULATE_CSH,
-        'k' => crate::ported::zsh_h::EMULATE_KSH,
-        's' | 'b' => crate::ported::zsh_h::EMULATE_SH,
-        _ => crate::ported::zsh_h::EMULATE_ZSH,
+        'c' => EMULATE_CSH,
+        'k' => EMULATE_KSH,
+        's' | 'b' => EMULATE_SH,
+        _ => EMULATE_ZSH,
     };
     EMULATION.store(new_emu, std::sync::atomic::Ordering::Relaxed);
     FULLY_EMULATING.store(fully, std::sync::atomic::Ordering::Relaxed);
@@ -271,7 +270,7 @@ pub fn emulate(mode: &str, fully: bool) {
     // OPT_SPECIAL-skip walk, inlined here per the C source.
     let mut emu = new_emu;
     if fully {
-        emu |= crate::ported::zsh_h::EMULATE_FULLY; // c:551
+        emu |= EMULATE_FULLY; // c:551
     }
     let mut new_opts: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
     installemulation(emu, &mut new_opts); // c:552
@@ -281,7 +280,7 @@ pub fn emulate(mode: &str, fully: bool) {
             opt_state_set(k, *v);
         }
     }
-    if new_emu == crate::ported::zsh_h::EMULATE_ZSH {
+    if new_emu == EMULATE_ZSH {
         // c:46 — `opts[optno] = defset(...)` walk for zsh defaults.
         for name in ZSH_OPTIONS_SET.iter() {
             opt_state_set(name, defset(name, EMULATE_ZSH));
@@ -312,7 +311,7 @@ pub fn emulate(mode: &str, fully: bool) {
 // ===========================================================
 
 // BEGIN moved-from-exec-rs (statics)
-use crate::zsh_h::{isset, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH};
+use crate::zsh_h::{isset, opt_name, options, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH, EXECOPT, INTERACTIVE, USEZLE};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -349,7 +348,7 @@ pub fn setoption(hn: &str, value: i32) -> i32 {
 pub fn bin_setopt(
     nam: &str,
     args: &[String], // c:580
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     isun: i32,
 ) -> i32 {
     let mut retval = 0i32;
@@ -637,7 +636,7 @@ pub fn optlookup(name: &str) -> i32 {
 /// resolves the canonical name via `optno_by_name`.
 pub fn optlookupc(c: char) -> i32 {
     // c:721
-    let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
+    let letters = if isset(optlookup("shoptionletters")) {
         KSH_LETTERS
     } else {
         zshletters
@@ -687,7 +686,6 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     }
     // c:743-755 — locked-option enforcement (force=0 path).
     if force == 0 {
-        use crate::ported::zsh_h::{EXECOPT, INTERACTIVE, SHINSTDIN, SINGLECOMMAND, USEZLE};
         // c:743 — interactive + EXECOPT off is forbidden.
         if idx == EXECOPT && value == 0 && crate::ported::zsh_h::interact() {
             return -1;
@@ -808,7 +806,7 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     if ret == 0 && (idx == MULTIBYTE || idx == BANGHIST || idx == SHINSTDIN)
     // c:879-882
     {
-        crate::ported::utils::inittyptab(); // c:883
+        inittyptab(); // c:883
     }
     ret
 }
@@ -827,7 +825,7 @@ pub fn dashgetfn() -> String {
     // the `$-` string. Match C exactly with FIRST_OPT..=LAST_OPT.
     const FIRST_OPT: u8 = b'0'; // c:289
     const LAST_OPT: u8 = b'y'; // c:290
-    let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
+    let letters = if isset(optlookup("shoptionletters")) {
         KSH_LETTERS
     } else {
         zshletters
@@ -938,7 +936,7 @@ pub fn printoptionlist() {
                                  // tracking on each option, so the alias walk emits nothing here.
     println!();
     println!("Option letters:"); // c:949
-    let letters = if crate::ported::zsh_h::isset(optlookup("shoptionletters")) {
+    let letters = if isset(optlookup("shoptionletters")) {
         KSH_LETTERS
     } else {
         zshletters
@@ -1064,8 +1062,8 @@ pub static KSH_LETTERS: &[(char, &str, bool)] = &[
 /// Port of file-static `int emulation;` at `Src/options.c:33`.
 /// Holds the current emulation bit (`EMULATE_ZSH`/`CSH`/`KSH`/`SH`,
 /// OR-able with `EMULATE_FULLY`).
-pub static EMULATION: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(crate::ported::zsh_h::EMULATE_ZSH);
+pub static EMULATION: AtomicI32 =
+    AtomicI32::new(EMULATE_ZSH);
 
 /// `EMULATE_FULLY` bit (`Src/zsh.h:2354`) tracked separately so
 /// `install_emulation_defaults` can re-OR it into the emulation
@@ -1313,12 +1311,13 @@ pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::n
 /// Re-exported here so call sites that already import from
 /// `options` don't need to change to `zsh_h`.
 pub use crate::ported::zsh_h::OPT_INVALID;
+use crate::utils::inittyptab;
 
 /// Port of `static int setemulate_emulation;` from `Src/options.c:496`.
 /// The target emulation bitmap, written by `installemulation` and
 /// read by the `setemulate` per-option callback (c:518).
-static SETEMULATE_EMULATION: std::sync::atomic::AtomicI32 = // c:496
-    std::sync::atomic::AtomicI32::new(0);
+static SETEMULATE_EMULATION: AtomicI32 = // c:496
+    AtomicI32::new(0);
 
 /// Port of `static char *setemulate_opts;` from `Src/options.c:501`.
 /// The precomputed `new_opts[]` array `setemulate` writes into. C
@@ -1564,10 +1563,10 @@ fn optns_flags(name: &str) -> u16 {
 
 /// !!! RUST-ONLY HELPER — see WARNING block above.
 /// Returns options that are on by default for zsh emulation.
-pub(crate) fn default_on_options() -> std::collections::HashSet<&'static str> {
+pub(crate) fn default_on_options() -> HashSet<&'static str> {
     // Default-on options have OPT_ZSH bit set in their flags
-    let zsh_emu = crate::ported::zsh_h::EMULATE_ZSH as u16;
-    let mut set = std::collections::HashSet::new();
+    let zsh_emu = EMULATE_ZSH as u16;
+    let mut set = HashSet::new();
     for name in ZSH_OPTIONS_SET.iter() {
         let flags = optns_flags(name);
         if (flags & zsh_emu) != 0 && (flags & OPT_SPECIAL) == 0 {
@@ -1600,7 +1599,7 @@ fn setemulate_opts_lock() -> &'static std::sync::Mutex<std::collections::HashMap
 /// serves both `opt_name(idx) → name` and the reverse via walk.
 fn optno_by_name(name: &str) -> Option<i32> {
     for idx in 1..OPT_SIZE {
-        let n = zh::opt_name(idx);
+        let n = opt_name(idx);
         if !n.is_empty() && n == name {
             return Some(idx);
         }
@@ -1799,14 +1798,14 @@ mod tests {
         emulate("sh", true);
         assert_eq!(
             EMULATION.load(std::sync::atomic::Ordering::Relaxed),
-            crate::ported::zsh_h::EMULATE_SH
+            EMULATE_SH
         );
         assert!(isset(optlookup("shwordsplit")));
 
         emulate("zsh", true);
         assert_eq!(
             EMULATION.load(std::sync::atomic::Ordering::Relaxed),
-            crate::ported::zsh_h::EMULATE_ZSH
+            EMULATE_ZSH
         );
     }
 

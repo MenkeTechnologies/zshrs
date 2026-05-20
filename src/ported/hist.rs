@@ -8,11 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicUsize
 use std::sync::Mutex;
 
 use crate::ported::zsh_h::histent;
-use crate::zsh_h::{
-    isset, BANGHIST, HFILE_FAST, HFILE_USE_OPTIONS, HISTIGNOREALLDUPS, HISTIGNOREDUPS,
-    HISTIGNORESPACE, HISTNOFUNCTIONS, HISTNOSTORE, HISTREDUCEBLANKS, INCAPPENDHISTORY,
-    INCAPPENDHISTORYTIME, INTERACTIVE, SHAREHISTORY, SHINSTDIN,
-};
+use crate::zsh_h::{hist_stack, isset, BANGHIST, ERRFLAG_INT, HFILE_FAST, HFILE_USE_OPTIONS, HISTIGNOREALLDUPS, HISTIGNOREDUPS, HISTIGNORESPACE, HISTNOFUNCTIONS, HISTNOSTORE, HISTREDUCEBLANKS, INCAPPENDHISTORY, INCAPPENDHISTORYTIME, INTERACTIVE, SHAREHISTORY, SHINSTDIN};
 pub use crate::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER};
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
@@ -40,6 +36,8 @@ use crate::ported::zsh_h::{
 };
 use crate::ported::ztype_h::itok;
 use std::sync::atomic::Ordering::SeqCst;
+use crate::glob::remnulargs;
+use crate::lex::{parse_subst_string, untokenize, ztokens};
 
 // Bits of histactive variable                                               // c:137
 /// Port of `HA_ACTIVE` from Src/hist.c:138. History mechanism is active.
@@ -72,7 +70,7 @@ static histfile_linect: AtomicI64 = AtomicI64::new(0); // c:242
 
 /// Port of `void hist_context_save(struct hist_stack *hs, int toplevel)`
 /// from Src/hist.c:248.
-pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i32) {
+pub fn hist_context_save(hs: &mut hist_stack, toplevel: i32) {
     // c:248
     if toplevel != 0 {
         // c:248
@@ -106,7 +104,7 @@ pub fn hist_context_save(hs: &mut crate::ported::zsh_h::hist_stack, toplevel: i3
 
 /// Port of `void hist_context_restore(const struct hist_stack *hs, int toplevel)`
 /// from Src/hist.c:296.
-pub fn hist_context_restore(hs: &crate::ported::zsh_h::hist_stack, toplevel: i32) {
+pub fn hist_context_restore(hs: &hist_stack, toplevel: i32) {
     // c:296
     if toplevel != 0 {
         // c:296
@@ -327,7 +325,7 @@ pub fn iaddtoline(c: i32) {
         // Defensively guard against an out-of-range token byte
         // (the closed range Pound..=Nularg is 0x84..=0xa1, 30
         // entries; ztokens covers them).
-        crate::ported::lex::ztokens
+        ztokens
             .bytes()
             .nth(idx)
             .unwrap_or(c as u8)
@@ -627,7 +625,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
         buf = String::with_capacity(buflen); // c:664 zhalloc
 
         // c:666-727 — read event-spec into buf.
-        crate::ported::signals::queue_signals(); // c:668
+        queue_signals(); // c:668
         if c == b'?' as i32 {
             // c:669
             loop {
@@ -1076,14 +1074,14 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     // see params.rs:1310. Tokenize-strip via parse_subst_string,
                     // then remnulargs + untokenize.
                     let oef = errflag.load(SeqCst);
-                    let _ = crate::ported::lex::parse_subst_string(&sline); // c:921
+                    let _ = parse_subst_string(&sline); // c:921
                     errflag.store(
-                        oef | (errflag.load(SeqCst) & crate::ported::zsh_h::ERRFLAG_INT),
+                        oef | (errflag.load(SeqCst) & ERRFLAG_INT),
                         SeqCst,
                     ); // c:923
                     let mut s = sline.clone();
-                    crate::ported::glob::remnulargs(&mut s); // c:924
-                    sline = crate::ported::lex::untokenize(&s); // c:925
+                    remnulargs(&mut s); // c:924
+                    sline = untokenize(&s); // c:925
                 }
                 b'x' => {
                     // c:928
@@ -4353,6 +4351,7 @@ pub use crate::ported::zsh_h::{HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD, H
 // flag-value drift fix and the BINF/CONDF/MFF duplicates in
 // module.rs — single source of truth for C-pinned bit values.
 pub use crate::ported::zsh_h::{HISTFLAG_DONE, HISTFLAG_NOEXEC, HISTFLAG_RECALL, HISTFLAG_SETTY};
+use crate::signals::queue_signals;
 
 /// Direct port of C's `getsparam("HISTFILE")` lookup used inside
 /// `lockhistfile()` (c:3188) and `readhistfile()` / `savehistfile()`
