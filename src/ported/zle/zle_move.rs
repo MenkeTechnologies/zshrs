@@ -10,7 +10,8 @@ use std::sync::atomic::Ordering;
 use crate::ported::zle::zle_h::{MOD_CHAR, MOD_LINE};
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_params::*,
+    zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Move cursor to the start of the current logical line.
 /// Port of `findbol()` from Src/Zle/zle_utils.c:1158 — same scan,
@@ -20,10 +21,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*,
-    zle_vi::*, zle_word::*,
-};
 
 /// Port of `alignmultiwordleft(int *pos, int setpos)` from Src/Zle/zle_move.c:49.
 ///

@@ -28,17 +28,14 @@ use crate::ported::zsh_h::ERRFLAG_INT;
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_vi::*, zle_word::*,
 };
 /// Insert string at cursor position
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_vi::*, zle_word::*,
-};
 use crate::zle::zle_main::{
     history, vibuf, CURCHANGE, KILLRING, KILLRINGMAX, LASTCS, LASTLINE, LASTLL, MARK,
     UNDO_CHANGENO, UNDO_LIMITNO, UNDO_STACK, VISTARTCHANGE, ZLECS, ZLELINE, ZLELL,

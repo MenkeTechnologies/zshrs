@@ -32,7 +32,10 @@ use crate::ported::zsh_h::{
     INCAPPENDHISTORYTIME, INP_ALIAS, INP_HIST, INTERACTIVE, SHAREHISTORY, SHINSTDIN,
 };
 use crate::ported::ztype_h::itok;
-pub use crate::ported::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER};
+pub use crate::ported::zsh_h::{
+    CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER, HISTFLAG_DONE, HISTFLAG_NOEXEC,
+    HISTFLAG_RECALL, HISTFLAG_SETTY, HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD, HIST_TMPSTORE,
+};
 
 // Bits of histactive variable                                               // c:137
 /// Port of `HA_ACTIVE` from Src/hist.c:138. History mechanism is active.
@@ -4325,7 +4328,6 @@ static strin: AtomicI32 = AtomicI32::new(0);
 // or writing the wrong bit; history-file write paths would skip
 // entries the user wanted preserved, and HIST_FOREIGN/HIST_NOWRITE
 // gates fired against unrelated bit patterns.
-pub use crate::ported::zsh_h::{HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD, HIST_TMPSTORE};
 
 // =========================================================================
 // CASMOD_ enum (port of zsh.h:3122-3127)
@@ -4345,7 +4347,6 @@ pub use crate::ported::zsh_h::{HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD, H
 // This is the same consolidation pattern applied to the prior HIST_*
 // flag-value drift fix and the BINF/CONDF/MFF duplicates in
 // module.rs — single source of truth for C-pinned bit values.
-pub use crate::ported::zsh_h::{HISTFLAG_DONE, HISTFLAG_NOEXEC, HISTFLAG_RECALL, HISTFLAG_SETTY};
 use crate::signals::queue_signals;
 
 /// Direct port of C's `getsparam("HISTFILE")` lookup used inside

@@ -20,8 +20,7 @@
 //! Rust storage is in `params.rs`). We define those structs here as
 //! the canonical port of zsh.h; consumers `use` them from here.
 
-use std::sync::atomic::AtomicI32;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 // =============================================================================
 // 1. Integer type aliases (zsh.h:30-92).

@@ -9,7 +9,9 @@
 
 use crate::ported::params::{assignaparam, getaparam, setaparam, setsparam, unsetparam};
 use crate::ported::utils::{errflag, zwarnnam};
-use crate::ported::zsh_h::{OPT_ISSET, hashnode, options, param, Param, Patprog, ERRFLAG_INT, PM_ARRAY};
+use crate::ported::zsh_h::{
+    ERRFLAG_INT, HashNode, OPT_ISSET, PM_ARRAY, Param, Patprog, hashnode, module, options, param,
+};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::Ordering;
@@ -774,7 +776,6 @@ pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {
 // static struct features module_features                            c:2143
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 /// Port of `testforstyle(char *ctxt, char *style)` from Src/Modules/zutil.c:465.
 /// C: `static int testforstyle(char *ctxt, char *style)` — non-empty
@@ -1425,7 +1426,6 @@ pub fn rparseclo(result: &mut RParseResult) -> i32 {
 // yet covered above. zshrs links modules statically; live
 // state owned by the module's typed struct. Name-parity shims.
 
-use crate::ported::zsh_h::HashNode;
 
 /// Port of `prependactions(LinkList acts, LinkList branches)` from `Src/Modules/zutil.c:1269`.
 /// For each branch, pushnode (insert at HEAD) each action from `acts`

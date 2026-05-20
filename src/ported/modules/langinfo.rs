@@ -13,6 +13,10 @@
 /// integer keys. Used by `liitem()` for name→item lookup and by
 /// `scanlanginfo()` to enumerate every entry.
 use std::ffi::CStr;
+use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::features;
+use crate::utils::unmetafy;
+use crate::zsh_h::module;
 
 /// Port of `liitem(const char *name)` from `Src/Modules/langinfo.c:379`. Walks the
 /// parallel `nl_names[]` / `nl_vals[]` arrays looking for `name`;
@@ -116,7 +120,7 @@ pub fn getlanginfo(name: &str) -> Option<String> {
     // c:396
     // c:403-404 — `nameu = dupstring(name); unmetafy(nameu, &len);`
     let mut buf = name.as_bytes().to_vec(); // c:403
-    crate::ported::utils::unmetafy(&mut buf); // c:404
+    unmetafy(&mut buf); // c:404
     let nameu = std::str::from_utf8(&buf).ok()?;
     // c:411-415 — `if (name) elem = liitem(name); else elem = NULL;`
     let elem = liitem(nameu)?; // c:412
@@ -185,8 +189,6 @@ pub fn setup_(m: *const module) -> i32 {
 // static struct paramdef partab[]                                   c:455
 // static struct features module_features                            c:464
 // =====================================================================
-
-use crate::ported::zsh_h::module;
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/langinfo.c:479`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -282,9 +284,8 @@ pub static NL_NAMES: &[&str] = &[
     "ALT_DIGITS",
 ];
 
-use std::sync::{Mutex, OnceLock};
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -295,7 +296,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["p:langinfo".to_string()]
 }
 
@@ -305,7 +306,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -318,7 +319,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -348,9 +349,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 0,
             cd_list: None,

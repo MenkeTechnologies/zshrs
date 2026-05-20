@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use once_cell::sync::Lazy;
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{unmeta, zwarnnam};
+use crate::zsh_h::{module, options, OPT_ARG, OPT_ISSET, PM_DONTIMPORT_SUID, PM_REMOVABLE, PM_SINGLE};
 
 /// Port of `PM_UPTODATE` from `Src/Modules/db_gdbm.c:38`.
 /// `#define PM_UPTODATE PM_DONTIMPORT_SUID` — re-uses a Param flag bit
@@ -1228,6 +1229,7 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 
 #[cfg(test)]
 mod tests {
+    use crate::zsh_h::{options, PM_DONTIMPORT_SUID};
     use super::*;
 
     /// Port of `bin_ztie(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/db_gdbm.c:109`.

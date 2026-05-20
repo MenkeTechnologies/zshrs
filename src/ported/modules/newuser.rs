@@ -6,11 +6,14 @@
 //! kick off the new-user install wizard.
 
 use std::path::PathBuf;
+use crate::ported::init::source;
+use crate::ported::params::getsparam;
+use crate::ported::zsh_h::{module, EMULATE_ZSH, EMULATION};
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/newuser.c:37`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
-pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn setup_(m: *const module) -> i32 {
     // c:37
     0 // c:44
 }
@@ -20,7 +23,7 @@ pub fn setup_(m: *const crate::ported::zsh_h::module) -> i32 {
 /// (no builtins, no ZLE widgets, no params); the non-zero return
 /// signals "no feature table" to the loader.
 #[allow(unused_variables)]
-pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<String>) -> i32 {
+pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
     // c:44
     1 // c:51
 }
@@ -28,7 +31,7 @@ pub fn features_(m: *const crate::ported::zsh_h::module, features: &mut Vec<Stri
 /// Port of `enables_(UNUSED(Module m), UNUSED(int **enables))` from `Src/Modules/newuser.c:51`. C body is
 /// `return 0;` — no per-feature enables to manage.
 #[allow(unused_variables)]
-pub fn enables_(m: *const crate::ported::zsh_h::module, enables: &mut Option<Vec<i32>>) -> i32 {
+pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:51
     0 // c:58
 }
@@ -86,10 +89,10 @@ pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {
 /// }
 /// ```
 #[allow(unused_variables)]
-pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn boot_(m: *const module) -> i32 {
     // c:4
     // c:70 — `const char *dotdir = getsparam_u("ZDOTDIR");`. paramtab read.
-    let mut dotdir: String = crate::ported::params::getsparam("ZDOTDIR").unwrap_or_default();
+    let mut dotdir: String = getsparam("ZDOTDIR").unwrap_or_default();
 
     // c:71-78 — `const char *spaths[] = { SITESCRIPT_DIR, SCRIPT_DIR, 0 };`
     // The C source resolves these from configure-time defines; the Rust
@@ -103,9 +106,9 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {
         .collect();
 
     // c:81 — `if (!EMULATION(EMULATE_ZSH)) return 0;`
-    if !crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_ZSH) {
+    if !EMULATION(EMULATE_ZSH) {
         return 0; // c:82
-    }
+    } else {}
 
     // c:84-88 — `if (!dotdir) { dotdir = home; if (!dotdir) return 0; }`.
     //
@@ -114,7 +117,7 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {
     // which diverges when the shell has updated HOME via paramtab
     // but hasn't yet exported the change. Route through getsparam.
     if dotdir.is_empty() {
-        dotdir = crate::ported::params::getsparam("HOME") // c:85
+        dotdir = getsparam("HOME") // c:85
             .unwrap_or_default();
         if dotdir.is_empty() {
             return 0; // c:87
@@ -135,7 +138,7 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {
     for sp in &spaths {
         // c:96
         let buf = format!("{}/newuser", sp); // c:98
-        if crate::ported::init::source(&buf) != SOURCE_NOT_FOUND {
+        if source(&buf) != SOURCE_NOT_FOUND {
             // c:100
             break; // c:101
         }
@@ -147,7 +150,7 @@ pub fn boot_(m: *const crate::ported::zsh_h::module) -> i32 {
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/newuser.c:109`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
-pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn cleanup_(m: *const module) -> i32 {
     // c:109
     0 // c:116
 }
@@ -155,7 +158,7 @@ pub fn cleanup_(m: *const crate::ported::zsh_h::module) -> i32 {
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/newuser.c:116`. C body is
 /// `return 0;` (UNUSED `Module m`).
 #[allow(unused_variables)]
-pub fn finish_(m: *const crate::ported::zsh_h::module) -> i32 {
+pub fn finish_(m: *const module) -> i32 {
     // c:116
     0 // c:116
 }

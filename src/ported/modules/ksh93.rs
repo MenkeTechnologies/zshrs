@@ -29,13 +29,10 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::ported::builtins::sched::zleactive;
-use crate::ported::params::{createparam, paramtab, setloopvar};
+use crate::ported::params::{createparam, paramtab, setiparam, setloopvar, setsparam};
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::string::{dupstring, ztrdup};
-use crate::ported::zsh_h::{
-    eprog, funcwrap, isset, module, param, EMULATE_KSH, EMULATION, PARAMDEF, PM_LOCAL, PM_NAMEREF,
-    PM_READONLY, PM_UNSET,
-};
+use crate::ported::zsh_h::{eprog, features, funcstack, funcwrap, isset, module, param, paramdef, EMULATE_KSH, EMULATION, PARAMDEF, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET};
 use crate::ported::ztype_h::INAMESPC;
 
 // =====================================================================
@@ -213,7 +210,7 @@ pub static sh_edmode: Mutex<[u8; 2]> = Mutex::new([0, 0]); // c:109
 pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_char) -> i32 {
     // c:143
     // c:143 — `Funcstack f;`
-    let mut f: *const crate::ported::zsh_h::funcstack;
+    let mut f: *const funcstack;
     // c:146 — `Param pm;`
     let mut pm: *mut param;
     // c:147 — `zlong num = funcstack->prev ? getiparam(".sh.level") : 0;`
@@ -240,7 +237,7 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
     if num == 0 {
         // c:152
         // c:153 — for (f = funcstack; f; f = f->prev, num++);
-        f = (*funcstack.lock().unwrap()) as *const crate::ported::zsh_h::funcstack;
+        f = (*funcstack.lock().unwrap()) as *const funcstack;
         while !f.is_null() {
             // f = f->prev — stub: no real chain, exit immediately.
             f = std::ptr::null_mut();
@@ -322,7 +319,7 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
                     .into_owned()
             }
         };
-        crate::ported::params::setsparam(
+        setsparam(
             ".sh.fun", // c:181
             &ztrdup(&name_str),
         );
@@ -340,7 +337,7 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
         unsafe {
             (*pm).level = locallevel.load(Ordering::Relaxed);
         } // c:185
-        crate::ported::params::setiparam(".sh.level", num); // c:186
+        setiparam(".sh.level", num); // c:186
     }
     if zleactive.load(Ordering::Relaxed) != 0 {
         // c:188
@@ -541,7 +538,7 @@ pub fn cleanup_(m: *const module) -> i32 {
 
     // c:116-131 — `static struct paramdef partab[]` inlined here
     // because Rust statics can't hold String-typed paramdef.name.
-    let partab: [crate::ported::zsh_h::paramdef; 9] = [
+    let partab: [paramdef; 9] = [
         PARAMDEF(".sh.edchar", (PM_SCALAR | PM_SPECIAL) as i32, 0, 0), // c:117
         PARAMDEF(
             ".sh.edmode",
@@ -601,14 +598,14 @@ pub fn finish_(m: *const module) -> i32 {
     0
 }
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local descriptor stub mirroring the C bintab + partab.
 // WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec![
         "b:nameref".to_string(),
         "p:.sh.edchar".to_string(),
@@ -629,7 +626,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -638,16 +635,12 @@ fn handlefeatures(
     0
 }
 
-// PM_SCALAR / PM_ARRAY / PM_SPECIAL — referenced by PARTAB above.
-const PM_SCALAR: u32 = crate::ported::zsh_h::PM_SCALAR;
-const PM_ARRAY: u32 = crate::ported::zsh_h::PM_ARRAY;
-const PM_SPECIAL: u32 = crate::ported::zsh_h::PM_SPECIAL;
 
 // WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -667,6 +660,7 @@ pub use crate::ported::options::emulation;
 // on return. `ksh93_wrapper` increments before `createparam()` and
 // decrements after.
 pub use crate::ported::params::locallevel;
+use crate::zsh_h::{PM_ARRAY, PM_SCALAR, PM_SPECIAL};
 
 /// `curkeymapname` — `char *` global from `Src/Zle/zle_keymap.c`,
 /// declared `extern` at c:189. Holds the active keymap name.
@@ -720,9 +714,9 @@ const _: AtomicI64 = AtomicI64::new(0);
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Port of `ksh93_wrapper(Eprog prog, FuncWrap w, char *name)` from `Src/Modules/ksh93.c:143`.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 1, // bintab: nameref (ksh93.c)
             cd_list: None,

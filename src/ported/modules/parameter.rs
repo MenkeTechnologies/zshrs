@@ -25,14 +25,14 @@ use crate::ported::module::MODULESTAB;
 use crate::ported::options::{dosetopt, opt_state_set, optlookup};
 use crate::ported::params::{deleteparamtable, getsparam, getstrvalue, realparamtab};
 use crate::ported::utils::zwarn;
-use crate::ported::zsh_h::{hashtable, opt_name, param, value, INTERACTIVE, ND_USERNAME,
-    hashnode, nameddir, param as ParamStruct, HashNode, HashTable, Param, ALIAS_GLOBAL,
-    ALIAS_SUFFIX, DISABLED,
-    PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL,
-    PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SCALAR,
-    PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER,
-    FS_EVAL, FS_SOURCE, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE,
-    STAT_NOPRINT, STAT_STOPPED,
+use crate::ported::zsh_h::{
+    ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, FS_EVAL, FS_SOURCE, HashNode, HashTable, INTERACTIVE,
+    ND_USERNAME, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
+    PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z,
+    PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, Param,
+    SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE, STAT_NOPRINT,
+    STAT_STOPPED, ScanFunc, hashnode, hashtable, module, nameddir, opt_name, param,
+    param as ParamStruct, value,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -239,7 +239,6 @@ mod paramtypestr_tests {
 // static struct features module_features                            c:2300 (parameter.c)
 // =====================================================================
 
-use crate::ported::zsh_h::{ScanFunc, module};
 
 /// Port of `scanpmparameters(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Modules/parameter.c:124.
 ///

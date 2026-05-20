@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use super::zle_h::{REFRESH_ELEMENT, REFRESH_STRING};
 use crate::ported::init::{tclen, SHTTY};
 use crate::ported::utils::{adjustcolumns, adjustlines, write_loop};
-use crate::ported::zsh_h::{TCCLEAREOL, TXT_ERROR};
+use crate::ported::zsh_h::{TCCLEAREOL, TXT_ERROR, TXT_MULTIWORD_MASK};
 
 /// Port of `ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)` from `Src/Zle/zle_refresh.c:86`.
 /// ```c
@@ -313,11 +313,11 @@ impl RefreshState {
         }
     }
 }
-use crate::ported::zsh_h::TXT_MULTIWORD_MASK;
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Main refresh function — redraws the line.
 /// Port of `zrefresh()` from Src/Zle/zle_refresh.c. The C source paints
@@ -333,10 +333,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_tricky::*, zle_utils::*, zle_vi::*,
-    zle_word::*,
-};
 
 /// Port of `ZR_END_ELLIPSIS_SIZE` macro from `zle_refresh.c:284`.
 pub const ZR_END_ELLIPSIS_SIZE: usize = ZR_END_ELLIPSIS.len(); // c:284

@@ -30,17 +30,14 @@ use crate::ported::zsh_h::{isset, HISTBEEP, HISTIGNOREDUPS};
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*,
+    deltochar::*, textobjects::*, zle_h::*, zle_main::*, zle_misc::*, zle_move::*, zle_params::*,
+    zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `int isearch_active` from `Src/Zle/zle_hist.c:1078`.
 /// Non-zero while the user is inside an incremental-search session.
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_h::*, zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 /// Snapshot the current line into the history entry at `cursor`,
 /// preserving the original on first edit.

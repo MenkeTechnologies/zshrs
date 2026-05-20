@@ -3,9 +3,14 @@
 //! Provides PCRE regex matching through pcre_compile, pcre_match, pcre_study builtins.
 //! Uses the Rust `regex` crate which provides Perl-compatible regex syntax.
 
-use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG, OPT_ISSET, module, options};
+use crate::ported::utils::{metafy, zstrtol, zwarnnam};
+use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG, OPT_ISSET, module, options, isset, MB_CHARLEN, KSHARRAYS};
 use regex::Regex;
+
+use std::sync::{Mutex, OnceLock};
+use crate::params::setsparam;
+use crate::ported::options::optlookup;
+use crate::ported::params::{setaparam, sethparam, setiparam};
 
 /// Port of `CPCRE_PLAIN` from `Src/Modules/pcre.c:34`. Default
 /// pattern-flavour id passed to `cond_pcre_match` (the `-pcre-match`
@@ -50,7 +55,7 @@ pub fn zpcre_utf8_enabled() -> i32 {
     // c:45-67 — under MULTIBYTE_SUPPORT && HAVE_NL_LANGINFO && CODESET.
     // Static-link path: zshrs hosts on macOS/Linux where PCRE2 ships with
     // Unicode by default; check MULTIBYTE option + LANG/LC_ALL CODESET.
-    let multibyte = crate::ported::zsh_h::isset(crate::ported::options::optlookup("multibyte")); // c:53
+    let multibyte = isset(optlookup("multibyte")); // c:53
     if !multibyte {
         return 0; // c:54
     }
@@ -256,7 +261,6 @@ pub fn zpcre_get_substrings(
     matchedinarr: i32,
     want_begin_end: i32,
 ) -> i32 {
-    use crate::ported::params::setsparam;
 
     let mut capture_start: i32 = 1; // c:164
     if matchedinarr != 0 {
@@ -286,7 +290,7 @@ pub fn zpcre_get_substrings(
             // c:188
             let (s, e) = ovec[0]; // c:189 arg + ovec[0]..ovec[1]
             let slice = arg.get(s..e).unwrap_or("");
-            let match_all = crate::ported::utils::metafy(slice); // c:189
+            let match_all = metafy(slice); // c:189
             setsparam(mv, &match_all); // c:190
         }
 
@@ -304,14 +308,14 @@ pub fn zpcre_get_substrings(
                     let vec_off = (2 * i) as usize; // c:208
                     if let Some(&(s, e)) = ovec.get(vec_off / 2) {
                         let slice = arg.get(s..e).unwrap_or("");
-                        matches.push(crate::ported::utils::metafy(slice)); // c:209
+                        matches.push(metafy(slice)); // c:209
                     } else {
                         matches.push(String::new());
                     }
                     i += 1;
                 }
                 // c:212 — `setaparam(substravar, matches);`
-                crate::ported::params::setaparam(sv, matches); // c:212
+                setaparam(sv, matches); // c:212
             }
         }
 
@@ -331,7 +335,7 @@ pub fn zpcre_get_substrings(
                 );
                 // For each named entry: push ztrdup(name), push metafy(value).
                 // (Skipped — ncount == 0 in the stub backend.)
-                crate::ported::params::sethparam(na, hash); // c:230
+                sethparam(na, hash); // c:230
             }
         }
 
@@ -350,14 +354,14 @@ pub fn zpcre_get_substrings(
                         .as_bytes()
                         .get(ptr_pos..ptr_pos + leftlen as usize)
                         .unwrap_or(&[]);
-                    crate::ported::zsh_h::MB_CHARLEN(slice, slice.len()) // c:248 MB_CHARLEN
+                    MB_CHARLEN(slice, slice.len()) // c:248 MB_CHARLEN
                 };
                 ptr_pos += clen; // c:249
                 leftlen -= clen as i32; // c:250
             }
             // c:252 — `setiparam("MBEGIN", offs + !isset(KSHARRAYS));`
-            let ksharrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) as i64;
-            crate::ported::params::setiparam("MBEGIN", offs + 1 - ksharrays); // c:252
+            let ksharrays = isset(KSHARRAYS) as i64;
+            setiparam("MBEGIN", offs + 1 - ksharrays); // c:252
 
             // c:254-260 — add char count over the match itself.
             let mut leftlen = (ovec[0].1 - ovec[0].0) as i32; // c:254
@@ -369,12 +373,12 @@ pub fn zpcre_get_substrings(
                         .as_bytes()
                         .get(ptr_pos..ptr_pos + leftlen as usize)
                         .unwrap_or(&[]);
-                    crate::ported::zsh_h::MB_CHARLEN(slice, slice.len()) // c:257 MB_CHARLEN
+                    MB_CHARLEN(slice, slice.len()) // c:257 MB_CHARLEN
                 };
                 ptr_pos += clen; // c:258
                 leftlen -= clen as i32; // c:259
             }
-            crate::ported::params::setiparam(
+            setiparam(
                 // c:261 MEND
                 "MEND",
                 offs - ksharrays,
@@ -405,7 +409,7 @@ pub fn zpcre_get_substrings(
                                 .as_bytes()
                                 .get(ptr_pos..ptr_pos + leftlen as usize)
                                 .unwrap_or(&[]);
-                            crate::ported::zsh_h::MB_CHARLEN(slice, slice.len())
+                            MB_CHARLEN(slice, slice.len())
                             // c:282
                         };
                         ptr_pos += clen; // c:283
@@ -423,7 +427,7 @@ pub fn zpcre_get_substrings(
                                 .as_bytes()
                                 .get(ptr_pos..ptr_pos + leftlen as usize)
                                 .unwrap_or(&[]);
-                            crate::ported::zsh_h::MB_CHARLEN(slice, slice.len())
+                            MB_CHARLEN(slice, slice.len())
                             // c:292
                         };
                         ptr_pos += clen; // c:293
@@ -432,8 +436,8 @@ pub fn zpcre_get_substrings(
                     let buf = format!("{}", offs - ksharrays); // c:296
                     mend.push(buf); // c:297
                 }
-                crate::ported::params::setaparam("mbegin", mbegin); // c:301
-                crate::ported::params::setaparam("mend", mend); // c:302
+                setaparam("mbegin", mbegin); // c:301
+                setaparam("mend", mend); // c:302
             }
         }
     }
@@ -476,11 +480,11 @@ pub fn zpcre_get_substrings(
 pub fn getposint(instr: &str, nam: &str) -> i32 {
     // c:312
     // c:312 — `ret = (int)zstrtol(instr, &eptr, 10);`
-    let (ret, eptr) = crate::ported::utils::zstrtol(instr, 10);
+    let (ret, eptr) = zstrtol(instr, 10);
     let ret = ret as i32;
     // c:317 — `if (*eptr || ret < 0)` — trailing chars OR negative.
     if !eptr.is_empty() || ret < 0 {
-        crate::ported::utils::zwarnnam(nam, &format!("integer expected: {}", instr)); // c:319
+        zwarnnam(nam, &format!("integer expected: {}", instr)); // c:319
         return -1; // c:321
     }
     ret // c:325
@@ -683,8 +687,6 @@ pub fn finish_(m: *const module) -> i32 {
     //                    builtins unregister via cleanup_'s setfeatureenables.
     0
 }
-
-use std::sync::{Mutex, OnceLock};
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

@@ -34,8 +34,7 @@ use std::sync::Mutex;
 
 use crate::ported::glob::{remnulargs, tokenize};
 use crate::ported::params::{createparam, paramtab};
-use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::pattern::range_type;
+use crate::ported::pattern::{patcompile, pattry, range_type};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zle::comp_h::{
     Cmatcher, Cpattern, CAF_ALL, CAF_ARRAYS, CAF_KEYS, CAF_MATCH, CAF_MATSORT, CAF_NOSORT,
@@ -43,7 +42,11 @@ use crate::ported::zle::comp_h::{
     CMF_ISPAR, CMF_LEFT, CMF_LINE, CMF_NOLIST, CMF_REMOVE, CMF_RIGHT, CPAT_ANY, CPAT_CCLASS,
     CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
 };
-use crate::ported::zle::{compcore, compresult};
+use crate::ported::zle::{
+    compcore, compresult, deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*,
+    zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*,
+    zle_word::*,
+};
 use crate::ported::zsh_h::{
     module, options, param, PAT_HEAPDUP, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY,
     PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE, PM_UNSET, PP_UNKWN,
@@ -57,9 +60,6 @@ use crate::ported::zsh_h::{
 // =====================================================================
 
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
-};
 /// Direct port of `freecmlist(Cmlist l)` from `Src/Zle/complete.c:98`.
 /// C body (c:101-110): walk the linked list freeing each Cmatcher
 /// via `freecmatcher()` and the per-entry `str` via `zsfree()`.
@@ -69,10 +69,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 pub fn freecmlist(l: Option<Box<crate::ported::zle::comp_h::Cmlist>>) {
     // c:98

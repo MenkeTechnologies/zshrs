@@ -7,7 +7,8 @@ use super::zle_thingy::Thingy;
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Parse a bindkey-style key sequence string into raw bytes.
 ///
@@ -31,10 +32,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 pub fn getkeystring(s: &str) -> Vec<u8> {
     // c:utils.c:6915

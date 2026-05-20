@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use crate::parse;
+use crate::{DPUTS, lex, parse};
 use crate::ported::linklist::LinkList;
 use crate::ported::mem::{queue_signals, unqueue_signals};
 use crate::ported::utils::{has_token, quotestring};
@@ -27,7 +27,6 @@ use crate::ported::zsh_h::{
     WC_TYPESET, WC_TYPESET_ARGC, WC_WHILE, WC_WHILE_TYPE, WC_WHILE_UNTIL, Z_ASYNC, Z_DISOWN, Z_END,
     Z_SIMPLE,
 };
-use crate::{lex, DPUTS};
 
 /// Port of `is_cond_binary_op(const char *str)` from `Src/text.c:58`.
 pub fn is_cond_binary_op(str: &str) -> i32 {

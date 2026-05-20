@@ -2,12 +2,11 @@
 //!
 //! Provides zpty builtin for running sub-processes with pseudo terminals.
 
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET};
+use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::io::{self, Read, Write};
-use std::os::unix::io::IntoRawFd;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{IntoRawFd, RawFd};
 use std::process::Command;
 
 /// Port of `READ_MAX` from `Src/Modules/zpty.c:44`. Maximum bytes
@@ -178,9 +177,7 @@ pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'
 // static struct features module_features                            c:884 (zpty.c)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Open a pseudo-terminal master/slave pair.
 /// Port of `get_pty(int master, int *retfd)` from Src/Modules/zpty.c:191 (or :255 for

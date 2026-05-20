@@ -139,7 +139,7 @@ pub static locallevel: std::sync::atomic::AtomicI32 = // c:54
 // C; do not reintroduce one.
 // ---------------------------------------------------------------------------
 
-pub use crate::ported::zsh_h::param;
+pub use crate::ported::zsh_h::{TERM_UNKNOWN, param};
 
 /// Port of `LCIPDEF(name)` from `Src/params.c:324` —
 /// `IPDEF2(name, lc_blah_gsu, PM_UNSET)`.
@@ -5984,7 +5984,6 @@ pub static TERMFLAGS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI3
 // while the prompt.rs guard at line 441 imported the correct
 // (0x02) value from zsh_h.rs — so the two paths disagreed silently
 // about which bit means "unknown terminal".
-pub use crate::ported::zsh_h::TERM_UNKNOWN;
 
 /// Port of `uidsetfn(UNUSED(Param pm), zlong x)` from `Src/params.c:4698`. C body:
 /// `if (setuid((uid_t)x)) zerr("failed to change user ID: %e", errno);`

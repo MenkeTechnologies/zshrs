@@ -128,8 +128,9 @@ pub const P_PURESTR: i32 = 0x04; // c:218 Can be matched with a strcmp.
 // =====================================================================
 
 pub use crate::ported::zsh_h::{
-    PAT_ANY, PAT_FILE, PAT_FILET, PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH,
-    PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART, PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP,
+    GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE, PAT_ANY, PAT_FILE, PAT_FILET,
+    PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH, PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART,
+    PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP,
 };
 
 // C: `static int patnpar;` — number of active parens (1-indexed at
@@ -139,7 +140,6 @@ pub static patnpar: AtomicI32 = AtomicI32::new(0); // c:271
 // GF_* glob-flag bits live in `zsh.h:1763-1773`, ported to
 // `src/ported/zsh_h.rs:2287-2291` per Rule C. Re-export so pattern's
 // matcher arms can read them without the longer path.
-pub use crate::ported::zsh_h::{GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE};
 use crate::ported::params::{paramtab, paramtab_hashed_storage};
 use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
 use crate::zsh_h::{

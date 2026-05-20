@@ -14,7 +14,7 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use crate::ported::zsh_h::OPT_ISSET;
+use crate::ported::zsh_h::{OPT_ISSET, module};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -746,7 +746,6 @@ pub fn finish_(m: *const module) -> i32 {
 // static struct funcwrap wrapper[]                                  c:328
 // =====================================================================
 
-use crate::ported::zsh_h::module;
 
 // ---------------------------------------------------------------------------
 // File-static globals — port of c:66-71.

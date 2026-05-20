@@ -10,8 +10,7 @@
 //! - spell-word, delete-char-or-list
 //! - magic-space, accept-and-menu-complete
 
-use std::sync::atomic::AtomicI32;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::ported::utils::write_loop;
 use crate::ported::zle::compcore::ADDEDX;
@@ -35,17 +34,14 @@ use crate::ported::zsh_h::{
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `mod_export int usemenu` from `Src/Zle/zle_tricky.c:96`.
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_utils::*, zle_vi::*,
-    zle_word::*,
-};
 
 /// Port of `usetab()` from Src/Zle/zle_tricky.c:183.
 /// WARNING: param names don't match C — Rust=(zle, keybuf) vs C=()

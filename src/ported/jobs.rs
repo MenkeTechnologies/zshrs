@@ -29,8 +29,8 @@ use crate::ported::signals::{killjb, signal_block, signal_setmask, unqueue_signa
 use crate::ported::signals_h::{signal_default, signal_ignore, sigs_name, sigs_number};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
-    isset, options, MONITOR, OPT_ISSET, POSIXBUILTINS, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB,
-    STAT_SUBJOB_ORPHANED, STAT_SUPERJOB,
+    MONITOR, OPT_ISSET, POSIXBUILTINS, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB, STAT_SUBJOB_ORPHANED,
+    STAT_SUPERJOB, isset, job, options, process,
 };
 
 /// job status flags. `i32` to match C's `int stat` field on
@@ -187,7 +187,6 @@ pub use crate::ported::zsh_h::{MAXJOBS_ALLOC, MAX_PIPESTATS, SP_RUNNING, timeinf
 // jobs.rs uses them via `process` / `job` aliases to keep call sites
 // readable (Rust convention favors CamelCase at use-sites; the
 // underlying type is the lowercase C-faithful canonical).
-use crate::ported::zsh_h::{job, process};
 
 impl process {
     /// Build a fresh entry. Matches C's `update_process()` init shape

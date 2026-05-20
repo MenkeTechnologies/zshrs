@@ -31,7 +31,8 @@ use std::io::Write;
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `KMN_IMMORTAL` from `Src/Zle/zle_keymap.c:62`. Marks a
 /// keymap-name node that can't be deleted (the `.safe` keymap).
@@ -39,10 +40,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 /// Direct port of `struct keymapname` from `Src/Zle/zle_keymap.c:54`.
 /// One node in the global `keymapnamtab` — maps a name to a Keymap

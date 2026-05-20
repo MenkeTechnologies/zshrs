@@ -50,7 +50,8 @@ use crate::ported::zle::zle_tricky::printfmt;
 use crate::ported::zsh_h::{isset, USEZLE};
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*,
+    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
+    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `mod_export int invcount` from `Src/Zle/compresult.c:37`.
 /// Invalidation counter — bumped every time the cached completion
@@ -60,10 +61,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 /// Truncate a long completion line with `...` so it fits a column
 /// budget.

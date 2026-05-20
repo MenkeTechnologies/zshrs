@@ -9,7 +9,8 @@
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    textobjects::*,
+    textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*, zle_params::*,
+    zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `deltochar(UNUSED(char **args))` from `Src/Zle/deltochar.c:38`. The shared
 /// body behind both the `delete-to-char` and `zap-to-char` widgets:
@@ -26,10 +27,6 @@ use crate::ported::zle::{
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*,
-    zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 pub fn deltochar() -> i32 {
     // c:38

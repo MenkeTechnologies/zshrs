@@ -279,8 +279,6 @@ pub fn scanpmsgr() -> Vec<(String, String)> {
 // static struct features module_features                            c:170 (hlgroup)
 // =====================================================================
 
-use crate::ported::zsh_h::module;
-
 // `partab` — port of `static struct paramdef partab[]` (hlgroup.c).
 
 // `module_features` — port of `static struct features module_features`
@@ -330,8 +328,10 @@ pub fn finish_(m: *const module) -> i32 {
 }
 
 use std::sync::{Mutex, OnceLock};
+use crate::ported::zsh_h::features;
+use crate::zsh_h::module;
 
-static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
+static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
@@ -342,7 +342,7 @@ static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLo
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) -> Vec<String> {
+fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
     vec!["p:.zle.esc".to_string(), "p:.zle.sgr".to_string()]
 }
 
@@ -352,7 +352,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>) 
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
 fn handlefeatures(
     _m: *const module,
-    _f: &Mutex<crate::ported::zsh_h::features>,
+    _f: &Mutex<features>,
     enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     if enables.is_none() {
@@ -365,7 +365,7 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
     0
 }
 
@@ -395,9 +395,9 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::feature
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
+fn module_features() -> &'static Mutex<features> {
     MODULE_FEATURES.get_or_init(|| {
-        Mutex::new(crate::ported::zsh_h::features {
+        Mutex::new(features {
             bn_list: None,
             bn_size: 0,
             cd_list: None,

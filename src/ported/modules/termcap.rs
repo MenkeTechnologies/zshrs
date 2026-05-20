@@ -17,7 +17,7 @@
 use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
 use crate::ported::utils::zwarnnam;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 /// Port of `ztgetflag(char *s)` from `Src/Modules/termcap.c:54`. Wraps
 /// libtermcap's `tgetflag()` to disambiguate "off" from "not
@@ -428,7 +428,6 @@ fn ensure_termcap_loaded() -> bool {
 
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-use std::sync::OnceLock;
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

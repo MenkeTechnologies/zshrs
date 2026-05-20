@@ -9,7 +9,8 @@ use crate::ported::zle::zle_h::{ZC_iblank, MOD_MULT};
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
-    deltochar::*, zle_hist::*,
+    deltochar::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*, zle_params::*,
+    zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
 /// Port of `blankwordclass(ZLE_CHAR_T x)` from `Src/Zle/textobjects.c:34`. The
 /// vi blank-word class predicate. Returns 0 for blanks, 1 otherwise.
@@ -17,10 +18,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use crate::ported::zle::{
-    zle_main::*, zle_misc::*, zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*,
-    zle_utils::*, zle_vi::*, zle_word::*,
-};
 
 pub fn blankwordclass(x: char) -> i32 {
     // c:34
