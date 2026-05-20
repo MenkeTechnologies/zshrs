@@ -17,16 +17,22 @@ use indexmap::IndexMap;
 
 use crate::config_h::DEFAULT_TMPPREFIX;
 use crate::func_body_fmt::FuncBodyFmt;
-use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, savehistsiz};
+use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, resizehistents, savehistsiz};
 #[allow(unused_imports)]
-use crate::ported::math::{MN_FLOAT, MN_FLOAT as MN_FLT, MN_INTEGER, MN_INTEGER as MN_INT};
+use crate::ported::math::{
+    matheval, mathevali, MN_FLOAT, MN_FLOAT as MN_FLT, MN_INTEGER, MN_INTEGER as MN_INT,
+};
+use crate::ported::modules::parameter::FUNCSTACK;
 #[allow(unused_imports)]
-use crate::ported::options::{opt_state_get, opt_state_set};
+use crate::ported::options::{opt_state_get, opt_state_set, optlookup};
+use crate::ported::pattern::patmatch;
 #[allow(unused_imports)]
 use crate::ported::signals::{queue_signals, unqueue_signals};
+use crate::ported::string::ztrdup;
 #[allow(unused_imports)]
 use crate::ported::utils::{
-    argzero, errflag, inittyptab, posixzero, set_argzero, set_locallevel, set_posixzero, unmeta,
+    adjustwinsize, argzero, colonsplit, errflag, get_username, inittyptab, itype_end,
+    locallevel as locallevel_fn, posixzero, set_argzero, set_locallevel, set_posixzero, unmeta,
     ztrdup_metafy, zerr, zwarn,
 };
 #[allow(unused_imports)]
@@ -1556,7 +1562,7 @@ pub fn createparamtable() {
     }; // c:880 getlogin()
     let logname = if logname.is_empty() {
         // c:882 — `ztrdup(cached_username)` fallback.
-        crate::ported::utils::get_username()
+        get_username()
     } else {
         logname
     };
@@ -1738,7 +1744,7 @@ pub fn createparamtable() {
         &ztrdup_metafy(crate::ported::config_h::VENDOR),
     );
     let argv0 = env::args().next().unwrap_or_default();
-    setsparam("ZSH_ARGZERO", &crate::ported::string::ztrdup(&argv0)); // c:965 (ztrdup, not _metafy: posixzero)
+    setsparam("ZSH_ARGZERO", &ztrdup(&argv0)); // c:965 (ztrdup, not _metafy: posixzero)
     setsparam(
         "ZSH_VERSION",
         &ztrdup_metafy(crate::ported::patchlevel::ZSH_VERSION),
@@ -2407,7 +2413,7 @@ pub(crate) fn getarg<'a>(
             } else if exact {
                 target == pat
             } else {
-                crate::ported::pattern::patmatch(pat, target)
+                patmatch(pat, target)
             }
         };
         if return_all {
@@ -2564,7 +2570,7 @@ pub(crate) fn getarg<'a>(
             let hit = if exact {
                 s == pat
             } else {
-                crate::ported::pattern::patmatch(pat_used, s)
+                patmatch(pat_used, s)
             };
             if hit {
                 remaining -= 1;
@@ -2678,7 +2684,7 @@ pub(crate) fn getarg<'a>(
                     let hit = if flags.contains('e') {
                         cand == pat
                     } else {
-                        crate::ported::pattern::patmatch(pat, &cand)
+                        patmatch(pat, &cand)
                     };
                     if hit {
                         remaining -= 1;
@@ -2904,9 +2910,9 @@ pub fn fetchvalue<'a>(
             ppar = (c - b'0') as i32;
             end_pos = 1;
         }
-    } else if crate::ported::utils::itype_end(s, true) > 0 {
+    } else if itype_end(s, true) > 0 {
         // c:2196 itype_end
-        end_pos = crate::ported::utils::itype_end(s, true);
+        end_pos = itype_end(s, true);
     } else if matches!(c, b'?' | b'#' | b'$' | b'!' | b'@' | b'*' | b'-') {
         // c:2198-2210
         end_pos = 1;
@@ -2992,7 +2998,7 @@ pub fn fetchvalue<'a>(
             }
         } else if (scanflags & crate::ported::zsh_h::SCANPM_ASSIGNING as i32) == 0
             && v.scanflags != 0
-            && isset(crate::ported::options::optlookup("ksharrays"))
+            && isset(optlookup("ksharrays"))
         {
             // c:2294-2296 — KSHARRAYS implicit `[0]` for bare arr.
             v.end = 1;
@@ -3125,7 +3131,7 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
                             t += 1; // c:2454-2455
                         }
                         if (pmflags & PM_INTEGER) != 0 {
-                            let cbases = crate::ported::options::optlookup("cbases") > 0;
+                            let cbases = optlookup("cbases") > 0;
                             if cbases
                                 && t + 1 < bytes.len()
                                 && bytes[t] == b'0'
@@ -3291,7 +3297,7 @@ pub fn getintvalue(v: Option<&mut value>) -> i64 {
     // match C's arithmetic-expression evaluation.
     let pm = v.pm.as_mut().unwrap();
     let s = strgetfn(pm);
-    crate::ported::math::mathevali(&s).unwrap_or(0) // c:2618 mathevali(...)
+    mathevali(&s).unwrap_or(0) // c:2618 mathevali(...)
 }
 
 /// Port of `getnumvalue(Value v)` from `Src/params.c:2624`. Returns an
@@ -3357,7 +3363,7 @@ pub fn getnumvalue(v: Option<&mut value>) -> mnumber {
     // C's arithmetic-expression evaluation; matheval returns an
     // mnumber tag matching the C output type.
     let s = strgetfn(pm);
-    crate::ported::math::matheval(&s) // c:2640 matheval(...)
+    matheval(&s) // c:2640 matheval(...)
         .unwrap_or(mnumber {
             l: 0,
             d: 0.0,
@@ -3539,7 +3545,7 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 let ival: i64 = if (flags & ASSPM_ENV_IMPORT) != 0 {
                     s.parse::<i64>().unwrap_or(0)
                 } else {
-                    crate::ported::math::mathevali(s).unwrap_or(0)
+                    mathevali(s).unwrap_or(0)
                 };
                 intsetfn(pm, ival);
                 if (pm.node.flags as u32 & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) != 0
@@ -3564,7 +3570,7 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                         type_: MN_FLOAT,
                     }
                 } else {
-                    crate::ported::math::matheval(s).unwrap_or(mnumber {
+                    matheval(s).unwrap_or(mnumber {
                         l: 0,
                         d: 0.0,
                         type_: MN_FLOAT,
@@ -4169,7 +4175,7 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
 ///
 /// The previous Rust port handled the GATE logic correctly but
 /// SKIPPED the diagnostic emit, claiming the `funcstack` global
-/// wasn't ported. But `crate::ported::modules::parameter::FUNCSTACK`
+/// wasn't ported. But `FUNCSTACK`
 /// IS ported (`Mutex<Vec<funcstack>>`). Wire the walk:
 ///   for (i = funcstack; i; i = i->prev)
 ///       if (i->tp == FS_FUNC) {
@@ -4214,7 +4220,7 @@ pub fn check_warn_pm(pm: &param, pmtype: &str, created: i32, may_warn_about_nest
         return;
     }
     // c:3180-3190 — walk funcstack, emit zwarn at first FS_FUNC.
-    let stack = match crate::ported::modules::parameter::FUNCSTACK.lock() {
+    let stack = match FUNCSTACK.lock() {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -5467,9 +5473,9 @@ pub fn zlevarsetfn(pm: &mut param, x: i64) {
                   // c:4231-4232 — `2 + (p == &zterm_columns)` selects 2 for LINES
                   // (zterm_lines) and 3 for COLUMNS (zterm_columns).
     if pm.node.nam == "LINES" {
-        let _ = crate::ported::utils::adjustwinsize(2); // c:4232 LINES path
+        let _ = adjustwinsize(2); // c:4232 LINES path
     } else if pm.node.nam == "COLUMNS" {
-        let _ = crate::ported::utils::adjustwinsize(3); // c:4232 COLUMNS path
+        let _ = adjustwinsize(3); // c:4232 COLUMNS path
     }
 }
 
@@ -5516,7 +5522,7 @@ pub fn colonarrgetfn(arr: &[String]) -> String {
 pub fn colonarrsetfn(pm: &mut param, x: Option<String>) {
     let uniq = (pm.node.flags as u32 & PM_UNIQUE) != 0; // c:4339
     let arr = match x {
-        Some(s) => crate::ported::utils::colonsplit(&s, uniq), // c:4339
+        Some(s) => colonsplit(&s, uniq), // c:4339
         None => Vec::new(),
     };
     arrvarsetfn(pm, arr);
@@ -5894,7 +5900,7 @@ pub fn usernamegetfn() -> String {
     // c:4655
     // c:4658 — `return get_username();`. Route through the
     // canonical refresh-on-uid-change accessor at utils.rs.
-    crate::ported::utils::get_username() // c:4658
+    get_username() // c:4658
 }
 
 /// Port of `usernamesetfn(UNUSED(Param pm), char *x)` from `Src/params.c:4662`. C body:
@@ -6409,7 +6415,7 @@ pub fn argzerosetfn(x: String) {
             zerr("read-only variable: 0"); // c:4941
         } else {
             // c:4943-4944 — zsfree(argzero); argzero = ztrdup(x).
-            set_argzero(Some(crate::ported::string::ztrdup(&x)));
+            set_argzero(Some(ztrdup(&x)));
         }
         // c:4946 — `zsfree(x)`. Rust drop handles via move.
     }
@@ -6452,7 +6458,7 @@ pub fn histsizegetfn() -> i64 {
 /// `if ((histsiz = v) < 1) histsiz = 1; resizehistents();`
 ///
 /// The previous Rust port noted `resizehistents()` as "pending the
-/// history-table port", but `crate::ported::hist::resizehistents`
+/// history-table port", but `resizehistents`
 /// IS available — was a stale comment. Without the resize call,
 /// setting HISTSIZE to a smaller value left the in-memory ring
 /// over-sized until the next implicit prune (next entry added).
@@ -6463,7 +6469,7 @@ pub fn histsizesetfn(v: i64) {
     // c:4977 — mirror into the hist.rs atomic so resizehistents()
     // sees the new size, then trigger the prune.
     histsiz.store(v.max(1), Ordering::SeqCst);
-    crate::ported::hist::resizehistents(); // c:4977
+    resizehistents(); // c:4977
 }
 
 /// Port of `savehistsizegetfn(UNUSED(Param pm))` from `Src/params.c:4985`. C body:
@@ -6791,7 +6797,7 @@ pub fn underscoregetfn() -> String {
 pub fn term_reinit_from_pm() {
     // c:5163
     // c:5167 — `if (unset(INTERACTIVE) || !*term) termflags |= TERM_UNKNOWN;`
-    let interactive = isset(crate::ported::options::optlookup("interactive"));
+    let interactive = isset(optlookup("interactive"));
     let term = term_lock().lock().map(|s| s.clone()).unwrap_or_default();
     if !interactive || term.is_empty() {
         // c:5167
@@ -7420,7 +7426,7 @@ pub fn endparamscope() {
     queue_signals();
     // c:5861 — `LinkList refs = locallevel < scoperefs_num ? scoperefs[locallevel] : NULL;`
     //          Snapshot the refs at the OLD locallevel BEFORE decrementing.
-    let old_ll = crate::ported::utils::locallevel();
+    let old_ll = locallevel_fn();
     let refs_snapshot: Vec<String> = SCOPEREFS.with(|sr| {
         let sr = sr.borrow();
         if (old_ll as usize) < sr.len() {
@@ -7434,7 +7440,7 @@ pub fn endparamscope() {
                                             // c:5865 — `saveandpophiststack(0, HFILE_USE_OPTIONS);`. Pop
                                             // all stack entries with locallevel > current.
     crate::ported::hist::saveandpophiststack(0, crate::ported::zsh_h::HFILE_USE_OPTIONS as i32);
-    let ll = crate::ported::utils::locallevel();
+    let ll = locallevel_fn();
     // c:5869 scanhashtable(paramtab, 0, 0, 0, scanendscope, 0). Walk
     // the live paramtab (HashMap-backed until the hashtable.c vtable
     // is wired) and apply scanendscope's `pm->level > locallevel`
@@ -9571,7 +9577,7 @@ mod tests {
     #[test]
     fn test_colonarr_conversion() {
         let _g = crate::test_util::global_state_lock();
-        let arr = crate::ported::utils::colonsplit("/bin:/usr/bin:/usr/local/bin", false);
+        let arr = colonsplit("/bin:/usr/bin:/usr/local/bin", false);
         assert_eq!(arr, vec!["/bin", "/usr/bin", "/usr/local/bin"]);
         let path = colonarrgetfn(&arr);
         assert_eq!(path, "/bin:/usr/bin:/usr/local/bin");
