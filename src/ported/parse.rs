@@ -7413,13 +7413,15 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
     let name = match tok() {
         STRING_LEX | ENVSTRING => {
             let n = tokstr().unwrap_or_default();
-            // Restore BEFORE the next zshlex so trailing tokens lex
-            // in the original parent context (mirrors C ordering at
-            // parse.c:2244-2245 — restore right after the word is
-            // confirmed, before any downstream advance).
+            // c:2244-2245 — restore incmdpos / nocorrect right after
+            // the redir target word is confirmed, BEFORE the trailing
+            // zshlex advances past it. The advance itself is deferred
+            // below so REDIR_HEREDOC[DASH] can push onto HDOCS first
+            // (matching the wordcode variant at parse.rs:6894-6908) —
+            // otherwise the NEWLIN drained by that zshlex sees an
+            // empty HDOCS list and gethere never collects the body.
             set_incmdpos(oldcmdpos);
             set_nocorrect(oldnc);
-            zshlex();
             n
         }
         _ => {
@@ -7488,6 +7490,13 @@ fn par_redir_with_id(idstring: Option<&str>) -> Option<ZshRedir> {
     } else {
         None
     };
+
+    // c:2298 (heredoc) / c:2322 (other redirs) — final zshlex() advance
+    // past the redir target word. MUST run after the HDOCS push above
+    // so the heredoc-drain inside this zshlex sees the new entry. For
+    // non-heredoc forms the order is irrelevant; consolidating to a
+    // single tail-call here matches the wordcode variant.
+    zshlex();
 
     Some(ZshRedir {
         rtype,

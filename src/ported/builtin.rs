@@ -30,7 +30,7 @@ use std::sync::{Mutex, OnceLock};
 use std::{env, fs, io, io::Write, path::Path, path::PathBuf};
 
 use indexmap::IndexMap;
-
+use crate::DPUTS;
 use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
 use crate::parse::{Redirect, ShellCommand};
@@ -288,7 +288,7 @@ pub fn execbuiltin(
     if bn_ref.handlerfunc.is_none() {
         // c:264
         // c:265 — DPUTS(1, "Missing builtin detected too late")
-        crate::DPUTS!(true, "Missing builtin detected too late"); // c:265
+        DPUTS!(true, "Missing builtin detected too late"); // c:265
                                                                   // c:266 — deletebuiltin(bn->node.nam) — not yet ported here.
         return 1; // c:267
     }
@@ -1710,14 +1710,18 @@ pub fn cd_new_pwd(func: i32, dir: usize, quiet: i32) {
     }
 
     // c:1236-1242 — shift PWD → OLDPWD, set new PWD.
-    if let Some(pwd) = getsparam("PWD") {
-        setsparam("OLDPWD", &pwd);
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Some(s) = cwd.to_str() {
-            setsparam("PWD", s);
-        }
-    }
+    //
+    // The caller (`bin_cd` at builtin.rs:1379-1408) already wrote
+    // OLDPWD (pre-cd $PWD) and PWD (the logical `dest_path`) into the
+    // paramtab. Re-deriving them here would (a) double-shift OLDPWD
+    // (overwriting the correct pre-cd value with the just-set PWD),
+    // and (b) re-set PWD via `std::env::current_dir()` which always
+    // returns the resolved physical path — clobbering the logical
+    // path on systems where the destination is a symlink (e.g. macOS
+    // /tmp → /private/tmp). C `cd_new_pwd` reads `new_pwd` off the
+    // dirstack (the path the user typed); zshrs's dirstack plumbing
+    // doesn't carry that path here, so the caller is the authoritative
+    // PWD writer and this fn must NOT re-write either parameter.
 
     // c:1245-1252 — print dirstack on PUSHD/POPD (unless silent/quiet).
     if quiet == 0 && func != BIN_CD && isset(INTERACTIVE) && !isset(optlookup("pushdsilent")) {

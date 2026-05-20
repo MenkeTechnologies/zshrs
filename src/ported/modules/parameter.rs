@@ -38,8 +38,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use crate::zsh_h::{shfunc, HASHED};
 use std::sync::{Mutex, OnceLock};
-
-
+use crate::DPUTS;
 // Bag-of-globals `ParamType`/`ParamFlags` enum + `*Table` structs
 // deleted (PORT_PLAN.md Phase 2 anti-pattern #1): C has no
 // counterpart — paramtypestr now reads `PM_TYPE(pm->node.flags)`
@@ -73,7 +72,7 @@ pub fn paramtypestr(pm: &param) -> String {
         PM_HASHED => "association".to_string(),       // c:59
         _ => {
             // c:60 default
-            crate::DPUTS!(true, "BUG: type not handled in parameter"); // c:61
+            DPUTS!(true, "BUG: type not handled in parameter"); // c:61
             String::new() // c:62
         }
     };

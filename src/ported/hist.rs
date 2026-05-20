@@ -10,6 +10,7 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::Component::*;
 use std::sync::atomic::Ordering::SeqCst;
+use crate::{DPUTS, DPUTS1};
 use crate::ported::glob::remnulargs;
 use crate::ported::hashtable::addhistnode;
 use crate::ported::input::{ingetc, inputsetline, inungetc};
@@ -110,7 +111,7 @@ pub fn hist_context_restore(hs: &hist_stack, toplevel: i32) {
         // c:296
         // c:299 — Back to top level: don't need special ZLE value
         // c:300 — DPUTS(hs->hline != zle_chline, "BUG: Ouch, wrong chline for ZLE")
-        crate::DPUTS!(
+        DPUTS!(
             // c:300
             hs.hline != *zle_chline.lock().unwrap(), // c:300
             "BUG: Ouch, wrong chline for ZLE"        // c:300
@@ -1331,7 +1332,7 @@ pub fn strinend() {
     // c:1049
     hend(None); // c:1051
                 // c:1052 — DPUTS(!strin, "BUG: strinend() called without strinbeg()")
-    crate::DPUTS!(
+    DPUTS!(
         // c:1052
         strin.load(Ordering::SeqCst) == 0, // c:1052 !strin
         "BUG: strinend() called without strinbeg()"  // c:1052
@@ -1398,7 +1399,7 @@ pub fn ihwbegin(offset: i32) {
     // c:1664-1665 — DPUTS1(pos < 0, "History word position < 0 in %s",
     //                      dupstrpfx(chline, hptr-chline))
     let word_pos = (hptr_val as i32) + offset; // c:1664 pos
-    crate::DPUTS1!(
+    DPUTS1!(
         // c:1664
         word_pos < 0,                      // c:1664
         "History word position < 0 in {}", // c:1664
@@ -2293,12 +2294,12 @@ pub fn hwget() -> Option<(i32, String)> {
     // c:1729 — DPUTS(1, "BUG: hwget() called with no words"); arm fires
     // when chwordpos == 0 (the C `if (!chwordpos)` branch at c:1728).
     if pos == 0 {
-        crate::DPUTS!(true, "BUG: hwget() called with no words"); // c:1729
+        DPUTS!(true, "BUG: hwget() called with no words"); // c:1729
         return None;
     }
     // c:1734 — DPUTS(1, "BUG: hwget() called in middle of word")
     if pos % 2 != 0 {
-        crate::DPUTS!(true, "BUG: hwget() called in middle of word"); // c:1734
+        DPUTS!(true, "BUG: hwget() called in middle of word"); // c:1734
         return None;
     }
     let words = chwords.lock().unwrap();
@@ -2672,7 +2673,7 @@ pub fn chabspath(input: &str) -> Option<String> {
 pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> {
     // c:1971
     // c:1983 — DPUTS1(mode != 'A' && mode != 'P', "chrealpath: mode='%c' is invalid", mode)
-    crate::DPUTS1!(
+    DPUTS1!(
         // c:1983
         mode != b'A' && mode != b'P', // c:1983
         "chrealpath: mode='{}' is invalid",
@@ -3340,9 +3341,9 @@ pub fn ihungetc(c: i32) {
         if (inflags & (INP_ALIAS | INP_HIST)) != INP_ALIAS {
             // c:1009
             // c:1010 — DPUTS(hptr <= chline, "BUG: hungetc attempted at buffer start")
-            crate::DPUTS!(hp <= 0, "BUG: hungetc attempted at buffer start"); // c:1010
+            DPUTS!(hp <= 0, "BUG: hungetc attempted at buffer start"); // c:1010
                                                                               // c:1012 — DPUTS(*hptr != (char) c, "BUG: wrong character in hungetc() ")
-            crate::DPUTS!(
+            DPUTS!(
                 // c:1012
                 hp > 0 && line_b.get(hp - 1).copied() != Some(c as u8), // c:1012
                 "BUG: wrong character in hungetc() "                    // c:1012

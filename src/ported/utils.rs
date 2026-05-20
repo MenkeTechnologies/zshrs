@@ -19,7 +19,7 @@ use libc::{
     S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP,
     S_IXOTH, S_IXUSR,
 };
-
+use crate::{DPUTS, DPUTS1};
 use crate::init::zleentry;
 use crate::params::getsparam_u;
 use crate::ported::builtin::{SFCONTEXT, STOPMSG};
@@ -402,7 +402,7 @@ pub fn zsetupterm() {
     // in zle/termcap module), so the second condition reduces to
     // `term_count > 0 && true` if we treat cur_term as the count
     // itself. Simplified to the bare `term_count < 0` invariant.
-    crate::DPUTS!(tc < 0, "inconsistent term_count and/or cur_term"); // c:395-396
+    DPUTS!(tc < 0, "inconsistent term_count and/or cur_term"); // c:395-396
     TERM_COUNT.fetch_add(1, Ordering::Relaxed); // c:402
 }
 
@@ -413,7 +413,7 @@ pub fn zdeleteterm() {
     let tc = TERM_COUNT.load(Ordering::Relaxed);
     // c:412-413 — DPUTS(term_count < 1 || !cur_term,
     //                   "inconsistent term_count and/or cur_term");
-    crate::DPUTS!(tc < 1, "inconsistent term_count and/or cur_term"); // c:412-413
+    DPUTS!(tc < 1, "inconsistent term_count and/or cur_term"); // c:412-413
     if tc > 0 {
         TERM_COUNT.fetch_sub(1, Ordering::Relaxed); // c:414
     }
@@ -1073,7 +1073,7 @@ pub fn print_if_link(s: &str, all: bool) {
         // PATH_MAX limit but the C parity-check still fires when a
         // pathological caller passes a path that wouldn't fit C's
         // s_at_entry[PATH_MAX+1] buffer.
-        crate::DPUTS1!(
+        DPUTS1!(
             // c:1009
             s.len() >= libc::PATH_MAX as usize, // c:1008 memccpy returns NULL
             "path longer than PATH_MAX: {}",

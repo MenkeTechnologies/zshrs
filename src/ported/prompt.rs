@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 use std::env;
 use std::sync::atomic::Ordering;
+use crate::DPUTS;
 use crate::ported::params::{paramtab, setaparam};
 use crate::ported::utils::strpfx;
 use crate::ported::zsh_h::{
@@ -734,7 +735,7 @@ pub fn cmdpop() {
         let mut st = s.borrow_mut();
         // c:1635 — DPUTS(1, "BUG: cmdstack empty") in the C empty-stack
         // branch. The C source still pops + continues; same here.
-        crate::DPUTS!(st.is_empty(), "BUG: cmdstack empty"); // c:1635
+        DPUTS!(st.is_empty(), "BUG: cmdstack empty"); // c:1635
         st.pop();
     });
 }

@@ -21,6 +21,7 @@ use std::process::Child;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use crate::DPUTS;
 use crate::ported::builtins::sched::zleactive;
 use crate::ported::hashtable_h::{BIN_BG, BIN_FG, BIN_JOBS};
 use crate::ported::params::{getsparam, setsparam, unsetparam};
@@ -1379,7 +1380,7 @@ pub fn deletefilelist(file_list: &mut job, disowning: bool) {
 /// the same with `iter_mut().skip(1)`.
 pub fn cleanfilelists(jobtab: &mut [job]) {
     // c:1447 — DPUTS(shell_exiting >= 0, "BUG: cleanfilelists() before exit")
-    crate::DPUTS!(
+    DPUTS!(
         // c:1447
         crate::ported::builtin::SHELL_EXITING // c:1447
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -1817,7 +1818,7 @@ pub fn spawnjob() {
         .lock()
         .expect("thisjob poisoned");
     // c:1898 — DPUTS(thisjob == -1, "No valid job in spawnjob.")
-    crate::DPUTS!(thisjob_idx == -1, "No valid job in spawnjob."); // c:1898
+    DPUTS!(thisjob_idx == -1, "No valid job in spawnjob."); // c:1898
     if thisjob_idx < 0 {
         return;
     }
