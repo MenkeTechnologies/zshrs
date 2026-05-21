@@ -1522,7 +1522,7 @@ fn zsetlimit(_limnum: i32, _nam: &str) -> i32 {
 // Loops over RLIM_NLIMITS and calls `zsetlimit()` on each. Same
 // rationale as `zsetlimit` above.
 #[cfg(unix)]
-fn setlimits(nam: &str) -> i32 {
+pub(crate) fn setlimits(nam: &str) -> i32 {
     let mut ret = 0;
     for i in 0..nlimits() as i32 {
         if zsetlimit(i, nam) != 0 {
@@ -1533,7 +1533,7 @@ fn setlimits(nam: &str) -> i32 {
 }
 
 #[cfg(not(unix))]
-fn setlimits(_nam: &str) -> i32 {
+pub(crate) fn setlimits(_nam: &str) -> i32 {
     0
 }
 
