@@ -527,6 +527,7 @@ pub const TH_IMMORTAL: i32 = 1 << 1; // c:234
 
 /// Port of `struct modifier` from `Src/Zle/zle.h:245-251`.
 /// Command modifier prefix state (numeric arg, vi cut buffer, etc.).
+#[derive(Clone)]
 pub struct modifier {
     // c:245
     /// MOD_* flags (see below).
