@@ -38,18 +38,14 @@ use crate::ported::hashtable::shfunctab_lock;
 use crate::ported::hist::{strinbeg, strinend};
 use crate::ported::init::{underscorelen, underscoreused, zunderscore};
 use crate::ported::input::{inpop, inpush};
-use crate::ported::lex::{hgetc, parsestr, tok, untokenize, LEXERR, LEX_LEXSTOP, LEX_LINENO};
+use crate::ported::lex::{hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO};
 use crate::ported::mem::dupstring;
-use crate::ported::parse::parse_list;
+use crate::ported::parse::{ecrawstr, parse_list};
 use crate::ported::signals::{queue_signals, unqueue_signals};
-use crate::ported::subst::quotesubst;
-use crate::ported::utils::{errflag, movefd, unmeta, zerr, ERRFLAG_ERROR};
-use crate::ported::ztype_h::inull;
-use crate::ported::zsh_h::{
-    builtin, eprog, hashnode, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH,
-    BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIR_HEREDOCDASH,
-    WC_SIMPLE, WC_TYPESET,
-};
+use crate::ported::subst::{quotesubst, singsub};
+use crate::ported::utils::{errflag, movefd, unmeta, write_loop, zclose, zerr, ERRFLAG_ERROR};
+use crate::ported::ztype_h::{inull, itok};
+use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound};
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
 /// a trap handler is currently being processed and, paired with
@@ -1409,11 +1405,7 @@ pub fn simple_redir_name(prog: &eprog, redir_type: i32) -> Option<String> {
     if pc.len() < 7 {
         return None;
     }
-    use crate::ported::zsh_h::{
-        wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR,
-        WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END,
-        WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE,
-    };
+
     if wc_code(pc[0]) != WC_LIST
         || (WC_LIST_TYPE(pc[0]) & Z_END as u32) == 0  // c:4695
         || wc_code(pc[1]) != WC_SUBLIST
@@ -1432,5 +1424,163 @@ pub fn simple_redir_name(prog: &eprog, redir_type: i32) -> Option<String> {
         return None; // c:4706
     }
     // c:4703 — `return dupstring(ecrawstr(prog, pc + 5, NULL));`
-    Some(dupstring(&crate::ported::parse::ecrawstr(prog, 5, None)))
+    Some(dupstring(&ecrawstr(prog, 5, None)))
+}
+
+/// Port of `int getherestr(struct redir *fn)` from `Src/exec.c:4655`.
+///
+/// C body:
+/// ```c
+/// char *s, *t;
+/// int fd, len;
+/// t = fn->name;
+/// singsub(&t);
+/// untokenize(t);
+/// unmetafy(t, &len);
+/// if (!(fn->flags & REDIRF_FROM_HEREDOC))
+///     t[len++] = '\n';
+/// if ((fd = gettempfile(NULL, 1, &s)) < 0)
+///     return -1;
+/// write_loop(fd, t, len);
+/// close(fd);
+/// fd = open(s, O_RDONLY | O_NOCTTY);
+/// unlink(s);
+/// return fd;
+/// ```
+///
+/// Materialise a `<<<` herestring or unprocessed-here-doc body into a
+/// tempfile, then re-open read-only and unlink — gives the consumer a
+/// read fd whose backing file is already cleaned up.
+pub fn getherestr(fn_: &redir) -> i32 {
+    // c:4655
+    let mut t: String = fn_.name.clone().unwrap_or_default(); // c:4660
+    t = singsub(&t); // c:4661
+    t = untokenize(&t); // c:4662
+                        // c:4663 — `unmetafy(t, &len);` — strip Meta-escapes.
+                        // Reuse the canonical unmetafy port (utils.rs) on a Vec<u8>.
+    let mut bytes: Vec<u8> = t.into_bytes();
+    let _len = crate::ported::utils::unmetafy(&mut bytes);
+    // c:4671-4672 — `if (!(fn->flags & REDIRF_FROM_HEREDOC)) t[len++] = '\n';`
+    if (fn_.flags & REDIRF_FROM_HEREDOC) == 0 {
+        // c:4671
+        bytes.push(b'\n'); // c:4672
+    }
+    // c:4673-4674 — `if ((fd = gettempfile(NULL, 1, &s)) < 0) return -1;`
+    let (fd, s) = match crate::ported::utils::gettempfile(None) {
+        Some(p) => p,
+        None => return -1, // c:4674
+    };
+    // c:4675 — `write_loop(fd, t, len);`
+    let _ = write_loop(fd, &bytes); // c:4675
+                                                          // c:4676 — `close(fd);`
+    let _ = zclose(fd); // c:4676
+                                              // c:4677 — `fd = open(s, O_RDONLY | O_NOCTTY);`
+    let cstr = std::ffi::CString::new(s.as_str()).unwrap_or_default();
+    let new_fd = unsafe { libc::open(cstr.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) }; // c:4677
+                                                                                       // c:4678 — `unlink(s);`
+    unsafe {
+        libc::unlink(cstr.as_ptr());
+    } // c:4678
+    new_fd // c:4679
+}
+
+/// Port of `void quote_tokenized_output(char *str, FILE *file)` from
+/// `Src/exec.c:2114`.
+///
+/// C body (abridged):
+/// ```c
+/// for (; *s; s++) {
+///     switch (*s) {
+///         case Meta: putc(*++s ^ 32, file); continue;
+///         case Nularg: continue;
+///         case '\\' '<' '>' '(' '|' ')' '^' '#' '~' '[' ']' '*' '?' '$' ' ':
+///             putc('\\', file); break;
+///         case '\t': fputs("$'\\t'", file); continue;
+///         case '\n': fputs("$'\\n'", file); continue;
+///         case '\r': fputs("$'\\r'", file); continue;
+///         case '=': if (s == str) putc('\\', file); break;
+///         default:
+///             if (itok(*s)) { putc(ztokens[*s - Pound], file); continue; }
+///     }
+///     putc(*s, file);
+/// }
+/// ```
+///
+/// Used by `xtrace` (`set -x` printer) and `whence -c` to display a
+/// tokenized argv in a form where lexer tokens (`Star`, `Inpar`, …)
+/// surface as unescaped chars (`*`, `(`) while literal special chars
+/// get backslash-escaped — round-tripping through the shell.
+pub fn quote_tokenized_output(str_in: &str, file: &mut impl std::io::Write) -> std::io::Result<()> {
+    // c:2114
+    let bytes = str_in.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        // c:2118 `for (; *s; s++)`
+        let c = bytes[i];
+        match c {
+            x if x == Meta => {
+                // c:2120 — `case Meta: putc(*++s ^ 32, file);`
+                if i + 1 < bytes.len() {
+                    file.write_all(&[bytes[i + 1] ^ 32])?; // c:2121
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue; // c:2122
+            }
+            x if x as char == Nularg => {
+                // c:2124
+                i += 1;
+                continue; // c:2126
+            }
+            b'\\' | b'<' | b'>' | b'(' | b'|' | b')' | b'^' | b'#' | b'~' | b'[' | b']'
+            | b'*' | b'?' | b'$' | b' ' => {
+                // c:2128-2142
+                file.write_all(b"\\")?; // c:2143
+            }
+            b'\t' => {
+                // c:2146
+                file.write_all(b"$'\\t'")?; // c:2147
+                i += 1;
+                continue;
+            }
+            b'\n' => {
+                // c:2150
+                file.write_all(b"$'\\n'")?; // c:2151
+                i += 1;
+                continue;
+            }
+            b'\r' => {
+                // c:2154
+                file.write_all(b"$'\\r'")?; // c:2155
+                i += 1;
+                continue;
+            }
+            b'=' => {
+                // c:2158 — `if (s == str) putc('\\', file);`
+                if i == 0 {
+                    file.write_all(b"\\")?; // c:2160
+                }
+            }
+            _ => {
+                // c:2163 — `if (itok(*s)) putc(ztokens[*s - Pound], file); continue;`
+                if itok(c) {
+                    // c:2164
+                    let pound = Pound as u8;
+                    if c >= pound {
+                        let idx = (c - pound) as usize;
+                        let zt = ztokens.as_bytes();
+                        if idx < zt.len() {
+                            file.write_all(&[zt[idx]])?; // c:2165 `ztokens[*s - Pound]`
+                        }
+                    }
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        file.write_all(&[c])?; // c:2171
+        i += 1;
+    }
+    Ok(())
 }
