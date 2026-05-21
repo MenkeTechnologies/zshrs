@@ -1437,11 +1437,20 @@ pub fn getrestchar_keybuf() -> i32 {
     getrestchar(c)
 }
 
-/// Port of `getkeymapcmd(Keymap km, Thingy *funcp, char **strp)` from
-/// Src/Zle/zle_keymap.c:1581. Stub: keymap-trie walk lives at
-/// zle_main::get_key_cmd; full extraction pending.
+/// !!! WARNING: PARTIAL PORT — stub. C `getkeymapcmd(Keymap km,
+/// Thingy *funcp, char **strp)` at Src/Zle/zle_keymap.c:1581 is the
+/// 89-line keystroke-to-Thingy resolver: it walks the keybinding
+/// trie character-by-character (via `getkeybuf`), returns the
+/// matched Thingy on a leaf, and feeds extra-keys-after-leaf back
+/// via `ungetbyte`. Returns the trie depth on success, -1 on no-match.
+///
+/// Wrong sig too: C is `(Keymap, Thingy*, char**)`, Rust is `(i32)`.
+///
+/// Zero Rust callers reach this fn; the live key-dispatch path
+/// uses `zle_main::get_key_cmd` directly. Faithful port needs the
+/// Keymap struct + Thingy out-param infrastructure.
 pub fn getkeymapcmd(_km: i32) -> i32 {
-    // c:1581
+    // c:1581 — see WARNING above; stub returns -1 (no match).
     -1
 }
 

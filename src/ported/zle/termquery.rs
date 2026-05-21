@@ -946,10 +946,19 @@ pub fn free_cursor_forms() {
     CURSOR_FORMS.with(|cf| cf.borrow_mut().clear());
 }
 
-/// Port of `cursor_form()` from Src/Zle/termquery.c:933. Stub:
-/// CURF_/CURC_/cursor_forms substrate pending.
+/// !!! WARNING: PARTIAL PORT — stub. C `cursor_form(void)` at
+/// Src/Zle/termquery.c:913 walks the `cursor_forms[]` array and
+/// emits the DECSCUSR escape (CSI Ps ` q`) appropriate to the
+/// current `state` (CURF_DEFAULT/CURF_INSERT/CURF_OVERWRITE/
+/// CURF_VICMD/CURF_VIINS/CURF_DEFAULTSTATE), respecting
+/// trashedzle / insmode / vichgflag. Writes via `putshout` to set
+/// the terminal cursor shape.
+///
+/// Wrong sig too: C returns `void`, Rust returns `Vec<String>`.
+/// Empty Vec means callers get nothing — vi-mode cursor reshape
+/// (block in cmd, beam in insert) doesn't fire. Tracked.
 pub fn cursor_form() -> Vec<String> {
-    // c:933
+    // c:913 — see WARNING above; stub.
     Vec::new()
 }
 

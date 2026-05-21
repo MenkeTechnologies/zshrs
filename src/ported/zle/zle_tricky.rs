@@ -748,12 +748,20 @@ pub fn inststrlen(
     len
 }
 
-/// Port of `doexpansion(char *s, int lst, int olst, int explincmd)`
-/// from Src/Zle/zle_tricky.c:2263. Stub: live expand-or-complete
-/// routes through docomplete(COMP_EXPAND); Cmatch pipeline pending.
-/// WARNING: param names don't match C — Rust=() vs C=(s, lst, olst, explincmd)
+/// !!! WARNING: PARTIAL PORT — stub. C `doexpansion(char *s, int lst,
+/// int olst, int explincmd)` at Src/Zle/zle_tricky.c:2263 is the
+/// 58-line driver for `expand-or-complete`: it parses `s` for
+/// history (`!`), glob, alias, and process expansions via the
+/// pushheap → dupstring → DnullSnull-swap → expand_dynamic → newlinklist
+/// pipeline at c:2269-2316, then inserts the result via foredel +
+/// inststr.
+///
+/// Zero Rust callers reach this fn; the live expand-or-complete
+/// widget routes through `docomplete(COMP_EXPAND)` instead, which
+/// dispatches to the Cmatch pipeline in `docompletion` below.
+/// Faithful port needs the Cmatch/Cstrlist substrate.
 pub fn doexpansion() -> i32 {
-    // c:2263
+    // c:2263 — see WARNING above; stub returns 0.
     0
 }
 
