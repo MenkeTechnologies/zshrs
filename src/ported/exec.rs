@@ -1810,6 +1810,97 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
     None // c:952
 }
 
+/// Port of `static void fixfds(int *save)` from `Src/exec.c:4523`.
+///
+/// C body:
+/// ```c
+/// int old_errno = errno;
+/// int i;
+/// for (i = 0; i != 10; i++)
+///     if (save[i] != -2)
+///         redup(save[i], i);
+/// errno = old_errno;
+/// ```
+///
+/// Restore fds 0..9 from the `save[10]` slot array. `-2` sentinel
+/// means "no save was made for this fd"; any other value is the
+/// stashed fd that gets `dup2`'d back via `redup`. Preserves the
+/// caller's errno across the loop so a downstream caller diagnoses
+/// the original failure, not a noisy dup2 errno.
+pub fn fixfds(save: &[i32; 10]) {
+    // c:4523
+    let old_errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0); // c:4525
+    for i in 0..10i32 {
+        // c:4528 — `for (i = 0; i != 10; i++)`
+        if save[i as usize] != -2 {
+            // c:4529
+            crate::ported::utils::redup(save[i as usize], i); // c:4530
+        }
+    }
+    // c:4531 — `errno = old_errno;`
+    #[cfg(target_os = "macos")]
+    unsafe {
+        *libc::__error() = old_errno;
+    }
+    #[cfg(target_os = "linux")]
+    unsafe {
+        *libc::__errno_location() = old_errno;
+    }
+}
+
+/// Port of `mod_export void closem(int how, int all)` from `Src/exec.c:4546`.
+///
+/// C body:
+/// ```c
+/// int i;
+/// for (i = 10; i <= max_zsh_fd; i++)
+///     if (fdtable[i] != FDT_UNUSED &&
+///         (all || (fdtable[i] != FDT_PROC_SUBST &&
+///                  fdtable[i] != FDT_EXTERNAL)) &&
+///         (how == FDT_UNUSED || (fdtable[i] & FDT_TYPE_MASK) == how)) {
+///         if (i == SHTTY) SHTTY = -1;
+///         zclose(i);
+///     }
+/// ```
+///
+/// Walk fds 10..=MAX_ZSH_FD and close every internal shell fd that
+/// matches the criteria. `how == FDT_UNUSED` matches all kinds (no
+/// type filter); otherwise only fds whose low-nibble type equals
+/// `how` are closed. `all == 0` preserves user-visible fds
+/// (FDT_PROC_SUBST, FDT_EXTERNAL) since those need to outlive the
+/// shell's internal-fd lifetime. SHTTY clearing prevents a stale
+/// reference if we just closed the controlling tty.
+pub fn closem(how: i32, all: i32) {
+    // c:4546
+    use crate::ported::init::SHTTY;
+    use crate::ported::utils::{fdtable_get, MAX_ZSH_FD};
+    use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_PROC_SUBST, FDT_TYPE_MASK, FDT_UNUSED};
+    let max = MAX_ZSH_FD.load(Ordering::Relaxed); // c:4550
+    for i in 10i32..=max {
+        // c:4550
+        let kind = fdtable_get(i); // c:4551 fdtable[i]
+        if kind == FDT_UNUSED {
+            // c:4551
+            continue;
+        }
+        // c:4557-4558 — `(all || (kind != FDT_PROC_SUBST && kind != FDT_EXTERNAL))`
+        if all == 0 && (kind == FDT_PROC_SUBST || kind == FDT_EXTERNAL) {
+            continue;
+        }
+        // c:4559 — `(how == FDT_UNUSED || (fdtable[i] & FDT_TYPE_MASK) == how)`
+        if how != FDT_UNUSED && (kind & FDT_TYPE_MASK) != how {
+            continue;
+        }
+        // c:4560-4561 — `if (i == SHTTY) SHTTY = -1;`
+        if i == SHTTY.load(Ordering::Relaxed) {
+            // c:4560
+            SHTTY.store(-1, Ordering::Relaxed); // c:4561
+        }
+        // c:4562 — `zclose(i);`
+        let _ = crate::ported::utils::zclose(i);
+    }
+}
+
 /// Port of `Cmdnam hashcmd(char *arg0, char **pp)` from
 /// `Src/exec.c:1010`.
 ///
