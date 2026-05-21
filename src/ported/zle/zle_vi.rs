@@ -112,14 +112,14 @@ pub fn vigetkey() -> i32 {
     // Rust port: getbyte returns Option<u8>; None means EOF.
     // The KUNGETBUF drain path was the previous stub — covered now
     // by getbyte itself which consults the unget buffer first.
-    let byte = match crate::ported::zle::zle_main::getbyte(true) {
+    let byte = match getbyte(true) {
         Some(b) => b,
-        None => return crate::ported::zle::zle_h::ZLEEOF, // c:135
+        None => return ZLEEOF, // c:135
     };
 
     // c:137 — `m[0] = lastchar;`. Updated by getbyte side effect; we
     // also have `byte` in hand.
-    crate::ported::zle::compcore::LASTCHAR.store(byte as i32, std::sync::atomic::Ordering::SeqCst); // c:137
+    crate::ported::zle::compcore::LASTCHAR.store(byte as i32, SeqCst); // c:137
     // c:138 — `metafy(m, 1, META_NOALLOC);` — Rust UTF-8 storage
     // doesn't need the meta-escape step here; the byte is already
     // in canonical form for keybind lookup.
@@ -139,14 +139,14 @@ pub fn vigetkey() -> i32 {
         // c:144 — `if (!cmd || cmd == Th(z_sendbreak)) return ZLEEOF;`
         None | Some("send-break") | Some("undefined-key") => {
             // c:145
-            return crate::ported::zle::zle_h::ZLEEOF;
+            return ZLEEOF;
         }
         // c:146-148 — `else if (cmd == Th(z_quotedinsert))`.
         Some("quoted-insert") => {
             // c:146
-            if crate::ported::zle::zle_main::getfullchar(false).is_none() {
+            if getfullchar(false).is_none() {
                 // c:147 getfullchar(0) == ZLEEOF
-                return crate::ported::zle::zle_h::ZLEEOF; // c:148
+                return ZLEEOF; // c:148
             }
         }
         // c:149-157 — `else if (cmd == Th(z_viquotedinsert))` — show
@@ -155,29 +155,29 @@ pub fn vigetkey() -> i32 {
             // c:149
             // c:150 — `ZLE_CHAR_T sav = zleline[zlecs];`
             let zlecs =
-                crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+                ZLECS.load(SeqCst);
             let sav: Option<char> = {
-                let line = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+                let line = ZLELINE.lock().unwrap();
                 line.get(zlecs).copied() // c:150
             };
             // c:152 — `zleline[zlecs] = '^';`
             {
-                let mut line = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+                let mut line = ZLELINE.lock().unwrap();
                 if zlecs < line.len() {
                     line[zlecs] = '^';
                 }
             }
             // c:153 — `zrefresh();`
-            crate::ported::zle::zle_refresh::zrefresh();
+            zrefresh();
             // c:154 — `getfullchar(0);` — read but result captured
             // separately via LASTFULLCHAR (the static the C source
             // updates internally). Rust port's `getfullchar` returns
             // Option<char>; the broader LASTFULLCHAR state lives on
             // zle_main side.
-            let _ = crate::ported::zle::zle_main::getfullchar(false);
+            let _ = getfullchar(false);
             // c:155 — `zleline[zlecs] = sav;` restore original char.
             if let Some(c) = sav {
-                let mut line = crate::ported::zle::zle_main::ZLELINE.lock().unwrap();
+                let mut line = ZLELINE.lock().unwrap();
                 if zlecs < line.len() {
                     line[zlecs] = c;
                 }
@@ -189,7 +189,7 @@ pub fn vigetkey() -> i32 {
         // c:158-159 — `else if (cmd == Th(z_vicmdmode)) return ZLEEOF;`
         Some("vi-cmd-mode") => {
             // c:158
-            return crate::ported::zle::zle_h::ZLEEOF; // c:159
+            return ZLEEOF; // c:159
         }
         _ => {
             // c:144 fallthrough — any other cmd (typically self-insert)

@@ -393,7 +393,7 @@ pub fn getbyte(do_keytmout: bool) -> Option<u8> {
     };
 
     LASTCHAR
-        .store((b as ZleInt) as i32, SeqCst);
+        .store((b as i32) as i32, SeqCst);
     Some(b)
 }
 
@@ -1535,7 +1535,7 @@ pub fn finish_(m: *const module) -> i32 {
     // c:2338 — `free_isrch_spots()`.
     free_isrch_spots();
     // c:2342-2346 — kring entries: in Rust the KILLRING is a
-    // `Mutex<VecDeque<Vec<ZleChar>>>` owned by the runtime; clearing
+    // `Mutex<VecDeque<Vec<char>>>` owned by the runtime; clearing
     // it drops the entries.
     if let Ok(mut ring) = KILLRING.lock() {
         ring.clear();
@@ -1553,16 +1553,12 @@ pub fn finish_(m: *const module) -> i32 {
     0 // c:2357
 }
 
-pub type ZleChar = char;
-
-/// ZLE string type
-pub type ZleString = Vec<ZleChar>;
-
-/// ZLE integer type for character values
-pub type ZleInt = i32;
-
-/// EOF marker
-pub const ZLEEOF: ZleInt = -1;
+// `pub type ZleChar = char;`, `pub type ZleString = Vec<ZleChar>;`,
+// `pub type ZleInt = i32;` — three Rust-only type aliases with no C
+// counterpart, DELETED per PORT.md Rule 0. C uses the canonical
+// `ZLE_CHAR_T` / `ZLE_STRING_T` typedefs in `Src/Zle/zle.h:31-32`
+// (ported at `zle_h.rs:45/48`), and plain `int` for the integer
+// case. Callers now use `char` / `Vec<char>` / `i32` directly.
 
 // `pub struct Zle;` deleted along with `impl Default for Zle` and
 // `impl Zle { fn new() }`. The unit marker had no C counterpart and
@@ -2413,7 +2409,7 @@ pub static WATCH_FDS: std::sync::Mutex<Vec<watch_fd>> = // c:204
 // =====================================================================
 
 /// Port of `ZLE_STRING_T zleline` from `Src/Zle/zle_main.c:40`.
-pub static ZLELINE: std::sync::Mutex<Vec<ZleChar>> = std::sync::Mutex::new(Vec::new());
+pub static ZLELINE: std::sync::Mutex<Vec<char>> = std::sync::Mutex::new(Vec::new());
 /// Port of `int zlecs` from `Src/Zle/zle_main.c:45`.
 pub static ZLECS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 /// Port of `int zlell` from `Src/Zle/zle_main.c:45`.
@@ -2461,7 +2457,7 @@ pub static RPROMPT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new
 /// Port of `int pre_zle_status` from `Src/Zle/zle_main.c`.
 pub static PRE_ZLE_STATUS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 /// Port of `ZLE_STRING_T vibuf[36]` from `Src/Zle/zle_misc.c`.
-pub static VIBUF: std::sync::OnceLock<std::sync::Mutex<[Vec<ZleChar>; 36]>> =
+pub static VIBUF: std::sync::OnceLock<std::sync::Mutex<[Vec<char>; 36]>> =
     std::sync::OnceLock::new();
 
 /// Emacs mode flag
@@ -2470,7 +2466,7 @@ pub fn is_emacs() -> bool {
     *n == "emacs" || *n == "main"
 }
 /// Port of `LinkList kring` from `Src/Zle/zle_misc.c`.
-pub static KILLRING: std::sync::Mutex<VecDeque<Vec<ZleChar>>> =
+pub static KILLRING: std::sync::Mutex<VecDeque<Vec<char>>> =
     std::sync::Mutex::new(VecDeque::new());
 /// Port of `int kringsize` from `Src/Zle/zle_misc.c`.
 pub static KILLRINGMAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(8);
@@ -2497,7 +2493,7 @@ pub static VICHGBUF: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new(
 /// Port of `char *srch_str` from `Src/Zle/zle_hist.c`.
 pub static SRCH_STR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 /// Port of `ZLE_STRING_T lastline` from `Src/Zle/zle_utils.c`.
-pub static LASTLINE: std::sync::Mutex<Vec<ZleChar>> = std::sync::Mutex::new(Vec::new());
+pub static LASTLINE: std::sync::Mutex<Vec<char>> = std::sync::Mutex::new(Vec::new());
 /// Port of `int lastll` from `Src/Zle/zle_utils.c`.
 pub static LASTLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 /// Port of `int lastcs` from `Src/Zle/zle_utils.c`.
@@ -2578,7 +2574,7 @@ pub static HIGHLIGHT: std::sync::OnceLock<std::sync::Mutex<HighlightManager>> =
 // the accessor wrappers interleaved between real port fns.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub fn vibuf() -> &'static std::sync::Mutex<[Vec<ZleChar>; 36]> {
+pub fn vibuf() -> &'static std::sync::Mutex<[Vec<char>; 36]> {
     VIBUF.get_or_init(|| std::sync::Mutex::new(std::array::from_fn(|_| Vec::new())))
 }
 

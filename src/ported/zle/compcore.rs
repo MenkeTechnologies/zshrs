@@ -4695,7 +4695,7 @@ mod tests {
         //
         // `selfinsert()` (zle_misc.rs:180) writes through
         // `self_insert(c)` which mutates the `zle_main::ZLELINE`
-        // (`Mutex<Vec<ZleChar>>`) plus `zle_main::ZLECS`/`ZLELL` —
+        // (`Mutex<Vec<char>>`) plus `zle_main::ZLECS`/`ZLELL` —
         // NOT the `compcore::ZLELINE` (`OnceLock<Mutex<String>>`)
         // used by the meta/unmeta tests above. The original test
         // seeded the wrong buffer, so the assert kept seeing "ab"

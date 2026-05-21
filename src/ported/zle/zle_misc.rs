@@ -565,7 +565,7 @@ pub fn transposechars() -> i32 {
         }
         // c:345-358 — MULTIBYTE branch uses transpose_swap with surrounding
         //              positions; non-multibyte branch swaps two ZLE_CHAR_T.
-        //              Rust ZleString is Vec<char> so we can swap directly.
+        //              Rust Vec<char> is Vec<char> so we can swap directly.
         ZLELINE.lock().unwrap().swap(ct - 1, ct);
     }
     0
@@ -1056,7 +1056,7 @@ pub fn yankpop() -> i32 {
         return 1;
     }
     // C body cycles the kill ring index `kct` and re-inserts the
-    // previous yank. zshrs uses VecDeque<ZleString> with the rotation
+    // previous yank. zshrs uses VecDeque<Vec<char>> with the rotation
     // index `yank_ring_idx`. Simplified: rotate front entry to back,
     // delete previous yank text from line, insert new front.
     let prev_start = YANKB.load(SeqCst);

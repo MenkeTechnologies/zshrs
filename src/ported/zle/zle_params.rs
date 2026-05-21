@@ -687,7 +687,7 @@ pub fn get_killring() -> Vec<String> {
     // c:705-733 — return kring entries with most-recently-killed
     // first. Empty entries returned as "" so the array length always
     // equals kringsize. zshrs holds the kill ring as
-    // VecDeque<ZleString> where push_front puts newest at index 0,
+    // VecDeque<Vec<char>> where push_front puts newest at index 0,
     // so we iterate forward.
     KILLRING
         .lock()

@@ -19,7 +19,7 @@
 
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use super::zle_main::{ZleString, BUFSTACK, MULT};
+use super::zle_main::{BUFSTACK, MULT};
 use super::zle_misc::DONE;
 use crate::ported::options::opt_state_set;
 use crate::ported::zsh_h::{isset, HISTBEEP, HISTIGNOREDUPS, ZLRF_HISTORY};
@@ -831,7 +831,7 @@ pub fn zle_goto_hist(n: i32, skipdups: bool) -> bool {
     }
 
     history().lock().unwrap().cursor = new_idx as usize;
-    let new_line: Option<ZleString> = if new_idx == len {
+    let new_line: Option<Vec<char>> = if new_idx == len {
         history().lock().unwrap().saved_line.clone()
     } else {
         Some(
@@ -1419,7 +1419,7 @@ pub struct History {
     pub max_size: usize,
     /// Saved line when navigating history (mirrors the C `zle_text`
     /// shadow on `Histent`).
-    pub saved_line: Option<ZleString>,
+    pub saved_line: Option<Vec<char>>,
     /// Saved cursor position pre-navigation.
     pub saved_cs: usize,
     /// Previous search string. Mirrors `searchstr`

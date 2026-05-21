@@ -330,7 +330,7 @@ pub fn ZC_toupper(c: ZLE_CHAR_T) -> ZLE_CHAR_T {
 // =====================================================================
 // `LASTFULLCHAR` — `Src/Zle/zle.h:75-76`. Macro alias resolving to
 // `lastchar_wide` (the most-recent fully-decoded codepoint). Lives
-// as a field on `Zle` (`lastchar_wide: ZleInt`); the macro name is
+// as a field on `Zle` (`lastchar_wide: i32`); the macro name is
 // kept here as an alias for searchability.
 // =====================================================================
 
