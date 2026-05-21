@@ -233,8 +233,19 @@ pub fn instmatch(
 /// Port of `hasbrpsfx(Cmatch m, char *pre, char *suf)` from Src/Zle/compresult.c — used by the
 /// brace-suffix tracking that compsys keeps for menu completion.
 /// WARNING: param names don't match C — Rust=(s) vs C=(m, pre, suf)
+/// !!! WARNING: PARTIAL PORT / RUST-ONLY SHAPE — does NOT match C's
+/// `hasbrpsfx(Cmatch m, char *pre, char *suf)` at Src/Zle/compresult.c:685.
+/// C body (39 lines): checks whether the brace-prefix/brace-suffix on
+/// a Cmatch entry differ from the menu's `lastprebr`/`lastpostbr`
+/// state, including the metafy_line() bookkeeping for non-meta input.
+/// This Rust impl is a heuristic — "does the string contain `{` or
+/// `}`?" — used by ambiguous-match decisions in callers (lines 445,
+/// 816). The two callers pass single strings, not Cmatch entries.
+///
+/// Faithful port needs Cmatch.brpre/brsuf field access + zlemetaline
+/// metafy/unmetafy round-trip + lastprebr/lastpostbr globals. Tracked.
 pub fn hasbrpsfx(s: &str) -> bool {
-    // c:685
+    // c:685 — see WARNING above; Rust impl is a heuristic.
     s.contains('{') || s.contains('}')
 }
 
@@ -349,12 +360,21 @@ pub fn do_single(
     instmatch(buffer, cursor, word_start, word_end, &replacement)
 }
 
-/// Test whether `word` satisfies the required prefix and suffix
-/// constraints (the `compadd -P pre -S suf` requirements).
-/// Port of `valid_match(m, next)` from Src/Zle/compresult.c.
-/// WARNING: param names don't match C — Rust=(word, prefix, suffix) vs C=(m, next)
+/// !!! WARNING: PARTIAL PORT / RUST-ONLY SHAPE — does NOT match C's
+/// `valid_match(Cmatch *m, int next)` at Src/Zle/compresult.c:1210.
+/// C body (32 lines) walks the match list (menuacc / minfo.group /
+/// amatches / lmatches), skipping CMF_DUMMY / CMF_NOLIST / CMF_MULT
+/// entries while honoring zmult direction. This Rust port instead
+/// does a simple word.starts_with(prefix) + ends_with(suffix) check —
+/// the `compadd -P pre -S suf` predicate, which is what the only
+/// callers (the in-file tests) want.
+///
+/// The C function and this one share a name but have completely
+/// different semantics. Per PORT.md Rule 0 (no invented fns), a
+/// faithful port would need the full minfo/amatches infrastructure
+/// AND the callers would need rewriting. Tracked for follow-up.
 pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {
-    // c:1210
+    // c:1210 — see WARNING above; Rust impl is a different fn.
     word.starts_with(prefix) && (suffix.is_empty() || word.ends_with(suffix))
 }
 
