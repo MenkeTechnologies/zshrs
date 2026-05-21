@@ -35,6 +35,7 @@ use crate::fusevm_bridge::with_executor;
 use crate::ported::builtin::{cd_able_vars, fixdir, BUILTINS, DOPRINTDIR, LASTVAL};
 use crate::ported::builtins::rlimits::setlimits;
 use crate::ported::compat::zgettime_monotonic_if_available;
+use crate::ported::config_h::DEFAULT_PATH;
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::hashtable::{cmdnam_unhashed, cmdnamtab_lock, dircache_set, hashdir, pathchecked, shfunctab_lock};
 use crate::ported::hist::{strinbeg, strinend};
@@ -50,7 +51,7 @@ use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::subst::{quotesubst, singsub};
 use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, ERRFLAG_ERROR};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS};
+use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS, PATHDIRS};
 use crate::zsh_h::execstack;
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
@@ -1543,7 +1544,7 @@ pub fn shfunc_set_sticky(shf: &mut shfunc) {
 pub fn search_defpath(cmd: &str, plen: usize) -> Option<String> {
     // c:691
     // c:695 — `for (ps = DEFAULT_PATH; ps; ps = pe ? pe+1 : NULL)`.
-    for ps in crate::ported::config_h::DEFAULT_PATH.split(':') {
+    for ps in DEFAULT_PATH.split(':') {
         // c:695
         // c:697 — `if (*ps == '/')`.
         if !ps.starts_with('/') {
@@ -1674,6 +1675,59 @@ pub fn clobber_open(f: &redir) -> i32 {
         *libc::__error() = oerrno; // macOS errno location
     }
     -1 // c:2263
+}
+
+/// Port of `char *findcmd(char *arg0, int docopy, int default_path)`
+/// from `Src/exec.c:897`. Walk `$PATH` (or DEFAULT_PATH under
+/// `default_path=1`) for `arg0`, returning the matching path on
+/// success. `_docopy` is the C source's "duplicate the result"
+/// flag — Rust ownership covers it without an explicit copy step.
+/// `default_path=1` forces `/bin:/usr/bin:...` search (used by
+/// `command -p`).
+pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
+    // c:897
+    // c:903-908 — if (default_path) → search_defpath; return.
+    if default_path != 0 {
+        return search_defpath(arg0, libc::PATH_MAX as usize);
+    }
+    // c:912-913 — strlen(arg0) > PATH_MAX → NULL.
+    if arg0.len() > libc::PATH_MAX as usize {
+        return None;
+    }
+    // c:914-920 — `/`-bearing arg: accept only if absolute OR (relative
+    // + PATHDIRS set and not ./ ../).
+    if arg0.contains('/') {
+        // c:915 — `RET_IF_COM(arg0)` — accept if it's an existing executable.
+        if iscom(arg0) {
+            if arg0.starts_with('/') {
+                return Some(arg0.to_string()); // c:916
+            }
+            // c:917-919 — relative + PATHDIRS set → fall through to walk.
+            if arg0.starts_with("./")
+                || arg0.starts_with("../")
+                || !isset(PATHDIRS)
+            {
+                return None;
+            }
+            // else fall through to PATH walk.
+        } else {
+            return None;
+        }
+    }
+    // c:943-951 — walk `path[]` (the shell `$path` array). Read $PATH
+    // from paramtab so shell-private edits via `path=(...)` take
+    // effect (not OS env only).
+    let path = getsparam("PATH")?;
+    for dir in path.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let candidate = format!("{}/{}", dir, arg0);
+        if iscom(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None // c:952
 }
 
 /// Port of `Cmdnam hashcmd(char *arg0, char **pp)` from

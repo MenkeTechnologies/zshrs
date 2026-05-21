@@ -9163,65 +9163,11 @@ fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
     (left_align, width, prec)
 }
 
-/// Port of `findcmd(char *arg0, int docopy, int default_path)` from Src/exec.c:897. Walk `$PATH` for `name`,
-/// returning the matching path on success. `_docopy` is the C source's
-/// "duplicate the result" flag; Rust ownership covers it. `default_path`
-/// = 1 forces the system default `/bin:/usr/bin:...` path search (used
-/// by `command -p`).
-pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
-    // c:897
-    // c:903-908 — if (default_path) { search_defpath; return; }
-    if default_path != 0 {
-        for dir in DEFAULT_PATH.split(':') {
-            if dir.is_empty() {
-                continue;
-            }
-            let candidate = format!("{}/{}", dir, arg0);
-            if std::path::Path::new(&candidate).is_file() {
-                return Some(candidate);
-            }
-        }
-        return None; // c:907
-    }
-    // c:912-913 — strlen(arg0) > PATH_MAX → NULL
-    if arg0.len() > libc::PATH_MAX as usize {
-        return None;
-    }
-    // c:914-920 — if path contains '/': only accept if not relative and PATHDIRS set.
-    if arg0.contains('/') {
-        // c:915 — RET_IF_COM(arg0) — accept if it's an existing executable.
-        let p = std::path::Path::new(arg0);
-        if p.is_file() {
-            // c:916-919 — reject if arg0 starts with '/' (absolute) OR
-            //              PATHDIRS unset OR begins with ./ ../
-            if arg0.starts_with('/') {
-                return Some(arg0.to_string());
-            }
-            // For relative + PATHDIRS set, fall through to PATH walk.
-            if !arg0.starts_with("./") && !arg0.starts_with("../") && isset(PATHDIRS) {
-                // Fall through to PATH walk below.
-            } else {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    }
-    // c:943-951 — walk `path[]` (the shell $path array). Read $PATH from
-    //              paramtab so shell-private PATH edits via path=(...) take
-    //              effect (vs OS env-only).
-    let path = getsparam("PATH")?;
-    for dir in path.split(':') {
-        if dir.is_empty() {
-            continue;
-        }
-        let candidate = format!("{}/{}", dir, arg0);
-        if std::path::Path::new(&candidate).is_file() {
-            return Some(candidate);
-        }
-    }
-    None // c:952
-}
+// `findcmd` (Src/exec.c:897) — moved to its canonical home at
+// `crate::ported::exec::findcmd` per PORT.md Rule C (the C source
+// lives in exec.c, so the Rust port belongs in exec.rs). Call sites
+// import from the new path.
+pub use crate::ported::exec::findcmd;
 
 /// Port of `getsigidx(const char *s)` from Src/signals.c — return signal number for
 /// a name, or -1 if unknown. Strips optional `SIG` prefix; falls back
