@@ -1412,12 +1412,14 @@ pub fn patmungestring(s: &str) -> String {
 /// non-zero on match, 0 on no-match.
 pub fn pattry(prog: &Patprog, string: &str) -> bool {
     // c:2223
-    pattrylen(prog, string, string.len() as i32, -1, 0) // c:2225
+    // c:2225 — `return pattrylen(prog, string, len, -1, NULL, 0);`
+    pattrylen(prog, string, string.len() as i32, -1, None, 0)                // c:2225
 }
 
 /// Port of `int pattrylen(Patprog prog, char *string, int len,
 /// int unmetalen, Patstralloc patstralloc, int offset)` from
 /// `Src/pattern.c:2236`.
+///
 /// ```c
 /// int
 /// pattrylen(Patprog prog, char *string, int len, int unmetalen,
@@ -1427,15 +1429,18 @@ pub fn pattry(prog: &Patprog, string: &str) -> bool {
 ///                       NULL, NULL, NULL);
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(prog, string, len, unmetalen, offset) vs C=(prog, string, len, unmetalen, patstralloc, offset)
 pub fn pattrylen(
     prog: &Patprog,
     string: &str,
-    len: i32, // c:2236
+    len: i32,                                                                // c:2236
     unmetalen: i32,
+    patstralloc: Option<&crate::ported::zsh_h::Patstralloc>,
     offset: i32,
 ) -> bool {
-    pattryrefs(prog, string, len, unmetalen, offset, None, None, None) // c:2239
+    // c:2238
+    pattryrefs(
+        prog, string, len, unmetalen, patstralloc, offset, None, None, None, // c:2239
+    )
 }
 
 /// Port of `int pattryrefs(Patprog prog, char *string, int stringlen,
@@ -1444,11 +1449,13 @@ pub fn pattrylen(
 /// Runs `prog` against `string[0..stringlen]` (or whole string when
 /// stringlen=-1) at `patoffset`, returning capture-group ranges.
 ///
-/// C signature kept verbatim except where the Rust type system
-/// requires adaptation (`Patstralloc`, the metafied-string allocator,
-/// isn't yet ported — treat as None). Capture ranges are returned
-/// via the (begp, endp) out-vecs to match C's `int *begp, int *endp`.
-/// WARNING: param names don't match C — Rust=(prog, string, stringlen, unmetalenin, patoffset, nump, begp, endp) vs C=(prog, string, stringlen, unmetalenin, patstralloc, patoffset, nump, begp, endp)
+/// C signature preserved per Rule S1. `Patstralloc` (the metafied-
+/// string-allocator carrier from zsh.h:1613) is threaded through as
+/// `Option<&Patstralloc>` matching C's `NULL`-passable pointer; the
+/// matcher body currently ignores its contents (the substrate that
+/// uses pre-allocated metafied buffers isn't wired into the Rust
+/// matcher yet), but the param shape matches C so call sites trace
+/// 1:1 to upstream.
 #[allow(clippy::too_many_arguments)]
 pub fn pattryrefs(
     // c:2294
@@ -1456,6 +1463,7 @@ pub fn pattryrefs(
     string: &str,
     stringlen: i32,
     _unmetalenin: i32,
+    _patstralloc: Option<&crate::ported::zsh_h::Patstralloc>,
     _patoffset: i32,
     nump: Option<&mut i32>,
     begp: Option<&mut Vec<i32>>,
@@ -2717,6 +2725,7 @@ mod tests {
             "foobar",
             -1,
             -1,
+            None,
             0,
             Some(&mut nump),
             Some(&mut begp),
