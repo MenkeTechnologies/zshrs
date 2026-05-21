@@ -5898,6 +5898,7 @@ pub fn bin_print(
     let nonewline = OPT_ISSET(ops, b'n'); // c:4595
     let raw = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R'); // c:4596
     let one_per_line = OPT_ISSET(ops, b'l'); // c:4597
+    let nul_sep = OPT_ISSET(ops, b'N'); // c:5114/5127/5132 — NUL separator
     let _printf_mode = func == BIN_PRINTF || OPT_HASARG(ops, b'f'); // c:4604
     let echo_mode = func == BIN_ECHO;
     let _ = (name, raw);
@@ -5967,7 +5968,14 @@ pub fn bin_print(
     }
 
     // c:4860+ — main print loop.
-    let sep = if one_per_line { "\n" } else { " " };
+    // c:5126-5127 — separator priority: `-l` ('\n') > `-N` ('\0') > ' '.
+    let sep = if one_per_line {
+        "\n"
+    } else if nul_sep {
+        "\0"
+    } else {
+        " "
+    };
     // c:4598-4600 — `-P` prompt-style percent expansion (`%n`, `%d`,
     // `%?`, `%h`, `%%`, etc.). Routes through `expand_prompt`
     // (canonical port of `Src/prompt.c:182 promptexpand`).
@@ -6035,21 +6043,31 @@ pub fn bin_print(
     if let Some(ref v) = dest_var {
         setsparam(v, &body);
     } else {
-        let final_nl = !nonewline; // c:5550 — final newline unless -n.
+        // c:5130-5132 — final terminator: `-n` suppresses; `-N` emits
+        // NUL instead of newline; else newline.
+        let final_term: &[u8] = if nonewline {
+            b""
+        } else if nul_sep {
+            b"\0"
+        } else {
+            b"\n"
+        };
         if let Some(mut f) = dest_fd {
             // c:4847 — write to dup'd file descriptor.
             use std::io::Write as _;
-            let _ = f.write_all(body.as_bytes()); // c:5546
-            if final_nl {
-                let _ = f.write_all(b"\n");
-            }
-            // f closes on drop (close(dup_fd)) — user's original fd
-            // remains open per c:4843 dup semantics.
+            let _ = f.write_all(body.as_bytes()); // c:5124 fwrite
+            let _ = f.write_all(final_term); // c:5132
+                                              // f closes on drop (close(dup_fd)) — user's original fd
+                                              // remains open per c:4843 dup semantics.
         } else {
-            print!("{}", body);
-            if final_nl {
-                println!();
-            }
+            // stdout path. -N writes NUL via raw stdout; print!/println!
+            // would mangle a NUL inside a String literal via format
+            // machinery, so route through stdout().write_all directly.
+            use std::io::Write as _;
+            let stdout = std::io::stdout();
+            let mut lk = stdout.lock();
+            let _ = lk.write_all(body.as_bytes()); // c:5124
+            let _ = lk.write_all(final_term); // c:5132
         }
     }
     0
@@ -10176,6 +10194,50 @@ mod tests {
         // Conjunction check: zsh-equivalent: print -O foo Bar BAZ
         // gives `foo Bar BAZ`. Pin so an inadvertent reverse-before-
         // sort regression fails.
+    }
+
+    /// `Src/builtin.c:5126-5132` — `print -N a b` separates args with
+    /// `\0` and terminates with `\0` (not `\n`). Pipe-roundtrip pin.
+    #[test]
+    fn bin_print_nul_separator_with_minus_N() {
+        let _g = crate::test_util::global_state_lock();
+        use std::io::Read as _;
+        let mut fds: [libc::c_int; 2] = [0, 0];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let (rfd, wfd) = (fds[0], fds[1]);
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        // -u <wfd>
+        ops.ind[b'u' as usize] = 1 | (1 << 2);
+        ops.args = vec![wfd.to_string()];
+        ops.argscount = 1;
+        // -N (no arg)
+        ops.ind[b'N' as usize] = 1;
+
+        let r = bin_print(
+            "print",
+            &["a".to_string(), "b".to_string(), "c".to_string()],
+            &ops,
+            BIN_PRINT,
+        );
+        assert_eq!(r, 0);
+        unsafe { libc::close(wfd) };
+
+        let mut buf = Vec::new();
+        unsafe {
+            use std::os::unix::io::FromRawFd;
+            let mut f = std::fs::File::from_raw_fd(rfd);
+            f.read_to_end(&mut buf).unwrap();
+        }
+        assert_eq!(
+            buf,
+            b"a\0b\0c\0",
+            "c:5126-5132 — -N: NUL separators + NUL terminator"
+        );
     }
 
     /// `Src/builtin.c:4815-4847` — `print -u FD` writes to the given
