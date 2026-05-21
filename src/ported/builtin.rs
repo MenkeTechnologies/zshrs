@@ -40,7 +40,8 @@ use crate::ported::exec::{getfpfunc, loadautofn, FORKLEVEL, TRAP_RETURN, TRAP_ST
 use crate::ported::hashnameddir::{emptynameddirtable, nameddirtab, printnameddirnode};
 use crate::ported::hashtable::{
     aliastab_lock, cmdnamtab_lock, createaliasnode, dircache_set, emptycmdnamtable, hnamcmp,
-    printaliasnode, printcmdnamnode, reswdtab_lock, shfunctab_lock, sufaliastab_lock,
+    printaliasnode, printcmdnamnode, printshfuncexpand, reswdtab_lock, shfunctab_lock,
+    sufaliastab_lock,
 };
 // `curhist` (hist.rs static) NOT imported — there's an unavoidable
 // `let curhist` local in fc_main that mirrors C's `int curhist;` local
@@ -4790,7 +4791,7 @@ pub fn bin_whence(
     // verbose mode. Mirror C: force v unconditionally under
     // BIN_COMMAND.
     let mut v = v;
-    let _aliasflags = if func == BIN_COMMAND {
+    let aliasflags = if func == BIN_COMMAND {
         // c:4015
         if OPT_ISSET(ops, b'V') {
             // c:4016
@@ -4954,42 +4955,47 @@ pub fn bin_whence(
         let mut buf: Option<String> = None;
         // c:4124-4130 — `-p` path-only path.
         if !OPT_ISSET(ops, b'p') {
-            // c:4128-4134 — alias check.
-            if let Ok(t) = aliastab_lock().read() {
-                if let Some(a) = t.get(arg) {
-                    // c:4128
-                    if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
-                        // c:4129
-                        println!("{}: alias", a.node.nam);
-                    } else if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
-                        println!("{}: aliased to {}", a.node.nam, a.text);
-                    } else if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
-                        println!("{} is an alias for {}", a.node.nam, a.text);
-                    } else if (printflags & PRINT_LIST as i32) != 0 {
-                        println!("alias {}={}", a.node.nam, a.text);
-                    } else {
-                        println!("{}={}", a.node.nam, a.text);
-                    }
-                    informed = 1; // c:4131
-                    if !all {
-                        continue;
-                    } // c:4132
-                }
+            // c:4093-4097 — alias check. C: `aliastab->printnode(hn, aliasflags)`.
+            // Inline match-on-printflags was a fake reimplementation;
+            // route through the canonical `printaliasnode` so any
+            // future flag added there (PRINT_NAMEONLY etc.) is honored.
+            let alias_text = aliastab_lock()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg).map(|a| a.clone()));
+            if let Some(a) = alias_text {
+                printaliasnode(&a, aliasflags); // c:4094
+                informed = 1; // c:4095
+                if !all {
+                    continue;
+                } // c:4097
             }
-            // c:4136-4143 — suffix-alias check (arg has a `.SUFFIX`).
+            // c:4099-4107 — suffix-alias check. C: arg has `.SUFFIX`
+            // AND suffix char before `.` isn't Meta AND sufaliastab
+            // has matching suf entry. Route through printaliasnode for
+            // sufaliastab — same printnode callback as aliastab
+            // (Src/hashtable.c:1255 `sufaliastab->printnode = printaliasnode`).
             if let Some(idx) = arg.rfind('.') {
-                // c:4137
-                if idx > 0 && idx + 1 < arg.len() {
+                // c:4100 strrchr(*argv, '.')
+                let after_dot_nonempty = idx + 1 < arg.len();
+                let dot_not_at_start = idx > 0;
+                // c:4101 — `suf[-1] != Meta`. Rust strings are UTF-8;
+                // skip when the byte immediately before `.` would be
+                // a metafy escape (rare in real shell usage).
+                let pre_dot_not_meta = arg.as_bytes()[idx - 1] as u8
+                    != crate::ported::zsh_h::Meta;
+                if after_dot_nonempty && dot_not_at_start && pre_dot_not_meta {
                     let suf = &arg[idx + 1..];
-                    if let Ok(t) = sufaliastab_lock().read() {
-                        if let Some(a) = t.get(suf) {
-                            // c:4140
-                            println!("{}={}", a.node.nam, a.text); // c:4141
-                            informed = 1; // c:4142
-                            if !all {
-                                continue;
-                            } // c:4143
-                        }
+                    let suf_alias = sufaliastab_lock()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(suf).map(|a| a.clone()));
+                    if let Some(a) = suf_alias {
+                        printaliasnode(&a, printflags); // c:4103
+                        informed = 1; // c:4104
+                        if !all {
+                            continue;
+                        } // c:4106
                     }
                 }
             }
@@ -5016,62 +5022,35 @@ pub fn bin_whence(
                     continue;
                 } // c:4112
             }
-            // c:4153-4158 — shell function check.
-            if let Ok(t) = shfunctab_lock().read() {
-                if t.contains_key(arg) {
-                    // c:4153
-                    if (printflags & PRINT_WHENCE_FUNCDEF as i32) != 0 {
-                        let body = getshfunc(arg)
-                            .and_then(|f| f.body)
-                            .unwrap_or_else(|| String::from("# body undefined"));
-                        println!("{} () {{\n{}\n}}", arg, body);
-                    } else if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
-                        println!("{}: function", arg);
-                    } else if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
-                        println!("{}: shell function", arg);
-                    } else if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
-                        // c:Src/builtin.c:4155 `printf("%s is %sshell function", …)`
-                        // — autoload stubs (PM_UNDEFINED) report as
-                        // "autoload shell function"; loaded fns just
-                        // "shell function".
-                        let is_autoload = getshfunc(arg)
-                            .map(|f| (f.node.flags as u32 & PM_UNDEFINED) != 0)
-                            .unwrap_or(false);
-                        if is_autoload {
-                            println!("{} is an autoload shell function", arg);
-                        } else {
-                            println!("{} is a shell function", arg);
-                        }
-                    } else {
-                        println!("{}", arg); // c:4155
-                    }
-                    informed = 1; // c:4156
-                    if !all {
-                        continue;
-                    } // c:4157
-                }
-            }
-            // c:4160-4165 — builtin command check.
-            // Output shape per `Src/builtin.c:177-194 printbuiltinnode`:
-            //   -w → "name: builtin"
-            //   -c → "name: shell built-in command"
-            //   -v → "name is a shell builtin"
-            //   default → "name"
-            if BUILTINS.iter().any(|b| b.node.nam == *arg) {
-                // c:4160
-                if wd {
-                    println!("{}: builtin", arg); // c:179
-                } else if csh {
-                    println!("{}: shell built-in command", arg); // c:184
-                } else if v {
-                    println!("{} is a shell builtin", arg); // c:189
-                } else {
-                    println!("{}", arg); // c:194
-                }
-                informed = 1; // c:4163
+            // c:4116-4121 — shell function check. C:
+            //   `printshfuncexpand(hn, printflags, expand)`.
+            // Inline match-on-printflags reimplementation deleted —
+            // route through the canonical port at hashtable.rs:1407,
+            // which threads `expand` (for `-x N` indent override) and
+            // handles PRINT_WHENCE_FUNCDEF/PRINT_WHENCE_WORD/_CSH/
+            // _VERBOSE branches per Src/hashtable.c:1340-1404.
+            let shfunc_node = getshfunc(arg);
+            if let Some(ref f) = shfunc_node {
+                printshfuncexpand(f, printflags, expand); // c:4117
+                informed = 1; // c:4118
                 if !all {
                     continue;
-                } // c:4164
+                } // c:4120
+            }
+            // c:4123-4128 — builtin check. C: `builtintab->printnode(
+            //   hn, printflags)` → printbuiltinnode at Src/builtin.c:174.
+            // Inline match-on-(wd|csh|v) reimplementation deleted —
+            // route through the canonical port at builtin.rs:139.
+            let builtin_node: Option<*mut hashnode> = BUILTINS
+                .iter()
+                .find(|b| b.node.nam == *arg)
+                .map(|b| &b.node as *const hashnode as *mut hashnode);
+            if let Some(hn) = builtin_node {
+                printbuiltinnode(hn, printflags); // c:4124
+                informed = 1; // c:4125
+                if !all {
+                    continue;
+                } // c:4127
             }
             // c:4167-4173 — cmdnamtab HASHED check (commands installed
             // via `hash NAME=PATH`). Read the canonical cmdnamtab
