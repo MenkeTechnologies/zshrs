@@ -5394,15 +5394,18 @@ pub fn bin_hash(
                     }
                 }
             } else {
-                // c:4332-4334 — `if (!hashcmd(name, path)) zwarnnam(
-                //                "no such command")`. Walk shell-side
-                //                $PATH (paramtab).
-                let found = getsparam("PATH").is_some_and(|p| {
-                    p.split(':').any(|d| {
-                        !d.is_empty() && std::path::Path::new(&format!("{}/{}", d, n)).exists()
-                    })
-                });
-                if !found {
+                // c:4332-4334 — `if (!hashcmd(asg->name, path)) zwarnnam(
+                //                "%s: no such command", asg->name);`
+                // Route through the canonical `hashcmd` port at
+                // `crate::ported::exec::hashcmd` (Src/exec.c:1010) —
+                // the prior inline-PATH-walk fakery missed iscom's
+                // X-perm + S_IFREG check AND skipped the cmdnamtab
+                // insertion + HASHDIRS bulk-hash side effects.
+                let path: Vec<String> = getsparam("PATH")
+                    .map(|p| p.split(':').map(String::from).collect())
+                    .unwrap_or_default();
+                if crate::ported::exec::hashcmd(n, &path).is_none() {
+                    // c:4332
                     zwarnnam(name, &format!("no such command: {}", n)); // c:4333
                     returnval = 1; // c:4334
                 }
