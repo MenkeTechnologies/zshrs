@@ -1301,7 +1301,12 @@ pub(crate) fn printcompctlp(name: &str, hn: &Compctl, printflags: i32) {
 ///   7. If COMP_LIST: print only the named entries
 ///   8. Else: install via compctl_process_cc
 /// WARNING: param names don't match C — Rust=(argv) vs C=(name, argv, ops, func)
-pub(crate) fn bin_compctl(name: &str, argv: &[String]) -> i32 {
+pub fn bin_compctl(
+    name: &str,
+    argv: &[String],
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     let mut argv: Vec<String> = argv.to_vec();
     let mut ret: i32 = 0;
 
@@ -1428,7 +1433,12 @@ pub const CFN_DEFAULT: i32 = 2; // c:1673
 ///   CFN_FIRST   = 1  — skip cc_first
 ///   CFN_DEFAULT = 2  — skip cc_default
 /// WARNING: param names don't match C — Rust=(argv) vs C=(name, argv, ops, func)
-pub(crate) fn bin_compcall(name: &str, argv: &[String]) -> i32 {
+pub fn bin_compcall(
+    name: &str,
+    argv: &[String],
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     // C: c:1680-1683 — incompfunc check
     let incompfunc = INCOMPFUNC.with(|c| c.get());
     if incompfunc != 1 {
@@ -3269,7 +3279,18 @@ mod tests {
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         createcompctltable();
-        let r = bin_compctl("compctl", &["-f".to_string(), "mycmd".to_string()]);
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_compctl(
+            "compctl",
+            &["-f".to_string(), "mycmd".to_string()],
+            &ops,
+            0,
+        );
         assert_eq!(r, 0);
         let g = COMPCTL_TAB.read().unwrap();
         assert!(g.as_ref().unwrap().contains_key("mycmd"));
@@ -3472,7 +3493,13 @@ mod tests {
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         INCOMPFUNC.with(|c| c.set(0));
-        let r = bin_compcall("compcall", &[]);
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_compcall("compcall", &[], &ops, 0);
         assert_eq!(r, 1);
     }
 
@@ -3482,7 +3509,13 @@ mod tests {
         let _g = zle_test_setup();
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         INCOMPFUNC.with(|c| c.set(1));
-        let r = bin_compcall("compcall", &["-T".to_string()]);
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_compcall("compcall", &["-T".to_string()], &ops, 0);
         assert_eq!(r, 0);
         // Reset
         INCOMPFUNC.with(|c| c.set(0));

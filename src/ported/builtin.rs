@@ -9299,6 +9299,27 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ), // c:139
+        // c:Src/Zle/compctl.c:4000-4001 — zsh/compctl module.
+        BUILTIN(
+            "compcall",
+            0,
+            Some(crate::ported::zle::compctl::bin_compcall as HandlerFunc),
+            0,
+            0,
+            0,
+            Some("TD"),
+            None,
+        ), // c:4000
+        BUILTIN(
+            "compctl",
+            0,
+            Some(crate::ported::zle::compctl::bin_compctl as HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:4001
         BUILTIN(
             "zle",
             0,
@@ -10054,10 +10075,11 @@ mod tests {
         //   zsh/clone (clone), zsh/example (example)
         //   zsh/param/private (private)
         //   zsh/termcap (echotc)
-        // Total Rust BUILTINS table size pinned at 140 to catch
+        //   zsh/compctl (compcall, compctl)
+        // Total Rust BUILTINS table size pinned at 142 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 140,
+        assert_eq!(BUILTINS.len(), 142,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
