@@ -1196,7 +1196,9 @@ pub fn zlecallhook(name: &str, arg: Option<&str>) {
         Some(a) => vec![a.to_string()],
         None => Vec::new(),
     };
-    let _ = execzlefunc(name, &args); // c:1768
+    // c:1768 — `execzlefunc(thingy, args, 1, 0)`. set_bindk=1 so
+    // the hook's widget binding is visible to inner handlers.
+    let _ = execzlefunc(name, &args, 1, 0); // c:1768
 
     // c:1771 — `unrefthingy(thingy);`
     crate::ported::zle::zle_thingy::unrefthingy(name);
