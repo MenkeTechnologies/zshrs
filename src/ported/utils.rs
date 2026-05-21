@@ -5430,7 +5430,7 @@ pub fn zputs(s: &str) -> io::Result<()> {
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, heap)
 pub fn nicedup(s: &str) -> String {
     // c:5530
-    mb_niceformat(s) // c:5534
+    mb_niceformat(s, 0) // c:5534
 }
 
 /// Nice-format and duplicate string.
@@ -5462,7 +5462,7 @@ pub fn nicedupstring(s: &str) -> String {
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream)
 pub fn nicezputs(s: &str) -> String {
     // c:5313 / zsh.h:3274
-    mb_niceformat(s)
+    mb_niceformat(s, 0)
 }
 
 /// Port of `niceztrlen(char const *s)` from `Src/utils.c:5324`.
@@ -5489,9 +5489,10 @@ pub fn niceztrlen(s: &str) -> usize {
 // Rust idiom replacement: `chars()` + `wcs_nicechar` covers the C
 // mbrtowc loop with `MB_INVALID` fallback (Rust UTF-8 guarantees
 // valid scalars, so the invalid-byte arm collapses).
-pub fn mb_niceformat(s: &str) -> String {
+pub fn mb_niceformat(s: &str, flags: i32) -> String {
     let unmeta = unmeta(s);
     let mut out = String::with_capacity(unmeta.len());
+    let quotable = (flags & NICEFLAG_QUOTE) != 0; // c:5413
     // c:5407-5435 — C iterates via `mbrtowc(&c, ptr, umlen, &mbs)`
     // then calls `wcs_nicechar(c, ...)` on each scalar. The Rust
     // port previously called byte-based `nicechar(c)` here —
@@ -5501,7 +5502,15 @@ pub fn mb_niceformat(s: &str) -> String {
     // so non-ASCII printable wides emit raw UTF-8 and large
     // codepoints get `\u`/`\U` hex escape.
     for c in unmeta.chars() {
-        out.push_str(&wcs_nicechar(c));
+        // c:5413-5417 — `'` and `\` get backslash-escaped under
+        // NICEFLAG_QUOTE (so the result is safe inside `$'...'`).
+        if quotable && c == '\'' {
+            out.push_str("\\'"); // c:5413-5414
+        } else if quotable && c == '\\' {
+            out.push_str("\\\\"); // c:5417-5418
+        } else {
+            out.push_str(&wcs_nicechar(c));
+        }
     }
     out
 }
@@ -6090,10 +6099,14 @@ pub(crate) fn quotedzputs(s: &str) -> String {
     // non-printables), wrap in `$'…'` using sb/mb_niceformat with
     // NICEFLAG_QUOTE so embedded `'`/`\` get backslash-escaped.
     if is_mb_niceformat(s) {
-        // c:6478 (MULTIBYTE_SUPPORT) / c:6494 (single-byte)
-        // c:6502-6504 — `sb_niceformat(s, NULL, &substr, NICEFLAG_QUOTE|NICEFLAG_NODUP);
-        //                 sprintf(outstr, "$'%s'", substr);`
-        return format!("$'{}'", sb_niceformat(s, NICEFLAG_QUOTE)); // c:6504
+        // c:6478-6492 (MULTIBYTE_SUPPORT branch): use mb_niceformat
+        //   with NICEFLAG_QUOTE so multi-byte chars round-trip through
+        //   wcs_nicechar (raw UTF-8 for printable wides, `\u`/`\U` for
+        //   large codepoints) AND `'`/`\\` get backslash-escaped.
+        // Under !MULTIBYTE_SUPPORT (c:6494-6508) C would use
+        //   sb_niceformat instead. Static-link path: MULTIBYTE is
+        //   always available in Rust.
+        return format!("$'{}'", mb_niceformat(s, NICEFLAG_QUOTE)); // c:6488
     }
     // c:6511-6518 — `if (!hasspecial(s)) return dupstring(s);`.
     if !hasspecial(s) {
@@ -9081,6 +9094,32 @@ mod tests {
         );
     }
 
+    /// c:6478-6492 — `is_mb_niceformat` arm of quotedzputs uses
+    /// mb_niceformat with NICEFLAG_QUOTE so embedded `'` becomes
+    /// `\'` inside the `$'...'` wrapper (preventing the quote from
+    /// terminating the wrap). Previously sb_niceformat without
+    /// NICEFLAG_QUOTE was used, which would have left `'` raw.
+    #[test]
+    fn quotedzputs_dollar_quote_escapes_apostrophe_inside_wrap() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        // String with embedded `'` AND a control char so the
+        // is_mb_niceformat arm is taken (controls trigger it).
+        let r = quotedzputs("a\nb'c");
+        // Expected: `$'a\nb\'c'` — the embedded `'` is `\'` inside
+        // dollar-quotes, NOT terminating the wrap.
+        assert!(
+            r.starts_with("$'") && r.ends_with("'"),
+            "c:6488 — must be wrapped in $'...'  got {:?}",
+            r
+        );
+        assert!(
+            r.contains("\\'"),
+            "c:5413-5414 — embedded `'` must be `\\'` not raw `'`: got {:?}",
+            r
+        );
+    }
+
     /// c:6533-6576 — RCQUOTES branch: wrap everything in `'…'`,
     /// double embedded `'` as `''`.
     #[test]
@@ -9438,23 +9477,23 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Pure ASCII printable: unchanged.
         assert_eq!(
-            mb_niceformat("hello"),
+            mb_niceformat("hello", 0),
             "hello",
             "c:5407 — printable ASCII passes through"
         );
         // Wide chars (Latin-1, CJK) — must NOT get \M-X escape.
         assert_eq!(
-            mb_niceformat("café"),
+            mb_niceformat("café", 0),
             "café",
             "c:5407 — Latin-1 'é' must NOT byte-mask to \\M-X"
         );
         assert_eq!(
-            mb_niceformat("字"),
+            mb_niceformat("字", 0),
             "字",
             "c:5407 — CJK printable passes through"
         );
         // Mixed: ASCII + wide.
-        assert_eq!(mb_niceformat("abcéxyz"), "abcéxyz");
+        assert_eq!(mb_niceformat("abcéxyz", 0), "abcéxyz");
     }
 
     /// `Src/utils.c:5407` + `wcs_nicechar` — controls still escape
@@ -9464,17 +9503,17 @@ mod tests {
     fn mb_niceformat_escapes_controls() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            mb_niceformat("\n"),
+            mb_niceformat("\n", 0),
             "\\n",
             "c:5407 → wcs_nicechar c:625 — newline escapes"
         );
         assert_eq!(
-            mb_niceformat("\t"),
+            mb_niceformat("\t", 0),
             "\\t",
             "c:5407 → wcs_nicechar c:628 — tab escapes"
         );
         // Mixed: text with embedded control.
-        assert_eq!(mb_niceformat("a\nb"), "a\\nb");
+        assert_eq!(mb_niceformat("a\nb", 0), "a\\nb");
     }
 
     /// `Src/utils.c:4971-4983` — `metalen(s, len)`. **Input `len` is
@@ -10598,16 +10637,16 @@ mod tests {
     fn nicezputs_matches_mb_niceformat_under_multibyte() {
         let _g = crate::test_util::global_state_lock();
         // ASCII printable: both produce the same passthrough.
-        assert_eq!(nicezputs("hello"), mb_niceformat("hello"));
+        assert_eq!(nicezputs("hello"), mb_niceformat("hello", 0));
         // ASCII control: \n must be `\n` (literal backslash + n).
-        assert_eq!(nicezputs("a\nb"), mb_niceformat("a\nb"));
+        assert_eq!(nicezputs("a\nb"), mb_niceformat("a\nb", 0));
         assert!(
             nicezputs("a\nb").contains("\\n"),
             "nicechar/wcs_nicechar emit `\\n` (not raw 0x0a)"
         );
         // Multibyte: previous chars()+nicechar would have mangled
         // é into `\M-…`. mb_niceformat preserves printable wides.
-        assert_eq!(nicezputs("é"), mb_niceformat("é"));
+        assert_eq!(nicezputs("é"), mb_niceformat("é", 0));
         // Empty: both empty.
         assert_eq!(nicezputs(""), String::new());
     }
@@ -10620,12 +10659,12 @@ mod tests {
     #[test]
     fn nicedup_matches_mb_niceformat_under_multibyte() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(nicedup("hello"), mb_niceformat("hello"));
-        assert_eq!(nicedup("a\nb"), mb_niceformat("a\nb"));
+        assert_eq!(nicedup("hello"), mb_niceformat("hello", 0));
+        assert_eq!(nicedup("a\nb"), mb_niceformat("a\nb", 0));
         // Wide-char printable: the bug was here — sb_niceformat byte-
         // masks `c & 0xff` so `é` (0xC3 0xA9 UTF-8) emerged as
         // two `\M-…` escapes. mb_niceformat preserves it.
-        assert_eq!(nicedup("é"), mb_niceformat("é"));
+        assert_eq!(nicedup("é"), mb_niceformat("é", 0));
         // nicedupstring delegates to nicedup; pin equivalence.
         assert_eq!(nicedupstring("hé\nllo"), nicedup("hé\nllo"));
     }
