@@ -583,35 +583,181 @@ pub fn killrunjobs(from_signal: i32) {
     }
 }
 
-/// Kill a specific job by process group.
-/// Port of `killjb(Job jn, int sig)` from Src/signals.c:529.
-/// Rust idiom replacement: `killpg(jn, sig)` covers the C monitoring-
-/// branch; non-monitor path (per-proc `kill`) lives on the executor
-/// since it owns the JobInfo->procs vec.
-// send a signal to a job (simply involves kill if monitoring is on)       // c:529
-/// !!! WARNING: PARTIAL PORT — wrong sig + missing superjob walk.
-/// C `killjb(Job jn, int sig)` at Src/signals.c:529 (68 lines) takes
-/// a `Job` struct pointer and:
-///   - c:534 — checks the `jobbing` global before doing anything
-///   - c:535-560 — when `jn->stat & STAT_SUPERJOB && sig == SIGCONT`,
-///     walks `jobtab[jn->other].procs` calling killpg on each (with
-///     a kill() fallback when killpg returns -1)
-///   - c:562-590 — falls through to killpg(jn->gleader, sig) for
-///     non-superjob jobs
-///   - returns 0/-1 per killpg result
-///
-/// Rust port takes `(i32, i32)` where the first arg is treated as
-/// a pgid. Callers in jobs.rs pass `gleader` directly so the bare
-/// `killpg` happens to work — but the C-faithful Job-superjob
-/// SIGCONT walk is unreachable. Tracked for follow-up.
+/* send a signal to a job (simply involves kill if monitoring is on) */    // c:525
+/// Port of `killjb(Job jn, int sig)` from `Src/signals.c:529`.
+/// CALLER CONVENTION: Rust passes `jn_idx: usize` (JOBTAB index)
+/// instead of C `Job jn` (pointer); the body resolves the job via
+/// `JOBTAB.lock()`. Returns 0/-1 per the killpg result chain.
 #[cfg(unix)]
-pub fn killjb(jn: i32, sig: i32) -> i32 {
-    // c:529 — see WARNING above; partial port.
-    if jn > 0 {
-        unsafe { libc::killpg(jn, sig) }
-    } else {
-        -1
+pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
+    // c:529
+    let _pn: ();                                                             // c:531 `Process pn;` — modelled by loop binding
+    let mut err: i32 = 0;                                                    // c:532
+
+    if crate::ported::zsh_h::jobbing() {                                     // c:534
+        // Snapshot the job state under the lock (gleader + stat + other
+        // + procs + other-procs). Avoid holding the lock during kill()
+        // syscalls — they can block under signals.
+        let snap = {
+            let table = match crate::ported::jobs::JOBTAB.get() {
+                Some(t) => t,
+                None => return -1,
+            };
+            let tab = table.lock().unwrap_or_else(|e| e.into_inner());
+            let jn = match tab.get(jn_idx) {
+                Some(j) => j,
+                None => return -1,
+            };
+            let other_procs: Vec<libc::pid_t> = if jn.other > 0 {
+                tab.get(jn.other as usize)
+                    .map(|o| o.procs.iter().map(|p| p.pid).collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let other_empty = jn.other > 0
+                && tab
+                    .get(jn.other as usize)
+                    .map(|o| o.procs.is_empty())
+                    .unwrap_or(true);
+            (
+                jn.stat,
+                jn.gleader,
+                jn.other,
+                jn.procs.iter().map(|p| p.pid).collect::<Vec<_>>(),
+                other_procs,
+                other_empty,
+            )
+        };
+        let (stat, gleader, other, procs_pids, other_procs, other_empty) = snap;
+
+        if (stat & crate::ported::zsh_h::STAT_SUPERJOB) != 0 {               // c:535
+            if sig == libc::SIGCONT {                                        // c:536
+                // c:537-540 — walk jobtab[jn->other].procs, killpg each;
+                // fall through to kill() on killpg failure; ESRCH ignored.
+                for pid in &other_procs {                                    // c:537
+                    if unsafe { libc::killpg(*pid, sig) } == -1 {            // c:538
+                        let e = std::io::Error::last_os_error().raw_os_error();
+                        // c:539 — fallback kill()
+                        if unsafe { libc::kill(*pid, sig) } == -1
+                            && e != Some(libc::ESRCH)
+                        {
+                            err = -1;                                        // c:540
+                        }
+                    }
+                }
+
+                /*
+                 * Note this does not kill the last process,
+                 * which is assumed to be the one controlling the
+                 * subjob, i.e. the forked zsh that was originally
+                 * list_pipe_pid...
+                 */                                                          // c:542-547
+                let n = procs_pids.len();
+                if n > 0 {
+                    for pid in &procs_pids[..n - 1] {                        // c:548 `for pn = jn->procs; pn->next; ...`
+                        if unsafe { libc::kill(*pid, sig) } == -1
+                            && std::io::Error::last_os_error().raw_os_error()
+                                != Some(libc::ESRCH)
+                        {
+                            err = -1;                                        // c:550
+                        }
+                    }
+
+                    /*
+                     * ...we only continue that once the external processes
+                     * currently associated with the subjob are finished.
+                     */                                                      // c:552-555
+                    if other_empty {                                         // c:556
+                        let last = procs_pids[n - 1];
+                        if unsafe { libc::kill(last, sig) } == -1
+                            && std::io::Error::last_os_error().raw_os_error()
+                                != Some(libc::ESRCH)
+                        {
+                            err = -1;                                        // c:558
+                        }
+                    }
+                }
+
+                /*
+                 * The following marks both the superjob and subjob
+                 * as running, as done elsewhere.
+                 */                                                          // c:560-569
+                if err != -1 {                                               // c:570
+                    let table = crate::ported::jobs::JOBTAB.get().unwrap();
+                    let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+                    crate::ported::jobs::makerunning(&mut tab, jn_idx);      // c:571
+                }
+
+                return err;                                                  // c:573
+            }
+
+            // c:575 — `if (killpg(jobtab[jn->other].gleader, sig) == -1 && errno != ESRCH) err = -1;`
+            let other_gleader = crate::ported::jobs::JOBTAB
+                .get()
+                .and_then(|t| t.lock().ok().and_then(|tab| tab.get(other as usize).map(|j| j.gleader)))
+                .unwrap_or(0);
+            if other_gleader > 0
+                && unsafe { libc::killpg(other_gleader, sig) } == -1
+                && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+            {
+                err = -1;                                                    // c:576
+            }
+
+            if unsafe { libc::killpg(gleader, sig) } == -1                   // c:578
+                && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+            {
+                err = -1;                                                    // c:579
+            }
+
+            return err;                                                      // c:581
+        } else {                                                             // c:583
+            err = unsafe { libc::killpg(gleader, sig) };                     // c:584
+            if sig == libc::SIGCONT && err != -1 {                           // c:585
+                let table = crate::ported::jobs::JOBTAB.get().unwrap();
+                let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+                crate::ported::jobs::makerunning(&mut tab, jn_idx);          // c:586
+            }
+            return err;                                                      // c:587
+        }
     }
+    // c:590-604 — non-jobbing: walk jn->procs, kill each if SP_RUNNING
+    // or WIFSTOPPED; ignore ESRCH and `sig == 0` (kill -0 polling).
+    let table = match crate::ported::jobs::JOBTAB.get() {
+        Some(t) => t,
+        None => return err,
+    };
+    let snap: Vec<(libc::pid_t, i32)> = {
+        let tab = table.lock().unwrap_or_else(|e| e.into_inner());
+        match tab.get(jn_idx) {
+            Some(j) => j.procs.iter().map(|p| (p.pid, p.status)).collect(),
+            None => return err,
+        }
+    };
+    for (pid, status) in snap {                                              // c:590
+        /*
+         * Do not kill this job's process if it's already dead as its
+         * pid could have been reused by the system.
+         */                                                                  // c:591-595
+        let is_running = status == crate::ported::zsh_h::SP_RUNNING;
+        let is_stopped = libc::WIFSTOPPED(status);
+        if is_running || is_stopped {                                        // c:596
+            /*
+             * kill -0 on a job is pointless. We still call kill() for each
+             * process in case the user cares about it but we ignore its outcome.
+             */                                                              // c:597-600
+            let r = unsafe { libc::kill(pid, sig) };
+            if r == -1
+                && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+                && sig != 0
+            {
+                err = r;
+                return -1;                                                   // c:602
+            }
+            err = r;                                                         // c:601 assignment
+        }
+    }
+    err                                                                      // c:605
 }
 
 /// Port of `struct savetrap` from `Src/signals.c:611-624`.
