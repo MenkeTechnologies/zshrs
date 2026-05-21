@@ -1184,25 +1184,82 @@ pub fn zle_usable() -> i32 {
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
 pub fn bin_zle_flags(args: &[String]) -> i32 {
     // c:651
-    // c:651-693 — `if (!zle_usable()) return 1; if (bindk) { widget w =
-    //                bindk->widget; for(flag = args; *flag; flag++)
-    //                set ZLE_* bit per flag-name }`. Without mutating
-    // the `Arc<widget>` flags (current shape is immutable `Arc<widget>`),
-    // we can validate the flag names but not write back. The C source
-    // mutates w->flags directly; for the simplified port, we just
-    // validate args + return success when usable.
+    // c:653-654 — locals.
+    let mut ret: i32 = 0; // c:653
+    // c:656-659 — !zle_usable early-return.
     if zle_usable() == 0 {
+        zwarnnam("zle", "can only set flags from a widget"); // c:657
         return 1; // c:658
     }
-    // c:664-693 — validate "yank"/"yankbefore"/"kill"/etc flag names.
-    let mut ret = 0;
-    for flag in args {
-        match flag.as_str() {
-            "yank" | "yankbefore" | "kill" => {}
-            _ => ret = 1,
+    // c:661-663 — `if (bindk) { Widget w = bindk->widget; if (w) { ... } }`.
+    // BINDK holds the Thingy bound by the active key. When unset (no
+    // active key sequence), the c:661 guard skips the whole loop.
+    let bindk_present = crate::ported::zle::zle_main::BINDK
+        .lock()
+        .map(|b| b.is_some())
+        .unwrap_or(false);
+    if bindk_present {
+        // c:661
+        // c:664-693 — `for (flag = args; *flag; flag++) { ... }`.
+        for flag in args {
+            // c:664
+            match flag.as_str() {
+                "yank" => {
+                    // c:665 — `w->flags |= ZLE_YANKAFTER;`. !!! WARNING:
+                    // PARTIAL PORT — current Thingy.widget shape is
+                    // `Option<Arc<widget>>` (immutable through Arc),
+                    // so flag bits are validated but the mutation
+                    // back into widget.flags is dropped. Faithful
+                    // port needs Arc<Mutex<widget>> across the tree.
+                    // For now this matches "validation only".
+                }
+                "yankbefore" => {
+                    // c:667 — `w->flags |= ZLE_YANKBEFORE;`. Same gap.
+                }
+                "kill" => {
+                    // c:669 — `w->flags |= ZLE_KILL;`. Same gap.
+                }
+                // c:672-680 — menucmp/linemove/keepsuffix branches are
+                // commented out in C ("These won't do anything yet,
+                // because of how execzlefunc handles user widgets").
+                // We mirror that — recognized as valid flag-names but
+                // no-op.
+                "menucmp" | "linemove" | "keepsuffix" => {
+                    // c:674/676/678
+                }
+                "vichange" => {
+                    // c:682 — `if (invicmdmode()) startvichange(-1); ...`
+                    if crate::ported::zle::zle_h::invicmdmode(
+                        &crate::ported::zle::zle_keymap::curkeymapname(),
+                    ) {
+                        // c:683
+                        crate::ported::zle::zle_vi::startvichange(-1); // c:684
+                        // c:685-688 — if a numeric arg is active and a
+                        // PM_SPECIAL `NUMERIC` param exists, clear its
+                        // PM_UNSET bit so the value becomes visible to
+                        // the widget. !!! WARNING: PARTIAL PORT —
+                        // paramtab access through getnode + PM_SPECIAL/
+                        // PM_UNSET mutation is gated on the paramtab
+                        // Rust port exposing a mutable getnode; that
+                        // surface isn't ported as a writable lookup
+                        // yet. Skipping leaves NUMERIC param visibility
+                        // unchanged.
+                        let zm_flags = ZMOD.lock().unwrap().flags;
+                        let _ = zm_flags & (MOD_MULT | MOD_TMULT); // c:685 guard
+                    }
+                }
+                _ => {
+                    // c:691-693 — unknown flag name.
+                    zwarnnam(
+                        "zle",
+                        &format!("invalid flag `{}' given to zle -f", flag),
+                    ); // c:692
+                    ret = 1; // c:693
+                }
+            }
         }
     }
-    ret
+    ret // c:697
 }
 
 /// Port of `bin_zle_call(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:702`.
@@ -1703,6 +1760,53 @@ mod tests {
         ]);
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:791-794 — unknown option char → return 1");
+    }
+
+    /// `Src/Zle/zle_thingy.c:691-693` — `bin_zle_flags` rejects unknown
+    /// flag names with `zwarnnam` + ret=1.
+    #[test]
+    fn bin_zle_flags_rejects_unknown_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+        crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
+        // BINDK must be set for the loop to run (c:661).
+        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(Thingy {
+            nam: "dummy".to_string(),
+            flags: 0,
+            rc: 1,
+            widget: None,
+        });
+        let r = bin_zle_flags(&["bogus_flag".to_string()]);
+        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = None;
+        crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
+        assert_eq!(r, 1, "c:692-693 — unknown flag → zwarnnam + ret=1");
+    }
+
+    /// `Src/Zle/zle_thingy.c:665-669` — `yank`, `yankbefore`, `kill` are
+    /// recognized flag names (return 0).
+    #[test]
+    fn bin_zle_flags_accepts_yank_kill() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+        crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
+        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(Thingy {
+            nam: "dummy".to_string(),
+            flags: 0,
+            rc: 1,
+            widget: None,
+        });
+        let r = bin_zle_flags(&[
+            "yank".to_string(),
+            "yankbefore".to_string(),
+            "kill".to_string(),
+        ]);
+        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = None;
+        crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
+        assert_eq!(r, 0, "c:665-669 — all recognized → ret=0");
     }
 
     /// `Src/Zle/zle_thingy.c:740-744` — `-f` requires the literal token
