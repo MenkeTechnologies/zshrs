@@ -20,7 +20,7 @@ use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
     interact, isset, opt_name, options, APPENDHISTORY, BANGHIST, CHASELINKS, EMACSMODE,
     EMULATE_CSH, EMULATE_FULLY, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH, EXECOPT,
-    GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, INTERACTIVE, MAILWARNING, META, MONITOR,
+    GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, INTERACTIVE, MAILWARNING, Meta, MONITOR,
     MULTIBYTE, OPT_INVALID, OPT_SIZE, PAT_HEAPDUP, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
     SUNKEYBOARDHACK, USEZLE, VIMODE,
 };
@@ -399,7 +399,7 @@ pub fn bin_setopt(
             let mut c = body_bytes[k];
             // c:600-601 — `if(**args == Meta) *++*args ^= 32;` —
             // unmeta the next byte before reading.
-            if c == META as u8 {
+            if c == Meta {
                 // c:600
                 k += 1;
                 if k < body_bytes.len() {

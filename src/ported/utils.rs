@@ -40,7 +40,7 @@ use crate::ported::params::{
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
-use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, META, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS};
+use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing};
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
     imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
@@ -4032,7 +4032,7 @@ pub fn inittyptab() {
     t[0] |= IMETA as u32; // c:4195
                           // c:4196-4197 — Meta + Marker marked IMETA.
     {
-        t[META as usize] |= IMETA as u32;
+        t[Meta as usize] |= IMETA as u32;
         t[Marker as usize] |= IMETA as u32;
     }
 
@@ -4078,7 +4078,7 @@ pub fn inittyptab() {
         let mut i = 0;
         while i < bytes.len() {
             // c:4217 — `int c = (unsigned char) (*s == Meta ? *++s ^ 32 : *s)`.
-            let c = if bytes[i] == META as u8 && i + 1 < bytes.len() {
+            let c = if bytes[i] == Meta && i + 1 < bytes.len() {
                 i += 1;
                 bytes[i] ^ 32
             } else {
@@ -4125,7 +4125,7 @@ pub fn inittyptab() {
         let mut i = 0;
         while i < bytes.len() {
             // c:4238 — Meta+X demetafy.
-            let c = if bytes[i] == META as u8 && i + 1 < bytes.len() {
+            let c = if bytes[i] == Meta && i + 1 < bytes.len() {
                 i += 1;
                 bytes[i] ^ 32
             } else {
@@ -4476,7 +4476,7 @@ pub fn setcbreak() -> bool {
 pub fn attachtty(pgrp: i32) {
     // c:4775
 
-    if !(crate::ported::zsh_h::jobbing() && interact()) {
+    if !(jobbing() && interact()) {
         return; // c:4779
     }
     let shtty = SHTTY.load(Ordering::Relaxed); // c:4781
@@ -4607,7 +4607,7 @@ pub fn unmetafy(s: &mut Vec<u8>) -> usize {
     // First loop: find the first `Meta` byte. Everything before it
     // stays as-is, so we don't need to copy.
     let mut p: usize = 0;
-    while p < s.len() && s[p] != Meta {
+    while p < s.len() && s[p] != Meta{
         p += 1;
     }
     // Second loop: walk from `p` onward, copying each byte into the
@@ -4654,7 +4654,7 @@ pub fn metalen(s: &str, len: usize) -> usize {
     let mut i = 0;
     while remaining > 0 && i < bytes.len() {
         // c:4976 `while (len--)`
-        if bytes[i] == Meta as u8 {
+        if bytes[i] == Meta {
             // c:4977
             mlen += 1; // c:4978
             i += 2; // c:4979 s++ (already advanced past Meta)
@@ -4716,7 +4716,7 @@ pub fn unmeta_one(s: &str) -> (char, usize) {
         return ('\0', 0);
     }
     // c:5077 — `if (in[0] == Meta)`.
-    if bytes[0] == Meta as u8 && bytes.len() > 1 {
+    if bytes[0] == Meta && bytes.len() > 1 {
         // c:5078-5079 — `*sz = 2; wc = (unsigned char)(in[1] ^ 32);`.
         ((bytes[1] ^ 32) as char, 2)
     } else {
@@ -4855,7 +4855,7 @@ pub fn ztrsub(buf: &str, start: usize, end: usize) -> usize {
     let mut l = (end - start) as isize; // c:5189
     let mut i = start;
     while i < end {
-        if bytes[i] == Meta as u8 {
+        if bytes[i] == Meta {
             // c:5192
             i += 2; // c:5198
             l -= 1; // c:5199
@@ -4919,7 +4919,7 @@ pub fn zputs(s: &str) -> io::Result<()> {
     while i < bytes.len() {
         // c:5269
         let c = bytes[i];
-        if c == Meta as u8 {
+        if c == Meta {
             // c:5270
             // c:5271 — `c = *++s ^ 32;`. Skip the Meta byte, decode next.
             if i + 1 < bytes.len() {
@@ -5223,7 +5223,7 @@ pub fn metacharlenconv(s: &str) -> (usize, Option<char>) {
     if bytes.is_empty() {
         return (0, None);
     }
-    if bytes[0] == Meta as u8 && bytes.len() >= 2 {
+    if bytes[0] == Meta && bytes.len() >= 2 {
         // c:5818
         let raw = bytes[1] as u32 ^ 32; // c:5820
         return (2, char::from_u32(raw)); // c:5821
@@ -5382,7 +5382,7 @@ pub fn hasspecial(s: &str) -> bool {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        let c = if bytes[i] == Meta as u8 && i + 1 < bytes.len() {
+        let c = if bytes[i] == Meta && i + 1 < bytes.len() {
             // c:6075 — `*s == Meta ? *++s ^ 32 : *s`.
             let v = bytes[i + 1] ^ 32;
             i += 2;
@@ -6670,14 +6670,6 @@ pub static MAX_ZSH_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 /// Count of `FDT_FLOCK`-tagged fds; consulted by `closem()` to
 /// decide whether to skip the flock-fd sweep.
 pub static FDTABLE_FLOCKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-
-/// Port of `Meta` from `Src/zsh.h`. Sentinel byte (0x83) zsh
-/// prepends in front of any byte whose top bit it wants to escape;
-/// the byte that follows is XOR'd with 32. `unmetafy` (and the
-/// `Meta`-aware loops throughout zsh) walk the result byte-by-byte
-/// and reverse the encoding.
-#[allow(non_upper_case_globals)]
-pub const Meta: u8 = 0x83;
 
 /// Setter for `scriptname`. Called from `bin_dot` / `source`
 /// when entering a script.
@@ -8691,7 +8683,7 @@ mod tests {
         // Same as above — read-only after inittyptab.
         inittyptab();
         // Meta + 0x41 ('A') → 'a' (0x61) → not special.
-        let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
+        let bytes: Vec<u8> = vec![Meta, 0x41u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         assert!(
             !hasspecial(s),
@@ -8735,7 +8727,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // META + 0x41 ('A') → decodes to 'a' (0x61). 'a' is printable
         // → passes through unchanged.
-        let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
+        let bytes: Vec<u8> = vec![Meta, 0x41u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         assert_eq!(
             sb_niceformat(s),
@@ -8743,7 +8735,7 @@ mod tests {
             "c:5872 — unmetafy first: Meta+0x41 → 'a' → printable passthrough"
         );
         // META + 0x20 → decodes to NUL → "^@" form.
-        let bytes: Vec<u8> = vec![Meta as u8, 0x20u8];
+        let bytes: Vec<u8> = vec![Meta, 0x20u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         let r = sb_niceformat(s);
         assert!(
@@ -8783,7 +8775,7 @@ mod tests {
     fn metacharlenconv_meta_pair_xor_decodes() {
         let _g = crate::test_util::global_state_lock();
         // Meta + 0x41 ('A') → 'A' ^ 32 = 'a'.
-        let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
+        let bytes: Vec<u8> = vec![Meta, 0x41u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         let (n, c) = metacharlenconv(s);
         assert_eq!(
@@ -8911,7 +8903,7 @@ mod tests {
             "c:4972 — ASCII: metafied bytes == unmetafied chars"
         );
         // [a, Meta, X, b] = 4 metafied bytes representing 3 chars.
-        let bytes: Vec<u8> = vec![b'a', Meta as u8, 0x41, b'b'];
+        let bytes: Vec<u8> = vec![b'a', Meta, 0x41, b'b'];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         assert_eq!(
             metalen(s, 3),
@@ -8919,7 +8911,7 @@ mod tests {
             "c:4978 — 3 unmetafied chars + 1 Meta = 4 metafied bytes"
         );
         // Two Meta pairs: [Meta, X, Meta, Y] = 4 bytes for 2 chars.
-        let bytes: Vec<u8> = vec![Meta as u8, 0x41, Meta as u8, 0x42];
+        let bytes: Vec<u8> = vec![Meta, 0x41, Meta, 0x42];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         assert_eq!(
             metalen(s, 2),
@@ -8969,13 +8961,13 @@ mod tests {
     fn unmeta_one_meta_pair_decodes_xor_32() {
         let _g = crate::test_util::global_state_lock();
         // META + 0x41 ('A') → 'A' ^ 32 = 0x61 ('a'). 2 bytes consumed.
-        let bytes: Vec<u8> = vec![Meta as u8, 0x41u8];
+        let bytes: Vec<u8> = vec![Meta, 0x41u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         let (got, n) = unmeta_one(s);
         assert_eq!(got, 'a', "c:5079 — Meta+0x41 decodes to 0x41^32 = 'a'");
         assert_eq!(n, 2, "c:5078 — Meta pair consumes 2 bytes");
         // META + 0x20 = 0x20^32 = 0x00 (NUL).
-        let bytes: Vec<u8> = vec![Meta as u8, 0x20u8];
+        let bytes: Vec<u8> = vec![Meta, 0x20u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         let (got, n) = unmeta_one(s);
         assert_eq!(
@@ -8991,7 +8983,7 @@ mod tests {
     #[test]
     fn unmeta_one_trailing_meta_byte_falls_through() {
         let _g = crate::test_util::global_state_lock();
-        let bytes: Vec<u8> = vec![Meta as u8];
+        let bytes: Vec<u8> = vec![Meta];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         let (_, n) = unmeta_one(s);
         // Defensive: Rust returns the Meta byte itself as char + 1.
@@ -9026,7 +9018,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Build "a" + Meta + 0x20 + "b" = 4 bytes total.
         // Unmetafied: "a" + 1-char-from-meta + "b" = 3 chars.
-        let meta_byte = Meta as u8;
+        let meta_byte = Meta;
         let buf_bytes: Vec<u8> = vec![b'a', meta_byte, 0x20, b'b'];
         let buf = unsafe { std::str::from_utf8_unchecked(&buf_bytes) };
         // [0..4) byte distance = 4; Meta pair found → l-- → 3.
@@ -9271,7 +9263,7 @@ mod tests {
         // META+'A' (0x41) decodes to 'A' ^ 32 = 'a' (0x61).
         // So a "META a" pair represents the byte 'a' (0x61).
         // Compare "Ma" (M=Meta+a-byte-pair) vs "b" (>a).
-        let meta_byte = Meta as u8;
+        let meta_byte = Meta;
         let s1_bytes: Vec<u8> = vec![meta_byte, 0x41u8]; // decodes to 0x61 = 'a'
         let s2_bytes: Vec<u8> = vec![b'b'];
         let s1 = unsafe { std::str::from_utf8_unchecked(&s1_bytes) };

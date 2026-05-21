@@ -31,7 +31,7 @@ use crate::ported::builtins::sched::zleactive;
 use crate::ported::params::{createparam, paramtab, setiparam, setloopvar, setsparam};
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::string::{dupstring, ztrdup};
-use crate::ported::zsh_h::{eprog, features, funcstack, funcwrap, isset, module, param, paramdef, EMULATE_KSH, EMULATION, PARAMDEF, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET};
+use crate::ported::zsh_h::{eprog, features, funcstack, funcwrap, isset, module, param, paramdef, EMULATE_KSH, EMULATION, KSHARRAYS, PARAMDEF, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET, VIMODE};
 use crate::ported::ztype_h::INAMESPC;
 pub use crate::ported::options::emulation;
 pub use crate::ported::params::locallevel;
@@ -676,12 +676,6 @@ pub static varedarg: Mutex<String> = Mutex::new(String::new());
 // without explicit handling. NULL by default — exec.c port wires the
 // real walk.
 static funcstack: Mutex<usize> = Mutex::new(0);
-
-// `KSHARRAYS` / `VIMODE` — option indices from `Src/zsh.h`. The
-// `isset(X)` macro (zsh.h:1455) routes through `OPTS_LIVE` via
-// `isset`.
-const KSHARRAYS: i32 = crate::ported::zsh_h::KSHARRAYS;
-const VIMODE: i32 = crate::ported::zsh_h::VIMODE;
 
 // `param.u.arr` field — the C `union u` has `char **arr` at c:1835.
 // The Rust `param` struct exposes it as `pub u_arr: Option<Vec<String>>`

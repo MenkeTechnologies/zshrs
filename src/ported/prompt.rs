@@ -10,14 +10,9 @@ use std::env;
 use std::sync::atomic::Ordering;
 use crate::DPUTS;
 use crate::ported::params::{paramtab, setaparam};
-use crate::ported::utils::strpfx;
-use crate::ported::zsh_h::{
-    zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, TERM_BAD, TERM_NOUP, TERM_UNKNOWN,
-    TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
-    TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK,
-    TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR,
-};
-
+use crate::ported::utils::{imeta_byte, strpfx};
+use crate::ported::zsh_h::{zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_ALL, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR};
+use crate::zsh_h::Meta;
 
 /// Thread-local mirrors of zsh globals read during `promptexpand()` (logical
 /// `$PWD`, `$?`, `cmdstack`, …). C uses scattered globals; zshrs uses TLS,
@@ -910,7 +905,7 @@ pub fn tsetattrs(newattrs: zattr) -> String {
     // then for FG/BG colour bits replace the existing mask wholesale.
     {
         let mut pend = pending_attrs_lock().lock().expect("pending_attrs poisoned");
-        *pend |= newattrs & crate::ported::zsh_h::TXT_ATTR_ALL; // c:1742
+        *pend |= newattrs & TXT_ATTR_ALL; // c:1742
         if (newattrs & TXTFGCOLOUR) != 0 {
             // c:1743
             *pend &= !TXT_ATTR_FG_MASK; // c:1744
@@ -1337,9 +1332,9 @@ impl buf_vars {
     fn pputc(&mut self, c: u8) {
         self.addbufspc(2);
         let bp = self.bp;
-        if crate::ported::utils::imeta_byte(c) {
+        if imeta_byte(c) {
             self.buf.resize(bp + 2, 0);
-            self.buf[bp] = crate::ported::utils::Meta;
+            self.buf[bp] = Meta as u8;
             self.buf[bp + 1] = c ^ 32;
             self.bp = bp + 2;
         } else {
@@ -1409,7 +1404,7 @@ impl buf_vars {
         let mut i = 0usize;
         while i < end {
             let b = self.buf[i];
-            if b == crate::ported::utils::Meta {
+            if b == (Meta as u8) {
                 if i + 1 < end {
                     v.push(b);
                     v.push(self.buf[i + 1]);

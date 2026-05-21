@@ -31,7 +31,7 @@ use crate::ported::zsh_h::{
     PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z,
     PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, Param,
     SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE, STAT_NOPRINT,
-    STAT_STOPPED, ScanFunc, hashnode, hashtable, module, nameddir, opt_name, param,
+    STAT_STOPPED, ScanFunc, hashnode, hashtable, isset, module, nameddir, opt_name, param,
     value,
 };
 use std::collections::HashMap;
@@ -2376,10 +2376,7 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
     // c:1581-1589 — opts[INTERACTIVE] guard around deleteparamtable
     // (avoid removing sub-pms eagerly when an interactive shell is
     // watching).
-    let saved_interactive = crate::ported::zsh_h::isset(
-        // c:1584
-        INTERACTIVE,
-    );
+    let saved_interactive = isset(INTERACTIVE); // c:1584
     opt_state_set(
         &opt_name(INTERACTIVE),
         false,

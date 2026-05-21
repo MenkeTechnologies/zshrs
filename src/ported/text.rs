@@ -12,7 +12,7 @@ use crate::ported::utils::{has_token, quotestring};
 use crate::ported::zsh_h;
 use crate::ported::zsh_h::{
     estate, redir, wc_code, wordcode, Eprog, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_OR,
-    COND_STRDEQ, COND_STREQ, COND_STRNEQ, EC_NODUP, IS_READFD, JOBTEXTSIZE, META,
+    COND_STRDEQ, COND_STREQ, COND_STRNEQ, EC_NODUP, IS_READFD, JOBTEXTSIZE, Meta,
     REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_CLOSE, REDIR_ERRAPP, REDIR_ERRAPPNOW,
     REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN,
     REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW,
@@ -237,7 +237,7 @@ pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
         let mut v = tb.borrow_mut();
         String::from_utf8_lossy(&std::mem::take(&mut *v)).into_owned()
     });
-    if raw.ends_with(META) {
+    if raw.ends_with(Meta as char) {
         raw.pop();
     }
     let p = state.prog;

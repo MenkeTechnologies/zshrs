@@ -38,7 +38,8 @@ use std::io::Write;
 // ═══════════════════════════════════════════════════════════════════════════
 
 use crate::ported::zle::zle_thingy::getwidgettarget;
-use crate::ported::zsh_h::{options, MAX_OPS};
+use crate::ported::options::opt_state_get;
+use crate::ported::zsh_h::{isset, options, ERREXIT, MAX_OPS};
 use crate::socket::bin_zsocket;
 use fusevm::op::redirect_op as r;
 use fusevm::shell_builtins::*;
@@ -57,6 +58,7 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::io::IntoRawFd;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::zsh_h::CASMOD_CAPS;
 
 thread_local! {
     /// Mirror of C zsh's `doneps4` local in execcmd_exec
@@ -3847,14 +3849,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     state = match state {
                         St::S(s) => St::S(crate::ported::hist::casemodify(
                             &s,
-                            crate::ported::hist::CASMOD_CAPS,
+                            CASMOD_CAPS,
                         )),
                         St::A(a) => St::A(
                             a.into_iter()
                                 .map(|s| {
                                     crate::ported::hist::casemodify(
                                         &s,
-                                        crate::ported::hist::CASMOD_CAPS,
+                                        CASMOD_CAPS,
                                     )
                                 })
                                 .collect(),
@@ -6753,8 +6755,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `opts[ERREXIT]` per Src/options.c:46). Older paths still
             // populate `exec.options`. Check both — agree when EITHER
             // says on.
-            let on_canonical = crate::ported::zsh_h::isset(crate::ported::zsh_h::ERREXIT);
-            let on_legacy = crate::ported::options::opt_state_get("errexit").unwrap_or(false);
+            let on_canonical = isset(ERREXIT);
+            let on_legacy = opt_state_get("errexit").unwrap_or(false);
             (on_canonical || on_legacy)
                 && exec.local_scope_depth == 0
                 && exec.subshell_snapshots.is_empty()

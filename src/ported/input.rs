@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write, self};
 use crate::ported::zsh_h::{
-    INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO, INP_RAW_KEEP, META
+    INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO, INP_RAW_KEEP, Meta
 };
 
 
@@ -221,7 +221,7 @@ pub fn shingetline() -> String {
                     // and Src/zsh.h Meta protocol — c ^ 32 maps the
                     // 5 reserved bytes (0x00, 0x83-0x9b) to printable
                     // form for the SHIN buffer.
-                    result.push(META);
+                    result.push(Meta as char);
                     result.push(char::from_u32((c as u32) ^ 32).unwrap_or(c));
                 } else {
                     result.push(c);

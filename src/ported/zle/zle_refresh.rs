@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use super::zle_h::{REFRESH_ELEMENT, REFRESH_STRING};
 use crate::ported::init::{tclen, SHTTY};
 use crate::ported::utils::{adjustcolumns, adjustlines, write_loop};
-use crate::ported::zsh_h::{TCCLEAREOL, TXT_ERROR, TXT_MULTIWORD_MASK};
+use crate::ported::zsh_h::{isset, COMBININGCHARS, TCCLEAREOL, TCDEL, TCINS, TXT_ERROR, TXT_MULTIWORD_MASK};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
@@ -1185,7 +1185,7 @@ pub fn refreshline(ln: i32) {
                 char_ins
             };
             // c:1934 — `tccan(TCDEL) && tcdelcost(i) <= i + 1`
-            let can_del = (tclen.lock().unwrap()[crate::ported::zsh_h::TCDEL as usize] != 0)  /* tccan(TCDEL) per zsh.h:2682 */ && i_pad <= i_pad + 1;
+            let can_del = (tclen.lock().unwrap()[TCDEL as usize] != 0)  /* tccan(TCDEL) per zsh.h:2682 */ && i_pad <= i_pad + 1;
             if can_del {
                 // c:1935 — tc_delchars(i)
                 // !!! STUB: tc_delchars — Src/Zle/zle_refresh.c.
@@ -1232,7 +1232,7 @@ pub fn refreshline(ln: i32) {
         if eligible {
             // c:1965
             // c:1976-2006 — TCDEL try-block: find a series we can delete
-            if (tclen.lock().unwrap()[crate::ported::zsh_h::TCDEL as usize]
+            if (tclen.lock().unwrap()[TCDEL as usize]
                 != 0)
             /* tccan(TCDEL) per zsh.h:2682 */
             {
@@ -1264,7 +1264,7 @@ pub fn refreshline(ln: i32) {
 
             // c:2012-2060 — TCINS try-block: find chars to insert.
             let zterm_lines = WINH.load(Ordering::SeqCst);
-            if (tclen.lock().unwrap()[crate::ported::zsh_h::TCINS as usize] != 0)  /* tccan(TCINS) per zsh.h:2682 */ && vln != zterm_lines - 1
+            if (tclen.lock().unwrap()[TCINS as usize] != 0)  /* tccan(TCINS) per zsh.h:2682 */ && vln != zterm_lines - 1
             {
                 // c:2012
                 let mut i_try = 1i32; // c:2014
@@ -1606,7 +1606,7 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
             if width > 0 {
                 vsiz += width; // c:2417
                                // c:2418-2421 — combining-char absorption; skip combos.
-                if crate::ported::zsh_h::isset(crate::ported::zsh_h::COMBININGCHARS) {
+                if isset(COMBININGCHARS) {
                     while t0 < tmpll - 1 {
                         // c:2419
                         let next = *tmpline.get((t0 + 1) as usize).unwrap_or(&'\0');

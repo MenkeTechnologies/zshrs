@@ -41,12 +41,7 @@ use crate::ported::zle::zle_keymap::{
 use crate::ported::zle::zle_misc::DONE;
 use crate::ported::zle::zle_thingy::rthingy_nocreate;
 use crate::ported::zle::termquery::mark_output;
-use crate::ported::zsh_h::{
-    hookdef, module, OPT_ARG_SAFE, OPT_ISSET, PM_ARRAY, PM_HASHED, PM_SCALAR, ZLE_CMD_ADD_TO_LINE,
-    ZLE_CMD_CHPWD, ZLE_CMD_GET_KEY, ZLE_CMD_GET_LINE, ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC,
-    ZLE_CMD_READ, ZLE_CMD_REFRESH, ZLE_CMD_RESET_PROMPT, ZLE_CMD_SET_HIST_LINE, ZLE_CMD_SET_KEYMAP,
-    ZLE_CMD_TRASH, ZLRF_HISTORY,
-};
+use crate::ported::zsh_h::{hashtable, hookdef, module, HashTable, OPT_ARG_SAFE, OPT_ISSET, PM_ARRAY, PM_HASHED, PM_SCALAR, ZLCON_LINE_START, ZLE_CMD_ADD_TO_LINE, ZLE_CMD_CHPWD, ZLE_CMD_GET_KEY, ZLE_CMD_GET_LINE, ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC, ZLE_CMD_READ, ZLE_CMD_REFRESH, ZLE_CMD_RESET_PROMPT, ZLE_CMD_SET_HIST_LINE, ZLE_CMD_SET_KEYMAP, ZLE_CMD_TRASH, ZLRF_HISTORY, ZLRF_NOSETTY};
 
 use crate::ported::zle::zle_h::{change, modifier};
 #[allow(unused_imports)]
@@ -1270,8 +1265,8 @@ pub fn zlebeforetrap(
         // C uses the global `params` HashTable directly; the Rust
         // paramtab API takes a HashTable arg so we pass a fresh
         // empty one matching the C scope-push semantics.
-        let mut local_scope: crate::ported::zsh_h::HashTable =
-            Box::new(crate::ported::zsh_h::hashtable {
+        let mut local_scope: HashTable =
+            Box::new(hashtable {
                 hsize: 0,
                 ct: 0,
                 nodes: Vec::new(),
@@ -2342,14 +2337,14 @@ pub static PREFIXFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 /// flags passed to `zleread()` controlling history/setty behaviour.
 /// Default value matches input.c:418 (`ZLRF_HISTORY | ZLRF_NOSETTY`).
 pub static ZLEREADFLAGS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(
-    ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY,
+    ZLRF_HISTORY | ZLRF_NOSETTY,
 );
 
 /// Port of `int zlecontext` from `Src/Zle/zle_main.c`. ZLCON_*
 /// context tag passed to `zleread()` — distinguishes line-start
 /// vs continuation-line vs vared etc.
 pub static ZLECONTEXT: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(crate::ported::zsh_h::ZLCON_LINE_START);
+    std::sync::atomic::AtomicI32::new(ZLCON_LINE_START);
 
 /// Port of `int zle_recursive` from `Src/Zle/zle_main.c`. Depth of
 /// nested `recursive-edit` invocations; non-zero inhibits outer

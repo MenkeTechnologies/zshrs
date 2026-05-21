@@ -868,6 +868,7 @@ fn module_features() -> &'static Mutex<features> {
 
 #[cfg(test)]
 mod tests {
+    use crate::ported::zsh_h::funcstack;
     use super::*;
 
     /// Serialise tests that mutate the module-static globals so the
@@ -1020,7 +1021,7 @@ mod tests {
         {
             let mut stack = FUNCSTACK.lock().unwrap();
             stack.clear();
-            stack.push(crate::ported::zsh_h::funcstack {
+            stack.push(funcstack {
                 filename: Some("/tmp/foo.zsh".to_string()),
                 flineno: 42,
                 ..Default::default()

@@ -18,7 +18,7 @@ use crate::ported::string::dyncat;
 use crate::ported::utils::{zerr, errflag, init_dirsav, lchdir, restoredir};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self};
-use crate::ported::zsh_h::{isset, redir, Bnull, Bnullkeep, Dnull, Inang, Nularg, Outang, Pound, Snull, BAREGLOBQUAL, BRACECCL, CASEGLOB, ERRFLAG_INT, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT, IS_DASH, LISTTYPES, MARKDIRS, META, MULTIOS, NULLGLOB, NUMERICGLOBSORT, PP_UNKWN, PREFORK_SINGLE, REDIR_CLOSE, REDIR_ERRWRITE, REDIR_MERGEIN, REDIR_MERGEOUT, SHGLOB, SUB_ALL, SUB_END, SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_START, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST};
+use crate::ported::zsh_h::{isset, redir, Bnull, Bnullkeep, Dnull, Inang, Nularg, Outang, Pound, Snull, BAREGLOBQUAL, BRACECCL, CASEGLOB, ERRFLAG_INT, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT, IS_DASH, LISTTYPES, MARKDIRS, Meta, MULTIOS, NULLGLOB, NUMERICGLOBSORT, PP_UNKWN, PREFORK_SINGLE, REDIR_CLOSE, REDIR_ERRWRITE, REDIR_MERGEIN, REDIR_MERGEOUT, SHGLOB, SUB_ALL, SUB_END, SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_START, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST};
 use std::sync::atomic::Ordering;
 use std::collections::HashSet;
 use std::fs::{self, Metadata};
@@ -1675,7 +1675,7 @@ pub fn zshtokenize(s: &mut String, flags: i32) {
         // c:3580 for (; *s; s++)
         let c = chars[i];
         match c {
-            x if x == META => {                                              // c:3583 case Meta
+            x if x == Meta as char => {                                              // c:3583 case Meta
                 i += 2;                                                      // c:3585 skip both Meta and next
                 bslash = false;
                 continue;
