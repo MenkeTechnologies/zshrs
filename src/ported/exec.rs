@@ -2795,6 +2795,231 @@ pub fn parsecmd(cmd: &str, eptr: Option<&mut usize>) -> Option<eprog> {
     prog // c:4903
 }
 
+/// Port of `char *getoutputfile(char *cmd, char **eptr)` from
+/// `Src/exec.c:4910` — `=(cmd)` process substitution.
+///
+/// Substitutes the cmd's stdout into a temp file, returns the
+/// filename. Optimised path: `=(<<<heredoc-str)` writes the
+/// heredoc body directly without a fork.
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// (a) `addfilelist` Rust signature `(&mut job, name, fd)` vs C
+///     `addfilelist(name, fd)`. We can't grab the current job
+///     handle without a jobs-mod refactor. Filelist registration
+///     SKIPPED — the temp file will be cleaned by the system temp
+///     reaper, not by zsh's job-exit hook. Re-port addfilelist
+///     to match C 2-arg shape to unblock.
+/// (b) `waitforpid` Rust takes 1 arg `pid`, C takes `(pid, full)`.
+///     Behavior matches the `full=0` case anyway.
+/// (c) `entersubsh` not ported — child does setsid only.
+/// (d) `execode` not ported — re-feed body via fusevm pipeline.
+/// (e) `_realexit` not ported — bare std::process::exit(0).
+/// (f) TMPSUFFIX link()-rename block (c:4951-4958) skipped for now
+///     until addfilelist re-port lands.
+/// =============================================================
+pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
+    // c:4910
+    use crate::ported::signals_h::{child_block, child_unblock};
+    use crate::ported::utils::{gettempname, redup, write_loop};
+    use crate::ported::zsh_h::{CS_CMDSUBST, FDT_UNUSED, REDIR_HERESTR};
+    let bytes = cmd.as_bytes();
+    let _ = bytes;
+    // c:4918 — `if (thisjob == -1)` — guard removed (thisjob model differs).
+    let mut ends_at: usize = 0;
+    let prog = parsecmd(cmd, Some(&mut ends_at))?; // c:4922
+    if let Some(p) = eptr {
+        *p = ends_at;
+    }
+    let mut nam = gettempname(None, true)?; // c:4924
+                                            // c:4927 — `simple_redir_name` opt for `=(<<<str)`.
+    let mut s: Option<String> = simple_redir_name(&prog, REDIR_HERESTR).map(|raw| {
+        // c:4933
+        let mut sub = crate::ported::subst::singsub(&raw); // c:4933
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            // c:4934
+            String::new() // c:4935 — sentinel; checked below
+        } else {
+            sub = untokenize(&sub); // c:4937
+            crate::ported::mem::dyncat(&sub, "\n") // c:4938
+        }
+    });
+    if let Some(ref sv) = s {
+        if sv.is_empty() {
+            s = None;
+        }
+    }
+    if s.is_none() {
+        // c:4942
+        child_block(); // c:4943
+    }
+    // c:4945 — `open(nam, O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY, 0600)`.
+    let c_nam = match std::ffi::CString::new(nam.clone()) {
+        Ok(c) => c,
+        Err(_) => {
+            if s.is_none() {
+                child_unblock();
+            }
+            return None;
+        }
+    };
+    let fd = unsafe {
+        libc::open(
+            c_nam.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOCTTY,
+            0o600 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        // c:4945
+        zerr(&format!(
+            "process substitution failed: {}",
+            std::io::Error::last_os_error()
+        )); // c:4946
+        if s.is_none() {
+            child_unblock(); // c:4948
+        }
+        return None; // c:4949
+    }
+    // c:4951-4958 — TMPSUFFIX link block (see WARNING f).
+    // addfilelist(nam, 0) — see WARNING (a).
+    if let Some(sv) = s {
+        // c:4962 — optimised here-string write path.
+        let mut buf: Vec<u8> = sv.into_bytes();
+        let _len = crate::ported::utils::unmetafy(&mut buf); // c:4965
+        let _ = write_loop(fd, &buf); // c:4966
+        unsafe {
+            libc::close(fd);
+        } // c:4967
+        return Some(nam); // c:4968
+    }
+    // c:4971 — `cmdoutpid = pid = zfork(NULL)`.
+    let pid = zfork(None);
+    cmdoutpid.store(pid, Ordering::Relaxed);
+    if pid == -1 {
+        // c:4972
+        unsafe {
+            libc::close(fd);
+        } // c:4973
+        child_unblock(); // c:4974
+        return Some(nam); // c:4975
+    } else if pid != 0 {
+        // c:4976 — parent.
+        unsafe {
+            libc::close(fd);
+        } // c:4977
+        let _ = crate::ported::jobs::waitforpid(pid); // c:4978
+        cmdoutval.store(0, Ordering::Relaxed); // c:4979
+        return Some(nam); // c:4980
+    }
+    // c:4983 — child.
+    closem(FDT_UNUSED, 0); // c:4984
+    let _ = redup(fd, 1); // c:4985
+                          // entersubsh approx — WARNING (c)
+    unsafe {
+        libc::setsid();
+    }
+    crate::ported::prompt::cmdpush(CS_CMDSUBST as u8); // c:4987
+                                                       // c:4988 — execode — WARNING (d).
+    let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
+    let body = if body_end > 2 && body_end <= cmd.len() {
+        &cmd[2..body_end]
+    } else {
+        ""
+    };
+    let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
+    crate::ported::prompt::cmdpop(); // c:4989
+    unsafe {
+        libc::close(1);
+    } // c:4990
+                                                          // _realexit — WARNING (e)
+    std::process::exit(0); // c:4991
+    #[allow(unreachable_code)]
+    {
+        // c:4992-4993 — `zerr("exit returned in child!!"); kill(getpid(), SIGKILL);`
+        let _ = &mut nam;
+        unsafe {
+            libc::kill(libc::getpid(), libc::SIGKILL);
+        }
+        None
+    }
+}
+
+/// Port of `char *getproc(char *cmd, char **eptr)` from
+/// `Src/exec.c:5025` — `<(cmd)` / `>(cmd)` process substitution
+/// via `/dev/fd/N` (PATH_DEV_FD branch; modern Linux/macOS).
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// (a) PATH_DEV_FD branch only — the FIFO fallback (`!PATH_DEV_FD`
+///     path c:5037-5064) is omitted; modern Linux/macOS both
+///     provide /dev/fd. namedpipe() is ported (exec.rs:2701) but
+///     unused here.
+/// (b) `addproc` Rust 4-arg drift (see getpipe WARNING a) —
+///     procsubstpid set only.
+/// (c) `addfilelist(NULL, fd)` skipped (see getoutputfile WARNING a).
+/// (d) `entersubsh` not ported — setsid only.
+/// (e) `execode` not ported — re-feed body via fusevm.
+/// (f) `_realexit` not ported — bare exit(LASTVAL).
+/// (g) `fdtable[fd] = FDT_PROC_SUBST` (c:5086) — set via fdtable_set.
+/// =============================================================
+pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
+    // c:5025
+    use crate::ported::utils::{fdtable_set, redup, zclose};
+    use crate::ported::zsh_h::{CS_CMDSUBST, FDT_PROC_SUBST, FDT_UNUSED, Inang};
+    let bytes = cmd.as_bytes();
+    let out: i32 = if !bytes.is_empty() && (bytes[0] as char) == Inang {
+        1 // c:5032 — `<(...)` writer-side child
+    } else {
+        0
+    };
+    // c:5068 — `if (thisjob == -1)` guard skipped (thisjob model differs).
+    // c:5072 — PATH_DEV_FD path: allocate buffer for the /dev/fd/N string.
+    let mut ends_at: usize = 0;
+    let _prog = parsecmd(cmd, Some(&mut ends_at))?; // c:5073
+    if let Some(p) = eptr {
+        *p = ends_at;
+    }
+    let mut pipes: [i32; 2] = [-1; 2];
+    if mpipe(&mut pipes) < 0 {
+        // c:5075
+        return None;
+    }
+    let mut bgtime: crate::ported::zsh_system_h::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let pid = zfork(Some(&mut bgtime)); // c:5077
+    if pid != 0 {
+        // c:5077 — parent path.
+        let pnam = format!("/dev/fd/{}", pipes[(1 - out) as usize]); // c:5078
+        let _ = zclose(pipes[out as usize]); // c:5079
+        if pid == -1 {
+            // c:5080
+            let _ = zclose(pipes[(1 - out) as usize]); // c:5082
+            return None; // c:5083
+        }
+        let fd = pipes[(1 - out) as usize]; // c:5085
+        fdtable_set(fd, FDT_PROC_SUBST); // c:5086
+                                         // c:5087 — addfilelist(NULL, fd) skipped (WARNING c)
+                                         // c:5088-5091 — addproc skipped (WARNING b)
+        procsubstpid.store(pid, Ordering::Relaxed); // c:5092
+        return Some(pnam); // c:5093
+    }
+    // c:5095 — child.
+    unsafe {
+        libc::setsid();
+    }
+    let _ = redup(pipes[out as usize], out); // c:5096
+    closem(FDT_UNUSED, 0); // c:5097
+    crate::ported::prompt::cmdpush(CS_CMDSUBST as u8); // c:5100
+    let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
+    let body = if body_end > 2 && body_end <= cmd.len() {
+        &cmd[2..body_end]
+    } else {
+        ""
+    };
+    let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
+    crate::ported::prompt::cmdpop(); // c:5102
+    let _ = zclose(out); // c:5103
+    std::process::exit(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed)); // c:5104
+}
+
 /// Port of `enum { ESUB_ASYNC, ESUB_PGRP, ... };` from `Src/exec.c:1056`.
 /// Flag bits for `entersubsh(int flags, struct entersubsh_ret *retp)`.
 pub mod esub {
