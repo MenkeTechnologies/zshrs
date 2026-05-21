@@ -5845,16 +5845,26 @@ pub fn sb_niceformat(s: &str, flags: i32) -> String {
 /// PRINTEIGHTBIT-off.
 pub fn is_sb_niceformat(s: &str) -> bool {
     // c:5937
-    // c:5942-5944 — `ums = ztrdup(s); untokenize(ums); unmetafy(ums, &umlen);`.
-    // Three-step C body. Rust skips the untokenize step for the same
-    // reason as `sb_niceformat` above (chars()-iteration would mangle
-    // raw metafied bytes); callers pass already-untokenized input.
-    let mut bytes = s.as_bytes().to_vec();
-    let umlen = unmetafy(&mut bytes); // c:5944
+    let mut ret: bool = false;                                               // c:5939
+    // c:5942 — `ums = ztrdup(s);` (Rust: copy to owned String)
+    let ums: String = s.to_string();
+    // c:5943 — `untokenize(ums);`
+    let ums: String = crate::ported::lex::untokenize(&ums);
+    // c:5944 — `ptr = unmetafy(ums, &umlen);`
+    let mut bytes: Vec<u8> = ums.into_bytes();
+    let umlen = unmetafy(&mut bytes);
     bytes.truncate(umlen);
-    // c:5946-5952 — `while (ptr < eptr) { if (is_nicechar(*ptr)) { ret = 1;
-    //                break; } ++ptr; }`. Any-byte short-circuit.
-    bytes.iter().any(|&b| is_nicechar(b as char)) // c:5947
+    // c:5945 — `eptr = ptr + umlen;` (modelled by `bytes` length)
+    let mut ptr: usize = 0;                                                  // c:5946
+    while ptr < bytes.len() {                                                // c:5947
+        if is_nicechar(bytes[ptr] as char) {                                 // c:5948
+            ret = true;                                                      // c:5949
+            break;                                                           // c:5950
+        }
+        ptr += 1;                                                            // c:5952
+    }
+    // c:5955 — `free(ums);` (Rust drop-on-scope)
+    ret                                                                      // c:5957
 }
 
 /// Tab expansion — direct port of `zexpandtabs(const char *s, int len, int width, int startpos, FILE *fout, int all)` in zsh/Src/utils.c:5975.
