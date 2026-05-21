@@ -7018,24 +7018,128 @@ pub fn bin_dot(
     result
 }
 
-/// Port of `eval(char **argv)` from Src/builtin.c:6151.
-/// C: `static int eval(char **argv)` — concatenate argv with spaces,
-///   parse as a shell program, then execode. Returns lastval.
+/// Port of `static int eval(char **argv)` from `Src/builtin.c:6151`.
 pub fn eval(argv: &[String]) -> i32 {
     // c:6151
-    // c:6151 — `if (!*argv) return 0;`
-    if argv.is_empty() {
-        // c:6160
-        return 0;
+    // c:6153 — `Eprog prog;` (declared inline below)
+    // c:6154 — `char *oscriptname = scriptname;`
+    let oscriptname: Option<String> = crate::ported::utils::scriptname_get();
+    // c:6155 — `int oineval = ineval, fpushed;`
+    let oineval: i32 = INEVAL.load(std::sync::atomic::Ordering::Relaxed);
+    let fpushed: bool;
+    // c:6156 — `struct funcstack fstack;`
+
+    // c:6163 — `ineval = !isset(EVALLINENO);`
+    INEVAL.store(
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::EVALLINENO) { 1 } else { 0 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let ineval_now = INEVAL.load(std::sync::atomic::Ordering::Relaxed) != 0;
+
+    if !ineval_now {                                                         // c:6164
+        // c:6165 — `scriptname = "(eval)";`
+        crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
+        // c:6166-6196 — funcstack push: build a fstack frame describing
+        // this eval, link it to the head of FUNCSTACK.
+        let prev_frame = {
+            let stack = crate::ported::modules::parameter::FUNCSTACK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            stack.last().cloned()
+        };
+        let lineno_now =
+            crate::ported::input::lineno.with(|c| c.get()) as i64;
+        let caller = match &prev_frame {
+            Some(p) => Some(p.name.clone()),
+            None => crate::ported::utils::argzero(),                         // c:6168 dupstring(argzero)
+        };
+
+        // c:6182-6196 — flineno/filename derivation. Three cases:
+        //   1. no prev frame OR prev tp == FS_SOURCE: flineno=lineno,
+        //      filename=caller (the source name)
+        //   2. prev tp == FS_EVAL: flineno = prev.flineno + lineno - 1
+        //   3. otherwise (function): flineno = prev.flineno + lineno,
+        //      filename = prev.filename or ""
+        let (flineno, filename): (i64, Option<String>) = match &prev_frame {
+            None => (lineno_now, caller.clone()),                            // c:6183-6184
+            Some(p) if p.tp == crate::ported::zsh_h::FS_SOURCE => {
+                (lineno_now, caller.clone())                                 // c:6183-6184
+            }
+            Some(p) => {
+                let mut fl = p.flineno + lineno_now;                         // c:6186
+                if p.tp == crate::ported::zsh_h::FS_EVAL {                   // c:6191
+                    fl -= 1;                                                 // c:6192
+                }
+                let fname = p.filename.clone().or_else(|| Some(String::new())); // c:6193-6195
+                (fl, fname)
+            }
+        };
+        let frame = crate::ported::zsh_h::funcstack {
+            prev: None,                                                      // c:1349 — linked via FUNCSTACK vec
+            name: "(eval)".to_string(),                                      // c:6167
+            filename,                                                        // c:6184 / c:6193
+            caller,                                                          // c:6168
+            flineno,                                                         // c:6183 / c:6186
+            lineno: lineno_now,                                              // c:6169
+            tp: crate::ported::zsh_h::FS_EVAL,                               // c:6170
+        };
+        {
+            let mut stack = crate::ported::modules::parameter::FUNCSTACK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            stack.push(frame);                                               // c:6197 funcstack = &fstack
+        }
+        fpushed = true;                                                      // c:6199
+    } else {
+        fpushed = false;                                                     // c:6201
     }
-    // c:6166-6210 — full eval body (`prog = parse_string(zjoin(argv,
-    // ' ', 1), 1); execode(prog, 1, 0, "eval");`) lives at the
-    // BUILTIN_EVAL fusevm dispatcher (fusevm_bridge.rs) where it can
-    // call `with_executor` mandatorily. This canonical free-fn entry
-    // is the no-VM fallback (unit tests, static-link callers); it
-    // returns lastval matching C's "no-op success" path when the
-    // joined program has nowhere to run.
-    LASTVAL.load(std::sync::atomic::Ordering::Relaxed) // c:6210
+
+    // c:6203 — `prog = parse_string(zjoin(argv, ' ', 1), 1);`
+    let joined = crate::ported::utils::zjoin(argv, ' ');
+    let prog = crate::ported::exec::parse_string(&joined, 1);
+
+    if let Some(prog) = prog {
+        // c:6205 — `if (wc_code(*prog->prog) != WC_LIST)`
+        let head = prog.prog.first().copied().unwrap_or(0);
+        if crate::ported::zsh_h::wc_code(head) != crate::ported::zsh_h::WC_LIST as u32 {
+            /* No code to execute */                                          // c:6206
+            LASTVAL.store(0, std::sync::atomic::Ordering::Relaxed);          // c:6207
+        } else {
+            // c:6209 — `execode(prog, 1, 0, "eval");`. Routes through
+            // the executor; in-process equivalent.
+            let _ = crate::fusevm_bridge::with_executor(|exec| {
+                exec.run_command_substitution(&joined)
+            });
+            // c:6211-6212 — `if (errflag && !lastval) lastval = errflag;`
+            let ef = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+            let lv = LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+            if ef != 0 && lv == 0 {
+                LASTVAL.store(ef, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    } else {
+        LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);              // c:6215
+    }
+
+    if fpushed {                                                             // c:6218
+        // c:6219 — `funcstack = funcstack->prev;`
+        let mut stack = crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        stack.pop();
+    }
+
+    // c:6221 — `errflag &= ~ERRFLAG_ERROR;`
+    crate::ported::utils::errflag.fetch_and(
+        !crate::ported::zsh_h::ERRFLAG_ERROR,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    // c:6222 — `scriptname = oscriptname;`
+    crate::ported::utils::set_scriptname(oscriptname);
+    // c:6223 — `ineval = oineval;`
+    INEVAL.store(oineval, std::sync::atomic::Ordering::Relaxed);
+
+    LASTVAL.load(std::sync::atomic::Ordering::Relaxed)                       // c:6225
 }
 
 /// Port of `bin_emulate(char *nam, char **argv, Options ops, UNUSED(int func))` from Src/builtin.c:6232.
