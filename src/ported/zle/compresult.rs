@@ -1446,9 +1446,10 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
             }
             if (g.flags & CGF_LINES) != 0 {
                 // c:2044
+                let mut so = std::io::stdout();
                 let last_idx = g.ylist.len().saturating_sub(1);
                 for (i, p) in g.ylist.iter().enumerate() {
-                    let _ = zputs(p);
+                    let _ = zputs(p, &mut so);
                     if i != last_idx {
                         // c:2050
                         // C wraps via " \b" or "\n"; we emit \n for safety.
@@ -1458,8 +1459,9 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
             } else {
                 // c:2058
                 // Column layout — emit each entry.
+                let mut so = std::io::stdout();
                 for entry in &g.ylist {
-                    let _ = zputs(entry);
+                    let _ = zputs(entry, &mut so);
                     let _ = write_loop(out_fd, b"\n");
                     ml += 1;
                 }
