@@ -5693,9 +5693,25 @@ pub fn bin_hash(
                 };
                 crate::ported::hashnameddir::addnameddirnode(n, nd); // c:4314
             } else {
-                // c:4316 — `cn->u.cmd = ztrdup(value);` in cmdnamtab.
-                // Static-link path: store in PATH-style env.
-                std::env::set_var(format!("__zshrs_hash_{}", n), v);
+                // c:4313-4318 — `Cmdnam cn = zshcalloc(sizeof *cn);
+                //                 cn->node.flags = HASHED;
+                //                 cn->u.cmd = ztrdup(asg->value.scalar);
+                //                 ht->addnode(ht, ztrdup(asg->name), hn);`
+                // Insert into cmdnamtab so `hash myc` lookup hits it
+                // (was storing in `__zshrs_hash_*` env var — fakery
+                // that the user-facing `hash myc` query never read).
+                let cn = crate::ported::zsh_h::cmdnam {
+                    node: hashnode {
+                        next: None,
+                        nam: n.to_string(),
+                        flags: HASHED as i32,                                // c:4316
+                    },
+                    name: None,
+                    cmd: Some(v.to_string()),                                // c:4316
+                };
+                if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().write() {
+                    tab.add(cn);                                             // c:4318 addnode
+                }
             }
             if OPT_ISSET(ops, b'v') {
                 // c:4321
@@ -5728,20 +5744,28 @@ pub fn bin_hash(
                     }
                 }
             } else {
-                // c:4332-4334 — `if (!hashcmd(asg->name, path)) zwarnnam(
-                //                "%s: no such command", asg->name);`
-                // Route through the canonical `hashcmd` port at
-                // `crate::ported::exec::hashcmd` (Src/exec.c:1010) —
-                // the prior inline-PATH-walk fakery missed iscom's
-                // X-perm + S_IFREG check AND skipped the cmdnamtab
-                // insertion + HASHDIRS bulk-hash side effects.
-                let path: Vec<String> = getsparam("PATH")
-                    .map(|p| p.split(':').map(String::from).collect())
-                    .unwrap_or_default();
-                if crate::ported::exec::hashcmd(n, &path).is_none() {
-                    // c:4332
-                    zwarnnam(name, &format!("no such command: {}", n)); // c:4333
-                    returnval = 1; // c:4334
+                // c:4319-4334 — `else if (!(hn = ht->getnode2(ht,
+                //   asg->name))) { ... if (!hashcmd(asg->name, path))
+                //   zwarnnam("no such command"); }`. C path: first
+                // check cmdnamtab for an existing entry; only fall
+                // back to hashcmd's PATH walk when not present. The
+                // previous Rust port skipped the cmdnamtab check, so
+                // a prior `hash myc=/path` insert was invisible to
+                // the matching `hash myc` query.
+                let in_cmdnamtab = crate::ported::hashtable::cmdnamtab_lock()
+                    .read()
+                    .map(|t| t.get(n).is_some())
+                    .unwrap_or(false);
+                if !in_cmdnamtab {
+                    // c:4319 hn == NULL → try hashcmd.
+                    let path: Vec<String> = getsparam("PATH")
+                        .map(|p| p.split(':').map(String::from).collect())
+                        .unwrap_or_default();
+                    if crate::ported::exec::hashcmd(n, &path).is_none() {
+                        // c:4332
+                        zwarnnam(name, &format!("no such command: {}", n)); // c:4333
+                        returnval = 1; // c:4334
+                    }
                 }
             }
         }
