@@ -9276,6 +9276,18 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("flags"),
             None,
         ),
+        // c:Src/Modules/param_private.c:652 — zsh/param/private module.
+        // BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN.
+        BUILTIN(
+            "private",
+            BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN,
+            Some(crate::ported::modules::param_private::bin_private as HandlerFunc),
+            0,
+            -1,
+            0,
+            Some("AE:%F:%HL:%PR:%TUZ:%ahi:%lnmrtux"),
+            Some("P"),
+        ), // c:652
         BUILTIN(
             "zle",
             0,
@@ -10029,10 +10041,11 @@ mod tests {
         //   zsh/datetime (strftime)
         //   zsh/zftp (zftp), zsh/zpty (zpty), zsh/curses (zcurses)
         //   zsh/clone (clone), zsh/example (example)
-        // Total Rust BUILTINS table size pinned at 138 to catch
+        //   zsh/param/private (private)
+        // Total Rust BUILTINS table size pinned at 139 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 138,
+        assert_eq!(BUILTINS.len(), 139,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 

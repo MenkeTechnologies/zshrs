@@ -242,10 +242,20 @@ pub fn is_private(pm: *const param) -> i32 {
 pub fn bin_private(
     nam: &str,
     args: &[String], // c:217
-    ops: &mut options,
+    ops_in: &options,
     func: i32,
-    assigns: &mut Vec<(String, String)>,
 ) -> i32 {
+    // c:217 C sig is `(nam, args, LinkList assigns, Options ops,
+    // func)` — 5 params. HandlerFunc takes only 4, so:
+    // (a) `assigns` is dropped (zshrs's execbuiltin doesn't thread
+    //     assigns through; `BINF_ASSIGN` parsing converts foo=bar
+    //     args to plain entries in `args`).
+    // (b) `ops` is cloned to a fn-local mut since the C body sets
+    //     bits inside (e.g. ops->ind[X] toggles in fallback branches).
+    let mut ops_local = ops_in.clone();
+    let ops = &mut ops_local;
+    let mut assigns: Vec<(String, String)> = Vec::new();
+    let assigns = &mut assigns;
     // c:220 — `int from_typeset = 1;`
     let mut from_typeset: i32 = 1; // c:220
                                    // c:221 — `int ofake = fakelevel;`
@@ -1199,7 +1209,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops_pp();
         let mut assigns: Vec<(String, String)> = Vec::new();
-        assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 0);
+        assert_eq!(bin_private("private", &[], &ops, 0), 0);
     }
 
     /// Port of `bin_private(char *nam, char **args, LinkList assigns, Options ops, int func)` from `Src/Modules/param_private.c:217`.
@@ -1210,13 +1220,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut ops = empty_ops_pp();
         ops.ind[b'P' as usize] = 1;
-        let mut assigns: Vec<(String, String)> = Vec::new();
         let r = bin_private(
             "private",
             &["foo=bar".to_string()],
-            &mut ops,
+            &ops,
             0,
-            &mut assigns,
         );
         assert_eq!(r, 0);
     }
@@ -1230,7 +1238,7 @@ mod tests {
         ops.ind[b'P' as usize] = 1;
         ops.ind[b'T' as usize] = 1;
         let mut assigns: Vec<(String, String)> = Vec::new();
-        assert_eq!(bin_private("private", &[], &mut ops, 0, &mut assigns), 1);
+        assert_eq!(bin_private("private", &[], &ops, 0), 1);
     }
 
     /// Verifies module loaders return 0.
@@ -1310,13 +1318,11 @@ mod tests {
         let mut ops = empty_ops_pp();
         ops.ind[b'P' as usize] = 1;
         ops.ind[b't' as usize] = 1;
-        let mut assigns: Vec<(String, String)> = Vec::new();
         let r = bin_private(
             "private",
             &["foo=bar".to_string()],
-            &mut ops,
+            &ops,
             0,
-            &mut assigns,
         );
         // The actual C-side rejection is in bin_typeset for `-P -t`;
         // until that's ported, we accept 0 (pass-through) here.
