@@ -300,19 +300,21 @@ pub fn getcurrentrealtime() -> f64 {
 /// return arr;
 /// ```
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn getcurrenttime() -> (i64, i64) {
+pub fn getcurrenttime() -> Vec<String> {
     // c:220
     // c:222-224 — `char **arr; char buf[DIGBUFSIZE]; struct timespec now;`
-    let mut now: timespec = unsafe { std::mem::zeroed() };
+    let mut arr: Vec<String> = Vec::with_capacity(2);                        // c:228 zhalloc(3 * sizeof(*arr))
+    let mut now: timespec = unsafe { std::mem::zeroed() };                   // c:224
     // c:226 — `zgettime(&now);`
     zgettime(&mut now);
-    // c:228-232 — C allocates a 3-element char** via zhalloc, sprintf
-    // tv_sec then tv_nsec into a stack buf, dupstring's each entry,
-    // sets arr[2]=NULL. Rust returns the numeric pair directly;
-    // the `$EPOCHREALTIME` parameter wrapper does the sprintf at the
-    // caller. Native tuple replaces the C `char**` array; Rust idiom
-    // replacement covers the heap-alloc dance.
-    (now.tv_sec as i64, now.tv_nsec as i64)
+    // c:229 — `sprintf(buf, "%ld", (long)now.tv_sec);`
+    let buf = format!("{}", now.tv_sec as i64);
+    arr.push(buf);                                                           // c:230 arr[0] = dupstring(buf)
+    // c:231 — `sprintf(buf, "%ld", (long)now.tv_nsec);`
+    let buf = format!("{}", now.tv_nsec as i64);
+    arr.push(buf);                                                           // c:232 arr[1] = dupstring(buf)
+    // c:233 — `arr[2] = NULL;` (collapsed: Vec's length is the terminator)
+    arr                                                                      // c:235
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (datetime.c:255).
@@ -479,14 +481,17 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let rt = getcurrentrealtime();
         assert!(rt > 1700000000.0);
-        let (secs, _) = getcurrenttime();
+        let arr = getcurrenttime();
+        let secs: i64 = arr[0].parse().unwrap();
         assert!((rt - secs as f64).abs() < 1.0);
     }
 
     #[test]
     fn test_epoch_time() {
         let _g = crate::test_util::global_state_lock();
-        let (secs, nanos) = getcurrenttime();
+        let arr = getcurrenttime();
+        let secs: i64 = arr[0].parse().unwrap();
+        let nanos: i64 = arr[1].parse().unwrap();
         assert!(secs > 1700000000);
         assert!((0..1_000_000_000).contains(&nanos));
     }
@@ -595,7 +600,8 @@ mod tests {
     fn getcurrenttime_nanos_under_one_billion() {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..5 {
-            let (_secs, nanos) = getcurrenttime();
+            let arr = getcurrenttime();
+            let nanos: i64 = arr[1].parse().unwrap();
             assert!(
                 nanos < 1_000_000_000,
                 "nanos {} >= 1e9 — unit confusion in c:220 port",
