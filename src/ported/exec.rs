@@ -51,6 +51,7 @@ use crate::ported::subst::{quotesubst, singsub};
 use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, ERRFLAG_ERROR};
 use crate::ported::ztype_h::{inull, itok};
 use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options};
+use crate::zsh_h::execstack;
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
 /// a trap handler is currently being processed and, paired with
@@ -221,6 +222,13 @@ pub static list_pipe_job: std::sync::atomic::AtomicI32 = // c:462 (Src/exec.c)
 /// also wants to xtrace.
 pub static doneps4: std::sync::atomic::AtomicI32 = // c:262 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `struct execstack *exstack;` from `Src/exec.c:244`. Head
+/// of the linked exec-context save stack — `execsave` pushes a frame
+/// before signal-handler / trap dispatch; `execrestore` pops it
+/// afterwards so the interrupted command resumes with its state intact.
+pub static exstack: std::sync::Mutex<Option<Box<crate::ported::zsh_h::execstack>>> = // c:244
+    std::sync::Mutex::new(None);
 
 /// Port of `static char *STTYval;` from `Src/exec.c:263`. Pending
 /// `stty` argument string captured by `addvars` when the command's
@@ -1238,6 +1246,165 @@ pub fn is_anonymous_function_name(name: &str) -> i32 {
     } else {
         0
     }
+}
+
+/// Port of `void execsave(void)` from `Src/exec.c:6438`.
+///
+/// C body:
+/// ```c
+/// struct execstack *es = (struct execstack *) zalloc(sizeof(struct execstack));
+/// es->list_pipe_pid = list_pipe_pid;
+/// es->nowait = nowait;
+/// es->pline_level = pline_level;
+/// es->list_pipe_child = list_pipe_child;
+/// es->list_pipe_job = list_pipe_job;
+/// strcpy(es->list_pipe_text, list_pipe_text);
+/// es->lastval = lastval;
+/// es->noeval = noeval;
+/// es->badcshglob = badcshglob;
+/// es->cmdoutpid = cmdoutpid;
+/// es->cmdoutval = cmdoutval;
+/// es->use_cmdoutval = use_cmdoutval;
+/// es->procsubstpid = procsubstpid;
+/// es->trap_return = trap_return;
+/// es->trap_state = trap_state;
+/// es->trapisfunc = trapisfunc;
+/// es->traplocallevel = traplocallevel;
+/// es->noerrs = noerrs;
+/// es->this_noerrexit = this_noerrexit;
+/// es->underscore = ztrdup(zunderscore);
+/// es->next = exstack;
+/// exstack = es;
+/// noerrs = cmdoutpid = 0;
+/// ```
+///
+/// Snapshot every transient exec-context global onto the `exstack`
+/// linked list so a signal-handler / trap-firing nested eval can
+/// scribble freely; `execrestore` pops the frame back. Called by
+/// `dotrap` (signals.c) and the trap-firing entry in `execlist`.
+pub fn execsave() {
+    // c:6438
+    // c:6442 — `es = zalloc(sizeof(execstack));`
+    let mut es = Box::new(execstack {
+        // c:6442
+        next: None,
+        list_pipe_pid: list_pipe_pid.load(Ordering::Relaxed), // c:6443
+        nowait: nowait.load(Ordering::Relaxed),               // c:6444
+        pline_level: pline_level.load(Ordering::Relaxed),     // c:6445
+        list_pipe_child: list_pipe_child.load(Ordering::Relaxed), // c:6446
+        list_pipe_job: list_pipe_job.load(Ordering::Relaxed), // c:6447
+        list_pipe_text: [0u8; crate::ported::zsh_h::JOBTEXTSIZE], // c:6448 strcpy
+        lastval: LASTVAL.load(Ordering::Relaxed),             // c:6449
+        // c:6450 — `noeval = M_NOEVAL` per math.rs port-rename. Read
+        // through the helper accessor for the canonical value.
+        // c:6450 — `noeval` (math.c:40) is ported as the thread-local
+        // `M_NOEVAL` in math.rs with private `m_noeval()` accessor.
+        // execsave/execrestore live across that privacy boundary;
+        // snapshot 0 until the accessor is elevated to pub(crate).
+        noeval: 0, // c:6450 (deps WARNING — math.rs::m_noeval not pub)
+        // c:6451 — `badcshglob` lives in glob.c:103 but isn't ported
+        // yet; snapshot 0 (the BSS-zero default) until the port lands.
+        badcshglob: 0, // c:6451
+        cmdoutpid: cmdoutpid.load(Ordering::Relaxed), // c:6452
+        cmdoutval: cmdoutval.load(Ordering::Relaxed), // c:6453
+        use_cmdoutval: use_cmdoutval.load(Ordering::Relaxed), // c:6454
+        procsubstpid: procsubstpid.load(Ordering::Relaxed), // c:6455
+        trap_return: TRAP_RETURN.load(Ordering::Relaxed), // c:6456
+        trap_state: TRAP_STATE.load(Ordering::Relaxed), // c:6457
+        trapisfunc: crate::ported::signals::trapisfunc.load(Ordering::Relaxed), // c:6458
+        traplocallevel: crate::ported::signals::traplocallevel.load(Ordering::Relaxed), // c:6459
+        noerrs: noerrs.load(Ordering::Relaxed), // c:6460
+        this_noerrexit: this_noerrexit.load(Ordering::Relaxed), // c:6461
+        // c:6462 — `es->underscore = ztrdup(zunderscore);`
+        underscore: Some(zunderscore.lock().unwrap().clone()),
+    });
+    // c:6463-6464 — `es->next = exstack; exstack = es;`
+    let mut head = exstack.lock().unwrap();
+    es.next = head.take();
+    *head = Some(es);
+    // c:6465 — `noerrs = cmdoutpid = 0;`
+    noerrs.store(0, Ordering::Relaxed);
+    cmdoutpid.store(0, Ordering::Relaxed);
+}
+
+/// Port of `void execrestore(void)` from `Src/exec.c:6470`.
+///
+/// C body:
+/// ```c
+/// struct execstack *en = exstack;
+/// DPUTS(!exstack, "BUG: execrestore() without execsave()");
+/// queue_signals();
+/// exstack = exstack->next;
+/// list_pipe_pid = en->list_pipe_pid;
+/// nowait = en->nowait;
+/// pline_level = en->pline_level;
+/// list_pipe_child = en->list_pipe_child;
+/// list_pipe_job = en->list_pipe_job;
+/// strcpy(list_pipe_text, en->list_pipe_text);
+/// lastval = en->lastval;
+/// noeval = en->noeval;
+/// badcshglob = en->badcshglob;
+/// cmdoutpid = en->cmdoutpid;
+/// cmdoutval = en->cmdoutval;
+/// use_cmdoutval = en->use_cmdoutval;
+/// procsubstpid = en->procsubstpid;
+/// trap_return = en->trap_return;
+/// trap_state = en->trap_state;
+/// trapisfunc = en->trapisfunc;
+/// traplocallevel = en->traplocallevel;
+/// noerrs = en->noerrs;
+/// this_noerrexit = en->this_noerrexit;
+/// setunderscore(en->underscore);
+/// zsfree(en->underscore);
+/// free(en);
+/// unqueue_signals();
+/// ```
+///
+/// Pop the top `execstack` frame and restore every transient
+/// exec-context global. Inverse of `execsave`.
+pub fn execrestore() {
+    // c:6470
+    let mut head = exstack.lock().unwrap();
+    let en = match head.take() {
+        // c:6472 + c:6477
+        Some(en) => en,
+        None => {
+            // c:6474 — DPUTS(!exstack, "BUG: execrestore() without execsave()")
+            crate::DPUTS!(true, "BUG: execrestore() without execsave()");
+            return;
+        }
+    };
+    queue_signals(); // c:6476
+    *head = en.next; // c:6477
+    drop(head); // release lock before scalar restores
+
+    list_pipe_pid.store(en.list_pipe_pid, Ordering::Relaxed); // c:6479
+    nowait.store(en.nowait, Ordering::Relaxed); // c:6480
+    pline_level.store(en.pline_level, Ordering::Relaxed); // c:6481
+    list_pipe_child.store(en.list_pipe_child, Ordering::Relaxed); // c:6482
+    list_pipe_job.store(en.list_pipe_job, Ordering::Relaxed); // c:6483
+                                                              // c:6484 — list_pipe_text restore (not yet stored as Rust static)
+    LASTVAL.store(en.lastval, Ordering::Relaxed); // c:6485
+    // c:6486 — `noeval = en->noeval;` — same privacy issue as the
+    // execsave side; restore is a no-op for now (deps WARNING).
+    let _ = en.noeval;
+                                                // c:6487 — badcshglob restore (not yet stored as Rust static)
+    cmdoutpid.store(en.cmdoutpid, Ordering::Relaxed); // c:6488
+    cmdoutval.store(en.cmdoutval, Ordering::Relaxed); // c:6489
+    use_cmdoutval.store(en.use_cmdoutval, Ordering::Relaxed); // c:6490
+    procsubstpid.store(en.procsubstpid, Ordering::Relaxed); // c:6491
+    TRAP_RETURN.store(en.trap_return, Ordering::Relaxed); // c:6492
+    TRAP_STATE.store(en.trap_state, Ordering::Relaxed); // c:6493
+    crate::ported::signals::trapisfunc.store(en.trapisfunc, Ordering::Relaxed); // c:6494
+    crate::ported::signals::traplocallevel.store(en.traplocallevel, Ordering::Relaxed); // c:6495
+    noerrs.store(en.noerrs, Ordering::Relaxed); // c:6496
+    this_noerrexit.store(en.this_noerrexit, Ordering::Relaxed); // c:6497
+                                                                // c:6498-6499 — `setunderscore(en->underscore); zsfree(en->underscore);`
+    if let Some(ref u) = en.underscore {
+        setunderscore(u); // c:6498
+    }
+    // c:6500 — `free(en);` — handled by Box drop when `en` falls out of scope.
+    unqueue_signals(); // c:6502
 }
 
 /// Port of `void execstring(char *s, int dont_change_job, int exiting,
