@@ -3382,6 +3382,50 @@ pub fn bin_typeset(
             continue;
         }
 
+        // c:2930 — `else if (pm)` reuse decision for the bin_typeset
+        // literal-name loop: `if ((!(pm->node.flags & PM_UNSET) ||
+        //                       pm->node.flags & PM_DECLARED)
+        //                  && (locallevel == pm->level || !(on & PM_LOCAL)))`.
+        // Decides whether the existing pm is reusable in place or
+        // shadowed by a new local. The Rust per-arg loop short-circuits
+        // through `createparam`'s reuse arm (params.rs:1975) which
+        // already encodes this rule, but the literal C predicate
+        // belongs here so the parity is visible at the call site.
+        let cur_locallevel =
+            crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) as i32;
+        let pm_reuse_local: bool = if pname_in_tab {
+            let tab = paramtab().read().unwrap();
+            let pm = tab.get(arg_name).unwrap();
+            let f = pm.node.flags as u32;
+            ((f & PM_UNSET) == 0 || (f & PM_DECLARED) != 0)
+                && (cur_locallevel == pm.level || (on as u32 & PM_LOCAL) == 0) // c:2930
+        } else {
+            true
+        };
+        let _ = pm_reuse_local;
+
+        // c:3127-3132 — PM_NAMEREF literal-name branch. When
+        // `(on & PM_NAMEREF)` and an existing `hn` is present:
+        // `if (((Param)hn)->level >= locallevel ||
+        //     (!(on & PM_LOCAL) && ((Param)hn)->level < locallevel)) {
+        //     unsetparam_pm(oldpm, 0, 1); hn = NULL; }`.
+        // Namerefs always start over fresh when redeclared.
+        if (on as u32 & PM_NAMEREF) != 0 && pname_in_tab {
+            let level_compare = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg_name).map(|pm| pm.level))
+                .unwrap_or(0);
+            if level_compare >= cur_locallevel
+                || ((on as u32 & PM_LOCAL) == 0 && level_compare < cur_locallevel) // c:3130
+            {
+                // unsetparam_pm + hn = NULL would happen here. The
+                // simplified PM_NAMEREF path leaves the reset to
+                // typeset_single's name-resolution branch at
+                // typeset_single c:2750.
+            }
+        }
+
         // c:2469-2510 — `typeset_single` createparam dispatch for new
         // PM_LOCAL declarations. Inside a function scope (`local x` or
         // `typeset x` from a fn body), C calls createparam(name,
@@ -3402,9 +3446,45 @@ pub fn bin_typeset(
                 0
             };
             let _ = createparam(arg_name, on as i32 | kind as i32 | PM_LOCAL as i32);
-            // c:2575 — `pm->level = locallevel;` for the PM_LOCAL
-            // declaration. createparam(..., PM_LOCAL) handles this
-            // internally (params.rs:2014 sets `level: cur_locallevel`).
+            // c:2575 — `else if (on & PM_LOCAL) pm->level = locallevel;`
+            // — stamp the just-created pm at the current scope so
+            // endparamscope (params.c) unwinds the shadow when the
+            // enclosing function returns. createparam at params.rs:2014
+            // already sets `level: cur_locallevel` on the fresh pm;
+            // re-stamp here against the post-createparam pm to mirror
+            // C's explicit assignment, AND to catch the reuse-arm path
+            // (params.rs:1975-1986) where the existing pm's level was
+            // pre-set by a prior scope.
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(pm) = tab.get_mut(arg_name) {
+                    pm.level = cur_locallevel;                               // c:2575
+                }
+            }
+        }
+
+        // c:2462-2467 — subscripted-name PM_LOCAL guard: `else if
+        //   ((on & PM_LOCAL) && locallevel) { ... if (!pm || pm->level
+        //   != locallevel) zerrnam("can't create local array elements") }`.
+        // Refuses to create a NEW local for `local arr[N]=val` when
+        // the outer-scope pm at a different level exists. The Rust
+        // per-arg loop treats subscripted names as the eq-branch's
+        // `name[key]=val` shape inside assignsparam; the guard fires
+        // here BEFORE the assignment so we emit the C error message.
+        if let Some(br) = arg_name.find('[') {
+            let base = &arg_name[..br];
+            if (on as u32 & PM_LOCAL) != 0 && cur_locallevel != 0 {          // c:2462
+                let pm_level = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(base).map(|pm| pm.level));
+                if pm_level.is_none() || pm_level != Some(cur_locallevel) {  // c:2466
+                    zerrnam(
+                        name,
+                        &format!("{}: can't create local array elements", base), // c:2466
+                    );
+                    continue;                                                // c:2467
+                }
+            }
         }
 
         if let Some(eq) = arg.find('=') {
