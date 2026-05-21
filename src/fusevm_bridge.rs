@@ -147,12 +147,13 @@ where
 // atomic that exec.set_last_status keeps current.
 
 /// Look up a canonical builtin by name in `BUILTINS` and dispatch
-/// via `execbuiltin` (Src/builtin.c:250). Mirrors the C pattern
-/// `bn = gethashnode2(builtintab, name); execbuiltin(args, redirs,
-/// bn)`. Returns 1 if no such builtin or if the handler is wired
-/// to None (legacy stub entry — the wrapper on ShellExecutor still
-/// covers those until their handler is wired into BUILTINS).
-pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
+/// via `execbuiltin` (Src/builtin.c:250). NO shadow check — calls the
+/// builtin even if a user function with the same name exists. Used by
+/// the `builtin foo` prefix opcode (which explicitly bypasses function
+/// lookup per zsh semantics) and by internal call sites where shadowing
+/// is unwanted. For zsh's normal name-resolution order (function shadows
+/// builtin), use `dispatch_builtin` instead.
+pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     let bn_idx = crate::ported::builtin::BUILTINS
         .iter()
         .position(|b| b.node.nam == name);
@@ -164,6 +165,21 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     } else {
         1
     }
+}
+
+/// Shadow-aware dispatch matching zsh's name-resolution order:
+/// alias → reserved word → **function (shadows builtin)** → builtin →
+/// external. All `BUILTIN_X` opcode handlers route through here so a
+/// user-defined `cd () { … }` (or `r`, `fc`, `which`, … anything in
+/// fusevm's name→opcode map) takes precedence over the C builtin —
+/// matching `Src/exec.c:execcmd_exec`'s dispatch at c:3050-3068.
+/// Without this, compile-time builtin resolution silently ignored
+/// user wrappers (e.g. ZPWR's `cd () { builtin cd "$@"; … }`).
+pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
+    if let Some(status) = try_user_fn_override(name, &args) {
+        return status;
+    }
+    dispatch_builtin_raw(name, args)
 }
 
 /// Register all zsh builtins with the VM.
@@ -421,13 +437,193 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    // BUILTIN_EXEC / BUILTIN_COMMAND / BUILTIN_BUILTIN wires deleted
-    // along with their handler stubs in src/vm_helper. The opcodes were
-    // never emitted by the fusevm compiler (zero `Op::CallBuiltin(...)`
-    // references) — leftover from the deleted pre-fusevm `Src/exec.c` port.
-    // When `command` / `exec` / `builtin` land as canonical
-    // ports in `src/ported/builtin.rs` (`Src/builtin.c:4017 bin_command`,
-    // `:6052 bin_exec`, etc.), wire them here through `execbuiltin`.
+    // `builtin foo args…`: precmd-modifier that forces builtin dispatch,
+    // bypassing alias AND function lookup. Without this, `builtin cd /`
+    // inside a user `cd () { … }` wrapper recurses (real-world ZPWR pattern).
+    // Handler pops argc args from the stack, treats args[0] as the builtin
+    // name, and dispatches the rest via `dispatch_builtin` → `execbuiltin`
+    // → `bin_*` directly. No function/alias lookup happens.
+    vm.register_builtin(BUILTIN_BUILTIN, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let Some((name, rest)) = args.split_first() else {
+            // `builtin` with no args → list builtins (zsh emits nothing,
+            // exit 0). Match that behavior; the BIN_BUILTIN bin_* in C
+            // does the same default-list-nothing.
+            return Value::Status(0);
+        };
+        // `builtin foo` MUST bypass function shadow — that's the whole
+        // point of the prefix. Use the _raw helper, not the shadow-aware
+        // one. Without this, `cd () { builtin cd "$@"; }` recurses.
+        Value::Status(dispatch_builtin_raw(name, rest.to_vec()))
+    });
+
+    // `command foo args…` — BINF_COMMAND prefix (Src/builtin.c:44). Zsh
+    // semantic: bypass alias+function lookup, search builtin then $PATH.
+    // Without this, `cd () { command cd "$@" }` would re-invoke the user
+    // wrapper (same root cause as the `builtin` bug). Flags `-p`/`-v`/`-V`
+    // route to bin_whence with BIN_COMMAND funcid; bare `command foo`
+    // dispatches builtin if present, else external (no fork — direct
+    // spawn via execute_external since zshrs is non-forking).
+    vm.register_builtin(BUILTIN_COMMAND, |vm, argc| {
+        let mut args = pop_args(vm, argc);
+        // Strip `-p` (use sanitized PATH — informational on macOS/Linux
+        // where the default PATH is already in use; zsh implements it
+        // via _PATH_STDPATH). Stop on first non-flag or `--`.
+        let mut path_search = false;
+        let mut whence_mode: Option<&str> = None;
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "--" {
+                args.remove(i);
+                break;
+            }
+            if !a.starts_with('-') || a.len() < 2 {
+                break;
+            }
+            let flag = &a[1..];
+            if flag == "p" {
+                path_search = true;
+                args.remove(i);
+            } else if flag == "v" {
+                whence_mode = Some("-v");
+                break;
+            } else if flag == "V" {
+                whence_mode = Some("-V");
+                break;
+            } else {
+                break;
+            }
+        }
+        let _ = path_search; // accepted but ignored (default PATH search)
+        if let Some(flag) = whence_mode {
+            // Route directly to bin_whence with BIN_COMMAND funcid. The
+            // whence port at builtin.rs:4782+ already special-cases
+            // `func == BIN_COMMAND` for `-v` (simple-style) vs `-V`
+            // (verbose-style). The `command` builtin in C is BIN_PREFIX
+            // (NULLBINCMD) — there's no `bin_command` — so we can't
+            // route through execbuiltin's BUILTINS lookup; build the
+            // ops struct directly and invoke the handler.
+            args.remove(0); // drop the -v / -V flag itself
+            let mut ops = crate::ported::zsh_h::options {
+                ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+                args: Vec::new(),
+                argscount: 0,
+                argsalloc: 0,
+            };
+            let flag_byte = if flag == "-V" { b'V' } else { b'v' };
+            ops.ind[flag_byte as usize] = 1;
+            let status = crate::ported::builtin::bin_whence(
+                "command",
+                &args,
+                &ops,
+                crate::ported::hashtable_h::BIN_COMMAND,
+            );
+            return Value::Status(status);
+        }
+        let Some((name, rest)) = args.split_first() else {
+            return Value::Status(0);
+        };
+        // Builtin first (no function shadow). If not a builtin, fall
+        // through to external — matching zsh "Look for builtin command;
+        // … else search $PATH" at Src/exec.c:3092+.
+        if crate::ported::builtin::BUILTINS
+            .iter()
+            .any(|b| b.node.nam == name.as_str())
+        {
+            return Value::Status(dispatch_builtin_raw(name, rest.to_vec()));
+        }
+        let n = name.clone();
+        let r = rest.to_vec();
+        Value::Status(
+            with_executor(|exec| exec.execute_external(&n, &r, &[])).unwrap_or(127),
+        )
+    });
+
+    // `exec cmd args…` — BINF_EXEC prefix (Src/builtin.c:45). Zsh
+    // semantic: replace the current shell process with `cmd`. On Unix
+    // this is `execvp(2)`; the call only returns on error. zshrs is
+    // non-forking, so the shell process IS the calling process —
+    // execvp here directly replaces it. Options `-a name` (override
+    // argv[0]), `-c` (clean env), `-l` (login shell — prepend `-`)
+    // ported minimally; advanced redirect-only `exec >file` is handled
+    // upstream by compile_zsh and never reaches this handler.
+    vm.register_builtin(BUILTIN_EXEC, |vm, argc| {
+        let mut args = pop_args(vm, argc);
+        let mut argv0_override: Option<String> = None;
+        let mut clean_env = false;
+        let mut login = false;
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "--" {
+                args.remove(i);
+                break;
+            }
+            if !a.starts_with('-') || a.len() < 2 {
+                break;
+            }
+            match a.as_str() {
+                "-a" => {
+                    args.remove(i);
+                    if i < args.len() {
+                        argv0_override = Some(args.remove(i));
+                    }
+                }
+                "-c" => {
+                    clean_env = true;
+                    args.remove(i);
+                }
+                "-l" => {
+                    login = true;
+                    args.remove(i);
+                }
+                _ => break,
+            }
+        }
+        let Some(cmd) = args.first().cloned() else {
+            // `exec` with no command + no redirects = no-op success.
+            return Value::Status(0);
+        };
+        let rest: Vec<String> = args[1..].to_vec();
+        let display_argv0 = match argv0_override {
+            Some(a) => a,
+            None => {
+                if login {
+                    format!("-{}", cmd)
+                } else {
+                    cmd.clone()
+                }
+            }
+        };
+        let mut command = std::process::Command::new(&cmd);
+        command.arg0(&display_argv0);
+        command.args(&rest);
+        if clean_env {
+            command.env_clear();
+        }
+        use std::os::unix::process::CommandExt;
+        // `exec` returns the OS error iff exec(2) failed; on success
+        // it never returns. Match zsh: print the error to stderr with
+        // the `exec` prefix and exit 127 (cmd not found) or 126 (not
+        // executable).
+        let err = command.exec();
+        let code = match err.kind() {
+            std::io::ErrorKind::NotFound => {
+                eprintln!("zshrs: exec: {}: not found", cmd);
+                127
+            }
+            std::io::ErrorKind::PermissionDenied => {
+                eprintln!("zshrs: exec: {}: permission denied", cmd);
+                126
+            }
+            _ => {
+                eprintln!("zshrs: exec: {}: {}", cmd, err);
+                127
+            }
+        };
+        std::process::exit(code);
+    });
 
     vm.register_builtin(BUILTIN_LET, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -478,14 +674,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    // History
-    // BUILTIN_HISTORY / BUILTIN_R wires deleted with their stubs.
-    // Opcodes never emitted by the fusevm compiler (dead since the
-    // pre-fusevm executor port was replaced). `bin_fc` stays — it's wired to
-    // the canonical port at `src/ported/builtin.rs`.
+    // History — `fc`, `history`, and `r` all route to `bin_fc` (zsh
+    // registers them as aliases of the same builtin per Src/builtin.c).
+    // Previous "wires deleted; opcode never emitted" comment was wrong:
+    // fusevm's `builtin_id("history")` / `("r")` ARE Some(…), so
+    // compile_zsh emits Op::CallBuiltin for them — without a registered
+    // handler they were silent no-ops, masking user `r () { … }` wrappers
+    // (the ZPWR autoload pattern hit this).
     vm.register_builtin(BUILTIN_FC, |vm, argc| {
         let args = pop_args(vm, argc);
         let status = dispatch_builtin("fc", args);
+        Value::Status(status)
+    });
+    vm.register_builtin(BUILTIN_HISTORY, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = dispatch_builtin("history", args);
+        Value::Status(status)
+    });
+    vm.register_builtin(BUILTIN_R, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = dispatch_builtin("r", args);
         Value::Status(status)
     });
 

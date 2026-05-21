@@ -910,6 +910,40 @@ impl ZshCompiler {
         // ordinary cmds in this context — the walk doesn't depend on
         // the wordcode distinction past `getnode2` (c:3035), and the
         // static BUILTINS table doesn't model an enabled/disabled bit.
+        // Precommand modifiers `builtin`/`command`/`exec` (BINF_BUILTIN /
+        // BINF_COMMAND / BINF_EXEC per Src/builtin.c:42-45). The normal
+        // precmd-strip (via execcmd_exec) drops them and then resolves the
+        // underlying name — if that name lacks a dedicated fusevm opcode
+        // (e.g. `cd`), the fallback is `Op::CallFunction`, which finds user
+        // wrappers and recurses (real-world ZPWR `cd () { builtin cd "$@"; }`).
+        // Emit the prefix opcode directly with all args intact; the runtime
+        // handler dispatches by name with the correct shadow semantic:
+        //   - `builtin`: bypass alias+function, builtin-only
+        //   - `command`: bypass function, builtin then external
+        //   - `exec`:    replace shell process
+        if simple.words.len() >= 2 {
+            let first = crate::lex::untokenize(&simple.words[0]);
+            let opcode = match first.as_str() {
+                "builtin" => Some(fusevm::shell_builtins::BUILTIN_BUILTIN),
+                "command" => Some(fusevm::shell_builtins::BUILTIN_COMMAND),
+                "exec" => Some(fusevm::shell_builtins::BUILTIN_EXEC),
+                _ => None,
+            };
+            if let Some(opcode) = opcode {
+                let argc = (simple.words.len() - 1) as u8;
+                for word in &simple.words[1..] {
+                    self.compile_word_str(word);
+                }
+                self.builder.emit(Op::CallBuiltin(opcode, argc), 0);
+                self.builder.emit(Op::SetStatus, 0);
+                self.emit_errexit_check();
+                if has_redirects {
+                    self.builder.emit(Op::WithRedirectsEnd, 0);
+                }
+                return;
+            }
+        }
+
         let dispatch =
             crate::ported::exec::execcmd_exec(&simple.words, crate::ported::zsh_h::WC_SIMPLE);
         let precmd_skip = dispatch.precmd_skip;

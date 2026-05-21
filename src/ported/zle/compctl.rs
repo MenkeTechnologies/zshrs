@@ -2356,8 +2356,8 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
     // c:2537-2540 — `s = (shfunctab[cmdstr] || builtintab[cmdstr]) ?
     // NULL : findcmd(cmdstr, 1, 0);` — only resolve via $PATH when
     // cmdstr is neither a defined function nor a builtin.
-    let is_function = crate::ported::builtin::shfunctab_table()
-        .lock()
+    let is_function = crate::ported::hashtable::shfunctab_lock()
+        .read()
         .map(|t| t.contains_key(&cmdstr))
         .unwrap_or(false);
     let is_builtin = crate::ported::builtin::BUILTINS

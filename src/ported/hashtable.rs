@@ -364,27 +364,75 @@ impl shfunc_table {
     }
 
     pub fn add(&mut self, func: shfunc) -> Option<shfunc> {
-        self.table.insert(func.node.nam.clone(), func)
+        self.table
+            .insert(func.node.nam.clone(), Box::new(func))
+            .map(|b| *b)
     }
 
     pub fn get(&self, name: &str) -> Option<&shfunc> {
         self.table
             .get(name)
+            .map(|b| b.as_ref())
             .filter(|f| (f.node.flags & DISABLED as i32) == 0)
     }
 
     pub fn get_including_disabled(&self, name: &str) -> Option<&shfunc> {
-        self.table.get(name)
+        self.table.get(name).map(|b| b.as_ref())
     }
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut shfunc> {
         self.table
             .get_mut(name)
+            .map(|b| b.as_mut())
             .filter(|f| (f.node.flags & DISABLED as i32) == 0)
     }
 
     pub fn remove(&mut self, name: &str) -> Option<shfunc> {
-        self.table.remove(name)
+        self.table.remove(name).map(|b| *b)
+    }
+
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.table.contains_key(name)
+    }
+
+    /// Port of C's `HashTable.addnode` GSU function pointer
+    /// (`Src/zsh.h:281+`). Takes a `*mut shfunc` (typedef `Shfunc`)
+    /// previously obtained via `Box::into_raw` — reclaims ownership
+    /// into the table by name. After this call, the caller's `shf`
+    /// pointer is INVALIDATED in the Rust ownership sense; subsequent
+    /// reads must go through `getnode(name)` to get a fresh pointer.
+    /// In practice, C code re-uses the same `shf` pointer because the
+    /// Box stays at the same heap address — we keep that semantic by
+    /// boxing-on-heap. Replaces any prior entry with the same name
+    /// (matching C `addnode`'s overwrite-and-free-old behavior).
+    pub fn addnode(&mut self, shf: *mut shfunc) {
+        if shf.is_null() {
+            return;
+        }
+        let boxed = unsafe { Box::from_raw(shf) };
+        let name = boxed.node.nam.clone();
+        let _ = self.table.insert(name, boxed);
+    }
+
+    /// Port of C's `HashTable.getnode` GSU. Returns the raw `Shfunc`
+    /// pointer (typedef `*mut shfunc`) or null if missing or disabled.
+    /// Pointer stays valid as long as the underlying `Box<shfunc>`
+    /// lives in the table (i.e. until `remove`/`addnode`-overwrite).
+    pub fn getnode(&self, name: &str) -> *mut shfunc {
+        self.table
+            .get(name)
+            .filter(|b| (b.node.flags & DISABLED as i32) == 0)
+            .map(|b| b.as_ref() as *const shfunc as *mut shfunc)
+            .unwrap_or(std::ptr::null_mut())
+    }
+
+    /// Port of C's `HashTable.getnode2` GSU — same as `getnode` but
+    /// returns disabled nodes too. Used by `unhash`/`enable -f` paths.
+    pub fn getnode2(&self, name: &str) -> *mut shfunc {
+        self.table
+            .get(name)
+            .map(|b| b.as_ref() as *const shfunc as *mut shfunc)
+            .unwrap_or(std::ptr::null_mut())
     }
 
     pub fn disable(&mut self, name: &str) -> bool {
@@ -414,11 +462,12 @@ impl shfunc_table {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&String, &shfunc)> {
-        self.table.iter()
+        self.table.iter().map(|(k, b)| (k, b.as_ref()))
     }
 
     pub fn iter_sorted(&self) -> Vec<(&String, &shfunc)> {
-        let mut entries: Vec<_> = self.table.iter().collect();
+        let mut entries: Vec<(&String, &shfunc)> =
+            self.table.iter().map(|(k, b)| (k, b.as_ref())).collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
         entries
     }
@@ -2137,10 +2186,18 @@ pub struct cmdnam_table {
 /// Port of the `shfunctab` HashTable Src/hashtable.c builds —
 /// `printshfuncnode` / `freeshfuncnode` (Src/builtin.c) hang off
 /// the same shape.
-/// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
-/// `cmdnam_table` for the canonical-port direction.
+/// Faithful port of C's `HashTable shfunctab` (Src/zsh.h, declared
+/// `mod_export HashTable shfunctab`). Stores `Box<shfunc>` so that
+/// raw `*mut shfunc` handed to C-style call sites stays stable
+/// across map rehashes — mirrors C's `HashNode` semantics where
+/// the table owns the heap allocation and hands out pointers.
+/// Owned-value accessors (`add`, `get`, `get_mut`) coexist with
+/// C-faithful pointer accessors (`addnode`, `getnode`) so both
+/// the Rust-idiomatic bytecode function-def path
+/// (`fusevm_bridge.rs:8378`) and the C-style `bin_functions`
+/// port (`builtin.rs:3689+`) write to the same canonical table.
 pub struct shfunc_table {
-    table: HashMap<String, shfunc>,
+    table: HashMap<String, Box<shfunc>>,
 }
 
 /// Reserved word hash table

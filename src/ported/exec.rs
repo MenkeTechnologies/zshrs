@@ -492,12 +492,25 @@ pub fn getfpfunc(
     spec_path: Option<&[String]>,
     _all_loaded: i32,
 ) -> Option<String> {
+    // C reads $fpath via `getaparam("fpath")` (the param-table array form
+    // tied to scalar `FPATH` via `typeset -T`). Reading `std::env::var`
+    // misses any in-script modification like `fpath=(/some/dir $fpath)`
+    // because that mutates the internal param table, not the inherited
+    // process env. Fall back to env only when the param table is empty
+    // (cold start before any param-table init).
     let dirs: Vec<String> = match spec_path {
         Some(s) => s.to_vec(),
-        None => std::env::var("FPATH")
-            .or_else(|_| std::env::var("fpath"))
-            .ok()
-            .map(|v| v.split(':').map(String::from).collect())
+        None => crate::ported::params::getaparam("fpath")
+            .filter(|v| !v.is_empty())
+            .or_else(|| {
+                crate::ported::params::getsparam("FPATH")
+                    .map(|v| v.split(':').map(String::from).collect())
+            })
+            .or_else(|| {
+                std::env::var("FPATH")
+                    .ok()
+                    .map(|v| v.split(':').map(String::from).collect())
+            })
             .unwrap_or_default(),
     };
     for dir in &dirs {
