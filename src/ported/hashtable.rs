@@ -2273,6 +2273,20 @@ pub fn cmdnamtab_lock() -> &'static std::sync::RwLock<cmdnam_table> {
     CMDNAMTAB.get_or_init(|| std::sync::RwLock::new(cmdnam_table::new()))
 }
 
+/// Port of `mod_export char **pathchecked;` from `Src/hashtable.c:595`.
+///
+/// Cursor into the `$path` array tracking how far the PATH-hash-on-
+/// first-use machinery has walked. Bumped by `hashcmd` (exec.c:1042)
+/// after each successful lookup so subsequent `hashdir` calls only
+/// scan entries we haven't already cached.
+///
+/// C uses `char **pathchecked` (pointer into the `path[]` array); the
+/// Rust port stores an index since `$path` lives in paramtab and is
+/// re-fetched on each access. Reset to 0 by `path` reassignment per
+/// `Src/hashtable.c:618`.
+pub static pathchecked: std::sync::atomic::AtomicUsize = // c:595
+    std::sync::atomic::AtomicUsize::new(0);
+
 // hash table containing the aliases                                        // c:1174
 /// Singleton accessor for the global `aliastab`.
 /// Mirrors C's `mod_export HashTable aliastab` (hashtable.c:1186).

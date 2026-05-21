@@ -1534,6 +1534,98 @@ pub fn shfunc_set_sticky(shf: &mut shfunc) {
     }
 }
 
+/// Port of `Cmdnam hashcmd(char *arg0, char **pp)` from
+/// `Src/exec.c:1010`.
+///
+/// C body:
+/// ```c
+/// Cmdnam cn;
+/// char *s, buf[PATH_MAX+1];
+/// char **pq;
+/// if (*arg0 == '/') return NULL;
+/// for (; *pp; pp++)
+///     if (**pp == '/') {
+///         s = buf;
+///         struncpy(&s, *pp, PATH_MAX);
+///         *s++ = '/';
+///         if ((s - buf) + strlen(arg0) >= PATH_MAX) continue;
+///         strcpy(s, arg0);
+///         if (iscom(buf)) break;
+///     }
+/// if (!*pp) return NULL;
+/// cn = (Cmdnam) zshcalloc(sizeof *cn);
+/// cn->node.flags = 0;
+/// cn->u.name = pp;
+/// cmdnamtab->addnode(cmdnamtab, ztrdup(arg0), cn);
+/// if (isset(HASHDIRS)) {
+///     for (pq = pathchecked; pq <= pp; pq++) hashdir(pq);
+///     pathchecked = pp + 1;
+/// }
+/// return cn;
+/// ```
+///
+/// Walk `pp[]` (a $path slice starting from `pathchecked`) for the
+/// first absolute-PATH entry where `<entry>/<arg0>` is an executable
+/// regular file. Inserts the unhashed-cmdnam entry into `cmdnamtab`
+/// and (under HASHDIRS) bulk-hashes every PATH dir we walked through
+/// so subsequent commands hit the cache.
+///
+/// Returns the just-inserted `cmdnam` (now in `cmdnamtab`) on success,
+/// `None` if `arg0` is absolute or no PATH entry contains it.
+pub fn hashcmd(arg0: &str, pp: &[String]) -> Option<crate::ported::zsh_h::cmdnam> {
+    // c:1010
+    // c:1016 — `if (*arg0 == '/') return NULL;`
+    if arg0.starts_with('/') {
+        return None; // c:1017
+    }
+    // c:1018-1028 — walk pp[] for first matching absolute entry.
+    let mut found_idx: Option<usize> = None;
+    for (i, dir) in pp.iter().enumerate() {
+        // c:1018
+        if !dir.starts_with('/') {
+            // c:1019
+            continue;
+        }
+        // c:1020-1025 — buf = "<dir>/<arg0>"; PATH_MAX bounds check.
+        if dir.len() + 1 + arg0.len() >= libc::PATH_MAX as usize {
+            // c:1023
+            continue; // c:1024
+        }
+        let buf = format!("{}/{}", dir, arg0); // c:1025
+        if iscom(&buf) {
+            // c:1026
+            found_idx = Some(i);
+            break; // c:1027
+        }
+    }
+    // c:1030-1031 — `if (!*pp) return NULL;`
+    let pp_idx = match found_idx {
+        Some(i) => i,
+        None => return None, // c:1031
+    };
+    // c:1033-1036 — alloc cn, set flags=0, u.name=pp (the matching slice).
+    let path_slice: Vec<String> = pp[pp_idx..].to_vec(); // c:1035
+    let cn = crate::ported::hashtable::cmdnam_unhashed(arg0, path_slice); // c:1033-1035
+                                                                          // c:1036 — `cmdnamtab->addnode(cmdnamtab, ztrdup(arg0), cn);`
+    if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().write() {
+        tab.add(cn.clone());
+    }
+    // c:1038-1042 — under HASHDIRS, bulk-hash every dir up to and
+    // including the matching one, then bump pathchecked past it.
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHDIRS) {
+        // c:1038
+        let start = crate::ported::hashtable::pathchecked.load(Ordering::Relaxed); // c:1039
+        for pq in start..=pp_idx {
+            // c:1039
+            if pq < pp.len() {
+                crate::ported::hashtable::hashdir(&pp[pq], pq); // c:1040
+            }
+        }
+        crate::ported::hashtable::pathchecked.store(pp_idx + 1, Ordering::Relaxed); // c:1041
+    }
+    Some(cn) // c:1044
+}
+
 /// Port of `static pid_t zfork(struct timespec *ts)` from
 /// `Src/exec.c:349`.
 ///
