@@ -4800,7 +4800,13 @@ pub fn inittyptab() {
     // mark "blank repeated → no-skip" IFS chars. Mirrors C exactly.
     {
         // c:4216 — `for (s = ifs ? ifs : CURRENT_DEFAULT_IFS; ...)`.
-        let ifs = ifsgetfn();
+        // C: `paramtab->getnode("IFS")->gsu.s->getfn(pm)`. Rust:
+        // look up pm in paramtab, dispatch via ifsgetfn(pm).
+        let ifs = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)))
+            .unwrap_or_default();
         let src: String = if ifs.is_empty() {
             DEFAULT_IFS.to_string()
         } else {
@@ -4847,7 +4853,11 @@ pub fn inittyptab() {
     // Drops to ASCII-only under MULTIBYTE_SUPPORT (the non-ASCII path
     // routes through wordchars_wide).
     {
-        let wc = wordcharsgetfn();
+        let wc = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get("WORDCHARS").map(|pm| crate::ported::params::wordcharsgetfn(pm)))
+            .unwrap_or_default();
         let src: String = if wc.is_empty() {
             DEFAULT_WORDCHARS.to_string()
         } else {
@@ -5026,13 +5036,21 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
         // through `std::env::var("WORDCHARS")` which is the libc
         // process environment — never reflects runtime `WORDCHARS=:`
         // assignments inside the shell.
-        let w = wordcharsgetfn();
+        let w = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get("WORDCHARS").map(|pm| crate::ported::params::wordcharsgetfn(pm)))
+            .unwrap_or_default();
         return w.chars().any(|x| x == c);
     }
     if cls == ISEP {
         // c:4366
         // c:4367 — same canonical-global pattern for IFS.
-        let ifs = ifsgetfn();
+        let ifs = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)))
+            .unwrap_or_default();
         return ifs.chars().any(|x| x == c);
     }
     let _ = IALNUM;
@@ -8550,10 +8568,20 @@ mod tests {
     fn finddir_uses_paramtab_home_not_env() {
         let _g = crate::test_util::global_state_lock();
         // Stash and replace the canonical HOME via homesetfn — the
-        // same code path PM_SPECIAL dispatch routes through.
-        let saved = crate::ported::params::homegetfn();
+        // same code path PM_SPECIAL dispatch routes through. C
+        // dispatches `pm->gsu.s->{get,set}fn(pm, ...)`; mirror by
+        // looking up the HOME pm in paramtab.
+        let saved = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get("HOME").map(|pm| crate::ported::params::homegetfn(pm)))
+            .unwrap_or_default();
         let sentinel = "/tmp/zshrs-finddir-pin".to_string();
-        homesetfn(sentinel.clone());
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("HOME") {
+                homesetfn(pm, sentinel.clone());
+            }
+        }
 
         // `/tmp/zshrs-finddir-pin/x` must abbreviate to `~/x`.
         let abbrev = finddir(&format!("{}/x", sentinel));
@@ -8565,7 +8593,11 @@ mod tests {
         );
 
         // Restore.
-        homesetfn(saved);
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("HOME") {
+                homesetfn(pm, saved);
+            }
+        }
     }
 
     #[test]
@@ -10852,12 +10884,25 @@ mod tests {
             return;
         }
         // Save and set WORDCHARS to a single non-ASCII char.
-        let saved = wordcharsgetfn();
-        wordcharssetfn("é".to_string());
+        // C dispatches `pm->gsu.s->{get,set}fn(pm, val)`; mirror via
+        // paramtab lookup.
+        let saved = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get("WORDCHARS").map(|pm| crate::ported::params::wordcharsgetfn(pm)))
+            .unwrap_or_default();
+        let mut do_set = |val: String| {
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("WORDCHARS") {
+                    wordcharssetfn(pm, val);
+                }
+            }
+        };
+        do_set("é".to_string());
         // 'é' is alphanumeric per Unicode → IWORD returns true via
         // is_alphanumeric short-circuit at c:4353. So we can't pin
         // the WORDCHARS-specific path with 'é'. Use a non-alnum char.
-        wordcharssetfn(":".to_string());
+        do_set(":".to_string());
         // ':' is ASCII so wcsitype routes through TYPTAB (which now
         // has IWORD on ':' because wordcharssetfn called inittyptab).
         assert!(
@@ -10865,7 +10910,7 @@ mod tests {
             "c:4364 — wordchars membership through canonical global"
         );
         // Restore.
-        wordcharssetfn(saved);
+        do_set(saved);
     }
 
     /// `Src/utils.c:2090-2097` — `addmodulefd(fd, fdt)`. Stores the
@@ -11116,14 +11161,26 @@ mod tests {
         if !isset(MULTIBYTE) {
             return;
         }
-        let saved = ifsgetfn();
-        ifssetfn(":".to_string());
+        // C: `pm->gsu.s->{get,set}fn(pm, val)`. Mirror via paramtab.
+        let saved = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)))
+            .unwrap_or_default();
+        let mut do_set = |val: String| {
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("IFS") {
+                    ifssetfn(pm, val);
+                }
+            }
+        };
+        do_set(":".to_string());
         assert!(
             wcsitype(':', ISEP as u32),
             "c:4367 — IFS membership through canonical global"
         );
         // Restore.
-        ifssetfn(saved);
+        do_set(saved);
     }
 
     /// c:536 — high-bit byte (>= 0x80) is nice when PRINTEIGHTBIT is

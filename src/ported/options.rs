@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 
 use crate::ported::init::SHTTY;
 use crate::ported::jobs::{acquire_pgrp, ORIGPGRP};
-use crate::ported::params::keyboardhacksetfn;
+use crate::ported::params::{keyboardhacksetfn, paramtab};
 use crate::ported::pattern::{patcompile, patmatch};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
@@ -783,12 +783,21 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     {
         if idx == SUNKEYBOARDHACK {
             // c:871
-            // c:873 — `keyboardhackchar = (value ? '`' : '\0');`
-            keyboardhacksetfn(if value != 0 {
+            // c:873 — `keyboardhackchar = (value ? '`' : '\0');`. C
+            // dispatches through `pm->gsu.s->setfn(pm, val)`; mirror
+            // by looking up KEYBOARD_HACK in paramtab and threading
+            // the pm through (the setfn body ignores pm anyway,
+            // matching UNUSED(Param pm) in C).
+            let new_val = if value != 0 {
                 "`".to_string()
             } else {
                 String::new()
-            });
+            };
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(pm) = tab.get_mut("KEYBOARD_HACK") {
+                    keyboardhacksetfn(pm, new_val);
+                }
+            }
         }
     }
     // c:744 — locate the option name whose FNV hash matches idx.
