@@ -660,14 +660,14 @@ pub fn bin_zle(
     // Rust take only `&[String]` (sig narrower than C `(name, args,
     // ops, func)`); wrapped via closures so the dispatcher stays
     // table-driven. The sub-handler-sig widening is a follow-up.
-    type OpHandler = Box<dyn Fn(&[String]) -> i32>;
+    type OpHandler<'a> = Box<dyn Fn(&[String]) -> i32 + 'a>;
     let opns: [(u8, OpHandler, i32, i32); 14] = [
         (b'l', Box::new(bin_zle_list), 0, -1), // c:350
         (b'D', Box::new(bin_zle_del), 1, -1),  // c:351
         (b'A', Box::new(bin_zle_link), 2, 2),  // c:352
         (b'N', Box::new(bin_zle_new), 1, 2),   // c:353
         (b'C', Box::new(bin_zle_complete), 3, 3), // c:354
-        (b'R', Box::new(|_| bin_zle_refresh()), 0, -1), // c:355
+        (b'R', Box::new(|a| bin_zle_refresh(a, ops)), 0, -1), // c:355
         (b'M', Box::new(bin_zle_mesg), 1, 1),  // c:356
         (b'U', Box::new(bin_zle_unget), 1, 1), // c:357
         (b'K', Box::new(bin_zle_keymap), 1, 1), // c:358
@@ -774,14 +774,73 @@ pub fn bin_zle_list(args: &[String]) -> i32 {
 /// the C direct `zrefresh()` call; the next zlecore tick picks it
 /// up — same observable behaviour without re-entering refresh here.
 /// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
-pub fn bin_zle_refresh() -> i32 {
+pub fn bin_zle_refresh(args: &[String], ops: &options) -> i32 {
     // c:418
+    // c:420-421 — `char *s = statusline; int ocl = clearlist;`. Save
+    // pre-call state so the function can restore it on exit.
+    let s_save: Option<String> = STATUSLINE.lock().unwrap().clone(); // c:420
+    let ocl: i32 = crate::ported::zle::zle_refresh::CLEARLIST
+        .load(Ordering::Relaxed); // c:421
+
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
+        // c:423
         return 1; // c:424
     }
-    // c:450 — `zrefresh()`. Flag the next tick.
-    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
-    0 // c:454
+    // c:425 — `statusline = NULL;`
+    *STATUSLINE.lock().unwrap() = None;
+    if !args.is_empty() {
+        // c:426
+        // c:427-428 — `if (**args) statusline = *args;` — empty arg
+        // means "clear statusline", non-empty replaces it.
+        if !args[0].is_empty() {
+            // c:427
+            *STATUSLINE.lock().unwrap() = Some(args[0].clone()); // c:428
+        }
+        if args.len() > 1 {
+            // c:429 — second-and-following args form a list to display.
+            let zmultsav: i32 =
+                crate::ported::zle::compcore::ZMULT.load(Ordering::Relaxed); // c:431
+            // c:433-434 — `for (; *args; args++) addlinknode(l, *args);`.
+            let list: Vec<String> = args[1..].to_vec(); // c:434
+            crate::ported::zle::compcore::ZMULT.store(1, Ordering::Relaxed); // c:436
+            // c:437 — `listlist(l)`. Rust port takes (&[String], cols);
+            // 0 cols defers width to listlist's internal calc.
+            crate::ported::zle::zle_tricky::listlist(&list, 0); // c:437
+            if STATUSLINE.lock().unwrap().is_some() {
+                // c:438
+                crate::ported::zle::zle_refresh::LASTLISTLEN
+                    .fetch_add(1, Ordering::Relaxed); // c:439
+            }
+            // c:440 — `showinglist = clearlist = 0;`.
+            crate::ported::zle::zle_refresh::SHOWINGLIST
+                .store(0, Ordering::Relaxed);
+            crate::ported::zle::zle_refresh::CLEARLIST
+                .store(0, Ordering::Relaxed);
+            // c:441 — restore zmult.
+            crate::ported::zle::compcore::ZMULT
+                .store(zmultsav, Ordering::Relaxed);
+        } else if OPT_ISSET(ops, b'c') {
+            // c:442 — single positional + `-c`: queue a clear.
+            crate::ported::zle::zle_refresh::CLEARLIST
+                .store(1, Ordering::Relaxed); // c:443
+            crate::ported::zle::zle_refresh::LASTLISTLEN
+                .store(0, Ordering::Relaxed); // c:444
+        }
+    } else if OPT_ISSET(ops, b'c') {
+        // c:446 — no positionals + `-c`: clear list immediately.
+        crate::ported::zle::zle_refresh::CLEARLIST
+            .store(1, Ordering::Relaxed); // c:447
+        crate::ported::zle::zle_refresh::LISTSHOWN
+            .store(1, Ordering::Relaxed); // c:447
+        crate::ported::zle::zle_refresh::LASTLISTLEN
+            .store(0, Ordering::Relaxed); // c:448
+    }
+    crate::ported::zle::zle_refresh::zrefresh(); // c:450
+    // c:451-452 — `statusline = s; clearlist = ocl;` restore.
+    *STATUSLINE.lock().unwrap() = s_save; // c:451
+    crate::ported::zle::zle_refresh::CLEARLIST
+        .store(ocl, Ordering::Relaxed); // c:452
+    0 // c:453
 }
 
 /// Port of `bin_zle_mesg(char *name, char **args, UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:459`.
