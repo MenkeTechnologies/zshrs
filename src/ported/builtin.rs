@@ -3350,27 +3350,13 @@ pub fn bin_typeset(
             continue; // c:2551 return NULL
         }
 
-        if (on & PM_LOCAL) != 0
-            && !arg_name.is_empty()
-            && !arg_name.starts_with('-')
-            && !arg_name.starts_with('+')
-        {
-            let kind = if is_hashed {
-                PM_HASHED
-            } else if is_array {
-                PM_ARRAY
-            } else {
-                0
-            };
-            let _ = createparam(arg_name, on as i32 | kind as i32 | PM_LOCAL as i32);
-        }
         // c:2241-2247 — `-p` print-mode for an existing param (no `=`,
         // no value). C `typeset_single` lands here when `usepm` is set
-        // and `!ASG_VALUEP(asg)`. The Rust loop bypasses
-        // `typeset_single`; mirror the print-only dispatch inline
-        // against paramtab. PRINT_TYPESET produces `typeset -i n=5`
-        // shape; PRINT_INCLUDEVALUE produces `n=5` shape (default
-        // typeset listing).
+        // and `!ASG_VALUEP(asg)`, BEFORE createparam runs (c:2218 →
+        // c:2244 early return). The Rust loop must also dispatch the
+        // print branch first; otherwise the createparam call below
+        // overwrites pm.node.flags on the reuse-arm (c:2018), clobbering
+        // typeset-attribute bits set by an earlier `typeset -i n` call.
         if !arg.contains('=') && OPT_ISSET(&ops, b'p') {
             let with_ns = if OPT_ISSET(&ops, b'm') {                         // c:2241
                 PRINT_WITH_NAMESPACE
@@ -3394,6 +3380,21 @@ pub fn bin_typeset(
                 }
             }
             continue;
+        }
+
+        if (on & PM_LOCAL) != 0
+            && !arg_name.is_empty()
+            && !arg_name.starts_with('-')
+            && !arg_name.starts_with('+')
+        {
+            let kind = if is_hashed {
+                PM_HASHED
+            } else if is_array {
+                PM_ARRAY
+            } else {
+                0
+            };
+            let _ = createparam(arg_name, on as i32 | kind as i32 | PM_LOCAL as i32);
         }
 
         if let Some(eq) = arg.find('=') {
@@ -3520,6 +3521,25 @@ pub fn bin_typeset(
             //          params (a `local foo` would be invisible).
             if getsparam(arg).is_none() {
                 setsparam(arg, ""); // c:3074
+            }
+            // c:2357+ (typeset_single tc branch) — bare `typeset -i n`
+            // / `-F n` / `-E n` / `-l n` / `-u n` / `-r n` toggles the
+            // attribute on the existing param too, not just on the
+            // value-assignment form. C runs typeset_single which
+            // converts the param in place; mirror by stamping the
+            // flag on the paramtab entry the same way the `=` arm
+            // does.
+            let type_mask =
+                (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY) as i32;
+            let to_set = (on
+                & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY))
+                as i32;
+            if to_set != 0 {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg) {
+                        pm.node.flags = (pm.node.flags & !type_mask) | to_set;
+                    }
+                }
             }
         }
     }
