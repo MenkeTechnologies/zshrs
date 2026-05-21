@@ -84,6 +84,152 @@ pub static TRAP_RETURN: std::sync::atomic::AtomicI32 = // c:155 (Src/exec.c)
 pub static FORKLEVEL: std::sync::atomic::AtomicI32 = // c:1052 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
+// =============================================================================
+// File-static globals from Src/exec.c. Bucket choices per PORT_PLAN.md:
+//   - Per-evaluator transient state → thread_local Cell (bucket 1)
+//   - Shell-wide shared state       → AtomicI32 / Mutex (bucket 2)
+// All names match C exactly. Surrounding doc-comments cite the C
+// declaration line.
+// =============================================================================
+
+/// Port of `int noerrexit;` from `Src/exec.c:72`. Bit-flags that
+/// suppress ERREXIT triggering on the next command(s). Bits:
+/// `NOERREXIT_EXIT` (in `if`/`while`/`until` test contexts),
+/// `NOERREXIT_RETURN` (after `return`), `NOERREXIT_UNTIL_EXEC`
+/// (until next exec'd command). Bucket-1 — per-evaluator (each
+/// recursive eval has its own suppression frame).
+pub static noerrexit: std::sync::atomic::AtomicI32 = // c:72 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int this_noerrexit;` from `Src/exec.c:109`. When set,
+/// suppress ERREXIT for THIS one command only (consumed + cleared
+/// before the next command starts). Set by `execcursh` and the
+/// `((expr))` arith path so a 0-result doesn't trigger errexit.
+pub static this_noerrexit: std::sync::atomic::AtomicI32 = // c:109 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `mod_export int noerrs;` from `Src/exec.c:117`. When
+/// non-zero, suppress `zerr()` output (lex error reporting during
+/// `parse_string`, `parseopts` etc.). Saved/restored by
+/// `execsave`/`execrestore`.
+pub static noerrs: std::sync::atomic::AtomicI32 = // c:117 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int nohistsave;` from `Src/exec.c:122`. When non-zero,
+/// `addhistnode` no-ops so trap firings / `eval` invocations don't
+/// pollute `$HISTCMD`. Tracked alongside `noerrs` in the trap path.
+pub static nohistsave: std::sync::atomic::AtomicI32 = // c:122 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int subsh;` from `Src/exec.c:160`. Subshell depth — bumped
+/// every time `entersubsh` forks a sub-shell, used by signal handling
+/// (different SIGINT semantics in subshells) and by `${$$}` (`$$`
+/// stays at the top-level pid).
+pub static subsh: std::sync::atomic::AtomicI32 = // c:160 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `mod_export volatile int retflag;` from `Src/exec.c:165`.
+/// Set by `bin_return` to unwind the function-call stack. Cleared
+/// by `runshfunc` on entry, checked by `execlist`'s main loop.
+pub static retflag: std::sync::atomic::AtomicI32 = // c:165 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `pid_t cmdoutpid;` from `Src/exec.c:215`. Pid of the most
+/// recent `$(cmd)` command-substitution child. Used by exit-status
+/// propagation: `cmdoutval` carries the exit; `cmdoutpid` carries
+/// the pid `waitpid`-d for it.
+pub static cmdoutpid: std::sync::atomic::AtomicI32 = // c:215 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `mod_export pid_t procsubstpid;` from `Src/exec.c:220`.
+/// Pid of the most recent process-substitution child (`<(cmd)` /
+/// `>(cmd)`). Tracked separately from `cmdoutpid` because procsubst
+/// jobs aren't wait-collected by the parent until the fd is closed.
+pub static procsubstpid: std::sync::atomic::AtomicI32 = // c:220 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int cmdoutval;` from `Src/exec.c:225`. Exit status of
+/// the most recent `$(cmd)`. Drives `$?` when a varspc-only command
+/// runs alongside a substitution.
+pub static cmdoutval: std::sync::atomic::AtomicI32 = // c:225 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int use_cmdoutval;` from `Src/exec.c:234`. When set,
+/// `lastval` is updated from `cmdoutval` after the command
+/// (i.e. the command had substitutions whose exit status matters).
+pub static use_cmdoutval: std::sync::atomic::AtomicI32 = // c:234 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `mod_export int sfcontext;` from `Src/exec.c:239`. Source
+/// context — one of `SFC_NONE`, `SFC_DIRECT` (user typed it),
+/// `SFC_SIGNAL` (trap firing), `SFC_HOOK` (precmd/preexec etc.),
+/// `SFC_WIDGET` (ZLE widget), `SFC_COMPLETE` (completion fn),
+/// `SFC_CFUNC` (compsys fn), `SFC_SUBST` ($(...) cmd-subst),
+/// `SFC_EVAL` (eval body). Read by `zerr()` / `funcstack` building.
+pub static sfcontext: std::sync::atomic::AtomicI32 = // c:239 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int list_pipe = 0;` from `Src/exec.c:457`. Set when the
+/// currently-executing pipeline is the long-running pipe-into-loop
+/// shape (`cat foo | while read a; do ... done`) — drives the
+/// super/sub-job tracking documented in the famous `Allen Edeln…`
+/// comment block above this declaration in C.
+pub static list_pipe: std::sync::atomic::AtomicI32 = // c:457 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int simple_pline = 0;` from `Src/exec.c:457`. Set during
+/// dispatch of a "simple" pipeline (single-stage / no shell-construct
+/// tail) so the `list_pipe` machinery short-circuits.
+pub static simple_pline: std::sync::atomic::AtomicI32 = // c:457 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static pid_t list_pipe_pid;` from `Src/exec.c:459`.
+/// PID of the sub-shell created to host the loop-after-pipe pattern;
+/// passed up the recursive `execlist` stack so the cat-job's super-
+/// job entry can record it.
+pub static list_pipe_pid: std::sync::atomic::AtomicI32 = // c:459 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static int nowait;` from `Src/exec.c:461`. When set,
+/// `execpline` doesn't wait for the pipeline; used during the
+/// list_pipe sub-shell fork bookkeeping.
+pub static nowait: std::sync::atomic::AtomicI32 = // c:461 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `int pline_level = 0;` from `Src/exec.c:461`. Recursive
+/// pipeline depth (counts nested pipelines within the current
+/// `execlist` call chain).
+pub static pline_level: std::sync::atomic::AtomicI32 = // c:461 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static int list_pipe_child = 0;` from `Src/exec.c:462`.
+/// Set in the child after the list_pipe fork so the child knows to
+/// continue executing the loop body (vs the parent which records
+/// the pid + returns).
+pub static list_pipe_child: std::sync::atomic::AtomicI32 = // c:462 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static int list_pipe_job;` from `Src/exec.c:462`. Job
+/// table index of the pipeline's first-stage job (the `cat` in
+/// `cat foo | while ...`).
+pub static list_pipe_job: std::sync::atomic::AtomicI32 = // c:462 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static int doneps4;` from `Src/exec.c:262`. Set after
+/// `printprompt4` has emitted the `$PS4` prefix for the current
+/// xtrace command — prevents double-printing when an inner sub-eval
+/// also wants to xtrace.
+pub static doneps4: std::sync::atomic::AtomicI32 = // c:262 (Src/exec.c)
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static char *STTYval;` from `Src/exec.c:263`. Pending
+/// `stty` argument string captured by `addvars` when the command's
+/// inline env contains `STTY=...`. Applied by `execute` before fork
+/// + exec so the spawned program sees its tty configured. Reset to
+/// `None` after consumption to avoid infinite recursion.
+pub static STTYval: std::sync::Mutex<Option<String>> = // c:263 (Src/exec.c)
+    std::sync::Mutex::new(None);
+
 /// Convert a here-document into a here-string. Line-by-line port of
 /// `gethere()` from `Src/exec.c:4569-4652`. Reads the body from the
 /// input stream via `hgetc()` until the terminator line is matched,
