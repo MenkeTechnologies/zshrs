@@ -40,7 +40,7 @@ use crate::ported::params::{
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
-use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC, shfunc};
+use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Dash, NICEFLAG_QUOTE, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC, shfunc};
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
     imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
@@ -5473,7 +5473,7 @@ pub fn nicezputs(s: &str) -> String {
 /// this via [`sb_niceformat`] which is the same render-then-measure
 /// path.
 pub fn niceztrlen(s: &str) -> usize {
-    sb_niceformat(s).len()
+    sb_niceformat(s, 0).len()
 }
 
 /// Multibyte-aware nice-format of a string.
@@ -5720,8 +5720,8 @@ pub fn charlenconv(s: &str, len: usize) -> (usize, Option<char>) {
 /// previous Rust port did neither — emitted raw bytes for any
 /// non-ASCII-control input, which corrupted output for high-bit
 /// bytes under PRINTEIGHTBIT-off (should have rendered `\M-X`).
-/// WARNING: param names don't match C — Rust=(s) vs C=(s, stream, outstrp, flags)
-pub fn sb_niceformat(s: &str) -> String {
+/// WARNING: param names don't match C — Rust=(s, flags) vs C=(s, stream, outstrp, flags)
+pub fn sb_niceformat(s: &str, flags: i32) -> String {
     // c:5851
     // c:5865-5872 — `ums = ztrdup(s); untokenize(ums); ptr =
     // unmetafy(ums, &umlen);`. The C `untokenize` step converts ZSH
@@ -5740,12 +5740,19 @@ pub fn sb_niceformat(s: &str) -> String {
     bytes.truncate(umlen);
 
     let mut result = String::new();
+    let quotable = (flags & NICEFLAG_QUOTE) != 0; // c:5886
     // c:5875 — `while (ptr < eptr)`.
     for &b in &bytes {
-        // c:5886 — `fmt = nicechar_sel(c, ...)` for every byte.
-        // NICEFLAG_QUOTE not yet plumbed (no callers need it); pass
-        // `quotable=false` so single-byte path uses `^X`/`\M-X` forms.
-        result.push_str(&nicechar_sel(b as char, false));
+        // c:5413-5417 — `'` and `\` get backslash-escaped under
+        // NICEFLAG_QUOTE (so the result is safe inside `$'...'`).
+        if quotable && b == b'\'' {
+            result.push_str("\\'"); // c:5413-5414
+        } else if quotable && b == b'\\' {
+            result.push_str("\\\\"); // c:5417-5418
+        } else {
+            // c:5886 — `fmt = nicechar_sel(c, ...)` for every byte.
+            result.push_str(&nicechar_sel(b as char, quotable));
+        }
     }
     result
 }
@@ -6068,45 +6075,125 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
 /// — when `stream` is non-NULL it writes there and returns NULL,
 /// otherwise it returns the quoted string. Rust's variant covers
 /// only the `stream==NULL` form (the `set -x` callers all want the
-/// string back, not direct stdout writing).
-///
-/// RCQUOTES-style quoting (c:6533-6571) is not yet plumbed (zero
-/// call sites pass that option through to here in the daily-driver
-/// path); the default `'…'` arm runs unconditionally.
+/// string back, not direct stdout writing). The `stream==Some` form
+/// is fputs/fputc-direct in C; Rust callers that need writer-based
+/// output should compose `print!`/`write!` with this fn's return.
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, stream)
 pub(crate) fn quotedzputs(s: &str) -> String {
     // c:6464
-    // c:6470-6475 — empty string emits `''` literal.
+    // c:6469-6475 — `if (!*s)` empty string emits `''` literal.
     if s.is_empty() {
-        return "''".to_string();
+        return "''".to_string(); // c:6472
     }
-    // c:6477-6492 — `is_mb_niceformat(s)` arm: if the string contains
-    // nice-formatted chars (controls, non-printables), wrap in `$'…'`
-    // using mb_niceformat with NICEFLAG_QUOTE so embedded `'`/`\` get
-    // backslash-escaped within the dollar-quotes.
+    // c:6477-6508 — `is_mb_niceformat(s)` / `is_sb_niceformat(s)` arm:
+    // if the string contains nice-formatted chars (controls,
+    // non-printables), wrap in `$'…'` using sb/mb_niceformat with
+    // NICEFLAG_QUOTE so embedded `'`/`\` get backslash-escaped.
     if is_mb_niceformat(s) {
-        // c:6478
-        // c:6486-6488 — `mb_niceformat(s, NULL, &substr, NICEFLAG_QUOTE|NICEFLAG_NODUP);`
-        //                `sprintf(outstr, "$'%s'", substr);`
-        // Rust mb_niceformat doesn't currently thread NICEFLAG_QUOTE
-        // through to wcs_nicechar_sel; that's a separate plumbing gap.
-        // The unquoted output is close enough for `typeset -p`/`set`
-        // round-trip on the common control-char paths (`\n`, `\t`,
-        // `\e`) — embedded `'` would round-trip wrong but the C-side
-        // NICEFLAG_QUOTE path catches that. Fix here is the outer
-        // `$'…'` wrap; the inner escape upgrade is a follow-on.
-        return format!("$'{}'", mb_niceformat(s)); // c:6488
+        // c:6478 (MULTIBYTE_SUPPORT) / c:6494 (single-byte)
+        // c:6502-6504 — `sb_niceformat(s, NULL, &substr, NICEFLAG_QUOTE|NICEFLAG_NODUP);
+        //                 sprintf(outstr, "$'%s'", substr);`
+        return format!("$'{}'", sb_niceformat(s, NICEFLAG_QUOTE)); // c:6504
     }
-    // c:6511 — `if (!hasspecial(s)) return dupstring(s);`. Routes
-    // through the canonical typtab-driven `hasspecial`.
+    // c:6511-6518 — `if (!hasspecial(s)) return dupstring(s);`.
     if !hasspecial(s) {
         // c:6511
         return s.to_string(); // c:6516
     }
-    // c:6573-6587 — single-quote wrap with `'\''` escape for embedded
-    // apostrophes (the !RCQUOTES default path).
-    let inner = s.replace('\'', "'\\''");
-    format!("'{}'", inner)
+    // c:6520-6529 — outstr buffer alloc (zhalloc). Rust uses growable
+    // String; the C `l = strlen(s) + 2 + (per-' overhead)` size hint
+    // is just allocation tuning and doesn't affect output.
+    let mut out = String::with_capacity(s.len() + 2);
+    let bytes = s.as_bytes();
+    let csh_junkie = isset(CSHJUNKIEQUOTES); // c:6554 / c:6612
+
+    if isset(RCQUOTES) {
+        // c:6533 — RCQUOTES: wrap entire string in `'…'`; each
+        // embedded `'` becomes `''` (the rc-style doubled quote).
+        out.push('\''); // c:6539
+        let mut i = 0;
+        while i < bytes.len() {
+            // c:6540-6547 — decode current byte through Meta/Dash.
+            let c = if bytes[i] as char == Dash {
+                // c:6541 — `if (*s == Dash) c = '-';`
+                i += 1;
+                '-'
+            } else if bytes[i] == Meta && i + 1 < bytes.len() {
+                // c:6543 — `else if (*s == Meta) c = *++s ^ 32;`
+                let dec = bytes[i + 1] ^ 32;
+                i += 2;
+                dec as char
+            } else {
+                // c:6546 — `else c = *s;`
+                let dec = bytes[i];
+                i += 1;
+                dec as char
+            };
+            if c == '\'' {
+                // c:6548-6553 — `if (c == '\'') *ptr++ = '\'';` (the
+                // rc-quote doubling).
+                out.push('\''); // c:6553
+            } else if c == '\n' && csh_junkie {
+                // c:6554-6560 — `if (c == '\n' && isset(CSHJUNKIEQUOTES))
+                //                 *ptr++ = '\\';`
+                out.push('\\'); // c:6559
+            }
+            // c:6561-6570 — emit c (metafy on imeta).
+            out.push(c); // c:6569 (non-stream branch always re-metafies;
+                         // Rust String holds decoded chars directly)
+        }
+        out.push('\''); // c:6576
+    } else {
+        // c:6578-6637 — Bourne-style quoting, "avoiding empty quoted
+        // strings". Tracks `inquote` so that `it's` becomes
+        // `'it'\''s'` (no empty `''` runs).
+        let mut inquote = false; // c:6466 (initialised at top of C fn)
+        let mut i = 0;
+        while i < bytes.len() {
+            // c:6579-6586 — decode current byte.
+            let c = if bytes[i] as char == Dash {
+                i += 1;
+                '-' // c:6581
+            } else if bytes[i] == Meta && i + 1 < bytes.len() {
+                let dec = bytes[i + 1] ^ 32; // c:6583
+                i += 2;
+                dec as char
+            } else {
+                let dec = bytes[i]; // c:6585
+                i += 1;
+                dec as char
+            };
+            if c == '\'' {
+                // c:6587-6602 — `'` closes any open inquote then emits
+                // `\'` outside the quotes.
+                if inquote {
+                    out.push('\''); // c:6593
+                    inquote = false; // c:6594
+                }
+                out.push('\\'); // c:6600
+                out.push('\''); // c:6601
+            } else {
+                // c:6603-6629 — other chars open a quote run if not
+                // already open, optionally backslash-escape `\n` under
+                // CSHJUNKIEQUOTES, then emit the byte.
+                if !inquote {
+                    out.push('\''); // c:6609
+                    inquote = true; // c:6610
+                }
+                if c == '\n' && csh_junkie {
+                    out.push('\\'); // c:6617
+                }
+                out.push(c); // c:6627 (imeta-encoding handled by Rust
+                             // String storage in the non-stream form)
+            }
+        }
+        if inquote {
+            out.push('\''); // c:6636
+        }
+    }
+    // c:6639-6640 — `if (!stream) *ptr++ = '\0';` — Rust String already
+    // NUL-terminated implicitly; no-op.
+    out // c:6642
 }
 
 /// Port of `char *dquotedztrdup(char const *s)` from `Src/utils.c:6648-6723`.
@@ -8967,6 +9054,50 @@ mod tests {
         assert_eq!(quotedzputs("abc123"), "abc123");
     }
 
+    /// c:6578-6637 — Bourne path "avoids empty quoted strings" by
+    /// tracking `inquote`. Input `'x` should not produce empty `''`
+    /// at the front; `x'` should not produce trailing `''`.
+    #[test]
+    fn quotedzputs_avoids_empty_quoted_runs_on_boundaries() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        // Leading `'`: c:6587 with inquote=0 skips the close, emits
+        // `\'`. Then `x`: c:6604 opens a quote, emits `x`, end emits
+        // closing `'`. Result: `\''x'` — the visible doubled `''` is
+        // `\'` (escaped) + `'` (opening single-quote), NOT an empty
+        // single-quoted string.
+        assert_eq!(
+            quotedzputs("'x"),
+            "\\''x'",
+            "c:6587-6610 — leading `'` produces `\\'` + opening `'`"
+        );
+        // Trailing `'`: open quote at `x`, see `'` with inquote=1 → close
+        // (`'`), emit `\'`. End-of-string: inquote=0, no trailing `'`.
+        // Result: `'x'\\'` — NO trailing `''`.
+        assert_eq!(
+            quotedzputs("x'"),
+            "'x'\\'",
+            "c:6631-6637 — trailing `'` doesn't generate empty `''`"
+        );
+    }
+
+    /// c:6533-6576 — RCQUOTES branch: wrap everything in `'…'`,
+    /// double embedded `'` as `''`.
+    #[test]
+    fn quotedzputs_rcquotes_doubles_apostrophe() {
+        let _g = crate::test_util::global_state_lock();
+        inittyptab();
+        let prev = crate::ported::options::opt_state_get("rcquotes").unwrap_or(false);
+        crate::ported::options::opt_state_set("rcquotes", true);
+        // RCQUOTES: `it's` → `'it''s'` (doubled `'`, NOT `'\''`).
+        let got = quotedzputs("it's");
+        crate::ported::options::opt_state_set("rcquotes", prev);
+        assert_eq!(
+            got, "'it''s'",
+            "c:6548-6553 — RCQUOTES: `'` → `''` (doubled)"
+        );
+    }
+
     /// `Src/utils.c:2331-2337` — `strucpy(s, t)`. Appends `t` to
     /// `*s` and leaves `*s` pointing at the NUL terminator (Rust
     /// equivalent: append-in-place; `.len()` gives the new end).
@@ -9154,26 +9285,26 @@ mod tests {
     fn sb_niceformat_passes_printable_ascii() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            sb_niceformat("hello"),
+            sb_niceformat("hello", 0),
             "hello",
             "c:5886 — nicechar_sel passes printable through"
         );
-        assert_eq!(sb_niceformat(""), "");
-        assert_eq!(sb_niceformat("ABC012!?@"), "ABC012!?@");
+        assert_eq!(sb_niceformat("", 0), "");
+        assert_eq!(sb_niceformat("ABC012!?@", 0), "ABC012!?@");
     }
 
     /// c:5886 — controls get `\n`/`\t`/`^X`/`^?` escapes via nicechar_sel.
     #[test]
     fn sb_niceformat_escapes_controls() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(sb_niceformat("a\nb"), "a\\nb", "c:5886 — newline → \\n");
-        assert_eq!(sb_niceformat("a\tb"), "a\\tb");
+        assert_eq!(sb_niceformat("a\nb", 0), "a\\nb", "c:5886 — newline → \\n");
+        assert_eq!(sb_niceformat("a\tb", 0), "a\\tb");
         assert_eq!(
-            sb_niceformat("\x01"),
+            sb_niceformat("\x01", 0),
             "^A",
             "c:5886 — control char → ^X form"
         );
-        assert_eq!(sb_niceformat("\x7f"), "^?");
+        assert_eq!(sb_niceformat("\x7f", 0), "^?");
     }
 
     /// `Src/utils.c:5872` — unmetafy step before formatting. Pin:
@@ -9187,14 +9318,14 @@ mod tests {
         let bytes: Vec<u8> = vec![Meta, 0x41u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
         assert_eq!(
-            sb_niceformat(s),
+            sb_niceformat(s, 0),
             "a",
             "c:5872 — unmetafy first: Meta+0x41 → 'a' → printable passthrough"
         );
         // META + 0x20 → decodes to NUL → "^@" form.
         let bytes: Vec<u8> = vec![Meta, 0x20u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
-        let r = sb_niceformat(s);
+        let r = sb_niceformat(s, 0);
         assert!(
             !r.is_empty(),
             "c:5872 — Meta+0x20 → NUL → must emit some escape, not empty"
