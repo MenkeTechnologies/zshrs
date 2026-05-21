@@ -994,10 +994,28 @@ pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {
 }
 
 /// Port of `mod_export enum source_return source(char *s)` from Src/init.c:1551.
-/// Rust idiom replacement: `Path::exists` + `fs::read_to_string`
-/// covers the C `open`+`read`+`zexec` cascade; the parse-and-exec
-/// loop dispatches through the canonical fusevm bridge rather than
-/// in-process bytecode walk.
+///
+/// !!! WARNING: PARTIAL PORT — file-existence check + sourcelevel
+/// bookkeeping only; the parse-and-execute body (c:1618-1670) is
+/// NOT ported here. The real source path for daily-driver use is
+/// `bins/zshrs.rs::source_from_memory` which dispatches through
+/// the fusevm bytecode VM. This `source()` is reachable only via
+/// the legacy `run_init_scripts` path that bins/zshrs.rs bypasses.
+///
+/// The C body (c:1551-1679) does:
+///   - open(path) / fdopen → SOURCE_NOT_FOUND on failure
+///   - save shell state: oldlineno, scriptname, FUNCTION_ARGZERO $0
+///   - sourcelevel++ (preserved here)
+///   - parse_string + execute_eprog loop, applying every line as
+///     if it were a script (c:1618-1642)
+///   - restore: scriptname, oldlineno, $0, sourcelevel--
+///   - errflag propagation: error during exec leaves errflag set
+///
+/// Fix-up plan: wire this fn to take a `&mut ShellExecutor` or
+/// surface the executor through the source_from_memory bridge so
+/// both code paths converge. Tracked for follow-up since it
+/// requires `src/ported/` to take a non-`src/ported/` type, which
+/// is a layering refactor.
 pub fn source(s: &str) -> i32 {
     // c:1551
     let _us = unmeta(s); // c:1551
@@ -1007,19 +1025,23 @@ pub fn source(s: &str) -> i32 {
         return 1; /* SOURCE_NOT_FOUND */
     }
 
-    // Save shell state                                                      // c:1571-1581
+    // c:1571-1581 — save shell state. !!! PARTIAL: oldlineno save,
+    // scriptname save, $0 (FUNCTION_ARGZERO) save are not ported
+    // here — see bins/zshrs.rs::source_from_memory:1834-1840.
     let oldlineno = 0i64; // c:1575
     let _ = oldlineno;
 
     sourcelevel.fetch_add(1, Ordering::SeqCst); // c:1606
 
-    // Read and execute the file                                             // c:1618-1642
-    // Without exec/parse layers, just record that we sourced it.
+    // c:1618-1642 — parse-and-execute loop. !!! PARTIAL: the file
+    // is read for the side effect of any errors fs::read_to_string
+    // surfaces (permission denied, EIO, etc.) but the parsed code
+    // is discarded. Real execution path is fusevm via bins/zshrs.rs.
     let _ = std::fs::read_to_string(path);
 
     sourcelevel.fetch_sub(1, Ordering::SeqCst); // c:1644
 
-    // Restore shell state                                                   // c:1646-1670
+    // c:1646-1670 — restore shell state. PARTIAL: see save block.
     0 /* SOURCE_OK */ // c:1679
 }
 
