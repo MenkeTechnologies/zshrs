@@ -207,6 +207,8 @@ pub struct globdata {
     pub gf_markdirs: i32,    // c:186 gd_gf_markdirs
     pub gf_noglobdots: i32,  // c:186 gd_gf_noglobdots
     pub gf_listtypes: i32,   // c:186 gd_gf_listtypes
+    pub gf_pre_words: Option<Vec<String>>,  // c:190 gd_gf_pre_words
+    pub gf_post_words: Option<Vec<String>>, // c:190 gd_gf_post_words
 }
 
 // c:197 — `static struct globdata curglobdata;`
@@ -225,6 +227,8 @@ pub static CURGLOBDATA: std::sync::Mutex<globdata> = std::sync::Mutex::new(globd
     gf_markdirs: 0,
     gf_noglobdots: 0,
     gf_listtypes: 0,
+    gf_pre_words: None,
+    gf_post_words: None,
 });
 
 /// Port of `struct complist` from `Src/glob.c:252`.
@@ -884,6 +888,8 @@ impl globdata {
             gf_markdirs: 0,
             gf_noglobdots: 0,
             gf_listtypes: 0,
+            gf_pre_words: None,
+            gf_post_words: None,
         }
     }
 }
@@ -1190,19 +1196,43 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
     }
 }
 
-/// Port of `insert_glob_match(LinkList list, LinkNode next, char *data)` from Src/glob.c:1125.
-/// C: `static void insert_glob_match(LinkList list, LinkNode next,
-///     char *data)` — insert `data` into `list` at position `next`,
-///     respecting `gf_pre_words`/`gf_post_words` injection.
+/*
+ * Insert a glob match.
+ * If there were words to prepend given by the P glob qualifier, do so.
+ */                                                                          // c:1120-1123
+/// Port of `insert_glob_match(LinkList list, LinkNode next, char *data)`
+/// from Src/glob.c:1125. Inserts `data` at `next`, with optional
+/// `gf_pre_words` prefix and `gf_post_words` suffix injection from
+/// CURGLOBDATA (the `P:before:after:` glob qualifier).
 pub fn insert_glob_match(list: &mut Vec<String>, next: usize, data: &str) {
     // c:1125
-    // c:1125-1155 — for each gf_pre_words entry, insertlinknode; then
-    // insertlinknode(list, next, data); then gf_post_words.
-    if next <= list.len() {
-        // c:1140
-        list.insert(next, data.to_string()); // c:1158
-    } else {
-        list.push(data.to_string());
+    let (pre, post) = {
+        let gd = CURGLOBDATA.lock().unwrap_or_else(|e| e.into_inner());
+        (gd.gf_pre_words.clone(), gd.gf_post_words.clone())                  // c:1127, c:1136
+    };
+    // C `insertlinknode(list, next, data)` inserts AFTER node `next`,
+    // returning the newly added node (so subsequent inserts append in
+    // order). Our Vec<String> analog inserts at index `next+1` and
+    // bumps `next` to point at the just-inserted slot.
+    let mut cur = next;
+    let n = list.len();
+    let mut clamp = |i: usize| -> usize { if i > n { n } else { i } };
+    if let Some(pre_words) = pre {                                           // c:1127 `if (gf_pre_words)`
+        for w in pre_words.iter() {                                          // c:1129
+            let pos = clamp(cur + 1);
+            list.insert(pos, w.clone());                                     // c:1130 `dupstring(getdata(added))`
+            cur = pos;                                                       // c:1130 — return-value advances `next`
+        }
+    }
+    let pos = clamp(cur + 1);
+    list.insert(pos, data.to_string());                                      // c:1134
+    cur = pos;
+    if let Some(post_words) = post {                                         // c:1136 `if (gf_post_words)`
+        for w in post_words.iter() {                                         // c:1138
+            let pos = clamp(cur + 1);
+            list.insert(pos, w.clone());                                     // c:1139
+            cur = pos;
+        }
     }
 }
 
@@ -1245,36 +1275,73 @@ pub fn checkglobqual(
     0 // c:1212
 }
 
-/// Port of `zglob(LinkList list, LinkNode np, int nountok)` from Src/glob.c:1214.
-/// C: `void zglob(LinkList list, LinkNode np, int nountok)` — top-level
-///   glob expansion: parse qualifiers, walk the filesystem, replace
-///   the placeholder node in `list` with the matches.
-///
-/// Rust port: read the placeholder pattern from `list[np]`, run the
-/// canonical `glob_path` expansion, and overwrite the placeholder
-/// with the expanded entries (one node per match) so the caller's
-/// downstream prefork pass sees one LinkNode per file. Mirrors the
-/// `insert_glob_match` walk at glob.c:1125.
-#[allow(unused_variables)]
+/// Port of `zglob(LinkList list, LinkNode np, int nountok)` from
+/// Src/glob.c:1214. Top-level glob expansion: gate on GLOBOPT/
+/// EXECOPT/haswilds (c:1230-1234), remove the placeholder node,
+/// expand the pattern via `glob_path` (which covers the c:1240-2012
+/// qualifier+scanner+sort body), then splice the resulting matches
+/// back at `node` via `insert_glob_match` (c:1995-2007).
 pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
     // c:1214
     if np >= list.len() {
         return;
     }
-    let pattern = list[np].clone();
-    let matches = glob_path(&pattern);
+    // c:1217 — `LinkNode node = prevnode(np);` — the insertion point
+    // after the placeholder is uremnode'd. Vec analog: insert at np.
+    let node: usize = np;                                                    // c:1217
+    let ostr = list[np].clone();                                             // c:1221 `ostr = getdata(np)`
+    // c:1226 — `nobareglob = !isset(BAREGLOBQUAL);` (consumed by qualifier
+    // parser inside glob_path).
+
+    // c:1230 — `if (unset(GLOBOPT) || !haswilds(ostr) || unset(EXECOPT))`
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBOPT)
+        || !haswilds(&ostr)
+        || !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXECOPT)
+    {
+        if nountok == 0 {                                                    // c:1231
+            // c:1232 — untokenize in-place; replace list[np] with the
+            // untokenized form.
+            list[np] = crate::ported::lex::untokenize(&ostr);
+        }
+        return;                                                              // c:1233
+    }
+
+    // c:1235 — `save_globstate(saved);` happens inside glob_path via
+    // its `enter_glob_scope()` RAII guard, equivalent semantics.
+
+    // c:1237-1238 — `str = dupstring(ostr); uremnode(list, np);`
+    list.remove(np);                                                         // c:1238
+
+    let matches = glob_path(&ostr);                                          // c:1240-1995 body
+
+    // c:1846-1848 — NOMATCH path: when no matches and !nountok,
+    // re-untokenize and insert the original placeholder back.
     if matches.is_empty() {
-        // c:1700 NOMATCH path — leave the placeholder in place so
-        // downstream NOMATCH option handling (zerr/zexit) fires.
+        let restored = if nountok == 0 {
+            crate::ported::lex::untokenize(&ostr)                            // c:1847
+        } else {
+            ostr.clone()
+        };
+        let pos = if node > list.len() { list.len() } else { node };
+        list.insert(pos, restored);                                          // c:1848 `insertlinknode(list, node, ostr)`
         return;
     }
-    // Replace np with first match, splice the rest after.
-    let mut it = matches.into_iter();
-    list[np] = it.next().unwrap();
-    let mut insert_at = np + 1;
-    for m in it {
-        list.insert(insert_at, m);
-        insert_at += 1;
+
+    // c:1995-2007 — splice matches back via insert_glob_match (honors
+    // gf_pre_words / gf_post_words).
+    let mut cur = if node == 0 { 0 } else { node - 1 };                      // node is `prevnode(np)` semantics
+    for m in matches.iter() {
+        insert_glob_match(list, cur, m);                                     // c:1995
+        cur += 1;
+        if let Some(g) = CURGLOBDATA.lock().ok() {
+            // Advance past any pre_words that insert_glob_match added.
+            if let Some(p) = &g.gf_pre_words {
+                cur += p.len();
+            }
+            if let Some(p) = &g.gf_post_words {
+                cur += p.len();
+            }
+        }
     }
 }
 
