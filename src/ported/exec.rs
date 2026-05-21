@@ -41,18 +41,20 @@ use crate::ported::hashtable::{cmdnam_unhashed, cmdnamtab_lock, dircache_set, ha
 use crate::ported::hist::{strinbeg, strinend};
 use crate::ported::init::{underscorelen, underscoreused, zunderscore};
 use crate::ported::input::{inpop, inpush};
-use crate::ported::jobs::{expandjobtab, JOBTAB, THISJOB};
+use crate::ported::jobs::{expandjobtab, waitforpid, JOBTAB, THISJOB};
 use crate::ported::lex::{hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO};
 use crate::ported::mem::{dupstring, popheap, pushheap};
 use crate::ported::options::sticky;
 use crate::ported::params::{getsparam, paramtab, setiparam};
 use crate::ported::parse::{ecrawstr, parse_list};
+use crate::ported::prompt::{cmdpop, cmdpush};
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::subst::{quotesubst, singsub};
 use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, zwarn, ERRFLAG_ERROR};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS, PATHDIRS, PM_READONLY, multio};
+use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS, PATHDIRS, PM_READONLY, multio,CS_CMDSUBST, FDT_PROC_SUBST, FDT_UNUSED, Inang};
 use crate::zsh_h::execstack;
+use crate::ported::utils::{fdtable_set, redup};
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
 /// a trap handler is currently being processed and, paired with
@@ -2803,6 +2805,274 @@ pub fn parsecmd(cmd: &str, eptr: Option<&mut usize>) -> Option<eprog> {
     prog // c:4903
 }
 
+/// `POUNDBANGLIMIT` from `Src/exec.c:500` — max bytes read from the
+/// front of a script when probing for a `#!` shebang line.
+pub const POUNDBANGLIMIT: usize = 128;
+
+/// Port of `static int zexecve(char *pth, char **argv, char **newenvp)`
+/// from `Src/exec.c:504`. Wraps `execve(2)` with:
+///   - `$_` env var stamped to absolute `pth` (c:514-520)
+///   - winch signal unblock right before the syscall (c:527)
+///   - on `ENOEXEC` / `ENOENT`: reads the first POUNDBANGLIMIT
+///     bytes, parses a `#!interp arg` shebang and re-execs the
+///     interpreter (c:534-628). For `ENOEXEC` with no shebang,
+///     binary-safety check then falls back to `/bin/sh script` per
+///     POSIX (c:588-628).
+///
+/// Returns `errno` from the failing exec — execve only returns on
+/// failure, so success means the calling process is already replaced.
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// (a) C uses `static char buf[PATH_MAX*2+1]` for the `_=...` env
+///     string; Rust uses a stack `String` (consumed by `zputenv`).
+/// (b) `closedumps()` for `!FD_CLOEXEC` (c:521-523) called
+///     unconditionally as a no-op when FD_CLOEXEC is platform default.
+/// (c) `unmetafy(pth, NULL)` / round-trip `metafy` at c:510-513,
+///     c:639-642 — handled implicitly via &str ↔ CString.
+/// (d) `metafy(execvebuf+2, -1, META_STATIC)` (c:551, 575) — we
+///     drop the metafy and pass byte ranges to zerr directly.
+/// (e) `argv[-1]` / `argv[-2]` shebang interpreter slot-overwriting
+///     (C overwrites BEFORE argv[0]) — Rust rebuilds a fresh
+///     Vec<String> with interp + optional arg + original argv tail
+///     since Vec doesn't expose negative indexing.
+/// (f) `environ` is FFI-loaded only when `newenvp` is None.
+/// =============================================================
+pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
+    // c:504
+    use std::ffi::CString;
+    // c:514-520 — `_=pth` env stamping.
+    let pth_abs = if pth.starts_with('/') {
+        // c:516
+        pth.to_string() // c:517
+    } else {
+        // c:518
+        format!("{}/{}", getsparam("PWD").unwrap_or_default(), pth) // c:519
+    };
+    crate::ported::params::zputenv(&format!("_={}", pth_abs)); // c:520
+    crate::ported::parse::closedumps(); // c:522
+    crate::ported::signals_h::winch_unblock(); // c:527
+    let cpth = match CString::new(pth) {
+        Ok(c) => c,
+        Err(_) => return libc::ENOENT,
+    };
+    let cargs: Vec<CString> = argv
+        .iter()
+        .filter_map(|a| CString::new(a.as_str()).ok())
+        .collect();
+    let mut argv_ptrs: Vec<*const libc::c_char> =
+        cargs.iter().map(|c| c.as_ptr()).collect();
+    argv_ptrs.push(std::ptr::null());
+    let env_holder: Vec<CString>;
+    let env_ptrs: Vec<*const libc::c_char>;
+    let envp: *const *const libc::c_char = match newenvp {
+        Some(env) => {
+            env_holder = env
+                .iter()
+                .filter_map(|e| CString::new(e.as_str()).ok())
+                .collect();
+            env_ptrs = {
+                let mut v: Vec<*const libc::c_char> =
+                    env_holder.iter().map(|c| c.as_ptr()).collect();
+                v.push(std::ptr::null());
+                v
+            };
+            env_ptrs.as_ptr()
+        }
+        None => unsafe {
+            extern "C" {
+                static environ: *const *const libc::c_char;
+            }
+            environ
+        },
+    };
+    unsafe {
+        libc::execve(cpth.as_ptr(), argv_ptrs.as_ptr(), envp); // c:528
+    }
+    let eno = std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(libc::ENOEXEC); // c:534
+    if eno == libc::ENOEXEC || eno == libc::ENOENT {
+        // c:534
+        let fd = unsafe { libc::open(cpth.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) }; // c:538
+        if fd < 0 {
+            return std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::ENOENT); // c:634
+        }
+        let mut buf = vec![0u8; POUNDBANGLIMIT + 1]; // c:541
+        let ct = unsafe {
+            libc::read(
+                fd,
+                buf.as_mut_ptr() as *mut libc::c_void,
+                POUNDBANGLIMIT as libc::size_t,
+            )
+        }; // c:542
+        unsafe {
+            libc::close(fd);
+        } // c:543
+        if ct >= 0 {
+            // c:544
+            let ct = ct as usize;
+            if ct >= 2 && buf[0] == b'#' && buf[1] == b'!' {
+                // c:545
+                let mut t0 = 0;
+                while t0 < ct && buf[t0] != b'\n' {
+                    t0 += 1;
+                } // c:546-548
+                if t0 == ct {
+                    // c:549
+                    zerr(&format!(
+                        // c:550
+                        "{}: bad interpreter: {}: {}",
+                        pth,
+                        String::from_utf8_lossy(&buf[2..t0.min(ct)]),
+                        std::io::Error::from_raw_os_error(eno)
+                    ));
+                } else {
+                    // c:552
+                    while t0 > 0
+                        && (buf[t0] == b' ' || buf[t0] == b'\t' || buf[t0] == b'\n')
+                    {
+                        buf[t0] = 0;
+                        t0 -= 1;
+                    } // c:553-554
+                    let mut ptr_lo: usize = 2;
+                    while ptr_lo < buf.len() && buf[ptr_lo] == b' ' {
+                        ptr_lo += 1;
+                    } // c:555
+                    let ptr2_lo = ptr_lo;
+                    let mut ptr_hi = ptr2_lo;
+                    while ptr_hi < buf.len()
+                        && buf[ptr_hi] != 0
+                        && buf[ptr_hi] != b' '
+                    {
+                        ptr_hi += 1;
+                    } // c:556
+                    let interp_str =
+                        String::from_utf8_lossy(&buf[ptr2_lo..ptr_hi]).into_owned();
+                    if eno == libc::ENOENT {
+                        // c:557 — pathprog rewrite path.
+                        let pprog = if !interp_str.starts_with('/') {
+                            // c:561
+                            crate::ported::utils::pathprog(&interp_str)
+                                .map(|p| p.display().to_string())
+                        } else {
+                            None
+                        };
+                        if let Some(pprog) = pprog {
+                            // c:562
+                            let mut argv_new: Vec<String> =
+                                Vec::with_capacity(argv.len() + 2);
+                            argv_new.push(interp_str.clone()); // c:564
+                            if ptr_hi >= buf.len() || buf[ptr_hi] == 0 {
+                                argv_new.push(pth.to_string());
+                            } else {
+                                // c:567
+                                let mut rest_lo = ptr_hi + 1;
+                                while rest_lo < buf.len() && buf[rest_lo] == b' ' {
+                                    rest_lo += 1;
+                                }
+                                let mut rest_hi = rest_lo;
+                                while rest_hi < buf.len() && buf[rest_hi] != 0 {
+                                    rest_hi += 1;
+                                }
+                                let arg_str =
+                                    String::from_utf8_lossy(&buf[rest_lo..rest_hi])
+                                        .into_owned();
+                                argv_new.push(arg_str);
+                                argv_new.push(pth.to_string());
+                            }
+                            for orig in argv.iter().skip(1) {
+                                argv_new.push(orig.clone());
+                            }
+                            crate::ported::signals_h::winch_unblock(); // c:565/c:570
+                            return zexecve(&pprog, &argv_new, newenvp); // c:566/c:571
+                        }
+                        zerr(&format!(
+                            // c:574
+                            "{}: bad interpreter: {}: {}",
+                            pth,
+                            interp_str,
+                            std::io::Error::from_raw_os_error(eno)
+                        ));
+                    } else if ptr_hi < buf.len() && buf[ptr_hi] != 0 {
+                        // c:576
+                        let mut rest_lo = ptr_hi + 1;
+                        while rest_lo < buf.len() && buf[rest_lo] == b' ' {
+                            rest_lo += 1;
+                        }
+                        let mut rest_hi = rest_lo;
+                        while rest_hi < buf.len() && buf[rest_hi] != 0 {
+                            rest_hi += 1;
+                        }
+                        let arg_str =
+                            String::from_utf8_lossy(&buf[rest_lo..rest_hi]).into_owned();
+                        let mut argv_new: Vec<String> = vec![
+                            interp_str.clone(),
+                            arg_str,
+                            pth.to_string(),
+                        ];
+                        for orig in argv.iter().skip(1) {
+                            argv_new.push(orig.clone());
+                        }
+                        crate::ported::signals_h::winch_unblock(); // c:580
+                        return zexecve(&interp_str, &argv_new, newenvp); // c:581
+                    } else {
+                        // c:582
+                        let mut argv_new: Vec<String> =
+                            vec![interp_str.clone(), pth.to_string()];
+                        for orig in argv.iter().skip(1) {
+                            argv_new.push(orig.clone());
+                        }
+                        crate::ported::signals_h::winch_unblock(); // c:584
+                        return zexecve(&interp_str, &argv_new, newenvp); // c:585
+                    }
+                }
+            } else if eno == libc::ENOEXEC {
+                // c:588 — binary-safety + /bin/sh fallback.
+                let nul_pos = buf[..ct].iter().position(|&b| b == 0); // c:597
+                let isbinary = match nul_pos {
+                    None => false, // c:598
+                    Some(npos) => {
+                        let mut has_letter = false;
+                        let mut binary = true;
+                        for &b in &buf[..npos] {
+                            // c:602-609
+                            if (b as char).is_ascii_lowercase()
+                                || b == b'$'
+                                || b == b'`'
+                            {
+                                has_letter = true;
+                            }
+                            if has_letter && b == b'\n' {
+                                binary = false; // c:606
+                                break;
+                            }
+                        }
+                        binary
+                    }
+                };
+                if !isbinary {
+                    // c:611
+                    let mut argv_new: Vec<String> = Vec::with_capacity(argv.len() + 2);
+                    argv_new.push("sh".to_string()); // c:625
+                    if !argv.is_empty()
+                        && (argv[0].starts_with('-') || argv[0].starts_with('+'))
+                    {
+                        argv_new.push("-".to_string()); // c:623
+                    }
+                    for orig in argv.iter() {
+                        argv_new.push(orig.clone());
+                    }
+                    crate::ported::signals_h::winch_unblock(); // c:626
+                    return zexecve("/bin/sh", &argv_new, newenvp); // c:627
+                }
+            }
+        }
+    }
+    eno // c:643
+}
+
 /// Port of `char *getoutputfile(char *cmd, char **eptr)` from
 /// `Src/exec.c:4910` — `=(cmd)` process substitution.
 ///
@@ -2915,7 +3185,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         unsafe {
             libc::close(fd);
         } // c:4977
-        let _ = crate::ported::jobs::waitforpid(pid); // c:4978
+        let _ = waitforpid(pid); // c:4978
         cmdoutval.store(0, Ordering::Relaxed); // c:4979
         return Some(nam); // c:4980
     }
@@ -2923,7 +3193,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     closem(FDT_UNUSED, 0); // c:4984
     let _ = redup(fd, 1); // c:4985
     entersubsh(esub::PGRP | esub::NOMONITOR, None); // c:4986
-    crate::ported::prompt::cmdpush(CS_CMDSUBST as u8); // c:4987
+    cmdpush(CS_CMDSUBST as u8); // c:4987
                                                        // c:4988 — execode — WARNING (d).
     let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
     let body = if body_end > 2 && body_end <= cmd.len() {
@@ -2932,7 +3202,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         ""
     };
     let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
-    crate::ported::prompt::cmdpop(); // c:4989
+    cmdpop(); // c:4989
     unsafe {
         libc::close(1);
     } // c:4990
@@ -2968,8 +3238,6 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
 /// =============================================================
 pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:5025
-    use crate::ported::utils::{fdtable_set, redup, zclose};
-    use crate::ported::zsh_h::{CS_CMDSUBST, FDT_PROC_SUBST, FDT_UNUSED, Inang};
     let bytes = cmd.as_bytes();
     let out: i32 = if !bytes.is_empty() && (bytes[0] as char) == Inang {
         1 // c:5032 — `<(...)` writer-side child
@@ -3010,7 +3278,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     entersubsh(esub::ASYNC | esub::PGRP, None); // c:5095
     let _ = redup(pipes[out as usize], out); // c:5096
     closem(FDT_UNUSED, 0); // c:5097
-    crate::ported::prompt::cmdpush(CS_CMDSUBST as u8); // c:5100
+    cmdpush(CS_CMDSUBST as u8); // c:5100
     let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
     let body = if body_end > 2 && body_end <= cmd.len() {
         &cmd[2..body_end]
@@ -3018,7 +3286,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         ""
     };
     let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
-    crate::ported::prompt::cmdpop(); // c:5102
+    cmdpop(); // c:5102
     let _ = zclose(out); // c:5103
     std::process::exit(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed)); // c:5104
 }
@@ -3360,7 +3628,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     entersubsh(esub::ASYNC | esub::PGRP | esub::NOMONITOR, None); // c:5146
     let _ = redup(pipes[out as usize], out); // c:5147
     closem(FDT_UNUSED, 0); // c:5148
-    crate::ported::prompt::cmdpush(CS_CMDSUBST as u8); // c:5149
+    cmdpush(CS_CMDSUBST as u8); // c:5149
                                                        // c:5150 — execode(prog, 0, 1, ...) — see WARNING (c).
     let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
     let body = if body_end > 2 && body_end <= bytes.len() {
@@ -3369,7 +3637,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
         ""
     };
     let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
-    crate::ported::prompt::cmdpop(); // c:5151
+    cmdpop(); // c:5151
                                      // c:5152 — _realexit() — WARNING (d).
     std::process::exit(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed));
 }
