@@ -232,7 +232,7 @@ pub fn output_strftime(
 /// WARNING: param names don't match C — Rust=(nam, argv, func) vs C=(nam, argv, ops, func)
 pub fn bin_strftime(
     nam: &str,
-    argv: &[&str], // c:187
+    argv: &[String], // c:187
     ops: &options,
     func: i32,
 ) -> i32 {
@@ -248,7 +248,10 @@ pub fn bin_strftime(
     if let Some(ref tz) = tz_saved {
         std::env::set_var("TZ", tz); // c:198 setsparam
     }
-    let result = output_strftime(nam, argv, ops, func); // c:199
+    // Convert &[String] → &[&str] for the internal helper which
+    // takes the narrower view.
+    let argv_views: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let result = output_strftime(nam, &argv_views, ops, func); // c:199
                                                         // c:200 — `endparamscope();`. Restore the saved TZ.
     if let Some(ref tz) = tz_saved {
         std::env::set_var("TZ", tz);
