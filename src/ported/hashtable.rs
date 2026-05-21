@@ -1014,27 +1014,28 @@ pub fn printcmdnamnode(hn: &cmdnam, printflags: i32) {
 
     // c:762-777 — PRINT_WHENCE_VERBOSE branch.
     if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
+        let mut so = std::io::stdout();
         if (hn.node.flags & HASHED as i32) != 0 {
             // c:763
             // c:764-767 — `nicezputs(nam); printf(" is hashed to "); nicezputs(u.cmd); putchar('\n');`
-            print!("{}", nicezputs(&hn.node.nam)); // c:764
+            let _ = nicezputs(&hn.node.nam, &mut so); // c:764
             print!(" is hashed to "); // c:765
             if let Some(cmd) = &hn.cmd {
-                print!("{}", nicezputs(cmd)); // c:766
+                let _ = nicezputs(cmd, &mut so); // c:766
             }
             println!(); // c:767
         } else {
             // c:768
             // c:769-774 — `nicezputs(nam); printf(" is "); nicezputs(*u.name); putchar('/'); nicezputs(nam); putchar('\n');`
-            print!("{}", nicezputs(&hn.node.nam)); // c:769
+            let _ = nicezputs(&hn.node.nam, &mut so); // c:769
             print!(" is "); // c:770
             if let Some(name_arr) = &hn.name {
                 if let Some(first) = name_arr.first() {
-                    print!("{}", nicezputs(first)); // c:771
+                    let _ = nicezputs(first, &mut so); // c:771
                 }
             }
             print!("/"); // c:772
-            print!("{}", nicezputs(&hn.node.nam)); // c:773
+            let _ = nicezputs(&hn.node.nam, &mut so); // c:773
             println!(); // c:774
         }
         return; // c:776
@@ -1231,7 +1232,8 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
     if (printflags & (PRINT_WHENCE_VERBOSE | PRINT_WHENCE_WORD)) != 0
         && (printflags & PRINT_WHENCE_FUNCDEF) == 0
     {
-        print!("{}", nicezputs(&hn.node.nam)); // c:929
+        let mut so = std::io::stdout();
+        let _ = nicezputs(&hn.node.nam, &mut so); // c:929
         // c:930-933 — printf one of three strings via nested ternary.
         let msg = if (printflags & PRINT_WHENCE_WORD) != 0 {
             ": function" // c:930
@@ -1713,7 +1715,8 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
 
     // c:1282-1293 — PRINT_WHENCE_CSH branch.
     if (printflags & PRINT_WHENCE_CSH) != 0 {
-        print!("{}", nicezputs(&hn.node.nam)); // c:1283
+        let mut so = std::io::stdout();
+        let _ = nicezputs(&hn.node.nam, &mut so); // c:1283
         print!(": "); // c:1284
         if (hn.node.flags & ALIAS_SUFFIX as i32) != 0 {
             print!("suffix "); // c:1286
@@ -1721,14 +1724,15 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
             print!("globally "); // c:1288
         }
         print!("aliased to "); // c:1289
-        print!("{}", nicezputs(&hn.text)); // c:1290
+        let _ = nicezputs(&hn.text, &mut so); // c:1290
         println!(); // c:1291
         return; // c:1292
     }
 
     // c:1295-1308 — PRINT_WHENCE_VERBOSE branch.
     if (printflags & PRINT_WHENCE_VERBOSE) != 0 {
-        print!("{}", nicezputs(&hn.node.nam)); // c:1296
+        let mut so = std::io::stdout();
+        let _ = nicezputs(&hn.node.nam, &mut so); // c:1296
         print!(" is a"); // c:1297
         if (hn.node.flags & ALIAS_SUFFIX as i32) != 0 {
             print!(" suffix"); // c:1299
@@ -1738,7 +1742,7 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
             print!("n"); // c:1303
         }
         print!(" alias for "); // c:1304
-        print!("{}", nicezputs(&hn.text)); // c:1305
+        let _ = nicezputs(&hn.text, &mut so); // c:1305
         println!(); // c:1306
         return; // c:1307
     }
