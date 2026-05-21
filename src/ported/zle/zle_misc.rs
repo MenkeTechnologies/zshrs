@@ -1847,14 +1847,126 @@ pub fn makeparamsuffix(br: i32, n: i32) {
     addsuffix(0, 0, prefix, lenstr, n);
 }
 
-/// Port of `makesuffixstr(char *f, char *s, int n)` from Src/Zle/zle_misc.c:1642.
+/// Port of `makesuffixstr(char *f, char *s, int n)` from
+/// `Src/Zle/zle_misc.c:1642`. Three-way dispatch:
+///   - `f` set → register `f` as the post-insert hook (suffixfunc)
+///   - `s` set → parse char-class spec (`^/!` invert; `\-` flag;
+///     `a-z` ranges) into addsuffix calls
+///   - neither → fall back to `makesuffix(n)` default char set
 pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
     // c:1642
-    // C body: `if (str) addsuffixstring(0, 0, str, n);
-    //          if (funcnam) suffixfunc = funcnam`. zshrs's suffixfunc
-    // global isn't set up; faithful path covers the str argument.
-    if let Some(s) = s {
-        addsuffixstring(0, 0, s, n);
+    if let Some(f_str) = f {                                                 // c:1644
+        // c:1645-1647 — `zsfree(suffixfunc); suffixfunc = ztrdup(f);
+        //                suffixlen = n;`.
+        // !!! WARNING: SUBSTRATE GAP — suffixfunc/suffixlen globals !!!
+        // C maintains `static char *suffixfunc` and `static int suffixlen`
+        // (zle_misc.c:~50) consumed by `iremovesuffix` on next char insert.
+        // zshrs hasn't ported these statics; the registration is a no-op
+        // — `iremovesuffix` will skip its function-hook branch.
+        // Engine-side fix: add the two statics + wire iremovesuffix.
+        let _ = f_str;                                                       // c:1646 suffixfunc = ...
+        let _ = n;                                                           // c:1647 suffixlen = n
+    } else if let Some(s_str) = s {                                          // c:1648
+        let mut inv: i32;                                                    // c:1649
+        let _i: usize;                                                       // c:1649
+        let mut z: i32 = 0;                                                  // c:1649
+        let s_iter_start;                                                    // c:1650 ZLE_STRING_T s
+        if s_str.starts_with('^') || s_str.starts_with('!') {                // c:1652
+            inv = 1;                                                         // c:1653
+            s_iter_start = &s_str[1..];                                      // c:1654 `s++`
+        } else {
+            inv = 0;                                                         // c:1656
+            s_iter_start = s_str;
+        }
+        // c:1657 — `s = getkeystring(s, &i, GETKEYS_SUFFIX, &z);`
+        let (decoded, consumed) =
+            crate::ported::utils::getkeystring(s_iter_start);
+        // GETKEYS_SUFFIX scan sets `z` when `\-` appears; current
+        // getkeystring port doesn't expose `z` separately. The `\-`
+        // detection is observable inline by scanning the literal arg
+        // for `\-` prior to getkeystring's escape collapse.
+        if s_iter_start.contains("\\-") {                                    // c:1657 z out-param
+            z = 1;
+        }
+        let _ = consumed;
+        // c:1658 — `s = metafy(s, i, META_USEHEAP);` (no-op for UTF-8 String)
+        // c:1659 — `ws = stringaszleline(s, 0, &i, NULL, NULL);`
+        let ws = crate::ported::zle::zle_utils::stringaszleline(&decoded);
+        let mut i: usize = ws.len();
+
+        /*
+         * Remove suffix on uninsertable characters if `\-` was given
+         * and the character class wasn't negated -- or vice versa.
+         */                                                                  // c:1661-1662
+        let _suffixnoinsrem = z ^ inv;                                       // c:1663
+        let _suffixlen = n;                                                  // c:1664
+        // !!! WARNING: SUBSTRATE GAP — suffixnoinsrem/suffixlen globals !!!
+        // Same gap as the suffixfunc branch above; iremovesuffix
+        // doesn't honour the no-insert-removal flag yet.
+
+        // c:1666-1689 — walk `ws`, peeking for `a-b` range form.
+        let mut lasts: usize = 0;                                            // c:1666
+        let mut wptr: usize = 0;                                             // c:1666
+        while i > 0 {                                                        // c:1667
+            if i >= 3 && ws.get(wptr + 1) == Some(&'-') {                    // c:1668
+                if wptr > lasts {                                            // c:1671
+                    let span: Vec<char> = ws[lasts..wptr].to_vec();
+                    let lenstr = (wptr - lasts) as i32;
+                    addsuffix(
+                        if inv != 0 { SUFTYP_NEGSTR } else { SUFTYP_POSSTR },
+                        0,
+                        span,
+                        lenstr,
+                        n,
+                    );                                                       // c:1672-1673
+                }
+                let mut s_arr: Vec<char> = Vec::with_capacity(2);            // c:1669 ZLE_CHAR_T str[2]
+                s_arr.push(ws[wptr]);                                        // c:1674
+                s_arr.push(ws[wptr + 2]);                                    // c:1675
+                addsuffix(
+                    if inv != 0 { SUFTYP_NEGRNG } else { SUFTYP_POSRNG },
+                    0,
+                    s_arr,
+                    2,
+                    n,
+                );                                                           // c:1676-1677
+
+                wptr += 3;                                                   // c:1679
+                i -= 3;                                                      // c:1680
+                lasts = wptr;                                                // c:1681
+            } else {
+                wptr += 1;                                                   // c:1683
+                i -= 1;                                                      // c:1684
+                if i == 0 && wptr == ws.len() {
+                    // Final char will be appended by the post-loop span
+                    // below; nothing to do here.
+                }
+                // Catch the `for` loop's `i--` semantics — the C peeks two
+                // ahead so when i<3 we can't enter the range branch.
+                if wptr >= ws.len() {
+                    break;
+                }
+            }
+        }
+        if wptr > lasts {                                                    // c:1687
+            let span: Vec<char> = ws[lasts..wptr].to_vec();
+            let lenstr = (wptr - lasts) as i32;
+            addsuffix(
+                if inv != 0 { SUFTYP_NEGSTR } else { SUFTYP_POSSTR },
+                0,
+                span,
+                lenstr,
+                n,
+            );                                                               // c:1688-1689
+        }
+        // c:1690 — `free(ws);` (Rust drop)
+        let _ = (lasts, wptr);
+        // Bind `inv` to avoid unused warning if all branches above happen
+        // to skip the inverter (constant-folded short circuit).
+        inv += 0;
+        let _ = inv;
+    } else {
+        makesuffix(n);                                                       // c:1692
     }
 }
 
