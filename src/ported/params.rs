@@ -16,17 +16,28 @@ use indexmap::IndexMap;
 use crate::config_h::DEFAULT_TMPPREFIX;
 use crate::{DPUTS, DPUTS2};
 use crate::func_body_fmt::FuncBodyFmt;
-use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, resizehistents, savehistsiz};
+use crate::lex::parse_subscript;
+use crate::ported::builtin::{LASTVAL, PPARAMS};
+use crate::ported::config_h::{MACHTYPE, OSTYPE, VENDOR};
+use crate::ported::exec::FORKLEVEL;
+use crate::ported::hashtable::emptycmdnamtable;
+use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, resizehistents, saveandpophiststack, savehistsiz};
+use crate::ported::init::SHTTY;
+use crate::ported::lex::untokenize;
 #[allow(unused_imports)]
 use crate::ported::math::{
     matheval, mathevali, MN_FLOAT, MN_FLOAT as MN_FLT, MN_INTEGER, MN_INTEGER as MN_INT,
 };
+use crate::ported::math::lastbase;
+use crate::ported::mem::{popheap, pushheap};
 use crate::ported::modules::parameter::FUNCSTACK;
 #[allow(unused_imports)]
 use crate::ported::options::{opt_state_get, opt_state_set, optlookup};
+use crate::ported::patchlevel::{ZSH_PATCHLEVEL, ZSH_VERSION};
 use crate::ported::pattern::patmatch;
 #[allow(unused_imports)]
 use crate::ported::signals::{queue_signals, unqueue_signals};
+use crate::ported::signals_h::SIGS;
 use crate::ported::string::ztrdup;
 #[allow(unused_imports)]
 use crate::ported::utils::{
@@ -34,6 +45,7 @@ use crate::ported::utils::{
     locallevel as locallevel_fn, posixzero, set_argzero, set_locallevel, set_posixzero, unmeta,
     ztrdup_metafy, zerr, zwarn,
 };
+use crate::ported::utils::{adduserdir, arrlen_ge, dec_locallevel, inc_locallevel, metafy, quotedzputs, xsymlink};
 #[allow(unused_imports)]
 use crate::ported::zsh_h::{
     gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar, hashnode, hashtable, isset, mnumber, paramdef,
@@ -48,11 +60,10 @@ use crate::ported::zsh_h::{
     PRINT_TYPESET, SCANPM_ARRONLY, SCANPM_CHECKING, SCANPM_ISVAR_AT, SCANPM_KEYMATCH,
     SCANPM_MATCHKEY, SCANPM_MATCHMANY, SCANPM_MATCHVAL, SCANPM_NONAMEREF, SCANPM_WANTINDEX,
     SCANPM_WANTKEYS, SCANPM_WANTVALS, TERM_BAD, VALFLAG_EMPTY, VALFLAG_INV, VALFLAG_SUBST,
-    WARNCREATEGLOBAL, WARNNESTEDVAR,
+    WARNCREATEGLOBAL, WARNNESTEDVAR,TERM_UNKNOWN, param, POSIXARGZERO
 };
-pub use crate::ported::zsh_h::{TERM_UNKNOWN, param};
-
-
+use crate::ported::zsh_h::{HashNode, Inbrack, CBASES, CHASELINKS, HFILE_USE_OPTIONS, META, OCTALZEROES, PM_LOWER, PRIVILEGED, SCANPM_ASSIGNING};
+use crate::ported::zsh_system_h::DEFAULT_TIMEFMT;
 
 /// Port of `static int lc_update_needed` from `Src/params.c:5850`
 /// (under `#ifdef USE_LOCALE`). Set to 1 by `scanendscope` when a
@@ -306,7 +317,7 @@ pub fn IPDEF10(A: &str, B: usize) -> paramdef {
 #[allow(unused_variables)]
 pub fn newparamtable(size: i32, name: &str) -> Option<HashTable> {
     let hsize = if size == 0 { 17 } else { size };
-    let mut nodes: Vec<Option<crate::ported::zsh_h::HashNode>> = Vec::with_capacity(hsize as usize);
+    let mut nodes: Vec<Option<HashNode>> = Vec::with_capacity(hsize as usize);
     for _ in 0..hsize {
         nodes.push(None);
     }
@@ -1369,7 +1380,7 @@ pub fn issetvar(name: &str) -> i32 {
     } else {
         v.end as usize
     };
-    if crate::ported::utils::arrlen_ge(&arr, bound) {
+    if arrlen_ge(&arr, bound) {
         1
     } else {
         0
@@ -1527,7 +1538,7 @@ pub fn createparamtable() {
     setsparam("TMPPREFIX", &ztrdup_metafy(DEFAULT_TMPPREFIX)); // c:870
     setsparam(
         "TIMEFMT",
-        &ztrdup_metafy(crate::ported::zsh_system_h::DEFAULT_TIMEFMT),
+        &ztrdup_metafy(DEFAULT_TIMEFMT),
     ); // c:871
 
     // c:873-876 — HOST from gethostname() (ztrdup_metafy wrap c:875).
@@ -1571,7 +1582,7 @@ pub fn createparamtable() {
 
     // c:891 — pushheap() / c:921 — popheap(). Wraps the env-import
     // loop so per-iter allocations land on the heap zone.
-    crate::ported::mem::pushheap(); // c:891
+    pushheap(); // c:891
 
     // c:893-924 — environment import loop.
     for (iname, ivalue) in env::vars() {
@@ -1601,7 +1612,7 @@ pub fn createparamtable() {
             continue;
         }
         // c:907-908 — assignsparam(..., ASSPM_ENV_IMPORT).
-        let metafied = crate::ported::utils::metafy(&ivalue);
+        let metafied = metafy(&ivalue);
         let _ = assignsparam(&iname, &metafied, ASSPM_ENV_IMPORT);
         // c:909-915 — stamp PM_EXPORTED and the env-side string.
         let mut tab = paramtab().write().unwrap();
@@ -1623,7 +1634,7 @@ pub fn createparamtable() {
         }
     }
 
-    crate::ported::mem::popheap(); // c:921
+    popheap(); // c:921
 
     // c:933-944 — HOME / LOGNAME / SHLVL post-import wiring.
     //
@@ -1721,12 +1732,12 @@ pub fn createparamtable() {
     setsparam(
         // c:961
         "MACHTYPE",
-        &ztrdup_metafy(crate::ported::config_h::MACHTYPE),
+        &ztrdup_metafy(MACHTYPE),
     );
     setsparam(
         // c:962
         "OSTYPE",
-        &ztrdup_metafy(crate::ported::config_h::OSTYPE),
+        &ztrdup_metafy(OSTYPE),
     );
     let tty_str = {
         let p = unsafe { libc::ttyname(0) };
@@ -1742,17 +1753,17 @@ pub fn createparamtable() {
     setsparam(
         // c:964
         "VENDOR",
-        &ztrdup_metafy(crate::ported::config_h::VENDOR),
+        &ztrdup_metafy(VENDOR),
     );
     let argv0 = env::args().next().unwrap_or_default();
     setsparam("ZSH_ARGZERO", &ztrdup(&argv0)); // c:965 (ztrdup, not _metafy: posixzero)
     setsparam(
         "ZSH_VERSION",
-        &ztrdup_metafy(crate::ported::patchlevel::ZSH_VERSION),
+        &ztrdup_metafy(ZSH_VERSION),
     ); // c:966 (Config/version.mk VERSION via patchlevel::ZSH_VERSION)
     setsparam(
         "ZSH_PATCHLEVEL",
-        &ztrdup_metafy(crate::ported::patchlevel::ZSH_PATCHLEVEL),
+        &ztrdup_metafy(ZSH_PATCHLEVEL),
     ); // c:967
 
     // c:968-979 — `setaparam("signals", sigptr = zalloc((TRAPCOUNT
@@ -1764,7 +1775,7 @@ pub fn createparamtable() {
     // sigs[] name table, then SIGRTMIN..SIGRTMAX names, then the
     // trailing tail (DEBUG / ERR / EXIT / ZERR sentinels).
     let mut signals_arr: Vec<String> = Vec::new();
-    for &(name, _num) in crate::ported::signals_h::SIGS.iter() {
+    for &(name, _num) in SIGS.iter() {
         signals_arr.push(ztrdup_metafy(name));
     }
     // RT-signal range (Linux-only; macOS SIGS table already includes
@@ -2766,7 +2777,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     // existing lex-layer port at `crate::ported::lex::parse_subscript`
     // which honours `[...]` / `(...)` / `{...}` nesting and single/
     // double quoting (parse/src/lex.rs:3074).
-    let close_pos = crate::lex::parse_subscript(after_lbrack, ']');
+    let close_pos = parse_subscript(after_lbrack, ']');
     let close_pos = match close_pos {
         Some(p) => p,
         None => {
@@ -2991,20 +3002,20 @@ pub fn fetchvalue<'a>(
         // remainder starts with `[` (or the lexer's `Inbrack` token),
         // hand off to `getindex` which fills `v.start`/`v.end`/
         // `v.scanflags` and advances `pptr`.
-        if bracks > 0 && (pptr.starts_with('[') || pptr.starts_with(crate::ported::zsh_h::Inbrack))
+        if bracks > 0 && (pptr.starts_with('[') || pptr.starts_with(Inbrack))
         {
             if getindex(pptr, v, scanflags) != 0 {
                 // c:2290
                 return Some(v); // c:2292
             }
-        } else if (scanflags & crate::ported::zsh_h::SCANPM_ASSIGNING as i32) == 0
+        } else if (scanflags & SCANPM_ASSIGNING as i32) == 0
             && v.scanflags != 0
             && isset(optlookup("ksharrays"))
         {
             // c:2294-2296 — KSHARRAYS implicit `[0]` for bare arr.
             v.end = 1;
             v.scanflags = 0;
-        }
+        } else {}
         return Some(v);
     }
     None
@@ -3555,7 +3566,7 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                     pm.width = s.len() as i32;
                 }
                 if pm.base == 0 {
-                    let lb = crate::ported::math::lastbase();
+                    let lb = lastbase();
                     if lb != -1 {
                         pm.base = lb;
                     }
@@ -4200,7 +4211,7 @@ pub fn check_warn_pm(pm: &param, pmtype: &str, created: i32, may_warn_about_nest
     // params.c:54). `forklevel` is the ported global at vm_helper
     // (port of exec.c:1052) set to locallevel at every entersubsh().
     let cur_local: i32 = locallevel.load(Ordering::Relaxed);
-    let forklevel: i32 = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed); // c:1052 (Src/exec.c)
+    let forklevel: i32 = FORKLEVEL.load(Ordering::Relaxed); // c:1052 (Src/exec.c)
     if created != 0 && isset(WARNCREATEGLOBAL) {
         // c:3168
         if cur_local <= forklevel || pm.level != 0 {
@@ -5265,7 +5276,7 @@ pub fn strsetfn(pm: &mut param, x: String) {
     // c:4046 isset(AUTONAMEDIRS)
     {
         pm.node.flags |= PM_NAMEDDIR as i32; // c:4047
-        crate::ported::utils::adduserdir(&pm.node.nam, &x, 0, false); // c:4048
+        adduserdir(&pm.node.nam, &x, 0, false); // c:4048
     }
 }
 
@@ -6079,7 +6090,7 @@ pub fn ttyidlegetfn() -> i64 {
     // when SHTTY was opened on a non-stdin file descriptor (e.g.
     // `zsh < script` where stdin is a file but the controlling tty
     // was opened separately). C tracks the actual SHTTY fd.
-    let shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+    let shtty = SHTTY.load(Ordering::SeqCst);
     if shtty == -1 {
         // c:4776
         return -1;
@@ -6410,7 +6421,7 @@ pub fn argzerosetfn(x: String) {
     // c:4937 — if (x).
     if !x.is_empty() {
         // c:4940 — isset(POSIXARGZERO) reject.
-        if isset(crate::ported::zsh_h::POSIXARGZERO) {
+        if isset(POSIXARGZERO) {
             zerr("read-only variable: 0"); // c:4941
         } else {
             // c:4943-4944 — zsfree(argzero); argzero = ztrdup(x).
@@ -6435,7 +6446,7 @@ pub fn argzerosetfn(x: String) {
 /// `isset(POSIXARGZERO)` + the canonical posixzero accessor.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn argzerogetfn() -> String {
-    if isset(crate::ported::zsh_h::POSIXARGZERO) {
+    if isset(POSIXARGZERO) {
         // c:4958
         posixzero().unwrap_or_default() // c:4959
     } else {
@@ -6741,8 +6752,8 @@ pub fn homesetfn(x: String) {
     // c:5121-5126 — CHASELINKS path resolves symlinks before storing.
     // Falls through to the plain `x` store when CHASELINKS is off or
     // xsymlink fails.
-    let resolved = if !x.is_empty() && isset(crate::ported::zsh_h::CHASELINKS) {
-        crate::ported::utils::xsymlink(&x).unwrap_or(x)
+    let resolved = if !x.is_empty() && isset(CHASELINKS) {
+        xsymlink(&x).unwrap_or(x)
     } else {
         x
     };
@@ -6786,7 +6797,7 @@ pub fn underscoregetfn() -> String {
         .lock()
         .expect("zunderscore poisoned")
         .clone();
-    crate::ported::lex::untokenize(&u) // c:5156 untokenize(u)
+    untokenize(&u) // c:5156 untokenize(u)
 }
 
 /// Port of `term_reinit_from_pm()` from `Src/params.c:5163`.
@@ -6920,7 +6931,7 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {
     // c:5291 — `if (t == path) cmdnamtab->emptytable(cmdnamtab)`.
     // PATH change invalidates the command-name cache.
     if s == "PATH" || s == "path" {
-        crate::ported::hashtable::emptycmdnamtable();
+        emptycmdnamtable();
     }
 
     // c:5294 — `pm = paramtab->getnode(paramtab, s)`.
@@ -7088,14 +7099,14 @@ pub fn copyenvstr(buf: &mut String, value: &str, flags: i32) {
     while let Some(b) = it.next() {
         // c:5436
         let mut ch = b;
-        if ch == crate::ported::zsh_h::META as u8 {
+        if ch == META as u8 {
             // c:5437
             ch = match it.next() {
                 Some(next) => next ^ 32, // c:5438
                 None => break,
             };
         }
-        if flags_u & crate::ported::zsh_h::PM_LOWER != 0 {
+        if flags_u & PM_LOWER != 0 {
             // c:5439
             ch = ch.to_ascii_lowercase(); // c:5440
         } else if flags_u & PM_UPPER != 0 {
@@ -7223,11 +7234,11 @@ pub fn convbase_ptr(v: i64, base: i32) -> (String, i32) {
         b = -10;
     }
     if b > 0 {
-        if isset(crate::ported::zsh_h::CBASES) && b == 16 {
+        if isset(CBASES) && b == 16 {
             s.push_str("0x");
-        } else if isset(crate::ported::zsh_h::CBASES)
+        } else if isset(CBASES)
             && b == 8
-            && isset(crate::ported::zsh_h::OCTALZEROES)
+            && isset(OCTALZEROES)
         {
             s.push('0');
         } else if b != 10 {
@@ -7412,7 +7423,7 @@ pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
 /// exit. Rust port operates on the bucket-2 holder `paramtab` via a
 /// `&mut HashTable` argument.
 pub fn startparamscope(_table: &mut HashTable) {
-    crate::ported::utils::inc_locallevel();
+    inc_locallevel();
 }
 
 /// Port of `endparamscope()` from `Src/params.c:5857`. C signature:
@@ -7435,10 +7446,10 @@ pub fn endparamscope() {
         }
     });
 
-    crate::ported::utils::dec_locallevel(); // c:5863 locallevel--
+    dec_locallevel(); // c:5863 locallevel--
                                             // c:5865 — `saveandpophiststack(0, HFILE_USE_OPTIONS);`. Pop
                                             // all stack entries with locallevel > current.
-    crate::ported::hist::saveandpophiststack(0, crate::ported::zsh_h::HFILE_USE_OPTIONS as i32);
+    saveandpophiststack(0, HFILE_USE_OPTIONS as i32);
     let ll = locallevel_fn();
     // c:5869 scanhashtable(paramtab, 0, 0, 0, scanendscope, 0). Walk
     // the live paramtab (HashMap-backed until the hashtable.c vtable
@@ -7675,7 +7686,7 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
         // that `typeset -p VAR` expects. Without quoting, `eval
         // "$(typeset -p VAR)"` round-trip is BROKEN for any value
         // with spaces, special chars, or shell metacharacters.
-        print!("{}", crate::ported::utils::quotedzputs(&s)); // c:6053
+        print!("{}", quotedzputs(&s)); // c:6053
     } else if t == PM_INTEGER {
         print!("{}", intgetfn(p));
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
@@ -8415,7 +8426,7 @@ fn pparams_lock() -> &'static Mutex<Vec<String>> {
     // `builtin::PPARAMS` (Src/init.c `pparams`); set/shift builtins
     // write there. Point at that single store so `$#` reads the
     // live value instead of an isolated empty mirror.
-    &crate::ported::builtin::PPARAMS
+    &PPARAMS
 }
 
 fn zunderscore_lock() -> &'static Mutex<String> {
@@ -8468,7 +8479,7 @@ fn dontimport(flags: i32) -> i32 {
     }
     // c:805-806 — `if ((flags & PM_DONTIMPORT_SUID) && isset(PRIVILEGED)) return 1`.
     if flags & PM_DONTIMPORT_SUID != 0                 // c:805
-        && isset(crate::ported::zsh_h::PRIVILEGED)
+        && isset(PRIVILEGED)
     {
         return 1; // c:806
     }
@@ -8555,7 +8566,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // POSIX shell-special scalars. C dispatches these through
         // dedicated gsu getfn callbacks (Src/params.c special_assigns).
         "?" => Some(
-            crate::ported::builtin::LASTVAL
+            LASTVAL
                 .load(Ordering::Relaxed)
                 .to_string(),
         ),
@@ -9076,6 +9087,7 @@ fn paramvals_lock() -> &'static Mutex<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
+    use crate::ported::zsh_h::Pound;
     use super::*;
     use crate::zsh_h::hashnode;
 
@@ -10321,7 +10333,7 @@ mod tests {
 
         // Set zunderscore to a string containing a Pound token byte
         // surrounded by literals.
-        let pound = crate::ported::zsh_h::Pound;
+        let pound = Pound;
         let mut s = String::new();
         s.push('a');
         s.push(pound);

@@ -25,8 +25,11 @@ use crate::ported::zsh_h::{
 pub(crate) mod prompt_tls {
     use std::cell::RefCell;
     use std::env;
-
+    use crate::ported::hist::curhist;
+    use crate::ported::jobs::JOBTAB;
+    use crate::ported::modules::parameter::FUNCSTACK;
     use crate::ported::params::{getsparam, paramtab};
+    use crate::ported::utils::adjustcolumns;
 
     thread_local! {
         pub(super) static PWD: RefCell<String> = const { RefCell::new(String::new()) };
@@ -110,12 +113,12 @@ pub(crate) mod prompt_tls {
         // c:hist.c:233 curhist
         HISTNUM.with(|c| {
             *c.borrow_mut() =
-                crate::ported::hist::curhist.load(std::sync::atomic::Ordering::Relaxed);
+                curhist.load(std::sync::atomic::Ordering::Relaxed);
         });
         SHLVL.with(|c| *c.borrow_mut() = shlvl);
         // c:jobs.c:88 jobtab — count in-use job slots
         NUM_JOBS.with(|c| {
-            *c.borrow_mut() = crate::ported::jobs::JOBTAB
+            *c.borrow_mut() = JOBTAB
                 .get_or_init(|| std::sync::Mutex::new(Vec::new()))
                 .lock()
                 .map(|t| t.iter().filter(|j| j.is_inuse()).count() as i32)
@@ -137,7 +140,7 @@ pub(crate) mod prompt_tls {
         });
         // c:utils.c adjustcolumns — re-read TIOCGWINSZ.
         TERM_WIDTH.with(|c| {
-            *c.borrow_mut() = crate::ported::utils::adjustcolumns();
+            *c.borrow_mut() = adjustcolumns();
         });
         LINENO.with(|c| {
             *c.borrow_mut() = getsparam("LINENO")
@@ -150,7 +153,7 @@ pub(crate) mod prompt_tls {
         SCRIPTFILENAME.with(|c| *c.borrow_mut() = scriptname.clone().or_else(|| getsparam("0")));
         FUNC_LINE_BASE.with(|c| *c.borrow_mut() = None);
         FUNCSTACK_FILENAME.with(|c| {
-            *c.borrow_mut() = crate::ported::modules::parameter::FUNCSTACK
+            *c.borrow_mut() = FUNCSTACK
                 .lock()
                 .ok()
                 .and_then(|s| s.last().and_then(|fs| fs.filename.clone()));

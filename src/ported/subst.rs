@@ -80,23 +80,7 @@ use crate::ported::string::dyncat;
 use crate::ported::utils::{errflag, getkeystring, quotestring, xsymlinks, zerr};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{cached_regex, slice_array_zero_based, slice_positionals};
-use crate::ported::zsh_h::{
-    ALIAS_GLOBAL, ALIAS_SUFFIX, Bnull, Bnullkeep, CASMOD_NONE, DISABLED, Dnull, Equals, HASHED,
-    Hat, IGNOREBRACES, Inang, Inbrace, Inbrack, Inpar, Inparmath, LEXFLAGS_ACTIVE,
-    LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, MN_FLOAT, MN_UNSET,
-    MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, Marker, Nularg, Outang,
-    OutangProc, Outbrace, Outbrack, Outpar, Outparmath, PM_ARRAY, PM_EFLOAT, PM_EXPORTED,
-    PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF,
-    PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE, PM_UPPER,
-    PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
-    PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET, Param,
-    Pound, QT_BACKSLASH_PATTERN, QT_QUOTEDZPUTS, QT_SINGLE_OPTIONAL, Qstring, Qtick,
-    SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, SHFILEEXPANSION, SORTIT_ANYOLDHOW,
-    SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY, SORTIT_SOMEHOW, SUB_ALL, SUB_BIND,
-    SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH,
-    SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR, Snull, Stringg, Tick, Tilde, hashnode, isset,
-    param,
-};
+use crate::ported::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX, Bnull, Bnullkeep, CASMOD_NONE, DISABLED, Dnull, Equals, HASHED, Hat, IGNOREBRACES, Inang, Inbrace, Inbrack, Inpar, Inparmath, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, MN_FLOAT, MN_UNSET, MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE, PM_UPPER, PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK, PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET, Param, Pound, QT_BACKSLASH_PATTERN, QT_QUOTEDZPUTS, QT_SINGLE_OPTIONAL, Qstring, Qtick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, SHFILEEXPANSION, SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY, SORTIT_SOMEHOW, SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR, Snull, Stringg, Tick, Tilde, hashnode, isset, param, PUSHDMINUS, SHWORDSPLIT, SORTIT_NUMERICALLY_SIGNED, KSHTYPESET};
 
 /// Port of `LF_ARRAY` from `Src/subst.c:33`.
 /// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
@@ -202,7 +186,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
     let mut node_idx = 0; // c:100
     let mut stop_idx: Option<usize> = None; // c:100
     let mut keep = false; // c:100
-    let asssub = (flags & PREFORK_TYPESET != 0) && isset(crate::ported::zsh_h::KSHTYPESET); // c:100
+    let asssub = (flags & PREFORK_TYPESET != 0) && isset(KSHTYPESET); // c:100
     let mut iter_count = 0u32; // c:100
 
     while node_idx < list.nodes.len() {
@@ -926,7 +910,7 @@ fn stringsubst(
                 // c:237
                 // Parameter substitution
                 let mut new_pf_flags = pf_flags; // c:237
-                if (isset(crate::ported::zsh_h::SHWORDSPLIT) && (pf_flags & PREFORK_NOSHWORDSPLIT == 0)) // c:237
+                if (isset(SHWORDSPLIT) && (pf_flags & PREFORK_NOSHWORDSPLIT == 0)) // c:237
                     || (pf_flags & PREFORK_SPLIT != 0)
                 // c:237
                 {
@@ -1672,7 +1656,7 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                     .lock()
                     .map(|d| d.clone())
                     .unwrap_or_default();
-                let pushdminus = isset(crate::ported::zsh_h::PUSHDMINUS); // c:4906
+                let pushdminus = isset(PUSHDMINUS); // c:4906
                 let entry = dstackent(
                     // c:4902
                     if neg { '-' } else { '+' }, // c:4902
@@ -2868,7 +2852,7 @@ pub fn paramsubst(
                     } // c:2219
                     '-' => {
                         // c:2220 case '-': case Dash:
-                        sortit |= crate::ported::zsh_h::SORTIT_NUMERICALLY_SIGNED;
+                        sortit |= SORTIT_NUMERICALLY_SIGNED;
                         // c:2222
                     } // c:2223
                     'a' => {

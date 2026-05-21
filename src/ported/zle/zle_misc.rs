@@ -38,7 +38,7 @@ use crate::ported::zle::complete::INCOMPFUNC;
 use crate::ported::zle::zle_move::{deccs, decpos, inccs, incpos, vifirstnonblank};
 use crate::ported::zle::zle_utils::{findbol, findeol};
 use crate::ported::zle::zle_vi::startvichange;
-use crate::ported::zsh_h::{ERRFLAG_ERROR, ERRFLAG_INT};
+use crate::ported::zsh_h::{ERRFLAG_ERROR, ERRFLAG_INT, QT_SINGLE_OPTIONAL};
 use crate::zle::zle_h::{MOD_MULT, MOD_NEG, MOD_NULL, MOD_TMULT};
 
 // =====================================================================
@@ -1197,7 +1197,7 @@ pub fn bracketedpaste(args: &[String]) -> i32 {
         // c:823
         pbuf.clone()
     } else {
-        quotestring(&pbuf, crate::ported::zsh_h::QT_SINGLE_OPTIONAL) // c:824
+        quotestring(&pbuf, QT_SINGLE_OPTIONAL) // c:824
     };
     let wpaste: Vec<char> = payload.chars().collect();
     // c:826-834 — !(zmod.flags & MOD_VIBUF) → reset kct, killregion if

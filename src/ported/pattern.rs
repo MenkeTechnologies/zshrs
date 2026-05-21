@@ -55,13 +55,14 @@ pub use crate::ported::zsh_h::{
 };
 use crate::ported::params::{paramtab, paramtab_hashed_storage};
 use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
-use crate::zsh_h::{Marker, 
-    isset, patprog, BASHAUTOLIST, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB,
-    MULTIBYTE, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, RCQUOTES, SHGLOB, SORTIT_IGNORING_BACKSLASHES,
-    SORTIT_NUMERICALLY, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH,
-    ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR,
-    ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST,
-    ZPC_KSH_STAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
+use crate::utils::zerrnam;
+use crate::zsh_h::{Marker,
+                   isset, patprog, BASHAUTOLIST, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB,
+                   MULTIBYTE, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, RCQUOTES, SHGLOB, SORTIT_IGNORING_BACKSLASHES,
+                   SORTIT_NUMERICALLY, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH,
+                   ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR,
+                   ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST,
+                   ZPC_KSH_STAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
     
 };
 
@@ -1686,7 +1687,7 @@ pub fn pat_enables(cmd: &str, patp: &[&str], enable: bool) -> i32 {
         }
         if !matched {
             // c:4205
-            crate::ported::utils::zerrnam(cmd, &format!("invalid pattern: {}", p)); // c:4206
+            zerrnam(cmd, &format!("invalid pattern: {}", p)); // c:4206
             ret = 1; // c:4207
         }
     }
@@ -3273,7 +3274,7 @@ mod tests {
         );
         assert_eq!(
             Marker as u8,
-            crate::ported::zsh_h::Marker as u8,
+            Marker as u8,
             "pattern.rs::Marker must alias zsh_h::Marker"
         );
     }

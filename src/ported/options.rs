@@ -1672,6 +1672,7 @@ pub fn list_emulate_options(cmdopts: &std::collections::HashMap<String, bool>, f
 }
 #[cfg(test)]
 mod tests {
+    use crate::ported::zsh_h::ALIASESOPT;
     use super::*;
 
     // Tests share global OPTS_LIVE state; serialize via this mutex so
@@ -1949,7 +1950,7 @@ mod tests {
         );
         // ALIASESOPT is the next enum slot — must be 1.
         assert_eq!(
-            crate::ported::zsh_h::ALIASESOPT,
+            ALIASESOPT,
             1,
             "Src/zsh.h:2364 — ALIASESOPT immediately follows OPT_INVALID"
         );

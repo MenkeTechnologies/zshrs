@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use super::zle_main::{ZleString, BUFSTACK, MULT};
 use super::zle_misc::DONE;
 use crate::ported::options::opt_state_set;
-use crate::ported::zsh_h::{isset, HISTBEEP, HISTIGNOREDUPS};
+use crate::ported::zsh_h::{isset, HISTBEEP, HISTIGNOREDUPS, ZLRF_HISTORY};
 
 // =====================================================================
 // Isearch globals — `Src/Zle/zle_hist.c:1078`.
@@ -415,7 +415,7 @@ pub fn uplineorhistory() -> i32 {
     if n != 0 {
         ZLECS.store(ocs, Ordering::SeqCst);
         if (ZLEREADFLAGS.load(Ordering::SeqCst)
-            & crate::ported::zsh_h::ZLRF_HISTORY)
+            & ZLRF_HISTORY)
             == 0
         {
             return 1;
@@ -520,7 +520,7 @@ pub fn downlineorhistory() -> i32 {
     if n != 0 {
         ZLECS.store(ocs, Ordering::SeqCst);
         if (ZLEREADFLAGS.load(Ordering::SeqCst)
-            & crate::ported::zsh_h::ZLRF_HISTORY)
+            & ZLRF_HISTORY)
             == 0
         {
             return 1;

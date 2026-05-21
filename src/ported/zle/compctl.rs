@@ -40,7 +40,7 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
-use crate::ported::zsh_h::{QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE};
+use crate::ported::zsh_h::{IN_NOTHING, QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE};
 
 
 // Re-export the canonical `compctl.h` ports from compctl_h.rs so
@@ -3033,7 +3033,7 @@ static ERANGE: Mutex<i32> = Mutex::new(0);
 /// `Src/zsh.h:2321-2332` (ported in zsh_h.rs). NB: dead code is
 /// fake — the previous Rust `linwhat_kind` mod had `IN_ENV=1` and
 /// an invented `IN_REDIR=4`; both wrong vs the real C enum.
-static LINWHAT: Mutex<i32> = Mutex::new(crate::ported::zsh_h::IN_NOTHING);
+static LINWHAT: Mutex<i32> = Mutex::new(IN_NOTHING);
 
 /// `linredir` — non-zero when completing inside a redirection.
 static LINREDIR: Mutex<i32> = Mutex::new(0);

@@ -949,7 +949,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:307 — canonical value.
         assert_eq!(
-            crate::ported::zsh_system_h::ZSH_INITIAL_OPEN_MAX,
+            ZSH_INITIAL_OPEN_MAX,
             64,
             "Src/zsh_system.h:307 — ZSH_INITIAL_OPEN_MAX must be 64"
         );

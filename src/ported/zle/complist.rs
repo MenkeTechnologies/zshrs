@@ -33,7 +33,7 @@ use crate::ported::zle::comp_h::{
 };
 use crate::ported::zle::compcore::{listdat, MINFO, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
 use crate::ported::zle::zle_refresh::{tcmultout, tcout, CLEARFLAG, NLNCT};
-use crate::ported::zsh_h::{isset, Patprog};
+use crate::ported::zsh_h::{isset, Patprog, EXTENDEDGLOB, USEZLE};
 
 // `ListColors` / `ListLayout` and their Rust-only methods deleted.
 // The C source uses `struct listcols` (legit port at line 645 as
@@ -1923,7 +1923,7 @@ pub fn complistmatches() -> i32 {
     crate::ported::mem::pushheap();
 
     // c:2023-2024 — save EXTENDEDGLOB; force it on for the listing pass.
-    let extendedglob = isset(crate::ported::zsh_h::EXTENDEDGLOB);
+    let extendedglob = isset(EXTENDEDGLOB);
     // c:2024 — `opts[EXTENDEDGLOB] = 1;` — option mutation not yet
     // exposed as a free fn; the typed `setopt(EXTENDEDGLOB)` path
     // would set the bit. Carry-through.
@@ -1944,7 +1944,7 @@ pub fn complistmatches() -> i32 {
     MNEW.store(if mnew { 1 } else { 0 }, Ordering::SeqCst);
 
     // c:2031-2040 — empty list / no-zle bail-out.
-    let usezle = isset(crate::ported::zsh_h::USEZLE);
+    let usezle = isset(USEZLE);
     if listdat_nlines == 0 || (mselect >= 0 && !(usezle/* && !termflags && complastprompt valid */))
     {
         SHOWINGLIST.store(0, Ordering::SeqCst);

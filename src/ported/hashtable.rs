@@ -17,10 +17,7 @@
 
 #![allow(non_camel_case_types)]
 
-use crate::ported::zsh_h::{
-    BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH, FUNC, IF,
-    INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, REPEAT, SELECT, THEN, TIME, TYPESET, UNTIL, WHILE, ZEND,
-};
+use crate::ported::zsh_h::{alias, BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH, FUNC, IF, INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, REPEAT, SELECT, THEN, TIME, TYPESET, UNTIL, WHILE, ZEND};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -663,27 +660,27 @@ impl alias_table {
         table
     }
 
-    pub fn add(&mut self, alias: crate::ported::zsh_h::alias) -> Option<crate::ported::zsh_h::alias> {
+    pub fn add(&mut self, alias: alias) -> Option<alias> {
         self.table.insert(alias.node.nam.clone(), alias)
     }
 
-    pub fn get(&self, name: &str) -> Option<&crate::ported::zsh_h::alias> {
+    pub fn get(&self, name: &str) -> Option<&alias> {
         self.table
             .get(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
 
-    pub fn get_including_disabled(&self, name: &str) -> Option<&crate::ported::zsh_h::alias> {
+    pub fn get_including_disabled(&self, name: &str) -> Option<&alias> {
         self.table.get(name)
     }
 
-    pub fn get_mut(&mut self, name: &str) -> Option<&mut crate::ported::zsh_h::alias> {
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut alias> {
         self.table
             .get_mut(name)
             .filter(|a| (a.node.flags & DISABLED as i32) == 0)
     }
 
-    pub fn remove(&mut self, name: &str) -> Option<crate::ported::zsh_h::alias> {
+    pub fn remove(&mut self, name: &str) -> Option<alias> {
         self.table.remove(name)
     }
 
@@ -717,11 +714,11 @@ impl alias_table {
         self.table.clear();
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &crate::ported::zsh_h::alias)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &alias)> {
         self.table.iter()
     }
 
-    pub fn iter_sorted(&self) -> Vec<(&String, &crate::ported::zsh_h::alias)> {
+    pub fn iter_sorted(&self) -> Vec<(&String, &alias)> {
         let mut entries: Vec<_> = self.table.iter().collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
         entries
@@ -1501,7 +1498,7 @@ pub trait HashNodeFlags {
     }
 }
 
-impl HashNodeFlags for crate::ported::zsh_h::alias {
+impl HashNodeFlags for alias {
     fn flags(&self) -> u32 {
         self.node.flags as u32
     }
@@ -1589,9 +1586,9 @@ pub fn createaliastables() {
 /// Mirrors C `addaliasnode(aliastab, name, createaliasnode(text, flags))`
 /// at hashtable.c:1230 — caller-side bundle for the
 /// hashnode+text+flags inline-build.
-pub fn createaliasnode(name: &str, text: &str, flags: u32) -> crate::ported::zsh_h::alias {
+pub fn createaliasnode(name: &str, text: &str, flags: u32) -> alias {
     // c:1230
-    crate::ported::zsh_h::alias {
+    alias {
         node: hashnode {
             next: None,
             nam: name.to_string(),
@@ -1632,7 +1629,7 @@ pub fn freealiasnode(hn: &str) {
 /// PRINT_WHENCE_VERBOSE / PRINT_LIST flag dispatch. PRINT_LIST falls
 /// through to the tail `quotedzputs(nam) '=' quotedzputs(text) '\n'`;
 /// every other branch returns early.
-pub fn printaliasnode(hn: &crate::ported::zsh_h::alias, printflags: i32) {
+pub fn printaliasnode(hn: &alias, printflags: i32) {
     // c:1258 — `Alias a = (Alias) hn;` — Rust types already give us alias.
 
     // c:1260-1264 — PRINT_NAMEONLY branch.
@@ -2168,7 +2165,7 @@ pub struct reswd_table {
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
 /// `cmdnam_table` for the canonical-port direction.
 pub struct alias_table {
-    table: HashMap<String, crate::ported::zsh_h::alias>,
+    table: HashMap<String, alias>,
 }
 
 // Mirrors C's file-statics at hashtable.c:1517:
@@ -2809,7 +2806,7 @@ mod tests {
     #[test]
     fn test_generic_addhashnode_displaces_old() {
         let _g = crate::test_util::global_state_lock();
-        let mut ht: HashMap<String, crate::ported::zsh_h::alias> = HashMap::new();
+        let mut ht: HashMap<String, alias> = HashMap::new();
         addhashnode(&mut ht, "x", createaliasnode("x", "echo a", 0));
         let old = addhashnode2(&mut ht, "x", createaliasnode("x", "echo b", 0));
         assert!(old.is_some());
@@ -2820,7 +2817,7 @@ mod tests {
     #[test]
     fn test_generic_disable_filters_get() {
         let _g = crate::test_util::global_state_lock();
-        let mut ht: HashMap<String, crate::ported::zsh_h::alias> = HashMap::new();
+        let mut ht: HashMap<String, alias> = HashMap::new();
         ht.insert("a".to_string(), createaliasnode("a", "1", 0));
         assert!(gethashnode(&ht, "a").is_some());
         disablehashnode(&mut ht, "a");
@@ -2834,7 +2831,7 @@ mod tests {
     #[test]
     fn test_scanmatchtable_pattern_and_count() {
         let _g = crate::test_util::global_state_lock();
-        let mut ht: HashMap<String, crate::ported::zsh_h::alias> = HashMap::new();
+        let mut ht: HashMap<String, alias> = HashMap::new();
         ht.insert("foo".to_string(), createaliasnode("foo", "1", 0));
         ht.insert("foobar".to_string(), createaliasnode("foobar", "2", 0));
         ht.insert("baz".to_string(), createaliasnode("baz", "3", 0));
@@ -2850,7 +2847,7 @@ mod tests {
     #[test]
     fn test_emptyhashtable_clears() {
         let _g = crate::test_util::global_state_lock();
-        let mut ht: HashMap<String, crate::ported::zsh_h::alias> = HashMap::new();
+        let mut ht: HashMap<String, alias> = HashMap::new();
         ht.insert("a".to_string(), createaliasnode("a", "1", 0));
         ht.insert("b".to_string(), createaliasnode("b", "2", 0));
         assert_eq!(ht.len(), 2);

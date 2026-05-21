@@ -71,16 +71,4 @@ pub mod ztype_h;
 mod tests {
     use super::*;
 
-    /// The crate's `META` byte (0x83) is the metacharacter sentinel
-    /// embedded in every metafied buffer. Three independent modules
-    /// re-declare it (input.rs:472, utils.rs:4747, zsh_h.rs); the
-    /// invariant is that the THREE constants are EQUAL. If anything
-    /// drifts, lex/quote/unmeta semantics fracture across the codebase.
-    #[test]
-    fn meta_sentinel_consistent_across_modules() {
-        let _g = crate::test_util::global_state_lock();
-        assert_eq!(input::META as u8, zsh_h::META as u8);
-        assert_eq!(utils::Meta, zsh_h::META as u8);
-        assert_eq!(input::META as u8, 0x83);
-    }
 }

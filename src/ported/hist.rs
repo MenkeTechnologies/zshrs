@@ -14,9 +14,11 @@ use crate::{DPUTS, DPUTS1};
 use crate::ported::glob::remnulargs;
 use crate::ported::hashtable::addhistnode;
 use crate::ported::input::{ingetc, inputsetline, inungetc};
-use crate::ported::lex::{parse_subst_string, untokenize, ztokens, LEX_ISFIRSTCH, LEX_LEXSTOP};
+use crate::ported::lex::{lexinit, parse_subst_string, untokenize, ztokens, LEX_ISFIRSTCH, LEX_LEXSTOP};
 use crate::ported::options::dosetopt;
+use crate::ported::parse::init_parse_status;
 use crate::ported::signals::unqueue_signals;
+use crate::ported::subst::equalsubstr;
 use crate::ported::utils::{errflag, zerr, ERRFLAG_ERROR};
 use crate::ported::zle::compcore::ZLEMETACS;
 use crate::ported::zsh_h::{
@@ -996,7 +998,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 }
                 b'c' => {
                     // c:863
-                    match crate::ported::subst::equalsubstr(&sline, false, false) {
+                    match equalsubstr(&sline, false, false) {
                         // c:864
                         Some(new) => sline = new,
                         None => {
@@ -1310,8 +1312,8 @@ pub fn strinbeg(dohist: i32) {
     // c:1033
     strin.fetch_add(1, SeqCst); // c:1035
     hbegin(dohist); // c:1036
-    crate::ported::lex::lexinit(); // c:1037
-    crate::ported::parse::init_parse_status(); // c:1042
+    lexinit(); // c:1037
+    init_parse_status(); // c:1042
 }
 
 /// Port of `void strinend(void)` from `Src/hist.c:1049-1056`.

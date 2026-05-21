@@ -20,10 +20,11 @@ use std::collections::HashMap;
 
 use crate::ported::options::opt_state_set;
 use crate::ported::params::{convbase, getsparam, unsetparam};
-use crate::ported::zsh_h::Nularg;
-
+use crate::ported::utils::zerr;
 /// Re-export of `mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
-pub use crate::ported::zsh_h::{MN_FLOAT, MN_INTEGER, MN_UNSET, mnumber};
+pub use crate::ported::zsh_h::{Nularg, MN_FLOAT, MN_INTEGER, MN_UNSET, mnumber};
+use crate::zsh_h::{PM_EFLOAT, PM_FFLOAT, PM_INTEGER};
+
 /// Re-export of `MN_FLOAT` (defined in zsh_h.rs as the Src/zsh.h:104 port).
 /// Re-export of `MN_INTEGER` (defined in zsh_h.rs as the Src/zsh.h:103 port).
 /// Re-export of `MN_UNSET` (defined in zsh_h.rs as the Src/zsh.h:105 port).
@@ -1643,10 +1644,9 @@ pub(crate) fn pop() -> mnumber {
 /// re-typed to match the parameter's type (C c:1014-1027).
 pub(crate) fn setmathvar(name: &str, val: mnumber) -> mnumber {
     // c:972
-    use crate::ported::zsh_h::{PM_EFLOAT, PM_FFLOAT, PM_INTEGER};
     // c:996-1001 — bad-lvalue check (empty name).
     if name.is_empty() {
-        crate::ported::utils::zerr("bad math expression: lvalue required");
+        zerr("bad math expression: lvalue required");
         return mnumber {
             l: 0,
             d: 0.0,
@@ -2671,7 +2671,7 @@ pub(crate) fn mathevalarg(expr: &str) -> i64 {
     // c:1530-1532 — empty after Nularg-skip is a HARD error here.
     if s.is_empty() {
         // c:1530
-        crate::ported::utils::zerr("bad math expression: empty string"); // c:1531
+        zerr("bad math expression: empty string"); // c:1531
         return 0; // c:1532
     }
     // c:1534 — `mathevall(s, MPREC_ARG, ss)`. The Rust port doesn't yet

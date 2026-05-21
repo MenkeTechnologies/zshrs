@@ -8,7 +8,7 @@
 
 use std::cell::RefCell;
 pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
-use crate::ported::zsh_h::OPT_ISSET;
+use crate::ported::zsh_h::{options, OPT_ISSET};
 
 
 // ===========================================================
@@ -412,7 +412,7 @@ pub fn bin_mem(
     // c:1722
     _name: &str,
     _argv: &[String],
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     let m_l: i64 = 0; // c:1727 low addr
