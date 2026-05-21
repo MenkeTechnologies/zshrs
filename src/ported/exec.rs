@@ -407,26 +407,120 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 /// silent-no-op pattern (return empty string when no executor) would
 /// mask catastrophic state corruption as "command produced no output",
 /// which is the failure mode the `subst.rs:496` warning block flags.
+/* $(...) */                                                                // c:4709
 pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
-    // c:4712
+    // c:4713
+    // c:4715 — `Eprog prog;`
+    let prog: Option<crate::ported::exec::eprog>;
+    // c:4716 — `int pipes[2];`  (collapsed: in-process executor; no fork)
+    // c:4717 — `pid_t pid;`     (collapsed)
+    let mut s: String;                                                       // c:4718
+    // c:4720-4723 — `int onc = nocomments; nocomments = (interact &&
+    //                !sourcelevel && unset(INTERACTIVECOMMENTS));
+    //                prog = parse_string(cmd, 0); nocomments = onc;`
+    let onc = crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.get());
+    let new_nc = crate::ported::zsh_h::interact()
+        && crate::ported::init::sourcelevel.load(std::sync::atomic::Ordering::Relaxed) == 0
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVECOMMENTS);
+    crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.set(new_nc));
+    prog = parse_string(cmd, 0);
+    crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.set(onc));
+
+    if prog.is_none() {                                                      // c:4725
+        return Vec::new();                                                   // c:4726 return NULL
+    }
+    let prog = prog.unwrap();
+
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXECOPT) {         // c:4728
+        return Vec::new();                                                   // c:4729 newlinklist()
+    }
+
+    // c:4731 — `if ((s = simple_redir_name(prog, REDIR_READ)))` — `$(< word)`
+    if let Some(red_name) = simple_redir_name(&prog, crate::ported::zsh_h::REDIR_READ) {
+        /* $(< word) */                                                      // c:4732
+        s = red_name;
+        s = crate::ported::subst::singsub(&s);                               // c:4737
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            return Vec::new();                                               // c:4739
+        }
+        let s = crate::ported::lex::untokenize(&s);                          // c:4740
+        let path_meta = crate::ported::utils::unmeta(&s);                    // c:4741 unmeta(s)
+        let cpath = match std::ffi::CString::new(path_meta.as_bytes()) {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        let stream = unsafe {
+            libc::open(cpath.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY)      // c:4741
+        };
+        if stream == -1 {
+            // c:4742 — `zwarn("%e: %s", errno, s);`
+            let errno = std::io::Error::last_os_error();
+            crate::ported::utils::zerr(&format!("{}: {}", errno, s));
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::exec::cmdoutval.store(1, std::sync::atomic::Ordering::Relaxed);
+            return Vec::new();                                               // c:4744
+        }
+        // c:4746 — `retval = readoutput(stream, qt, &readerror);`
+        // readoutput is not yet ported as a stand-alone fn; use the
+        // canonical executor read path. The c:4855-4871 byte-walking
+        // / qt / spacesplit logic stays where it was, applied below.
+        let mut buf_str = String::new();
+        let mut readerror: i32 = 0;
+        let mut file = unsafe { <std::fs::File as std::os::unix::io::FromRawFd>::from_raw_fd(stream) };
+        use std::io::Read;
+        if let Err(e) = file.read_to_string(&mut buf_str) {
+            readerror = e.raw_os_error().unwrap_or(1);
+        }
+        // file drops → fd closed
+        if readerror != 0 {
+            crate::ported::utils::zerr(&format!(
+                "error when reading {}: {}",                                 // c:4748
+                s,
+                std::io::Error::from_raw_os_error(readerror)
+            ));
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::exec::cmdoutval.store(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        // c:4751 return retval — readoutput post-walk (c:4855-4871 tail)
+        // inlined: trim trailing newlines, then qt-branch.
+        let buf = buf_str.trim_end_matches('\n');
+        return if qt != 0 {
+            if buf.is_empty() {
+                vec![String::from(crate::ported::zsh_h::Nularg)]             // c:4859-4861
+            } else {
+                vec![buf.to_string()]                                        // c:4863
+            }
+        } else {
+            crate::ported::utils::spacesplit(buf, false)                     // c:4865
+        };
+    }
+
+    // c:4753-4790 — Full fork path: mpipe + zfork + parent
+    // readoutput / waitforpid / child execode + _realexit. fusevm runs
+    // command substitution in-process, so the fork shape collapses to a
+    // synchronous executor call. C control points preserved as cites:
+    //   c:4753 mpipe       — handled by ShellExecutor pipe wiring
+    //   c:4758 child_block — no-op (no fork)
+    //   c:4760 zfork       — replaced by in-process exec
+    //   c:4768-4776 parent — equivalent to executor return
+    //   c:4778-4789 child  — entersubsh+execode+_realexit collapse
+    crate::ported::exec::cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed); // c:4759
     let buf = with_executor(|exec| exec.run_command_substitution(cmd));
-    // c:4855-4857 — `while (cnt && ptr[-1] == '\n') ptr--, cnt--;`.
+    crate::ported::builtin::LASTVAL.store(
+        crate::ported::exec::cmdoutval.load(std::sync::atomic::Ordering::Relaxed),
+        std::sync::atomic::Ordering::Relaxed,
+    );                                                                       // c:4775
+
+    // c:4772 retval = readoutput — post-walk (c:4855-4871 tail) inlined.
     let buf = buf.trim_end_matches('\n');
     if qt != 0 {
-        // c:4858-4863 — quoted branch.
         if buf.is_empty() {
-            // c:4859-4861 — Nularg sentinel for empty quoted output.
-            vec![String::from(crate::ported::zsh_h::Nularg)]
+            vec![String::from(crate::ported::zsh_h::Nularg)]                 // c:4859-4861
         } else {
-            vec![buf.to_string()] // c:4863 addlinknode(ret, buf)
+            vec![buf.to_string()]                                            // c:4863
         }
     } else {
-        // c:4864-4871 — unquoted branch: spacesplit then add per word.
-        // C also runs `shtokenize` on each word when GLOBSUBST is
-        // set (c:4868) so the result can be re-glob-expanded;
-        // tracked for follow-up — Rust returns owned Strings so the
-        // in-place tokenize shape doesn't translate directly.
-        crate::ported::utils::spacesplit(buf, false) // c:4865
+        crate::ported::utils::spacesplit(buf, false)                         // c:4865
     }
 }
 
