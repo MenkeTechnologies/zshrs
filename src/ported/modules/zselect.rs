@@ -7,6 +7,7 @@
 //! port matches: zero types. Two fns: `bin_zselect` and the
 //! static helper `handle_digits`, plus the 6 module loaders.
 
+use crate::ported::params::isident;
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::module;
 use std::sync::{Mutex, OnceLock};
@@ -125,7 +126,7 @@ pub fn bin_zselect(
                         // c:99-102 — `idigit(*argptr) || !isident(argptr)` check.
                         if arg_str.is_empty()
                             || arg_str.chars().next().unwrap().is_ascii_digit()
-                            || !is_ident(&arg_str)
+                            || !isident(&arg_str)
                         {
                             zwarnnam(nam, &format!("invalid array name: {}", arg_str));
                             return 1;
@@ -343,27 +344,6 @@ pub fn finish_(m: *const module) -> i32 {
     // c:325
     0 // c:325
 }
-
-/// WARNING: NOT IN ZSELECT.C — Rust char predicate equivalent to C `iident()`
-/// (equivalent C logic at Src/Modules/zsh.h:1700).
-/// `isident(s)` predicate — identifier validity check matching
-/// zsh's `isident()` (Src/utils.c). True iff `s` is non-empty,
-/// every char is alnum or `_`, and the first char is not a digit.
-fn is_ident(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
-    if first.is_ascii_digit() {
-        return false;
-    }
-    if !(first.is_alphanumeric() || first == '_') {
-        return false;
-    }
-    chars.all(|c| c.is_alphanumeric() || c == '_')
-}
-
 
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 

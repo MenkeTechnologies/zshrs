@@ -18,7 +18,7 @@
 use crate::ported::utils::{metafy, zwarnnam};
 use std::sync::{Mutex, OnceLock};
 use crate::ported::compat::zgettime;
-use crate::ported::params::{getsparam, setiparam, setsparam};
+use crate::ported::params::{getsparam, isident, setiparam, setsparam};
 use crate::ported::zsh_system_h::timespec;
 use crate::ported::zsh_h::{features, options, OPT_ARG, OPT_ISSET, MAX_OPS, module};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
@@ -99,7 +99,7 @@ pub fn output_strftime(
         None
     };
     if let Some(name) = scalar {
-        if !is_ident(name) {
+        if !isident(name) {
             // c:110 isident check
             zwarnnam(nam, &format!("not an identifier: {}", name)); // c:111
             return 1; // c:112
@@ -374,25 +374,6 @@ pub fn finish_(m: *const module) -> i32 {
     //                    via cleanup_'s setfeatureenables(...).
     0
 }
-
-/// WARNING: NOT IN DATETIME.C — Rust char predicate equivalent to C `iident()`
-/// (equivalent C logic at Src/Modules/zsh.h:1700).
-/// Identifier validity check matching zsh's `isident()` (Src/utils.c).
-fn is_ident(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
-    if first.is_ascii_digit() {
-        return false;
-    }
-    if !(first.is_alphanumeric() || first == '_') {
-        return false;
-    }
-    chars.all(|c| c.is_alphanumeric() || c == '_')
-}
-
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
