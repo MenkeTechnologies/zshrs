@@ -6765,10 +6765,19 @@ pub fn bin_getopts(
                 setiparam("OPTIND", zoptind as i64);
                 return 0;
             }
-            let p_arg = args[zoptind as usize].clone();
-            zoptind += 1;
+            // c:5763 — `p = ztrdup(args[zoptind++]);` — read args[zoptind]
+            // then post-increment. zoptind now points one past the
+            // arg-bearing flag's index.
+            let p_arg = args[zoptind as usize].clone();                      // c:5763
+            zoptind += 1;                                                    // c:5763 post-increment
             setsparam("OPTARG", &p_arg); // c:5765
-            optcind = 0;
+            // c:5771 — `optcind = 0; zoptind++;` — bump past the
+            // consumed value arg too, so the NEXT getopts call sees
+            // the arg AFTER the value. Previous Rust port skipped this
+            // second increment, so the next iter re-read the consumed
+            // value as if it were a new flag.
+            optcind = 0;                                                     // c:5771
+            zoptind += 1;                                                    // c:5772
         } else {
             // c:5774 — `p = metafy(str+optcind, lenstr-optcind, META_DUP);`
             let p_arg = str_buf[(optcind as usize)..].to_string();
