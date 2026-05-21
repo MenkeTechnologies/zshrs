@@ -674,7 +674,7 @@ pub fn bin_zle(
         (b'I', Box::new(|_| bin_zle_invalidate()), 0, 0), // c:359
         (b'f', Box::new(bin_zle_flags), 1, -1), // c:360
         (b'F', Box::new(bin_zle_fd), 0, 2),    // c:361
-        (b'T', Box::new(bin_zle_transform), 0, 2), // c:362
+        (b'T', Box::new(|a| bin_zle_transform(a, ops)), 0, 2), // c:362
         (0u8, Box::new(bin_zle_call), 0, -1),  // c:363 — sentinel: no flag → bin_zle_call.
     ];
 
@@ -1569,33 +1569,97 @@ pub fn bin_zle_fd(args: &[String]) -> i32 {
 /// Registers the transformation via `ShellExecutor.hook_functions`
 /// under the synthetic hook name `zle-transform-<tcfn>` so the
 /// redisplay path can find it. Args validate first.
-pub fn bin_zle_transform(args: &[String]) -> i32 {
+pub fn bin_zle_transform(args: &[String], ops: &options) -> i32 {
     // c:955
-    // c:955 — at most 2 args.
-    if args.len() > 2 {
-        return 1;
-    }
-    // C body c:965-1004 — only the `tc` transform exists in C; the
-    // global `tcout_func_name` (zle_refresh.c:246) holds the user
-    // function name. The Rust port mirrors the same single slot.
-    if let Ok(mut name) = TCOUT_FUNC_NAME.lock() {
-        match args.len() {
-            0 | 1 => {
-                // No-arg listing path or `-r` reset — clear the slot.
-                if args.first().map(|s| s.as_str()) != Some("tc") {
-                    *name = None; // c:984
+    // c:957-963 — badargs convention:
+    //   -1: too few arguments
+    //    0: just right
+    //    1: too many arguments
+    //    2: first argument not recognised
+    let mut badargs: i32 = 0; // c:963
+
+    if OPT_ISSET(ops, b'L') {
+        // c:965 — `-L`: list the current tc handler.
+        if !args.is_empty() {
+            // c:966
+            if args.len() > 1 {
+                // c:967
+                badargs = 1; // c:968
+            } else if args[0] != "tc" {
+                // c:969
+                badargs = 2; // c:970
+            }
+        }
+        if badargs == 0 {
+            // c:973
+            let cur = TCOUT_FUNC_NAME.lock().ok().and_then(|n| n.clone());
+            if let Some(fname) = cur {
+                // c:973
+                print!("zle -T tc "); // c:974
+                print!("{}", crate::ported::utils::quotedzputs(&fname)); // c:975
+                println!(); // c:976
+            }
+        }
+    } else if OPT_ISSET(ops, b'r') {
+        // c:978 — `-r`: reset the tc handler.
+        if args.is_empty() {
+            // c:979
+            badargs = -1; // c:980
+        } else if args.len() > 1 {
+            // c:981
+            badargs = 1; // c:982
+        } else if args[0] == "tc" {
+            // c:983 — `if (tcout_func_name) { zsfree; tcout_func_name = NULL; }`.
+            // The C `if (tcout_func_name)` guard avoids a double-free
+            // before the value is reset.
+            if let Ok(mut name) = TCOUT_FUNC_NAME.lock() {
+                if name.is_some() {
+                    // c:983
+                    *name = None; // c:985 zsfree + NULL
                 }
             }
-            2 => {
-                if args[0] == "tc" {
-                    // c:992
-                    *name = Some(args[1].clone()); // c:996
+        } else {
+            // C falls through silently when args[0] != "tc"; the only
+            // `tc` transform exists, so anything else is a no-op.
+            badargs = 2;
+        }
+    } else {
+        // c:987 — default `zle -T name fname` form.
+        if args.is_empty() || args.len() < 2 {
+            // c:988
+            badargs = -1; // c:989 — we've already checked args <= 2.
+        } else {
+            // c:991
+            if args[0] == "tc" {
+                // c:992
+                if let Ok(mut name) = TCOUT_FUNC_NAME.lock() {
+                    // c:993 — `if (tcout_func_name) zsfree(tcout_func_name);`.
+                    *name = Some(args[1].clone()); // c:996 ztrdup
                 }
+            } else {
+                badargs = 2; // c:998
             }
-            _ => {}
         }
     }
-    0
+
+    if badargs != 0 {
+        // c:1003
+        if badargs == 2 {
+            // c:1004
+            zwarnnam(
+                "zle",
+                &format!("-T: no such transformation '{}'", args[0]), // c:1005
+            );
+        } else {
+            // c:1006
+            let way = if badargs > 0 { "many" } else { "few" }; // c:1007
+            zwarnnam("zle", &format!("too {} arguments for option -T", way));
+            // c:1008
+        }
+        return 1; // c:1010
+    }
+
+    0 // c:1013
 }
 
 /// Port of `init_thingies()` from `Src/Zle/zle_thingy.c:1022`.
@@ -1760,6 +1824,90 @@ mod tests {
         ]);
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:791-794 — unknown option char → return 1");
+    }
+
+    /// `Src/Zle/zle_thingy.c:988-989` — `bin_zle_transform` rejects
+    /// too few args (default form needs exactly 2). Pin: zero args →
+    /// badargs=-1 → return 1.
+    #[test]
+    fn bin_zle_transform_rejects_too_few_args() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        let ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zle_transform(&[], &ops);
+        assert_eq!(r, 1, "c:989-1010 — too few args → 1");
+    }
+
+    /// `Src/Zle/zle_thingy.c:992-996` — default form `zle -T tc fname`
+    /// sets TCOUT_FUNC_NAME.
+    #[test]
+    fn bin_zle_transform_default_form_sets_tc_handler() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        *TCOUT_FUNC_NAME.lock().unwrap() = None;
+        let ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zle_transform(
+            &["tc".to_string(), "my_handler".to_string()],
+            &ops,
+        );
+        assert_eq!(r, 0, "c:992-996 — valid `tc fname` → 0");
+        assert_eq!(
+            TCOUT_FUNC_NAME.lock().unwrap().as_deref(),
+            Some("my_handler"),
+            "c:996 — name should be stored"
+        );
+    }
+
+    /// `Src/Zle/zle_thingy.c:983-985` — `-r tc` resets the handler.
+    #[test]
+    fn bin_zle_transform_r_clears_tc_handler() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        *TCOUT_FUNC_NAME.lock().unwrap() = Some("preset".to_string());
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b'r' as usize] = 1;
+        let r = bin_zle_transform(&["tc".to_string()], &ops);
+        assert_eq!(r, 0, "c:983-985 — `-r tc` → 0");
+        assert!(
+            TCOUT_FUNC_NAME.lock().unwrap().is_none(),
+            "c:985 — name should be cleared"
+        );
+    }
+
+    /// `Src/Zle/zle_thingy.c:969-970` — unknown transform name (anything
+    /// other than `tc`) → badargs=2 → return 1.
+    #[test]
+    fn bin_zle_transform_rejects_unknown_transform() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b'L' as usize] = 1;
+        let r = bin_zle_transform(&["bogus".to_string()], &ops);
+        assert_eq!(r, 1, "c:969-970/1005 — unknown transform → 1");
     }
 
     /// `Src/Zle/zle_thingy.c:691-693` — `bin_zle_flags` rejects unknown
