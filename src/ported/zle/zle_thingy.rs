@@ -1458,9 +1458,12 @@ pub fn bin_zle_call(args: &[String]) -> i32 {
     //   setbindk, setlbindk); unrefthingy(t);`. Rust execzlefunc takes
     // (name, args); setbindk/setlbindk plumbing pending the wider sig.
     rthingy(&wname); // c:800
-    let _ = setbindk;
-    let _ = setlbindk;
-    let ret = crate::ported::zle::zle_main::execzlefunc(&wname, &argv); // c:806
+    // c:806 — `ret = execzlefunc(t, args, setbindk, setlbindk)`.
+    // Now that execzlefunc takes the 4-arg C sig, thread the flags
+    // collected from `-w` (setbindk) and `-f nolast` (setlbindk).
+    let ret = crate::ported::zle::zle_main::execzlefunc(
+        &wname, &argv, setbindk, setlbindk,
+    ); // c:806
     unrefthingy(&wname); // c:807
 
     // c:808-809 — `if (saveflag) zmod = modsave;`.
@@ -1852,7 +1855,7 @@ pub fn getwidgettarget(name: &str) -> Option<String> {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Get-or-init access to the global thingytab.
-fn thingytab() -> &'static Mutex<HashMap<String, Thingy>> {
+pub fn thingytab() -> &'static Mutex<HashMap<String, Thingy>> {
     THINGYTAB.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

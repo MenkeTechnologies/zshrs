@@ -688,7 +688,7 @@ pub fn execimmortal(func: &str, args: &[String]) -> i32 {
     if rthingy_nocreate(&dotted) {
         // c:1406
         // c:1407 — `return execzlefunc(immortal, args, 0, 0)`.
-        return execzlefunc(&dotted, args);
+        return execzlefunc(&dotted, args, 0, 0);
     }
     1 // c:1409
 }
@@ -709,14 +709,42 @@ pub fn execimmortal(func: &str, args: &[String]) -> i32 {
 /// Bindk/metafy boundary management lives on the per-thread Zle
 /// struct already.
 /// Port of `execzlefunc(Thingy func, char **args, int set_bindk, int set_lbindk)` from `Src/Zle/zle_main.c:1420`.
-/// WARNING: param names don't match C — Rust=(name, args) vs C=(func, args, set_bindk, set_lbindk)
-pub fn execzlefunc(name: &str, args: &[String]) -> i32 {
+pub fn execzlefunc(
+    name: &str,
+    args: &[String],
+    set_bindk: i32,
+    set_lbindk: i32,
+) -> i32 {
     // c:1420
     // c:1420 — `if (!func) return 1`.
     if !rthingy_nocreate(name) {
         // c:1422
         return 1;
     }
+
+    // c:1426-1427 — `Thingy save_bindk = bindk; Thingy save_lbindk = lbindk;`.
+    let save_bindk = BINDK.lock().ok().and_then(|b| b.clone());
+    let _save_lbindk = LBINDK.lock().ok().and_then(|b| b.clone());
+
+    // c:1429-1430 — `if (set_bindk) bindk = func;`. Install the
+    // active Thingy on BINDK so bin_zle_flags + other widgets see the
+    // correct "current key binding".
+    if set_bindk != 0 {
+        // c:1429
+        let t = crate::ported::zle::zle_thingy::thingytab()
+            .lock()
+            .ok()
+            .and_then(|tab| tab.get(name).cloned());
+        if let Some(t) = t {
+            *BINDK.lock().unwrap() = Some(t); // c:1430
+        }
+    }
+    // c:1435-1436 — `if (set_lbindk) refthingy(save_lbindk);`.
+    // The refthingy call increments the rc on LBINDK so inner widgets
+    // (which may overwrite it) can't free it under us. The Rust
+    // analog is just to keep the local clone around for the duration
+    // of the call — `_save_lbindk` holds it.
+    let _ = set_lbindk; // c:1435 — captured via _save_lbindk lifetime
 
     // c:1437 — `if (func->widget->flags & WIDGET_INT)` — internal
     // widget dispatch. Without the Widget union in scope we route
@@ -737,11 +765,18 @@ pub fn execzlefunc(name: &str, args: &[String]) -> i32 {
         // c:1530 — capture LASTVAL after the call. dispatch_function_call
         // sets LASTVAL itself; mirror the return through.
         LASTVAL.store(rc, Ordering::Relaxed);
+        // c:1596-1598 — restore BINDK on exit. C: `bindk = save_bindk;`
+        if set_bindk != 0 {
+            *BINDK.lock().unwrap() = save_bindk; // c:1597
+        }
         return rc;
     }
 
     // c:1597 — fall through: widget exists in thingytab but has no
-    // shfunc binding. Return success with no side effect.
+    // shfunc binding. Restore BINDK and return.
+    if set_bindk != 0 {
+        *BINDK.lock().unwrap() = save_bindk; // c:1597
+    }
     0
 }
 
@@ -2078,7 +2113,7 @@ fn execute_widget(widget: &widget) {
             // so widget side-effects (BUFFER/CURSOR/etc.) land on
             // the live ZLE state synchronously rather than waiting
             // for a host drain pass.
-            let _ = execzlefunc(name, &[]);
+            let _ = execzlefunc(name, &[], 0, 0);
         }
         _ => {}
     }
