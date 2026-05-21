@@ -1810,6 +1810,251 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
     None // c:952
 }
 
+/// Port of `static void addfd(int forked, int *save, struct multio **mfds,
+///                             int fd1, int fd2, int rflag, char *varid)`
+/// from `Src/exec.c:2397`.
+///
+/// C body (~100 lines, three branches):
+/// ```c
+/// if (varid) {
+///     /* {varid}>file form — move fd above 10 and bind $varid to it */
+/// } else if (!mfds[fd1] || unset(MULTIOS)) {
+///     /* new multio OR MULTIOS off — first redir on this fd */
+/// } else {
+///     /* additional redir on a fd that's already a multio (split or extend) */
+/// }
+/// ```
+///
+/// Register `fd2` (already-open) as a redirection target for `fd1`.
+/// Three branches: `varid` writes the moved fd to `$varid` and bumps
+/// fdtable[fd1] = FDT_EXTERNAL; new-multio path saves the original fd1
+/// (when `!forked`) and stamps mfds[fd1] as a single-entry struct;
+/// extend-multio path either splits a ct=1 stream into a pipe + 2 fds
+/// via `mpipe`, or appends another fd to an already-split stream
+/// (re-allocating `mfds[fd1]` past the MULTIOUNIT boundary).
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// `hrealloc` at c:2485 grows the multio struct past MULTIOUNIT in C
+/// (variable-length tail). The Rust port `multio` (zsh_h.rs:1390)
+/// declares `fds: [i32; MULTIOUNIT]` (fixed 8-slot array). The
+/// extend-past-MULTIOUNIT branch falls back to a zerr() since we
+/// can't append past the array bound. Re-port `multio` as
+/// `Vec<i32>` (or a sized-tail variant) to remove this cap.
+///
+/// `fdtable[fdN] |= FDT_SAVED_MASK` at c:2440 — Rust fdtable_set
+/// stores the int value but doesn't expose a bitwise-OR setter; we
+/// re-read + OR + re-store as two atomic-feeling steps.
+/// =============================================================
+pub fn addfd(
+    forked: i32,
+    save: &mut [i32; 10],
+    mfds: &mut [Option<Box<crate::ported::zsh_h::multio>>; 10],
+    fd1: i32,
+    fd2: i32,
+    rflag: i32,
+    varid: Option<&str>,
+) {
+    // c:2397
+    use crate::ported::utils::{fdtable_get, fdtable_set, movefd, redup, zclose};
+    use crate::ported::zsh_h::{
+        isset, unset, FDT_EXTERNAL, FDT_INTERNAL, FDT_SAVED_MASK, MULTIOS, MULTIOUNIT,
+    };
+    let _ = isset;
+    let mut pipes: [i32; 2] = [-1; 2]; // c:2400
+
+    // c:2402-2417 — `if (varid)` branch — {varid}>file shape.
+    if let Some(vid) = varid {
+        // c:2402
+        let fd_moved = movefd(fd2); // c:2404
+        if fd_moved == -1 {
+            // c:2405
+            zerr(&format!(
+                // c:2406
+                "cannot move fd {}: {}",
+                fd2,
+                std::io::Error::last_os_error()
+            ));
+            return; // c:2407
+        }
+        // c:2409 — `fdtable[fd1] = FDT_EXTERNAL;`
+        fdtable_set(fd_moved, FDT_EXTERNAL);
+        // c:2410 — `setiparam(varid, (zlong)fd1);`
+        crate::ported::params::setiparam(vid, fd_moved as i64);
+        // c:2415-2416 — `if (errflag) zclose(fd1);`
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            // c:2415
+            let _ = zclose(fd_moved); // c:2416
+        }
+        return;
+    }
+    // c:2418 — `else if (!mfds[fd1] || unset(MULTIOS))`
+    let fd1u = fd1 as usize;
+    if fd1u >= mfds.len() {
+        return;
+    }
+    if mfds[fd1u].is_none() || unset(MULTIOS) {
+        // c:2418
+        if mfds[fd1u].is_none() {
+            // c:2419 — `starting a new multio`
+            // c:2420 — `mfds[fd1] = zhalloc(sizeof(multio));`
+            mfds[fd1u] = Some(Box::new(crate::ported::zsh_h::multio {
+                ct: 0,
+                rflag: 0,
+                pipe: -1,
+                fds: [-1; MULTIOUNIT],
+            }));
+            // c:2421 — `if (!forked && save[fd1] == -2)`
+            if forked == 0 && save[fd1u] == -2 {
+                if fd1 == fd2 {
+                    // c:2422
+                    save[fd1u] = -1; // c:2423
+                } else {
+                    // c:2424
+                    let fd_n = movefd(fd1); // c:2425
+                    if fd_n < 0 {
+                        // c:2430
+                        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                        if e != libc::EBADF {
+                            // c:2431
+                            zerr(&format!(
+                                // c:2432
+                                "cannot duplicate fd {}: {}",
+                                fd1,
+                                std::io::Error::from_raw_os_error(e)
+                            ));
+                            mfds[fd1u] = None; // c:2433
+                            closemnodes(mfds); // c:2434
+                            return; // c:2435
+                        }
+                    } else {
+                        // c:2438-2439 — DPUTS check that the saved fd is FDT_INTERNAL.
+                        crate::DPUTS!(
+                            fdtable_get(fd_n) != FDT_INTERNAL,
+                            "Saved file descriptor not marked as internal"
+                        );
+                        // c:2440 — `fdtable[fdN] |= FDT_SAVED_MASK;`
+                        let cur = fdtable_get(fd_n);
+                        fdtable_set(fd_n, cur | FDT_SAVED_MASK);
+                    }
+                    save[fd1u] = fd_n; // c:2442
+                }
+            }
+        }
+        // c:2446-2447 — `if (!varid) redup(fd2, fd1);` (varid already
+        // handled above; this is the non-varid branch.)
+        let _ = redup(fd2, fd1);
+        // c:2448-2450 — `mfds[fd1]->ct=1; mfds[fd1]->fds[0]=fd1; mfds[fd1]->rflag=rflag;`
+        if let Some(mn) = mfds[fd1u].as_mut() {
+            mn.ct = 1; // c:2448
+            mn.fds[0] = fd1; // c:2449
+            mn.rflag = rflag; // c:2450
+        }
+    } else {
+        // c:2451 — extend existing multio.
+        // c:2452-2456 — rflag mismatch check.
+        let cur_rflag = mfds[fd1u].as_ref().map(|m| m.rflag).unwrap_or(0);
+        if cur_rflag != rflag {
+            // c:2452
+            zerr(&format!("file mode mismatch on fd {}", fd1)); // c:2453
+            closemnodes(mfds); // c:2454
+            return; // c:2455
+        }
+        let cur_ct = mfds[fd1u].as_ref().map(|m| m.ct).unwrap_or(0);
+        if cur_ct == 1 {
+            // c:2457 — split the stream.
+            // c:2458 — `int fdN = movefd(fd1);`
+            let fd_n = movefd(fd1);
+            if fd_n < 0 {
+                // c:2459
+                zerr(&format!(
+                    // c:2460
+                    "multio failed for fd {}: {}",
+                    fd1,
+                    std::io::Error::last_os_error()
+                ));
+                closemnodes(mfds); // c:2461
+                return; // c:2462
+            }
+            if let Some(mn) = mfds[fd1u].as_mut() {
+                mn.fds[0] = fd_n; // c:2464
+            }
+            // c:2465 — `fdN = movefd(fd2);`
+            let fd_n2 = movefd(fd2);
+            if fd_n2 < 0 {
+                // c:2466
+                zerr(&format!(
+                    // c:2467
+                    "multio failed for fd {}: {}",
+                    fd2,
+                    std::io::Error::last_os_error()
+                ));
+                closemnodes(mfds); // c:2468
+                return; // c:2469
+            }
+            if let Some(mn) = mfds[fd1u].as_mut() {
+                mn.fds[1] = fd_n2; // c:2471
+            }
+            // c:2472 — `mpipe(pipes)`
+            if mpipe(&mut pipes) < 0 {
+                // c:2472
+                zerr(&format!(
+                    // c:2473
+                    "multio failed for fd {}: {}",
+                    fd2,
+                    std::io::Error::last_os_error()
+                ));
+                closemnodes(mfds); // c:2474
+                return; // c:2475
+            }
+            // c:2477 — `mfds[fd1]->pipe = pipes[1 - rflag];`
+            if let Some(mn) = mfds[fd1u].as_mut() {
+                mn.pipe = pipes[(1 - rflag) as usize];
+            }
+            // c:2478 — `redup(pipes[rflag], fd1);`
+            let _ = redup(pipes[rflag as usize], fd1);
+            // c:2479 — `mfds[fd1]->ct = 2;`
+            if let Some(mn) = mfds[fd1u].as_mut() {
+                mn.ct = 2;
+            }
+        } else {
+            // c:2480 — extend already-split stream.
+            // c:2482-2486 — hrealloc past MULTIOUNIT boundary.
+            // WARNING DIVERGENCE: Rust `multio.fds` is fixed-size
+            // `[i32; MULTIOUNIT]` (zsh_h.rs:1395); the C realloc grows
+            // the trailing array, but Rust can't. Bail with zerr when
+            // we'd exceed the bound. Re-port multio as Vec<i32> to fix.
+            if cur_ct as usize >= MULTIOUNIT {
+                zerr(&format!(
+                    "multio failed for fd {}: too many outputs (MULTIOUNIT limit, Rust port cap)",
+                    fd1
+                ));
+                closemnodes(mfds);
+                return;
+            }
+            // c:2487 — `if ((fdN = movefd(fd2)) < 0)`
+            let fd_n = movefd(fd2);
+            if fd_n < 0 {
+                zerr(&format!(
+                    // c:2488
+                    "multio failed for fd {}: {}",
+                    fd2,
+                    std::io::Error::last_os_error()
+                ));
+                closemnodes(mfds); // c:2489
+                return; // c:2490
+            }
+            // c:2492 — `mfds[fd1]->fds[mfds[fd1]->ct++] = fdN;`
+            if let Some(mn) = mfds[fd1u].as_mut() {
+                let slot = mn.ct as usize;
+                if slot < mn.fds.len() {
+                    mn.fds[slot] = fd_n;
+                    mn.ct += 1;
+                }
+            }
+        }
+    }
+}
+
 /// Port of `static void closemn(struct multio **mfds, int fd, int type)`
 /// from `Src/exec.c:2273`.
 ///
