@@ -23,7 +23,7 @@ use crate::ported::input::{inpop, inpush};
 use crate::ported::parse::HDOCS;
 use crate::ported::prompt::{cmdpop, cmdpush, CMDSTACK};
 use crate::ported::string::dupstring_wlen;
-use crate::ported::utils::{errflag, zerr, ERRFLAG_ERROR};
+use crate::ported::utils::{errflag, spckword, zerr, ERRFLAG_ERROR};
 use crate::ported::zle::compcore::{WB, WE};
 use crate::ported::zsh_h::{
     alias, interact, isset, lex_stack, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals,
@@ -3002,49 +3002,23 @@ pub fn exalias() -> bool {
         && crate::ported::hist::hist_is_in_word() == 0
         && (isset(CORRECTALL) || (isset(CORRECT) && LEX_INCMDPOS.get()))
     {
-        // Build candidate list: command names in $PATH, shell
-        // functions, aliases, builtins. C's spckword scans these
-        // internally; our Rust spckword (utils.rs:1802) takes a
-        // pre-built list, so we assemble here, run, then mutate
-        // tokstr in place when a correction crosses the distance
-        // threshold (matches C's `spckword(&tokstr, 1, incmdpos, 1);`
-        // contract — replacing tokstr with the corrected form).
-        let candidates: Vec<String> = {
-            let mut v: Vec<String> = Vec::new();
-            // Shell functions.
-            if let Ok(t) = crate::ported::hashtable::shfunctab_lock().read() {
-                v.extend(t.iter().map(|(k, _)| k.clone()));
-            }
-            // Aliases.
-            if let Ok(t) = aliastab_lock().read() {
-                v.extend(t.iter().map(|(k, _)| k.clone()));
-            }
-            // Command names (from cmdnamtab — hashed $PATH lookups).
-            if let Ok(t) = crate::ported::hashtable::cmdnamtab_lock().read() {
-                v.extend(t.iter().map(|(k, _)| k.clone()));
-            }
-            v
-        };
-        let refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
-        // C calls `spckword(&tokstr, ...)` with the raw tokstr; this
-        // runs BEFORE alias / reswd lookup below, BEFORE `lextext`
-        // is computed. Read `tokstr` directly here.
+        // c:1962 — `spckword(&tokstr, 1, incmdpos, 1);`. The canonical
+        // port at utils.rs::spckword scans the right hashtables
+        // internally (was inline-built here before the port matched C).
         if let Some(word) = tokstr() {
-            let word_untok = if has_token(&word) {
+            let mut buf = if has_token(&word) {
                 untokenize(&word)
             } else {
                 word.clone()
             };
-            if let Some(corrected) = crate::ported::utils::spckword(&word_untok, &refs, 3) {
-                if corrected != word_untok {
-                    // c:1962 spckword `doerr=1` arg → prompts user.
-                    // Without per-call interactive integration, accept
-                    // the correction silently when CORRECTALL is set,
-                    // skip otherwise (matches the conservative path).
-                    if isset(CORRECTALL) {
-                        set_tokstr(Some(corrected));
-                    }
-                }
+            crate::ported::utils::spckword(
+                &mut buf,
+                1, // c:1962 hist=1
+                if LEX_INCMDPOS.get() { 1 } else { 0 }, // c:1962 cmd=incmdpos
+                1, // c:1962 ask=1
+            );
+            if buf != word {
+                set_tokstr(Some(buf));
             }
         }
     }

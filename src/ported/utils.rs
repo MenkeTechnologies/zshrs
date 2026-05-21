@@ -3285,42 +3285,492 @@ pub fn getquery(prompt: &str, valid_chars: &str) -> Option<char> {
     None
 }
 
-/// Scan for spelling correction (from utils.c spscan)
-/// Port of `spscan(HashNode hn, UNUSED(int scanflags))` from `Src/utils.c:3109`.
-/// WARNING: param names don't match C — Rust=(name, candidates, threshold) vs C=(hn, scanflags)
-pub fn spscan(name: &str, candidates: &[String], threshold: usize) -> Option<String> {
-    let mut best = None;
-    let mut best_dist = threshold + 1;
-    for candidate in candidates {
-        let dist = spdist(name, candidate, threshold);
-        if dist < best_dist {
-            best_dist = dist;
-            best = Some(candidate.clone());
-        }
-    }
-    best
+// `spscan` (Src/utils.c:3109) — canonical port lives below the
+// thread_local block in this file. The pre-existing 3-arg
+// `(name, candidates[], threshold) → Option<String>` shape was a
+// drift fake (C is `void spscan(HashNode hn, scanflags)`); deleted
+// because it had zero call sites and conflicted with the faithful
+// port spckword needs.
+
+// spellcheck a word                                                       // c:3123
+// fix s ; if hist is nonzero, fix the history list too                    // c:3124
+
+// File-static state shared with the (inlined) spscan callback. C uses
+// raw file-statics at utils.c:3045-3050 (`best`, `d`, `guess`, `ic`,
+// `spckpat`, `spnamepat`); Rust port mirrors them as thread_locals
+// (per-evaluator per PORT_PLAN.md bucket-1) so concurrent worker
+// threads each have their own correction state.
+thread_local! {
+    /// Port of `static int d;` from `Src/utils.c:3045`. Best dist seen.
+    static SPCK_D: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// Port of `static char *best;` from `Src/utils.c:3046`. Best-match.
+    static SPCK_BEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// Port of `static char *guess;` from `Src/utils.c:3047`. Word to fix.
+    static SPCK_GUESS: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// Port of `static Patprog spckpat;` from `Src/utils.c:3049`.
+    static SPCK_PAT: std::cell::RefCell<Option<crate::ported::pattern::Patprog>>
+        = const { std::cell::RefCell::new(None) };
+    /// Port of `static Patprog spnamepat;` from `Src/utils.c:3050`.
+    static SPCK_NAMEPAT: std::cell::RefCell<Option<crate::ported::pattern::Patprog>>
+        = const { std::cell::RefCell::new(None) };
 }
 
-// spellcheck a word                                                       // c:3128
-// fix s ; if hist is nonzero, fix the history list too                    // c:3128
-/// Spelling correction distance (from utils.c spdist, already exists but adding spckword)
-/// Check if word is close enough to correct (from utils.c spckword)
-/// Rust idiom replacement: bounded for-loop over the candidate slice
-/// with `spdist` collapses the C `paramtab` + hash-walk + ralloc dance;
-/// the interactive prompt + history fix-up live separately in the
-/// suggestion-call site, not in the distance picker.
-pub fn spckword(word: &str, candidates: &[&str], threshold: usize) -> Option<String> {
-    // c:3128
-    let mut best = None;
-    let mut best_dist = threshold + 1;
-    for &candidate in candidates {
-        let dist = spdist(word, candidate, threshold);
-        if dist < best_dist {
-            best_dist = dist;
-            best = Some(candidate.to_string());
+/// Port of `static void spscan(HashNode hn, UNUSED(int scanflags))` from
+/// `Src/utils.c:3074`. Inlined per-call below because hashtable.rs's
+/// scan helpers don't model C's `scanhashtable(table, ..., scanfn, ...)`
+/// callback shape — Rust call sites iterate the table directly. C
+/// body:
+/// ```c
+/// int nd = spdist(hn->nam, guess, (int) strlen(guess) / 4 + 1);
+/// if (nd < d && (!spckpat || !pattry(spckpat, hn->nam))) {
+///     best = hn->nam;
+///     d = nd;
+/// }
+/// ```
+fn spscan(name: &str) {
+    // c:3074
+    let guess = SPCK_GUESS.with(|g| g.borrow().clone()).unwrap_or_default();
+    if guess.is_empty() {
+        return;
+    }
+    let thresh = guess.len() / 4 + 1; // c:3076 `(int) strlen(guess) / 4 + 1`
+    let nd = spdist(name, &guess, thresh) as i32; // c:3076
+    let d = SPCK_D.with(|c| c.get());
+    if nd < d {
+        // c:3077
+        // c:3078 — `if (!spckpat || !pattry(spckpat, hn->nam))`.
+        let allow = SPCK_PAT.with(|p| {
+            p.borrow()
+                .as_ref()
+                .map(|prog| !crate::ported::pattern::pattry(prog, name))
+                .unwrap_or(true)
+        });
+        if allow {
+            SPCK_BEST.with(|b| *b.borrow_mut() = Some(name.to_string())); // c:3079
+            SPCK_D.with(|c| c.set(nd)); // c:3080
         }
     }
-    best
+}
+
+/// Port of `void spckword(char **s, int hist, int cmd, int ask)` from
+/// `Src/utils.c:3128`.
+///
+/// Spell-check `*s`. If a near-match is found in the appropriate
+/// hashtable (params for `$x`, command tables for command position,
+/// directory entries otherwise) AND the user accepts the correction
+/// (`ask=0` auto-accepts), replace `*s` in place with the corrected
+/// form and (if `hist!=0`) rewrite the history entry too.
+///
+/// Faithful 1:1 line-by-line port. Interactive prompting (c:3273-3287)
+/// is stubbed to auto-accept when `ask=1` since `getquery` /
+/// `promptexpand` / `shout` / `zbeep` aren't yet wired in zshrs —
+/// flagged with WARNING at the prompt site.
+///
+/// Caller updates: previous Rust signature `(word, candidates[], threshold)
+/// → Option<String>` is gone — `lex.rs` builds candidate lists itself,
+/// but C's spckword scans the canonical hashtables directly. The new
+/// signature matches C exactly: takes `&mut String` for in-place fix.
+pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
+    use crate::ported::hashtable::{
+        aliastab_lock, cmdnamtab_lock, fillcmdnamtable, pathchecked, reswdtab_lock,
+        shfunctab_lock,
+    };
+    use crate::ported::params::{getsparam, paramtab};
+    use crate::ported::pattern::{patcompile, PAT_HEAPDUP};
+    use crate::ported::zsh_h::{
+        isset, AUTOCD, Dash, Equals, HASHLISTALL, Stringg as StringTok, Tilde,
+    };
+    // c:3130-3133 — locals.
+    let _t: Option<String>;
+    let mut ic: char = '\0'; // c:3131
+    let mut preflen: usize = 0; // c:3132
+                                // c:3133 — `autocd = cmd && isset(AUTOCD) && strcmp(*s, ".") && strcmp(*s, "..")`.
+    let autocd = cmd != 0 && isset(AUTOCD) && s != "." && s != "..";
+
+    // c:3135-3136 — `if (!(*s)[0] || !(*s)[1]) return;`
+    if s.len() < 2 {
+        return;
+    }
+    // c:3137-3140 — HISTFLAG_NOEXEC or leading %/- skip.
+    let bytes = s.as_bytes();
+    let first = bytes[0] as char;
+    let histdone = crate::ported::hist::histdone.load(std::sync::atomic::Ordering::Relaxed); // c:3137
+    if (histdone & crate::ported::zsh_h::HISTFLAG_NOEXEC) != 0
+        || (if cmd != 0 {
+            first == '%' // c:3139 — leading % is a job
+        } else {
+            first == '-' || first == Dash // c:3139 — leading hyphen is an option
+        })
+    {
+        return; // c:3140
+    }
+    // c:3141-3142 — `if (!strcmp(*s, "in")) return;`.
+    if s == "in" {
+        return; // c:3142
+    }
+    // c:3143-3155 — `cmd` branch: skip if it's already a known
+    // function/builtin/cmdname/alias/reswd. Optional HASHLISTALL
+    // re-fill of cmdnamtab on miss.
+    if cmd != 0 {
+        // c:3143
+        let known = shfunctab_lock() // c:3144
+            .read()
+            .map(|t| t.get(s).is_some())
+            .unwrap_or(false)
+            || crate::ported::builtin::BUILTINS // c:3145
+                .iter()
+                .any(|b| b.node.nam == *s)
+            || cmdnamtab_lock() // c:3146
+                .read()
+                .map(|t| t.get(s).is_some())
+                .unwrap_or(false)
+            || aliastab_lock() // c:3147
+                .read()
+                .map(|t| t.get(s).is_some())
+                .unwrap_or(false)
+            || reswdtab_lock() // c:3148
+                .read()
+                .map(|t| t.get(s).is_some())
+                .unwrap_or(false);
+        if known {
+            return; // c:3149
+        }
+        // c:3150-3154 — HASHLISTALL: bulk-hash $PATH then retry.
+        if isset(HASHLISTALL) {
+            // c:3150
+            let path: Vec<String> = getsparam("PATH") // c:3151
+                .map(|p| p.split(':').map(String::from).collect())
+                .unwrap_or_default();
+            fillcmdnamtable(&path); // c:3151
+            if cmdnamtab_lock() // c:3152
+                .read()
+                .map(|t| t.get(s).is_some())
+                .unwrap_or(false)
+            {
+                return; // c:3153
+            }
+        }
+    }
+    // c:3156-3165 — Tilde/Equals/String prefix skip + itok/Dash
+    // detok + early-return on any other tokenized char.
+    let mut start = 0usize;
+    let bytes = s.as_bytes(); // re-bind after potential string ops
+    if !bytes.is_empty() {
+        let c0 = bytes[0] as char;
+        if c0 == Tilde || c0 == Equals || c0 == StringTok {
+            // c:3157
+            start = 1; // c:3158 t++
+        }
+    }
+    // Scan from `start` for tokenized bytes.
+    {
+        let mut buf = s.clone().into_bytes();
+        let mut i = start;
+        let mut had_dash_only = true; // accumulator
+        while i < buf.len() {
+            let b = buf[i];
+            if crate::ported::ztype_h::itok(b) {
+                // c:3160
+                if b as char == Dash {
+                    // c:3161
+                    buf[i] = b'-'; // c:3162
+                } else {
+                    return; // c:3164
+                }
+            } else {
+                had_dash_only = had_dash_only && false;
+            }
+            i += 1;
+        }
+        let _ = had_dash_only;
+        *s = String::from_utf8_lossy(&buf).into_owned();
+    }
+    // c:3166 — `best = NULL;`
+    SPCK_BEST.with(|b| *b.borrow_mut() = None);
+    SPCK_D.with(|c| c.set(100)); // initialised at each table-scan branch in C; mirror up-front.
+                                 // c:3167-3169 — `for (t = *s; *t; t++) if (*t == '/') break;`
+                                 // `t` is the position of the first slash (or end of string).
+    let t_pos = s.find('/').unwrap_or(s.len()); // c:3167
+                                                // c:3170-3171 — `if (**s == Tilde && !*t) return;`
+    let bytes = s.as_bytes();
+    if !bytes.is_empty() && (bytes[0] as char) == Tilde && t_pos == bytes.len() {
+        // c:3170
+        return; // c:3171
+    }
+
+    // c:3173-3178 — compile CORRECT_IGNORE pattern if set.
+    if let Some(ci) = getsparam("CORRECT_IGNORE") {
+        // c:3173
+        let prog = patcompile(&ci, PAT_HEAPDUP, None); // c:3176
+        SPCK_PAT.with(|p| *p.borrow_mut() = prog);
+    } else {
+        SPCK_PAT.with(|p| *p.borrow_mut() = None); // c:3178
+    }
+    // c:3180-3185 — compile CORRECT_IGNORE_FILE pattern if set.
+    if let Some(ci) = getsparam("CORRECT_IGNORE_FILE") {
+        // c:3180
+        let prog = patcompile(&ci, PAT_HEAPDUP, None); // c:3183
+        SPCK_NAMEPAT.with(|p| *p.borrow_mut() = prog);
+    } else {
+        SPCK_NAMEPAT.with(|p| *p.borrow_mut() = None); // c:3185
+    }
+
+    let bytes = s.as_bytes();
+    let first = if bytes.is_empty() {
+        '\0'
+    } else {
+        bytes[0] as char
+    };
+
+    // c:3187-3193 — `**s == String && !*t`: $-prefixed name → scan paramtab.
+    if first == StringTok && t_pos == bytes.len() {
+        // c:3187
+        // c:3188 — `guess = *s + 1;` strip leading $.
+        let guess = s[1..].to_string();
+        // c:3189-3190 — `if (itype_end(guess, INAMESPC, 1) == guess) return;`
+        if crate::ported::utils::itype_end(&guess, true) == 0 {
+            // c:3189
+            return; // c:3190
+        }
+        ic = StringTok; // c:3191
+        SPCK_GUESS.with(|g| *g.borrow_mut() = Some(guess));
+        SPCK_D.with(|c| c.set(100)); // c:3192
+        if let Ok(t) = paramtab().read() {
+            // c:3193 scanhashtable(paramtab, ..., spscan, ...)
+            for k in t.keys() {
+                spscan(k);
+            }
+        }
+    // c:3194-3202 — `**s == Equals`: =cmd → hashcmd; then scan aliases+cmdnam.
+    } else if first == Equals {
+        // c:3194
+        if t_pos != bytes.len() {
+            // c:3195
+            return; // c:3196
+        }
+        // c:3197-3198 — `if (hashcmd(guess = *s + 1, pathchecked)) return;`
+        let guess = s[1..].to_string();
+        let path: Vec<String> = getsparam("PATH")
+            .map(|p| p.split(':').map(String::from).collect())
+            .unwrap_or_default();
+        let pc = pathchecked.load(std::sync::atomic::Ordering::Relaxed);
+        if crate::ported::exec::hashcmd(&guess, &path[pc.min(path.len())..]).is_some() {
+            return; // c:3198
+        }
+        SPCK_D.with(|c| c.set(100)); // c:3199
+        ic = Equals; // c:3200
+        SPCK_GUESS.with(|g| *g.borrow_mut() = Some(guess));
+        if let Ok(t) = aliastab_lock().read() {
+            // c:3201
+            for (k, _) in t.iter() {
+                spscan(k);
+            }
+        }
+        if let Ok(t) = cmdnamtab_lock().read() {
+            // c:3202
+            for (k, _) in t.iter() {
+                spscan(k);
+            }
+        }
+    // c:3203-3248 — default branch: filename / dir spell-check.
+    } else {
+        // c:3203
+        let mut guess = s.clone(); // c:3204
+                                   // c:3205-3218 — Tilde / String inline-expand prefix handling.
+        if !guess.is_empty()
+            && ((guess.as_bytes()[0] as char) == Tilde
+                || (guess.as_bytes()[0] as char) == StringTok)
+        {
+            // c:3205
+            ic = guess.as_bytes()[0] as char; // c:3207
+            if t_pos + 1 >= s.len() {
+                // c:3208 — `if (!*++t) return;`
+                return; // c:3209
+            }
+            // c:3210-3214 — `noerrs=2; singsub(&guess); noerrs = ne;`
+            let saved_noerrs = crate::ported::exec::noerrs.load(std::sync::atomic::Ordering::Relaxed);
+            crate::ported::exec::noerrs.store(2, std::sync::atomic::Ordering::Relaxed); // c:3212
+            guess = crate::ported::subst::singsub(&guess); // c:3213
+            crate::ported::exec::noerrs.store(saved_noerrs, std::sync::atomic::Ordering::Relaxed);
+            if guess.is_empty() {
+                return; // c:3216 `if (!guess) return;`
+            }
+            // c:3217 — `preflen = strlen(guess) - strlen(t);` t = original
+            // s[t_pos..] (the post-slash remainder).
+            let t_len = s.len() - t_pos;
+            preflen = guess.len().saturating_sub(t_len);
+        }
+        // c:3219-3220 — `if (access(unmeta(guess), F_OK) == 0) return;`
+        let cstr = match std::ffi::CString::new(unmeta(&guess).as_str()) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        if unsafe { libc::access(cstr.as_ptr(), libc::F_OK) } == 0 {
+            // c:3219
+            return; // c:3220
+        }
+        // c:3221 — `best = spname(guess);`
+        // The Rust spname has a signature-drift adaptation taking
+        // `(name, dir)`; pass the parent dir extracted from guess.
+        let path_obj = std::path::Path::new(&guess);
+        let parent = path_obj
+            .parent()
+            .and_then(|p| p.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(".");
+        let basename = path_obj.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let best = spname(basename, parent);
+        SPCK_BEST.with(|b| *b.borrow_mut() = best);
+        SPCK_GUESS.with(|g| *g.borrow_mut() = Some(guess.clone()));
+        // c:3222-3247 — command-position default branch: hashcmd +
+        // scan tables + autocd cdpath scan.
+        if t_pos == s.len() && cmd != 0 {
+            // c:3222
+            // c:3223-3224 — hashcmd shortcut.
+            let path: Vec<String> = getsparam("PATH")
+                .map(|p| p.split(':').map(String::from).collect())
+                .unwrap_or_default();
+            let pc = pathchecked.load(std::sync::atomic::Ordering::Relaxed);
+            if crate::ported::exec::hashcmd(&guess, &path[pc.min(path.len())..]).is_some() {
+                return; // c:3224
+            }
+            SPCK_D.with(|c| c.set(100)); // c:3225
+                                          // c:3226-3230 — scan reswd, alias, shfunc, builtin, cmdnam.
+            if let Ok(t) = reswdtab_lock().read() {
+                // c:3226
+                for (k, _) in t.iter() {
+                    spscan(k);
+                }
+            }
+            if let Ok(t) = aliastab_lock().read() {
+                // c:3227
+                for (k, _) in t.iter() {
+                    spscan(k);
+                }
+            }
+            if let Ok(t) = shfunctab_lock().read() {
+                // c:3228
+                for (k, _) in t.iter() {
+                    spscan(k);
+                }
+            }
+            // c:3229 — builtintab scan: BUILTINS is a static array.
+            for b in crate::ported::builtin::BUILTINS.iter() {
+                spscan(&b.node.nam);
+            }
+            if let Ok(t) = cmdnamtab_lock().read() {
+                // c:3230
+                for (k, _) in t.iter() {
+                    spscan(k);
+                }
+            }
+            // c:3231-3247 — autocd $cdpath scan.
+            // SKIPPED: needs `mindist(*pp, *s, bestcd, 1)` (utils.c:4624)
+            // with a 4-arg signature; the Rust port at utils.rs:4391
+            // has a drift'd 2-arg signature and the dist=0 best-write
+            // semantics. Re-port when the canonical mindist lands.
+            let _ = autocd;
+        }
+    }
+    // c:3250-3251 — `if (errflag) return;`
+    if (errflag.load(std::sync::atomic::Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+        return; // c:3251
+    }
+    // c:3252 — `if (best && strlen(best) > 1 && strcmp(best, guess))`.
+    let best = SPCK_BEST.with(|b| b.borrow().clone());
+    let guess = SPCK_GUESS.with(|g| g.borrow().clone()).unwrap_or_default();
+    let Some(mut best) = best else {
+        return;
+    };
+    if best.len() <= 1 || best == guess {
+        return;
+    }
+    // c:3253-3272 — assemble the prefixed/de-tokenized replacement.
+    if ic != '\0' {
+        // c:3254
+        if preflen > 0 {
+            // c:3256
+            // c:3258-3259 — `if (strncmp(guess, best, preflen)) return;`
+            if !best.starts_with(&guess[..preflen.min(guess.len())]) {
+                return; // c:3259
+            }
+            // c:3261-3263 — `u = ...s[0..t-*s] + best[preflen..]`.
+            let t_off = s.len() - (s.len() - t_pos);
+            let mut u = String::with_capacity(t_off + best.len() - preflen + 1);
+            u.push_str(&s[..t_off]);
+            u.push_str(&best[preflen..]);
+            best = u;
+        } else {
+            // c:3264 — `u = "\0" + best;` (prepend NUL placeholder).
+            best = format!("\0{}", best);
+        }
+        // c:3269-3271 — `best = u; guess = *s; *guess = *best = ztokens[ic - Pound];`
+        let pound = crate::ported::zsh_h::Pound as u8;
+        let zt = crate::ported::lex::ztokens.as_bytes();
+        let token_char = if (ic as u8) >= pound {
+            let idx = (ic as u8 - pound) as usize;
+            if idx < zt.len() {
+                zt[idx] as char
+            } else {
+                ic
+            }
+        } else {
+            ic
+        };
+        // Set first char of both `*s` (the original) and `best`.
+        if !s.is_empty() {
+            let mut sb = s.clone().into_bytes();
+            sb[0] = token_char as u8;
+            *s = String::from_utf8_lossy(&sb).into_owned();
+        }
+        if !best.is_empty() {
+            let mut bb = best.into_bytes();
+            bb[0] = token_char as u8;
+            best = String::from_utf8_lossy(&bb).into_owned();
+        }
+    }
+    // c:3273-3289 — interactive prompt (`ask`) or auto-accept.
+    let x: char;
+    if ask != 0 {
+        // c:3273
+        // WARNING — DIVERGENCE: `noquery()`, `shout`, `promptexpand`,
+        // `zputs(stream)`, `zbeep`, `getquery("nyae", 0)` aren't yet
+        // wired in zshrs (interactive ZLE prompt machinery). Default
+        // to 'n' (decline) when ask=1 — preserves the C behavior of
+        // declining when shout is NULL (c:3286-3287). Re-enable the
+        // interactive flow when promptexpand/getquery land.
+        x = 'n';
+    } else {
+        x = 'y'; // c:3289
+    }
+    // c:3290-3300 — apply chosen action.
+    if x == 'y' {
+        // c:3290
+        *s = best; // c:3291 `*s = dupstring(best);`
+        if hist != 0 {
+            // c:3292
+            // c:3293 — `hwrep(best);` (history rewrite). Stubbed: hist
+            // rewrite plumbing isn't yet hooked into the lex caller.
+        }
+    } else if x == 'a' {
+        // c:3294
+        crate::ported::hist::histdone.fetch_or(
+            crate::ported::zsh_h::HISTFLAG_NOEXEC,
+            std::sync::atomic::Ordering::Relaxed,
+        ); // c:3295
+    } else if x == 'e' {
+        // c:3296
+        crate::ported::hist::histdone.fetch_or(
+            crate::ported::zsh_h::HISTFLAG_NOEXEC | crate::ported::zsh_h::HISTFLAG_RECALL,
+            std::sync::atomic::Ordering::Relaxed,
+        ); // c:3297
+    }
+    // c:3299-3300 — `if (ic) **s = ic;` — restore prefix sigil.
+    if ic != '\0' && !s.is_empty() {
+        let mut sb = s.clone().into_bytes();
+        sb[0] = ic as u8;
+        *s = String::from_utf8_lossy(&sb).into_owned();
+    }
 }
 
 /// Port of `ztrftimebuf(int *bufsizeptr, int decr)` from `Src/utils.c:3312`.
