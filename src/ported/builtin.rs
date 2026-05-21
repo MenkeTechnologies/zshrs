@@ -4851,48 +4851,22 @@ pub fn bin_whence(
                                 }
                             }
                         }
-                        // c:4050-4053 — reserved words scan.
-                        let reswords = [
-                            "do",
-                            "done",
-                            "esac",
-                            "then",
-                            "elif",
-                            "else",
-                            "fi",
-                            "for",
-                            "case",
-                            "if",
-                            "while",
-                            "function",
-                            "repeat",
-                            "time",
-                            "until",
-                            "exec",
-                            "command",
-                            "select",
-                            "coproc",
-                            "nocorrect",
-                            "foreach",
-                            "end",
-                            "!",
-                            "[[",
-                            "{",
-                            "}",
-                            "declare",
-                            "export",
-                            "float",
-                            "integer",
-                            "local",
-                            "private",
-                            "readonly",
-                            "typeset",
-                        ];
-                        for w in &reswords {
-                            // c:4051
+                        // c:4054-4056 — `scanmatchtable(reswdtab, pprog,
+                        //   1, 0, DISABLED, reswdtab->printnode, printflags);`.
+                        // Walks the canonical reswdtab (`Src/hashtable.c:1076-1108`,
+                        // ported at hashtable.rs:521-553). Was a hardcoded
+                        // 33-element array, which drifted from the canonical
+                        // table (missing `if/fi/esac/then/{/}/[[/!/declare/typeset`
+                        // entries that ARE in reswdtab).
+                        let names: Vec<String> = reswdtab_lock()
+                            .read()
+                            .map(|t| t.iter().map(|(k, _)| k.clone()).collect())
+                            .unwrap_or_default();
+                        for w in &names {
+                            // c:4055 pattry against each reswdtab name
                             if pattry(&prog, w) {
                                 println!("{}", w);
-                                informed += 1; // c:4052
+                                informed += 1; // c:4054
                             }
                         }
                         // c:4056-4060 — shell functions scan
@@ -5019,45 +4993,15 @@ pub fn bin_whence(
                     }
                 }
             }
-            // c:4146-4151 — reserved-word check.
-            let reswords = [
-                "do",
-                "done",
-                "esac",
-                "then",
-                "elif",
-                "else",
-                "fi",
-                "for",
-                "case",
-                "if",
-                "while",
-                "function",
-                "repeat",
-                "time",
-                "until",
-                "exec",
-                "command",
-                "select",
-                "coproc",
-                "nocorrect",
-                "foreach",
-                "end",
-                "!",
-                "[[",
-                "{",
-                "}",
-                "declare",
-                "export",
-                "float",
-                "integer",
-                "local",
-                "private",
-                "readonly",
-                "typeset",
-            ];
-            if reswords.contains(&arg.as_str()) {
-                // c:4146
+            // c:4109-4114 — `if ((hn = reswdtab->getnode(reswdtab, *argv)))
+            //   reswdtab->printnode(hn, printflags);`. Reads canonical
+            // reswdtab instead of a drift-prone literal array.
+            let is_reswd = reswdtab_lock()
+                .read()
+                .map(|t| t.get(arg).is_some())
+                .unwrap_or(false);
+            if is_reswd {
+                // c:4109
                 if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
                     println!("{}: reserved", arg);
                 } else if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
@@ -5065,12 +5009,12 @@ pub fn bin_whence(
                 } else if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
                     println!("{} is a reserved word", arg);
                 } else {
-                    println!("{}", arg); // c:4148
+                    println!("{}", arg); // c:4110
                 }
-                informed = 1; // c:4149
+                informed = 1; // c:4111
                 if !all {
                     continue;
-                } // c:4150
+                } // c:4112
             }
             // c:4153-4158 — shell function check.
             if let Ok(t) = shfunctab_lock().read() {
@@ -5158,34 +5102,56 @@ pub fn bin_whence(
                 } // c:4171
             }
         }
-        // c:4178-4198 — `-a` all-paths search through $PATH.
+        // c:4141-4172 — `-a` all-paths search. C iterates the
+        // shell-side `path` array (the tied $path/$PATH global,
+        // Src/parse.c). Rust reads $PATH via getsparam — same source.
         if all && !arg.starts_with('/') {
-            // c:4178
+            // c:4141
             if let Some(path) = getsparam("PATH") {
                 for dir in path.split(':') {
+                    // c:4145 — `if (**pp) buf = zhtricat(*pp, "/", *argv);
+                    //              else      buf = dupstring(*argv);`.
+                    // Empty path entry means CWD per POSIX, but C still
+                    // joins with "/" if non-empty; Rust matches the
+                    // !empty arm.
                     if dir.is_empty() {
                         continue;
                     }
-                    let full = format!("{}/{}", dir, arg);
-                    let p = std::path::Path::new(&full);
-                    if p.is_file() {
-                        // c:4185
+                    let full = format!("{}/{}", dir, arg); // c:4147
+                    // c:4150 — `iscom(buf)`: access(X_OK)==0 &&
+                    // S_ISREG(stat). Was `Path::is_file()` which omits
+                    // the X_OK check — would have flagged non-executable
+                    // files as matches.
+                    if crate::ported::exec::iscom(&full) {
+                        // c:4150
                         if wd {
-                            println!("{}: command", arg);
-                        } else if v && !csh {
-                            print!("{} is ", arg);
-                            println!("{}", quotedzputs(&full));
+                            // c:4151
+                            println!("{}: command", arg); // c:4152
                         } else {
-                            println!("{}", full);
+                            if v && !csh {
+                                // c:4154
+                                print!("{} is ", arg); // c:4155
+                                print!("{}", quotedzputs(&full)); // c:4156
+                            } else {
+                                print!("{}", full); // c:4158
+                            }
+                            // c:4159-4160 — `-s`/`-S` symlink follow.
+                            // Not yet ported here; placeholder.
+                            println!(); // c:4161 fputc('\n', stdout)
                         }
-                        informed = 1; // c:4192
+                        informed = 1; // c:4163
                     }
                 }
             }
-            if !informed != 0 && (wd || v || csh) {
-                // c:4196
-                println!("{}{}", arg, if wd { ": none" } else { " not found" });
-                returnval = 1;
+            // c:4166-4171 — `if (!informed && (wd || v || csh))`. C:
+            //     zputs(*argv, stdout); puts(wd ? ": none" : " not found");
+            // Was `if !informed != 0 && ...` which is broken Rust — the
+            // `!` is bitwise NOT on the i32, so the condition was true
+            // when informed != 0 (inverted). Fix: explicit `informed == 0`.
+            if informed == 0 && (wd || v || csh) {
+                // c:4166
+                println!("{}{}", arg, if wd { ": none" } else { " not found" }); // c:4168-4169
+                returnval = 1; // c:4170
             }
             continue;
         }
