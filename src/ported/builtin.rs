@@ -5959,6 +5959,24 @@ pub fn bin_print(
             &args[1..]
         };
         let out = printf_format(&fmt, rest);
+        // c:4854-4856 — `if (OPT_ISSET(ops, 'v') || (fmt && (OPT_ISSET
+        //   (ops, 'z') || OPT_ISSET(ops, 's')))) ASSIGN_MSTREAM(...)`.
+        // For -f combined with -z or -s, capture output then route
+        // through the same dispatch as the non-fmt path.
+        if OPT_ISSET(ops, b'z') {
+            // c:5564-5565 — push captured output to bufstack.
+            crate::ported::zle::zle_main::BUFSTACK
+                .lock()
+                .unwrap()
+                .push(out);
+            return 0;
+        }
+        if OPT_ISSET(ops, b's') {
+            // c:5569-5574 — push captured output as a history entry.
+            let event_id = crate::ported::hist::prepnexthistent();
+            crate::ported::hashtable::addhistnode(&out, event_id as i32);
+            return 0;
+        }
         if let Some(ref v) = dest_var {
             setsparam(v, &out);
         } else {
@@ -10249,6 +10267,42 @@ mod tests {
         // Conjunction check: zsh-equivalent: print -O foo Bar BAZ
         // gives `foo Bar BAZ`. Pin so an inadvertent reverse-before-
         // sort regression fails.
+    }
+
+    /// `Src/builtin.c:4854-4856 + 5564-5565` — `printf -z FMT ARGS...`
+    /// captures formatted output then pushes to bufstack (same path
+    /// as -z without -f).
+    #[test]
+    fn bin_print_printf_with_minus_z() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b'z' as usize] = 1;
+        // -f set to "echo %s" (positional)
+        ops.ind[b'f' as usize] = 1 | (1 << 2);
+        ops.args = vec!["echo %s".to_string()];
+        ops.argscount = 1;
+        crate::ported::zle::zle_main::BUFSTACK
+            .lock()
+            .unwrap()
+            .clear();
+        let r = bin_print(
+            "printf",
+            &["hello".to_string()],
+            &ops,
+            BIN_PRINTF,
+        );
+        assert_eq!(r, 0);
+        let buf = crate::ported::zle::zle_main::BUFSTACK.lock().unwrap();
+        assert_eq!(
+            buf.last().map(|s| s.as_str()),
+            Some("echo hello"),
+            "c:4854-4856 — printf -z must push formatted output to bufstack"
+        );
     }
 
     /// `Src/builtin.c:5564-5565` — `print -z WORDS...` pushes the
