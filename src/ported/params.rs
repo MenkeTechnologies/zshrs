@@ -62,7 +62,7 @@ use crate::ported::zsh_h::{
     SCANPM_WANTKEYS, SCANPM_WANTVALS, TERM_BAD, VALFLAG_EMPTY, VALFLAG_INV, VALFLAG_SUBST,
     WARNCREATEGLOBAL, WARNNESTEDVAR,TERM_UNKNOWN, param, POSIXARGZERO
 };
-use crate::ported::zsh_h::{HashNode, Inbrack, CBASES, CHASELINKS, HFILE_USE_OPTIONS, META, OCTALZEROES, PM_LOWER, PRIVILEGED, SCANPM_ASSIGNING};
+use crate::ported::zsh_h::{HashNode, Inbrack, CBASES, CHASELINKS, HFILE_USE_OPTIONS, Meta, OCTALZEROES, PM_LOWER, PRIVILEGED, SCANPM_ASSIGNING};
 use crate::ported::zsh_system_h::DEFAULT_TIMEFMT;
 
 /// Port of `static int lc_update_needed` from `Src/params.c:5850`
@@ -7099,7 +7099,7 @@ pub fn copyenvstr(buf: &mut String, value: &str, flags: i32) {
     while let Some(b) = it.next() {
         // c:5436
         let mut ch = b;
-        if ch == META as u8 {
+        if ch == Meta {
             // c:5437
             ch = match it.next() {
                 Some(next) => next ^ 32, // c:5438

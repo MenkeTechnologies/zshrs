@@ -33,7 +33,7 @@ use crate::ported::zle::comp_h::{
 };
 use crate::ported::zle::compcore::{listdat, MINFO, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
 use crate::ported::zle::zle_refresh::{tcmultout, tcout, CLEARFLAG, NLNCT};
-use crate::ported::zsh_h::{isset, Patprog, EXTENDEDGLOB, USEZLE};
+use crate::ported::zsh_h::{isset, Patprog, EXTENDEDGLOB, TCCLEAREOD, TCCLEAREOL, USEZLE};
 
 // `ListColors` / `ListLayout` and their Rust-only methods deleted.
 // The C source uses `struct listcols` (legit port at line 645 as
@@ -989,9 +989,9 @@ pub fn compprintlist(showall: i32) -> i32 {
     LAST_INVCOUNT.store(invcount, Ordering::SeqCst); // c:1394
 
     let tcd_avail =
-        crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOD as usize] != 0; // c:1398
+        crate::ported::init::tclen.lock().unwrap()[TCCLEAREOD as usize] != 0; // c:1398
     let tceol_avail =
-        crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOL as usize] != 0;
+        crate::ported::init::tclen.lock().unwrap()[TCCLEAREOL as usize] != 0;
 
     if cl < 2 {
         // c:1396

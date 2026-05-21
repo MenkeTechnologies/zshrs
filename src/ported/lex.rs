@@ -32,7 +32,7 @@ use crate::ported::zsh_h::{
     ALIASESOPT, CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE, CS_BRACE, CS_BRACEPAR,
     CS_CMDSUBST, CS_CURSH, CS_DQUOTE, CS_HEREDOC, CS_HEREDOCD, CS_MATH, CS_MATHSUBST, CS_QUOTE,
     ERRFLAG_INT, HISTALLOWCLOBBER, IGNOREBRACES, IGNORECLOSEBRACES, INP_ALIAS,
-    INTERACTIVECOMMENTS, KSHGLOB, META, POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN, SHORTLOOPS,
+    INTERACTIVECOMMENTS, KSHGLOB, Meta, POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN, SHORTLOOPS,
     SHORTREPEAT, ZCONTEXT_LEX, ZCONTEXT_PARSE,
 };
 use crate::ported::ztype_h::itok;
@@ -455,7 +455,7 @@ pub fn initlextabs() {
     }
     // c:422-423 — special overrides.
     a2[b'&' as usize] = LX2_BREAK;
-    a2[META as usize] = LX2_META;
+    a2[Meta as usize] = LX2_META;
     // c:424-431 — byte-token map for the 8 magic chars.
     t2[b'*' as usize] = Star as u8;
     t2[b'?' as usize] = Quest as u8;

@@ -42,7 +42,15 @@ use crate::ported::hashtable::{
     aliastab_lock, cmdnamtab_lock, createaliasnode, dircache_set, emptycmdnamtable, hnamcmp,
     printaliasnode, printcmdnamnode, reswdtab_lock, shfunctab_lock, sufaliastab_lock,
 };
-use crate::ported::hist::{readhistfile, savehistfile};
+// `curhist` (hist.rs static) NOT imported — there's an unavoidable
+// `let curhist` local in fc_main that mirrors C's `int curhist;` local
+// shadowing the global. Rule E says keep the C name. The static is
+// referenced via its fully-qualified path at the single read site to
+// avoid name-shadow E0530.
+use crate::ported::hist::{
+    addhistnum, gethistent, hcomsearch, histsiz, pushhiststack, quietgethist, readhistfile,
+    saveandpophiststack, savehistfile, savehistsiz,
+};
 use crate::ported::jobs::{bin_fg, removetrapnode};
 use crate::ported::math::{matheval, mathevali, mnumber, MN_INTEGER};
 use crate::ported::mem::{queue_signals, unqueue_signals};
@@ -50,8 +58,8 @@ use crate::ported::module::MATHFUNCS;
 use crate::ported::modules::parameter::{DIRSTACK, FUNCSTACK};
 use crate::ported::options::{dosetopt, emulation, optlookup, ZSH_OPTIONS_SET};
 use crate::ported::params::{
-    getsparam, locallevel as locallevel_param, paramtab, setaparam, setiparam, setsparam,
-    unsetparam,
+    createparam, getiparam, getsparam, isident, locallevel as locallevel_param, paramtab, setaparam,
+    setiparam, setsparam, unsetparam, unsetparam_pm,
 };
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals::settrap;
@@ -1887,8 +1895,8 @@ pub fn bin_fc(
         } else {
             -1
         };
-        hs = crate::ported::hist::histsiz.load(Ordering::Relaxed); // c:1442
-        shs = crate::ported::hist::savehistsiz.load(Ordering::Relaxed);
+        hs = histsiz.load(Ordering::Relaxed); // c:1442
+        shs = savehistsiz.load(Ordering::Relaxed);
         if !argv.is_empty() {
             // c:1445
             hf = argv.remove(0); // c:1446
@@ -1934,7 +1942,7 @@ pub fn bin_fc(
             }
         }
         // c:1473 — pushhiststack(hf, hs, shs, level); failure → return 1.
-        crate::ported::hist::pushhiststack(Some(&hf), hs, shs, level); // c:1473
+        pushhiststack(Some(&hf), hs, shs, level); // c:1473
         if !hf.is_empty() {
             // c:1475
             // c:1476-1480 — `if (stat(hf, &st) >= 0 || errno != ENOENT)
@@ -1972,7 +1980,7 @@ pub fn bin_fc(
             return 1; // c:1488
         }
         // c:1490 — `return !saveandpophiststack(-1, HFILE_USE_OPTIONS);`.
-        let popped = crate::ported::hist::saveandpophiststack(-1, HFILE_USE_OPTIONS as i32); // c:1490
+        let popped = saveandpophiststack(-1, HFILE_USE_OPTIONS as i32); // c:1490
         return if popped != 0 { 0 } else { 1 }; // c:1490 `!` flip
     }
 
@@ -2101,11 +2109,10 @@ pub fn bin_fc(
     }
 
     // c:1573-1610 — default ranges + listing/edit dispatch. C reads
-    //                the live `curhist` global; in zshrs that comes
-    //                from `prompt_tls::HISTNUM` (which mirrors $HISTCMD).
-    //                Use getiparam so paramtab handles the lookup and
-    //                conversion uniformly.
-    let curhist: i64 = crate::ported::params::getiparam("HISTCMD");
+    //                the live `curhist` global at hist.rs directly. The
+    //                FQN here is forced — bare `curhist` would resolve
+    //                to the local `let curhist` we're declaring.
+    let curhist: i64 = crate::ported::hist::curhist.load(Ordering::Relaxed) as i64;
     if last == -1 {
         // c:1573
         if OPT_ISSET(ops, b'l') && first < curhist {
@@ -2259,8 +2266,8 @@ pub fn fcgetcomm(s: &str) -> i64 {
         if cmd != 0 || is_zero_prefix {
             if cmd < 0 {
                 // c:1693 — `cmd = addhistnum(curline.histnum, cmd, HIST_FOREIGN);`
-                let curh = crate::ported::hist::curhist.load(std::sync::atomic::Ordering::Relaxed);
-                cmd = crate::ported::hist::addhistnum(curh, cmd as i32, 1);
+                let curh = crate::ported::hist::curhist.load(Ordering::Relaxed);
+                cmd = addhistnum(curh, cmd as i32, 1);
             }
             if cmd < 0 {
                 // c:1695
@@ -2270,7 +2277,7 @@ pub fn fcgetcomm(s: &str) -> i64 {
         }
     }
     // c:1700 — `cmd = hcomsearch(s); if (cmd == -1) zwarnnam(...);`
-    match crate::ported::hist::hcomsearch(s) {
+    match hcomsearch(s) {
         Some(n) => n,
         None => {
             zwarnnam("fc", &format!("event not found: {}", s));
@@ -2337,7 +2344,7 @@ pub fn fclist(
 
     // c:1776-1790 — `gethistent(first, ...)` with bidirectional fallback.
     let near = if first < last { 1 } else { -1 };
-    let start_ev = match crate::ported::hist::gethistent(first, near) {
+    let start_ev = match gethistent(first, near) {
         Some(e) => e,
         None => {
             zwarnnam(
@@ -2379,7 +2386,7 @@ pub fn fclist(
     let step: i64 = if first < last { 1 } else { -1 };
     loop {
         // c:1830 — `ent = quietgethist(ev);` — fetch entry by event #.
-        let entry = match crate::ported::hist::quietgethist(ev) {
+        let entry = match quietgethist(ev) {
             Some(e) => e,
             None => break,
         };
@@ -2908,7 +2915,7 @@ pub fn typeset_single(
         // c:2372-2375 — carry scalar value across type change.
         // c:2378 — unsetparam_pm(pm, 0, 1)
         if let Some(pm_r) = unsafe { pm.as_mut() } {
-            crate::ported::params::unsetparam_pm(pm_r, 0, 1);
+            unsetparam_pm(pm_r, 0, 1);
         }
         pname_owned = pname.to_string(); // c:2377
     }
@@ -3281,7 +3288,7 @@ pub fn bin_typeset(
             .as_bytes()
             .first()
             .is_some_and(|b| b.is_ascii_digit());
-        let pname_valid = (crate::ported::params::isident(arg_name) || pname_in_tab)
+        let pname_valid = (isident(arg_name) || pname_in_tab)
             && (!first_is_digit || arg_name == "0");
         if !pname_valid {
             if first_is_digit {
@@ -3310,10 +3317,7 @@ pub fn bin_typeset(
             } else {
                 0
             };
-            let _ = crate::ported::params::createparam(
-                arg_name,
-                on as i32 | kind as i32 | PM_LOCAL as i32,
-            );
+            let _ = createparam(arg_name, on as i32 | kind as i32 | PM_LOCAL as i32);
         }
         if let Some(eq) = arg.find('=') {
             let n = &arg[..eq];

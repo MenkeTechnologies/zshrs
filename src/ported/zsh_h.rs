@@ -115,7 +115,14 @@ pub const MFF_AUTOALL: i32 = 8; // c:130
 // 3. Meta byte + parser tokens (zsh.h:144-224).
 // =============================================================================
 
-pub const META: char = '\u{83}'; // c:144
+// c:144 — `#define Meta ((char) 0x83)`. C `char` is one byte; every
+// use site in zsh compares against / writes raw bytes (`bytes[i] ==
+// Meta`, `out.push(Meta)`, `t[Meta]` ITOK-table indexing). The
+// previous `Meta: char = '\u{83}'` typing was the bot fakery —
+// Rust `char` is a 4-byte Unicode scalar, forcing 32+ `as u8` casts
+// across the tree. `u8` is the faithful byte type matching C's
+// `char` (which on every zsh build is a 1-byte type).
+pub const Meta: u8 = 0x83; // c:144
 pub const DEFAULT_IFS: &str = " \t\n\u{83} "; // c:149
 pub const DEFAULT_IFS_SH: &str = " \t\n"; // c:153
 
@@ -3570,7 +3577,7 @@ pub fn MB_METACHARLEN(s: &[u8]) -> usize {
     // c:3278/3359
     if s.is_empty() {
         0
-    } else if s[0] as char == META {
+    } else if s[0] == Meta {
         2
     } else {
         1
@@ -3587,7 +3594,7 @@ pub fn MB_METACHARLENCONV(s: &[u8]) -> (usize, Option<char>) {
     if s.is_empty() {
         return (0, None);
     }
-    if s[0] as char == META && s.len() >= 2 {
+    if s[0] == Meta && s.len() >= 2 {
         let unmeta = s[1] ^ 0x20;
         (2, Some(unmeta as char))
     } else {
@@ -3605,7 +3612,7 @@ pub fn MB_METASTRLEN(s: &str) -> usize {
     let mut i = 0;
     let bytes = s.as_bytes();
     while i < bytes.len() {
-        if bytes[i] as char == META && i + 1 < bytes.len() {
+        if bytes[i] == Meta && i + 1 < bytes.len() {
             i += 2;
         } else {
             i += 1;
@@ -3795,7 +3802,7 @@ mod tests {
     #[test]
     fn meta_byte_value() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(META as u32, 0x83);
+        assert_eq!(Meta as u32, 0x83);
     }
 
     #[test]
@@ -4101,7 +4108,7 @@ mod tests {
     #[test]
     fn token_byte_values_match_c_zsh_h() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(META, '\u{83}', "c:144");
+        assert_eq!(Meta, 0x83, "c:144");
         assert_eq!(Pound, '\u{84}', "c:159");
         assert_eq!(Stringg, '\u{85}', "c:160");
         assert_eq!(Hat, '\u{86}', "c:161");

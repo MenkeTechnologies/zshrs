@@ -60,27 +60,27 @@
 use std::ffi::CString;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::DPUTS;
+use crate::lex::untokenize;
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
 use crate::ported::exec::getoutput;
 use crate::ported::glob::xpandbraces;
 use crate::ported::hashnameddir::nameddirtab;
 use crate::ported::hashtable::{aliastab_lock, cmdnamtab_lock, shfunctab_lock, sufaliastab_lock};
 use crate::ported::hist::{
-    casemodify, hsubl, hsubpatopt, hsubr, rembutext, remlpaths, remtext, remtpath, CASMOD_CAPS,
-    CASMOD_LOWER, CASMOD_UPPER,
+    casemodify, hsubl, hsubpatopt, hsubr, rembutext, remlpaths, remtext, remtpath,
 };
 use crate::ported::math::mathevali;
 use crate::ported::modules::parameter::*;
-use crate::ported::options::opt_state_set;
-use crate::ported::params::{
-    assignsparam, getarrvalue, getsparam, paramtab, paramtab_hashed_storage,
-};
+use crate::ported::options::{opt_state_set, ZSH_OPTIONS_SET};
+use crate::ported::params::{assignsparam, convbase_underscore, convfloat_underscore, getarrvalue, getsparam, lookup_special_var, paramtab, paramtab_hashed_storage, setsparam};
 use crate::ported::pattern::patmatch;
-use crate::ported::string::dyncat;
-use crate::ported::utils::{errflag, getkeystring, quotestring, xsymlinks, zerr};
+use crate::ported::prompt::promptexpand;
+use crate::ported::string::{dupstring, dyncat};
+use crate::ported::utils::{errflag, getkeystring, quotestring, xsymlinks, zerr, GETKEY_CTRL, GETKEY_EMACS, GETKEY_OCTAL_ESC};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{cached_regex, slice_array_zero_based, slice_positionals};
-use crate::ported::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX, Bnull, Bnullkeep, CASMOD_NONE, DISABLED, Dnull, Equals, HASHED, Hat, IGNOREBRACES, Inang, Inbrace, Inbrack, Inpar, Inparmath, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, MN_FLOAT, MN_UNSET, MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE, PM_UPPER, PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK, PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET, Param, Pound, QT_BACKSLASH_PATTERN, QT_QUOTEDZPUTS, QT_SINGLE_OPTIONAL, Qstring, Qtick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, SHFILEEXPANSION, SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY, SORTIT_SOMEHOW, SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR, Snull, Stringg, Tick, Tilde, hashnode, isset, param, PUSHDMINUS, SHWORDSPLIT, SORTIT_NUMERICALLY_SIGNED, KSHTYPESET};
+use crate::ported::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX, Bnull, Bnullkeep, CASMOD_NONE, DISABLED, Dnull, Equals, HASHED, Hat, IGNOREBRACES, Inang, Inbrace, Inbrack, Inpar, Inparmath, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, MN_FLOAT, MN_UNSET, MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE, PM_UPPER, PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK, PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET, Param, Pound, QT_BACKSLASH_PATTERN, QT_QUOTEDZPUTS, QT_SINGLE_OPTIONAL, Qstring, Qtick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, SHFILEEXPANSION, SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY, SORTIT_SOMEHOW, SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR, Snull, Stringg, Tick, Tilde, hashnode, isset, param, PUSHDMINUS, SHWORDSPLIT, SORTIT_NUMERICALLY_SIGNED, KSHTYPESET, RCEXPANDPARAM, QT_NONE, QT_SINGLE, QT_DOLLARS, HISTSUBSTPATTERN, QT_BACKSLASH};
+use crate::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_UPPER};
 
 /// Port of `LF_ARRAY` from `Src/subst.c:33`.
 /// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
@@ -148,14 +148,14 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
     // — extract key, run param-subst, untokenize.
     let raw_key: String = chars[1..end_pos].iter().collect(); // c:64
     let key_subst = singsub(&raw_key); // c:65
-    let key = crate::lex::untokenize(&key_subst); // c:66
+    let key = untokenize(&key_subst); // c:66
 
     // C lines 67-75: Marker / Marker_plus sentinel + insertlinknode
     // for key and value.
     let value_start = if is_append { end_pos + 3 } else { end_pos + 2 }; // c:67-72
     let raw_value: String = chars[value_start..].iter().collect(); // c:69 / 73
     let value_subst = singsub(&raw_value); // c:75
-    let value = crate::lex::untokenize(&value_subst); // c:76
+    let value = untokenize(&value_subst); // c:76
 
     let marker = if is_append {
         // c:67
@@ -1519,7 +1519,7 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool) -> Option<String> {
     // C: `cmdstr = dupstrpfx(str, pp-str);
     //     untokenize(cmdstr); remnulargs(cmdstr);`
     let cmdstr_raw: String = s.chars().take(end).collect(); // c:721
-    let cmdstr = crate::lex::untokenize(&cmdstr_raw); // c:722
+    let cmdstr = untokenize(&cmdstr_raw); // c:722
     let cmdstr = cmdstr.replace('\u{0}', ""); // c:723
 
     // C: `cnam = findcmd(cmdstr, 1, 0)` (Src/exec.c:723) — `1` is
@@ -2331,7 +2331,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
         // c:1542
         Some(d) => d, // c:1542
         None => {
-            let untoked = crate::lex::untokenize(s); // c:1543
+            let untoked = untokenize(s); // c:1543
             if escapes {
                 // c:1544
                 // C: `dst = getkeystring(dst, &klen,
@@ -2428,7 +2428,7 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
         return None;
     } // c:1590
     let stripped = expanded.replace('\u{0}', ""); // c:1590
-    let untoked = crate::lex::untokenize(&stripped); // c:1591
+    let untoked = untokenize(&stripped); // c:1591
 
     let rest: String = chars[end..].iter().collect(); // c:1593
     Some((untoked, rest)) // c:1596
@@ -2512,7 +2512,7 @@ pub fn paramsubst(
         // full LinkList-based rewrite.
 
         // c:1663 — `int plan9 = isset(RCEXPANDPARAM);`
-        let mut plan9 = isset(crate::ported::zsh_h::RCEXPANDPARAM); // c:1663
+        let mut plan9 = isset(RCEXPANDPARAM); // c:1663
 
         // c:1669 — `int globsubst = isset(GLOBSUBST);` (handled inline
         // at use sites via opt_state_set rather than tracked here).
@@ -2559,7 +2559,7 @@ pub fn paramsubst(
 
         // c:1739 — `int quotemod = 0, quotetype = QT_NONE, quoteerr = 0;`
         let mut quotemod: i32 = 0; // c:1739
-        let mut quotetype: i32 = crate::ported::zsh_h::QT_NONE; // c:1739
+        let mut quotetype: i32 = QT_NONE; // c:1739
         let mut quoteerr = false; // c:1739
 
         // c:1746 — `int mods = 0;` bit0=D, bit1=V.
@@ -3049,9 +3049,9 @@ pub fn paramsubst(
                                 // c:2416
                                 match body_chars[idx] {
                                     // c:2417 switch (*s)
-                                    'e' => getkeys |= crate::ported::utils::GETKEY_EMACS as i32, // c:2418-2419
-                                    'o' => getkeys |= crate::ported::utils::GETKEY_OCTAL_ESC as i32, // c:2421-2422
-                                    'c' => getkeys |= crate::ported::utils::GETKEY_CTRL as i32, // c:2424-2425
+                                    'e' => getkeys |= GETKEY_EMACS as i32, // c:2418-2419
+                                    'o' => getkeys |= GETKEY_OCTAL_ESC as i32, // c:2421-2422
+                                    'c' => getkeys |= GETKEY_CTRL as i32, // c:2424-2425
                                     _ => {
                                         // c:2428 default
                                         // c:2430 goto flagerr — emit bad-subst.
@@ -3785,7 +3785,7 @@ pub fn paramsubst(
                         // POSIX shell-specials ($?/$#/$$/$!/$*/$@/$-/$N).
                         // Canonical dispatch through params::lookup_special_var
                         // (Src/params.c special_assigns getfn).
-                        crate::ported::params::lookup_special_var(&var_name)
+                        lookup_special_var(&var_name)
                     } else {
                         None
                     }
@@ -4293,7 +4293,7 @@ pub fn paramsubst(
                 let repl = {
                     let saved_skip = SKIP_FILESUB.with(|c| c.get());
                     SKIP_FILESUB.with(|c| c.set(true));
-                    let s = crate::lex::untokenize(&singsub(&raw_repl));
+                    let s = untokenize(&singsub(&raw_repl));
                     SKIP_FILESUB.with(|c| c.set(saved_skip));
                     let mut out = String::with_capacity(s.len());
                     let mut it = s.chars().peekable();
@@ -4456,7 +4456,7 @@ pub fn paramsubst(
                 // so the existing untokenize call still handles any
                 // surviving meta-tokens).
                 let repl = {
-                    let s = crate::lex::untokenize(&singsub(&raw_repl));
+                    let s = untokenize(&singsub(&raw_repl));
                     let mut out = String::with_capacity(s.len());
                     let mut it = s.chars().peekable();
                     while let Some(c) = it.next() {
@@ -4898,7 +4898,7 @@ pub fn paramsubst(
                         else {
                             "scalar"
                         }; // c:2817 case PM_SCALAR
-                        let val = crate::ported::string::dupstring(val); // c:2825 val = dupstring(val)
+                        let val = dupstring(val); // c:2825 val = dupstring(val)
                         let val = if pm.level != 0
                         // c:2826
                         {
@@ -5326,7 +5326,7 @@ pub fn paramsubst(
             // c:2405
             // Canonical prompt expansion (Src/prompt.c:182 promptexpand).
             let prompt_one = |s: &str| -> String {
-                let (expanded, _, _) = crate::ported::prompt::promptexpand(s, 0, None);
+                let (expanded, _, _) = promptexpand(s, 0, None);
                 expanded
             };
             if let Some(parts) = split_parts.clone() {
@@ -5748,14 +5748,14 @@ pub fn paramsubst(
                 }); // c:2245
                 if needs {
                     // c:2245
-                    quotestring(s, crate::ported::zsh_h::QT_SINGLE) // c:2245
+                    quotestring(s, QT_SINGLE) // c:2245
                 } else {
                     // c:2245
                     s.to_string() // c:2245
                 } // c:2245
             } else if quotetype == QT_QUOTEDZPUTS {
                 // c:2245 (q+)
-                quotestring(s, crate::ported::zsh_h::QT_DOLLARS) // c:2245
+                quotestring(s, QT_DOLLARS) // c:2245
             } else if quotemod > 0 {
                 // c:4033 if (quotemod > 0)
                 // c:2252 — quotemod++ and quotetype++ cascade for
@@ -6654,7 +6654,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
         "0".to_string() // c:4498 — MN_UNSET falls through to zero in practice
     } else if (v.type_ == MN_FLOAT) && outputradix == 0 {
         // c:4493-4494
-        crate::ported::params::convfloat_underscore(v.d, outputunderscore)
+        convfloat_underscore(v.d, outputunderscore)
     } else {
         // c:4496-4498
         let l = if (v.type_ == MN_FLOAT) {
@@ -6662,7 +6662,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
         } else {
             v.l
         };
-        crate::ported::params::convbase_underscore(l, outputradix as u32, outputunderscore)
+        convbase_underscore(l, outputradix as u32, outputunderscore)
     }; // c:4499
 
     // C: `t = *bptr = hcalloc(...); …; strcat(t, rest);` — concat
@@ -6840,7 +6840,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             // Direct port of Src/hist.c:2336 — `if (isset(HISTSUBSTPATTERN)
             // || forcepat)` selects the pattern path; otherwise the
             // strstr-based literal replace runs.
-            let use_glob = modifier == 'S' || isset(crate::ported::zsh_h::HISTSUBSTPATTERN);
+            let use_glob = modifier == 'S' || isset(HISTSUBSTPATTERN);
             let do_match = |hay: &str| -> Option<(usize, usize)> {
                 if use_glob {
                     // Sliding-window glob match — find first
@@ -7096,7 +7096,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 'q' => Some(quotestring(
                     // c:4585 (:q)
                     w,
-                    crate::ported::zsh_h::QT_BACKSLASH,
+                    QT_BACKSLASH,
                 )),
                 'Q' => {
                     // c:4585 (:Q unquote)
@@ -7663,7 +7663,7 @@ fn scanpmparameters() -> String {
 
 /// `scanpmoptions` — port of `Src/Modules/parameter.c:1016`.
 fn scanpmoptions() -> String {
-    crate::ported::options::ZSH_OPTIONS_SET
+    ZSH_OPTIONS_SET
         .iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>()
@@ -7711,13 +7711,6 @@ fn vars_contains(name: &str) -> bool {
     paramtab()
         .read()
         .map_or(false, |tab| tab.contains_key(name))
-}
-
-/// Insert / replace a scalar parameter via the canonical
-/// `assignsparam` path. Equivalent to C's `setsparam(name, val)`
-/// (`Src/params.c:3350`).
-fn vars_insert(name: String, value: String) {
-    crate::ported::params::setsparam(&name, &value);
 }
 
 /// Read an array parameter from `paramtab`. Equivalent to C's
@@ -7822,7 +7815,7 @@ fn exec_assignaparam(name: &str, parts: Vec<String>) {
                          // shell — `(P)`, `(L)`, `(Q)`, `(U)`, etc. Forcing them to snake_case
                          // would obscure which zsh feature the test pins.
 mod tests {
-    use crate::zsh_h::{Hat, Tilde};
+    use crate::zsh_h::{Hat, Tilde, CASMOD_CAPS};
     // utils.c:6915
     use super::*;
     // utils.c:6915
@@ -7861,7 +7854,9 @@ mod tests {
     fn test_simple_param_expansion() {
         let _g = crate::test_util::global_state_lock();
         errflag.store(0, Ordering::Relaxed);
-        vars_insert("FOO".to_string(), "bar".to_string());
+        let name = "FOO".to_string();
+        let value = "bar".to_string();
+        setsparam(&name, &value);
 
         let (result, _, _) = paramsubst("$FOO", 0, false, 0, &mut 0);
         assert_eq!(result, "bar");
@@ -7918,7 +7913,9 @@ mod tests {
     fn test_singsub() {
         let _g = crate::test_util::global_state_lock();
         // utils.c:6915
-        vars_insert("X".to_string(), "value".to_string()); // utils.c:6915
+        let name = "X".to_string();
+        let value = "value".to_string();
+        setsparam(&name, &value); // utils.c:6915
                                                            // singsub currently doesn't process $ - it's a high-level wrapper
                                                            // that needs prefork to be fully working
         let result = singsub("X"); // utils.c:6915
