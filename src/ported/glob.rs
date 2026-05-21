@@ -4508,35 +4508,6 @@ pub fn is_symlink(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Match minimum distance for spelling correction (from glob.c mindist line 4624)
-/// Edit-distance helper for `setopt CORRECT` glob fallback.
-/// Port of the `spdist()`-driven correction inside
-/// `findcmd()` (Src/exec.c) when adapted for glob targets.
-pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
-    // c:4624
-    let Ok(entries) = fs::read_dir(dir) else {
-        return usize::MAX;
-    };
-
-    let mut min_dist = usize::MAX;
-
-    for entry in entries.flatten() {
-        let entry_name = entry.file_name().to_string_lossy().to_string();
-        if exact && entry_name == name {
-            *best = entry_name;
-            return 0;
-        }
-
-        let dist = crate::utils::spdist(name, &entry_name, min_dist);
-        if dist < min_dist {
-            min_dist = dist;
-            *best = entry_name.clone();
-        }
-    }
-
-    min_dist
-}
-
 /// Apply mode spec to existing mode. Port of the
 /// `spec_op`/`spec_who`/`spec_perm` inline application at the end of
 /// C's `qgetmodespec` (`Src/glob.c:919-922`).
