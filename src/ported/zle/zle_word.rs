@@ -132,8 +132,13 @@ pub fn forwardword(args: &[String]) -> i32 {
             // c:57
             ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:58 INCCS
         }
-        if false && n == 0 {
-            // c:59
+        // c:59 — `if (wordflag && !n) return 0;`. wordflag is the
+        // vi-range/word-motion kludge flag set by getvirange at
+        // zle_vi.c:186; ported as atomic WORDFLAG. Was hardcoded to
+        // `false`, dropping the vi-word-motion early-exit.
+        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0
+            && n == 0
+        {
             return 0; // c:60
         }
         while ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -203,7 +208,10 @@ pub fn viforwardword(args: &[String]) -> i32 {
             // c:96
             ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:97 INCCS
         }
-        if false && n == 0 {
+        // c:99 — `if (wordflag && !n) return 0;` (see forwardword note).
+        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0
+            && n == 0
+        {
             return 0;
         } // c:99
         let mut nl = if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -263,7 +271,10 @@ pub fn viforwardblankword(args: &[String]) -> i32 {
             // c:125
             ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
-        if false && n == 0 {
+        // c:127 — `if (wordflag && !n) return 0;` (see forwardword note).
+        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0
+            && n == 0
+        {
             return 0;
         } // c:127
         let mut nl = if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -324,7 +335,10 @@ pub fn emacsforwardword(args: &[String]) -> i32 {
             // c:152
             ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
-        if false && n == 0 {
+        // c:164 — `if (wordflag && !n) return 0;` (see forwardword note).
+        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0
+            && n == 0
+        {
             return 0;
         } // c:164
         while ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -846,7 +860,7 @@ pub fn backwarddeleteword(args: &[String]) -> i32 {
         }
     }
     let ct = (ZLECS.load(std::sync::atomic::Ordering::SeqCst) - x) as i32;
-    crate::ported::zle::zle_utils::backdel(ct, /*CUT_RAW*/ 1); // c:462
+    backdel(ct, /*CUT_RAW*/ 1); // c:462
     0
 }
 
@@ -858,8 +872,8 @@ pub fn vibackwardkillword(_args: &[String]) -> i32 {
     let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:462
                                                                  // c:464 — `lim = (viinsbegin > findbol()) ? viinsbegin : findbol();`
     let viinsbegin =
-        crate::ported::zle::zle_main::VIINSBEGIN.load(std::sync::atomic::Ordering::SeqCst);
-    let bol = crate::ported::zle::zle_utils::findbol();
+        VIINSBEGIN.load(std::sync::atomic::Ordering::SeqCst);
+    let bol = findbol();
     let lim: usize = viinsbegin.max(bol);
     let mut __g_zmod = ZMOD.lock().unwrap();
     let n = if __g_zmod.flags & MOD_MULT != 0 {
@@ -912,7 +926,7 @@ pub fn vibackwardkillword(_args: &[String]) -> i32 {
     let ct = (ZLECS.load(std::sync::atomic::Ordering::SeqCst) - x) as i32;
     // c:499 — `backkill(zlecs - x, CUT_FRONT|CUT_RAW);`
     // CUT_FRONT = 0x02, CUT_RAW = 0x04 in zle.h.
-    crate::ported::zle::zle_utils::backkill(ct, 0x02 | 0x04);
+    backkill(ct, 0x02 | 0x04);
     0
 }
 
@@ -961,7 +975,7 @@ pub fn backwardkillword(args: &[String]) -> i32 {
         }
     }
     let ct = (ZLECS.load(std::sync::atomic::Ordering::SeqCst) - x) as i32;
-    crate::ported::zle::zle_utils::backkill(ct, 0x02 | 0x04); // c:533
+    backkill(ct, 0x02 | 0x04); // c:533
     0
 }
 
@@ -1140,7 +1154,7 @@ pub fn deleteword(args: &[String]) -> i32 {
         }
     }
     let ct = (x - ZLECS.load(std::sync::atomic::Ordering::SeqCst)) as i32;
-    crate::ported::zle::zle_utils::foredel(ct, /*CUT_RAW*/ 1); // c:628
+    foredel(ct, /*CUT_RAW*/ 1); // c:628
     0
 }
 
@@ -1185,7 +1199,7 @@ pub fn killword(args: &[String]) -> i32 {
         }
     }
     let ct = (x - ZLECS.load(std::sync::atomic::Ordering::SeqCst)) as i32;
-    crate::ported::zle::zle_utils::forekill(ct, /*CUT_RAW*/ 1); // c:652
+    forekill(ct, /*CUT_RAW*/ 1); // c:652
     0
 }
 
@@ -1442,7 +1456,7 @@ mod tests {
     use super::*;
 
     fn line(s: &str) {
-        crate::ported::zle::zle_main::zle_reset();
+        zle_reset();
         *ZLELINE.lock().unwrap() = s.chars().collect();
         ZLELL.store(
             ZLELINE.lock().unwrap().len(),
