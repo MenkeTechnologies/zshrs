@@ -4813,118 +4813,147 @@ pub fn bin_whence(
     // print callback; the Rust port iterates each tab's accessor and
     // emits the print directly.
     if OPT_ISSET(ops, b'm') {
-        // c:4026
-        // c:4028-4030 — `cmdnamtab->filltable(cmdnamtab);` + matchednodes
-        // setup when -a is set. Static-link path: PATH walk on demand
-        // through findcmd; matchednodes accumulator is
-        // MATCHEDNODES.
+        // c:4028 — `cmdnamtab->filltable(cmdnamtab);` populates every
+        // $PATH entry into cmdnamtab so the c:4070 scan below sees
+        // every executable (not just hashed ones). C calls this once
+        // per `-m` invocation; Rust mirrors with a single fillcmdnamtable
+        // against the shell-side $PATH array.
+        if let Some(path) = getsparam("PATH") {
+            let path_arr: Vec<String> =
+                path.split(':').map(|s| s.to_string()).collect();
+            crate::ported::hashtable::fillcmdnamtable(&path_arr);
+        }
+        // c:4030-4033 — `if (all) { pushheap(); matchednodes = newlinklist(); }`.
+        // MATCHEDNODES is the Rust analog of `matchednodes`; pushheap
+        // is a Rust no-op (no heap allocator).
         if all {
-            // c:4029
+            // c:4030
             if let Ok(mut m) = MATCHEDNODES.lock() {
                 m.clear();
             }
         }
-        queue_signals(); // c:4032
+        queue_signals(); // c:4034
         for pat in argv {
-            // c:4031
-            // c:4034 — `tokenize(*argv);` (preserves Rust-side noop).
+            // c:4035
+            // c:4037 — `tokenize(*argv);` (Rust patcompile handles the
+            // tokenize step internally; explicit call is a no-op here).
             let pprog = patcompile(
-                pat, // c:4035
+                pat, // c:4038
                 PAT_HEAPDUP,
                 None,
             );
             match pprog {
                 None => {
-                    // c:4036
-                    zwarnnam(nam, &format!("bad pattern : {}", pat)); // c:4036
-                    returnval = 1; // c:4037
+                    // c:4039
+                    zwarnnam(nam, &format!("bad pattern : {}", pat)); // c:4040
+                    returnval = 1; // c:4041
                     continue;
                 }
                 Some(prog) => {
                     if !OPT_ISSET(ops, b'p') {
-                        // c:4042
-                        // c:4044-4047 — aliases scan.
-                        if let Ok(t) = aliastab_lock().read() {
-                            for (n, _a) in t.iter() {
-                                if pattry(&prog, n) {
-                                    println!("{}", n);
-                                    informed += 1; // c:4045
-                                }
-                            }
+                        // c:4044 — !`-p` path-only.
+                        // c:4049-4051 — `scanmatchtable(aliastab, pprog,
+                        //   1, 0, DISABLED, aliastab->printnode, printflags);`.
+                        // Route through the canonical printnode callback.
+                        let alias_matches: Vec<alias> = aliastab_lock()
+                            .read()
+                            .map(|t| {
+                                t.iter()
+                                    .filter(|(n, _)| pattry(&prog, n))
+                                    .map(|(_, a)| a.clone())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        for a in &alias_matches {
+                            printaliasnode(a, printflags); // c:4051
+                            informed += 1; // c:4049
                         }
                         // c:4054-4056 — `scanmatchtable(reswdtab, pprog,
                         //   1, 0, DISABLED, reswdtab->printnode, printflags);`.
-                        // Walks the canonical reswdtab (`Src/hashtable.c:1076-1108`,
-                        // ported at hashtable.rs:521-553). Was a hardcoded
-                        // 33-element array, which drifted from the canonical
-                        // table (missing `if/fi/esac/then/{/}/[[/!/declare/typeset`
-                        // entries that ARE in reswdtab).
+                        // reswdtab->printnode is `printreswdnode` at
+                        // Src/hashtable.c:1259 — its body is just
+                        // `zputs(hn->nam); putchar('\n')`. Inline the
+                        // print since no separate Rust callback yet
+                        // exists and the body is trivial.
                         let names: Vec<String> = reswdtab_lock()
                             .read()
                             .map(|t| t.iter().map(|(k, _)| k.clone()).collect())
                             .unwrap_or_default();
                         for w in &names {
-                            // c:4055 pattry against each reswdtab name
                             if pattry(&prog, w) {
-                                println!("{}", w);
+                                println!("{}", w); // c:1259 zputs + newline
                                 informed += 1; // c:4054
                             }
                         }
-                        // c:4056-4060 — shell functions scan
-                        // (scanmatchshfunc → shfunctab walk + printnode).
-                        let names: Vec<String> = shfunctab_lock()
+                        // c:4059-4061 — `scanmatchshfunc(pprog, 1, 0,
+                        //   DISABLED, shfunctab->printnode, printflags,
+                        //   expand);`. Route through canonical
+                        // printshfuncexpand with `expand`.
+                        let func_matches: Vec<shfunc> = shfunctab_lock()
                             .read()
-                            .map(|t| t.iter().map(|(k, _)| k.clone()).collect())
+                            .map(|t| {
+                                t.iter()
+                                    .filter(|(n, _)| pattry(&prog, n))
+                                    .map(|(_, f)| f.clone())
+                                    .collect()
+                            })
                             .unwrap_or_default();
-                        for n in &names {
-                            if pattry(&prog, n) {
-                                println!("{}", n);
-                                informed += 1; // c:4058
-                            }
+                        for f in &func_matches {
+                            printshfuncexpand(f, printflags, expand); // c:4061
+                            informed += 1; // c:4059
                         }
-                        // c:4063-4066 — builtins scan.
+                        // c:4064-4066 — `scanmatchtable(builtintab, pprog,
+                        //   1, 0, DISABLED, builtintab->printnode,
+                        //   printflags);`.
                         for b in BUILTINS.iter() {
                             if pattry(&prog, &b.node.nam) {
-                                println!("{}", b.node.nam);
+                                printbuiltinnode(
+                                    &b.node as *const hashnode
+                                        as *mut hashnode,
+                                    printflags,
+                                ); // c:4066
                                 informed += 1; // c:4064
                             }
                         }
                     }
-                    // c:4070-4072 — cmdnamtab scan ($PATH-cached external commands).
-                    // Static-link path: walk $PATH dirs (from paramtab —
-                    // shell-side $PATH, not OS env) and match basenames.
-                    if let Some(path) = getsparam("PATH") {
-                        for dir in path.split(':') {
-                            if dir.is_empty() {
-                                continue;
+                    // c:4070-4073 — `scanmatchtable(cmdnamtab, pprog,
+                    //   1, 0, 0, (all ? fetchcmdnamnode :
+                    //   cmdnamtab->printnode), printflags);`. After
+                    // fillcmdnamtable above, cmdnamtab has every
+                    // PATH-resident command name. Walk the canonical
+                    // table (not std::fs::read_dir) so HASHED/non-
+                    // HASHED distinction is preserved.
+                    let cmd_matches: Vec<(String, crate::ported::zsh_h::cmdnam)> = cmdnamtab_lock()
+                        .read()
+                        .map(|t| {
+                            t.iter()
+                                .filter(|(n, _)| pattry(&prog, n))
+                                .map(|(n, c)| (n.clone(), c.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    for (n, c) in &cmd_matches {
+                        if all {
+                            // c:4072 fetchcmdnamnode — accumulates
+                            // matching node names into matchednodes.
+                            if let Ok(mut m) = MATCHEDNODES.lock() {
+                                m.push(n.clone());
                             }
-                            if let Ok(rd) = std::fs::read_dir(dir) {
-                                for entry in rd.flatten() {
-                                    if let Some(name) = entry.file_name().to_str() {
-                                        if pattry(&prog, name) {
-                                            if all {
-                                                if let Ok(mut m) =
-                                                    MATCHEDNODES.lock()
-                                                {
-                                                    m.push(name.to_string());
-                                                }
-                                            } else {
-                                                println!("{}", name);
-                                            }
-                                            informed += 1; // c:4072
-                                        }
-                                    }
-                                }
-                            }
+                        } else {
+                            // c:4072 cmdnamtab->printnode — emits per
+                            // PRINT_WHENCE_WORD/CSH/VERBOSE branches.
+                            printcmdnamnode(c, printflags);
                         }
+                        informed += 1; // c:4070
                     }
                 }
             }
-            crate::ported::signals_h::run_queued_signals(); // c:4076
+            crate::ported::signals_h::run_queued_signals(); // c:4079
         }
-        unqueue_signals(); // c:4078
+        unqueue_signals(); // c:4081
         if !all {
-            // c:4081
+            // c:4082-4084 — `return returnval || !informed;` (early-out
+            // when not in `-a` accumulator mode).
             return if returnval != 0 || informed == 0 {
                 1
             } else {
