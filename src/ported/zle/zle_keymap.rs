@@ -1002,7 +1002,7 @@ pub fn bin_bindkey(
         if OPT_ISSET(ops, b'e') || OPT_ISSET(ops, b'v') {
             return 0;
         }
-        return bin_bindkey_list(name, args);
+        return bin_bindkey_list(name, kmname.as_deref(), None, args, ops, 0);
     }
 
     // c:816-824 — arity check.
@@ -1015,34 +1015,43 @@ pub fn bin_bindkey(
         return 1;
     }
 
-    // c:826-827 — dispatch.
-    let func_char = if op.o == 0 { ' ' } else { op.o as char };
+    // c:826-827 — dispatch. C: `return op->func(name, kmname, km, argv, ops, op->o);`
+    let func_i: i32 = op.o as i32;
+    let km_ref: Option<&Keymap> = None;                                      // c:826 km — substrate via openkeymap(kmname) deferred
+    let km_str = kmname.as_deref();
     match op.func {
-        Op::LsMaps => {
-            for k in bin_bindkey_lsmaps() {
-                println!("{}", k);
-            }
-            0
-        }
-        Op::DelAll => bin_bindkey_delall(name),
-        Op::Del => bin_bindkey_del(args),
-        Op::Link => bin_bindkey_link(args),
-        Op::New => bin_bindkey_new(args),
-        Op::Meta => bin_bindkey_meta(name, args),
-        Op::Bind => bin_bindkey_bind(name, args, func_char),
-    };
-    let _ = kmname; // kmname currently unused by sub-handlers; will be threaded once they take it.
-    0
+        Op::LsMaps => bin_bindkey_lsmaps(name, km_str, km_ref, args, ops, func_i),
+        Op::DelAll => bin_bindkey_delall(name, km_str, km_ref, args, ops, func_i),
+        Op::Del => bin_bindkey_del(name, km_str, km_ref, args, ops, func_i),
+        Op::Link => bin_bindkey_link(name, km_str, km_ref, args, ops, func_i),
+        Op::New => bin_bindkey_new(name, km_str, km_ref, args, ops, func_i),
+        Op::Meta => bin_bindkey_meta(name, km_str, km_ref, args, ops, func_i),
+        Op::Bind => bin_bindkey_bind(name, km_str, km_ref, args, ops, func_i),
+    }
 }
 
-/// Port of `bin_bindkey_lsmaps(char *name, UNUSED(char *kmname), UNUSED(Keymap km), char **argv, Options ops, UNUSED(char func))` from Src/Zle/zle_keymap.c:834.
-/// WARNING: param names don't match C — Rust=() vs C=(name, kmname, km, argv, ops, func)
-pub fn bin_bindkey_lsmaps() -> Vec<String> {
+/// Port of `bin_bindkey_lsmaps(char *name, UNUSED(char *kmname),
+/// UNUSED(Keymap km), char **argv, Options ops, UNUSED(char func))`
+/// from Src/Zle/zle_keymap.c:834.
+///
+/// Print every registered keymap (one per line, with `-> alias`
+/// suffix for entries that share the underlying keymap).
+pub fn bin_bindkey_lsmaps(
+    _name: &str,
+    _kmname: Option<&str>,
+    _km: Option<&Keymap>,
+    _argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
     // c:834
     // C body (c:856-873): `scanhashtable(keymapnamtab, 1, ...,
     //                      scanlistmaps, 0)`. Format each as
     // `name (-> alias)` for entries that share a keymap.
-    keymapnamtab().lock().unwrap().keys().cloned().collect()
+    for k in keymapnamtab().lock().unwrap().keys() {
+        println!("{}", k);
+    }
+    0
 }
 
 /// Port of `scanlistmaps(HashNode hn, int list_verbose)` from Src/Zle/zle_keymap.c:856.
@@ -1054,9 +1063,17 @@ pub fn scanlistmaps() -> Vec<String> {
     keymapnamtab().lock().unwrap().keys().cloned().collect()
 }
 
-/// Port of `bin_bindkey_delall(UNUSED(char *name), UNUSED(char *kmname), UNUSED(Keymap km), UNUSED(char **argv), UNUSED(Options ops), UNUSED(char func))` from Src/Zle/zle_keymap.c:891.
-/// WARNING: param names don't match C — Rust=(name) vs C=(name, kmname, km, argv, ops, func)
-pub fn bin_bindkey_delall(name: &str) -> i32 {
+/// Port of `bin_bindkey_delall(UNUSED(char *name), UNUSED(char *kmname),
+/// UNUSED(Keymap km), UNUSED(char **argv), UNUSED(Options ops),
+/// UNUSED(char func))` from Src/Zle/zle_keymap.c:891.
+pub fn bin_bindkey_delall(
+    name: &str,
+    _kmname: Option<&str>,
+    _km: Option<&Keymap>,
+    _argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
     // c:891
     // C body (c:888-892): `km->flags & KM_IMMUTABLE → 1; else
     //                      walk km->multi + km->first[256] freeing all`.
@@ -1068,17 +1085,25 @@ pub fn bin_bindkey_delall(name: &str) -> i32 {
     0
 }
 
-/// Port of `bin_bindkey_del(char *name, UNUSED(char *kmname), UNUSED(Keymap km), char **argv, UNUSED(Options ops), UNUSED(char func))` from Src/Zle/zle_keymap.c:902.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, kmname, km, argv, ops, func)
-pub fn bin_bindkey_del(args: &[String]) -> i32 {
+/// Port of `bin_bindkey_del(char *name, UNUSED(char *kmname),
+/// UNUSED(Keymap km), char **argv, UNUSED(Options ops),
+/// UNUSED(char func))` from Src/Zle/zle_keymap.c:902.
+pub fn bin_bindkey_del(
+    _name: &str,
+    _kmname: Option<&str>,
+    _km: Option<&Keymap>,
+    argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
     // c:902
-    // C body (c:830-855): `do { unlinkkeymap(*args, 0) } while(*++args)`.
+    // C body (c:830-855): `do { unlinkkeymap(*argv, 0) } while(*++argv)`.
     // Returns 1 on first failure, else 0.
-    if args.is_empty() {
+    if argv.is_empty() {
         return 1;
     }
     let mut ret = 0;
-    for arg in args {
+    for arg in argv {
         match unlinkkeymap(arg, 0) {
             0 => {}
             _ => ret = 1,
@@ -1087,46 +1112,62 @@ pub fn bin_bindkey_del(args: &[String]) -> i32 {
     ret
 }
 
-/// Port of `bin_bindkey_link(char *name, UNUSED(char *kmname), Keymap km, char **argv, UNUSED(Options ops), UNUSED(char func))` from Src/Zle/zle_keymap.c:921.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, kmname, km, argv, ops, func)
-pub fn bin_bindkey_link(args: &[String]) -> i32 {
+/// Port of `bin_bindkey_link(char *name, UNUSED(char *kmname),
+/// Keymap km, char **argv, UNUSED(Options ops), UNUSED(char func))`
+/// from Src/Zle/zle_keymap.c:921.
+pub fn bin_bindkey_link(
+    _name: &str,
+    _kmname: Option<&str>,
+    _km: Option<&Keymap>,
+    argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
     // c:921
-    // C body (c:907-933): `km2 = openkeymap(args[0]); if (!km2) return 1;
-    //                       linkkeymap(km2, args[1], 0)`.
-    if args.len() < 2 {
+    // C body (c:907-933): `km2 = openkeymap(argv[0]); if (!km2) return 1;
+    //                       linkkeymap(km2, argv[1], 0)`.
+    if argv.len() < 2 {
         return 1;
     }
-    let Some(km) = openkeymap(&args[0]) else {
+    let Some(km) = openkeymap(&argv[0]) else {
         return 1;
     };
-    if linkkeymap(km, &args[1], 0) != 0 {
+    if linkkeymap(km, &argv[1], 0) != 0 {
         return 1;
     }
     0
 }
 
-/// Port of `bin_bindkey_new(char *name, UNUSED(char *kmname), Keymap km, char **argv, UNUSED(Options ops), UNUSED(char func))` from Src/Zle/zle_keymap.c:938.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, kmname, km, argv, ops, func)
-pub fn bin_bindkey_new(args: &[String]) -> i32 {
+/// Port of `bin_bindkey_new(char *name, UNUSED(char *kmname),
+/// Keymap km, char **argv, UNUSED(Options ops), UNUSED(char func))`
+/// from Src/Zle/zle_keymap.c:938.
+pub fn bin_bindkey_new(
+    _name: &str,
+    _kmname: Option<&str>,
+    _km: Option<&Keymap>,
+    argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
     // c:938
-    // c:938-955 — `kmn = keymapnamtab.getnode(args[0]); if (kmn->flags
-    //               & KMN_IMMORTAL) return 1; if (args[1]) km =
-    //               openkeymap(args[1]) else NULL;
-    //               linkkeymap(newkeymap(km, args[0]), args[0], 0)`.
-    if args.is_empty() {
+    // c:938-955 — `kmn = keymapnamtab.getnode(argv[0]); if (kmn->flags
+    //               & KMN_IMMORTAL) return 1; if (argv[1]) km =
+    //               openkeymap(argv[1]) else NULL;
+    //               linkkeymap(newkeymap(km, argv[0]), argv[0], 0)`.
+    if argv.is_empty() {
         return 1;
     }
     let blocked = keymapnamtab()
         .lock()
         .unwrap()
-        .get(&args[0])
+        .get(&argv[0])
         .map(|n| n.flags & KMN_IMMORTAL != 0)
         .unwrap_or(false);
     if blocked {
         return 1; // c:944
     }
-    let template = if args.len() >= 2 {
-        let km = openkeymap(&args[1]);
+    let template = if argv.len() >= 2 {
+        let km = openkeymap(&argv[1]);
         if km.is_none() {
             return 1; // c:950
         }
@@ -1134,8 +1175,8 @@ pub fn bin_bindkey_new(args: &[String]) -> i32 {
     } else {
         None
     };
-    let new_km = newkeymap(template.as_deref(), &args[0]); // c:954
-    linkkeymap(new_km, &args[0], 0);
+    let new_km = newkeymap(template.as_deref(), &argv[0]); // c:954
+    linkkeymap(new_km, &argv[0], 0);
     0 // c:955
 }
 
@@ -1153,7 +1194,14 @@ pub fn bin_bindkey_new(args: &[String]) -> i32 {
 /// validates the keymap exists and returns success; when the
 /// metabind table lands in `zle_bindings.rs` the inner loop can
 /// be uncommented to issue real bindkey calls.
-pub fn bin_bindkey_meta(name: &str, _argv: &[String]) -> i32 {
+pub fn bin_bindkey_meta(
+    name: &str,
+    _kmname: Option<&str>,
+    _km: Option<&Keymap>,
+    _argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
     // c:966
     // c:966 — KM_IMMUTABLE check: km->flags & KM_IMMUTABLE → return 1.
     // zshrs KeymapFlags doesn't carry IMMUTABLE yet; openkeymap()
@@ -1180,7 +1228,14 @@ pub fn bin_bindkey_meta(name: &str, _argv: &[String]) -> i32 {
 /// the copy, swap the new Arc into every name that pointed at the
 /// old Arc (preserves C's "all sharing names see the change"
 /// semantic).
-pub fn bin_bindkey_bind(name: &str, args: &[String], func: char) -> i32 {
+pub fn bin_bindkey_bind(
+    name: &str,
+    _kmname: Option<&str>,
+    _km: Option<&Keymap>,
+    argv: &[String],
+    _ops: &options,
+    func: i32,
+) -> i32 {
     // c:999
 
     let Some(old_arc) = openkeymap(name) else {
@@ -1188,26 +1243,27 @@ pub fn bin_bindkey_bind(name: &str, args: &[String], func: char) -> i32 {
     }; // c:1002
        // c:1003-1011 — bind seq+target pairs need even argv count
        // (omit on '-r' / when func is the empty target).
-    let needs_pairs = func == '\0' || func == 's';
-    if needs_pairs && (args.len() % 2 != 0) {
+    let func_c = if func == 0 { '\0' } else { func as u8 as char };
+    let needs_pairs = func_c == '\0' || func_c == 's';
+    if needs_pairs && (argv.len() % 2 != 0) {
         return 1;
     }
 
     // Mutable clone of the shared Keymap.
     let mut km: Keymap = (*old_arc).clone();
 
-    // c:1014-1090 — walk args in 1 or 2-step strides.
-    let stride = if func == 'r' { 1 } else { 2 };
+    // c:1014-1090 — walk argv in 1 or 2-step strides.
+    let stride = if func_c == 'r' { 1 } else { 2 };
     let mut i = 0;
-    while i + (stride - 1) < args.len() {
-        let seq_bytes = args[i].as_bytes();
+    while i + (stride - 1) < argv.len() {
+        let seq_bytes = argv[i].as_bytes();
         let target = if stride == 2 {
-            Some(args[i + 1].clone())
+            Some(argv[i + 1].clone())
         } else {
             None
         };
 
-        let kb_value: KeyBinding = match func {
+        let kb_value: KeyBinding = match func_c {
             // c:1027
             'r' => KeyBinding {
                 bind: None,
@@ -1278,7 +1334,14 @@ pub fn scanremoveprefix(km: &mut Keymap, prefix: &[u8]) {
 /// from `Src/Zle/zle_keymap.c:1094`. Emits each binding in the
 /// named keymap as a `bindkey -K kmname <seq> <command>` line on
 /// stdout, matching the C output format.
-pub fn bin_bindkey_list(name: &str, _ops: &[String]) -> i32 {
+pub fn bin_bindkey_list(
+    name: &str,
+    _kmname: Option<&str>,
+    _km: Option<&Keymap>,
+    _argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
     // c:1094
     let Some(km) = openkeymap(name) else {
         return 1;
