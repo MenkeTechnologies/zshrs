@@ -72,7 +72,7 @@ use crate::ported::utils::{
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
 use crate::ported::zle::compctl::compctlread;
-use crate::ported::zsh_h::{eprog, nameddir, options, ALIAS_GLOBAL, ALIAS_SUFFIX, BINF_KEEPNUM, DISABLED, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, MAX_OPS, MFF_STR, OPT_ARG, OPT_HASARG, OPT_ISSET, OPT_MINUS, OPT_PLUS, PM_ABSPATH_USED, PM_ARRAY, PM_CUR_FPATH, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED, PM_UNALIASED, PM_UNDEFINED, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TYPESET_OPTSTR, XTRACE, asgment, builtin, hashnode, isset, mathfunc, param, shfunc, HandlerFunc, ASG_ARRAY, ASG_ARRAYP, ASG_KEY_VALUE, ASG_VALUEP, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, FUNCTIONARGZERO, HASHED, INTERACTIVE, MFF_USERFUNC, MONITOR, NULLBINCMD, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_AUTOLOAD, PM_DECLARED, PM_EXPORTED, PM_HIDE, PM_SCALAR, PM_SPECIAL, PM_TYPE, PM_UNSET, POSIXBUILTINS, PRINT_INCLUDEVALUE, TYPESETSILENT, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_DEFERRED, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC, alias};
+use crate::ported::zsh_h::{eprog, nameddir, options, ALIAS_GLOBAL, ALIAS_SUFFIX, BINF_KEEPNUM, DISABLED, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, MAX_OPS, MFF_STR, OPT_ARG, OPT_HASARG, OPT_ISSET, OPT_MINUS, OPT_PLUS, PM_ABSPATH_USED, PM_ARRAY, PM_CUR_FPATH, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF, PM_UNIQUE, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED, PM_UNALIASED, PM_UNDEFINED, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TYPESET_OPTSTR, XTRACE, asgment, builtin, hashnode, isset, mathfunc, param, shfunc, HandlerFunc, ASG_ARRAY, ASG_ARRAYP, ASG_KEY_VALUE, ASG_VALUEP, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, FUNCTIONARGZERO, HASHED, INTERACTIVE, MFF_USERFUNC, MONITOR, NULLBINCMD, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_AUTOLOAD, PM_DECLARED, PM_EXPORTED, PM_HIDE, PM_SCALAR, PM_SPECIAL, PM_TYPE, PM_UNSET, POSIXBUILTINS, PRINT_INCLUDEVALUE, TYPESETSILENT, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_DEFERRED, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC, alias};
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
 
@@ -3225,17 +3225,21 @@ pub fn bin_typeset(
         // c:2792 — `scanhashtable(paramtab, 1, on|roff, 0, paramtab->printnode,
         //               printflags|(roff ? PRINT_NAMEONLY : 0));`
         //
-        // Walks the paramtab (sorted=1, alphabetical) filtering by
-        // the typeset flags. The previous Rust port walked
-        // `std::env::vars()` — OS env — same divergence as the
-        // prior bin_set + bin_unset -m fixes. Shell-internal vars
-        // (not exported) never appeared in `typeset` listings; the
-        // \`on\`/\`roff\` flag filter was also ignored, so `typeset
-        // -p +g` showed ALL env vars regardless of which typeset
-        // flags the user requested.
-        let mut entries: Vec<(String, String)> = {
+        // Walk paramtab (sorted=1, alphabetical) filtering by on|roff
+        // and dispatch printparamnode for each match. Previously inlined
+        // a `println!("{}={}", k, v)` which:
+        //   - Ignored printflags (PRINT_TYPESET, PRINT_POSIX_EXPORT,
+        //     PRINT_POSIX_READONLY, PRINT_NAMEONLY) so `export -p` had
+        //     zero rows, `typeset -p` skipped attribute letters, and
+        //     `readonly -p` had no `readonly ` prefix.
+        //   - Read pm.u_str directly so PM_INTEGER / PM_*FLOAT /
+        //     PM_ARRAY / PM_HASHED values printed as empty.
+        // printparamnode (params.c:6123) handles all of these.
+        let printflags_final = printflags | if roff != 0 { PRINT_NAMEONLY } else { 0 }; // c:2792
+        let names: Vec<String> = {
             let tab = paramtab().read().unwrap();
-            tab.iter()
+            let mut names: Vec<String> = tab
+                .iter()
                 .filter(|(_, pm)| {
                     let f = pm.node.flags as u32;
                     if (f & PM_UNSET) != 0 {
@@ -3245,18 +3249,16 @@ pub fn bin_typeset(
                     let on_roff = (on as u32) | (roff as u32);
                     on_roff == 0 || (f & on_roff) != 0
                 })
-                .map(|(k, pm)| {
-                    let v = pm.u_str.clone().unwrap_or_default();
-                    (k.clone(), v)
-                })
-                .collect()
+                .map(|(k, _)| k.clone())
+                .collect();
+            names.sort_by(|a, b| hnamcmp(a, b));
+            names
         };
-        entries.sort_by(|a, b| hnamcmp(&a.0, &b.0));
-        for (k, v) in entries {
-            if (printflags & PRINT_NAMEONLY) != 0 {
-                println!("{}", k);
-            } else {
-                println!("{}={}", k, quotedzputs(&v));
+        for k in names {
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(pm) = tab.get_mut(&k) {
+                    crate::ported::params::printparamnode(pm, printflags_final); // c:2792
+                }
             }
         }
         unqueue_signals();
@@ -3445,7 +3447,15 @@ pub fn bin_typeset(
             } else {
                 0
             };
-            let _ = createparam(arg_name, on as i32 | kind as i32 | PM_LOCAL as i32);
+            // c:2475-2487 — C calls `assignsparam(pname, value, 0)`
+            // which creates the pm via the assignsparam → createparam
+            // path WITHOUT propagating PM_READONLY/PM_EXPORTED flags
+            // (that path uses PM_SCALAR / PM_ARRAY / PM_HASHED only).
+            // Post-assign attribute stamps add PM_READONLY/PM_EXPORTED
+            // later. Mirror by passing ONLY the type-kind + PM_LOCAL
+            // (not the full `on` mask) so the freshly-created pm
+            // doesn't error on its own first assignment.
+            let _ = createparam(arg_name, kind as i32 | PM_LOCAL as i32);
             // c:2575 — `else if (on & PM_LOCAL) pm->level = locallevel;`
             // — stamp the just-created pm at the current scope so
             // endparamscope (params.c) unwinds the shadow when the
@@ -3571,19 +3581,29 @@ pub fn bin_typeset(
                 // flip flags) wrote "5" to u_str then changed PM_TYPE
                 // to PM_INTEGER without migrating u_str → u_val, so
                 // getsparam(n) read u_val=0 instead of 5.
-                let type_mask =
-                    (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY) as i32;
-                let to_set = (on
-                    & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY))
+                // c:2748-2784 — pre-assign type flags only (PM_INTEGER
+                // etc. — affect storage / setfn dispatch). Post-assign
+                // attributes (PM_READONLY / PM_EXPORTED / justification
+                // bits) are stamped AFTER setsparam since the C path
+                // (c:2475 `assignsparam(pname, val, 0)` → c:2510
+                // `on = pm->node.flags`) sets PM_READONLY only after
+                // the value lands. Mixing them pre-assign caused
+                // `readonly y=hello` to error "read-only variable: y"
+                // — the freshly-created pm had PM_READONLY which
+                // blocked its OWN initial assign.
+                let pre_assign_mask =
+                    (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_NAMEREF) as i32;
+                let pre_assign_to_set = (on
+                    & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_NAMEREF))
                     as i32;
-                if to_set != 0 {
+                if pre_assign_to_set != 0 {
                     let pname_in_tab = paramtab()
                         .read()
                         .map(|t| t.contains_key(n))
                         .unwrap_or(false);
                     if !pname_in_tab {
                         // c:1132+ createparam(name, type_flags) — fresh.
-                        let _ = createparam(n, to_set);
+                        let _ = createparam(n, pre_assign_to_set);
                     } else {
                         // c:2355-2378 tc (type-conversion) — flip the
                         // PM_TYPE bits on the existing param BEFORE
@@ -3591,12 +3611,30 @@ pub fn bin_typeset(
                         // the new type's setfn.
                         if let Ok(mut tab) = paramtab().write() {
                             if let Some(pm) = tab.get_mut(n) {
-                                pm.node.flags = (pm.node.flags & !type_mask) | to_set;
+                                pm.node.flags =
+                                    (pm.node.flags & !pre_assign_mask) | pre_assign_to_set;
                             }
                         }
                     }
                 }
                 setsparam(n, &folded); // c:params.c:3350
+                // c:2510-2520 — `on = pm->node.flags;` then stamp the
+                // attribute bits on the just-assigned param.
+                let post_assign_mask = (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B
+                    | PM_RIGHT_Z | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE)
+                    as i32;
+                let post_assign_to_set = (on
+                    & (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z
+                       | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE))
+                    as i32;
+                if post_assign_to_set != 0 {
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(n) {
+                            pm.node.flags =
+                                (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                        }
+                    }
+                }
                 // c:Src/params.c:3024 addenv — only mirror to OS env
                 // when PM_EXPORTED is in flags or already-exported.
                 let already_exported = std::env::var_os(n).is_some();
