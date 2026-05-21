@@ -28,13 +28,27 @@
 //!   replaced by fusevm bytecode in `src/extensions/compile_zsh.rs`;
 //!   see the WARNING block inside the function body.
 
+use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
 
 use crate::fusevm_bridge::with_executor;
-use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+use crate::ported::builtin::{BUILTINS, LASTVAL};
+use crate::ported::context::{zcontext_restore, zcontext_save};
+use crate::ported::hashtable::shfunctab_lock;
+use crate::ported::hist::{strinbeg, strinend};
+use crate::ported::init::{underscorelen, underscoreused, zunderscore};
+use crate::ported::input::{inpop, inpush};
+use crate::ported::lex::{hgetc, parsestr, tok, untokenize, LEXERR, LEX_LEXSTOP, LEX_LINENO};
+use crate::ported::mem::dupstring;
+use crate::ported::parse::parse_list;
+use crate::ported::signals::{queue_signals, unqueue_signals};
+use crate::ported::subst::quotesubst;
+use crate::ported::utils::{errflag, movefd, unmeta, zerr, ERRFLAG_ERROR};
+use crate::ported::ztype_h::inull;
 use crate::ported::zsh_h::{
-    BINF_BUILTIN, BINF_COMMAND, BINF_EXEC, BINF_PREFIX, IS_DASH, PM_UNDEFINED, WC_SIMPLE,
-    WC_TYPESET,
+    builtin, eprog, hashnode, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH,
+    BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIR_HEREDOCDASH,
+    WC_SIMPLE, WC_TYPESET,
 };
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
@@ -100,15 +114,15 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 
     // c:4580-4584 — for (s = str; *s; s++) if (inull(*s)) { qt = 1; break; }
     for s in str.bytes() {
-        if crate::ported::ztype_h::inull(s) {
+        if inull(s) {
             // c:4581
             qt = 1; // c:4582
             break; // c:4583
         }
     }
-    str = crate::ported::subst::quotesubst(&str); // c:4585
-    str = crate::ported::lex::untokenize(&str); // c:4586
-    if typ == crate::ported::zsh_h::REDIR_HEREDOCDASH {
+    str = quotesubst(&str); // c:4585
+    str = untokenize(&str); // c:4586
+    if typ == REDIR_HEREDOCDASH {
         // c:4587
         strip = 1; // c:4588
                    // c:4589-4590 — while (*str == '\t') str++;
@@ -129,7 +143,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 
         // c:4597-4598 — while ((c = hgetc()) == '\t' && strip) ;
         loop {
-            c = crate::ported::lex::hgetc();
+            c = hgetc();
             if !(c == Some('\t') && strip != 0) {
                 break;
             }
@@ -140,17 +154,17 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
             // c:4600-4613 — buffer-growth realloc dance. Rust's
             // String auto-grows; nothing to do.
             // c:4614 — if (lexstop || c == '\n') break;
-            if crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) || c == Some('\n') || c.is_none() {
+            if LEX_LEXSTOP.with(|f| f.get()) || c == Some('\n') || c.is_none() {
                 break;
             }
             // c:4616 — if (!qt && c == '\\')
             if qt == 0 && c == Some('\\') {
                 buf.push('\\'); // c:4617 *bptr++ = c
-                c = crate::ported::lex::hgetc(); // c:4618
+                c = hgetc(); // c:4618
                 if c == Some('\n') {
                     // c:4619
                     buf.pop(); // c:4620 bptr--
-                    c = crate::ported::lex::hgetc(); // c:4621
+                    c = hgetc(); // c:4621
                     continue; // c:4622
                 }
             }
@@ -158,7 +172,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
                 // c:4625 *bptr++ = c
                 buf.push(ch);
             }
-            c = crate::ported::lex::hgetc(); // c:4626
+            c = hgetc(); // c:4626
         }
         // c:4628 — *bptr = '\0'; (implicit — Rust String tracks len)
 
@@ -167,7 +181,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
             break;
         }
         // c:4631-4634 — if (lexstop) { t = bptr; break; }
-        if crate::ported::lex::LEX_LEXSTOP.with(|f| f.get()) {
+        if LEX_LEXSTOP.with(|f| f.get()) {
             t = buf.len();
             break;
         }
@@ -180,21 +194,21 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
     // c:4638-4640 — s = buf; buf = dupstring(buf); zfree(s, bsiz);
     // The C dance frees the realloc'd block and re-allocates via the
     // string-heap allocator. Rust drops the old String when reassigned.
-    buf = crate::ported::mem::dupstring(&buf);
+    buf = dupstring(&buf);
 
     if qt == 0 {
         // c:4641
         // c:4642 — int ef = errflag;
         let ef = errflag.load(Ordering::Relaxed);
         // c:4644 — parsestr(&buf);
-        if let Ok(parsed) = crate::ported::lex::parsestr(&buf) {
+        if let Ok(parsed) = parsestr(&buf) {
             buf = parsed;
         }
         // c:4646-4649 — if (!(errflag & ERRFLAG_ERROR)) errflag = ef | (errflag & ERRFLAG_INT);
         if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0 {
             let cur = errflag.load(Ordering::Relaxed);
             errflag.store(
-                ef | (cur & crate::ported::zsh_h::ERRFLAG_INT),
+                ef | (cur & ERRFLAG_INT),
                 Ordering::Relaxed,
             );
         }
@@ -239,7 +253,7 @@ pub fn getoutput(cmd: &str) -> String {
 /// Eprog runs lazily at first call site.
 /// Port of `loadautofn(Shfunc shf, int fksh, int autol, int current_fpath)` from `Src/exec.c:5682`.
 pub fn loadautofn(
-    shf: *mut crate::ported::zsh_h::shfunc, // c:5682 (Src/exec.c)
+    shf: *mut shfunc, // c:5682 (Src/exec.c)
     _ks: i32,
     test_only: i32,
     _ignore_loaddir: i32,
@@ -276,13 +290,13 @@ pub fn loadautofn(
     }
     // Sync the body string into the Rust-side ShFunc table so the
     // lazy-parse path can find it later.
-    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+    if let Ok(mut tab) = shfunctab_lock().write() {
         if let Some(existing) = tab.get_mut(&name) {
             existing.body = Some(body);
             existing.filename = dir_path;
         } else {
-            tab.add(crate::ported::zsh_h::shfunc {
-                node: crate::ported::zsh_h::hashnode {
+            tab.add(shfunc {
+                node: hashnode {
                     next: None,
                     nam: name.clone(),
                     flags: 0,
@@ -355,8 +369,8 @@ pub fn getfpfunc(
 /// the C return-NULL-on-failure contract).
 pub fn resolvebuiltin<'a>(
     cmdarg: &str, // c:2703 (Src/exec.c)
-    hn: &'a crate::ported::zsh_h::builtin,
-) -> Option<&'a crate::ported::zsh_h::builtin> {
+    hn: &'a builtin,
+) -> Option<&'a builtin> {
     // c:2705 — `if (!((Builtin) hn)->handlerfunc)`.
     if hn.handlerfunc.is_none() {
         // c:2706 — `modname = dupstring(((Builtin)hn)->optstr)`.
@@ -365,7 +379,7 @@ pub fn resolvebuiltin<'a>(
         // module-autoload path is not yet wired; treat missing
         // handlerfunc as unresolvable.
         // c:2715-2721 — re-lookup, fail with `lastval=1` + zerr.
-        crate::ported::utils::zerr(&format!(
+        zerr(&format!(
             "autoloading module {} failed to define builtin: {}",
             modname, cmdarg
         ));
@@ -468,7 +482,7 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
     // c:2900 (Src/exec.c)
 
     // c:2904-2916 — locals.
-    let mut hn: Option<&'static crate::ported::zsh_h::builtin> = None; // c:2904
+    let mut hn: Option<&'static builtin> = None; // c:2904
     let mut is_shfunc = false; // c:2913
     let mut is_builtin = false; // c:2913
     let mut use_defpath = false; // c:2913
@@ -504,7 +518,7 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
         while precmd_skip < preargs.len() {
             // c:3029
             // c:3030 — `cmdarg = (char *) peekfirst(preargs);`.
-            let cmdarg = crate::ported::lex::untokenize(&preargs[precmd_skip]);
+            let cmdarg = untokenize(&preargs[precmd_skip]);
             // c:3031 — `checked = !has_token(cmdarg)`. zshrs's fusevm
             // already performed prefork expansion on `preargs`, so
             // `has_token` is effectively false here; the C `break` on
@@ -523,7 +537,7 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
             // modifier preceded it.
             if (cflags & (BINF_BUILTIN | BINF_COMMAND)) == 0 {
                 // c:3051
-                if crate::ported::hashtable::shfunctab_lock()
+                if shfunctab_lock()
                     .read()
                     .map(|t| t.iter().any(|(k, _)| k == &cmdarg))
                     .unwrap_or(false)
@@ -533,7 +547,7 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
                 }
             }
             // c:3056 — `builtintab->getnode(builtintab, cmdarg)`.
-            let entry = crate::ported::builtin::BUILTINS
+            let entry = BUILTINS
                 .iter()
                 .find(|b| b.node.nam == cmdarg);
             let Some(entry) = entry else {
@@ -680,7 +694,7 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
                                   // c:3203-3208 — empty next → error.
                     if argnode >= preargs.len() {
                         // c:3203
-                        crate::ported::utils::zerr(
+                        zerr(
                             // c:3204
                             "exec requires a command to execute",
                         );
@@ -712,7 +726,7 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
                                     // c:3220 — `-a NAME` separate form.
                                     if argnode >= preargs.len() {
                                         // c:3230
-                                        crate::ported::utils::zerr(
+                                        zerr(
                                             // c:3231
                                             "exec flag -a requires a parameter",
                                         );
@@ -726,15 +740,15 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
                             }
                             'c' => {
                                 // c:3242
-                                cflags |= crate::ported::zsh_h::BINF_CLEARENV; // c:3243
+                                cflags |= BINF_CLEARENV; // c:3243
                             }
                             'l' => {
                                 // c:3245
-                                cflags |= crate::ported::zsh_h::BINF_DASH; // c:3246
+                                cflags |= BINF_DASH; // c:3246
                             }
                             _ => {
                                 // c:3248
-                                crate::ported::utils::zerr(
+                                zerr(
                                     // c:3249
                                     &format!("unknown exec flag -{}", cmdopt),
                                 );
@@ -755,7 +769,7 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
                 // struct so the caller can apply it before fork+exec.
                 if let Some(ref a0) = exec_argv0 {
                     // c:3263 — `remnulargs + untokenize` then setenv.
-                    let cleaned = crate::ported::lex::untokenize(a0); // c:3266-3267
+                    let cleaned = untokenize(a0); // c:3266-3267
                     exec_argv0 = Some(cleaned);
                 }
                 if error_done {
@@ -818,5 +832,263 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
         has_command_vv,
         exec_argv0,
         is_empty_command,
+    }
+}
+
+// =============================================================================
+// Leaf-function ports — c:283 (parse_string) and below. Added incrementally to
+// chip at the ~5500 lines of exec.c still un-ported beyond the wordcode
+// walker (execlist / execpline / execcmd which the fusevm bytecode VM
+// replaces — see the WARNING block in execcmd_exec).
+// =============================================================================
+
+/// Port of `parse_string(char *s, int reset_lineno)` from `Src/exec.c:283`.
+///
+/// C body:
+/// ```c
+/// Eprog p; zlong oldlineno;
+/// zcontext_save();
+/// inpush(s, INP_LINENO, NULL);
+/// strinbeg(0);
+/// oldlineno = lineno;
+/// if (reset_lineno) lineno = 1;
+/// p = parse_list();
+/// lineno = oldlineno;
+/// if (tok == LEXERR && !lastval) lastval = 1;
+/// strinend();
+/// inpop();
+/// zcontext_restore();
+/// return p;
+/// ```
+///
+/// Parses an arbitrary string as a zsh command list, returning the
+/// `Eprog` (compiled wordcode). Used by `getoutput` for `$(cmd)`,
+/// `bin_eval` for `eval`, and the autoload path.
+pub fn parse_string(s: &str, reset_lineno: i32) -> Option<eprog> {
+    // c:285-286
+    let p: Option<eprog>;
+    let oldlineno: i64;
+
+    zcontext_save(); // c:288
+    inpush(s, INP_LINENO, None); // c:289
+    strinbeg(0); // c:290
+    oldlineno = LEX_LINENO.get() as i64; // c:291
+    if reset_lineno != 0 {
+        // c:292
+        LEX_LINENO.set(1); // c:293
+    }
+    p = parse_list(); // c:294
+    LEX_LINENO.set(oldlineno as u64); // c:295
+                                                          // c:296-297 — `if (tok == LEXERR && !lastval) lastval = 1;`
+    if tok() == LEXERR
+        && LASTVAL.load(Ordering::Relaxed) == 0
+    {
+        LASTVAL.store(1, Ordering::Relaxed);
+    }
+    strinend(); // c:298
+    inpop(); // c:299
+    zcontext_restore(); // c:300
+    p // c:301
+}
+
+/// Port of `int isgooderr(int e, char *dir)` from `Src/exec.c:652`.
+///
+/// C body:
+/// ```c
+/// /* Maybe the directory was unreadable, or maybe it wasn't even a directory. */
+/// return ((e != EACCES || !access(dir, X_OK)) &&
+///         e != ENOENT && e != ENOTDIR);
+/// ```
+///
+/// errno classifier for `execve` failures during PATH search: if the
+/// errno is EACCES (and the dir is X-accessible) or ENOENT/ENOTDIR,
+/// it's "expected" (try next PATH entry); otherwise it's a real
+/// failure worth surfacing.
+pub fn isgooderr(e: i32, dir: &str) -> bool {
+    // c:652
+    let dir_x_ok = std::path::Path::new(&unmeta(dir))
+        .metadata()
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false);
+    // c:658-659 — `(e != EACCES || !access(dir, X_OK)) && e != ENOENT && e != ENOTDIR`
+    (e != libc::EACCES || !dir_x_ok) && e != libc::ENOENT && e != libc::ENOTDIR
+}
+
+/// Port of `int iscom(char *s)` from `Src/exec.c:962`.
+///
+/// C body:
+/// ```c
+/// struct stat statbuf;
+/// char *us = unmeta(s);
+/// return (access(us, X_OK) == 0 && stat(us, &statbuf) >= 0 &&
+///         S_ISREG(statbuf.st_mode));
+/// ```
+///
+/// True iff `s` names an executable regular file (X-perm + S_IFREG).
+/// Used by the PATH-search loop in `findcmd` / `search_defpath` to
+/// validate candidate paths before exec.
+pub fn iscom(s: &str) -> bool {
+    // c:962
+    let us = unmeta(s); // c:965
+                        // c:967-968 — `access(us, X_OK) == 0 && stat(us, &statbuf) >= 0 && S_ISREG(...)`
+    let cstr = match std::ffi::CString::new(us.as_str()) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let x_ok = unsafe { libc::access(cstr.as_ptr(), libc::X_OK) } == 0;
+    if !x_ok {
+        return false;
+    }
+    let meta = match std::fs::metadata(&us) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    meta.file_type().is_file()
+}
+
+/// Port of `int isrelative(char *s)` from `Src/exec.c:996`.
+///
+/// C body:
+/// ```c
+/// if (*s != '/') return 1;
+/// for (; *s; s++)
+///     if (*s == '.' && s[-1] == '/' &&
+///         (s[1] == '/' || s[1] == '\0' ||
+///          (s[1] == '.' && (s[2] == '/' || s[2] == '\0'))))
+///         return 1;
+/// return 0;
+/// ```
+///
+/// True iff `s` either doesn't start with `/` OR contains a `./` or
+/// `../` component anywhere. Used by `cd` resolution and PATH-cache
+/// invalidation to detect non-canonical paths.
+pub fn isrelative(s: &str) -> i32 {
+    // c:996
+    let bytes = s.as_bytes();
+    if bytes.is_empty() || bytes[0] != b'/' {
+        // c:998
+        return 1; // c:999
+    }
+    // c:1000-1004 — walk for `./` or `../` components.
+    for i in 1..bytes.len() {
+        let c = bytes[i];
+        let prev = bytes[i - 1];
+        if c == b'.' && prev == b'/' {
+            let next = bytes.get(i + 1).copied().unwrap_or(0);
+            if next == b'/' || next == 0 {
+                // c:1002
+                return 1;
+            }
+            if next == b'.' {
+                let next2 = bytes.get(i + 2).copied().unwrap_or(0);
+                if next2 == b'/' || next2 == 0 {
+                    // c:1003
+                    return 1;
+                }
+            }
+        }
+    }
+    0 // c:1005
+}
+
+/// Port of `void setunderscore(char *str)` from `Src/exec.c:2652`.
+///
+/// C body:
+/// ```c
+/// queue_signals();
+/// if (str && *str) {
+///     size_t l = strlen(str) + 1, nl = (l + 31) & ~31;
+///     if (nl > underscorelen || (underscorelen - nl) > 64) {
+///         zfree(zunderscore, underscorelen);
+///         zunderscore = (char *) zalloc(underscorelen = nl);
+///     }
+///     strcpy(zunderscore, str);
+///     underscoreused = l;
+/// } else {
+///     ... reset zunderscore = "" ...
+/// }
+/// unqueue_signals();
+/// ```
+///
+/// Sets the `$_` global to the last argument of the most recent
+/// command. Called from `execcmd_exec` (c:3936) per `last_status`
+/// update; mirrored in zshrs by the fusevm `Op::Exec` handler.
+pub fn setunderscore(str: &str) {
+    // c:2652
+    queue_signals(); // c:2654
+    if !str.is_empty() {
+        // c:2655 `if (str && *str)`
+        // c:2656-2663 — copy str into zunderscore; track byte length in underscoreused.
+        let mut zu = zunderscore.lock().unwrap();
+        *zu = str.to_string();
+        let nl = (str.len() + 1 + 31) & !31; // c:2656
+        underscorelen.store(nl, Ordering::Relaxed); // c:2660
+        underscoreused.store((str.len() + 1) as i32, Ordering::Relaxed);
+    // c:2663
+    } else {
+        // c:2664
+        let mut zu = zunderscore.lock().unwrap();
+        zu.clear(); // c:2669 `*zunderscore = '\0';`
+        underscoreused.store(1, Ordering::Relaxed); // c:2670
+    }
+    unqueue_signals(); // c:2672
+}
+
+/// Port of `int mpipe(int *pp)` from `Src/exec.c:5160`.
+///
+/// C body:
+/// ```c
+/// if (pipe(pp) < 0) {
+///     zerr("pipe failed: %e", errno);
+///     return -1;
+/// }
+/// pp[0] = movefd(pp[0]);
+/// pp[1] = movefd(pp[1]);
+/// return 0;
+/// ```
+///
+/// libc `pipe(2)` wrapper that pushes both ends out of the reserved-
+/// fd range via `movefd`. Used by `getpipe` / `getproc` /
+/// `spawnpipes` for process substitution and pipeline wiring.
+pub fn mpipe(pp: &mut [i32; 2]) -> i32 {
+    // c:5160
+    let mut fds: [libc::c_int; 2] = [-1; 2];
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } < 0 {
+        // c:5162
+        zerr(&format!(
+            // c:5163
+            "pipe failed: {}",
+            std::io::Error::last_os_error()
+        ));
+        return -1; // c:5164
+    }
+    pp[0] = movefd(fds[0]); // c:5166
+    pp[1] = movefd(fds[1]); // c:5167
+    0 // c:5168
+}
+
+/// Port of `static const char *const ANONYMOUS_FUNCTION_NAME = "(anon)";`
+/// from `Src/exec.c:5289`. Anonymous-function name marker used by
+/// `is_anonymous_function_name`, `execfuncdef`, and `doshfunc` for
+/// `() { ... }` anonymous function dispatch.
+pub const ANONYMOUS_FUNCTION_NAME: &str = "(anon)";
+
+/// Port of `int is_anonymous_function_name(const char *name)` from
+/// `Src/exec.c:5300`.
+///
+/// C body:
+/// ```c
+/// return !strcmp(name, ANONYMOUS_FUNCTION_NAME);
+/// ```
+///
+/// True iff the name equals the `"(anon)"` sentinel. Used by zprof
+/// reporting and `whence -v` to skip / annotate anonymous functions.
+pub fn is_anonymous_function_name(name: &str) -> i32 {
+    // c:5300
+    if name == ANONYMOUS_FUNCTION_NAME {
+        // c:5302
+        1
+    } else {
+        0
     }
 }
