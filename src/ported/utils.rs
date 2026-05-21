@@ -3060,13 +3060,13 @@ pub fn checkrmall(s: &str) -> bool {
         return false; // c:2914
     }
     // c:2915-2917 — emit "[yn]? ", flush, beep.
-    let prompt = " [yn]? "; // c:2915
-    let _ = io::stderr().flush(); // c:2916
-    zbeep(); // c:2917
-             // c:2918 — `return (getquery("ny", 1) == 'y');`. Default-first-
-             // char is 'n' (no) — getquery's first valid char is the default
-             // returned when the user just hits Enter.
-    getquery(prompt, "ny") == Some('y') // c:2918
+    let _ = io::stderr().write_all(b" [yn]? ");                              // c:2915 nicezputs of " [yn]? "
+    let _ = io::stderr().flush();                                            // c:2916
+    zbeep();                                                                 // c:2917
+    // c:2918 — `return (getquery("ny", 1) == 'y');`. Default-first-
+    // char is 'n' (no) — getquery's first valid char is the default
+    // returned when the user just hits Enter.
+    getquery(Some("ny"), 1) == b'y' as i32                                   // c:2918
 }
 
 /// Port of `ssize_t read_loop(int fd, char *buf, size_t len)` from
@@ -3319,28 +3319,167 @@ pub fn noquery(purge: bool) -> i32 {
     val // c:3009
 }
 
-/// Simple interactive query (from utils.c getquery)
-/// Port of `getquery(char *valid_chars, int purge)` from `Src/utils.c:3014`.
-/// Rust idiom replacement: `io::stdin().read_exact` + `eprint!` covers
-/// the C raw-tty read-one-char loop without the SHTTY/termios save-
-/// restore dance; the C `purge` arg drops since `read_exact` consumes
-/// exactly one byte and doesn't pre-fill from a queued buffer.
-/// WARNING: param names don't match C — Rust=(prompt, valid_chars) vs C=(valid_chars, purge)
-pub fn getquery(prompt: &str, valid_chars: &str) -> Option<char> {
-    eprint!("{}", prompt);
-    let _ = io::stderr().flush();
+/// Port of `int getquery(char *valid_chars, int purge)` from
+/// `Src/utils.c:3014`.
+///
+/// Read a single keystroke from the TTY in raw mode and return its
+/// character code (as `int`, mirroring C). If `valid_chars` is `None`
+/// (C `NULL`) any byte is accepted. If `valid_chars` is `Some(s)`, only
+/// chars in `s` (plus `\n` which maps to `s[0]`) are accepted; other
+/// input rings the bell and re-prompts. `Y`/`N` are pre-normalised to
+/// `y`/`n` per c:3041-3045.
+///
+/// `purge != 0` triggers `noquery(purge)`'s queue-purge path — if input
+/// is queued, returns `'n'` without reading.
+pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
+    // c:3014
+    // c:3016 — `int c, d, nl = 0;`
+    let mut c: i32;
+    let mut d: i32;
+    let mut nl: i32 = 0;
+    // c:3017 — `int isem = !strcmp(term, "emacs");`
+    // Stub: `term` is the $TERM environment global, declared in
+    // `Src/init.c` (extern in zsh.h). Local stub reads $TERM from
+    // paramtab; absent → empty string.
+    let term: String = getsparam("TERM").unwrap_or_default();
+    let isem: bool = term == "emacs";
+    // c:3018 — `struct ttyinfo ti;`
+    // Rust: termios is the canonical TTY-state type returned by gettyinfo.
+    let mut ti: libc::termios;                                               // c:3018
 
-    let mut buf = [0u8; 1];
+    attachtty(crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed)); // c:3020 attachtty(mypgrp)
+
+    // c:3022 — `gettyinfo(&ti);`
+    ti = match gettyinfo() {
+        Some(t) => t,
+        None => return -1,
+    };
+    // c:3023-3030 — `ti.tio.c_lflag &= ~ECHO; if (!isem) {
+    //                  ti.tio.c_lflag &= ~ICANON;
+    //                  ti.tio.c_cc[VMIN] = 1;
+    //                  ti.tio.c_cc[VTIME] = 0; }`
     #[cfg(unix)]
     {
-        if io::stdin().read_exact(&mut buf).is_ok() {
-            let c = buf[0] as char;
-            if valid_chars.is_empty() || valid_chars.contains(c) {
-                return Some(c);
-            }
+        ti.c_lflag &= !(libc::ECHO);                                         // c:3024
+        if !isem {                                                           // c:3025
+            ti.c_lflag &= !(libc::ICANON);                                   // c:3026
+            ti.c_cc[libc::VMIN] = 1;                                         // c:3027
+            ti.c_cc[libc::VTIME] = 0;                                        // c:3028
         }
     }
-    None
+    // c:3037 — `settyinfo(&ti);`
+    settyinfo(&ti);
+
+    // c:3039 — `if (noquery(purge))`
+    if noquery(purge != 0) != 0 {
+        // Stub: `shttyinfo` is the canonical saved-TTY-state global,
+        // declared in `Src/init.c` (extern in zsh.h:1856). Without the
+        // global tracked here we re-fetch current termios as a degraded
+        // best-effort restore.
+        if !isem {                                                           // c:3040
+            if let Some(saved) = gettyinfo() {                               // c:3041 settyinfo(&shttyinfo)
+                settyinfo(&saved);
+            }
+        }
+        let _ = write_loop(SHTTY.load(Ordering::Relaxed), b"n\n");           // c:3042
+        return b'n' as i32;                                                  // c:3043
+    }
+
+    // c:3046-3061 — `while ((c = read1char(0)) >= 0) { ... }`
+    c = -1;
+    loop {
+        let cc = read1char(0);                                               // c:3046
+        if cc < 0 {
+            c = cc;
+            break;
+        }
+        c = cc;
+        if c == b'Y' as i32 {                                                // c:3047
+            c = b'y' as i32;                                                 // c:3048
+        } else if c == b'N' as i32 {                                         // c:3049
+            c = b'n' as i32;                                                 // c:3050
+        }
+        if valid_chars.is_none() {                                           // c:3051
+            break;                                                           // c:3052
+        }
+        if c == b'\n' as i32 {                                               // c:3053
+            // c:3054 — `c = *valid_chars;`
+            c = valid_chars.unwrap().bytes().next().unwrap_or(b'\n') as i32;
+            nl = 1;                                                          // c:3055
+            break;                                                           // c:3056
+        }
+        // c:3058 — `if (strchr(valid_chars, c))`
+        if valid_chars.unwrap().bytes().any(|b| b as i32 == c) {
+            nl = 1;                                                          // c:3059
+            break;                                                           // c:3060
+        }
+        zbeep();                                                             // c:3062
+    }
+    if c >= 0 {                                                              // c:3064
+        // c:3065-3066 — `char buf = (char)c; write_loop(SHTTY, &buf, 1);`
+        let buf = [c as u8];                                                 // c:3065
+        let _ = write_loop(SHTTY.load(Ordering::Relaxed), &buf);             // c:3066
+    }
+    if nl != 0 {                                                             // c:3068
+        let _ = write_loop(SHTTY.load(Ordering::Relaxed), b"\n");            // c:3069
+    }
+
+    if isem {                                                                // c:3071
+        if c != b'\n' as i32 {                                               // c:3072
+            // c:3073 — `while ((d = read1char(1)) >= 0 && d != '\n');`
+            loop {
+                d = read1char(1);
+                if d < 0 || d == b'\n' as i32 {
+                    break;
+                }
+            }
+        }
+    } else if c != b'\n' as i32 && valid_chars.is_none() {                   // c:3075
+        // c:3077-3094 — MULTIBYTE_SUPPORT branch: drain trailing bytes
+        // of an incomplete multibyte sequence.
+        if isset(MULTIBYTE) && c >= 0 {                                      // c:3077
+            // c:3083-3093 — `for (;;) { ret = mbrlen(&cc, 1, &mbs);
+            //                          if (ret != MB_INCOMPLETE) break;
+            //                          c = read1char(1); if (c < 0) break;
+            //                          cc = (char)c; }`
+            // Rust: model MB_INCOMPLETE detection by checking whether
+            // the byte buffer so far forms a complete UTF-8 prefix.
+            // `cc` carries the current byte under examination.
+            let mut cc: u8 = c as u8;                                        // c:3082
+            let mut accum: Vec<u8> = vec![cc];
+            loop {
+                // mbrlen returns MB_INCOMPLETE when the partial buffer
+                // doesn't yet form a complete UTF-8 character. Rust
+                // equivalent: from_utf8 errors with error_len() == None
+                // when more bytes are needed.
+                let incomplete = match std::str::from_utf8(&accum) {
+                    Ok(_) => false,
+                    Err(e) => e.error_len().is_none(),
+                };
+                if !incomplete {                                             // c:3088
+                    break;
+                }
+                let nc = read1char(1);                                       // c:3089
+                if nc < 0 {                                                  // c:3090
+                    break;                                                   // c:3091
+                }
+                cc = nc as u8;                                               // c:3092
+                accum.push(cc);
+            }
+            let _ = cc;
+        }
+        // c:3097 — `write_loop(SHTTY, "\n", 1);`
+        let _ = write_loop(SHTTY.load(Ordering::Relaxed), b"\n");
+    }
+
+    // c:3101 — `settyinfo(&shttyinfo);` — restore saved TTY state.
+    // Stub-degraded path: refetch current termios. The proper port
+    // requires wiring an `shttyinfo` global in init.rs.
+    if let Some(saved) = gettyinfo() {
+        settyinfo(&saved);
+    }
+
+    c                                                                        // c:3102 return c
 }
 
 // `spscan` (Src/utils.c:3109) — canonical port lives below the
