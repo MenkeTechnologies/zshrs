@@ -702,13 +702,6 @@ default_on_options
 sigs_name
 sigs_number
 
-# getjob2 / findjobnam_c (jobs.rs) — Rust variants of the
-# C getjob() / findjobnam() entry points. The `_c` / `_2` suffixed
-# names accommodate Rust signature differences from the C entries
-# while keeping the per-call data-flow shape; left in place since
-# the canonical getjob/findjobnam already exist alongside.
-getjob2
-
 # lock_str / lock_vec (zle/compcore.rs) — Rust-only OnceLock
 # get-or-init helpers for the completion-state global Mutexes (the
 # COMPPREFIX / COMPSUFFIX / COMPLIST etc. ports of `char *` globals
