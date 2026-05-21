@@ -8409,7 +8409,7 @@ fn pipestats_lock() -> &'static Mutex<Vec<i32>> {
     PIPESTATS_VAR.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn shtimer_lock() -> &'static Mutex<Duration> {
+pub fn shtimer_lock() -> &'static Mutex<Duration> {
     static SHTIMER_VAR: OnceLock<Mutex<Duration>> = OnceLock::new();
     SHTIMER_VAR.get_or_init(|| {
         Mutex::new(

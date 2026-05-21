@@ -1935,18 +1935,154 @@ pub fn spawnjob() {
 // at the top of this file. C uses `child_times_t` (typedef onto
 // `struct rusage` or `struct timeinfo` per `Src/zsh.h:1112-1114`).
 
-/// Port of `shelltime(child_times_t *shell, child_times_t *kids, struct timespec *then, int delta)` from `Src/jobs.c:1926`.
-/// Returns `(shell, kids)` — the C signature splits self vs children
-/// rusage; the Rust port collapses to a tuple return for ergonomics.
-pub fn shelltime() -> timeinfo {
-    #[cfg(unix)]
-    {
+/// Port of `void shelltime(child_times_t *shell, child_times_t *kids,
+/// struct timespec *then, int delta)` from `Src/jobs.c:1926-1987`.
+///
+/// Records or prints the shell's RUSAGE_SELF + RUSAGE_CHILDREN times.
+/// Side-effecting:
+///   - If `shell` is `Some` and `delta == 0`: snapshot current self
+///     rusage into `*shell` (no print).
+///   - If `shell` is `Some` and `delta != 0`: compute delta from
+///     `*shell` to now (no print).
+///   - If `shell` is `None` and `delta == 0`: print "shell ..." line.
+///   - Same pattern for `kids` against RUSAGE_CHILDREN.
+///   - `then` similarly: when `None` and `delta == 0`, use as the
+///     monotonic timestamp slot; when `Some + delta`, compute the
+///     elapsed real time as `now - *then`.
+///
+/// C body c:1926-1987 maps closely:
+///   - c:1934 — zgettime_monotonic_if_available(&now)
+///   - c:1937 — getrusage(RUSAGE_SELF, &ti)
+///   - c:1944-1955 — handle `shell` save / delta
+///   - c:1956-1962 — compute `dtimespec` from `then` and `now` /
+///                   shtimer
+///   - c:1964-1965 — `if (!delta == !shell) printtime("shell")`
+///   - c:1968 — getrusage(RUSAGE_CHILDREN, &ti)
+///   - c:1973-1984 — handle `kids` save / delta
+///   - c:1985-1986 — `if (!delta == !kids) printtime("children")`
+#[cfg(unix)]
+pub fn shelltime(
+    shell: Option<&mut timeinfo>,
+    kids: Option<&mut timeinfo>,
+    then: Option<&mut std::time::Instant>,
+    delta: i32,
+) {
+    // c:1926
+    // c:1934 — `zgettime_monotonic_if_available(&now);`. Use Instant
+    // for monotonic time.
+    let now = std::time::Instant::now();
+    // c:1937 — `getrusage(RUSAGE_SELF, &ti);`. Self timings.
+    let mut ti: timeinfo = {
         let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
         if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } == 0 {
-            return timeinfo::from_rusage(&usage);
+            timeinfo::from_rusage(&usage)
+        } else {
+            timeinfo::default()
+        }
+    };
+
+    let shell_present = shell.is_some();
+    // c:1944-1955 — `if (shell) { if (delta) dtime_tv(...); else *shell = ti; }`.
+    if let Some(s) = shell {
+        // c:1944
+        if delta != 0 {
+            // c:1945 — delta-compute by subtracting saved values.
+            // C uses dtime_tv to subtract timespec. timeinfo holds
+            // raw rusage members; subtract user/sys time directly.
+            ti.ut = ti.ut.saturating_sub(s.ut); // c:1947 dtime_tv(ru_utime, shell->ru_utime, ti.ru_utime)
+            ti.st = ti.st.saturating_sub(s.st); // c:1948
+        } else {
+            // c:1953-1954 — snapshot current `ti` into `*shell`.
+            *s = ti.clone();
         }
     }
-    timeinfo::default()
+
+    // c:1956-1962 — compute `dtimespec` (real elapsed time).
+    let dtime: std::time::Duration = if delta != 0 {
+        // c:1957 — `dtime_ts(&dtimespec, then, &now)`. The C body
+        // requires `then` to be Some for the delta path (set on a
+        // prior delta=0 call).
+        match then {
+            Some(t) => dtime_ts(t, &now), // c:1957
+            None => std::time::Duration::ZERO,
+        }
+    } else {
+        // c:1959-1961 — `if (then) *then = now;` then
+        //                `dtime_ts(&dtimespec, &shtimer, &now);`.
+        if let Some(t) = then {
+            *t = now;
+        }
+        // c:1961 — `dtime_ts(&dtimespec, &shtimer, &now)`. Rust's
+        // `params::shtimer_lock()` is the analog of C's `shtimer`
+        // global (`struct timespec` set at shell start). Compute
+        // elapsed time as now - shtimer.
+        let shtimer_dur = *crate::ported::params::shtimer_lock()
+            .lock()
+            .expect("shtimer poisoned");
+        let now_dur = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        if now_dur > shtimer_dur {
+            now_dur - shtimer_dur
+        } else {
+            std::time::Duration::ZERO
+        }
+    };
+
+    // c:1964 — `if (!delta == !shell) printtime("shell")`.
+    // The negation pair: print when (delta==0 && shell.is_none()) OR
+    // (delta!=0 && shell.is_some()).
+    if (delta == 0) == !shell_present {
+        // c:1964
+        let real_secs = dtime.as_secs_f64();
+        // c:1965 — `printtime(&dtimespec, &ti, "shell")`.
+        let timefmt = crate::ported::params::getsparam("TIMEFMT")
+            .unwrap_or_else(|| "%J  %U user %S system %P cpu %*E total".to_string());
+        let line = printtime(real_secs, &ti, &timefmt, "shell"); // c:1965
+        eprintln!("{}", line);
+    }
+
+    // c:1968 — `getrusage(RUSAGE_CHILDREN, &ti);`. Children timings.
+    let mut tc: timeinfo = {
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        if unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut usage) } == 0 {
+            timeinfo::from_rusage(&usage)
+        } else {
+            timeinfo::default()
+        }
+    };
+
+    let kids_present = kids.is_some();
+    // c:1973-1984 — `if (kids) { ... }` symmetric to shell.
+    if let Some(k) = kids {
+        // c:1973
+        if delta != 0 {
+            tc.ut = tc.ut.saturating_sub(k.ut); // c:1976
+            tc.st = tc.st.saturating_sub(k.st); // c:1977
+        } else {
+            *k = tc.clone(); // c:1983
+        }
+    }
+
+    // c:1985-1986 — `if (!delta == !kids) printtime("children")`.
+    if (delta == 0) == !kids_present {
+        // c:1985
+        let real_secs = dtime.as_secs_f64();
+        let timefmt = crate::ported::params::getsparam("TIMEFMT")
+            .unwrap_or_else(|| "%J  %U user %S system %P cpu %*E total".to_string());
+        let line = printtime(real_secs, &tc, &timefmt, "children"); // c:1986
+        eprintln!("{}", line);
+    }
+}
+
+/// Non-unix stub matching the C body's #ifdef-gated absence.
+#[cfg(not(unix))]
+pub fn shelltime(
+    _shell: Option<&mut timeinfo>,
+    _kids: Option<&mut timeinfo>,
+    _then: Option<&mut std::time::Instant>,
+    _delta: i32,
+) {
 }
 
 // see if jobs need printing                                                // c:1993
