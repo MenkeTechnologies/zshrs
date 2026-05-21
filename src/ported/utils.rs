@@ -22,7 +22,7 @@ use libc::{
 use crate::{DPUTS, DPUTS1};
 use crate::init::zleentry;
 use crate::params::getsparam_u;
-use crate::ported::builtin::{SFCONTEXT, STOPMSG};
+use crate::ported::builtin::{BUILTINS, SFCONTEXT, STOPMSG};
 use crate::ported::compat::u9_iswprint;
 use crate::ported::hashnameddir::{nameddirtab, removenameddirnode};
 use crate::ported::hashtable::shfunctab_lock;
@@ -40,7 +40,7 @@ use crate::ported::params::{
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
-use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing};
+use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC};
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
     imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
@@ -3395,7 +3395,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
     let bytes = s.as_bytes();
     let first = bytes[0] as char;
     let histdone = crate::ported::hist::histdone.load(std::sync::atomic::Ordering::Relaxed); // c:3137
-    if (histdone & crate::ported::zsh_h::HISTFLAG_NOEXEC) != 0
+    if (histdone & HISTFLAG_NOEXEC) != 0
         || (if cmd != 0 {
             first == '%' // c:3139 — leading % is a job
         } else {
@@ -3417,7 +3417,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
             .read()
             .map(|t| t.get(s).is_some())
             .unwrap_or(false)
-            || crate::ported::builtin::BUILTINS // c:3145
+            || BUILTINS // c:3145
                 .iter()
                 .any(|b| b.node.nam == *s)
             || cmdnamtab_lock() // c:3146
@@ -3469,7 +3469,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
         let mut had_dash_only = true; // accumulator
         while i < buf.len() {
             let b = buf[i];
-            if crate::ported::ztype_h::itok(b) {
+            if itok(b) {
                 // c:3160
                 if b as char == Dash {
                     // c:3161
@@ -3528,7 +3528,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
         // c:3188 — `guess = *s + 1;` strip leading $.
         let guess = s[1..].to_string();
         // c:3189-3190 — `if (itype_end(guess, INAMESPC, 1) == guess) return;`
-        if crate::ported::utils::itype_end(&guess, true) == 0 {
+        if itype_end(&guess, true) == 0 {
             // c:3189
             return; // c:3190
         }
@@ -3655,7 +3655,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
                 }
             }
             // c:3229 — builtintab scan: BUILTINS is a static array.
-            for b in crate::ported::builtin::BUILTINS.iter() {
+            for b in BUILTINS.iter() {
                 spscan(&b.node.nam);
             }
             if let Ok(t) = cmdnamtab_lock().read() {
@@ -3755,13 +3755,13 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
     } else if x == 'a' {
         // c:3294
         crate::ported::hist::histdone.fetch_or(
-            crate::ported::zsh_h::HISTFLAG_NOEXEC,
+            HISTFLAG_NOEXEC,
             std::sync::atomic::Ordering::Relaxed,
         ); // c:3295
     } else if x == 'e' {
         // c:3296
         crate::ported::hist::histdone.fetch_or(
-            crate::ported::zsh_h::HISTFLAG_NOEXEC | crate::ported::zsh_h::HISTFLAG_RECALL,
+            HISTFLAG_NOEXEC | crate::ported::zsh_h::HISTFLAG_RECALL,
             std::sync::atomic::Ordering::Relaxed,
         ); // c:3297
     }

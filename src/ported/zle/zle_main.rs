@@ -33,7 +33,7 @@ use crate::ported::init::SHTTY;
 use crate::ported::mem::unqueue_signals;
 use crate::ported::module::{addhookfunc, deletehookfunc};
 use crate::ported::params::getsparam;
-use crate::ported::utils::{errflag, write_loop, zwarnnam};
+use crate::ported::utils::{errflag, getshfunc, write_loop, zwarnnam};
 use crate::ported::zle::compcore::LASTCHAR;
 use crate::ported::zle::zle_keymap::{
     curkeymap, curkeymapname, keymapnamtab, linkkeymap, openkeymap, selectkeymap, LOCALKEYMAP,
@@ -729,7 +729,7 @@ pub fn execzlefunc(name: &str, args: &[String]) -> i32 {
     // (signals.rs:1087). Routes through the wordcode VM directly so
     // the widget body's side-effects (BUFFER/CURSOR/KEYMAP writes,
     // zle -K, etc.) land on the live ZLE state in this thread.
-    if crate::ported::utils::getshfunc(name).is_some() {
+    if getshfunc(name).is_some() {
         // c:1490
         let rc = crate::fusevm_bridge::with_executor(|exec| {
             exec.dispatch_function_call(name, args).unwrap_or(0)
