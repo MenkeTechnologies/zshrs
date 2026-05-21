@@ -3416,7 +3416,7 @@ pub fn export_param(pm: &mut param) {
     } else if (pm.node.flags as u32 & (PM_EFLOAT | PM_FFLOAT)) != 0 {
         // c:2668 — `convfloat(pm->gsu.f->getfn(pm), pm->base,
         //                     pm->node.flags, NULL)`.
-        crate::ported::utils::convfloat(floatgetfn(pm), pm.base, pm.node.flags as u32)
+        convfloat(floatgetfn(pm), pm.base, pm.node.flags as u32)
         // c:2668
     } else {
         strgetfn(pm)
@@ -7698,7 +7698,7 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
         // (which differs from C's printf %g / %e formats).
         print!(
             "{}",
-            crate::ported::utils::convfloat(floatgetfn(p), p.base, p.node.flags as u32)
+            convfloat(floatgetfn(p), p.base, p.node.flags as u32)
         ); // c:6063
     } else if t == PM_ARRAY {
         if (printflags & PRINT_KV_PAIR) == 0 {
