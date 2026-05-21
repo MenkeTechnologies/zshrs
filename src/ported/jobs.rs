@@ -2706,15 +2706,9 @@ pub fn bin_fg(
                 unqueue_signals();
                 return 1; // c:2497
             }
-            // Continue current job by sending SIGCONT to its pgrp.
-            let gleader = table
-                .lock()
-                .expect("jobtab poisoned")
-                .get(curjob as usize)
-                .map(|j| j.gleader)
-                .unwrap_or(0);
-            if gleader > 0 {
-                let _ = killjb(gleader, libc::SIGCONT);
+            // Continue current job by sending SIGCONT via killjb(Job, sig).
+            if curjob >= 0 {
+                let _ = killjb(curjob as usize, libc::SIGCONT);
             }
             unqueue_signals();
             return 0;
@@ -2745,21 +2739,13 @@ pub fn bin_fg(
             returnval = 1;
             continue;
         }
-        let gleader = table
-            .lock()
-            .expect("jobtab poisoned")
-            .get(p as usize)
-            .map(|j| j.gleader)
-            .unwrap_or(0);
         if func == BIN_FG || func == BIN_BG {
-            if gleader > 0 {
-                if killjb(gleader, libc::SIGCONT) == -1 {
-                    zwarnnam(
-                        name,
-                        &format!("{}: kill failed: {}", arg, std::io::Error::last_os_error()),
-                    );
-                    returnval = 1;
-                }
+            if killjb(p as usize, libc::SIGCONT) == -1 {
+                zwarnnam(
+                    name,
+                    &format!("{}: kill failed: {}", arg, std::io::Error::last_os_error()),
+                );
+                returnval = 1;
             }
         } else if func == BIN_JOBS {
             let t = table.lock().expect("jobtab poisoned");
@@ -3037,16 +3023,8 @@ pub fn bin_kill(
                 returnval += 1; // c:2990
                 continue;
             }
-            // c:2993 — `killjb(jobtab + p, sig)`. Look up the job's
-            // process-group leader and send via killjb.
-            let gleader = JOBTAB
-                .get_or_init(|| Mutex::new(Vec::new()))
-                .lock()
-                .expect("jobtab poisoned")
-                .get(p as usize)
-                .map(|j| j.gleader)
-                .unwrap_or(0);
-            if killjb(gleader, sig) == -1 {
+            // c:2993 — `killjb(jobtab + p, sig)`.
+            if killjb(p as usize, sig) == -1 {
                 // c:2993
                 zwarnnam(
                     "kill",
@@ -3076,7 +3054,7 @@ pub fn bin_kill(
                 && sig != libc::SIGTTIN
                 && sig != libc::SIGSTOP
             {
-                let _ = killjb(gleader, libc::SIGCONT); // c:3009
+                let _ = killjb(p as usize, libc::SIGCONT); // c:3009
             }
         } else {
             match arg.parse::<i32>() {
