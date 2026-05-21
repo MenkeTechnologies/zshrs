@@ -10280,13 +10280,11 @@ impl crate::ported::vm_helper::ShellExecutor {
                     argscount: 0,
                     argsalloc: 0,
                 };
-                let mut assigns: Vec<(String, String)> = Vec::new();
                 return crate::modules::param_private::bin_private(
                     "private",
                     &rest_vec,
-                    &mut ops,
+                    &ops,
                     0,
-                    &mut assigns,
                 );
             }
             "zformat" => {
