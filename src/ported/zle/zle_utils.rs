@@ -440,30 +440,89 @@ pub fn backdel(ct: i32, _flags: i32) {
 /// characters FORWARD from the cursor (i.e. drops `[zlecs, zlecs+ct)`
 /// from the line) without pushing to the kill-ring.
 ///
-/// C signature: `void foredel(int ct, int flags)`. Rust port takes
-/// `&mut Zle`. The non-RAW path's `INCCS` multibyte adjustment loop
-/// (c:1115+) collapses to plain `Vec<char>::drain`.
-/// WARNING: param names don't match C — Rust=(zle, ct, _flags) vs C=(ct, flags)
-pub fn foredel(ct: i32, _flags: i32) {
+/// C body (utils.c:1105-1122):
+/// ```c
+/// if (flags & CUT_RAW) {
+///     if (zlemetaline != NULL)
+///         shiftchars(zlemetacs, ct);
+///     else {
+///         shiftchars(zlecs, ct);
+///         CCRIGHT();
+///     }
+/// } else {
+///     int origcs = zlecs, n = ct;
+///     DPUTS(zlemetaline != NULL, "foredel needs CUT_RAW when metafied");
+///     while (n--) INCCS();
+///     ct = zlecs - origcs;
+///     zlecs = origcs;
+///     shiftchars(zlecs, ct);
+///     CCRIGHT();
+/// }
+/// ```
+///
+/// CUT_RAW + zlemetaline: byte-shift ZLEMETALINE at zlemetacs.
+/// CUT_RAW + plain: char-drain ZLELINE at zlecs.
+/// non-CUT_RAW: INCCS-walk to advance `n` codepoints, drain that
+/// range from ZLELINE. zshrs treats ZLELINE as `Vec<char>` so the
+/// INCCS multibyte walk collapses to a fixed-N drain.
+pub fn foredel(ct: i32, flags: i32) {
     // c:1105
-    let ct = ct as usize;
-    if ct == 0
-        || ZLECS.load(Ordering::SeqCst)
-            >= ZLELL.load(Ordering::SeqCst)
-    {
+    if ct <= 0 {
         return;
     }
-    let take_n = ct.min(
-        ZLELL.load(Ordering::SeqCst)
-            - ZLECS.load(Ordering::SeqCst),
-    );
+    if (flags & crate::ported::zle::zle_h::CUT_RAW) != 0 {                   // c:1107 if (flags & CUT_RAW)
+        // c:1108 — `if (zlemetaline != NULL) shiftchars(zlemetacs, ct);`
+        let zml_active = crate::ported::zle::compcore::ZLEMETALINE
+            .get()
+            .is_some();
+        if zml_active {
+            // c:1109 — `shiftchars(zlemetacs, ct);` — byte-splice
+            // ZLEMETALINE[cs..cs+ct].
+            if let Some(m) = crate::ported::zle::compcore::ZLEMETALINE.get() {
+                if let Ok(mut g) = m.lock() {
+                    let cs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::Relaxed) as usize;
+                    if cs < g.len() {
+                        let end = (cs + ct as usize).min(g.len());
+                        let bytes = g.as_bytes();
+                        let new_line: String =
+                            String::from_utf8_lossy(&bytes[..cs]).into_owned()
+                                + &String::from_utf8_lossy(&bytes[end..]);
+                        *g = new_line;
+                        crate::ported::zle::compcore::ZLEMETALL.store(g.len() as i32, Ordering::Relaxed);
+                    }
+                }
+            }
+            return;
+        }
+        // c:1111-1113 — `else { shiftchars(zlecs, ct); CCRIGHT(); }`
+        let ct = ct as usize;
+        if ZLECS.load(Ordering::SeqCst) >= ZLELL.load(Ordering::SeqCst) {
+            return;
+        }
+        let take_n =
+            ct.min(ZLELL.load(Ordering::SeqCst) - ZLECS.load(Ordering::SeqCst));
+        let i = ZLECS.load(Ordering::SeqCst);
+        ZLELINE.lock().unwrap().drain(i..i + take_n);                        // c:1111 shiftchars
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+        ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);                         // c:1112 CCRIGHT
+        return;
+    }
+    // c:1115-1121 — non-CUT_RAW path:
+    //   DPUTS(zlemetaline != NULL, "foredel needs CUT_RAW when metafied");
+    //   int origcs = zlecs, n = ct; while (n--) INCCS();
+    //   ct = zlecs - origcs; zlecs = origcs; shiftchars(zlecs, ct); CCRIGHT();
+    // Rust ZLELINE is Vec<char> so INCCS multibyte walk collapses to a
+    // fixed-N drain (one element per codepoint).
+    let ct = ct as usize;
+    if ZLECS.load(Ordering::SeqCst) >= ZLELL.load(Ordering::SeqCst) {
+        return;
+    }
+    let take_n =
+        ct.min(ZLELL.load(Ordering::SeqCst) - ZLECS.load(Ordering::SeqCst));
     let i = ZLECS.load(Ordering::SeqCst);
-    ZLELINE.lock().unwrap().drain(i..i + take_n); // c:1111 shiftchars
-    ZLELL.store(
-        ZLELINE.lock().unwrap().len(),
-        Ordering::SeqCst,
-    );
-    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1112 CCRIGHT
+    ZLELINE.lock().unwrap().drain(i..i + take_n);                            // c:1120 shiftchars
+    ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);                             // c:1121 CCRIGHT
 }
 
 /// Port of `setline(char *s, int flags)` from Src/Zle/zle_utils.c:1129.
