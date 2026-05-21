@@ -56,14 +56,14 @@ pub use crate::ported::zsh_h::{
 use crate::ported::params::{paramtab, paramtab_hashed_storage};
 use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
 use crate::utils::zerrnam;
-use crate::zsh_h::{Marker,
+use crate::zsh_h::{Marker, Meta, Nularg,
                    isset, patprog, BASHAUTOLIST, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB,
                    MULTIBYTE, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, RCQUOTES, SHGLOB, SORTIT_IGNORING_BACKSLASHES,
                    SORTIT_NUMERICALLY, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH,
                    ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR,
                    ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST,
                    ZPC_KSH_STAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
-    
+
 };
 
 
@@ -1398,12 +1398,35 @@ pub fn charsub(x: &str, y: usize) -> usize {
 /// match state globals; Rust state is per-call so no-op.
 pub fn pattrystart() {} // c:2063
 
-/// Port of `patmungestring(char **string, int *stringlen, int *unmetalenin)` from `Src/pattern.c:2080`. Un-metafies
-/// in C; UTF-8 needs no munging.
-/// WARNING: param names don't match C — Rust=(s) vs C=(string, stringlen, unmetalenin)
-pub fn patmungestring(s: &str) -> String {
+/// Port of `void patmungestring(char **string, int *stringlen, int *unmetalenin)`
+/// from `Src/pattern.c:2080`.
+///
+/// Skips a leading `Nularg` (the empty-tokenised-string sentinel)
+/// and computes `*stringlen` from `strlen` when caller passed `-1`.
+/// Mutates all three in/out args; mirrors C's `char **` /
+/// `int *` semantics via Rust mutable references.
+pub fn patmungestring(string: &mut &str, stringlen: &mut i32, unmetalenin: &mut i32) {
     // c:2080
-    s.to_string()
+    // c:2082-2091 — `if (*stringlen > 0 && **string == Nularg)` — skip
+    // the leading Nularg sentinel and adjust lengths.
+    let bytes = string.as_bytes();
+    if *stringlen > 0 && !bytes.is_empty() && bytes[0] as char == Nularg {
+        // c:2085 — `(*string)++;` — advance past Nularg.
+        *string = &string[1..];                                              // c:2085
+        // c:2090 — `if (*unmetalenin > 0) (*unmetalenin)--;`
+        if *unmetalenin > 0 {                                                // c:2089
+            *unmetalenin -= 1;                                               // c:2090
+        }
+        // c:2092 — `if (*stringlen > 0) (*stringlen)--;`
+        if *stringlen > 0 {                                                  // c:2091
+            *stringlen -= 1;                                                 // c:2092
+        }
+    }
+
+    // c:2096-2097 — `if (*stringlen < 0) *stringlen = strlen(*string);`
+    if *stringlen < 0 {                                                      // c:2096
+        *stringlen = string.len() as i32;                                    // c:2097
+    }
 }
 
 /// Port of `pattry(Patprog prog, char *string)` from `Src/pattern.c:2223`.
@@ -2498,11 +2521,145 @@ fn patmatch_internal(
     Some(s_off)
 }
 
-/// Port of `patallocstr()` from `Src/pattern.c:2132`.
-/// WARNING: param names don't match C — Rust=(s) vs C=(prog, string, stringlen, unmetalen, force, patstralloc)
-pub fn patallocstr(s: &str) -> String {
+/// Port of `char *patallocstr(Patprog prog, char *string, int stringlen,
+/// int unmetalen, int force, Patstralloc patstralloc)` from
+/// `Src/pattern.c:2132`.
+///
+/// Sets up `patstralloc` for a match attempt: when `force` is set or
+/// the input contains Meta bytes (or PAT_HAS_EXCLUDP demands a
+/// full-path copy), allocates an un-metafied scratch buffer and
+/// stashes pointer/length info on `patstralloc`. Returns the
+/// allocated buffer or `None` if no allocation was needed.
+pub fn patallocstr(
+    prog: &Patprog,
+    string: &str,
+    stringlen: i32,
+    unmetalen: i32,
+    force: i32,
+    patstralloc: &mut crate::ported::zsh_h::patstralloc,
+) -> Option<String> {
     // c:2132
-    s.to_string()
+    // c:2137 — `int needfullpath;`
+    let needfullpath: bool;
+    // Working values (mutated when force triggers patmungestring).
+    let mut string: &str = string;                                           // c:2133 char *string param
+    let mut stringlen: i32 = stringlen;
+    let mut unmetalen: i32 = unmetalen;
+
+    if force != 0 {                                                          // c:2139
+        // c:2140 — `patmungestring(&string, &stringlen, &unmetalen);`
+        patmungestring(&mut string, &mut stringlen, &mut unmetalen);
+    }
+
+    /*
+     * For a top-level ~-exclusion, we will need the full
+     * path to exclude, so copy the path so far and append the
+     * current test string.
+     */                                                                      // c:2142-2146
+    // c:2147 — `needfullpath = (prog->flags & PAT_HAS_EXCLUDP) && pathpos;`
+    // Stub: `pathpos` (`Src/glob.c:pathpos`) tracks current glob path
+    // depth; not yet ported. Treat as 0 so the needfullpath branch is
+    // inactive — same end-state as PAT_HAS_EXCLUDP being clear.
+    let pathpos: i32 = 0;                                                    // c:glob.c pathpos
+    needfullpath = (prog.0.flags & PAT_HAS_EXCLUDP as i32) != 0 && pathpos != 0; // c:2147
+
+    /* Get the length of the full string when unmetafied. */                 // c:2149
+    if unmetalen < 0 {                                                       // c:2150
+        // c:2151 — `patstralloc->unmetalen = ztrsub(string + stringlen, string);`
+        // ztrsub returns the unmetafied char count between two pointers
+        // in the same string. Rust analog: ztrsub(buf, start, end).
+        patstralloc.unmetalen = crate::ported::utils::ztrsub(
+            string,
+            0,
+            (stringlen as usize).min(string.len()),
+        ) as i32;
+    } else {                                                                 // c:2152
+        patstralloc.unmetalen = unmetalen;                                   // c:2153
+    }
+    if needfullpath {                                                        // c:2154
+        // c:2155 — `patstralloc->unmetalenp = ztrsub(pathbuf + pathpos, pathbuf);`
+        // Stub: `pathbuf` global not yet ported (Src/glob.c). When
+        // pathpos == 0 (above stub), needfullpath is also false, so this
+        // branch is unreachable in current state.
+        patstralloc.unmetalenp = 0;                                          // c:2155 stubbed
+        if patstralloc.unmetalenp == 0 {                                     // c:2156
+            // c:2157 — `needfullpath = 0;` (recompute since len was 0).
+        }
+    } else {                                                                 // c:2158
+        patstralloc.unmetalenp = 0;                                          // c:2159
+    }
+    /* Initialise cache area */                                              // c:2161
+    patstralloc.progstrunmeta = None;                                        // c:2162
+    patstralloc.progstrunmetalen = 0;                                        // c:2163
+
+    // c:2165-2166 — `DPUTS(needfullpath && (prog->flags & (PAT_PURES|PAT_ANY)),
+    //                       "rum sort of file exclusion");`
+    // Rust drops the debug assertion.
+
+    /*
+     * Partly for efficiency, and partly for the convenience of
+     * globbing, we don't unmetafy pure string patterns, and
+     * there's no reason to if the pattern is just a *.
+     */                                                                      // c:2167-2171
+    let pures_or_any = (prog.0.flags & (PAT_PURES | PAT_ANY) as i32) != 0;
+    if force != 0
+        || (!pures_or_any
+            && (needfullpath || patstralloc.unmetalen != stringlen))         // c:2172
+    {
+        /*
+         * We need to copy if we need to prepend the path so far
+         * (in which case we copy both chunks), or if we have
+         * Meta characters.
+         */                                                                  // c:2174-2178
+        // c:2179 — `char *dst, *ptr; int i, icopy, ncopy;`
+        let total = (patstralloc.unmetalen + patstralloc.unmetalenp) as usize;
+        let mut dst = String::with_capacity(total);                          // c:2182 zhalloc
+
+        // c:2184-2192 — choose source chunk(s).
+        let mut ptr: &str;
+        let mut ncopy: i32;
+        if needfullpath {                                                    // c:2185
+            // c:2186 — `ptr = pathbuf;` (stubbed empty)
+            ptr = "";
+            ncopy = patstralloc.unmetalenp;                                  // c:2188
+        } else {                                                             // c:2189
+            ptr = string;                                                    // c:2190
+            ncopy = patstralloc.unmetalen;                                   // c:2191
+        }
+        // c:2193-2210 — for (icopy = 0; icopy < 2; icopy++) outer loop:
+        //   copy ncopy bytes from ptr to dst, unmetafy Meta+X pairs.
+        for icopy in 0..2 {                                                  // c:2193
+            let ptr_bytes = ptr.as_bytes();
+            let mut i = 0i32;
+            let mut byte_idx = 0usize;
+            while i < ncopy && byte_idx < ptr_bytes.len() {                  // c:2194
+                if ptr_bytes[byte_idx] == Meta as u8 && byte_idx + 1 < ptr_bytes.len() {
+                    // c:2195-2197 — `if (*ptr == Meta) { ptr++; *dst++ = *ptr++ ^ 32; }`
+                    byte_idx += 1;                                           // c:2196 ptr++
+                    dst.push((ptr_bytes[byte_idx] ^ 32) as char);            // c:2197 *dst++ = *ptr++ ^ 32
+                    byte_idx += 1;
+                } else {                                                     // c:2198
+                    // c:2199 — `else *dst++ = *ptr++;`
+                    dst.push(ptr_bytes[byte_idx] as char);
+                    byte_idx += 1;
+                }
+                i += 1;
+            }
+            if !needfullpath {                                               // c:2203
+                break;                                                       // c:2204
+            }
+            /* next time append test string to path so far */                // c:2205
+            ptr = string;                                                    // c:2207
+            ncopy = patstralloc.unmetalen;                                   // c:2208
+            let _ = icopy;
+        }
+        patstralloc.alloced = Some(dst.clone());                             // c:2182 dst = patstralloc->alloced
+        return Some(dst);                                                    // c:2213 return patstralloc->alloced
+    } else {                                                                 // c:2214
+        patstralloc.alloced = None;                                          // c:2215
+    }
+
+    None                                                                     // c:2218 return patstralloc->alloced (NULL)
 }
 
 /// Port of `patrepeat(Upat p, char *charstart)` from `Src/pattern.c:4096`. Counts how many
