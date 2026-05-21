@@ -40,7 +40,7 @@ use crate::ported::params::{
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
-use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Dash, NICEFLAG_QUOTE, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC, shfunc};
+use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Dash, NICEFLAG_HEAP, NICEFLAG_NODUP, NICEFLAG_QUOTE, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC, shfunc};
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
     imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
@@ -145,10 +145,10 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
         // c:107-110 — `if (unset(SHINSTDIN) || locallevel) {
         //                 nicezputs(prefix, stderr); fputc(':', stderr); }`
         if unset(SHINSTDIN) || locallevel != 0 {
-            let _ = stderr_lock.write_all(nicezputs(&prefix).as_bytes());
+            let _ = nicezputs(&prefix, &mut stderr_lock); // c:108
             let _ = stderr_lock.write_all(b":");
         }
-        let _ = stderr_lock.write_all(nicezputs(cmd).as_bytes());
+        let _ = nicezputs(cmd, &mut stderr_lock); // c:111
         let _ = stderr_lock.write_all(b":");
     } else {
         // c:114 — `nicezputs((isset(SHINSTDIN) && !locallevel) ? "zsh" : prefix, stderr);`
@@ -157,7 +157,7 @@ fn zwarning(cmd: Option<&str>, msg: &str) {
         } else {
             prefix.as_str()
         };
-        let _ = stderr_lock.write_all(nicezputs(to_emit).as_bytes());
+        let _ = nicezputs(to_emit, &mut stderr_lock); // c:114
         let _ = stderr_lock.write_all(b":");
     }
     // c:116 — `zerrmsg(stderr, fmt, ap)` — lineno prefix + message.
@@ -2982,7 +2982,7 @@ pub fn checkrmall(s: &str) -> bool {
         // c:2903
     }
     // c:2905 — `nicezputs(s, shout)` — escape non-printables in path.
-    let _ = write!(stderr_w, "{}", nicezputs(s_abs)); // c:2905
+    let _ = nicezputs(s_abs, &mut stderr_w); // c:2905
                                                       // c:2906-2912 — RMSTARWAIT: print "? (waiting ten seconds)",
                                                       // flush, beep, sleep 10, then newline.
     if isset(RMSTARWAIT) {
@@ -5496,12 +5496,25 @@ pub fn zputs(s: &str) -> io::Result<()> {
 /// strips wide-char handling and corrupts non-ASCII via byte-mask
 /// `nicechar(c & 0xff)`.
 ///
-/// The `heap` arg drops: Rust ownership replaces NICEFLAG_HEAP's
-/// zalloc-vs-zhalloc choice.
-/// WARNING: param names don't match C — Rust=(s) vs C=(s, heap)
-pub fn nicedup(s: &str) -> String {
+/// C signature faithful: `(s, heap) -> String`. `heap` selects between
+/// arena (`NICEFLAG_HEAP`) and persistent (default `ztrdup`) allocation
+/// in C; Rust has a single allocator so both paths produce the same
+/// owned `String`, but the `heap` parameter is preserved per Rule S1.
+pub fn nicedup(s: &str, heap: i32) -> String {
     // c:5530
-    mb_niceformat(s, 0) // c:5534
+    // c:5532 — `char *retstr;`
+    let retstr: Option<String>;
+    // c:5534 — `(void)mb_niceformat(s, NULL, &retstr, heap ? NICEFLAG_HEAP : 0);`
+    let mut slot: Option<String> = None;
+    let _ = mb_niceformat(
+        s,
+        None,
+        Some(&mut slot),
+        if heap != 0 { NICEFLAG_HEAP } else { 0 },
+    );
+    retstr = slot;
+    // c:5536 — `return retstr;`
+    retstr.unwrap_or_default()
 }
 
 /// Nice-format and duplicate string.
@@ -5509,7 +5522,7 @@ pub fn nicedup(s: &str) -> String {
 /// C body: `return nicedup(s, 1);` — heap-arena allocation form.
 pub fn nicedupstring(s: &str) -> String {
     // c:5301
-    nicedup(s) // c:5303
+    nicedup(s, 1) // c:5303
 }
 
 /// Nicely format a string
@@ -5530,10 +5543,11 @@ pub fn nicedupstring(s: &str) -> String {
 /// Route through `mb_niceformat` to match the C macro under
 /// MULTIBYTE — which itself unmetafies and uses `wcs_nicechar` for
 /// proper wide-char handling.
-/// WARNING: param names don't match C — Rust=(s) vs C=(s, stream)
-pub fn nicezputs(s: &str) -> String {
-    // c:5313 / zsh.h:3274
-    mb_niceformat(s, 0)
+pub fn nicezputs(s: &str, stream: &mut dyn std::io::Write) -> i32 {
+    // c:5313 (non-MULTIBYTE) / zsh.h:3274 (MULTIBYTE macro:
+    //   `(void)mb_niceformat((str), (outs), NULL, 0)`).
+    let _ = mb_niceformat(s, Some(stream), None, 0);
+    0                                                                        // c:5316 return 0
 }
 
 /// Port of `niceztrlen(char const *s)` from `Src/utils.c:5324`.
@@ -5561,30 +5575,189 @@ pub fn niceztrlen(s: &str) -> usize {
 // Rust idiom replacement: `chars()` + `wcs_nicechar` covers the C
 // mbrtowc loop with `MB_INVALID` fallback (Rust UTF-8 guarantees
 // valid scalars, so the invalid-byte arm collapses).
-pub fn mb_niceformat(s: &str, flags: i32) -> String {
-    let unmeta = unmeta(s);
-    let mut out = String::with_capacity(unmeta.len());
-    let quotable = (flags & NICEFLAG_QUOTE) != 0; // c:5413
-    // c:5407-5435 — C iterates via `mbrtowc(&c, ptr, umlen, &mbs)`
-    // then calls `wcs_nicechar(c, ...)` on each scalar. The Rust
-    // port previously called byte-based `nicechar(c)` here —
-    // incorrect for non-ASCII codepoints (would byte-mask via
-    // `c & 0xff` and emit `\M-X` for legit UTF-8 char). Route
-    // through `wcs_nicechar` (now properly ported in this session)
-    // so non-ASCII printable wides emit raw UTF-8 and large
-    // codepoints get `\u`/`\U` hex escape.
-    for c in unmeta.chars() {
-        // c:5413-5417 — `'` and `\` get backslash-escaped under
-        // NICEFLAG_QUOTE (so the result is safe inside `$'...'`).
-        if quotable && c == '\'' {
-            out.push_str("\\'"); // c:5413-5414
-        } else if quotable && c == '\\' {
-            out.push_str("\\\\"); // c:5417-5418
-        } else {
-            out.push_str(&wcs_nicechar(c));
-        }
+pub fn mb_niceformat(
+    s: &str,
+    mut stream: Option<&mut dyn std::io::Write>,
+    outstrp: Option<&mut Option<String>>,
+    flags: i32,
+) -> usize {
+    // c:5366
+    let mut l: usize = 0;                                                    // c:5368 size_t l = 0
+    let mut newl: usize;                                                     // c:5368 size_t newl
+    // c:5369 — `int umlen, outalloc, outleft, eol = 0;`. outalloc/outleft
+    // model C's buffer-growth math; Rust String auto-grows so the realloc
+    // loop at c:5430-5440 collapses to push_str. umlen and eol carry.
+    let mut umlen: usize;                                                    // c:5369
+    let mut eol: bool = false;                                               // c:5369 int eol = 0
+    // c:5370 — `wchar_t c;` (carried inside loop in Rust)
+    // c:5371 — `char *ums, *ptr, *fmt, *outstr, *outptr;`
+    let mut ums: Vec<u8>;                                                    // c:5371 char *ums
+    let mut ptr: usize;                                                      // c:5371 char *ptr
+    let mut fmt: String;                                                     // c:5371 char *fmt
+    let mut outstr: Option<String>;                                          // c:5371 char *outstr
+    // c:5372 — `mbstate_t mbs;` (Rust UTF-8 has no shift state; tracked
+    // by the `valid_up_to` / `error_len` logic below).
+
+    // c:5374-5380 — `if (outstrp) outptr = outstr = zalloc(5*strlen(s));`
+    if outstrp.is_some() {                                                   // c:5374
+        outstr = Some(String::with_capacity(5 * s.len()));                   // c:5376
+    } else {                                                                 // c:5377
+        outstr = None;                                                       // c:5379 outstr = NULL
     }
-    out
+
+    // c:5382 — `ums = ztrdup(s);`
+    // c:5383-5387 — comment-only block carried verbatim:
+    /*
+     * is this necessary at this point? niceztrlen does this
+     * but it's used in lots of places.  however, one day this may
+     * be, too.
+     */                                                                      // c:5383-5387
+    // c:5388 — `untokenize(ums);` — Rust port uses the char-based
+    // `lex::untokenize` (only fires on codepoints in the 0x84..=0xa1
+    // ITOK range, never on UTF-8 continuation bytes); the byte-level
+    // shape of C's untokenize is unsafe on raw UTF-8 input because a
+    // continuation byte like 0x97 (part of `字` = 0xE5 0xAD 0x97) sits
+    // inside the ITOK range and would be misclassified as a token.
+    // c:5389 — `ptr = unmetafy(ums, &umlen);` — `unmeta` is the safe
+    // UTF-8 wrapper that runs unmetafy only when Meta bytes are
+    // present and otherwise no-ops.
+    let detok = crate::ported::lex::untokenize(s);
+    let unmeta_str = unmeta(&detok);
+    ums = unmeta_str.into_bytes();
+    umlen = ums.len();                                                       // c:5389 *umlen
+    ptr = 0;                                                                 // c:5389 ptr starts at 0 in ums
+
+    // c:5391 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless UTF-8)
+    while umlen > 0 {                                                        // c:5392
+        // c:5393 — `cnt = eol ? MB_INVALID : mbrtowc(&c, ptr, umlen, &mbs);`
+        // Rust equivalent: try to decode one UTF-8 scalar from ums[ptr..],
+        // honoring `eol` (force the invalid arm when set).
+        let cnt: usize;
+        let decoded_c: Option<char>;
+        if eol {
+            // c:5396 — MB_INVALID arm via `eol = 1`.
+            decoded_c = None;
+            cnt = 1;
+        } else {
+            let remaining = &ums[ptr..ptr + umlen];
+            match std::str::from_utf8(remaining) {
+                Ok(s_slice) => {
+                    // Valid UTF-8 throughout remaining; consume one char.
+                    if let Some(ch) = s_slice.chars().next() {
+                        decoded_c = Some(ch);
+                        cnt = ch.len_utf8();
+                    } else {
+                        // Empty? Shouldn't happen given umlen > 0, but
+                        // mirror MB_INVALID.
+                        decoded_c = None;
+                        cnt = 1;
+                    }
+                }
+                Err(e) => {
+                    let valid_up_to = e.valid_up_to();
+                    if valid_up_to > 0 {
+                        // Decode the first valid char then continue.
+                        let valid_slice = unsafe {
+                            std::str::from_utf8_unchecked(&remaining[..valid_up_to])
+                        };
+                        let ch = valid_slice.chars().next().unwrap();
+                        decoded_c = Some(ch);
+                        cnt = ch.len_utf8();
+                    } else if e.error_len().is_none() {
+                        // Incomplete sequence at end of input — MB_INCOMPLETE.
+                        // c:5394 — `case MB_INCOMPLETE: eol = 1; FALL THROUGH`
+                        eol = true;
+                        decoded_c = None;                                    // MB_INVALID
+                        cnt = 1;
+                    } else {
+                        // Definite invalid byte — MB_INVALID.
+                        decoded_c = None;
+                        cnt = 1;
+                    }
+                }
+            }
+        }
+
+        // c:5396-5403 / c:5404-5424 switch dispatch on cnt/decoded_c.
+        let cnt_used: usize;
+        match decoded_c {
+            None => {
+                // c:5397 — `case MB_INVALID:` (or fall-through from
+                // MB_INCOMPLETE at c:5394).
+                // c:5400 — `fmt = nicechar_sel(*ptr, flags & NICEFLAG_QUOTE);`
+                fmt = nicechar_sel(ums[ptr] as char, (flags & NICEFLAG_QUOTE) != 0);
+                newl = fmt.len();                                            // c:5401 newl = strlen(fmt)
+                cnt_used = 1;                                                // c:5402 cnt = 1
+                // c:5403 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless)
+            }
+            Some(c) if c == '\0' => {
+                // c:5406 — `case 0:` — '\0' decodes to 0; consume 1 byte
+                // and fall through to default.
+                cnt_used = 1;                                                // c:5409
+                // c:5411-5421 default arm (FALL THROUGH from case 0)
+                if c == '\'' && (flags & NICEFLAG_QUOTE) != 0 {
+                    // c:5413
+                    fmt = "\\'".to_string();                                 // c:5414
+                    newl = 2;                                                // c:5415
+                } else if c == '\\' && (flags & NICEFLAG_QUOTE) != 0 {       // c:5417
+                    fmt = "\\\\".to_string();                                // c:5418
+                    newl = 2;                                                // c:5419
+                } else {
+                    // c:5422 — `fmt = wcs_nicechar_sel(c, &newl, NULL,
+                    //                                 flags & NICEFLAG_QUOTE);`
+                    // Rust wcs_nicechar_sel returns the formatted String;
+                    // newl (column width) is approximated as fmt.len() since
+                    // the Rust signature doesn't yet thread the &newl
+                    // out-param (separate Rule S1 fix for wcs_nicechar_sel).
+                    fmt = wcs_nicechar_sel(c, (flags & NICEFLAG_QUOTE) != 0);
+                    newl = fmt.len();
+                }
+            }
+            Some(c) => {
+                // c:5411 — `default:` arm (cnt > 0, valid char).
+                cnt_used = cnt;
+                if c == '\'' && (flags & NICEFLAG_QUOTE) != 0 {              // c:5413
+                    fmt = "\\'".to_string();                                 // c:5414
+                    newl = 2;                                                // c:5415
+                } else if c == '\\' && (flags & NICEFLAG_QUOTE) != 0 {       // c:5417
+                    fmt = "\\\\".to_string();                                // c:5418
+                    newl = 2;                                                // c:5419
+                } else {
+                    // c:5422 — `fmt = wcs_nicechar_sel(c, &newl, NULL,
+                    //                                 flags & NICEFLAG_QUOTE);`
+                    fmt = wcs_nicechar_sel(c, (flags & NICEFLAG_QUOTE) != 0);
+                    newl = fmt.len();
+                }
+            }
+        }
+
+        umlen -= cnt_used;                                                   // c:5427 umlen -= cnt
+        ptr += cnt_used;                                                     // c:5428 ptr += cnt
+        l += newl;                                                           // c:5429 l += newl
+
+        if let Some(ref mut w) = stream {                                    // c:5431 if (stream)
+            // c:5432 — `zputs(fmt, stream);`
+            let _ = w.write_all(fmt.as_bytes());
+        }
+        if let Some(ref mut buf) = outstr {                                  // c:5433 if (outstr)
+            // c:5434-5446 — append fmt to outstr, growing on demand. Rust
+            // String auto-grows; the realloc loop collapses to push_str.
+            buf.push_str(&fmt);                                              // c:5446 memcpy(outptr, fmt, outlen)
+        }
+        let _ = fmt;
+    }
+
+    // c:5451 — `free(ums);` (Rust drop at scope exit)
+    drop(ums);
+    if let Some(slot) = outstrp {                                            // c:5452 if (outstrp)
+        // c:5453 — `*outptr = '\0';` (no-op for Rust String)
+        // c:5455-5460 — NICEFLAG_NODUP / NICEFLAG_HEAP shaping. Rust has
+        // a single allocator so all three paths produce identical owned
+        // String contents; transfer ownership into caller's slot.
+        *slot = outstr.take();
+    }
+
+    l                                                                        // c:5462 return l
 }
 
 /// Port of `is_mb_niceformat(const char *s)` from `Src/utils.c:5474`.
@@ -5617,57 +5790,71 @@ pub fn mb_niceformat(s: &str, flags: i32) -> String {
 /// resulting bytes. For valid UTF-8 sequences, check
 /// `is_wcs_nicechar(scalar)`; for invalid bytes, check
 /// `is_nicechar(byte)`. Either path bailing positive returns true.
-pub fn is_mb_niceformat(s: &str) -> bool {
-    // c:5481-5483 — `ums = ztrdup(s); untokenize(ums); ptr = unmetafy(ums, &umlen);`
-    let mut bytes = s.as_bytes().to_vec();
-    let umlen = unmetafy(&mut bytes);
-    bytes.truncate(umlen);
+pub fn is_mb_niceformat(s: &str) -> i32 {
+    // c:5474
+    // c:5476 — `int umlen, ret = 0;`
+    let umlen: usize;                                                        // c:5476
+    let mut ret: i32 = 0;                                                    // c:5476
+    // c:5477 — `char *ums, *ptr;` (eptr modelled by bytes.len())
+    let mut ums: Vec<u8>;                                                    // c:5477
+    let mut ptr: usize;                                                      // c:5477
 
-    let mut i = 0;
-    while i < bytes.len() {
-        let remaining = &bytes[i..];
+    // c:5481-5483 — `ums = ztrdup(s); untokenize(ums); ptr =
+    //                unmetafy(ums, &umlen);` — Rust uses char-based
+    // `lex::untokenize` (never corrupts UTF-8 continuation bytes) and
+    // `unmeta` (no-op on UTF-8 without Meta bytes; runs unmetafy when
+    // they're present).
+    let detok = crate::ported::lex::untokenize(s);
+    let unmeta_str = unmeta(&detok);
+    ums = unmeta_str.into_bytes();
+    umlen = ums.len();                                                       // c:5483 *umlen
+    ptr = 0;                                                                 // c:5483 ptr starts at 0
+
+    // c:5485 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless UTF-8)
+    while ret == 0 && ptr < ums.len() {                                      // c:5486 while (umlen > 0)
+        let remaining = &ums[ptr..];
         match std::str::from_utf8(remaining) {
-            Ok(s) => {
+            Ok(s_slice) => {
                 // c:5503-5511 — `default: if (is_wcs_nicechar(c)) ret = 1;`
-                // Walk valid UTF-8 char-by-char. Previously the Rust
-                // port used an inline check that didn't honor
-                // PRINTEIGHTBIT for high-bit chars; now routes through
-                // the canonical `is_wcs_nicechar` predicate.
-                for c in s.chars() {
-                    if is_wcs_nicechar(c) {
-                        // c:5509
-                        return true;
+                for ch in s_slice.chars() {
+                    if is_wcs_nicechar(ch) {                                 // c:5508
+                        ret = 1;                                             // c:5509
+                        break;
                     }
                 }
-                return false;
+                break;
             }
             Err(e) => {
                 let valid_up_to = e.valid_up_to();
                 if valid_up_to > 0 {
-                    let valid =
-                        std::str::from_utf8(&remaining[..valid_up_to]).expect("valid_up_to slice");
-                    for c in valid.chars() {
-                        if is_wcs_nicechar(c) {
-                            // c:5509
-                            return true;
+                    let valid = unsafe {
+                        std::str::from_utf8_unchecked(&remaining[..valid_up_to])
+                    };
+                    for ch in valid.chars() {
+                        if is_wcs_nicechar(ch) {                             // c:5508
+                            ret = 1;                                         // c:5509
+                            break;
                         }
                     }
-                    i += valid_up_to;
+                    if ret != 0 {
+                        break;
+                    }
+                    ptr += valid_up_to;
                     continue;
                 }
                 // c:5493-5498 — `case MB_INVALID: if (is_nicechar(*ptr))
-                //                ret = 1; break;`. Raw byte check via
-                // canonical `is_nicechar` (now PRINTEIGHTBIT-aware).
-                let b = remaining[0];
-                if is_nicechar(b as char) {
-                    // c:5495
-                    return true;
+                //                ret = 1; break;`
+                if is_nicechar(remaining[0] as char) {                       // c:5494
+                    ret = 1;                                                 // c:5495
+                    break;
                 }
-                i += 1;
+                ptr += 1;
             }
         }
     }
-    false
+
+    drop(ums);                                                               // c:5519 free(ums)
+    ret                                                                      // c:5523 return ret
 }
 
 /// Multibyte metachar length with conversion (from utils.c mb_metacharlenconv_r)
@@ -6274,7 +6461,7 @@ pub(crate) fn quotedzputs(s: &str) -> String {
     // if the string contains nice-formatted chars (controls,
     // non-printables), wrap in `$'…'` using sb/mb_niceformat with
     // NICEFLAG_QUOTE so embedded `'`/`\` get backslash-escaped.
-    if is_mb_niceformat(s) {
+    if is_mb_niceformat(s) != 0 {
         // c:6478-6492 (MULTIBYTE_SUPPORT branch): use mb_niceformat
         //   with NICEFLAG_QUOTE so multi-byte chars round-trip through
         //   wcs_nicechar (raw UTF-8 for printable wides, `\u`/`\U` for
@@ -6282,7 +6469,16 @@ pub(crate) fn quotedzputs(s: &str) -> String {
         // Under !MULTIBYTE_SUPPORT (c:6494-6508) C would use
         //   sb_niceformat instead. Static-link path: MULTIBYTE is
         //   always available in Rust.
-        return format!("$'{}'", mb_niceformat(s, NICEFLAG_QUOTE)); // c:6488
+        // c:6485-6492 — `mb_niceformat(s, NULL, &substr,
+        //                              NICEFLAG_QUOTE|NICEFLAG_NODUP);`
+        let mut substr: Option<String> = None;
+        let _ = mb_niceformat(
+            s,
+            None,
+            Some(&mut substr),
+            NICEFLAG_QUOTE | NICEFLAG_NODUP,
+        );
+        return format!("$'{}'", substr.unwrap_or_default()); // c:6488
     }
     // c:6511-6518 — `if (!hasspecial(s)) return dupstring(s);`.
     if !hasspecial(s) {
@@ -8757,16 +8953,16 @@ mod tests {
     fn test_is_mb_niceformat_plain_ascii() {
         let _g = crate::test_util::global_state_lock();
         // Plain printable ASCII — nothing needs nicechar escaping.
-        assert!(!is_mb_niceformat("hello world"));
+        assert_eq!(is_mb_niceformat("hello world"), 0);
     }
 
     #[test]
     fn test_is_mb_niceformat_with_control_char() {
         let _g = crate::test_util::global_state_lock();
         // Tab is control (< 0x20) — needs nice escaping.
-        assert!(is_mb_niceformat("a\tb"));
+        assert_eq!(is_mb_niceformat("a\tb"), 1);
         // Bell character.
-        assert!(is_mb_niceformat("a\x07b"));
+        assert_eq!(is_mb_niceformat("a\x07b"), 1);
     }
 
     /// c:4856/4954 — `metafy` + `unmetafy` MUST round-trip for ASCII.
@@ -9633,15 +9829,15 @@ mod tests {
     #[test]
     fn is_mb_niceformat_false_for_pure_printable_ascii() {
         let _g = crate::test_util::global_state_lock();
-        assert!(
-            !is_mb_niceformat("hello"),
+        assert_eq!(
+            is_mb_niceformat("hello"), 0,
             "c:5509 — printable ASCII needs no nice-format"
         );
-        assert!(
-            !is_mb_niceformat(""),
+        assert_eq!(
+            is_mb_niceformat(""), 0,
             "c:5486 — empty string has no chars to flag"
         );
-        assert!(!is_mb_niceformat("ABC012!?@"));
+        assert_eq!(is_mb_niceformat("ABC012!?@"), 0);
     }
 
     /// c:5509 + `is_wcs_nicechar` — newline/tab/control chars trigger
@@ -9649,59 +9845,50 @@ mod tests {
     #[test]
     fn is_mb_niceformat_true_for_strings_with_controls() {
         let _g = crate::test_util::global_state_lock();
-        assert!(is_mb_niceformat("a\nb"), "c:5509 — newline is nice");
-        assert!(is_mb_niceformat("\t"));
-        assert!(is_mb_niceformat("\x01"), "c:5509 — control char is nice");
-        assert!(is_mb_niceformat("\x7f"), "c:5509 — DEL is nice");
+        assert_eq!(is_mb_niceformat("a\nb"), 1, "c:5509 — newline is nice");
+        assert_eq!(is_mb_niceformat("\t"), 1);
+        assert_eq!(is_mb_niceformat("\x01"), 1, "c:5509 — control char is nice");
+        assert_eq!(is_mb_niceformat("\x7f"), 1, "c:5509 — DEL is nice");
     }
 
     /// `Src/utils.c:5366-5460` — `mb_niceformat(s)`. Multibyte-aware
-    /// nice-formatter. Calls `wcs_nicechar` per char. Previously was
-    /// routed through byte-based `nicechar` — wrong for non-ASCII.
-    /// Pin: printable wide chars pass through unchanged; controls
-    /// still escape.
+    /// nice-formatter. Calls `wcs_nicechar` per char. Test uses
+    /// C-equivalent call shape: `char *out; mb_niceformat(s, NULL, &out, 0);`
     #[test]
     fn mb_niceformat_preserves_printable_wide_chars() {
         let _g = crate::test_util::global_state_lock();
-        // Pure ASCII printable: unchanged.
-        assert_eq!(
-            mb_niceformat("hello", 0),
-            "hello",
-            "c:5407 — printable ASCII passes through"
-        );
-        // Wide chars (Latin-1, CJK) — must NOT get \M-X escape.
-        assert_eq!(
-            mb_niceformat("café", 0),
-            "café",
-            "c:5407 — Latin-1 'é' must NOT byte-mask to \\M-X"
-        );
-        assert_eq!(
-            mb_niceformat("字", 0),
-            "字",
-            "c:5407 — CJK printable passes through"
-        );
-        // Mixed: ASCII + wide.
-        assert_eq!(mb_niceformat("abcéxyz", 0), "abcéxyz");
+        let mut out: Option<String> = None;
+        mb_niceformat("hello", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("hello"), "c:5407 — printable ASCII passes through");
+
+        let mut out: Option<String> = None;
+        mb_niceformat("café", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("café"), "c:5407 — Latin-1 'é' must NOT byte-mask to \\M-X");
+
+        let mut out: Option<String> = None;
+        mb_niceformat("字", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("字"), "c:5407 — CJK printable passes through");
+
+        let mut out: Option<String> = None;
+        mb_niceformat("abcéxyz", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("abcéxyz"));
     }
 
-    /// `Src/utils.c:5407` + `wcs_nicechar` — controls still escape
-    /// in mb_niceformat. Pin that newline → `\n` even for the
-    /// multibyte variant.
+    /// `Src/utils.c:5407` + `wcs_nicechar` — controls still escape.
     #[test]
     fn mb_niceformat_escapes_controls() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            mb_niceformat("\n", 0),
-            "\\n",
-            "c:5407 → wcs_nicechar c:625 — newline escapes"
-        );
-        assert_eq!(
-            mb_niceformat("\t", 0),
-            "\\t",
-            "c:5407 → wcs_nicechar c:628 — tab escapes"
-        );
-        // Mixed: text with embedded control.
-        assert_eq!(mb_niceformat("a\nb", 0), "a\\nb");
+        let mut out: Option<String> = None;
+        mb_niceformat("\n", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("\\n"), "c:5407 → wcs_nicechar c:625 — newline escapes");
+
+        let mut out: Option<String> = None;
+        mb_niceformat("\t", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("\\t"), "c:5407 → wcs_nicechar c:628 — tab escapes");
+
+        let mut out: Option<String> = None;
+        mb_niceformat("a\nb", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("a\\nb"));
     }
 
     /// `Src/utils.c:4971-4983` — `metalen(s, len)`. **Input `len` is
@@ -10824,37 +11011,41 @@ mod tests {
     #[test]
     fn nicezputs_matches_mb_niceformat_under_multibyte() {
         let _g = crate::test_util::global_state_lock();
-        // ASCII printable: both produce the same passthrough.
-        assert_eq!(nicezputs("hello"), mb_niceformat("hello", 0));
-        // ASCII control: \n must be `\n` (literal backslash + n).
-        assert_eq!(nicezputs("a\nb"), mb_niceformat("a\nb", 0));
-        assert!(
-            nicezputs("a\nb").contains("\\n"),
-            "nicechar/wcs_nicechar emit `\\n` (not raw 0x0a)"
-        );
-        // Multibyte: previous chars()+nicechar would have mangled
-        // é into `\M-…`. mb_niceformat preserves printable wides.
-        assert_eq!(nicezputs("é"), mb_niceformat("é", 0));
-        // Empty: both empty.
-        assert_eq!(nicezputs(""), String::new());
+        // C-equivalent pattern: write to a stream, compare to
+        // mb_niceformat outstrp-form output. Inline rather than via a
+        // Rust-only helper.
+        for input in ["hello", "a\nb", "é", ""] {
+            let mut nz_buf: Vec<u8> = Vec::new();
+            let _ = nicezputs(input, &mut nz_buf);
+            let nz = String::from_utf8(nz_buf).expect("utf8");
+
+            let mut mb_out: Option<String> = None;
+            let _ = mb_niceformat(input, None, Some(&mut mb_out), 0);
+            assert_eq!(nz, mb_out.unwrap_or_default(),
+                "nicezputs and mb_niceformat must agree for {:?}", input);
+        }
+        // \n must produce literal `\n` (backslash + n).
+        let mut nz_buf: Vec<u8> = Vec::new();
+        let _ = nicezputs("a\nb", &mut nz_buf);
+        let nz = String::from_utf8(nz_buf).expect("utf8");
+        assert!(nz.contains("\\n"), "nicechar emits `\\n`, not raw 0x0a");
     }
 
     /// `Src/utils.c:5530` — under MULTIBYTE_SUPPORT, `nicedup(s, heap)`
     /// body is `(void)mb_niceformat(s, NULL, &retstr, …); return retstr;`
-    /// so the returned string MUST equal mb_niceformat output. Previous
-    /// Rust port routed through `sb_niceformat` (the !MULTIBYTE path),
-    /// dropping wide-char handling and mangling non-ASCII into `\M-X`.
+    /// so the returned string MUST equal mb_niceformat output.
     #[test]
     fn nicedup_matches_mb_niceformat_under_multibyte() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(nicedup("hello"), mb_niceformat("hello", 0));
-        assert_eq!(nicedup("a\nb"), mb_niceformat("a\nb", 0));
-        // Wide-char printable: the bug was here — sb_niceformat byte-
-        // masks `c & 0xff` so `é` (0xC3 0xA9 UTF-8) emerged as
-        // two `\M-…` escapes. mb_niceformat preserves it.
-        assert_eq!(nicedup("é"), mb_niceformat("é", 0));
-        // nicedupstring delegates to nicedup; pin equivalence.
-        assert_eq!(nicedupstring("hé\nllo"), nicedup("hé\nllo"));
+        for input in ["hello", "a\nb", "é"] {
+            let nd = nicedup(input, 0);
+            let mut mb_out: Option<String> = None;
+            let _ = mb_niceformat(input, None, Some(&mut mb_out), 0);
+            assert_eq!(nd, mb_out.unwrap_or_default(),
+                "nicedup must equal mb_niceformat outstrp form for {:?}", input);
+        }
+        // nicedupstring delegates to nicedup(s, 1).
+        assert_eq!(nicedupstring("hé\nllo"), nicedup("hé\nllo", 1));
     }
 
     /// `Src/utils.c:734-744` — `zwcwidth(wc)` returns 1 when MULTIBYTE
