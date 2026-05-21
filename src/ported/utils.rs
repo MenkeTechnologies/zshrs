@@ -3810,6 +3810,7 @@ pub fn ztrftimebuf(bufsizeptr: &mut i32, decr: i32) -> i32 {
 pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
     let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = duration.as_secs() as i64;
+    let nsec = duration.subsec_nanos() as u64;
 
     #[cfg(unix)]
     unsafe {
@@ -3817,9 +3818,79 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
         if tm.is_null() {
             return String::new();
         }
+        let tm_ref = &*tm;
+
+        // c:3398-3406 — pre-pass: walk fmt and substitute zsh-specific
+        // extensions BEFORE delegating to libc::strftime. The C source
+        // handles these inline; Rust pre-rewrites them into literal
+        // numbers so libc::strftime sees only standard specifiers.
+        //   %K  = 24-hr clock, no leading zero (0-23)
+        //   %L  = 12-hr clock, no leading zero (1-12)
+        //   %f  = day of month, no leading zero (1-31)
+        //   %.N = fractional seconds, N digits (0-9)
+        let mut preprocessed = String::with_capacity(fmt.len());
+        let bytes = fmt.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' && i + 1 < bytes.len() {
+                // c:3374-3384 — parse optional `N.` prefix (digit count
+                // for the `%.` fractional-seconds specifier).
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                let digs: u32 = if j > i + 1 {
+                    std::str::from_utf8(&bytes[i + 1..j])
+                        .unwrap_or("3")
+                        .parse()
+                        .unwrap_or(3)
+                } else {
+                    3
+                };
+                // c:3408 — `switch (*fmt++)` examines the specifier
+                // char (after the digit prefix).
+                if j < bytes.len() && bytes[j] == b'.' {
+                    // c:3409 — fractional-seconds. Default 3 digits if
+                    // none specified (j == i+1).
+                    let digs = digs.min(9);
+                    let trunc_div: u64 = 10u64.pow(9 - digs);
+                    let val = nsec / trunc_div;
+                    preprocessed
+                        .push_str(&format!("{:0width$}", val, width = digs as usize));
+                    i = j + 1;
+                    continue;
+                }
+                let next = bytes[i + 1];
+                // c:3445-3460 — %K / %L / %f extensions.
+                match next {
+                    b'K' => {
+                        preprocessed.push_str(&format!("{}", tm_ref.tm_hour));
+                        i += 2;
+                        continue;
+                    }
+                    b'L' => {
+                        let mut h12 = tm_ref.tm_hour % 12;
+                        if h12 == 0 {
+                            h12 = 12;
+                        }
+                        preprocessed.push_str(&format!("{}", h12));
+                        i += 2;
+                        continue;
+                    }
+                    b'f' => {
+                        preprocessed.push_str(&format!("{}", tm_ref.tm_mday));
+                        i += 2;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            preprocessed.push(bytes[i] as char);
+            i += 1;
+        }
 
         let mut buf = vec![0u8; 256];
-        let c_fmt = CString::new(fmt).unwrap_or_default();
+        let c_fmt = CString::new(preprocessed).unwrap_or_default();
         let len = libc::strftime(
             buf.as_mut_ptr() as *mut libc::c_char,
             buf.len(),
@@ -3837,7 +3908,7 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
 
     #[cfg(not(unix))]
     {
-        let _ = (fmt, secs);
+        let _ = (fmt, secs, nsec);
         String::new()
     }
 }
@@ -11121,6 +11192,64 @@ mod tests {
     /// bytes (downstream paramtab consumers assume metafied entries).
     /// Pin: ASCII usernames round-trip identically through metafy,
     /// AND the result is a non-empty string for the current uid.
+    /// `Src/utils.c:3445-3460` — ztrftime zsh-specific %K/%L/%f
+    /// extensions return values WITHOUT leading zeros (vs the
+    /// strftime %H/%I/%d which pad).
+    #[test]
+    #[cfg(unix)]
+    fn ztrftime_zsh_extensions_no_leading_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // Pick a known time: Jan 5 2024 09:07:42.123456789 UTC.
+        // Use SystemTime + an offset since we want deterministic values
+        // independent of TZ; we just verify that the format substitutes
+        // the right NUMBER OF DIGITS for the leading-zero case.
+        use std::time::Duration;
+        // 2024-01-05 09:07:42 UTC = 1704445662
+        let t = UNIX_EPOCH + Duration::new(1704445662, 123_456_789);
+        // %H gives leading zero "09"; %K should give "9" (in some TZ
+        // hour will be different but the digit-count rule still holds).
+        let h_padded = ztrftime("%H", t);
+        let k_unpadded = ztrftime("%K", t);
+        // Both represent the same hour. If h_padded starts with `0`,
+        // k_unpadded must be 1-char and not start with `0`.
+        if h_padded.starts_with('0') && h_padded.len() == 2 {
+            assert!(
+                !k_unpadded.starts_with('0'),
+                "c:3445 — %K must strip the leading 0 from %H={}, got %K={}",
+                h_padded,
+                k_unpadded
+            );
+            assert_eq!(
+                k_unpadded.len(),
+                1,
+                "c:3445 — %K should be 1 digit when hour < 10"
+            );
+        }
+        // %f for day-of-month: t is Jan 5 → in any reasonable TZ
+        // day is between 4 and 6; format should be 1 digit when day < 10.
+        let d_padded = ztrftime("%d", t);
+        let f_unpadded = ztrftime("%f", t);
+        if d_padded.starts_with('0') && d_padded.len() == 2 {
+            assert!(!f_unpadded.starts_with('0'));
+            assert_eq!(
+                f_unpadded.len(),
+                1,
+                "c:3457 — %f should be 1 digit when day < 10"
+            );
+        }
+        // %3. fractional seconds: input nsec is 123456789 → first 3
+        // digits should be 123. Note zsh's syntax is `%N.` where N is
+        // the digit count (c:3374-3384 + c:3409).
+        let frac = ztrftime("%3.", t);
+        assert_eq!(
+            frac, "123",
+            "c:3409-3438 — %3. must emit first 3 digits of nsec"
+        );
+        // %. with no digit prefix defaults to 3 digits per c:3409.
+        let frac_default = ztrftime("%.", t);
+        assert_eq!(frac_default, "123", "c:3409 — %. defaults to 3 digits");
+    }
+
     #[test]
     #[cfg(unix)]
     fn get_username_returns_metafied_non_empty_string() {
