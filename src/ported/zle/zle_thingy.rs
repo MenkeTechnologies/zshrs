@@ -656,26 +656,25 @@ pub fn bin_zle(
     _func: i32,
 ) -> i32 {
     // c:345-364 — dispatch table: `static const struct opn opns[]`.
-    // (flag_char, handler_fn, min_args, max_args). Sub-handlers in
-    // Rust take only `&[String]` (sig narrower than C `(name, args,
-    // ops, func)`); wrapped via closures so the dispatcher stays
-    // table-driven. The sub-handler-sig widening is a follow-up.
-    type OpHandler<'a> = Box<dyn Fn(&[String]) -> i32 + 'a>;
+    // (flag_char, handler_fn, min_args, max_args). All sub-handlers
+    // take the C canonical `(name, args, ops, func)` signature, so
+    // the table type matches `struct opn` exactly.
+    type OpHandler = fn(&str, &[String], &options, i32) -> i32;
     let opns: [(u8, OpHandler, i32, i32); 14] = [
-        (b'l', Box::new(bin_zle_list), 0, -1), // c:350
-        (b'D', Box::new(bin_zle_del), 1, -1),  // c:351
-        (b'A', Box::new(bin_zle_link), 2, 2),  // c:352
-        (b'N', Box::new(bin_zle_new), 1, 2),   // c:353
-        (b'C', Box::new(bin_zle_complete), 3, 3), // c:354
-        (b'R', Box::new(|a| bin_zle_refresh(a, ops)), 0, -1), // c:355
-        (b'M', Box::new(bin_zle_mesg), 1, 1),  // c:356
-        (b'U', Box::new(bin_zle_unget), 1, 1), // c:357
-        (b'K', Box::new(bin_zle_keymap), 1, 1), // c:358
-        (b'I', Box::new(|_| bin_zle_invalidate()), 0, 0), // c:359
-        (b'f', Box::new(bin_zle_flags), 1, -1), // c:360
-        (b'F', Box::new(|a| bin_zle_fd(a, ops)), 0, 2),    // c:361
-        (b'T', Box::new(|a| bin_zle_transform(a, ops)), 0, 2), // c:362
-        (0u8, Box::new(bin_zle_call), 0, -1),  // c:363 — sentinel: no flag → bin_zle_call.
+        (b'l', bin_zle_list, 0, -1),         // c:350
+        (b'D', bin_zle_del, 1, -1),          // c:351
+        (b'A', bin_zle_link, 2, 2),          // c:352
+        (b'N', bin_zle_new, 1, 2),           // c:353
+        (b'C', bin_zle_complete, 3, 3),      // c:354
+        (b'R', bin_zle_refresh, 0, -1),      // c:355
+        (b'M', bin_zle_mesg, 1, 1),          // c:356
+        (b'U', bin_zle_unget, 1, 1),         // c:357
+        (b'K', bin_zle_keymap, 1, 1),        // c:358
+        (b'I', bin_zle_invalidate, 0, 0),    // c:359
+        (b'f', bin_zle_flags, 1, -1),        // c:360
+        (b'F', bin_zle_fd, 0, 2),            // c:361
+        (b'T', bin_zle_transform, 0, 2),     // c:362
+        (0u8, bin_zle_call, 0, -1),          // c:363 — sentinel: no flag → bin_zle_call.
     ];
 
     // c:369 — `for (op = opns; op->o && !OPT_ISSET(ops, op->o); op++) ;`.
@@ -712,8 +711,7 @@ pub fn bin_zle(
     }
 
     // c:388 — `return op->func(name, args, ops, op->o);`.
-    let _ = ops; // sub-handler-sig widening is the follow-up
-    op_func(args)
+    op_func(name, args, ops, *op_o as i32)
 }
 
 /// Port of `bin_zle_list(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:393`.
@@ -730,8 +728,7 @@ pub fn bin_zle(
 /// }
 /// ```
 /// `zle -l` — list widget bindings (or check existence per arg).
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_list(args: &[String]) -> i32 {
+pub fn bin_zle_list(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:393
     // c:393-413 — `if (!*args) scan all` else look up each in turn.
     // Returns 0 if all found and listable; 1 if any missing.
@@ -773,8 +770,7 @@ pub fn bin_zle_list(args: &[String]) -> i32 {
 /// Rust idiom replacement: arming `ZLE_RESET_NEEDED` flag covers
 /// the C direct `zrefresh()` call; the next zlecore tick picks it
 /// up — same observable behaviour without re-entering refresh here.
-/// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
-pub fn bin_zle_refresh(args: &[String], ops: &options) -> i32 {
+pub fn bin_zle_refresh(_name: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:418
     // c:420-421 — `char *s = statusline; int ocl = clearlist;`. Save
     // pre-call state so the function can restore it on exit.
@@ -854,8 +850,7 @@ pub fn bin_zle_refresh(args: &[String], ops: &options) -> i32 {
 /// }
 /// ```
 /// `zle -M msg` — display a transient message during widget run.
-/// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_mesg(args: &[String]) -> i32 {
+pub fn bin_zle_mesg(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:459
     // c:459-468 — `if (!zleactive) { zwarnnam; return 1; }
     //               showmsg(*args); if (sfcontext != SFC_WIDGET)
@@ -883,7 +878,7 @@ pub fn bin_zle_mesg(args: &[String]) -> i32 {
 /// `zle -U str` — push string bytes back onto input queue in
 /// reverse so subsequent reads return them in original order.
 /// WARNING: param names don't match C — Rust=(zle, args) vs C=(name, args, ops, func)
-pub fn bin_zle_unget(args: &[String]) -> i32 {
+pub fn bin_zle_unget(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:473
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         return 1; // c:479
@@ -908,7 +903,7 @@ pub fn bin_zle_unget(args: &[String]) -> i32 {
 /// `zle -K keymap` — switch the current keymap (only valid from
 /// inside a widget callback).
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_keymap(args: &[String]) -> i32 {
+pub fn bin_zle_keymap(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:488
     // c:488-494 — `if (!zleactive) return 1 with warning;
     //               return selectkeymap(*args, 0)`.
@@ -973,7 +968,7 @@ pub fn scanlistwidgets() -> i32 {
 /// thingytab. Returns 1 if any widget was missing or protected
 /// (TH_IMMORTAL), else 0.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_del(args: &[String]) -> i32 {
+pub fn bin_zle_del(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:548
     let mut ret = 0;
     for arg in args {
@@ -1004,7 +999,7 @@ pub fn bin_zle_del(args: &[String]) -> i32 {
 /// ```
 /// `zle -A old new` — alias `new` to point at the same widget as `old`.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_link(args: &[String]) -> i32 {
+pub fn bin_zle_link(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:567
     // c:567-578 — `t = thingytab.getnode(args[0]); if(!t) ret=1; else
     //              if(bindwidget(t->widget, rthingy(args[1]))) ret=1`.
@@ -1045,7 +1040,7 @@ pub fn bin_zle_link(args: &[String]) -> i32 {
 /// `zle -N name [func]` — bind a user-defined widget. `func`
 /// defaults to `name` when omitted.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_new(args: &[String]) -> i32 {
+pub fn bin_zle_new(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:584
     // c:584-595 — `widget w = zalloc; w->flags=0; w->u.fnnam = ztrdup(args[1]?args[1]:args[0]);
     //              if(!bindwidget(w, rthingy(args[0]))) return 0;
@@ -1093,7 +1088,7 @@ pub fn bin_zle_new(args: &[String]) -> i32 {
 /// ```
 /// `zle -C name comp-widget func` — register a completion widget.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_complete(args: &[String]) -> i32 {
+pub fn bin_zle_complete(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:600
     // c:600-629 — Load zsh/complete; resolve `args[1]` (or `.args[1]`)
     // to a Thingy; verify it's ZLE_ISCOMP; alloc a widget with
@@ -1182,7 +1177,7 @@ pub fn zle_usable() -> i32 {
 /// the C `w->flags |= ZLE_*` mutation lives on the widget-execution
 /// path itself; this entry validates args + returns success.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_flags(args: &[String]) -> i32 {
+pub fn bin_zle_flags(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:651
     // c:653-654 — locals.
     let mut ret: i32 = 0; // c:653
@@ -1279,7 +1274,7 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {
 /// Faithful port of `bin_zle_call(char *name, char **args, Options ops,
 /// UNUSED(char func))` from Src/Zle/zle_thingy.c:703.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_call(args: &[String]) -> i32 {
+pub fn bin_zle_call(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:703
     // c:706-709 — locals.
     let modsave: modifier = (*ZMOD.lock().unwrap()).clone(); // c:706 struct modifier modsave = zmod
@@ -1500,7 +1495,7 @@ pub fn bin_zle_call(args: &[String]) -> i32 {
 /// the invalidation and re-enters `trashzle`.
 /// Port of `bin_zle_invalidate(UNUSED(char *name), UNUSED(char **args), UNUSED(Options ops), UNUSED(char func))` from `Src/Zle/zle_thingy.c:830`.
 /// WARNING: param names don't match C — Rust=() vs C=(name, args, ops, func)
-pub fn bin_zle_invalidate() -> i32 {
+pub fn bin_zle_invalidate(_name: &str, _args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:830
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) != 0 {
         // c:837 — `trashzle()` via the reset-flag bridge.
@@ -1527,7 +1522,7 @@ pub fn bin_zle_invalidate() -> i32 {
 /// `watch_fds` LinkList add/remove; the poll loop in `raw_getbyte`
 /// reads the map directly, no callback-table indirection needed.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_fd(args: &[String], ops: &options) -> i32 {
+pub fn bin_zle_fd(_name: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:857
     // c:859 — locals.
     let mut fd: i32 = 0; // c:859
@@ -1637,7 +1632,7 @@ pub fn bin_zle_fd(args: &[String], ops: &options) -> i32 {
 /// Registers the transformation via `ShellExecutor.hook_functions`
 /// under the synthetic hook name `zle-transform-<tcfn>` so the
 /// redisplay path can find it. Args validate first.
-pub fn bin_zle_transform(args: &[String], ops: &options) -> i32 {
+pub fn bin_zle_transform(_name: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:955
     // c:957-963 — badargs convention:
     //   -1: too few arguments
@@ -1906,10 +1901,16 @@ mod tests {
         reset_tab();
         crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
         // -q is not a valid bin_zle_call flag.
-        let r = bin_zle_call(&[
+        let ops_empty = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zle_call("zle", &[
             "widget_name".to_string(),
             "-q".to_string(),
-        ]);
+        ], &ops_empty, 0);
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:791-794 — unknown option char → return 1");
     }
@@ -1960,9 +1961,9 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_zle_fd(&["notanumber".to_string()], &ops);
+        let r = bin_zle_fd("zle", &["notanumber".to_string()], &ops, 0);
         assert_eq!(r, 1, "c:865-867 — non-numeric fd → 1");
-        let r2 = bin_zle_fd(&["-1".to_string()], &ops);
+        let r2 = bin_zle_fd("zle", &["-1".to_string()], &ops, 0);
         assert_eq!(r2, 1, "c:865-867 — negative fd → 1");
     }
 
@@ -1982,8 +1983,10 @@ mod tests {
             argsalloc: 0,
         };
         let r = bin_zle_fd(
+            "zle",
             &["7".to_string(), "my_handler".to_string()],
             &ops,
+            0,
         );
         assert_eq!(r, 0, "c:889-914 — install → 0");
         let tab = WATCH_FDS.lock().unwrap();
@@ -2008,7 +2011,7 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_zle_fd(&["99".to_string()], &ops);
+        let r = bin_zle_fd("zle", &["99".to_string()], &ops, 0);
         assert_eq!(r, 1, "c:944-946 — delete unknown fd → 1");
     }
 
@@ -2026,7 +2029,7 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_zle_transform(&[], &ops);
+        let r = bin_zle_transform("zle", &[], &ops, 0);
         assert_eq!(r, 1, "c:989-1010 — too few args → 1");
     }
 
@@ -2045,8 +2048,10 @@ mod tests {
             argsalloc: 0,
         };
         let r = bin_zle_transform(
+            "zle",
             &["tc".to_string(), "my_handler".to_string()],
             &ops,
+            0,
         );
         assert_eq!(r, 0, "c:992-996 — valid `tc fname` → 0");
         assert_eq!(
@@ -2070,7 +2075,7 @@ mod tests {
             argsalloc: 0,
         };
         ops.ind[b'r' as usize] = 1;
-        let r = bin_zle_transform(&["tc".to_string()], &ops);
+        let r = bin_zle_transform("zle", &["tc".to_string()], &ops, 0);
         assert_eq!(r, 0, "c:983-985 — `-r tc` → 0");
         assert!(
             TCOUT_FUNC_NAME.lock().unwrap().is_none(),
@@ -2092,7 +2097,7 @@ mod tests {
             argsalloc: 0,
         };
         ops.ind[b'L' as usize] = 1;
-        let r = bin_zle_transform(&["bogus".to_string()], &ops);
+        let r = bin_zle_transform("zle", &["bogus".to_string()], &ops, 0);
         assert_eq!(r, 1, "c:969-970/1005 — unknown transform → 1");
     }
 
@@ -2112,7 +2117,13 @@ mod tests {
             rc: 1,
             widget: None,
         });
-        let r = bin_zle_flags(&["bogus_flag".to_string()]);
+        let ops_empty = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zle_flags("zle", &["bogus_flag".to_string()], &ops_empty, 0);
         *BINDK.lock().unwrap() = None;
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:692-693 — unknown flag → zwarnnam + ret=1");
@@ -2133,11 +2144,17 @@ mod tests {
             rc: 1,
             widget: None,
         });
-        let r = bin_zle_flags(&[
+        let ops_empty = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zle_flags("zle", &[
             "yank".to_string(),
             "yankbefore".to_string(),
             "kill".to_string(),
-        ]);
+        ], &ops_empty, 0);
         *BINDK.lock().unwrap() = None;
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 0, "c:665-669 — all recognized → ret=0");
@@ -2152,11 +2169,17 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         reset_tab();
         crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
-        let r = bin_zle_call(&[
+        let ops_empty = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zle_call("zle", &[
             "widget".to_string(),
             "-f".to_string(),
             "bogus".to_string(),
-        ]);
+        ], &ops_empty, 0);
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:741 — -f with non-'nolast' → return 1");
     }
