@@ -1810,6 +1810,193 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
     None // c:952
 }
 
+/// Port of `static void closemn(struct multio **mfds, int fd, int type)`
+/// from `Src/exec.c:2273`.
+///
+/// C body (abridged — the meat is the fork-into-tee-or-cat child):
+/// ```c
+/// if (fd >= 0 && mfds[fd] && mfds[fd]->ct >= 2) {
+///     struct multio *mn = mfds[fd];
+///     char buf[TCBUFSIZE]; int len, i;
+///     pid_t pid; struct timespec bgtime;
+///     child_block();
+///     if ((pid = zfork(&bgtime))) {
+///         for (i = 0; i < mn->ct; i++) zclose(mn->fds[i]);
+///         zclose(mn->pipe);
+///         if (pid == -1) { mfds[fd] = NULL; child_unblock(); return; }
+///         mn->ct = 1; mn->fds[0] = fd;
+///         addproc(pid, NULL, 1, &bgtime, -1, -1);
+///         child_unblock(); return;
+///     }
+///     /* pid == 0 (child) */
+///     opts[INTERACTIVE] = 0;
+///     dont_queue_signals();
+///     child_unblock();
+///     closeallelse(mn);
+///     if (mn->rflag) {
+///         /* tee process: read mn->pipe, write each mn->fds[i] */
+///     } else {
+///         /* cat process: read each mn->fds[i], write mn->pipe */
+///     }
+///     _exit(0);
+/// } else if (fd >= 0 && type == REDIR_CLOSE)
+///     mfds[fd] = NULL;
+/// ```
+///
+/// Success-path close of a multio. For ct>=2 (multiple-output
+/// redirection), forks a tee/cat child that proxies bytes between
+/// the original fd and the per-output fds. Single-output multios
+/// (ct=1) skip the fork entirely and just clear the slot.
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// The `addproc(pid, NULL, 1, &bgtime, -1, -1)` call at c:2299 uses
+/// the 6-arg C signature; zshrs's Rust `addproc` (jobs.rs:1516) is
+/// drift'd to 4 args `(&mut job, pid, text, aux)` and doesn't yet
+/// thread bgtime/fg/bg. The fork + child loop are ported faithfully;
+/// the parent-side addproc call is skipped with a flagged comment —
+/// the tee/cat child still runs and the multio gets properly drained,
+/// just without the parent recording a job-table entry for the child.
+/// Re-enable when addproc lands the canonical signature.
+/// =============================================================
+pub fn closemn(
+    mfds: &mut [Option<Box<crate::ported::zsh_h::multio>>; 10],
+    fd: i32,
+    type_: i32,
+) {
+    // c:2273
+    use crate::ported::signals_h::{child_block, child_unblock, dont_queue_signals};
+    use crate::ported::zsh_h::REDIR_CLOSE;
+    // c:2275 — `if (fd >= 0 && mfds[fd] && mfds[fd]->ct >= 2)`
+    let needs_tee = fd >= 0
+        && (fd as usize) < mfds.len()
+        && mfds[fd as usize].as_ref().is_some_and(|m| m.ct >= 2);
+    if needs_tee {
+        // c:2275
+        // Take the multio out of the slot so we can move pieces into
+        // the child without aliasing the slot.
+        let mn = mfds[fd as usize].take().unwrap();
+        let mut buf = [0u8; 4092]; // c:2277 TCBUFSIZE
+                                   // c:2287 — `child_block();` block SIGCHLD before fork race.
+        child_block();
+        // c:2288 — `pid = zfork(&bgtime);`
+        let mut bgtime = crate::ported::zsh_system_h::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        let pid = zfork(Some(&mut bgtime));
+        if pid != 0 {
+            // c:2288 parent branch
+            // c:2289-2290 — close all per-output fds.
+            for i in 0..mn.ct as usize {
+                if i < mn.fds.len() {
+                    let _ = crate::ported::utils::zclose(mn.fds[i]); // c:2290
+                }
+            }
+            let _ = crate::ported::utils::zclose(mn.pipe); // c:2291
+            if pid == -1 {
+                // c:2292
+                // c:2293 — `mfds[fd] = NULL;` already done via .take()
+                child_unblock(); // c:2294
+                return; // c:2295
+            }
+            // c:2297-2298 — `mn->ct = 1; mn->fds[0] = fd;`
+            let mut mn_back = mn;
+            mn_back.ct = 1; // c:2297
+            mn_back.fds[0] = fd; // c:2298
+            mfds[fd as usize] = Some(mn_back);
+            // c:2299 — `addproc(pid, NULL, 1, &bgtime, -1, -1);`
+            // WARNING DIVERGENCE: addproc Rust sig is 4-arg + needs &mut job.
+            // Skipped: parent doesn't record the tee/cat child in the job
+            // table. The child still drains the pipe correctly.
+            let _ = (pid, bgtime);
+            child_unblock(); // c:2300
+            return; // c:2301
+        }
+        // c:2303 — child branch (pid == 0).
+        crate::ported::options::opt_state_set("interactive", false); // c:2304
+        dont_queue_signals(); // c:2305
+        child_unblock(); // c:2306
+        closeallelse(&mn); // c:2307
+                           // c:2308-2333 — tee or cat loop.
+        if mn.rflag != 0 {
+            // c:2308 — `mn->rflag` set → tee process
+            // c:2310 — `while ((len = read(mn->pipe, buf, TCBUFSIZE)) != 0)`
+            loop {
+                let len = unsafe {
+                    libc::read(mn.pipe, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                };
+                if len == 0 {
+                    break;
+                }
+                if len < 0 {
+                    // c:2311
+                    let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                    if e == libc::EINTR {
+                        // c:2312
+                        continue;
+                    } else {
+                        break; // c:2315
+                    }
+                }
+                // c:2317-2319 — `for i: write_loop(mn->fds[i], buf, len)`
+                for i in 0..mn.ct as usize {
+                    if i >= mn.fds.len() {
+                        break;
+                    }
+                    if crate::ported::utils::write_loop(mn.fds[i], &buf[..len as usize])
+                        .is_err()
+                    {
+                        break; // c:2319
+                    }
+                }
+            }
+        } else {
+            // c:2321 — cat process
+            for i in 0..mn.ct as usize {
+                if i >= mn.fds.len() {
+                    break;
+                }
+                // c:2324 — `while ((len = read(mn->fds[i], buf, TCBUFSIZE)) != 0)`
+                loop {
+                    let len = unsafe {
+                        libc::read(
+                            mn.fds[i],
+                            buf.as_mut_ptr() as *mut libc::c_void,
+                            buf.len(),
+                        )
+                    };
+                    if len == 0 {
+                        break;
+                    }
+                    if len < 0 {
+                        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                        // c:2326 — `if (errno == EINTR && !isatty(mn->fds[i]))`
+                        if e == libc::EINTR && unsafe { libc::isatty(mn.fds[i]) } == 0 {
+                            continue;
+                        } else {
+                            break; // c:2329
+                        }
+                    }
+                    // c:2331 — `if (write_loop(mn->pipe, buf, len) < 0) break;`
+                    if crate::ported::utils::write_loop(mn.pipe, &buf[..len as usize]).is_err() {
+                        break; // c:2332
+                    }
+                }
+            }
+        }
+        // c:2335 — `_exit(0);`
+        unsafe {
+            libc::_exit(0);
+        }
+    } else if fd >= 0 && type_ == REDIR_CLOSE {
+        // c:2336
+        // c:2337 — `mfds[fd] = NULL;`
+        if (fd as usize) < mfds.len() {
+            mfds[fd as usize] = None;
+        }
+    }
+}
+
 /// Port of `static void closemnodes(struct multio **mfds)` from
 /// `Src/exec.c:2344`.
 ///
