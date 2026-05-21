@@ -1810,6 +1810,90 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
     None // c:952
 }
 
+/// Port of `static void closemnodes(struct multio **mfds)` from
+/// `Src/exec.c:2344`.
+///
+/// C body:
+/// ```c
+/// int i, j;
+/// for (i = 0; i < 10; i++)
+///     if (mfds[i]) {
+///         for (j = 0; j < mfds[i]->ct; j++)
+///             zclose(mfds[i]->fds[j]);
+///         mfds[i] = NULL;
+///     }
+/// ```
+///
+/// Failure-path cleanup: close every fd stashed in any of the 10
+/// multio slots and null the slot. Called from `execcmd_exec` when
+/// a redirect setup fails partway through and we need to roll back.
+pub fn closemnodes(mfds: &mut [Option<Box<crate::ported::zsh_h::multio>>; 10]) {
+    // c:2344
+    for i in 0..10 {
+        // c:2348
+        if let Some(mn) = mfds[i].take() {
+            // c:2349
+            for j in 0..mn.ct as usize {
+                // c:2350
+                if j < mn.fds.len() {
+                    let _ = crate::ported::utils::zclose(mn.fds[j]); // c:2351
+                }
+            }
+            // c:2352 — `mfds[i] = NULL;` — handled by .take() above.
+        }
+    }
+}
+
+/// Port of `static void closeallelse(struct multio *mn)` from
+/// `Src/exec.c:2358`.
+///
+/// C body:
+/// ```c
+/// int i, j;
+/// long openmax;
+/// openmax = fdtable_size;
+/// for (i = 0; i < openmax; i++)
+///     if (mn->pipe != i) {
+///         for (j = 0; j < mn->ct; j++)
+///             if (mn->fds[j] == i) break;
+///         if (j == mn->ct)
+///             zclose(i);
+///     }
+/// ```
+///
+/// Close every fd in the open range EXCEPT `mn->pipe` and the fds
+/// stashed in `mn->fds`. Called inside the multio tee/cat child
+/// process to release every fd the parent had open — only the pipe
+/// + per-output fds stay alive for the read/write loop.
+pub fn closeallelse(mn: &crate::ported::zsh_h::multio) {
+    // c:2358
+    // c:2363 — `openmax = fdtable_size;`. zshrs models fdtable as a
+    // Vec; use MAX_ZSH_FD as the upper bound (fdtable_size grows past
+    // max_zsh_fd in C but every slot past it is FDT_UNUSED anyway).
+    let openmax = crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed) + 1; // c:2363
+    for i in 0..openmax {
+        // c:2365
+        if mn.pipe == i {
+            // c:2366
+            continue;
+        }
+        // c:2367-2369 — scan mn->fds[] for i; skip-close if found.
+        let mut found = false;
+        for j in 0..mn.ct as usize {
+            // c:2367
+            if j < mn.fds.len() && mn.fds[j] == i {
+                // c:2368
+                found = true;
+                break; // c:2369
+            }
+        }
+        // c:2370-2371 — `if (j == mn->ct) zclose(i);`
+        if !found {
+            let _ = crate::ported::utils::zclose(i); // c:2371
+        }
+    }
+}
+
 /// Port of `static void fixfds(int *save)` from `Src/exec.c:4523`.
 ///
 /// C body:
