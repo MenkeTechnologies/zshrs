@@ -4701,7 +4701,11 @@ pub fn bin_functions(
                 }
             } else {
                 // c:3723 — `printshfuncexpand(&shf->node, pflags, expand);`
-                println!("{}", shf_mut.node.nam); // c:3723
+                // C prints the function via shfunctab.printnode honoring
+                // pflags (PRINT_NAMEONLY / verbose). The previous Rust
+                // port just printed the name — `functions f` skipped
+                // the `f () { ... body ... }` body listing entirely.
+                crate::ported::hashtable::printshfuncexpand(shf_mut, pflags, expand); // c:3723
             }
         } else if (on & PM_UNDEFINED) != 0 {
             // c:3725
@@ -6660,6 +6664,7 @@ pub fn bin_getopts(
             // c:5701
             ZOPTIND.store(zoptind, Ordering::Relaxed);
             OPTCIND.store(optcind, Ordering::Relaxed);
+            setiparam("OPTIND", zoptind as i64);                            // c:5702
             return 1;
         }
         str_buf = args[(zoptind - 1) as usize].clone();
@@ -6672,6 +6677,11 @@ pub fn bin_getopts(
         if lenstr < 2 || (!str_buf.starts_with('-') && !str_buf.starts_with('+')) {
             ZOPTIND.store(zoptind, Ordering::Relaxed);
             OPTCIND.store(optcind, Ordering::Relaxed);
+            // c:5707 — mirror to $OPTIND so callers see the post-loop
+            // pointer. Previous Rust port skipped this write on the
+            // "no more options" exit; OPTIND stayed at the last
+            // option arg index (-b) instead of advancing past it.
+            setiparam("OPTIND", zoptind as i64);
             return 1;
         }
         if lenstr == 2 && &str_buf[..2] == "--" {
@@ -6679,6 +6689,7 @@ pub fn bin_getopts(
             zoptind += 1;
             ZOPTIND.store(zoptind, Ordering::Relaxed);
             OPTCIND.store(0, Ordering::Relaxed);
+            setiparam("OPTIND", zoptind as i64);                            // c:5711
             return 1;
         }
         optcind += 1;
