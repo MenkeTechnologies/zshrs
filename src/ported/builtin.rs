@@ -3655,19 +3655,64 @@ pub fn bin_typeset(
                     exec.set_array(n_owned.clone(), Vec::new());
                 }
             });
+            // c:Src/params.c:4087 arrsetfn — when PM_UNIQUE is set on
+            // an existing array, the canonical setfn applies
+            // `uniqarray()` to the current contents. `typeset -aU arr`
+            // on an existing arr must dedupe in place; without this,
+            // the flag stamp lands on pm.flags but the value stays
+            // un-deduped until the next assignment.
+            if is_array && (on as u32 & PM_UNIQUE) != 0 {
+                let n_clone = arg.clone();
+                let current = crate::fusevm_bridge::with_executor(|exec| {
+                    exec.array(&n_clone).unwrap_or_default()
+                });
+                // simple_arrayuniq is the in-place dedupe used by
+                // params.rs arrsetfn (PM_UNIQUE path).
+                let deduped = {
+                    let mut seen = std::collections::HashSet::new();
+                    current
+                        .into_iter()
+                        .filter(|x| seen.insert(x.clone()))
+                        .collect::<Vec<_>>()
+                };
+                crate::fusevm_bridge::with_executor(|exec| {
+                    exec.set_array(n_clone.clone(), deduped);
+                });
+            }
+            // Stamp attribute bits on paramtab entry — same set as
+            // the `name=value` post-assign mask.
+            let post_assign_mask = (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B
+                | PM_RIGHT_Z | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE | PM_HASHED
+                | PM_ARRAY)
+                as i32;
+            let post_assign_to_set = (on
+                & (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z
+                   | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE | PM_HASHED | PM_ARRAY))
+                as i32;
+            if post_assign_to_set != 0 {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg_name) {
+                        pm.node.flags = (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                    }
+                }
+            }
         } else {
             // c:2355-2378 (typeset_single tc branch) — bare `typeset -i n`
-            // / `-F n` / `-E n` / `-l n` / `-u n` / `-r n` converts the
-            // existing param's type. C path: unsetparam_pm → createparam
-            // with PM_INTEGER → assignsparam (which re-evaluates the
-            // saved value through the new type's setfn). The Rust port
-            // flips the flag in place and re-assigns the cached u_str
-            // value through assignstrvalue so PM_INTEGER routes through
-            // intsetfn (mathevali → u_val).
-            let type_mask =
-                (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY) as i32;
-            let to_set = (on
-                & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY))
+            // / `-F n` / `-E n` / `-l n` / `-u n` / `-r n` / `export N`
+            // / `readonly N` converts/stamps the existing param. Split
+            // into pre-assign (type conversion) and post-assign
+            // (attribute stamp) the same way the `name=value` arm does.
+            let pre_assign_mask =
+                (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_NAMEREF) as i32;
+            let pre_assign_to_set = (on
+                & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_NAMEREF))
+                as i32;
+            let post_assign_mask = (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B
+                | PM_RIGHT_Z | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE)
+                as i32;
+            let post_assign_to_set = (on
+                & (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z
+                   | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE))
                 as i32;
             // c:2374 — `s = ztrdup(getsparam(pname));`. Capture the
             // pre-conversion scalar value so the re-assignment after
@@ -3677,17 +3722,34 @@ pub fn bin_typeset(
                 // c:3072 — `if (!getsparam(arg)) setsparam(arg, "")`.
                 setsparam(arg, ""); // c:3074
             }
-            if to_set != 0 {
+            if pre_assign_to_set != 0 {
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
-                        pm.node.flags = (pm.node.flags & !type_mask) | to_set;
+                        pm.node.flags =
+                            (pm.node.flags & !pre_assign_mask) | pre_assign_to_set;
                     }
                 }
                 // c:2372-2378 — re-assign saved value through new type's
                 // setfn so u_val (for PM_INTEGER) or u_dval (for PM_*FLOAT)
                 // catches the value migration from u_str.
-                if let Some(val) = saved_val {
-                    setsparam(arg, &val);
+                if let Some(ref val) = saved_val {
+                    setsparam(arg, val);
+                }
+            }
+            // c:2510+ — stamp post-assign attributes (PM_EXPORTED,
+            // PM_READONLY, etc.) on the (possibly newly-created) pm.
+            if post_assign_to_set != 0 {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg) {
+                        pm.node.flags =
+                            (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                    }
+                }
+                // c:Src/params.c:3024 addenv — mirror PM_EXPORTED to OS env.
+                if (on as u32 & PM_EXPORTED) != 0 {
+                    if let Some(val) = saved_val.as_deref().or(Some("")) {
+                        std::env::set_var(arg, val);
+                    }
                 }
             }
         }
