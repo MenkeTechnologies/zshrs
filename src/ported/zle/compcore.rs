@@ -40,7 +40,8 @@ use crate::ported::zle::compmatch::{bld_parts, cline_matched};
 use crate::ported::zle::compresult::{do_ambig_menu, ztat};
 use crate::ported::zle::zle_h::{invalidatelist, COMP_LIST_COMPLETE, COMP_LIST_EXPAND, CUT_RAW};
 use crate::ported::zle::zle_refresh::{CLEARLIST, SHOWINGLIST};
-use crate::ported::zle::zle_tricky::{MENUCMP, ORIGCS, ORIGLINE, USEGLOB, USEMENU, VALIDLIST, WOULDINSTAB};
+use crate::ported::zle::zle_tricky::{inststr, MENUCMP, ORIGCS, ORIGLINE, USEGLOB, USEMENU, VALIDLIST, WOULDINSTAB};
+use crate::ported::zle::zle_utils::foredel;
 use crate::ported::zsh_h::{isset, Bnull, Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound, Qstring, Quest, Snull, Star, Stringg, Tilde, BASHAUTOLIST, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, RCQUOTES, SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY, ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
 #[allow(unused_imports)]
 use crate::ported::zle::{
@@ -195,11 +196,11 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         // c:342
         // c:344 — error path.
         ZLEMETACS.store(0, Ordering::Relaxed); // c:344
-        crate::ported::zle::zle_utils::foredel(
+        foredel(
             ZLEMETALL.load(Ordering::Relaxed),
             CUT_RAW,
         ); // c:345 — `foredel(zlemetall, CUT_RAW)`
-        let _ = crate::ported::zle::zle_tricky::inststr(
+        let _ = inststr(
             &ORIGLINE
                 .get_or_init(|| Mutex::new(String::new()))
                 .lock()
@@ -259,11 +260,11 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     } else if useline.load(Ordering::Relaxed) == 0 && uselist.load(Ordering::Relaxed) != 0 {
         // c:374
         ZLEMETACS.store(0, Ordering::Relaxed); // c:375
-        crate::ported::zle::zle_utils::foredel(
+        foredel(
             ZLEMETALL.load(Ordering::Relaxed),
             CUT_RAW,
         ); // c:376 — `foredel(zlemetall, CUT_RAW)`
-        let _ = crate::ported::zle::zle_tricky::inststr(
+        let _ = inststr(
             &ORIGLINE
                 .get_or_init(|| Mutex::new(String::new()))
                 .lock()
@@ -382,11 +383,11 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
             CLEARLIST.store(1, Ordering::Relaxed);
         } // c:428
         ZLEMETACS.store(0, Ordering::Relaxed); // c:429
-        crate::ported::zle::zle_utils::foredel(
+        foredel(
             ZLEMETALL.load(Ordering::Relaxed),
             CUT_RAW,
         ); // c:430 — `foredel(zlemetall, CUT_RAW)`
-        let _ = crate::ported::zle::zle_tricky::inststr(
+        let _ = inststr(
             &ORIGLINE
                 .get_or_init(|| Mutex::new(String::new()))
                 .lock()
@@ -571,13 +572,13 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {
         ZLEMETACS.store(0, Ordering::Relaxed);
         // c:525 — `foredel(zlemetall, CUT_RAW)` removes the entire line.
         let metall = ZLEMETALL.load(Ordering::Relaxed);
-        crate::ported::zle::zle_utils::foredel(metall, CUT_RAW);
+        foredel(metall, CUT_RAW);
         // c:526 — `inststr(origline)` reinserts the pre-completion buffer.
         let origline_v: String = ORIGLINE
             .get()
             .and_then(|m| m.lock().ok().map(|g| g.clone()))
             .unwrap_or_default();
-        let _ = crate::ported::zle::zle_tricky::inststr(&origline_v);
+        let _ = inststr(&origline_v);
         // c:527 — `zlemetacs = origcs`.
         let origcs_v = ORIGCS.load(Ordering::Relaxed);
         ZLEMETACS.store(origcs_v, Ordering::Relaxed);
@@ -3685,9 +3686,9 @@ fn goto_compend(ret: i32) -> i32 {
 // `fn foredel` / `fn inststr` locals deleted — both duplicated
 // canonical ports living in their proper home files:
 //   - foredel: `Src/Zle/zle_utils.c:1105`
-//     → `crate::ported::zle::zle_utils::foredel`
+//     → `foredel`
 //   - inststr: macro `Src/Zle/zle_tricky.c:57` (inststr(X) →
-//     inststrlen(X,1,-1)) → `crate::ported::zle::zle_tricky::inststr`
+//     inststrlen(X,1,-1)) → `inststr`
 // The duplicates here narrowed C signatures (foredel dropped `flags`,
 // inststr dropped the i32 return + duplicated inststrlen's body) and
 // violated Rule C (every decl in its mirroring C file). Callers in
@@ -4615,7 +4616,7 @@ mod tests {
         }
         ZLEMETACS.store(2, Ordering::Relaxed);
         ZLEMETALL.store(6, Ordering::Relaxed);
-        crate::ported::zle::zle_utils::foredel(3, CUT_RAW);
+        foredel(3, CUT_RAW);
         let line = ZLEMETALINE.get().unwrap().lock().unwrap().clone();
         assert_eq!(line, "abf");
         assert_eq!(ZLEMETALL.load(Ordering::Relaxed), 3);
@@ -4632,7 +4633,7 @@ mod tests {
         }
         ZLEMETACS.store(5, Ordering::Relaxed);
         ZLEMETALL.store(5, Ordering::Relaxed);
-        let _ = crate::ported::zle::zle_tricky::inststr(" world");
+        let _ = inststr(" world");
         let line = ZLEMETALINE.get().unwrap().lock().unwrap().clone();
         assert_eq!(line, "hello world");
         assert_eq!(ZLEMETACS.load(Ordering::Relaxed), 11);

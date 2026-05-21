@@ -13,7 +13,7 @@
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::ported::utils::write_loop;
-use crate::ported::zle::compcore::ADDEDX;
+use crate::ported::zle::compcore::{ADDEDX, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
 use crate::ported::zle::zle_h::{
     COMP_COMPLETE, COMP_EXPAND, COMP_EXPAND_COMPLETE, COMP_LIST_COMPLETE, COMP_LIST_EXPAND,
     COMP_SPELL,
@@ -740,17 +740,14 @@ pub fn inststrlen(
         len = str.len() as i32;
     }
     // c:2237 — `if (zlemetaline != NULL) { meta path } else { wide path }`
-    let zml_active = crate::ported::zle::compcore::ZLEMETALINE
-        .get()
-        .is_some();
+    let zml_active = ZLEMETALINE.get().is_some();
     if zml_active {
         // c:2238 — `spaceinline(len);` then strncpy into ZLEMETALINE[cs..].
         // The Rust spaceinline operates on ZLELINE; for the meta path
         // we splice directly into ZLEMETALINE.
-        if let Some(m) = crate::ported::zle::compcore::ZLEMETALINE.get() {
+        if let Some(m) = ZLEMETALINE.get() {
             if let Ok(mut g) = m.lock() {
-                let cs = crate::ported::zle::compcore::ZLEMETACS
-                    .load(Ordering::SeqCst) as usize;
+                let cs = ZLEMETACS.load(Ordering::SeqCst) as usize;
                 let cs = cs.min(g.len());
                 let take = (len as usize).min(str.len());
                 let bytes = g.as_bytes();
@@ -758,11 +755,9 @@ pub fn inststrlen(
                     + &str[..take]
                     + &String::from_utf8_lossy(&bytes[cs..]);
                 *g = new_line;
-                crate::ported::zle::compcore::ZLEMETALL
-                    .store(g.len() as i32, Ordering::SeqCst);                // c:2239 spaceinline updates ZLEMETALL
+                ZLEMETALL.store(g.len() as i32, Ordering::SeqCst);           // c:2239 spaceinline updates ZLEMETALL
                 if move_cursor {                                             // c:2240
-                    crate::ported::zle::compcore::ZLEMETACS                  // c:2241 zlemetacs += len
-                        .fetch_add(take as i32, Ordering::SeqCst);
+                    ZLEMETACS.fetch_add(take as i32, Ordering::SeqCst);      // c:2241 zlemetacs += len
                 }
             }
         }
@@ -770,9 +765,9 @@ pub fn inststrlen(
     }
     // c:2244-2253 — non-meta wide path.
     let instr = &str[..(len as usize).min(str.len())];                       // c:2247 ztrduppfx(str, len)
-    let zlestr: Vec<char> = crate::ported::zle::zle_utils::stringaszleline(instr); // c:2248
+    let zlestr: Vec<char> = stringaszleline(instr);                          // c:2248
     let zlelen = zlestr.len();
-    crate::ported::zle::zle_utils::spaceinline(zlelen as i32);               // c:2249
+    spaceinline(zlelen as i32);                                              // c:2249
     {
         let mut line = ZLELINE.lock().unwrap();
         let pos = ZLECS.load(Ordering::SeqCst);

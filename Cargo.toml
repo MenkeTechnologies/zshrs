@@ -139,6 +139,14 @@ recorder = ["daemon"]
 zd = ["dep:ureq", "dep:base64"]
 profiling = []
 flamegraph = ["tracing-flame"]
+# `zsh-debug` — enables DPUTS / DPUTS1 / DPUTS2 debug-assertion macros
+# (Src/zsh.h:2914-2920). Mirrors zsh's `--enable-zsh-debug` configure
+# flag: stock zsh ships with `#ifdef DEBUG` un-set so DPUTS is a no-op;
+# zshrs matches that contract by gating the macros on this feature
+# rather than `cfg(debug_assertions)` (which is active for every
+# `cargo build` and produced spurious "shouldn't-happen" assertion
+# noise during normal interactive use).
+zsh-debug = []
 prometheus = ["metrics", "metrics-exporter-prometheus"]
 
 [dev-dependencies]

@@ -20,9 +20,10 @@
 
 use std::sync::atomic::Ordering;
 
-use super::zle_h::{CH_NEXT, CH_PREV, MOD_VIBUF, ZSL_COPY, ZSL_TOEND};
+use super::zle_h::{CH_NEXT, CH_PREV, CUT_RAW, MOD_VIBUF, ZSL_COPY, ZSL_TOEND};
 use crate::ported::builtin::RETFLAG;
 use crate::ported::utils::errflag;
+use crate::ported::zle::compcore::{ZLEMETACS, ZLEMETALINE, ZLEMETALL};
 use crate::ported::zsh_h::ERRFLAG_INT;
 
 #[allow(unused_imports)]
@@ -470,17 +471,15 @@ pub fn foredel(ct: i32, flags: i32) {
     if ct <= 0 {
         return;
     }
-    if (flags & crate::ported::zle::zle_h::CUT_RAW) != 0 {                   // c:1107 if (flags & CUT_RAW)
+    if (flags & CUT_RAW) != 0 {                                              // c:1107 if (flags & CUT_RAW)
         // c:1108 — `if (zlemetaline != NULL) shiftchars(zlemetacs, ct);`
-        let zml_active = crate::ported::zle::compcore::ZLEMETALINE
-            .get()
-            .is_some();
+        let zml_active = ZLEMETALINE.get().is_some();
         if zml_active {
             // c:1109 — `shiftchars(zlemetacs, ct);` — byte-splice
             // ZLEMETALINE[cs..cs+ct].
-            if let Some(m) = crate::ported::zle::compcore::ZLEMETALINE.get() {
+            if let Some(m) = ZLEMETALINE.get() {
                 if let Ok(mut g) = m.lock() {
-                    let cs = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::Relaxed) as usize;
+                    let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
                     if cs < g.len() {
                         let end = (cs + ct as usize).min(g.len());
                         let bytes = g.as_bytes();
@@ -488,7 +487,7 @@ pub fn foredel(ct: i32, flags: i32) {
                             String::from_utf8_lossy(&bytes[..cs]).into_owned()
                                 + &String::from_utf8_lossy(&bytes[end..]);
                         *g = new_line;
-                        crate::ported::zle::compcore::ZLEMETALL.store(g.len() as i32, Ordering::Relaxed);
+                        ZLEMETALL.store(g.len() as i32, Ordering::Relaxed);
                     }
                 }
             }

@@ -49,11 +49,12 @@
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 pub use crate::ported::zsh_h::{
-    GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE, PAT_ANY, PAT_FILE, PAT_FILET,
-    PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH, PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART,
-    PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP,
+    patstralloc, GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE, PAT_ANY,
+    PAT_FILE, PAT_FILET, PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH, PAT_NOGLD,
+    PAT_NOTEND, PAT_NOTSTART, PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP, Patstralloc,
 };
 use crate::ported::params::{paramtab, paramtab_hashed_storage};
+use crate::ported::utils::ztrsub;
 use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
 use crate::utils::zerrnam;
 use crate::zsh_h::{Marker, Meta, Nularg,
@@ -1457,7 +1458,7 @@ pub fn pattrylen(
     string: &str,
     len: i32,                                                                // c:2236
     unmetalen: i32,
-    patstralloc: Option<&crate::ported::zsh_h::Patstralloc>,
+    patstralloc: Option<&Patstralloc>,
     offset: i32,
 ) -> bool {
     // c:2238
@@ -1486,7 +1487,7 @@ pub fn pattryrefs(
     string: &str,
     stringlen: i32,
     _unmetalenin: i32,
-    _patstralloc: Option<&crate::ported::zsh_h::Patstralloc>,
+    _patstralloc: Option<&Patstralloc>,
     _patoffset: i32,
     nump: Option<&mut i32>,
     begp: Option<&mut Vec<i32>>,
@@ -2536,7 +2537,7 @@ pub fn patallocstr(
     stringlen: i32,
     unmetalen: i32,
     force: i32,
-    patstralloc: &mut crate::ported::zsh_h::patstralloc,
+    patstralloc: &mut patstralloc,
 ) -> Option<String> {
     // c:2132
     // c:2137 — `int needfullpath;`
@@ -2568,7 +2569,7 @@ pub fn patallocstr(
         // c:2151 — `patstralloc->unmetalen = ztrsub(string + stringlen, string);`
         // ztrsub returns the unmetafied char count between two pointers
         // in the same string. Rust analog: ztrsub(buf, start, end).
-        patstralloc.unmetalen = crate::ported::utils::ztrsub(
+        patstralloc.unmetalen = ztrsub(
             string,
             0,
             (stringlen as usize).min(string.len()),
