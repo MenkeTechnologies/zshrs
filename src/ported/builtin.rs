@@ -9220,6 +9220,62 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("nqrs:"),
             None,
         ), // c:239
+        // c:Src/Modules/zftp.c:189 — zsh/zftp module.
+        BUILTIN(
+            "zftp",
+            0,
+            Some(crate::ported::modules::zftp::bin_zftp as HandlerFunc),
+            1,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:189
+        // c:Src/Modules/zpty.c:882 — zsh/zpty module.
+        BUILTIN(
+            "zpty",
+            0,
+            Some(crate::ported::modules::zpty::bin_zpty as HandlerFunc),
+            0,
+            -1,
+            0,
+            Some("ebdmrwLnt"),
+            None,
+        ), // c:882
+        // c:Src/Modules/curses.c:1632 — zsh/curses module.
+        BUILTIN(
+            "zcurses",
+            0,
+            Some(crate::ported::modules::curses::bin_zcurses as HandlerFunc),
+            1,
+            -1,
+            0,
+            Some(""),
+            None,
+        ), // c:1632
+        // c:Src/Modules/clone.c:110 — zsh/clone module (Linux only;
+        // bin_clone on non-Linux is the "not available" stub).
+        BUILTIN(
+            "clone",
+            0,
+            Some(crate::ported::modules::clone::bin_clone as HandlerFunc),
+            1,
+            1,
+            0,
+            None,
+            None,
+        ), // c:110
+        // c:Src/Modules/example.c — zsh/example module (template).
+        BUILTIN(
+            "example",
+            0,
+            Some(crate::ported::modules::example::bin_example as HandlerFunc),
+            0,
+            -1,
+            0,
+            Some("flags"),
+            None,
+        ),
         BUILTIN(
             "zle",
             0,
@@ -9971,10 +10027,12 @@ mod tests {
         //   zsh/watch (log)
         //   zsh/zprof (zprof)
         //   zsh/datetime (strftime)
-        // Total Rust BUILTINS table size pinned at 133 to catch
+        //   zsh/zftp (zftp), zsh/zpty (zpty), zsh/curses (zcurses)
+        //   zsh/clone (clone), zsh/example (example)
+        // Total Rust BUILTINS table size pinned at 138 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 133,
+        assert_eq!(BUILTINS.len(), 138,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
