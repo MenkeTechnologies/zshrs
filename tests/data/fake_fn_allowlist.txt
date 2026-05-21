@@ -356,6 +356,17 @@ zunderscore_lock
 # patmatch engine — split out as Rust helpers to avoid pulling in
 # pattern.c for the simple `*` / `?` cases scanmatchshfunc needs.
 shfunctab_lock
+# hashtable.rs `shfunc_table` C-faithful pointer accessors. C declares
+# `addnode`/`getnode`/`getnode2` as fn-ptr fields on `struct hashtable`
+# (Src/zsh.h:281+), not as standalone fns, so they don't appear in the
+# C symbol list. The Rust ports expose the same semantics as methods on
+# `shfunc_table` so the `bin_functions` port at builtin.rs can write
+# through one canonical shfunctab (matching C) instead of the prior
+# pair of parallel tables.
+addnode
+getnode
+getnode2
+contains_key
 simple_glob_match
 glob_match_inner
 

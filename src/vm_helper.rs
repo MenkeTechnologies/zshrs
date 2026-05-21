@@ -1953,9 +1953,36 @@ impl ShellExecutor {
     /// `call_function(&ShellCommand, args)`. It avoids the AST detour when
     /// the new pipeline already has a Chunk for the function.
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
-        // maybe_autoload / autoload_function were deleted with the
-        // old exec.c stubs. Until canonical autoload is wired,
-        // resolve from functions_compiled directly.
+        // Autoload prelude: if `name` isn't yet compiled but exists as
+        // a PM_UNDEFINED stub in shfunctab (registered by `autoload`
+        // builtin via `add_autoload_function` at builtin.rs:3654),
+        // materialize it via `loadautofn_by_name` (exec.rs) which reads
+        // the file from $fpath and stores raw body text on
+        // `shfunctab.body`. Then wrap as `name() { <body> }` and eval
+        // through the standard zsh pipeline — the wrap parses as a
+        // function-def, fusevm emits `BUILTIN_REGISTER_COMPILED_FN`,
+        // and the function lands in `functions_compiled`. This covers
+        // zsh-style autoload (default + `-z`); ksh-style (`-k` /
+        // KSH_AUTOLOAD) would eval the unwrapped body and rely on the
+        // file to define+call the function itself — TODO once needed.
+        if !self.functions_compiled.contains_key(name) {
+            if let Some(stub) = crate::ported::utils::getshfunc(name) {
+                if (stub.node.flags as u32 & crate::ported::zsh_h::PM_UNDEFINED) != 0 {
+                    let boxed = Box::new(stub.clone());
+                    let ptr = Box::into_raw(boxed);
+                    let _ = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
+                    unsafe {
+                        let _ = Box::from_raw(ptr);
+                    }
+                    if let Some(body) =
+                        crate::ported::utils::getshfunc(name).and_then(|f| f.body)
+                    {
+                        let wrapped = format!("{name}() {{\n{body}\n}}");
+                        let _ = self.execute_script_zsh_pipeline(&wrapped);
+                    }
+                }
+            }
+        }
         let chunk = self.functions_compiled.get(name).cloned()?;
 
         // FUNCNEST guard — see `call_function` for the lower-than-

@@ -40,7 +40,7 @@ use crate::ported::params::{
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
-use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC};
+use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC, shfunc};
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
     imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
@@ -4222,16 +4222,23 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
 /// ```
 ///
 /// Routes through the global `shfunctab` singleton in
-/// hashtable.rs (hashtable::shfunctab_lock) — matches C's
-/// signature exactly. Returns the function body as
-/// `Option<String>` (zshrs's `Shfunc` equivalent is the
-/// function-text mapping; bytecode dispatch happens in fusevm
-/// at call time).
-pub fn getshfunc(nam: &str) -> Option<String> {
+/// hashtable.rs (hashtable::shfunctab_lock). Returns an owned
+/// `shfunc` clone so callers can read `flags` (to detect
+/// `PM_UNDEFINED` autoload stubs), `funcdef`, `filename`, and
+/// `body` without holding the table lock. Owned clone vs C's
+/// `*Shfunc` raw pointer trades one allocation for Rust
+/// lifetime safety — `getshfunc` is a function-lookup site,
+/// not per-statement, so the cost is irrelevant.
+///
+/// Returning `Option<String>` of just `body` (the old contract)
+/// made every PM_UNDEFINED autoload stub invisible because
+/// `body=None` collapsed via `and_then` to `None`, which callers
+/// then read as "function doesn't exist."
+pub fn getshfunc(nam: &str) -> Option<shfunc> {
     let tab = shfunctab_lock()
         .read()
         .expect("shfunctab poisoned");
-    tab.get(nam).and_then(|f| f.body.clone())
+    tab.get(nam).cloned()
 }
 
 /// Port of `char **subst_string_by_func(Shfunc func, char *arg1, char *orig)`
