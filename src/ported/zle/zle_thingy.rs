@@ -1733,13 +1733,33 @@ pub fn bin_zle_transform(args: &[String], ops: &options) -> i32 {
 /// each into the table marked TH_IMMORTAL.
 pub fn init_thingies() -> i32 {
     // c:1022
-    // c:1022-1028 — `createthingytab(); for (t=thingies; t->nam; t++)
-    //                  thingytab->addnode(...)`. The `thingies[]`
-    // static array in C is the table of built-in widget names; here
-    // we just init the empty table — the built-in widget registration
-    // happens via `addzlefunction()` which the dispatcher calls per
-    // entry in `iwidgets.list`.
+    // c:1024 — `Thingy t;`.
+    // c:1026 — `createthingytab();` create the empty hash table.
     createthingytab(); // c:1026
+    // c:1027-1028 — `for (t = thingies; t->nam; t++)
+    //                  thingytab->addnode(thingytab, t->nam, t);`.
+    // The C `thingies[]` array is generated from
+    // `Src/Zle/thingies.list` (391 names). Rust uses the parallel
+    // `IWIDGET_NAMES` slice in `zle_bindings.rs` — the subset of
+    // those names that have a fn-pointer port via `iwidget_lookup`.
+    // Walking only the ported subset matches what `zle -N` /
+    // `bindkey` can actually dispatch.
+    // Previously a no-op stub: created the table and exited.
+    // `zle -l` returned an empty widget list because nothing was
+    // ever added.
+    let names = crate::ported::zle::zle_bindings::IWIDGET_NAMES;
+    let mut tab = thingytab().lock().unwrap();
+    for nam in names {
+        // c:1028 addnode — insert a Thingy for each builtin widget
+        // name. Use makethingynode directly to avoid the re-locking
+        // that the public `rthingy` path performs.
+        if !tab.contains_key(*nam) {
+            let mut t = makethingynode();
+            t.nam = nam.to_string(); // c:163 ztrdup(nam)
+            t.flags |= crate::ported::zle::zle_h::TH_IMMORTAL; // c:1027 immortal
+            tab.insert(nam.to_string(), t);
+        }
+    }
     0
 }
 
@@ -1889,6 +1909,39 @@ mod tests {
         ]);
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:791-794 — unknown option char → return 1");
+    }
+
+    /// `Src/Zle/zle_thingy.c:1022-1028` — `init_thingies` populates
+    /// THINGYTAB with every name in `IWIDGET_NAMES` so `zle -l` works
+    /// without each name needing a prior `zle -N` registration.
+    #[test]
+    fn init_thingies_populates_known_widget_names() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        thingytab().lock().unwrap().clear();
+        init_thingies();
+        let tab = thingytab().lock().unwrap();
+        // Sample three canonical widgets — all must be present after init.
+        assert!(
+            tab.contains_key("accept-line"),
+            "c:1028 — accept-line must be in THINGYTAB"
+        );
+        assert!(
+            tab.contains_key("self-insert"),
+            "c:1028 — self-insert must be in THINGYTAB"
+        );
+        assert!(
+            tab.contains_key("undefined-key"),
+            "c:1028 — undefined-key must be in THINGYTAB"
+        );
+        // Every entry should be marked TH_IMMORTAL.
+        let al = tab.get("accept-line").unwrap();
+        assert_ne!(
+            al.flags & crate::ported::zle::zle_h::TH_IMMORTAL,
+            0,
+            "c:1027 — TH_IMMORTAL bit must be set"
+        );
     }
 
     /// `Src/Zle/zle_thingy.c:865-867` — `bin_zle_fd` rejects negative
