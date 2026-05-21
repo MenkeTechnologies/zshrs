@@ -133,30 +133,46 @@ pub fn createbuiltintable() -> &'static HashMap<String, &'static builtin> {
 // fn entries satisfy ABI/name parity for the drift gate.
 // ===========================================================
 
-/// Port of `printbuiltinnode(HashNode hn, int printflags)` from Src/builtin.c:174.
-/// C: `static void printbuiltinnode(HashNode hn, int printflags)` —
-///   emit `whence`-style description of one builtin.
-/// WARNING: param names don't match C — Rust=(hn) vs C=(hn, printflags)
+/// Port of `printbuiltinnode(HashNode hn, int printflags)` from
+/// `Src/builtin.c:174`.
+///
+/// C body (c:174-194):
+/// ```c
+/// Builtin bn = (Builtin) hn;
+/// if (printflags & PRINT_WHENCE_WORD) {
+///     printf("%s: builtin\n", bn->node.nam); return;
+/// }
+/// if (printflags & PRINT_WHENCE_CSH) {
+///     printf("%s: shell built-in command\n", bn->node.nam); return;
+/// }
+/// if (printflags & PRINT_WHENCE_VERBOSE) {
+///     printf("%s is a shell builtin\n", bn->node.nam); return;
+/// }
+/// /* default is name only */
+/// printf("%s\n", bn->node.nam);
+/// ```
 pub fn printbuiltinnode(
-    hn: *mut hashnode, // c:174
+    hn: *mut hashnode,                                                       // c:174
     printflags: i32,
 ) {
     if hn.is_null() {
         return;
     }
-    let bn = unsafe { &*hn };
-    if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
-        // c:179
-        println!("{}: builtin", bn.nam); // c:180
-        return;
+    let bn = unsafe { &*hn };                                                // c:176
+    if (printflags & PRINT_WHENCE_WORD as i32) != 0 {                        // c:178
+        println!("{}: builtin", bn.nam);                                     // c:179
+        return;                                                              // c:180
     }
-    if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
-        // c:199
-        println!("{}: shell built-in command", bn.nam); // c:199
-        return;
+    if (printflags & PRINT_WHENCE_CSH as i32) != 0 {                         // c:183
+        println!("{}: shell built-in command", bn.nam);                      // c:184
+        return;                                                              // c:185
     }
-    // c:199-198 — default form: just emit the name.
-    println!("{}", bn.nam);
+    if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {                     // c:188
+        println!("{} is a shell builtin", bn.nam);                           // c:189
+        return;                                                              // c:190
+    }
+    // c:193 — `/* default is name only */`
+    println!("{}", bn.nam);                                                  // c:194
 }
 
 /// Port of `freebuiltinnode(HashNode hn)` from Src/builtin.c:199.

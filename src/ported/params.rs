@@ -5278,6 +5278,33 @@ pub fn strsetfn(pm: &mut param, x: String) {
         pm.node.flags |= PM_NAMEDDIR as i32; // c:4047
         adduserdir(&pm.node.nam, &x, 0, false); // c:4048
     }
+    // c:4050 — C `assignstrvalue` dispatches `v->pm->gsu.s->setfn` so
+    // PM_SPECIAL params route to their dedicated setfn (homesetfn,
+    // ifssetfn, ...). The Rust assignstrvalue calls strsetfn directly
+    // (the GSU callback-pointer dispatch isn't fully wired), so special
+    // names bypass their setfn and the canonical C globals (home_lock,
+    // ifs_lock, ...) stay stale while paramtab's u_str updates. Mirror
+    // the dispatch here by name — same end-state as the C gsu hop.
+    if (pm.node.flags as u32 & PM_SPECIAL) != 0
+        || matches!(
+            pm.node.nam.as_str(),
+            "HOME" | "IFS" | "TERM" | "WORDCHARS" | "TERMINFO" | "TERMINFO_DIRS"
+            | "USERNAME" | "KEYBOARD_HACK" | "HISTCHARS" | "histchars"
+        )
+    {
+        match pm.node.nam.as_str() {
+            "HOME" => homesetfn(x),                                          // c:5118
+            "IFS" => ifssetfn(x),                                            // c:5155
+            "TERM" => termsetfn(x),                                          // c:5174
+            "WORDCHARS" => wordcharssetfn(x),                                // c:5141
+            "TERMINFO" => terminfosetfn(x),                                  // c:5188
+            "TERMINFO_DIRS" => terminfodirssetfn(x),                         // c:5198
+            "USERNAME" => usernamesetfn(x),                                  // c:5042
+            "KEYBOARD_HACK" => keyboardhacksetfn(x),                         // c:5072
+            "HISTCHARS" | "histchars" => histcharssetfn(Some(x)),            // c:5083
+            _ => {}                                                          // non-special scalar
+        }
+    }
 }
 
 /// Port of `arrgetfn(Param pm)` from `Src/params.c:4057`. C body:
