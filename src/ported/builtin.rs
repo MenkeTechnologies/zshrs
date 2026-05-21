@@ -56,8 +56,9 @@ use crate::ported::params::{
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals::settrap;
 use crate::ported::utils::{
-    argzero, errflag, fprintdir, getkeystring, getkeystring_with, lchdir, quotedzputs, set_argzero,
-    zerr, zerrnam, zwarn, zwarnnam, GETKEYS_PRINT,
+    argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir,
+    printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn, zwarnnam,
+    GETKEYS_PRINT,
 };
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
@@ -539,7 +540,7 @@ pub fn execbuiltin(
         // (including consumed option words) so XTRACE shows what the
         // user typed, not the option-stripped tail.
         let fullargv = &argarr; // c:441
-        crate::ported::utils::printprompt4(); // c:442
+        printprompt4(); // c:442
                                               // c:443 — `fprintf(xtrerr, "%s", name);`
         eprint!("{}", name); // c:443
                              // c:444-447 — `while (*fullargv) { fputc(' ',xtrerr); quotedzputs(...); }`
@@ -2146,7 +2147,7 @@ pub fn bin_fc(
         // c:1611-1668 — edit history range to a temp file, fcedit it,
         // then stuff() the result back as the next command.
         retval = 1; // c:1620
-        let fil_opt = crate::ported::utils::gettempfile(Some("zshfc")); // c:1621 gettempfile
+        let fil_opt = gettempfile(Some("zshfc")); // c:1621 gettempfile
         match fil_opt {
             None => {
                 // c:1623
@@ -3855,7 +3856,7 @@ pub fn bin_functions(
     // dispatch). Previous Rust port dropped the \`|| !scriptname\` half
     // so \`functions -X foo\` from interactive shell silently
     // succeeded — divergent.
-    let scriptname_missing = crate::ported::utils::scriptname_get().is_none();
+    let scriptname_missing = scriptname_get().is_none();
     if (off & PM_UNDEFINED) != 0                                             // c:3394
         || (OPT_ISSET(ops, b'k') && OPT_ISSET(ops, b'z'))                    // c:3394
         || (OPT_ISSET(ops, b'x') && !OPT_HASARG(ops, b'x'))                  // c:3395
@@ -5035,7 +5036,7 @@ pub fn bin_whence(
                 if t.contains_key(arg) {
                     // c:4153
                     if (printflags & PRINT_WHENCE_FUNCDEF as i32) != 0 {
-                        let body = crate::ported::utils::getshfunc(arg)
+                        let body = getshfunc(arg)
                             .unwrap_or_else(|| String::from("# body undefined"));
                         println!("{} () {{\n{}\n}}", arg, body);
                     } else if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
@@ -5943,7 +5944,7 @@ pub fn bin_print(
         if !echo_E {
             for a in processed_args.iter_mut() {
                 let (s, _) =
-                    crate::ported::utils::getkeystring_with(a, crate::ported::utils::GETKEYS_PRINT);
+                    getkeystring_with(a, GETKEYS_PRINT);
                 *a = s;
             }
         }
