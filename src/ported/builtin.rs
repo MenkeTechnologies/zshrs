@@ -5903,10 +5903,42 @@ pub fn bin_print(
     let _ = (name, raw);
 
     // c:4633-4685 — destination dispatch. -u FD writes to fd, -s pushes
-    // to history, -z to ZLE buffer, -v VAR assigns to scalar. Defer to
-    // env/var wireup.
+    // to history, -z to ZLE buffer, -v VAR assigns to scalar.
     let dest_var: Option<String> = if OPT_HASARG(ops, b'v') {
         OPT_ARG(ops, b'v').map(String::from)
+    } else {
+        None
+    };
+    // c:4815-4851 — `-u FD` (and `-p` coprocess) dispatch. Parses FD,
+    // dup's it for an owned descriptor, opens as a File for writes.
+    // The previous Rust port silently dropped `-u`, so `print -u 2
+    // hello` went to stdout instead of stderr.
+    let dest_fd: Option<std::fs::File> = if OPT_HASARG(ops, b'u') {
+        // c:4826
+        let argptr = OPT_ARG(ops, b'u').unwrap_or("");
+        // c:4827-4828 — undocumented `-up` aliases to coprocout.
+        // Rust skip: coprocout isn't wired yet; document the gap.
+        match argptr.parse::<i32>() {
+            // c:4835 zstrtol
+            Ok(fdarg) => {
+                // c:4843 — `dup(fdarg)` for an owned writer that
+                // close-on-drop doesn't close the user's original fd.
+                let dup_fd = unsafe { libc::dup(fdarg) };
+                if dup_fd < 0 {
+                    zwarnnam(name, &format!("bad file number: {}", fdarg)); // c:4844
+                    return 1; // c:4845
+                }
+                use std::os::unix::io::FromRawFd;
+                Some(unsafe { std::fs::File::from_raw_fd(dup_fd) }) // c:4847
+            }
+            Err(_) => {
+                zwarnnam(
+                    name,
+                    &format!("number expected after -u: {}", argptr),
+                ); // c:4837
+                return 1; // c:4838
+            }
+        }
     } else {
         None
     };
@@ -6003,12 +6035,21 @@ pub fn bin_print(
     if let Some(ref v) = dest_var {
         setsparam(v, &body);
     } else {
-        print!("{}", body);
-        // c:5550 — final newline unless -n.
-        if !nonewline && !echo_mode {
-            println!();
-        } else if echo_mode && !nonewline {
-            println!();
+        let final_nl = !nonewline; // c:5550 — final newline unless -n.
+        if let Some(mut f) = dest_fd {
+            // c:4847 — write to dup'd file descriptor.
+            use std::io::Write as _;
+            let _ = f.write_all(body.as_bytes()); // c:5546
+            if final_nl {
+                let _ = f.write_all(b"\n");
+            }
+            // f closes on drop (close(dup_fd)) — user's original fd
+            // remains open per c:4843 dup semantics.
+        } else {
+            print!("{}", body);
+            if final_nl {
+                println!();
+            }
         }
     }
     0
@@ -10135,5 +10176,60 @@ mod tests {
         // Conjunction check: zsh-equivalent: print -O foo Bar BAZ
         // gives `foo Bar BAZ`. Pin so an inadvertent reverse-before-
         // sort regression fails.
+    }
+
+    /// `Src/builtin.c:4815-4847` — `print -u FD` writes to the given
+    /// file descriptor. Pin: write to a pipe via -u and read back.
+    #[test]
+    fn bin_print_writes_to_specified_fd() {
+        let _g = crate::test_util::global_state_lock();
+        use std::io::Read as _;
+        // Open a pipe; print -u writes to write end, we read off read
+        // end.
+        let mut fds: [libc::c_int; 2] = [0, 0];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let (rfd, wfd) = (fds[0], fds[1]);
+
+        // Build options with -u set to the write fd.
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b'u' as usize] = 1;
+        ops.args = vec![wfd.to_string()];
+        // OPT_ARG looks up via OPT_HASARG/argscount; the exact wiring
+        // depends on the parseopts pre-call path. Use a minimal stub
+        // so OPT_ARG('u') returns wfd's string.
+        ops.argscount = 1;
+
+        // The OPT_ARG indexing path requires `ops.ind[b'u']` to encode
+        // both the "is set" bit and an arg-index pointer. The default
+        // parseopts wires this; for the unit test we synthesize the
+        // wfd-as-string into args[0] AND set `ops.ind[b'u']` to point
+        // at it via the same convention (`(ops.ind[c] >> 2) - 1`).
+        ops.ind[b'u' as usize] = 1 | (1 << 2); // sense=1, arg_index=1 → args[0]
+
+        // Closing wfd in the caller after print so reader sees EOF.
+        // We dup'd inside bin_print so closing wfd here is safe AFTER
+        // bin_print returns.
+        let r = bin_print(
+            "print",
+            &["hello".to_string()],
+            &ops,
+            BIN_PRINT,
+        );
+        assert_eq!(r, 0, "c:4847 — bin_print should return 0 on success");
+        unsafe { libc::close(wfd) };
+
+        // Read from rfd.
+        let mut buf = String::new();
+        unsafe {
+            use std::os::unix::io::FromRawFd;
+            let mut f = std::fs::File::from_raw_fd(rfd);
+            f.read_to_string(&mut buf).unwrap();
+        }
+        assert_eq!(buf, "hello\n", "c:4847 — write should land on -u FD");
     }
 }
