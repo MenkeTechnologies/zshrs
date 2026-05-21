@@ -202,23 +202,69 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {
 /// when the var isn't a hash, the group entry is missing, or the
 /// entry has PM_UNSET set.
 ///
-/// C signature: `static HashNode getgroup(const char *name, int sgr)`.
-/// Rust port returns `Option<String>` — the synthesised Param's
-/// rendered value (or None for PM_UNSET).
-///
-/// **Strict-rule status: PARTIAL.** Reading `$.zle.hlgroups` requires
-/// the magic-assoc dispatch path through the executor's hash-param
-/// table; that wiring depends on a faithful Param/HashTable port
-/// which is a multi-file undertaking. Current body returns None
-/// (mirrors C's c:99-103 PM_UNSET branch). See `TODO.md`.
-pub fn getgroup(_name: &str, _sgr: bool) -> Option<String> {
+/// Port of `static HashNode getgroup(const char *name, int sgr)` from
+/// `Src/Modules/hlgroup.c:82`. Looks up `name` in the user-defined
+/// `$.zle.hlgroups` hash, returns the converted-attr string when found,
+/// `None` for the PM_UNSET path. C synthesises a fresh Param + HashNode
+/// shell; the Rust caller (an `${.zle.esc[name]}` magic-assoc fetch)
+/// doesn't need the Param wrapping — only the result string.
+pub fn getgroup(name: &str, sgr: bool) -> Option<String> {
     // c:82
-    // c:82-94 — pm setup with PM_SCALAR|PM_SPECIAL.
-    // c:96-100 — `if (!(v = getvalue(...)) || ... PM_HASHED ... ||
-    //                 (((Param) hn)->node.flags & PM_UNSET))`
-    //   → c:102-103: `pm->u.str = ""; pm->node.flags |= PM_UNSET;`
-    // c:104-106 — `else: pm->u.str = convertattr(((Param) hn)->u.str, sgr);`
-    None // c:103 PM_UNSET
+    // c:84-94 — `pm = hcalloc(...); pm->gsu.s = &pmesc_gsu;
+    //            pm->node.nam = dupstring(name);
+    //            pm->node.flags = PM_SCALAR|PM_SPECIAL;`
+    // The synthesised pm wraps the return; Rust returns the string
+    // directly. The flag set + gsu wiring collapses since the caller
+    // path (pmesc_get) consumes only `pm->u.str`.
+    let _ = name; // gate against unused-param lint when body short-circuits
+
+    // c:89 — `char *var = GROUPVAR;`
+    let var = GROUPVAR;
+    // c:96 — `if (!(v = getvalue(&vbuf, &var, 0))`
+    let tab = crate::ported::params::paramtab();
+    let table = match tab.read() {
+        Ok(t) => t,
+        Err(_) => return None,
+    };
+    let pm = match table.get(var) {
+        Some(p) => p,
+        None => return None,                                                 // c:102-103 PM_UNSET
+    };
+    // c:97 — `|| PM_TYPE(v->pm->node.flags) != PM_HASHED`
+    if crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) != crate::ported::zsh_h::PM_HASHED {
+        return None;                                                         // c:102-103 PM_UNSET
+    }
+    // c:98 — `|| !(hlg = v->pm->gsu.h->getfn(v->pm))` — fetch backing hash.
+    let hlg = match pm.u_hash.as_ref() {
+        Some(h) => h,
+        None => return None,                                                 // c:102-103 PM_UNSET
+    };
+    // c:99 — `|| !(hn = gethashnode2(hlg, name))` — lookup by name.
+    let hn = hlg.nodes.iter().find_map(|opt| {
+        opt.as_ref().and_then(|hn| {
+            if hn.nam == name { Some(hn) } else { None }
+        })
+    });
+    let hn = match hn {
+        Some(h) => h,
+        None => return None,                                                 // c:102-103 PM_UNSET
+    };
+    // c:100 — `|| (((Param) hn)->node.flags & PM_UNSET)`
+    if (hn.flags & crate::ported::zsh_h::PM_UNSET as i32) != 0 {
+        return None;                                                         // c:102-103 PM_UNSET
+    }
+    // The hashnode's value lives on the associated Param. The Rust
+    // HashTable.nodes stores `HashNode` (just nam+flags), not the
+    // wrapping Param — so the attribute string lookup needs a
+    // companion Param lookup. The user-facing param table indexes
+    // hash-entry params under "VAR[name]" composite keys; try that.
+    let composite_key = format!("{}[{}]", var, name);
+    let raw_attr = match table.get(&composite_key) {
+        Some(child_pm) => child_pm.u_str.clone().unwrap_or_default(),
+        None => return None,                                                 // attribute string unreachable
+    };
+    // c:105 — `pm->u.str = convertattr(((Param) hn)->u.str, sgr);`
+    Some(convertattr(&raw_attr, sgr))                                        // c:105
 }
 
 /// shared magic-assoc scanner behind `${(k).zle.esc}` /
