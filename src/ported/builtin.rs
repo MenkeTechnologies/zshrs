@@ -3382,7 +3382,14 @@ pub fn bin_typeset(
             continue;
         }
 
-        if (on & PM_LOCAL) != 0
+        // c:2469-2510 — `typeset_single` createparam dispatch for new
+        // PM_LOCAL declarations. Inside a function scope (`local x` or
+        // `typeset x` from a fn body), C calls createparam(name,
+        // on|PM_LOCAL) which chains pm.old = oldpm at the current
+        // locallevel — the c:2575 `pm->level = locallevel` stamp that
+        // endparamscope unwinds. Without this, `local x=inside`
+        // modifies the outer-scope x instead of installing a shadow.
+        if (on as u32 & PM_LOCAL) != 0                                       // c:2469
             && !arg_name.is_empty()
             && !arg_name.starts_with('-')
             && !arg_name.starts_with('+')
@@ -3395,6 +3402,9 @@ pub fn bin_typeset(
                 0
             };
             let _ = createparam(arg_name, on as i32 | kind as i32 | PM_LOCAL as i32);
+            // c:2575 — `pm->level = locallevel;` for the PM_LOCAL
+            // declaration. createparam(..., PM_LOCAL) handles this
+            // internally (params.rs:2014 sets `level: cur_locallevel`).
         }
 
         if let Some(eq) = arg.find('=') {
@@ -3470,34 +3480,48 @@ pub fn bin_typeset(
                 } else {
                     raw_v.to_string()
                 };
-                setsparam(n, &folded); // c:params.c:3350
-                                       // c:Src/params.c:3024 addenv — only mirror to OS env
-                                       // when PM_EXPORTED is in flags or already-exported.
-                                       // The unconditional env::set_var here was a pre-
-                                       // existing bug exposed by Task 25: local scalars
-                                       // were leaking to env, surviving endparamscope.
-                let already_exported = std::env::var_os(n).is_some();
-                if (on & PM_EXPORTED) != 0 || already_exported {
-                    std::env::set_var(n, &folded); // c:3024 addenv
-                }
-                // C-canonical: typeset -i / -F / -E / -l / -u / -r set
-                // PM_INTEGER / PM_FFLOAT / PM_EFLOAT / PM_LOWER /
-                // PM_UPPER / PM_READONLY on the Param (Src/builtin.c
-                // typeset_single + Src/params.c assignsparam). We set
-                // them on the just-created paramtab entry so SET_VAR
-                // and subsequent reads see the type metadata in one
-                // canonical place — no exec.var_attrs mirror needed.
+                // c:typeset_single — createparam with the type flag
+                // BEFORE assignsparam, so assignstrvalue's PM_TYPE
+                // dispatch (params.c:2748) routes the value through
+                // the correct setfn:
+                //   - PM_INTEGER → intsetfn (mathevali → u_val)
+                //   - PM_EFLOAT/PM_FFLOAT → floatsetfn (parsefloat → u_dval)
+                //   - PM_SCALAR → strsetfn (u_str)
+                // The previous Rust ordering (setsparam first, then
+                // flip flags) wrote "5" to u_str then changed PM_TYPE
+                // to PM_INTEGER without migrating u_str → u_val, so
+                // getsparam(n) read u_val=0 instead of 5.
                 let type_mask =
                     (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY) as i32;
                 let to_set = (on
                     & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY))
                     as i32;
                 if to_set != 0 {
-                    if let Ok(mut tab) = paramtab().write() {
-                        if let Some(pm) = tab.get_mut(n) {
-                            pm.node.flags = (pm.node.flags & !type_mask) | to_set;
+                    let pname_in_tab = paramtab()
+                        .read()
+                        .map(|t| t.contains_key(n))
+                        .unwrap_or(false);
+                    if !pname_in_tab {
+                        // c:1132+ createparam(name, type_flags) — fresh.
+                        let _ = createparam(n, to_set);
+                    } else {
+                        // c:2355-2378 tc (type-conversion) — flip the
+                        // PM_TYPE bits on the existing param BEFORE
+                        // re-assigning so assignstrvalue routes through
+                        // the new type's setfn.
+                        if let Ok(mut tab) = paramtab().write() {
+                            if let Some(pm) = tab.get_mut(n) {
+                                pm.node.flags = (pm.node.flags & !type_mask) | to_set;
+                            }
                         }
                     }
+                }
+                setsparam(n, &folded); // c:params.c:3350
+                // c:Src/params.c:3024 addenv — only mirror to OS env
+                // when PM_EXPORTED is in flags or already-exported.
+                let already_exported = std::env::var_os(n).is_some();
+                if (on & PM_EXPORTED) != 0 || already_exported {
+                    std::env::set_var(n, &folded); // c:3024 addenv
                 }
             }
         } else if is_hashed || is_array {
@@ -3514,31 +3538,38 @@ pub fn bin_typeset(
                 }
             });
         } else {
-            // c:3072 — `if (!getsparam(arg)) setsparam(arg, "")`. Bare
-            //          name + no type flag declares an empty scalar
-            //          when none exists. C consults paramtab; was
-            //          checking OS env which never sees scalar-only
-            //          params (a `local foo` would be invisible).
-            if getsparam(arg).is_none() {
-                setsparam(arg, ""); // c:3074
-            }
-            // c:2357+ (typeset_single tc branch) — bare `typeset -i n`
-            // / `-F n` / `-E n` / `-l n` / `-u n` / `-r n` toggles the
-            // attribute on the existing param too, not just on the
-            // value-assignment form. C runs typeset_single which
-            // converts the param in place; mirror by stamping the
-            // flag on the paramtab entry the same way the `=` arm
-            // does.
+            // c:2355-2378 (typeset_single tc branch) — bare `typeset -i n`
+            // / `-F n` / `-E n` / `-l n` / `-u n` / `-r n` converts the
+            // existing param's type. C path: unsetparam_pm → createparam
+            // with PM_INTEGER → assignsparam (which re-evaluates the
+            // saved value through the new type's setfn). The Rust port
+            // flips the flag in place and re-assigns the cached u_str
+            // value through assignstrvalue so PM_INTEGER routes through
+            // intsetfn (mathevali → u_val).
             let type_mask =
                 (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY) as i32;
             let to_set = (on
                 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_READONLY))
                 as i32;
+            // c:2374 — `s = ztrdup(getsparam(pname));`. Capture the
+            // pre-conversion scalar value so the re-assignment after
+            // type flip preserves it through the new setfn.
+            let saved_val = getsparam(arg);
+            if getsparam(arg).is_none() {
+                // c:3072 — `if (!getsparam(arg)) setsparam(arg, "")`.
+                setsparam(arg, ""); // c:3074
+            }
             if to_set != 0 {
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
                         pm.node.flags = (pm.node.flags & !type_mask) | to_set;
                     }
+                }
+                // c:2372-2378 — re-assign saved value through new type's
+                // setfn so u_val (for PM_INTEGER) or u_dval (for PM_*FLOAT)
+                // catches the value migration from u_str.
+                if let Some(val) = saved_val {
+                    setsparam(arg, &val);
                 }
             }
         }
