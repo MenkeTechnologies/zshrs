@@ -21,15 +21,6 @@
 // Group-flag constants (c:85-95) — flags on `cmgroup.flags`.
 // ---------------------------------------------------------------------------
 
-// --- AUTO: cross-zle hoisted-fn use glob ---
-#[allow(unused_imports)]
-use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
-    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
-};
-#[allow(unused_imports)]
-#[allow(unused_imports)]
-
 pub const CGF_NOSORT: i32 = 1; // c:85
 pub const CGF_LINES: i32 = 2; // c:86
 pub const CGF_HASDL: i32 = 4; // c:87
@@ -683,6 +674,7 @@ pub struct Cldata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ported::zle::zle_main::zle_test_setup;
 
     /// Verifies CGF_* group flag values per c:85-95.
     #[test]

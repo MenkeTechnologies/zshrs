@@ -14,13 +14,6 @@
 
 // New comprehensive ZLE port from C
 
-// --- AUTO: cross-zle hoisted-fn use glob ---
-#[allow(unused_imports)]
-use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
-    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
-};
-
 pub mod comp_h;
 pub mod compcore;
 pub mod compctl;

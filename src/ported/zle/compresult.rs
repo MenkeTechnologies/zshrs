@@ -261,9 +261,9 @@ pub fn hasbrpsfx(s: &str) -> bool {
 pub fn do_ambiguous(matches: &[String]) -> i32 {
     // c:744
     // c:748 — `menucmp = menuacc = 0`.
-    crate::ported::zle::zle_tricky::MENUCMP.store(0, Ordering::Relaxed);
+    MENUCMP.store(0, Relaxed);
     // c:763 — `lastambig = 1`.
-    crate::ported::zle::zle_tricky::LASTAMBIG.store(1, Ordering::Relaxed);
+    LASTAMBIG.store(1, Relaxed);
 
     // c:774 — if `ainfo` is populated, walk ainfo->line via cline_str
     // (compresult.c:535 path); else fall back to the LCP over the
@@ -284,13 +284,13 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
     // c:783-790 — buffer-edit: foredel the original word, inststr
     // the unambig prefix, when WB/WE describe a valid range.
     if !prefix.is_empty() {
-        let wb = crate::ported::zle::compcore::WB.load(Ordering::Relaxed);
-        let we = crate::ported::zle::compcore::WE.load(Ordering::Relaxed);
+        let wb = crate::ported::zle::compcore::WB.load(Relaxed);
+        let we = crate::ported::zle::compcore::WE.load(Relaxed);
         if we > wb && wb >= 0 {
             let span = we - wb;
-            crate::ported::zle::compcore::ZLEMETACS.store(wb, Ordering::Relaxed); // c:785
-            crate::ported::zle::zle_utils::foredel(span, 0); // c:787
-            let _ = crate::ported::zle::zle_tricky::inststr(&prefix); // c:790
+            crate::ported::zle::compcore::ZLEMETACS.store(wb, Relaxed); // c:785
+            foredel(span, 0); // c:787
+            let _ = inststr(&prefix); // c:790
         }
     }
     if !prefix.is_empty() {
@@ -354,7 +354,7 @@ pub fn do_single(
 ) -> (String, usize) {
     // c:974 — `fixsuffix()` clears any pending menu-suffix state before
     // inserting the new match.
-    crate::ported::zle::zle_misc::fixsuffix();
+    fixsuffix();
     let suffix = if add_space { " " } else { "" };
     let replacement = format!("{}{}", the_match, suffix);
     instmatch(buffer, cursor, word_start, word_end, &replacement)
@@ -397,7 +397,7 @@ pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, 
         return (0, "");
     }
     if matches.len() == 1 {
-        SHOWINGLIST.store(-2, Ordering::Relaxed);
+        SHOWINGLIST.store(-2, Relaxed);
     }
     let next = if forward {
         (current + 1) % matches.len()
@@ -430,7 +430,7 @@ pub fn accept_last(
     use std::sync::atomic::Ordering;
 
     // c:1299 — `if (!menuacc)` snapshot prebr/postbr.
-    if menuacc.load(Ordering::Relaxed) == 0 {
+    if menuacc.load(Relaxed) == 0 {
         // c:1299
         let prebr = LASTPREBR
             .get_or_init(|| std::sync::Mutex::new(String::new()))
@@ -451,7 +451,7 @@ pub fn accept_last(
         }
         // c:1305-1321 — if listshown set and braces differ on any
         // match, set showinglist=-2 so the listing re-renders.
-        if LISTSHOWN.load(Ordering::Relaxed) != 0 && (!prebr.is_empty() || !postbr.is_empty()) {
+        if LISTSHOWN.load(Relaxed) != 0 && (!prebr.is_empty() || !postbr.is_empty()) {
             let groups = amatches
                 .get_or_init(|| std::sync::Mutex::new(Vec::new()))
                 .lock()
@@ -464,14 +464,14 @@ pub fn accept_last(
                     let s = m.str.as_deref().unwrap_or("");
                     if !hasbrpsfx(s) {
                         // c:1316
-                        SHOWINGLIST.store(-2, Ordering::Relaxed); // c:1317
+                        SHOWINGLIST.store(-2, Relaxed); // c:1317
                         break;
                     }
                 }
             }
         }
     }
-    menuacc.fetch_add(1, Ordering::Relaxed); // c:1323
+    menuacc.fetch_add(1, Relaxed); // c:1323
     do_single(buffer, cursor, word_start, word_end, selected, true)
 }
 
@@ -525,16 +525,16 @@ pub fn do_ambig_menu() -> i32 {
     // c:1381
 
     // c:1386 — `if (iforcemenu == -1) do_ambiguous();`
-    if iforcemenu.load(Ordering::Relaxed) == -1 {
+    if iforcemenu.load(Relaxed) == -1 {
         // c:1386
         let _ = do_ambiguous(&[]); // c:1387
     }
 
-    let um = USEMENU.load(Ordering::Relaxed);
+    let um = USEMENU.load(Relaxed);
     if um != 3 {
         // c:1389
-        MENUCMP.store(1, Ordering::Relaxed); // c:1390
-        menuacc.store(0, Ordering::Relaxed); // c:1391
+        MENUCMP.store(1, Relaxed); // c:1390
+        menuacc.store(0, Relaxed); // c:1391
         if let Ok(mut m) = MINFO
             .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
             .lock()
@@ -542,14 +542,14 @@ pub fn do_ambig_menu() -> i32 {
             m.cur = None; // c:1392
         }
     } else {
-        if oldlist.load(Ordering::Relaxed) != 0 {
+        if oldlist.load(Relaxed) != 0 {
             // c:1395
             let has_cur = MINFO
                 .get()
                 .and_then(|m| m.lock().ok())
                 .map(|m| m.cur.is_some())
                 .unwrap_or(false);
-            if oldins.load(Ordering::Relaxed) != 0 && has_cur {
+            if oldins.load(Relaxed) != 0 && has_cur {
                 // c:1396
                 // C: `accept_last()` — accepts the current menu pick.
                 // Rust sig takes (buf, cs, wb, we, selected); call with
@@ -570,10 +570,10 @@ pub fn do_ambig_menu() -> i32 {
 
     // c:1429 — `insmnum = comp_mod(insmnum, lastpermmnum)`.
     let mut idx = comp_mod(
-        insmnum.load(Ordering::Relaxed),
-        lastpermmnum.load(Ordering::Relaxed),
+        insmnum.load(Relaxed),
+        lastpermmnum.load(Relaxed),
     );
-    insmnum.store(idx, Ordering::Relaxed);
+    insmnum.store(idx, Relaxed);
 
     // c:1430-1438 — walk amatches advancing past groups with mcount<=idx.
     let groups = amatches
@@ -609,12 +609,12 @@ pub fn do_ambig_menu() -> i32 {
     // C path for the common case of a valid match present at the index.
     let mc = g.matches.get(idx as usize).cloned();
 
-    if iforcemenu.load(Ordering::Relaxed) != -1 {
+    if iforcemenu.load(Relaxed) != -1 {
         // c:1454
         if let Some(ref m) = mc {
             // c:1455 — `minfo.cur = m;`. Inlined per the no-fake-helper
             // rule (set_minfo_cur was a Rust-only wrapper).
-            if let Ok(mut g) = crate::ported::zle::compcore::MINFO
+            if let Ok(mut g) = MINFO
                 .get_or_init(|| {
                     std::sync::Mutex::new(Menuinfo::default())
                 })
@@ -735,7 +735,7 @@ pub fn calclist(showall: i32) -> i32 {
 
     let invcount = INVCOUNT.load(Relaxed);
     let onlyexpl_v = onlyexpl.load(Relaxed);
-    let menuacc_v = crate::ported::zle::compcore::menuacc.load(Relaxed);
+    let menuacc_v = menuacc.load(Relaxed);
     let zterm_columns = adjustcolumns() as i32; // c:zterm_columns
     let zterm_lines = adjustlines() as i32; // c:zterm_lines
 
@@ -1242,17 +1242,17 @@ pub fn asklist() -> i32 {
     // c:1925
 
     // c:1928 — `trashzle(); showinglist = listshown = 0; lastlistlen = 0`.
-    crate::ported::zle::zle_main::trashzle(); // c:1928
-    SHOWINGLIST.store(0, Ordering::Relaxed);
-    crate::ported::zle::zle_refresh::LISTSHOWN.store(0, Ordering::Relaxed);
-    LASTLISTLEN.store(0, Ordering::Relaxed); // c:1934
+    trashzle(); // c:1928
+    SHOWINGLIST.store(0, Relaxed);
+    LISTSHOWN.store(0, Relaxed);
+    LASTLISTLEN.store(0, Relaxed); // c:1934
 
     // c:1930 — `clearflag = (isset(USEZLE) && !termflags && dolastprompt)`.
     let usezle = isset(USEZLE);
-    let termflags = crate::ported::params::TERMFLAGS.load(Ordering::Relaxed);
-    let dolastprompt = crate::ported::zle::compcore::dolastprompt.load(Ordering::Relaxed) != 0;
+    let termflags = crate::ported::params::TERMFLAGS.load(Relaxed);
+    let dolastprompt = crate::ported::zle::compcore::dolastprompt.load(Relaxed) != 0;
     let clearflag = usezle && termflags == 0 && dolastprompt;
-    CLEARFLAG.store(if clearflag { 1 } else { 0 }, Ordering::Relaxed);
+    CLEARFLAG.store(if clearflag { 1 } else { 0 }, Relaxed);
 
     // c:1937-1940 — snapshot listdat counts + minfo state.
     let listdat = listdat_static
@@ -1262,7 +1262,7 @@ pub fn asklist() -> i32 {
         .map(|g| g.clone())
         .unwrap_or_default();
     let zterm_lines = adjustlines() as i32;
-    let cmax = COMPLISTMAX.load(Ordering::Relaxed) as i32;
+    let cmax = COMPLISTMAX.load(Relaxed) as i32;
 
     let has_cur = MINFO
         .get()
@@ -1291,12 +1291,12 @@ pub fn asklist() -> i32 {
         } else {
             format!("zsh: do you wish to see all {} lines? ", listdat.nlines)
         };
-        let fd = SHTTY.load(Ordering::Relaxed);
+        let fd = SHTTY.load(Relaxed);
         let out = if fd >= 0 { fd } else { 1 };
         let _ = write_loop(out, prompt.as_bytes());
 
         // c:1955 — `getzlequery()`.
-        let said_yes = crate::ported::zle::zle_utils::getzlequery() != 0;
+        let said_yes = getzlequery() != 0;
 
         if !said_yes {
             // c:1956
@@ -1362,7 +1362,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
     //          `shout`. Resolve once and reuse for every emission so
     //          a single SHTTY load covers the whole render.
     let out_fd: i32 = {
-        let fd = SHTTY.load(Ordering::Relaxed);
+        let fd = SHTTY.load(Relaxed);
         if fd >= 0 {
             fd
         } else {
@@ -1492,7 +1492,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
         pnl = 1;
     }
 
-    let _ = Ordering::Relaxed;
+    let _ = Relaxed;
     ml // c:2185
 }
 
@@ -1574,7 +1574,7 @@ pub fn bld_all_str() -> String {
                 continue 'outer;
             }
         }
-        let _ = Ordering::Relaxed;
+        let _ = Relaxed;
         g_idx = (gi + 1..).find(|&i| i < groups.len() && groups[i].mcount != 0);
     }
     buf // c:2238 ztrdup(buf)
@@ -1621,7 +1621,7 @@ pub fn iprintm(
     let mut len: i32;
     // c:2243 — C writes through `printfmt`/`fputs(s, shout)`. Route Rust
     //          to SHTTY so the visible-byte stream matches.
-    let fd = SHTTY.load(Ordering::Relaxed);
+    let fd = SHTTY.load(Relaxed);
     let out = if fd >= 0 { fd } else { 1 };
 
     if let Some(d) = disp_now {
@@ -1676,8 +1676,8 @@ pub fn ilistmatches() -> i32 {
         .map(|g| g.nlines)
         .unwrap_or(0);
     if nlines == 0 {
-        SHOWINGLIST.store(0, Ordering::Relaxed);
-        LISTSHOWN.store(0, Ordering::Relaxed);
+        SHOWINGLIST.store(0, Relaxed);
+        LISTSHOWN.store(0, Relaxed);
         return 0;
     }
     // c:2295 — printlist(0, iprintm, 0).
@@ -1696,7 +1696,7 @@ pub fn list_matches() -> i32 {
     // c:2304
     if VALIDLIST.load(Ordering::SeqCst) == 0 {
         // c:2311
-        crate::ported::zle::zle_utils::showmsg("BUG: listmatches called with bogus list");
+        showmsg("BUG: listmatches called with bogus list");
         return 1; // c:2313
     }
     // c:2317-2324 — populate the chdata bag.
@@ -1708,7 +1708,7 @@ pub fn list_matches() -> i32 {
         .unwrap_or_default();
     let mut dat = Chdata::default();
     dat.matches = groups.into_iter().next().map(Box::new); // c:2317 first group head
-    dat.num = nmatches_g.load(Ordering::Relaxed); // c:2319
+    dat.num = nmatches_g.load(Relaxed); // c:2319
                                                   // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` fires every
                                                   // registered Hookfn; first non-zero short-circuits per HOOKF_ALL.
                                                   // When `gethookdef` returns NULL (no module registered a handler)
@@ -1747,7 +1747,7 @@ pub fn invalidate_list() -> i32 {
             // c:2338
             // c:2339 — `zrefresh()` triggers a screen redraw so the now-
             // invalidated listing isn't left on screen.
-            crate::ported::zle::zle_refresh::zrefresh();
+            zrefresh();
         }
         // c:2341 — `freematches(lastmatches, 1)` fires `minfo.cur = None`
         // via the cm=1 side-effect.

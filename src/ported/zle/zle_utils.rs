@@ -235,12 +235,12 @@ pub fn shiftchars(to: i32, cnt: i32) {
     // shift it left by cnt; if mark is inside the range, clamp to `to`.
     //     if (mark >= to + cnt) mark -= cnt;
     //     else if (mark > to)   mark = to;
-    let mark_cur = crate::ported::zle::zle_main::MARK.load(Ordering::SeqCst) as i32;
+    let mark_cur = MARK.load(Ordering::SeqCst) as i32;
     if mark_cur >= to + cnt {
-        crate::ported::zle::zle_main::MARK
+        MARK
             .store((mark_cur - cnt).max(0) as usize, Ordering::SeqCst); // c:852
     } else if mark_cur > to {
-        crate::ported::zle::zle_main::MARK.store(to.max(0) as usize, Ordering::SeqCst); // c:854
+        MARK.store(to.max(0) as usize, Ordering::SeqCst); // c:854
     }
 
     // !!! WARNING: PARTIAL PORT — region_highlights adjustment unported.
@@ -1915,30 +1915,30 @@ mod findbol_findeol_tests {
         let _g = zle_test_setup();
         // Arm 1: mark > to+cnt → shifts left by cnt (c:851-852).
         zle_with("0123456789", 0);
-        crate::ported::zle::zle_main::MARK.store(8, Ordering::SeqCst);
+        MARK.store(8, Ordering::SeqCst);
         shiftchars(2, 3);
         assert_eq!(
-            crate::ported::zle::zle_main::MARK.load(Ordering::SeqCst),
+            MARK.load(Ordering::SeqCst),
             5,
             "c:851-852 — mark(8) >= to(2)+cnt(3) → mark -= cnt → 5"
         );
 
         // Arm 2: to < mark <= to+cnt → mark clamped to `to` (c:853-854).
         zle_with("0123456789", 0);
-        crate::ported::zle::zle_main::MARK.store(4, Ordering::SeqCst);
+        MARK.store(4, Ordering::SeqCst);
         shiftchars(2, 3);
         assert_eq!(
-            crate::ported::zle::zle_main::MARK.load(Ordering::SeqCst),
+            MARK.load(Ordering::SeqCst),
             2,
             "c:853-854 — mark(4) inside (to=2, cnt=3] range → clamp to `to`(2)"
         );
 
         // Arm 3: mark <= to → mark unchanged.
         zle_with("0123456789", 0);
-        crate::ported::zle::zle_main::MARK.store(1, Ordering::SeqCst);
+        MARK.store(1, Ordering::SeqCst);
         shiftchars(2, 3);
         assert_eq!(
-            crate::ported::zle::zle_main::MARK.load(Ordering::SeqCst),
+            MARK.load(Ordering::SeqCst),
             1,
             "c:851/853 — mark(1) < to(2) → unchanged"
         );

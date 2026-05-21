@@ -779,7 +779,7 @@ pub fn bin_zle_refresh(args: &[String], ops: &options) -> i32 {
     // c:420-421 — `char *s = statusline; int ocl = clearlist;`. Save
     // pre-call state so the function can restore it on exit.
     let s_save: Option<String> = STATUSLINE.lock().unwrap().clone(); // c:420
-    let ocl: i32 = crate::ported::zle::zle_refresh::CLEARLIST
+    let ocl: i32 = CLEARLIST
         .load(Ordering::Relaxed); // c:421
 
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
@@ -805,40 +805,40 @@ pub fn bin_zle_refresh(args: &[String], ops: &options) -> i32 {
             crate::ported::zle::compcore::ZMULT.store(1, Ordering::Relaxed); // c:436
             // c:437 — `listlist(l)`. Rust port takes (&[String], cols);
             // 0 cols defers width to listlist's internal calc.
-            crate::ported::zle::zle_tricky::listlist(&list, 0); // c:437
+            listlist(&list, 0); // c:437
             if STATUSLINE.lock().unwrap().is_some() {
                 // c:438
-                crate::ported::zle::zle_refresh::LASTLISTLEN
+                LASTLISTLEN
                     .fetch_add(1, Ordering::Relaxed); // c:439
             }
             // c:440 — `showinglist = clearlist = 0;`.
-            crate::ported::zle::zle_refresh::SHOWINGLIST
+            SHOWINGLIST
                 .store(0, Ordering::Relaxed);
-            crate::ported::zle::zle_refresh::CLEARLIST
+            CLEARLIST
                 .store(0, Ordering::Relaxed);
             // c:441 — restore zmult.
             crate::ported::zle::compcore::ZMULT
                 .store(zmultsav, Ordering::Relaxed);
         } else if OPT_ISSET(ops, b'c') {
             // c:442 — single positional + `-c`: queue a clear.
-            crate::ported::zle::zle_refresh::CLEARLIST
+            CLEARLIST
                 .store(1, Ordering::Relaxed); // c:443
-            crate::ported::zle::zle_refresh::LASTLISTLEN
+            LASTLISTLEN
                 .store(0, Ordering::Relaxed); // c:444
         }
     } else if OPT_ISSET(ops, b'c') {
         // c:446 — no positionals + `-c`: clear list immediately.
-        crate::ported::zle::zle_refresh::CLEARLIST
+        CLEARLIST
             .store(1, Ordering::Relaxed); // c:447
-        crate::ported::zle::zle_refresh::LISTSHOWN
+        LISTSHOWN
             .store(1, Ordering::Relaxed); // c:447
-        crate::ported::zle::zle_refresh::LASTLISTLEN
+        LASTLISTLEN
             .store(0, Ordering::Relaxed); // c:448
     }
-    crate::ported::zle::zle_refresh::zrefresh(); // c:450
+    zrefresh(); // c:450
     // c:451-452 — `statusline = s; clearlist = ocl;` restore.
     *STATUSLINE.lock().unwrap() = s_save; // c:451
-    crate::ported::zle::zle_refresh::CLEARLIST
+    CLEARLIST
         .store(ocl, Ordering::Relaxed); // c:452
     0 // c:453
 }
@@ -1194,7 +1194,7 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {
     // c:661-663 — `if (bindk) { Widget w = bindk->widget; if (w) { ... } }`.
     // BINDK holds the Thingy bound by the active key. When unset (no
     // active key sequence), the c:661 guard skips the whole loop.
-    let bindk_present = crate::ported::zle::zle_main::BINDK
+    let bindk_present = BINDK
         .lock()
         .map(|b| b.is_some())
         .unwrap_or(false);
@@ -1229,11 +1229,11 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {
                 }
                 "vichange" => {
                     // c:682 — `if (invicmdmode()) startvichange(-1); ...`
-                    if crate::ported::zle::zle_h::invicmdmode(
+                    if invicmdmode(
                         &crate::ported::zle::zle_keymap::curkeymapname(),
                     ) {
                         // c:683
-                        crate::ported::zle::zle_vi::startvichange(-1); // c:684
+                        startvichange(-1); // c:684
                         // c:685-688 — if a numeric arg is active and a
                         // PM_SPECIAL `NUMERIC` param exists, clear its
                         // PM_UNSET bit so the value becomes visible to
@@ -1461,7 +1461,7 @@ pub fn bin_zle_call(args: &[String]) -> i32 {
     // c:806 — `ret = execzlefunc(t, args, setbindk, setlbindk)`.
     // Now that execzlefunc takes the 4-arg C sig, thread the flags
     // collected from `-w` (setbindk) and `-f nolast` (setlbindk).
-    let ret = crate::ported::zle::zle_main::execzlefunc(
+    let ret = execzlefunc(
         &wname, &argv, setbindk, setlbindk,
     ); // c:806
     unrefthingy(&wname); // c:807
@@ -1759,7 +1759,7 @@ pub fn init_thingies() -> i32 {
         if !tab.contains_key(*nam) {
             let mut t = makethingynode();
             t.nam = nam.to_string(); // c:163 ztrdup(nam)
-            t.flags |= crate::ported::zle::zle_h::TH_IMMORTAL; // c:1027 immortal
+            t.flags |= TH_IMMORTAL; // c:1027 immortal
             tab.insert(nam.to_string(), t);
         }
     }
@@ -1864,7 +1864,7 @@ mod tests {
     use super::*;
 
     // Serialize tests since they share the global THINGYTAB.
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static LOCK: Mutex<()> = Mutex::new(());
 
     fn reset_tab() {
         thingytab().lock().unwrap().clear();
@@ -1941,7 +1941,7 @@ mod tests {
         // Every entry should be marked TH_IMMORTAL.
         let al = tab.get("accept-line").unwrap();
         assert_ne!(
-            al.flags & crate::ported::zle::zle_h::TH_IMMORTAL,
+            al.flags & TH_IMMORTAL,
             0,
             "c:1027 — TH_IMMORTAL bit must be set"
         );
@@ -2106,14 +2106,14 @@ mod tests {
         reset_tab();
         crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
         // BINDK must be set for the loop to run (c:661).
-        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(Thingy {
+        *BINDK.lock().unwrap() = Some(Thingy {
             nam: "dummy".to_string(),
             flags: 0,
             rc: 1,
             widget: None,
         });
         let r = bin_zle_flags(&["bogus_flag".to_string()]);
-        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = None;
+        *BINDK.lock().unwrap() = None;
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:692-693 — unknown flag → zwarnnam + ret=1");
     }
@@ -2127,7 +2127,7 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         reset_tab();
         crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
-        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = Some(Thingy {
+        *BINDK.lock().unwrap() = Some(Thingy {
             nam: "dummy".to_string(),
             flags: 0,
             rc: 1,
@@ -2138,7 +2138,7 @@ mod tests {
             "yankbefore".to_string(),
             "kill".to_string(),
         ]);
-        *crate::ported::zle::zle_main::BINDK.lock().unwrap() = None;
+        *BINDK.lock().unwrap() = None;
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 0, "c:665-669 — all recognized → ret=0");
     }
