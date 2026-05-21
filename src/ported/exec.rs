@@ -36,11 +36,11 @@ use crate::ported::builtin::{cd_able_vars, fixdir, BUILTINS, DOPRINTDIR, LASTVAL
 use crate::ported::builtins::rlimits::setlimits;
 use crate::ported::compat::zgettime_monotonic_if_available;
 use crate::ported::context::{zcontext_restore, zcontext_save};
-use crate::ported::hashtable::{dircache_set, shfunctab_lock};
+use crate::ported::hashtable::{cmdnam_unhashed, cmdnamtab_lock, dircache_set, hashdir, pathchecked, shfunctab_lock};
 use crate::ported::hist::{strinbeg, strinend};
 use crate::ported::init::{underscorelen, underscoreused, zunderscore};
 use crate::ported::input::{inpop, inpush};
-use crate::ported::jobs::THISJOB;
+use crate::ported::jobs::{expandjobtab, JOBTAB, THISJOB};
 use crate::ported::lex::{hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO};
 use crate::ported::mem::{dupstring, popheap, pushheap};
 use crate::ported::options::sticky;
@@ -50,7 +50,7 @@ use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::subst::{quotesubst, singsub};
 use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, ERRFLAG_ERROR};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options};
+use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS};
 use crate::zsh_h::execstack;
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
@@ -1534,6 +1534,148 @@ pub fn shfunc_set_sticky(shf: &mut shfunc) {
     }
 }
 
+/// Port of `static char *search_defpath(char *cmd, char *pbuf, int plen)`
+/// from `Src/exec.c:691`.
+///
+/// Walk DEFAULT_PATH for an executable `<dir>/<cmd>` regular file.
+/// Used by `command -p` to bypass the user's `$PATH` and search the
+/// system default (`/bin:/usr/bin:...`).
+pub fn search_defpath(cmd: &str, plen: usize) -> Option<String> {
+    // c:691
+    // c:695 — `for (ps = DEFAULT_PATH; ps; ps = pe ? pe+1 : NULL)`.
+    for ps in crate::ported::config_h::DEFAULT_PATH.split(':') {
+        // c:695
+        // c:697 — `if (*ps == '/')`.
+        if !ps.starts_with('/') {
+            continue;
+        }
+        // c:700-707 — PATH_MAX bounds check on `<dir>` segment.
+        if ps.len() >= plen {
+            // c:700 / c:704
+            continue; // c:701 / c:705
+        }
+        // c:708 — `*s++ = '/';`. c:709-710 bounds check on `<dir>/<cmd>`.
+        let full_len = ps.len() + 1 + cmd.len();
+        if full_len >= plen {
+            // c:709
+            continue; // c:710
+        }
+        let buf = format!("{}/{}", ps, cmd); // c:711 `strucpy(&s, cmd);`
+                                             // c:712 — `if (iscom(pbuf)) return pbuf;`
+        if iscom(&buf) {
+            // c:712
+            return Some(buf); // c:713
+        }
+    }
+    None // c:716
+}
+
+/// Port of `static int clobber_open(struct redir *f)` from
+/// `Src/exec.c:2221`.
+///
+/// C body:
+/// ```c
+/// struct stat buf;
+/// int fd, oerrno;
+/// char *ufname = unmeta(f->name);
+/// /* If clobbering, just open. */
+/// if (isset(CLOBBER) || IS_CLOBBER_REDIR(f->type))
+///     return open(ufname, O_WRONLY | O_CREAT | O_TRUNC | O_NOCTTY, 0666);
+/// /* If not clobbering, attempt to create file exclusively. */
+/// if ((fd = open(ufname, O_WRONLY | O_CREAT | O_EXCL | O_NOCTTY, 0666)) >= 0)
+///     return fd;
+/// /* If that fails, we are still allowed to open non-regular files. */
+/// oerrno = errno;
+/// if ((fd = open(ufname, O_WRONLY | O_NOCTTY)) != -1) {
+///     if (!fstat(fd, &buf)) {
+///         if (!S_ISREG(buf.st_mode)) return fd;
+///         /* CLOBBER_EMPTY allows re-use of empty regular files. */
+///         if (isset(CLOBBEREMPTY) && buf.st_size == 0) return fd;
+///     }
+///     close(fd);
+/// }
+/// errno = oerrno;
+/// return -1;
+/// ```
+///
+/// Open the redir target for write with the NOCLOBBER rules:
+/// - CLOBBER set or `>|` form → just open with O_TRUNC
+/// - Otherwise → try O_EXCL first; on EEXIST, only allow non-regular
+///   files (FIFOs, devices, sockets) OR empty regular files under
+///   CLOBBEREMPTY.
+pub fn clobber_open(f: &redir) -> i32 {
+    // c:2221
+    let ufname_owned = unmeta(f.name.as_deref().unwrap_or("")); // c:2225
+    let ufname = match std::ffi::CString::new(ufname_owned.as_str()) {
+        Ok(c) => c,
+        Err(_) => return -1,
+    };
+    // c:2228-2230 — clobber path: just open + truncate.
+    if isset(CLOBBER)
+        || IS_CLOBBER_REDIR(f.typ)
+    {
+        // c:2228
+        // c:2229 — `open(ufname, O_WRONLY|O_CREAT|O_TRUNC|O_NOCTTY, 0666)`
+        let fd = unsafe {
+            libc::open(
+                ufname.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_NOCTTY,
+                0o666 as libc::c_uint,
+            )
+        };
+        return fd; // c:2230
+    }
+    // c:2233-2235 — try O_EXCL create first.
+    let fd = unsafe {
+        // c:2233
+        libc::open(
+            ufname.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOCTTY,
+            0o666 as libc::c_uint,
+        )
+    };
+    if fd >= 0 {
+        return fd; // c:2235
+    }
+    // c:2240 — `oerrno = errno;` — save for restoration on the recover path.
+    let oerrno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    // c:2241-2260 — recover: open() w/o O_EXCL, accept if non-regular
+    // OR (CLOBBEREMPTY && size == 0).
+    let fd = unsafe {
+        // c:2241
+        libc::open(
+            ufname.as_ptr(),
+            libc::O_WRONLY | libc::O_NOCTTY,
+            0o666 as libc::c_uint,
+        )
+    };
+    if fd != -1 {
+        let mut buf: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut buf) } == 0 {
+            // c:2242
+            // c:2243-2244 — non-regular file: accept.
+            if (buf.st_mode & libc::S_IFMT) != libc::S_IFREG {
+                // c:2243
+                return fd; // c:2244
+            }
+            // c:2256-2257 — CLOBBEREMPTY + empty regular: accept.
+            if isset(CLOBBEREMPTY) && buf.st_size == 0 {
+                // c:2256
+                return fd; // c:2257
+            }
+        }
+        unsafe {
+            libc::close(fd);
+        } // c:2259
+    }
+    // c:2262 — `errno = oerrno;` — restore the EEXIST so caller diagnoses
+    // "file exists" not the noisier "couldn't reopen" trailing errno.
+    unsafe {
+        *libc::__error() = oerrno; // macOS errno location
+    }
+    -1 // c:2263
+}
+
 /// Port of `Cmdnam hashcmd(char *arg0, char **pp)` from
 /// `Src/exec.c:1010`.
 ///
@@ -1572,7 +1714,7 @@ pub fn shfunc_set_sticky(shf: &mut shfunc) {
 ///
 /// Returns the just-inserted `cmdnam` (now in `cmdnamtab`) on success,
 /// `None` if `arg0` is absolute or no PATH entry contains it.
-pub fn hashcmd(arg0: &str, pp: &[String]) -> Option<crate::ported::zsh_h::cmdnam> {
+pub fn hashcmd(arg0: &str, pp: &[String]) -> Option<cmdnam> {
     // c:1010
     // c:1016 — `if (*arg0 == '/') return NULL;`
     if arg0.starts_with('/') {
@@ -1605,23 +1747,23 @@ pub fn hashcmd(arg0: &str, pp: &[String]) -> Option<crate::ported::zsh_h::cmdnam
     };
     // c:1033-1036 — alloc cn, set flags=0, u.name=pp (the matching slice).
     let path_slice: Vec<String> = pp[pp_idx..].to_vec(); // c:1035
-    let cn = crate::ported::hashtable::cmdnam_unhashed(arg0, path_slice); // c:1033-1035
+    let cn = cmdnam_unhashed(arg0, path_slice); // c:1033-1035
                                                                           // c:1036 — `cmdnamtab->addnode(cmdnamtab, ztrdup(arg0), cn);`
-    if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().write() {
+    if let Ok(mut tab) = cmdnamtab_lock().write() {
         tab.add(cn.clone());
     }
     // c:1038-1042 — under HASHDIRS, bulk-hash every dir up to and
     // including the matching one, then bump pathchecked past it.
-    if crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHDIRS) {
+    if isset(HASHDIRS) {
         // c:1038
-        let start = crate::ported::hashtable::pathchecked.load(Ordering::Relaxed); // c:1039
+        let start = pathchecked.load(Ordering::Relaxed); // c:1039
         for pq in start..=pp_idx {
             // c:1039
             if pq < pp.len() {
-                crate::ported::hashtable::hashdir(&pp[pq], pq); // c:1040
+                hashdir(&pp[pq], pq); // c:1040
             }
         }
-        crate::ported::hashtable::pathchecked.store(pp_idx + 1, Ordering::Relaxed); // c:1041
+        pathchecked.store(pp_idx + 1, Ordering::Relaxed); // c:1041
     }
     Some(cn) // c:1044
 }
@@ -1663,14 +1805,14 @@ pub fn zfork(ts: Option<&mut crate::ported::zsh_system_h::timespec>) -> libc::pi
     if thisjob != -1 {
         // c:356
         let needed = (thisjob + 1) as usize;
-        let needs_expand = crate::ported::jobs::JOBTAB
+        let needs_expand = JOBTAB
             .get_or_init(|| std::sync::Mutex::new(Vec::new()))
             .lock()
             .map(|t| needed >= t.len().saturating_sub(1))
             .unwrap_or(false);
         if needs_expand {
-            let mut tab = crate::ported::jobs::JOBTAB.get().unwrap().lock().unwrap();
-            if !crate::ported::jobs::expandjobtab(&mut tab, needed) {
+            let mut tab = JOBTAB.get().unwrap().lock().unwrap();
+            if !expandjobtab(&mut tab, needed) {
                 // c:357
                 zerr("job table full"); // c:357
                 return -1; // c:358
