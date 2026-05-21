@@ -9007,6 +9007,92 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("npqPS:"),
             None,
         ),
+        // c:Src/Zle/computil.c:5103-5110 — zsh/computil module's 8
+        // builtins drive compsys (the canonical completion system).
+        // All have HandlerFunc-compatible signatures already; just
+        // need BUILTINS-table registration. Without these,
+        // _describe / _arguments / _values / _files / _groups / etc.
+        // (compsys's primary entry points) silently no-op.
+        BUILTIN(
+            "comparguments",
+            0,
+            Some(crate::ported::zle::computil::bin_comparguments as HandlerFunc),
+            1,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:5103
+        BUILTIN(
+            "compdescribe",
+            0,
+            Some(crate::ported::zle::computil::bin_compdescribe as HandlerFunc),
+            3,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:5104
+        BUILTIN(
+            "compfiles",
+            0,
+            Some(crate::ported::zle::computil::bin_compfiles as HandlerFunc),
+            1,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:5105
+        BUILTIN(
+            "compgroups",
+            0,
+            Some(crate::ported::zle::computil::bin_compgroups as HandlerFunc),
+            1,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:5106
+        BUILTIN(
+            "compquote",
+            0,
+            Some(crate::ported::zle::computil::bin_compquote as HandlerFunc),
+            1,
+            -1,
+            0,
+            Some("p"),
+            None,
+        ), // c:5107
+        BUILTIN(
+            "comptags",
+            0,
+            Some(crate::ported::zle::computil::bin_comptags as HandlerFunc),
+            1,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:5108
+        BUILTIN(
+            "comptry",
+            0,
+            Some(crate::ported::zle::computil::bin_comptry as HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:5109
+        BUILTIN(
+            "compvalues",
+            0,
+            Some(crate::ported::zle::computil::bin_compvalues as HandlerFunc),
+            1,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:5110
         BUILTIN(
             "zle",
             0,
@@ -9749,10 +9835,12 @@ mod tests {
         //   zsh/pcre (pcre_compile/pcre_match/pcre_study)
         //   zsh/zutil (zformat/zgdbmpath)
         //   zsh/sched (sched)
-        // Total Rust BUILTINS table size pinned at 113 to catch
+        //   zsh/computil (comparguments/compdescribe/compfiles/
+        //     compgroups/compquote/comptags/comptry/compvalues)
+        // Total Rust BUILTINS table size pinned at 121 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 113,
+        assert_eq!(BUILTINS.len(), 121,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
