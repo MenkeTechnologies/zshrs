@@ -1213,18 +1213,37 @@ pub fn zlecallhook(name: &str, arg: Option<&str>) {
 /// committing any pending edits to a new undo entry first.
 pub fn get_undo_current_change() -> i64 {
     // c:1785
-    // c:1788 — int remetafy;
-    // c:1795 — if (zlemetaline != NULL) { unmetafy_line(); remetafy = 1; }
-    // c:1799 — else remetafy = 0;
-    // Rust uses UTF-8 natively — the metaline transcoding is a no-op
-    // at the storage layer, so the remetafy bookkeeping collapses.
-    // c:1802 — mkundoent();           — flush pending edits to undo ring
-    mkundoent();
-    // c:1803 — setlastline();
-    setlastline();
-    // c:1805-1806 — if (remetafy) metafy_line();    (collapsed per above)
-    // c:1808 — return undo_changeno;
-    UNDO_CHANGENO.load(Ordering::SeqCst) as i64
+    let remetafy: i32;                                                       // c:1787
+    /*
+     * Yuk: we call this from within the completion system,
+     * so we need to convert back to the form which can be
+     * copied into undo entries.
+     */                                                                      // c:1789-1793
+    // c:1794 — `if (zlemetaline != NULL)`. ZLEMETALINE is a
+    // OnceLock<Mutex<String>>: "non-NULL" ≡ initialised AND non-empty.
+    let zml_active = crate::ported::zle::compcore::ZLEMETALINE
+        .get()
+        .and_then(|m| m.lock().ok().map(|s| !s.is_empty()))
+        .unwrap_or(false);
+    if zml_active {
+        // c:1795 — `unmetafy_line();` Rust stores ZLE as UTF-8, so the
+        // unmetafy → undo-form transcoding is a no-op at the storage
+        // layer; the bookkeeping flag is still set per C.
+        remetafy = 1;                                                        // c:1796
+    } else {
+        remetafy = 0;                                                        // c:1798
+    }
+
+    /* add entry for any pending changes */                                  // c:1800
+    mkundoent();                                                             // c:1801
+    setlastline();                                                           // c:1802
+
+    if remetafy != 0 {                                                       // c:1804
+        // c:1805 — `metafy_line();` — re-metafy. No-op storage-wise
+        // (UTF-8 invariant); the call site is preserved for symmetry.
+    }
+
+    UNDO_CHANGENO.load(Ordering::SeqCst) as i64                              // c:1807
 }
 
 /// Port of `get_undo_limit_change(UNUSED(Param pm))` from Src/Zle/zle_utils.c:1812.
