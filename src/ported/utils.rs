@@ -5544,7 +5544,8 @@ pub fn nicezputs(s: &str) -> String {
 /// this via [`sb_niceformat`] which is the same render-then-measure
 /// path.
 pub fn niceztrlen(s: &str) -> usize {
-    sb_niceformat(s, 0).len()
+    // c equivalent: l = sb_niceformat(s, NULL, NULL, 0); return l;
+    sb_niceformat(s, None, None, 0)
 }
 
 /// Multibyte-aware nice-format of a string.
@@ -5796,127 +5797,169 @@ pub fn charlenconv(s: &str, len: usize) -> (usize, Option<char>) {
 /// }
 /// ```
 /// Single-byte nice format. **Unmetafies the input first** (c:5872),
-/// then calls `nicechar_sel` for EVERY byte (not just controls). The
-/// previous Rust port did neither — emitted raw bytes for any
-/// non-ASCII-control input, which corrupted output for high-bit
-/// bytes under PRINTEIGHTBIT-off (should have rendered `\M-X`).
-/// WARNING: param names don't match C — Rust=(s, flags) vs C=(s, stream, outstrp, flags)
-pub fn sb_niceformat(s: &str, flags: i32) -> String {
+/// then calls `nicechar_sel` for EVERY byte (not just controls).
+///
+/// Param mapping (Rule S1, faithful to C):
+/// - `s: &str`            ← C `const char *s`
+/// - `stream: Option<&mut dyn Write>` ← C `FILE *stream` (`None` ≡ `NULL`)
+/// - `outstrp: Option<&mut Option<String>>` ← C `char **outstrp`
+///   (outer `None` ≡ `NULL`; inner `Option<String>` is the storage slot
+///   the caller passes as `&local`, mirroring `char *retstr;
+///   sb_niceformat(s, NULL, &retstr, ...);`).
+/// - returns `usize` ← C `size_t l`.
+pub fn sb_niceformat(
+    s: &str,
+    mut stream: Option<&mut dyn std::io::Write>,
+    outstrp: Option<&mut Option<String>>,
+    flags: i32,
+) -> usize {
     // c:5851
-    let mut l: usize = 0;                                                    // c:5853
-    let mut newl: usize;                                                     // c:5853 (declared with l)
+    let mut l: usize = 0;                                                    // c:5853 size_t l = 0
+    let mut newl: usize;                                                     // c:5853 size_t newl
     // c:5854 — `int umlen, outalloc, outleft;`. outalloc/outleft model
-    // the C buffer-growth math; Rust uses String which auto-grows, so
-    // the realloc gymnastics at c:5897-5906 collapse to push_str.
+    // C's buffer-growth math; Rust String auto-grows so the realloc
+    // loop at c:5897-5906 collapses to push_str. umlen carries through.
+    let umlen: usize;                                                        // c:5854
     // c:5855 — `char *ums, *ptr, *eptr, *fmt, *outstr, *outptr;`
-    // c:5857-5863 — `if (outstrp) outptr = outstr = zalloc(2*strlen(s));`.
-    // Rust always returns a String (single non-NULL outstrp path); the
-    // `stream` and per-flag NICEFLAG_NODUP / NICEFLAG_HEAP branches at
-    // c:5893, c:5919-5925 collapse since the Rust API has one shape.
-    let outstr: String;                                                      // c:5859
-    let mut outptr = String::with_capacity(2 * s.len());                     // c:5859
+    let mut ums: Vec<u8>;                                                    // c:5855 char *ums
+    let mut ptr: usize;                                                      // c:5855 char *ptr
+    let eptr: usize;                                                         // c:5855 char *eptr
+    let mut fmt: String;                                                     // c:5855 char *fmt
+    let mut outstr: Option<String>;                                          // c:5855 char *outstr
+
+    // c:5857-5863 — `if (outstrp) outptr = outstr = zalloc(2*strlen(s));`
+    if outstrp.is_some() {                                                   // c:5857
+        outstr = Some(String::with_capacity(2 * s.len()));                   // c:5859
+    } else {                                                                 // c:5860
+        outstr = None;                                                       // c:5862 outstr = NULL
+    }
 
     // c:5865 — `ums = ztrdup(s);`
-    let ums_bytes: Vec<u8> = s.as_bytes().to_vec();
+    ums = s.as_bytes().to_vec();
+    // c:5866-5870 — comment-only block carried verbatim:
+    /*
+     * is this necessary at this point? niceztrlen does this
+     * but it's used in lots of places.  however, one day this may
+     * be, too.
+     */                                                                      // c:5866-5870
     // c:5871 — `untokenize(ums);` inlined byte-level (lex::untokenize
-    // takes &str / chars() which corrupts raw metafied bytes; C does
-    // byte-walks). Mirrors `Src/exec.c:2077-2099` exec.c untokenize().
+    // is char-based; C does byte-walks). Mirrors `Src/exec.c:2077-2099`
+    // exec.c untokenize().
     let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";                 // ZTOKENS — Src/lex.c:38
-    let mut bytes: Vec<u8> = Vec::with_capacity(ums_bytes.len());
-    for &c in &ums_bytes {                                                   // exec.c:2082
-        // exec.c:2083 — `if (itok(c))`. ITOK = Pound(0x84)..=Nularg(0xa1).
-        if (0x84u8..=0xa1u8).contains(&c) {
-            // exec.c:2086 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
-            if c != 0xa1u8 {
+    let mut detok: Vec<u8> = Vec::with_capacity(ums.len());
+    for &c in &ums {                                                         // exec.c:2082
+        if (0x84u8..=0xa1u8).contains(&c) {                                  // exec.c:2083 itok(c)
+            if c != 0xa1u8 {                                                 // exec.c:2086 c != Nularg
                 let idx = (c - 0x84) as usize;
                 if idx < ztokens_table.len() {
-                    bytes.push(ztokens_table[idx]);
+                    detok.push(ztokens_table[idx]);
                 }
             }
         } else {
-            bytes.push(c);                                                   // exec.c:2094
+            detok.push(c);                                                   // exec.c:2094
         }
     }
+    ums = detok;
     // c:5872 — `ptr = unmetafy(ums, &umlen);`
-    let umlen = unmetafy(&mut bytes);
-    bytes.truncate(umlen);
-    // c:5873 — `eptr = ptr + umlen;` (modelled by `bytes.len()`)
-    let eptr: usize = bytes.len();
-    let mut ptr: usize = 0;
+    umlen = unmetafy(&mut ums);
+    ums.truncate(umlen);
+    eptr = umlen;                                                            // c:5873 eptr = ptr + umlen
+    ptr = 0;                                                                 // c:5872 ptr starts at 0 in ums
 
-    let quotable = (flags & NICEFLAG_QUOTE) != 0;
     while ptr < eptr {                                                       // c:5875
-        let c: u8 = bytes[ptr];                                              // c:5876
-        let fmt: String;
-        if c == b'\'' && quotable {                                          // c:5877
+        let c: i32 = ums[ptr] as i32;                                        // c:5876 int c = (unsigned char) *ptr
+        if c == b'\'' as i32 && (flags & NICEFLAG_QUOTE) != 0 {              // c:5877
             fmt = "\\'".to_string();                                         // c:5878
             newl = 2;                                                        // c:5879
-        } else if c == b'\\' && quotable {                                   // c:5881
+        } else if c == b'\\' as i32 && (flags & NICEFLAG_QUOTE) != 0 {       // c:5881
             fmt = "\\\\".to_string();                                        // c:5882
             newl = 2;                                                        // c:5883
         } else {                                                             // c:5885
-            fmt = nicechar_sel(c as char, quotable);                         // c:5886
+            fmt = nicechar_sel(c as u8 as char, (flags & NICEFLAG_QUOTE) != 0); // c:5886
             newl = 1;                                                        // c:5887
         }
 
-        ptr += 1;                                                            // c:5890
-        l += newl;                                                           // c:5891
+        ptr += 1;                                                            // c:5890 ++ptr
+        l += newl;                                                           // c:5891 l += newl
 
-        // c:5893-5894 — `if (stream) zputs(fmt, stream);` (Rust: no
-        // stream-output shape; collapsed.)
-        // c:5895-5912 — append `fmt` to outstr, growing on demand.
-        outptr.push_str(&fmt);                                               // c:5907
+        if let Some(ref mut w) = stream {                                    // c:5893 if (stream)
+            // c:5894 — `zputs(fmt, stream);`
+            let _ = w.write_all(fmt.as_bytes());
+        }
+        if let Some(ref mut buf) = outstr {                                  // c:5895 if (outstr)
+            // c:5896-5912 — append fmt to outstr, growing on demand. Rust
+            // String auto-grows; the realloc loop at c:5897-5906 collapses
+            // to push_str (memcpy + outptr/outleft bookkeeping unneeded).
+            buf.push_str(&fmt);                                              // c:5907 memcpy(outptr, fmt, outlen)
+        }
+        // `fmt` is consumed at next iter assignment (C reuses pointer).
+        let _ = fmt;
     }
 
-    // c:5915 — `free(ums);` (Rust drop)
-    outstr = outptr;                                                         // c:5917 *outptr='\0' end-marker (no-op for String)
-    // c:5919-5925 — NICEFLAG_NODUP / NICEFLAG_HEAP shaping: Rust returns
-    // an owned String, equivalent to the ztrdup path (default).
-    let _ = l;                                                               // c:5928 `return l;` — caller-facing length;
-                                                                             // Rust API returns the String directly.
-    outstr
+    // c:5915 — `free(ums);` (Rust drop at scope exit)
+    drop(ums);
+    if let Some(slot) = outstrp {                                            // c:5916 if (outstrp)
+        // c:5917 — `*outptr = '\0';` (no-op for String — push_str leaves
+        // no embedded NUL, and Rust String is length-prefixed).
+        // c:5919-5925 — NICEFLAG_NODUP / NICEFLAG_HEAP shaping: in C this
+        // selects between ztrdup (perm) / dupstring (heap arena) / direct
+        // ownership-transfer (NODUP). Rust has a single allocator so all
+        // three paths produce identical owned String contents; transfer
+        // ownership of `outstr` into the caller's slot.
+        *slot = outstr.take();
+    }
+
+    l                                                                        // c:5928 return l
 }
 
 /// Port of `int is_sb_niceformat(const char *s)` from `Src/utils.c:5937-5959`.
-/// Predicate: would sb_niceformat change the input? Walks each byte
-/// after unmetafy, returns true if any byte is "nice" per
-/// `is_nicechar`. Previously only checked `is_ascii_control` —
-/// missed high-bit bytes that need `\M-X` escaping under
-/// PRINTEIGHTBIT-off.
-pub fn is_sb_niceformat(s: &str) -> bool {
+///
+/// Predicate: would `sb_niceformat` change the input? Walks each byte
+/// after unmetafy, returns `1` if any byte is "nice" per `is_nicechar`,
+/// else `0` (C `int` return faithful to Rule S1).
+pub fn is_sb_niceformat(s: &str) -> i32 {
     // c:5937
-    let mut ret: bool = false;                                               // c:5939
-    // c:5942 — `ums = ztrdup(s);` (Rust: copy to owned byte array)
-    let ums_bytes: Vec<u8> = s.as_bytes().to_vec();
-    // c:5943 — `untokenize(ums);` inlined byte-level (exec.c:2077-2099).
+    // c:5939 — `int umlen, ret = 0;`
+    let umlen: usize;                                                        // c:5939
+    let mut ret: i32 = 0;                                                    // c:5939
+    // c:5940 — `char *ums, *ptr, *eptr;`
+    let mut ums: Vec<u8>;                                                    // c:5940 char *ums
+    let mut ptr: usize;                                                      // c:5940 char *ptr
+    let eptr: usize;                                                         // c:5940 char *eptr
+
+    ums = s.as_bytes().to_vec();                                             // c:5942 ums = ztrdup(s)
+    // c:5943 — `untokenize(ums);` inlined byte-level (lex::untokenize is
+    // char-based; C does byte-walks). Mirrors `Src/exec.c:2077-2099`.
     let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";                 // ZTOKENS — Src/lex.c:38
-    let mut bytes: Vec<u8> = Vec::with_capacity(ums_bytes.len());
-    for &c in &ums_bytes {
-        if (0x84u8..=0xa1u8).contains(&c) {
-            if c != 0xa1u8 {
+    let mut detok: Vec<u8> = Vec::with_capacity(ums.len());
+    for &c in &ums {                                                         // exec.c:2082
+        if (0x84u8..=0xa1u8).contains(&c) {                                  // exec.c:2083 itok(c)
+            if c != 0xa1u8 {                                                 // exec.c:2086 c != Nularg
                 let idx = (c - 0x84) as usize;
                 if idx < ztokens_table.len() {
-                    bytes.push(ztokens_table[idx]);
+                    detok.push(ztokens_table[idx]);
                 }
             }
         } else {
-            bytes.push(c);
+            detok.push(c);                                                   // exec.c:2094
         }
     }
-    // c:5944 — `ptr = unmetafy(ums, &umlen);`
-    let umlen = unmetafy(&mut bytes);
-    bytes.truncate(umlen);
-    // c:5945 — `eptr = ptr + umlen;` (modelled by `bytes` length)
-    let mut ptr: usize = 0;                                                  // c:5946
-    while ptr < bytes.len() {                                                // c:5947
-        if is_nicechar(bytes[ptr] as char) {                                 // c:5948
-            ret = true;                                                      // c:5949
+    ums = detok;
+    umlen = unmetafy(&mut ums);                                              // c:5944 ptr = unmetafy(ums, &umlen)
+    ums.truncate(umlen);
+    eptr = umlen;                                                            // c:5945 eptr = ptr + umlen
+    ptr = 0;                                                                 // c:5944 ptr starts at 0 in ums
+
+    while ptr < eptr {                                                       // c:5947
+        if is_nicechar(ums[ptr] as char) {                                   // c:5948 is_nicechar(*ptr)
+            ret = 1;                                                         // c:5949
             break;                                                           // c:5950
         }
-        ptr += 1;                                                            // c:5952
+        ptr += 1;                                                            // c:5952 ++ptr
     }
-    // c:5955 — `free(ums);` (Rust drop-on-scope)
-    ret                                                                      // c:5957
+
+    drop(ums);                                                               // c:5955 free(ums)
+    ret                                                                      // c:5957 return ret
 }
 
 /// Tab expansion — direct port of `zexpandtabs(const char *s, int len, int width, int startpos, FILE *fout, int all)` in zsh/Src/utils.c:5975.
@@ -9443,30 +9486,49 @@ mod tests {
 
     /// `Src/utils.c:5849-5910` — `sb_niceformat(s)`. Pin: ASCII
     /// printable passes through unchanged; controls escape.
+    /// C-equivalent call shape: `char *out; sb_niceformat(s, NULL, &out, 0);`
     #[test]
     fn sb_niceformat_passes_printable_ascii() {
         let _g = crate::test_util::global_state_lock();
+        let mut out: Option<String> = None;
+        let l = sb_niceformat("hello", None, Some(&mut out), 0);
         assert_eq!(
-            sb_niceformat("hello", 0),
-            "hello",
+            out.as_deref(), Some("hello"),
             "c:5886 — nicechar_sel passes printable through"
         );
-        assert_eq!(sb_niceformat("", 0), "");
-        assert_eq!(sb_niceformat("ABC012!?@", 0), "ABC012!?@");
+        assert_eq!(l, 5, "c:5928 — return length equals output bytes");
+
+        let mut out: Option<String> = None;
+        sb_niceformat("", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some(""));
+
+        let mut out: Option<String> = None;
+        sb_niceformat("ABC012!?@", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("ABC012!?@"));
     }
 
     /// c:5886 — controls get `\n`/`\t`/`^X`/`^?` escapes via nicechar_sel.
     #[test]
     fn sb_niceformat_escapes_controls() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(sb_niceformat("a\nb", 0), "a\\nb", "c:5886 — newline → \\n");
-        assert_eq!(sb_niceformat("a\tb", 0), "a\\tb");
+        let mut out: Option<String> = None;
+        sb_niceformat("a\nb", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("a\\nb"), "c:5886 — newline → \\n");
+
+        let mut out: Option<String> = None;
+        sb_niceformat("a\tb", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("a\\tb"));
+
+        let mut out: Option<String> = None;
+        sb_niceformat("\x01", None, Some(&mut out), 0);
         assert_eq!(
-            sb_niceformat("\x01", 0),
-            "^A",
+            out.as_deref(), Some("^A"),
             "c:5886 — control char → ^X form"
         );
-        assert_eq!(sb_niceformat("\x7f", 0), "^?");
+
+        let mut out: Option<String> = None;
+        sb_niceformat("\x7f", None, Some(&mut out), 0);
+        assert_eq!(out.as_deref(), Some("^?"));
     }
 
     /// `Src/utils.c:5872` — unmetafy step before formatting. Pin:
@@ -9479,32 +9541,35 @@ mod tests {
         // → passes through unchanged.
         let bytes: Vec<u8> = vec![Meta, 0x41u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
+        let mut out: Option<String> = None;
+        sb_niceformat(s, None, Some(&mut out), 0);
         assert_eq!(
-            sb_niceformat(s, 0),
-            "a",
+            out.as_deref(), Some("a"),
             "c:5872 — unmetafy first: Meta+0x41 → 'a' → printable passthrough"
         );
         // META + 0x20 → decodes to NUL → "^@" form.
         let bytes: Vec<u8> = vec![Meta, 0x20u8];
         let s = unsafe { std::str::from_utf8_unchecked(&bytes) };
-        let r = sb_niceformat(s, 0);
+        let mut out: Option<String> = None;
+        sb_niceformat(s, None, Some(&mut out), 0);
+        let r = out.unwrap_or_default();
         assert!(
             !r.is_empty(),
             "c:5872 — Meta+0x20 → NUL → must emit some escape, not empty"
         );
     }
 
-    /// `Src/utils.c:5937-5959` — `is_sb_niceformat(s)`. Returns true
-    /// if sb_niceformat would change the input.
+    /// `Src/utils.c:5937-5959` — `is_sb_niceformat(s)`. Returns 1
+    /// if sb_niceformat would change the input, else 0.
     #[test]
     fn is_sb_niceformat_true_for_strings_with_controls() {
         let _g = crate::test_util::global_state_lock();
-        assert!(is_sb_niceformat("\n"), "newline is nice");
-        assert!(is_sb_niceformat("a\tb"));
-        assert!(is_sb_niceformat("\x01"));
-        // Non-control ASCII → false.
-        assert!(!is_sb_niceformat("hello"));
-        assert!(!is_sb_niceformat(""));
+        assert_eq!(is_sb_niceformat("\n"), 1, "newline is nice");
+        assert_eq!(is_sb_niceformat("a\tb"), 1);
+        assert_eq!(is_sb_niceformat("\x01"), 1);
+        // Non-control ASCII → 0.
+        assert_eq!(is_sb_niceformat("hello"), 0);
+        assert_eq!(is_sb_niceformat(""), 0);
     }
 
     /// `Src/utils.c:5810-5826` — `metacharlenconv(x, c)`. Returns
