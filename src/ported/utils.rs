@@ -2867,24 +2867,31 @@ pub fn timespec_diff_us(t1: &std::time::Instant, t2: &std::time::Instant) -> i64
 
 /// Port of `int zmonotime(time_t *tloc)` from Src/utils.c:2780.
 ///
-/// "Like time(), but uses the monotonic clock." Returns
-/// `tv_sec` of CLOCK_MONOTONIC; the previous Rust port used
-/// `Instant::now().elapsed()` which always returned ≈0.
-pub fn zmonotime() -> i64 {
+/// "Like time(), but uses the monotonic clock." Reads CLOCK_MONOTONIC
+/// and returns `tv_sec`; writes the same value through `tloc` if
+/// non-NULL (Rust: `Some(&mut t)`).
+pub fn zmonotime(tloc: Option<&mut i64>) -> i64 {
     // c:2780
     #[cfg(unix)]
     {
-        let mut ts = libc::timespec {
+        // c:2782 — `struct timespec ts;`
+        let mut ts = libc::timespec {                                        // c:2782
             tv_sec: 0,
             tv_nsec: 0,
         };
+        // c:2783 — `zgettime_monotonic_if_available(&ts);`
         unsafe {
-            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts); // c:2783
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);             // c:2783
         }
-        ts.tv_sec as i64 // c:2786
+        // c:2784-2785 — `if (tloc) *tloc = ts.tv_sec;`
+        if let Some(t) = tloc {                                              // c:2784
+            *t = ts.tv_sec as i64;                                           // c:2785
+        }
+        ts.tv_sec as i64                                                     // c:2786 return ts.tv_sec
     }
     #[cfg(not(unix))]
     {
+        let _ = tloc;
         0
     }
 }
@@ -2944,7 +2951,7 @@ pub fn zsleep(us: i64) -> i32 {
 /// to work, else 0."
 pub fn zsleep_random(max_us: i64, end_time: i64) -> i32 {
     // c:2833
-    let now = zmonotime(); // c:2833
+    let now = zmonotime(None); // c:2833
     let r16 = unsafe { libc::rand() } & 0xFFFF; // c:2845
     let mut r: i64 = (max_us >> 16) * (r16 as i64); // c:2852
     while r != 0 && now + (r / 1_000_000) > end_time {
