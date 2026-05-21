@@ -589,6 +589,57 @@ pub static VICMDBIND: [&str; 128] = [
     /* ^? */ "vi-backward-char",
 ];
 
+/// All known internal widget names — the Rust analog of C's
+/// `Src/Zle/thingies.list` (391 entries) restricted to the names
+/// that have a Rust port in `iwidget_lookup` below. Walked at
+/// startup by `init_thingies()` to populate THINGYTAB so `zle -l`
+/// can enumerate widgets without each name having to be invoked
+/// first via the keymap.
+pub const IWIDGET_NAMES: &[&str] = &[
+    "accept-and-hold", "accept-line", "accept-line-and-down-history",
+    "backward-char", "backward-delete-char", "backward-kill-word",
+    "backward-word", "beep", "beginning-of-buffer-or-history",
+    "beginning-of-line", "capitalize-word", "clear-screen",
+    "copy-prev-word", "copy-region-as-kill", "delete-char-or-list",
+    "digit-argument", "down-case-word", "down-history",
+    "down-line-or-history", "end-of-buffer-or-history", "end-of-line",
+    "execute-last-named-cmd", "execute-named-cmd", "expand-history",
+    "expand-or-complete", "forward-char", "forward-word", "get-line",
+    "history-incremental-search-backward",
+    "history-incremental-search-forward", "history-search-backward",
+    "history-search-forward", "insert-last-word", "kill-line",
+    "kill-whole-line", "kill-word", "list-choices", "list-expand",
+    "neg-argument", "pound-insert", "push-line", "quote-line",
+    "quote-region", "quoted-insert", "redisplay", "redo", "run-help",
+    "self-insert", "self-insert-unmeta", "send-break",
+    "set-mark-command", "spell-word", "transpose-chars",
+    "transpose-words", "undefined-key", "undo", "up-case-word",
+    "up-history", "up-line-or-history", "vi-add-eol", "vi-add-next",
+    "vi-backward-blank-word", "vi-backward-char",
+    "vi-backward-delete-char", "vi-backward-kill-word",
+    "vi-backward-word", "vi-change", "vi-change-eol",
+    "vi-change-whole-line", "vi-cmd-mode", "vi-delete",
+    "vi-delete-char", "vi-digit-or-beginning-of-line",
+    "vi-down-line-or-history", "vi-end-of-line", "vi-fetch-history",
+    "vi-find-next-char", "vi-find-next-char-skip",
+    "vi-find-prev-char", "vi-find-prev-char-skip",
+    "vi-first-non-blank", "vi-forward-blank-word",
+    "vi-forward-blank-word-end", "vi-forward-char", "vi-forward-word",
+    "vi-forward-word-end", "vi-goto-column", "vi-goto-mark",
+    "vi-goto-mark-line", "vi-history-search-backward",
+    "vi-history-search-forward", "vi-indent", "vi-insert",
+    "vi-insert-bol", "vi-join", "vi-kill-eol", "vi-kill-line",
+    "vi-match-bracket", "vi-open-line-above", "vi-open-line-below",
+    "vi-put-after", "vi-put-before", "vi-quoted-insert",
+    "vi-repeat-change", "vi-repeat-find", "vi-repeat-search",
+    "vi-replace", "vi-replace-chars", "vi-rev-repeat-find",
+    "vi-rev-repeat-search", "vi-set-buffer", "vi-set-mark",
+    "vi-substitute", "vi-swap-case", "vi-unindent",
+    "vi-up-line-or-history", "vi-yank", "vi-yank-whole-line",
+    "visual-line-mode", "visual-mode", "which-command", "yank",
+    "yank-pop",
+];
+
 /// Lookup the canonical fn pointer for a built-in widget name.
 /// Direct port of the dispatch achieved by C's
 /// `Src/Zle/zle_bindings.c:55-60 widgets[]` table generated from
