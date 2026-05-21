@@ -28,11 +28,11 @@ use crate::ported::hashnameddir::{nameddirtab, removenameddirnode};
 use crate::ported::hashtable::shfunctab_lock;
 use crate::ported::hist::{bangchar, chrealpath};
 use crate::ported::init::SHTTY;
-use crate::ported::modules::clone::{coprocin, coprocout};
+use crate::ported::modules::clone::{coprocin, coprocout, mypgrp};
 // SHTTY imported under an alias to avoid collision with the
 // `SHTTY: i32` function parameters at fdsettyinfo/fdgettyinfo
 // (Rule E — C uses SHTTY as both the global and the parameter name).
-use crate::ported::lex::lineno;
+use crate::ported::lex::{lineno, untokenize};
 use crate::ported::options::{dosetopt, opt_state_set};
 use crate::ported::params::{
     assignsparam, convbase as convbase_param, getaparam, getsparam, homesetfn, ifsgetfn, ifssetfn,
@@ -3354,7 +3354,7 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
     // Rust: termios is the canonical TTY-state type returned by gettyinfo.
     let mut ti: libc::termios;                                               // c:3018
 
-    attachtty(crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed)); // c:3020 attachtty(mypgrp)
+    attachtty(mypgrp.load(Ordering::Relaxed)); // c:3020 attachtty(mypgrp)
 
     // c:3022 — `gettyinfo(&ti);`
     ti = match gettyinfo() {
@@ -5820,7 +5820,7 @@ pub fn mb_niceformat(
     // c:5389 — `ptr = unmetafy(ums, &umlen);` — `unmeta` is the safe
     // UTF-8 wrapper that runs unmetafy only when Meta bytes are
     // present and otherwise no-ops.
-    let detok = crate::ported::lex::untokenize(s);
+    let detok = untokenize(s);
     let unmeta_str = unmeta(&detok);
     ums = unmeta_str.into_bytes();
     umlen = ums.len();                                                       // c:5389 *umlen
@@ -6011,7 +6011,7 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
     // `lex::untokenize` (never corrupts UTF-8 continuation bytes) and
     // `unmeta` (no-op on UTF-8 without Meta bytes; runs unmetafy when
     // they're present).
-    let detok = crate::ported::lex::untokenize(s);
+    let detok = untokenize(s);
     let unmeta_str = unmeta(&detok);
     ums = unmeta_str.into_bytes();
     umlen = ums.len();                                                       // c:5483 *umlen

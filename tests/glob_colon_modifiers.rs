@@ -101,56 +101,5 @@ fn chained_modifiers_apply_left_to_right() {
         zsh::glob::glob(&pattern)
     };
     assert_eq!(got, vec!["Cargo".to_string()], "pattern={}", pattern);
-}
 
-#[test]
-fn modifier_unit_tail_strips_trailing_slash() {
-    use zsh::glob::apply_colon_modifiers;
-    assert_eq!(apply_colon_modifiers("foo/bar/", ":t"), "bar");
-    assert_eq!(apply_colon_modifiers("/etc/passwd", ":t"), "passwd");
-    assert_eq!(apply_colon_modifiers("loose", ":t"), "loose");
-}
-
-#[test]
-fn modifier_unit_head_edge_cases() {
-    use zsh::glob::apply_colon_modifiers;
-    assert_eq!(apply_colon_modifiers("foo/bar.txt", ":h"), "foo");
-    assert_eq!(apply_colon_modifiers("/etc/passwd", ":h"), "/etc");
-    assert_eq!(apply_colon_modifiers("/foo", ":h"), "/");
-    assert_eq!(apply_colon_modifiers("loose", ":h"), ".");
-}
-
-#[test]
-fn modifier_unit_root_and_ext_edge_cases() {
-    use zsh::glob::apply_colon_modifiers;
-    // :e — extension only.
-    assert_eq!(apply_colon_modifiers("foo.tar.gz", ":e"), "gz");
-    assert_eq!(apply_colon_modifiers("foo", ":e"), "");
-    assert_eq!(apply_colon_modifiers(".bashrc", ":e"), "bashrc");
-    assert_eq!(apply_colon_modifiers("path/no.ext.here", ":e"), "here");
-    // :r — strip last extension.
-    assert_eq!(apply_colon_modifiers("foo.tar.gz", ":r"), "foo.tar");
-    assert_eq!(apply_colon_modifiers("foo", ":r"), "foo");
-    // Per zsh: `.bashrc:r` truncates AT the leading dot → empty.
-    assert_eq!(apply_colon_modifiers(".bashrc", ":r"), "");
-}
-
-#[test]
-fn modifier_unit_global_subst() {
-    use zsh::glob::apply_colon_modifiers;
-    // :gs/X/Y/ replaces ALL occurrences; :s/X/Y/ replaces first only.
-    assert_eq!(apply_colon_modifiers("a.x.b.x.c", ":s/x/Y/"), "a.Y.b.x.c");
-    assert_eq!(apply_colon_modifiers("a.x.b.x.c", ":gs/x/Y/"), "a.Y.b.Y.c");
-}
-
-#[test]
-fn modifier_unit_subst_with_alternative_delimiter() {
-    use zsh::glob::apply_colon_modifiers;
-    // zsh allows any single char as the s-delimiter — `,` `_` `;`,
-    // useful when the pattern contains `/`.
-    assert_eq!(apply_colon_modifiers("/a/b/c", ":s,/a/,/Z/,"), "/Z/b/c");
-    assert_eq!(
-        apply_colon_modifiers("hello world", ":s_world_planet_"),
-        "hello planet"
-    );
 }

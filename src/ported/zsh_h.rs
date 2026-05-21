@@ -1983,15 +1983,18 @@ macro_rules! HEAP_ERROR {
 /// (c:2917). Without DEBUG (c:2923) the macro expands to nothing.
 ///
 /// The Rust port routes through `crate::ported::utils::dputs` (port
-/// of `dputs` at `Src/utils.c:253`) under `#[cfg(debug_assertions)]`
-/// — Rust's analogue to C's `#ifdef DEBUG`. The file:line prefix
-/// uses `file!()` / `line!()` to mirror `__FILE__:__LINE__`.
+/// of `dputs` at `Src/utils.c:253`) under `#[cfg(feature = "zsh-debug")]`
+/// — Rust's analogue to C's `#ifdef DEBUG` (set by configure's
+/// `--enable-zsh-debug`). Stock zsh ships with DEBUG un-set, so the
+/// default zshrs build (without `--features zsh-debug`) is silent
+/// too. The file:line prefix uses `file!()` / `line!()` to mirror
+/// `__FILE__:__LINE__`.
 #[macro_export]
 macro_rules! DPUTS {
     // c:2918
     ($x:expr, $y:expr) => {
         // c:2918
-        #[cfg(debug_assertions)] // c:2918 ifdef DEBUG
+        #[cfg(feature = "zsh-debug")] // c:2918 ifdef DEBUG
         {
             if $x {
                 // c:2918 if (X)
@@ -2023,7 +2026,7 @@ macro_rules! DPUTS1 {
     // c:2919
     ($x:expr, $y:expr, $z1:expr) => {
         // c:2919
-        #[cfg(debug_assertions)] // c:2919
+        #[cfg(feature = "zsh-debug")] // c:2919
         {
             if $x {
                 // c:2919
@@ -2048,7 +2051,7 @@ macro_rules! DPUTS2 {
     // c:2920
     ($x:expr, $y:expr, $z1:expr, $z2:expr) => {
         // c:2920
-        #[cfg(debug_assertions)] // c:2920
+        #[cfg(feature = "zsh-debug")] // c:2920
         {
             if $x {
                 // c:2920
@@ -2073,7 +2076,7 @@ macro_rules! DPUTS3 {
     // c:2921
     ($x:expr, $y:expr, $z1:expr, $z2:expr, $z3:expr) => {
         // c:2921
-        #[cfg(debug_assertions)] // c:2921
+        #[cfg(feature = "zsh-debug")] // c:2921
         {
             if $x {
                 // c:2921
