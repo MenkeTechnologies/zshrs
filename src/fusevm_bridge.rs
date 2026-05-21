@@ -1051,8 +1051,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             argscount: 0,
             argsalloc: 0,
         };
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        let status = crate::ported::modules::datetime::bin_strftime("strftime", &argv, &ops, 0);
+        let status = crate::ported::modules::datetime::bin_strftime("strftime", &args, &ops, 0);
         Value::Status(status)
     });
 

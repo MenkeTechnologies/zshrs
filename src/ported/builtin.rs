@@ -9209,6 +9209,17 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("c"),
             None,
         ), // c:315
+        // c:Src/Modules/datetime.c:239 — zsh/datetime module.
+        BUILTIN(
+            "strftime",
+            0,
+            Some(crate::ported::modules::datetime::bin_strftime as HandlerFunc),
+            1,
+            3,
+            0,
+            Some("nqrs:"),
+            None,
+        ), // c:239
         BUILTIN(
             "zle",
             0,
@@ -9959,10 +9970,11 @@ mod tests {
         //   zsh/stat (stat)
         //   zsh/watch (log)
         //   zsh/zprof (zprof)
-        // Total Rust BUILTINS table size pinned at 132 to catch
+        //   zsh/datetime (strftime)
+        // Total Rust BUILTINS table size pinned at 133 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 132,
+        assert_eq!(BUILTINS.len(), 133,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
