@@ -6073,6 +6073,17 @@ pub fn bin_print(
         }
     }
     let body = processed_args.join(sep);
+    // c:5564-5575 — destination dispatch order:
+    //   -z   → zpushnode(bufstack, stringval)
+    //   -v   → setsparam(VAR, stringval)
+    //   -s   → prepnexthistent() + addhistnode(histtab, stringval)
+    //   else → fwrite to fout
+    if OPT_ISSET(ops, b's') {
+        // c:5569-5574 — push the captured output as a history entry.
+        let event_id = crate::ported::hist::prepnexthistent(); // c:5569
+        crate::ported::hashtable::addhistnode(&body, event_id as i32); // c:5574
+        return 0;
+    }
     if let Some(ref v) = dest_var {
         setsparam(v, &body);
     } else {
@@ -10227,6 +10238,41 @@ mod tests {
         // Conjunction check: zsh-equivalent: print -O foo Bar BAZ
         // gives `foo Bar BAZ`. Pin so an inadvertent reverse-before-
         // sort regression fails.
+    }
+
+    /// `Src/builtin.c:5569-5574` — `print -s WORDS...` pushes the
+    /// joined string to the history table instead of stdout.
+    #[test]
+    fn bin_print_minus_s_pushes_to_history() {
+        let _g = crate::test_util::global_state_lock();
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b's' as usize] = 1;
+        // Clear histtab to a known state.
+        crate::ported::hashtable::histtab_lock()
+            .write()
+            .unwrap()
+            .clear();
+        let r = bin_print(
+            "print",
+            &["hello".to_string(), "world".to_string()],
+            &ops,
+            BIN_PRINT,
+        );
+        assert_eq!(r, 0, "c:5574 — -s should succeed");
+        // After -s, the joined "hello world" string must appear in
+        // histtab (the in-process history lookup table).
+        let tab = crate::ported::hashtable::histtab_lock()
+            .read()
+            .unwrap();
+        assert!(
+            tab.contains_key("hello world"),
+            "c:5574 — addhistnode must record `hello world` in histtab"
+        );
     }
 
     /// `Src/builtin.c:4718-4741` — `print -m PATTERN args...` keeps
