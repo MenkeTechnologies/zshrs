@@ -2527,13 +2527,13 @@ pub fn domenuselect() -> i32 {
     let _wasmeta: i32; // c:2394
     let mut status = String::new(); // c:2396
 
-    // c:2398-2399 — bail-out: no previous list.
-    // !!! STUB: `hasoldlist` static not yet ported. C tests it to
-    // detect that a previous compprintlist has populated mtab/mgtab;
-    // without that gate we'd loop on an empty matrix. Return 2
-    // (caller falls through to basic menucomplete).
-    let hasoldlist = false; // c:2398
-    if !hasoldlist {
+    // c:2398-2399 — bail-out when no previous list. `hasoldlist` is
+    // the file-static at compcore.c:140 (ported as AtomicI32 in
+    // compcore.rs:3462); set by `compprintlist` after populating
+    // mtab/mgtab.
+    if crate::ported::zle::compcore::hasoldlist.load(std::sync::atomic::Ordering::Relaxed)
+        == 0
+    {
         return 2; // c:2399
     }
 
