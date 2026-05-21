@@ -412,13 +412,28 @@ pub fn pputc(buf: &mut String, c: char) {
 }
 
 // Make sure there is room for `need' more characters in the buffer.       // c:991
-/// Ensure the prompt buffer has at least `need` bytes free.
-/// Port of `addbufspc(int need)` from Src/prompt.c:991 — the C source
-/// reallocates the heap buffer; Rust's `String` does this
-/// automatically so this is a no-op.
-/// WARNING: param names don't match C — Rust=(_buf, _need) vs C=(need)
-pub fn addbufspc(_buf: &mut String, _need: usize) { // c:991
-                                                    // Rust String handles allocation automatically
+/// Port of `static void addbufspc(int need)` from `Src/prompt.c:991`.
+/// C accesses the file-static `bv` (struct promptbuf) and may
+/// realloc `bv->buf` if (bp - buf) + need*2 > bufspc. The zshrs
+/// promptbuf state lives on a per-promptbuf `PromptBuf` struct
+/// (impl method `PromptBuf::addbufspc` does the real work at line
+/// 1325). This free-fn shape is a C-name-parity anchor: callers
+/// that don't have a PromptBuf in hand (only via file-static `bv`
+/// in C) reach for `addbufspc(need)` directly — no such caller
+/// exists in zshrs yet because every prompt-buf op goes through
+/// the struct method. The body is a no-op because Rust String
+/// auto-grows on the impl-method side; `need` is bound to mirror C.
+pub fn addbufspc(need: i32) {
+    // c:991
+    // c:993 — `need *= 2;` for metafication
+    let _need_doubled = need.saturating_mul(2);
+    // c:994-1010 — realloc dance on `bv->buf` if growth needed.
+    // !!! WARNING: SUBSTRATE GAP — file-static `bv` not ported !!!
+    // The `bv` (prompt-buf state) is a file-static in C
+    // (Src/prompt.c:~50); zshrs models it as a method-receiver
+    // (PromptBuf::addbufspc, line 1325). Free-fn callers would need
+    // a thread-local PromptBuf accessor to dispatch; until then this
+    // shape is a name-parity shim.
 }
 
 /// Append a string to the prompt buffer.
