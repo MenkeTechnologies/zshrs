@@ -8513,6 +8513,21 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ),
+        // c:Src/Builtins/sched.c:375 — sched is a Builtins module
+        // builtin (zsh/sched). bintab has only one entry. The Rust
+        // port at builtins/sched.rs::bin_sched (325 lines) was not
+        // registered, so `sched 09:00 echo morning` returned
+        // "command not found".
+        BUILTIN(
+            "sched",
+            0,
+            Some(crate::ported::builtins::sched::bin_sched as HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        ),
         BUILTIN(
             "shift",
             BINF_PSPECIAL,
@@ -9733,10 +9748,11 @@ mod tests {
         //   zsh/terminfo (echoti)
         //   zsh/pcre (pcre_compile/pcre_match/pcre_study)
         //   zsh/zutil (zformat/zgdbmpath)
-        // Total Rust BUILTINS table size pinned at 112 to catch
+        //   zsh/sched (sched)
+        // Total Rust BUILTINS table size pinned at 113 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 112,
+        assert_eq!(BUILTINS.len(), 113,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
