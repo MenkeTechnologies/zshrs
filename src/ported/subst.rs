@@ -815,8 +815,12 @@ fn stringsubst(
                         let path = rest.trim();
                         std::fs::read_to_string(path).unwrap_or_default()
                     } else {
-                        // c:exec.c:4712 — `getoutput(cmd, 0)`.
-                        getoutput(&cmd)
+                        // c:exec.c:4712 — `getoutput(cmd, 1)`. Caller
+                        // here is splicing the result into a string
+                        // (str3 = format!("{}{}{}", ...)), which is
+                        // the qt=1 / "$(...)" path. Join the Vec back
+                        // for the string concat.
+                        getoutput(&cmd, 1).join("")
                     };
                     let prefix: String = chars[..pos].iter().collect(); // c:237
                     let suffix: String = if end + 1 < chars.len() {
@@ -1004,8 +1008,9 @@ fn stringsubst(
             if end < chars.len() {
                 // c:237
                 let cmd: String = chars[cmd_start..end].iter().collect(); // c:237
-                                                                          // c:exec.c:4712 — `getoutput(cmd, 0)`.
-                let output = getoutput(&cmd);
+                                                                          // c:exec.c:4712 — `getoutput(cmd, 1)`. String-
+                                                                          // splice caller (qt=1).
+                let output = getoutput(&cmd, 1).join("");
                 let prefix: String = chars[..pos].iter().collect(); // c:237
                 let suffix: String = if end + 1 < chars.len() {
                     // c:237

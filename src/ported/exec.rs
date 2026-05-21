@@ -385,12 +385,21 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
     Some(buf) // c:4651 return buf
 }
 
-/// Free-function wrapper for `getoutput()` from `Src/exec.c:4712`.
-/// Runs a command-substitution body in the active executor and
-/// returns its captured stdout. The C signature is `LinkList
-/// getoutput(char *cmd, int qt)` but every caller in subst.rs
-/// joins the list back into a string, so the Rust port collapses
-/// the intermediate.
+/// Port of `LinkList getoutput(char *cmd, int qt)` from
+/// `Src/exec.c:4712-4791`. Runs a command-substitution body in the
+/// active executor, then routes the captured stdout through
+/// `readoutput(pipe, qt, NULL)` semantics at c:4855-4872.
+///
+/// C return shape: `LinkList` of `char*`. Rust port returns
+/// `Vec<String>` (same shape, owned).
+///
+/// `qt` matches C exactly:
+///   - qt=1 (quoted, `"$(...)"`): trim trailing newlines, return
+///     entire output as a single-element vec. C c:4858-4862: if
+///     output empty, returns a single Nularg sentinel so callers
+///     see "empty value" rather than "no value".
+///   - qt=0 (unquoted, `$(...)`): trim trailing newlines, then
+///     `spacesplit(buf, allownull=false)` per c:4865-4871.
 ///
 /// Uses `with_executor` (panics on missing VM context), not
 /// `try_with_executor + unwrap_or_default()`. C `getoutput` calls
@@ -398,9 +407,27 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 /// silent-no-op pattern (return empty string when no executor) would
 /// mask catastrophic state corruption as "command produced no output",
 /// which is the failure mode the `subst.rs:496` warning block flags.
-pub fn getoutput(cmd: &str) -> String {
-    // c:4712 (Src/exec.c)
-    with_executor(|exec| exec.run_command_substitution(cmd))
+pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
+    // c:4712
+    let buf = with_executor(|exec| exec.run_command_substitution(cmd));
+    // c:4855-4857 — `while (cnt && ptr[-1] == '\n') ptr--, cnt--;`.
+    let buf = buf.trim_end_matches('\n');
+    if qt != 0 {
+        // c:4858-4863 — quoted branch.
+        if buf.is_empty() {
+            // c:4859-4861 — Nularg sentinel for empty quoted output.
+            vec![String::from(crate::ported::zsh_h::Nularg)]
+        } else {
+            vec![buf.to_string()] // c:4863 addlinknode(ret, buf)
+        }
+    } else {
+        // c:4864-4871 — unquoted branch: spacesplit then add per word.
+        // C also runs `shtokenize` on each word when GLOBSUBST is
+        // set (c:4868) so the result can be re-glob-expanded;
+        // tracked for follow-up — Rust returns owned Strings so the
+        // in-place tokenize shape doesn't translate directly.
+        crate::ported::utils::spacesplit(buf, false) // c:4865
+    }
 }
 
 /// Direct port of `Shfunc loadautofn(Shfunc shf, int ks, int test_only,
