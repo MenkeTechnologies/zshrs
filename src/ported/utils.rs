@@ -5803,38 +5803,78 @@ pub fn charlenconv(s: &str, len: usize) -> (usize, Option<char>) {
 /// WARNING: param names don't match C — Rust=(s, flags) vs C=(s, stream, outstrp, flags)
 pub fn sb_niceformat(s: &str, flags: i32) -> String {
     // c:5851
-    // c:5865-5872 — `ums = ztrdup(s); untokenize(ums); ptr =
-    // unmetafy(ums, &umlen);`. The C `untokenize` step converts ZSH
-    // internal token bytes (Star/Quest/Inbrack etc.) back to their
-    // canonical chars. The Rust `untokenize` lives in lex.rs but uses
-    // `chars()`-iteration which mangles raw metafied bytes (e.g.
-    // `Meta + X` pairs that aren't valid UTF-8 standalone). For
-    // sb_niceformat the caller path is "already-untokenized metafied
-    // bytes", so the untokenize step is a no-op for the common case
-    // and applying it via chars() would corrupt invalid-UTF-8
-    // metafied input. Skip the untokenize step — matches the
-    // tested call-site behavior.
-    let mut bytes = s.as_bytes().to_vec();
-    // c:5872 — `ptr = unmetafy(ums, &umlen);`.
-    let umlen = unmetafy(&mut bytes); // c:5872
-    bytes.truncate(umlen);
+    let mut l: usize = 0;                                                    // c:5853
+    let mut newl: usize;                                                     // c:5853 (declared with l)
+    // c:5854 — `int umlen, outalloc, outleft;`. outalloc/outleft model
+    // the C buffer-growth math; Rust uses String which auto-grows, so
+    // the realloc gymnastics at c:5897-5906 collapse to push_str.
+    // c:5855 — `char *ums, *ptr, *eptr, *fmt, *outstr, *outptr;`
+    // c:5857-5863 — `if (outstrp) outptr = outstr = zalloc(2*strlen(s));`.
+    // Rust always returns a String (single non-NULL outstrp path); the
+    // `stream` and per-flag NICEFLAG_NODUP / NICEFLAG_HEAP branches at
+    // c:5893, c:5919-5925 collapse since the Rust API has one shape.
+    let outstr: String;                                                      // c:5859
+    let mut outptr = String::with_capacity(2 * s.len());                     // c:5859
 
-    let mut result = String::new();
-    let quotable = (flags & NICEFLAG_QUOTE) != 0; // c:5886
-    // c:5875 — `while (ptr < eptr)`.
-    for &b in &bytes {
-        // c:5413-5417 — `'` and `\` get backslash-escaped under
-        // NICEFLAG_QUOTE (so the result is safe inside `$'...'`).
-        if quotable && b == b'\'' {
-            result.push_str("\\'"); // c:5413-5414
-        } else if quotable && b == b'\\' {
-            result.push_str("\\\\"); // c:5417-5418
+    // c:5865 — `ums = ztrdup(s);`
+    let ums_bytes: Vec<u8> = s.as_bytes().to_vec();
+    // c:5871 — `untokenize(ums);` inlined byte-level (lex::untokenize
+    // takes &str / chars() which corrupts raw metafied bytes; C does
+    // byte-walks). Mirrors `Src/exec.c:2077-2099` exec.c untokenize().
+    let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";                 // ZTOKENS — Src/lex.c:38
+    let mut bytes: Vec<u8> = Vec::with_capacity(ums_bytes.len());
+    for &c in &ums_bytes {                                                   // exec.c:2082
+        // exec.c:2083 — `if (itok(c))`. ITOK = Pound(0x84)..=Nularg(0xa1).
+        if (0x84u8..=0xa1u8).contains(&c) {
+            // exec.c:2086 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
+            if c != 0xa1u8 {
+                let idx = (c - 0x84) as usize;
+                if idx < ztokens_table.len() {
+                    bytes.push(ztokens_table[idx]);
+                }
+            }
         } else {
-            // c:5886 — `fmt = nicechar_sel(c, ...)` for every byte.
-            result.push_str(&nicechar_sel(b as char, quotable));
+            bytes.push(c);                                                   // exec.c:2094
         }
     }
-    result
+    // c:5872 — `ptr = unmetafy(ums, &umlen);`
+    let umlen = unmetafy(&mut bytes);
+    bytes.truncate(umlen);
+    // c:5873 — `eptr = ptr + umlen;` (modelled by `bytes.len()`)
+    let eptr: usize = bytes.len();
+    let mut ptr: usize = 0;
+
+    let quotable = (flags & NICEFLAG_QUOTE) != 0;
+    while ptr < eptr {                                                       // c:5875
+        let c: u8 = bytes[ptr];                                              // c:5876
+        let fmt: String;
+        if c == b'\'' && quotable {                                          // c:5877
+            fmt = "\\'".to_string();                                         // c:5878
+            newl = 2;                                                        // c:5879
+        } else if c == b'\\' && quotable {                                   // c:5881
+            fmt = "\\\\".to_string();                                        // c:5882
+            newl = 2;                                                        // c:5883
+        } else {                                                             // c:5885
+            fmt = nicechar_sel(c as char, quotable);                         // c:5886
+            newl = 1;                                                        // c:5887
+        }
+
+        ptr += 1;                                                            // c:5890
+        l += newl;                                                           // c:5891
+
+        // c:5893-5894 — `if (stream) zputs(fmt, stream);` (Rust: no
+        // stream-output shape; collapsed.)
+        // c:5895-5912 — append `fmt` to outstr, growing on demand.
+        outptr.push_str(&fmt);                                               // c:5907
+    }
+
+    // c:5915 — `free(ums);` (Rust drop)
+    outstr = outptr;                                                         // c:5917 *outptr='\0' end-marker (no-op for String)
+    // c:5919-5925 — NICEFLAG_NODUP / NICEFLAG_HEAP shaping: Rust returns
+    // an owned String, equivalent to the ztrdup path (default).
+    let _ = l;                                                               // c:5928 `return l;` — caller-facing length;
+                                                                             // Rust API returns the String directly.
+    outstr
 }
 
 /// Port of `int is_sb_niceformat(const char *s)` from `Src/utils.c:5937-5959`.
@@ -5846,12 +5886,24 @@ pub fn sb_niceformat(s: &str, flags: i32) -> String {
 pub fn is_sb_niceformat(s: &str) -> bool {
     // c:5937
     let mut ret: bool = false;                                               // c:5939
-    // c:5942 — `ums = ztrdup(s);` (Rust: copy to owned String)
-    let ums: String = s.to_string();
-    // c:5943 — `untokenize(ums);`
-    let ums: String = crate::ported::lex::untokenize(&ums);
+    // c:5942 — `ums = ztrdup(s);` (Rust: copy to owned byte array)
+    let ums_bytes: Vec<u8> = s.as_bytes().to_vec();
+    // c:5943 — `untokenize(ums);` inlined byte-level (exec.c:2077-2099).
+    let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";                 // ZTOKENS — Src/lex.c:38
+    let mut bytes: Vec<u8> = Vec::with_capacity(ums_bytes.len());
+    for &c in &ums_bytes {
+        if (0x84u8..=0xa1u8).contains(&c) {
+            if c != 0xa1u8 {
+                let idx = (c - 0x84) as usize;
+                if idx < ztokens_table.len() {
+                    bytes.push(ztokens_table[idx]);
+                }
+            }
+        } else {
+            bytes.push(c);
+        }
+    }
     // c:5944 — `ptr = unmetafy(ums, &umlen);`
-    let mut bytes: Vec<u8> = ums.into_bytes();
     let umlen = unmetafy(&mut bytes);
     bytes.truncate(umlen);
     // c:5945 — `eptr = ptr + umlen;` (modelled by `bytes` length)
