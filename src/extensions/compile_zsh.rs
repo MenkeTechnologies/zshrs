@@ -914,6 +914,20 @@ impl ZshCompiler {
             crate::ported::exec::execcmd_exec(&simple.words, crate::ported::zsh_h::WC_SIMPLE);
         let precmd_skip = dispatch.precmd_skip;
 
+        // c:Src/exec.c:3372-3406 "Empty command" no-redir arm — bare
+        // `exec` / `noglob` / `command` / `nocorrect` (the precmd
+        // walk stripped everything). C sets `lastval = cmdoutval` (0
+        // when no $(cmd) ran) and returns without dispatching.
+        // Surfaced by execcmd_exec via `is_empty_command`.
+        if dispatch.is_empty_command {
+            self.builder.emit(Op::LoadInt(0), 0); // c:3399 lastval = cmdoutval
+            self.builder.emit(Op::SetStatus, 0); // c:3399
+            if has_redirects {
+                self.builder.emit(Op::WithRedirectsEnd, 0);
+            }
+            return; // c:3406
+        }
+
         // Builtin or function or external. Push args first (post-strip).
         let argc = (simple.words.len() - precmd_skip - 1) as u8;
         for word in &simple.words[precmd_skip + 1..] {
