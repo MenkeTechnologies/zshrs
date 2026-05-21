@@ -673,7 +673,7 @@ pub fn bin_zle(
         (b'K', Box::new(bin_zle_keymap), 1, 1), // c:358
         (b'I', Box::new(|_| bin_zle_invalidate()), 0, 0), // c:359
         (b'f', Box::new(bin_zle_flags), 1, -1), // c:360
-        (b'F', Box::new(bin_zle_fd), 0, 2),    // c:361
+        (b'F', Box::new(|a| bin_zle_fd(a, ops)), 0, 2),    // c:361
         (b'T', Box::new(|a| bin_zle_transform(a, ops)), 0, 2), // c:362
         (0u8, Box::new(bin_zle_call), 0, -1),  // c:363 — sentinel: no flag → bin_zle_call.
     ];
@@ -1524,35 +1524,100 @@ pub fn bin_zle_invalidate() -> i32 {
 /// `watch_fds` LinkList add/remove; the poll loop in `raw_getbyte`
 /// reads the map directly, no callback-table indirection needed.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_fd(args: &[String]) -> i32 {
+pub fn bin_zle_fd(args: &[String], ops: &options) -> i32 {
     // c:857
-    if args.is_empty() {
-        // c:857-905
-        return 0; // list-all path
-    }
-    // c:863-867 — parse fd; reject negative.
-    let fd: i32 = args[0].parse().unwrap_or(-1);
-    if fd < 0 {
-        return 1;
-    } // c:866
+    // c:859 — locals.
+    let mut fd: i32 = 0; // c:859
+    let mut found: bool = false; // c:859
 
-    if let Ok(mut tab) = WATCH_FDS.lock() {
-        match args.len() {
-            1 => {
-                // c:935 — `zle -F -d fd` remove.
-                tab.retain(|w| w.fd != fd);
-            }
+    // c:862-869 — parse fd if given. C uses zstrtol(*args, &endptr, 10)
+    // and rejects when trailing garbage exists (*endptr != '\0') OR
+    // fd < 0.
+    if !args.is_empty() {
+        // c:862
+        match args[0].parse::<i32>() {
+            // c:863 zstrtol
+            Ok(n) if n >= 0 => fd = n,
             _ => {
-                // c:921 — install / replace.
-                tab.retain(|w| w.fd != fd);
-                tab.push(watch_fd {
-                    func: args[1].clone(),
-                    fd,
-                    widget: 0,
-                });
+                // c:865 — `*endptr || fd < 0`
+                zwarnnam(
+                    "zle",
+                    &format!("Bad file descriptor number for -F: {}", args[0]),
+                ); // c:866
+                return 1; // c:867
             }
         }
     }
+
+    // c:871-887 — `-L` listing branch, OR no-args list-all.
+    if OPT_ISSET(ops, b'L') || args.is_empty() {
+        // c:871
+        if !args.is_empty() && args.len() > 1 {
+            // c:873
+            zwarnnam("zle", "too many arguments for -FL"); // c:874
+            return 1; // c:875
+        }
+        if let Ok(tab) = WATCH_FDS.lock() {
+            // c:877 — `for (i = 0; i < nwatch; i++)`
+            for w in tab.iter() {
+                if !args.is_empty() && w.fd != fd {
+                    // c:879
+                    continue; // c:880
+                }
+                found = true; // c:881
+                // c:882 — `printf("%s -F %s%d %s\n", name, widget ? "-w " : "", fd, func);`
+                let w_flag = if w.widget != 0 { "-w " } else { "" };
+                println!("zle -F {}{} {}", w_flag, w.fd, w.func);
+            }
+        }
+        // c:885-886 — return 1 if fd was given and not found.
+        return if !args.is_empty() && !found { 1 } else { 0 }; // c:886
+    }
+
+    if args.len() > 1 {
+        // c:889 — adding/replacing a handler.
+        let funcnam = args[1].clone(); // c:891 ztrdup
+        if let Ok(mut tab) = WATCH_FDS.lock() {
+            // c:892 — `if (nwatch) for (...) if (fd matches) replace`.
+            for w in tab.iter_mut() {
+                // c:893
+                if w.fd == fd {
+                    // c:895
+                    w.func = funcnam.clone(); // c:897
+                    w.widget = if OPT_ISSET(ops, b'w') { 1 } else { 0 }; // c:898
+                    found = true; // c:899
+                    break; // c:900
+                }
+            }
+            if !found {
+                // c:904 — append new entry.
+                tab.push(watch_fd {
+                    // c:910-913
+                    fd,           // c:911
+                    func: funcnam, // c:912
+                    widget: if OPT_ISSET(ops, b'w') { 1 } else { 0 }, // c:913
+                });
+                // c:914 — `nwatch = newnwatch;` (Vec.len() tracks
+                // nwatch implicitly).
+            }
+        }
+    } else {
+        // c:916 — deleting a handler (one positional, no value).
+        if let Ok(mut tab) = WATCH_FDS.lock() {
+            let len_before = tab.len();
+            tab.retain(|w| w.fd != fd); // c:920-940 memcpy-shrink
+            found = tab.len() < len_before; // c:940
+        }
+        if !found {
+            // c:944 — `if (!found) zwarnnam(name, "No handler installed for fd %d", fd);`
+            zwarnnam(
+                "zle",
+                &format!("No handler installed for fd {}", fd),
+            ); // c:945
+            return 1; // c:946
+        }
+    }
+
     0 // c:952
 }
 
@@ -1824,6 +1889,71 @@ mod tests {
         ]);
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:791-794 — unknown option char → return 1");
+    }
+
+    /// `Src/Zle/zle_thingy.c:865-867` — `bin_zle_fd` rejects negative
+    /// or non-numeric fd with `zwarnnam` + return 1.
+    #[test]
+    fn bin_zle_fd_rejects_bad_fd_string() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        let ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zle_fd(&["notanumber".to_string()], &ops);
+        assert_eq!(r, 1, "c:865-867 — non-numeric fd → 1");
+        let r2 = bin_zle_fd(&["-1".to_string()], &ops);
+        assert_eq!(r2, 1, "c:865-867 — negative fd → 1");
+    }
+
+    /// `Src/Zle/zle_thingy.c:889-914` — `zle -F FD FUNC` installs a
+    /// new handler. Pin: WATCH_FDS gains an entry.
+    #[test]
+    fn bin_zle_fd_adds_new_handler() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        // Reset table.
+        WATCH_FDS.lock().unwrap().clear();
+        let ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zle_fd(
+            &["7".to_string(), "my_handler".to_string()],
+            &ops,
+        );
+        assert_eq!(r, 0, "c:889-914 — install → 0");
+        let tab = WATCH_FDS.lock().unwrap();
+        assert_eq!(tab.len(), 1);
+        assert_eq!(tab[0].fd, 7);
+        assert_eq!(tab[0].func, "my_handler");
+        assert_eq!(tab[0].widget, 0);
+    }
+
+    /// `Src/Zle/zle_thingy.c:944-946` — deleting a non-existent fd
+    /// handler emits `zwarnnam "No handler installed for fd N"` and
+    /// returns 1.
+    #[test]
+    fn bin_zle_fd_delete_nonexistent_returns_1() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        WATCH_FDS.lock().unwrap().clear();
+        let ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_zle_fd(&["99".to_string()], &ops);
+        assert_eq!(r, 1, "c:944-946 — delete unknown fd → 1");
     }
 
     /// `Src/Zle/zle_thingy.c:988-989` — `bin_zle_transform` rejects
