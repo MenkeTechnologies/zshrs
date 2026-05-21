@@ -33,7 +33,8 @@ use std::sync::atomic::Ordering;
 use crate::fusevm_bridge::with_executor;
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::zsh_h::{
-    BINF_BUILTIN, BINF_COMMAND, BINF_PREFIX, PM_UNDEFINED, WC_SIMPLE, WC_TYPESET,
+    BINF_BUILTIN, BINF_COMMAND, BINF_EXEC, BINF_PREFIX, IS_DASH, PM_UNDEFINED, WC_SIMPLE,
+    WC_TYPESET,
 };
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
@@ -404,6 +405,23 @@ pub struct execcmd_dispatch {
     /// (`Src/exec.c:3160 use_defpath = 1`). NOT YET HONORED by the
     /// fusevm compiler — flagged for follow-up.
     pub use_defpath: bool,
+    /// `command -v` / `command -V` requested: the dispatch target
+    /// flips to `bin_whence` per `Src/exec.c:3149-3157`
+    /// (`hn = &commandbn.node; is_builtin = 1`). The fusevm compiler
+    /// reads this and emits `Op::CallBuiltin(BUILTIN_WHENCE_FROM_COMMAND)`
+    /// instead of resolving the post-strip head.
+    pub has_command_vv: bool,
+    /// `exec -a NAME` requested: ARGV0 override per `Src/exec.c:3214-3240`.
+    /// `Some(NAME)` triggers `zputenv("ARGV0=NAME")` before exec.
+    pub exec_argv0: Option<String>,
+    /// Empty-command branch fired with no redirs (`Src/exec.c:3372-3406`
+    /// — the `else` arm of `if (redir && nonempty(redir))`). Covers
+    /// bare `exec` / `noglob` / `command`. Caller emits
+    /// `lastval = cmdoutval` (0 when no `$(cmd)` ran) and returns.
+    /// Also fires for the `(cflags & BINF_PREFIX) && (cflags &
+    /// BINF_COMMAND)` sub-case at `c:3365-3371` (bare `command`
+    /// returns 0 without complaining about missing redirs).
+    pub is_empty_command: bool,
 }
 
 /// Port of the head section of `execcmd_exec(Estate state,
@@ -453,10 +471,18 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
     let mut hn: Option<&'static crate::ported::zsh_h::builtin> = None; // c:2904
     let mut is_shfunc = false; // c:2913
     let mut is_builtin = false; // c:2913
-    let use_defpath = false; // c:2913
+    let mut use_defpath = false; // c:2913
     let mut cflags: u32 = 0; // c:2915
     let mut orig_cflags: u32 = 0; // c:2915
     let _ = orig_cflags;
+    // c:3263 — `char *exec_argv0 = NULL;` (declared inside the
+    // BINF_EXEC arm; hoisted here so the dispatch struct can carry it
+    // out after the loop terminates).
+    let mut exec_argv0: Option<String> = None;
+    // c:3149/3158 — `has_vV`/`has_p` flags from the BINF_COMMAND arm
+    // (c:3104). Surface `has_vV` via the dispatch struct so the fusevm
+    // compiler can emit `bin_whence` instead of resolving the head.
+    let mut has_command_vv = false;
 
     // c:2962-2973 — `%job` head: rewrite `%name` → `fg|bg|disown %name`.
     // Not in scope for the compile-time dispatch walk: jobspec
@@ -541,19 +567,236 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
             }
             // c:3086 — `uremnode(preargs, firstnode(preargs))`.
             precmd_skip += 1;
+            // c:3087-3091 — `if (!firstnode(preargs)) { execcmd_getargs
+            //   (...); if (!firstnode(preargs)) break; }`. zshrs has
+            // no `execcmd_getargs` (args arrive pre-expanded); the
+            // bounds-check at the top of `while precmd_skip <
+            // preargs.len()` handles the empty case identically.
 
-            // WARNING — DIVERGENCE (sub-modifier option-parsing): the
-            // C body at `c:3092-3275` handles `command -p / -v / -V`
-            // and `exec -a / -l / -c` option flags on the
-            // newly-stripped head. zshrs currently routes those
-            // through `bin_command` / `bin_exec` (ports in
-            // `src/ported/builtin.rs`) — that path doesn't run here.
-            // Result: `use_defpath` stays false even for `command -p`.
-            // Flagged for follow-up; not a blocker for the
-            // `builtin … typeset +x FPATH` chain that prompted this
-            // port.
+            // c:3092-3177 — BINF_COMMAND sub-option parsing
+            // (`command -p / -v / -V`).
+            if (cflags & BINF_COMMAND) != 0 && precmd_skip < preargs.len() {
+                // c:3102-3104 — `LinkNode argnode, oldnode, pnode = NULL;
+                //                int has_p = 0, has_vV = 0, has_other = 0;`
+                let mut argnode: usize = precmd_skip; // c:3105 `argnode = firstnode(preargs);`
+                let mut pnode: Option<usize> = None; // c:3102
+                let mut has_p = false; // c:3104
+                let mut has_vv = false; // c:3104
+                let mut has_other = false; // c:3104
+                // c:3107 — `while (IS_DASH(*argdata))`
+                while argnode < preargs.len()
+                    && IS_DASH(preargs[argnode].chars().next().unwrap_or('\0'))
+                {
+                    let argdata = preargs[argnode].clone(); // c:3106
+                    let bytes = argdata.as_bytes();
+                    // c:3108-3111 — stop on bare `-` or `--`.
+                    if bytes.len() < 2 || (IS_DASH(bytes[1] as char) && bytes.len() == 2) {
+                        // c:3109
+                        break; // c:3111
+                    }
+                    // c:3112-3133 — scan flag chars.
+                    for &c in &bytes[1..] {
+                        // c:3112
+                        match c as char {
+                            'p' => {
+                                // c:3114
+                                has_p = true; // c:3122
+                                pnode = Some(argnode); // c:3123
+                            }
+                            'v' | 'V' => {
+                                // c:3125-3126
+                                has_vv = true; // c:3127
+                            }
+                            _ => {
+                                // c:3129
+                                has_other = true; // c:3130
+                            }
+                        }
+                    }
+                    // c:3134-3138 — unknown flag → don't try, leave alone.
+                    if has_other {
+                        // c:3134
+                        has_p = false; // c:3136
+                        has_vv = false; // c:3136
+                        break; // c:3137
+                    }
+                    // c:3140-3147 — advance to next arg.
+                    argnode += 1; // c:3141 nextnode(argnode)
+                    if argnode >= preargs.len() {
+                        // c:3142 — execcmd_getargs (skipped: pre-expanded)
+                        break; // c:3145
+                    }
+                }
+                // c:3149-3157 — `-v`/`-V` → dispatch to whence.
+                if has_vv {
+                    // c:3149
+                    // c:3154 `pushnode(preargs, "command")` — C re-inserts
+                    // "command" so bin_whence sees it as argv[0]. zshrs
+                    // surfaces this via `has_command_vv`; the fusevm
+                    // compiler emits the equivalent whence call.
+                    has_command_vv = true; // c:3155-3156 hn = &commandbn; is_builtin=1
+                    is_builtin = true;
+                    break; // c:3157
+                } else if has_p {
+                    // c:3158
+                    use_defpath = true; // c:3160
+                    if let Some(pn) = pnode {
+                        // c:3165 — `uremnode(preargs, pnode)`. zshrs:
+                        // remove the `-p`-bearing arg from preargs.
+                        if pn < preargs.len() {
+                            preargs.remove(pn);
+                            // precmd_skip already accounts for the
+                            // stripped `command` prefix; we just removed
+                            // the `-p` flag which sat at preargs[pn].
+                            // No precmd_skip change needed — the head
+                            // remains where it was.
+                        }
+                    }
+                }
+                // c:3176-3177 — `--` trailing end-of-options strip.
+                if argnode < preargs.len() {
+                    let argdata = &preargs[argnode];
+                    let b = argdata.as_bytes();
+                    if b.len() == 2 && IS_DASH(b[0] as char) && IS_DASH(b[1] as char) {
+                        // c:3176
+                        preargs.remove(argnode); // c:3177
+                    }
+                }
+            } else if (cflags & BINF_EXEC) != 0 && precmd_skip < preargs.len() {
+                // c:3178-3275 — BINF_EXEC sub-option parsing
+                // (`exec -a NAME -l -c`).
+                let mut argnode: usize = precmd_skip; // c:3185
+                let mut error_done = false;
+                // c:3196 — `while (argdata && IS_DASH(*argdata) &&
+                //                  strlen(argdata) >= 2)`
+                while argnode < preargs.len() {
+                    let argdata = preargs[argnode].clone();
+                    let bytes = argdata.as_bytes();
+                    if bytes.is_empty() || !IS_DASH(bytes[0] as char) || bytes.len() < 2 {
+                        break; // c:3196 loop guard
+                    }
+                    let oldnode = argnode; // c:3197
+                    argnode += 1; // c:3198 nextnode(oldnode)
+                                  // c:3203-3208 — empty next → error.
+                    if argnode >= preargs.len() {
+                        // c:3203
+                        crate::ported::utils::zerr(
+                            // c:3204
+                            "exec requires a command to execute",
+                        );
+                        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3206
+                        error_done = true;
+                        break; // c:3207 goto done
+                    }
+                    // c:3209 — `uremnode(preargs, oldnode)`.
+                    preargs.remove(oldnode);
+                    argnode -= 1; // re-anchor — `argnode` was the post-removed slot
+                                  // c:3210-3211 — `--` stops option scan.
+                    if bytes.len() == 2 && IS_DASH(bytes[0] as char) && IS_DASH(bytes[1] as char) {
+                        // c:3210
+                        break; // c:3211
+                    }
+                    // c:3212-3258 — scan flag chars after the leading `-`.
+                    let mut k = 1usize;
+                    while k < bytes.len() && !error_done {
+                        let cmdopt = bytes[k] as char; // c:3212
+                        match cmdopt {
+                            'a' => {
+                                // c:3214 — `-a` ARGV0 override.
+                                if k + 1 < bytes.len() {
+                                    // c:3216 — `-aNAME` inline form.
+                                    exec_argv0 =
+                                        Some(String::from_utf8_lossy(&bytes[k + 1..]).into_owned()); // c:3217
+                                    k = bytes.len(); // c:3219 position past end
+                                } else {
+                                    // c:3220 — `-a NAME` separate form.
+                                    if argnode >= preargs.len() {
+                                        // c:3230
+                                        crate::ported::utils::zerr(
+                                            // c:3231
+                                            "exec flag -a requires a parameter",
+                                        );
+                                        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3233
+                                        error_done = true;
+                                        break; // c:3234 goto done
+                                    }
+                                    exec_argv0 = Some(preargs[argnode].clone()); // c:3236
+                                    preargs.remove(argnode); // c:3239
+                                }
+                            }
+                            'c' => {
+                                // c:3242
+                                cflags |= crate::ported::zsh_h::BINF_CLEARENV; // c:3243
+                            }
+                            'l' => {
+                                // c:3245
+                                cflags |= crate::ported::zsh_h::BINF_DASH; // c:3246
+                            }
+                            _ => {
+                                // c:3248
+                                crate::ported::utils::zerr(
+                                    // c:3249
+                                    &format!("unknown exec flag -{}", cmdopt),
+                                );
+                                errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3251
+                                error_done = true;
+                                break; // c:3256
+                            }
+                        }
+                        k += 1;
+                    }
+                    if error_done {
+                        break;
+                    }
+                }
+                // c:3263-3274 — zputenv("ARGV0=NAME"). zshrs defers
+                // the actual `setenv` to the fusevm compiler / external
+                // exec path; we surface `exec_argv0` via the dispatch
+                // struct so the caller can apply it before fork+exec.
+                if let Some(ref a0) = exec_argv0 {
+                    // c:3263 — `remnulargs + untokenize` then setenv.
+                    let cleaned = crate::ported::lex::untokenize(a0); // c:3266-3267
+                    exec_argv0 = Some(cleaned);
+                }
+                if error_done {
+                    return execcmd_dispatch {
+                        precmd_skip,
+                        is_builtin,
+                        is_shfunc,
+                        cflags,
+                        use_defpath,
+                        has_command_vv,
+                        exec_argv0,
+                        is_empty_command: false,
+                    };
+                }
+            }
         }
     }
+
+    // c:3309-3406 — "Empty command" branch. When the precmd-modifier
+    // walk above strips every word with nothing left to dispatch
+    // (bare `exec`, bare `noglob`, bare `command`, bare `nocorrect`),
+    // C falls into `if (!args || empty(args))` at c:3331. Sub-cases:
+    //
+    // - redir-present + do_exec       → nullexec=1 (continue to run)
+    // - redir-present + varspc        → nullexec=2 (continue)
+    // - redir-present + no nullcmd    → `zerr("redirection with no command")`
+    //                                   lastval=1, return
+    // - redir-present + SHNULLCMD     → args=[":"]
+    // - redir-present + readnullcmd   → args=[readnullcmd]
+    // - redir-present + default       → args=[nullcmd]
+    // - NO redir + BINF_PREFIX+COMMAND → lastval=0, return (c:3365-3371)
+    // - NO redir + default            → lastval=cmdoutval, return (c:3372-3406)
+    //
+    // zshrs's `execcmd_exec` doesn't receive `redir` (it takes `args`
+    // only). The cases that DEPEND on redirs are handled by
+    // `compile_zsh.rs::compile_redir` before this dispatch fires; the
+    // remaining cases collapse into the single `is_empty_command`
+    // flag below. Both NO-redir sub-cases produce the same observable
+    // outcome (lastval=0, return without invoking anything), so a
+    // single flag suffices.
+    let is_empty_command = precmd_skip >= preargs.len();
 
     // =================== WARNING — DIVERGENCE ====================
     // c:3285+: prefork-substitution, magic_assign decision, multio
@@ -572,5 +815,8 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
         is_shfunc,
         cflags,
         use_defpath,
+        has_command_vv,
+        exec_argv0,
+        is_empty_command,
     }
 }
