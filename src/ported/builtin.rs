@@ -9320,6 +9320,47 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ), // c:4001
+        // c:Src/Modules/attr.c:220-223 — zsh/attr module (4 builtins).
+        BUILTIN(
+            "zgetattr",
+            0,
+            Some(crate::ported::modules::attr::bin_getattr as HandlerFunc),
+            2,
+            3,
+            0,
+            Some("h"),
+            None,
+        ), // c:220
+        BUILTIN(
+            "zsetattr",
+            0,
+            Some(crate::ported::modules::attr::bin_setattr as HandlerFunc),
+            3,
+            3,
+            0,
+            Some("h"),
+            None,
+        ), // c:221
+        BUILTIN(
+            "zdelattr",
+            0,
+            Some(crate::ported::modules::attr::bin_delattr as HandlerFunc),
+            2,
+            -1,
+            0,
+            Some("h"),
+            None,
+        ), // c:222
+        BUILTIN(
+            "zlistattr",
+            0,
+            Some(crate::ported::modules::attr::bin_listattr as HandlerFunc),
+            1,
+            2,
+            0,
+            Some("h"),
+            None,
+        ), // c:223
         BUILTIN(
             "zle",
             0,
@@ -10076,10 +10117,11 @@ mod tests {
         //   zsh/param/private (private)
         //   zsh/termcap (echotc)
         //   zsh/compctl (compcall, compctl)
-        // Total Rust BUILTINS table size pinned at 142 to catch
+        //   zsh/attr (zgetattr, zsetattr, zdelattr, zlistattr)
+        // Total Rust BUILTINS table size pinned at 146 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 142,
+        assert_eq!(BUILTINS.len(), 146,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
