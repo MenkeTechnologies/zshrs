@@ -714,38 +714,80 @@ pub fn get_comp_string() -> Option<String> {
     Some(snap[start..end].to_string())
 }
 
-/// Port of `inststrlen(char *str, int move, int len)` from Src/Zle/zle_tricky.c:2231.
-/// WARNING: param names don't match C — Rust=(str, move_cursor, len) vs C=(str, move, len)
+/// Port of `int inststrlen(char *str, int move, int len)` from
+/// `Src/Zle/zle_tricky.c:2231`.
+///
+/// Insert `str` at the current cursor; advance cursor when `move`
+/// is set. Honors both line storage modes per C:
+/// - `zlemetaline != NULL` → splice into ZLEMETALINE / advance ZLEMETACS.
+/// - else → convert `str` via `stringaszleline`, splice chars into
+///   ZLELINE / advance ZLECS.
+///
+/// `len == -1` triggers strlen(str). `move` (Rust `move_cursor` — the
+/// C name collides with Rust's `move` keyword) selects cursor-advance.
 pub fn inststrlen(
     // c:2231
     str: &str,
     move_cursor: bool,
     mut len: i32,
 ) -> i32 {
-    // c:2233-2234 — `if (!len || !str) return 0`.
+    // c:2233-2234 — `if (!len || !str) return 0;`
     if len == 0 || str.is_empty() {
         return 0;
     }
-    // c:2235-2236 — `if (len == -1) len = strlen(str)`.
+    // c:2235-2236 — `if (len == -1) len = strlen(str);`
     if len == -1 {
         len = str.len() as i32;
     }
-    // c:2237-2247 — meta vs wide branches; we work in chars directly.
-    let n = (len as usize).min(str.len());
-    for (i, ch) in str.chars().take(n).enumerate() {
-        ZLELINE
-            .lock()
-            .unwrap()
-            .insert(
-                ZLECS.load(Ordering::SeqCst) + i,
-                ch,
-            );
+    // c:2237 — `if (zlemetaline != NULL) { meta path } else { wide path }`
+    let zml_active = crate::ported::zle::compcore::ZLEMETALINE
+        .get()
+        .is_some();
+    if zml_active {
+        // c:2238 — `spaceinline(len);` then strncpy into ZLEMETALINE[cs..].
+        // The Rust spaceinline operates on ZLELINE; for the meta path
+        // we splice directly into ZLEMETALINE.
+        if let Some(m) = crate::ported::zle::compcore::ZLEMETALINE.get() {
+            if let Ok(mut g) = m.lock() {
+                let cs = crate::ported::zle::compcore::ZLEMETACS
+                    .load(Ordering::SeqCst) as usize;
+                let cs = cs.min(g.len());
+                let take = (len as usize).min(str.len());
+                let bytes = g.as_bytes();
+                let new_line: String = String::from_utf8_lossy(&bytes[..cs]).into_owned()
+                    + &str[..take]
+                    + &String::from_utf8_lossy(&bytes[cs..]);
+                *g = new_line;
+                crate::ported::zle::compcore::ZLEMETALL
+                    .store(g.len() as i32, Ordering::SeqCst);                // c:2239 spaceinline updates ZLEMETALL
+                if move_cursor {                                             // c:2240
+                    crate::ported::zle::compcore::ZLEMETACS                  // c:2241 zlemetacs += len
+                        .fetch_add(take as i32, Ordering::SeqCst);
+                }
+            }
+        }
+        return len;
     }
-    if move_cursor {
-        ZLECS.fetch_add(n, Ordering::SeqCst);
-        // c:2241
+    // c:2244-2253 — non-meta wide path.
+    let instr = &str[..(len as usize).min(str.len())];                       // c:2247 ztrduppfx(str, len)
+    let zlestr: Vec<char> = crate::ported::zle::zle_utils::stringaszleline(instr); // c:2248
+    let zlelen = zlestr.len();
+    crate::ported::zle::zle_utils::spaceinline(zlelen as i32);               // c:2249
+    {
+        let mut line = ZLELINE.lock().unwrap();
+        let pos = ZLECS.load(Ordering::SeqCst);
+        for (i, ch) in zlestr.iter().enumerate() {                           // c:2250 ZS_strncpy
+            if pos + i < line.len() {
+                line[pos + i] = *ch;
+            } else {
+                line.insert(pos + i, *ch);
+            }
+        }
     }
-    len
+    if move_cursor {                                                         // c:2253
+        ZLECS.fetch_add(zlelen, Ordering::SeqCst);                           // c:2254 zlecs += len
+    }
+    len                                                                      // c:2257 return len
 }
 
 /// !!! WARNING: PARTIAL PORT — stub. C `doexpansion(char *s, int lst,
