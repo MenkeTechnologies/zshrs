@@ -232,7 +232,36 @@ pub fn spaceinline(ct: i32) {
 /// WARNING: param names don't match C — Rust=(zle, to, cnt) vs C=(to, cnt)
 pub fn shiftchars(to: i32, cnt: i32) {
     // c:846
-    // C body c:911-915 (the load-bearing tail of shiftchars):
+    // c:851-854 — mark adjustment: if mark is past the deleted range,
+    // shift it left by cnt; if mark is inside the range, clamp to `to`.
+    //     if (mark >= to + cnt) mark -= cnt;
+    //     else if (mark > to)   mark = to;
+    let mark_cur = crate::ported::zle::zle_main::MARK.load(Ordering::SeqCst) as i32;
+    if mark_cur >= to + cnt {
+        crate::ported::zle::zle_main::MARK
+            .store((mark_cur - cnt).max(0) as usize, Ordering::SeqCst); // c:852
+    } else if mark_cur > to {
+        crate::ported::zle::zle_main::MARK.store(to.max(0) as usize, Ordering::SeqCst); // c:854
+    }
+
+    // !!! WARNING: PARTIAL PORT — region_highlights adjustment unported.
+    // C lines c:856-909 walk `region_highlights[N_SPECIAL_HIGHLIGHTS..
+    // n_region_highlights]` and adjust each entry's `start`/`end`
+    // (and `start_meta`/`end_meta` on the metaline branch) by the
+    // same rule as `mark`: shift past the cut, or clamp to `to`.
+    // The Rust REGION_HIGHLIGHTS table (zle_refresh.rs:2604) uses a
+    // simplified struct without `flags`/`start_meta`/`end_meta`, so
+    // the ZRH_PREDISPLAY-subtraction logic (c:862-865/892-895) can't
+    // be expressed yet. Faithful port needs migration to the
+    // canonical `region_highlight` struct at zle_h.rs:847. Tracked
+    // for follow-up. Skipping leaves overlapping highlights stale
+    // after a shift, not corruption.
+
+    // c:856-885 — metaline branch (zlemetaline != NULL). Rust stores
+    // ZLELINE as UTF-8 directly without a separate metafied buffer,
+    // so the meta-branch collapses into the !meta branch below.
+
+    // c:911-915 — !zlemetaline branch (the load-bearing tail):
     //     while (to + cnt < zlell) {
     //         zleline[to] = zleline[to + cnt];
     //         to++;
@@ -1875,6 +1904,43 @@ mod findbol_findeol_tests {
         let line: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(line, "abcdef", "cnt=0 → no chars removed");
         assert_eq!(ZLELL.load(Ordering::SeqCst), 6);
+    }
+
+    /// `Src/Zle/zle_utils.c:851-854` — mark adjustment under shiftchars.
+    /// Pin all three arms of the mark-relative-to-cut conditional.
+    #[test]
+    fn shiftchars_adjusts_mark_per_c851_c854() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        // Arm 1: mark > to+cnt → shifts left by cnt (c:851-852).
+        zle_with("0123456789", 0);
+        crate::ported::zle::zle_main::MARK.store(8, Ordering::SeqCst);
+        shiftchars(2, 3);
+        assert_eq!(
+            crate::ported::zle::zle_main::MARK.load(Ordering::SeqCst),
+            5,
+            "c:851-852 — mark(8) >= to(2)+cnt(3) → mark -= cnt → 5"
+        );
+
+        // Arm 2: to < mark <= to+cnt → mark clamped to `to` (c:853-854).
+        zle_with("0123456789", 0);
+        crate::ported::zle::zle_main::MARK.store(4, Ordering::SeqCst);
+        shiftchars(2, 3);
+        assert_eq!(
+            crate::ported::zle::zle_main::MARK.load(Ordering::SeqCst),
+            2,
+            "c:853-854 — mark(4) inside (to=2, cnt=3] range → clamp to `to`(2)"
+        );
+
+        // Arm 3: mark <= to → mark unchanged.
+        zle_with("0123456789", 0);
+        crate::ported::zle::zle_main::MARK.store(1, Ordering::SeqCst);
+        shiftchars(2, 3);
+        assert_eq!(
+            crate::ported::zle::zle_main::MARK.load(Ordering::SeqCst),
+            1,
+            "c:851/853 — mark(1) < to(2) → unchanged"
+        );
     }
 
     /// `Src/Zle/zle_utils.c:777-844` — `spaceinline(ct)` opens `ct`
