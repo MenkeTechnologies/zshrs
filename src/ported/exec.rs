@@ -33,20 +33,24 @@ use std::sync::atomic::Ordering;
 
 use crate::fusevm_bridge::with_executor;
 use crate::ported::builtin::{cd_able_vars, fixdir, BUILTINS, DOPRINTDIR, LASTVAL};
+use crate::ported::builtins::rlimits::setlimits;
+use crate::ported::compat::zgettime_monotonic_if_available;
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::hashtable::{dircache_set, shfunctab_lock};
 use crate::ported::hist::{strinbeg, strinend};
 use crate::ported::init::{underscorelen, underscoreused, zunderscore};
 use crate::ported::input::{inpop, inpush};
+use crate::ported::jobs::THISJOB;
 use crate::ported::lex::{hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO};
-use crate::ported::mem::dupstring;
+use crate::ported::mem::{dupstring, popheap, pushheap};
+use crate::ported::options::sticky;
 use crate::ported::params::getsparam;
 use crate::ported::parse::{ecrawstr, parse_list};
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::subst::{quotesubst, singsub};
 use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, ERRFLAG_ERROR};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR};
+use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options};
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
 /// a trap handler is currently being processed and, paired with
@@ -1090,6 +1094,54 @@ pub fn is_anonymous_function_name(name: &str) -> i32 {
     }
 }
 
+/// Port of `void execstring(char *s, int dont_change_job, int exiting,
+/// char *context)` from `Src/exec.c:1228`.
+///
+/// C body:
+/// ```c
+/// Eprog prog;
+/// pushheap();
+/// if (isset(VERBOSE)) {
+///     zputs(s, stderr);
+///     fputc('\n', stderr);
+///     fflush(stderr);
+/// }
+/// if ((prog = parse_string(s, 0)))
+///     execode(prog, dont_change_job, exiting, context);
+/// popheap();
+/// ```
+///
+/// Public entry — execute an arbitrary string as a zsh command list.
+/// Called by `eval`, `.`/`source`, `trap` action firing, autoload
+/// body executors, command substitution body runners.
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// The C path is `parse_string` → `execode` → `execlist` (wordcode
+/// walker). zshrs replaces `execode/execlist` with the fusevm
+/// bytecode VM at `crate::vm_helper::ShellExecutor::execute_script_zsh_pipeline`.
+/// Faithful port: VERBOSE banner + pushheap/popheap intact; the
+/// parse+execute chain delegates to the fusevm entry. When `execlist`
+/// lands as a strict 1:1 port, swap the delegate for the canonical
+/// chain.
+/// =============================================================
+pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str) {
+    // c:1228
+    pushheap(); // c:1232
+                                    // c:1233-1237 — VERBOSE banner.
+    if isset(VERBOSE) {
+        // c:1233
+        let mut stderr = std::io::stderr().lock();
+        use std::io::Write;
+        let _ = stderr.write_all(s.as_bytes()); // c:1234 zputs(s, stderr)
+        let _ = stderr.write_all(b"\n"); // c:1235
+        let _ = stderr.flush(); // c:1236
+    }
+    // c:1238-1239 — parse + execode. zshrs delegates the parse+VM
+    // chain to the fusevm pipeline (see WARNING above).
+    let _ = with_executor(|e| e.execute_script_zsh_pipeline(s));
+    popheap(); // c:1240
+}
+
 /// Port of `Emulation_options sticky_emulation_dup(Emulation_options src,
 /// int useheap)` from `Src/exec.c:5501`.
 ///
@@ -1118,12 +1170,12 @@ pub fn is_anonymous_function_name(name: &str) -> i32 {
 /// at function-def time to snapshot the pending `sticky` global so
 /// the function carries its own immutable copy.
 pub fn sticky_emulation_dup(
-    src: &crate::ported::zsh_h::emulation_options,
+    src: &emulation_options,
     _useheap: i32,
-) -> crate::ported::zsh_h::Emulation_options {
+) -> Emulation_options {
     // c:5501
     // c:5503-5505 — `newsticky = hcalloc/zshcalloc; newsticky->emulation = src->emulation;`
-    let mut newsticky = Box::new(crate::ported::zsh_h::emulation_options {
+    let mut newsticky = Box::new(emulation_options {
         emulation: src.emulation, // c:5505
         n_on_opts: 0,
         n_off_opts: 0,
@@ -1159,7 +1211,7 @@ pub fn sticky_emulation_dup(
 /// snapshot (deep-copy via `sticky_emulation_dup`), or clear it.
 pub fn shfunc_set_sticky(shf: &mut shfunc) {
     // c:5527
-    let sticky_guard = crate::ported::options::sticky.lock().unwrap();
+    let sticky_guard = sticky.lock().unwrap();
     if let Some(ref s) = *sticky_guard {
         // c:5529
         shf.sticky = Some(sticky_emulation_dup(s, 0)); // c:5530
@@ -1201,7 +1253,7 @@ pub fn zfork(ts: Option<&mut crate::ported::zsh_system_h::timespec>) -> libc::pi
     let pid: libc::pid_t;
 
     // c:356-359 — `if (thisjob != -1 && thisjob >= jobtabsize - 1 && !expandjobtab())`
-    let thisjob_lock = crate::ported::jobs::THISJOB.get_or_init(|| std::sync::Mutex::new(-1));
+    let thisjob_lock = THISJOB.get_or_init(|| std::sync::Mutex::new(-1));
     let thisjob = *thisjob_lock.lock().unwrap();
     if thisjob != -1 {
         // c:356
@@ -1222,7 +1274,7 @@ pub fn zfork(ts: Option<&mut crate::ported::zsh_system_h::timespec>) -> libc::pi
     }
     // c:360-361 — `if (ts) zgettime_monotonic_if_available(ts);`
     if let Some(ts) = ts {
-        crate::ported::compat::zgettime_monotonic_if_available(ts);
+        zgettime_monotonic_if_available(ts);
     }
     // c:368-370 — `queue_signals(); pid = fork(); unqueue_signals();`
     queue_signals(); // c:368
@@ -1242,7 +1294,7 @@ pub fn zfork(ts: Option<&mut crate::ported::zsh_system_h::timespec>) -> libc::pi
     #[cfg(unix)]
     if pid == 0 {
         // c:376
-        let _ = crate::ported::builtins::rlimits::setlimits(""); // c:378
+        let _ = setlimits(""); // c:378
     }
     pid // c:380
 }
