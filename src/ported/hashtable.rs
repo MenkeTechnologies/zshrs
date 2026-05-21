@@ -857,8 +857,12 @@ pub fn printhashtabinfo<T>(name: &str, ht: &HashMap<String, T>) -> String {
 /// C iterates all registered hashtables (cmdnamtab, shfunctab,
 /// aliastab, etc.) and emits stats for each. Rust port walks the
 /// known-singleton tables.
-/// WARNING: param names don't match C — Rust=() vs C=(nam, args, ops, func)
-pub fn bin_hashinfo() -> i32 {
+pub fn bin_hashinfo(
+    _nam: &str,
+    _args: &[String], // c:566
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     let banner = "----------------------------------------------------";
     println!("{}", banner);
     {

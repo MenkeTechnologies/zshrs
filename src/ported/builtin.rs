@@ -1875,9 +1875,16 @@ pub fn printif(str: Option<&str>, c: u8) {
 pub fn bin_fc(
     nam: &str,
     argv: &[String], // c:1426
-    ops: &mut options,
+    ops_in: &options,
     func: i32,
 ) -> i32 {
+    // C `Options ops` is `struct options *` — mutable via `ops->ind['n']
+    // = 1;` at c:1644. zshrs HandlerFunc takes `&options`, so we clone
+    // to a fn-local `ops` mirror at the top. Mutation of the clone is
+    // intra-fn only (`fclist` reads `ops` to format output and never
+    // returns it), so behavior matches C.
+    let mut ops = ops_in.clone();
+    let ops = &mut ops;
     let mut argv = argv.to_vec();
     let mut first: i64 = -1;
     let mut last: i64 = -1;
@@ -7949,7 +7956,16 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ),
-        BUILTIN("bye", 0, None, 0, 1, BIN_EXIT, None, None),
+        BUILTIN(
+            "bye",
+            0,
+            Some(bin_break as HandlerFunc),
+            0,
+            1,
+            BIN_EXIT,
+            None,
+            None,
+        ),
         BUILTIN(
             "cd",
             BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID,
@@ -8095,14 +8111,23 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         BUILTIN(
             "fc",
             0,
-            None,
+            Some(bin_fc as HandlerFunc),
             0,
             -1,
             BIN_FC,
             Some("aAdDe:EfiIlLmnpPrRst:W"),
             None,
         ),
-        BUILTIN("fg", 0, None, 0, -1, BIN_FG, None, None),
+        BUILTIN(
+            "fg",
+            0,
+            Some(bin_fg as HandlerFunc),
+            0,
+            -1,
+            BIN_FG,
+            None,
+            None,
+        ),
         BUILTIN(
             "float",
             BINF_PLUSOPTS | BINF_MAGICEQUALS | BINF_PSPECIAL | BINF_ASSIGN,
@@ -8123,7 +8148,16 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("ckmMstTuUWx:z"),
             None,
         ),
-        BUILTIN("getln", 0, None, 0, -1, 0, Some("ecnAlE"), Some("zr")),
+        BUILTIN(
+            "getln",
+            0,
+            Some(bin_read as HandlerFunc),
+            0,
+            -1,
+            0,
+            Some("ecnAlE"),
+            Some("zr"),
+        ),
         BUILTIN(
             "getopts",
             0,
@@ -8146,11 +8180,20 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         ),
         // Src/builtin.c — `#ifdef ZSH_HASH_DEBUG`
         //   BUILTIN("hashinfo", 0, bin_hashinfo, 0, 0, 0, NULL, NULL)
-        BUILTIN("hashinfo", 0, None, 0, 0, 0, None, None),
+        BUILTIN(
+            "hashinfo",
+            0,
+            Some(crate::ported::hashtable::bin_hashinfo as HandlerFunc),
+            0,
+            0,
+            0,
+            None,
+            None,
+        ),
         BUILTIN(
             "history",
             0,
-            None,
+            Some(bin_fc as HandlerFunc),
             0,
             -1,
             BIN_FC,
@@ -8177,7 +8220,16 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("dlpZrs"),
             None,
         ),
-        BUILTIN("kill", BINF_HANDLES_OPTS, None, 0, -1, 0, None, None),
+        BUILTIN(
+            "kill",
+            BINF_HANDLES_OPTS,
+            Some(crate::ported::jobs::bin_kill as HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        ),
         BUILTIN("let", 0, Some(bin_let as HandlerFunc), 1, -1, 0, None, None),
         BUILTIN(
             "local",
@@ -8201,11 +8253,20 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         ),
         // Src/builtin.c — `#if defined(ZSH_MEM) & defined(ZSH_MEM_DEBUG)`
         //   BUILTIN("mem", 0, bin_mem, 0, 0, 0, "v", NULL)
-        BUILTIN("mem", 0, None, 0, 0, 0, Some("v"), None),
+        BUILTIN(
+            "mem",
+            0,
+            Some(crate::ported::mem::bin_mem as HandlerFunc),
+            0,
+            0,
+            0,
+            Some("v"),
+            None,
+        ),
         BUILTIN(
             "popd",
             BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID,
-            None,
+            Some(bin_cd as HandlerFunc),
             0,
             1,
             BIN_POPD,
@@ -8238,14 +8299,23 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         BUILTIN(
             "pushd",
             BINF_SKIPINVALID | BINF_SKIPDASH | BINF_DASHDASHVALID,
-            None,
+            Some(bin_cd as HandlerFunc),
             0,
             2,
             BIN_PUSHD,
             Some("qsPL"),
             None,
         ),
-        BUILTIN("pushln", 0, None, 0, -1, BIN_PRINT, None, Some("-nz")),
+        BUILTIN(
+            "pushln",
+            0,
+            Some(bin_print as HandlerFunc),
+            0,
+            -1,
+            BIN_PRINT,
+            None,
+            Some("-nz"),
+        ),
         BUILTIN(
             "pwd",
             0,
@@ -8256,7 +8326,16 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("rLP"),
             None,
         ),
-        BUILTIN("r", 0, None, 0, -1, BIN_R, Some("IlLnr"), None),
+        BUILTIN(
+            "r",
+            0,
+            Some(bin_fc as HandlerFunc),
+            0,
+            -1,
+            BIN_R,
+            Some("IlLnr"),
+            None,
+        ),
         BUILTIN(
             "read",
             0,
@@ -8307,7 +8386,16 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ),
-        BUILTIN("setopt", 0, None, 0, -1, BIN_SETOPT, None, None),
+        BUILTIN(
+            "setopt",
+            0,
+            Some(crate::ported::options::bin_setopt as HandlerFunc),
+            0,
+            -1,
+            BIN_SETOPT,
+            None,
+            None,
+        ),
         BUILTIN(
             "shift",
             BINF_PSPECIAL,
@@ -8328,7 +8416,16 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ),
-        BUILTIN("suspend", 0, None, 0, 0, 0, Some("f"), None),
+        BUILTIN(
+            "suspend",
+            0,
+            Some(crate::ported::jobs::bin_suspend as HandlerFunc),
+            0,
+            0,
+            0,
+            Some("f"),
+            None,
+        ),
         BUILTIN(
             "test",
             BINF_HANDLES_OPTS,
@@ -8354,9 +8451,36 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         // free-fn ports at src/ported/builtins/rlimits.rs but never
         // registered them; the BUILTIN_NAMES derivation missed them and
         // `type limit` etc. returned empty.
-        BUILTIN("limit", 0, None, 0, -1, 0, Some("sh"), None), // c:rlimits.c:868
-        BUILTIN("ulimit", 0, None, 0, -1, 0, None, None),      // c:rlimits.c:869
-        BUILTIN("unlimit", 0, None, 0, -1, 0, Some("hs"), None), // c:rlimits.c:870
+        BUILTIN(
+            "limit",
+            0,
+            Some(crate::ported::builtins::rlimits::bin_limit as HandlerFunc),
+            0,
+            -1,
+            0,
+            Some("sh"),
+            None,
+        ), // c:rlimits.c:868
+        BUILTIN(
+            "ulimit",
+            0,
+            Some(crate::ported::builtins::rlimits::bin_ulimit as HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:rlimits.c:869
+        BUILTIN(
+            "unlimit",
+            0,
+            Some(crate::ported::builtins::rlimits::bin_unlimit as HandlerFunc),
+            0,
+            -1,
+            0,
+            Some("hs"),
+            None,
+        ), // c:rlimits.c:870
         BUILTIN(
             "times",
             BINF_PSPECIAL,
@@ -8457,7 +8581,16 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("fmvn"),
             None,
         ),
-        BUILTIN("unsetopt", 0, None, 0, -1, BIN_UNSETOPT, None, None),
+        BUILTIN(
+            "unsetopt",
+            0,
+            Some(crate::ported::options::bin_setopt as HandlerFunc),
+            0,
+            -1,
+            BIN_UNSETOPT,
+            None,
+            None,
+        ),
         BUILTIN(
             "wait",
             0,
@@ -8508,7 +8641,16 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("AFRILP:abcfdilmpsue"),
             None,
         ),
-        BUILTIN("zcompile", 0, None, 0, -1, 0, Some("tUMRcmzka"), None),
+        BUILTIN(
+            "zcompile",
+            0,
+            Some(crate::ported::parse::bin_zcompile as HandlerFunc),
+            0,
+            -1,
+            0,
+            Some("tUMRcmzka"),
+            None,
+        ),
         // Module builtins (zsh/zutil, zsh/cap, zsh/pcre, etc.) — these
         // live in src/ported/modules/* and src/ported/zle/* but their
         // canonical pub fn signatures match HandlerFunc, so they can be
