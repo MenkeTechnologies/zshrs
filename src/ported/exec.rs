@@ -1092,3 +1092,345 @@ pub fn is_anonymous_function_name(name: &str) -> i32 {
         0
     }
 }
+
+/// Port of `int commandnotfound(char *arg0, LinkList args)` from
+/// `Src/exec.c:669`.
+///
+/// C body:
+/// ```c
+/// Shfunc shf = (Shfunc)
+///     shfunctab->getnode(shfunctab, "command_not_found_handler");
+/// if (!shf) {
+///     lastval = 127;
+///     return 1;
+/// }
+/// pushnode(args, arg0);
+/// lastval = doshfunc(shf, args, 1);
+/// return 0;
+/// ```
+///
+/// Look up the user-defined `command_not_found_handler` shfunc and
+/// invoke it with `arg0` prepended to `args`. Returns 0 if handled,
+/// 1 if no handler (so caller emits the standard "command not found"
+/// error). Sets `$?` to 127 in the no-handler path.
+pub fn commandnotfound(arg0: &str, args: &mut Vec<String>) -> i32 {
+    // c:669
+    // c:671-672 — `shf = shfunctab->getnode(shfunctab, "command_not_found_handler");`
+    let has_handler = shfunctab_lock()
+        .read()
+        .map(|t| t.get("command_not_found_handler").is_some())
+        .unwrap_or(false);
+    if !has_handler {
+        // c:674
+        LASTVAL.store(127, Ordering::Relaxed); // c:675
+        return 1; // c:676
+    }
+    // c:679 — `pushnode(args, arg0);` — prepend arg0.
+    args.insert(0, arg0.to_string());
+    // c:680 — `lastval = doshfunc(shf, args, 1);`
+    // WARNING — DIVERGENCE: `doshfunc` (c:5823) is not yet ported.
+    // Route through the executor's function dispatch so the handler
+    // actually fires; the C `noreturnval=1` arg is the "don't pop
+    // funcstack into $? after return" flag — fusevm's
+    // dispatch_function_call already manages funcstack correctly.
+    let status = with_executor(|exec| {
+        exec.dispatch_function_call("command_not_found_handler", args)
+            .unwrap_or(127)
+    });
+    LASTVAL.store(status, Ordering::Relaxed);
+    0 // c:681
+}
+
+/// Port of `char *namedpipe(void)` from `Src/exec.c:5001`.
+///
+/// C body (#ifdef HAVE_FIFOS branch):
+/// ```c
+/// char *tnam = gettempname(NULL, 1);
+/// if (!tnam) {
+///     zerr("failed to create named pipe: %e", errno);
+///     return NULL;
+/// }
+/// if (mkfifo(tnam, 0600) < 0) {
+///     zerr("failed to create named pipe: %s, %e", tnam, errno);
+///     return NULL;
+/// }
+/// return tnam;
+/// ```
+///
+/// Create a FIFO with a unique name for process substitution. Used by
+/// `getproc` (`<(cmd)` / `>(cmd)`) on systems without `/dev/fd`.
+pub fn namedpipe() -> Option<String> {
+    // c:5001
+    let tnam = crate::ported::utils::gettempname(None, true); // c:5003
+    let tnam = match tnam {
+        Some(t) => t,
+        None => {
+            // c:5005
+            zerr(&format!(
+                // c:5006
+                "failed to create named pipe: {}",
+                std::io::Error::last_os_error()
+            ));
+            return None; // c:5007
+        }
+    };
+    // c:5010 — `mkfifo(tnam, 0600)`.
+    let cstr = match std::ffi::CString::new(tnam.as_str()) {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+    if unsafe { libc::mkfifo(cstr.as_ptr(), 0o600) } < 0 {
+        // c:5010
+        zerr(&format!(
+            // c:5014
+            "failed to create named pipe: {}, {}",
+            tnam,
+            std::io::Error::last_os_error()
+        ));
+        return None; // c:5015
+    }
+    Some(tnam) // c:5017
+}
+
+/// Port of `Eprog parsecmd(char *cmd, char **eptr)` from `Src/exec.c:4878`.
+///
+/// C body:
+/// ```c
+/// char *str;
+/// Eprog prog;
+/// for (str = cmd + 2; *str && *str != Outpar; str++);
+/// if (!*str || cmd[1] != Inpar) {
+///     char *errstr = dupstrpfx(cmd, 2);
+///     untokenize(errstr);
+///     zerr("unterminated `%s...)'", errstr);
+///     return NULL;
+/// }
+/// *str = '\0';
+/// if (eptr) *eptr = str+1;
+/// if (!(prog = parse_string(cmd + 2, 0))) {
+///     zerr("parse error in process substitution");
+///     return NULL;
+/// }
+/// return prog;
+/// ```
+///
+/// Lex a `<(...)`/`>(...)`/`=(...)` body — the leading 2 chars are
+/// the marker pair (`Inang+Inpar`, `Outang+Inpar`, `Equals+Inpar`),
+/// remainder is the command up to the matching `Outpar`. Returns the
+/// parsed Eprog (and writes the post-`)` cursor through `eptr`).
+pub fn parsecmd(cmd: &str, eptr: Option<&mut usize>) -> Option<eprog> {
+    // c:4878
+    let bytes = cmd.as_bytes();
+    // c:4883 — `for (str = cmd + 2; *str && *str != Outpar; str++);`
+    if bytes.len() < 2 {
+        return None;
+    }
+    let mut str_idx: usize = 2;
+    while str_idx < bytes.len() && (bytes[str_idx] as char) != crate::ported::zsh_h::Outpar {
+        str_idx += 1;
+    }
+    // c:4884 — `if (!*str || cmd[1] != Inpar)`.
+    if str_idx >= bytes.len() || (bytes[1] as char) != crate::ported::zsh_h::Inpar {
+        // c:4884
+        let errstr = if bytes.len() >= 2 {
+            untokenize(&cmd[..2]) // c:4891-4892
+        } else {
+            String::new()
+        };
+        zerr(&format!("unterminated `{}...)'", errstr)); // c:4893
+        return None; // c:4894
+    }
+    // c:4896 — `*str = '\0';` — cmd[str_idx] becomes the terminator.
+    // c:4897-4898 — `if (eptr) *eptr = str + 1;`
+    if let Some(p) = eptr {
+        *p = str_idx + 1;
+    }
+    // c:4899 — `parse_string(cmd + 2, 0)`.
+    let body = &cmd[2..str_idx];
+    let prog = parse_string(body, 0);
+    if prog.is_none() {
+        // c:4899
+        zerr("parse error in process substitution"); // c:4900
+        return None; // c:4901
+    }
+    prog // c:4903
+}
+
+/// Port of `static int cancd2(char *s)` from `Src/exec.c:6411`.
+///
+/// C body:
+/// ```c
+/// struct stat buf;
+/// char *us, *us2 = NULL;
+/// int ret;
+/// if (!isset(CHASEDOTS) && !isset(CHASELINKS)) {
+///     if (*s != '/')
+///         us = tricat(pwd[1] ? pwd : "", "/", s);
+///     else
+///         us = ztrdup(s);
+///     fixdir(us2 = us);
+/// } else
+///     us = unmeta(s);
+/// ret = !(access(us, X_OK) || stat(us, &buf) || !S_ISDIR(buf.st_mode));
+/// if (us2) free(us2);
+/// return ret;
+/// ```
+///
+/// True iff `s` is a directory we can `cd` into (X-perm). With
+/// `!CHASEDOTS && !CHASELINKS`, lexically canonicalise the path
+/// (joining with PWD if relative) so `cd /foo/bar/..` works without
+/// resolving the symlink. Otherwise pass `s` through `unmeta` to libc.
+pub fn cancd2(s: &str) -> i32 {
+    // c:6411
+    let us: String;
+    // c:6422 — `if (!isset(CHASEDOTS) && !isset(CHASELINKS))`.
+    let chasedots = crate::ported::zsh_h::isset(crate::ported::zsh_h::CHASEDOTS); // c:6422
+    let chaselinks = crate::ported::zsh_h::isset(crate::ported::zsh_h::CHASELINKS);
+    if !chasedots && !chaselinks {
+        // c:6422
+        // c:6423-6426 — `*s != '/' ? tricat(pwd, "/", s) : ztrdup(s);`
+        let pwd_str = crate::ported::params::getsparam("PWD").unwrap_or_default(); // c:6424 `pwd`
+        let mut raw = if !s.starts_with('/') {
+            // c:6423
+            format!("{}/{}", if pwd_str.len() > 1 { &pwd_str[..] } else { "" }, s)
+        } else {
+            s.to_string()
+        };
+        // c:6427 — `fixdir(us2 = us);` — lexical canonicalisation.
+        raw = crate::ported::builtin::fixdir(&raw);
+        us = raw;
+    } else {
+        // c:6428
+        us = unmeta(s); // c:6429
+    }
+    // c:6430 — `!(access(us, X_OK) || stat(us, &buf) || !S_ISDIR(...))`.
+    let cstr = match std::ffi::CString::new(us.as_str()) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    if unsafe { libc::access(cstr.as_ptr(), libc::X_OK) } != 0 {
+        return 0;
+    }
+    let meta = match std::fs::metadata(&us) {
+        Ok(m) => m,
+        Err(_) => return 0,
+    };
+    if !meta.file_type().is_dir() {
+        return 0;
+    }
+    1
+}
+
+/// Port of `char *cancd(char *s)` from `Src/exec.c:6370`.
+///
+/// Resolve a `cd` target against `$cdpath` and `cd_able_vars`.
+/// Returns the chosen absolute path (heap-dup) if `cancd2` accepts
+/// it, else `None`.
+///
+/// C body uses CDPATH walking + `cd_able_vars()` fallback. Sets
+/// `doprintdir = -1` when a non-trivial path is found (so `cd`
+/// echoes the resolved path).
+pub fn cancd(s: &str) -> Option<String> {
+    // c:6370
+    // c:6372-6373 — `nocdpath = s[0]=='.' && (s[1]=='/' || !s[1] ||
+    //                (s[1]=='.' && (s[2]=='/' || !s[2])))`.
+    let bytes = s.as_bytes();
+    let nocdpath = bytes.first().copied() == Some(b'.')
+        && (bytes.get(1).copied() == Some(b'/')
+            || bytes.get(1).is_none()
+            || (bytes.get(1).copied() == Some(b'.')
+                && (bytes.get(2).copied() == Some(b'/') || bytes.get(2).is_none())));
+    // c:6376 — `if (*s != '/')` branch.
+    if !s.starts_with('/') {
+        // c:6376
+        // c:6379-6380 — `if (cancd2(s)) return s;`
+        if cancd2(s) != 0 {
+            return Some(s.to_string());
+        }
+        // c:6381-6382 — `if (access(unmeta(s), X_OK) == 0) return NULL;`
+        let cstr = std::ffi::CString::new(unmeta(s).as_str()).ok()?;
+        if unsafe { libc::access(cstr.as_ptr(), libc::X_OK) } == 0 {
+            return None; // c:6382
+        }
+        // c:6383-6397 — CDPATH walk.
+        if !nocdpath {
+            let cdpath_str = crate::ported::params::getsparam("CDPATH").unwrap_or_default();
+            for cp in cdpath_str.split(':') {
+                // c:6384
+                let sbuf = if !cp.is_empty() {
+                    format!("{}/{}", cp, s) // c:6386
+                } else {
+                    s.to_string() // c:6391
+                };
+                if cancd2(&sbuf) != 0 {
+                    // c:6393
+                    crate::ported::builtin::DOPRINTDIR.store(-1, Ordering::Relaxed); // c:6394
+                    return Some(sbuf); // c:6395
+                }
+            }
+        }
+        // c:6398-6403 — `cd_able_vars()` fallback.
+        if let Some(t) = crate::ported::builtin::cd_able_vars(s) {
+            // c:6398
+            if cancd2(&t) != 0 {
+                // c:6399
+                crate::ported::builtin::DOPRINTDIR.store(-1, Ordering::Relaxed); // c:6400
+                return Some(t); // c:6401
+            }
+        }
+        return None; // c:6404
+    }
+    // c:6406 — absolute path: `return cancd2(s) ? s : NULL;`
+    if cancd2(s) != 0 {
+        Some(s.to_string())
+    } else {
+        None
+    }
+}
+
+/// Port of `char *simple_redir_name(Eprog prog, int redir_type)` from
+/// `Src/exec.c:4689`.
+///
+/// Test if an Eprog encodes a single simple-command consisting of a
+/// SINGLE redirection of the requested type with NO command body
+/// (the `cat < foo` shape). When true, returns the redir target name
+/// (heap-dup) so callers like `$(< file)` short-circuit to a direct
+/// `open(2)` instead of fork+pipe+exec.
+///
+/// C body walks the wordcode at fixed offsets (`pc[0]` = WC_LIST,
+/// `pc[1]` = WC_SUBLIST, `pc[2]` = WC_PIPE, `pc[3]` = WC_REDIR,
+/// `pc[6]` = WC_SIMPLE with argc=0). zshrs's wordcode buffer is the
+/// same shape — this port replicates the same offset reads.
+pub fn simple_redir_name(prog: &eprog, redir_type: i32) -> Option<String> {
+    // c:4689
+    let pc = &prog.prog;
+    // c:4694-4702 — guard chain. Walk the wordcode buffer at fixed
+    // offsets matching C's `pc[0]..pc[6]` checks.
+    if pc.len() < 7 {
+        return None;
+    }
+    use crate::ported::zsh_h::{
+        wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR,
+        WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END,
+        WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE,
+    };
+    if wc_code(pc[0]) != WC_LIST
+        || (WC_LIST_TYPE(pc[0]) & Z_END as u32) == 0  // c:4695
+        || wc_code(pc[1]) != WC_SUBLIST
+        || WC_SUBLIST_FLAGS(pc[1]) != 0  // c:4696
+        || WC_SUBLIST_TYPE(pc[1]) != WC_SUBLIST_END  // c:4697
+        || wc_code(pc[2]) != WC_PIPE
+        || WC_PIPE_TYPE(pc[2]) != WC_PIPE_END  // c:4698
+        || wc_code(pc[3]) != WC_REDIR
+        || WC_REDIR_TYPE(pc[3]) != redir_type  // c:4699
+        || WC_REDIR_VARID(pc[3]) != 0  // c:4700
+        || pc[4] != 0  // c:4701
+        || wc_code(pc[6]) != WC_SIMPLE
+        || WC_SIMPLE_ARGC(pc[6]) != 0
+    // c:4702
+    {
+        return None; // c:4706
+    }
+    // c:4703 — `return dupstring(ecrawstr(prog, pc + 5, NULL));`
+    Some(dupstring(&crate::ported::parse::ecrawstr(prog, 5, None)))
+}
