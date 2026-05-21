@@ -1649,7 +1649,7 @@ static ORDEROPTS: &[OrderOpt] = &[
     OrderOpt {
         name: "nosort",
         abbrev: 2,
-        oflag: crate::ported::zle::comp_h::CAF_NOSORT,
+        oflag: CAF_NOSORT,
     }, // c:562
     OrderOpt {
         name: "match",

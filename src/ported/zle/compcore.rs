@@ -562,7 +562,7 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {
         ZLEMETACS.store(0, Ordering::Relaxed);
         // c:525 — `foredel(zlemetall, CUT_RAW)` removes the entire line.
         let metall = ZLEMETALL.load(Ordering::Relaxed);
-        crate::ported::zle::zle_utils::foredel(metall, crate::ported::zle::zle_h::CUT_RAW);
+        crate::ported::zle::zle_utils::foredel(metall, CUT_RAW);
         // c:526 — `inststr(origline)` reinserts the pre-completion buffer.
         let origline_v: String = ORIGLINE
             .get()

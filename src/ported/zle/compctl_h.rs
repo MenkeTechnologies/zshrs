@@ -21,13 +21,6 @@
 // `-x` condition type constants (c:76-89).
 // ---------------------------------------------------------------------------
 
-// --- AUTO: cross-zle hoisted-fn use glob ---
-#[allow(unused_imports)]
-use crate::ported::zle::{
-    deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
-    zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
-};
-
 pub const CCT_UNUSED: i32 = 0; // c:76
 pub const CCT_POS: i32 = 1; // c:77
 pub const CCT_CURSTR: i32 = 2; // c:78
@@ -260,6 +253,7 @@ pub struct Compctl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ported::zle::zle_main::zle_test_setup;
 
     /// Verifies CCT_* values per c:76-89.
     #[test]

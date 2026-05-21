@@ -185,7 +185,7 @@ pub fn cmatchers_same(
 /// entries so the final list is `[new_entries..., old_bmatchers...]`.
 pub fn add_bmatchers(m: Option<&Cmatcher>) {
     // c:101
-    let cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| std::sync::Mutex::new(None));
+    let cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
     let old = cell.lock().ok().and_then(|mut g| g.take()); // c:104 Cmlist old = bmatchers
                                                            // c:105-113 — qualify each m; prepend matches in C order (reversed
                                                            // iter so the final list is `[new_entries..., old]` per c:114 *q=old).
@@ -218,14 +218,14 @@ pub fn add_bmatchers(m: Option<&Cmatcher>) {
 pub fn update_bmatchers() {
     // c:121
     let bm_cell =
-        crate::ported::zle::compcore::bmatchers.get_or_init(|| std::sync::Mutex::new(None));
-    let ms_cell = mstack.get_or_init(|| std::sync::Mutex::new(None));
+        crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+    let ms_cell = mstack.get_or_init(|| Mutex::new(None));
     let mut p = bm_cell.lock().ok().and_then(|mut g| g.take()); // c:124 Cmlist p = bmatchers
     let ms_head = ms_cell
         .lock()
         .ok()
         .and_then(|g| g.as_ref().map(|b| (**b).clone()));
-    let mut new_bmatchers: Option<Box<crate::ported::zle::comp_h::Cmlist>> =
+    let mut new_bmatchers: Option<Box<Cmlist>> =
         p.as_ref().map(|b| (**b).clone()).map(Box::new);
     while let Some(node) = p {
         // c:128 while (p)
@@ -709,7 +709,7 @@ pub fn add_match_part(
 
     // c:405-419 — merge MATCHSUBS into the head/tail.
     let subs = MATCHSUBS
-        .get_or_init(|| std::sync::Mutex::new(None))
+        .get_or_init(|| Mutex::new(None))
         .lock()
         .ok()
         .and_then(|mut g| g.take());
@@ -743,7 +743,7 @@ pub fn add_match_part(
         }
         // c:417 — `matchsubs = matchlastsub = NULL`.
         if let Ok(mut g) = MATCHLASTSUB
-            .get_or_init(|| std::sync::Mutex::new(None))
+            .get_or_init(|| Mutex::new(None))
             .lock()
         {
             *g = None;
@@ -787,7 +787,7 @@ pub fn add_match_part(
     if last_present {
         // c:440
         if let Ok(mut tail) = MATCHLASTPART
-            .get_or_init(|| std::sync::Mutex::new(None))
+            .get_or_init(|| Mutex::new(None))
             .lock()
         {
             if let Some(t) = tail.as_mut() {
@@ -795,14 +795,14 @@ pub fn add_match_part(
             }
         }
     } else if let Ok(mut head) = MATCHPARTS
-        .get_or_init(|| std::sync::Mutex::new(None))
+        .get_or_init(|| Mutex::new(None))
         .lock()
     {
         *head = p.clone(); // c:442
     }
     if let Some(lp_node) = lp {
         if let Ok(mut tail) = MATCHLASTPART
-            .get_or_init(|| std::sync::Mutex::new(None))
+            .get_or_init(|| Mutex::new(None))
             .lock()
         {
             *tail = Some(lp_node); // c:443
@@ -935,7 +935,7 @@ pub fn match_str(
     // Snapshot the mstack chain into a Vec for stable iteration.
     let mstack_snapshot: Vec<Box<Cmatcher>> = {
         let g = mstack
-            .get_or_init(|| std::sync::Mutex::new(None))
+            .get_or_init(|| Mutex::new(None))
             .lock()
             .ok();
         let mut out = Vec::new();
@@ -2163,14 +2163,14 @@ pub fn bld_parts(
         // anchored portion, advance str/plen past the anchor.
         let mut found_anchor = false;
         let bmatchers_chain = crate::ported::zle::compcore::bmatchers
-            .get_or_init(|| std::sync::Mutex::new(None))
+            .get_or_init(|| Mutex::new(None))
             .lock()
             .ok()
             .and_then(|g| g.clone());
         let mut cur = bmatchers_chain.as_deref();
         while let Some(ms) = cur {
             let mp = &*ms.matcher;
-            let preds_ok = mp.flags == crate::ported::zle::comp_h::CMF_RIGHT
+            let preds_ok = mp.flags == CMF_RIGHT
                 && mp.wlen < 0
                 && mp.ralen > 0
                 && mp.llen == 0
@@ -2181,7 +2181,7 @@ pub fn bld_parts(
                 continue;
             }
             let str_at = std::str::from_utf8(&bytes[str_pos..]).unwrap_or("");
-            if crate::ported::zle::compmatch::pattern_match(mp.right.as_deref(), str_at, None, "")
+            if pattern_match(mp.right.as_deref(), str_at, None, "")
                 == 0
             {
                 cur = ms.next.as_deref();
@@ -2193,7 +2193,7 @@ pub fn bld_parts(
                     false
                 } else {
                     let l_slice = std::str::from_utf8(&bytes[off as usize..]).unwrap_or("");
-                    crate::ported::zle::compmatch::pattern_match(
+                    pattern_match(
                         mp.left.as_deref(),
                         l_slice,
                         None,
@@ -2439,7 +2439,7 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
             // line that matches the OTHER string, copies the result
             // into `out`, and advances both inputs.
             let bmatchers = crate::ported::zle::compcore::bmatchers
-                .get_or_init(|| std::sync::Mutex::new(None))
+                .get_or_init(|| Mutex::new(None))
                 .lock()
                 .ok()
                 .and_then(|g| g.clone());
@@ -2708,7 +2708,7 @@ pub fn join_sub(
 
     // c:2226 — walk bmatchers for a no-anchor matcher.
     let bmatchers = crate::ported::zle::compcore::bmatchers
-        .get_or_init(|| std::sync::Mutex::new(None))
+        .get_or_init(|| Mutex::new(None))
         .lock()
         .ok()
         .and_then(|g| g.clone());
@@ -3903,17 +3903,17 @@ pub static MATCHSUBS: OnceLock<Mutex<Option<Box<Cline>>>> =
     OnceLock::new(); // c:294
 
 /// File-scope `Cline matchlastpart` from `Src/Zle/compmatch.c:327`.
-pub static MATCHLASTPART: std::sync::OnceLock<
-    std::sync::Mutex<Option<Box<Cline>>>,
-> = std::sync::OnceLock::new(); // c:292
+pub static MATCHLASTPART: OnceLock<
+    Mutex<Option<Box<Cline>>>,
+> = OnceLock::new(); // c:292
 
 /// File-scope `int matchbufadded` from `Src/Zle/compmatch.c:446`.
 pub static MATCHBUFADDED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:289
 
 /// File-scope `Cline matchlastsub` from `Src/Zle/compmatch.c:294`.
-pub static MATCHLASTSUB: std::sync::OnceLock<
+pub static MATCHLASTSUB: OnceLock<
     Mutex<Option<Box<Cline>>>,
-> = std::sync::OnceLock::new(); // c:294
+> = OnceLock::new(); // c:294
 
 /// Port of `PATMATCHRANGE(str, c, indp, mtp)` macro from
 /// `Src/pattern.c`. Walks an encoded character-range descriptor in
@@ -4263,13 +4263,13 @@ mod tests {
         cline_matched(&mut head);
         let h = head.as_ref().unwrap();
         // c:257 — flag set on head.
-        assert!(h.flags & CLF_MATCHED != 0);
+        assert_ne!(h.flags & CLF_MATCHED, 0);
         // c:258 — flag set on prefix.
-        assert!(h.prefix.as_ref().unwrap().flags & CLF_MATCHED != 0);
+        assert_ne!(h.prefix.as_ref().unwrap().flags & CLF_MATCHED, 0);
         // c:259 — flag set on suffix.
-        assert!(h.suffix.as_ref().unwrap().flags & CLF_MATCHED != 0);
+        assert_ne!(h.suffix.as_ref().unwrap().flags & CLF_MATCHED, 0);
         // c:261 — flag set on next.
-        assert!(h.next.as_ref().unwrap().flags & CLF_MATCHED != 0);
+        assert_ne!(h.next.as_ref().unwrap().flags & CLF_MATCHED, 0);
     }
 
     #[test]
@@ -4428,7 +4428,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         if let Ok(mut g) = mstack
-            .get_or_init(|| std::sync::Mutex::new(None))
+            .get_or_init(|| Mutex::new(None))
             .lock()
         {
             *g = None;
@@ -4444,7 +4444,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         if let Ok(mut g) = mstack
-            .get_or_init(|| std::sync::Mutex::new(None))
+            .get_or_init(|| Mutex::new(None))
             .lock()
         {
             *g = None;
@@ -4476,7 +4476,7 @@ mod tests {
         let _g = zle_test_setup();
         // Clear mstack to guarantee the empty-stack code path.
         if let Ok(mut g) = mstack
-            .get_or_init(|| std::sync::Mutex::new(None))
+            .get_or_init(|| Mutex::new(None))
             .lock()
         {
             *g = None;
@@ -4510,7 +4510,7 @@ mod tests {
             ralen: 0,
         };
         let bm_cell =
-            crate::ported::zle::compcore::bmatchers.get_or_init(|| std::sync::Mutex::new(None));
+            crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
         *bm_cell.lock().unwrap() = Some(Box::new(Cmlist {
             next: None,
             matcher: Box::new(matcher),
@@ -4518,7 +4518,7 @@ mod tests {
         }));
         // Clear mstack so the entry must be trimmed.
         let ms_cell =
-            mstack.get_or_init(|| std::sync::Mutex::new(None));
+            mstack.get_or_init(|| Mutex::new(None));
         *ms_cell.lock().unwrap() = None;
 
         update_bmatchers();
@@ -4577,7 +4577,7 @@ mod tests {
         let b = Cmatcher {
             refc: 1,
             next: None,
-            flags: crate::ported::zle::comp_h::CMF_LEFT,
+            flags: CMF_LEFT,
             line: None,
             llen: 0,
             word: None,

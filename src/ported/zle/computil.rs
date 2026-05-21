@@ -967,11 +967,11 @@ pub fn cd_init(
 ) -> i32 {
 
     // c:485 — discard prior parsed state.
-    if cd_parsed.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+    if cd_parsed.load(Ordering::Relaxed) != 0 {
         let mut st = cd_state.lock().unwrap();
         st.sep = None;
         freecdsets(st.sets.take());
-        cd_parsed.store(0, std::sync::atomic::Ordering::Relaxed);
+        cd_parsed.store(0, Ordering::Relaxed);
     }
 
     // c:491 — seed cd_state.
@@ -1143,7 +1143,7 @@ pub fn cd_init(
         cd_calc();
         cd_prep();
     }
-    cd_parsed.store(1, std::sync::atomic::Ordering::Relaxed); // c:592
+    cd_parsed.store(1, Ordering::Relaxed); // c:592
     0
 }
 
@@ -3274,7 +3274,7 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
     // c:1832
 
     if (xor.is_empty() && opts == 0)                                         // c:1834
-        || cur > COMPCURRENT.load(std::sync::atomic::Ordering::Relaxed)
+        || cur > COMPCURRENT.load(Ordering::Relaxed)
     {
         return;
     }
@@ -3282,7 +3282,7 @@ pub fn ca_inactive(d: &mut cadef, xor: &[String], cur: i32, opts: i32) {
     // c:1839 — single-letter exclusions only when at compcurrent (option
     // clumping safety: a prefix-of-longer-opt at cursor mustn't kill the
     // multi-letter form prematurely).
-    let single = opts == 0 && cur == COMPCURRENT.load(std::sync::atomic::Ordering::Relaxed);
+    let single = opts == 0 && cur == COMPCURRENT.load(Ordering::Relaxed);
 
     // c:1841 — iterate xor entries. When opts=1 we synthesize a "-" pass.
     let iter_xor: Vec<String> = if opts != 0 {
@@ -3693,7 +3693,7 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             .nonarg
             .as_deref()
             .and_then(|s| patcompile(s, 0, None::<&mut String>));
-        let mut endpat: Option<crate::ported::pattern::Patprog> = None;
+        let mut endpat: Option<Patprog> = None;
 
         // c:2068 — walk words.
         let mut cur = 2i32;
@@ -5471,9 +5471,9 @@ pub fn cv_quote_get_val(d: &cvdef, name: &str) -> Option<Box<cvval>> {
         s = p;
     }
     // c:3200 — `remnulargs(name)`.
-    crate::ported::glob::remnulargs(&mut s);
+    remnulargs(&mut s);
     // c:3201 — `untokenize(name)`.
-    let s = crate::ported::lex::untokenize(&s);
+    let s = untokenize(&s);
     // c:3203 — `return cv_get_val(d, name)`.
     cv_get_val(d, &s)
 }
@@ -6111,7 +6111,7 @@ pub fn comp_quote(str: &str, prefix: i32) -> String {
         .get()
         .and_then(|m| m.lock().ok().and_then(|str| str.bytes().next()))
         .unwrap_or(0);
-    let mut ret = crate::ported::zle::zle_tricky::quotename(&s_eff, qhead as i32);
+    let mut ret = quotename(&s_eff, qhead as i32);
     // c:3672-3673 — restore `=` prefix on both ret and original.
     if x {
         if !ret.is_empty() {
@@ -6720,7 +6720,7 @@ pub fn bin_comptry(
                 tokenize(&mut qq);
 
                 // c:4013 — if hasbraces/haswilds, glob-expand.
-                let has_meta = hasbraces(&qq, false) || crate::ported::pattern::haswilds(&qq);
+                let has_meta = hasbraces(&qq, false) || haswilds(&qq);
                 let all_arr: Vec<String> = comptags
                     .lock()
                     .ok()
@@ -7077,7 +7077,7 @@ pub fn cfp_matcher_range(
                 // `lo-hi`; literals pass through.
                 fn decode_range_bytes(bytes: &[u8]) -> String {
                     let pp_range_marker =
-                        (0x80u8).wrapping_add(crate::ported::zsh_h::PP_RANGE as u8);
+                        (0x80u8).wrapping_add(PP_RANGE as u8);
                     let mut out = String::new();
                     let mut i = 0usize;
                     while i < bytes.len() {
@@ -7190,7 +7190,7 @@ pub fn cfp_matcher_pats(matcher: &str, add: &str) -> String {
 
     let mut m_opt: Option<&Cmatcher> = Some(&*m_chain);
     while let Some(m) = m_opt {
-        let mut stopp: Option<&crate::ported::zle::comp_h::Cpattern> = None;
+        let mut stopp: Option<&Cpattern> = None;
         let mut stopl: i32 = 0;
 
         if (m.flags & (CMF_LEFT | CMF_RIGHT)) == 0 {
@@ -7894,7 +7894,7 @@ pub fn bin_compgroups(
     _func: i32,
 ) -> i32 {
 
-    if INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed) != 1 {
+    if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:5078
         zwarnnam(nam, "can only be called from completion function");
         return 1;
@@ -7942,7 +7942,7 @@ pub fn setup_() -> i32 {
         }
     }
     // c:5131 — `lasttaglevel = 0`.
-    lasttaglevel.store(0, std::sync::atomic::Ordering::Relaxed);
+    lasttaglevel.store(0, Ordering::Relaxed);
     0 // c:5133
 }
 
@@ -9059,10 +9059,10 @@ mod tests {
     fn bin_comptry_no_taglevel_errors() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
-        let saved_lvl = lasttaglevel.load(std::sync::atomic::Ordering::Relaxed);
-        INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
-        lasttaglevel.store(0, std::sync::atomic::Ordering::Relaxed);
+        let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+        let saved_lvl = lasttaglevel.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        lasttaglevel.store(0, Ordering::Relaxed);
         let ops = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
@@ -9070,8 +9070,8 @@ mod tests {
             argsalloc: 0,
         };
         let r = bin_comptry("comptry", &["tag1".into()], &ops, 0);
-        INCOMPFUNC.store(saved_incompfunc, std::sync::atomic::Ordering::Relaxed);
-        lasttaglevel.store(saved_lvl, std::sync::atomic::Ordering::Relaxed);
+        INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
+        lasttaglevel.store(saved_lvl, Ordering::Relaxed);
         assert_eq!(r, 1);
     }
 
@@ -9082,8 +9082,8 @@ mod tests {
     fn bin_comptry_plain_adds_set() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
-        let saved_lvl = lasttaglevel.load(std::sync::atomic::Ordering::Relaxed);
+        let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+        let saved_lvl = lasttaglevel.load(Ordering::Relaxed);
         // Seed comptags[1] with two registered tags.
         if let Ok(mut tab) = comptags.lock() {
             tab[1] = Some(Box::new(ctags {
@@ -9093,8 +9093,8 @@ mod tests {
                 sets: None,
             }));
         }
-        INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
-        lasttaglevel.store(1, std::sync::atomic::Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        lasttaglevel.store(1, Ordering::Relaxed);
         let ops = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
@@ -9111,8 +9111,8 @@ mod tests {
         if let Ok(mut tab) = comptags.lock() {
             tab[1] = None;
         }
-        INCOMPFUNC.store(saved_incompfunc, std::sync::atomic::Ordering::Relaxed);
-        lasttaglevel.store(saved_lvl, std::sync::atomic::Ordering::Relaxed);
+        INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
+        lasttaglevel.store(saved_lvl, Ordering::Relaxed);
         assert_eq!(r, 0);
         let tags = sets_first_tags.expect("a set was appended");
         assert_eq!(
@@ -9252,7 +9252,7 @@ mod tests {
         let pm = COMPPREFIX
             .get_or_init(|| std::sync::Mutex::new(String::new()));
         *pm.lock().unwrap() = String::new();
-        let sm = crate::ported::zle::complete::COMPSUFFIX
+        let sm = COMPSUFFIX
             .get_or_init(|| std::sync::Mutex::new(String::new()));
         *sm.lock().unwrap() = String::new();
         let r = cfp_test_exact(&["/tmp".to_string()], &["true".to_string()], "");
@@ -9265,8 +9265,8 @@ mod tests {
     fn bin_compgroups_empty_args_succeeds() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let saved = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
-        INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
+        let saved = INCOMPFUNC.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
         let ops = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
@@ -9274,7 +9274,7 @@ mod tests {
             argsalloc: 0,
         };
         let r = bin_compgroups("compgroups", &[], &ops, 0);
-        INCOMPFUNC.store(saved, std::sync::atomic::Ordering::Relaxed);
+        INCOMPFUNC.store(saved, Ordering::Relaxed);
         assert_eq!(r, 0);
     }
 
@@ -9370,8 +9370,8 @@ mod tests {
     fn bin_compdescribe_rejects_bad_option() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
-        INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
+        let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
         let ops = options {
             ind: [0u8; MAX_OPS],
             args: Vec::new(),
@@ -9381,7 +9381,7 @@ mod tests {
         // -xx is two chars but ends with `x` not a known subcommand
         // letter — should fall through to the `invalid option` arm.
         let r = bin_compdescribe("compdescribe", &["-x".into()], &ops, 0);
-        INCOMPFUNC.store(saved_incompfunc, std::sync::atomic::Ordering::Relaxed);
+        INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
         assert_eq!(r, 1);
     }
 
@@ -9436,8 +9436,8 @@ mod tests {
     fn bin_compquote_returns_zero_when_qstack_empty() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let saved_incompfunc = INCOMPFUNC.load(std::sync::atomic::Ordering::Relaxed);
-        INCOMPFUNC.store(1, std::sync::atomic::Ordering::Relaxed);
+        let saved_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
         // Ensure compqstack is empty (zle_test_setup resets things).
         if let Some(m) = COMPQSTACK.get() {
             if let Ok(mut s) = m.lock() {
@@ -9451,7 +9451,7 @@ mod tests {
             argsalloc: 0,
         };
         let r = bin_compquote("compquote", &["foo".into()], &ops, 0);
-        INCOMPFUNC.store(saved_incompfunc, std::sync::atomic::Ordering::Relaxed);
+        INCOMPFUNC.store(saved_incompfunc, Ordering::Relaxed);
         assert_eq!(r, 0);
     }
 
