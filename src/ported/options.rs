@@ -2117,3 +2117,14 @@ mod tests {
         opt_state_set("automenu", saved);
     }
 }
+
+/// Port of `mod_export Emulation_options sticky;` from
+/// `Src/options.c:41`. Pending "sticky" emulation that the next-
+/// defined shell function will adopt — set by `emulate -L FOO -s`
+/// per `Src/builtin.c:emulate -s`; consumed by `shfunc_set_sticky`
+/// (`Src/exec.c:5527`) when the function definition compiles.
+///
+/// `None` (the default) means "no pending sticky"; the function
+/// inherits the parent shell's emulation as usual.
+pub static sticky: std::sync::Mutex<Option<crate::ported::zsh_h::Emulation_options>> = // c:41
+    std::sync::Mutex::new(None);
