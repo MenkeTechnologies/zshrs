@@ -72,7 +72,7 @@ use crate::ported::utils::{
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
 use crate::ported::zle::compctl::compctlread;
-use crate::ported::zsh_h::{eprog, nameddir, options, ALIAS_GLOBAL, ALIAS_SUFFIX, BINF_KEEPNUM, DISABLED, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, MAX_OPS, MFF_STR, OPT_ARG, OPT_HASARG, OPT_ISSET, OPT_MINUS, OPT_PLUS, PM_ABSPATH_USED, PM_ARRAY, PM_CUR_FPATH, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED, PM_UNALIASED, PM_UNDEFINED, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TYPESET_OPTSTR, XTRACE, asgment, builtin, hashnode, isset, mathfunc, param, shfunc, HandlerFunc, ASG_ARRAY, ASG_ARRAYP, ASG_KEY_VALUE, ASG_VALUEP, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, FUNCTIONARGZERO, HASHED, INTERACTIVE, MFF_USERFUNC, MONITOR, NULLBINCMD, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_AUTOLOAD, PM_DECLARED, PM_EXPORTED, PM_HIDE, PM_SCALAR, PM_SPECIAL, PM_TYPE, PM_UNSET, POSIXBUILTINS, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_DEFERRED, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC, alias};
+use crate::ported::zsh_h::{eprog, nameddir, options, ALIAS_GLOBAL, ALIAS_SUFFIX, BINF_KEEPNUM, DISABLED, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, MAX_OPS, MFF_STR, OPT_ARG, OPT_HASARG, OPT_ISSET, OPT_MINUS, OPT_PLUS, PM_ABSPATH_USED, PM_ARRAY, PM_CUR_FPATH, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED, PM_UNALIASED, PM_UNDEFINED, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TYPESET_OPTSTR, XTRACE, asgment, builtin, hashnode, isset, mathfunc, param, shfunc, HandlerFunc, ASG_ARRAY, ASG_ARRAYP, ASG_KEY_VALUE, ASG_VALUEP, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, FUNCTIONARGZERO, HASHED, INTERACTIVE, MFF_USERFUNC, MONITOR, NULLBINCMD, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_AUTOLOAD, PM_DECLARED, PM_EXPORTED, PM_HIDE, PM_SCALAR, PM_SPECIAL, PM_TYPE, PM_UNSET, POSIXBUILTINS, PRINT_INCLUDEVALUE, TYPESETSILENT, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_DEFERRED, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC, alias};
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
 
@@ -2923,10 +2923,31 @@ pub fn typeset_single(
     }
 
     // c:2240-2247 — print-only path: typeset -p / typeset name (no value).
-    if usepm != 0 && on == 0 && asg_ref.is_some_and(|a| !ASG_VALUEP(a)) {
-        // Live printnode dispatch would land here; deferred until
-        // paramtab.printnode is exposed as a free fn.
-        return pm;
+    if usepm != 0 && on == 0 && _roff == 0 && asg_ref.is_some_and(|a| !ASG_VALUEP(a)) {
+        // c:2241 — `int with_ns = OPT_ISSET(ops,'m') ? PRINT_WITH_NAMESPACE : 0;`
+        let with_ns = if OPT_ISSET(ops, b'm') {                              // c:2241
+            PRINT_WITH_NAMESPACE
+        } else {
+            0
+        };
+        if let Some(pm_r) = unsafe { pm.as_mut() } {
+            if OPT_ISSET(ops, b'p') {                                        // c:2242
+                // c:2243 — `paramtab->printnode(&pm->node, PRINT_TYPESET|with_ns);`
+                crate::ported::params::printparamnode(
+                    pm_r,
+                    PRINT_TYPESET | with_ns,
+                );
+            } else if !OPT_ISSET(ops, b'g')                                  // c:2244
+                && (!isset(TYPESETSILENT) || OPT_ISSET(ops, b'm'))           // c:2245
+            {
+                // c:2246 — `paramtab->printnode(&pm->node, PRINT_INCLUDEVALUE|with_ns);`
+                crate::ported::params::printparamnode(
+                    pm_r,
+                    PRINT_INCLUDEVALUE | with_ns,
+                );
+            }
+        }
+        return pm;                                                           // c:2247
     }
 
     // c:2355-2378 — tc (type-conversion) branch: recreate the param.
@@ -3343,6 +3364,38 @@ pub fn bin_typeset(
             };
             let _ = createparam(arg_name, on as i32 | kind as i32 | PM_LOCAL as i32);
         }
+        // c:2241-2247 — `-p` print-mode for an existing param (no `=`,
+        // no value). C `typeset_single` lands here when `usepm` is set
+        // and `!ASG_VALUEP(asg)`. The Rust loop bypasses
+        // `typeset_single`; mirror the print-only dispatch inline
+        // against paramtab. PRINT_TYPESET produces `typeset -i n=5`
+        // shape; PRINT_INCLUDEVALUE produces `n=5` shape (default
+        // typeset listing).
+        if !arg.contains('=') && OPT_ISSET(&ops, b'p') {
+            let with_ns = if OPT_ISSET(&ops, b'm') {                         // c:2241
+                PRINT_WITH_NAMESPACE
+            } else {
+                0
+            };
+            let existed = paramtab()
+                .read()
+                .map(|t| t.contains_key(arg_name))
+                .unwrap_or(false);
+            if existed {
+                if let Ok(mut tab) = paramtab().write() {
+                    if let Some(pm) = tab.get_mut(arg_name) {
+                        // c:2243 — `paramtab->printnode(&pm->node,
+                        //   PRINT_TYPESET|with_ns);`
+                        crate::ported::params::printparamnode(
+                            pm,
+                            PRINT_TYPESET | with_ns,
+                        );
+                    }
+                }
+            }
+            continue;
+        }
+
         if let Some(eq) = arg.find('=') {
             let n = &arg[..eq];
             let raw_v = &arg[eq + 1..];

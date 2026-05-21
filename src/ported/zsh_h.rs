@@ -544,7 +544,7 @@ pub struct dirsav {
 
 /// Port of `struct hashnode` from `Src/zsh.h:1226-1230`.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct hashnode {
     // c:1226
     pub next: Option<HashNode>, // c:1227
@@ -950,7 +950,7 @@ pub struct gsu_hash {
 /// fields; the dispatcher looks at `node.flags & PM_TYPE` and reads
 /// the matching field.
 #[allow(non_camel_case_types)]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct param {
     // c:1829
     pub node: hashnode, // c:1830

@@ -1027,10 +1027,19 @@ impl ShellExecutor {
         // bangchar+hatchar+hashchar (defaults `!`, `^`, `#` per
         // `Src/init.c:1100-1102`). Route through the C-port `histcharsgetfn`
         // so the value follows any runtime updates to the trio.
-        variables.insert(
-            "histchars".to_string(),
-            crate::ported::params::histcharsgetfn(),
-        ); // c:params.c:5064
+        // c:5064 — `pm->gsu.s->getfn(pm)` dispatches to histcharsgetfn.
+        // Mirror via paramtab lookup; at this init point the special
+        // entry may not exist yet, so fall back to default `!^#`.
+        let histchars_val = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get("histchars")
+                    .or_else(|| t.get("HISTCHARS"))
+                    .map(|pm| crate::ported::params::histcharsgetfn(pm))
+            })
+            .unwrap_or_else(|| "!^#".to_string());
+        variables.insert("histchars".to_string(), histchars_val); // c:params.c:5064
 
         // c:Src/params.c:858-860 standard non-special param defaults.
         // The full createparamtable() body installs special_paramdef

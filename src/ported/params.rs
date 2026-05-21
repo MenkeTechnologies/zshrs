@@ -55,9 +55,9 @@ use crate::ported::zsh_h::{
     PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HASHELEM,
     PM_INTEGER, PM_LEFT, PM_LOCAL, PM_NAMEDDIR, PM_NAMEREF, PM_NORESTORE, PM_READONLY,
     PM_READONLY_SPECIAL, PM_REMOVABLE, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR,
-    PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, PRINT_INCLUDEVALUE,
+    PM_HIDE, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, PRINT_INCLUDEVALUE,
     PRINT_KV_PAIR, PRINT_LINE, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY,
-    PRINT_TYPESET, SCANPM_ARRONLY, SCANPM_CHECKING, SCANPM_ISVAR_AT, SCANPM_KEYMATCH,
+    PRINT_TYPE, PRINT_TYPESET, SCANPM_ARRONLY, SCANPM_CHECKING, SCANPM_ISVAR_AT, SCANPM_KEYMATCH,
     SCANPM_MATCHKEY, SCANPM_MATCHMANY, SCANPM_MATCHVAL, SCANPM_NONAMEREF, SCANPM_WANTINDEX,
     SCANPM_WANTKEYS, SCANPM_WANTVALS, TERM_BAD, VALFLAG_EMPTY, VALFLAG_INV, VALFLAG_SUBST,
     WARNCREATEGLOBAL, WARNNESTEDVAR,TERM_UNKNOWN, param, POSIXARGZERO
@@ -1462,6 +1462,24 @@ pub fn createparamtable() {
     // Helper closure (single definition; mirrors the C
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
     let add_special = |ip: &special_paramdef, tab: &mut HashMap<String, Param>| {
+        // c:840 — `paramdef->gsu` selects which gsu_scalar vtable the
+        // new param gets. C uses the per-IPDEF macro's BR(...) field;
+        // since the Rust special_paramdef doesn't carry a gsu slot
+        // yet, dispatch by name to the matching `*_GSU` constant
+        // (HOME_GSU/IFS_GSU/...). Non-special scalars (no match)
+        // leave gsu_s as None and fall back to strsetfn/strgetfn.
+        let gsu_s: Option<Box<gsu_scalar>> = match ip.name {
+            "HOME" => Some(Box::new(HOME_GSU.clone())),                      // c:248
+            "IFS" => Some(Box::new(IFS_GSU.clone())),                        // c:245
+            "TERM" => Some(Box::new(TERM_GSU.clone())),                      // c:250
+            "TERMINFO" => Some(Box::new(TERMINFO_GSU.clone())),              // c:251
+            "TERMINFO_DIRS" => Some(Box::new(TERMINFODIRS_GSU.clone())),     // c:252
+            "WORDCHARS" => Some(Box::new(WORDCHARS_GSU.clone())),            // c:249
+            "USERNAME" => Some(Box::new(USERNAME_GSU.clone())),              // c:247
+            "KEYBOARD_HACK" => Some(Box::new(KEYBOARDHACK_GSU.clone())),     // c:253
+            "HISTCHARS" | "histchars" => Some(Box::new(HISTCHARS_GSU.clone())), // c:246
+            _ => None,
+        };
         let pm = Box::new(param {
             node: hashnode {
                 next: None,
@@ -1474,7 +1492,7 @@ pub fn createparamtable() {
             u_val: 0,
             u_dval: 0.0,
             u_hash: None,
-            gsu_s: None,
+            gsu_s,                                                           // c:840 gsu_s wired
             gsu_i: None,
             gsu_f: None,
             gsu_a: None,
@@ -3492,9 +3510,21 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
         t if t == PM_SCALAR || t == PM_NAMEREF => {
             let v_str = val.take().unwrap_or_default();
             if v.start == 0 && v.end == -1 {
-                // v->pm->gsu.s->setfn(v->pm, val);
+                // c:2748 — `v->pm->gsu.s->setfn(v->pm, val);`. C
+                // dispatches through the param's GSU vtable so
+                // PM_SPECIAL params route to their canonical setfn
+                // (homesetfn, ifssetfn, ...). The Rust port stores
+                // the vtable on `pm.gsu_s` (set in `createparamtable`
+                // via `gsu_scalar_for_special`); when set, dispatch
+                // through it. When unset, fall back to the default
+                // `strsetfn` path (C's stdscalar_gsu.setfn).
                 let len = v_str.len();
-                strsetfn(pm, v_str);
+                let setfn_ptr = pm.gsu_s.as_ref().map(|g| g.setfn);
+                if let Some(setfn) = setfn_ptr {
+                    setfn(pm, v_str);                                        // c:2748
+                } else {
+                    strsetfn(pm, v_str);                                     // c:2748 (default)
+                }
                 if (pm.node.flags as u32 & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) != 0
                     && pm.width == 0
                 {
@@ -4457,6 +4487,52 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             // c:1149-1150 (ALLEXPORT path)
             pm_flags |= PM_EXPORTED as i32;
         }
+        // c:1135-1160 — `createparam` installs gsu via the special-
+        // params table when the name matches a PM_SPECIAL entry. C
+        // walks `paramtab->getnode(name)` first, but for fresh
+        // creations the gsu pointer comes from the IPDEF macro the
+        // paramdef ships with. Mirror by looking up the name in the
+        // special-scalar GSU table — same end-state as if
+        // createparamtable had run.
+        let gsu_s: Option<Box<gsu_scalar>> = match name {
+            "HOME" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(HOME_GSU.clone())) // c:248
+            }
+            "IFS" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(IFS_GSU.clone())) // c:245
+            }
+            "TERM" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(TERM_GSU.clone())) // c:250
+            }
+            "TERMINFO" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(TERMINFO_GSU.clone())) // c:251
+            }
+            "TERMINFO_DIRS" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(TERMINFODIRS_GSU.clone())) // c:252
+            }
+            "WORDCHARS" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(WORDCHARS_GSU.clone())) // c:249
+            }
+            "USERNAME" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(USERNAME_GSU.clone())) // c:247
+            }
+            "KEYBOARD_HACK" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(KEYBOARDHACK_GSU.clone())) // c:253
+            }
+            "HISTCHARS" | "histchars" => {
+                pm_flags |= PM_SPECIAL as i32;
+                Some(Box::new(HISTCHARS_GSU.clone())) // c:246
+            }
+            _ => None,
+        };
         let pm: Param = Box::new(param {
             node: hashnode {
                 next: None,
@@ -4469,7 +4545,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             u_val: 0,
             u_dval: 0.0,
             u_hash: None,
-            gsu_s: None,
+            gsu_s,                                                           // c:1149 special gsu wired
             gsu_i: None,
             gsu_f: None,
             gsu_a: None,
@@ -4491,6 +4567,34 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             unqueue_signals(); // c:3220
             return None; // c:3221
         }
+        // c:1135-1160 — back-fill the gsu_s vtable on existing
+        // entries that pre-dated `createparamtable` (e.g. env-import
+        // path inserted HOME/IFS/etc via the non-special branch
+        // before the special-param table was populated). Without
+        // this back-fill, those params stay None-gsu forever and
+        // assignstrvalue falls through to the default `strsetfn`
+        // path, bypassing homesetfn/ifssetfn — so the canonical
+        // C globals (`home`, `ifs`, ...) drift from paramtab.
+        let pm = tab.get_mut(name).unwrap();
+        if pm.gsu_s.is_none() {
+            let new_gsu: Option<Box<gsu_scalar>> = match name {
+                "HOME" => Some(Box::new(HOME_GSU.clone())),                  // c:248
+                "IFS" => Some(Box::new(IFS_GSU.clone())),                    // c:245
+                "TERM" => Some(Box::new(TERM_GSU.clone())),                  // c:250
+                "TERMINFO" => Some(Box::new(TERMINFO_GSU.clone())),          // c:251
+                "TERMINFO_DIRS" => Some(Box::new(TERMINFODIRS_GSU.clone())), // c:252
+                "WORDCHARS" => Some(Box::new(WORDCHARS_GSU.clone())),        // c:249
+                "USERNAME" => Some(Box::new(USERNAME_GSU.clone())),          // c:247
+                "KEYBOARD_HACK" => Some(Box::new(KEYBOARDHACK_GSU.clone())), // c:253
+                "HISTCHARS" | "histchars" => Some(Box::new(HISTCHARS_GSU.clone())), // c:246
+                _ => None,
+            };
+            if new_gsu.is_some() {
+                pm.gsu_s = new_gsu;
+                pm.node.flags |= PM_SPECIAL as i32;
+            }
+        }
+        let pm = tab.get(name).unwrap();
         // c:3236-3250 — existing PM_ARRAY/PM_HASHED on a non-special,
         // non-tied, non-KSHARRAYS, non-AUGMENT scalar assignment →
         // `resetparam(v->pm, PM_SCALAR)`.
@@ -5278,33 +5382,6 @@ pub fn strsetfn(pm: &mut param, x: String) {
         pm.node.flags |= PM_NAMEDDIR as i32; // c:4047
         adduserdir(&pm.node.nam, &x, 0, false); // c:4048
     }
-    // c:4050 — C `assignstrvalue` dispatches `v->pm->gsu.s->setfn` so
-    // PM_SPECIAL params route to their dedicated setfn (homesetfn,
-    // ifssetfn, ...). The Rust assignstrvalue calls strsetfn directly
-    // (the GSU callback-pointer dispatch isn't fully wired), so special
-    // names bypass their setfn and the canonical C globals (home_lock,
-    // ifs_lock, ...) stay stale while paramtab's u_str updates. Mirror
-    // the dispatch here by name — same end-state as the C gsu hop.
-    if (pm.node.flags as u32 & PM_SPECIAL) != 0
-        || matches!(
-            pm.node.nam.as_str(),
-            "HOME" | "IFS" | "TERM" | "WORDCHARS" | "TERMINFO" | "TERMINFO_DIRS"
-            | "USERNAME" | "KEYBOARD_HACK" | "HISTCHARS" | "histchars"
-        )
-    {
-        match pm.node.nam.as_str() {
-            "HOME" => homesetfn(x),                                          // c:5118
-            "IFS" => ifssetfn(x),                                            // c:5155
-            "TERM" => termsetfn(x),                                          // c:5174
-            "WORDCHARS" => wordcharssetfn(x),                                // c:5141
-            "TERMINFO" => terminfosetfn(x),                                  // c:5188
-            "TERMINFO_DIRS" => terminfodirssetfn(x),                         // c:5198
-            "USERNAME" => usernamesetfn(x),                                  // c:5042
-            "KEYBOARD_HACK" => keyboardhacksetfn(x),                         // c:5072
-            "HISTCHARS" | "histchars" => histcharssetfn(Some(x)),            // c:5083
-            _ => {}                                                          // non-special scalar
-        }
-    }
 }
 
 /// Port of `arrgetfn(Param pm)` from `Src/params.c:4057`. C body:
@@ -5933,8 +6010,7 @@ pub fn setsecondstype(
 /// setuid(3) (or USER changed externally via setuid binary)
 /// would keep returning the old username.
 ///
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn usernamegetfn() -> String {
+pub fn usernamegetfn(_pm: &param) -> String {
     // c:4655
     // c:4658 — `return get_username();`. Route through the
     // canonical refresh-on-uid-change accessor at utils.rs.
@@ -5948,8 +6024,7 @@ pub fn usernamegetfn() -> String {
 /// crosses an unsafe FFI boundary not yet wrapped here. The
 /// cached-name update is performed; uid/gid changes still need
 /// porting of the `pwd.h` getpwnam wrapper.
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn usernamesetfn(x: String) {
+pub fn usernamesetfn(_pm: &mut param, x: String) {
     // c:4662
     // c:4662 — `if (x && (pswd = getpwnam(x)) && pswd->pw_uid != cached_uid)`.
     let target = std::ffi::CString::new(x.as_bytes()).ok();
@@ -6140,15 +6215,13 @@ pub fn ttyidlegetfn() -> i64 {
 // -----------------------------------------------------------
 
 /// Port of `ifsgetfn(UNUSED(Param pm))` from `Src/params.c:4784`. C body: `return ifs;`
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn ifsgetfn() -> String {
+pub fn ifsgetfn(_pm: &param) -> String {
     ifs_lock().lock().expect("ifs poisoned").clone()
 }
 
 /// Port of `ifssetfn(UNUSED(Param pm), char *x)` from `Src/params.c:4793`. C body:
 /// `zsfree(ifs); ifs = x; inittyptab();`
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn ifssetfn(x: String) {
+pub fn ifssetfn(_pm: &mut param, x: String) {
     *ifs_lock().lock().expect("ifs poisoned") = x;
     // c:4795 — `inittyptab()` rebuilds the typtab[] ISEP/IWSEP bits
     // from the new IFS. Without this, every word-split path stays
@@ -6610,8 +6683,7 @@ pub fn errnogetfn() -> i64 {
 
 /// Port of `keyboardhackgetfn(UNUSED(Param pm))` from `Src/params.c:5024`. C body:
 /// `static char buf[2]; buf[0] = keyboardhackchar; return buf;`
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn keyboardhackgetfn() -> String {
+pub fn keyboardhackgetfn(_pm: &param) -> String {
     let c = *keyboardhack_lock().lock().expect("keyboardhack poisoned");
     if c == 0 {
         String::new()
@@ -6646,8 +6718,7 @@ pub fn keyboardhackgetfn() -> String {
 ///     characters that happened to round-trip through Meta
 ///     encoding in the assignment pipeline.
 ///
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn keyboardhacksetfn(x: String) {
+pub fn keyboardhacksetfn(_pm: &mut param, x: String) {
     // c:5040
     // c:5044 — `unmetafy(x, &len)` — strip Meta-encoded pairs.
     // Run on the byte buffer so the protocol matches C's pointer
@@ -6682,8 +6753,7 @@ pub fn keyboardhacksetfn(x: String) {
 /// Reads from the three canonical atomic globals
 /// (`crate::ported::hist::{bangchar, hatchar, hashchar}`) to mirror C
 /// which reads from three separate `unsigned char` globals.
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn histcharsgetfn() -> String {
+pub fn histcharsgetfn(_pm: &param) -> String {
     let b = bangchar.load(Ordering::SeqCst) as u8;
     let h = hatchar.load(Ordering::SeqCst) as u8;
     let p = hashchar.load(Ordering::SeqCst) as u8;
@@ -6710,15 +6780,18 @@ pub fn histcharsgetfn() -> String {
 ///   - ASCII check ran against raw Meta bytes (0x83), falsely
 ///     rejecting valid round-tripped values.
 ///
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn histcharssetfn(x: Option<String>) {
+pub fn histcharssetfn(_pm: &mut param, x: String) {
     // c:5081
-    let new_chars: [u8; 3] = match x {
-        None => {
-            // c:5100-5103 — defaults `!^#` when x is NULL.
-            [b'!', b'^', b'#']
-        }
-        Some(s) => {
+    // C signature is `histcharssetfn(Param pm, char *x)`. C uses NULL
+    // for the "reset to defaults" path; in Rust the canonical fn-ptr
+    // type is `fn(&mut param, String)` so the empty-string sentinel
+    // takes that role (`x.is_empty()` ≡ C `x == NULL`).
+    let new_chars: [u8; 3] = if x.is_empty() {
+        // c:5100-5103 — defaults `!^#` when x is NULL.
+        [b'!', b'^', b'#']
+    } else {
+        let s = x;
+        {
             // c:5086 — `unmetafy(x, &len)`. Strip Meta pairs first.
             let unmeta = unmeta(&s); // c:5086 unmetafy(x)
             let bytes = unmeta.as_bytes();
@@ -6759,9 +6832,85 @@ pub fn histcharssetfn(x: Option<String>) {
     inittyptab();
 }
 
+// ---------------------------------------------------------------------
+// Special-scalar GSU vtables — port of `Src/params.c:217-256` `stdscalar_gsu`,
+// `home_gsu`, `ifs_gsu`, etc. Each entry pairs the canonical
+// getfn/setfn/unsetfn for a PM_SPECIAL scalar. `createparamtable`
+// copies the matching gsu into each special param's `gsu_s` slot so
+// `assignstrvalue` dispatches via `pm->gsu.s->setfn(pm, val)`
+// (params.c:2748) exactly like C.
+// ---------------------------------------------------------------------
+
+/// Port of `static const struct gsu_scalar home_gsu` from `Src/params.c:248`.
+pub const HOME_GSU: gsu_scalar = gsu_scalar {                                // c:248
+    getfn: homegetfn,
+    setfn: homesetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar ifs_gsu` from `Src/params.c:245`.
+pub const IFS_GSU: gsu_scalar = gsu_scalar {                                 // c:245
+    getfn: ifsgetfn,
+    setfn: ifssetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar term_gsu` from `Src/params.c:250`.
+pub const TERM_GSU: gsu_scalar = gsu_scalar {                                // c:250
+    getfn: termgetfn,
+    setfn: termsetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar terminfo_gsu` from `Src/params.c:251`.
+pub const TERMINFO_GSU: gsu_scalar = gsu_scalar {                            // c:251
+    getfn: terminfogetfn,
+    setfn: terminfosetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar terminfodirs_gsu`
+/// from `Src/params.c:252`.
+pub const TERMINFODIRS_GSU: gsu_scalar = gsu_scalar {                        // c:252
+    getfn: terminfodirsgetfn,
+    setfn: terminfodirssetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar wordchars_gsu`
+/// from `Src/params.c:249`.
+pub const WORDCHARS_GSU: gsu_scalar = gsu_scalar {                           // c:249
+    getfn: wordcharsgetfn,
+    setfn: wordcharssetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar username_gsu`
+/// from `Src/params.c:247`.
+pub const USERNAME_GSU: gsu_scalar = gsu_scalar {                            // c:247
+    getfn: usernamegetfn,
+    setfn: usernamesetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar keyboardhack_gsu`
+/// from `Src/params.c:253`.
+pub const KEYBOARDHACK_GSU: gsu_scalar = gsu_scalar {                        // c:253
+    getfn: keyboardhackgetfn,
+    setfn: keyboardhacksetfn,
+    unsetfn: stdunsetfn,
+};
+
+/// Port of `static const struct gsu_scalar histchars_gsu`
+/// from `Src/params.c:246`.
+pub const HISTCHARS_GSU: gsu_scalar = gsu_scalar {                           // c:246
+    getfn: histcharsgetfn,
+    setfn: histcharssetfn,
+    unsetfn: stdunsetfn,
+};
+
 /// Port of `homegetfn(UNUSED(Param pm))` from `Src/params.c:5109`. C body: `return home;`
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn homegetfn() -> String {
+pub fn homegetfn(_pm: &param) -> String {
     home_lock().lock().expect("home poisoned").clone()
 }
 
@@ -6774,8 +6923,7 @@ pub fn homegetfn() -> String {
 ///     home = x ? x : ztrdup("");
 /// finddir(NULL);
 /// ```
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn homesetfn(x: String) {
+pub fn homesetfn(_pm: &mut param, x: String) {
     // c:5121-5126 — CHASELINKS path resolves symlinks before storing.
     // Falls through to the plain `x` store when CHASELINKS is off or
     // xsymlink fails.
@@ -6792,15 +6940,13 @@ pub fn homesetfn(x: String) {
 
 /// Port of `wordcharsgetfn(UNUSED(Param pm))` from `Src/params.c:5132`. C body:
 /// `return wordchars;`
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn wordcharsgetfn() -> String {
+pub fn wordcharsgetfn(_pm: &param) -> String {
     wordchars_lock().lock().expect("wordchars poisoned").clone()
 }
 
 /// Port of `wordcharssetfn(UNUSED(Param pm), char *x)` from `Src/params.c:5141`. C body:
 /// `zsfree(wordchars); wordchars = x; inittyptab();`
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn wordcharssetfn(x: String) {
+pub fn wordcharssetfn(_pm: &mut param, x: String) {
     *wordchars_lock().lock().expect("wordchars poisoned") = x;
     // c:5143 — `inittyptab()` rebuilds typtab IWORD bits from the
     // new WORDCHARS. Without this, every IWORD lookup stays pinned
@@ -6847,23 +6993,20 @@ pub fn term_reinit_from_pm() {
 }
 
 /// Port of `termgetfn(UNUSED(Param pm))` from `Src/params.c:5176`. C body: `return term;`
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn termgetfn() -> String {
+pub fn termgetfn(_pm: &param) -> String {
     term_lock().lock().expect("term poisoned").clone()
 }
 
 /// Port of `termsetfn(UNUSED(Param pm), char *x)` from `Src/params.c:5185`. C body:
 /// `zsfree(term); term = x ? x : ""; term_reinit_from_pm();`
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn termsetfn(x: String) {
+pub fn termsetfn(_pm: &mut param, x: String) {
     *term_lock().lock().expect("term poisoned") = x;
     term_reinit_from_pm();
 }
 
 /// Port of `terminfogetfn(UNUSED(Param pm))` from `Src/params.c:5196`. C body:
 /// `return zsh_terminfo ? zsh_terminfo : "";`
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn terminfogetfn() -> String {
+pub fn terminfogetfn(_pm: &param) -> String {
     zsh_terminfo_lock()
         .lock()
         .expect("zsh_terminfo poisoned")
@@ -6877,8 +7020,7 @@ pub static RPROMPT_INDENT: Mutex<i32> = Mutex::new(1);
 
 /// Port of `terminfosetfn(Param pm, char *x)` from `Src/params.c:5205`. C body:
 /// `zsfree(zsh_terminfo); zsh_terminfo = x; addenv if exported; term_reinit_from_pm();`
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn terminfosetfn(x: String) {
+pub fn terminfosetfn(_pm: &mut param, x: String) {
     *zsh_terminfo_lock().lock().expect("zsh_terminfo poisoned") = x.clone();
     env::set_var("TERMINFO", &x);
     term_reinit_from_pm();
@@ -6886,8 +7028,7 @@ pub fn terminfosetfn(x: String) {
 
 /// Port of `terminfodirsgetfn(UNUSED(Param pm))` from `Src/params.c:5224`. C body:
 /// `return zsh_terminfodirs ? zsh_terminfodirs : "";`
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn terminfodirsgetfn() -> String {
+pub fn terminfodirsgetfn(_pm: &param) -> String {
     zsh_terminfodirs_lock()
         .lock()
         .expect("zsh_terminfodirs poisoned")
@@ -6896,8 +7037,7 @@ pub fn terminfodirsgetfn() -> String {
 
 /// Port of `terminfodirssetfn(Param pm, char *x)` from `Src/params.c:5233`. C body
 /// mirrors `terminfosetfn` for the TERMINFO_DIRS env var.
-/// WARNING: param names don't match C — Rust=(x) vs C=(pm, x)
-pub fn terminfodirssetfn(x: String) {
+pub fn terminfodirssetfn(_pm: &mut param, x: String) {
     *zsh_terminfodirs_lock()
         .lock()
         .expect("zsh_terminfodirs poisoned") = x.clone();
@@ -7827,18 +7967,121 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 return;
             }
         }
+        let mut altname: u8 = 0;
         if (printflags & PRINT_POSIX_EXPORT) != 0 {
             if (f & PM_EXPORTED) == 0 {
                 return;
             }
+            altname = b'x';
             print!("export ");
         } else if (printflags & PRINT_POSIX_READONLY) != 0 {
             if (f & PM_READONLY) == 0 {
                 return;
             }
+            altname = b'r';
             print!("readonly ");
+        } else if (f & PM_EXPORTED) != 0 && (f & (PM_ARRAY | PM_HASHED)) == 0 {
+            // c:6181-6188 — exported scalar: `local` or `export`.
+            let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
+            if hn.level != 0 && hn.level >= cur_ll {
+                print!("local ");
+            } else {
+                altname = b'x';
+                print!("export ");
+            }
         } else {
-            print!("typeset ");
+            let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
+            if cur_ll != 0 && hn.level >= cur_ll {
+                if (f & PM_EXPORTED) != 0 {
+                    print!("local ");
+                } else {
+                    print!("typeset ");
+                }
+            } else if cur_ll != 0 {
+                print!("typeset -g ");
+            } else {
+                print!("typeset ");
+            }
+        }
+
+        // c:6199-6259 — attribute walk via pmtypes table. Each row
+        // tests `p->node.flags & binflag`; on match, PRINT_TYPESET
+        // emits the `-X` letter, PRINT_TYPE the long word.
+        // Port of `Src/params.c:6010 static const struct paramtypes
+        // pmtypes[]`.
+        const PMTF_USE_BASE: u32 = 1 << 0;
+        const PMTF_USE_WIDTH: u32 = 1 << 1;
+        const PMTF_TEST_LEVEL: u32 = 1 << 2;
+        struct PmType {
+            binflag: u32,
+            string: &'static str,
+            typeflag: u8,
+            flags: u32,
+        }
+        const PMTYPES: &[PmType] = &[
+            PmType { binflag: PM_AUTOLOAD,  string: "undefined",       typeflag: 0,    flags: 0 },
+            PmType { binflag: PM_INTEGER,   string: "integer",         typeflag: b'i', flags: PMTF_USE_BASE },
+            PmType { binflag: PM_EFLOAT,    string: "float",           typeflag: b'E', flags: 0 },
+            PmType { binflag: PM_FFLOAT,    string: "float",           typeflag: b'F', flags: 0 },
+            PmType { binflag: PM_ARRAY,     string: "array",           typeflag: b'a', flags: 0 },
+            PmType { binflag: PM_HASHED,    string: "association",     typeflag: b'A', flags: 0 },
+            PmType { binflag: 0,            string: "local",           typeflag: 0,    flags: PMTF_TEST_LEVEL },
+            PmType { binflag: PM_HIDE,      string: "hide",            typeflag: b'h', flags: 0 },
+            PmType { binflag: PM_LEFT,      string: "left justified",  typeflag: b'L', flags: PMTF_USE_WIDTH },
+            PmType { binflag: PM_RIGHT_B,   string: "right justified", typeflag: b'R', flags: PMTF_USE_WIDTH },
+            PmType { binflag: PM_RIGHT_Z,   string: "zero filled",     typeflag: b'Z', flags: PMTF_USE_WIDTH },
+            PmType { binflag: PM_LOWER,     string: "lowercase",       typeflag: b'l', flags: 0 },
+            PmType { binflag: PM_UPPER,     string: "uppercase",       typeflag: b'u', flags: 0 },
+            PmType { binflag: PM_READONLY,  string: "readonly",        typeflag: b'r', flags: 0 },
+            PmType { binflag: PM_TAGGED,    string: "tagged",          typeflag: b't', flags: 0 },
+            PmType { binflag: PM_EXPORTED,  string: "exported",        typeflag: b'x', flags: 0 },
+            PmType { binflag: PM_UNIQUE,    string: "unique",          typeflag: b'U', flags: 0 },
+            PmType { binflag: PM_TIED,      string: "tied",            typeflag: b'T', flags: 0 },
+            PmType { binflag: PM_NAMEREF,   string: "nameref",         typeflag: b'n', flags: 0 },
+        ];
+        if (printflags & (PRINT_TYPE | PRINT_TYPESET)) != 0 {
+            let mut doneminus = false;                                       // c:6200
+            for pmptr in PMTYPES.iter() {                                    // c:6204
+                if altname != 0 && altname == pmptr.typeflag {               // c:6207
+                    continue;
+                }
+                let doprint = if (pmptr.flags & PMTF_TEST_LEVEL) != 0 {      // c:6209
+                    hn.level != 0                                            // c:6211
+                } else if (pmptr.binflag != PM_EXPORTED
+                    || hn.level != 0
+                    || (f & (PM_LOCAL | PM_ARRAY | PM_HASHED)) != 0)
+                    && (f & pmptr.binflag) != 0
+                {
+                    // c:6225-6227
+                    true
+                } else {
+                    false
+                };
+                if doprint {                                                 // c:6230
+                    if (printflags & PRINT_TYPESET) != 0 {                   // c:6231
+                        if pmptr.typeflag != 0 {                             // c:6232
+                            if !doneminus {                                  // c:6233
+                                print!("-");                                 // c:6234
+                                doneminus = true;
+                            }
+                            print!("{}", pmptr.typeflag as char);            // c:6237
+                        }
+                    } else {
+                        print!("{} ", pmptr.string);                         // c:6240
+                    }
+                    if (pmptr.flags & PMTF_USE_BASE) != 0 && hn.base != 0 {  // c:6242
+                        print!("{} ", hn.base);                              // c:6243
+                        doneminus = false;
+                    }
+                    if (pmptr.flags & PMTF_USE_WIDTH) != 0 && hn.width != 0 {// c:6245
+                        print!("{} ", hn.width);                             // c:6246
+                        doneminus = false;
+                    }
+                }
+            }
+            if doneminus {                                                   // c:6252
+                print!(" ");
+            }
         }
     }
     if (printflags & PRINT_KV_PAIR) != 0 {
@@ -8573,16 +8816,28 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "ERRNO" => Some(errnogetfn().to_string()),
         // Time callbacks.
         "SECONDS" => Some(intsecondsgetfn().to_string()),
-        // Cached-state callbacks (OnceLock<Mutex<…>> backed).
-        "USERNAME" => Some(usernamegetfn()),
-        "HOME" => Some(homegetfn()),
-        "TERM" => Some(termgetfn()),
-        "WORDCHARS" => Some(wordcharsgetfn()),
-        "IFS" => Some(ifsgetfn()),
-        "TERMINFO" => Some(terminfogetfn()),
-        "TERMINFO_DIRS" => Some(terminfodirsgetfn()),
-        "KEYBOARD_HACK" => Some(keyboardhackgetfn()),
-        "histchars" | "HISTCHARS" => Some(histcharsgetfn()),
+        // Cached-state callbacks. C dispatches `pm->gsu.s->getfn(pm)`
+        // where pm is `paramtab->getnode(name)`. Mirror: look up pm,
+        // pass it through. Each getfn here ignores pm (matches C's
+        // UNUSED(Param pm)), so a fallback default-constructed param
+        // is acceptable when the table isn't populated yet.
+        "USERNAME" | "HOME" | "TERM" | "WORDCHARS" | "IFS" | "TERMINFO"
+        | "TERMINFO_DIRS" | "KEYBOARD_HACK" | "histchars" | "HISTCHARS" => {
+            let tab = paramtab().read().ok()?;
+            let pm = tab.get(name)?;
+            Some(match name {
+                "USERNAME" => usernamegetfn(pm),
+                "HOME" => homegetfn(pm),
+                "TERM" => termgetfn(pm),
+                "WORDCHARS" => wordcharsgetfn(pm),
+                "IFS" => ifsgetfn(pm),
+                "TERMINFO" => terminfogetfn(pm),
+                "TERMINFO_DIRS" => terminfodirsgetfn(pm),
+                "KEYBOARD_HACK" => keyboardhackgetfn(pm),
+                "histchars" | "HISTCHARS" => histcharsgetfn(pm),
+                _ => unreachable!(),
+            })
+        }
         "_" => Some(underscoregetfn()),
         // Counters with int return.
         "HISTSIZE" => Some(histsizegetfn().to_string()),
@@ -8610,7 +8865,15 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         }
         // $* / $@ join positional params via IFS first char.
         "*" | "@" => {
-            let sep = ifsgetfn().chars().next().unwrap_or(' ').to_string();
+            let sep = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get("IFS").map(|pm| ifsgetfn(pm)))
+                .unwrap_or_else(|| " ".to_string())
+                .chars()
+                .next()
+                .unwrap_or(' ')
+                .to_string();
             pparams_lock().lock().ok().map(|p| p.join(&sep))
         }
         // $- : current option-letter set. zsh emits baseline "569X"
@@ -8998,11 +9261,11 @@ mod gsu_tests {
         let _g = HISTCHARS_TEST_LOCK_SHARED
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        histcharssetfn(None);
-        assert_eq!(histcharsgetfn(), "!^#");
-        histcharssetfn(Some("@$&".to_string()));
-        assert_eq!(histcharsgetfn(), "@$&");
-        histcharssetfn(None);
+        histcharssetfn(&mut param::default(), String::new());
+        assert_eq!(histcharsgetfn(&param::default()), "!^#");
+        histcharssetfn(&mut param::default(), "@$&".to_string());
+        assert_eq!(histcharsgetfn(&param::default()), "@$&");
+        histcharssetfn(&mut param::default(), String::new());
     }
 
     /// Pin: `histcharssetfn` runs `unmetafy` per Src/params.c:5086
@@ -9021,27 +9284,27 @@ mod gsu_tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // 1-char: bangchar=='Q', hatchar=='\0', hashchar=='\0'.
-        histcharssetfn(Some("Q".to_string()));
+        histcharssetfn(&mut param::default(), "Q".to_string());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'Q' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), 0);
         assert_eq!(hashchar.load(Ordering::SeqCst), 0);
         // 2-char: bangchar=='X', hatchar=='Y', hashchar=='\0'.
-        histcharssetfn(Some("XY".to_string()));
+        histcharssetfn(&mut param::default(), "XY".to_string());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'X' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), b'Y' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), 0);
         // 3-char: bangchar=='A', hatchar=='B', hashchar=='C'.
-        histcharssetfn(Some("ABC".to_string()));
+        histcharssetfn(&mut param::default(), "ABC".to_string());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'A' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), b'B' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), b'C' as i32);
         // 4+ char: c:5087-5088 truncates to 3.
-        histcharssetfn(Some("WXYZ".to_string()));
+        histcharssetfn(&mut param::default(), "WXYZ".to_string());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'W' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), b'X' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), b'Y' as i32);
         // Reset to default.
-        histcharssetfn(None);
+        histcharssetfn(&mut param::default(), String::new());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'!' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), b'^' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), b'#' as i32);
@@ -10158,12 +10421,12 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Default state.
-        histcharssetfn(None);
+        histcharssetfn(&mut param::default(), String::new());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'!' as i32);
         assert_eq!(hatchar.load(Ordering::SeqCst), b'^' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), b'#' as i32);
         // Set HISTCHARS to "@:%".
-        histcharssetfn(Some("@:%".to_string()));
+        histcharssetfn(&mut param::default(), "@:%".to_string());
         assert_eq!(
             bangchar.load(Ordering::SeqCst),
             b'@' as i32,
@@ -10180,7 +10443,7 @@ mod tests {
             "c:5097 — hashchar = third byte of HISTCHARS"
         );
         // Restore.
-        histcharssetfn(None);
+        histcharssetfn(&mut param::default(), String::new());
         assert_eq!(bangchar.load(Ordering::SeqCst), b'!' as i32);
         assert_eq!(hashchar.load(Ordering::SeqCst), b'#' as i32);
     }
@@ -10188,23 +10451,23 @@ mod tests {
     /// `Src/params.c:5064-5074` — `histcharsgetfn` reads from the
     /// three atomic globals and returns a string of non-NUL bytes.
     /// Pin set→get symmetry: after `histcharssetfn(Some("@&%"))`,
-    /// `histcharsgetfn()` returns `"@&%"`.
+    /// `histcharsgetfn(&param::default())` returns `"@&%"`.
     #[test]
     fn histcharsgetfn_round_trips_with_histcharssetfn() {
         let _g = crate::test_util::global_state_lock();
         let _g = HISTCHARS_TEST_LOCK_SHARED
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        histcharssetfn(Some("@&%".to_string()));
+        histcharssetfn(&mut param::default(), "@&%".to_string());
         assert_eq!(
-            histcharsgetfn(),
+            histcharsgetfn(&param::default()),
             "@&%",
             "c:5068-5073 — getfn reads atomic globals setfn wrote"
         );
         // Restore default and verify round-trip.
-        histcharssetfn(None);
+        histcharssetfn(&mut param::default(), String::new());
         assert_eq!(
-            histcharsgetfn(),
+            histcharsgetfn(&param::default()),
             "!^#",
             "default `!^#` round-trips through atomics"
         );
@@ -10288,11 +10551,11 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Reset to defaults.
-        histcharssetfn(None);
+        histcharssetfn(&mut param::default(), String::new());
         let bang_before = bangchar.load(Ordering::SeqCst);
         let hat_before = hatchar.load(Ordering::SeqCst);
         // Try to set HISTCHARS with non-ASCII char.
-        histcharssetfn(Some("é".to_string()));
+        histcharssetfn(&mut param::default(), "é".to_string());
         // c:5092 — rejection returns BEFORE any state changes.
         assert_eq!(
             bangchar.load(Ordering::SeqCst),
