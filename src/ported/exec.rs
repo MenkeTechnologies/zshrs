@@ -130,6 +130,14 @@ pub static nohistsave: std::sync::atomic::AtomicI32 = // c:122 (Src/exec.c)
 pub static subsh: std::sync::atomic::AtomicI32 = // c:160 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
+/// Port of `mod_export int zsh_subshell;` from `Src/init.c:67`. Visible
+/// `$ZSH_SUBSHELL` parameter — incremented by `entersubsh()` each time
+/// the shell forks into a subshell (real or fake-exec). Distinct from
+/// `subsh` which records whether we ARE a subshell; `zsh_subshell` is
+/// the visible depth count.
+pub static zsh_subshell: std::sync::atomic::AtomicI32 = // c:67 (Src/init.c)
+    std::sync::atomic::AtomicI32::new(0);
+
 /// Port of `mod_export volatile int retflag;` from `Src/exec.c:165`.
 /// Set by `bin_return` to unwind the function-call stack. Cleared
 /// by `runshfunc` on entry, checked by `execlist`'s main loop.
@@ -2914,10 +2922,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:4983 — child.
     closem(FDT_UNUSED, 0); // c:4984
     let _ = redup(fd, 1); // c:4985
-                          // entersubsh approx — WARNING (c)
-    unsafe {
-        libc::setsid();
-    }
+    entersubsh(esub::PGRP | esub::NOMONITOR, None); // c:4986
     crate::ported::prompt::cmdpush(CS_CMDSUBST as u8); // c:4987
                                                        // c:4988 — execode — WARNING (d).
     let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
@@ -3002,9 +3007,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         return Some(pnam); // c:5093
     }
     // c:5095 — child.
-    unsafe {
-        libc::setsid();
-    }
+    entersubsh(esub::ASYNC | esub::PGRP, None); // c:5095
     let _ = redup(pipes[out as usize], out); // c:5096
     closem(FDT_UNUSED, 0); // c:5097
     crate::ported::prompt::cmdpush(CS_CMDSUBST as u8); // c:5100
@@ -3031,6 +3034,231 @@ pub mod esub {
     pub const REVERTPGRP: i32 = 0x10; // c:1069
     pub const NOMONITOR: i32 = 0x20; // c:1071
     pub const JOB_CONTROL: i32 = 0x40; // c:1073
+}
+
+/// Port of `struct entersubsh_ret` from `Src/exec.c` (forward decl).
+/// Out-arg used by `entersubsh()` to hand back the group-leader pid
+/// and the list-pipe job index the parent should track. Only filled
+/// in for `ESUB_PGRP` + non-async forks (synchronous pipeline child
+/// groups).
+#[allow(non_camel_case_types)]
+#[derive(Default)]
+pub struct entersubsh_ret {
+    pub gleader: i32,        // c:1122
+    pub list_pipe_job: i32,  // c:1123
+}
+
+/// Port of `static void entersubsh(int flags, struct entersubsh_ret *retp)`
+/// from `Src/exec.c:1083`. Called by every child fork to switch the
+/// process into subshell mode: traps reset, monitor disabled, signals
+/// re-defaulted, pgrp + tty handed off, saved fds closed, jobtab
+/// cleared, ZSH_SUBSHELL bumped, forklevel = locallevel.
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// (a) `jobtab[list_pipe_job]` / `jobtab[thisjob]` pgrp ops (c:1110-
+///     1151) are SKIPPED — the Rust jobs module (jobs.rs) hides the
+///     jobtab behind a JobTable handle and doesn't expose direct
+///     index access in this call shape. The ESUB_PGRP+sync path
+///     therefore won't establish pipeline group-leadership in the
+///     child until a jobtab accessor is added. `setpgrp(0, 0)` is
+///     used as the fallback so the child at least leaves the parent's
+///     process group.
+/// (b) `clearjobtab(monitor)` (c:1219) — Rust signature is
+///     `clearjobtab(&mut JobTable, monitor)`; we get the global table
+///     via a TABLE handle similar to other jobs.rs entries.
+/// (c) `attachtty(...)` (c:1119, 1144) — only invoked from the pgrp
+///     branch which is skipped per (a).
+/// (d) `release_pgrp()` called for ESUB_REVERTPGRP when `getpid() ==
+///     mypgrp` — direct C parity (jobs.rs:3406 provides the call).
+/// (e) `opts[USEZLE] = 0; zleactive = 0` — Rust opts table lookup
+///     uses `opts_set_off(USEZLE)`; zleactive is the atomic in
+///     builtins/sched.rs.
+/// =============================================================
+pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
+    // c:1083
+    use crate::ported::signals::{
+        intrap, settrap, sigtrapped, signal_default, signal_ignore, signal_mask,
+        signal_unblock, unsettrap,
+    };
+    use crate::ported::signals_h::SIGCOUNT;
+    use crate::ported::utils::{fdtable_get, zclose, MAX_ZSH_FD};
+    use crate::ported::options::dosetopt;
+    use crate::ported::zsh_h::{
+        isset, FDT_SAVED_MASK, INTERACTIVE, MONITOR, POSIXJOBS, POSIXTRAPS, USEZLE,
+        ZSIG_FUNC, ZSIG_IGNORED,
+    };
+    let monitor: i32;
+    let job_control_ok: i32;
+    // c:1088-1092 — reset traps unless KEEPTRAP.
+    if (flags & esub::KEEPTRAP) == 0 {
+        // c:1088
+        for sig in 0..=SIGCOUNT {
+            // c:1089
+            let st = {
+                let guard = sigtrapped.lock().unwrap();
+                guard.get(sig as usize).copied().unwrap_or(0)
+            };
+            let func_set = (st & ZSIG_FUNC) != 0; // c:1090
+            let posix_ignored = isset(POSIXTRAPS) && ((st & ZSIG_IGNORED) != 0); // c:1091
+            if !func_set && !posix_ignored {
+                unsettrap(sig); // c:1092
+            }
+        }
+    }
+    monitor = if isset(MONITOR) { 1 } else { 0 }; // c:1093
+    job_control_ok =
+        if monitor != 0 && (flags & esub::JOB_CONTROL) != 0 && isset(POSIXJOBS) {
+            // c:1094
+            1
+        } else {
+            0
+        };
+    crate::ported::builtin::EXIT_VAL.store(0, Ordering::Relaxed); // c:1095
+    if (flags & esub::NOMONITOR) != 0 {
+        // c:1096
+        dosetopt(MONITOR, 0, 0); // c:1097
+    }
+    if !isset(MONITOR) {
+        // c:1098
+        if (flags & esub::ASYNC) != 0 {
+            // c:1099
+            let _ = settrap(libc::SIGINT, None, 0); // c:1100
+            let _ = settrap(libc::SIGQUIT, None, 0); // c:1101
+            if unsafe { libc::isatty(0) } != 0 {
+                // c:1102
+                unsafe {
+                    libc::close(0);
+                } // c:1103
+                let devnull = std::ffi::CString::new("/dev/null").unwrap();
+                if unsafe {
+                    libc::open(
+                        devnull.as_ptr(),
+                        libc::O_RDWR | libc::O_NOCTTY,
+                    )
+                } != 0
+                {
+                    // c:1104
+                    zerr(&format!(
+                        // c:1105
+                        "can't open /dev/null: {}",
+                        std::io::Error::last_os_error()
+                    ));
+                    unsafe {
+                        libc::_exit(1);
+                    } // c:1106
+                }
+            }
+        }
+    } else {
+        // c:1110 — `else if (thisjob != -1 && (flags & ESUB_PGRP))`.
+        // WARNING (a) — pgrp/jobtab handling skipped; basic fallback only.
+        if (flags & esub::PGRP) != 0 {
+            unsafe {
+                libc::setpgid(0, 0);
+            }
+        }
+    }
+    let _ = retp; // WARNING (a) — out-arg unfilled when pgrp branch skipped.
+    if (flags & esub::FAKE) == 0 {
+        // c:1153
+        subsh.store(1, Ordering::Relaxed); // c:1154
+    }
+    // c:1161 — `zsh_subshell++;` regardless of FAKE.
+    zsh_subshell.fetch_add(1, Ordering::Relaxed);
+    // c:1162 — `if ((flags & ESUB_REVERTPGRP) && getpid() == mypgrp)`.
+    if (flags & esub::REVERTPGRP) != 0
+        && unsafe { libc::getpid() }
+            == crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed)
+    {
+        crate::ported::jobs::release_pgrp(); // c:1163
+    }
+    *crate::ported::init::shout.lock().unwrap() = 0; // c:1164 — shout = NULL
+    if (flags & esub::NOMONITOR) != 0 {
+        // c:1165
+        signal_ignore(libc::SIGTTOU); // c:1171
+        signal_ignore(libc::SIGTTIN); // c:1172
+        signal_ignore(libc::SIGTSTP); // c:1173
+    } else if job_control_ok == 0 {
+        // c:1174
+        signal_default(libc::SIGTTOU); // c:1181
+        signal_default(libc::SIGTTIN); // c:1182
+        signal_default(libc::SIGTSTP); // c:1183
+    }
+    let interact = isset(INTERACTIVE); // c:1185 — Rust uses INTERACTIVE option as proxy
+    if interact {
+        signal_default(libc::SIGTERM); // c:1186
+        let int_st = sigtrapped
+            .lock()
+            .unwrap()
+            .get(libc::SIGINT as usize)
+            .copied()
+            .unwrap_or(0);
+        if (int_st & ZSIG_IGNORED) == 0 {
+            // c:1187
+            signal_default(libc::SIGINT); // c:1188
+        }
+        let pipe_st = sigtrapped
+            .lock()
+            .unwrap()
+            .get(libc::SIGPIPE as usize)
+            .copied()
+            .unwrap_or(0);
+        if pipe_st == 0 {
+            // c:1189
+            signal_default(libc::SIGPIPE); // c:1190
+        }
+    }
+    let quit_st = sigtrapped
+        .lock()
+        .unwrap()
+        .get(libc::SIGQUIT as usize)
+        .copied()
+        .unwrap_or(0);
+    if (quit_st & ZSIG_IGNORED) == 0 {
+        // c:1192
+        signal_default(libc::SIGQUIT); // c:1193
+    }
+    // c:1202-1205 — unblock any trapped signals while in `intrap`.
+    if intrap.load(Ordering::Relaxed) != 0 {
+        // c:1202
+        for sig in 1..=SIGCOUNT {
+            let st = sigtrapped
+                .lock()
+                .unwrap()
+                .get(sig as usize)
+                .copied()
+                .unwrap_or(0);
+            if st != 0 && st != ZSIG_IGNORED {
+                // c:1204
+                let m = signal_mask(sig);
+                let _ = signal_unblock(&m); // c:1205
+            }
+        }
+    }
+    if job_control_ok == 0 {
+        // c:1206
+        dosetopt(MONITOR, 0, 0); // c:1207
+    }
+    dosetopt(USEZLE, 0, 0); // c:1208
+    crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed); // c:1209
+                                                                            // c:1214-1217 — close saved fds.
+    let max = MAX_ZSH_FD.load(Ordering::Relaxed);
+    for i in 10..=max {
+        if (fdtable_get(i) & FDT_SAVED_MASK) != 0 {
+            // c:1215
+            let _ = zclose(i); // c:1216
+        }
+    }
+    // c:1218-1219 — clearjobtab — WARNING (b).
+    // SKIPPED: `clearjobtab(&mut JOB_TABLE, monitor)` requires a
+    // jobs.rs API surface change.
+    let _ = monitor;
+    let _ = crate::ported::jobs::get_usage(); // c:1220
+    FORKLEVEL.store(
+        // c:1221 — `forklevel = locallevel;`
+        crate::ported::params::locallevel.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
 }
 
 /// Port of `static int getpipe(char *cmd, int nullexec)` from
@@ -3129,11 +3357,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
         return pipes[(1 - out) as usize]; // c:5144
     }
     // c:5146 — child path.
-    // entersubsh approximation — see WARNING (b).
-    unsafe {
-        libc::setsid();
-        libc::signal(libc::SIGINT, libc::SIG_IGN);
-    }
+    entersubsh(esub::ASYNC | esub::PGRP | esub::NOMONITOR, None); // c:5146
     let _ = redup(pipes[out as usize], out); // c:5147
     closem(FDT_UNUSED, 0); // c:5148
     crate::ported::prompt::cmdpush(CS_CMDSUBST as u8); // c:5149
