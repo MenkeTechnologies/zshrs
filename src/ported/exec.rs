@@ -1090,6 +1090,85 @@ pub fn is_anonymous_function_name(name: &str) -> i32 {
     }
 }
 
+/// Port of `Emulation_options sticky_emulation_dup(Emulation_options src,
+/// int useheap)` from `Src/exec.c:5501`.
+///
+/// C body (`useheap` selects between heap-arena and permanent zalloc;
+/// Rust collapses both into owned `Box` clones):
+/// ```c
+/// Emulation_options newsticky = useheap ?
+///     hcalloc(sizeof(*src)) : zshcalloc(sizeof(*src));
+/// newsticky->emulation = src->emulation;
+/// if (src->n_on_opts) {
+///     size_t sz = src->n_on_opts * sizeof(*src->on_opts);
+///     newsticky->n_on_opts = src->n_on_opts;
+///     newsticky->on_opts = useheap ? zhalloc(sz) : zalloc(sz);
+///     memcpy(newsticky->on_opts, src->on_opts, sz);
+/// }
+/// if (src->n_off_opts) {
+///     size_t sz = src->n_off_opts * sizeof(*src->off_opts);
+///     newsticky->n_off_opts = src->n_off_opts;
+///     newsticky->off_opts = useheap ? zhalloc(sz) : zalloc(sz);
+///     memcpy(newsticky->off_opts, src->off_opts, sz);
+/// }
+/// return newsticky;
+/// ```
+///
+/// Deep-clone a sticky emulation struct. Used by `shfunc_set_sticky`
+/// at function-def time to snapshot the pending `sticky` global so
+/// the function carries its own immutable copy.
+pub fn sticky_emulation_dup(
+    src: &crate::ported::zsh_h::emulation_options,
+    _useheap: i32,
+) -> crate::ported::zsh_h::Emulation_options {
+    // c:5501
+    // c:5503-5505 — `newsticky = hcalloc/zshcalloc; newsticky->emulation = src->emulation;`
+    let mut newsticky = Box::new(crate::ported::zsh_h::emulation_options {
+        emulation: src.emulation, // c:5505
+        n_on_opts: 0,
+        n_off_opts: 0,
+        on_opts: Vec::new(),
+        off_opts: Vec::new(),
+    });
+    // c:5506-5511 — copy on_opts.
+    if src.n_on_opts != 0 {
+        // c:5506
+        newsticky.n_on_opts = src.n_on_opts; // c:5508
+        newsticky.on_opts = src.on_opts.clone(); // c:5510 memcpy
+    }
+    // c:5512-5517 — copy off_opts.
+    if src.n_off_opts != 0 {
+        // c:5512
+        newsticky.n_off_opts = src.n_off_opts; // c:5514
+        newsticky.off_opts = src.off_opts.clone(); // c:5516 memcpy
+    }
+    newsticky // c:5519
+}
+
+/// Port of `void shfunc_set_sticky(Shfunc shf)` from `Src/exec.c:5527`.
+///
+/// C body:
+/// ```c
+/// if (sticky)
+///     shf->sticky = sticky_emulation_dup(sticky, 0);
+/// else
+///     shf->sticky = NULL;
+/// ```
+///
+/// Stamp the function with the current pending sticky-emulation
+/// snapshot (deep-copy via `sticky_emulation_dup`), or clear it.
+pub fn shfunc_set_sticky(shf: &mut shfunc) {
+    // c:5527
+    let sticky_guard = crate::ported::options::sticky.lock().unwrap();
+    if let Some(ref s) = *sticky_guard {
+        // c:5529
+        shf.sticky = Some(sticky_emulation_dup(s, 0)); // c:5530
+    } else {
+        // c:5531
+        shf.sticky = None; // c:5532
+    }
+}
+
 /// Port of `static pid_t zfork(struct timespec *ts)` from
 /// `Src/exec.c:349`.
 ///
