@@ -1160,27 +1160,204 @@ pub fn bin_zle_flags(args: &[String]) -> i32 {
 /// Bare-args invocation of `zle widget args...` from inside another
 /// widget. The full path (flag parse + execzlefunc) needs ZLE
 /// session substrate; this port covers the empty-args probe and
-/// the !zle_usable guard.
-/// Rust idiom replacement: the empty-args + !zle_usable guards cover
-/// the daily-driver entry; the flag-parsing loop + execzlefunc
-/// dispatch lives on the live ZLE session substrate.
+/// Faithful port of `bin_zle_call(char *name, char **args, Options ops,
+/// UNUSED(char func))` from Src/Zle/zle_thingy.c:703.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
 pub fn bin_zle_call(args: &[String]) -> i32 {
     // c:703
-    // c:703-716 — `if (!wname) return !zle_usable(); if (!zle_usable())
-    //                  zwarnnam; return 1`. The flag-parsing loop +
-    // execzlefunc dispatch needs full ZLE session substrate.
-    if args.is_empty() {
-        // c:711 — `return !zle_usable()`. Returns 0 when usable, 1 when not.
-        return if zle_usable() != 0 { 0 } else { 1 };
+    // c:706-709 — locals.
+    let modsave: modifier = (*ZMOD.lock().unwrap()).clone(); // c:706 struct modifier modsave = zmod
+    let mut saveflag = 0i32; // c:707
+    let mut setbindk = 0i32; // c:707
+    let mut setlbindk = 0i32; // c:707
+                              // c:707 `remetafy` collapses in Rust (UTF-8 storage).
+    let mut keymap_restore: Option<String> = None; // c:708
+    // c:708 — `char *wname = *args++;`. Consume first arg as widget name.
+    let mut argv: Vec<String> = args.to_vec();
+    let wname = if argv.is_empty() {
+        None
+    } else {
+        Some(argv.remove(0))
+    };
+
+    // c:710-711 — `if (!wname) return !zle_usable();`
+    if wname.is_none() {
+        // c:710
+        return if zle_usable() != 0 { 0 } else { 1 }; // c:711
     }
+    let wname = wname.unwrap();
+
+    // c:713-716 — `if (!zle_usable()) { zwarnnam; return 1; }`.
     if zle_usable() == 0 {
         // c:713
+        zwarnnam("zle", "widgets can only be called when ZLE is active"); // c:714
         return 1; // c:715
     }
-    // Full dispatch path (flag parse + execzlefunc) needs more
-    // substrate. Treat as success once usable + widget name given.
-    0
+
+    // c:722-726 — `if (zlemetaline) { unmetafy_line(); remetafy = 1; }
+    //               else remetafy = 0;`. Rust stores ZLE as UTF-8;
+    // the meta-line bookkeeping is a no-op.
+
+    // c:728-798 — flag-parsing loop. C iterates while `**args == '-'`
+    // and consumes the option characters one at a time. Supports
+    //   -f nolast      → setlbindk = 1
+    //   -n NUM         → zmod.mult = NUM, MOD_MULT |= 1
+    //   -N             → zmod.mult = 1, MOD_MULT &= ~1 (reset count)
+    //   -K keymap      → selectkeymap(keymap, 0)
+    //   -w             → setbindk = 1
+    // The C trick `skip_this_arg = "x"` substitutes a dummy when an
+    // attached-value (like `-nNUM` form) consumed the operand inline.
+    while !argv.is_empty() && argv[0].starts_with('-') {
+        // c:728
+        let cur = argv[0].clone();
+        // c:732-734 — `-` or `--` terminates flag parsing.
+        if cur.len() == 1 || (cur.len() == 2 && cur.as_bytes()[1] == b'-') {
+            // c:732
+            argv.remove(0); // c:733 args++
+            break; // c:734
+        }
+        let mut byte_idx = 1usize; // skip leading '-'
+        let mut consumed_next = false;
+        let cur_bytes = cur.as_bytes();
+        while byte_idx < cur_bytes.len() {
+            // c:736 `while (*++(*args))`
+            let c = cur_bytes[byte_idx];
+            byte_idx += 1;
+            match c {
+                b'f' => {
+                    // c:738-750 — `-f nolast`.
+                    // c:739 — `flag = args[0][1] ? args[0]+1 : args[1];`
+                    let flag: Option<String> = if byte_idx < cur_bytes.len() {
+                        // c:739 attached form `-fXXX`
+                        Some(
+                            std::str::from_utf8(&cur_bytes[byte_idx..])
+                                .unwrap_or("")
+                                .to_string(),
+                        )
+                    } else if argv.len() > 1 {
+                        // c:739 separate form `-f XXX`
+                        Some(argv[1].clone())
+                    } else {
+                        None
+                    };
+                    if flag.as_deref() != Some("nolast") {
+                        // c:740
+                        zwarnnam("zle", "'nolast' expected after -f"); // c:741
+                        return 1; // c:744
+                    }
+                    // c:746-747 — consume separate-form operand.
+                    if byte_idx >= cur_bytes.len() {
+                        argv.remove(1); // c:746-747
+                        consumed_next = true;
+                    }
+                    setlbindk = 1; // c:749
+                    byte_idx = cur_bytes.len(); // exit inner loop
+                }
+                b'n' => {
+                    // c:751-764 — `-n NUM`. Set zmod.mult.
+                    let num: Option<String> = if byte_idx < cur_bytes.len() {
+                        Some(
+                            std::str::from_utf8(&cur_bytes[byte_idx..])
+                                .unwrap_or("")
+                                .to_string(),
+                        )
+                    } else if argv.len() > 1 {
+                        Some(argv[1].clone())
+                    } else {
+                        None
+                    };
+                    if num.is_none() {
+                        // c:753
+                        zwarnnam("zle", &format!("number expected after -{}", c as char)); // c:754
+                        return 1; // c:757
+                    }
+                    if byte_idx >= cur_bytes.len() {
+                        argv.remove(1);
+                        consumed_next = true;
+                    }
+                    saveflag = 1; // c:761
+                    let n: i32 = num.unwrap().parse().unwrap_or(0); // c:762 atoi
+                    let mut zm = ZMOD.lock().unwrap();
+                    zm.mult = n; // c:762
+                    zm.flags |= MOD_MULT; // c:763
+                    byte_idx = cur_bytes.len();
+                }
+                b'N' => {
+                    // c:765-768 — `-N` reset count modifier.
+                    saveflag = 1; // c:766
+                    let mut zm = ZMOD.lock().unwrap();
+                    zm.mult = 1; // c:767
+                    zm.flags &= !MOD_MULT; // c:768
+                }
+                b'K' => {
+                    // c:770-786 — `-K keymap`.
+                    let keymap_tmp: Option<String> = if byte_idx < cur_bytes.len() {
+                        Some(
+                            std::str::from_utf8(&cur_bytes[byte_idx..])
+                                .unwrap_or("")
+                                .to_string(),
+                        )
+                    } else if argv.len() > 1 {
+                        Some(argv[1].clone())
+                    } else {
+                        None
+                    };
+                    if keymap_tmp.is_none() {
+                        // c:772
+                        zwarnnam("zle", &format!("keymap expected after -{}", c as char)); // c:773
+                        return 1; // c:776
+                    }
+                    if byte_idx >= cur_bytes.len() {
+                        argv.remove(1);
+                        consumed_next = true;
+                    }
+                    keymap_restore =
+                        Some(crate::ported::zle::zle_keymap::curkeymapname().clone()); // c:780
+                    if crate::ported::zle::zle_keymap::selectkeymap(
+                        &keymap_tmp.unwrap(),
+                        0,
+                    ) != 0
+                    {
+                        // c:781
+                        return 1; // c:784
+                    }
+                    byte_idx = cur_bytes.len();
+                }
+                b'w' => {
+                    // c:787-789 — `-w`.
+                    setbindk = 1; // c:788
+                }
+                _ => {
+                    // c:790-794 — unknown option.
+                    zwarnnam("zle", &format!("unknown option: {}", cur)); // c:791
+                    return 1; // c:794
+                }
+            }
+        }
+        argv.remove(0); // c:797 — args++.
+        let _ = consumed_next; // already adjusted via argv.remove(1) above
+    }
+
+    // c:800-807 — `t = rthingy(wname); ... ret = execzlefunc(t, args,
+    //   setbindk, setlbindk); unrefthingy(t);`. Rust execzlefunc takes
+    // (name, args); setbindk/setlbindk plumbing pending the wider sig.
+    rthingy(&wname); // c:800
+    let _ = setbindk;
+    let _ = setlbindk;
+    let ret = crate::ported::zle::zle_main::execzlefunc(&wname, &argv); // c:806
+    unrefthingy(&wname); // c:807
+
+    // c:808-809 — `if (saveflag) zmod = modsave;`.
+    if saveflag != 0 {
+        *ZMOD.lock().unwrap() = modsave; // c:809
+    }
+    // c:810-811 — `if (keymap_restore) selectkeymap(keymap_restore, 0);`.
+    if let Some(k) = keymap_restore {
+        // c:810
+        crate::ported::zle::zle_keymap::selectkeymap(&k, 0); // c:811
+    }
+    // c:812-813 — remetafy collapses in Rust.
+    ret // c:814
 }
 
 /// Direct port of `int bin_zle_invalidate(char *name, char **args,
@@ -1447,6 +1624,44 @@ mod tests {
             r, 1,
             "c:373-374 — incompatible op flags (-l + -D) → return 1"
         );
+    }
+
+    /// `Src/Zle/zle_thingy.c:790-794` — `bin_zle_call` rejects unknown
+    /// option chars in the flag-parsing loop. Pin: `-q` (not a real
+    /// flag) → return 1. Set zleactive=1 so we reach the flag parser
+    /// (otherwise the !zle_usable early-return at c:715 would mask it).
+    #[test]
+    fn bin_zle_call_rejects_unknown_option() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+        crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
+        // -q is not a valid bin_zle_call flag.
+        let r = bin_zle_call(&[
+            "widget_name".to_string(),
+            "-q".to_string(),
+        ]);
+        crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
+        assert_eq!(r, 1, "c:791-794 — unknown option char → return 1");
+    }
+
+    /// `Src/Zle/zle_thingy.c:740-744` — `-f` requires the literal token
+    /// "nolast". Anything else → return 1.
+    #[test]
+    fn bin_zle_call_rejects_bad_f_arg() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+        crate::ported::builtins::sched::zleactive.store(1, Ordering::Relaxed);
+        let r = bin_zle_call(&[
+            "widget".to_string(),
+            "-f".to_string(),
+            "bogus".to_string(),
+        ]);
+        crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
+        assert_eq!(r, 1, "c:741 — -f with non-'nolast' → return 1");
     }
 
     /// `Src/Zle/zle_thingy.c:378-381` — bin_zle rejects too-few args.
