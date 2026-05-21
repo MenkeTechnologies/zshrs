@@ -1552,24 +1552,71 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
 }
 
 /// Simple glob pattern matching
-/// Match a glob pattern against a single string.
-/// Port of `matchpat(char *a, char *b)` from Src/glob.c:2514 — same
-/// `EXTENDED_GLOB`/`NO_CASE_GLOB` option handling.
-/// WARNING: param names don't match C — Rust=(pattern, text, extended, case_sensitive) vs C=(a, b)
-pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool {
+/* check to see if a matches b (b is not a filename pattern) */            // c:2510
+// !!! WARNING: RUST-ONLY HELPER — extra args + flipped arg order vs C !!!
+// C signature: `int matchpat(char *a, char *b)` — `a` = text to match,
+// `b` = pattern. Rust callers (cond.rs, watch.rs, glob.rs internal users)
+// pass `(pattern, text, extended, case_sensitive)` — pattern-FIRST,
+// flipped from C, plus two per-call option overrides. The BODY below
+// is C-faithful for the matching path (patcompile + pattry, no Unicode
+// case-folding); `extended`/`case_sensitive` drive transient
+// `opt_state_set` overrides around the patcompile call. The transient
+// swap is the WRONG mechanism — patcompile is not reentrant under
+// concurrent option mutation. SOLE acceptable use: this same-process,
+// single-threaded matchpat call path. Replace with: all callers
+// migrate to (a) global setopt and (b) canonical C arg order
+// `matchpat(text, pattern)`.
+// !!! WARNING: RUST-ONLY HELPER — extra args + flipped arg order vs C !!!
+/// Port of `matchpat(char *a, char *b)` from `Src/glob.c:2514`.
+/// CALLER CONVENTION: Rust=(pattern, text, ext, cs) — pattern FIRST
+/// (FLIPPED from C `matchpat(text=a, pattern=b)`). Body remaps to
+/// C order internally.
+pub fn matchpat(pattern_in: &str, text_in: &str, extended: bool, case_sensitive: bool) -> bool {
+    // Remap to C names (a=text, b=pattern) at the function boundary so
+    // the body below reads identically to Src/glob.c:2514-2530.
+    let a = text_in;
+    let b = pattern_in;
     // c:2514
-    let pat = if case_sensitive {
-        pattern.to_string()
+    crate::ported::signals_h::queue_signals();                               // c:2519
+    // !!! WARNING: SUBSTRATE GAP — pattern engine GF_IGNCASE broken !!!
+    // C `patcompile` reads CASEGLOB and emits GF_IGNCASE when unset; the
+    // matcher then walks case-insensitively. zshrs's pattern engine
+    // emits the flag correctly (pattern.rs:362) but the matcher does NOT
+    // honor it at match time (verified by direct pattern::patmatch
+    // probe). To keep semantically-correct case-insensitive matching
+    // while the engine gap is open, pre-fold both sides when
+    // `case_sensitive == false`. Engine-side fix path: pattern.rs
+    // patmatch_one / patmatchrange must consult GF_IGNCASE.
+    // !!! WARNING: SUBSTRATE GAP — pattern engine GF_IGNCASE broken !!!
+    let (a_eff, b_eff) = if case_sensitive {
+        (a.to_string(), b.to_string())
     } else {
-        pattern.to_lowercase()
+        (a.to_lowercase(), b.to_lowercase())
     };
-    let txt = if case_sensitive {
-        text.to_string()
-    } else {
-        text.to_lowercase()
+    // Per-call option override (Rust-only): snapshot, set, restore.
+    let prev_extended = crate::ported::options::opt_state_get("extendedglob");
+    let prev_caseglob = crate::ported::options::opt_state_get("caseglob");
+    crate::ported::options::opt_state_set("extendedglob", extended);
+    crate::ported::options::opt_state_set("caseglob", case_sensitive);
+    // c:2521 — `if (!(p = patcompile(b, PAT_STATIC, NULL)))`. Rust uses
+    // PAT_HEAPDUP (=0) — pattern::patmatch's canonical compile path;
+    // PAT_STATIC's static-buffer path is incomplete in zshrs.
+    let p_opt = crate::ported::pattern::patcompile(&b_eff, crate::ported::zsh_h::PAT_HEAPDUP, None);
+    if let Some(v) = prev_extended {
+        crate::ported::options::opt_state_set("extendedglob", v);
+    }
+    if let Some(v) = prev_caseglob {
+        crate::ported::options::opt_state_set("caseglob", v);
+    }
+    let ret = match p_opt {
+        Some(p) => crate::ported::pattern::pattry(&p, &a_eff),               // c:2525
+        None => {
+            crate::ported::utils::zerr(&format!("bad pattern: {}", b));      // c:2522
+            false                                                            // c:2523
+        }
     };
-
-    patmatch(&pat, &txt, extended)
+    crate::ported::signals_h::unqueue_signals();                             // c:2527
+    ret                                                                      // c:2529
 }
 
 /// Get match return value (from glob.c get_match_ret line 2550)
