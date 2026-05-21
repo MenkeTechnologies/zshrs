@@ -4978,11 +4978,12 @@ pub fn bin_whence(
     };
     for arg in &argv_vec {
         // c:4121
-        // c:4123 — `informed = 0;` reset per iteration so the per-arg
+        // c:4088 — `informed = 0;` reset per iteration so the per-arg
         // not-found path can fire correctly.
-        informed = 0; // c:4123
-        let mut buf: Option<String> = None;
-        // c:4124-4130 — `-p` path-only path.
+        informed = 0; // c:4088
+        // c:4090 `char *cnam` is the findcmd return in C; in Rust it
+        // is bound inline at the findcmd call site below.
+        // c:4089-4137 — !`-p` and !`-a` matched-from-prior-`-m` arm.
         if !OPT_ISSET(ops, b'p') {
             // c:4093-4097 — alias check. C: `aliastab->printnode(hn, aliasflags)`.
             // Inline match-on-printflags was a fake reimplementation;
@@ -5143,8 +5144,17 @@ pub fn bin_whence(
                             } else {
                                 print!("{}", full); // c:4158
                             }
-                            // c:4159-4160 — `-s`/`-S` symlink follow.
-                            // Not yet ported here; placeholder.
+                            // c:4159-4160 — `if (OPT_ISSET(ops,'s') ||
+                            //   OPT_ISSET(ops,'S')) print_if_link(buf,
+                            //   OPT_ISSET(ops,'S'));`. -s prints just
+                            // the final realpath; -S prints the whole
+                            // chain.
+                            if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'S') {
+                                crate::ported::utils::print_if_link(
+                                    &full,
+                                    OPT_ISSET(ops, b'S'),
+                                ); // c:4160
+                            }
                             println!(); // c:4161 fputc('\n', stdout)
                         }
                         informed = 1; // c:4163
@@ -5173,37 +5183,38 @@ pub fn bin_whence(
                 continue;
             }
         }
-        // c:4205-4218 — final $PATH fallback via findcmd.
-        buf = findcmd(arg, 1, (func == BIN_COMMAND && OPT_ISSET(ops, b'p')) as i32);
-        if let Some(path) = buf {
-            // c:4150 iscom
-            if wd {
-                // c:4151
-                println!("{}: command", arg); // c:4152
-            } else if v && !csh {
-                // c:4154
-                print!("{} is ", arg); // c:4156
-                println!("{}", quotedzputs(&path)); // c:4157
-            } else {
-                println!("{}", path); // c:4159
-            }
-            informed = 1; // c:4163
-            continue;
-        }
-        // c:4166-4185 — fallback: findcmd through $PATH.
-        if let Some(cnam) = findcmd(arg, 1, 0) {
+        // c:4181-4197 — external-command fallback via findcmd.
+        // C: `if ((cnam = findcmd(*argv, 1, func == BIN_COMMAND &&
+        //   OPT_ISSET(ops, 'p'))))`. Single call site — the previous
+        // Rust port had two near-duplicate findcmd blocks which
+        // doubled the lookup. Collapsed into one to match C.
+        if let Some(cnam) = findcmd(
+            arg,
+            1, // c:4181 docmd
+            (func == BIN_COMMAND && OPT_ISSET(ops, b'p')) as i32, // c:4182-4183
+        ) {
             // c:4181
             if wd {
                 // c:4184
-                println!("{}: command", arg); // c:4185
-            } else if v && !csh {
-                // c:4187
-                print!("{} is ", arg); // c:4188
-                println!("{}", quotedzputs(&cnam)); // c:4189
+                println!("{}: command", arg); // c:4186
             } else {
-                println!("{}", cnam); // c:4191
+                if v && !csh {
+                    // c:4188
+                    print!("{} is ", arg); // c:4189
+                    print!("{}", quotedzputs(&cnam)); // c:4190
+                } else {
+                    print!("{}", cnam); // c:4192
+                }
+                // c:4193-4194 — `-s`/`-S` symlink follow.
+                if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'S') {
+                    crate::ported::utils::print_if_link(
+                        &cnam,
+                        OPT_ISSET(ops, b'S'),
+                    ); // c:4194
+                }
+                println!(); // c:4195 fputc('\n', stdout)
             }
-            informed = 1; // c:4198
+            informed = 1; // c:4197
             continue;
         }
         // c:4201-4205 — not found at all.
