@@ -3278,9 +3278,19 @@ pub fn permmatches(last: i32) -> i32 {
 // freematch / freematches — `Src/Zle/compcore.c:3575 / 3605`.
 // =====================================================================
 
-/// Port of `void freematch(Cmatch m, int *cl, int rec)` from
-/// compcore.c:3575. Rust's `Drop` covers it.
-pub fn freematch(_m: Cmatch) { // c:3575
+/// Port of `static void freematch(Cmatch m, int nbeg, int nend)` from
+/// `Src/Zle/compcore.c:3575`. C frees each Cmatch field via `zsfree`
+/// (str/orig/ipre/ripre/isuf/ppre/psuf/pre/suf/prpre/rems/remf/disp/
+/// autoq) and `zfree(m->brpl, nbeg * sizeof(int))` /
+/// `zfree(m->brsl, nend * sizeof(int))` — all collapse to Rust's
+/// automatic Drop on the owned String / Vec<i32> fields. nbeg/nend
+/// kept on the signature for C parity (consumed by C as `zfree` size
+/// args; Rust Vec carries its own length).
+pub fn freematch(m: Cmatch, _nbeg: i32, _nend: i32) {
+    // c:3577 — `if (!m) return;` — Rust's owned `m` is always valid;
+    // dropping it on return runs every field's destructor (c:3579-3596
+    // zsfree / zfree calls collapsed).
+    drop(m);                                                                 // c:3598 zfree(m)
 }
 
 /// Direct port of `mod_export void freematches(Cmgroup g, int cm)` from
