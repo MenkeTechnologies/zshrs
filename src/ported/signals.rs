@@ -589,9 +589,24 @@ pub fn killrunjobs(from_signal: i32) {
 /// branch; non-monitor path (per-proc `kill`) lives on the executor
 /// since it owns the JobInfo->procs vec.
 // send a signal to a job (simply involves kill if monitoring is on)       // c:529
+/// !!! WARNING: PARTIAL PORT — wrong sig + missing superjob walk.
+/// C `killjb(Job jn, int sig)` at Src/signals.c:529 (68 lines) takes
+/// a `Job` struct pointer and:
+///   - c:534 — checks the `jobbing` global before doing anything
+///   - c:535-560 — when `jn->stat & STAT_SUPERJOB && sig == SIGCONT`,
+///     walks `jobtab[jn->other].procs` calling killpg on each (with
+///     a kill() fallback when killpg returns -1)
+///   - c:562-590 — falls through to killpg(jn->gleader, sig) for
+///     non-superjob jobs
+///   - returns 0/-1 per killpg result
+///
+/// Rust port takes `(i32, i32)` where the first arg is treated as
+/// a pgid. Callers in jobs.rs pass `gleader` directly so the bare
+/// `killpg` happens to work — but the C-faithful Job-superjob
+/// SIGCONT walk is unreachable. Tracked for follow-up.
 #[cfg(unix)]
 pub fn killjb(jn: i32, sig: i32) -> i32 {
-    // c:529
+    // c:529 — see WARNING above; partial port.
     if jn > 0 {
         unsafe { libc::killpg(jn, sig) }
     } else {
