@@ -504,7 +504,7 @@ pub fn bin_pcre_match(
     args: &[String],
     ops: &options,
     _func: i32,
-) -> (i32, Option<String>, Vec<Option<String>>) {
+) -> i32 {
     // c:330-341 — locals at function top.
     let ret: i32; // c:330
     let _c: u8 = 0; // c:330
@@ -524,7 +524,7 @@ pub fn bin_pcre_match(
     if !has_pat {
         // c:343
         zwarnnam(nam, "no pattern has been compiled"); // c:344
-        return (1, None, Vec::new()); // c:345
+        return 1; // c:345
     }
 
     // c:348-354 — -d (DFA) precludes -v/-A
@@ -533,22 +533,19 @@ pub fn bin_pcre_match(
         if OPT_HASARG(ops, b'v') || OPT_HASARG(ops, b'A') {
             // c:351
             zwarnnam(nam, "-d cannot be combined with -v or -A"); // c:352
-            return (1, None, Vec::new()); // c:353
+            return 1; // c:353
         }
     } else {
         matched_portion = Some(OPT_ARG(ops, b'v').unwrap_or("MATCH")); // c:349
         named = Some(OPT_ARG(ops, b'A').unwrap_or(".pcre.match")); // c:350
     }
-    let _ = matched_portion;
-    let _ = named;
     receptacle = OPT_ARG(ops, b'a').unwrap_or("match"); // c:355
-    let _ = receptacle;
 
     // c:357-360 — -n offset
     if OPT_HASARG(ops, b'n') {
         offset_start = getposint(OPT_ARG(ops, b'n').unwrap_or(""), nam); // c:358
         if offset_start < 0 {
-            return (1, None, Vec::new()); // c:359
+            return 1; // c:359
         }
     }
     // c:362 — -b: return offset pairs
@@ -571,9 +568,9 @@ pub fn bin_pcre_match(
             Some(re) => re,
             None => return (None, Vec::new()),
         };
-        let search_text: &str = if offset_start > 0 && (offset_start as usize) < plaintext.len() {
+        let search_text: &str = if offset_start > 0 && (offset_start as usize) <= plaintext.len() {
             &plaintext[offset_start as usize..]
-        } else if (offset_start as usize) >= plaintext.len() {
+        } else if (offset_start as usize) > plaintext.len() {
             return (None, Vec::new());
         } else {
             &plaintext
@@ -594,12 +591,40 @@ pub fn bin_pcre_match(
     if full_match.is_some() {
         // c:400 ret > 0
         return_value = 0; // c:403
+        // c:405-414 — install $MATCH (or -v target) + $match (or -a
+        // receptacle). C uses zpcre_get_substrings which calls
+        // setsparam / setaparam directly; Rust mirrors that.
+        if let Some(m) = full_match.as_deref() {
+            // c:Src/Modules/pcre.c:405 — `setsparam(matched_portion, ztrdup(m))`.
+            crate::ported::params::setsparam(
+                matched_portion.unwrap_or("MATCH"),
+                m,
+            );
+        }
+        // c:410-413 — `setaparam(receptacle, captured_subs)`.
+        let subs: Vec<String> = captures
+            .iter()
+            .map(|opt| opt.clone().unwrap_or_default())
+            .collect();
+        crate::ported::params::setaparam(receptacle, subs);
+        // c:407-409 — -A named hash unimplemented (PCRE2 named-capture
+        // surface not yet exposed by the regex crate without compile-
+        // time hashmap; document gap).
+        let _ = named;
+    } else {
+        // c:415-419 — unset $MATCH/$match on no-match. Mirror by setting
+        // to empty so subsequent reads don't see stale values.
+        crate::ported::params::setsparam(matched_portion.unwrap_or("MATCH"), "");
+        crate::ported::params::setaparam(receptacle, Vec::new());
     }
     ret = if full_match.is_some() { 1 } else { 0 }; // c:398/c:399 sentinel
     let _ = ret;
+    let _ = use_dfa;
+    let _ = want_offset_pair;
+    let _ = subject_len;
 
     // c:422-415 — free match_data + context, zsfree(plaintext) — Rust Drop.
-    (return_value, full_match, captures) // c:422
+    return_value // c:422
 }
 
 /// Port of `cond_pcre_match(char **a, int id)` from `Src/Modules/pcre.c:422`. The
@@ -826,9 +851,13 @@ mod tests {
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         let ops = ops_with(&[b'i']);
         assert_eq!(bin_pcre_compile("pcre_compile", &[s("hello")], &ops, 0), 0);
-        let (status, full, _) = bin_pcre_match("pcre_match", &[s("HELLO WORLD")], &empty_ops(), 0);
+        let status = bin_pcre_match("pcre_match", &[s("HELLO WORLD")], &empty_ops(), 0);
         assert_eq!(status, 0);
-        assert_eq!(full.as_deref(), Some("HELLO"));
+        assert_eq!(
+            crate::ported::params::getsparam("MATCH").as_deref(),
+            Some("HELLO"),
+            "c:405 — setsparam(MATCH, matched_portion)"
+        );
     }
 
     /// Verifies bin_pcre_study returns 1 when no pattern compiled
@@ -858,9 +887,12 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         bin_pcre_compile("pcre_compile", &[s("hello")], &empty_ops(), 0);
-        let (status, full, _) = bin_pcre_match("pcre_match", &[s("hello world")], &empty_ops(), 0);
+        let status = bin_pcre_match("pcre_match", &[s("hello world")], &empty_ops(), 0);
         assert_eq!(status, 0);
-        assert_eq!(full.as_deref(), Some("hello"));
+        assert_eq!(
+            crate::ported::params::getsparam("MATCH").as_deref(),
+            Some("hello")
+        );
     }
 
     /// Verifies no-match returns status 1 (Src/Modules/pcre.c:399 NOMATCH).
@@ -869,7 +901,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         bin_pcre_compile("pcre_compile", &[s("hello")], &empty_ops(), 0);
-        let (status, _, _) = bin_pcre_match("pcre_match", &[s("goodbye world")], &empty_ops(), 0);
+        let status = bin_pcre_match("pcre_match", &[s("goodbye world")], &empty_ops(), 0);
         assert_eq!(status, 1);
     }
 
@@ -880,11 +912,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
         bin_pcre_compile("pcre_compile", &[s(r"(\w+) (\w+)")], &empty_ops(), 0);
-        let (status, _, caps) = bin_pcre_match("pcre_match", &[s("hello world")], &empty_ops(), 0);
+        let status = bin_pcre_match("pcre_match", &[s("hello world")], &empty_ops(), 0);
         assert_eq!(status, 0);
+        // c:410-413 — captures into `match` array param.
+        let caps = crate::ported::params::getaparam("match").unwrap_or_default();
         assert_eq!(caps.len(), 2);
-        assert_eq!(caps[0].as_deref(), Some("hello"));
-        assert_eq!(caps[1].as_deref(), Some("world"));
+        assert_eq!(caps[0], "hello");
+        assert_eq!(caps[1], "world");
     }
 
     /// Verifies cond_pcre_match returns C's int convention
@@ -921,7 +955,7 @@ mod tests {
     fn test_builtin_pcre_match_no_pattern() {
         let _g = crate::test_util::global_state_lock();
         PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
-        let (status, _, _) = bin_pcre_match("pcre_match", &[s("test")], &empty_ops(), 0);
+        let status = bin_pcre_match("pcre_match", &[s("test")], &empty_ops(), 0);
         assert_eq!(status, 1);
     }
 
@@ -977,7 +1011,7 @@ mod tests {
     fn bin_pcre_match_no_args_returns_one() {
         let _g = crate::test_util::global_state_lock();
         bin_pcre_compile("pcre_compile", &[s("x")], &empty_ops(), 0);
-        let (status, _, _) = bin_pcre_match("pcre_match", &[], &empty_ops(), 0);
+        let status = bin_pcre_match("pcre_match", &[], &empty_ops(), 0);
         assert_eq!(status, 1, "no subject must surface as error");
     }
 

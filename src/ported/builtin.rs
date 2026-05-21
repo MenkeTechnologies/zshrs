@@ -8730,9 +8730,16 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ),
-        // bin_pcre_match returns (i32, Option<String>, Vec<...>) — non-standard
-        // signature, can't dispatch via execbuiltin. Wrapper stays in vm_helper.
-        BUILTIN("pcre_match", 0, None, 1, -1, 0, Some("ab:nv:"), None),
+        BUILTIN(
+            "pcre_match",
+            0,
+            Some(crate::ported::modules::pcre::bin_pcre_match as HandlerFunc),
+            1,
+            -1,
+            0,
+            Some("ab:nv:"),
+            None,
+        ),
         BUILTIN(
             "ztcp",
             0,
