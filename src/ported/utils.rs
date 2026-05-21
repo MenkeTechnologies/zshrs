@@ -7846,23 +7846,13 @@ pub fn imeta_byte(b: u8) -> bool {
     b == 0 || (0x83..=0xa2).contains(&b)
 }
 
-/// Port of `convfloat(double dval, int digits, int flags, FILE *fout)` from `Src/params.c:5690` (the C source has
-/// it in params.c, not utils.c — re-exported through utils.rs for
-/// caller convenience since math/printf paths reach it from both
-/// directories). See [`crate::params::convfloat`] for the faithful
-/// C body port; this wrapper drops the `FILE *fout` arg (every
-/// zshrs caller wants the returned string, never the printf path).
-/// WARNING: param names don't match C — Rust=(dval, digits, flags) vs C=(dval, digits, flags, fout)
-pub fn convfloat(dval: f64, digits: i32, flags: u32) -> String {
-    crate::params::convfloat(dval, digits, flags)
-}
-
-/// Port of `convfloat_underscore(double dval, int underscore)` from `Src/params.c:5765`.
-/// See [`crate::params::convfloat_underscore`] for the faithful C
-/// body port.
-pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
-    crate::params::convfloat_underscore(dval, underscore)
-}
+// `pub fn convfloat` and `pub fn convfloat_underscore` re-export
+// wrappers DELETED per PORT.md Rule C. C defines both in
+// `Src/params.c:5690` and `:5765` — the canonical Rust home is
+// `src/ported/params.rs` (`convfloat` at line 7356,
+// `convfloat_underscore` matching). Caller convenience cost is
+// `use crate::ported::params::convfloat;` instead of `utils::`;
+// no Rust-side re-export needed.
 
 // ===========================================================
 // Methods moved verbatim from src/ported/vm_helper because their
