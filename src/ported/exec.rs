@@ -45,13 +45,13 @@ use crate::ported::jobs::{expandjobtab, JOBTAB, THISJOB};
 use crate::ported::lex::{hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO};
 use crate::ported::mem::{dupstring, popheap, pushheap};
 use crate::ported::options::sticky;
-use crate::ported::params::{getsparam, paramtab};
+use crate::ported::params::{getsparam, paramtab, setiparam};
 use crate::ported::parse::{ecrawstr, parse_list};
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::subst::{quotesubst, singsub};
 use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, zwarn, ERRFLAG_ERROR};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS, PATHDIRS, PM_READONLY};
+use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS, PATHDIRS, PM_READONLY, multio};
 use crate::zsh_h::execstack;
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
@@ -1848,7 +1848,7 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
 pub fn addfd(
     forked: i32,
     save: &mut [i32; 10],
-    mfds: &mut [Option<Box<crate::ported::zsh_h::multio>>; 10],
+    mfds: &mut [Option<Box<multio>>; 10],
     fd1: i32,
     fd2: i32,
     rflag: i32,
@@ -1879,7 +1879,7 @@ pub fn addfd(
         // c:2409 — `fdtable[fd1] = FDT_EXTERNAL;`
         fdtable_set(fd_moved, FDT_EXTERNAL);
         // c:2410 — `setiparam(varid, (zlong)fd1);`
-        crate::ported::params::setiparam(vid, fd_moved as i64);
+        setiparam(vid, fd_moved as i64);
         // c:2415-2416 — `if (errflag) zclose(fd1);`
         if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
             // c:2415
@@ -1897,7 +1897,7 @@ pub fn addfd(
         if mfds[fd1u].is_none() {
             // c:2419 — `starting a new multio`
             // c:2420 — `mfds[fd1] = zhalloc(sizeof(multio));`
-            mfds[fd1u] = Some(Box::new(crate::ported::zsh_h::multio {
+            mfds[fd1u] = Some(Box::new(multio {
                 ct: 0,
                 rflag: 0,
                 pipe: -1,
@@ -2104,7 +2104,7 @@ pub fn addfd(
 /// Re-enable when addproc lands the canonical signature.
 /// =============================================================
 pub fn closemn(
-    mfds: &mut [Option<Box<crate::ported::zsh_h::multio>>; 10],
+    mfds: &mut [Option<Box<multio>>; 10],
     fd: i32,
     type_: i32,
 ) {
@@ -2259,7 +2259,7 @@ pub fn closemn(
 /// Failure-path cleanup: close every fd stashed in any of the 10
 /// multio slots and null the slot. Called from `execcmd_exec` when
 /// a redirect setup fails partway through and we need to roll back.
-pub fn closemnodes(mfds: &mut [Option<Box<crate::ported::zsh_h::multio>>; 10]) {
+pub fn closemnodes(mfds: &mut [Option<Box<multio>>; 10]) {
     // c:2344
     for i in 0..10 {
         // c:2348
@@ -2297,7 +2297,7 @@ pub fn closemnodes(mfds: &mut [Option<Box<crate::ported::zsh_h::multio>>; 10]) {
 /// stashed in `mn->fds`. Called inside the multio tee/cat child
 /// process to release every fd the parent had open — only the pipe
 /// + per-output fds stay alive for the read/write loop.
-pub fn closeallelse(mn: &crate::ported::zsh_h::multio) {
+pub fn closeallelse(mn: &multio) {
     // c:2358
     // c:2363 — `openmax = fdtable_size;`. zshrs models fdtable as a
     // Vec; use MAX_ZSH_FD as the upper bound (fdtable_size grows past
@@ -2793,6 +2793,181 @@ pub fn parsecmd(cmd: &str, eptr: Option<&mut usize>) -> Option<eprog> {
         return None; // c:4901
     }
     prog // c:4903
+}
+
+/// Port of `enum { ESUB_ASYNC, ESUB_PGRP, ... };` from `Src/exec.c:1056`.
+/// Flag bits for `entersubsh(int flags, struct entersubsh_ret *retp)`.
+pub mod esub {
+    // c:1056
+    pub const ASYNC: i32 = 0x01; // c:1058
+    pub const PGRP: i32 = 0x02; // c:1063
+    pub const KEEPTRAP: i32 = 0x04; // c:1065
+    pub const FAKE: i32 = 0x08; // c:1067
+    pub const REVERTPGRP: i32 = 0x10; // c:1069
+    pub const NOMONITOR: i32 = 0x20; // c:1071
+    pub const JOB_CONTROL: i32 = 0x40; // c:1073
+}
+
+/// Port of `static int getpipe(char *cmd, int nullexec)` from
+/// `Src/exec.c:5119`.
+///
+/// C body executes `<(cmd)` / `>(cmd)` process substitution via a
+/// pipe pair: parent gets back the readable (`<(...)`) or writable
+/// (`>(...)`) end as an fd; child runs the substituted command with
+/// its stdio redirected into the other end.
+///
+/// ```c
+/// Eprog prog;
+/// int pipes[2], out = *cmd == Inang;
+/// pid_t pid;
+/// struct timespec bgtime;
+/// char *ends;
+/// if (!(prog = parsecmd(cmd, &ends))) return -1;
+/// if (*ends) { zerr("invalid syntax..."); return -1; }
+/// if (mpipe(pipes) < 0) return -1;
+/// if ((pid = zfork(&bgtime))) {
+///     zclose(pipes[out]);
+///     if (pid == -1) { zclose(pipes[!out]); return -1; }
+///     if (!nullexec) addproc(pid, NULL, 1, &bgtime, -1, -1);
+///     procsubstpid = pid;
+///     return pipes[!out];
+/// }
+/// entersubsh(ESUB_ASYNC|ESUB_PGRP|ESUB_NOMONITOR, NULL);
+/// redup(pipes[out], out);
+/// closem(FDT_UNUSED, 0);
+/// cmdpush(CS_CMDSUBST);
+/// execode(prog, 0, 1, out ? "outsubst" : "insubst");
+/// cmdpop();
+/// _realexit();
+/// ```
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// (a) `addproc` Rust signature drift (jobs.rs:1516 takes
+///     `(&mut job, pid, text, aux)` 4-arg; C is 6-arg with
+///     `bgtime`/`gleader`/`list_pipe_job`). For now we set
+///     `procsubstpid` only; the job-table side won't see the child.
+///     Re-port addproc to 6-arg to unblock.
+/// (b) `entersubsh` not yet ported (exec.c:1080+). We approximate
+///     the ESUB_ASYNC|ESUB_PGRP|ESUB_NOMONITOR contract by setting
+///     `setsid()` + ignoring SIGINT (the minimum needed for the
+///     child to not steal tty interrupts). Full port re-establishes
+///     pgrp handling, trap reset, monitor disable.
+/// (c) `execode(prog, ...)` not yet ported. zshrs has no wordcode
+///     walker; we route the substituted body through the same
+///     fusevm pipeline `execstring` uses. The eprog from parsecmd
+///     is only used as a validity check — the actual execution
+///     re-reads `body` (which equals what parsecmd already
+///     consumed).
+/// (d) `_realexit()` flushes stdio + jobs + history. We use bare
+///     `std::process::exit(lastval)` for now.
+/// =============================================================
+pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
+    // c:5119
+    use crate::ported::utils::{redup, zclose};
+    use crate::ported::zsh_h::{Inang, CS_CMDSUBST, FDT_UNUSED};
+    let bytes = cmd.as_bytes();
+    let out: i32 = if !bytes.is_empty() && (bytes[0] as char) == Inang {
+        1 // c:5122 — `<(...)` reads from child, child writes to fd 1
+    } else {
+        0 // `>(...)` — child reads from fd 0
+    };
+    let mut ends_at: usize = 0;
+    let prog = parsecmd(cmd, Some(&mut ends_at)); // c:5127
+    if prog.is_none() {
+        // c:5127
+        return -1; // c:5128
+    }
+    // c:5129 — `if (*ends)` — trailing bytes after the `)` are invalid.
+    if ends_at < bytes.len() && bytes[ends_at] != 0 {
+        zerr("invalid syntax for process substitution in redirection"); // c:5130
+        return -1; // c:5131
+    }
+    let mut pipes: [i32; 2] = [-1; 2];
+    if mpipe(&mut pipes) < 0 {
+        // c:5133
+        return -1;
+    }
+    // c:5135 — `if ((pid = zfork(&bgtime)))` — parent path.
+    let mut bgtime: crate::ported::zsh_system_h::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let pid = zfork(Some(&mut bgtime)); // c:5135
+    if pid != 0 {
+        // c:5135 — parent.
+        let _ = zclose(pipes[out as usize]); // c:5136
+        if pid == -1 {
+            // c:5137
+            let _ = zclose(pipes[(1 - out) as usize]); // c:5138
+            return -1; // c:5139
+        }
+        // c:5141-5142 — `if (!nullexec) addproc(pid, ...)` — see WARNING (a).
+        let _ = nullexec; // not yet routed through addproc (sig drift)
+        procsubstpid.store(pid, Ordering::Relaxed); // c:5143
+        return pipes[(1 - out) as usize]; // c:5144
+    }
+    // c:5146 — child path.
+    // entersubsh approximation — see WARNING (b).
+    unsafe {
+        libc::setsid();
+        libc::signal(libc::SIGINT, libc::SIG_IGN);
+    }
+    let _ = redup(pipes[out as usize], out); // c:5147
+    closem(FDT_UNUSED, 0); // c:5148
+    crate::ported::prompt::cmdpush(CS_CMDSUBST as u8); // c:5149
+                                                       // c:5150 — execode(prog, 0, 1, ...) — see WARNING (c).
+    let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
+    let body = if body_end > 2 && body_end <= bytes.len() {
+        &cmd[2..body_end]
+    } else {
+        ""
+    };
+    let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
+    crate::ported::prompt::cmdpop(); // c:5151
+                                     // c:5152 — _realexit() — WARNING (d).
+    std::process::exit(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed));
+}
+
+/// Port of `static void spawnpipes(LinkList l, int nullexec)` from
+/// `Src/exec.c:5184`.
+///
+/// Walks a redir list `l`, and for each REDIR_OUTPIPE/REDIR_INPIPE
+/// entry fires `getpipe(name, nullexec || varid)` and stashes the
+/// resulting fd into `f->fd2`.
+///
+/// ```c
+/// LinkNode n;
+/// Redir f;
+/// char *str;
+/// n = firstnode(l);
+/// for (; n; incnode(n)) {
+///     f = (Redir) getdata(n);
+///     if (f->type == REDIR_OUTPIPE || f->type == REDIR_INPIPE) {
+///         str = f->name;
+///         f->fd2 = getpipe(str, nullexec || f->varid);
+///     }
+/// }
+/// ```
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// The Rust port consumes a `&mut Vec<crate::ported::zsh_h::redir>`
+/// in place of `LinkList`. The walk is identical; the only behavior
+/// difference is that LinkList iteration in C lets callers splice
+/// nodes mid-walk — we never do that here so it's a no-op divergence.
+/// =============================================================
+pub fn spawnpipes(l: &mut [crate::ported::zsh_h::redir], nullexec: i32) {
+    // c:5184
+    use crate::ported::zsh_h::{REDIR_INPIPE, REDIR_OUTPIPE};
+    for f in l.iter_mut() {
+        // c:5191
+        if f.typ == REDIR_OUTPIPE || f.typ == REDIR_INPIPE {
+            // c:5193
+            let str_ = f.name.clone().unwrap_or_default(); // c:5194
+            let nullexec_eff = if f.varid.as_deref().map_or(false, |v| !v.is_empty()) {
+                1
+            } else {
+                nullexec
+            };
+            f.fd2 = getpipe(&str_, nullexec_eff); // c:5195
+        }
+    }
 }
 
 /// Port of `static int cancd2(char *s)` from `Src/exec.c:6411`.
