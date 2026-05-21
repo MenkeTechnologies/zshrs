@@ -1694,11 +1694,11 @@ pub(crate) fn printprompt4() {
 /// ```
 /// The C function is registered as the `freenode` callback for
 /// hashtables holding plain string values. The Rust port consumes
-/// `s` by value; Rust's `Drop` runs the equivalent of `zsfree` when
+/// `a` by value; Rust's `Drop` runs the equivalent of `zsfree` when
 /// the `String` is moved into this fn and falls out of scope at the
-/// closing brace — the no-op body is the correct port.
-/// WARNING: param names don't match C — Rust=(_s) vs C=(a)
-pub fn freestr(_s: String) {}
+/// closing brace — the no-op body is the correct port. Param name
+/// `a` matches C exactly per Rule E.
+pub fn freestr(_a: String) {}
 
 /// Port of `int gettempfile(const char *prefix, int use_heap, char **tempname)`
 /// from Src/utils.c:2231. Creates a fresh tempfile with `O_RDWR|O_CREAT|O_EXCL`
@@ -2407,11 +2407,29 @@ pub fn tuupper(c: char) -> char {
     c.to_uppercase().next().unwrap_or(c)
 }
 
-/// Duplicate n characters (from utils.c ztrncpy)
-/// Port of `ztrncpy(char *s, char *t, int len)` from `Src/utils.c:2320`.
-/// WARNING: param names don't match C — Rust=(s, n) vs C=(s, t, len)
-pub fn ztrncpy(s: &str, n: usize) -> String {
-    s.chars().take(n).collect()
+/// Port of `void ztrncpy(char *s, char *t, int len)` from `Src/utils.c:2320`.
+///
+/// C body (c:2320-2326):
+/// ```c
+/// while (len--)
+///     *s++ = *t++;
+/// *s = '\0';
+/// ```
+///
+/// Copy `len` bytes from `t` into `s`, then NUL-terminate. C does no
+/// bounds check; the caller must ensure `s` has `len + 1` bytes of
+/// capacity. Rust port preserves the (s, t, len) parameter shape:
+/// `s: &mut String` (output), `t: &str` (source), `len: usize` (copy
+/// count). The C NUL terminator at c:2325 is implicit in Rust's
+/// length-prefixed String. The Rust port clamps `len` to `t.len()` to
+/// avoid the out-of-bounds read C's `*s++ = *t++` would perform when
+/// `len > strlen(t)` (UB in C; explicitly bounded in Rust).
+pub fn ztrncpy(s: &mut String, t: &str, len: usize) {
+    // c:2320
+    s.clear();                                                               // C overwrites from start of *s
+    let take = len.min(t.len());                                             // c:2322 while (len--)
+    s.push_str(&t[..take]);                                                  // c:2322 *s++ = *t++
+    // c:2325 — `*s = '\0';` (implicit in Rust String length)
 }
 
 /// Port of `void strucpy(char **s, char *t)` from `Src/utils.c:2331-2337`.
@@ -2425,18 +2443,15 @@ pub fn ztrncpy(s: &str, n: usize) -> String {
 /// local pointer-walker, NOT "upper-case" — the function does NOT
 /// change case.
 ///
-/// Rust API: append `t` to the in-out string `dest`. The C
-/// pointer-advance translates to "the new end of dest is at
-/// dest.len()", which is implicit in Rust's owning-String model.
-/// The previous Rust port took `(s: &str, t: bool)` and treated `t`
-/// as an upper-case flag — completely wrong semantics. No live
-/// Rust callers.
-/// WARNING: param names don't match C — Rust=(dest, t) vs C=(s, t)
-pub fn strucpy(dest: &mut String, t: &str) {
+/// Rust API: param name `s` matches C exactly per Rule E (despite Rust
+/// convention of `dest` for output buffers). The C pointer-advance
+/// `*s = u - 1` translates to "the new end of s is at s.len()", which
+/// is implicit in Rust's owning-String model.
+pub fn strucpy(s: &mut String, t: &str) {
     // c:2331
-    dest.push_str(t); // c:2335 `*u++ = *t++` loop
-                      // c:2336 `*s = u - 1;` — pointer-advance is implicit in Rust
-                      // (`dest.len()` is the new end-of-string position).
+    s.push_str(t);                                                           // c:2335 `*u++ = *t++` loop
+    // c:2336 — `*s = u - 1;` — pointer-advance is implicit in Rust
+    // (`s.len()` is the new end-of-string position).
 }
 
 /// Port of `void struncpy(char **s, char *t, int n)` from `Src/utils.c:2341-2350`.
@@ -2450,17 +2465,13 @@ pub fn strucpy(dest: &mut String, t: &str) {
 /// Note c:2348 — "just one null-byte will do, unlike strncpy(3)";
 /// doesn't pad with NULs.
 ///
-/// Rust API: append up to `n` bytes of `t` to `dest`. Previously
-/// the Rust port took `(s: &str, t: usize, n: bool)` and treated
-/// `n` as an upper-case flag — same wrong semantics as strucpy.
-/// No live Rust callers.
-/// WARNING: param names don't match C — Rust=(dest, t, n) vs C=(s, t, n)
-pub fn struncpy(dest: &mut String, t: &str, n: usize) {
+/// Param names match C exactly per Rule E.
+pub fn struncpy(s: &mut String, t: &str, n: usize) {
     // c:2341
     // c:2345 — `while (n-- && (*u = *t++)) u++;` — copy up to n
     // bytes, stop at NUL (which in Rust &str is the end-of-string).
     let take = n.min(t.len());
-    dest.push_str(&t[..take]);
+    s.push_str(&t[..take]);
 }
 
 /// Array length - port from arrlen()
