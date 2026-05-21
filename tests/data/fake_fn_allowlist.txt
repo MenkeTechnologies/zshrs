@@ -311,7 +311,6 @@ top_prec
 #     (`#define imeta(c) ((c) >= Meta)`). Macros aren't in the
 #     C-function index, so the name lands here.
 imeta_byte
-iwsep_byte
 
 # utils.rs realpath — Rust wrapper around libc realpath(3). Not in zsh
 # utils.c (zsh calls libc realpath directly). Kept for callsite shape.
@@ -1028,15 +1027,6 @@ chain_branches_to
 cmdnam_hashed
 cmdnam_unhashed
 
-# Rust-only per-module helper bridging the canonical
-# `module::featuresarray` / `handlefeatures` / `setfeatureenables`
-# API (which takes `&Module`) to the per-module entry-point hooks
-# (which receive `*const zsh_h::module` raw pointers from the
-# module loader). Synthesizes an equivalent `module::Module` named
-# after the static-link module. Same name + body in every
-# clone/example/datetime/etc. file — pure dispatch glue, no logic.
-module_handle
-
 # Rust-only ShFunc constructor helpers — no single C function.
 # C uses `createshfunc(name); shf->funcdef = parse_subst_string(body);`
 # or `createshfunc(name); shf->node.flags = PM_UNDEFINED;` inline at
@@ -1061,11 +1051,8 @@ apply_history_modifiers
 # that C inlines via `itok()` / `inblank()` / `iblank()` macros
 # (is_token / is_blank / is_inblank). Long-term these all collapse
 # into the canonical `gettok` body when that is fully ported.
-check_iterations
-process_heredocs
 read_line
 is_valid_assignment_target
-check_alias
 
 # parse.rs Rust-only heredoc / inoutpar resolution — zsh's parser
 # patches heredoc bodies directly into the wordcode buffer
@@ -1137,17 +1124,10 @@ lex_init
 
 # === P8 ZshParser dissolution: free fns at module scope ===
 parse
-parse_case
-parse_cmd
-parse_for
 parse_for_cstyle
-parse_pipe
 parse_program
 parse_program_until
-parse_redir
 parse_select
-parse_simple
-parse_sublist
 
 # === P8 followup ===
 parse_init
