@@ -5967,6 +5967,40 @@ pub fn bin_print(
         return 0;
     }
 
+    // c:4718-4741 — `-m PATTERN args...` glob-filter. First arg is
+    // the pattern; remaining args are kept iff `pattry(pat, arg)`.
+    // Previously absent — `print -m 'foo*' foo1 bar foo2` emitted
+    // all four args instead of just foo1/foo2.
+    let mut processed_args: Vec<String> = if OPT_ISSET(ops, b'm') {
+        // c:4718
+        if args.is_empty() {
+            // c:4722
+            zwarnnam(name, "no pattern specified"); // c:4723
+            return 1; // c:4724
+        }
+        // c:4728 — `patcompile(*args, PAT_STATIC, NULL)`.
+        let pat = &args[0];
+        let pprog =
+            crate::ported::pattern::patcompile(pat, PAT_STATIC, None);
+        match pprog {
+            None => {
+                zwarnnam(name, &format!("bad pattern: {}", pat)); // c:4730
+                return 1; // c:4732
+            }
+            Some(prog) => {
+                // c:4734-4737 — `for (t = p = ++args; *p; p++) if
+                // (pattry(pprog, *p)) *t++ = *p;`. Keep matching args.
+                args[1..]
+                    .iter()
+                    .filter(|a| crate::ported::pattern::pattry(&prog, a))
+                    .cloned()
+                    .collect()
+            }
+        }
+    } else {
+        args.to_vec()
+    };
+
     // c:4860+ — main print loop.
     // c:5126-5127 — separator priority: `-l` ('\n') > `-N` ('\0') > ' '.
     let sep = if one_per_line {
@@ -5979,13 +6013,12 @@ pub fn bin_print(
     // c:4598-4600 — `-P` prompt-style percent expansion (`%n`, `%d`,
     // `%?`, `%h`, `%%`, etc.). Routes through `expand_prompt`
     // (canonical port of `Src/prompt.c:182 promptexpand`).
-    let mut processed_args: Vec<String> = if OPT_ISSET(ops, b'P') {
-        args.iter()
-            .map(|a| crate::ported::prompt::expand_prompt(a)) // c:Src/prompt.c:182
-            .collect()
-    } else {
-        args.to_vec()
-    };
+    if OPT_ISSET(ops, b'P') {
+        // c:4598-4600 — `-P` prompt-style percent expansion.
+        for a in processed_args.iter_mut() {
+            *a = crate::ported::prompt::expand_prompt(a); // c:Src/prompt.c:182
+        }
+    }
     // c:4799-4808 — `-o` / `-O` / `-i` sort flags.
     //
     // C body:
@@ -10194,6 +10227,48 @@ mod tests {
         // Conjunction check: zsh-equivalent: print -O foo Bar BAZ
         // gives `foo Bar BAZ`. Pin so an inadvertent reverse-before-
         // sort regression fails.
+    }
+
+    /// `Src/builtin.c:4718-4741` — `print -m PATTERN args...` keeps
+    /// only the args matching PATTERN. Pipe-roundtrip pin: pat=`foo*`,
+    /// args=[foo1, bar, foo2] → expect `foo1 foo2\n` (NOT `bar`).
+    #[test]
+    fn bin_print_minus_m_glob_filter() {
+        let _g = crate::test_util::global_state_lock();
+        use std::io::Read as _;
+        let mut fds: [libc::c_int; 2] = [0, 0];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let (rfd, wfd) = (fds[0], fds[1]);
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b'u' as usize] = 1 | (1 << 2);
+        ops.args = vec![wfd.to_string()];
+        ops.argscount = 1;
+        ops.ind[b'm' as usize] = 1; // -m
+
+        let r = bin_print(
+            "print",
+            &["foo*".to_string(), "foo1".to_string(), "bar".to_string(), "foo2".to_string()],
+            &ops,
+            BIN_PRINT,
+        );
+        assert_eq!(r, 0);
+        unsafe { libc::close(wfd) };
+
+        let mut buf = String::new();
+        unsafe {
+            use std::os::unix::io::FromRawFd;
+            let mut f = std::fs::File::from_raw_fd(rfd);
+            f.read_to_string(&mut buf).unwrap();
+        }
+        assert_eq!(
+            buf, "foo1 foo2\n",
+            "c:4718-4741 — -m filters to only `foo*`-matching args"
+        );
     }
 
     /// `Src/builtin.c:5126-5132` — `print -N a b` separates args with
