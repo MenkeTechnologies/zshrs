@@ -13,7 +13,8 @@ use super::zle_h::{
     TH_IMMORTAL, WIDGET_INT, WIDGET_INUSE, WIDGET_NCOMP, WidgetImpl, ZLE_ISCOMP, ZLE_KEEPSUFFIX,
     ZLE_MENUCMP, widget,
 };
-use crate::ported::zsh_h::{options, DISABLED};
+use crate::ported::utils::zwarnnam;
+use crate::ported::zsh_h::{options, OPT_ISSET, DISABLED};
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
@@ -648,18 +649,71 @@ pub fn deletezlefunction(w: &Arc<widget>) {
 /// `zle` builtin dispatcher — selects per-flag handler from opns[]
 /// table (-l/-D/-A/-N/-C/-R/-M/-U/-K/-I/-f/-F/-T) or falls through
 /// to bin_zle_call when no flag is set.
-/// WARNING: param names don't match C — Rust=(_nam, args, _func) vs C=(name, args, ops, func)
 pub fn bin_zle(
-    _nam: &str,
+    name: &str,
     args: &[String], // c:343
-    _ops: &options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
-    // c:343-389 — table-driven dispatch on `-l/-D/-A/-N/-C/-R/-M/-U/
-    // -K/-I/-f/-F/-T` Options flags; falls through to bin_zle_call
-    // when no flag is set. Without an Options-equivalent here we
-    // mirror just the no-flag default-call path (bin_zle_call).
-    bin_zle_call(args)
+    // c:345-364 — dispatch table: `static const struct opn opns[]`.
+    // (flag_char, handler_fn, min_args, max_args). Sub-handlers in
+    // Rust take only `&[String]` (sig narrower than C `(name, args,
+    // ops, func)`); wrapped via closures so the dispatcher stays
+    // table-driven. The sub-handler-sig widening is a follow-up.
+    type OpHandler = Box<dyn Fn(&[String]) -> i32>;
+    let opns: [(u8, OpHandler, i32, i32); 14] = [
+        (b'l', Box::new(bin_zle_list), 0, -1), // c:350
+        (b'D', Box::new(bin_zle_del), 1, -1),  // c:351
+        (b'A', Box::new(bin_zle_link), 2, 2),  // c:352
+        (b'N', Box::new(bin_zle_new), 1, 2),   // c:353
+        (b'C', Box::new(bin_zle_complete), 3, 3), // c:354
+        (b'R', Box::new(|_| bin_zle_refresh()), 0, -1), // c:355
+        (b'M', Box::new(bin_zle_mesg), 1, 1),  // c:356
+        (b'U', Box::new(bin_zle_unget), 1, 1), // c:357
+        (b'K', Box::new(bin_zle_keymap), 1, 1), // c:358
+        (b'I', Box::new(|_| bin_zle_invalidate()), 0, 0), // c:359
+        (b'f', Box::new(bin_zle_flags), 1, -1), // c:360
+        (b'F', Box::new(bin_zle_fd), 0, 2),    // c:361
+        (b'T', Box::new(bin_zle_transform), 0, 2), // c:362
+        (0u8, Box::new(bin_zle_call), 0, -1),  // c:363 — sentinel: no flag → bin_zle_call.
+    ];
+
+    // c:369 — `for (op = opns; op->o && !OPT_ISSET(ops, op->o); op++) ;`.
+    // Pick the first op whose flag is set; sentinel (o=0) loops out.
+    let op_idx = opns
+        .iter()
+        .position(|(o, _, _, _)| *o != 0 && OPT_ISSET(ops, *o))
+        .unwrap_or(opns.len() - 1); // c:369 — fall to sentinel
+
+    // c:370-375 — reject when more than one operation flag is set:
+    // `if (op->o) for (opp = op; (++opp)->o; ) if (OPT_ISSET(ops,
+    // opp->o)) { zwarnnam("incompatible..."); return 1; }`.
+    if opns[op_idx].0 != 0 {
+        // c:370
+        for (o, _, _, _) in opns.iter().skip(op_idx + 1) {
+            if *o != 0 && OPT_ISSET(ops, *o) {
+                zwarnnam(name, "incompatible operation selection options"); // c:373
+                return 1; // c:374
+            }
+        }
+    }
+
+    // c:378-385 — arg-count check against op->min / op->max.
+    let n = args.len() as i32; // c:378
+    let (op_o, op_func, op_min, op_max) = &opns[op_idx];
+    if n < *op_min {
+        // c:379
+        zwarnnam(name, &format!("not enough arguments for -{}", *op_o as char)); // c:380
+        return 1; // c:381
+    } else if *op_max != -1 && n > *op_max {
+        // c:382
+        zwarnnam(name, &format!("too many arguments for -{}", *op_o as char)); // c:383
+        return 1; // c:384
+    }
+
+    // c:388 — `return op->func(name, args, ops, op->o);`.
+    let _ = ops; // sub-handler-sig widening is the follow-up
+    op_func(args)
 }
 
 /// Port of `bin_zle_list(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:393`.
@@ -1369,6 +1423,52 @@ mod tests {
 
     fn reset_tab() {
         thingytab().lock().unwrap().clear();
+    }
+
+    /// `Src/Zle/zle_thingy.c:370-375` — `bin_zle` rejects mutually
+    /// exclusive operation flags. Pin: -l + -D together → return 1.
+    #[test]
+    fn bin_zle_rejects_incompatible_op_flags() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+        // Build an options struct with both -l and -D set.
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b'l' as usize] = 1;
+        ops.ind[b'D' as usize] = 1;
+        let r = bin_zle("zle", &[], &ops, 0);
+        assert_eq!(
+            r, 1,
+            "c:373-374 — incompatible op flags (-l + -D) → return 1"
+        );
+    }
+
+    /// `Src/Zle/zle_thingy.c:378-381` — bin_zle rejects too-few args.
+    /// `-D` requires min=1; passing zero args → return 1.
+    #[test]
+    fn bin_zle_rejects_too_few_args() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _g = LOCK.lock().unwrap();
+        reset_tab();
+        let mut ops = options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        ops.ind[b'D' as usize] = 1; // -D requires min=1
+        let r = bin_zle("zle", &[], &ops, 0);
+        assert_eq!(
+            r, 1,
+            "c:379-381 — zle -D with zero args → 'not enough' → return 1"
+        );
     }
 
     #[test]
