@@ -34,7 +34,7 @@ use std::sync::atomic::Ordering;
 use crate::fusevm_bridge::with_executor;
 use crate::ported::builtin::{cd_able_vars, fixdir, BUILTINS, DOPRINTDIR, LASTVAL};
 use crate::ported::context::{zcontext_restore, zcontext_save};
-use crate::ported::hashtable::shfunctab_lock;
+use crate::ported::hashtable::{dircache_set, shfunctab_lock};
 use crate::ported::hist::{strinbeg, strinend};
 use crate::ported::init::{underscorelen, underscoreused, zunderscore};
 use crate::ported::input::{inpop, inpush};
@@ -46,7 +46,7 @@ use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::subst::{quotesubst, singsub};
 use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, ERRFLAG_ERROR};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar};
+use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR};
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
 /// a trap handler is currently being processed and, paired with
@@ -1090,6 +1090,84 @@ pub fn is_anonymous_function_name(name: &str) -> i32 {
     }
 }
 
+/// Port of `static pid_t zfork(struct timespec *ts)` from
+/// `Src/exec.c:349`.
+///
+/// C body:
+/// ```c
+/// pid_t pid;
+/// if (thisjob != -1 && thisjob >= jobtabsize - 1 && !expandjobtab()) {
+///     zerr("job table full");
+///     return -1;
+/// }
+/// if (ts) zgettime_monotonic_if_available(ts);
+/// queue_signals();
+/// pid = fork();
+/// unqueue_signals();
+/// if (pid == -1) {
+///     zerr("fork failed: %e", errno);
+///     return -1;
+/// }
+/// #ifdef HAVE_GETRLIMIT
+/// if (!pid) setlimits(NULL);
+/// #endif
+/// return pid;
+/// ```
+///
+/// fork(2) wrapper with jobtab capacity check + child rlimit
+/// re-application. Used by every subshell-spawning path: pipelines,
+/// process substitution, async commands, command substitution.
+pub fn zfork(ts: Option<&mut crate::ported::zsh_system_h::timespec>) -> libc::pid_t {
+    // c:349
+    let pid: libc::pid_t;
+
+    // c:356-359 — `if (thisjob != -1 && thisjob >= jobtabsize - 1 && !expandjobtab())`
+    let thisjob_lock = crate::ported::jobs::THISJOB.get_or_init(|| std::sync::Mutex::new(-1));
+    let thisjob = *thisjob_lock.lock().unwrap();
+    if thisjob != -1 {
+        // c:356
+        let needed = (thisjob + 1) as usize;
+        let needs_expand = crate::ported::jobs::JOBTAB
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .map(|t| needed >= t.len().saturating_sub(1))
+            .unwrap_or(false);
+        if needs_expand {
+            let mut tab = crate::ported::jobs::JOBTAB.get().unwrap().lock().unwrap();
+            if !crate::ported::jobs::expandjobtab(&mut tab, needed) {
+                // c:357
+                zerr("job table full"); // c:357
+                return -1; // c:358
+            }
+        }
+    }
+    // c:360-361 — `if (ts) zgettime_monotonic_if_available(ts);`
+    if let Some(ts) = ts {
+        crate::ported::compat::zgettime_monotonic_if_available(ts);
+    }
+    // c:368-370 — `queue_signals(); pid = fork(); unqueue_signals();`
+    queue_signals(); // c:368
+    pid = unsafe { libc::fork() }; // c:369
+    unqueue_signals(); // c:370
+                       // c:371-374 — fork failure.
+    if pid == -1 {
+        // c:371
+        zerr(&format!(
+            // c:372
+            "fork failed: {}",
+            std::io::Error::last_os_error()
+        ));
+        return -1; // c:373
+    }
+    // c:375-379 — child: re-apply rlimits (HAVE_GETRLIMIT path).
+    #[cfg(unix)]
+    if pid == 0 {
+        // c:376
+        let _ = crate::ported::builtins::rlimits::setlimits(""); // c:378
+    }
+    pid // c:380
+}
+
 /// Port of `void loadautofnsetfile(Shfunc shf, char *fdir)` from
 /// `Src/exec.c:5657`.
 ///
@@ -1114,7 +1192,7 @@ pub fn is_anonymous_function_name(name: &str) -> i32 {
 pub fn loadautofnsetfile(shf: &mut shfunc, fdir: Option<&str>) {
     // c:5657
     // c:5664-5665 — `if (!(shf->node.flags & PM_LOADDIR) || strcmp(shf->filename, fdir) != 0)`
-    let loaddir = (shf.node.flags as u32 & crate::ported::zsh_h::PM_LOADDIR) != 0;
+    let loaddir = (shf.node.flags as u32 & PM_LOADDIR) != 0;
     let same = match (&shf.filename, fdir) {
         (Some(a), Some(b)) => a == b,
         _ => false,
@@ -1122,14 +1200,14 @@ pub fn loadautofnsetfile(shf: &mut shfunc, fdir: Option<&str>) {
     if !loaddir || !same {
         // c:5664
         // c:5667 — `dircache_set(&shf->filename, NULL);` — refcount-drop old.
-        crate::ported::hashtable::dircache_set(&mut shf.filename, None);
+        dircache_set(&mut shf.filename, None);
         if let Some(fdir) = fdir {
             // c:5668
-            shf.node.flags |= crate::ported::zsh_h::PM_LOADDIR as i32; // c:5670
-            crate::ported::hashtable::dircache_set(&mut shf.filename, Some(fdir)); // c:5671
+            shf.node.flags |= PM_LOADDIR as i32; // c:5670
+            dircache_set(&mut shf.filename, Some(fdir)); // c:5671
         } else {
             // c:5672
-            shf.node.flags &= !(crate::ported::zsh_h::PM_LOADDIR as i32); // c:5674
+            shf.node.flags &= !(PM_LOADDIR as i32); // c:5674
             shf.filename = Some(shf.node.nam.clone()); // c:5675 `ztrdup(shf->node.nam)`
         }
     }
