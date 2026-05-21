@@ -42,10 +42,7 @@ use crate::ported::zle::complete::{
     COMPQSTACK, COMPSUFFIX, COMPWORDS, INCOMPFUNC,
 };
 use crate::ported::zle::compresult::ztat;
-use crate::ported::zsh_h::{
-    options, unset, value, Comma, Inbrace, Outbrace, GLOBDOTS, MAX_OPS, OPT_ISSET, PM_ARRAY,
-    PM_TYPE, PP_LOWER, PP_RANGE, PP_UPPER, QT_BACKSLASH, QT_BACKSLASH_PATTERN,
-};
+use crate::ported::zsh_h::{isset, options, unset, value, Comma, Inbrace, Outbrace, GLOBDOTS, KSHARRAYS, MAX_OPS, OPT_ISSET, PM_ARRAY, PM_TYPE, PP_LOWER, PP_RANGE, PP_UPPER, QT_BACKSLASH, QT_BACKSLASH_PATTERN};
 use crate::ported::ztype_h::{iblank, idigit, imeta, inblank};
 
 // =====================================================================
@@ -4705,7 +4702,7 @@ pub fn bin_comparguments(
             let mut act: Vec<String> = Vec::new();
             let mut subc: Vec<String> = Vec::new();
             let mut ret = 1i32;
-            crate::ported::zle::complete::ignore_prefix(ca_doff.load(Ordering::Relaxed));
+            ignore_prefix(ca_doff.load(Ordering::Relaxed));
 
             // Walk lstate (ca_laststate + its snext chain).
             let mut state_clone = ca_laststate.lock().map(|s| clone_castate_full(&s)).ok();
@@ -4769,7 +4766,7 @@ pub fn bin_comparguments(
         b'n' => {
             // c:2899
             let optbeg = ca_laststate.lock().map(|s| s.optbeg).unwrap_or(0);
-            let kshoffset = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
+            let kshoffset = if isset(KSHARRAYS) {
                 0
             } else {
                 1

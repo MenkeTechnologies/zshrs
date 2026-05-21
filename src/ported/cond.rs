@@ -25,13 +25,11 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use crate::glob::matchpat;
-use crate::ported::zsh_h::{
-    COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT, COND_OT, COND_REGEX,
-    COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, isset, unset,
-};
+use crate::ported::zsh_h::{COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT, COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, isset, unset, EXTENDEDGLOB, CASEGLOB, POSIXBUILTINS};
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
-
+use crate::ported::options::{optlookup, optlookupc};
+use crate::ported::utils::zwarnnam;
 // C-style i32 return codes from `evalcond` (mirroring cond.c:70):
 //   0 — condition true
 //   1 — condition false
@@ -378,8 +376,8 @@ pub fn evalcond(
                         if posix {
                             text == pat
                         } else {
-                            let extended = isset(crate::ported::zsh_h::EXTENDEDGLOB);
-                            let case_sensitive = isset(crate::ported::zsh_h::CASEGLOB);
+                            let extended = isset(EXTENDEDGLOB);
+                            let case_sensitive = isset(CASEGLOB);
                             matchpat(pat, text, extended, case_sensitive)
                         }
                     };
@@ -418,8 +416,8 @@ pub fn evalcond(
                             #[cfg(not(feature = "regex"))]
                             {
                                 // Same option-state read as strpat above.
-                                let extended = isset(crate::ported::zsh_h::EXTENDEDGLOB);
-                                let case_sensitive = isset(crate::ported::zsh_h::CASEGLOB);
+                                let extended = isset(EXTENDEDGLOB);
+                                let case_sensitive = isset(CASEGLOB);
                                 b2i(matchpat(&right, &left, extended, case_sensitive))
                             }
                         }
@@ -549,17 +547,17 @@ pub fn optison(name: &str, s: &str) -> i32 {
     // c:502
     let i: i32 = if s.len() == 1 {
         // c:502
-        crate::ported::options::optlookupc(s.as_bytes()[0] as char) // c:507
+        optlookupc(s.as_bytes()[0] as char) // c:507
     } else {
-        crate::ported::options::optlookup(s) // c:509
+        optlookup(s) // c:509
     };
     if i == 0 {
         // c:510
-        if isset(crate::ported::zsh_h::POSIXBUILTINS) {
+        if isset(POSIXBUILTINS) {
             // c:511
             return 1; // c:512
         } else {
-            crate::ported::utils::zwarnnam(name, &format!("no such option: {}", s)); // c:514
+            zwarnnam(name, &format!("no such option: {}", s)); // c:514
             return 3; // c:515
         }
     } else if i < 0 {
@@ -688,10 +686,10 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
     };
     let p = crate::ported::subst::singsub(p_raw); // c:556
                                                   // c:2519 (glob.c) — `if (isset(EXTENDED_GLOB)) ...` controls #/~ syntax.
-    let extended = isset(crate::ported::zsh_h::EXTENDEDGLOB);
+    let extended = isset(EXTENDEDGLOB);
     // c:2519 — case sensitivity reads `isset(CASEGLOB)` (with the
     // canonical-name spelling, NOT a "no_case_glob" variant).
-    let case_sensitive = isset(crate::ported::zsh_h::CASEGLOB);
+    let case_sensitive = isset(CASEGLOB);
     // C: `matchpat(str, s)` where `str` is the text being matched
     // and `s` is the pattern. Rust matchpat's signature is REVERSED:
     // `matchpat(pattern, text, ...)`. The previous Rust port called

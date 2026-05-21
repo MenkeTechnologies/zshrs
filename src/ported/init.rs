@@ -5,18 +5,18 @@
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use crate::ported::builtin::{realexit, LASTVAL, STOPMSG};
+use crate::ported::builtin::{realexit, LASTVAL, RETFLAG, STOPMSG};
+use crate::ported::context::zcontext_restore;
 use crate::ported::hist::{curhist, curline, hbegin, hend, hist_ring, histlinect, stophist};
-use crate::ported::lex::{tok, ENDINPUT};
-use crate::ported::options::emulation;
+use crate::ported::lex::{set_tok, tok, ENDINPUT};
+use crate::ported::mem::popheap;
+use crate::ported::options::{dosetopt, emulation};
 use crate::ported::params::{getsparam, TERMFLAGS};
-use crate::ported::signals::{install_handler, intr, queue_signals, signal_ignore, unqueue_signals};
-use crate::ported::utils::{errflag, movefd, unmeta};
-use crate::ported::zsh_h::{
-    eprog, interact, islogin, isset, Eprog, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP,
-    HISTIGNOREDUPS, HIST_DUP, HIST_TMPSTORE, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN,
-    SINGLECOMMAND, ZEXIT_NORMAL,
-};
+use crate::ported::signals::{dotrap, install_handler, intr, queue_signals, signal_ignore, sigtrapped, unqueue_signals};
+use crate::ported::signals_h::dont_queue_signals;
+use crate::ported::text::getpermtext;
+use crate::ported::utils::{callhookfunc, errflag, movefd, unmeta, ERRFLAG_ERROR};
+use crate::ported::zsh_h::{eprog, hookdef, interact, islogin, isset, jobbing, Eprog, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP, HIST_TMPSTORE, HOOK_SUFFIX, HUP, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, TERM_UNKNOWN, ZEXIT_NORMAL, ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC, HOOKF_ALL};
 // =========================================================================
 // File-scope globals from init.c
 // =========================================================================
@@ -139,9 +139,8 @@ pub static tccolours: AtomicI32 = AtomicI32::new(0); // c:94
 /// pointers must stay valid for any later `runhookdef` dispatch.
 pub static zshhooks: once_cell::sync::Lazy<
     // c:101
-    std::sync::atomic::AtomicPtr<crate::ported::zsh_h::hookdef>,
+    std::sync::atomic::AtomicPtr<hookdef>,
 > = once_cell::sync::Lazy::new(|| {
-    use crate::ported::zsh_h::{hookdef, HOOKF_ALL};
     let arr: Box<[hookdef; 4]> = Box::new([
         hookdef {
             // c:102
@@ -488,7 +487,7 @@ pub fn init_term() -> i32 {
     if term.is_empty() {
         // c:777
         TERMFLAGS
-            .fetch_or(crate::ported::zsh_h::TERM_UNKNOWN, Ordering::SeqCst); // c:778
+            .fetch_or(TERM_UNKNOWN, Ordering::SeqCst); // c:778
         return 0; // c:779
     }
     // unset zle if using zsh under emacs                                    // c:782
@@ -859,7 +858,7 @@ pub fn init_signals() {
         // c:1418-1421 — SIGHUP: if parent installed SIG_IGN, clear
         // the HUP option; otherwise install our handler.
         if signal_ignore(libc::SIGHUP) == libc::SIG_IGN {
-            crate::ported::options::dosetopt(crate::ported::zsh_h::HUP, 0, 0); // c:1419
+            dosetopt(HUP, 0, 0); // c:1419
         } else {
             install_handler(libc::SIGHUP); // c:1421
         }
@@ -881,7 +880,7 @@ pub fn init_signals() {
         }
 
         // c:1432-1436 — `if (jobbing)` job-control signal ignores.
-        if crate::ported::zsh_h::jobbing() {
+        if jobbing() {
             signal_ignore(libc::SIGTTOU); // c:1433
             signal_ignore(libc::SIGTSTP); // c:1434
             signal_ignore(libc::SIGTTIN); // c:1435
@@ -1349,7 +1348,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                 // c:180
                 let preexec_fn = crate::ported::utils::getshfunc("preexec"); // c:181
                 let preexec_hook = crate::ported::params::paramtab().read().ok().and_then(|t| {
-                    t.get(&format!("preexec{}", crate::ported::zsh_h::HOOK_SUFFIX))
+                    t.get(&format!("preexec{}", HOOK_SUFFIX))
                         .map(|_| ())
                 }); // c:182 paramtab->getnode("preexec_functions")
                 if preexec_fn.is_some() || preexec_hook.is_some() {
@@ -1402,9 +1401,9 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                     let job_text = crate::ported::text::getjobtext(placeholder, None); // c:199
                     args.push(crate::ported::mem::dupstring(&job_text));
                     // c:200 — getpermtext(prog, NULL, 0)
-                    let cmdstr = crate::ported::text::getpermtext(placeholder2, None, 0); // c:200
+                    let cmdstr = getpermtext(placeholder2, None, 0); // c:200
                     args.push(cmdstr.clone());
-                    crate::ported::utils::callhookfunc(
+                    callhookfunc(
                         // c:202
                         "preexec",
                         Some(&args),
@@ -1414,7 +1413,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                     crate::ported::mem::zsfree(cmdstr); // c:205
                     errflag.fetch_and(
                         // c:214 errflag &= ~ERRFLAG_ERROR
-                        !crate::ported::utils::ERRFLAG_ERROR,
+                        !ERRFLAG_ERROR,
                         Ordering::SeqCst,
                     );
                 }
@@ -1422,9 +1421,9 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             if toplevel != 0                                                 // c:216
                 && zle_load_state.load(Ordering::SeqCst) == 1
             {
-                let _ = crate::ported::init::zleentry(
+                let _ = zleentry(
                     // c:217 ZLE_CMD_PREEXEC
-                    crate::ported::zsh_h::ZLE_CMD_PREEXEC,
+                    ZLE_CMD_PREEXEC,
                 );
             }
             if STOPMSG.load(Ordering::SeqCst) != 0 {
@@ -1442,15 +1441,15 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             // visible in audits.
             let _ = prog_inner;
             // c:221 — `tok = toksav;` restore
-            crate::ported::lex::set_tok(_toksav);
+            set_tok(_toksav);
             if toplevel != 0 {
                 // c:222
                 noexitct.store(0, Ordering::SeqCst); // c:223
                 if zle_load_state.load(Ordering::SeqCst) == 1 {
                     // c:224
-                    let _ = crate::ported::init::zleentry(
+                    let _ = zleentry(
                         // c:225 ZLE_CMD_POSTEXEC
-                        crate::ported::zsh_h::ZLE_CMD_POSTEXEC,
+                        ZLE_CMD_POSTEXEC,
                     );
                 }
             }
@@ -1466,21 +1465,21 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         let errflag_v = errflag.load(Ordering::SeqCst);
         let interact_v = isset(INTERACTIVE);
         let srclvl = sourcelevel.load(Ordering::SeqCst);
-        let retflag_v = crate::ported::builtin::RETFLAG.load(Ordering::SeqCst);
+        let retflag_v = RETFLAG.load(Ordering::SeqCst);
         if ((!interact_v || srclvl != 0) && errflag_v != 0) || retflag_v != 0 {
             // c:234
             break; // c:235
         }
         if isset(SINGLECOMMAND) && toplevel != 0 {
             // c:236
-            crate::ported::signals_h::dont_queue_signals(); // c:237
+            dont_queue_signals(); // c:237
                                                             // c:238 — sigtrapped[SIGEXIT] != 0 → dotrap(SIGEXIT)
-            let tr = crate::ported::signals::sigtrapped.lock().unwrap();
+            let tr = sigtrapped.lock().unwrap();
             let sigexit = libc::SIGINT as usize; // SIGEXIT = 0 (zsh-internal)
             if tr.get(sigexit).copied().unwrap_or(0) != 0 {
                 // c:238
                 drop(tr);
-                let _ = crate::ported::signals::dotrap(0 /* SIGEXIT */); // c:239
+                let _ = dotrap(0 /* SIGEXIT */); // c:239
             }
             realexit(); // c:240
         }
@@ -1493,9 +1492,9 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
     err = errflag.load(Ordering::SeqCst); // c:245 err = errflag
     if toplevel == 0 {
         // c:246 !toplevel
-        crate::ported::context::zcontext_restore(); // c:247
+        zcontext_restore(); // c:247
     }
-    crate::ported::mem::popheap(); // c:248
+    popheap(); // c:248
     unqueue_signals(); // c:249
 
     if err != 0 {

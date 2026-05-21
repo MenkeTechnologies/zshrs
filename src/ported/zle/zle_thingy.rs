@@ -13,7 +13,7 @@ use super::zle_h::{
     TH_IMMORTAL, WIDGET_INT, WIDGET_INUSE, WIDGET_NCOMP, WidgetImpl, ZLE_ISCOMP, ZLE_KEEPSUFFIX,
     ZLE_MENUCMP, widget,
 };
-use crate::ported::zsh_h::DISABLED;
+use crate::ported::zsh_h::{options, DISABLED};
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
@@ -652,7 +652,7 @@ pub fn deletezlefunction(w: &Arc<widget>) {
 pub fn bin_zle(
     _nam: &str,
     args: &[String], // c:343
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     // c:343-389 — table-driven dispatch on `-l/-D/-A/-N/-C/-R/-M/-U/

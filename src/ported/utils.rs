@@ -26,7 +26,8 @@ use crate::ported::builtin::{SFCONTEXT, STOPMSG};
 use crate::ported::compat::u9_iswprint;
 use crate::ported::hashnameddir::{nameddirtab, removenameddirnode};
 use crate::ported::hashtable::shfunctab_lock;
-use crate::ported::hist::chrealpath;
+use crate::ported::hist::{bangchar, chrealpath};
+use crate::ported::init::SHTTY;
 use crate::ported::modules::clone::{coprocin, coprocout};
 // SHTTY imported under an alias to avoid collision with the
 // `SHTTY: i32` function parameters at fdsettyinfo/fdgettyinfo
@@ -39,15 +40,7 @@ use crate::ported::params::{
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
-use crate::ported::zsh_h::{
-    dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP,
-    CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK,
-    FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker,
-    META, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS,
-    PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK,
-    QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS,
-    XTRACE, ZLE_CMD_TRASH,
-};
+use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, META, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS};
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
     imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
@@ -1367,7 +1360,7 @@ pub fn getnameddir(name: &str) -> Option<String> {
             // is set. Previously omitted in the Rust port — silently
             // returned the raw passwd-db dir even when the user had
             // `setopt chaselinks`.
-            let dir = if isset(crate::ported::zsh_h::CHASELINKS) {
+            let dir = if isset(CHASELINKS) {
                 xsymlink(&raw_dir).unwrap_or(raw_dir)
             } else {
                 raw_dir
@@ -1731,7 +1724,7 @@ pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {
 #[cfg(unix)]
 pub fn gettyinfo() -> Option<libc::termios> {
     // c:1746
-    fdgettyinfo(crate::ported::init::SHTTY.load(Ordering::Relaxed)).ok() // c:1748
+    fdgettyinfo(SHTTY.load(Ordering::Relaxed)).ok() // c:1748
 }
 
 /// Emit the `$PS4` xtrace prefix to stderr.
@@ -1770,7 +1763,7 @@ pub fn fdgettyinfo(_fd: i32) -> std::io::Result<()> {
 #[cfg(unix)]
 pub fn settyinfo(ti: &libc::termios) -> bool {
     // c:1778
-    fdsettyinfo(crate::ported::init::SHTTY.load(Ordering::Relaxed), ti).is_ok() // c:1780
+    fdsettyinfo(SHTTY.load(Ordering::Relaxed), ti).is_ok() // c:1780
 }
 
 /// Apply terminal mode to a file descriptor, with EINTR retry.
@@ -1778,9 +1771,9 @@ pub fn settyinfo(ti: &libc::termios) -> bool {
 /// `while (tcsetattr(SHTTY, TCSADRAIN, &ti->tio) == -1 && errno
 /// == EINTR)` — same retry shape here.
 #[cfg(unix)]
-pub fn fdsettyinfo(SHTTY: i32, ti: &libc::termios) -> io::Result<()> {
+pub fn fdsettyinfo(SHTTY2: i32, ti: &libc::termios) -> io::Result<()> {
     loop {
-        if unsafe { libc::tcsetattr(SHTTY, libc::TCSADRAIN, ti) } != -1 {
+        if unsafe { libc::tcsetattr(SHTTY2, libc::TCSADRAIN, ti) } != -1 {
             return Ok(());
         }
         let err = io::Error::last_os_error();
@@ -1900,7 +1893,7 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
     // c:1898-1917 — TIOCGWINSZ probe.
     if getwinsz != 0 || from == 1 {
         // c:1898
-        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let shtty = SHTTY.load(Ordering::Relaxed);
         if shtty == -1 {
             // c:1900
             return (adjustcolumns(), adjustlines()); // c:1901
@@ -2948,7 +2941,7 @@ pub fn checkrmall(s: &str) -> bool {
     let mut count: i32 = 0; // c:2870 count = 0
                             // c:2880-2892 — opendir + readdir loop, count entries (skip
                             // dotfiles when !GLOBDOTS), cap at max_count.
-    let ignoredots = !isset(crate::ported::zsh_h::GLOBDOTS); // c:2881
+    let ignoredots = !isset(GLOBDOTS); // c:2881
     for fname in zreaddir(s_abs, 1) {
         // c:2880 opendir/zreaddir
         if ignoredots && fname.starts_with('.') {
@@ -2992,7 +2985,7 @@ pub fn checkrmall(s: &str) -> bool {
     let _ = write!(stderr_w, "{}", nicezputs(s_abs)); // c:2905
                                                       // c:2906-2912 — RMSTARWAIT: print "? (waiting ten seconds)",
                                                       // flush, beep, sleep 10, then newline.
-    if isset(crate::ported::zsh_h::RMSTARWAIT) {
+    if isset(RMSTARWAIT) {
         // c:2906
         let _ = write!(stderr_w, "? (waiting ten seconds)"); // c:2907
         let _ = stderr_w.flush(); // c:2908
@@ -3069,7 +3062,7 @@ pub fn read_loop(fd: i32, buf: &mut [u8]) -> io::Result<usize> {
                         continue; // c:2934
                     }
                     // c:2935-2936 — `if (fd != SHTTY) zwarn("read failed: %e", errno);`
-                    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+                    let shtty = SHTTY.load(Ordering::Relaxed);
                     if fd != shtty {
                         // c:2935
                         zwarn(
@@ -3135,7 +3128,7 @@ pub fn write_loop(fd: i32, buf: &[u8]) -> io::Result<usize> {
                         continue; // c:2959
                     }
                     // c:2960-2961 — `if (fd != SHTTY) zwarn("write failed: %e", errno);`
-                    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+                    let shtty = SHTTY.load(Ordering::Relaxed);
                     if fd != shtty {
                         // c:2960
                         zwarn(
@@ -3195,7 +3188,7 @@ pub fn read1char(echo: i32) -> i32 {
     // c:2972
     #[cfg(unix)]
     {
-        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let shtty = SHTTY.load(Ordering::Relaxed);
         if shtty < 0 {
             return -1;
         }
@@ -3245,7 +3238,7 @@ pub fn noquery(purge: bool) -> i32 {
     let mut val: libc::c_int = 0; // c:2992
     #[cfg(unix)]
     {
-        let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed); // c:2999
+        let shtty = SHTTY.load(Ordering::Relaxed); // c:2999
         if shtty == -1 {
             return 0;
         }
@@ -3818,7 +3811,7 @@ pub fn subst_string_by_func(
     }
     args.push(orig.to_string()); // c:4026
     SFCONTEXT // c:4027
-        .store(crate::ported::zsh_h::SFC_SUBST, Ordering::Relaxed);
+        .store(SFC_SUBST, Ordering::Relaxed);
     INCOMPFUNC.store(0, Ordering::Relaxed); // c:4028
 
     let rc = callhookfunc(func_name, Some(&args), 0, std::ptr::null_mut()); // c:4030
@@ -3913,7 +3906,7 @@ pub fn zbeep() {
         let (decoded, _) = getkeystring(&zbeep); // c:4111
         #[cfg(unix)]
         {
-            let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            let shtty = SHTTY.load(Ordering::Relaxed);
             if shtty != -1 {
                 let _ = write_loop(shtty, decoded.as_bytes()); // c:4112
             } else {
@@ -3926,7 +3919,7 @@ pub fn zbeep() {
         // c:4113
         #[cfg(unix)]
         {
-            let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            let shtty = SHTTY.load(Ordering::Relaxed);
             if shtty != -1 {
                 let _ = write_loop(shtty, b"\x07"); // c:4114
             } else {
@@ -4169,14 +4162,14 @@ pub fn inittyptab() {
     // bangchar != 0. Sets ZTF_BANGCHAR flag bit then marks the
     // bangchar byte ISPECIAL.
     {
-        let bangchar = crate::ported::hist::bangchar.load(Ordering::SeqCst) as usize;
+        let bangchar2 = bangchar.load(Ordering::SeqCst) as usize;
         let flags = *TYPTAB_FLAGS.lock().unwrap();
         let interact_flag = (flags & ZTF_INTERACT) != 0;
-        let banghist = isset(crate::ported::zsh_h::BANGHIST);
-        if banghist && bangchar != 0 && bangchar < 256 && interact_flag {
+        let banghist = isset(BANGHIST);
+        if banghist && bangchar2 != 0 && bangchar2 < 256 && interact_flag {
             // c:4257
             *TYPTAB_FLAGS.lock().unwrap() |= ZTF_BANGCHAR; // c:4258
-            t[bangchar] |= ISPECIAL as u32; // c:4259
+            t[bangchar2] |= ISPECIAL as u32; // c:4259
         } else {
             *TYPTAB_FLAGS.lock().unwrap() &= !ZTF_BANGCHAR; // c:4261
         }
@@ -4217,7 +4210,7 @@ pub fn makecommaspecial(yesno: bool) {
 /// stored by `inittyptab` (i.e. BANGHIST is on).
 pub fn makebangspecial(yesno: bool) {
     // c:4283
-    let bc = crate::ported::hist::bangchar.load(Ordering::SeqCst) as usize;
+    let bc = bangchar.load(Ordering::SeqCst) as usize;
     if bc == 0 || bc >= 256 {
         return;
     }
@@ -4486,7 +4479,7 @@ pub fn attachtty(pgrp: i32) {
     if !(crate::ported::zsh_h::jobbing() && interact()) {
         return; // c:4779
     }
-    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed); // c:4781
+    let shtty = SHTTY.load(Ordering::Relaxed); // c:4781
     if shtty == -1 {
         return;
     }
@@ -4526,7 +4519,7 @@ pub fn attachtty(pgrp: i32) {
 #[cfg(unix)]
 pub fn gettygrp() -> i32 {
     // c:4815
-    let shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let shtty = SHTTY.load(Ordering::Relaxed);
     if shtty == -1 {
         // c:4819
         return -1; // c:4820
@@ -10243,12 +10236,12 @@ mod tests {
         // Test environment: SHTTY is -1 (no controlling tty bound
         // by the port). C-side would `read(-1, ...)` which fails;
         // Rust port should fail-fast with -1.
-        let saved = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-        crate::ported::init::SHTTY.store(-1, Ordering::Relaxed);
+        let saved = SHTTY.load(Ordering::Relaxed);
+        SHTTY.store(-1, Ordering::Relaxed);
         let got = read1char(0); // echo=0
         assert_eq!(got, -1, "c:2978 — SHTTY=-1 → read fails → return -1");
         // Restore.
-        crate::ported::init::SHTTY.store(saved, Ordering::Relaxed);
+        SHTTY.store(saved, Ordering::Relaxed);
     }
 
     /// `Src/utils.c:1989-2012` — `movefd(fd)` dups fd to >= 10 (so it

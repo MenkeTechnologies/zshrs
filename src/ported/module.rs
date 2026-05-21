@@ -14,19 +14,16 @@
 //! hooks, and math functions).
 
 use crate::ported::builtin::createbuiltintable;
-use crate::ported::params::{paramtab, unsetparam_pm};
+use crate::ported::params::{createparam, createspecialhash, paramtab, unsetparam_pm};
 use crate::ported::signals::unqueue_signals;
 use crate::ported::utils::{zwarn, zwarnnam};
-use crate::ported::zsh_h::{
-    BINF_AUTOALL, CONDF_AUTOALL, HOOKF_ALL, Hookfn, MFF_USERFUNC, MOD_ALIAS, MOD_BUSY, MOD_INIT_B,
-    MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD, OPT_ISSET, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT,
-    PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED,
-    PM_TYPE, builtin, conddef, funcwrap, hookdef, mathfunc, options, paramdef,
-};
+use crate::ported::zsh_h::{BINF_AUTOALL, CONDF_AUTOALL, HOOKF_ALL, Hookfn, MFF_USERFUNC, MOD_ALIAS, MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD, OPT_ISSET, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED, PM_TYPE, builtin, conddef, funcwrap, hookdef, mathfunc, options, paramdef, CASMOD_LOWER, CASMOD_UPPER, Param, linknode, linklist, PM_AUTOALL, PRINT_LIST};
 use crate::zsh_h::module;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use crate::ported::hist::casemodify;
+use crate::ported::mem::ztrdup;
 pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, CONDF_INFIX, MFF_ADDED};
 
 
@@ -282,7 +279,7 @@ pub fn addhookdef(h: *mut hookdef) -> i32 {
         hooktab.store(h, std::sync::atomic::Ordering::SeqCst); // c:870 hooktab = h
         if (*h).funcs.is_null() {
             // c:871 h->funcs = znewlinklist()
-            (*h).funcs = Box::into_raw(Box::new(crate::ported::zsh_h::linklist {
+            (*h).funcs = Box::into_raw(Box::new(linklist {
                 first: None,
                 last: None,
                 flags: 0,
@@ -425,7 +422,7 @@ pub fn addhookdeffunc(
 ) -> i32 {
     unsafe {
         if (*h).funcs.is_null() {
-            (*h).funcs = Box::into_raw(Box::new(crate::ported::zsh_h::linklist {
+            (*h).funcs = Box::into_raw(Box::new(linklist {
                 first: None,
                 last: None,
                 flags: 0,
@@ -438,7 +435,7 @@ pub fn addhookdeffunc(
         // node — the C `last` field is a raw pointer; the Rust
         // representation keeps it as None and resolves the tail by
         // walking forward from .first).
-        let new_node = Box::new(crate::ported::zsh_h::linknode {
+        let new_node = Box::new(linknode {
             next: None,
             prev: None,
             dat: f as usize,
@@ -506,7 +503,7 @@ pub fn deletehookdeffunc(
         let funcs = &mut *(*h).funcs;
         let f_val = f as usize;
         // Walk owning chain looking for the matching dat. Splice on hit.
-        let mut prev: &mut Option<Box<crate::ported::zsh_h::linknode>> = &mut funcs.first;
+        let mut prev: &mut Option<Box<linknode>> = &mut funcs.first;
         loop {
             match prev {
                 None => return 1, // c:971
@@ -745,16 +742,16 @@ pub fn addparamdef(d: &mut paramdef) -> i32 {
 
     // c:1068-1075 — either createspecialhash (hash params with getnfn)
     // or createparam, falling back to gethashnode on collision.
-    let pm_opt: Option<crate::ported::zsh_h::Param> = if d.getnfn.is_some() {
+    let pm_opt: Option<Param> = if d.getnfn.is_some() {
         // c:1068
         // c:1069-1071 — createspecialhash(d->name, d->getnfn, d->scantfn, d->flags)
         // The Rust createspecialhash takes (name, flags) only; the
         // getnfn/scantfn fields aren't yet wired through the typed
         // Rust API. Pass flags and let the param be created.
-        crate::ported::params::createspecialhash(&d.name, d.flags) // c:1069
+        createspecialhash(&d.name, d.flags) // c:1069
     } else {
         // c:1072
-        match crate::ported::params::createparam(&d.name, d.flags) {
+        match createparam(&d.name, d.flags) {
             // c:1073
             Some(p) => Some(p),
             None => {
@@ -796,11 +793,11 @@ pub fn addparamdef(d: &mut paramdef) -> i32 {
             // c:1087/1091
             if t == PM_SCALAR && (pmflags & PM_TIED) != 0 {
                 // c:1088
-                let lower = crate::ported::hist::casemodify(
+                let lower = casemodify(
                     &pm.node.nam,
-                    crate::ported::zsh_h::CASMOD_LOWER,
+                    CASMOD_LOWER,
                 );
-                pm.ename = Some(crate::ported::mem::ztrdup(&lower)); // c:1089
+                pm.ename = Some(ztrdup(&lower)); // c:1089
             }
             // c:1092 pm->gsu.s = d->gsu ? d->gsu : &varscalar_gsu;
             // gsu vtable wireup is opaque (function pointers via usize);
@@ -816,11 +813,11 @@ pub fn addparamdef(d: &mut paramdef) -> i32 {
             // c:1104
             if (pmflags & PM_TIED) != 0 {
                 // c:1105
-                let upper = crate::ported::hist::casemodify(
+                let upper = casemodify(
                     &pm.node.nam,
-                    crate::ported::zsh_h::CASMOD_UPPER,
+                    CASMOD_UPPER,
                 );
-                pm.ename = Some(crate::ported::mem::ztrdup(&upper)); // c:1106
+                pm.ename = Some(ztrdup(&upper)); // c:1106
             }
             let _ = d.gsu; // c:1107
         } else if t == PM_HASHED {
@@ -871,7 +868,7 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
     // c:1128
 
     // c:1131 — `Param pm = (Param) paramtab->getnode(paramtab, d->name);`
-    let mut pm: crate::ported::zsh_h::Param = {
+    let mut pm: Param = {
         let tab = paramtab().read();
         match tab {
             Ok(t) => match t.get(&d.name) {
@@ -1501,7 +1498,7 @@ impl modulestab {
         let _ = PM_AUTOLOAD; // c:1224 pm->flags |= PM_AUTOLOAD
         if (flags & FEAT_AUTOALL) != 0 {
             // c:1225
-            let _ = crate::ported::zsh_h::PM_AUTOALL; // c:1226
+            let _ = PM_AUTOALL; // c:1226
         }
         unqueue_signals(); // c:1231
         0 // c:1227,1233 ret=0
@@ -2488,7 +2485,7 @@ pub fn autoloadscan(name: &str, optstr: &str, flags: u32, printflags: i32) {
         // c:2403
         return; // c:2408
     }
-    if (printflags & crate::ported::zsh_h::PRINT_LIST) != 0 {
+    if (printflags & PRINT_LIST) != 0 {
         // c:2409
         // c:2410-2417 — long form `zmodload -ab MOD NAME`
         print!("zmodload -ab ");
@@ -3032,7 +3029,7 @@ pub fn bin_zmodload_auto(
                     module,
                     0,
                     if OPT_ISSET(ops, b'L') {
-                        crate::ported::zsh_h::PRINT_LIST
+                        PRINT_LIST
                     } else {
                         0
                     },
@@ -3942,6 +3939,7 @@ pub const FINDMOD_CREATE: i32 = 0x0002; // c:115
 
 #[cfg(test)]
 mod tests {
+    use crate::ported::zsh_h::hashnode;
     use super::*;
 
     #[test]
@@ -4238,7 +4236,7 @@ mod tests {
 
     fn mk_b(nam: &str) -> builtin {
         builtin {
-            node: crate::ported::zsh_h::hashnode {
+            node: hashnode {
                 next: None,
                 nam: nam.to_string(),
                 flags: 0,

@@ -27,9 +27,7 @@ use crate::ported::zle::zle_misc::{
     POSTDISPLAY, PREDISPLAY, PREVIOUS_ABORTED_SEARCH, PREVIOUS_SEARCH, SUFFIXLEN,
 };
 use crate::ported::zle::zle_thingy::Thingy;
-use crate::ported::zsh_h::{
-    PM_READONLY, PM_SCALAR, ZLCON_LINE_CONT, ZLCON_LINE_START, ZLCON_SELECT, ZLCON_VARED,
-};
+use crate::ported::zsh_h::{hashnode, param, ScanFunc, PM_READONLY, PM_SCALAR, ZLCON_LINE_CONT, ZLCON_LINE_START, ZLCON_SELECT, ZLCON_VARED};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
@@ -99,7 +97,7 @@ pub fn makezleparams(_ro: i32) {
 /// Called when one of ZLE's special parameters ($BUFFER etc.) is
 /// `unset`. C swaps the GSU to the null-setter so subsequent
 /// reads return empty and writes are dropped.
-pub fn zleunsetfn(pm: &mut crate::ported::zsh_h::param, exp: i32) {
+pub fn zleunsetfn(pm: &mut param, exp: i32) {
     // c:237
     crate::ported::params::stdunsetfn(pm, exp); // c:237
                                                 // c:240 — `pm->gsu.s = &nullsetscalar_gsu`. The GSU vtable swap
@@ -756,7 +754,7 @@ pub fn unset_register(name: char, _exp: i32) {
 /// a no-op port; trait dispatch via the typed `vibuf()` accessor
 /// covers the read/write side. Rust idiom replacement.
 /// WARNING: param names don't match C — Rust=(_t, _flags) vs C=(ht, func, flags)
-pub fn scan_registers(_ht: i32, func: Option<crate::ported::zsh_h::ScanFunc>, flags: i32) {
+pub fn scan_registers(_ht: i32, func: Option<ScanFunc>, flags: i32) {
     // c:784
     let func = match func {
         Some(f) => f,
@@ -770,8 +768,8 @@ pub fn scan_registers(_ht: i32, func: Option<crate::ported::zsh_h::ScanFunc>, fl
     for i in 0..36usize {
         // c:798 for (i = 0; i < 36; i++)
         let val: String = buf.get(i).map(|v| v.iter().collect()).unwrap_or_default(); // c:801 zlelineasstring(vibuf[i].buf, ...)
-        let pm = crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
+        let pm = param {
+            node: hashnode {
                 // c:794 memset(&pm, 0)
                 next: None,
                 nam: format!("{}", ch as char), // c:799 *pm.node.nam = ch

@@ -34,6 +34,9 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
+use crate::ported::zsh_h::options;
+use crate::ported::ztype_h::imeta;
+
 /// Port of `KMN_IMMORTAL` from `Src/Zle/zle_keymap.c:62`. Marks a
 /// keymap-name node that can't be deleted (the `.safe` keymap).
 
@@ -824,7 +827,7 @@ pub fn keyisprefix(km: &Keymap, seq: &[u8]) -> i32 {
 pub fn bin_bindkey(
     name: &str,
     args: &[String], // c:743
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET};
@@ -1471,10 +1474,10 @@ pub fn addkeybuf(c: i32) {
     //     typtab; they should pass through as literal bytes).
     // Routing through `ztype_h::imeta` ties the meta-encoding decision
     // to the same typtab inittyptab() populates — one source of truth.
-    let is_meta = crate::ported::ztype_h::imeta(c as u8); // c:1721
+    let is_meta = imeta(c as u8); // c:1721
     let mut buf = keybuf.lock().unwrap();
     if is_meta {
-        buf.push(crate::ported::zsh_h::META as u8); // c:1722 Meta
+        buf.push(META as u8); // c:1722 Meta
         buf.push((c ^ 32) as u8); // c:1723 c ^ 32
     } else {
         buf.push(c as u8); // c:1725

@@ -19,9 +19,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write, self};
 use crate::ported::zsh_h::{
-    INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO, INP_RAW_KEEP,
+    INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO, INP_RAW_KEEP, META
 };
-pub use crate::ported::zsh_h::META;
 
 
 /// Port of `struct instacks` from `Src/input.c:109`. One frame in

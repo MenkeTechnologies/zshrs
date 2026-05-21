@@ -18,19 +18,15 @@ use crate::ported::string::dyncat;
 use crate::ported::utils::{zerr, errflag, init_dirsav, lchdir, restoredir};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self};
-use crate::ported::zsh_h::{
-    isset, Bnull, Bnullkeep, Dnull, Inang, Nularg, Outang, Pound, Snull, BAREGLOBQUAL, BRACECCL,
-    CASEGLOB, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT, IS_DASH, LISTTYPES, MARKDIRS, META, MULTIOS,
-    NULLGLOB, NUMERICGLOBSORT, PP_UNKWN, PREFORK_SINGLE, REDIR_CLOSE, REDIR_ERRWRITE,
-    REDIR_MERGEIN, REDIR_MERGEOUT, SUB_ALL, SUB_END, SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_MATCH,
-    SUB_REST, SUB_START, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST,
-};
+use crate::ported::zsh_h::{isset, redir, Bnull, Bnullkeep, Dnull, Inang, Nularg, Outang, Pound, Snull, BAREGLOBQUAL, BRACECCL, CASEGLOB, ERRFLAG_INT, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT, IS_DASH, LISTTYPES, MARKDIRS, META, MULTIOS, NULLGLOB, NUMERICGLOBSORT, PP_UNKWN, PREFORK_SINGLE, REDIR_CLOSE, REDIR_ERRWRITE, REDIR_MERGEIN, REDIR_MERGEOUT, SHGLOB, SUB_ALL, SUB_END, SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_START, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST};
 use std::sync::atomic::Ordering;
 use std::collections::HashSet;
 use std::fs::{self, Metadata};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::ported::subst::LinkList;
+use crate::subst::prefork;
 
 /// A glob match with metadata for sorting
 #[derive(Debug, Clone)]
@@ -1351,8 +1347,8 @@ pub static IN_EXPANDREDIR: std::sync::atomic::AtomicI32 = // c:1206
 /// otherwise.
 /// WARNING: param names don't match C — Rust=(fn_, redirtab) vs C=(fn, redirtab)
 pub fn xpandredir(
-    fn_: &mut crate::ported::zsh_h::redir, // c:2150
-    redirtab: &mut Vec<crate::ported::zsh_h::redir>,
+    fn_: &mut redir, // c:2150
+    redirtab: &mut Vec<redir>,
 ) -> i32 {
     use std::sync::atomic::Ordering::SeqCst;
     let mut ret = 0; // c:2156
@@ -1361,10 +1357,10 @@ pub fn xpandredir(
         Some(n) => n.to_string(),
         None => return 0,
     };
-    let mut fake: crate::ported::subst::LinkList = crate::ported::linklist::LinkList::new();
+    let mut fake: LinkList = LinkList::new();
     fake.push_back(name); // c:2160
     let mut rf = 0i32;
-    crate::ported::subst::prefork(
+    prefork(
         &mut fake, // c:2162 prefork
         if isset(MULTIOS) { 0 } else { PREFORK_SINGLE },
         &mut rf,
@@ -1657,7 +1653,7 @@ pub fn tokenize(s: &mut String) {
 pub fn shtokenize(s: &mut String) {
     // c:3563
     let mut flags = ZSHTOK_SUBST; // c:3567
-    if isset(crate::ported::zsh_h::SHGLOB) {
+    if isset(SHGLOB) {
         // c:3568
         flags |= ZSHTOK_SHGLOB; // c:3569
     }
@@ -2063,7 +2059,7 @@ pub fn qualsheval(filename: &str, expr: &str) -> bool {
     // pre-call errflag plus any interrupt bit set during eval.
     let post_errflag = errflag.load(Ordering::Relaxed);
     errflag.store(
-        saved_errflag | (post_errflag & crate::ported::zsh_h::ERRFLAG_INT),
+        saved_errflag | (post_errflag & ERRFLAG_INT),
         Ordering::Relaxed,
     ); // c:3924
        // c:3925 — `lastval = lv;`. Restore pre-call lastval.
@@ -4850,7 +4846,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::ported::options::{opt_state_set, opt_state_unset};
-    use crate::ported::zsh_h::{redir, REDIR_WRITE};
+    use crate::ported::zsh_h::{redir, ERRFLAG_ERROR, REDIR_WRITE};
 
     fn setup_test_dir() -> TempDir {
         let dir = TempDir::new().unwrap();
@@ -5526,7 +5522,7 @@ mod tests {
         let _ = qualsheval("/tmp/file", ":"); // no-op expr
                                               // c:3924 — errflag restored.
         assert_eq!(
-            errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR,
+            errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR,
             0,
             "c:3924 — qualsheval must restore errflag (no ERRFLAG_ERROR leak)"
         );

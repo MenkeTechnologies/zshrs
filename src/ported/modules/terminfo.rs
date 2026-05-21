@@ -16,11 +16,12 @@
 //! Unknown capabilities return `None` so callers can emit `""`
 //! matching zsh's `PM_UNSET` fallback (terminfo.c:165-168).
 
-use crate::ported::params::{TERMFLAGS, TERM_UNKNOWN};
+use crate::ported::params::{TERMFLAGS };
 use std::sync::atomic::Ordering;
 use crate::ported::zsh_h::module;
 use std::sync::{Mutex, OnceLock};
-
+use crate::options::optlookup;
+use crate::zsh_h::{isset, TERM_UNKNOWN};
 
 // FFI bindings to the system ncurses terminfo interface. Direct
 // port of the call sites in `zsh/Src/Modules/terminfo.c`. macOS
@@ -74,7 +75,7 @@ pub fn bin_echoti(
         // c:75
         return 1; // c:76
     }
-    let interactive = crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive")); // c:77
+    let interactive = isset(optlookup("interactive")); // c:77
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 && interactive {
         return 1; // c:78
     }
@@ -194,7 +195,7 @@ pub fn getterminfo(name: &str) -> Option<String> {
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
         // c:144
         let interactive =
-            crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
+            isset(optlookup("interactive"));
         if interactive {
             // c:144
             return None; // c:145
@@ -279,7 +280,7 @@ pub fn scanterminfo() -> Vec<(String, String)> {
     }
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
         let interactive =
-            crate::ported::zsh_h::isset(crate::ported::options::optlookup("interactive"));
+            isset(optlookup("interactive"));
         if interactive {
             return out;
         }

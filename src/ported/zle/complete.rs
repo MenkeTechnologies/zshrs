@@ -33,9 +33,9 @@ use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Mutex;
 
 use crate::ported::glob::{remnulargs, tokenize};
-use crate::ported::params::{createparam, paramtab};
+use crate::ported::params::{createparam, getsparam, paramtab};
 use crate::ported::pattern::{patcompile, pattry, range_type};
-use crate::ported::utils::zwarnnam;
+use crate::ported::utils::{zerr, zwarnnam};
 use crate::ported::zle::comp_h::{
     Cmatcher, Cpattern, CAF_ALL, CAF_ARRAYS, CAF_KEYS, CAF_MATCH, CAF_MATSORT, CAF_NOSORT,
     CAF_QUOTE, CAF_UNIQALL, CAF_UNIQCON, CLF_LINE, CLF_SUF, CMF_FILE, CMF_HIDE, CMF_INTER,
@@ -47,10 +47,7 @@ use crate::ported::zle::{
     zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*,
     zle_word::*,
 };
-use crate::ported::zsh_h::{
-    module, options, param, PAT_HEAPDUP, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY,
-    PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE, PM_UNSET, PP_UNKWN,
-};
+use crate::ported::zsh_h::{eprog, funcwrap, module, options, param, PAT_HEAPDUP, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE, PM_UNSET, PP_RANGE, PP_UNKWN};
 
 // =====================================================================
 // Cmlist / Cmatcher / Cpattern allocators + freers — Src/Zle/complete.c.
@@ -756,7 +753,7 @@ pub fn parse_class<'a>(
         if i < bytes.len() && bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] != endchar {
             i += 1; // consume '-'
                     // c:539 — `*optr++ = Meta + PP_RANGE;`.
-            out.push(0x80u8.wrapping_add(crate::ported::zsh_h::PP_RANGE as u8));
+            out.push(0x80u8.wrapping_add(PP_RANGE as u8));
             // c:543-547 — start char (with Meta decode).
             if bytes[ptr1] == 0x83 && ptr1 + 1 < bytes.len() {
                 out.push(0x83);
@@ -2189,8 +2186,8 @@ pub fn comp_setunset(
 /// default at c:1593).
 /// WARNING: param names don't match C — Rust=(_prog, _w, name) vs C=(prog, w, name)
 pub fn comp_wrapper(
-    _prog: *const crate::ported::zsh_h::eprog, // c:1556
-    _w: *const crate::ported::zsh_h::funcwrap,
+    _prog: *const eprog, // c:1556
+    _w: *const funcwrap,
     name: &str,
 ) -> i32 {
     use std::sync::atomic::Ordering;
@@ -2229,7 +2226,7 @@ pub fn comp_wrapper(
     // c:1593 — if comprestore == "auto", restore. Default is "auto" per
     // c:1576 (set in comp_wrapper itself before runshfunc).
     let comprestore_val =
-        crate::ported::params::getsparam("comprestore").unwrap_or_else(|| "auto".to_string());
+        getsparam("comprestore").unwrap_or_else(|| "auto".to_string());
     if comprestore_val == "auto" {
         restore(&COMPPREFIX, opre);
         restore(&COMPSUFFIX, osuf);
@@ -2259,7 +2256,7 @@ pub fn comp_check() -> i32 {
     // c:1651
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:1651
-        crate::ported::utils::zerr(
+        zerr(
             // c:1654
             "condition can only be used in completion function",
         );

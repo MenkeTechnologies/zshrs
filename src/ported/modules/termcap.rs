@@ -14,12 +14,13 @@
 //! libtermcap into the build. Function signatures + observable
 //! outputs match C 1:1.
 
-use crate::ported::params::{getsparam, TERMFLAGS, TERM_UNKNOWN};
+use crate::ported::params::{getsparam, TERMFLAGS};
 use crate::ported::utils::{zsetupterm, zwarnnam};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use crate::ported::options::optlookup;
 use crate::ported::zsh_h::{features, isset, module};
+use crate::zsh_h::TERM_UNKNOWN;
 
 /// Port of `ztgetflag(char *s)` from `Src/Modules/termcap.c:54`. Wraps
 /// libtermcap's `tgetflag()` to disambiguate "off" from "not

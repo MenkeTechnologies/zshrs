@@ -38,16 +38,13 @@ use crate::ported::zle::comp_h::{
     CGF_PACKED, CGF_ROWS, CLF_LINE, CLF_SUF, CMF_ALL, CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT,
     CMF_NOLIST, CMF_PACKED, CMF_ROWS,
 };
-use crate::ported::zle::compcore::{
-    amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, listdat as listdat_static,
-    menuacc, nmatches as nmatches_g, oldins, oldlist, onlyexpl, MINFO,
-};
+use crate::ported::zle::compcore::{amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, listdat as listdat_static, menuacc, nmatches as nmatches_g, nmatches, oldins, oldlist, onlyexpl, MINFO};
 use crate::ported::zle::complete::COMPLISTMAX;
 use crate::ported::zle::computil::CM_SPACE;
 use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
 use crate::ported::zle::zle_refresh::tcoutclear;
 use crate::ported::zle::zle_tricky::printfmt;
-use crate::ported::zsh_h::{isset, USEZLE};
+use crate::ported::zsh_h::{isset, LISTPACKED, LISTROWSFIRST, LISTTYPES, USEZLE};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
@@ -743,17 +740,17 @@ pub fn calclist(showall: i32) -> i32 {
     let am =
         amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
     let mut groups = am.lock().unwrap();
-    let nmatches = crate::ported::zle::compcore::nmatches.load(Relaxed);
-    let mut mlens: Vec<i32> = vec![0; (nmatches + 1) as usize];
+    let nmatches2 = nmatches.load(Relaxed);
+    let mut mlens: Vec<i32> = vec![0; (nmatches2 + 1) as usize];
 
     let mut hidden = 0i32;
     let mut nlist = 0i32;
     let mut nlines = 0i32;
     let mut max = 0i32;
 
-    let listpacked = isset(crate::ported::zsh_h::LISTPACKED);
-    let listrowsfirst = isset(crate::ported::zsh_h::LISTROWSFIRST);
-    let listtypes = isset(crate::ported::zsh_h::LISTTYPES);
+    let listpacked = isset(LISTPACKED);
+    let listrowsfirst = isset(LISTROWSFIRST);
+    let listtypes = isset(LISTTYPES);
 
     // First pass — per-group width / line accounting (c:1514-1657).
     for g in groups.iter_mut() {

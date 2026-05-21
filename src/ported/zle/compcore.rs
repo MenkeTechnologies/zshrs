@@ -24,6 +24,7 @@
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use crate::DPUTS;
+use crate::ported::context::zcontext_restore_partial;
 use crate::ported::module::{gethookdef, runhookdef};
 use crate::ported::params::{getsparam, paramtab, paramtab_hashed_storage, setaparam, setsparam};
 use crate::ported::signals::{queue_signals, unqueue_signals};
@@ -40,12 +41,7 @@ use crate::ported::zle::compresult::{do_ambig_menu, ztat};
 use crate::ported::zle::zle_h::{invalidatelist, COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
 use crate::ported::zle::zle_refresh::{CLEARLIST, SHOWINGLIST};
 use crate::ported::zle::zle_tricky::{MENUCMP, ORIGCS, ORIGLINE, USEGLOB, USEMENU, VALIDLIST, WOULDINSTAB};
-use crate::ported::zsh_h::{
-    isset, Bnull, Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound, Qstring,
-    Quest, Snull, Star, Stringg, Tilde, BASHAUTOLIST, NUMERICGLOBSORT, PM_HASHED, PM_TYPE,
-    QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, RCQUOTES,
-    SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY,
-};
+use crate::ported::zsh_h::{isset, Bnull, Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound, Qstring, Quest, Snull, Star, Stringg, Tilde, BASHAUTOLIST, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, RCQUOTES, SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY, ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
@@ -3989,10 +3985,10 @@ fn lexsave() -> usize {
 /// `zcontext_restore_partial(ZCONTEXT_HIST|ZCONTEXT_LEX|ZCONTEXT_PARSE)`.
 fn lexrestore(_token: usize) {
     // lex.c via context.c:117
-    let parts = crate::ported::zsh_h::ZCONTEXT_HIST
-        | crate::ported::zsh_h::ZCONTEXT_LEX
-        | crate::ported::zsh_h::ZCONTEXT_PARSE;
-    crate::ported::context::zcontext_restore_partial(parts);
+    let parts = ZCONTEXT_HIST
+        | ZCONTEXT_LEX
+        | ZCONTEXT_PARSE;
+    zcontext_restore_partial(parts);
     LEXSAVE_DEPTH.fetch_sub(1, Ordering::SeqCst);
 }
 
