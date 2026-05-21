@@ -5621,6 +5621,7 @@ pub fn zreaddir(path: &str, ignoredots: i32) -> Vec<String> {
 }
 
 /// Port of `int zputs(char const *s, FILE *stream)` from `Src/utils.c:5263-5282`.
+///
 /// ```c
 /// while (*s) {
 ///     if (*s == Meta)     c = *++s ^ 32;
@@ -5631,44 +5632,38 @@ pub fn zreaddir(path: &str, ignoredots: i32) -> Vec<String> {
 /// }
 /// return 0;
 /// ```
-/// Token-byte detection previously hardcoded `c >= 0x83 && c <= 0x9b`
-/// — that's a 0x19-byte window which doesn't match the actual `itok()`
-/// typtab range (which covers Pound..Nularg + Snull..Nularg). Now
-/// routes through the canonical `itok()` predicate.
-/// WARNING: param names don't match C — Rust=(s) vs C=(s, stream)
-pub fn zputs(s: &str) -> io::Result<()> {
+///
+/// Writes `s` to `stream` with Meta+X pair decoding and ITOK-byte
+/// skipping. Returns `0` on success, `-1` on write error (mirroring
+/// C's `EOF` sentinel for the int return).
+pub fn zputs(s: &str, stream: &mut dyn std::io::Write) -> i32 {
     // c:5265
-    let mut out = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
+    let bytes = s.as_bytes();                                                // c:5265 *s walk
     let mut i = 0;
-    while i < bytes.len() {
-        // c:5269
-        let c = bytes[i];
-        if c == Meta {
-            // c:5270
-            // c:5271 — `c = *++s ^ 32;`. Skip the Meta byte, decode next.
+    while i < bytes.len() {                                                  // c:5267 while (*s)
+        let c: u8;                                                           // c:5268 char c
+        if bytes[i] == Meta {                                                // c:5269 if (*s == Meta)
+            // c:5270 — `c = *++s ^ 32;`
             if i + 1 < bytes.len() {
-                let decoded = bytes[i + 1] ^ 32;
-                out.push(decoded as char);
-                i += 2; // c:5277 s++ after the ++s
+                c = bytes[i + 1] ^ 32;
+                i += 1;                                                      // c:5270 ++s
             } else {
                 i += 1;
+                continue;
             }
-        } else if itok(c) {
-            // c:5272
-            // c:5273-5274 — token byte: `s++; continue;` (skip without
-            // emitting). Canonical `itok()` covers Pound..Nularg +
-            // Snull..Nularg per typtab; previous Rust port hardcoded
-            // 0x83..=0x9b which missed the Snull..Nularg range
-            // (typically 0xa0..0xa9 on default zsh.h tokens).
+        } else if itok(bytes[i]) {                                           // c:5271 else if (itok(*s))
+            // c:5272 — `s++; continue;` (skip token byte)
             i += 1;
             continue;
         } else {
-            out.push(c as char);
-            i += 1;
+            c = bytes[i];                                                    // c:5274 else c = *s
+        }
+        i += 1;                                                              // c:5276 s++
+        if stream.write_all(&[c]).is_err() {                                 // c:5277 fputc(c, stream)
+            return -1;                                                       // c:5278 return EOF
         }
     }
-    io::stdout().lock().write_all(out.as_bytes()) // c:5278
+    0                                                                        // c:5280 return 0
 }
 
 /// Port of `nicedup(char const *s, int heap)` from `Src/utils.c:5289`

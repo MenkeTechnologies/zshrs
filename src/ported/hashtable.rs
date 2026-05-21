@@ -990,11 +990,12 @@ pub fn printcmdnamnode(hn: &cmdnam, printflags: i32) {
 
     // c:749-760 — PRINT_WHENCE_CSH | PRINT_WHENCE_SIMPLE branch.
     if (printflags & (PRINT_WHENCE_CSH | PRINT_WHENCE_SIMPLE)) != 0 {
+        let mut so = std::io::stdout();
         if (hn.node.flags & HASHED as i32) != 0 {
             // c:750
             // c:751-752 — `zputs(u.cmd, stdout); putchar('\n');`
             if let Some(cmd) = &hn.cmd {
-                let _ = zputs(cmd); // c:751
+                let _ = zputs(cmd, &mut so); // c:751
             }
             println!(); // c:752
         } else {
@@ -1002,11 +1003,11 @@ pub fn printcmdnamnode(hn: &cmdnam, printflags: i32) {
             // c:754-757 — `zputs(*u.name); putchar('/'); zputs(nam); putchar('\n');`
             if let Some(name_arr) = &hn.name {
                 if let Some(first) = name_arr.first() {
-                    let _ = zputs(first); // c:754
+                    let _ = zputs(first, &mut so); // c:754
                 }
             }
             print!("/"); // c:755
-            let _ = zputs(&hn.node.nam); // c:756
+            let _ = zputs(&hn.node.nam, &mut so); // c:756
             println!(); // c:757
         }
         return; // c:759
@@ -1221,7 +1222,8 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
         || ((printflags & PRINT_WHENCE_SIMPLE) != 0
             && (printflags & PRINT_WHENCE_FUNCDEF) == 0)
     {
-        let _ = zputs(&hn.node.nam); // c:922
+        let mut so = std::io::stdout();
+        let _ = zputs(&hn.node.nam, &mut so); // c:922
         println!(); // c:923
         return; // c:924
     }
@@ -1299,7 +1301,8 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                 PM_ZSHSTORED,
                 PM_CUR_FPATH,
             ];
-            let _ = zputs("builtin autoload -X"); // c:967
+            let mut so = std::io::stdout();
+            let _ = zputs("builtin autoload -X", &mut so); // c:967
                                                   // c:968-969 — emit each fopt char whose flag is set.
             for fl in 0..fopt.len() {
                 // c:968
@@ -1313,14 +1316,15 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                 if (hn.node.flags & PM_LOADDIR as i32) != 0 {
                     // c:970
                     print!(" "); // c:971
-                    let _ = zputs(filename); // c:972
+                    let _ = zputs(filename, &mut so); // c:972
                 }
             }
         } else {
             // c:974
             // c:975 — `zputs(t, stdout);`
             let body = t.take().unwrap();
-            let _ = zputs(&body); // c:975
+            let mut so = std::io::stdout();
+            let _ = zputs(&body, &mut so); // c:975
                                   // c:977-982 — funcdef.flags & EF_RUN → run-time suffix.
             let ef_run = hn
                 .funcdef
@@ -1346,7 +1350,8 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
         let t = getpermtext(redir.clone(), None, 1); // c:989
         if !t.is_empty() {
             // c:990
-            let _ = zputs(&t); // c:991
+            let mut so = std::io::stdout();
+            let _ = zputs(&t, &mut so); // c:991
         }
     }
 
@@ -1689,7 +1694,8 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
 
     // c:1260-1264 — PRINT_NAMEONLY branch.
     if (printflags & PRINT_NAMEONLY) != 0 {
-        let _ = zputs(&hn.node.nam); // c:1261
+        let mut so = std::io::stdout();
+        let _ = zputs(&hn.node.nam, &mut so); // c:1261
         println!(); // c:1262
         return; // c:1263
     }
@@ -1708,7 +1714,8 @@ pub fn printaliasnode(hn: &alias, printflags: i32) {
 
     // c:1276-1280 — PRINT_WHENCE_SIMPLE branch.
     if (printflags & PRINT_WHENCE_SIMPLE) != 0 {
-        let _ = zputs(&hn.text); // c:1277
+        let mut so = std::io::stdout();
+        let _ = zputs(&hn.text, &mut so); // c:1277
         println!(); // c:1278
         return; // c:1279
     }
