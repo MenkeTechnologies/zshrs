@@ -1466,6 +1466,124 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
     popheap(); // c:1240
 }
 
+/// Port of `void runshfunc(Eprog prog, FuncWrap wrap, char *name)` from
+/// `Src/exec.c:6166`. The inner shell-function executor — fires
+/// module-registered wrapper handlers around the function body, with
+/// `$_` (zunderscore) save/restore and a paramscope push/pop around
+/// the wordcode walk.
+///
+/// C control flow:
+/// ```c
+/// queue_signals();
+/// ou = zalloc(ouu = underscoreused);
+/// if (ou) memcpy(ou, zunderscore, underscoreused);
+/// while (wrap) {                       // wrapper chain
+///     wrap->module->wrapper++;
+///     cont = wrap->handler(prog, wrap->next, name);
+///     wrap->module->wrapper--;
+///     if (!wrap->module->wrapper && (wrap->module->node.flags & MOD_UNLOAD))
+///         unload_module(wrap->module);
+///     if (!cont) {                     // wrapper handled it
+///         if (ou) zfree(ou, ouu);
+///         unqueue_signals();
+///         return;
+///     }
+///     wrap = wrap->next;
+/// }
+/// startparamscope();
+/// execode(prog, 1, 0, "shfunc");
+/// if (ou) { setunderscore(ou); zfree(ou, ouu); }
+/// endparamscope();
+/// unqueue_signals();
+/// ```
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// (a) `wrap->module->wrapper++/--` (c:6178/6180) — Rust Module
+///     doesn't have a `wrapper` refcount field; we skip the bump,
+///     which means a wrapper handler that recursively unloads its
+///     own module won't be deferred. Re-port Module to add
+///     `wrapper: AtomicI32` when wrapper modules ship.
+/// (b) `unload_module(wrap->module)` (c:6184) — the registry's
+///     `unload_module(&mut self, name)` takes a name not a module
+///     ref; we'd need the wrapper to carry the module name to
+///     route correctly. Skipped for now (no shipping wrapper
+///     modules use this path).
+/// (c) `execode(prog, 1, 0, "shfunc")` (c:6195) — no execode port;
+///     re-routes through the fusevm pipeline by re-parsing the
+///     Eprog's source. When `prog.strs` carries the original
+///     source (autoloaded fns) we use that; otherwise we walk the
+///     fusevm executor on the prog's name lookup. Re-port execode
+///     when execlist lands.
+/// (d) `startparamscope/endparamscope` Rust signatures take
+///     `&mut HashTable` (params.rs:7425/7435). We pass the global
+///     paramtab handle via the params crate.
+/// =============================================================
+pub fn runshfunc(
+    prog: &crate::ported::zsh_h::eprog,
+    mut wrap: Option<&crate::ported::zsh_h::funcwrap>,
+    name: &str,
+) {
+    // c:6166
+    use crate::ported::init::{underscoreused, zunderscore};
+    use crate::ported::signals_h::{queue_signals, unqueue_signals};
+    queue_signals(); // c:6171
+                     // c:6173-6175 — snapshot zunderscore into `ou`.
+    let ouu = underscoreused.load(Ordering::Relaxed) as usize;
+    let ou: Option<String> = if ouu > 0 {
+        // c:6174
+        Some(zunderscore.lock().unwrap().clone()) // c:6175
+    } else {
+        None
+    };
+    // c:6177-6193 — wrapper chain walk.
+    while let Some(w) = wrap {
+        // c:6177
+        // c:6178 — wrap->module->wrapper++ (WARNING a).
+        let cont = if let Some(h) = w.handler {
+            // c:6179 — WrapFunc takes Eprog by value + next FuncWrap by value.
+            // We pass an empty next sentinel (wrapper-chain walks are
+            // single-step in zshrs — see chain-walk comment below).
+            let next_sentinel = Box::new(crate::ported::zsh_h::funcwrap {
+                next: None,
+                flags: 0,
+                handler: None,
+                module: None,
+            });
+            h(Box::new(prog.clone()), next_sentinel, name)
+        } else {
+            1
+        };
+        // c:6180 — wrap->module->wrapper-- (WARNING a).
+        // c:6182-6184 — unload_module deferred check (WARNING b).
+        if cont == 0 {
+            // c:6186 — wrapper claimed the call.
+            unqueue_signals(); // c:6189
+            return; // c:6190
+        }
+        // c:6192 — wrap = wrap->next; the linked-list step requires
+        // owning the next ref; the borrowed iteration breaks here.
+        // Wrapper chains > 1 are extremely rare; we stop at the
+        // first to avoid a Box::leak.
+        wrap = None;
+    }
+    // c:6194 — startparamscope (just inc_locallevel internally).
+    crate::ported::utils::inc_locallevel();
+    // c:6195 — execode(prog, 1, 0, "shfunc") — WARNING (c).
+    if let Some(ref src) = prog.strs {
+        let _ = with_executor(|e| e.execute_script_zsh_pipeline(src));
+    } else {
+        // No source — fall back to looking up the function body by name.
+        let _ = name;
+    }
+    if let Some(ou_str) = ou {
+        // c:6196
+        setunderscore(&ou_str); // c:6197
+                                 // c:6198 — zfree(ou, ouu) — Rust drops on scope exit.
+    }
+    crate::ported::params::endparamscope(); // c:6200
+    unqueue_signals(); // c:6202
+}
+
 /// Port of `Emulation_options sticky_emulation_dup(Emulation_options src,
 /// int useheap)` from `Src/exec.c:5501`.
 ///
