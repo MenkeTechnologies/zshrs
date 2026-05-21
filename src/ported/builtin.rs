@@ -7871,7 +7871,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         BUILTIN(
             "autoload",
             BINF_PLUSOPTS,
-            None,
+            Some(bin_functions as HandlerFunc),
             0,
             -1,
             0,

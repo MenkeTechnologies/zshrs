@@ -14,10 +14,10 @@ use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use crate::ported::builtin::SFCONTEXT;
+use crate::ported::builtin::{LASTVAL, SFCONTEXT};
 use crate::ported::params::getiparam;
-use crate::ported::utils::{errflag, zwarnnam};
-use crate::ported::zsh_h::{module, options};
+use crate::ported::utils::{errflag, getshfunc, zwarnnam};
+use crate::ported::zsh_h::{module, options, SFC_HOOK};
 use std::sync::{Mutex, OnceLock};
 
 
@@ -1644,7 +1644,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
         }
         // c:1604-1613 — progress hook (zftp_progress shfunc dispatch).
         if ret == 0 && sofar != last_sofar && progress != 0 {
-            if let Some(_shfunc) = crate::ported::utils::getshfunc("zftp_progress") {
+            if let Some(_shfunc) = getshfunc("zftp_progress") {
                 // c:1605
                 let osc = SFCONTEXT.load(Ordering::Relaxed); // c:1606
                 zfsetparam(
@@ -1653,12 +1653,12 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
                     ZFPM_READONLY | ZFPM_INTEGER,
                 ); // c:1608
                 SFCONTEXT
-                    .store(crate::ported::zsh_h::SFC_HOOK, Ordering::Relaxed); // c:1609
+                    .store(SFC_HOOK, Ordering::Relaxed); // c:1609
                                                                                // c:1610 — doshfunc(shfunc, NULL, 1). Static-link path:
                                                                                // VM-level CallFunction dispatch happens inside fusevm
                                                                                // when a live frame exists; from this caller we trust
                                                                                // the `getshfunc` probe and read the post-call LASTVAL.
-                let _ = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+                let _ = LASTVAL.load(Ordering::Relaxed);
                 SFCONTEXT.store(osc, Ordering::Relaxed);
             // c:1611
             } else {
@@ -2752,7 +2752,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
         // the c:2577-2585 cache check collapses to "always probe SIZE"
         // (or "always set getsize on STOR") — matching C's behavior
         // when those bits are unset on a fresh session.
-        if progress != 0 && crate::ported::utils::getshfunc("zftp_progress").is_some() {
+        if progress != 0 && getshfunc("zftp_progress").is_some() {
             let mut sz: libc::off_t = -1; // c:2567
             let mut _mdtm: Option<String> = None;
             // c:2576-2585 — DUMB-gated SIZE probe. C also consults
@@ -2803,7 +2803,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
 
         // c:2606-2616 — final progress callback (zftp_progress shfunc).
         if progress != 0 && ret != 2 {
-            if let Some(_shfunc) = crate::ported::utils::getshfunc("zftp_progress") {
+            if let Some(_shfunc) = getshfunc("zftp_progress") {
                 // c:2607
                 let osc =
                     SFCONTEXT.load(Ordering::Relaxed); // c:2610
@@ -2813,12 +2813,12 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
                     ZFPM_READONLY,
                 );
                 SFCONTEXT.store(
-                    crate::ported::zsh_h::SFC_HOOK,
+                    SFC_HOOK,
                     Ordering::Relaxed,
                 ); // c:2613
                    // c:2614 — doshfunc dispatch happens inside fusevm; static
                    // caller probes via getshfunc + reads LASTVAL.
-                let _ = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+                let _ = LASTVAL.load(Ordering::Relaxed);
                 SFCONTEXT.store(osc, Ordering::Relaxed);
                 // c:2615
             } else {
@@ -3000,14 +3000,14 @@ pub fn zfclose(leaveparams: i32) {
             zfunsetparam(n); // c:2764
         }
         // c:2767-2773 — zftp_chpwd shfunc dispatch.
-        if crate::ported::utils::getshfunc("zftp_chpwd").is_some() {
+        if getshfunc("zftp_chpwd").is_some() {
             // c:2767
             let osc = SFCONTEXT.load(Ordering::Relaxed);
             SFCONTEXT
-                .store(crate::ported::zsh_h::SFC_HOOK, Ordering::Relaxed); // c:2770
+                .store(SFC_HOOK, Ordering::Relaxed); // c:2770
                                                                            // c:2771 doshfunc dispatch — VM-level CallFunction lives
                                                                            // inside fusevm; static caller probes via getshfunc.
-            let _ = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+            let _ = LASTVAL.load(Ordering::Relaxed);
             SFCONTEXT.store(osc, Ordering::Relaxed); // c:2772
         }
     }

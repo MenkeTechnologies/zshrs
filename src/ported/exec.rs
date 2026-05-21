@@ -32,29 +32,32 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
 
 use crate::fusevm_bridge::with_executor;
-use crate::ported::builtin::{cd_able_vars, fixdir, BUILTINS, DOPRINTDIR, LASTVAL};
+use crate::ported::builtin::{cd_able_vars, fixdir, BUILTINS, DOPRINTDIR, EXIT_VAL, LASTVAL};
 use crate::ported::builtins::rlimits::setlimits;
+use crate::ported::builtins::sched::zleactive;
 use crate::ported::compat::zgettime_monotonic_if_available;
 use crate::ported::config_h::DEFAULT_PATH;
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::hashtable::{cmdnam_unhashed, cmdnamtab_lock, dircache_set, hashdir, pathchecked, shfunctab_lock};
 use crate::ported::hist::{strinbeg, strinend};
-use crate::ported::init::{underscorelen, underscoreused, zunderscore};
+use crate::ported::init::{shout, underscorelen, underscoreused, zunderscore, SHTTY};
 use crate::ported::input::{inpop, inpush};
-use crate::ported::jobs::{expandjobtab, waitforpid, JOBTAB, THISJOB};
+use crate::ported::jobs::{expandjobtab, get_usage, release_pgrp, waitforpid, JOBTAB, THISJOB};
 use crate::ported::lex::{hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO};
-use crate::ported::mem::{dupstring, popheap, pushheap};
-use crate::ported::options::sticky;
-use crate::ported::params::{getsparam, paramtab, setiparam};
-use crate::ported::parse::{ecrawstr, parse_list};
+use crate::ported::mem::{dupstring, dyncat, popheap, pushheap};
+use crate::ported::modules::clone::mypgrp;
+use crate::ported::options::{dosetopt, opt_state_set, sticky};
+use crate::ported::params::{endparamscope, getsparam, locallevel, paramtab, setiparam, zgetenv, zputenv};
+use crate::ported::parse::{closedumps, ecrawstr, parse_list};
 use crate::ported::prompt::{cmdpop, cmdpush};
-use crate::ported::signals::{queue_signals, unqueue_signals};
+use crate::ported::signals::{intrap, queue_signals, settrap, sigtrapped, signal_mask, signal_unblock, trapisfunc, traplocallevel, unqueue_signals, unsettrap};
+use crate::ported::signals_h::{child_block, child_unblock, dont_queue_signals, signal_default, signal_ignore, winch_unblock, SIGCOUNT};
 use crate::ported::subst::{quotesubst, singsub};
-use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, zwarn, ERRFLAG_ERROR};
+use crate::ported::utils::{errflag, fdtable_get, fdtable_set, gettempfile, gettempname, inc_locallevel, movefd, pathprog, printprompt4, quotedzputs, redup, unmeta, unmetafy, write_loop, zclose, zerr, zwarn, ERRFLAG_ERROR, MAX_ZSH_FD};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS, PATHDIRS, PM_READONLY, multio,CS_CMDSUBST, FDT_PROC_SUBST, FDT_UNUSED, Inang};
-use crate::zsh_h::execstack;
-use crate::ported::utils::{fdtable_set, redup};
+use crate::ported::zsh_h::{builtin, eprog, execstack, funcwrap, hashnode, multio, redir, shfunc, unset, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, CHASEDOTS, CHASELINKS, CLOBBER, CLOBBEREMPTY, CS_CMDSUBST, Emulation_options, ERRFLAG_INT, FDT_EXTERNAL, FDT_INTERNAL, FDT_PROC_SUBST, FDT_SAVED_MASK, FDT_TYPE_MASK, FDT_UNUSED, FDT_XTRACE, HASHDIRS, INTERACTIVE, INP_LINENO, IS_CLOBBER_REDIR, IS_DASH, Inang, Inpar, JOBTEXTSIZE, Meta, MONITOR, MULTIOS, MULTIOUNIT, Nularg, Outpar, PATHDIRS, PM_LOADDIR, PM_READONLY, PM_UNDEFINED, POSIXJOBS, POSIXTRAPS, Pound, REDIRF_FROM_HEREDOC, REDIR_CLOSE, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_OUTPIPE, USEZLE, VERBOSE, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, WC_TYPESET, ZSIG_FUNC, ZSIG_IGNORED, Z_END, cmdnam, emulation_options, isset, wc_code};
+use crate::zsh_h::XTRACE;
+use crate::ported::zsh_system_h::timespec as ZshTimespec;
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
 /// a trap handler is currently being processed and, paired with
@@ -238,7 +241,7 @@ pub static doneps4: std::sync::atomic::AtomicI32 = // c:262 (Src/exec.c)
 /// of the linked exec-context save stack — `execsave` pushes a frame
 /// before signal-handler / trap dispatch; `execrestore` pops it
 /// afterwards so the interrupted command resumes with its state intact.
-pub static exstack: std::sync::Mutex<Option<Box<crate::ported::zsh_h::execstack>>> = // c:244
+pub static exstack: std::sync::Mutex<Option<Box<execstack>>> = // c:244
     std::sync::Mutex::new(None);
 
 /// Port of `static char *STTYval;` from `Src/exec.c:263`. Pending
@@ -1304,7 +1307,7 @@ pub fn execsave() {
         pline_level: pline_level.load(Ordering::Relaxed),     // c:6445
         list_pipe_child: list_pipe_child.load(Ordering::Relaxed), // c:6446
         list_pipe_job: list_pipe_job.load(Ordering::Relaxed), // c:6447
-        list_pipe_text: [0u8; crate::ported::zsh_h::JOBTEXTSIZE], // c:6448 strcpy
+        list_pipe_text: [0u8; JOBTEXTSIZE], // c:6448 strcpy
         lastval: LASTVAL.load(Ordering::Relaxed),             // c:6449
         // c:6450 — `noeval = M_NOEVAL` per math.rs port-rename. Read
         // through the helper accessor for the canonical value.
@@ -1322,8 +1325,8 @@ pub fn execsave() {
         procsubstpid: procsubstpid.load(Ordering::Relaxed), // c:6455
         trap_return: TRAP_RETURN.load(Ordering::Relaxed), // c:6456
         trap_state: TRAP_STATE.load(Ordering::Relaxed), // c:6457
-        trapisfunc: crate::ported::signals::trapisfunc.load(Ordering::Relaxed), // c:6458
-        traplocallevel: crate::ported::signals::traplocallevel.load(Ordering::Relaxed), // c:6459
+        trapisfunc: trapisfunc.load(Ordering::Relaxed), // c:6458
+        traplocallevel: traplocallevel.load(Ordering::Relaxed), // c:6459
         noerrs: noerrs.load(Ordering::Relaxed), // c:6460
         this_noerrexit: this_noerrexit.load(Ordering::Relaxed), // c:6461
         // c:6462 — `es->underscore = ztrdup(zunderscore);`
@@ -1406,8 +1409,8 @@ pub fn execrestore() {
     procsubstpid.store(en.procsubstpid, Ordering::Relaxed); // c:6491
     TRAP_RETURN.store(en.trap_return, Ordering::Relaxed); // c:6492
     TRAP_STATE.store(en.trap_state, Ordering::Relaxed); // c:6493
-    crate::ported::signals::trapisfunc.store(en.trapisfunc, Ordering::Relaxed); // c:6494
-    crate::ported::signals::traplocallevel.store(en.traplocallevel, Ordering::Relaxed); // c:6495
+    trapisfunc.store(en.trapisfunc, Ordering::Relaxed); // c:6494
+    traplocallevel.store(en.traplocallevel, Ordering::Relaxed); // c:6495
     noerrs.store(en.noerrs, Ordering::Relaxed); // c:6496
     this_noerrexit.store(en.this_noerrexit, Ordering::Relaxed); // c:6497
                                                                 // c:6498-6499 — `setunderscore(en->underscore); zsfree(en->underscore);`
@@ -1519,13 +1522,11 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
 ///     paramtab handle via the params crate.
 /// =============================================================
 pub fn runshfunc(
-    prog: &crate::ported::zsh_h::eprog,
-    mut wrap: Option<&crate::ported::zsh_h::funcwrap>,
+    prog: &eprog,
+    mut wrap: Option<&funcwrap>,
     name: &str,
 ) {
     // c:6166
-    use crate::ported::init::{underscoreused, zunderscore};
-    use crate::ported::signals_h::{queue_signals, unqueue_signals};
     queue_signals(); // c:6171
                      // c:6173-6175 — snapshot zunderscore into `ou`.
     let ouu = underscoreused.load(Ordering::Relaxed) as usize;
@@ -1543,7 +1544,7 @@ pub fn runshfunc(
             // c:6179 — WrapFunc takes Eprog by value + next FuncWrap by value.
             // We pass an empty next sentinel (wrapper-chain walks are
             // single-step in zshrs — see chain-walk comment below).
-            let next_sentinel = Box::new(crate::ported::zsh_h::funcwrap {
+            let next_sentinel = Box::new(funcwrap {
                 next: None,
                 flags: 0,
                 handler: None,
@@ -1567,7 +1568,7 @@ pub fn runshfunc(
         wrap = None;
     }
     // c:6194 — startparamscope (just inc_locallevel internally).
-    crate::ported::utils::inc_locallevel();
+    inc_locallevel();
     // c:6195 — execode(prog, 1, 0, "shfunc") — WARNING (c).
     if let Some(ref src) = prog.strs {
         let _ = with_executor(|e| e.execute_script_zsh_pipeline(src));
@@ -1580,7 +1581,7 @@ pub fn runshfunc(
         setunderscore(&ou_str); // c:6197
                                  // c:6198 — zfree(ou, ouu) — Rust drops on scope exit.
     }
-    crate::ported::params::endparamscope(); // c:6200
+    endparamscope(); // c:6200
     unqueue_signals(); // c:6202
 }
 
@@ -1983,11 +1984,6 @@ pub fn addfd(
     varid: Option<&str>,
 ) {
     // c:2397
-    use crate::ported::utils::{fdtable_get, fdtable_set, movefd, redup, zclose};
-    use crate::ported::zsh_h::{
-        isset, unset, FDT_EXTERNAL, FDT_INTERNAL, FDT_SAVED_MASK, MULTIOS, MULTIOUNIT,
-    };
-    let _ = isset;
     let mut pipes: [i32; 2] = [-1; 2]; // c:2400
 
     // c:2402-2417 — `if (varid)` branch — {varid}>file shape.
@@ -2237,8 +2233,6 @@ pub fn closemn(
     type_: i32,
 ) {
     // c:2273
-    use crate::ported::signals_h::{child_block, child_unblock, dont_queue_signals};
-    use crate::ported::zsh_h::REDIR_CLOSE;
     // c:2275 — `if (fd >= 0 && mfds[fd] && mfds[fd]->ct >= 2)`
     let needs_tee = fd >= 0
         && (fd as usize) < mfds.len()
@@ -2252,7 +2246,7 @@ pub fn closemn(
                                    // c:2287 — `child_block();` block SIGCHLD before fork race.
         child_block();
         // c:2288 — `pid = zfork(&bgtime);`
-        let mut bgtime = crate::ported::zsh_system_h::timespec {
+        let mut bgtime = ZshTimespec {
             tv_sec: 0,
             tv_nsec: 0,
         };
@@ -2262,10 +2256,10 @@ pub fn closemn(
             // c:2289-2290 — close all per-output fds.
             for i in 0..mn.ct as usize {
                 if i < mn.fds.len() {
-                    let _ = crate::ported::utils::zclose(mn.fds[i]); // c:2290
+                    let _ = zclose(mn.fds[i]); // c:2290
                 }
             }
-            let _ = crate::ported::utils::zclose(mn.pipe); // c:2291
+            let _ = zclose(mn.pipe); // c:2291
             if pid == -1 {
                 // c:2292
                 // c:2293 — `mfds[fd] = NULL;` already done via .take()
@@ -2286,7 +2280,7 @@ pub fn closemn(
             return; // c:2301
         }
         // c:2303 — child branch (pid == 0).
-        crate::ported::options::opt_state_set("interactive", false); // c:2304
+        opt_state_set("interactive", false); // c:2304
         dont_queue_signals(); // c:2305
         child_unblock(); // c:2306
         closeallelse(&mn); // c:2307
@@ -2316,7 +2310,7 @@ pub fn closemn(
                     if i >= mn.fds.len() {
                         break;
                     }
-                    if crate::ported::utils::write_loop(mn.fds[i], &buf[..len as usize])
+                    if write_loop(mn.fds[i], &buf[..len as usize])
                         .is_err()
                     {
                         break; // c:2319
@@ -2351,7 +2345,7 @@ pub fn closemn(
                         }
                     }
                     // c:2331 — `if (write_loop(mn->pipe, buf, len) < 0) break;`
-                    if crate::ported::utils::write_loop(mn.pipe, &buf[..len as usize]).is_err() {
+                    if write_loop(mn.pipe, &buf[..len as usize]).is_err() {
                         break; // c:2332
                     }
                 }
@@ -2396,7 +2390,7 @@ pub fn closemnodes(mfds: &mut [Option<Box<multio>>; 10]) {
             for j in 0..mn.ct as usize {
                 // c:2350
                 if j < mn.fds.len() {
-                    let _ = crate::ported::utils::zclose(mn.fds[j]); // c:2351
+                    let _ = zclose(mn.fds[j]); // c:2351
                 }
             }
             // c:2352 — `mfds[i] = NULL;` — handled by .take() above.
@@ -2430,7 +2424,7 @@ pub fn closeallelse(mn: &multio) {
     // c:2363 — `openmax = fdtable_size;`. zshrs models fdtable as a
     // Vec; use MAX_ZSH_FD as the upper bound (fdtable_size grows past
     // max_zsh_fd in C but every slot past it is FDT_UNUSED anyway).
-    let openmax = crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed) + 1; // c:2363
+    let openmax = MAX_ZSH_FD.load(Ordering::Relaxed) + 1; // c:2363
     for i in 0..openmax {
         // c:2365
         if mn.pipe == i {
@@ -2449,7 +2443,7 @@ pub fn closeallelse(mn: &multio) {
         }
         // c:2370-2371 — `if (j == mn->ct) zclose(i);`
         if !found {
-            let _ = crate::ported::utils::zclose(i); // c:2371
+            let _ = zclose(i); // c:2371
         }
     }
 }
@@ -2478,7 +2472,7 @@ pub fn fixfds(save: &[i32; 10]) {
         // c:4528 — `for (i = 0; i != 10; i++)`
         if save[i as usize] != -2 {
             // c:4529
-            crate::ported::utils::redup(save[i as usize], i); // c:4530
+            redup(save[i as usize], i); // c:4530
         }
     }
     // c:4531 — `errno = old_errno;`
@@ -2516,9 +2510,6 @@ pub fn fixfds(save: &[i32; 10]) {
 /// reference if we just closed the controlling tty.
 pub fn closem(how: i32, all: i32) {
     // c:4546
-    use crate::ported::init::SHTTY;
-    use crate::ported::utils::{fdtable_get, MAX_ZSH_FD};
-    use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_PROC_SUBST, FDT_TYPE_MASK, FDT_UNUSED};
     let max = MAX_ZSH_FD.load(Ordering::Relaxed); // c:4550
     for i in 10i32..=max {
         // c:4550
@@ -2541,7 +2532,7 @@ pub fn closem(how: i32, all: i32) {
             SHTTY.store(-1, Ordering::Relaxed); // c:4561
         }
         // c:4562 — `zclose(i);`
-        let _ = crate::ported::utils::zclose(i);
+        let _ = zclose(i);
     }
 }
 
@@ -2664,7 +2655,7 @@ pub fn hashcmd(arg0: &str, pp: &[String]) -> Option<cmdnam> {
 /// fork(2) wrapper with jobtab capacity check + child rlimit
 /// re-application. Used by every subshell-spawning path: pipelines,
 /// process substitution, async commands, command substitution.
-pub fn zfork(ts: Option<&mut crate::ported::zsh_system_h::timespec>) -> libc::pid_t {
+pub fn zfork(ts: Option<&mut ZshTimespec>) -> libc::pid_t {
     // c:349
     let pid: libc::pid_t;
 
@@ -2927,6 +2918,214 @@ pub fn parsecmd(cmd: &str, eptr: Option<&mut usize>) -> Option<eprog> {
 /// front of a script when probing for a `#!` shebang line.
 pub const POUNDBANGLIMIT: usize = 128;
 
+/// Port of `static char **makecline(LinkList list)` from `Src/exec.c:2046`.
+///
+/// Builds the argv array from a command's args list. The C version
+/// allocates with a 4-slot prepad (2 reserved at the front for the
+/// shebang `argv[-1]/argv[-2]` overwrite trick in zexecve) — Rust
+/// doesn't need this since we rebuild the Vec on shebang re-exec
+/// (see zexecve WARNING e).
+///
+/// XTRACE side-effect: each arg is printed via quotedzputs to xtrerr
+/// (stderr), preceded by the PS4 prefix when first command of the line.
+pub fn makecline(list: &[String]) -> Vec<String> {
+    // c:2046
+    if isset(XTRACE) {
+        // c:2055
+        if doneps4.load(Ordering::Relaxed) == 0 {
+            // c:2056
+            printprompt4(); // c:2057
+        }
+        let mut first = true;
+        let mut err = std::io::stderr().lock();
+        use std::io::Write;
+        for s in list.iter() {
+            // c:2059
+            if !first {
+                let _ = err.write_all(b" "); // c:2063
+            }
+            first = false;
+            let _ = err.write_all(quotedzputs(s).as_bytes()); // c:2061
+        }
+        let _ = err.write_all(b"\n"); // c:2065
+        let _ = err.flush(); // c:2066
+    }
+    list.to_vec() // c:2071-2072 — argv built; null terminator implicit in CString[] conversion
+}
+
+/// Port of `static void execute(LinkList args, int flags, int defpath)`
+/// from `Src/exec.c:723`. The canonical "child runs the simple
+/// external command" path: STTY/ARGV0/BINF_DASH handling, makecline,
+/// closem(FDT_XTRACE) + child_unblock, slash-path direct exec,
+/// defpath (`command -p`) search, cmdnamtab + $PATH walk, with
+/// commandnotfound-handler fallback and the final exit-code escape
+/// (127 not-found / 126 noperm).
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// (a) `cmdnamtab->getnode(cmdnamtab, arg0)` (c:824) — Rust
+///     cmdnamtab access pattern differs (hashtable.rs lookup
+///     surface). We skip the cmdnam-hashed fast path and fall
+///     straight to the $PATH scan; identical observable behavior
+///     when the hash is empty/cold (first call), slower-by-one-stat
+///     when hashed. Re-wire via cmdnamtab accessor to close.
+/// (b) `commandnotfound(arg0, args)` (c:809, 873) calls into the
+///     not-yet-ported `doshfunc` for the `command_not_found_handler`
+///     shell function. Already routes through executor dispatch
+///     (see exec.rs:2783).
+/// (c) `_realexit()` (c:810, 874) — bare `std::process::exit`.
+/// (d) `SHTTY` close on `!FD_CLOEXEC` (c:781-784) — Rust assumes
+///     FD_CLOEXEC platform default (macOS, Linux).
+/// (e) `path` Rust accessor uses paramtab lookup for "PATH";
+///     `defpath` (`command -p`) walks DEFAULT_PATH via
+///     search_defpath (already ported).
+/// =============================================================
+pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
+    // c:723
+    let mut eno: i32 = 0;
+    let mut ee: i32; // c:729
+    let mut arg0 = if args.is_empty() {
+        return;
+    } else {
+        args[0].clone()
+    }; // c:731
+    // c:733-748 — STTY pre-exec handling.
+    {
+        let mut stty = STTYval.lock().unwrap();
+        if let Some(s) = stty.take() {
+            // c:738 — STTYval = 0 to break recursion.
+            if !s.is_empty()
+                && unsafe { libc::isatty(0) } != 0
+                && unsafe { libc::tcgetpgrp(0) } == unsafe { libc::getpid() }
+            {
+                drop(stty);
+                let cmd = format!("stty {}", s); // c:739
+                execstring(&cmd, 1, 0, "stty"); // c:743
+            }
+        }
+    }
+    // c:752-763 — ARGV0 override.
+    if let Some(z) = zgetenv("ARGV0") {
+        args[0] = z.clone(); // c:753
+        unsafe {
+            let key = std::ffi::CString::new("ARGV0").unwrap();
+            libc::unsetenv(key.as_ptr()); // c:760
+        }
+        arg0 = args[0].clone();
+    } else if (flags & BINF_DASH) != 0 {
+        // c:764 — `BINF_DASH` prepends `-`.
+        args[0] = format!("-{}", arg0); // c:767-768
+        arg0 = args[0].clone();
+    }
+    let argv = makecline(args); // c:771
+    let newenvp_owned: Option<Vec<String>> = if (flags & BINF_CLEARENV) != 0 {
+        Some(Vec::new()) // c:772-773 — blank_env: char ** with only NULL slot
+
+    } else {
+        None
+    };
+    let newenvp = newenvp_owned.as_deref();
+    closem(FDT_XTRACE, 0); // c:779
+                            // c:780-785 — !FD_CLOEXEC SHTTY close — WARNING (d).
+    child_unblock(); // c:786
+    if arg0.len() >= libc::PATH_MAX as usize {
+        // c:787
+        zerr(&format!("command too long: {}", arg0)); // c:788
+        unsafe {
+            libc::_exit(1);
+        } // c:789
+    }
+    // c:791-801 — slash in arg0 → direct exec.
+    if let Some(slash_pos) = arg0.find('/') {
+        let lerrno = zexecve(&arg0, &argv, newenvp); // c:793
+        let is_dot = arg0.starts_with('.')
+            && (slash_pos == 1 || (arg0.len() > 2 && &arg0[..2] == ".." && slash_pos == 2));
+        if slash_pos == 0 || unset(PATHDIRS) || is_dot {
+            // c:794
+            zerr(&format!(
+                "{}: {}",
+                std::io::Error::from_raw_os_error(lerrno),
+                arg0
+            )); // c:797
+            let code = if lerrno == libc::EACCES || lerrno == libc::ENOEXEC {
+                126
+            } else {
+                127
+            };
+            unsafe {
+                libc::_exit(code);
+            } // c:798
+        }
+    }
+    if defpath != 0 {
+        // c:804 — `command -p` default-path search.
+        let pbuf = match search_defpath(&arg0, libc::PATH_MAX as usize) {
+            Some(p) => p, // c:808
+            None => {
+                if commandnotfound(&arg0, args) == 0 {
+                    // c:809
+                    unsafe {
+                        libc::_exit(LASTVAL.load(Ordering::Relaxed));
+                    }
+                }
+                zerr(&format!("command not found: {}", arg0)); // c:811
+                unsafe {
+                    libc::_exit(127);
+                } // c:812
+            }
+        };
+        ee = zexecve(&pbuf, &argv, newenvp); // c:815
+        let dir = pbuf.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        if isgooderr(ee, if dir.is_empty() { "/" } else { dir }) {
+            // c:819
+            eno = ee;
+        }
+    } else {
+        // c:822 — normal $PATH scan.
+        // WARNING (a) — cmdnamtab fast-path skipped.
+        let path_str = getsparam("PATH").unwrap_or_default();
+        for pp in path_str.split(':') {
+            if pp.is_empty() || pp == "." {
+                // c:856
+                ee = zexecve(&arg0, &argv, newenvp); // c:857
+                if isgooderr(ee, pp) {
+                    eno = ee;
+                }
+            } else {
+                // c:860
+                let candidate = format!("{}/{}", pp, arg0); // c:861-864
+                ee = zexecve(&candidate, &argv, newenvp); // c:865
+                if isgooderr(ee, pp) {
+                    eno = ee;
+                }
+            }
+        }
+    }
+    // c:871-881 — final error reporting.
+    if eno != 0 {
+        // c:871
+        zerr(&format!(
+            "{}: {}",
+            std::io::Error::from_raw_os_error(eno),
+            arg0
+        )); // c:872
+    } else if commandnotfound(&arg0, args) == 0 {
+        // c:873
+        unsafe {
+            libc::_exit(LASTVAL.load(Ordering::Relaxed));
+        } // c:874
+    } else {
+        zerr(&format!("command not found: {}", arg0)); // c:876
+    }
+    let code = if eno == libc::EACCES || eno == libc::ENOEXEC {
+        126
+    } else {
+        127
+    }; // c:881
+    unsafe {
+        libc::_exit(code);
+    }
+}
+
 /// Port of `static int zexecve(char *pth, char **argv, char **newenvp)`
 /// from `Src/exec.c:504`. Wraps `execve(2)` with:
 ///   - `$_` env var stamped to absolute `pth` (c:514-520)
@@ -2966,9 +3165,9 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
         // c:518
         format!("{}/{}", getsparam("PWD").unwrap_or_default(), pth) // c:519
     };
-    crate::ported::params::zputenv(&format!("_={}", pth_abs)); // c:520
-    crate::ported::parse::closedumps(); // c:522
-    crate::ported::signals_h::winch_unblock(); // c:527
+    zputenv(&format!("_={}", pth_abs)); // c:520
+    closedumps(); // c:522
+    winch_unblock(); // c:527
     let cpth = match CString::new(pth) {
         Ok(c) => c,
         Err(_) => return libc::ENOENT,
@@ -3072,7 +3271,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                         // c:557 — pathprog rewrite path.
                         let pprog = if !interp_str.starts_with('/') {
                             // c:561
-                            crate::ported::utils::pathprog(&interp_str)
+                            pathprog(&interp_str)
                                 .map(|p| p.display().to_string())
                         } else {
                             None
@@ -3103,7 +3302,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                             for orig in argv.iter().skip(1) {
                                 argv_new.push(orig.clone());
                             }
-                            crate::ported::signals_h::winch_unblock(); // c:565/c:570
+                            winch_unblock(); // c:565/c:570
                             return zexecve(&pprog, &argv_new, newenvp); // c:566/c:571
                         }
                         zerr(&format!(
@@ -3133,7 +3332,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                         for orig in argv.iter().skip(1) {
                             argv_new.push(orig.clone());
                         }
-                        crate::ported::signals_h::winch_unblock(); // c:580
+                        winch_unblock(); // c:580
                         return zexecve(&interp_str, &argv_new, newenvp); // c:581
                     } else {
                         // c:582
@@ -3142,7 +3341,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                         for orig in argv.iter().skip(1) {
                             argv_new.push(orig.clone());
                         }
-                        crate::ported::signals_h::winch_unblock(); // c:584
+                        winch_unblock(); // c:584
                         return zexecve(&interp_str, &argv_new, newenvp); // c:585
                     }
                 }
@@ -3182,7 +3381,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                     for orig in argv.iter() {
                         argv_new.push(orig.clone());
                     }
-                    crate::ported::signals_h::winch_unblock(); // c:626
+                    winch_unblock(); // c:626
                     return zexecve("/bin/sh", &argv_new, newenvp); // c:627
                 }
             }
@@ -3215,9 +3414,6 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
 /// =============================================================
 pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:4910
-    use crate::ported::signals_h::{child_block, child_unblock};
-    use crate::ported::utils::{gettempname, redup, write_loop};
-    use crate::ported::zsh_h::{CS_CMDSUBST, FDT_UNUSED, REDIR_HERESTR};
     let bytes = cmd.as_bytes();
     let _ = bytes;
     // c:4918 — `if (thisjob == -1)` — guard removed (thisjob model differs).
@@ -3230,13 +3426,13 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
                                             // c:4927 — `simple_redir_name` opt for `=(<<<str)`.
     let mut s: Option<String> = simple_redir_name(&prog, REDIR_HERESTR).map(|raw| {
         // c:4933
-        let mut sub = crate::ported::subst::singsub(&raw); // c:4933
+        let mut sub = singsub(&raw); // c:4933
         if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
             // c:4934
             String::new() // c:4935 — sentinel; checked below
         } else {
             sub = untokenize(&sub); // c:4937
-            crate::ported::mem::dyncat(&sub, "\n") // c:4938
+            dyncat(&sub, "\n") // c:4938
         }
     });
     if let Some(ref sv) = s {
@@ -3281,7 +3477,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     if let Some(sv) = s {
         // c:4962 — optimised here-string write path.
         let mut buf: Vec<u8> = sv.into_bytes();
-        let _len = crate::ported::utils::unmetafy(&mut buf); // c:4965
+        let _len = unmetafy(&mut buf); // c:4965
         let _ = write_loop(fd, &buf); // c:4966
         unsafe {
             libc::close(fd);
@@ -3374,7 +3570,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         // c:5075
         return None;
     }
-    let mut bgtime: crate::ported::zsh_system_h::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut bgtime: ZshTimespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     let pid = zfork(Some(&mut bgtime)); // c:5077
     if pid != 0 {
         // c:5077 — parent path.
@@ -3406,7 +3602,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
     cmdpop(); // c:5102
     let _ = zclose(out); // c:5103
-    std::process::exit(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed)); // c:5104
+    std::process::exit(LASTVAL.load(Ordering::Relaxed)); // c:5104
 }
 
 /// Port of `enum { ESUB_ASYNC, ESUB_PGRP, ... };` from `Src/exec.c:1056`.
@@ -3462,17 +3658,6 @@ pub struct entersubsh_ret {
 /// =============================================================
 pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
     // c:1083
-    use crate::ported::signals::{
-        intrap, settrap, sigtrapped, signal_default, signal_ignore, signal_mask,
-        signal_unblock, unsettrap,
-    };
-    use crate::ported::signals_h::SIGCOUNT;
-    use crate::ported::utils::{fdtable_get, zclose, MAX_ZSH_FD};
-    use crate::ported::options::dosetopt;
-    use crate::ported::zsh_h::{
-        isset, FDT_SAVED_MASK, INTERACTIVE, MONITOR, POSIXJOBS, POSIXTRAPS, USEZLE,
-        ZSIG_FUNC, ZSIG_IGNORED,
-    };
     let monitor: i32;
     let job_control_ok: i32;
     // c:1088-1092 — reset traps unless KEEPTRAP.
@@ -3499,7 +3684,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
         } else {
             0
         };
-    crate::ported::builtin::EXIT_VAL.store(0, Ordering::Relaxed); // c:1095
+    EXIT_VAL.store(0, Ordering::Relaxed); // c:1095
     if (flags & esub::NOMONITOR) != 0 {
         // c:1096
         dosetopt(MONITOR, 0, 0); // c:1097
@@ -3554,11 +3739,11 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
     // c:1162 — `if ((flags & ESUB_REVERTPGRP) && getpid() == mypgrp)`.
     if (flags & esub::REVERTPGRP) != 0
         && unsafe { libc::getpid() }
-            == crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed)
+            == mypgrp.load(Ordering::Relaxed)
     {
-        crate::ported::jobs::release_pgrp(); // c:1163
+        release_pgrp(); // c:1163
     }
-    *crate::ported::init::shout.lock().unwrap() = 0; // c:1164 — shout = NULL
+    *shout.lock().unwrap() = 0; // c:1164 — shout = NULL
     if (flags & esub::NOMONITOR) != 0 {
         // c:1165
         signal_ignore(libc::SIGTTOU); // c:1171
@@ -3626,7 +3811,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
         dosetopt(MONITOR, 0, 0); // c:1207
     }
     dosetopt(USEZLE, 0, 0); // c:1208
-    crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed); // c:1209
+    zleactive.store(0, Ordering::Relaxed); // c:1209
                                                                             // c:1214-1217 — close saved fds.
     let max = MAX_ZSH_FD.load(Ordering::Relaxed);
     for i in 10..=max {
@@ -3639,10 +3824,10 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
     // SKIPPED: `clearjobtab(&mut JOB_TABLE, monitor)` requires a
     // jobs.rs API surface change.
     let _ = monitor;
-    let _ = crate::ported::jobs::get_usage(); // c:1220
+    let _ = get_usage(); // c:1220
     FORKLEVEL.store(
         // c:1221 — `forklevel = locallevel;`
-        crate::ported::params::locallevel.load(Ordering::Relaxed),
+        locallevel.load(Ordering::Relaxed),
         Ordering::Relaxed,
     );
 }
@@ -3702,8 +3887,6 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
 /// =============================================================
 pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     // c:5119
-    use crate::ported::utils::{redup, zclose};
-    use crate::ported::zsh_h::{Inang, CS_CMDSUBST, FDT_UNUSED};
     let bytes = cmd.as_bytes();
     let out: i32 = if !bytes.is_empty() && (bytes[0] as char) == Inang {
         1 // c:5122 — `<(...)` reads from child, child writes to fd 1
@@ -3727,7 +3910,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
         return -1;
     }
     // c:5135 — `if ((pid = zfork(&bgtime)))` — parent path.
-    let mut bgtime: crate::ported::zsh_system_h::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut bgtime: ZshTimespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     let pid = zfork(Some(&mut bgtime)); // c:5135
     if pid != 0 {
         // c:5135 — parent.
@@ -3757,7 +3940,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
     cmdpop(); // c:5151
                                      // c:5152 — _realexit() — WARNING (d).
-    std::process::exit(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed));
+    std::process::exit(LASTVAL.load(Ordering::Relaxed));
 }
 
 /// Port of `static void spawnpipes(LinkList l, int nullexec)` from
@@ -3787,9 +3970,8 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
 /// difference is that LinkList iteration in C lets callers splice
 /// nodes mid-walk — we never do that here so it's a no-op divergence.
 /// =============================================================
-pub fn spawnpipes(l: &mut [crate::ported::zsh_h::redir], nullexec: i32) {
+pub fn spawnpipes(l: &mut [redir], nullexec: i32) {
     // c:5184
-    use crate::ported::zsh_h::{REDIR_INPIPE, REDIR_OUTPIPE};
     for f in l.iter_mut() {
         // c:5191
         if f.typ == REDIR_OUTPIPE || f.typ == REDIR_INPIPE {

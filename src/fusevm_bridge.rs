@@ -548,7 +548,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let status = dispatch_builtin("getopts", args);
         Value::Status(status)
     });
-
+    // BUILTIN_AUTOLOAD / BUILTIN_UNFUNCTION wires deleted with their
+    // stubs. `bin_functions` stays — wired to the canonical port.
+    vm.register_builtin(BUILTIN_AUTOLOAD, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = dispatch_builtin("autoload", args);
+        Value::Status(status)
+    });
     // BUILTIN_AUTOLOAD / BUILTIN_UNFUNCTION wires deleted with their
     // stubs. `bin_functions` stays — wired to the canonical port.
     vm.register_builtin(BUILTIN_FUNCTIONS, |vm, argc| {
