@@ -980,11 +980,11 @@ pub fn fixmagicspace() {
     // C body c:2869-2876 — `lastchar = ' '; lastchar_wide = L' ';
     //                       lastchar_wide_valid = 1`.
     crate::ported::zle::compcore::LASTCHAR.store(
-        (b' ' as ZleInt) as i32,
+        (b' ' as i32) as i32,
         Ordering::SeqCst,
     );
     LASTCHAR_WIDE.store(
-        (b' ' as ZleInt) as i32,
+        (b' ' as i32) as i32,
         Ordering::SeqCst,
     );
     LASTCHAR_WIDE_VALID.store(1, Ordering::SeqCst);

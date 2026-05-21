@@ -21,7 +21,6 @@
 use std::sync::atomic::Ordering;
 
 use super::zle_h::{CH_NEXT, CH_PREV, MOD_VIBUF, ZSL_COPY, ZSL_TOEND};
-use super::zle_main::{ZleChar, ZleString};
 use crate::ported::builtin::RETFLAG;
 use crate::ported::utils::errflag;
 use crate::ported::zsh_h::ERRFLAG_INT;
@@ -861,13 +860,13 @@ pub fn mkundoent() {
     {
         suf += 1;
     }
-    let del: ZleString = if suf + pre == LASTLL.load(Ordering::SeqCst) {
+    let del: Vec<char> = if suf + pre == LASTLL.load(Ordering::SeqCst) {
         Vec::new()
     } else {
         LASTLINE.lock().unwrap()[pre..LASTLL.load(Ordering::SeqCst) - suf]
             .to_vec()
     };
-    let ins: ZleString = if suf + pre == ZLELL.load(Ordering::SeqCst) {
+    let ins: Vec<char> = if suf + pre == ZLELL.load(Ordering::SeqCst) {
         Vec::new()
     } else {
         ZLELINE.lock().unwrap()[pre..ZLELL.load(Ordering::SeqCst) - suf].to_vec()
@@ -875,7 +874,7 @@ pub fn mkundoent() {
     UNDO_CHANGENO.fetch_add(1, Ordering::SeqCst);
     // Canonical `change.del`/`ins` are `ZLE_STRING_T = String`
     // (zle_h.rs:66, port of `ZLE_STRING_T` typedef). Local
-    // `ZleString = Vec<char>` (zle_main.rs:59); convert at the
+    // `Vec<char> = Vec<char>` (zle_main.rs:59); convert at the
     // boundary.
     let del_str: String = del.iter().collect();
     let ins_str: String = ins.iter().collect();
@@ -1264,7 +1263,7 @@ pub fn insert_str(s: &str) {
 }
 
 /// Insert chars at cursor position
-pub fn insert_chars(chars: &[ZleChar]) {
+pub fn insert_chars(chars: &[char]) {
     for &c in chars {
         ZLELINE
             .lock()
@@ -1348,7 +1347,7 @@ pub fn clear_line() {
 }
 
 /// Get region between point and mark
-pub fn get_region() -> Vec<ZleChar> {
+pub fn get_region() -> Vec<char> {
     let (start, end) = if ZLECS.load(Ordering::SeqCst)
         < MARK.load(Ordering::SeqCst)
     {
@@ -1382,7 +1381,7 @@ pub fn cut_to_buffer(buf: usize, append: bool) {
             )
         };
 
-        let text: ZleString = ZLELINE.lock().unwrap()[start..end].to_vec();
+        let text: Vec<char> = ZLELINE.lock().unwrap()[start..end].to_vec();
 
         if append {
             vibuf().lock().unwrap()[buf].extend(text);
