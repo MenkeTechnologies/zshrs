@@ -9093,6 +9093,122 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ), // c:5110
+        // c:Src/Modules/system.c:819-824 — zsh/system module builtins.
+        BUILTIN(
+            "syserror",
+            0,
+            Some(crate::ported::modules::system::bin_syserror as HandlerFunc),
+            0,
+            1,
+            0,
+            Some("e:p:"),
+            None,
+        ), // c:819
+        BUILTIN(
+            "sysread",
+            0,
+            Some(crate::ported::modules::system::bin_sysread as HandlerFunc),
+            0,
+            1,
+            0,
+            Some("c:i:o:s:t:"),
+            None,
+        ), // c:820
+        BUILTIN(
+            "syswrite",
+            0,
+            Some(crate::ported::modules::system::bin_syswrite as HandlerFunc),
+            1,
+            1,
+            0,
+            Some("c:o:"),
+            None,
+        ), // c:821
+        BUILTIN(
+            "sysopen",
+            0,
+            Some(crate::ported::modules::system::bin_sysopen as HandlerFunc),
+            1,
+            1,
+            0,
+            Some("rwau:o:m:"),
+            None,
+        ), // c:822
+        BUILTIN(
+            "sysseek",
+            0,
+            Some(crate::ported::modules::system::bin_sysseek as HandlerFunc),
+            1,
+            1,
+            0,
+            Some("u:w:"),
+            None,
+        ), // c:823
+        BUILTIN(
+            "zsystem",
+            0,
+            Some(crate::ported::modules::system::bin_zsystem as HandlerFunc),
+            1,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:824
+        // c:Src/Modules/zselect.c:272 — zsh/zselect module.
+        BUILTIN(
+            "zselect",
+            0,
+            Some(crate::ported::modules::zselect::bin_zselect as HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:272
+        // c:Src/Modules/socket.c:276 — zsh/socket module.
+        BUILTIN(
+            "zsocket",
+            0,
+            Some(crate::ported::modules::socket::bin_zsocket as HandlerFunc),
+            0,
+            3,
+            0,
+            Some("ad:ltv"),
+            None,
+        ), // c:276
+        // c:Src/Modules/stat.c:637 — zsh/stat module.
+        BUILTIN(
+            "stat",
+            0,
+            Some(crate::ported::modules::stat::bin_stat as HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:637
+        // c:Src/Modules/watch.c:694 — zsh/watch module's `log`.
+        BUILTIN(
+            "log",
+            0,
+            Some(crate::ported::modules::watch::bin_log as HandlerFunc),
+            0,
+            0,
+            0,
+            None,
+            None,
+        ), // c:694
+        // c:Src/Modules/zprof.c:315 — zsh/zprof module.
+        BUILTIN(
+            "zprof",
+            0,
+            Some(crate::ported::modules::zprof::bin_zprof as HandlerFunc),
+            0,
+            0,
+            0,
+            Some("c"),
+            None,
+        ), // c:315
         BUILTIN(
             "zle",
             0,
@@ -9837,10 +9953,16 @@ mod tests {
         //   zsh/sched (sched)
         //   zsh/computil (comparguments/compdescribe/compfiles/
         //     compgroups/compquote/comptags/comptry/compvalues)
-        // Total Rust BUILTINS table size pinned at 121 to catch
+        //   zsh/system (syserror/sysread/syswrite/sysopen/sysseek/zsystem)
+        //   zsh/zselect (zselect)
+        //   zsh/socket (zsocket)
+        //   zsh/stat (stat)
+        //   zsh/watch (log)
+        //   zsh/zprof (zprof)
+        // Total Rust BUILTINS table size pinned at 132 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 121,
+        assert_eq!(BUILTINS.len(), 132,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
