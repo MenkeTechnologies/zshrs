@@ -527,78 +527,125 @@ pub fn mb_charinit() {
     // Rust handles UTF-8 natively
 }
 
-/// Port of `wcs_nicechar_sel(wchar_t c, …, int quotable)` from
-/// `Src/utils.c:593-705`. Four branches per C:
+/// Port of `wcs_nicechar_sel(wchar_t c, size_t *widthp, char **swidep,
+/// int quotable)` from `Src/utils.c:593-705`. Four branches per C:
 ///   1. c < 0x80 and not printable: control-char escape (\n, \t, ^X, \C-X)
 ///      — same as `nicechar_sel`.
 ///   2. c >= 0x80 printable AND PRINTEIGHTBIT set: emit raw UTF-8 bytes.
 ///   3. c >= 0x80 fits in UTF-8: emit UTF-8 bytes (default-on for MULTIBYTE).
 ///   4. c >= 0x10000: `\U%.8x` 8-digit hex; c >= 0x100: `\u%.4x` 4-digit hex.
-/// Previously delegated to `nicechar_sel` which byte-masks via `c & 0xff`
-/// — that produced `\M-…` mangle for every legit UTF-8 codepoint.
-/// WARNING: param names don't match C — Rust=(c, quotable) vs C=(c, widthp, swidep, quotable)
-pub fn wcs_nicechar_sel(c: char, quotable: bool) -> String {
+///
+/// Param mapping (Rule S1, faithful to C):
+/// - `widthp: Option<&mut usize>` ← C `size_t *widthp` (`None` ≡ `NULL`).
+///   Set to the display column width of the produced sequence.
+/// - `swidep: Option<&mut usize>` ← C `char **swidep` (`None` ≡ `NULL`).
+///   Set to the byte index in the returned string where the post-wide
+///   meta-prefixed bytes begin (i.e. boundary between display-width
+///   characters and trailing Meta+X encoding bytes that don't add to
+///   column position).
+pub fn wcs_nicechar_sel(
+    c: char,
+    widthp: Option<&mut usize>,
+    swidep: Option<&mut usize>,
+    quotable: bool,
+) -> String {
     // c:593
     let cv = c as u32;
     // c:616 — `if (!WC_ISPRINT(c) && (c < 0x80 || !isset(PRINTEIGHTBIT)))`.
     // The non-printable + (low-ASCII or PRINTEIGHTBIT-off) branch.
     let print_eightbit = isset(PRINTEIGHTBIT);
     let is_printable = u9_iswprint(c);
+    let buf: String;
     if !is_printable && (cv < 0x80 || !print_eightbit) {
         if cv == 0x7f {
-            // c:617
-            return if quotable {
+            // c:617-624 — DEL: `^?` / `\C-?`
+            buf = if quotable {
                 "\\C-?".to_string()
             } else {
                 "^?".to_string()
             };
+            // c:686 widthp = (s - buf) + wcw (wcw for '?' = 1).
+            if let Some(wp) = widthp { *wp = buf.chars().count(); }
+            if let Some(sp) = swidep { *sp = buf.len(); }
+            return buf;
         } else if c == '\n' {
-            // c:625
-            return "\\n".to_string();
+            // c:625-627 — `\n` literal.
+            buf = "\\n".to_string();
+            if let Some(wp) = widthp { *wp = 2; }
+            if let Some(sp) = swidep { *sp = buf.len(); }
+            return buf;
         } else if c == '\t' {
-            // c:628
-            return "\\t".to_string();
+            // c:628-630 — `\t` literal.
+            buf = "\\t".to_string();
+            if let Some(wp) = widthp { *wp = 2; }
+            if let Some(sp) = swidep { *sp = buf.len(); }
+            return buf;
         } else if cv < 0x20 {
-            // c:631
-            // ^X / \C-X for controls (excluding \n, \t handled above).
+            // c:631-638 — ^X / \C-X for controls (excluding \n, \t).
             let cc = (cv + 0x40) as u8 as char;
-            return if quotable {
+            buf = if quotable {
                 format!("\\C-{}", cc)
             } else {
                 format!("^{}", cc)
             };
+            if let Some(wp) = widthp { *wp = buf.chars().count(); }
+            if let Some(sp) = swidep { *sp = buf.len(); }
+            return buf;
         }
         // c:639-641 — c >= 0x80 non-printable falls through to ret=-1
-        // path below (hex escape).
+        // path (hex escape).
     } else if cv < 0x80 {
-        // c:644-704 — printable ASCII: emit raw char.
-        return c.to_string();
+        // c:644-704 — printable ASCII: emit raw char. wcw=1.
+        buf = c.to_string();
+        if let Some(wp) = widthp { *wp = 1; }
+        if let Some(sp) = swidep { *sp = buf.len(); }
+        return buf;
     }
     // c:644-678 — high-bit char: try UTF-8 encode first.
     if u9_iswprint(c) {
-        // c:681 widthp wcw >= 0
-        // Printable wide char: emit raw UTF-8.
-        return c.to_string();
+        // c:681-693 — printable wide char: emit raw UTF-8.
+        buf = c.to_string();
+        let wcw = zwcwidth(c) as usize;
+        if let Some(wp) = widthp { *wp = wcw; }
+        if let Some(sp) = swidep { *sp = buf.len(); }
+        return buf;
     }
-    // c:656-663 — non-printable wide: hex escape.
+    // c:656-678 — non-printable wide: hex escape (or fall back to byte
+    // nicechar for c < 0x100).
     if cv >= 0x10000 {
-        // c:656
-        format!("\\U{:08x}", cv)
+        // c:656-659 — `\U%.8x` (10 chars).
+        buf = format!("\\U{:08x}", cv);
+        if let Some(wp) = widthp { *wp = 10; }
+        if let Some(sp) = swidep { *sp = buf.len(); }
+        buf
     } else if cv >= 0x100 {
-        // c:660
-        format!("\\u{:04x}", cv)
+        // c:660-663 — `\u%.4x` (6 chars).
+        buf = format!("\\u{:04x}", cv);
+        if let Some(wp) = widthp { *wp = 6; }
+        if let Some(sp) = swidep { *sp = buf.len(); }
+        buf
     } else {
         // c:664-674 — fall back to byte nicechar_sel.
-        nicechar_sel(c, quotable)
+        buf = nicechar_sel(c, quotable);
+        // c:670-671 — `*widthp = ztrlen(buf);` (display width respects
+        // metafied chars). `ztrlen` counts visible cells.
+        if let Some(wp) = widthp { *wp = ztrlen(&buf); }
+        // c:672-673 — `*swidep = buf + strlen(buf);` (no trailing meta
+        // since nicechar_sel ASCII output).
+        if let Some(sp) = swidep { *sp = buf.len(); }
+        buf
     }
 }
 
 /// Port of `wcs_nicechar(wchar_t c, size_t *widthp, char **swidep)` from `Src/utils.c:709`.
 /// C body: `return wcs_nicechar_sel(c, widthp, swidep, 0);`
-/// WARNING: param names don't match C — Rust=(c) vs C=(c, widthp, swidep)
-pub fn wcs_nicechar(c: char) -> String {
+pub fn wcs_nicechar(
+    c: char,
+    widthp: Option<&mut usize>,
+    swidep: Option<&mut usize>,
+) -> String {
     // c:709
-    wcs_nicechar_sel(c, false)
+    wcs_nicechar_sel(c, widthp, swidep, false)                               // c:711
 }
 
 /// Port of `int is_wcs_nicechar(wchar_t c)` from Src/utils.c:720.
@@ -5705,12 +5752,14 @@ pub fn mb_niceformat(
                 } else {
                     // c:5422 — `fmt = wcs_nicechar_sel(c, &newl, NULL,
                     //                                 flags & NICEFLAG_QUOTE);`
-                    // Rust wcs_nicechar_sel returns the formatted String;
-                    // newl (column width) is approximated as fmt.len() since
-                    // the Rust signature doesn't yet thread the &newl
-                    // out-param (separate Rule S1 fix for wcs_nicechar_sel).
-                    fmt = wcs_nicechar_sel(c, (flags & NICEFLAG_QUOTE) != 0);
-                    newl = fmt.len();
+                    let mut width: usize = 0;
+                    fmt = wcs_nicechar_sel(
+                        c,
+                        Some(&mut width),
+                        None,
+                        (flags & NICEFLAG_QUOTE) != 0,
+                    );
+                    newl = width;
                 }
             }
             Some(c) => {
@@ -5725,8 +5774,14 @@ pub fn mb_niceformat(
                 } else {
                     // c:5422 — `fmt = wcs_nicechar_sel(c, &newl, NULL,
                     //                                 flags & NICEFLAG_QUOTE);`
-                    fmt = wcs_nicechar_sel(c, (flags & NICEFLAG_QUOTE) != 0);
-                    newl = fmt.len();
+                    let mut width: usize = 0;
+                    fmt = wcs_nicechar_sel(
+                        c,
+                        Some(&mut width),
+                        None,
+                        (flags & NICEFLAG_QUOTE) != 0,
+                    );
+                    newl = width;
                 }
             }
         }
@@ -10460,17 +10515,17 @@ mod tests {
     fn wcs_nicechar_sel_printable_wide_emits_utf8() {
         let _g = crate::test_util::global_state_lock();
         // c:644-678 — printable wide char emits raw UTF-8.
-        assert_eq!(wcs_nicechar_sel('a', false), "a", "ASCII printable");
-        assert_eq!(wcs_nicechar_sel('é', false), "é", "Latin-1 printable");
-        assert_eq!(wcs_nicechar_sel('字', false), "字", "CJK printable");
+        assert_eq!(wcs_nicechar_sel('a', None, None, false), "a", "ASCII printable");
+        assert_eq!(wcs_nicechar_sel('é', None, None, false), "é", "Latin-1 printable");
+        assert_eq!(wcs_nicechar_sel('字', None, None, false), "字", "CJK printable");
     }
 
     /// c:625-630 — `\n` and `\t` escape (same as nicechar_sel for ASCII).
     #[test]
     fn wcs_nicechar_sel_escapes_newline_and_tab() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(wcs_nicechar_sel('\n', false), "\\n");
-        assert_eq!(wcs_nicechar_sel('\t', false), "\\t");
+        assert_eq!(wcs_nicechar_sel('\n', None, None, false), "\\n");
+        assert_eq!(wcs_nicechar_sel('\t', None, None, false), "\\t");
     }
 
     /// c:617-623 — DEL (0x7f) renders as `^?` (non-quotable) or
@@ -10478,8 +10533,8 @@ mod tests {
     #[test]
     fn wcs_nicechar_sel_del_uses_caret_question() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(wcs_nicechar_sel('\x7f', false), "^?");
-        assert_eq!(wcs_nicechar_sel('\x7f', true), "\\C-?");
+        assert_eq!(wcs_nicechar_sel('\x7f', None, None, false), "^?");
+        assert_eq!(wcs_nicechar_sel('\x7f', None, None, true), "\\C-?");
     }
 
     /// c:631-638 — control chars (0x01-0x1f, except \n/\t) emit
@@ -10487,10 +10542,10 @@ mod tests {
     #[test]
     fn wcs_nicechar_sel_control_chars_use_caret_prefix() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(wcs_nicechar_sel('\x01', false), "^A");
-        assert_eq!(wcs_nicechar_sel('\x07', false), "^G");
-        assert_eq!(wcs_nicechar_sel('\x1b', false), "^[");
-        assert_eq!(wcs_nicechar_sel('\x01', true), "\\C-A");
+        assert_eq!(wcs_nicechar_sel('\x01', None, None, false), "^A");
+        assert_eq!(wcs_nicechar_sel('\x07', None, None, false), "^G");
+        assert_eq!(wcs_nicechar_sel('\x1b', None, None, false), "^[");
+        assert_eq!(wcs_nicechar_sel('\x01', None, None, true), "\\C-A");
     }
 
     /// `Src/utils.c:656-663` — large non-printable codepoints get
@@ -10510,11 +10565,11 @@ mod tests {
         // 0x85 not 0x7f, not \n/\t, not <0x20. Falls past all if-elses to
         // post-branch logic → !is_printable, cv >= 0x100 false, cv >= 0x100 false
         // → falls to nicechar_sel fallback.
-        let r = wcs_nicechar_sel(nel, false);
+        let r = wcs_nicechar_sel(nel, None, None, false);
         assert!(!r.is_empty(), "must emit something for U+0085");
         // U+200B ZERO WIDTH SPACE — non-printable, 0x100-0xffff range.
         let zwsp = char::from_u32(0x200B).unwrap();
-        let r = wcs_nicechar_sel(zwsp, false);
+        let r = wcs_nicechar_sel(zwsp, None, None, false);
         // u9_iswprint(0x200B) returns true via unicode-width 0-width.
         // Per the impl: u9_iswprint true → emit raw. So r should be
         // the raw zwsp char.
@@ -10522,15 +10577,15 @@ mod tests {
     }
 
     /// `Src/utils.c:709-714` — `wcs_nicechar(c)` delegates to
-    /// `wcs_nicechar_sel(c, 0)`. Pin the parity with the 4-arg form.
+    /// `wcs_nicechar_sel(c, widthp, swidep, 0)`. Pin the parity.
     #[test]
     fn wcs_nicechar_matches_wcs_nicechar_sel_with_zero() {
         let _g = crate::test_util::global_state_lock();
         for c in ['a', '\n', '\t', '\x7f', '\x01', 'é', '字'] {
             assert_eq!(
-                wcs_nicechar(c),
-                wcs_nicechar_sel(c, false),
-                "c:711 — `wcs_nicechar(c)` must equal `wcs_nicechar_sel(c, 0)` for {:?}",
+                wcs_nicechar(c, None, None),
+                wcs_nicechar_sel(c, None, None, false),
+                "c:711 — `wcs_nicechar(c, NULL, NULL)` must equal `wcs_nicechar_sel(c, NULL, NULL, 0)` for {:?}",
                 c
             );
         }
