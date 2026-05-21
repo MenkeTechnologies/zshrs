@@ -45,13 +45,13 @@ use crate::ported::jobs::{expandjobtab, JOBTAB, THISJOB};
 use crate::ported::lex::{hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO};
 use crate::ported::mem::{dupstring, popheap, pushheap};
 use crate::ported::options::sticky;
-use crate::ported::params::getsparam;
+use crate::ported::params::{getsparam, paramtab};
 use crate::ported::parse::{ecrawstr, parse_list};
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::subst::{quotesubst, singsub};
-use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, ERRFLAG_ERROR};
+use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, zwarn, ERRFLAG_ERROR};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS, PATHDIRS};
+use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar, PM_LOADDIR, VERBOSE, Emulation_options, emulation_options, CLOBBER, IS_CLOBBER_REDIR, CLOBBEREMPTY, cmdnam, HASHDIRS, PATHDIRS, PM_READONLY};
 use crate::zsh_h::execstack;
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
@@ -1569,6 +1569,86 @@ pub fn search_defpath(cmd: &str, plen: usize) -> Option<String> {
         }
     }
     None // c:716
+}
+
+/// Port of `static int checkclobberparam(struct redir *f)` from
+/// `Src/exec.c:2178`.
+///
+/// C body:
+/// ```c
+/// struct value vbuf; Value v;
+/// char *s = f->varid; int fd;
+/// if (!s) return 1;
+/// if (!(v = getvalue(&vbuf, &s, 0))) return 1;
+/// if (v->pm->node.flags & PM_READONLY) {
+///     zwarn("can't allocate file descriptor to readonly parameter %s",
+///           f->varid);
+///     errno = 0;
+///     return 0;
+/// }
+/// /* We can't clobber the value in the parameter if it's
+///  * already an opened file descriptor */
+/// if (!isset(CLOBBER) && (s = getstrvalue(v)) &&
+///     (fd = (int)zstrtol(s, &s, 10)) >= 0 && !*s &&
+///     fd <= max_zsh_fd && fdtable[fd] == FDT_EXTERNAL) {
+///     zwarn("can't clobber parameter %s containing file descriptor %d",
+///          f->varid, fd);
+///     errno = 0;
+///     return 0;
+/// }
+/// return 1;
+/// ```
+///
+/// Validate that `f->varid` (the `{var}>file` brace-FD form's var
+/// name) is writable and (under NOCLOBBER) doesn't currently hold an
+/// FDT_EXTERNAL fd number. Returns 1 on OK, 0 on refusal (zwarn
+/// already emitted).
+///
+/// =================== WARNING — DIVERGENCE ====================
+/// The NOCLOBBER + FDT_EXTERNAL clause at c:2205-2213 needs
+/// `max_zsh_fd` and `fdtable[fd]` — neither global is yet modeled
+/// in zshrs (the fdtable port is a no-op shim at utils.rs:1978).
+/// That clause is skipped here. Without it, the only refusal path
+/// is the PM_READONLY guard at c:2191; the param-fd-already-open
+/// case falls through to OK and the upcoming open(2) clobbers it.
+/// Re-enable when fdtable lands.
+/// =============================================================
+pub fn checkclobberparam(f: &redir) -> i32 {
+    // c:2178
+    // c:2182 — `char *s = f->varid;`
+    let s = match &f.varid {
+        Some(v) => v.clone(),
+        None => return 1, // c:2185-2186 — `if (!s) return 1;`
+    };
+    // c:2188-2197 — readonly refusal: lookup PM flags directly via
+    // paramtab (the C `getvalue` returns a Value wrapping the same
+    // pm; we read pm->node.flags here without the wrap).
+    let readonly = paramtab()
+        .read()
+        .ok()
+        .and_then(|t| {
+            t.get(&s)
+                .map(|p| (p.node.flags as u32 & PM_READONLY) != 0)
+        })
+        .unwrap_or(false);
+    if readonly {
+        // c:2191
+        zwarn(&format!(
+            // c:2192
+            "can't allocate file descriptor to readonly parameter {}",
+            s
+        ));
+        // c:2195 — `errno = 0;` not flagged as a system error.
+        return 0; // c:2196
+    }
+    // c:2199-2213 — NOCLOBBER + FDT_EXTERNAL refusal. SKIPPED — see
+    // WARNING above (fdtable not modeled). When fdtable lands, port:
+    //   if !isset(CLOBBER)
+    //     && getstrvalue(v) parses as int fd
+    //     && fd <= max_zsh_fd
+    //     && fdtable[fd] == FDT_EXTERNAL
+    //   then zwarn + return 0.
+    1 // c:2214
 }
 
 /// Port of `static int clobber_open(struct redir *f)` from
