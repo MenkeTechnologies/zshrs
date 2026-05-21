@@ -32,7 +32,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
 
 use crate::fusevm_bridge::with_executor;
-use crate::ported::builtin::{BUILTINS, LASTVAL};
+use crate::ported::builtin::{cd_able_vars, fixdir, BUILTINS, DOPRINTDIR, LASTVAL};
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::hashtable::shfunctab_lock;
 use crate::ported::hist::{strinbeg, strinend};
@@ -40,12 +40,13 @@ use crate::ported::init::{underscorelen, underscoreused, zunderscore};
 use crate::ported::input::{inpop, inpush};
 use crate::ported::lex::{hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO};
 use crate::ported::mem::dupstring;
+use crate::ported::params::getsparam;
 use crate::ported::parse::{ecrawstr, parse_list};
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::subst::{quotesubst, singsub};
-use crate::ported::utils::{errflag, movefd, unmeta, write_loop, zclose, zerr, ERRFLAG_ERROR};
+use crate::ported::utils::{errflag, gettempfile, gettempname, movefd, unmeta, unmetafy, write_loop, zclose, zerr, ERRFLAG_ERROR};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound};
+use crate::ported::zsh_h::{builtin, eprog, hashnode, redir, shfunc, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, ERRFLAG_INT, INP_LINENO, IS_DASH, PM_UNDEFINED, REDIRF_FROM_HEREDOC, REDIR_HEREDOCDASH, WC_TYPESET, wc_code, Z_END, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, Meta, Nularg, Pound, isset, CHASEDOTS, CHASELINKS, Outpar, Inpar};
 
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
 /// a trap handler is currently being processed and, paired with
@@ -1089,6 +1090,51 @@ pub fn is_anonymous_function_name(name: &str) -> i32 {
     }
 }
 
+/// Port of `void loadautofnsetfile(Shfunc shf, char *fdir)` from
+/// `Src/exec.c:5657`.
+///
+/// C body:
+/// ```c
+/// if (!(shf->node.flags & PM_LOADDIR) ||
+///     strcmp(shf->filename, fdir) != 0) {
+///     dircache_set(&shf->filename, NULL);
+///     if (fdir) {
+///         shf->node.flags |= PM_LOADDIR;
+///         dircache_set(&shf->filename, fdir);
+///     } else {
+///         shf->node.flags &= ~PM_LOADDIR;
+///         shf->filename = ztrdup(shf->node.nam);
+///     }
+/// }
+/// ```
+///
+/// Update `shf->filename` to the autoload directory `fdir`. Routes
+/// through the refcounted `dircache_set` so identical directory
+/// strings are shared across shfunc table entries.
+pub fn loadautofnsetfile(shf: &mut shfunc, fdir: Option<&str>) {
+    // c:5657
+    // c:5664-5665 — `if (!(shf->node.flags & PM_LOADDIR) || strcmp(shf->filename, fdir) != 0)`
+    let loaddir = (shf.node.flags as u32 & crate::ported::zsh_h::PM_LOADDIR) != 0;
+    let same = match (&shf.filename, fdir) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    };
+    if !loaddir || !same {
+        // c:5664
+        // c:5667 — `dircache_set(&shf->filename, NULL);` — refcount-drop old.
+        crate::ported::hashtable::dircache_set(&mut shf.filename, None);
+        if let Some(fdir) = fdir {
+            // c:5668
+            shf.node.flags |= crate::ported::zsh_h::PM_LOADDIR as i32; // c:5670
+            crate::ported::hashtable::dircache_set(&mut shf.filename, Some(fdir)); // c:5671
+        } else {
+            // c:5672
+            shf.node.flags &= !(crate::ported::zsh_h::PM_LOADDIR as i32); // c:5674
+            shf.filename = Some(shf.node.nam.clone()); // c:5675 `ztrdup(shf->node.nam)`
+        }
+    }
+}
+
 /// Port of `int commandnotfound(char *arg0, LinkList args)` from
 /// `Src/exec.c:669`.
 ///
@@ -1157,7 +1203,7 @@ pub fn commandnotfound(arg0: &str, args: &mut Vec<String>) -> i32 {
 /// `getproc` (`<(cmd)` / `>(cmd)`) on systems without `/dev/fd`.
 pub fn namedpipe() -> Option<String> {
     // c:5001
-    let tnam = crate::ported::utils::gettempname(None, true); // c:5003
+    let tnam = gettempname(None, true); // c:5003
     let tnam = match tnam {
         Some(t) => t,
         None => {
@@ -1222,11 +1268,11 @@ pub fn parsecmd(cmd: &str, eptr: Option<&mut usize>) -> Option<eprog> {
         return None;
     }
     let mut str_idx: usize = 2;
-    while str_idx < bytes.len() && (bytes[str_idx] as char) != crate::ported::zsh_h::Outpar {
+    while str_idx < bytes.len() && (bytes[str_idx] as char) != Outpar {
         str_idx += 1;
     }
     // c:4884 — `if (!*str || cmd[1] != Inpar)`.
-    if str_idx >= bytes.len() || (bytes[1] as char) != crate::ported::zsh_h::Inpar {
+    if str_idx >= bytes.len() || (bytes[1] as char) != Inpar {
         // c:4884
         let errstr = if bytes.len() >= 2 {
             untokenize(&cmd[..2]) // c:4891-4892
@@ -1280,12 +1326,12 @@ pub fn cancd2(s: &str) -> i32 {
     // c:6411
     let us: String;
     // c:6422 — `if (!isset(CHASEDOTS) && !isset(CHASELINKS))`.
-    let chasedots = crate::ported::zsh_h::isset(crate::ported::zsh_h::CHASEDOTS); // c:6422
-    let chaselinks = crate::ported::zsh_h::isset(crate::ported::zsh_h::CHASELINKS);
+    let chasedots = isset(CHASEDOTS); // c:6422
+    let chaselinks = isset(CHASELINKS);
     if !chasedots && !chaselinks {
         // c:6422
         // c:6423-6426 — `*s != '/' ? tricat(pwd, "/", s) : ztrdup(s);`
-        let pwd_str = crate::ported::params::getsparam("PWD").unwrap_or_default(); // c:6424 `pwd`
+        let pwd_str = getsparam("PWD").unwrap_or_default(); // c:6424 `pwd`
         let mut raw = if !s.starts_with('/') {
             // c:6423
             format!("{}/{}", if pwd_str.len() > 1 { &pwd_str[..] } else { "" }, s)
@@ -1293,7 +1339,7 @@ pub fn cancd2(s: &str) -> i32 {
             s.to_string()
         };
         // c:6427 — `fixdir(us2 = us);` — lexical canonicalisation.
-        raw = crate::ported::builtin::fixdir(&raw);
+        raw = fixdir(&raw);
         us = raw;
     } else {
         // c:6428
@@ -1350,7 +1396,7 @@ pub fn cancd(s: &str) -> Option<String> {
         }
         // c:6383-6397 — CDPATH walk.
         if !nocdpath {
-            let cdpath_str = crate::ported::params::getsparam("CDPATH").unwrap_or_default();
+            let cdpath_str = getsparam("CDPATH").unwrap_or_default();
             for cp in cdpath_str.split(':') {
                 // c:6384
                 let sbuf = if !cp.is_empty() {
@@ -1360,17 +1406,17 @@ pub fn cancd(s: &str) -> Option<String> {
                 };
                 if cancd2(&sbuf) != 0 {
                     // c:6393
-                    crate::ported::builtin::DOPRINTDIR.store(-1, Ordering::Relaxed); // c:6394
+                    DOPRINTDIR.store(-1, Ordering::Relaxed); // c:6394
                     return Some(sbuf); // c:6395
                 }
             }
         }
         // c:6398-6403 — `cd_able_vars()` fallback.
-        if let Some(t) = crate::ported::builtin::cd_able_vars(s) {
+        if let Some(t) = cd_able_vars(s) {
             // c:6398
             if cancd2(&t) != 0 {
                 // c:6399
-                crate::ported::builtin::DOPRINTDIR.store(-1, Ordering::Relaxed); // c:6400
+                DOPRINTDIR.store(-1, Ordering::Relaxed); // c:6400
                 return Some(t); // c:6401
             }
         }
@@ -1459,14 +1505,14 @@ pub fn getherestr(fn_: &redir) -> i32 {
                         // c:4663 — `unmetafy(t, &len);` — strip Meta-escapes.
                         // Reuse the canonical unmetafy port (utils.rs) on a Vec<u8>.
     let mut bytes: Vec<u8> = t.into_bytes();
-    let _len = crate::ported::utils::unmetafy(&mut bytes);
+    let _len = unmetafy(&mut bytes);
     // c:4671-4672 — `if (!(fn->flags & REDIRF_FROM_HEREDOC)) t[len++] = '\n';`
     if (fn_.flags & REDIRF_FROM_HEREDOC) == 0 {
         // c:4671
         bytes.push(b'\n'); // c:4672
     }
     // c:4673-4674 — `if ((fd = gettempfile(NULL, 1, &s)) < 0) return -1;`
-    let (fd, s) = match crate::ported::utils::gettempfile(None) {
+    let (fd, s) = match gettempfile(None) {
         Some(p) => p,
         None => return -1, // c:4674
     };
