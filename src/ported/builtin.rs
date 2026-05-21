@@ -9288,6 +9288,17 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("AE:%F:%HL:%PR:%TUZ:%ahi:%lnmrtux"),
             Some("P"),
         ), // c:652
+        // c:Src/Modules/termcap.c:139 — zsh/termcap module.
+        BUILTIN(
+            "echotc",
+            0,
+            Some(crate::ported::modules::termcap::bin_echotc as HandlerFunc),
+            1,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:139
         BUILTIN(
             "zle",
             0,
@@ -10042,10 +10053,11 @@ mod tests {
         //   zsh/zftp (zftp), zsh/zpty (zpty), zsh/curses (zcurses)
         //   zsh/clone (clone), zsh/example (example)
         //   zsh/param/private (private)
-        // Total Rust BUILTINS table size pinned at 139 to catch
+        //   zsh/termcap (echotc)
+        // Total Rust BUILTINS table size pinned at 140 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 139,
+        assert_eq!(BUILTINS.len(), 140,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 

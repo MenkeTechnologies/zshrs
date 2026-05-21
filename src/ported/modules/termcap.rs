@@ -66,7 +66,12 @@ pub fn ztgetflag(s: &str) -> i32 {
 ///
 /// C signature: `static int bin_echotc(char *name, char **argv, Options ops, int func)`.
 /// WARNING: param names don't match C — Rust=(name, argv, _ops) vs C=(name, argv, ops, func)
-pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 {
+pub fn bin_echotc(
+    name: &str,
+    argv: &[String],
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
     // c:80
     const TERM_BAD: i32 = 1 << 1;
     if argv.is_empty() {
@@ -74,8 +79,8 @@ pub fn bin_echotc(name: &str, argv: &[&str], _ops: &[bool; 256]) -> i32 {
         zwarnnam(name, "missing argument");
         return 1;
     }
-    let s = argv[0];
-    let argv_rest: Vec<&str> = argv[1..].to_vec(); // c:85 (s = *argv++)
+    let s: &str = argv[0].as_str();
+    let argv_rest: Vec<&str> = argv[1..].iter().map(String::as_str).collect(); // c:85 (s = *argv++)
 
     // c:87 — `if (termflags & TERM_BAD) return 1;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {
@@ -554,7 +559,13 @@ mod tests {
     #[test]
     fn echotc_with_no_args_returns_one() {
         let _g = crate::test_util::global_state_lock();
-        let r = bin_echotc("echotc", &[], &[false; 256]);
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_echotc("echotc", &[], &ops, 0);
         assert_eq!(r, 1, "echotc must report missing-arg error");
     }
 
@@ -565,7 +576,18 @@ mod tests {
     #[test]
     fn echotc_unknown_cap_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
-        let r = bin_echotc("echotc", &["zz_definitely_not_a_cap"], &[false; 256]);
+        let ops = crate::ported::zsh_h::options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let r = bin_echotc(
+            "echotc",
+            &["zz_definitely_not_a_cap".to_string()],
+            &ops,
+            0,
+        );
         assert_ne!(r, 0, "unknown cap must error");
     }
 
