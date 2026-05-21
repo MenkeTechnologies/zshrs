@@ -630,33 +630,55 @@ pub fn bin_pcre_match(
 /// Port of `cond_pcre_match(char **a, int id)` from `Src/Modules/pcre.c:422`. The
 /// `-pcre-match` operator dispatch hook the lexer wires for
 /// `[[ s -pcre-match pat ]]`. Compiles `a[1]` and matches `a[0]`.
-/// Returns C's `int` (0 = no match, 1 = match) plus the captures so
-/// the caller can install $MATCH / $match.
-/// WARNING: param names don't match C — Rust=() vs C=(a, id)
-pub fn cond_pcre_match(a: &[String], _id: i32) -> (i32, Option<String>, Vec<Option<String>>) {
+/// Returns C's `int` (0 = no match, 1 = match); the $MATCH / $match
+/// install happens via setsparam/setaparam (Src/Modules/pcre.c:510-520).
+pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
+    // c:422
+    // c:428 — `int r = 0, return_value = 0;`.
     if a.len() < 2 {
-        return (0, None, Vec::new());
+        return 0;
     }
-    let lhs = &a[0];
-    let rhs = &a[1];
+    let lhs = &a[0]; // c:427 lhstr
+    let rhs = &a[1]; // c:427 rhre
 
-    // c:424-441 — pcre2_compile(rhs)
+    // c:441 — `pcre2_compile(rhre, ...)`. Rust regex crate substitutes
+    // for libpcre2 — same regex semantics for the common subset.
     match Regex::new(rhs) {
         Ok(re) => {
-            // c:476-491 — pcre2_match(re, lhs)
+            // c:476 — `pcre2_match(pcre_pat, lhstr_plain, ...)`.
             match re.captures(lhs) {
                 Some(caps) => {
+                    // c:490-491 — match succeeded.
                     let full = caps.get(0).map(|m| m.as_str().to_string());
-                    let mut subs = Vec::new();
-                    for i in 1..caps.len() {
-                        subs.push(caps.get(i).map(|m| m.as_str().to_string()));
+                    // c:510-520 — `setsparam("MATCH", matched_portion);
+                    //                setaparam("match", captures);`.
+                    // These are the standard zsh $MATCH / $match vars
+                    // that `[[ str -pcre-match pat ]]` populates.
+                    if let Some(m) = full {
+                        crate::ported::params::setsparam("MATCH", &m); // c:510
                     }
-                    (1, full, subs)
+                    let subs: Vec<String> = (1..caps.len())
+                        .map(|i| {
+                            caps.get(i).map(|m| m.as_str().to_string()).unwrap_or_default()
+                        })
+                        .collect();
+                    crate::ported::params::setaparam("match", subs); // c:520
+                    1 // c:485 return_value = 1
                 }
-                None => (0, None, Vec::new()),
+                None => {
+                    // c:483 — no-match: clear $MATCH/$match.
+                    crate::ported::params::setsparam("MATCH", "");
+                    crate::ported::params::setaparam("match", Vec::new());
+                    0
+                }
             }
         }
-        Err(_) => (0, None, Vec::new()),
+        Err(_) => {
+            // c:439 — pcre2_compile failed. C zwarnnam's; Rust returns
+            // 0 (no match) since the lexer-driven path already
+            // reported the compile error.
+            0
+        }
     }
 }
 
@@ -926,11 +948,11 @@ mod tests {
     #[test]
     fn test_cond_pcre_match() {
         let _g = crate::test_util::global_state_lock();
-        let (m, _, _) = cond_pcre_match(&[s("hello world"), s("hello")], 0);
+        let m = cond_pcre_match(&[s("hello world"), s("hello")], 0);
         assert_eq!(m, 1);
-        let (m, _, _) = cond_pcre_match(&[s("hello world"), s("(?i)HELLO")], 0);
+        let m = cond_pcre_match(&[s("hello world"), s("(?i)HELLO")], 0);
         assert_eq!(m, 1);
-        let (m, _, _) = cond_pcre_match(&[s("hello world"), s("HELLO")], 0);
+        let m = cond_pcre_match(&[s("hello world"), s("HELLO")], 0);
         assert_eq!(m, 0);
     }
 
@@ -1021,7 +1043,7 @@ mod tests {
     #[test]
     fn cond_pcre_match_malformed_pattern_returns_no_match() {
         let _g = crate::test_util::global_state_lock();
-        let (m, _, _) = cond_pcre_match(&[s("anything"), s("[")], 0);
+        let m = cond_pcre_match(&[s("anything"), s("[")], 0);
         assert_eq!(m, 0, "malformed regex must fail-soft to no-match");
     }
 
@@ -1030,9 +1052,9 @@ mod tests {
     #[test]
     fn cond_pcre_match_caret_anchor_requires_start() {
         let _g = crate::test_util::global_state_lock();
-        let (m, _, _) = cond_pcre_match(&[s("foo bar"), s("^foo")], 0);
+        let m = cond_pcre_match(&[s("foo bar"), s("^foo")], 0);
         assert_eq!(m, 1, "caret matches at start");
-        let (m, _, _) = cond_pcre_match(&[s("bar foo"), s("^foo")], 0);
+        let m = cond_pcre_match(&[s("bar foo"), s("^foo")], 0);
         assert_eq!(m, 0, "caret must NOT match mid-string");
     }
 
