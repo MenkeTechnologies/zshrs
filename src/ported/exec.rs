@@ -119,6 +119,17 @@ pub static this_noerrexit: std::sync::atomic::AtomicI32 = // c:109 (Src/exec.c)
 /// non-zero, suppress `zerr()` output (lex error reporting during
 /// `parse_string`, `parseopts` etc.). Saved/restored by
 /// `execsave`/`execrestore`.
+/// Port of `static char list_pipe_text[JOBTEXTSIZE]` from
+/// `Src/exec.c:463`. Holds the textual rendering of the in-flight
+/// pipe list; saved across nested execlist invocations at
+/// exec.c:1372-1380 (zeroed on entry, restored from
+/// `old_list_pipe_text` at c:1634-1638) and round-tripped through
+/// execsave/execrestore (c:6448 / c:6484). zshrs models it as a
+/// length-bounded String guarded by a Mutex — the C `char[80]` cap
+/// is a buffer-overflow guard, but matching length matters for the
+/// `jobs` builtin's pipe-list rendering.
+pub static LIST_PIPE_TEXT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new()); // c:463 (Src/exec.c)
+
 pub static noerrs: std::sync::atomic::AtomicI32 = // c:117 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
@@ -1441,7 +1452,16 @@ pub fn execsave() {
         pline_level: pline_level.load(Ordering::Relaxed),     // c:6445
         list_pipe_child: list_pipe_child.load(Ordering::Relaxed), // c:6446
         list_pipe_job: list_pipe_job.load(Ordering::Relaxed), // c:6447
-        list_pipe_text: [0u8; JOBTEXTSIZE], // c:6448 strcpy
+        list_pipe_text: {
+            // c:6448 — `strcpy(es->list_pipe_text, list_pipe_text);`
+            let mut buf = [0u8; JOBTEXTSIZE];
+            if let Ok(s) = LIST_PIPE_TEXT.lock() {
+                let bytes = s.as_bytes();
+                let n = bytes.len().min(JOBTEXTSIZE - 1);
+                buf[..n].copy_from_slice(&bytes[..n]);
+            }
+            buf
+        },
         lastval: LASTVAL.load(Ordering::Relaxed),             // c:6449
         // c:6450 — `es->noeval = noeval;`. Snapshot math.c's
         // `int noeval` (the parse-only side-effect-skip counter)
@@ -1531,7 +1551,15 @@ pub fn execrestore() {
     pline_level.store(en.pline_level, Ordering::Relaxed); // c:6481
     list_pipe_child.store(en.list_pipe_child, Ordering::Relaxed); // c:6482
     list_pipe_job.store(en.list_pipe_job, Ordering::Relaxed); // c:6483
-                                                              // c:6484 — list_pipe_text restore (not yet stored as Rust static)
+    // c:6484 — `strcpy(list_pipe_text, en->list_pipe_text);`.
+    if let Ok(mut s) = LIST_PIPE_TEXT.lock() {
+        let nul = en
+            .list_pipe_text
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(JOBTEXTSIZE);
+        *s = String::from_utf8_lossy(&en.list_pipe_text[..nul]).into_owned();
+    }
     LASTVAL.store(en.lastval, Ordering::Relaxed); // c:6485
     // c:6486 — `noeval = en->noeval;`. Restore math.c's noeval
     // counter from the saved frame.
