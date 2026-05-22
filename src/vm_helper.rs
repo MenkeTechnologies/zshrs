@@ -2558,52 +2558,11 @@ pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
     None
 }
 
-pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
-    fn collect<F: FnOnce(Option<crate::ported::zsh_h::ScanFunc>, i32)>(scan: F) -> Vec<String> {
-        SCAN_KEYS.with(|k| k.borrow_mut().clear());
-        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-            SCAN_KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
-        }
-        scan(Some(cb), 0);
-        SCAN_KEYS.with(|k| k.borrow().clone())
-    }
-    let null_ht = std::ptr::null_mut();
-    match name {
-        "commands" => Some(collect(|f, fl| scanpmcommands(null_ht, f, fl))),
-        "options" => Some(collect(|f, fl| scanpmoptions(null_ht, f, fl))),
-        "builtins" => Some(collect(|f, fl| scanpmbuiltins(null_ht, f, fl))),
-        "dis_builtins" => Some(collect(|f, fl| scanpmdisbuiltins(null_ht, f, fl))),
-        "functions" => Some(collect(|f, fl| scanpmfunctions(null_ht, f, fl))),
-        "dis_functions" => Some(collect(|f, fl| scanpmdisfunctions(null_ht, f, fl))),
-        "aliases" => Some(collect(|f, fl| scanpmraliases(null_ht, f, fl))),
-        "dis_aliases" => Some(collect(|f, fl| scanpmdisraliases(null_ht, f, fl))),
-        "galiases" => Some(collect(|f, fl| scanpmgaliases(null_ht, f, fl))),
-        "dis_galiases" => Some(collect(|f, fl| scanpmdisgaliases(null_ht, f, fl))),
-        "saliases" => Some(collect(|f, fl| scanpmsaliases(null_ht, f, fl))),
-        "dis_saliases" => Some(collect(|f, fl| scanpmdissaliases(null_ht, f, fl))),
-        // Route through canonical scanpmX (Src/Modules/parameter.c).
-        // Each scan fn walks its native table via the GSU callback.
-        "parameters" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmparameters(null_ht, f, fl))),
-        "modules" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmmodules(null_ht, f, fl))),
-        "history" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmhistory(null_ht, f, fl))),
-        "jobtexts" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmjobtexts(null_ht, f, fl))),
-        "jobstates" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmjobstates(null_ht, f, fl))),
-        "jobdirs" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmjobdirs(null_ht, f, fl))),
-        "nameddirs" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmnameddirs(null_ht, f, fl))),
-        "userdirs" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmuserdirs(null_ht, f, fl))),
-        // Names without canonical scanpmX ports yet (returned empty
-        // previously and remain so until per-name scan fns land).
-        // TODO faithful: route reswords/dis_reswords/historywords/
-        // usergroups/errnos/sysparams/dirstack through their scanpmX
-        // when those land in Src/Modules/parameter.c port.
-        "reswords" | "dis_reswords" | "historywords"
-        | "usergroups" | "errnos" | "sysparams" | "dirstack" => Some(Vec::new()),
-        // `mapfile` — zsh/mapfile module's magic assoc. Walks via
-        // canonical scanpmmapfile (Src/Modules/mapfile.c:241).
-        "mapfile" => Some(collect(|f, fl| crate::ported::modules::mapfile::scanpmmapfile(null_ht, f, fl))),
-        _ => None,
-    }
-}
+// `scan_magic_assoc_keys` deleted — its 36-line per-name match
+// dispatching to canonical scanpmX is the same routing PARTAB +
+// `partab_scan_keys` (above) and PARTAB_ARRAY + `partab_array_get`
+// now provide directly. Zero callers after the bridge magic-assoc
+// fallback was cut over to PARTAB-only dispatch in b092a5dc19.
 
 // =====================================================================
 // SubstState bridge — DELETED per user directive ("delete SubstState").
