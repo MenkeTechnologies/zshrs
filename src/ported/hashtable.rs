@@ -1266,7 +1266,16 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
     print!("{}", quotedzputs(&hn.node.nam));
 
     // c:947-987 — funcdef-present branch (or PM_UNDEFINED stub) vs empty `() { }`.
-    if hn.funcdef.is_some() || (hn.node.flags & PM_UNDEFINED as i32) != 0 {
+    // RUST-ONLY EXTENSION: zshrs's shfunc carries a raw `body: Option<String>`
+    // alongside (or instead of) the compiled `funcdef: Eprog` (see
+    // `shfunc` doc at zsh_h.rs:670). The fusevm compile path stores the
+    // body source there (parse.rs:7118 + parse.rs:1787) but never builds
+    // a C-shaped Eprog — `funcdef` stays None. C zsh's getpermtext walks
+    // the wordcode-Eprog; in zshrs we fall back to `body` text directly
+    // when funcdef is absent. Without this, `functions NAME` prints
+    // `f () { }` for every user-defined function.
+    let has_body_source = hn.body.as_deref().is_some_and(|b| !b.is_empty());
+    if hn.funcdef.is_some() || has_body_source || (hn.node.flags & PM_UNDEFINED as i32) != 0 {
         // c:947
         print!(" () {{\n"); // c:948
         let _ = zoutputtab(&mut io::stdout()); // c:949
@@ -1277,9 +1286,38 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
             println!("{} undefined", hashchar.load(Ordering::Relaxed) as u8 as char); // c:951
             let _ = zoutputtab(&mut io::stdout()); // c:952
             t = None;
-        } else {
+        } else if let Some(fd) = hn.funcdef.as_ref() {
             // c:953
-            t = hn.funcdef.as_ref().map(|fd| getpermtext(fd.clone(), None, 1)); // c:954
+            t = Some(getpermtext(fd.clone(), None, 1)); // c:954
+        } else {
+            // Rust-only fallback: emit `body` text directly. C's
+            // getpermtext walks the wordcode-Eprog and emits
+            // canonicalized statement-per-line text. We don't have
+            // the Eprog, so we normalize the captured raw body
+            // source: strip a leading `{` + ws, trailing `}` + ws,
+            // and trailing `;` before the `}`. These appear when
+            // par_simple's body_argv path (parse.rs:7041) reuses
+            // the raw input slice that still includes the framing
+            // braces; par_funcdef's brace path strips them but the
+            // short-form `name() { body }` path can capture the
+            // closing `}` because cmdpos vs. cmdpos confusion
+            // makes the `}` lex as STRING_LEX, missing the
+            // OUTBRACE_TOK arm at parse.rs:7113.
+            t = hn.body.clone().map(|s| {
+                let mut s = s.trim().to_string();
+                if s.starts_with('{') {
+                    s = s[1..].trim_start().to_string();
+                }
+                if s.ends_with('}') {
+                    s.pop();
+                    s = s.trim_end().to_string();
+                }
+                if s.ends_with(';') {
+                    s.pop();
+                    s = s.trim_end().to_string();
+                }
+                s
+            });
         }
         // c:955-958 — PM_TAGGED | PM_TAGGED_LOCAL → `# traced` marker.
         if (hn.node.flags & (PM_TAGGED | PM_TAGGED_LOCAL) as i32) != 0 {
