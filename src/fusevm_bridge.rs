@@ -5680,15 +5680,8 @@ impl crate::ported::vm_helper::ShellExecutor {
             // external command and only intercept the unambiguous
             // `zstat` name.
             "zstat" => {
-                // bin_stat now takes the canonical C signature
-                // (name, args, ops, func) per Src/Modules/stat.c:368.
-                let ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                return crate::modules::stat::bin_stat("zstat", &rest_vec, &ops, 0);
+                // Canonical bin_stat per stat.c:638 via BUILTINS["zstat"].
+                return crate::fusevm_bridge::dispatch_builtin("zstat", rest_vec.clone());
             }
             _ => {}
         }
