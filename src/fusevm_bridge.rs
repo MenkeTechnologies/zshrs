@@ -2858,63 +2858,57 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         with_executor(|exec| {
-            // Read paramtab-first, mutate, write back via canonical
-            // set_array so subscript-slice/index assignments are
-            // visible to both the paramtab single source and the
-            // legacy cache.
-            let mut arr = exec.array(&name).unwrap_or_default();
-            // Slice form `a[i,j]=(values)` — replace the inclusive
-            // slice. Negative bounds count from end. Out-of-range high
-            // bound clamps to len; low bound below 1 clamps to 1.
-            if let Some((s_str, e_str)) = key.split_once(',') {
-                let len = arr.len() as i64;
-                let resolve = |s: &str| -> i64 { s.trim().parse::<i64>().unwrap_or_default() };
-                let s_raw = resolve(s_str);
-                let e_raw = resolve(e_str);
-                let lo = if s_raw < 0 {
-                    (len + s_raw + 1).max(1)
+            // Parse subscript: slice `lo,hi` or single index `i`.
+            // setarrvalue (Src/params.c:2895) expects 1-based start/
+            // end inclusive where start==end means replace one
+            // element. Negative bounds translate to len+n+1 (1-based).
+            let len = exec.array(&name).map(|a| a.len() as i64).unwrap_or(0);
+            let translate = |raw: i64| -> i32 {
+                if raw < 0 {
+                    (len + raw + 1).max(1) as i32
                 } else {
-                    s_raw.max(1)
-                };
-                let hi = if e_raw < 0 {
-                    (len + e_raw + 1).max(0)
-                } else {
-                    e_raw.max(0)
-                };
-                let lo_idx = (lo - 1) as usize;
-                let hi_idx = ((hi as usize).min(arr.len())).max(lo_idx);
-                let _: Vec<String> = arr.splice(lo_idx..hi_idx, values).collect();
-                exec.set_array(name, arr);
-                return;
-            }
-            // Single-int key. `a[i]=()` (empty values) removes the
-            // element at that index. Otherwise treat as a multi-element
-            // splice starting at i.
-            let i: i64 = match key.trim().parse::<i64>() {
-                Ok(n) => n,
-                Err(_) => return,
+                    raw.max(1) as i32
+                }
             };
-            let len = arr.len() as i64;
-            let idx = if i > 0 {
-                (i - 1) as usize
-            } else if i < 0 {
-                let off = len + i;
-                if off < 0 {
+            let (start, end) = if let Some((s_str, e_str)) = key.split_once(',') {
+                let s = s_str.trim().parse::<i64>().unwrap_or(0);
+                let e = e_str.trim().parse::<i64>().unwrap_or(0);
+                (translate(s), translate(e))
+            } else {
+                let i = key.trim().parse::<i64>().unwrap_or(0);
+                if i == 0 {
                     return;
                 }
-                off as usize
-            } else {
-                return;
+                let n = translate(i);
+                (n, n)
             };
-            if values.is_empty() {
-                if idx < arr.len() {
-                    arr.remove(idx);
+            // Route through canonical setarrvalue (Src/params.c:2895).
+            // It handles PM_READONLY rejection, PM_HASHED slice-error,
+            // PM_ARRAY splice + bounds clamp + padding (c:2980+).
+            let taken = match crate::ported::params::paramtab().write() {
+                Ok(mut tab) => tab.remove(&name),
+                Err(_) => None,
+            };
+            let mut v = crate::ported::zsh_h::value {
+                pm: taken,
+                arr: Vec::new(),
+                scanflags: 0,
+                valflags: 0,
+                start,
+                end,
+            };
+            crate::ported::params::setarrvalue(&mut v, values);
+            // Write the mutated Param back to paramtab and mirror via
+            // exec.set_array for the legacy cache path.
+            if let Some(pm) = v.pm {
+                let arr_clone = pm.u_arr.clone();
+                if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                    tab.insert(name.clone(), pm);
                 }
-            } else {
-                let end = (idx + 1).min(arr.len());
-                let _: Vec<String> = arr.splice(idx..end, values).collect();
+                if let Some(arr) = arr_clone {
+                    exec.set_array(name, arr);
+                }
             }
-            exec.set_array(name, arr);
         });
         fusevm::Value::Status(0)
     });
