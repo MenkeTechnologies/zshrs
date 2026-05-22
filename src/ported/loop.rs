@@ -57,16 +57,8 @@ use std::sync::atomic::AtomicI32;
 //   execcase   → compile_zsh.rs::compile_case
 //   exectry    → compile_zsh.rs::compile_try
 
-/// Port of `execfor(Estate state, int do_exec)` from `Src/loop.c:50`. See module-level note:
-/// zshrs does not call this from production; fusevm lowers `for` in compile_zsh.rs. This entry is
-/// Port of `execfor(Estate state, int do_exec)` from Src/loop.c:50.
-/// Architectural canonical: tree-walker replaced by fusevm bytecode;
-/// pinned by tests/tree_walker_absent.rs.
-/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execfor(_do_exec: i32) -> i32 {
-    // c:50
-    unreachable!("execfor: tree-walker disabled — fusevm lowers `for` in compile_zsh.rs")
-}
+// execfor moved to src/ported/exec.rs as a faithful port of
+// `Src/loop.c:50`. See exec.rs for the C-line-cited body.
 
 // Note: dead `ForIterator` / `CForState` / `TryState` aggregates
 // removed per PORT_PLAN Phase 2. None had production callers (only
@@ -90,15 +82,8 @@ pub fn execfor(_do_exec: i32) -> i32 {
 /// reads it to decide whether a trap's `errflag` propagates.
 pub static try_tryflag: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0); // c:731
 
-/// Port of `execselect(Estate state, UNUSED(int do_exec))` from
-/// Src/loop.c:217. Architectural canonical: tree-walker replaced
-/// by fusevm bytecode. `selectlist(items, start)` IS ported above
-/// as a callable helper. WARNING: param names don't match C —
-/// Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execselect(_do_exec: i32) -> i32 {
-    // c:217
-    unreachable!("execselect: tree-walker disabled — fusevm lowers `select` in compile_zsh.rs")
-}
+// execselect moved to src/ported/exec.rs as a faithful port of
+// `Src/loop.c:217`. See exec.rs for the C-line-cited body.
 
 // Note: dead `LoopState` aggregate (and impl/tests) deleted per
 // PORT_PLAN Phase 2. It was a Rust-only invention that double-tracked
@@ -225,45 +210,9 @@ pub fn selectlist(items: &[&str], start: usize) -> usize {
     } // c:415 return
 }
 
-/// Port of `execwhile(Estate state, UNUSED(int do_exec))` from `Src/loop.c:413`.
-/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execwhile(_do_exec: i32) -> i32 {
-    // c:413
-    unreachable!(
-        "execwhile: tree-walker disabled — fusevm lowers `while`/`until` in compile_zsh.rs"
-    )
-}
-
-/// Port of `execrepeat(Estate state, UNUSED(int do_exec))` from `Src/loop.c:499`.
-/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execrepeat(_do_exec: i32) -> i32 {
-    // c:499
-    unreachable!("execrepeat: tree-walker disabled — fusevm lowers `repeat` in compile_zsh.rs")
-}
-
-/// Port of `execif(Estate state, int do_exec)` from `Src/loop.c:553`.
-/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execif(_do_exec: i32) -> i32 {
-    // c:553
-    unreachable!(
-        "execif: tree-walker disabled — fusevm lowers `if`/`elif`/`else` in compile_zsh.rs"
-    )
-}
-
-/// Port of `execcase(Estate state, int do_exec)` from Src/loop.c:600.
-/// Architectural canonical: tree-walker replaced by fusevm bytecode.
-/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn execcase(_do_exec: i32) -> i32 {
-    // c:600
-    unreachable!("execcase: tree-walker disabled — fusevm lowers `case` in compile_zsh.rs")
-}
-
-/// Port of `exectry(Estate state, int do_exec)` from `Src/loop.c:735`.
-/// WARNING: param names don't match C — Rust=(_do_exec) vs C=(state, do_exec)
-pub fn exectry(_do_exec: i32) -> i32 {
-    // c:735
-    unreachable!("exectry: tree-walker disabled — fusevm lowers `try`/`always` in compile_zsh.rs")
-}
+// execwhile / execrepeat / execif / execcase / exectry moved to
+// src/ported/exec.rs as faithful ports of Src/loop.c:413 / :499 /
+// :553 / :600 / :735. See exec.rs for the C-line-cited bodies.
 
 /// Number of nested loops.
 /// Port of the global `loops` counter from Src/loop.c — every
@@ -295,49 +244,13 @@ mod tests {
         assert!(r < items.len() || r == 0);
     }
 
-    /// `execfor` / `execwhile` / `execrepeat` / `execif` / `execcase` /
-    /// `exectry` / `execselect` are tree-walker stubs that panic with
-    /// `unreachable!()` per the zshrs architectural pin: the tree
-    /// walker is deleted; fusevm lowers these constructs directly in
-    /// compile_zsh.rs. The tree_walker_absent.rs invariant tests this
-    /// at the architectural level. Per-function `should_panic` tests
-    /// here pin the panic message so a regression that re-introduces
-    /// tree-walker exec doesn't slip in silently.
-    #[test]
-    #[should_panic(expected = "tree-walker disabled")]
-    fn execfor_panics_with_tree_walker_disabled() {
-        let _ = execfor(0);
-    }
-    #[test]
-    #[should_panic(expected = "tree-walker disabled")]
-    fn execwhile_panics_with_tree_walker_disabled() {
-        let _ = execwhile(0);
-    }
-    #[test]
-    #[should_panic(expected = "tree-walker disabled")]
-    fn execrepeat_panics_with_tree_walker_disabled() {
-        let _ = execrepeat(0);
-    }
-    #[test]
-    #[should_panic(expected = "tree-walker disabled")]
-    fn execif_panics_with_tree_walker_disabled() {
-        let _ = execif(0);
-    }
-    #[test]
-    #[should_panic(expected = "tree-walker disabled")]
-    fn execcase_panics_with_tree_walker_disabled() {
-        let _ = execcase(0);
-    }
-    #[test]
-    #[should_panic(expected = "tree-walker disabled")]
-    fn exectry_panics_with_tree_walker_disabled() {
-        let _ = exectry(0);
-    }
-    #[test]
-    #[should_panic(expected = "tree-walker disabled")]
-    fn execselect_panics_with_tree_walker_disabled() {
-        let _ = execselect(0);
-    }
+    // The 7 *_panics_with_tree_walker_disabled tests were deleted
+    // when the underlying `unreachable!()` stubs were replaced with
+    // faithful ports in src/ported/exec.rs. The architectural pin
+    // remains in tests/tree_walker_absent.rs (which asserts the
+    // AST-side `execute_simple`/`execute_pipeline`/etc. tree walker
+    // is gone — a different concept from the wordcode-VM dispatch
+    // chain ported in exec.rs).
 
     /// Empty list to selectlist: nothing to draw, returns 0.
     #[test]
