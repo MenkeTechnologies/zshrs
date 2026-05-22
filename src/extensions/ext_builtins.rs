@@ -746,18 +746,10 @@ impl ShellExecutor {
         }
 
         if args[0] == "--clear" {
-            // Route through bin_zprof -c so the C-faithful clear path
-            // resets CALLS/NCALLS/ARCS/NARCS uniformly (zprof.c:141-147).
-            {
-                let mut ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                ops.ind[b'c' as usize] = 1;
-                crate::zprof::bin_zprof("profile", &["-c".to_string()], &ops, 0);
-            };
+            // Route through canonical dispatch_builtin → BUILTINS["zprof"]
+            // (zprof.c:139 entry) with the `-c` flag — clears
+            // CALLS/NCALLS/ARCS/NARCS tables per c:141-147.
+            crate::fusevm_bridge::dispatch_builtin("zprof", vec!["-c".to_string()]);
             println!("profile data cleared");
             return 0;
         }
@@ -769,15 +761,7 @@ impl ShellExecutor {
             if crate::zprof::NCALLS.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                 println!("{}", dim("no profile data"));
             } else {
-                {
-                    let ops = options {
-                        ind: [0u8; MAX_OPS],
-                        args: Vec::new(),
-                        argscount: 0,
-                        argsalloc: 0,
-                    };
-                    crate::zprof::bin_zprof("profile", &[], &ops, 0);
-                };
+                crate::fusevm_bridge::dispatch_builtin("zprof", Vec::new());
             }
             return 0;
         }
@@ -805,18 +789,9 @@ impl ShellExecutor {
         // Enable profiling, run, collect results
         let was_enabled = self.profiling_enabled;
         self.profiling_enabled = true;
-        // Reset zprof state through the C-faithful -c path so the
+        // Reset zprof state through canonical dispatch_builtin so the
         // module-level CALLS/NCALLS/ARCS/NARCS tables start fresh.
-        {
-            let mut ops = options {
-                ind: [0u8; MAX_OPS],
-                args: Vec::new(),
-                argscount: 0,
-                argsalloc: 0,
-            };
-            ops.ind[b'c' as usize] = 1;
-            crate::zprof::bin_zprof("profile", &["-c".to_string()], &ops, 0);
-        };
+        crate::fusevm_bridge::dispatch_builtin("zprof", vec!["-c".to_string()]);
 
         let t0 = std::time::Instant::now();
         let result = self.execute_script(&code);
