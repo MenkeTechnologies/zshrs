@@ -1279,12 +1279,15 @@ pub fn finddir_scan(path: &str) -> Option<(String, String)> {
 /// `~name/rest`) instead of the C `Nameddir` pointer.
 pub fn finddir(path: &str) -> Option<String> {
     // c:1127
-    // C reads the global `home` variable, not `getenv("HOME")` — the
-    // global is updated whenever the user assigns `HOME=...` inside
-    // the shell. Route through `getsparam("HOME")` to match: paramtab
-    // is the canonical store and the env-fallback path picks up
-    // pre-paramtab-init reads.
-    let home = getsparam("HOME").unwrap_or_default(); // c:1133-1134 (homenode.dir = home)
+    // c:1138 — `homenode.dir = home ? home : "";`. Reads the C global
+    // `char *home` (params.c:91) DIRECTLY — not via paramtab. zshrs
+    // ports the global as `params::home_lock()` accessed by
+    // `homegetfn` (which ignores its &param arg per
+    // `c:5109 UNUSED(Param pm)`). Pass a default param so the read
+    // works even before paramtab["HOME"] has been hydrated (during
+    // early init / unit-test environments).
+    let _default_pm = crate::ported::zsh_h::param::default();
+    let home = crate::ported::params::homegetfn(&_default_pm); // c:1138 home
     if !home.is_empty() && home.len() > 1 && path.starts_with(&home) {
         // c:1138-1141
         let rest = &path[home.len()..];
@@ -8567,21 +8570,16 @@ mod tests {
     #[test]
     fn finddir_uses_paramtab_home_not_env() {
         let _g = crate::test_util::global_state_lock();
-        // Stash and replace the canonical HOME via homesetfn — the
-        // same code path PM_SPECIAL dispatch routes through. C
-        // dispatches `pm->gsu.s->{get,set}fn(pm, ...)`; mirror by
-        // looking up the HOME pm in paramtab.
-        let saved = crate::ported::params::paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get("HOME").map(|pm| crate::ported::params::homegetfn(pm)))
-            .unwrap_or_default();
+        // C's `homesetfn` (params.c:5118) UNUSED(Param pm) — the
+        // function ignores its param-pointer argument and writes the
+        // canonical `char *home` global directly. zshrs's port mirrors
+        // that: `params::homesetfn(_pm, x)` ignores _pm and updates
+        // `home_lock()`. So we pass a stack-default param; the paramtab
+        // wiring (PM_SPECIAL dispatch) is not on the test path.
+        let mut pm = crate::ported::zsh_h::param::default();
+        let saved = crate::ported::params::homegetfn(&pm);
         let sentinel = "/tmp/zshrs-finddir-pin".to_string();
-        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-            if let Some(pm) = tab.get_mut("HOME") {
-                homesetfn(pm, sentinel.clone());
-            }
-        }
+        homesetfn(&mut pm, sentinel.clone());
 
         // `/tmp/zshrs-finddir-pin/x` must abbreviate to `~/x`.
         let abbrev = finddir(&format!("{}/x", sentinel));
@@ -8593,11 +8591,7 @@ mod tests {
         );
 
         // Restore.
-        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-            if let Some(pm) = tab.get_mut("HOME") {
-                homesetfn(pm, saved);
-            }
-        }
+        homesetfn(&mut pm, saved);
     }
 
     #[test]

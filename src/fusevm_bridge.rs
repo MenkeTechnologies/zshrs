@@ -4684,7 +4684,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // type plus any attribute markers separated by `-`.
                     // Examples: `integer`, `float`, `scalar-readonly`,
                     // `scalar-export`, `scalar-left` (typeset -L N),
-                    // `scalar-right_blanks`, `array`, `association`.
+                    // `scalar-right_blanks`, `array`, `association`,
+                    // `association-hide`, `scalar-hideval`, …
                     //
                     // `(Pt)` combo: direct port of Src/subst.c:2807-2854.
                     // zsh's `wantt` reads `v->pm->node.flags` AFTER
@@ -4698,15 +4699,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     } else {
                         name.clone()
                     };
-                    let kind = with_executor(|exec| {
-                        // Delegate to the canonical (t)-flag formatter
-                        // which reads PM_TYPE flags from paramtab. The
-                        // vm_helper "parameters" arm of get_special_array
-                        // _value handles the same PM_INTEGER / PM_FFLOAT
-                        // / PM_LOWER / PM_READONLY flag dispatch.
-                        exec.get_special_array_value("parameters", &target)
-                            .unwrap_or_default()
-                    });
+                    // Route through the canonical paramtypestr port
+                    // (Src/Modules/parameter.c:43, ported at
+                    // modules/parameter.rs:51). The previous
+                    // get_special_array_value("parameters", …) path
+                    // dispatched through vm_helper.rs:3680 — a Rust
+                    // simplified formatter that skipped PM_HIDE,
+                    // PM_HIDEVAL, PM_TAGGED, PM_TIED, PM_UNIQUE bits,
+                    // so `typeset -gAh ZINIT; echo ${(t)ZINIT}` returned
+                    // "association" instead of "association-hide".
+                    let kind = crate::ported::params::paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|tab| {
+                            tab.get(&target).map(|pm| {
+                                crate::ported::modules::parameter::paramtypestr(pm)
+                            })
+                        })
+                        .unwrap_or_else(|| {
+                            // No paramtab entry — fall back to the
+                            // executor's shape probe (handles assoc/
+                            // array-shaped values that haven't materialized
+                            // a Param entry yet).
+                            with_executor(|exec| {
+                                exec.get_special_array_value("parameters", &target)
+                                    .unwrap_or_default()
+                            })
+                        });
                     state = St::S(kind);
                 }
                 '%' => {
@@ -5020,7 +5039,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return;
             }
             // Default: assoc set.
-            exec.unset_scalar(&name);
+            // Only remove a stale scalar entry — `unset_scalar`
+            // wipes the WHOLE paramtab row including attribute
+            // flags (PM_HIDE/PM_HIDEVAL/PM_TAGGED/etc.) which
+            // sethparam doesn't restore. Skip the wipe if the
+            // entry is already a PM_HASHED assoc; in that case the
+            // attribute flags must survive the `arr[k]=v` element
+            // update.
+            if !is_assoc {
+                exec.unset_scalar(&name);
+            }
             let mut map = exec.assoc(&name).unwrap_or_default();
             map.insert(key, value);
             exec.set_assoc(name, map);
