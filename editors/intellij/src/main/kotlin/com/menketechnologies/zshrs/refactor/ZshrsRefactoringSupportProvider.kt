@@ -38,6 +38,9 @@ class ZshrsRefactoringSupportProvider : RefactoringSupportProvider() {
 
     override fun getIntroduceConstantHandler(): RefactoringActionHandler =
         LspExtractActionHandler { it.contains("constant") }
+
+    override fun getIntroduceParameterHandler(): RefactoringActionHandler =
+        LspExtractActionHandler { it.contains("parameter") }
 }
 
 private class LspExtractActionHandler(
@@ -55,8 +58,11 @@ private class LspExtractActionHandler(
         val server = findZshrsLspServer(project) ?: return
 
         val selection = editor.selectionModel
-        val (range, hasSelection) = selectionRange(editor.document, selection)
-        if (!hasSelection) return
+        // Caret-only invocation: don't block here. The LSP server
+        // snaps to the word at the cursor (identifier outside a
+        // string, or word-piece inside one). Same UX as stryke's
+        // Cmd-Opt-V/C on a bare word.
+        val (range, _hasSelection) = selectionRange(editor.document, selection)
 
         val params = CodeActionParams(
             TextDocumentIdentifier(server.getDocumentIdentifier(virtualFile).uri),

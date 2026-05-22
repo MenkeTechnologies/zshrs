@@ -659,17 +659,12 @@ impl ShellExecutor {
             .unwrap_or(false)
     }
 
-    /// Unset an associative array parameter from canonical paramtab
-    /// + paramtab_hashed_storage. Direct port of `unsetparam_pm`
-    /// for a PM_HASHED Param.
+    /// Unset an associative array parameter via canonical
+    /// `unsetparam` (Src/params.c:3819) — PM_READONLY rejection,
+    /// stdunsetfn dispatch, env clear. Also clears the zshrs-side
+    /// `paramtab_hashed_storage` parallel IndexMap shadow.
     pub fn unset_assoc(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab()
-            .write()
-            .ok()
-            .as_deref_mut()
-        {
-            tab.remove(name);
-        }
+        crate::ported::params::unsetparam(name);
         let _ = crate::ported::params::paramtab_hashed_storage()
             .lock()
             .ok()
@@ -798,20 +793,14 @@ impl ShellExecutor {
         crate::ported::params::unsetparam(name);
     }
 
-    /// Unset a parameter from every store. Mirrors the C
-    /// `unsetparam_pm` semantics at `Src/params.c:3905`: clear the
-    /// paramtab entry + the legacy HashMap caches + (for exported
-    /// vars) the env entry. Callers that need to scope the unset to
-    /// just one type pass through this single entry so paramtab and
-    /// the HashMaps don't drift apart.
+    /// Unset a parameter via canonical `unsetparam` (Src/params.c:
+    /// 3819) — PM_NAMEREF skip + PM_READONLY rejection via
+    /// unsetparam_pm + stdunsetfn dispatch + env clear for exported.
+    /// Also clears the zshrs-side `paramtab_hashed_storage` parallel
+    /// IndexMap shadow used for assoc-array value backing (no C
+    /// counterpart — folds into Param.u_hash once that wires up).
     pub(crate) fn unset_var(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab()
-            .write()
-            .ok()
-            .as_deref_mut()
-        {
-            tab.remove(name); // c:params.c:3900 paramtab removenode
-        }
+        crate::ported::params::unsetparam(name);
         let _ = crate::ported::params::paramtab_hashed_storage()
             .lock()
             .ok()
