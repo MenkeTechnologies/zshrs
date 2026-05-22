@@ -703,28 +703,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_SETOPT, |vm, argc| {
         let args = pop_args(vm, argc);
-        // Canonical bin_setopt per options.c:580 — `isun` discriminant
-        // flips the action polarity; setopt → 0, unsetopt → 1.
-        let ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        let status = crate::ported::options::bin_setopt("setopt", &args, &ops, 0);
-        Value::Status(status)
+        // Canonical bin_setopt per options.c:580 — BUILTINS["setopt"]
+        // carries BIN_SETOPT=0 funcid which discriminates the polarity.
+        Value::Status(dispatch_builtin("setopt", args))
     });
 
     vm.register_builtin(BUILTIN_UNSETOPT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        let status = crate::ported::options::bin_setopt("unsetopt", &args, &ops, 1);
-        Value::Status(status)
+        // BUILTINS["unsetopt"] carries BIN_UNSETOPT=1 funcid which
+        // bin_setopt reads as `isun` to flip the action polarity.
+        Value::Status(dispatch_builtin("unsetopt", args))
     });
 
     vm.register_builtin(BUILTIN_SHOPT, |vm, argc| {
