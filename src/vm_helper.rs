@@ -3079,63 +3079,6 @@ impl crate::ported::vm_helper::ShellExecutor {
         opts
     }
 
-    pub(crate) fn default_on_options() -> &'static [&'static str] {
-        &[
-            "aliases",
-            "alwayslastprompt",
-            "appendhistory",
-            "autolist",
-            "automenu",
-            "autoparamkeys",
-            "autoparamslash",
-            "autoremoveslash",
-            "badpattern",
-            "banghist",
-            "bareglobqual",
-            "beep",
-            "bgnice",
-            "caseglob",
-            "casematch",
-            "checkjobs",
-            "checkrunningjobs",
-            "clobber",
-            "debugbeforecmd",
-            "equals",
-            "evallineno",
-            "exec",
-            "flowcontrol",
-            "functionargzero",
-            "glob",
-            "globalexport",
-            "globalrcs",
-            "hashcmds",
-            "hashdirs",
-            "hashlistall",
-            "histbeep",
-            "histsavebycopy",
-            "hup",
-            // INTERACTIVE / SHINSTDIN intentionally absent — see the
-            // matching note in `default_options()` above. C init
-            // computes these from isatty(0), not from the static
-            // emulation-default table.
-            "listambiguous",
-            "listbeep",
-            "listtypes",
-            "monitor",
-            "multibyte",
-            "multifuncdef",
-            "multios",
-            "nomatch",
-            "notify",
-            "promptcr",
-            "promptpercent",
-            "promptsp",
-            "rcs",
-            "shortloops",
-            "unset",
-            "zle",
-        ]
-    }
 }
 
 // =====================================================================
