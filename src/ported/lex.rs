@@ -3914,7 +3914,17 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
                 c if c == Outpar => result.push(')'),
                 c if c == Inparmath => result.push('('),
                 c if c == Outparmath => result.push(')'),
-                c if c == Qstring => result.push('$'),
+                // c:167 — Qstring is the DQ-context `$` marker.
+                // Preserve in this variant so the downstream
+                // `stringsubst` qt detection at Src/subst.c:283
+                // (`if ((qt = c == Qstring) || c == String)`) fires
+                // and paramsubst sees qt=true. Untokenizing to plain
+                // `$` would lose the DQ context for the
+                // BUILTIN_EXPAND_TEXT singsub path, breaking
+                // DQ-wrapped flag forms like `"${(o)arr}"` (should
+                // join to scalar, not sort+splat per c:3033 sepjoin
+                // + c:4245 isarr-gated sort).
+                c if c == Qstring => result.push(c),
                 c if c == Equals => result.push('='),
                 c if c == Bar => result.push('|'),
                 c if c == Inbrace => result.push('{'),

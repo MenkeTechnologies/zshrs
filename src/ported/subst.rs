@@ -8322,10 +8322,16 @@ fn exec_sethparam(name: &str, parts: Vec<String>) {
 /// only existed for the executor-backed snapshot path.
 fn exec_sync_state_from_paramtab() {}
 
-/// Read a scalar from `paramtab`. Equivalent to C's
-/// `getsparam(name)` (`Src/params.c:3194`).
+/// Read a scalar from `paramtab` via the canonical `getsparam`
+/// (`Src/params.c:3076`). Routes through `PM_TYPE` dispatch so
+/// PM_ARRAY returns `sepjoin(arr)` (c:2367), PM_INTEGER returns
+/// `convbase(u_val, base)` (c:2364), PM_FLOAT returns
+/// `convfloat(...)` (c:2367-2368), and PM_SCALAR/PM_NAMEREF
+/// returns `u_str`. The prior `vars_get` shortcut only handled
+/// PM_SCALAR — arrays + ints + floats returned None → empty
+/// raw_value, breaking `"${(o)arr}"` etc.
 fn exec_getsparam(name: &str) -> Option<String> {
-    vars_get(name)
+    crate::ported::params::getsparam(name)
 }
 
 /// Read the current paramsubst flag bitmask. Equivalent to C's
