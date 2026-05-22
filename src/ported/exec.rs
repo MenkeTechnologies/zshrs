@@ -1443,13 +1443,10 @@ pub fn execsave() {
         list_pipe_job: list_pipe_job.load(Ordering::Relaxed), // c:6447
         list_pipe_text: [0u8; JOBTEXTSIZE], // c:6448 strcpy
         lastval: LASTVAL.load(Ordering::Relaxed),             // c:6449
-        // c:6450 — `noeval = M_NOEVAL` per math.rs port-rename. Read
-        // through the helper accessor for the canonical value.
-        // c:6450 — `noeval` (math.c:40) is ported as the thread-local
-        // `M_NOEVAL` in math.rs with private `m_noeval()` accessor.
-        // execsave/execrestore live across that privacy boundary;
-        // snapshot 0 until the accessor is elevated to pub(crate).
-        noeval: 0, // c:6450 (deps WARNING — math.rs::m_noeval not pub)
+        // c:6450 — `es->noeval = noeval;`. Snapshot math.c's
+        // `int noeval` (the parse-only side-effect-skip counter)
+        // via math.rs's pub accessor.
+        noeval: crate::ported::math::m_noeval(),
         // c:6451 — `badcshglob` lives in glob.c:103 but isn't ported
         // yet; snapshot 0 (the BSS-zero default) until the port lands.
         badcshglob: 0, // c:6451
@@ -1533,9 +1530,9 @@ pub fn execrestore() {
     list_pipe_job.store(en.list_pipe_job, Ordering::Relaxed); // c:6483
                                                               // c:6484 — list_pipe_text restore (not yet stored as Rust static)
     LASTVAL.store(en.lastval, Ordering::Relaxed); // c:6485
-    // c:6486 — `noeval = en->noeval;` — same privacy issue as the
-    // execsave side; restore is a no-op for now (deps WARNING).
-    let _ = en.noeval;
+    // c:6486 — `noeval = en->noeval;`. Restore math.c's noeval
+    // counter from the saved frame.
+    crate::ported::math::m_noeval_set(en.noeval);
                                                 // c:6487 — badcshglob restore (not yet stored as Rust static)
     cmdoutpid.store(en.cmdoutpid, Ordering::Relaxed); // c:6488
     cmdoutval.store(en.cmdoutval, Ordering::Relaxed); // c:6489
