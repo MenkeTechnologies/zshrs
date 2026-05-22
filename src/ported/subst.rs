@@ -3623,13 +3623,20 @@ pub fn paramsubst(
             } else if let Some(magic_val) = {
                 // c:2926 — magic-assoc per-key lookup. Routes through
                 // canonical PARTAB (Src/Modules/parameter.c:2235-2298
-                // ports at parameter.rs::PARTAB). Each entry pairs
-                // the name with its `getfn` pointer; partab_get walks
-                // PARTAB + dispatches the matched getfn. The splice
-                // form `${name[@]}` falls through to splice_magic_assoc.
+                // ports at parameter.rs::PARTAB / PARTAB_ARRAY).
                 let is_splice = sub == "@" || sub == "*";
                 if is_splice {
-                    splice_magic_assoc(&var_name)
+                    if let Some(values) = crate::vm_helper::partab_array_get(&var_name) {
+                        Some(values.join(" "))
+                    } else if let Some(keys) = crate::vm_helper::partab_scan_keys(&var_name) {
+                        let vals: Vec<String> = keys
+                            .iter()
+                            .map(|k| crate::vm_helper::partab_get(&var_name, k).unwrap_or_default())
+                            .collect();
+                        Some(vals.join(" "))
+                    } else {
+                        None
+                    }
                 } else {
                     crate::vm_helper::partab_get(&var_name, sub)
                 }
@@ -6209,48 +6216,26 @@ pub fn paramsubst(
                     String::new() // c:1625
                 } // c:1625
             } else if let Some(magic_val) = {
-                // c:1625 — magic-assoc per-key lookup via the
-                // partab[] dispatch (Src/Modules/parameter.c:2234).
-                // See companion dispatch at the braced-form site.
-                let nul = std::ptr::null_mut();
-                let pm: Option<Param> = if sub == "@" || sub == "*" {
-                    None
-                } else {
-                    match var_name.as_str() {
-                        "aliases" => getpmralias(nul, sub),
-                        "galiases" => getpmgalias(nul, sub),
-                        "saliases" => getpmsalias(nul, sub),
-                        "dis_aliases" => getpmdisralias(nul, sub),
-                        "dis_galiases" => getpmdisgalias(nul, sub),
-                        "dis_saliases" => getpmdissalias(nul, sub),
-                        "builtins" => getpmbuiltin(nul, sub),
-                        "dis_builtins" => getpmdisbuiltin(nul, sub),
-                        "commands" => getpmcommand(nul, sub),
-                        "functions" => getpmfunction(nul, sub),
-                        "dis_functions" => getpmdisfunction(nul, sub),
-                        "functions_source" => getpmfunction_source(nul, sub),
-                        "dis_functions_source" => getpmdisfunction_source(nul, sub),
-                        "nameddirs" => getpmnameddir(nul, sub),
-                        "userdirs" => getpmuserdir(nul, sub),
-                        "options" => getpmoption(nul, sub),
-                        "parameters" => getpmparameter(nul, sub),
-                        "history" => getpmhistory(nul, sub),
-                        "modules" => getpmmodule(nul, sub),
-                        "jobdirs" => getpmjobdir(nul, sub),
-                        "jobstates" => getpmjobstate(nul, sub),
-                        "jobtexts" => getpmjobtext(nul, sub),
-                        "usergroups" => getpmusergroups(nul, sub),
-                        _ => None,
-                    }
-                };
-                // c:`scanpm<X>` splice paths from Modules/parameter.c.
-                pm.and_then(|p| p.u_str).or_else(|| {
-                    if sub == "@" || sub == "*" {
-                        splice_magic_assoc(&var_name)
+                // c:1625 — magic-assoc lookup via canonical PARTAB
+                // (Src/Modules/parameter.c:2235-2298 ports at
+                // parameter.rs::PARTAB / PARTAB_ARRAY). Mirrors the
+                // companion braced-form dispatch above.
+                let is_splice = sub == "@" || sub == "*";
+                if is_splice {
+                    if let Some(values) = crate::vm_helper::partab_array_get(&var_name) {
+                        Some(values.join(" "))
+                    } else if let Some(keys) = crate::vm_helper::partab_scan_keys(&var_name) {
+                        let vals: Vec<String> = keys
+                            .iter()
+                            .map(|k| crate::vm_helper::partab_get(&var_name, k).unwrap_or_default())
+                            .collect();
+                        Some(vals.join(" "))
                     } else {
                         None
                     }
-                })
+                } else {
+                    crate::vm_helper::partab_get(&var_name, sub)
+                }
             } {
                 magic_val
             } else {
@@ -7361,60 +7346,6 @@ fn errflag_set_error() {
 // `scanpm*` fns matching C's names, plus a `splice_magic_assoc`
 // dispatcher that routes name → fn.
 
-/// `scanpmraliases` — port of `Src/Modules/parameter.c:1990`.
-/// Walks `aliastab` for regular (non-global, non-suffix) aliases.
-fn scanpmraliases() -> String {
-    aliastab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, a)| {
-                    let f = a.node.flags;
-                    (f & ALIAS_GLOBAL as i32) == 0
-                        && (f & ALIAS_SUFFIX as i32) == 0
-                        && (f & DISABLED as i32) == 0
-                })
-                .map(|(_, a)| a.text.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmgaliases` — port of `Src/Modules/parameter.c:1990` (global arm).
-fn scanpmgaliases() -> String {
-    aliastab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, a)| {
-                    let f = a.node.flags;
-                    (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) == 0
-                })
-                .map(|(_, a)| a.text.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmsaliases` — port of `Src/Modules/parameter.c` (suffix arm).
-fn scanpmsaliases() -> String {
-    sufaliastab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, a)| (a.node.flags & DISABLED as i32) == 0)
-                .map(|(_, a)| a.text.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
 // =====================================================================
 // !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
 // =====================================================================
@@ -7462,174 +7393,6 @@ thread_local! {
     pub static SUB_FLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 }
 
-/// `scanpmdisraliases` — port of `Src/Modules/parameter.c:1998`.
-/// Disabled regular-aliases arm.
-fn scanpmdisraliases() -> String {
-    aliastab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, a)| {
-                    let f = a.node.flags;
-                    (f & ALIAS_GLOBAL as i32) == 0
-                        && (f & ALIAS_SUFFIX as i32) == 0
-                        && (f & DISABLED as i32) != 0
-                })
-                .map(|(_, a)| a.text.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmdisgaliases` — disabled-global-aliases arm.
-fn scanpmdisgaliases() -> String {
-    aliastab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, a)| {
-                    let f = a.node.flags;
-                    (f & ALIAS_GLOBAL as i32) != 0 && (f & DISABLED as i32) != 0
-                })
-                .map(|(_, a)| a.text.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmdissaliases` — disabled-suffix-aliases arm.
-fn scanpmdissaliases() -> String {
-    sufaliastab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, a)| (a.node.flags & DISABLED as i32) != 0)
-                .map(|(_, a)| a.text.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmcommands` — port of `Src/Modules/parameter.c:245`.
-/// HASHED arm reads `cmd` (resolved path); unhashed reads first
-/// path segment in `name` (Vec<String>) joined with the cmd name.
-fn scanpmcommands() -> String {
-    cmdnamtab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter_map(|(nm, c)| {
-                    let hashed = (c.node.flags & HASHED as i32) != 0;
-                    if hashed {
-                        c.cmd.clone()
-                    } else {
-                        c.name
-                            .as_ref()
-                            .and_then(|v| v.first())
-                            .map(|seg| format!("{}/{}", seg, nm))
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmfunctions` — port of `Src/Modules/parameter.c:519`.
-fn scanpmfunctions() -> String {
-    shfunctab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
-                .map(|(_, f)| f.body.clone().unwrap_or_default())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmdisfunctions` — disabled-functions arm.
-fn scanpmdisfunctions() -> String {
-    shfunctab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
-                .map(|(_, f)| f.body.clone().unwrap_or_default())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmfunction_source` — port of `Src/Modules/parameter.c:609`.
-/// `$functions_source` magic-assoc walker (paths where each
-/// function was loaded from). C delegates to `scanfunctions_source`
-/// with `dis=0`; the Rust port inlines the filtered iteration.
-fn scanpmfunction_source() -> String {
-    shfunctab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, f)| (f.node.flags & DISABLED as i32) == 0)
-                .map(|(_, f)| f.filename.clone().unwrap_or_default())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmdisfunction_source` — port of `Src/Modules/parameter.c:618`.
-/// `$dis_functions_source` arm (delegates to `scanfunctions_source`
-/// with `dis=DISABLED` in C).
-fn scanpmdisfunction_source() -> String {
-    shfunctab_lock()
-        .read()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .filter(|(_, f)| (f.node.flags & DISABLED as i32) != 0)
-                .map(|(_, f)| f.filename.clone().unwrap_or_default())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmnameddirs` — port of `Src/Modules/parameter.c:1618`.
-fn scanpmnameddirs() -> String {
-    nameddirtab()
-        .lock()
-        .ok()
-        .map(|t| {
-            t.iter()
-                .map(|(_, d)| d.dir.clone())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-/// `scanpmbuiltins` — port of `Src/Modules/parameter.c:843`.
-fn scanpmbuiltins() -> String {
-    crate::ported::builtin::createbuiltintable()
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 // `convbase` lives in src/ported/utils.rs (canonical port of
 // Src/utils.c). Callers below import via the full path.
 
@@ -7638,52 +7401,6 @@ fn scanpmbuiltins() -> String {
 // a Rust-only u32 wrapper duplicating the canonical i32 constants
 // in `zsh_h::MULTSUB_*` (c:zsh.h:2046-2059). Use those directly.
 // c:zsh.h:2046-2059
-
-/// `scanpmparameters` — port of `Src/Modules/parameter.c:124`.
-fn scanpmparameters() -> String {
-    paramtab()
-        .read()
-        .ok()
-        .map(|t| t.keys().cloned().collect::<Vec<_>>().join(" "))
-        .unwrap_or_default()
-}
-
-/// `scanpmoptions` — port of `Src/Modules/parameter.c:1016`.
-fn scanpmoptions() -> String {
-    ZSH_OPTIONS_SET
-        .iter()
-        .map(|s| s.to_string())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// Dispatcher routing magic-assoc parameter name → `scanpm*` fn.
-/// Rust-side stand-in for C's `param->gsu->scantab` callback
-/// dispatch (`Src/Modules/parameter.c` per-param init at e.g.
-/// `add_parameters()` line 2143). Returns `None` for names with no
-/// ported scanner (history/modules/jobdirs/jobstates/jobtexts/
-/// usergroups/userdirs/...).
-fn splice_magic_assoc(name: &str) -> Option<String> {
-    let v = match name {
-        "aliases" => scanpmraliases(), // c:parameter.c:1990
-        "galiases" => scanpmgaliases(),
-        "saliases" => scanpmsaliases(),
-        "dis_aliases" => scanpmdisraliases(),
-        "dis_galiases" => scanpmdisgaliases(),
-        "dis_saliases" => scanpmdissaliases(),
-        "commands" => scanpmcommands(),   // c:parameter.c:245
-        "functions" => scanpmfunctions(), // c:parameter.c:519
-        "dis_functions" => scanpmdisfunctions(),
-        "functions_source" => scanpmfunction_source(),
-        "dis_functions_source" => scanpmdisfunction_source(),
-        "nameddirs" => scanpmnameddirs(),   // c:parameter.c:1618
-        "builtins" => scanpmbuiltins(),     // c:parameter.c:843
-        "parameters" => scanpmparameters(), // c:parameter.c:124
-        "options" => scanpmoptions(),       // c:parameter.c:1016
-        _ => return None,
-    };
-    Some(v)
-}
 
 /// Read a scalar variable from `paramtab`. Equivalent to C's
 /// `getsparam(name)` (`Src/params.c:3194`) for the scalar case.
