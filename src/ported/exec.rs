@@ -4944,7 +4944,10 @@ impl crate::ported::vm_helper::ShellExecutor {
 // call path used by signal-trap dispatch and other callers that
 // can't go through the fusevm Op::CallFunction route.
 // =====================================================================
-use crate::fusevm_bridge::{ExecutorContext, register_builtins};
+use crate::fusevm_bridge::{ExecutorContext, register_builtins, ZshrsHost};
+use std::io;
+use std::io::{Read, Write};
+use std::os::unix::io::FromRawFd;
 impl crate::ported::vm_helper::ShellExecutor {
     /// Dispatch a function by name through the new (compiled) pipeline.
     /// Mirrors `ZshrsHost::call_function`'s resolution order — checks
@@ -5065,5 +5068,177 @@ impl crate::ported::vm_helper::ShellExecutor {
             self.set_last_status(status);
             Some(status)
         }
+    }
+}
+
+
+// =====================================================================
+// run_command_substitution — moved from src/vm_helper.rs.
+// Partial port of `Src/exec.c::getoutput` — command-substitution
+// runtime that captures `$(cmd)` output via dup2+pipe. Includes
+// `$(< file)` shorthand for fast file-read.
+// =====================================================================
+impl crate::ported::vm_helper::ShellExecutor {
+    pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
+        // `$(< FILE)` — zsh shorthand for "read FILE contents". Faster
+        // than spawning `cat`. The leading `<` (after stripping
+        // whitespace) means "read this file". Trailing newline is
+        // stripped (same as command-substitution).
+        let trimmed = cmd_str.trim_start();
+        // Only treat as `$(<file)` shorthand when the SINGLE leading `<`
+        // is followed by a filename, not another `<`. `$(<<<"hi" cat)`
+        // starts with `<<<` (here-string) and must go through the full
+        // parse path, not the read-file shortcut.
+        if let Some(rest) = trimmed.strip_prefix('<').filter(|s| !s.starts_with('<')) {
+            let filename = rest.trim();
+            // Expand any leading $ / tilde in the filename so
+            // `$(< $f)` and `$(< ~/x)` work.
+            let resolved = if filename.contains('$') || filename.starts_with('~') {
+                crate::ported::subst::singsub(filename)
+            } else {
+                filename.to_string()
+            };
+            let resolved = resolved.to_string();
+            match std::fs::read_to_string(&resolved) {
+                Ok(contents) => {
+                    return contents.trim_end_matches('\n').to_string();
+                }
+                Err(_) => {
+                    eprintln!("zshrs:1: no such file or directory: {}", resolved);
+                    return String::new();
+                }
+            }
+        }
+
+        // Port of getoutput(char *cmd, int qt) from Src/exec.c. Parse and compile via
+        // the lex+parse free fns + ZshCompiler pipeline, run on a
+        // sub-VM with the host wired up. Stdout is captured through
+        // an in-process pipe via dup2 — no fork.
+        //
+        // This single path replaces the prior "internal vs external"
+        // fast-path split: the sub-VM emits Op::Exec for unknown
+        // command names, which forks/execs through the host.
+
+        // Set up the stdout-capture pipe. We dup the original stdout
+        // so post-run we can restore it; the write end is dup2'd onto
+        // STDOUT_FILENO so all output the sub-VM emits (including from
+        // forked children, which inherit fd 1) lands in the pipe.
+        let (read_fd, write_fd) = {
+            let mut fds = [0i32; 2];
+            if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+                return String::new();
+            }
+            (fds[0], fds[1])
+        };
+        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if saved_stdout < 0 {
+            unsafe {
+                libc::close(read_fd);
+                libc::close(write_fd);
+            }
+            return String::new();
+        }
+        unsafe {
+            libc::dup2(write_fd, libc::STDOUT_FILENO);
+            libc::close(write_fd);
+        }
+
+        // Parse + compile + run.
+        // Push CS_CMDSUBST for `%_` xtrace prefix — direct port of
+        // Src/exec.c:4783 `cmdpush(CS_CMDSUBST);` around execode().
+        // Trace lines emitted by the inner program inherit this token
+        // so their PS4 prefix shows "cmdsubst" matching zsh -x.
+        crate::ported::prompt::cmdpush(crate::ported::zsh_h::CS_CMDSUBST as u8); // c:zsh.h:2799
+                                                                                 // Save LINENO so the inner cmdsubst's line counter doesn't
+                                                                                 // leak into the outer trace — direct port of Src/exec.c:1407
+                                                                                 // `oldlineno = lineno;` followed by `lineno = oldlineno;`
+                                                                                 // restore at line 1640. Inner program parses fresh as line 1
+                                                                                 // and increments from there; once it returns, the outer
+                                                                                 // line at the `$(…)` site must read the original outer
+                                                                                 // lineno (so xtrace renders `+:5:> echo …` not `+:1:> …`).
+        let saved_lineno = crate::ported::params::getsparam("LINENO");
+        // Anchor the inner program's lineno to the outer's current
+        // $LINENO so xtrace inside the cmdsubst renders the outer
+        // line. zsh's execlist preserves lineno across the inner
+        // exec — for our sub-VM (fresh compile) we use lineno_addend
+        // to shift inner's line N → outer_lineno + (N - 1).
+        let outer_lineno: u64 = self
+            .scalar("LINENO")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+        // Mirror Src/init.c errflag save/clear/check pattern around
+        // the nested parse so an inner syntax error doesn't bleed into
+        // the outer execution.
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        crate::ported::parse::parse_init(cmd_str);
+        let parsed = crate::ported::parse::parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        let prog = if parse_failed { None } else { Some(parsed) };
+        let mut cmd_status: Option<i32> = None;
+        if let Some(prog) = prog {
+            let mut compiler = crate::compile_zsh::ZshCompiler::new();
+            compiler.lineno_addend = outer_lineno.saturating_sub(1);
+            let chunk = compiler.compile(&prog);
+            if !chunk.ops.is_empty() {
+                crate::fusevm_disasm::maybe_print_stdout("run_command_substitution", &chunk);
+                let mut vm = fusevm::VM::new(chunk);
+                register_builtins(&mut vm);
+                vm.set_shell_host(Box::new(ZshrsHost));
+                // Seed inner $? with the outer's last_status so the
+                // sub-shell inherits the parent's exit code. Direct
+                // port of Src/exec.c:4783 around execcmd_exec — the
+                // child inherits `lastval` at fork time, so `false;
+                // echo $(echo $?)` reads 1, not the freshly-zeroed
+                // sub-VM default. Without this, every cmd-subst
+                // started with $?==0 regardless of the parent's
+                // last command.
+                vm.last_status = self.last_status();
+                let _ctx = ExecutorContext::enter(self);
+                let _ = vm.run();
+                cmd_status = Some(vm.last_status);
+            }
+        }
+        // Restore LINENO so outer xtrace sees the outer line.
+        if let Some(ln) = saved_lineno {
+            self.set_scalar("LINENO".to_string(), ln);
+        }
+        crate::ported::prompt::cmdpop();
+        // Propagate the inner cmd's status to the parent shell. zsh:
+        // `a=$(false); echo $?` → 1 because cmd-subst status leaks to
+        // $?. Set last_status on the executor so $? reads the right
+        // value for callers that don't have a SetStatus(0) overwrite
+        // (echo, test, etc.). Bare assignment paths still get the
+        // SetStatus(0) from compile_simple — that's a separate gap.
+        // Empty cmd-subst (`\`\``, `$()`) resets status to 0 per
+        // Src/exec.c — the inner ran no command so the "last
+        // command's exit" is the implicit success of "did nothing".
+        // Without this branch, a prior command's non-zero status
+        // leaked through the empty cmd-subst.
+        if let Some(status) = cmd_status {
+            self.set_last_status(status);
+        } else {
+            self.set_last_status(0);
+        }
+
+        // Flush any buffered Rust-side stdout so it reaches the pipe
+        // before we restore.
+        let _ = io::stdout().flush();
+
+        // Restore stdout and read what was captured.
+        unsafe {
+            libc::dup2(saved_stdout, libc::STDOUT_FILENO);
+            libc::close(saved_stdout);
+        }
+        let read_file = unsafe { std::fs::File::from_raw_fd(read_fd) };
+        let mut output = String::new();
+        let _ = std::io::BufReader::new(read_file).read_to_string(&mut output);
+
+        // POSIX: trailing newlines stripped from cmd-sub result.
+        while output.ends_with('\n') {
+            output.pop();
+        }
+        output
     }
 }
