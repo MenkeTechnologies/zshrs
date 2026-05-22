@@ -3484,6 +3484,13 @@ pub static PARTAB: &[PartabHashEntry] = &[
         getfn: crate::ported::zle::zleparameter::getpmwidgets,
         scanfn: crate::ported::zle::zleparameter::scanpmwidgets,
     },
+    // Src/Modules/system.c:904 SPECIALPMDEF("sysparams", PM_READONLY, ...).
+    PartabHashEntry {
+        name: "sysparams",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // system.c:904
+        getfn: crate::ported::modules::system::getpmsysparams,
+        scanfn: crate::ported::modules::system::scanpmsysparams,
+    },
 ];
 
 // scanpmfunction_source / scanpmdisfunction_source already ported
@@ -3572,6 +3579,12 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "historywords",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2273
         getfn: histwgetfn,
+    },
+    // Src/Modules/system.c:902 SPECIALPMDEF("errnos", PM_ARRAY|PM_READONLY, ...).
+    PartabArrayEntry {
+        name: "errnos",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // system.c:902
+        getfn: crate::ported::modules::system::errnosgetfn,
     },
     // Src/Zle/zleparameter.c:132 SPECIALPMDEF("keymaps", PM_ARRAY|PM_READONLY, ...).
     PartabArrayEntry {

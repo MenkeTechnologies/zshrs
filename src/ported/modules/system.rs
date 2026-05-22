@@ -1064,9 +1064,8 @@ pub fn bin_zsystem(
 /// `arrdup((char **)sys_errnames)` — a fresh duplicate of the
 /// errno-name table. Rust port returns the names as `Vec<String>`.
 ///
-/// C signature: `static char **errnosgetfn(Param pm)`.
-/// WARNING: param names don't match C — Rust=() vs C=(pm)
-pub fn errnosgetfn() -> Vec<String> {
+/// Port of `static char **errnosgetfn(Param pm)` from `Src/Modules/system.c:832`.
+pub fn errnosgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
     // c:832
     SYS_ERRNAMES.iter().map(|(n, _)| n.to_string()).collect() // c:846 arrdup
 }
@@ -1095,37 +1094,92 @@ pub fn fillpmsysparams(name: &str) -> Option<String> {
     Some(format!("{}", num)) // c:873 sprintf %d
 }
 
-/// Port of `getpmsysparams(UNUSED(HashTable ht), const char *name)` from `Src/Modules/system.c:873`. The
-/// magic-assoc lookup callback for `${sysparams[name]}`.
-///
-/// C signature: `static HashNode getpmsysparams(HashTable ht, const char *name)`.
-/// Rust port returns `Option<String>` since zshrs's magic-assoc
-/// dispatcher consumes the value, not a synthesised Param.
-/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getpmsysparams(name: &str) -> Option<String> {
+/// Port of `static HashNode getpmsysparams(UNUSED(HashTable ht), const char *name)`
+/// from `Src/Modules/system.c:873-883`. Returns a synthesised Param
+/// with u_str set via fillpmsysparams, or PM_UNSET when name isn't
+/// pid/ppid/procsubstpid.
+pub fn getpmsysparams(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Option<crate::ported::zsh_h::Param> {
     // c:873
-    // c:885-879 — `pm = hcalloc(); fillpmsysparams(pm, name); return &pm->node;`
-    fillpmsysparams(name) // c:885
+    use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SCALAR, PM_UNSET};
+    let mk = |s: String, extra: i32| -> Param {
+        Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: name.to_string(),
+                flags: PM_SCALAR as i32 | PM_READONLY as i32 | extra,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: Some(s),
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        })
+    };
+    // c:879 — `fillpmsysparams(pm, name)`. Wrap the rendered value
+    // in a Param; PM_UNSET when name didn't match a known key.
+    match fillpmsysparams(name) {
+        Some(v) => Some(mk(v, 0)),
+        None => Some(mk(String::new(), PM_UNSET as i32)),
+    }
 }
 
-/// Port of `scanpmsysparams(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/system.c:885`. The
-/// magic-assoc scanner for `${(k)sysparams}`. Iterates the three
-/// fixed keys and returns each `(name, value)` pair.
-///
-/// C signature: `static void scanpmsysparams(HashTable ht, ScanFunc func, int flags)`.
-/// Rust port returns the pairs as a Vec.
-/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scanpmsysparams() -> Vec<(String, String)> {
+/// Port of `static void scanpmsysparams(UNUSED(HashTable ht), ScanFunc func, int flags)`
+/// from `Src/Modules/system.c:885-895`. Walks the three fixed keys
+/// (pid/ppid/procsubstpid) and invokes the callback with a transient
+/// Param per entry.
+pub fn scanpmsysparams(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    func: Option<crate::ported::zsh_h::ScanFunc>,
+    flags: i32,
+) {
     // c:885
-    // c:885-894 — fill + emit each of pid / ppid / procsubstpid.
-    let mut out = Vec::new();
+    use crate::ported::zsh_h::{hashnode, param, PM_READONLY, PM_SCALAR};
+    let f = match func {
+        Some(f) => f,
+        None => return,
+    };
     for n in ["pid", "ppid", "procsubstpid"] {
-        // c:889/891/893
         if let Some(v) = fillpmsysparams(n) {
-            out.push((n.to_string(), v));
+            let pm = param {
+                node: hashnode {
+                    next: None,
+                    nam: n.to_string(),
+                    flags: PM_SCALAR as i32 | PM_READONLY as i32,
+                },
+                u_data: 0,
+                u_arr: None,
+                u_str: Some(v),
+                u_val: 0,
+                u_dval: 0.0,
+                u_hash: None,
+                gsu_s: None,
+                gsu_i: None,
+                gsu_f: None,
+                gsu_a: None,
+                gsu_h: None,
+                base: 0,
+                width: 0,
+                env: None,
+                ename: None,
+                old: None,
+                level: 0,
+            };
+            let node_box = Box::new(pm.node.clone());
+            f(&node_box, flags); // c:891 / c:893 func call
         }
     }
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1570,7 +1624,7 @@ mod tests {
     #[test]
     fn errnosgetfn_returns_table() {
         let _g = crate::test_util::global_state_lock();
-        let names = errnosgetfn();
+        let names = errnosgetfn(std::ptr::null_mut());
         assert!(names.contains(&"EPERM".to_string()));
         assert!(names.contains(&"ENOENT".to_string()));
         assert!(names.contains(&"EINVAL".to_string()));
@@ -1593,8 +1647,11 @@ mod tests {
     #[test]
     fn getpmsysparams_pid_set() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getpmsysparams("pid").is_some());
-        assert!(getpmsysparams("nonsense").is_none());
+        use crate::ported::zsh_h::PM_UNSET;
+        let pm_pid = getpmsysparams(std::ptr::null_mut(), "pid").expect("pid Param");
+        assert!(pm_pid.node.flags & PM_UNSET as i32 == 0, "pid must be set");
+        let pm_bad = getpmsysparams(std::ptr::null_mut(), "nonsense").expect("Param");
+        assert!(pm_bad.node.flags & PM_UNSET as i32 != 0, "unknown key PM_UNSET");
     }
 
     /// Verifies `scanpmsysparams` yields all three known keys
@@ -1602,11 +1659,17 @@ mod tests {
     #[test]
     fn scanpmsysparams_three_entries() {
         let _g = crate::test_util::global_state_lock();
-        let entries = scanpmsysparams();
-        let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
-        assert!(names.contains(&"pid"));
-        assert!(names.contains(&"ppid"));
-        assert!(names.contains(&"procsubstpid"));
+        use std::sync::Mutex;
+        static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        KEYS.lock().unwrap().clear();
+        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+            KEYS.lock().unwrap().push(node.nam.clone());
+        }
+        scanpmsysparams(std::ptr::null_mut(), Some(cb), 0);
+        let collected = KEYS.lock().unwrap().clone();
+        assert!(collected.iter().any(|k| k == "pid"));
+        assert!(collected.iter().any(|k| k == "ppid"));
+        assert!(collected.iter().any(|k| k == "procsubstpid"));
     }
 
     fn empty_ops() -> options {
