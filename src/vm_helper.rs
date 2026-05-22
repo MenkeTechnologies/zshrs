@@ -2295,38 +2295,10 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// Returns Some(value) if this is a special array access, None otherwise
     pub fn get_special_array_value(&self, array_name: &str, key: &str) -> Option<String> {
         match array_name {
-            // === ZSH/SYSTEM — errnos / sysparams ===
-            "errnos" => {
-                let table = crate::modules::system::ERRNO_NAMES;
-                if let Ok(n) = key.parse::<i64>() {
-                    let len = table.len() as i64;
-                    let pos = if n > 0 {
-                        (n - 1) as usize
-                    } else if n < 0 {
-                        let p = len + n;
-                        if p < 0 {
-                            return Some(String::new());
-                        }
-                        p as usize
-                    } else {
-                        return Some(String::new());
-                    };
-                    if let Some((name, _)) = table.get(pos) {
-                        return Some((*name).to_string());
-                    }
-                }
-                Some(String::new())
-            }
-            "sysparams" => {
-                let pid = std::process::id().to_string();
-                let ppid = unsafe { libc::getppid() }.to_string();
-                Some(match key {
-                    "pid" => pid,
-                    "ppid" => ppid,
-                    "procsubstpid" => "0".to_string(),
-                    _ => String::new(),
-                })
-            }
+            // errnos / sysparams arms deleted — both now route through
+            // canonical PARTAB / PARTAB_ARRAY entries (system.c:902 +
+            // :904 SPECIALPMDEFs) wiring errnosgetfn / getpmsysparams /
+            // scanpmsysparams as fn pointers with C signatures.
             // === SHELL OPTIONS ===
 
             // === ALIASES ===
