@@ -464,69 +464,60 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // route to bin_whence with BIN_COMMAND funcid; bare `command foo`
     // dispatches builtin if present, else external (no fork — direct
     // spawn via execute_external since zshrs is non-forking).
+    // BUILTIN_COMMAND — `command [-p] [-v|-V] cmd args…` BIN_PREFIX
+    // (Src/builtin.c:45). PURE PASSTHRU: prepend "command" and hand
+    // to `exec::execcmd_exec` (C port of `Src/exec.c::execcmd_exec`
+    // precommand-modifier walk at c:3104-3187). That port already
+    // does the -p / -v / -V option parsing, surfaces
+    // `has_command_vv` for the whence redirect, and reports the
+    // dispatch shape (is_builtin vs external).
     vm.register_builtin(BUILTIN_COMMAND, |vm, argc| {
-        let mut args = pop_args(vm, argc);
-        // Strip `-p` (use sanitized PATH — informational on macOS/Linux
-        // where the default PATH is already in use; zsh implements it
-        // via _PATH_STDPATH). Stop on first non-flag or `--`.
-        let mut path_search = false;
-        let mut whence_mode: Option<&str> = None;
-        let mut i = 0;
-        while i < args.len() {
-            let a = &args[i];
-            if a == "--" {
-                args.remove(i);
-                break;
-            }
-            if !a.starts_with('-') || a.len() < 2 {
-                break;
-            }
-            let flag = &a[1..];
-            if flag == "p" {
-                path_search = true;
-                args.remove(i);
-            } else if flag == "v" {
-                whence_mode = Some("-v");
-                break;
-            } else if flag == "V" {
-                whence_mode = Some("-V");
-                break;
-            } else {
-                break;
-            }
-        }
-        let _ = path_search; // accepted but ignored (default PATH search)
-        if let Some(flag) = whence_mode {
-            // Route directly to bin_whence with BIN_COMMAND funcid. The
-            // whence port at builtin.rs:4782+ already special-cases
-            // `func == BIN_COMMAND` for `-v` (simple-style) vs `-V`
-            // (verbose-style). The `command` builtin in C is BIN_PREFIX
-            // (NULLBINCMD) — there's no `bin_command` — so we can't
-            // route through execbuiltin's BUILTINS lookup; build the
-            // ops struct directly and invoke the handler.
-            args.remove(0); // drop the -v / -V flag itself
+        let args = pop_args(vm, argc);
+        let mut full = Vec::with_capacity(args.len() + 1);
+        full.push("command".to_string());
+        full.extend(args.clone());
+        let dispatch = crate::ported::exec::execcmd_exec(
+            &full,
+            crate::ported::zsh_h::WC_SIMPLE,
+        );
+        let post = &full[dispatch.precmd_skip..];
+        if dispatch.has_command_vv {
+            // `-v` / `-V` → bin_whence with BIN_COMMAND funcid.
             let mut ops = crate::ported::zsh_h::options {
                 ind: [0u8; crate::ported::zsh_h::MAX_OPS],
                 args: Vec::new(),
                 argscount: 0,
                 argsalloc: 0,
             };
-            let flag_byte = if flag == "-V" { b'V' } else { b'v' };
+            let mut name_pos = 0usize;
+            let mut flag_byte = b'v';
+            for (i, a) in post.iter().enumerate() {
+                if a.starts_with('-') && a.len() >= 2 {
+                    let body = &a.as_bytes()[1..];
+                    if body.contains(&b'V') {
+                        flag_byte = b'V';
+                    }
+                    name_pos = i + 1;
+                } else {
+                    name_pos = i;
+                    break;
+                }
+            }
             ops.ind[flag_byte as usize] = 1;
-            let status = crate::ported::builtin::bin_whence(
+            let whence_args: Vec<String> = post[name_pos..].to_vec();
+            return Value::Status(crate::ported::builtin::bin_whence(
                 "command",
-                &args,
+                &whence_args,
                 &ops,
                 crate::ported::hashtable_h::BIN_COMMAND,
-            );
-            return Value::Status(status);
+            ));
         }
-        let Some((name, rest)) = args.split_first() else {
+        if dispatch.is_empty_command {
+            return Value::Status(0);
+        }
+        let Some((name, rest)) = post.split_first() else {
             return Value::Status(0);
         };
-        // Builtin first (no function shadow). If not a builtin, fall
-        // through to external — matching zsh "Look for builtin command;
-        // … else search $PATH" at Src/exec.c:3092+.
         if crate::ported::builtin::BUILTINS
             .iter()
             .any(|b| b.node.nam == name.as_str())
