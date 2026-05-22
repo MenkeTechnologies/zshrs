@@ -3439,11 +3439,109 @@ pub static PARTAB: &[PartabHashEntry] = &[
         getfn: getpmusergroups,
         scanfn: scanpmusergroups,
     },
+    // c:2247 — `dis_functions_source`: hashed assoc, key=fn name,
+    // value=source path. Same shape as `functions` but for disabled.
+    PartabHashEntry {
+        name: "dis_functions_source",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2247
+        getfn: getpmdisfunction_source,
+        scanfn: scanpmdisfunction_source,
+    },
+    // c:2265 — `functions_source`.
+    PartabHashEntry {
+        name: "functions_source",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2265
+        getfn: getpmfunction_source,
+        scanfn: scanpmfunction_source,
+    },
 ];
 
-// partab_get / partab_scan_keys dispatch helpers live in src/vm_helper.rs
-// (outside src/ported/ — they're Rust-only convenience wrappers over
-// PARTAB's typed fn pointers, not direct ports of any C function).
+// scanpmfunction_source / scanpmdisfunction_source already ported
+// at lines 957/970 — re-used here as PARTAB.scanfn pointers.
+
+/// PM_ARRAY entries from `Src/Modules/parameter.c:2239-2291` — single
+/// whole-array getfn returning `Vec<String>` (no per-key dispatch).
+/// Mirrors C's `gsu_array.getfn(pm) -> char**`.
+pub type ArrayGetFn = fn(pm: *mut param) -> Vec<String>;
+
+/// Strongly-typed entry for PM_ARRAY-shape magic-assocs.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct PartabArrayEntry {
+    /// Parameter name — `${name}` / `${name[N]}` triggers dispatch.
+    pub name: &'static str,
+    /// PM_* flag bits — always include PM_ARRAY.
+    pub flags: i32,
+    /// Whole-array getter. Mirrors C's `gsu_array.getfn(pm)`.
+    pub getfn: ArrayGetFn,
+}
+
+/// `static const struct paramdef partab[]` PM_ARRAY subset from
+/// `Src/Modules/parameter.c:2239-2291`. Each entry's `gsu_array.getfn`
+/// returns the full array (no per-key dispatch).
+///
+/// `historywords` (c:2273) is listed in C but its canonical getfn
+/// (`historywordsgetfn` or similar) isn't yet ported in zshrs — TODO.
+pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
+    // c:2239 — `dirstack`: $DIRSTACK pushd/popd state.
+    PartabArrayEntry {
+        name: "dirstack",
+        flags: PM_ARRAY as i32, // c:2239
+        getfn: dirsgetfn,
+    },
+    // c:2251 — `dis_patchars`: pattern metacharacters when extendedglob off.
+    PartabArrayEntry {
+        name: "dis_patchars",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2251 PM_READONLY_SPECIAL
+        getfn: dispatcharsgetfn,
+    },
+    // c:2253 — `dis_reswords`: reserved words when disabled.
+    PartabArrayEntry {
+        name: "dis_reswords",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2253 PM_READONLY_SPECIAL
+        getfn: disreswordsgetfn,
+    },
+    // c:2257 — `funcfiletrace`: per-frame caller file+lineno.
+    PartabArrayEntry {
+        name: "funcfiletrace",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2257
+        getfn: funcfiletracegetfn,
+    },
+    // c:2259 — `funcsourcetrace`: per-frame def-site file+lineno.
+    PartabArrayEntry {
+        name: "funcsourcetrace",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2259
+        getfn: funcsourcetracegetfn,
+    },
+    // c:2261 — `funcstack`: function-call stack names.
+    PartabArrayEntry {
+        name: "funcstack",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2261
+        getfn: funcstackgetfn,
+    },
+    // c:2267 — `functrace`: per-frame call file+lineno.
+    PartabArrayEntry {
+        name: "functrace",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2267
+        getfn: functracegetfn,
+    },
+    // c:2289 — `patchars`: pattern metacharacters when extendedglob on.
+    PartabArrayEntry {
+        name: "patchars",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2289
+        getfn: patcharsgetfn,
+    },
+    // c:2291 — `reswords`: shell reserved words.
+    PartabArrayEntry {
+        name: "reswords",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2291
+        getfn: reswordsgetfn,
+    },
+];
+
+// partab_get / partab_scan_keys / partab_array_get dispatch helpers
+// live in src/vm_helper.rs (outside src/ported/ — they're Rust-only
+// convenience wrappers over the typed fn pointers, not C ports).
 
 // `module_features` — port of `static struct features module_features`
 // from parameter.c:2300.

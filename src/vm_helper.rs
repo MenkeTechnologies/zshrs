@@ -3134,6 +3134,19 @@ pub fn partab_get(name: &str, key: &str) -> Option<String> {
     None
 }
 
+/// PM_ARRAY lookup for `${name}` / `${name[N]}` — walks
+/// PARTAB_ARRAY and dispatches the whole-array getfn (Src/Modules/
+/// parameter.c:2239-2291 ports). Returns `None` if name isn't a
+/// known PM_ARRAY magic-assoc.
+pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
+    for entry in crate::ported::modules::parameter::PARTAB_ARRAY.iter() {
+        if entry.name == name {
+            return Some((entry.getfn)(std::ptr::null_mut()));
+        }
+    }
+    None
+}
+
 /// Scan helper for `${(k)name}` — enumerates keys via canonical
 /// scanfn, collected into Vec via SCAN_KEYS thread-local.
 pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {

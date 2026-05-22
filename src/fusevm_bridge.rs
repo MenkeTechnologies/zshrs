@@ -2349,12 +2349,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
-            // Try canonical PARTAB dispatch first (Src/Modules/parameter.c:2235
-            // ports — partab_get routes through getpm* gsu callbacks).
-            // Fall through to legacy get_special_array_value for names not
-            // yet in PARTAB (terminfo/termcap/mapfile/sysparams/funcstack/
-            // dirstack and other PM_ARRAY-shape entries).
-            if let Some(keys) = crate::vm_helper::partab_scan_keys(&name) {
+            // Dispatch priority (Src/Modules/parameter.c:2235-2298 ports):
+            //   1. PARTAB_ARRAY: PM_ARRAY entries → whole-array getfn
+            //      (dirstack/funcstack/patchars/reswords/etc.).
+            //   2. PARTAB:       PM_HASHED entries → scan keys + per-key get
+            //      (aliases/commands/functions/options/history/jobs/etc.).
+            //   3. Legacy get_special_array_value for the few unported
+            //      names (terminfo/termcap/mapfile/sysparams/errnos +
+            //      historywords until its getfn lands).
+            if let Some(values) = crate::vm_helper::partab_array_get(&name) {
+                Some(values)
+            } else if let Some(keys) = crate::vm_helper::partab_scan_keys(&name) {
                 Some(
                     keys.iter()
                         .map(|k| crate::vm_helper::partab_get(&name, k).unwrap_or_default())
