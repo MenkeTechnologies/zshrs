@@ -9740,8 +9740,14 @@ impl fusevm::ShellHost for ZshrsHost {
         // to the caller, breaking p10k/zinit's per-function emulate
         // -L sticky-mode pattern.
         let saved_options = crate::ported::options::opt_state_snapshot();
-        let (saved_params, saved_zero, saved_scriptname, saved_funcstack, saved_exit_trap) =
-            with_executor(|exec| {
+        let (
+            saved_params,
+            saved_zero,
+            saved_scriptname,
+            saved_funcstack,
+            saved_exit_trap,
+            saved_argzero_global,
+        ) = with_executor(|exec| {
                 let prev = exec.pparams();
                 exec.set_pparams(args.clone());
                 exec.local_scope_depth += 1;
@@ -9775,6 +9781,25 @@ impl fusevm::ShellHost for ZshrsHost {
                 };
                 let prev_zero = crate::ported::params::getsparam("0");
                 exec.set_scalar("0".to_string(), display_name.clone());
+                // c:Src/exec.c:5903 doshfunc — when FUNCTION_ARGZERO is
+                // set (default-on under zsh emulation) the global
+                // `argzero` is overwritten with the function name so
+                // every `$0` read (which routes through
+                // lookup_special_var("0") → argzero()) returns the
+                // function name. set_scalar above writes to paramtab,
+                // but lookup_special_var short-circuits to argzero()
+                // BEFORE consulting paramtab — so without this
+                // mirror, `$0` inside `f() { echo $0; }` returned the
+                // shell binary path instead of `f`.
+                let saved_argzero_global = if crate::ported::zsh_h::isset(
+                    crate::ported::zsh_h::FUNCTIONARGZERO,
+                ) {
+                    let prev = crate::ported::utils::argzero();
+                    crate::ported::utils::set_argzero(Some(display_name.clone()));
+                    Some(prev)
+                } else {
+                    None
+                };
                 // scriptname: PS4's `%N` and error-message prefix both
                 // read `exec.scriptname`. Inside a function, C zsh sets
                 // `scriptname = dupstring(name)` at Src/exec.c:5903 so
@@ -9803,7 +9828,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
                 exec.set_scalar("_".to_string(), dollar_underscore.clone());
                 exec.pending_underscore = Some(dollar_underscore);
-                (prev, prev_zero, prev_scriptname, prev_stack, saved)
+                (prev, prev_zero, prev_scriptname, prev_stack, saved, saved_argzero_global)
             });
 
         crate::fusevm_disasm::maybe_print_stdout(&format!("host.call_function:{fn_name}"), &chunk);
@@ -9886,6 +9911,14 @@ impl fusevm::ShellHost for ZshrsHost {
                 None => {
                     exec.unset_scalar("0");
                 }
+            }
+            // c:Src/exec.c:5907 doshfunc — restore global argzero to
+            // the caller's value when FUNCTION_ARGZERO was honored at
+            // entry. Mirrors the `argzero = old0;` line. When the
+            // option was NOT set at entry, saved_argzero_global is
+            // None and we leave argzero untouched.
+            if let Some(prev) = saved_argzero_global {
+                crate::ported::utils::set_argzero(prev);
             }
             exec.scriptname = saved_scriptname;
             exec.prompt_funcstack.pop();
