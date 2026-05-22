@@ -1970,17 +1970,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     // `foo[key]=val` — single-key set on an assoc array. Stack: [name, key, value].
+    // PURE PASSTHRU: assignsparam with `name[key]` form (C port of
+    // `Src/params.c::assignsparam` subscript path at c:3210-3231)
+    // already does the indexed-array vs assoc decision, PM_HASHED
+    // auto-vivification, numeric-subscript bounds handling, and
+    // PM_READONLY rejection.
     vm.register_builtin(BUILTIN_SET_ASSOC, |vm, _argc| {
         let value = vm.pop().to_str();
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
         with_executor(|exec| {
-            // PFA-SMR aspect: subscript assignment `arr[N]=val` /
-            // `assoc[key]=val`. Recorded as a structured assoc/array
-            // event with the (key, value) pair preserved in
-            // `value_assoc` so replay can reconstruct the exact slot.
-            // Path-family arrays come through SET_ARRAY / APPEND_ARRAY,
-            // never here, so no path_mod routing.
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
@@ -1989,84 +1988,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     &name,
                     vec![(key.clone(), value.clone())],
                     attrs,
-                    true, // element-add semantics, not full replace
+                    true,
                     ctx,
                 );
             }
-            // Indexed array element assign `a[N]=val`. Routes here when
-            // `name` is already an indexed array. For unset names, only
-            // treat as indexed if the key is unambiguously numeric (a
-            // literal int) — `foo[key]=val` with no prior storage and
-            // a string key should create an assoc (zsh default), not an
-            // indexed array. zsh's rule: numeric subscript on an
-            // indexed array (or new var with numeric key) assigns to
-            // the 1-based slot, growing the array if needed. Negative
-            // indices count from the end.
-            let is_indexed = exec.array(&name).is_some();
-            let is_assoc = exec.assoc(&name).is_some();
-            let key_literal_int = key.trim().parse::<i64>().ok();
-            // For an existing indexed array, fall back to arith eval so
-            // `a[i+1]=v` works when `i` is set.
-            let key_int_for_indexed = if is_indexed {
-                key_literal_int.or_else(|| {
-                    Some(
-                        crate::ported::math::mathevali(&crate::ported::subst::singsub(&key))
-                            .unwrap_or(0),
-                    )
-                })
-            } else {
-                key_literal_int
-            };
-            let route_indexed = if is_assoc {
-                false
-            } else if is_indexed {
-                key_int_for_indexed.is_some()
-            } else {
-                key_literal_int.is_some()
-            };
-            if let (true, Some(i)) = (route_indexed, key_int_for_indexed) {
-                let len = exec.array(&name).map(|a| a.len() as i64).unwrap_or(0);
-                let idx = if i > 0 {
-                    (i - 1) as usize
-                } else if i < 0 {
-                    let off = len + i;
-                    if off < 0 {
-                        return;
-                    }
-                    off as usize
-                } else {
-                    // zsh: `a[0]=v` is "assignment to invalid subscript
-                    // range" (positionals/arrays are 1-based). Mirror
-                    // the diagnostic and abort with status 1.
-                    eprintln!("zshrs:1: {}: assignment to invalid subscript range", name);
-                    std::process::exit(1);
-                };
-                // Read paramtab-first, mutate, write back via
-                // canonical set_array so the assignment is visible
-                // to both the legacy cache and paramtab.
-                let mut arr = exec.array(&name).unwrap_or_default();
-                while arr.len() <= idx {
-                    arr.push(String::new());
-                }
-                arr[idx] = value;
-                exec.set_array(name, arr);
-                return;
-            }
-            // Default: assoc set.
-            // Only remove a stale scalar entry — `unset_scalar`
-            // wipes the WHOLE paramtab row including attribute
-            // flags (PM_HIDE/PM_HIDEVAL/PM_TAGGED/etc.) which
-            // sethparam doesn't restore. Skip the wipe if the
-            // entry is already a PM_HASHED assoc; in that case the
-            // attribute flags must survive the `arr[k]=v` element
-            // update.
-            if !is_assoc {
-                exec.unset_scalar(&name);
-            }
-            let mut map = exec.assoc(&name).unwrap_or_default();
-            map.insert(key, value);
-            exec.set_assoc(name, map);
+            let _ = exec;
         });
+        // Build `name[key]=value` shape for assignsparam's subscript
+        // dispatch. Arith-evaluate numeric subscripts on an existing
+        // indexed array (`a[i+1]=v` form) before handing off — the
+        // canonical port currently only handles literal int / string
+        // keys, so pre-resolve here.
+        let resolved_key = with_executor(|exec| {
+            let is_indexed = exec.array(&name).is_some();
+            if is_indexed && key.trim().parse::<i64>().is_err() {
+                crate::ported::math::mathevali(
+                    &crate::ported::subst::singsub(&key),
+                )
+                .map(|n| n.to_string())
+                .unwrap_or(key.clone())
+            } else {
+                key.clone()
+            }
+        });
+        let subscripted = format!("{}[{}]", name, resolved_key);
+        crate::ported::params::assignsparam(
+            &subscripted,
+            &value,
+            crate::ported::zsh_h::ASSPM_WARN,
+        );
         Value::Status(0)
     });
 
