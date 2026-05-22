@@ -4945,6 +4945,9 @@ impl crate::ported::vm_helper::ShellExecutor {
 // can't go through the fusevm Op::CallFunction route.
 // =====================================================================
 use crate::fusevm_bridge::{ExecutorContext, register_builtins, ZshrsHost};
+use crate::exec_jobs::JobState;
+use crate::parse::Redirect;
+use std::process::Command;
 use std::io;
 use std::io::{Read, Write};
 use std::os::unix::io::FromRawFd;
@@ -5240,5 +5243,97 @@ impl crate::ported::vm_helper::ShellExecutor {
             output.pop();
         }
         output
+    }
+}
+
+
+// =====================================================================
+// execute_external + execute_external_bg — moved from src/vm_helper.rs.
+// Partial port of `Src/exec.c::execcmd_exec`'s external-dispatch tail
+// (c:3550-3850) — fork+exec for non-builtin commands.
+// =====================================================================
+impl crate::ported::vm_helper::ShellExecutor {
+    pub(crate) fn execute_external(
+        &mut self,
+        cmd: &str,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<i32, String> {
+        self.execute_external_bg(cmd, args, redirects, false)
+    }
+
+    fn execute_external_bg(
+        &mut self,
+        cmd: &str,
+        args: &[String],
+        _redirects: &[Redirect],
+        background: bool,
+    ) -> Result<i32, String> {
+        tracing::trace!(cmd, bg = background, "exec external");
+        let mut command = Command::new(cmd);
+        command.args(args);
+
+        // Redirect handling moved entirely to fusevm's WithRedirectsBegin/End
+        // ops at compile time; the `_redirects` slice arrives empty in every
+        // production code path. The legacy `for redir in redirects { ... }`
+        // block (~120 LOC of file/pipe/heredoc/herestring/fd_var handling)
+        // is gone.
+
+        if background {
+            match command.spawn() {
+                Ok(child) => {
+                    let pid = child.id();
+                    let cmd_str = format!("{} {}", cmd, args.join(" "));
+                    let job_id = self.jobs.add_job(child, cmd_str, JobState::Running);
+                    println!("[{}] {}", job_id, pid);
+                    Ok(0)
+                }
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::NotFound {
+                        // zsh: absolute paths emit "no such file or
+                        // directory" (the OS error, since the path was
+                        // tried directly), not "command not found"
+                        // (which implies PATH search).
+                        if cmd.starts_with('/') {
+                            eprintln!("zshrs:1: no such file or directory: {}", cmd);
+                        } else {
+                            eprintln!("zshrs:1: command not found: {}", cmd);
+                        }
+                        Ok(127)
+                    } else {
+                        Err(format!("zshrs: {}: {}", cmd, e))
+                    }
+                }
+            }
+        } else {
+            match command.status() {
+                Ok(status) => Ok(status.code().unwrap_or(1)),
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::NotFound {
+                        // zsh: absolute paths emit "no such file or
+                        // directory" (the OS error, since the path was
+                        // tried directly), not "command not found"
+                        // (which implies PATH search).
+                        if cmd.starts_with('/') {
+                            eprintln!("zshrs:1: no such file or directory: {}", cmd);
+                        } else {
+                            eprintln!("zshrs:1: command not found: {}", cmd);
+                        }
+                        Ok(127)
+                    } else if e.kind() == io::ErrorKind::PermissionDenied {
+                        // zsh: non-executable file → "permission denied"
+                        // on stderr and exit 126 (POSIX convention for
+                        // "command found but not executable"). zshrs
+                        // previously bubbled the IO error up via Err
+                        // and the surrounding code converted to 127
+                        // with no diagnostic.
+                        eprintln!("zshrs:1: permission denied: {}", cmd);
+                        Ok(126)
+                    } else {
+                        Err(format!("zshrs: {}: {}", cmd, e))
+                    }
+                }
+            }
+        }
     }
 }
