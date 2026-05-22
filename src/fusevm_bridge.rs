@@ -8700,23 +8700,21 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
         }
     }
     // `expand_glob` set the glob-failed cell when a no-match glob in
-    // this command's argv triggered the `nomatch` error. For BUILTIN
-    // commands (zsh: errflag persists in the shell process), the
-    // entire script aborts with status 1 — `echo /no_match_*` exits
-    // before printing anything. External commands hit the same flag
-    // in `host_exec_external` instead, which only fails the command
-    // and lets the script continue (zsh's fork inherits-but-resets
-    // errflag semantics). We only land here for builtins, so abort.
-    let glob_failed = with_executor(|exec| {
-        let f = exec.current_command_glob_failed.get();
-        if f {
-            exec.current_command_glob_failed.set(false);
-            exec.set_last_status(1);
-        }
-        f
-    });
-    if glob_failed {
-        std::process::exit(1);
+    // this command's argv triggered the `nomatch` error. C zsh
+    // (Src/glob.c:1877) calls `zerr("no matches found: %s", ostr)`
+    // which sets errflag|=ERRFLAG_ERROR, then unwinds out of the
+    // execpline path; the next top-level event clears errflag and
+    // the script continues. Previously zshrs called
+    // `process::exit(1)` here — killing the WHOLE shell on the first
+    // failed glob and breaking any plugin script that uses optional
+    // patterns (`ls /no_match*; echo after` lost the "after" line).
+    // Now just signal the failure via last_status + the per-command
+    // glob_failed cell so the downstream builtin handler /
+    // host_exec_external (line ~10245) short-circuits and returns
+    // status 1 without running the command body. The flag is left
+    // set for the dispatcher to consume + clear.
+    if with_executor(|exec| exec.current_command_glob_failed.get()) {
+        with_executor(|exec| exec.set_last_status(1));
     }
     // `$_` tracks the last argument of the PREVIOUSLY executed
     // command (zsh / bash convention). Promote the deferred value
