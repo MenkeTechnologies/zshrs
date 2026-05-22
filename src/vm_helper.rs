@@ -2346,29 +2346,18 @@ impl crate::ported::vm_helper::ShellExecutor {
     pub fn get_special_array_value(&self, array_name: &str, key: &str) -> Option<String> {
         match array_name {
             // === ZSH/MAPFILE module ===
-            // `${mapfile[/path]}` reads the file's contents. Direct
-            // port of `getpmmapfile(UNUSED(HashTable ht), const char *name)` (Src/Modules/mapfile.c:217)
-            // which calls `get_contents()` (line 167) on the path.
-            // Splice (`@`/`*`) returns the CWD entry list per
-            // `scanpmmapfile()` (line 240).
+            // Route through canonical Src/Modules/mapfile.c ports:
+            //   single key — getpmmapfile c:217 / get_contents c:167
+            //   @ / *      — scanpmmapfile c:241 (CWD entry list)
             "mapfile" => {
                 if key == "@" || key == "*" {
-                    // Inline readdir loop — direct port of
-                    // scanpmmapfile (Src/Modules/mapfile.c:241).
-                    let mut files: Vec<String> = Vec::new();
-                    if let Ok(rd) = std::fs::read_dir(".") {
-                        for entry in rd.flatten() {
-                            let path = entry.path();
-                            if path.is_file() {
-                                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                                    files.push(name.to_string());
-                                }
-                            }
-                        }
-                    }
+                    let files: Vec<String> = crate::ported::modules::mapfile::scanpmmapfile()
+                        .into_iter()
+                        .map(|(k, _)| k)
+                        .collect();
                     return Some(files.join(" "));
                 }
-                Some(crate::modules::mapfile::get_contents(key).unwrap_or_default())
+                Some(crate::ported::modules::mapfile::get_contents(key).unwrap_or_default())
             }
             // === ZSH/SYSTEM — errnos / sysparams ===
             "errnos" => {
