@@ -5578,7 +5578,7 @@ impl crate::ported::vm_helper::ShellExecutor {
         // host.exec. Catch them here before the OS-level exec attempts
         // to spawn a non-existent binary.
         match cmd.as_str() {
-            "sched" => return self.bin_sched(&rest_vec),
+            "sched" => return crate::fusevm_bridge::dispatch_builtin("sched", rest_vec.clone()),
             "echotc" => return crate::fusevm_bridge::dispatch_builtin("echotc", rest_vec.clone()),
             "echoti" => return crate::fusevm_bridge::dispatch_builtin("echoti", rest_vec.clone()),
             // "getln" handler deleted with its stub.

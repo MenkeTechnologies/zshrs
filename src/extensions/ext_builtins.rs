@@ -7522,8 +7522,7 @@ impl ShellExecutor {
 use crate::ported::builtins::rlimits::{
     bin_limit as rl_bin_limit, bin_ulimit as rl_bin_ulimit, bin_unlimit as rl_bin_unlimit,
 };
-use crate::ported::builtins::sched::bin_sched as sc_bin_sched;
-use crate::ported::modules::clone::bin_clone as cl_bin_clone;
+// sc_bin_sched / cl_bin_clone re-import deleted along with the wrappers.
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 impl ShellExecutor {
@@ -7534,32 +7533,11 @@ impl ShellExecutor {
     // BUILTINS entries themselves at src/ported/builtin.rs:9053-9082,
     // not from manual `build_short_opts` calls.
 
-    /// `sched` builtin entry. C declares the builtin with a NULL
-    /// option-string (sched.c:375) — `bin_sched` parses its own
-    /// `-N`/`-o`/`--` flags inline and ignores the dispatcher-filled
-    /// `ops`. The bridge passes a zero-init `options` to match.
-    pub(crate) fn bin_sched(&self, args: &[String]) -> i32 {
-        let ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        sc_bin_sched("sched", args, &ops, 0)
-    }
-
-    /// `clone` builtin entry. C declares the builtin with a NULL
-    /// option-string (clone.c:110) — `bin_clone` ignores `ops`/`func`.
-    /// The bridge passes a zero-init `options` to match.
-    pub(crate) fn bin_clone(&self, args: &[String]) -> i32 {
-        let ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        cl_bin_clone("clone", args, &ops, 0)
-    }
+    // bin_sched / bin_clone wrappers deleted — both routed through
+    // dispatch_builtin which goes via execbuiltin → BUILTINS[name]
+    // (sched.c:375 + clone.c:110). The 12-line ops-construct wrappers
+    // were Rust-only adapters duplicating what execbuiltin's call
+    // shape already provides.
 }
 
 // build_short_opts deleted — was a Rust-only short-opt parser
