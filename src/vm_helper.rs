@@ -630,22 +630,6 @@ impl ShellExecutor {
         (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_INTEGER) != 0
     }
 
-    /// `typeset -F` / `-E` — float.
-    pub fn is_float_param(&self, name: &str) -> bool {
-        let f = self.param_flags(name) as u32;
-        (f & (crate::ported::zsh_h::PM_EFLOAT | crate::ported::zsh_h::PM_FFLOAT)) != 0
-    }
-
-    /// `typeset -l` — Param has PM_LOWER.
-    pub fn is_lowercase_param(&self, name: &str) -> bool {
-        (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_LOWER) != 0
-    }
-
-    /// `typeset -u` — Param has PM_UPPER.
-    pub fn is_uppercase_param(&self, name: &str) -> bool {
-        (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_UPPER) != 0
-    }
-
     /// `readonly` / `typeset -r` — Param has PM_READONLY.
     pub fn is_readonly_param(&self, name: &str) -> bool {
         (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_READONLY) != 0
@@ -814,20 +798,6 @@ impl ShellExecutor {
         }
     }
 
-    /// Unset an alias from canonical aliastab (any flag). Mirrors
-    /// C's `unalias` lookup.
-    pub fn unset_alias(&mut self, name: &str) {
-        if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
-            tab.remove(name);
-        }
-    }
-
-    /// Unset a suffix alias.
-    pub fn unset_suffix_alias(&mut self, name: &str) {
-        if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().write() {
-            tab.remove(name);
-        }
-    }
 
     /// Snapshot the alias map as a sorted `Vec<(name, value)>`,
     /// only entries WITHOUT the ALIAS_GLOBAL flag (regular aliases).
@@ -1382,24 +1352,6 @@ impl ShellExecutor {
         }
 
         Ok(self.last_status())
-    }
-
-    /// P9d: wordcode-consumer entry. Direct port of zsh's `execlist`
-    /// from `Src/exec.c:1551-1671` — walks the wordcode buffer that
-    /// P9c's `par_event_wordcode` emitted into `ECBUF`, dispatching on
-    /// `WC_KIND` (wc_code) for each entry.
-    ///
-    /// Minimal implementation: walks ECBUF, dispatches WC_END to a
-    /// no-op return-0 path. The full WC_LIST/WC_SUBLIST/WC_PIPE/WC_CMD/
-    /// WC_REDIR/WC_SIMPLE/... dispatch tree (Src/exec.c ~30k lines
-    /// total) is the multi-week rewrite called out in PORT_PLAN.md.
-    /// This stub establishes the entry point and proves the consumer
-    /// can walk a buffer P9c emitted into.
-    pub fn exec_wordcode(&mut self) -> i32 {
-        let buf = ECBUF.with_borrow(|b| b.clone());
-        let (status, _next) = self.exec_list_wordcode(&buf, 0);
-        self.set_last_status(status);
-        status
     }
 
     /// P9d stub: direct port of `execlist(Estate state, int dont_change_job,
