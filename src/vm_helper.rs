@@ -1313,7 +1313,7 @@ impl ShellExecutor {
     /// hand to `Command::new`. Returns empty vec if the cmd isn't a
     /// simple shape — pipelines / compound forms aren't process-sub
     /// friendly anyway.
-    fn simple_cmd_words(&mut self, cmd_str: &str) -> Vec<String> {
+    pub(crate) fn simple_cmd_words(&mut self, cmd_str: &str) -> Vec<String> {
         // Mirror Src/init.c-style errflag save/clear/check around the
         // parse. Process-sub argv extraction silently bails on syntax
         // errors (matches zsh's behavior when the inner command can't
@@ -1346,85 +1346,6 @@ impl ShellExecutor {
         } else {
             Vec::new()
         }
-    }
-
-    pub(crate) fn run_process_sub_in(&mut self, cmd_str: &str) -> String {
-        // Phase 2: parse via parse_init+parse. Extract the first Simple cmd's
-        // words (untokenized), pre-expand to argv strings, spawn.
-        let words = self.simple_cmd_words(cmd_str);
-
-        // Create a unique FIFO in temp directory
-        let fifo_path = format!("/tmp/zshrs_psub_{}", std::process::id());
-        let fifo_counter = self.process_sub_counter;
-        self.process_sub_counter += 1;
-        let fifo_path = format!("{}_{}", fifo_path, fifo_counter);
-
-        // Remove if exists, then create FIFO
-        let _ = fs::remove_file(&fifo_path);
-        if nix::unistd::mkfifo(fifo_path.as_str(), nix::sys::stat::Mode::S_IRWXU).is_err() {
-            return String::new();
-        }
-
-        // Spawn command that writes to the FIFO
-        let fifo_clone = fifo_path.clone();
-        if !words.is_empty() {
-            let cmd_name = words[0].clone();
-            let args: Vec<String> = words[1..].to_vec();
-
-            self.worker_pool.submit(move || {
-                // Open FIFO for writing (will block until reader connects)
-                if let Ok(fifo) = fs::OpenOptions::new().write(true).open(&fifo_clone) {
-                    let _ = Command::new(&cmd_name)
-                        .args(&args)
-                        .stdout(fifo)
-                        .stderr(Stdio::inherit())
-                        .status();
-                }
-                // Clean up FIFO after command completes
-                let _ = fs::remove_file(&fifo_clone);
-            });
-        }
-
-        fifo_path
-    }
-
-    pub(crate) fn run_process_sub_out(&mut self, cmd_str: &str) -> String {
-        let words = self.simple_cmd_words(cmd_str);
-
-        // Create a unique FIFO in temp directory
-        let fifo_path = format!("/tmp/zshrs_psub_{}", std::process::id());
-        let fifo_counter = self.process_sub_counter;
-        self.process_sub_counter += 1;
-        let fifo_path = format!("{}_{}", fifo_path, fifo_counter);
-
-        // Remove if exists, then create FIFO
-        let _ = fs::remove_file(&fifo_path);
-        if nix::unistd::mkfifo(fifo_path.as_str(), nix::sys::stat::Mode::S_IRWXU).is_err() {
-            return String::new();
-        }
-
-        // Spawn command that reads from the FIFO
-        let fifo_clone = fifo_path.clone();
-        if !words.is_empty() {
-            let cmd_name = words[0].clone();
-            let args: Vec<String> = words[1..].to_vec();
-
-            self.worker_pool.submit(move || {
-                // Open FIFO for reading (will block until writer connects)
-                if let Ok(fifo) = fs::File::open(&fifo_clone) {
-                    let _ = Command::new(&cmd_name)
-                        .args(&args)
-                        .stdin(fifo)
-                        .stdout(Stdio::inherit())
-                        .stderr(Stdio::inherit())
-                        .status();
-                }
-                // Clean up FIFO after command completes
-                let _ = fs::remove_file(&fifo_clone);
-            });
-        }
-
-        fifo_path
     }
 
 
