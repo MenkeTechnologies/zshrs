@@ -480,8 +480,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let post = &full[dispatch.precmd_skip..];
         if dispatch.has_command_vv {
             // `-v` / `-V` → bin_whence with BIN_COMMAND funcid.
-            let mut ops = crate::ported::zsh_h::options {
-                ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            let mut ops = options {
+                ind: [0u8; MAX_OPS],
                 args: Vec::new(),
                 argscount: 0,
                 argsalloc: 0,
@@ -1386,7 +1386,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // first non-zero stage status (so failures earlier in the
         // pipeline propagate even if the last stage succeeded).
         let pipefail_on = with_executor(|exec| {
-            crate::ported::options::opt_state_get("pipefail").unwrap_or(false)
+            opt_state_get("pipefail").unwrap_or(false)
         });
         let last_status = if pipefail_on {
             pipestatus
@@ -1417,9 +1417,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_JOIN, |vm, _argc| {
         let val = vm.pop();
         match val {
-            fusevm::Value::Array(items) => {
+            Value::Array(items) => {
                 let parts: Vec<String> = items.iter().map(|v| v.to_str()).collect();
-                fusevm::Value::str(parts.join(" "))
+                Value::str(parts.join(" "))
             }
             other => other,
         }
@@ -1463,7 +1463,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 with_executor(|exec| {
                     exec.set_scalar("!".to_string(), pid.to_string());
                     exec.jobs
-                        .add_pid_job(pid, String::new(), crate::exec_jobs::JobState::Running);
+                        .add_pid_job(pid, String::new(), JobState::Running);
                 });
                 Value::Status(0)
             }
@@ -1482,7 +1482,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // for fresh names.
     vm.register_builtin(BUILTIN_SET_ARRAY, |vm, argc| {
         let n = argc as usize;
-        let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
+        let mut popped: Vec<Value> = Vec::with_capacity(n);
         for _ in 0..n {
             popped.push(vm.pop());
         }
@@ -1494,7 +1494,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut values: Vec<String> = Vec::new();
         for v in popped {
             match v {
-                fusevm::Value::Array(items) => {
+                Value::Array(items) => {
                     for it in items {
                         values.push(it.to_str());
                     }
@@ -1541,9 +1541,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_scalar(scalar_name, joined);
             }
             let _ = crate::ported::params::setaparam(&name, values.clone());
-            // Mirror to legacy exec.arrays cache so other consumers
-            // (the bridge's exec.array() reader) see the new value.
-            exec.set_array(name.clone(), values.clone());
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
@@ -1564,7 +1561,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // setaparam → assignaparam where PM_UNIQUE dedupe lands).
     vm.register_builtin(BUILTIN_APPEND_ARRAY, |vm, argc| {
         let n = argc as usize;
-        let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
+        let mut popped: Vec<Value> = Vec::with_capacity(n);
         for _ in 0..n {
             popped.push(vm.pop());
         }
@@ -1576,7 +1573,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut values: Vec<String> = Vec::new();
         for v in popped {
             match v {
-                fusevm::Value::Array(items) => {
+                Value::Array(items) => {
                     for it in items {
                         values.push(it.to_str());
                     }
@@ -1585,17 +1582,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         with_executor(|exec| {
-            // Assoc append `m+=(k1 v1 ...)`: route through canonical
-            // assignaparam (Src/params.c:3357) with ASSPM_AUGMENT,
-            // which dispatches to arrhashsetfn(pm, val, ASSPM_AUGMENT)
-            // at c:3850 to merge the (k,v) pairs into the existing
-            // map. Mirror to legacy exec.assoc cache.
+            // Assoc append `m+=(k1 v1 ...)`: merge the (k,v) pairs into
+            // the existing map and write back via canonical sethparam
+            // (Src/params.c:3602). The canonical C path would go
+            // assignaparam(ASSPM_AUGMENT) → arrhashsetfn(ASSPM_AUGMENT)
+            // at Src/params.c:3850, but the zshrs port of
+            // arrhashsetfn doesn't yet implement value-storage
+            // (pending Param.u_hash backend wireup) — until that
+            // lands, do the augment + write here so the storage
+            // actually mutates.
             if exec.assoc(&name).is_some() {
-                let _ = crate::ported::params::assignaparam(
-                    &name,
-                    values.clone(),
-                    crate::ported::zsh_h::ASSPM_AUGMENT,
-                );
                 let mut map = exec.assoc(&name).unwrap_or_default();
                 let mut it = values.into_iter();
                 while let Some(k) = it.next() {
@@ -1615,8 +1611,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let mut merged = prior;
             merged.extend(values.iter().cloned());
             let _ = crate::ported::params::setaparam(&name, merged.clone());
-            // Mirror to legacy exec.arrays cache.
-            exec.set_array(name.clone(), merged.clone());
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
@@ -1630,7 +1624,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if let Some((scalar_name, sep)) = tied_scalar {
                 let joined = merged.join(&sep);
                 exec.set_scalar(scalar_name.clone(), joined.clone());
-                std::env::set_var(&scalar_name, &joined);
+                env::set_var(&scalar_name, &joined);
             }
         });
         Value::Status(0)
@@ -1640,7 +1634,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(1);
         }
         let n = argc as usize;
-        let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
+        let mut popped: Vec<Value> = Vec::with_capacity(n);
         for _ in 0..n {
             popped.push(vm.pop());
         }
@@ -1695,7 +1689,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             //   t1      -> row index, walks 0..colsz
             //   ap      -> item pointer; advances by colsz to step
             //              DOWN a column.
-            let term_width: usize = std::env::var("COLUMNS")
+            let term_width: usize = env::var("COLUMNS")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(80);
@@ -1778,8 +1772,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
             // Reset canonical BREAKS/CONTFLAG before running the body
             // so a stale value from a sibling construct doesn't leak in.
-            crate::ported::builtin::BREAKS.store(0, std::sync::atomic::Ordering::SeqCst);
-            crate::ported::builtin::CONTFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::builtin::BREAKS.store(0, SeqCst);
+            crate::ported::builtin::CONTFLAG.store(0, SeqCst);
 
             crate::fusevm_disasm::maybe_print_stdout("select:body", &chunk);
             let mut body_vm = fusevm::VM::new(chunk.clone());
@@ -1861,9 +1855,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.len() == 1 {
-            fusevm::Value::str(nodes.into_iter().next().unwrap())
+            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(nodes.into_iter().map(Value::str).collect())
         }
     });
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
@@ -1888,12 +1882,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             nodes
         });
         if result.is_empty() {
-            return fusevm::Value::Array(Vec::new());
+            return Value::Array(Vec::new());
         }
         if result.len() == 1 {
-            return fusevm::Value::str(result.into_iter().next().unwrap());
+            return Value::str(result.into_iter().next().unwrap());
         }
-        fusevm::Value::Array(result.into_iter().map(fusevm::Value::str).collect())
+        Value::Array(result.into_iter().map(Value::str).collect())
     });
 
     // BUILTIN_PARAM_FLAG — `${(flags)name}` paramsubst dispatch.
@@ -1929,9 +1923,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.len() == 1 {
-            fusevm::Value::str(nodes.into_iter().next().unwrap())
+            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(nodes.into_iter().map(Value::str).collect())
         }
     });
 
@@ -2000,11 +1994,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::zsh_h::PREFORK_SPLIT,
         );
         if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            fusevm::Value::Array(Vec::new())
+            Value::Array(Vec::new())
         } else if parts.len() == 1 {
-            fusevm::Value::str(parts.into_iter().next().unwrap())
+            Value::str(parts.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(parts.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(parts.into_iter().map(Value::str).collect())
         }
     });
 
@@ -2014,13 +2008,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Src/glob.c::xpandbraces at glob.rs:1678). Was stubbed
         // as `vec![s]` — every `print X{1,2,3}Y` returned literal.
         let brace_ccl = with_executor(|exec| {
-            crate::ported::options::opt_state_get("braceccl").unwrap_or(false)
+            opt_state_get("braceccl").unwrap_or(false)
         });
         let parts = crate::ported::glob::xpandbraces(&s, brace_ccl);
         if parts.len() == 1 {
-            fusevm::Value::str(parts.into_iter().next().unwrap_or_default())
+            Value::str(parts.into_iter().next().unwrap_or_default())
         } else {
-            fusevm::Value::Array(parts.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(parts.into_iter().map(Value::str).collect())
         }
     });
 
@@ -2047,14 +2041,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if matches.is_empty() {
             // expand_glob handles NOMATCH internally; if it returns
             // empty here, nullglob was on. Yield empty array.
-            return fusevm::Value::Array(Vec::new());
+            return Value::Array(Vec::new());
         }
         if matches.len() == 1 && matches[0] == pattern {
             // No real matches; expand_glob returned the literal. Pass
             // back as scalar so downstream ops don't re-flatten.
-            return fusevm::Value::str(pattern);
+            return Value::str(pattern);
         }
-        fusevm::Value::Array(matches.into_iter().map(fusevm::Value::str).collect())
+        Value::Array(matches.into_iter().map(Value::str).collect())
     });
 
     // `break`/`continue` from a sub-VM body. The compile path emits
@@ -2117,7 +2111,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.get_variable(&name)
             }
         });
-        fusevm::Value::str(result)
+        Value::str(result)
     });
 
     vm.register_builtin(BUILTIN_ARRAY_ALL, |vm, _argc| {
@@ -2136,9 +2130,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // scalar value. Word-splitting requires either
                     // sh_word_split option or explicit `${(s.,.)scalar}`.
                     let val = exec.get_variable(&name);
-                    if val.is_empty() && !exec.has_scalar(&name) && std::env::var(&name).is_err() {
+                    if val.is_empty() && !exec.has_scalar(&name) && env::var(&name).is_err() {
                         Value::Array(vec![])
-                    } else if crate::ported::options::opt_state_get("shwordsplit").unwrap_or(false)
+                    } else if opt_state_get("shwordsplit").unwrap_or(false)
                     {
                         // bash-compat: under setopt sh_word_split, do
                         // split scalars on IFS chars.
@@ -2247,11 +2241,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_FLATTEN, |vm, argc| {
         let n = argc as usize;
         let start = vm.stack.len().saturating_sub(n);
-        let raw: Vec<fusevm::Value> = vm.stack.drain(start..).collect();
-        let mut flat: Vec<fusevm::Value> = Vec::with_capacity(raw.len());
+        let raw: Vec<Value> = vm.stack.drain(start..).collect();
+        let mut flat: Vec<Value> = Vec::with_capacity(raw.len());
         for v in raw {
             match v {
-                fusevm::Value::Array(items) => flat.extend(items),
+                Value::Array(items) => flat.extend(items),
                 other => flat.push(other),
             }
         }
@@ -2259,8 +2253,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Push the array first; the Int(len) becomes the builtin's return
         // value (which CallBuiltin already pushes). Caller consumes in
         // reverse: SetSlot(len_slot) pops Int, SetSlot(arr_slot) pops Array.
-        vm.push(fusevm::Value::Array(flat));
-        fusevm::Value::Int(len)
+        vm.push(Value::Array(flat));
+        Value::Int(len)
     });
 
     // Shell variable get/set — routes through executor.variables so nested
@@ -2280,7 +2274,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if name == "@" || name == "*" {
             return with_executor(|exec| {
                 sync_status(exec);
-                fusevm::Value::Array(exec.pparams().iter().map(fusevm::Value::str).collect())
+                Value::Array(exec.pparams().iter().map(Value::str).collect())
             });
         }
         // RC_EXPAND_PARAM: when the option is set and `name` refers to
@@ -2289,7 +2283,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // the option, arrays still join to a space-separated scalar
         // (zsh's default unquoted-array-as-scalar semantics).
         let rc_expand = with_executor(|exec| {
-            crate::ported::options::opt_state_get("rcexpandparam").unwrap_or(false)
+            opt_state_get("rcexpandparam").unwrap_or(false)
         });
         if rc_expand {
             let arr_val = with_executor(|exec| {
@@ -2297,7 +2291,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.array(&name)
             });
             if let Some(arr) = arr_val {
-                return fusevm::Value::Array(arr.into_iter().map(fusevm::Value::str).collect());
+                return Value::Array(arr.into_iter().map(Value::str).collect());
             }
         }
         // Magic-assoc fallback FIRST — `${aliases}` / `${functions}`
@@ -2320,12 +2314,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // getpm*/scanpm* fn pointers. The legacy
             // `get_special_array_value` dispatcher has been deleted.
             let _ = exec;
-            if let Some(values) = crate::vm_helper::partab_array_get(&name) {
+            if let Some(values) = partab_array_get(&name) {
                 Some(values)
-            } else if let Some(keys) = crate::vm_helper::partab_scan_keys(&name) {
+            } else if let Some(keys) = partab_scan_keys(&name) {
                 Some(
                     keys.iter()
-                        .map(|k| crate::vm_helper::partab_get(&name, k).unwrap_or_default())
+                        .map(|k| partab_get(&name, k).unwrap_or_default())
                         .collect::<Vec<_>>(),
                 )
             } else {
@@ -2336,7 +2330,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Distinguish "name IS a magic-assoc with no entries"
             // (return Array(empty)) from "name is unknown — fall
             // through to get_variable".
-            return fusevm::Value::Array(vals.into_iter().map(fusevm::Value::str).collect());
+            return Value::Array(vals.into_iter().map(Value::str).collect());
         }
         // Indexed-array path: return Value::Array so pop_args splats
         // each element into its own argv slot. Direct port of zsh's
@@ -2357,7 +2351,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // based first-element-only semantics). Direct port of
             // Src/params.c getstrvalue's KSH_ARRAYS gate which
             // returns aval[0] instead of the whole array.
-            let ksh_arrays = crate::ported::options::opt_state_get("ksharrays").unwrap_or(false);
+            let ksh_arrays = opt_state_get("ksharrays").unwrap_or(false);
             if let Some(arr) = exec.array(&name) {
                 if ksh_arrays {
                     return Some((vec![arr.first().cloned().unwrap_or_default()], in_dq));
@@ -2387,7 +2381,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 });
                 return Value::str(items.join(&sep));
             }
-            return fusevm::Value::Array(items.into_iter().map(fusevm::Value::str).collect());
+            return Value::Array(items.into_iter().map(Value::str).collect());
         }
         let (val, in_dq) = with_executor(|exec| {
             sync_status(exec);
@@ -2399,7 +2393,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // string so "$a" stays a single empty arg. Direct port of
         // subst.c's elide-empty pass.
         if val.is_empty() && !in_dq {
-            return fusevm::Value::Array(Vec::new());
+            return Value::Array(Vec::new());
         }
         Value::str(val)
     });
@@ -2495,12 +2489,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // command return).
             if !exec.inline_env_stack.is_empty() {
                 let prev_var = crate::ported::params::getsparam(&name);
-                let prev_env = std::env::var(&name).ok();
+                let prev_env = env::var(&name).ok();
                 exec.inline_env_stack
                     .last_mut()
                     .unwrap()
                     .push((name.clone(), prev_var, prev_env));
-                std::env::set_var(&name, &value);
+                env::set_var(&name, &value);
             }
             // Canonical setsparam handles readonly, integer math, case
             // fold, GSU dispatch.
@@ -2508,12 +2502,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // PM_EXPORTED / allexport env mirror — read AFTER setsparam
             // so the flag bit reflects any GSU setfn side-effects.
             let allexport =
-                crate::ported::options::opt_state_get("allexport").unwrap_or(false);
+                opt_state_get("allexport").unwrap_or(false);
             let already_exported = (exec.param_flags(&name) as u32
                 & crate::ported::zsh_h::PM_EXPORTED)
                 != 0;
             if allexport || already_exported {
-                std::env::set_var(&name, &value);
+                env::set_var(&name, &value);
             }
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled()
@@ -2557,7 +2551,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let (_full, _pos, nodes) =
             crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
         let result = nodes.into_iter().next().unwrap_or_default();
-        fusevm::Value::Bool(result == "1")
+        Value::Bool(result == "1")
     });
 
     // `time { compound; ... }` — runs the sub-chunk and prints elapsed
@@ -2598,7 +2592,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let op_byte = vm.pop().to_int() as u8;
         let varid = vm.pop().to_str();
         let path = vm.pop().to_str();
-        let path_c = match std::ffi::CString::new(path.clone()) {
+        let path_c = match CString::new(path.clone()) {
             Ok(c) => c,
             Err(_) => return Value::Status(1),
         };
@@ -2638,7 +2632,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.set_scalar("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
         });
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     // BUILTIN_BEGIN_INLINE_ENV / END_INLINE_ENV — wrap an
@@ -2652,7 +2646,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.inline_env_stack.push(Vec::new());
         });
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
     vm.register_builtin(BUILTIN_END_INLINE_ENV, |_vm, _argc| {
         with_executor(|exec| {
@@ -2667,13 +2661,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         }
                     }
                     match prev_env {
-                        Some(v) => std::env::set_var(&name, &v),
-                        None => std::env::remove_var(&name),
+                        Some(v) => env::set_var(&name, &v),
+                        None => env::remove_var(&name),
                     }
                 }
             }
         });
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     // BUILTIN_RESTORE_TRY_BLOCK_STATUS — emitted at the end of an
@@ -2690,7 +2684,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(0)
         });
-        fusevm::Value::Status(try_status)
+        Value::Status(try_status)
     });
 
     vm.register_builtin(BUILTIN_IS_TTY, |vm, _argc| {
@@ -2701,7 +2695,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             unsafe { libc::isatty(fd) != 0 }
         };
-        fusevm::Value::Bool(is_tty)
+        Value::Bool(is_tty)
     });
 
     // Set $LINENO before executing the next statement. Direct
@@ -2719,7 +2713,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Mirror to the file-static `lineno` (utils.c:121) that
         // zerrmsg reads at utils.c:301 for the `:N: msg` prefix.
         crate::ported::utils::set_lineno(n as i32);
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     // Direct port of Src/prompt.c:1623 cmdpush. Token is a `CS_*`
@@ -2739,13 +2733,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `prompt::CMDSTACK` thread_local (Src/prompt.c:1620). The
         // legacy `exec.cmd_stack` mirror is gone.
         let _ = token;
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     // Direct port of Src/prompt.c:1631 cmdpop.
     vm.register_builtin(BUILTIN_CMD_POP, |_vm, _argc| {
         crate::ported::prompt::cmdpop();
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
@@ -2759,14 +2753,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // shared between setopt/unsetopt and `[[ -o ]]`.
         let r = crate::ported::cond::optison("test", &name); // c:cond.c:502
         match r {
-            0 => fusevm::Value::Bool(true),  // c:cond.c:520 set
-            1 => fusevm::Value::Bool(false), // c:cond.c:518/520 unset
+            0 => Value::Bool(true),  // c:cond.c:520 set
+            1 => Value::Bool(false), // c:cond.c:518/520 unset
             _ => {
                 // c:cond.c:514 — unknown option: zwarnnam emitted by
                 // optison itself when POSIXBUILTINS is unset; mirror to
                 // stderr here for parity with the earlier diagnostic.
                 eprintln!("zshrs:1: no such option: {}", name);
-                fusevm::Value::Bool(false)
+                Value::Bool(false)
             }
         }
     });
@@ -2784,11 +2778,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.is_empty() {
-            fusevm::Value::Array(Vec::new())
+            Value::Array(Vec::new())
         } else if nodes.len() == 1 {
-            fusevm::Value::str(nodes.into_iter().next().unwrap())
+            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(nodes.into_iter().map(Value::str).collect())
         }
     });
 
@@ -2797,20 +2791,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // compile_assign as: [elem0, elem1, …, elemN-1, name, key].
     vm.register_builtin(BUILTIN_SET_SUBSCRIPT_RANGE, |vm, argc| {
         let n = argc as usize;
-        let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
+        let mut popped: Vec<Value> = Vec::with_capacity(n);
         for _ in 0..n {
             popped.push(vm.pop());
         }
         popped.reverse();
         if popped.len() < 2 {
-            return fusevm::Value::Status(1);
+            return Value::Status(1);
         }
         let key = popped.pop().unwrap().to_str();
         let name = popped.pop().unwrap().to_str();
         let mut values: Vec<String> = Vec::new();
         for v in popped {
             match v {
-                fusevm::Value::Array(items) => {
+                Value::Array(items) => {
                     for it in items {
                         values.push(it.to_str());
                     }
@@ -2859,19 +2853,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 end,
             };
             crate::ported::params::setarrvalue(&mut v, values);
-            // Write the mutated Param back to paramtab and mirror via
-            // exec.set_array for the legacy cache path.
+            // Write the mutated Param back to paramtab — setarrvalue
+            // mutated v.pm in-place; the prior `tab.remove(&name)` at
+            // the top of this handler took ownership, so we re-insert
+            // here. setarrvalue + this re-insert IS the canonical
+            // store (Src/params.c:2895). No further mirror needed.
             if let Some(pm) = v.pm {
-                let arr_clone = pm.u_arr.clone();
                 if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-                    tab.insert(name.clone(), pm);
-                }
-                if let Some(arr) = arr_clone {
-                    exec.set_array(name, arr);
+                    tab.insert(name, pm);
                 }
             }
         });
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     // BUILTIN_CONCAT_SPLICE — word-segment concat with first/last
@@ -2880,12 +2873,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let rhs = vm.pop();
         let lhs = vm.pop();
         match (lhs, rhs) {
-            (fusevm::Value::Array(mut la), fusevm::Value::Array(ra)) => {
+            (Value::Array(mut la), Value::Array(ra)) => {
                 if la.is_empty() {
-                    return fusevm::Value::Array(ra);
+                    return Value::Array(ra);
                 }
                 if ra.is_empty() {
-                    return fusevm::Value::Array(la);
+                    return Value::Array(la);
                 }
                 // Last of la merges with first of ra; rest unchanged.
                 let last_l = la.pop().unwrap();
@@ -2896,13 +2889,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let mut merged = String::with_capacity(l_s.len() + r_s.len());
                 merged.push_str(&l_s);
                 merged.push_str(&r_s);
-                la.push(fusevm::Value::str(merged));
+                la.push(Value::str(merged));
                 la.extend(ra_iter);
-                fusevm::Value::Array(la)
+                Value::Array(la)
             }
-            (fusevm::Value::Array(mut la), rhs_scalar) => {
+            (Value::Array(mut la), rhs_scalar) => {
                 if la.is_empty() {
-                    return fusevm::Value::str(rhs_scalar.as_str_cow().to_string());
+                    return Value::str(rhs_scalar.as_str_cow().to_string());
                 }
                 let last = la.pop().unwrap();
                 let l_s = last.as_str_cow();
@@ -2910,12 +2903,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let mut s = String::with_capacity(l_s.len() + r_s.len());
                 s.push_str(&l_s);
                 s.push_str(&r_s);
-                la.push(fusevm::Value::str(s));
-                fusevm::Value::Array(la)
+                la.push(Value::str(s));
+                Value::Array(la)
             }
-            (lhs_scalar, fusevm::Value::Array(mut ra)) => {
+            (lhs_scalar, Value::Array(mut ra)) => {
                 if ra.is_empty() {
-                    return fusevm::Value::str(lhs_scalar.as_str_cow().to_string());
+                    return Value::str(lhs_scalar.as_str_cow().to_string());
                 }
                 let first = ra.remove(0);
                 let l_s = lhs_scalar.as_str_cow();
@@ -2924,9 +2917,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 s.push_str(&l_s);
                 s.push_str(&r_s);
                 let mut out = Vec::with_capacity(ra.len() + 1);
-                out.push(fusevm::Value::str(s));
+                out.push(Value::str(s));
                 out.extend(ra);
-                fusevm::Value::Array(out)
+                Value::Array(out)
             }
             (lhs_s, rhs_s) => {
                 let l = lhs_s.as_str_cow();
@@ -2934,7 +2927,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let mut s = String::with_capacity(l.len() + r.len());
                 s.push_str(&l);
                 s.push_str(&r);
-                fusevm::Value::str(s)
+                Value::str(s)
             }
         }
     });
@@ -2955,12 +2948,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let rhs = vm.pop();
         let lhs = vm.pop();
         match (lhs, rhs) {
-            (fusevm::Value::Array(la), fusevm::Value::Array(ra)) => {
+            (Value::Array(la), Value::Array(ra)) => {
                 if ra.is_empty() {
-                    return fusevm::Value::Array(la);
+                    return Value::Array(la);
                 }
                 if la.is_empty() {
-                    return fusevm::Value::Array(ra);
+                    return Value::Array(ra);
                 }
                 let mut out = Vec::with_capacity(la.len() * ra.len());
                 for a in &la {
@@ -2970,38 +2963,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let mut s = String::with_capacity(a_s.len() + b_s.len());
                         s.push_str(&a_s);
                         s.push_str(&b_s);
-                        out.push(fusevm::Value::str(s));
+                        out.push(Value::str(s));
                     }
                 }
-                fusevm::Value::Array(out)
+                Value::Array(out)
             }
-            (fusevm::Value::Array(la), rhs_scalar) => {
+            (Value::Array(la), rhs_scalar) => {
                 let r = rhs_scalar.as_str_cow();
-                let out: Vec<fusevm::Value> = la
+                let out: Vec<Value> = la
                     .into_iter()
                     .map(|a| {
                         let a_s = a.as_str_cow();
                         let mut s = String::with_capacity(a_s.len() + r.len());
                         s.push_str(&a_s);
                         s.push_str(&r);
-                        fusevm::Value::str(s)
+                        Value::str(s)
                     })
                     .collect();
-                fusevm::Value::Array(out)
+                Value::Array(out)
             }
-            (lhs_scalar, fusevm::Value::Array(ra)) => {
+            (lhs_scalar, Value::Array(ra)) => {
                 let l = lhs_scalar.as_str_cow();
-                let out: Vec<fusevm::Value> = ra
+                let out: Vec<Value> = ra
                     .into_iter()
                     .map(|b| {
                         let b_s = b.as_str_cow();
                         let mut s = String::with_capacity(l.len() + b_s.len());
                         s.push_str(&l);
                         s.push_str(&b_s);
-                        fusevm::Value::str(s)
+                        Value::str(s)
                     })
                     .collect();
-                fusevm::Value::Array(out)
+                Value::Array(out)
             }
             (lhs_s, rhs_s) => {
                 let l = lhs_s.as_str_cow();
@@ -3009,7 +3002,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let mut s = String::with_capacity(l.len() + r.len());
                 s.push_str(&l);
                 s.push_str(&r);
-                fusevm::Value::str(s)
+                Value::str(s)
             }
         }
     });
@@ -3018,7 +3011,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let rhs = vm.pop();
         let lhs = vm.pop();
         let rc_expand = with_executor(|exec| {
-            crate::ported::options::opt_state_get("rcexpandparam").unwrap_or(false)
+            opt_state_get("rcexpandparam").unwrap_or(false)
         });
         let ifs_first = || -> String {
             with_executor(|exec| {
@@ -3030,7 +3023,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             })
         };
         // Helper: join an Array to scalar via IFS-first.
-        let join_arr = |arr: Vec<fusevm::Value>| -> String {
+        let join_arr = |arr: Vec<Value>| -> String {
             let sep = ifs_first();
             arr.iter()
                 .map(|v| v.as_str_cow().into_owned())
@@ -3040,27 +3033,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if !rc_expand {
             // Default: join any Array side to scalar, then concat.
             let l = match lhs {
-                fusevm::Value::Array(a) => join_arr(a),
+                Value::Array(a) => join_arr(a),
                 other => other.as_str_cow().into_owned(),
             };
             let r = match rhs {
-                fusevm::Value::Array(a) => join_arr(a),
+                Value::Array(a) => join_arr(a),
                 other => other.as_str_cow().into_owned(),
             };
             let mut s = String::with_capacity(l.len() + r.len());
             s.push_str(&l);
             s.push_str(&r);
-            return fusevm::Value::str(s);
+            return Value::str(s);
         }
         match (lhs, rhs) {
-            (fusevm::Value::Array(la), fusevm::Value::Array(ra)) => {
+            (Value::Array(la), Value::Array(ra)) => {
                 // Cartesian product: [a + b for a in la for b in ra].
                 let mut out = Vec::with_capacity(la.len() * ra.len().max(1));
                 if ra.is_empty() {
-                    return fusevm::Value::Array(la);
+                    return Value::Array(la);
                 }
                 if la.is_empty() {
-                    return fusevm::Value::Array(ra);
+                    return Value::Array(ra);
                 }
                 for a in &la {
                     let a_s = a.as_str_cow();
@@ -3069,38 +3062,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         let mut s = String::with_capacity(a_s.len() + b_s.len());
                         s.push_str(&a_s);
                         s.push_str(&b_s);
-                        out.push(fusevm::Value::str(s));
+                        out.push(Value::str(s));
                     }
                 }
-                fusevm::Value::Array(out)
+                Value::Array(out)
             }
-            (fusevm::Value::Array(la), rhs_scalar) => {
+            (Value::Array(la), rhs_scalar) => {
                 let r = rhs_scalar.as_str_cow();
-                let out: Vec<fusevm::Value> = la
+                let out: Vec<Value> = la
                     .into_iter()
                     .map(|a| {
                         let a_s = a.as_str_cow();
                         let mut s = String::with_capacity(a_s.len() + r.len());
                         s.push_str(&a_s);
                         s.push_str(&r);
-                        fusevm::Value::str(s)
+                        Value::str(s)
                     })
                     .collect();
-                fusevm::Value::Array(out)
+                Value::Array(out)
             }
-            (lhs_scalar, fusevm::Value::Array(ra)) => {
+            (lhs_scalar, Value::Array(ra)) => {
                 let l = lhs_scalar.as_str_cow();
-                let out: Vec<fusevm::Value> = ra
+                let out: Vec<Value> = ra
                     .into_iter()
                     .map(|b| {
                         let b_s = b.as_str_cow();
                         let mut s = String::with_capacity(l.len() + b_s.len());
                         s.push_str(&l);
                         s.push_str(&b_s);
-                        fusevm::Value::str(s)
+                        Value::str(s)
                     })
                     .collect();
-                fusevm::Value::Array(out)
+                Value::Array(out)
             }
             (lhs_s, rhs_s) => {
                 // Fast path: both scalar → identical to Op::Concat.
@@ -3109,7 +3102,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let mut s = String::with_capacity(l.len() + r.len());
                 s.push_str(&l);
                 s.push_str(&r);
-                fusevm::Value::str(s)
+                Value::str(s)
             }
         }
     });
@@ -3120,83 +3113,83 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SAME_FILE, |vm, _argc| {
         let b = vm.pop().to_str();
         let a = vm.pop().to_str();
-        let same = match (std::fs::metadata(&a), std::fs::metadata(&b)) {
+        let same = match (fs::metadata(&a), fs::metadata(&b)) {
             (Ok(ma), Ok(mb)) => ma.dev() == mb.dev() && ma.ino() == mb.ino(),
             _ => false,
         };
-        fusevm::Value::Bool(same)
+        Value::Bool(same)
     });
 
     // `[[ -c path ]]` — character device.
     vm.register_builtin(BUILTIN_IS_CHARDEV, |vm, _argc| {
         let path = vm.pop().to_str();
-        let result = std::fs::metadata(&path)
+        let result = fs::metadata(&path)
             .map(|m| m.file_type().is_char_device())
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
     // `[[ -b path ]]` — block device.
     vm.register_builtin(BUILTIN_IS_BLOCKDEV, |vm, _argc| {
         let path = vm.pop().to_str();
-        let result = std::fs::metadata(&path)
+        let result = fs::metadata(&path)
             .map(|m| m.file_type().is_block_device())
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
     // `[[ -p path ]]` — FIFO (named pipe).
     vm.register_builtin(BUILTIN_IS_FIFO, |vm, _argc| {
         let path = vm.pop().to_str();
-        let result = std::fs::metadata(&path)
+        let result = fs::metadata(&path)
             .map(|m| m.file_type().is_fifo())
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
     // `[[ -S path ]]` — socket.
     vm.register_builtin(BUILTIN_IS_SOCKET, |vm, _argc| {
         let path = vm.pop().to_str();
-        let result = std::fs::symlink_metadata(&path)
+        let result = fs::symlink_metadata(&path)
             .map(|m| m.file_type().is_socket())
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
 
     // `[[ -k path ]]` / `-u` / `-g` — sticky / setuid / setgid bit.
     vm.register_builtin(BUILTIN_HAS_STICKY, |vm, _argc| {
         let path = vm.pop().to_str();
-        let result = std::fs::metadata(&path)
+        let result = fs::metadata(&path)
             .map(|m| m.permissions().mode() & libc::S_ISVTX as u32 != 0)
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
     vm.register_builtin(BUILTIN_HAS_SETUID, |vm, _argc| {
         let path = vm.pop().to_str();
-        let result = std::fs::metadata(&path)
+        let result = fs::metadata(&path)
             .map(|m| m.permissions().mode() & libc::S_ISUID as u32 != 0)
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
     vm.register_builtin(BUILTIN_HAS_SETGID, |vm, _argc| {
         let path = vm.pop().to_str();
-        let result = std::fs::metadata(&path)
+        let result = fs::metadata(&path)
             .map(|m| m.permissions().mode() & libc::S_ISGID as u32 != 0)
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
     vm.register_builtin(BUILTIN_OWNED_BY_USER, |vm, _argc| {
         let path = vm.pop().to_str();
         let euid = unsafe { libc::geteuid() };
-        let result = std::fs::metadata(&path)
+        let result = fs::metadata(&path)
             .map(|m| m.uid() == euid)
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
     vm.register_builtin(BUILTIN_OWNED_BY_GROUP, |vm, _argc| {
         let path = vm.pop().to_str();
         let egid = unsafe { libc::getegid() };
-        let result = std::fs::metadata(&path)
+        let result = fs::metadata(&path)
             .map(|m| m.gid() == egid)
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
 
     // `[[ -N path ]]` — file's access time is NOT newer than its
@@ -3208,10 +3201,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // created files where both stamps are identical.
     vm.register_builtin(BUILTIN_FILE_MODIFIED_SINCE_ACCESS, |vm, _argc| {
         let path = vm.pop().to_str();
-        let result = std::fs::metadata(&path)
+        let result = fs::metadata(&path)
             .map(|m| m.atime() <= m.mtime())
             .unwrap_or(false);
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
 
     // `[[ a -nt b ]]` — true if `a`'s mtime is strictly later than `b`'s.
@@ -3226,26 +3219,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // touched within the same second compared equal even when
         // 500ms apart. zsh tracks ns and uses `>=` for ties (touching
         // a then b in quick succession should still report b newer).
-        let ta = std::fs::metadata(&a).and_then(|m| m.modified()).ok();
-        let tb = std::fs::metadata(&b).and_then(|m| m.modified()).ok();
+        let ta = fs::metadata(&a).and_then(|m| m.modified()).ok();
+        let tb = fs::metadata(&b).and_then(|m| m.modified()).ok();
         let result = match (ta, tb) {
             (Some(ta), Some(tb)) => ta > tb,
             _ => false,
         };
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
 
     // `[[ a -ot b ]]` — mirror of -nt. Same both-must-exist contract.
     vm.register_builtin(BUILTIN_FILE_OLDER, |vm, _argc| {
         let b = vm.pop().to_str();
         let a = vm.pop().to_str();
-        let ta = std::fs::metadata(&a).and_then(|m| m.modified()).ok();
-        let tb = std::fs::metadata(&b).and_then(|m| m.modified()).ok();
+        let ta = fs::metadata(&a).and_then(|m| m.modified()).ok();
+        let tb = fs::metadata(&b).and_then(|m| m.modified()).ok();
         let result = match (ta, tb) {
             (Some(ta), Some(tb)) => ta < tb,
             _ => false,
         };
-        fusevm::Value::Bool(result)
+        Value::Bool(result)
     });
 
     // `set -e` / `setopt errexit` post-command check. Compiler emits
@@ -3287,7 +3280,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // this handler always emits when xtrace is on — no prefix-
         // string heuristic.
         let on =
-            with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
+            with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
         if on {
             let already = XTRACE_DONE_PS4.with(|f| f.get());
             if !already {
@@ -3296,7 +3289,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             eprintln!("{}", cmd_text);
             XTRACE_DONE_PS4.with(|f| f.set(false));
         }
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     // Like XTRACE_LINE but reads the top `argc - 1` values from the
@@ -3316,7 +3309,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             exec.set_last_status(live);
         });
         let on =
-            with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
+            with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
         if on {
             let n_args = argc.saturating_sub(1) as usize;
             let len = vm.stack.len();
@@ -3365,7 +3358,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             XTRACE_DONE_PS4.with(|f| f.set(false));
         }
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     // BUILTIN_XTRACE_ASSIGN — direct port of the per-assignment
@@ -3385,7 +3378,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // or XTRACE_NEWLINE (assignment-only path).
     vm.register_builtin(BUILTIN_XTRACE_ASSIGN, |vm, _argc| {
         let on =
-            with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
+            with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
         if on {
             // PEEK [..., name, value] — argc==2 by contract.
             let len = vm.stack.len();
@@ -3402,7 +3395,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 eprint!("{}={} ", name, quotedzputs(&value));
             }
         }
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     // BUILTIN_XTRACE_NEWLINE — emit trailing `\n` + flush iff a
@@ -3411,7 +3404,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // (the assignment-only path through execcmd_exec).
     vm.register_builtin(BUILTIN_XTRACE_NEWLINE, |_vm, _argc| {
         let on =
-            with_executor(|exec| crate::ported::options::opt_state_get("xtrace").unwrap_or(false));
+            with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
         if on {
             let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
             if already_ps4 {
@@ -3419,13 +3412,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 XTRACE_DONE_PS4.with(|f| f.set(false));
             }
         }
-        fusevm::Value::Status(0)
+        Value::Status(0)
     });
 
     vm.register_builtin(BUILTIN_ERREXIT_CHECK, |vm, _argc| {
         let last = vm.last_status;
         if last == 0 {
-            return fusevm::Value::Status(0);
+            return Value::Status(0);
         }
         // ZERR / ERR trap fires whenever a command exits non-zero
         // (zsh signals.c handle_signals path). Read the trap body
@@ -3473,7 +3466,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if should_exit {
             std::process::exit(last);
         }
-        fusevm::Value::Status(last)
+        Value::Status(last)
     });
 
     // `${var:-default}` / `${var:=default}` / `${var:?error}` / `${var:+alt}`
@@ -3518,11 +3511,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.is_empty() {
-            fusevm::Value::Array(Vec::new())
+            Value::Array(Vec::new())
         } else if nodes.len() == 1 {
-            fusevm::Value::str(nodes.into_iter().next().unwrap())
+            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(nodes.into_iter().map(Value::str).collect())
         }
     });
 
@@ -3548,11 +3541,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.is_empty() {
-            fusevm::Value::Array(Vec::new())
+            Value::Array(Vec::new())
         } else if nodes.len() == 1 {
-            fusevm::Value::str(nodes.into_iter().next().unwrap())
+            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(nodes.into_iter().map(Value::str).collect())
         }
     });
 
@@ -3577,11 +3570,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.is_empty() {
-            fusevm::Value::Array(Vec::new())
+            Value::Array(Vec::new())
         } else if nodes.len() == 1 {
-            fusevm::Value::str(nodes.into_iter().next().unwrap())
+            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(nodes.into_iter().map(Value::str).collect())
         }
     });
 
@@ -3614,11 +3607,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.is_empty() {
-            fusevm::Value::Array(Vec::new())
+            Value::Array(Vec::new())
         } else if nodes.len() == 1 {
-            fusevm::Value::str(nodes.into_iter().next().unwrap())
+            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(nodes.into_iter().map(Value::str).collect())
         }
     });
 
@@ -3629,7 +3622,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARITH_EVAL, |vm, _argc| {
         let expr = vm.pop().to_str();
         let result = crate::ported::subst::arithsubst(&expr, "", "");
-        fusevm::Value::str(result)
+        Value::str(result)
     });
 
     // `$(cmd)` — pops [cmd_string], routes through
@@ -3657,7 +3650,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // exec since it owns the canonical post-subst record.
         let cs_status = with_executor(|exec| exec.last_status());
         vm.last_status = cs_status;
-        fusevm::Value::str(result)
+        Value::str(result)
     });
 
     // Text-based word expansion. Pops [preserved_text, mode_byte].
@@ -3727,7 +3720,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     exec.in_scalar_assign -= 1;
                 }
                 exec.in_dq_context -= 1;
-                fusevm::Value::str(out)
+                Value::str(out)
             }
             2 => {
                 // SingleQuoted: pure literal, strip outer `'…'`.
@@ -3736,7 +3729,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 } else {
                     text.as_str()
                 };
-                fusevm::Value::str(inner.to_string())
+                Value::str(inner.to_string())
             }
             3 => {
                 // Backquote command sub: strip outer backticks.
@@ -3757,20 +3750,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let captured = exec.run_command_substitution(inner);
                 let trimmed = captured.trim_end_matches('\n');
                 if exec.in_dq_context > 0 {
-                    fusevm::Value::str(trimmed.to_string())
+                    Value::str(trimmed.to_string())
                 } else {
                     let ifs = exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string());
-                    let parts: Vec<fusevm::Value> = trimmed
+                    let parts: Vec<Value> = trimmed
                         .split(|c: char| ifs.contains(c))
                         .filter(|s| !s.is_empty())
-                        .map(|s| fusevm::Value::str(s.to_string()))
+                        .map(|s| Value::str(s.to_string()))
                         .collect();
                     if parts.is_empty() {
-                        fusevm::Value::str(String::new())
+                        Value::str(String::new())
                     } else if parts.len() == 1 {
                         parts.into_iter().next().unwrap()
                     } else {
-                        fusevm::Value::Array(parts)
+                        Value::Array(parts)
                     }
                 }
             }
@@ -3779,7 +3772,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // but NOT glob or brace. Heredoc lines like `[42]` must
                 // pass through verbatim — running them through the
                 // default pipeline triggers NOMATCH on the literal.
-                fusevm::Value::str(crate::ported::subst::singsub(&text))
+                Value::str(crate::ported::subst::singsub(&text))
             }
             _ => {
                 // Default: full expansion pipeline.
@@ -3817,11 +3810,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // zsh stores the option as `glob` (default ON);
                 // `setopt noglob` writes `glob=false`. Honor either
                 // form so the dispatcher behaves the same as zsh.
-                let noglob = crate::ported::options::opt_state_get("noglob").unwrap_or(false)
-                    || crate::ported::options::opt_state_get("GLOB")
+                let noglob = opt_state_get("noglob").unwrap_or(false)
+                    || opt_state_get("GLOB")
                         .map(|v| !v)
                         .unwrap_or(false)
-                    || !crate::ported::options::opt_state_get("glob").unwrap_or(true);
+                    || !opt_state_get("glob").unwrap_or(true);
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {
@@ -3873,12 +3866,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // can apply the appropriate filter. Both require
                         // `setopt extendedglob` — runtime falls through
                         // to literal if that's off.
-                        let extglob_meta = crate::ported::options::opt_state_get("extendedglob")
+                        let extglob_meta = opt_state_get("extendedglob")
                             .unwrap_or(false)
                             && (s.starts_with('^') || s.contains('~') || s.contains("/^"));
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
-                            && !crate::ported::pattern::extract_numeric_ranges(&s).is_empty();
+                            && !extract_numeric_ranges(&s).is_empty();
                         // Glob alternation `(a|b|c)` is a primary
                         // zsh feature — `/etc/(passwd|hostname)`
                         // should expand to file matches. Detected
@@ -3913,12 +3906,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // 1/2/5) take separate arms above and always emit
                     // Value::Str so the empty arg survives.
                     if only.is_empty() {
-                        fusevm::Value::Array(Vec::new())
+                        Value::Array(Vec::new())
                     } else {
-                        fusevm::Value::str(only)
+                        Value::str(only)
                     }
                 } else {
-                    fusevm::Value::Array(parts.into_iter().map(fusevm::Value::str).collect())
+                    Value::Array(parts.into_iter().map(Value::str).collect())
                 }
             }
         })
@@ -3937,11 +3930,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.is_empty() {
-            fusevm::Value::str("0")
+            Value::str("0")
         } else if nodes.len() == 1 {
-            fusevm::Value::str(nodes.into_iter().next().unwrap())
+            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(nodes.into_iter().map(Value::str).collect())
         }
     });
 
@@ -3974,11 +3967,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.is_empty() {
-            fusevm::Value::Array(Vec::new())
+            Value::Array(Vec::new())
         } else if nodes.len() == 1 {
-            fusevm::Value::str(nodes.into_iter().next().unwrap())
+            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+            Value::Array(nodes.into_iter().map(Value::str).collect())
         }
     });
 
@@ -4044,7 +4037,7 @@ impl ZshrsHost {
 }
 
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
-    let mut popped: Vec<fusevm::Value> = Vec::with_capacity(argc as usize);
+    let mut popped: Vec<Value> = Vec::with_capacity(argc as usize);
     for _ in 0..argc {
         popped.push(vm.pop());
     }
@@ -4052,7 +4045,7 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
     let mut args: Vec<String> = Vec::with_capacity(popped.len());
     for v in popped {
         match v {
-            fusevm::Value::Array(items) => {
+            Value::Array(items) => {
                 for item in items {
                     args.push(item.to_str());
                 }
@@ -4552,7 +4545,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // brace_ccl: respect the BRACE_CCL option which the bracket-
         // class form `{a-z}` requires. Pull from executor options.
         let brace_ccl = with_executor(|exec| {
-            crate::ported::options::opt_state_get("braceccl").unwrap_or(false)
+            opt_state_get("braceccl").unwrap_or(false)
         });
         crate::ported::glob::xpandbraces(s, brace_ccl)
     }
@@ -4560,15 +4553,15 @@ impl fusevm::ShellHost for ZshrsHost {
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
         // Shell glob match — `*`, `?`, `[...]`, alternation. Used by `[[ x = pat ]]`,
         // `case` arms, and any other point that compares against a glob pattern.
-        crate::vm_helper::glob_match_static(s, pattern)
+        glob_match_static(s, pattern)
     }
 
     fn expand_param(
         &mut self,
         name: &str,
         _modifier: u8,
-        _args: &[fusevm::Value],
-    ) -> fusevm::Value {
+        _args: &[Value],
+    ) -> Value {
         // Sole funnel: route through `getsparam` matching C zsh's
         // `getsparam(name)` → `getvalue` → `getstrvalue` →
         // `Param.gsu->getfn` dispatch (Src/params.c:3076 / 2335).
@@ -4588,7 +4581,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // (value fetch) and paramsubst's modifier-walk loop. This
         // bridge is the value-fetch step only.
         let val_str = crate::ported::params::getsparam(name).unwrap_or_default();
-        fusevm::Value::str(val_str)
+        Value::str(val_str)
     }
 
     fn process_sub_in(&mut self, sub: &fusevm::Chunk) -> String {
@@ -4606,8 +4599,8 @@ impl fusevm::ShellHost for ZshrsHost {
                 n
             })
         );
-        let _ = std::fs::remove_file(&fifo_path);
-        let f = match std::fs::File::create(&fifo_path) {
+        let _ = fs::remove_file(&fifo_path);
+        let f = match fs::File::create(&fifo_path) {
             Ok(f) => f,
             Err(_) => return fifo_path,
         };
@@ -4642,25 +4635,25 @@ impl fusevm::ShellHost for ZshrsHost {
                 n
             })
         );
-        let _ = std::fs::remove_file(&fifo_path);
+        let _ = fs::remove_file(&fifo_path);
         let cpath = match CString::new(fifo_path.clone()) {
             Ok(c) => c,
             Err(_) => return fifo_path,
         };
         if unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) } != 0 {
             // Fall back to plain file if mkfifo fails.
-            let _ = std::fs::write(&fifo_path, "");
+            let _ = fs::write(&fifo_path, "");
             return fifo_path;
         }
         let sub = sub.clone();
         let fifo_for_child = fifo_path.clone();
         match unsafe { libc::fork() } {
             -1 => {
-                let _ = std::fs::remove_file(&fifo_path);
+                let _ = fs::remove_file(&fifo_path);
             }
             0 => {
                 // Child: open FIFO for read, dup onto stdin, run sub-chunk, exit.
-                if let Ok(f) = std::fs::OpenOptions::new().read(true).open(&fifo_for_child) {
+                if let Ok(f) = fs::OpenOptions::new().read(true).open(&fifo_for_child) {
                     let fd = f.as_raw_fd();
                     unsafe {
                         libc::dup2(fd, libc::STDIN_FILENO);
@@ -4709,7 +4702,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 paramtab: paramtab_snap,
                 paramtab_hashed_storage: paramtab_hashed_snap,
                 positional_params: exec.pparams(),
-                env_vars: std::env::vars().collect(),
+                env_vars: env::vars().collect(),
                 // Save the LOGICAL pwd ($PWD env), not `current_dir()`'s
                 // symlink-resolved path. zsh's subshell isolation per
                 // Src/exec.c at the `entersubsh` path treats `pwd` (the
@@ -4718,10 +4711,10 @@ impl fusevm::ShellHost for ZshrsHost {
                 // dest into `pwd`. Falling back to current_dir() only
                 // when PWD is unset matches `setupvals` at
                 // `Src/init.c:1100+`.
-                cwd: std::env::var("PWD")
+                cwd: env::var("PWD")
                     .ok()
-                    .map(std::path::PathBuf::from)
-                    .or_else(|| std::env::current_dir().ok()),
+                    .map(PathBuf::from)
+                    .or_else(|| env::current_dir().ok()),
                 umask: cur_umask,
                 traps: exec.traps.clone(),
             });
@@ -4778,22 +4771,22 @@ impl fusevm::ShellHost for ZshrsHost {
                 // Removes any `export` writes the subshell made, and
                 // restores any vars the subshell unset. Without this
                 // `(export y=sub)` would leak `y` to the parent shell.
-                let current: HashMap<String, String> = std::env::vars().collect();
+                let current: HashMap<String, String> = env::vars().collect();
                 for k in current.keys() {
                     if !snap.env_vars.contains_key(k) {
-                        std::env::remove_var(k);
+                        env::remove_var(k);
                     }
                 }
                 for (k, v) in &snap.env_vars {
                     if current.get(k) != Some(v) {
-                        std::env::set_var(k, v);
+                        env::set_var(k, v);
                     }
                 }
                 if let Some(cwd) = snap.cwd {
-                    let _ = std::env::set_current_dir(&cwd);
+                    let _ = env::set_current_dir(&cwd);
                     // Resync $PWD env so a parent `pwd` doesn't read
                     // the cwd the subshell `cd`'d into.
-                    std::env::set_var("PWD", &cwd);
+                    env::set_var("PWD", &cwd);
                 }
                 // Restore umask. zsh's `(umask 077)` doesn't leak to
                 // parent because the subshell forks; we run in-process
@@ -4878,7 +4871,7 @@ impl fusevm::ShellHost for ZshrsHost {
         if saved_stdout < 0 {
             return String::new();
         }
-        let write_fd = std::os::unix::io::AsRawFd::as_raw_fd(&write_end);
+        let write_fd = AsRawFd::as_raw_fd(&write_end);
         unsafe {
             libc::dup2(write_fd, libc::STDOUT_FILENO);
         }
@@ -5105,7 +5098,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // BEFORE consulting paramtab — so without this
                 // mirror, `$0` inside `f() { echo $0; }` returned the
                 // shell binary path instead of `f`.
-                let saved_argzero_global = if crate::ported::zsh_h::isset(
+                let saved_argzero_global = if isset(
                     crate::ported::zsh_h::FUNCTIONARGZERO,
                 ) {
                     let prev = crate::ported::utils::argzero();
@@ -5202,7 +5195,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // changes inside helpers without leaking to callers.
             // Without it, `setopt no_glob` inside a helper polluted
             // the caller's option state.
-            if crate::ported::options::opt_state_get("localoptions").unwrap_or(false) {
+            if opt_state_get("localoptions").unwrap_or(false) {
                 // Walk all options touched since entry; reset to snapshot.
                 let current = crate::ported::options::opt_state_snapshot();
                 for (k, _) in &current {
@@ -5259,7 +5252,7 @@ impl fusevm::ShellHost for ZshrsHost {
 // fusevm VM. Not a port of Src/exec.c (see file-level docs above) — they're
 // the bridge between fusevm opcodes and ShellExecutor state.
 // ───────────────────────────────────────────────────────────────────────────
-impl crate::ported::vm_helper::ShellExecutor {
+impl ShellExecutor {
     // ─── Host-routed shell ops (called by ZshrsHost from fusevm) ────────────
 
     /// Apply a single redirection. The current scope's saved-fd vec gets a
@@ -5271,7 +5264,7 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// host_apply_redirect to keep the error-handling identical.
     fn redir_open_or_fail(
         fd: i32,
-        result: std::io::Result<std::fs::File>,
+        result: std::io::Result<fs::File>,
         target: &str,
         redirect_failed: &mut bool,
     ) -> bool {
@@ -5293,7 +5286,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                 };
                 eprintln!("zshrs:1: {}: {}", msg, target);
                 *redirect_failed = true;
-                if let Ok(devnull) = std::fs::OpenOptions::new()
+                if let Ok(devnull) = fs::OpenOptions::new()
                     .read(true)
                     .write(true)
                     .open("/dev/null")
@@ -5348,8 +5341,8 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // zsh internally stores the inverted-name `clobber`
                 // (default ON); `setopt noclobber` writes
                 // `clobber=false`. Honor both keys.
-                let noclobber = crate::ported::options::opt_state_get("noclobber").unwrap_or(false)
-                    || !crate::ported::options::opt_state_get("clobber").unwrap_or(true);
+                let noclobber = opt_state_get("noclobber").unwrap_or(false)
+                    || !opt_state_get("clobber").unwrap_or(true);
                 if noclobber && std::path::Path::new(target).exists() {
                     eprintln!("zshrs:1: file exists: {}", target);
                     self.set_last_status(1);
@@ -5360,7 +5353,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                     // the user's chosen sink, but with noclobber the
                     // file is protected — discarding matches the
                     // user's intent better than printing to terminal).
-                    if let Ok(file) = std::fs::OpenOptions::new().write(true).open("/dev/null") {
+                    if let Ok(file) = fs::OpenOptions::new().write(true).open("/dev/null") {
                         let new_fd = file.into_raw_fd();
                         unsafe {
                             libc::dup2(new_fd, fd);
@@ -5371,7 +5364,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                 }
                 if !Self::redir_open_or_fail(
                     fd,
-                    std::fs::File::create(target),
+                    fs::File::create(target),
                     target,
                     &mut self.redirect_failed,
                 ) {
@@ -5381,7 +5374,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             r::CLOBBER => {
                 if !Self::redir_open_or_fail(
                     fd,
-                    std::fs::File::create(target),
+                    fs::File::create(target),
                     target,
                     &mut self.redirect_failed,
                 ) {
@@ -5391,7 +5384,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             r::APPEND => {
                 if !Self::redir_open_or_fail(
                     fd,
-                    std::fs::OpenOptions::new()
+                    fs::OpenOptions::new()
                         .create(true)
                         .append(true)
                         .open(target),
@@ -5404,7 +5397,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             r::READ => {
                 if !Self::redir_open_or_fail(
                     fd,
-                    std::fs::File::open(target),
+                    fs::File::open(target),
                     target,
                     &mut self.redirect_failed,
                 ) {
@@ -5412,7 +5405,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                 }
             }
             r::READ_WRITE => {
-                if let Ok(file) = std::fs::OpenOptions::new()
+                if let Ok(file) = fs::OpenOptions::new()
                     .create(true)
                     .truncate(false) // <> opens existing-or-new without truncating
                     .read(true)
@@ -5441,7 +5434,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                 }
             }
             r::WRITE_BOTH => {
-                if let Ok(file) = std::fs::File::create(target) {
+                if let Ok(file) = fs::File::create(target) {
                     let new_fd = file.into_raw_fd();
                     unsafe {
                         libc::dup2(new_fd, 1);
@@ -5451,7 +5444,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                 }
             }
             r::APPEND_BOTH => {
-                if let Ok(file) = std::fs::OpenOptions::new()
+                if let Ok(file) = fs::OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(target)
@@ -5507,7 +5500,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                 unsafe { libc::close(saved) };
             }
         }
-        let read_fd = std::os::unix::io::AsRawFd::as_raw_fd(&read_end);
+        let read_fd = AsRawFd::as_raw_fd(&read_end);
         unsafe { libc::dup2(read_fd, libc::STDIN_FILENO) };
         drop(read_end);
         std::thread::spawn(move || {
@@ -5555,39 +5548,39 @@ impl crate::ported::vm_helper::ShellExecutor {
         // host.exec. Catch them here before the OS-level exec attempts
         // to spawn a non-existent binary.
         match cmd.as_str() {
-            "sched" => return crate::fusevm_bridge::dispatch_builtin("sched", rest_vec.clone()),
-            "echotc" => return crate::fusevm_bridge::dispatch_builtin("echotc", rest_vec.clone()),
-            "echoti" => return crate::fusevm_bridge::dispatch_builtin("echoti", rest_vec.clone()),
+            "sched" => return dispatch_builtin("sched", rest_vec.clone()),
+            "echotc" => return dispatch_builtin("echotc", rest_vec.clone()),
+            "echoti" => return dispatch_builtin("echoti", rest_vec.clone()),
             // "getln" handler deleted with its stub.
-            "zpty" => return crate::fusevm_bridge::dispatch_builtin("zpty", rest_vec.clone()),
-            "ztcp" => return crate::fusevm_bridge::dispatch_builtin("ztcp", rest_vec.clone()),
+            "zpty" => return dispatch_builtin("zpty", rest_vec.clone()),
+            "ztcp" => return dispatch_builtin("ztcp", rest_vec.clone()),
             "zsocket" => {
                 // Route through canonical dispatch_builtin which goes
                 // via execbuiltin's BUILTINS["zsocket"].optstr parse
                 // ("ad:ltv" per Src/Modules/socket.c:276 BUILTIN spec).
                 // Replaces 55 lines of inline option-bit packing that
                 // duplicated execbuiltin's flag-parser.
-                return crate::fusevm_bridge::dispatch_builtin("zsocket", rest_vec.clone());
+                return dispatch_builtin("zsocket", rest_vec.clone());
             }
             "private" => {
                 // Route through canonical dispatch_builtin → execbuiltin
                 // → BUILTINS["private"] handler (param_private.c:217).
                 // Eliminates a 16-line inline ops-construct + direct
                 // bin_private call.
-                return crate::fusevm_bridge::dispatch_builtin("private", rest_vec.clone());
+                return dispatch_builtin("private", rest_vec.clone());
             }
             "zformat" => {
-                return crate::fusevm_bridge::dispatch_builtin("zformat", rest_vec.clone())
+                return dispatch_builtin("zformat", rest_vec.clone())
             }
             "zregexparse" => {
-                return crate::fusevm_bridge::dispatch_builtin("zregexparse", rest_vec.clone())
+                return dispatch_builtin("zregexparse", rest_vec.clone())
             }
             // `unalias`/`unhash`/`unfunction` share `bin_unhash` but
             // each carries its own funcid (BIN_UNALIAS / BIN_UNHASH /
             // BIN_UNFUNCTION) — dispatch_builtin handles the BUILTINS
             // lookup + funcid propagation via execbuiltin.
             "unalias" | "unhash" | "unfunction" => {
-                return crate::fusevm_bridge::dispatch_builtin(cmd.as_str(), rest_vec.clone());
+                return dispatch_builtin(cmd.as_str(), rest_vec.clone());
             }
             // zsh-bundled rename helpers — implemented natively in
             // Rust so `autoload -U zmv` works without shipping the
@@ -5599,11 +5592,11 @@ impl crate::ported::vm_helper::ShellExecutor {
             "zselect" => {
                 // Route through canonical dispatch_builtin which goes
                 // via execbuiltin → BUILTINS["zselect"] (zselect.c:272).
-                return crate::fusevm_bridge::dispatch_builtin("zselect", rest_vec.clone());
+                return dispatch_builtin("zselect", rest_vec.clone());
             }
-            "cap" => return crate::fusevm_bridge::dispatch_builtin("cap", rest_vec.clone()),
-            "getcap" => return crate::fusevm_bridge::dispatch_builtin("getcap", rest_vec.clone()),
-            "setcap" => return crate::fusevm_bridge::dispatch_builtin("setcap", rest_vec.clone()),
+            "cap" => return dispatch_builtin("cap", rest_vec.clone()),
+            "getcap" => return dispatch_builtin("getcap", rest_vec.clone()),
+            "setcap" => return dispatch_builtin("setcap", rest_vec.clone()),
             "yes" => return self.builtin_yes(&rest_vec),
             "nl" => return self.builtin_nl(&rest_vec),
             "env" => return self.builtin_env(&rest_vec),
@@ -5614,7 +5607,7 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // via execbuiltin → BUILTINS["chgrp"] (files.c:806)
                 // with BIN_CHGRP funcid + "hRs" optstr. Replaces 38
                 // lines of inline option-bit packing.
-                return crate::fusevm_bridge::dispatch_builtin("chgrp", rest_vec.clone());
+                return dispatch_builtin("chgrp", rest_vec.clone());
             }
             "nproc" => return self.builtin_nproc(&rest_vec),
             "expr" => return self.builtin_expr(&rest_vec),
@@ -5655,7 +5648,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             // automatically.
             "mkdir" | "zf_mkdir" | "zf_rm" | "zf_rmdir" | "zf_chmod"
             | "zf_chown" | "zf_chgrp" | "zf_ln" | "zf_mv" | "zf_sync" => {
-                return crate::fusevm_bridge::dispatch_builtin(cmd.as_str(), rest_vec.clone());
+                return dispatch_builtin(cmd.as_str(), rest_vec.clone());
             }
             // `zstat` — port of zsh/stat module (Src/Modules/stat.c
             // BUILTIN("zstat", …)). Returns file metadata as
@@ -5670,7 +5663,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             // `zstat` name.
             "zstat" => {
                 // Canonical bin_stat per stat.c:638 via BUILTINS["zstat"].
-                return crate::fusevm_bridge::dispatch_builtin("zstat", rest_vec.clone());
+                return dispatch_builtin("zstat", rest_vec.clone());
             }
             _ => {}
         }

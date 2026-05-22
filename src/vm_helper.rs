@@ -106,8 +106,8 @@ use std::sync::LazyLock;
 pub(crate) use crate::plugin_cache::PluginSnapshot;
 
 /// Cached compiled regexes for hot paths
-pub(crate) static REGEX_CACHE: LazyLock<Mutex<std::collections::HashMap<String, regex::Regex>>> =
-    LazyLock::new(|| Mutex::new(std::collections::HashMap::with_capacity(64)));
+pub(crate) static REGEX_CACHE: LazyLock<Mutex<HashMap<String, Regex>>> =
+    LazyLock::new(|| Mutex::new(HashMap::with_capacity(64)));
 
 // `TRAP_STATE`, `TRAP_RETURN`, and `FORKLEVEL` (ports of the `int
 // trap_state;` / `int trap_return;` / `int forklevel;` file-static
@@ -225,12 +225,12 @@ pub struct SubshellSnapshot {
     /// parent via paramtab (e.g. `x=outer; (x=inner); echo $x` returned
     /// `inner` because paramsubst reads through paramtab).
     pub paramtab: HashMap<String, crate::ported::zsh_h::Param>,
-    pub paramtab_hashed_storage: HashMap<String, indexmap::IndexMap<String, String>>,
+    pub paramtab_hashed_storage: HashMap<String, IndexMap<String, String>>,
     pub positional_params: Vec<String>,
     pub env_vars: HashMap<String, String>,
     /// Process working directory at subshell entry. `cd` inside the
     /// subshell shouldn't leak to the parent; we restore on End.
-    pub cwd: Option<std::path::PathBuf>,
+    pub cwd: Option<PathBuf>,
     /// File-creation mask at subshell entry. zsh forks for `(...)` so
     /// `umask` set inside dies with the child; we run subshells in
     /// process so we must restore the mask on End. Otherwise
@@ -406,7 +406,7 @@ pub struct ShellExecutor {
     // `src/ported/hashnameddir.rs:36` (port of C `nameddirtab` in
     // `Src/hashnameddir.c`). Callers route through that Mutex.
     // bin_sysopen - file descriptor management
-    pub open_fds: HashMap<i32, std::fs::File>,
+    pub open_fds: HashMap<i32, File>,
     pub next_fd: i32,
     // sched (Src/Builtins/sched.c) — schedcmds list lives in module
     // statics in the canonical port; nothing to carry on ShellExecutor.
@@ -535,7 +535,7 @@ impl ShellExecutor {
     /// Set a scalar parameter via the canonical `paramtab`
     /// (`Src/params.c:3350 setsparam`). The single store.
     pub fn set_scalar(&mut self, name: String, value: String) {
-        crate::ported::params::setsparam(&name, &value); // c:params.c:3350
+        setsparam(&name, &value); // c:params.c:3350
     }
 
     /// Read positional parameters from canonical `PPARAMS`
@@ -560,7 +560,7 @@ impl ShellExecutor {
     /// the name isn't in paramtab. Mirrors the C source's direct
     /// `pm->node.flags & PM_INTEGER` checks.
     pub fn param_flags(&self, name: &str) -> i32 {
-        crate::ported::params::paramtab()
+        paramtab()
             .read()
             .ok()
             .and_then(|t| t.get(name).map(|p| p.node.flags))
@@ -570,49 +570,49 @@ impl ShellExecutor {
     /// `typeset -i name` — Param has PM_INTEGER. Reads via
     /// `param_flags`.
     pub fn is_integer_param(&self, name: &str) -> bool {
-        (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_INTEGER) != 0
+        (self.param_flags(name) as u32 & PM_INTEGER) != 0
     }
 
     /// `readonly` / `typeset -r` — Param has PM_READONLY.
     pub fn is_readonly_param(&self, name: &str) -> bool {
-        (self.param_flags(name) as u32 & crate::ported::zsh_h::PM_READONLY) != 0
+        (self.param_flags(name) as u32 & PM_READONLY) != 0
     }
 
     /// Most-recent-command exit status. Reads canonical
     /// `builtin::LASTVAL` AtomicI32 (`Src/builtin.c:6443`).
     pub fn last_status(&self) -> i32 {
-        crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
+        crate::ported::builtin::LASTVAL.load(Ordering::Relaxed)
     }
 
     /// Write the most-recent-command exit status. The canonical
     /// store is `builtin::LASTVAL`; this is the single setter.
     /// Used everywhere `$?` / `%?` / errexit / ZERR trap read.
     pub fn set_last_status(&mut self, status: i32) {
-        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(status, Ordering::Relaxed);
     }
 
     /// Set an indexed array parameter via canonical paramtab
     /// (`setaparam`, `Src/params.c:3595`). The single store.
     pub fn set_array(&mut self, name: String, value: Vec<String>) {
-        crate::ported::params::setaparam(&name, value); // c:params.c:3595
+        setaparam(&name, value); // c:params.c:3595
     }
 
     /// Set an associative array parameter via canonical
     /// `sethparam` (`Src/params.c:3602`). The single store.
-    pub fn set_assoc(&mut self, name: String, value: indexmap::IndexMap<String, String>) {
+    pub fn set_assoc(&mut self, name: String, value: IndexMap<String, String>) {
         let mut flat: Vec<String> = Vec::with_capacity(value.len() * 2);
         for (k, v) in &value {
             flat.push(k.clone());
             flat.push(v.clone());
         }
-        crate::ported::params::sethparam(&name, flat); // c:params.c:3602
+        sethparam(&name, flat); // c:params.c:3602
     }
 
     /// Read a scalar parameter. Mirrors C `getsparam` at
     /// `Src/params.c:3076` — reads through paramtab, falls back to
     /// special-var hooks and env.
     pub fn scalar(&self, name: &str) -> Option<String> {
-        crate::ported::params::getsparam(name)
+        getsparam(name)
     }
 
     /// Read an array parameter via canonical `getaparam`
@@ -620,14 +620,14 @@ impl ShellExecutor {
     /// that includes the PM_TYPE check + digit-first-name rejection
     /// — the inline paramtab.get(...).u_arr read was missing both.
     pub fn array(&self, name: &str) -> Option<Vec<String>> {
-        crate::ported::params::getaparam(name)
+        getaparam(name)
     }
 
     /// Read an associative array parameter from canonical
     /// `paramtab_hashed_storage`. Mirrors C `gethparam` at
     /// `Src/params.c:3115` — returns the typed `IndexMap`.
-    pub fn assoc(&self, name: &str) -> Option<indexmap::IndexMap<String, String>> {
-        crate::ported::params::paramtab_hashed_storage()
+    pub fn assoc(&self, name: &str) -> Option<IndexMap<String, String>> {
+        paramtab_hashed_storage()
             .lock()
             .ok()
             .and_then(|m| m.get(name).cloned())
@@ -636,7 +636,7 @@ impl ShellExecutor {
     /// Test whether a scalar parameter exists in paramtab.
     /// Mirrors the C `paramtab->getnode(name) != NULL` check.
     pub fn has_scalar(&self, name: &str) -> bool {
-        crate::ported::params::getsparam(name).is_some()
+        getsparam(name).is_some()
     }
 
     /// Test whether an array parameter exists in paramtab.
@@ -645,14 +645,14 @@ impl ShellExecutor {
         // + digit-first-name rejection. The inline u_arr.is_some()
         // shortcut returned true for PM_HASHED Params that had
         // u_arr=Some, which is structurally wrong.
-        crate::ported::params::getaparam(name).is_some()
+        getaparam(name).is_some()
     }
 
     /// Test whether an associative array parameter exists. Reads
     /// canonical `paramtab_hashed_storage` (Src/params.c hashed
     /// PM_HASHED slot).
     pub fn has_assoc(&self, name: &str) -> bool {
-        crate::ported::params::paramtab_hashed_storage()
+        paramtab_hashed_storage()
             .lock()
             .ok()
             .map(|m| m.contains_key(name))
@@ -664,8 +664,8 @@ impl ShellExecutor {
     /// stdunsetfn dispatch, env clear. Also clears the zshrs-side
     /// `paramtab_hashed_storage` parallel IndexMap shadow.
     pub fn unset_assoc(&mut self, name: &str) {
-        crate::ported::params::unsetparam(name);
-        let _ = crate::ported::params::paramtab_hashed_storage()
+        unsetparam(name);
+        let _ = paramtab_hashed_storage()
             .lock()
             .ok()
             .as_deref_mut()
@@ -783,14 +783,14 @@ impl ShellExecutor {
     /// unsetparam_pm + stdunsetfn dispatch + pm.old scope restore.
     /// Inline `tab.remove(name)` skipped all four.
     pub fn unset_array(&mut self, name: &str) {
-        crate::ported::params::unsetparam(name);
+        unsetparam(name);
     }
 
     /// Unset a scalar parameter via canonical `unsetparam`. Same
     /// C-faithful path as `unset_array`; the C `unsetparam` itself
     /// is type-agnostic and dispatches through PM_TYPE inside.
     pub fn unset_scalar(&mut self, name: &str) {
-        crate::ported::params::unsetparam(name);
+        unsetparam(name);
     }
 
     /// Unset a parameter via canonical `unsetparam` (Src/params.c:
@@ -800,8 +800,8 @@ impl ShellExecutor {
     /// IndexMap shadow used for assoc-array value backing (no C
     /// counterpart — folds into Param.u_hash once that wires up).
     pub(crate) fn unset_var(&mut self, name: &str) {
-        crate::ported::params::unsetparam(name);
-        let _ = crate::ported::params::paramtab_hashed_storage()
+        unsetparam(name);
+        let _ = paramtab_hashed_storage()
             .lock()
             .ok()
             .as_deref_mut()
@@ -881,7 +881,7 @@ impl ShellExecutor {
         // script path (Src/init.c:297).
         variables.insert(
             "ZSH_ARGZERO".to_string(),
-            std::env::args().next().unwrap_or_else(|| "zsh".to_string()),
+            env::args().next().unwrap_or_else(|| "zsh".to_string()),
         );
         // ZLE word boundary chars — matches mainline zsh's default.
         variables.insert(
@@ -923,13 +923,13 @@ impl ShellExecutor {
         // c:5064 — `pm->gsu.s->getfn(pm)` dispatches to histcharsgetfn.
         // Mirror via paramtab lookup; at this init point the special
         // entry may not exist yet, so fall back to default `!^#`.
-        let histchars_val = crate::ported::params::paramtab()
+        let histchars_val = paramtab()
             .read()
             .ok()
             .and_then(|t| {
                 t.get("histchars")
                     .or_else(|| t.get("HISTCHARS"))
-                    .map(|pm| crate::ported::params::histcharsgetfn(pm))
+                    .map(|pm| histcharsgetfn(pm))
             })
             .unwrap_or_else(|| "!^#".to_string());
         variables.insert("histchars".to_string(), histchars_val); // c:params.c:5064
@@ -993,9 +993,9 @@ impl ShellExecutor {
         // Seed canonical OPTS_LIVE with defaults if not already
         // populated. `default_options` builds the same name→bool map
         // we previously cloned into `exec.options`.
-        if crate::ported::options::opt_state_len() == 0 {
+        if opt_state_len() == 0 {
             for (k, v) in Self::default_options() {
-                crate::ported::options::opt_state_set(&k, v);
+                opt_state_set(&k, v);
             }
         }
         let mut exec = Self {
@@ -1034,7 +1034,7 @@ impl ShellExecutor {
             compsys_cache: {
                 let cache_path = compsys::cache::default_cache_path();
                 if cache_path.exists() {
-                    let db_size = std::fs::metadata(&cache_path).map(|m| m.len()).unwrap_or(0);
+                    let db_size = fs::metadata(&cache_path).map(|m| m.len()).unwrap_or(0);
                     match CompsysCache::open(&cache_path) {
                         Ok(c) => {
                             tracing::info!(
@@ -1058,7 +1058,7 @@ impl ShellExecutor {
             plugin_cache: {
                 let pc_path = crate::plugin_cache::default_cache_path();
                 if let Some(parent) = pc_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                    let _ = fs::create_dir_all(parent);
                 }
                 match crate::plugin_cache::PluginCache::open(&pc_path) {
                     Ok(pc) => {
@@ -1155,17 +1155,17 @@ impl ShellExecutor {
         // self; this loop fans the contents out to paramtab in one
         // pass at the end of new().
         for (k, v) in &variables {
-            crate::ported::params::setsparam(k, v); // c:params.c:3350
+            setsparam(k, v); // c:params.c:3350
         }
         for (k, v) in &arrays {
-            crate::ported::params::setaparam(k, v.clone()); // c:params.c:3595
+            setaparam(k, v.clone()); // c:params.c:3595
         }
         // Populate paramtab with PM_SPECIAL placeholder Params for
         // every PARTAB / PARTAB_ARRAY magic-assoc name. Mirrors
         // what C's zsh/parameter module boot_ → handlefeatures
         // chain does at startup. Makes `${+aliases}` / `${(t)commands}`
         // / `typeset -p modules` etc. see the special entries.
-        crate::vm_helper::init_partab_params(); // c:Src/Modules/parameter.c:2341 boot_/enables_ chain
+        init_partab_params(); // c:Src/Modules/parameter.c:2341 boot_/enables_ chain
         exec
     }
 
@@ -1225,7 +1225,7 @@ impl ShellExecutor {
         // of Src/init.c source() which calls `lex_init_buf` /
         // `loop()` without engaging the history layer.
         let content =
-            std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
+            fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
         // Save & clear errflag around the parse so we can detect a
         // fresh syntax error vs an inherited one. Direct port of
         // Src/init.c source()'s `errflag &= ~ERRFLAG_ERROR;` before
@@ -1399,7 +1399,7 @@ impl ShellExecutor {
         // file to define+call the function itself — TODO once needed.
         if !self.functions_compiled.contains_key(name) {
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
-                if (stub.node.flags as u32 & crate::ported::zsh_h::PM_UNDEFINED) != 0 {
+                if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
                     let boxed = Box::new(stub.clone());
                     let ptr = Box::into_raw(boxed);
                     let _ = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
@@ -1449,14 +1449,14 @@ impl ShellExecutor {
         } else {
             name.to_string()
         };
-        let saved_zero = crate::ported::params::getsparam("0");
+        let saved_zero = getsparam("0");
         self.set_scalar("0".to_string(), display_name);
         self.local_scope_depth += 1;
         // c:Src/exec.c doshfunc startparamscope(): bump canonical
         // `locallevel` so any `local`/`typeset` inside the body
         // installs Params at the correct scope. endparamscope at
         // exit decrements + restores Param.old chain.
-        crate::ported::params::locallevel.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        locallevel.fetch_add(1, Ordering::Relaxed);
         let line_base = self.function_line_base.get(name).copied().unwrap_or(0);
         let def_file = self.function_def_file.get(name).cloned().flatten();
         self.prompt_funcstack
@@ -1475,7 +1475,7 @@ impl ShellExecutor {
         // c:Src/exec.c doshfunc → endparamscope(). Decrements
         // canonical locallevel and walks paramtab restoring the
         // Param.old chain for every entry installed at this depth.
-        crate::ported::params::endparamscope();
+        endparamscope();
         self.local_scope_depth -= 1;
         match saved_zero {
             Some(v) => {
@@ -1678,7 +1678,7 @@ impl ShellExecutor {
                     // Untokenize then variable-expand — text-based
                     // word expansion for the spawned argv.
                     let untoked = crate::lex::untokenize(w);
-                    crate::ported::subst::singsub(&untoked)
+                    singsub(&untoked)
                 })
                 .collect()
         } else {
@@ -1711,7 +1711,7 @@ impl ShellExecutor {
 
             self.worker_pool.submit(move || {
                 // Open FIFO for writing (will block until reader connects)
-                if let Ok(fifo) = fs::OpenOptions::new().write(true).open(&fifo_clone) {
+                if let Ok(fifo) = OpenOptions::new().write(true).open(&fifo_clone) {
                     let _ = Command::new(&cmd_name)
                         .args(&args)
                         .stdout(fifo)
@@ -1749,7 +1749,7 @@ impl ShellExecutor {
 
             self.worker_pool.submit(move || {
                 // Open FIFO for reading (will block until writer connects)
-                if let Ok(fifo) = fs::File::open(&fifo_clone) {
+                if let Ok(fifo) = File::open(&fifo_clone) {
                     let _ = Command::new(&cmd_name)
                         .args(&args)
                         .stdin(fifo)
@@ -1780,12 +1780,12 @@ impl ShellExecutor {
             // Expand any leading $ / tilde in the filename so
             // `$(< $f)` and `$(< ~/x)` work.
             let resolved = if filename.contains('$') || filename.starts_with('~') {
-                crate::ported::subst::singsub(filename)
+                singsub(filename)
             } else {
                 filename.to_string()
             };
             let resolved = resolved.to_string();
-            match std::fs::read_to_string(&resolved) {
+            match fs::read_to_string(&resolved) {
                 Ok(contents) => {
                     return contents.trim_end_matches('\n').to_string();
                 }
@@ -1834,7 +1834,7 @@ impl ShellExecutor {
         // Src/exec.c:4783 `cmdpush(CS_CMDSUBST);` around execode().
         // Trace lines emitted by the inner program inherit this token
         // so their PS4 prefix shows "cmdsubst" matching zsh -x.
-        crate::ported::prompt::cmdpush(crate::ported::zsh_h::CS_CMDSUBST as u8); // c:zsh.h:2799
+        cmdpush(crate::ported::zsh_h::CS_CMDSUBST as u8); // c:zsh.h:2799
                                                                                  // Save LINENO so the inner cmdsubst's line counter doesn't
                                                                                  // leak into the outer trace — direct port of Src/exec.c:1407
                                                                                  // `oldlineno = lineno;` followed by `lineno = oldlineno;`
@@ -1842,7 +1842,7 @@ impl ShellExecutor {
                                                                                  // and increments from there; once it returns, the outer
                                                                                  // line at the `$(…)` site must read the original outer
                                                                                  // lineno (so xtrace renders `+:5:> echo …` not `+:1:> …`).
-        let saved_lineno = crate::ported::params::getsparam("LINENO");
+        let saved_lineno = getsparam("LINENO");
         // Anchor the inner program's lineno to the outer's current
         // $LINENO so xtrace inside the cmdsubst renders the outer
         // line. zsh's execlist preserves lineno across the inner
@@ -1890,7 +1890,7 @@ impl ShellExecutor {
         if let Some(ln) = saved_lineno {
             self.set_scalar("LINENO".to_string(), ln);
         }
-        crate::ported::prompt::cmdpop();
+        cmdpop();
         // Propagate the inner cmd's status to the parent shell. zsh:
         // `a=$(false); echo $?` → 1 because cmd-subst status leaks to
         // $?. Set last_status on the executor so $? reads the right
@@ -1917,9 +1917,9 @@ impl ShellExecutor {
             libc::dup2(saved_stdout, libc::STDOUT_FILENO);
             libc::close(saved_stdout);
         }
-        let read_file = unsafe { std::fs::File::from_raw_fd(read_fd) };
+        let read_file = unsafe { File::from_raw_fd(read_fd) };
         let mut output = String::new();
-        let _ = std::io::BufReader::new(read_file).read_to_string(&mut output);
+        let _ = io::BufReader::new(read_file).read_to_string(&mut output);
 
         // POSIX: trailing newlines stripped from cmd-sub result.
         while output.ends_with('\n') {
@@ -2244,12 +2244,12 @@ use ::regex::{Error as RegexError, Regex, RegexBuilder};
 // MOVED FROM: src/ported/options.rs
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
+impl ShellExecutor {
     /// Returns every option name in `ZSH_OPTIONS_SET` (canonical port
     /// of `optns[]` at `Src/options.c:79+`). Replaces a 200-line
     /// hardcoded `&[...]` duplicate that drifted from upstream.
     pub(crate) fn all_zsh_options() -> Vec<&'static str> {
-        crate::ported::options::ZSH_OPTIONS_SET
+        ZSH_OPTIONS_SET
             .iter()
             .copied()
             .collect()
@@ -2261,7 +2261,7 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// `defaults_on` array that drifted from upstream every time a
     /// new option landed in optns[].
     pub(crate) fn default_options() -> HashMap<String, bool> {
-        let on = crate::ported::options::default_on_options();
+        let on = default_on_options();
         Self::all_zsh_options()
             .into_iter()
             .map(|n| (n.to_string(), on.contains(n)))
@@ -2274,7 +2274,7 @@ impl crate::ported::vm_helper::ShellExecutor {
 // MOVED FROM: src/ported/params.rs
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
+impl ShellExecutor {
     /// PURE PASSTHRU to the canonical `params::getsparam` (C port of
     /// `Src/params.c::getsparam`). Every special-name case the old
     /// 316-line body handled lives in `params::lookup_special_var` +
@@ -2283,7 +2283,7 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// need the set/unset distinction call `scalar` / `has_scalar`
     /// directly).
     pub(crate) fn get_variable(&self, name: &str) -> String {
-        crate::ported::params::getsparam(name).unwrap_or_default()
+        getsparam(name).unwrap_or_default()
     }
 }
 
@@ -2291,7 +2291,7 @@ impl crate::ported::vm_helper::ShellExecutor {
 // MOVED FROM: src/ported/signals.rs
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
+impl ShellExecutor {
     /// Execute trap handlers for a signal
     pub fn run_trap(&mut self, signal: &str) {
         if let Some(action) = self.traps.get(signal).cloned() {
@@ -2307,7 +2307,7 @@ impl crate::ported::vm_helper::ShellExecutor {
 // MOVED FROM: src/ported/prompt.rs
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
+impl ShellExecutor {
     /// Expand prompt escape sequences using the full prompt module.
     /// `expand_prompt` itself now reads C globals (paramtab / LASTVAL /
     /// curhist / JOBTAB / scriptname) so no per-executor sync is
@@ -2341,7 +2341,7 @@ impl crate::ported::vm_helper::ShellExecutor {
 // MOVED FROM: src/ported/glob.rs
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
+impl ShellExecutor {
     /// Expand glob pattern to matching files
     // expand_glob — thin wrapper around the canonical `glob::glob_path`
     // (C port of `Src/glob.c::zglob`). glob_path handles every glob
@@ -2362,21 +2362,21 @@ impl crate::ported::vm_helper::ShellExecutor {
     //     fusevm doesn't have an equivalent loop, so drop the bit
     //     here after zerr).
     pub fn expand_glob(&self, pattern: &str) -> Vec<String> {
-        let expanded = crate::ported::glob::glob_path(pattern);
+        let expanded = glob_path(pattern);
         if !expanded.is_empty() {
             return expanded;
         }
         // No matches. Mirror zsh's `setopt nullglob` / `nomatch`
         // dispatch (Src/glob.c:1873-1886) here because glob_path
         // returns an empty Vec without knowing executor state.
-        let nullglob = crate::ported::options::opt_state_get("nullglob").unwrap_or(false);
+        let nullglob = opt_state_get("nullglob").unwrap_or(false);
         if nullglob {
             return Vec::new();
         }
-        let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
+        let nomatch = opt_state_get("nomatch").unwrap_or(true);
         if nomatch && Self::looks_like_glob(pattern) {
             zerr(&format!("no matches found: {}", pattern));
-            errflag.fetch_and(!ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
+            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
             self.current_command_glob_failed.set(true);
             return Vec::new();
         }
@@ -2456,15 +2456,15 @@ impl crate::ported::vm_helper::ShellExecutor {
 // MOVED FROM: src/ported/utils.rs
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
+impl ShellExecutor {
     pub(crate) fn copy_dir_recursive(
-        src: &std::path::Path,
-        dest: &std::path::Path,
-    ) -> std::io::Result<()> {
+        src: &Path,
+        dest: &Path,
+    ) -> io::Result<()> {
         if !dest.exists() {
-            std::fs::create_dir_all(dest)?;
+            fs::create_dir_all(dest)?;
         }
-        for entry in std::fs::read_dir(src)? {
+        for entry in fs::read_dir(src)? {
             let entry = entry?;
             let file_type = entry.file_type()?;
             let src_path = entry.path();
@@ -2473,7 +2473,7 @@ impl crate::ported::vm_helper::ShellExecutor {
             if file_type.is_dir() {
                 Self::copy_dir_recursive(&src_path, &dest_path)?;
             } else {
-                std::fs::copy(&src_path, &dest_path)?;
+                fs::copy(&src_path, &dest_path)?;
             }
         }
         Ok(())
@@ -2505,7 +2505,7 @@ thread_local! {
 /// through canonical `PARTAB` (Src/Modules/parameter.c:2235 ports).
 /// Returns `None` if name isn't a known magic-assoc.
 pub fn partab_get(name: &str, key: &str) -> Option<String> {
-    for entry in crate::ported::modules::parameter::PARTAB.iter() {
+    for entry in PARTAB.iter() {
         if entry.name == name {
             return (entry.getfn)(std::ptr::null_mut(), key).and_then(|p| p.u_str);
         }
@@ -2518,7 +2518,7 @@ pub fn partab_get(name: &str, key: &str) -> Option<String> {
 /// parameter.c:2239-2291 ports). Returns `None` if name isn't a
 /// known PM_ARRAY magic-assoc.
 pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
-    for entry in crate::ported::modules::parameter::PARTAB_ARRAY.iter() {
+    for entry in PARTAB_ARRAY.iter() {
         if entry.name == name {
             return Some((entry.getfn)(std::ptr::null_mut()));
         }
@@ -2529,7 +2529,7 @@ pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
 /// Scan helper for `${(k)name}` — enumerates keys via canonical
 /// scanfn, collected into Vec via SCAN_KEYS thread-local.
 pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
-    for entry in crate::ported::modules::parameter::PARTAB.iter() {
+    for entry in PARTAB.iter() {
         if entry.name == name {
             SCAN_KEYS.with(|k| k.borrow_mut().clear());
             fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
@@ -2565,7 +2565,7 @@ pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
 pub fn init_partab_params() {
     use crate::ported::modules::parameter::{PARTAB, PARTAB_ARRAY};
     use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SPECIAL};
-    let mut tab = match crate::ported::params::paramtab().write() {
+    let mut tab = match paramtab().write() {
         Ok(t) => t,
         Err(_) => return,
     };
@@ -2623,7 +2623,7 @@ pub fn init_partab_params() {
 // lives at the per-call site in fusevm_bridge.rs subst_port arms.
 // =====================================================================
 
-impl crate::ported::vm_helper::ShellExecutor {
+impl ShellExecutor {
     pub fn enter_posix_mode(&mut self) {
         self.posix_mode = true;
         self.plugin_cache = None;
@@ -2633,7 +2633,7 @@ impl crate::ported::vm_helper::ShellExecutor {
         // Route through canonical dispatch_builtin → BUILTINS["emulate"]
         // (Src/builtin.c bin_emulate entry). execbuiltin parses the
         // `-R` flag from the "LR" optstr automatically.
-        crate::fusevm_bridge::dispatch_builtin(
+        dispatch_builtin(
             "emulate",
             vec!["sh".to_string(), "-R".to_string()],
         );
@@ -2643,7 +2643,7 @@ impl crate::ported::vm_helper::ShellExecutor {
         self.compsys_cache = None;
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
-        crate::fusevm_bridge::dispatch_builtin(
+        dispatch_builtin(
             "emulate",
             vec!["ksh".to_string(), "-R".to_string()],
         );
@@ -2664,7 +2664,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     // Argument order is reversed vs patmatch(pattern, text) — keep
     // the public (text, pattern) order so callers don't have to
     // change.
-    crate::ported::pattern::patmatch(pattern, s)
+    patmatch(pattern, s)
 }
 
 // `loadautofn` (port of `Src/exec.c:5682`) and `getfpfunc` (port of
