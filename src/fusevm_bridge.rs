@@ -2022,49 +2022,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // Brace expansion. Routes through executor.xpandbraces (already
     // implemented for the pre-fusevm executor). Returns Value::Array.
+    // BUILTIN_WORD_SPLIT — `${=var}` IFS-split runtime.
+    // PURE PASSTHRU: route through canonical `subst::multsub` with
+    // PREFORK_SPLIT flag (C port of `Src/subst.c::multsub` at c:544
+    // — the IFS-split walker with whitespace-vs-non-whitespace
+    // gating, quote-aware parsing, and empty-field handling).
     vm.register_builtin(BUILTIN_WORD_SPLIT, |vm, _argc| {
         let s = vm.pop().to_str();
-        let ifs = with_executor(|exec| exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string()));
-        // Direct port of multsub's IFS-split path (src/zsh/Src/subst.c:
-        // 567-680). zsh distinguishes WHITESPACE IFS (default) from
-        // NON-WHITESPACE IFS:
-        //   - whitespace IFS chars (space/tab/newline): runs of separator
-        //     collapse and empty fields are SUPPRESSED
-        //   - non-whitespace IFS chars: every separator boundary creates a
-        //     field, including empties between adjacent separators
-        // Mixed IFS treats whitespace runs as collapsing, but a single
-        // non-whitespace IFS character creates a field boundary regardless.
-        // zsh's default IFS is " \t\n\0" (space, tab, newline, NUL).
-        // Treat NUL as whitespace-class so the default-IFS path
-        // collapses runs and suppresses empties; without this the
-        // NUL char triggered the non-whitespace branch and emitted
-        // empty fields between every separator.
-        let only_ws = ifs.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\0'));
-        let parts: Vec<fusevm::Value> = if only_ws {
-            s.split(|c: char| ifs.contains(c))
-                .filter(|p| !p.is_empty())
-                .map(fusevm::Value::str)
-                .collect()
-        } else {
-            // Non-whitespace IFS: preserve every separator boundary,
-            // including empty fields. Matches zsh's behaviour for
-            // `IFS=:; ${=a}` on `x:y::z` -> [x, y, "", z].
-            s.split(|c: char| ifs.contains(c))
-                .map(fusevm::Value::str)
-                .collect()
-        };
-        // zsh: word-splitting an empty value yields ZERO words, not one
-        // empty word. `unset b; for w in ${=b}` iterates zero times.
-        // Whitespace-IFS path filtered out the empties already; the
-        // non-whitespace path may have produced a single-empty Vec from
-        // `"".split(...)` which still iterates once — collapse to an
-        // empty Array so for-loops and arg expansion see no words.
-        if parts.is_empty() || (parts.len() == 1 && parts[0].to_str().is_empty()) {
+        let (_joined, parts, _isarr, _flags) = crate::ported::subst::multsub(
+            &s,
+            crate::ported::zsh_h::PREFORK_SPLIT,
+        );
+        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
             fusevm::Value::Array(Vec::new())
         } else if parts.len() == 1 {
-            parts.into_iter().next().unwrap()
+            fusevm::Value::str(parts.into_iter().next().unwrap())
         } else {
-            fusevm::Value::Array(parts)
+            fusevm::Value::Array(parts.into_iter().map(fusevm::Value::str).collect())
         }
     });
 
@@ -2594,57 +2568,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // FuncDef path. Stack: [name, base64-bincode-of-Chunk]. We decode
     // the base64, deserialize the Chunk, and store directly in
     // executor.functions_compiled. Bypasses the ShellCommand JSON layer.
-    // `[[ -v name ]]` — true iff `name` is a set variable (incl. set-empty,
-    // arrays, assoc arrays, and exported env vars). Pops one string, pushes
-    // Bool. Matches bash's -v semantics; zsh's `(t)` flag overlaps.
+    // BUILTIN_VAR_EXISTS — `[[ -v name ]]` set-test.
+    // PURE PASSTHRU: build `${+name}` and route through canonical
+    // `subst::paramsubst` which returns "1" for set / "0" for unset
+    // (C port of `Src/subst.c::paramsubst` plus-prefix arm).
+    // paramsubst handles all the shapes the 48-line hand-roll did:
+    //   - bare scalar / array / assoc
+    //   - subscripted `a[N]` / `h[key]`
+    //   - positional params (any digit-only name)
+    //   - env-var fallback (`HOME` set via getsparam → lookup_special_var)
     vm.register_builtin(BUILTIN_VAR_EXISTS, |vm, _argc| {
         let name = vm.pop().to_str();
-        // `[[ -v a[N] ]]` checks element existence, not just the array.
-        // Split on `[`, look up the array, and verify the resolved
-        // index falls within the populated range. `[[ -v h[key] ]]`
-        // checks an associative array key.
-        if let Some(open) = name.find('[') {
-            if name.ends_with(']') {
-                let arr_name = &name[..open];
-                let key = &name[open + 1..name.len() - 1];
-                let exists = with_executor(|exec| {
-                    if let Some(arr) = exec.array(arr_name) {
-                        // 1-based index, supports negatives.
-                        let parsed = key.parse::<i64>().ok();
-                        if let Some(i) = parsed {
-                            let len = arr.len() as i64;
-                            let resolved = if i < 0 { len + i + 1 } else { i };
-                            return resolved >= 1 && resolved <= len;
-                        }
-                        return false;
-                    }
-                    if let Some(h) = exec.assoc(arr_name) {
-                        return h.contains_key(key);
-                    }
-                    false
-                });
-                return fusevm::Value::Bool(exists);
-            }
-        }
-        let exists = with_executor(|exec| {
-            // Positional parameter test: `[[ -v N ]]` for an integer N
-            // checks whether `$N` is set — i.e. there are at least N
-            // positional params. The digit name otherwise won't exist
-            // in `variables` unless explicitly assigned.
-            if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
-                if let Ok(n) = name.parse::<usize>() {
-                    if n == 0 {
-                        return exec.has_scalar("0");
-                    }
-                    return n <= exec.pparams().len();
-                }
-            }
-            exec.has_scalar(&name)
-                || exec.array(&name).is_some()
-                || exec.assoc(&name).is_some()
-                || std::env::var(&name).is_ok()
-        });
-        fusevm::Value::Bool(exists)
+        let body = format!("${{+{}}}", name);
+        let mut ret_flags: i32 = 0;
+        let (_full, _pos, nodes) =
+            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
+        let result = nodes.into_iter().next().unwrap_or_default();
+        fusevm::Value::Bool(result == "1")
     });
 
     // `time { compound; ... }` — runs the sub-chunk and prints elapsed
