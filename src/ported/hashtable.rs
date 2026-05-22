@@ -2468,32 +2468,21 @@ pub fn shfunctab_lock() -> &'static std::sync::RwLock<shfunc_table> {
     shfuncTAB.get_or_init(|| std::sync::RwLock::new(shfunc_table::new()))
 }
 
-/// Glob-style match — supports `*` and `?` only. Used by
-/// `scanmatchshfunc` for `print -l` / `unfunction` glob args.
-/// C uses the full `patmatch` engine; the Rust simplification
-/// covers the common cases.
+/// Glob-style match for hashtable scan callers. Direct port of C's
+/// `pattry(pprog, hn->nam)` at `Src/hashtable.c:412` / `c:431` —
+/// `scanmatchtable` compiles the caller's pattern once into a
+/// `Patprog` and tests every node's name against it. zshrs's
+/// `patmatch(pattern, text)` (pattern.rs:1561) does the
+/// `patcompile + pattry` pair in one call, so we route through
+/// it directly.
+///
+/// Previously this was an ad-hoc 30-line recursive matcher that
+/// only handled `*` and `?` — char classes (`[abc]`), numeric
+/// ranges (`<1-9>`), recursive globs, and the rest of zsh's
+/// extended-glob set silently fell through. Now uses the
+/// canonical engine.
 fn simple_glob_match(pattern: &str, name: &str) -> bool {
-    let pat_bytes = pattern.as_bytes();
-    let name_bytes = name.as_bytes();
-    glob_match_inner(pat_bytes, name_bytes)
-}
-
-fn glob_match_inner(pat: &[u8], name: &[u8]) -> bool {
-    if pat.is_empty() {
-        return name.is_empty();
-    }
-    match pat[0] {
-        b'*' => {
-            for i in 0..=name.len() {
-                if glob_match_inner(&pat[1..], &name[i..]) {
-                    return true;
-                }
-            }
-            false
-        }
-        b'?' => !name.is_empty() && glob_match_inner(&pat[1..], &name[1..]),
-        c => !name.is_empty() && name[0] == c && glob_match_inner(&pat[1..], &name[1..]),
-    }
+    crate::ported::pattern::patmatch(pattern, name) // c:hashtable.c:412
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
