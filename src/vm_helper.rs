@@ -3436,9 +3436,23 @@ pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
         "dis_galiases" => Some(collect(|f, fl| scanpmdisgaliases(null_ht, f, fl))),
         "saliases" => Some(collect(|f, fl| scanpmsaliases(null_ht, f, fl))),
         "dis_saliases" => Some(collect(|f, fl| scanpmdissaliases(null_ht, f, fl))),
-        "reswords" | "dis_reswords" | "modules" | "history" | "historywords" | "jobtexts"
-        | "jobstates" | "jobdirs" | "nameddirs" | "userdirs" | "usergroups" | "parameters"
-        | "errnos" | "sysparams" | "dirstack" => Some(Vec::new()),
+        // Route through canonical scanpmX (Src/Modules/parameter.c).
+        // Each scan fn walks its native table via the GSU callback.
+        "parameters" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmparameters(null_ht, f, fl))),
+        "modules" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmmodules(null_ht, f, fl))),
+        "history" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmhistory(null_ht, f, fl))),
+        "jobtexts" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmjobtexts(null_ht, f, fl))),
+        "jobstates" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmjobstates(null_ht, f, fl))),
+        "jobdirs" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmjobdirs(null_ht, f, fl))),
+        "nameddirs" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmnameddirs(null_ht, f, fl))),
+        "userdirs" => Some(collect(|f, fl| crate::ported::modules::parameter::scanpmuserdirs(null_ht, f, fl))),
+        // Names without canonical scanpmX ports yet (returned empty
+        // previously and remain so until per-name scan fns land).
+        // TODO faithful: route reswords/dis_reswords/historywords/
+        // usergroups/errnos/sysparams/dirstack through their scanpmX
+        // when those land in Src/Modules/parameter.c port.
+        "reswords" | "dis_reswords" | "historywords"
+        | "usergroups" | "errnos" | "sysparams" | "dirstack" => Some(Vec::new()),
         // `mapfile` — zsh/mapfile module's magic assoc. Keys are
         // discoverable via `scanpmmapfile` (Src/Modules/mapfile.c:241)
         // which walks `.` but uses an empty value list per the
