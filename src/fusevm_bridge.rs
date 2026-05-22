@@ -1815,9 +1815,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_scalar(name.clone(), chosen);
             });
 
-            // Reset the loop signal before running the body so a stale
-            // value from a sibling construct doesn't leak in.
-            with_executor(|exec| exec.loop_signal = None);
+            // Reset canonical BREAKS/CONTFLAG before running the body
+            // so a stale value from a sibling construct doesn't leak in.
+            crate::ported::builtin::BREAKS.store(0, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::builtin::CONTFLAG.store(0, std::sync::atomic::Ordering::SeqCst);
 
             crate::fusevm_disasm::maybe_print_stdout("select:body", &chunk);
             let mut body_vm = fusevm::VM::new(chunk.clone());
@@ -1825,22 +1826,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let _ = body_vm.run();
             last_status = body_vm.last_status;
 
-            // Drain the cross-VM loop-control signal. `break` from inside
-            // the body sets LoopSignal::Break; `continue` sets Continue.
-            // The legacy `BREAK_SELECT=1` env-var sentinel is still honored
-            // for backward compat with scripts written before the keyword
-            // path landed.
-            let signal = with_executor(|exec| exec.loop_signal.take());
+            // Drain the canonical BREAKS/CONTFLAG counters. Mirrors
+            // loop.c:529-534's `if (breaks) { breaks--; if (breaks ||
+            // !contflag) break; contflag = 0; }` drain pattern.
+            // The legacy `BREAK_SELECT=1` env-var sentinel is still
+            // honored for backward compat.
             let break_legacy = with_executor(|exec| {
                 let v = exec.scalar("BREAK_SELECT");
                 exec.unset_scalar("BREAK_SELECT");
                 v.map(|s| s != "0" && !s.is_empty()).unwrap_or(false)
             });
-            match signal {
-                Some(LoopSignal::Break) => break,
-                Some(LoopSignal::Continue) => continue,
-                None if break_legacy => break,
-                None => {}
+            use std::sync::atomic::Ordering::SeqCst;
+            let breaks = crate::ported::builtin::BREAKS.load(SeqCst);
+            if breaks > 0 {
+                let cont = crate::ported::builtin::CONTFLAG.load(SeqCst);
+                crate::ported::builtin::BREAKS.fetch_sub(1, SeqCst);
+                if breaks - 1 > 0 || cont == 0 {
+                    break;
+                }
+                crate::ported::builtin::CONTFLAG.store(0, SeqCst);
+                continue;
+            }
+            if break_legacy {
+                break;
             }
         }
 
@@ -2088,21 +2096,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Array(matches.into_iter().map(fusevm::Value::str).collect())
     });
 
-    // `break`/`continue` from a sub-VM body. The compile path emits these
-    // when the keyword appears at chunk top-level (no enclosing for/while in
-    // the current chunk's patch lists). Outer-loop builtins (BUILTIN_RUN_
-    // SELECT and any future loop-via-builtin construct) drain
-    // executor.loop_signal after each iteration.
+    // `break`/`continue` from a sub-VM body. The compile path emits
+    // these when the keyword appears at chunk top-level (no enclosing
+    // for/while in the current chunk's patch lists). Outer-loop
+    // builtins (BUILTIN_RUN_SELECT and any future loop-via-builtin
+    // construct) drain canonical BREAKS/CONTFLAG after each iteration.
+    //
+    // Writes match `bin_break`'s c:5836+ pattern:
+    //   continue: contflag = 1; breaks++   (Src/builtin.c::bin_break)
+    //   break:    breaks++
     vm.register_builtin(BUILTIN_SET_BREAK, |_vm, _argc| {
-        with_executor(|exec| {
-            exec.loop_signal = Some(LoopSignal::Break);
-        });
+        use std::sync::atomic::Ordering::SeqCst;
+        crate::ported::builtin::BREAKS.fetch_add(1, SeqCst);
         Value::Status(0)
     });
     vm.register_builtin(BUILTIN_SET_CONTINUE, |_vm, _argc| {
-        with_executor(|exec| {
-            exec.loop_signal = Some(LoopSignal::Continue);
-        });
+        use std::sync::atomic::Ordering::SeqCst;
+        crate::ported::builtin::CONTFLAG.store(1, SeqCst);
+        crate::ported::builtin::BREAKS.fetch_add(1, SeqCst);
         Value::Status(0)
     });
 
@@ -4241,13 +4252,16 @@ pub const BUILTIN_RUN_SELECT: u16 = 296;
 /// `m[k]+=value` — append onto an existing assoc-array value (string concat).
 /// If the key doesn't exist, behaves like SET_ASSOC. Stack: [name, key, value].
 
-/// `break` from inside a body that runs on a sub-VM (select, future loop-via-
-/// builtin constructs). Sets `executor.loop_signal = Some(LoopSignal::Break)`.
-/// Outer-loop builtins drain the flag after each body run and exit early.
+/// `break` from inside a body that runs on a sub-VM (select, future
+/// loop-via-builtin constructs). Writes the canonical
+/// `crate::ported::builtin::BREAKS` atomic (port of `Src/loop.c:46
+/// breaks`). Outer-loop builtins drain BREAKS/CONTFLAG after each
+/// body run, matching the loop.c:529-534 drain pattern.
 pub const BUILTIN_SET_BREAK: u16 = 299;
 
-/// `continue` from inside a sub-VM body. Sets the signal to Continue. Outer
-/// loop builtins drain + skip-to-next-iteration.
+/// `continue` from inside a sub-VM body. Sets CONTFLAG=1 + bumps
+/// BREAKS, matching `bin_break`'s WC_CONTINUE arm at Src/builtin.c
+/// c:5836 `contflag = 1; FALLTHROUGH; breaks++;`.
 pub const BUILTIN_SET_CONTINUE: u16 = 300;
 
 /// Brace expansion: `{a,b,c}` → 3 values, `{1..5}` → 5 values, `{01..05}` →
