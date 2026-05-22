@@ -4579,10 +4579,7 @@ impl fusevm::ShellHost for ZshrsHost {
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
         // Shell glob match — `*`, `?`, `[...]`, alternation. Used by `[[ x = pat ]]`,
         // `case` arms, and any other point that compares against a glob pattern.
-        // PURE PASSTHRU to canonical pattern::patmatch (C port of
-        // Src/pattern.c::pattry); args reversed since patmatch takes
-        // (pattern, text).
-        crate::ported::pattern::patmatch(pattern, s)
+        crate::vm_helper::glob_match_static(s, pattern)
     }
 
     fn expand_param(
