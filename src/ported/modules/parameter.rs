@@ -3255,8 +3255,195 @@ pub struct pardef {
 
 // `partab` — port of `static struct paramdef partab[]` (parameter.c).
 // 33 SPECIALPMDEF entries — each ties a `${assoc}` magic-assoc name
-// to its scanpm*/getpm* C callbacks. Rust-side dispatch happens via
-// thread-local SCAN routing in subst.rs; here we only need the names.
+// to its scanpm*/getpm* C callbacks. Rust-side dispatch is wired
+// through the static `PARTAB` table below: each entry pairs the
+// name + PM_* flags + getfn/scanfn fn pointers, so paramsubst can
+// route `${name[key]}` through `getpmX(name=key)` and `${(k)name}`
+// through `scanpmX(...)` like C does via the GSU `getnfn`/`scantfn`
+// callbacks (`Src/Modules/parameter.c:2235`+).
+
+/// Function-pointer types matching C's `GetNodeFunc` / `ScanTabFunc`
+/// for the magic-assoc table dispatch.
+pub type HashGetFn = fn(*mut HashTable, &str) -> Option<Param>;
+pub type HashScanFn = fn(*mut HashTable, Option<crate::ported::zsh_h::ScanFunc>, i32);
+
+/// Strongly-typed PARTAB entry. C's `paramdef` keeps these as opaque
+/// pointers; Rust's static-initialization rules make explicit fn
+/// pointers cleaner. Only the magic-assoc shape (PM_HASHED) is
+/// populated here; PM_ARRAY entries (`dirstack`, `funcstack`,
+/// `patchars`, `reswords`, etc.) need a separate ArrayGetFn type.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct PartabHashEntry {
+    /// Parameter name — `${name[key]}` triggers dispatch.
+    pub name: &'static str,
+    /// PM_* flag bits (PM_HASHED, PM_READONLY_SPECIAL, etc.).
+    pub flags: i32,
+    /// Per-key value lookup. Mirrors `getpm*` family in C.
+    pub getfn: HashGetFn,
+    /// Full-table enumeration. Mirrors `scanpm*` family in C.
+    pub scanfn: HashScanFn,
+}
+
+/// `static const struct paramdef partab[]` from `Src/Modules/parameter.c:
+/// 2235-2298`. Each entry binds a magic-assoc name to its
+/// per-key/full-scan canonical callbacks. The PM_ARRAY entries
+/// (dirstack/funcstack/patchars/reswords/historywords/etc.) aren't
+/// included here — they live in a separate `PARTAB_ARRAY` once the
+/// array-shaped getfn types land.
+pub static PARTAB: &[PartabHashEntry] = &[
+    // c:2235 — `aliases`: regular aliases (no ALIAS_GLOBAL bit).
+    PartabHashEntry {
+        name: "aliases",
+        flags: PM_HASHED as i32, // c:2235 SPECIALPMDEF flags
+        getfn: getpmralias,
+        scanfn: scanpmraliases,
+    },
+    // c:2237 — `builtins`: read-only.
+    PartabHashEntry {
+        name: "builtins",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2237 PM_READONLY_SPECIAL
+        getfn: getpmbuiltin,
+        scanfn: scanpmbuiltins,
+    },
+    // c:2238 — `commands`: cmdnamtab lookup + PATH path-build.
+    PartabHashEntry {
+        name: "commands",
+        flags: PM_HASHED as i32, // c:2238
+        getfn: getpmcommand,
+        scanfn: scanpmcommands,
+    },
+    // c:2241 — `dis_aliases`: aliases with DISABLED bit.
+    PartabHashEntry {
+        name: "dis_aliases",
+        flags: PM_HASHED as i32, // c:2241
+        getfn: getpmdisralias,
+        scanfn: scanpmdisraliases,
+    },
+    // c:2243 — `dis_builtins`: read-only disabled.
+    PartabHashEntry {
+        name: "dis_builtins",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2243 PM_READONLY_SPECIAL
+        getfn: getpmdisbuiltin,
+        scanfn: scanpmdisbuiltins,
+    },
+    // c:2245 — `dis_functions`: shfunctab with DISABLED bit.
+    PartabHashEntry {
+        name: "dis_functions",
+        flags: PM_HASHED as i32, // c:2245
+        getfn: getpmdisfunction,
+        scanfn: scanpmdisfunctions,
+    },
+    // c:2249 — `dis_galiases`.
+    PartabHashEntry {
+        name: "dis_galiases",
+        flags: PM_HASHED as i32, // c:2249
+        getfn: getpmdisgalias,
+        scanfn: scanpmdisgaliases,
+    },
+    // c:2255 — `dis_saliases`.
+    PartabHashEntry {
+        name: "dis_saliases",
+        flags: PM_HASHED as i32, // c:2255
+        getfn: getpmdissalias,
+        scanfn: scanpmdissaliases,
+    },
+    // c:2263 — `functions`: shfunctab lookup.
+    PartabHashEntry {
+        name: "functions",
+        flags: PM_HASHED as i32, // c:2263
+        getfn: getpmfunction,
+        scanfn: scanpmfunctions,
+    },
+    // c:2269 — `galiases`: aliases with ALIAS_GLOBAL bit.
+    PartabHashEntry {
+        name: "galiases",
+        flags: PM_HASHED as i32, // c:2269
+        getfn: getpmgalias,
+        scanfn: scanpmgaliases,
+    },
+    // c:2271 — `history`: history-ring entry by event number.
+    PartabHashEntry {
+        name: "history",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2271 PM_READONLY_SPECIAL
+        getfn: getpmhistory,
+        scanfn: scanpmhistory,
+    },
+    // c:2275 — `jobdirs`.
+    PartabHashEntry {
+        name: "jobdirs",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2275 PM_READONLY_SPECIAL
+        getfn: getpmjobdir,
+        scanfn: scanpmjobdirs,
+    },
+    // c:2277 — `jobstates`.
+    PartabHashEntry {
+        name: "jobstates",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2277 PM_READONLY_SPECIAL
+        getfn: getpmjobstate,
+        scanfn: scanpmjobstates,
+    },
+    // c:2279 — `jobtexts`.
+    PartabHashEntry {
+        name: "jobtexts",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2279 PM_READONLY_SPECIAL
+        getfn: getpmjobtext,
+        scanfn: scanpmjobtexts,
+    },
+    // c:2281 — `modules`.
+    PartabHashEntry {
+        name: "modules",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2281 PM_READONLY_SPECIAL
+        getfn: getpmmodule,
+        scanfn: scanpmmodules,
+    },
+    // c:2283 — `nameddirs`.
+    PartabHashEntry {
+        name: "nameddirs",
+        flags: PM_HASHED as i32, // c:2283
+        getfn: getpmnameddir,
+        scanfn: scanpmnameddirs,
+    },
+    // c:2285 — `options`.
+    PartabHashEntry {
+        name: "options",
+        flags: PM_HASHED as i32, // c:2285
+        getfn: getpmoption,
+        scanfn: scanpmoptions,
+    },
+    // c:2287 — `parameters`.
+    PartabHashEntry {
+        name: "parameters",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2287 PM_READONLY_SPECIAL
+        getfn: getpmparameter,
+        scanfn: scanpmparameters,
+    },
+    // c:2293 — `saliases`: suffix aliases.
+    PartabHashEntry {
+        name: "saliases",
+        flags: PM_HASHED as i32, // c:2293
+        getfn: getpmsalias,
+        scanfn: scanpmsaliases,
+    },
+    // c:2295 — `userdirs`.
+    PartabHashEntry {
+        name: "userdirs",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2295 PM_READONLY_SPECIAL
+        getfn: getpmuserdir,
+        scanfn: scanpmuserdirs,
+    },
+    // c:2297 — `usergroups`.
+    PartabHashEntry {
+        name: "usergroups",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // c:2297 PM_READONLY_SPECIAL
+        getfn: getpmusergroups,
+        scanfn: scanpmusergroups,
+    },
+];
+
+// partab_get / partab_scan_keys dispatch helpers live in src/vm_helper.rs
+// (outside src/ported/ — they're Rust-only convenience wrappers over
+// PARTAB's typed fn pointers, not direct ports of any C function).
 
 // `module_features` — port of `static struct features module_features`
 // from parameter.c:2300.
