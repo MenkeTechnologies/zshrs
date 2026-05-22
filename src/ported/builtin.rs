@@ -9890,14 +9890,26 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("Rs"),
             None,
         ),
+        // c:Src/Modules/files.c:806 — BUILTIN("chgrp", 0, bin_chown, 2, -1, BIN_CHGRP, "hRs", NULL)
+        BUILTIN(
+            "chgrp",
+            0,
+            Some(crate::ported::modules::files::bin_chown as HandlerFunc),
+            2,
+            -1,
+            crate::ported::modules::files::BIN_CHGRP,
+            Some("hRs"),
+            None,
+        ),
+        // c:Src/Modules/files.c:808 — BUILTIN("chown", 0, bin_chown, 2, -1, BIN_CHOWN, "hRs", NULL)
         BUILTIN(
             "chown",
             0,
             Some(crate::ported::modules::files::bin_chown as HandlerFunc),
             2,
             -1,
-            0,
-            Some("Rs"),
+            crate::ported::modules::files::BIN_CHOWN,
+            Some("hRs"),
             None,
         ),
         BUILTIN(
@@ -10589,7 +10601,7 @@ mod tests {
         // Total Rust BUILTINS table size pinned at 146 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 146,
+        assert_eq!(BUILTINS.len(), 147,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
