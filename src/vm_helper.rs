@@ -1160,8 +1160,12 @@ impl ShellExecutor {
         for (k, v) in &arrays {
             crate::ported::params::setaparam(k, v.clone()); // c:params.c:3595
         }
-        // Assocs: there are no pre-seeded entries (terminfo / termcap
-        // resolve lazily via magic_assoc_lookup) so no mirror loop.
+        // Populate paramtab with PM_SPECIAL placeholder Params for
+        // every PARTAB / PARTAB_ARRAY magic-assoc name. Mirrors
+        // what C's zsh/parameter module boot_ → handlefeatures
+        // chain does at startup. Makes `${+aliases}` / `${(t)commands}`
+        // / `typeset -p modules` etc. see the special entries.
+        crate::vm_helper::init_partab_params(); // c:Src/Modules/parameter.c:2341 boot_/enables_ chain
         exec
     }
 
@@ -2543,6 +2547,67 @@ pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
 // `partab_scan_keys` (above) and PARTAB_ARRAY + `partab_array_get`
 // now provide directly. Zero callers after the bridge magic-assoc
 // fallback was cut over to PARTAB-only dispatch in b092a5dc19.
+
+/// Populate paramtab with PM_SPECIAL placeholder Params for every
+/// PARTAB / PARTAB_ARRAY entry — Rust-only init helper, no direct
+/// C counterpart (closest is `handlefeatures` walking `partab[]`
+/// in `Src/Modules/parameter.c:2341` boot/enables chain).
+///
+/// Each magic-assoc name gets a Param with `entry.flags | PM_SPECIAL`.
+/// Value reads still route through `partab_get` / `partab_array_get`;
+/// having the Param in paramtab makes `paramtab.get(name)` return
+/// Some(Param) so `${+name}` / `${(t)name}` / `typeset -p name` see
+/// the entry. Without this, those reads returned empty for every
+/// magic-assoc (aliases, commands, functions, etc.).
+///
+/// Called from ShellExecutor::new() since zshrs's bin entry skips
+/// the canonical module-bootstrap chain.
+pub fn init_partab_params() {
+    use crate::ported::modules::parameter::{PARTAB, PARTAB_ARRAY};
+    use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SPECIAL};
+    let mut tab = match crate::ported::params::paramtab().write() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    // Strip PM_READONLY when seeding stubs: read-only Params block
+    // INTERNAL writes from the runtime's own function-call /
+    // funcstack-push paths that go through setaparam. Real reads
+    // route via PARTAB getfn callbacks, not these stub Params, so
+    // the readonly flag's purpose (block userspace assignment) is
+    // moot for the stub anyway.
+    let mk_pm = |name: &str, flags: i32| -> Param {
+        Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: name.to_string(),
+                flags: (flags & !(PM_READONLY as i32)) | PM_SPECIAL as i32,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        })
+    };
+    for entry in PARTAB.iter() {
+        tab.insert(entry.name.to_string(), mk_pm(entry.name, entry.flags));
+    }
+    for entry in PARTAB_ARRAY.iter() {
+        tab.insert(entry.name.to_string(), mk_pm(entry.name, entry.flags));
+    }
+}
 
 // =====================================================================
 // SubstState bridge — DELETED per user directive ("delete SubstState").

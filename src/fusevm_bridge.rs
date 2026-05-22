@@ -3491,18 +3491,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let rhs = vm.pop().to_str();
         let op = vm.pop().to_int() as u8;
         let name = vm.pop().to_str();
-        let op_str = match op {
-            0 => ":-",
-            1 => ":=",
-            2 => ":?",
-            3 => ":+",
-            4 => "-",
-            5 => "=",
-            6 => "?",
-            7 => "+",
-            _ => "-",
+        // op=8 is the `${+name}` set-test prefix form (distinct from the
+        // `${name+rhs}` substitute-if-set suffix form which is op=7).
+        // Per compile_zsh.rs::parse_param_modifier: the `+` is emitted as
+        // a leading sigil and `rhs` is empty.
+        let body = if op == 8 {
+            format!("${{+{}}}", name)
+        } else {
+            let op_str = match op {
+                0 => ":-",
+                1 => ":=",
+                2 => ":?",
+                3 => ":+",
+                4 => "-",
+                5 => "=",
+                6 => "?",
+                7 => "+",
+                _ => "-",
+            };
+            format!("${{{}{}{}}}", name, op_str, rhs)
         };
-        let body = format!("${{{}{}{}}}", name, op_str, rhs);
         let mut ret_flags: i32 = 0;
         let (_full, _pos, nodes) =
             crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
