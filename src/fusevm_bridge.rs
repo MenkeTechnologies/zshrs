@@ -1184,19 +1184,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZPROF, |vm, argc| {
         let args = pop_args(vm, argc);
-        // bin_zprof now takes the canonical C signature
-        // (name, args, ops, func) per Src/Modules/zprof.c:139.
-        let mut ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        if args.iter().any(|a| a == "-c") {
-            ops.ind[b'c' as usize] = 1;
-        }
-        let _ = with_executor(|_exec| ());
-        let status = crate::modules::zprof::bin_zprof("zprof", &args, &ops, 0);
+        // Route through canonical dispatch_builtin → execbuiltin →
+        // BUILTINS["zprof"] (zprof.c:139) which parses the optstr
+        // automatically. Replaces inline `-c` flag scan.
+        let status = dispatch_builtin("zprof", args);
         Value::Status(status)
     });
 
