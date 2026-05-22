@@ -2242,50 +2242,6 @@ pub enum BuiltinType {
 // they will be re-wired here once the canonical bin_* ports are
 // true to C.
 // =====================================================================
-#[allow(unused_variables, dead_code)]
-impl ShellExecutor {
-    fn _empty_ops() -> crate::ported::zsh_h::options {
-        options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        }
-    }
-
-    pub(crate) fn dispatch_pending_traps(&mut self) {}
-    // Note: `recorder_ctx()` lives in src/extensions/recorder.rs
-    // (gated behind --features recorder). Do not stub it here or
-    // you'll get a duplicate-definition error when the recorder
-    // feature is enabled.
-
-    // builtin_echo / builtin_printf / builtin_local / builtin_export /
-    // builtin_readonly / builtin_declare / builtin_typeset_named /
-    // builtin_integer / builtin_float / dispatch_typeset_as wrappers
-    // deleted — call sites now go directly through
-    // `dispatch_builtin(name, args)` which does the same
-    // BUILTINS[name] → execbuiltin walk.
-    // Stubs deleted — these were leftover from an old zshrs port aligned to
-    // `Src/exec.c` before fusevm replaced that path. Each was a `{ 0 }` / `{ None }` / `{ false }` no-op
-    // pretending to implement a builtin while silently succeeding.
-    // Removed: builtin_pushd, builtin_popd, builtin_history,
-    // builtin_unalias, builtin_unfunction, builtin_autoload,
-    // builtin_command, builtin_builtin, builtin_exec, builtin_noglob,
-    // builtin_type, builtin_which, builtin_where, builtin_r,
-    // builtin_getln, builtin_pushln, builtin_source_named,
-    // autoload_function, maybe_autoload, find_function_file,
-    // ksh_autoload_body, findcmd (shadow), get_builtin_names.
-    // Callers must route to canonical ports in `src/ported/builtin.rs`
-    // or fail loudly so the gap is visible.
-
-    // zutil.rs orphan stubs — moved here after `impl ShellExecutor`
-    // was ripped out of src/ported/modules/zutil.rs. The canonical
-    // bin_zstyle/bin_zparseopts/bin_zformat/bin_zregexparse free-fn
-    // ports (Src/Modules/zutil.c) will land in zutil.rs at module
-    // level; until then these stubs unblock callers.
-}
-
-// === DISSOLVED FROM src/exec_shims.rs ===
 use crate::fusevm_bridge::with_executor;
 use crate::ported::glob::*;
 use crate::ported::hist::*;
@@ -2350,27 +2306,11 @@ impl crate::ported::vm_helper::ShellExecutor {
             //   single key — getpmmapfile c:217 / get_contents c:167
             //   @ / *      — scanpmmapfile c:241 (CWD entry list)
             "mapfile" => {
-                if key == "@" || key == "*" {
-                    let files: Vec<String> = crate::ported::modules::mapfile::scanpmmapfile()
-                        .into_iter()
-                        .map(|(k, _)| k)
-                        .collect();
-                    return Some(files.join(" "));
-                }
                 Some(crate::ported::modules::mapfile::get_contents(key).unwrap_or_default())
             }
             // === ZSH/SYSTEM — errnos / sysparams ===
             "errnos" => {
                 let table = crate::modules::system::ERRNO_NAMES;
-                if key == "@" || key == "*" {
-                    return Some(
-                        table
-                            .iter()
-                            .map(|(n, _)| (*n).to_string())
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    );
-                }
                 if let Ok(n) = key.parse::<i64>() {
                     let len = table.len() as i64;
                     let pos = if n > 0 {
@@ -2393,9 +2333,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             "sysparams" => {
                 let pid = std::process::id().to_string();
                 let ppid = unsafe { libc::getppid() }.to_string();
-                if key == "@" || key == "*" {
-                    return Some(format!("{} {}", pid, ppid));
-                }
                 Some(match key {
                     "pid" => pid,
                     "ppid" => ppid,
@@ -2405,14 +2342,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             }
             // === SHELL OPTIONS ===
             "options" => {
-                if key == "@" || key == "*" {
-                    // Return all options as "name=on/off" pairs.
-                    let opts: Vec<String> = crate::ported::options::opt_state_snapshot()
-                        .iter()
-                        .map(|(k, v)| format!("{}={}", k, if *v { "on" } else { "off" }))
-                        .collect();
-                    return Some(opts.join(" "));
-                }
                 let opt_name = key.to_lowercase().replace('_', "");
                 let is_on = crate::ported::options::opt_state_get(&opt_name).unwrap_or(false);
                 Some(if is_on {
@@ -2432,33 +2361,14 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // bin_alias writes through `aliastab.add()` — the local
                 // `exec.aliases` HashMap is a stale init-time snapshot.
                 if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
-                    if key == "@" || key == "*" {
-                        let mut names: Vec<&String> = tab.iter().map(|(n, _)| n).collect();
-                        names.sort();
-                        let vals: Vec<String> = names
-                            .iter()
-                            .filter_map(|n| tab.get(n).map(|a| a.text.clone()))
-                            .collect();
-                        return Some(vals.join(" "));
-                    }
                     return Some(tab.get(key).map(|a| a.text.clone()).unwrap_or_default());
                 }
                 Some(self.alias(key).unwrap_or_default())
             }
             "galiases" => {
-                if key == "@" || key == "*" {
-                    let entries = self.global_alias_entries();
-                    let vals: Vec<String> = entries.into_iter().map(|(_, v)| v).collect();
-                    return Some(vals.join(" "));
-                }
                 Some(self.global_alias(key).unwrap_or_default())
             }
             "saliases" => {
-                if key == "@" || key == "*" {
-                    let entries = self.suffix_alias_entries();
-                    let vals: Vec<String> = entries.into_iter().map(|(_, v)| v).collect();
-                    return Some(vals.join(" "));
-                }
                 Some(self.suffix_alias(key).unwrap_or_default())
             }
 
@@ -2488,9 +2398,6 @@ impl crate::ported::vm_helper::ShellExecutor {
 
             // === FUNCTIONS ===
             "functions" => {
-                if key == "@" || key == "*" {
-                    return Some(self.function_names().join(" "));
-                }
                 // Apply zsh's getfn_functions formatter — leading-tab
                 // body, no trailing `;`. Direct port of Src/exec.c
                 // shipped via compile_zsh's fast path; this branch
@@ -2511,10 +2418,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // functions we don't yet track the defining file, so
                 // emit empty in that case.
                 // find_function_file deleted with old exec.c stubs.
-                if key == "@" || key == "*" {
-                    let _ = self.function_names();
-                    return Some(String::new());
-                }
                 {
                     let _ = key;
                     Some(String::new())
@@ -2526,37 +2429,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             // zsh/Modules/parameter.c. The @/* expansion enumerates
             // every command on PATH (deduplicated, first-wins).
             "commands" => {
-                if key == "@" || key == "*" {
-                    let path_var = env::var("PATH").unwrap_or_default();
-                    let mut seen: std::collections::HashSet<String> =
-                        std::collections::HashSet::new();
-                    let mut names: Vec<String> = Vec::new();
-                    // Hashed entries first (rehash population) — read
-                    // from canonical `cmdnamtab` (Src/exec.c:5260).
-                    if let Ok(tab) = crate::ported::hashtable::cmdnamtab_lock().read() {
-                        for (k, _) in tab.iter() {
-                            if seen.insert(k.clone()) {
-                                names.push(k.clone());
-                            }
-                        }
-                    }
-                    for dir in path_var.split(':') {
-                        if dir.is_empty() {
-                            continue;
-                        }
-                        if let Ok(entries) = std::fs::read_dir(dir) {
-                            for entry in entries.flatten() {
-                                if let Ok(name) = entry.file_name().into_string() {
-                                    if seen.insert(name.clone()) {
-                                        names.push(name);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    names.sort();
-                    return Some(names.join(" "));
-                }
                 if let Some(path) = self.find_in_path(key) {
                     Some(path)
                 } else {
@@ -2570,9 +2442,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                     .iter()
                     .map(|s| s.as_str())
                     .collect();
-                if key == "@" || key == "*" {
-                    return Some(builtins.join(" "));
-                }
                 if builtins.iter().any(|b| *b == key) {
                     Some("defined".to_string())
                 } else {
@@ -2585,19 +2454,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             // VarAttr::format_zsh (e.g. 'integer-readonly-export').
             // @/* enumerates every parameter name, sorted+deduped.
             "parameters" => {
-                if key == "@" || key == "*" {
-                    let mut names: std::collections::BTreeSet<String> =
-                        if let Ok(tab) = crate::ported::params::paramtab().read() {
-                            tab.keys().cloned().collect()
-                        } else {
-                            std::collections::BTreeSet::new()
-                        };
-                    if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
-                        names.extend(m.keys().cloned());
-                    }
-                    let v: Vec<String> = names.into_iter().collect();
-                    return Some(v.join(" "));
-                }
                 // Read PM_TYPE from paramtab Param flags first
                 // (canonical). PM_INTEGER → "integer", PM_FFLOAT|
                 // PM_EFLOAT → "float", PM_HASHED → "association",
@@ -2658,17 +2514,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // Canonical `nameddirtab` lives in
                 // `src/ported/hashnameddir.rs` (port of `Src/hashnameddir.c`).
                 let tab = crate::ported::hashnameddir::nameddirtab();
-                if key == "@" || key == "*" {
-                    let snapshot: Vec<(String, String)> = tab
-                        .lock()
-                        .ok()
-                        .map(|g| g.iter().map(|(k, v)| (k.clone(), v.dir.clone())).collect())
-                        .unwrap_or_default();
-                    let mut keys: Vec<&(String, String)> = snapshot.iter().collect();
-                    keys.sort_by(|a, b| a.0.cmp(&b.0));
-                    let vals: Vec<String> = keys.iter().map(|(_, v)| v.clone()).collect();
-                    return Some(vals.join(" "));
-                }
                 Some(
                     tab.lock()
                         .ok()
@@ -2685,24 +2530,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             "userdirs" => {
                 #[cfg(unix)]
                 {
-                    if key == "@" || key == "*" {
-                        let mut homes: Vec<String> = Vec::new();
-                        unsafe {
-                            libc::setpwent();
-                            loop {
-                                let pwd = libc::getpwent();
-                                if pwd.is_null() {
-                                    break;
-                                }
-                                let dir = CStr::from_ptr((*pwd).pw_dir);
-                                homes.push(dir.to_string_lossy().to_string());
-                            }
-                            libc::endpwent();
-                        }
-                        homes.sort();
-                        homes.dedup();
-                        return Some(homes.join(" "));
-                    }
                     if let Ok(name) = CString::new(key) {
                         unsafe {
                             let pwd = libc::getpwnam(name.as_ptr());
@@ -2723,24 +2550,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             "usergroups" => {
                 #[cfg(unix)]
                 {
-                    if key == "@" || key == "*" {
-                        let mut gids: Vec<String> = Vec::new();
-                        unsafe {
-                            libc::setgrent();
-                            loop {
-                                let grp = libc::getgrent();
-                                if grp.is_null() {
-                                    break;
-                                }
-                                let name = CStr::from_ptr((*grp).gr_name);
-                                gids.push(name.to_string_lossy().to_string());
-                            }
-                            libc::endgrent();
-                        }
-                        gids.sort();
-                        gids.dedup();
-                        return Some(gids.join(" "));
-                    }
                     if let Ok(name) = CString::new(key) {
                         unsafe {
                             let grp = libc::getgrnam(name.as_ptr());
@@ -2761,9 +2570,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                     .lock()
                     .map(|g| g.clone())
                     .unwrap_or_default();
-                if key == "@" || key == "*" {
-                    return Some(dirs.join(" "));
-                }
                 if let Ok(idx) = key.parse::<usize>() {
                     Some(dirs.get(idx).cloned().unwrap_or_default())
                 } else {
@@ -2773,14 +2579,6 @@ impl crate::ported::vm_helper::ShellExecutor {
 
             // === JOBS ===
             "jobstates" => {
-                if key == "@" || key == "*" {
-                    let states: Vec<String> = self
-                        .jobs
-                        .iter()
-                        .map(|(id, job)| format!("{}:{:?}", id, job.state))
-                        .collect();
-                    return Some(states.join(" "));
-                }
                 if let Ok(id) = key.parse::<usize>() {
                     if let Some(job) = self.jobs.get(id) {
                         return Some(format!("{:?}", job.state));
@@ -2789,14 +2587,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                 Some(String::new())
             }
             "jobtexts" => {
-                if key == "@" || key == "*" {
-                    let texts: Vec<String> = self
-                        .jobs
-                        .iter()
-                        .map(|(_, job)| job.command.clone())
-                        .collect();
-                    return Some(texts.join(" "));
-                }
                 if let Ok(id) = key.parse::<usize>() {
                     if let Some(job) = self.jobs.get(id) {
                         return Some(job.command.clone());
@@ -2815,10 +2605,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                     .scalar("PWD")
                     .or_else(|| env::var("PWD").ok())
                     .unwrap_or_default();
-                if key == "@" || key == "*" {
-                    let n = self.jobs.iter().count();
-                    return Some(vec![pwd; n].join(" "));
-                }
                 if let Ok(id) = key.parse::<usize>() {
                     if self.jobs.get(id).is_some() {
                         return Some(pwd);
@@ -2829,17 +2615,6 @@ impl crate::ported::vm_helper::ShellExecutor {
 
             // === HISTORY ===
             "history" => {
-                if key == "@" || key == "*" {
-                    // Return recent history
-                    if let Some(ref engine) = self.history {
-                        if let Ok(entries) = engine.recent(100) {
-                            let cmds: Vec<String> =
-                                entries.iter().map(|e| e.command.clone()).collect();
-                            return Some(cmds.join("\n"));
-                        }
-                    }
-                    return Some(String::new());
-                }
                 if let Ok(num) = key.parse::<usize>() {
                     if let Some(ref engine) = self.history {
                         if let Ok(Some(entry)) = engine.get_by_offset(num.saturating_sub(1)) {
@@ -2865,9 +2640,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                                     .collect::<Vec<_>>()
                             })
                             .collect();
-                        if key == "@" || key == "*" {
-                            return Some(words.join(" "));
-                        }
                         if let Ok(idx) = key.parse::<usize>() {
                             if idx >= 1 && idx <= words.len() {
                                 return Some(words[idx - 1].clone());
@@ -2905,16 +2677,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                         }
                     })
                     .collect();
-                if key == "@" || key == "*" {
-                    let mut all: Vec<String> = ALWAYS_LOADED
-                        .iter()
-                        .map(|s| s.to_string())
-                        .chain(user_loaded.iter().cloned())
-                        .collect();
-                    all.sort();
-                    all.dedup();
-                    return Some(all.join(" "));
-                }
                 if ALWAYS_LOADED.contains(&key)
                     || crate::ported::options::opt_state_get(&format!("_module_{}", key))
                         .unwrap_or(false)
@@ -2950,9 +2712,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                     "end",
                     "in",
                 ];
-                if key == "@" || key == "*" {
-                    return Some(reswords.join(" "));
-                }
                 if let Ok(idx) = key.parse::<usize>() {
                     Some(reswords.get(idx).map(|s| s.to_string()).unwrap_or_default())
                 } else {
@@ -2963,9 +2722,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             // === PATCHARS (characters with special meaning in patterns) ===
             "patchars" => {
                 let patchars = ["?", "*", "[", "]", "^", "#", "~", "(", ")", "|"];
-                if key == "@" || key == "*" {
-                    return Some(patchars.join(" "));
-                }
                 if let Ok(idx) = key.parse::<usize>() {
                     Some(patchars.get(idx).map(|s| s.to_string()).unwrap_or_default())
                 } else {
@@ -2983,9 +2739,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             // empty for those until they're populated.
             "funcstack" => {
                 if let Some(stack) = self.array("funcstack") {
-                    if key == "@" || key == "*" {
-                        return Some(stack.join(" "));
-                    }
                     if let Ok(idx) = key.parse::<usize>() {
                         // zsh subscripts are 1-based.
                         if idx >= 1 && idx <= stack.len() {
@@ -3003,9 +2756,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                 // `[[ -n $functrace[1] ]]` work without false-empty.
                 if let Some(stack) = self.array("funcstack") {
                     let synth: Vec<String> = stack.iter().map(|n| format!("{}:0", n)).collect();
-                    if key == "@" || key == "*" {
-                        return Some(synth.join(" "));
-                    }
                     if let Ok(idx) = key.parse::<usize>() {
                         if idx >= 1 && idx <= synth.len() {
                             return Some(synth[idx - 1].clone());
@@ -3041,11 +2791,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                         }
                     })
                     .collect();
-                if key == "@" || key == "*" {
-                    let mut sorted = disabled.clone();
-                    sorted.sort();
-                    return Some(sorted.join(" "));
-                }
                 if disabled.iter().any(|d| d == key) {
                     Some("defined".to_string())
                 } else {
@@ -3067,11 +2812,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             // Distinguishes builtin vs user-defined so
             // ${(t)widgets[name]} works.
             "widgets" => {
-                if key == "@" || key == "*" {
-                    let mut names = listwidgets();
-                    names.sort();
-                    return Some(names.join(" "));
-                }
                 if let Some(target) = getwidgettarget(key) {
                     if target == key {
                         Some("builtin".to_string())
@@ -3097,9 +2837,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                     "command",
                     "menuselect",
                 ];
-                if key == "@" || key == "*" {
-                    return Some(KEYMAPS.join(" "));
-                }
                 if KEYMAPS.contains(&key) {
                     Some("1".to_string())
                 } else {
@@ -3149,17 +2886,6 @@ impl crate::ported::vm_helper::ShellExecutor {
                     (libc::SIGUSR1, "USR1"),
                     (libc::SIGUSR2, "USR2"),
                 ];
-                if key == "@" || key == "*" {
-                    // Return one entry per signal in numeric order (1..N).
-                    let max = map.iter().map(|(n, _)| *n).max().unwrap_or(0) as usize;
-                    let mut slots: Vec<String> = vec![String::new(); max];
-                    for (n, name) in map {
-                        if (*n as usize) >= 1 && (*n as usize) <= max {
-                            slots[*n as usize - 1] = (*name).to_string();
-                        }
-                    }
-                    return Some(slots.join(" "));
-                }
                 // Numeric subscript -> name; name -> empty (zsh's
                 // $signals is keyed by number).
                 if let Ok(n) = key.parse::<i32>() {
