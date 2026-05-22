@@ -1447,9 +1447,12 @@ pub fn execsave() {
         // `int noeval` (the parse-only side-effect-skip counter)
         // via math.rs's pub accessor.
         noeval: crate::ported::math::m_noeval(),
-        // c:6451 — `badcshglob` lives in glob.c:103 but isn't ported
-        // yet; snapshot 0 (the BSS-zero default) until the port lands.
-        badcshglob: 0, // c:6451
+        // c:6451 — `es->badcshglob = badcshglob;`. Snapshot the
+        // csh-glob diagnostic counter (glob.c:103 / glob.rs
+        // BADCSHGLOB) so nested eval / trap dispatch doesn't disturb
+        // the outer command's per-line accounting.
+        badcshglob: crate::ported::glob::BADCSHGLOB
+            .load(std::sync::atomic::Ordering::Relaxed), // c:6451
         cmdoutpid: cmdoutpid.load(Ordering::Relaxed), // c:6452
         cmdoutval: cmdoutval.load(Ordering::Relaxed), // c:6453
         use_cmdoutval: use_cmdoutval.load(Ordering::Relaxed), // c:6454
@@ -1533,7 +1536,10 @@ pub fn execrestore() {
     // c:6486 — `noeval = en->noeval;`. Restore math.c's noeval
     // counter from the saved frame.
     crate::ported::math::m_noeval_set(en.noeval);
-                                                // c:6487 — badcshglob restore (not yet stored as Rust static)
+    // c:6487 — `badcshglob = en->badcshglob;`. Restore the csh-glob
+    // diagnostic counter saved on entry.
+    crate::ported::glob::BADCSHGLOB
+        .store(en.badcshglob, std::sync::atomic::Ordering::Relaxed);
     cmdoutpid.store(en.cmdoutpid, Ordering::Relaxed); // c:6488
     cmdoutval.store(en.cmdoutval, Ordering::Relaxed); // c:6489
     use_cmdoutval.store(en.use_cmdoutval, Ordering::Relaxed); // c:6490
