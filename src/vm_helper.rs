@@ -2335,36 +2335,11 @@ impl crate::ported::vm_helper::ShellExecutor {
                 })
             }
             // === SHELL OPTIONS ===
-            "options" => {
-                let opt_name = key.to_lowercase().replace('_', "");
-                let is_on = crate::ported::options::opt_state_get(&opt_name).unwrap_or(false);
-                Some(if is_on {
-                    "on".to_string()
-                } else {
-                    "off".to_string()
-                })
-            }
 
             // === ALIASES ===
             // ${aliases[@]} returns values in sorted-name order.
             // Iterating HashMap::values() gave random order; tests
             // and prompt code that snapshot ${(v)aliases} flickered.
-            "aliases" => {
-                // Read from canonical `aliastab` (`Src/hashtable.c:1210`,
-                // ported at `src/ported/hashtable.rs::aliastab_lock`).
-                // bin_alias writes through `aliastab.add()` — the local
-                // `exec.aliases` HashMap is a stale init-time snapshot.
-                if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
-                    return Some(tab.get(key).map(|a| a.text.clone()).unwrap_or_default());
-                }
-                Some(self.alias(key).unwrap_or_default())
-            }
-            "galiases" => {
-                Some(self.global_alias(key).unwrap_or_default())
-            }
-            "saliases" => {
-                Some(self.suffix_alias(key).unwrap_or_default())
-            }
 
             // === TERMINFO (zsh/terminfo module) ===
             // `${terminfo[capname]}` returns the escape sequence for
@@ -2391,233 +2366,41 @@ impl crate::ported::vm_helper::ShellExecutor {
             "termcap" => Some(crate::modules::termcap::gettermcap(key).unwrap_or_default()),
 
             // === FUNCTIONS ===
-            "functions" => {
-                // Apply zsh's getfn_functions formatter — leading-tab
-                // body, no trailing `;`. Direct port of Src/exec.c
-                // shipped via compile_zsh's fast path; this branch
-                // is the slow-path/subst_port entry that previously
-                // returned the raw user-typed source. Keeps
-                // `${functions[foo]:0:20}` (substring extraction)
-                // consistent with the fast-path `\$functions[foo]`.
-                let text = self.function_definition_text(key)?;
-                let formatted = FuncBodyFmt::render(text.trim());
-                Some(format!("\t{}", formatted))
-            }
-            "functions_source" => {
-                // ${functions_source[name]} → file path where the
-                // function was defined. zsh/Src/Modules/parameter.c
-                // exposes this as an assoc keyed by function name.
-                // For autoload functions we recover the source path
-                // via the same fpath walk that loads them; for inline
-                // functions we don't yet track the defining file, so
-                // emit empty in that case.
-                // find_function_file deleted with old exec.c stubs.
-                {
-                    let _ = key;
-                    Some(String::new())
-                }
-            }
 
             // === COMMANDS (command hash table) ===
             // ${commands[name]} → full path (or empty), per
             // zsh/Modules/parameter.c. The @/* expansion enumerates
             // every command on PATH (deduplicated, first-wins).
-            "commands" => {
-                if let Some(path) = self.find_in_path(key) {
-                    Some(path)
-                } else {
-                    Some(String::new())
-                }
-            }
 
             // === BUILTINS ===
-            "builtins" => {
-                let builtins: Vec<&str> = crate::vm_helper::BUILTIN_NAMES
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect();
-                if builtins.iter().any(|b| *b == key) {
-                    Some("defined".to_string())
-                } else {
-                    Some(String::new())
-                }
-            }
 
             // === PARAMETERS ===
             // ${parameters[name]} → full attribute string per
             // VarAttr::format_zsh (e.g. 'integer-readonly-export').
             // @/* enumerates every parameter name, sorted+deduped.
-            "parameters" => {
-                // Read PM_TYPE from paramtab Param flags first
-                // (canonical). PM_INTEGER → "integer", PM_FFLOAT|
-                // PM_EFLOAT → "float", PM_HASHED → "association",
-                // PM_ARRAY → "array", scalar default. Append PM_LOWER
-                // / PM_UPPER / PM_READONLY / PM_EXPORTED suffixes.
-                let flags = self.param_flags(key) as u32;
-                if flags != 0 || self.array(key).is_some() || self.assoc(key).is_some() {
-                    let base = if flags & PM_INTEGER != 0 {
-                        "integer"
-                    } else if flags & (PM_EFLOAT | PM_FFLOAT) != 0 {
-                        "float"
-                    } else if flags & PM_HASHED != 0 || self.assoc(key).is_some() {
-                        "association"
-                    } else if flags & PM_ARRAY != 0 || self.array(key).is_some() {
-                        "array"
-                    } else {
-                        "scalar"
-                    };
-                    let mut out = String::from(base);
-                    if flags & PM_LEFT != 0 {
-                        out.push_str("-left");
-                    }
-                    if flags & PM_RIGHT_B != 0 {
-                        out.push_str("-right_blanks");
-                    }
-                    if flags & PM_RIGHT_Z != 0 {
-                        out.push_str("-right_zeros");
-                    }
-                    if flags & PM_LOWER != 0 {
-                        out.push_str("-lower");
-                    }
-                    if flags & PM_UPPER != 0 {
-                        out.push_str("-upper");
-                    }
-                    if flags & PM_READONLY != 0 {
-                        out.push_str("-readonly");
-                    }
-                    if flags & PM_EXPORTED != 0 {
-                        out.push_str("-export");
-                    }
-                    return Some(out);
-                }
-                if self.has_assoc(key) {
-                    Some("association".to_string())
-                } else if self.has_array(key) {
-                    Some("array".to_string())
-                } else if self.has_scalar(key) || std::env::var(key).is_ok() {
-                    Some("scalar".to_string())
-                } else {
-                    Some(String::new())
-                }
-            }
 
             // === NAMED DIRECTORIES ===
             // ${nameddirs[@]} returns paths in sorted-name order (was
             // HashMap::values() with random iteration).
-            "nameddirs" => {
-                // Canonical `nameddirtab` lives in
-                // `src/ported/hashnameddir.rs` (port of `Src/hashnameddir.c`).
-                let tab = crate::ported::hashnameddir::nameddirtab();
-                Some(
-                    tab.lock()
-                        .ok()
-                        .and_then(|g| g.get(key).map(|nd| nd.dir.clone()))
-                        .unwrap_or_default(),
-                )
-            }
 
             // === USER DIRECTORIES ===
             // ${userdirs[name]} → home directory of user `name` per
             // zsh/Modules/parameter.c userdirs_*. With @/* expansion,
             // walk getpwent(3) to enumerate every passwd entry's
             // home directory.
-            "userdirs" => {
-                #[cfg(unix)]
-                {
-                    if let Ok(name) = CString::new(key) {
-                        unsafe {
-                            let pwd = libc::getpwnam(name.as_ptr());
-                            if !pwd.is_null() {
-                                let dir = CStr::from_ptr((*pwd).pw_dir);
-                                return Some(dir.to_string_lossy().to_string());
-                            }
-                        }
-                    }
-                }
-                Some(String::new())
-            }
 
             // === USER GROUPS ===
             // ${usergroups[name]} → GID of group `name`. With @/*
             // expansion, walk getgrent(3) to enumerate every group's
             // gid.
-            "usergroups" => {
-                #[cfg(unix)]
-                {
-                    if let Ok(name) = CString::new(key) {
-                        unsafe {
-                            let grp = libc::getgrnam(name.as_ptr());
-                            if !grp.is_null() {
-                                return Some((*grp).gr_gid.to_string());
-                            }
-                        }
-                    }
-                }
-                Some(String::new())
-            }
 
             // === DIRECTORY STACK ===
             // Canonical `dirstack` lives in `modules/parameter.rs::DIRSTACK`
             // — mirror of the C `dirstack` global (`Src/builtin.c:1456`).
-            "dirstack" => {
-                let dirs = crate::ported::modules::parameter::DIRSTACK
-                    .lock()
-                    .map(|g| g.clone())
-                    .unwrap_or_default();
-                if let Ok(idx) = key.parse::<usize>() {
-                    Some(dirs.get(idx).cloned().unwrap_or_default())
-                } else {
-                    Some(String::new())
-                }
-            }
 
             // === JOBS ===
-            "jobstates" => {
-                if let Ok(id) = key.parse::<usize>() {
-                    if let Some(job) = self.jobs.get(id) {
-                        return Some(format!("{:?}", job.state));
-                    }
-                }
-                Some(String::new())
-            }
-            "jobtexts" => {
-                if let Ok(id) = key.parse::<usize>() {
-                    if let Some(job) = self.jobs.get(id) {
-                        return Some(job.command.clone());
-                    }
-                }
-                Some(String::new())
-            }
-            "jobdirs" => {
-                // ${jobdirs[N]}: cwd at the time job N was launched.
-                // We don't yet capture per-job cwd at launch (would
-                // need a JobInfo.cwd field plumbed through add_job),
-                // so use the current PWD as a best-effort proxy. With
-                // @/* expansion, return one entry per active job so
-                // arr-length math (${#jobdirs}) matches ${#jobtexts}.
-                let pwd = self
-                    .scalar("PWD")
-                    .or_else(|| env::var("PWD").ok())
-                    .unwrap_or_default();
-                if let Ok(id) = key.parse::<usize>() {
-                    if self.jobs.get(id).is_some() {
-                        return Some(pwd);
-                    }
-                }
-                Some(String::new())
-            }
 
             // === HISTORY ===
-            "history" => {
-                if let Ok(num) = key.parse::<usize>() {
-                    if let Some(ref engine) = self.history {
-                        if let Ok(Some(entry)) = engine.get_by_offset(num.saturating_sub(1)) {
-                            return Some(entry.command);
-                        }
-                    }
-                }
-                Some(String::new())
-            }
             "historywords" => {
                 // $historywords: flat list of words from recent history
                 // entries (zsh/Modules/parameter.c historywords_*).
@@ -2651,77 +2434,10 @@ impl crate::ported::vm_helper::ShellExecutor {
             // self.options (see bin_zmodload). Always-loaded
             // built-in modules are surfaced unconditionally so
             // compsys's `[[ ${+modules[zsh/zutil]} ]]` gating works.
-            "modules" => {
-                const ALWAYS_LOADED: &[&str] = &[
-                    "zsh/parameter",
-                    "zsh/zutil",
-                    "zsh/complete",
-                    "zsh/complist",
-                    "zsh/zle",
-                    "zsh/main",
-                    "zsh/files",
-                ];
-                let user_loaded: Vec<String> = crate::ported::options::opt_state_snapshot()
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        if *v {
-                            k.strip_prefix("_module_").map(|s| s.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if ALWAYS_LOADED.contains(&key)
-                    || crate::ported::options::opt_state_get(&format!("_module_{}", key))
-                        .unwrap_or(false)
-                {
-                    Some("loaded".to_string())
-                } else {
-                    Some(String::new())
-                }
-            }
 
             // === RESERVED WORDS ===
-            "reswords" => {
-                let reswords = [
-                    "do",
-                    "done",
-                    "esac",
-                    "then",
-                    "elif",
-                    "else",
-                    "fi",
-                    "for",
-                    "case",
-                    "if",
-                    "while",
-                    "function",
-                    "repeat",
-                    "time",
-                    "until",
-                    "select",
-                    "coproc",
-                    "nocorrect",
-                    "foreach",
-                    "end",
-                    "in",
-                ];
-                if let Ok(idx) = key.parse::<usize>() {
-                    Some(reswords.get(idx).map(|s| s.to_string()).unwrap_or_default())
-                } else {
-                    Some(String::new())
-                }
-            }
 
             // === PATCHARS (characters with special meaning in patterns) ===
-            "patchars" => {
-                let patchars = ["?", "*", "[", "]", "^", "#", "~", "(", ")", "|"];
-                if let Ok(idx) = key.parse::<usize>() {
-                    Some(patchars.get(idx).map(|s| s.to_string()).unwrap_or_default())
-                } else {
-                    Some(String::new())
-                }
-            }
 
             // === FUNCTION CALL STACK ===
             // $funcstack: array of function names in the current call
@@ -2731,39 +2447,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             // funcfiletrace / funcsourcetrace need separate tables (file
             // and definition tracking) which we don't yet wire; emit
             // empty for those until they're populated.
-            "funcstack" => {
-                if let Some(stack) = self.array("funcstack") {
-                    if let Ok(idx) = key.parse::<usize>() {
-                        // zsh subscripts are 1-based.
-                        if idx >= 1 && idx <= stack.len() {
-                            return Some(stack[idx - 1].clone());
-                        }
-                    }
-                }
-                Some(String::new())
-            }
-            "functrace" => {
-                // $functrace: `caller_name:callsite_lineno` for each
-                // frame. We don't yet track call-site line numbers, so
-                // synthesize from funcstack with a `:0` placeholder
-                // line. This still lets scripts that test
-                // `[[ -n $functrace[1] ]]` work without false-empty.
-                if let Some(stack) = self.array("funcstack") {
-                    let synth: Vec<String> = stack.iter().map(|n| format!("{}:0", n)).collect();
-                    if let Ok(idx) = key.parse::<usize>() {
-                        if idx >= 1 && idx <= synth.len() {
-                            return Some(synth[idx - 1].clone());
-                        }
-                    }
-                }
-                Some(String::new())
-            }
-            "funcfiletrace" | "funcsourcetrace" => {
-                // Would need file:line where each function was called
-                // from / defined in. Per-frame file tracking is not yet
-                // wired — return empty.
-                Some(String::new())
-            }
 
             // === DISABLED VARIANTS (dis_*) ===
             // ${dis_builtins[name]} → "defined" if the builtin was
@@ -2774,30 +2457,6 @@ impl crate::ported::vm_helper::ShellExecutor {
             // model (see do_enable_disable at vm_helper:31371) so the
             // disabled list isn't recoverable post-disable; emit
             // empty for those.
-            "dis_builtins" => {
-                let disabled: Vec<String> = crate::ported::options::opt_state_snapshot()
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        if *v {
-                            k.strip_prefix("_disabled_").map(|s| s.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if disabled.iter().any(|d| d == key) {
-                    Some("defined".to_string())
-                } else {
-                    Some(String::new())
-                }
-            }
-            "dis_aliases"
-            | "dis_galiases"
-            | "dis_saliases"
-            | "dis_functions"
-            | "dis_functions_source"
-            | "dis_reswords"
-            | "dis_patchars" => Some(String::new()),
 
             // === ZLE WIDGETS ===
             // ${widgets[name]} → widget-type prefix per
