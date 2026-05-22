@@ -1870,10 +1870,12 @@ fn should_ignore_line(prog: Option<&[u8]>) -> i32 {
     let line = chline.lock().unwrap().clone();
     if isset(HISTIGNORESPACE) {
         // c:1427
-        if line.starts_with(' ')
-        /* aliasspaceflag — alias state TBD */
-        {
-            // c:1428
+        // c:1428 — `if (*chline == ' ' || aliasspaceflag)`. The
+        // aliasspaceflag arm fires when the lexer expanded a
+        // non-global alias whose body starts with a space (set at
+        // lex.c:1930 / lex.rs LEX_ALIAS_SPACE_FLAG).
+        let alias_space = crate::ported::lex::LEX_ALIAS_SPACE_FLAG.with(|c| c.get()) != 0;
+        if line.starts_with(' ') || alias_space {
             return 1; // c:1429
         }
     }

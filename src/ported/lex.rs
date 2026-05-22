@@ -914,6 +914,14 @@ thread_local! {
     pub static LEX_NOCOMMENTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int lexflags` (lex.c:118).
     pub static LEX_LEXFLAGS: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+    /// `int aliasspaceflag` (parse.c:39, zsh.h:3103). Set to 1 by the
+    /// alias-expansion path in `cmd_or_math` (lex.c:1930) when an
+    /// expanded non-global alias starts with a space; consulted by
+    /// hist.c:1428 to suppress history entries the same way a literal
+    /// space-prefixed command line is. Cleared by `parse_event`
+    /// (parse.c:618). parse_context_save/restore preserve across
+    /// nested parses.
+    pub static LEX_ALIAS_SPACE_FLAG: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `mod_export int wordbeg` (lex.c:123). The cursor-relative
     /// start index of the in-flight word, set in gettok when
     /// LEXFLAGS_ZLE is active. Consumed by `gotword`.
@@ -2895,6 +2903,15 @@ fn checkalias(lextext: &str) -> bool {
                 INP_ALIAS,
                 Some(lextext.to_string()),
             );
+            // c:1929-1930 — `if (an->text[0] == ' ' && !(an->node.flags & ALIAS_GLOBAL))
+            //                  aliasspaceflag = 1;`
+            // Drives HISTIGNORESPACE's alias-leading-space suppression
+            // path (hist.c:1428): without it, `alias g='echo hi'; g`
+            // gets history-logged even with HISTIGNORESPACE set when
+            // the alias body starts with a space.
+            if !is_global && alias.text.starts_with(' ') {
+                LEX_ALIAS_SPACE_FLAG.set(1);
+            }
             // c:1929 — `an->inuse = 1;`.
             let mut guard = aliastab_lock()
                 .write()
