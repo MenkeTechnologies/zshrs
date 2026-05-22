@@ -3621,54 +3621,18 @@ pub fn paramsubst(
                     String::new()
                 }
             } else if let Some(magic_val) = {
-                // c:2926 — magic-assoc per-key lookup. Mirrors C's
-                // paramtab dispatch through `partab[]` (Src/Modules/
-                // parameter.c:2234): each magic-name is registered
-                // with its own getfn pointer; we inline the same
-                // dispatch by calling the per-array `getpm<X>` ports.
-                // Each C fn returns a freshly-built `Param`; the
-                // value lives in `u_str`.
-                let nul = std::ptr::null_mut();
+                // c:2926 — magic-assoc per-key lookup. Routes through
+                // canonical PARTAB (Src/Modules/parameter.c:2235-2298
+                // ports at parameter.rs::PARTAB). Each entry pairs
+                // the name with its `getfn` pointer; partab_get walks
+                // PARTAB + dispatches the matched getfn. The splice
+                // form `${name[@]}` falls through to splice_magic_assoc.
                 let is_splice = sub == "@" || sub == "*";
-                let pm: Option<Param> = if is_splice {
-                    None // splice form — handled below.
+                if is_splice {
+                    splice_magic_assoc(&var_name)
                 } else {
-                    match var_name.as_str() {
-                        "aliases" => getpmralias(nul, sub),                   // c:1923
-                        "galiases" => getpmgalias(nul, sub),                  // c:1937
-                        "saliases" => getpmsalias(nul, sub),                  // c:1951
-                        "dis_aliases" => getpmdisralias(nul, sub),            // c:1930
-                        "dis_galiases" => getpmdisgalias(nul, sub),           // c:1944
-                        "dis_saliases" => getpmdissalias(nul, sub),           // c:1958
-                        "builtins" => getpmbuiltin(nul, sub),                 // c:799
-                        "dis_builtins" => getpmdisbuiltin(nul, sub),          // c:806
-                        "commands" => getpmcommand(nul, sub),                 // c:213
-                        "functions" => getpmfunction(nul, sub),               // c:444
-                        "dis_functions" => getpmdisfunction(nul, sub),        // c:451
-                        "functions_source" => getpmfunction_source(nul, sub), // c:591
-                        "dis_functions_source" => getpmdisfunction_source(nul, sub), // c:600
-                        "nameddirs" => getpmnameddir(nul, sub),               // c:1597
-                        "userdirs" => getpmuserdir(nul, sub),                 // c:1646
-                        "options" => getpmoption(nul, sub),                   // c:988
-                        "parameters" => getpmparameter(nul, sub),             // c:99
-                        "history" => getpmhistory(nul, sub),                  // c:1156
-                        "modules" => getpmmodule(nul, sub),                   // c:1040
-                        "jobdirs" => getpmjobdir(nul, sub),                   // c:1457
-                        "jobstates" => getpmjobstate(nul, sub),               // c:1385
-                        "jobtexts" => getpmjobtext(nul, sub),                 // c:1277
-                        "usergroups" => getpmusergroups(nul, sub),            // c:2102
-                        _ => None,
-                    }
-                };
-                // c:`scanpm<X>` paths — splice form `${(...)var[@]}`
-                // walks the backing table directly and joins values.
-                pm.and_then(|p| p.u_str).or_else(|| {
-                    if is_splice {
-                        splice_magic_assoc(&var_name)
-                    } else {
-                        None
-                    }
-                })
+                    crate::vm_helper::partab_get(&var_name, sub)
+                }
             } {
                 magic_val
             } else {
