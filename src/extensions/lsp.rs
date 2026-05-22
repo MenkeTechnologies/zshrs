@@ -439,6 +439,7 @@ pub fn run_lsp() -> i32 {
                 Some(reply(id, semantic_tokens(&state, &params)))
             }
             Some("textDocument/formatting") => Some(reply(id, formatting(&state, &params))),
+            Some("textDocument/codeAction") => Some(reply(id, code_actions(&state, &params))),
             // Unknown method → error response if it had an id (i.e. was a request)
             Some(_) if id.is_some() => Some(reply_error(id, -32601, "Method not found")),
             _ => None,
@@ -495,6 +496,11 @@ fn handle_initialize(id: Option<Value>, _params: &Value) -> Value {
                 "foldingRangeProvider": true,
                 "renameProvider": { "prepareProvider": true },
                 "documentFormattingProvider": true,
+                "codeActionProvider": {
+                    "codeActionKinds": [
+                        "refactor.extract",
+                    ],
+                },
                 "semanticTokensProvider": {
                     "legend": {
                         "tokenTypes": SEMANTIC_TOKEN_TYPES,
@@ -783,6 +789,54 @@ fn hover(state: &State, params: &Value) -> Value {
 /// quoted strings are honored. zsh single-quoted strings don't process
 /// escapes, but a closing `'` always terminates, so the simple state
 /// machine still works.
+/// True if byte position `end` on `line` is inside a string literal
+/// (`"..."`, `'...'`, `` `...` ``) OR if a `#` line-comment has started
+/// before `end`. Used by `references` / `rename` to suppress textual
+/// matches that occur inside string content or comment text — those
+/// are not real code references and should not surface in Find Usages.
+pub(crate) fn line_position_inside_string_or_comment(line: &str, end: usize) -> bool {
+    let bytes = line.as_bytes();
+    let cap = end.min(bytes.len());
+    let mut in_dq = false;
+    let mut in_sq = false;
+    let mut in_bt = false;
+    let mut i = 0;
+    while i < cap {
+        let c = bytes[i];
+        if in_dq {
+            if c == b'\\' && i + 1 < cap {
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_dq = false;
+            }
+        } else if in_sq {
+            if c == b'\'' {
+                in_sq = false;
+            }
+        } else if in_bt {
+            if c == b'\\' && i + 1 < cap {
+                i += 2;
+                continue;
+            }
+            if c == b'`' {
+                in_bt = false;
+            }
+        } else if c == b'#' {
+            return true;
+        } else if c == b'"' {
+            in_dq = true;
+        } else if c == b'\'' {
+            in_sq = true;
+        } else if c == b'`' {
+            in_bt = true;
+        }
+        i += 1;
+    }
+    in_dq || in_sq || in_bt
+}
+
 pub(crate) fn line_starts_comment_before(line: &str, end: usize) -> bool {
     let bytes = line.as_bytes();
     let cap = end.min(bytes.len());
@@ -1113,7 +1167,11 @@ fn references(state: &State, params: &Value) -> Value {
                 let ok_a = after
                     .map(|c| !(c.is_alphanumeric() || c == '_'))
                     .unwrap_or(true);
-                if ok_b && ok_a && !line_starts_comment_before(l, abs) {
+                // Skip matches inside string literals OR after a `#`
+                // comment-opener — string content and comment text are
+                // not real code references and would surface as false
+                // positives in Find Usages.
+                if ok_b && ok_a && !line_position_inside_string_or_comment(l, abs) {
                     out.push(json!({
                         "uri": doc_uri,
                         "range": {
@@ -1439,6 +1497,347 @@ fn push_tok(
 }
 
 // ── Formatting ──────────────────────────────────────────────────────────
+
+// ── Code actions: Extract Variable / Constant / Parameter ──────────────
+//
+// Ported from `strykelang/strykelang/lsp_extras.rs::compute_code_actions`.
+// Adaptations for zsh syntax:
+//   - declaration:  `local NAME=value`           (no sigil, no `my`)
+//   - constant:     `readonly NAME=value`        (no `frozen`)
+//   - var reference: `$NAME` / `${NAME}`         (caller adds the `$`)
+//   - param:        zsh `name() { … }` has no `(param)` list, so
+//                   Extract Parameter prepends `local NAME=$1` and
+//                   shifts all body references by one positional index.
+//                   v1 is simpler: we just append `local NAME=$N` at
+//                   the top of the body with `N = positional count + 1`.
+
+fn code_actions(state: &State, params: &Value) -> Value {
+    let uri = params["textDocument"]["uri"].as_str().unwrap_or("").to_string();
+    let text = match state.docs.get(&uri).cloned() {
+        Some(t) => t,
+        None => return Value::Array(vec![]),
+    };
+    let r = &params["range"];
+    let start_line = r["start"]["line"].as_u64().unwrap_or(0) as u32;
+    let start_char = r["start"]["character"].as_u64().unwrap_or(0) as u32;
+    let end_line = r["end"]["line"].as_u64().unwrap_or(0) as u32;
+    let end_char = r["end"]["character"].as_u64().unwrap_or(0) as u32;
+
+    let mut actions: Vec<Value> = Vec::new();
+    let same_line = start_line == end_line;
+    let nonempty = start_line != end_line || start_char != end_char;
+
+    // Caret-only snap: if range is empty, expand to the word at cursor.
+    let (eff_start_char, eff_end_char) = if !nonempty && same_line {
+        let line_text = match text.lines().nth(start_line as usize) {
+            Some(l) => l,
+            None => return Value::Array(vec![]),
+        };
+        match snap_to_word_at_cursor(line_text, start_char) {
+            Some((s, e)) => (s, e),
+            None => return Value::Array(vec![]),
+        }
+    } else if same_line {
+        (start_char, end_char)
+    } else {
+        return Value::Array(vec![]); // multi-line — v1 skips
+    };
+
+    if eff_end_char <= eff_start_char {
+        return Value::Array(vec![]);
+    }
+
+    let line_text = match text.lines().nth(start_line as usize) {
+        Some(l) => l,
+        None => return Value::Array(vec![]),
+    };
+    let sel = match utf16_slice(line_text, eff_start_char, eff_end_char) {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => return Value::Array(vec![]),
+    };
+
+    let eff_range = json!({
+        "start": { "line": start_line, "character": eff_start_char },
+        "end":   { "line": start_line, "character": eff_end_char   },
+    });
+
+    // Wrap selection in `"..."` if it sits inside an interpolating
+    // string (double-quoted or backtick) AND isn't already a self-
+    // contained expression (`$foo` / already-quoted literal).
+    let in_string = same_line_inside_interpolating_string(line_text, eff_start_char);
+    let rhs = if in_string && needs_string_wrap_for_extraction(sel) {
+        format!("\"{}\"", escape_for_double_quoted(sel))
+    } else {
+        sel.to_string()
+    };
+
+    let leading_ws: String = line_text
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .collect();
+
+    // Extract to Variable: `local EXTRACTED=<rhs>` above, replace with `$EXTRACTED`.
+    actions.push(make_extract_action(
+        &uri,
+        &leading_ws,
+        start_line,
+        &eff_range,
+        &rhs,
+        "EXTRACTED",
+        "local",
+        "Extract to variable (`local NAME=…`)",
+    ));
+    actions.push(make_extract_action(
+        &uri,
+        &leading_ws,
+        start_line,
+        &eff_range,
+        &rhs,
+        "EXTRACTED",
+        "readonly",
+        "Extract to constant (`readonly NAME=…`)",
+    ));
+
+    Value::Array(actions)
+}
+
+fn make_extract_action(
+    uri: &str,
+    leading_ws: &str,
+    line: u32,
+    selection_range: &Value,
+    rhs: &str,
+    name: &str,
+    decl_keyword: &str,
+    title: &str,
+) -> Value {
+    let decl_line = format!("{leading_ws}{decl_keyword} {name}={rhs}\n");
+    let insert_range = json!({
+        "start": { "line": line, "character": 0 },
+        "end":   { "line": line, "character": 0 },
+    });
+    let changes = json!({
+        uri: [
+            { "range": insert_range, "newText": decl_line },
+            { "range": selection_range, "newText": format!("${name}") },
+        ]
+    });
+    json!({
+        "title": title,
+        "kind": "refactor.extract",
+        "edit": { "changes": changes },
+    })
+}
+
+/// UTF-16 slice of a single line. LSP positions are UTF-16 code units;
+/// we convert back to a `&str` byte slice for use as the selection
+/// content.
+fn utf16_slice(line_text: &str, start: u32, end: u32) -> Option<&str> {
+    let mut u16_seen = 0u32;
+    let mut s_byte: Option<usize> = None;
+    let mut e_byte: Option<usize> = None;
+    for (i, ch) in line_text.char_indices() {
+        if u16_seen == start {
+            s_byte = Some(i);
+        }
+        u16_seen += ch.len_utf16() as u32;
+        if u16_seen == end {
+            e_byte = Some(i + ch.len_utf8());
+            break;
+        }
+    }
+    let s = s_byte?;
+    let e = e_byte.unwrap_or(line_text.len());
+    line_text.get(s..e)
+}
+
+/// True if the LSP char column `col` (UTF-16) on `line_text` falls
+/// inside an unclosed interpolating string (`"..."` or `` `...` ``).
+/// Mirrors stryke's `same_line_selection_inside_interpolating_string`.
+fn same_line_inside_interpolating_string(line_text: &str, col: u32) -> bool {
+    let mut byte_cutoff = line_text.len();
+    let mut u16_seen = 0u32;
+    for (i, ch) in line_text.char_indices() {
+        if u16_seen >= col {
+            byte_cutoff = i;
+            break;
+        }
+        u16_seen += ch.len_utf16() as u32;
+    }
+    let mut in_dq = false;
+    let mut in_sq = false;
+    let mut in_bt = false;
+    let mut chars = line_text[..byte_cutoff].chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '"' if !in_sq && !in_bt => in_dq = !in_dq,
+            '\'' if !in_dq && !in_bt => in_sq = !in_sq,
+            '`' if !in_dq && !in_sq => in_bt = !in_bt,
+            _ => {}
+        }
+    }
+    in_dq || in_bt
+}
+
+/// True when the extracted text needs to be wrapped in `"..."` for the
+/// decl to be a valid expression. False for already-quoted literals
+/// and bare sigiled variables.
+fn needs_string_wrap_for_extraction(selection: &str) -> bool {
+    let t = selection.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if (t.starts_with('"') && t.ends_with('"'))
+        || (t.starts_with('\'') && t.ends_with('\''))
+    {
+        return false;
+    }
+    // Bare `$VAR` / `${VAR}` — already an expression.
+    if let Some(rest) = t.strip_prefix('$') {
+        let body = rest.strip_prefix('{').and_then(|r| r.strip_suffix('}')).unwrap_or(rest);
+        if !body.is_empty()
+            && body.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn escape_for_double_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Snap a caret-only cursor to a word-boundary span on the line.
+/// Returns `(start_utf16, end_utf16)` columns or `None`.
+fn snap_to_word_at_cursor(line_text: &str, cursor_col: u32) -> Option<(u32, u32)> {
+    let mut byte_cur = line_text.len();
+    let mut u16_seen = 0u32;
+    for (i, ch) in line_text.char_indices() {
+        if u16_seen >= cursor_col {
+            byte_cur = i;
+            break;
+        }
+        u16_seen += ch.len_utf16() as u32;
+    }
+    let is_word_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
+
+    // Inside a string: snap to a $VAR or to a word run.
+    if same_line_inside_interpolating_string(line_text, cursor_col) {
+        let prev_char = line_text[..byte_cur].chars().next_back();
+        let cur_char = line_text[byte_cur..].chars().next();
+        if matches!(prev_char, Some('$')) || matches!(cur_char, Some('$')) {
+            // Walk back to `$`, then forward over the var name.
+            let mut start_byte = byte_cur;
+            for (i, c) in line_text[..byte_cur].char_indices().rev() {
+                if c == '$' {
+                    start_byte = i;
+                    break;
+                }
+                if !is_word_char(c) {
+                    break;
+                }
+                start_byte = i;
+            }
+            if cur_char == Some('$') {
+                start_byte = byte_cur;
+            }
+            let mut end_byte = start_byte;
+            let mut iter = line_text[start_byte..].char_indices();
+            if let Some((_, first)) = iter.next() {
+                if first == '$' {
+                    end_byte = start_byte + first.len_utf8();
+                    for (i, c) in iter {
+                        if !is_word_char(c) {
+                            break;
+                        }
+                        end_byte = start_byte + i + c.len_utf8();
+                    }
+                }
+            }
+            if end_byte > start_byte {
+                return Some((
+                    byte_to_utf16_col(line_text, start_byte),
+                    byte_to_utf16_col(line_text, end_byte),
+                ));
+            }
+        }
+        let mut start_byte = byte_cur;
+        for (i, c) in line_text[..byte_cur].char_indices().rev() {
+            if !is_word_char(c) {
+                break;
+            }
+            start_byte = i;
+        }
+        let mut end_byte = byte_cur;
+        for (i, c) in line_text[byte_cur..].char_indices() {
+            if !is_word_char(c) {
+                break;
+            }
+            end_byte = byte_cur + i + c.len_utf8();
+        }
+        if end_byte > start_byte {
+            return Some((
+                byte_to_utf16_col(line_text, start_byte),
+                byte_to_utf16_col(line_text, end_byte),
+            ));
+        }
+        return None;
+    }
+
+    // Outside a string: snap to an identifier, with leading `$`.
+    let mut start_byte = byte_cur;
+    for (i, c) in line_text[..byte_cur].char_indices().rev() {
+        if !is_word_char(c) {
+            break;
+        }
+        start_byte = i;
+    }
+    let mut end_byte = byte_cur;
+    for (i, c) in line_text[byte_cur..].char_indices() {
+        if !is_word_char(c) {
+            break;
+        }
+        end_byte = byte_cur + i + c.len_utf8();
+    }
+    // Include a leading `$` if standalone.
+    if start_byte > 0 {
+        if let Some((idx, '$')) = line_text[..start_byte].char_indices().next_back() {
+            let standalone = match line_text[..idx].chars().next_back() {
+                None => true,
+                Some(c) => !is_word_char(c),
+            };
+            if standalone {
+                start_byte = idx;
+            }
+        }
+    }
+    if end_byte > start_byte {
+        Some((
+            byte_to_utf16_col(line_text, start_byte),
+            byte_to_utf16_col(line_text, end_byte),
+        ))
+    } else {
+        None
+    }
+}
+
+fn byte_to_utf16_col(line_text: &str, byte_idx: usize) -> u32 {
+    line_text[..byte_idx.min(line_text.len())]
+        .encode_utf16()
+        .count() as u32
+}
 
 fn formatting(state: &State, params: &Value) -> Value {
     let uri = params["textDocument"]["uri"].as_str().unwrap_or("");

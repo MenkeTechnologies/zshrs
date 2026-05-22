@@ -615,14 +615,12 @@ impl ShellExecutor {
         crate::ported::params::getsparam(name)
     }
 
-    /// Read an array parameter from canonical paramtab. Mirrors C
-    /// `getaparam` at `Src/params.c:3100` — `paramtab->getnode(s)`
-    /// then `pm->u.arr.clone()`. Returns an owned `Vec<String>`.
+    /// Read an array parameter via canonical `getaparam`
+    /// (`Src/params.c:3101`). Routes through the C-faithful port
+    /// that includes the PM_TYPE check + digit-first-name rejection
+    /// — the inline paramtab.get(...).u_arr read was missing both.
     pub fn array(&self, name: &str) -> Option<Vec<String>> {
-        crate::ported::params::paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get(name).and_then(|pm| pm.u_arr.clone()))
+        crate::ported::params::getaparam(name)
     }
 
     /// Read an associative array parameter from canonical
@@ -784,27 +782,20 @@ impl ShellExecutor {
     /// Unset an array parameter. Direct port of `unsetparam_pm` for
     /// a PM_ARRAY Param. Mirrors are kept for now while the field
     /// transitions.
+    /// Unset an array parameter via canonical `unsetparam`
+    /// (Src/params.c:3819). Routes through the C-faithful port
+    /// that runs PM_NAMEREF skip + PM_READONLY rejection via
+    /// unsetparam_pm + stdunsetfn dispatch + pm.old scope restore.
+    /// Inline `tab.remove(name)` skipped all four.
     pub fn unset_array(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab()
-            .write()
-            .ok()
-            .as_deref_mut()
-        {
-            tab.remove(name);
-        }
+        crate::ported::params::unsetparam(name);
     }
 
-    /// Unset a scalar parameter from canonical paramtab. Narrower
-    /// than `unset_var` which clears arrays + assocs too. Direct
-    /// port of `Src/params.c:unsetparam_pm` for a scalar PM_TYPE.
+    /// Unset a scalar parameter via canonical `unsetparam`. Same
+    /// C-faithful path as `unset_array`; the C `unsetparam` itself
+    /// is type-agnostic and dispatches through PM_TYPE inside.
     pub fn unset_scalar(&mut self, name: &str) {
-        if let Some(tab) = crate::ported::params::paramtab()
-            .write()
-            .ok()
-            .as_deref_mut()
-        {
-            tab.remove(name);
-        }
+        crate::ported::params::unsetparam(name);
     }
 
     /// Unset a parameter from every store. Mirrors the C
