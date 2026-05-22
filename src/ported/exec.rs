@@ -4947,6 +4947,7 @@ impl crate::ported::vm_helper::ShellExecutor {
 use crate::fusevm_bridge::{ExecutorContext, register_builtins, ZshrsHost};
 use crate::exec_jobs::JobState;
 use crate::parse::Redirect;
+use std::path::Path;
 use std::process::Command;
 use std::io;
 use std::io::{Read, Write};
@@ -5335,5 +5336,176 @@ impl crate::ported::vm_helper::ShellExecutor {
                 }
             }
         }
+    }
+}
+
+
+// =====================================================================
+// execute_script_file / execute_script_zsh_pipeline / execute_script
+// — moved from src/vm_helper.rs.
+// Partial port of `Src/init.c::loop` / `Src/exec.c::execlist` /
+// `Src/builtin.c::bin_dot` script-execution entrypoints.
+// Reads the script file, runs the parser, drives the compiler,
+// invokes the fusevm VM. Bytecode-cache integration is zshrs-native
+// (no C analog).
+// =====================================================================
+impl crate::ported::vm_helper::ShellExecutor {
+    /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
+    /// Bytecode is stored in rkyv keyed by (path, mtime).
+    pub fn execute_script_file(&mut self, file_path: &str) -> Result<i32, String> {
+        let path = Path::new(file_path);
+        let abs_path = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_string();
+
+        // Try bytecode cache first — rkyv shard at ~/.zshrs/scripts.rkyv.
+        // The cache validates path + mtime + zshrs binary mtime; on any miss
+        // we fall through to lex/parse/compile.
+        if let Some(bc_blob) = crate::script_cache::try_load_bytes(path) {
+            if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
+                if !chunk.ops.is_empty() {
+                    tracing::trace!(
+                        path = %abs_path,
+                        ops = chunk.ops.len(),
+                        "execute_script_file: bytecode cache hit"
+                    );
+                    crate::fusevm_disasm::maybe_print_stdout(
+                        &format!("execute_script_file:cache:{abs_path}"),
+                        &chunk,
+                    );
+                    let mut vm = fusevm::VM::new(chunk);
+                    register_builtins(&mut vm);
+                    let _ctx = ExecutorContext::enter(self);
+                    match vm.run() {
+                        fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                            self.set_last_status(vm.last_status);
+                        }
+                        fusevm::VMResult::Error(e) => {
+                            return Err(format!("VM error: {}", e));
+                        }
+                    }
+                    return Ok(self.last_status());
+                }
+            }
+        }
+
+        // Cache miss — read, parse, compile, execute, then cache.
+        // No history expansion: zsh fires `!` history sub only on
+        // interactive input (the REPL line). Sourced files are
+        // verbatim — `(( !${#ARR} ))` (logical-not) must NOT
+        // become `(( <last-arg-of-prev-cmd>{#ARR} ))`. Direct port
+        // of Src/init.c source() which calls `lex_init_buf` /
+        // `loop()` without engaging the history layer.
+        let content =
+            std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
+        // Save & clear errflag around the parse so we can detect a
+        // fresh syntax error vs an inherited one. Direct port of
+        // Src/init.c source()'s `errflag &= ~ERRFLAG_ERROR;` before
+        // `parse_event(ENDINPUT)` and the post-parse errflag check.
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        crate::ported::parse::parse_init(&content);
+        let program = crate::ported::parse::parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        if parse_failed {
+            return Err("parse error".to_string());
+        }
+
+        let compiler = crate::compile_zsh::ZshCompiler::new();
+        let chunk = compiler.compile(&program);
+
+        // Cache the bytecode for next time. Best-effort — failures don't
+        // block execution since the chunk is already in hand.
+        if let Ok(blob) = bincode::serialize(&chunk) {
+            let _ = crate::script_cache::try_save_bytes(path, &blob);
+            tracing::trace!(
+                path = %abs_path,
+                bytes = blob.len(),
+                "execute_script_file: bytecode cached"
+            );
+        }
+
+        // Execute
+        if !chunk.ops.is_empty() {
+            crate::fusevm_disasm::maybe_print_stdout(
+                &format!("execute_script_file:compile:{abs_path}"),
+                &chunk,
+            );
+            let mut vm = fusevm::VM::new(chunk);
+            register_builtins(&mut vm);
+            let _ctx = ExecutorContext::enter(self);
+            match vm.run() {
+                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                    self.set_last_status(vm.last_status);
+                }
+                fusevm::VMResult::Error(e) => {
+                    return Err(format!("VM error: {}", e));
+                }
+            }
+        }
+
+        Ok(self.last_status())
+    }
+
+
+    /// Execute via the lex+parse free fns + ZshCompiler pipeline.
+    /// This is the only execution path; `execute_script` delegates here.
+    pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
+        // Skip history expansion for non-interactive script execution
+        // (`zsh -c '…'`, internal eval, sourced files). zsh's `!`
+        // history sub only fires on the REPL command line, never on
+        // a pre-parsed script body. The interactive REPL has its
+        // own dedicated path that calls expand_history before
+        // dispatching here.
+        // Save & clear errflag around the parse so a fresh syntax
+        // error is distinguishable from one already in flight. Mirrors
+        // Src/init.c loop()'s pre-parse `errflag &= ~ERRFLAG_ERROR;`.
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        crate::ported::parse::parse_init(script);
+        let program = crate::ported::parse::parse();
+        let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        if parse_failed {
+            return Err("parse error".to_string());
+        }
+
+        let compiler = crate::compile_zsh::ZshCompiler::new();
+        let chunk = compiler.compile(&program);
+
+        if chunk.ops.is_empty() {
+            return Ok(self.last_status());
+        }
+
+        crate::fusevm_disasm::maybe_print_stdout("execute_script_zsh_pipeline", &chunk);
+        let mut vm = fusevm::VM::new(chunk);
+        register_builtins(&mut vm);
+        {
+            let _ctx = ExecutorContext::enter(self);
+            match vm.run() {
+                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                    self.set_last_status(vm.last_status);
+                }
+                fusevm::VMResult::Error(e) => return Err(format!("VM error: {}", e)),
+            }
+        }
+
+        // Fire EXIT trap if set. Same logic as execute_script's old path:
+        // remove first to prevent infinite recursion, then run.
+        if let Some(action) = self.traps.remove("EXIT") {
+            tracing::debug!("firing EXIT trap (new pipeline)");
+            let _ = self.execute_script_zsh_pipeline(&action);
+        }
+
+        Ok(self.last_status())
+    }
+
+    #[tracing::instrument(skip(self, script), fields(len = script.len()))]
+    pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
+        // lex+parse free fns + ZshCompiler is the only execution path.
+        self.execute_script_zsh_pipeline(script)
     }
 }
