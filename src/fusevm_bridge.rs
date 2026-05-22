@@ -947,19 +947,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Resource limits
     vm.register_builtin(BUILTIN_ULIMIT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_ulimit(&args));
+        let status = dispatch_builtin("ulimit", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_LIMIT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_limit(&args));
+        let status = dispatch_builtin("limit", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_UNLIMIT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_unlimit(&args));
+        let status = dispatch_builtin("unlimit", args);
         Value::Status(status)
     });
 
