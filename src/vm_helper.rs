@@ -4898,416 +4898,45 @@ impl crate::ported::vm_helper::ShellExecutor {
 
 impl crate::ported::vm_helper::ShellExecutor {
     /// Expand glob pattern to matching files
+    // expand_glob — thin wrapper around the canonical `glob::glob_path`
+    // (C port of `Src/glob.c::zglob`). glob_path handles every glob
+    // feature: brace alternation, extendedglob `^pat` / `~` exclusion,
+    // `(#i)`/`(#l)`/`(#aN)` inline flags, numeric ranges, char classes,
+    // ksh `!()` negation, recursive `**`, qualifiers `(.)` `(/)` `(@)`
+    // `(o…)` `(O…)` `(M)` `(T)`, NULLGLOB / GLOBDOTS / CASEGLOB option
+    // gating — every one of those was duplicated in the 411-line
+    // hand-roll that previously lived here.
+    //
+    // Executor-side state that the canonical port can't touch:
+    //   - `current_command_glob_failed` cell: lets the dispatch layer
+    //     (fusevm_bridge::pop_args / host_exec_external) skip the
+    //     current command without exiting the shell when NOMATCH +
+    //     looks_like_glob fires.
+    //   - The diagnostic emission + per-list errflag-clear that
+    //     C zsh's execlist interleaves between failed lists (zshrs's
+    //     fusevm doesn't have an equivalent loop, so drop the bit
+    //     here after zerr).
     pub fn expand_glob(&self, pattern: &str) -> Vec<String> {
-        // Glob alternation `(a|b|c)` is a primary zsh feature
-        // (no extendedglob needed, unlike `~` exclusion). Direct
-        // port of zsh's pattern.c handling of P_BRANCH | inside
-        // grouping parens — at the path level, `/etc/(passwd|
-        // hostname)` matches multiple alternative paths. zshrs's
-        // glob crate (and earlier hand-rolled code) didn't expand
-        // the `(...|...)` form, so the literal parens reached the
-        // OS glob and produced no matches.
-        //
-        // Pre-expand by splitting top-level `(...|...)` groups
-        // into separate patterns and recursing — same shape as
-        // brace expansion at this layer. Skip when extendedglob
-        // is on AND the pattern is `(#flag)` (inline pattern flag,
-        // handled by the regex compiler downstream).
-        if let Some(alternatives) = expand_glob_alternation(pattern) {
-            // For each alternative, treat as a GLOB pattern: if it
-            // contains other glob chars, recurse through expand_glob
-            // (which handles `*`/`?`/`[`/qualifier suffixes); if
-            // it's a literal path, only include it if the path
-            // EXISTS — zsh's pattern.c behavior is "alternation
-            // produces matching paths, not literal alternatives".
-            // Without the exists-check, `/etc/(passwd|nonexistent)`
-            // would output both.
-            let mut out: Vec<String> = Vec::new();
-            for alt in alternatives {
-                let has_meta = alt.chars().any(|c| matches!(c, '*' | '?' | '[' | '('));
-                if has_meta {
-                    out.extend(self.expand_glob(&alt));
-                } else if std::path::Path::new(&alt).exists() {
-                    out.push(alt);
-                }
-            }
-            let mut seen = std::collections::HashSet::new();
-            out.retain(|p| seen.insert(p.clone()));
-            // zsh sorts glob results alphabetically by default.
-            // Without sorting, the alternation order leaks
-            // through (`/etc/(passwd|group)` would output
-            // `passwd group` instead of zsh's `group passwd`).
-            out.sort();
-            if !out.is_empty() {
-                return out;
-            }
-            // No matches — fall through to NOMATCH semantics
-            // below (zsh: error if `nomatch` is on, else literal).
+        let expanded = crate::ported::glob::glob_path(pattern);
+        if !expanded.is_empty() {
+            return expanded;
         }
-        // extendedglob `~` exclusion: `*.txt~b.txt` matches `*.txt`
-        // and excludes paths that also match `b.txt`. Detect a
-        // top-level `~` (not inside brackets/parens) when extendedglob
-        // is on and split. Recursively expand both halves and remove
-        // the RHS matches from the LHS list.
-        let extglob_on = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
-        if extglob_on {
-            // extendedglob `^pat` (negation): match everything that
-            // does NOT match `pat`. The lexer leaves `^` as a literal
-            // char, so we detect a leading `^` here and convert to a
-            // directory-walk-then-filter. Only applies at the start
-            // of the LAST path component (zsh: `^pat` only negates
-            // the basename portion).
-            let last_seg_start = pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
-            let last_seg = &pattern[last_seg_start..];
-            if last_seg.starts_with('^') && last_seg.len() > 1 {
-                let prefix = &pattern[..last_seg_start];
-                let neg = &last_seg[1..];
-                let dir = if prefix.is_empty() {
-                    ".".to_string()
-                } else {
-                    prefix.trim_end_matches('/').to_string()
-                };
-                let mut out = Vec::new();
-                if let Ok(entries) = std::fs::read_dir(&dir) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if name.starts_with('.') {
-                            continue;
-                        }
-                        if !crate::vm_helper::glob_match_static(&name, neg) {
-                            let path = if prefix.is_empty() {
-                                name
-                            } else {
-                                format!("{}{}", prefix, name)
-                            };
-                            out.push(path);
-                        }
-                    }
-                }
-                out.sort();
-                if !out.is_empty() {
-                    return out;
-                }
-                let nullglob = crate::ported::options::opt_state_get("nullglob").unwrap_or(false);
-                if nullglob {
-                    return Vec::new();
-                }
-                let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
-                if nomatch {
-                    // See expand_glob below for the C-citation +
-                    // errflag-clear rationale; identical fix applies
-                    // here.
-                    zerr(&format!("no matches found: {}", pattern));
-                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                    self.current_command_glob_failed.set(true);
-                    return Vec::new();
-                }
-                return vec![pattern.to_string()];
-            }
-            // Find a top-level `~` outside brackets.
-            let chars: Vec<char> = pattern.chars().collect();
-            let mut depth_b = 0i32;
-            let mut depth_p = 0i32;
-            let mut split_at: Option<usize> = None;
-            for (i, &c) in chars.iter().enumerate() {
-                match c {
-                    '[' => depth_b += 1,
-                    ']' => depth_b -= 1,
-                    '(' => depth_p += 1,
-                    ')' => depth_p -= 1,
-                    '~' if depth_b == 0 && depth_p == 0 && i > 0 => {
-                        // Skip `~` at start (tilde expansion) and `~` adjacent
-                        // to space (zsh treats those as expansion).
-                        split_at = Some(i);
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(pos) = split_at {
-                let lhs: String = chars[..pos].iter().collect();
-                let rhs: String = chars[pos + 1..].iter().collect();
-                let lhs_matches = self.expand_glob(&lhs);
-                // zsh pattern.c: `~` is an exclusion operator that matches
-                // RHS as a PATTERN against each LHS candidate, not a
-                // separate glob expansion in CWD. Match RHS against each
-                // result's basename and full path.
-                let filtered: Vec<String> = lhs_matches
-                    .into_iter()
-                    .filter(|p| {
-                        let basename = p.rsplit('/').next().unwrap_or(p);
-                        !crate::vm_helper::glob_match_static(basename, &rhs)
-                            && !crate::vm_helper::glob_match_static(p, &rhs)
-                    })
-                    .collect();
-                if !filtered.is_empty() {
-                    return filtered;
-                }
-                // Empty after exclusion — fall through so NOMATCH
-                // semantics fire if no nullglob.
-                let nullglob = crate::ported::options::opt_state_get("nullglob").unwrap_or(false);
-                if nullglob {
-                    return Vec::new();
-                }
-                let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
-                if nomatch && Self::looks_like_glob(pattern) {
-                    // c:Src/glob.c:1877 — `zerr`. Set the per-
-                    // command glob-failed flag so the dispatch path
-                    // suppresses the actual command without exiting
-                    // the shell. See same fix below at the
-                    // expand_glob entry path.
-                    zerr(&format!("no matches found: {}", pattern));
-                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                    self.current_command_glob_failed.set(true);
-                    return Vec::new();
-                }
-                return vec![pattern.to_string()];
-            }
-        }
-        // Check for zsh glob qualifiers at end: *(.) *(/) *(@) etc.
-        let (glob_pattern, qualifiers) = self.parse_glob_qualifiers(pattern);
-        // Pre-process `[^...]` → `[!...]` so the `glob` crate (which
-        // only accepts `!` for class negation per fnmatch) works for
-        // zsh's `^` form too. Walk the pattern and only translate
-        // inside `[...]` regions (so a literal `^` outside brackets
-        // stays literal — extendedglob handles those separately).
-        let glob_pattern = if glob_pattern.contains("[^") {
-            let mut out = String::with_capacity(glob_pattern.len());
-            let mut chars = glob_pattern.chars().peekable();
-            while let Some(c) = chars.next() {
-                if c == '[' {
-                    out.push('[');
-                    if chars.peek() == Some(&'^') {
-                        chars.next();
-                        out.push('!');
-                    }
-                    for cc in chars.by_ref() {
-                        out.push(cc);
-                        if cc == ']' {
-                            break;
-                        }
-                    }
-                } else {
-                    out.push(c);
-                }
-            }
-            out
-        } else {
-            glob_pattern
-        };
-
-        // POSIX character classes: `[[:alpha:]]`, `[[:digit:]]` etc.
-        // The `glob` crate doesn't recognise the `[:class:]` syntax —
-        // convert each known class to its enumerated char range so
-        // the underlying matcher sees a plain char-class. Done here
-        // (not at the lexer) so the substitution survives all the
-        // way to glob::glob_with(). Tracks: alnum, alpha, blank,
-        // cntrl, digit, graph, lower, print, punct, space, upper,
-        // xdigit. Each translates to ranges like `0-9`/`a-zA-Z`.
-        let glob_pattern = if glob_pattern.contains("[:") {
-            // Inline expansion of `[[:alpha:]]` → `[a-zA-Z]` etc.
-            // Mirrors the inline `[:class:]` switch the C source does
-            // in pattern.c::patmatchrange. Each known class translates
-            // to its standard ASCII range; unknown classes pass through.
-            let s = &glob_pattern;
-            let mut out = String::with_capacity(s.len());
-            let chars: Vec<char> = s.chars().collect();
-            let mut i = 0;
-            while i < chars.len() {
-                if chars[i] == '[' && i + 2 < chars.len() && chars[i + 1] == ':' {
-                    let mut j = i + 2;
-                    while j + 1 < chars.len() && !(chars[j] == ':' && chars[j + 1] == ']') {
-                        j += 1;
-                    }
-                    if j + 1 < chars.len() && chars[j] == ':' && chars[j + 1] == ']' {
-                        let name: String = chars[i + 2..j].iter().collect();
-                        let range = match name.as_str() {
-                            "alpha" => "a-zA-Z",
-                            "alnum" => "a-zA-Z0-9",
-                            "digit" => "0-9",
-                            "xdigit" => "0-9a-fA-F",
-                            "lower" => "a-z",
-                            "upper" => "A-Z",
-                            "space" => " \\t\\n\\r\\v\\f",
-                            "blank" => " \\t",
-                            "cntrl" => "\\x00-\\x1f\\x7f",
-                            "print" => "\\x20-\\x7e",
-                            "graph" => "\\x21-\\x7e",
-                            "punct" => "!-/:-@\\[-`{-~",
-                            _ => "",
-                        };
-                        if !range.is_empty() {
-                            out.push_str(range);
-                            i = j + 2;
-                            continue;
-                        }
-                    }
-                }
-                out.push(chars[i]);
-                i += 1;
-            }
-            out
-        } else {
-            glob_pattern
-        };
-
-        // zsh numeric range glob `<N-M>`, `<N->`, `<-M>`, `<->`.
-        // The `glob` crate has no equivalent — match by replacing the
-        // range with `*` and post-filtering by extracting the digit
-        // sequence at that position and verifying it falls in [N, M].
-        // Only fires when the pattern actually contains a `<…-…>` shape
-        // — guard with a fast contains() before the regex.
-        let numeric_ranges = if glob_pattern.contains('<') {
-            extract_numeric_ranges(&glob_pattern)
-        } else {
-            Vec::new()
-        };
-        let glob_pattern = if !numeric_ranges.is_empty() {
-            numeric_ranges_to_star(&glob_pattern)
-        } else {
-            glob_pattern
-        };
-
-        // Check for extended glob patterns: ?(pat), *(pat), +(pat), @(pat), !(pat)
-        if self.has_extglob_pattern(&glob_pattern) {
-            let expanded = self.expand_glob(&glob_pattern);
-            return self.filter_by_qualifiers(expanded, &qualifiers);
-        }
-
+        // No matches. Mirror zsh's `setopt nullglob` / `nomatch`
+        // dispatch (Src/glob.c:1873-1886) here because glob_path
+        // returns an empty Vec without knowing executor state.
         let nullglob = crate::ported::options::opt_state_get("nullglob").unwrap_or(false);
-        // `(D)` glob qualifier — per-pattern dotglob. Same effect as
-        // `setopt dotglob` but scoped to this expansion only.
-        // Also: when the LAST path component starts with literal `.`,
-        // treat as if dotglob was on (zsh: `.*` matches dotfiles even
-        // without setopt dotglob, because the leading `.` is literal).
-        let last_seg = glob_pattern.rsplit('/').next().unwrap_or(&glob_pattern);
-        let pattern_starts_with_dot = last_seg.starts_with('.');
-        // `globdots` is the zsh canonical name; `dotglob` is the bash
-        // alias. Both end up stored under their own key by setopt — read
-        // both so either spelling works.
-        let dotglob = crate::ported::options::opt_state_get("dotglob").unwrap_or(false)
-            || crate::ported::options::opt_state_get("globdots").unwrap_or(false)
-            || qualifiers.contains('D')
-            || pattern_starts_with_dot;
-        // `setopt nocaseglob` normalizes to `caseglob=false` in the
-        // options table (the `no` prefix is the negation marker).
-        // Read both forms so user code that flips either key works:
-        //   - `caseglob=false` → case-INSENSITIVE
-        //   - `nocaseglob=true` → case-INSENSITIVE (legacy / direct)
-        let nocaseglob = !crate::ported::options::opt_state_get("caseglob").unwrap_or(true)
-            || crate::ported::options::opt_state_get("nocaseglob").unwrap_or(false);
-
-        // Parallel recursive glob: when pattern contains **/ we split the
-        // directory walk across worker pool threads — one thread per top-level
-        // subdirectory.  zsh does this single-threaded via fork+exec which is
-        // why `echo **/*.rs` is painfully slow on large trees.
-        let mut expanded = if !numeric_ranges.is_empty() {
-            // `<N-M>` numeric range glob — handle via direct directory
-            // walk so the digit-count semantics survive (the glob crate
-            // can't express "one or more digits" precisely).
-            self.expand_glob_with_numeric_range(pattern, &numeric_ranges, dotglob, nocaseglob)
-        } else if glob_pattern.contains("**/") {
-            self.expand_glob_parallel(&glob_pattern, dotglob, nocaseglob)
-        } else {
-            let options = glob::MatchOptions {
-                case_sensitive: !nocaseglob,
-                require_literal_separator: false,
-                require_literal_leading_dot: !dotglob,
-            };
-            match glob::glob_with(&glob_pattern, options) {
-                Ok(paths) => paths
-                    .filter_map(|p| p.ok())
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect(),
-                Err(_) => vec![],
-            }
-        };
-
-        // zsh always excludes "." and ".." from glob results, even
-        // with `dotglob` set or when the pattern is `.*`. The Rust
-        // glob crate includes them. `Path::file_name` returns None
-        // for these (treats them as cur/parent-dir components), so
-        // check the trailing path segment textually.
-        expanded.retain(|p| {
-            let last = p.rsplit('/').next().unwrap_or(p);
-            last != "." && last != ".."
-        });
-
-        let expanded = self.filter_by_qualifiers(expanded, &qualifiers);
-        let mut expanded = expanded;
-        // zsh: `echo */` outputs each directory with a trailing
-        // slash. The Rust glob crate strips trailing slashes from
-        // matches, so re-append when the pattern ended in `/`.
-        if glob_pattern.ends_with('/') {
-            for p in expanded.iter_mut() {
-                if !p.ends_with('/') {
-                    p.push('/');
-                }
-            }
+        if nullglob {
+            return Vec::new();
         }
-        // Locale-aware sort: under a Unicode locale, zsh folds case
-        // (`Aaa bbb Ccc Ddd` not `Aaa Ccc Ddd bbb`). Fallback to byte
-        // order under C/POSIX. Sort by basename so directory components
-        // don't dominate the comparison and produce ASCII-style output.
-        // Skip when the qualifier requested an explicit sort (`o*`/`O*`)
-        // — those reorder by mtime/size/etc and the alpha sort would
-        // clobber the result.
-        let user_sort = qualifiers.contains('o') || qualifiers.contains('O');
-        if !user_sort {
-            // For `**/...` recursive globs, sort by the FULL path so
-            // depth-first / breadth-first walk order is preserved
-            // (zsh's natural recursive order: `dir/f sub sub/g`, not
-            // basename-sorted `f g sub`). For plain (non-recursive)
-            // globs, sort by BASENAME to match zsh's locale-aware
-            // case-folded output.
-            // Locale-aware compare via canonical `zstrcmp` (sort.c:191).
-            // C's `gmatchcmp` (glob.c:936) calls `zstrcmp(b->uname,
-            // a->uname, gf_numsort ? SORTIT_NUMERICALLY : 0)` for the
-            // GS_NAME arm — same path here at the callsite.
-            if glob_pattern.contains("**/") {
-                expanded.sort_by(|a, b| crate::ported::sort::zstrcmp(a, b, 0));
-            } else {
-                expanded.sort_by(|a, b| {
-                    let an = a.rsplit('/').next().unwrap_or(a);
-                    let bn = b.rsplit('/').next().unwrap_or(b);
-                    crate::ported::sort::zstrcmp(an, bn, 0)
-                });
-            }
+        let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
+        if nomatch && Self::looks_like_glob(pattern) {
+            zerr(&format!("no matches found: {}", pattern));
+            errflag.fetch_and(!ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed);
+            self.current_command_glob_failed.set(true);
+            return Vec::new();
         }
-
-        if expanded.is_empty() {
-            // The `(N)` per-pattern qualifier is the local equivalent of
-            // `setopt nullglob` — when present on this glob, no-match
-            // collapses to an empty list (silent) instead of the literal
-            // pattern. Mirrors zsh's `*(N)` semantics.
-            if nullglob || qualifiers.contains('N') {
-                return vec![];
-            }
-            // zsh's default is `setopt nomatch`: an unmatched glob
-            // emits "no matches found" on stderr, aborts the command
-            // with status 1, but the SCRIPT continues to the next
-            // top-level command (unless errexit is set). Mirrors
-            // Src/glob.c:1877 + the implicit per-list errflag bail
-            // that zsh's `execlist` interleaves with `lastval=1` —
-            // the parent execlist loop's `!errflag` test sees errflag
-            // momentarily set during the failed list and clears it
-            // before fetching the next list. zshrs's fusevm dispatch
-            // doesn't have an equivalent per-list errflag-clear, so
-            // we drop the ERRFLAG_ERROR bit here AFTER zerr has done
-            // its diagnostic side-effect; the per-command glob_failed
-            // cell is still set so the immediate command body is
-            // suppressed by the dispatcher (fusevm_bridge.rs:10245).
-            let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
-            if nomatch && Self::looks_like_glob(pattern) {
-                zerr(&format!("no matches found: {}", pattern));
-                errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                self.current_command_glob_failed.set(true);
-                return Vec::new();
-            }
-            vec![pattern.to_string()]
-        } else {
-            expanded
-        }
+        // Pattern has no glob meta — pass through literally.
+        vec![pattern.to_string()]
     }
     /// True iff the literal `pattern` actually contains a glob metachar
     /// in a position that would have triggered globbing. Used to avoid
