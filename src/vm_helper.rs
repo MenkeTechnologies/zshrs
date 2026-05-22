@@ -195,18 +195,13 @@ pub use crate::ported::modules::zutil::zstyle_entry;
 // (port of `struct schedcmd` from Src/Builtins/sched.c:43) for live state.
 pub use crate::ported::builtin::AutoloadFlags;
 
-/// Cross-VM loop-control signal. When `break`/`continue` is hit inside a body
-/// that runs on a sub-VM (e.g. select's body), the inline patches mechanism
-/// can't reach the outer loop — set this flag and the outer-loop builtin
-/// drains it after each iteration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Loop control signal from a command body.
-/// Mirrors the `LF_*` set Src/loop.c uses to thread
-/// `break`/`continue`/`return` flags up through the executor.
-pub enum LoopSignal {
-    Break,
-    Continue,
-}
+// `LoopSignal` enum deleted — it was a zshrs-invented dup of the
+// canonical BREAKS/CONTFLAG file-statics in src/ported/builtin.rs
+// (port of `breaks`/`contflag` from Src/loop.c:46/41). The docstring
+// claim that it "mirrors the LF_* set" was false — no such enum
+// exists in C zsh. Cross-VM break/continue now writes to BREAKS/
+// CONTFLAG directly via BUILTIN_SET_BREAK / BUILTIN_SET_CONTINUE,
+// matching bin_break's writes at Src/builtin.c::bin_break c:5836+.
 
 /// Snapshot of subshell-isolated state. Captured at `(` entry, restored at
 /// `)` exit. zsh subshell semantics: assignments inside `(…)` don't leak to
@@ -294,10 +289,10 @@ pub struct ShellExecutor {
     // guard duplicating C's `alias.inuse` field (`Src/zsh.h:1256`).
     // Callers now bump/clear `inuse` on the canonical alias node in
     // `aliastab` (`hashtable.rs:1804`), matching C's lexer behavior.
-    /// Set by `break`/`continue` keywords when no enclosing loop in the
-    /// current chunk's patch lists. Outer-loop builtins (BUILTIN_RUN_SELECT)
-    /// observe + clear this after each body run.
-    pub loop_signal: Option<LoopSignal>,
+    // `loop_signal` deleted — was a Rust-only dup of the canonical
+    // BREAKS/CONTFLAG atomics at src/ported/builtin.rs (port of
+    // Src/loop.c:46 `breaks` + :41 `contflag`). Cross-VM break/
+    // continue now writes BREAKS/CONTFLAG directly.
     /// Stack of subshell-state snapshots. Each `(…)` subshell pushes a copy
     /// of variables/arrays/assoc_arrays at entry and pops/restores at exit.
     /// Without this, `(x=inner; …); echo $x` shows `inner` instead of the
@@ -1026,7 +1021,6 @@ impl ShellExecutor {
         let mut exec = Self {
             scriptname: None,
             scriptfilename: None,
-            loop_signal: None,
             subshell_snapshots: Vec::new(),
             inline_env_stack: Vec::new(),
             current_command_glob_failed: std::cell::Cell::new(false),
