@@ -2446,38 +2446,10 @@ impl crate::ported::vm_helper::ShellExecutor {
             // "user:<funcname>", or "completion:<funcname>".
             // Distinguishes builtin vs user-defined so
             // ${(t)widgets[name]} works.
-            "widgets" => {
-                if let Some(target) = getwidgettarget(key) {
-                    if target == key {
-                        Some("builtin".to_string())
-                    } else {
-                        Some(format!("user:{}", target))
-                    }
-                } else {
-                    Some(String::new())
-                }
-            }
-
-            // === ZLE KEYMAPS ===
-            // ${keymaps[N]} per zleparameter.c keymaps_*: list of
-            // available keymap names. Single-key lookup returns 1
-            // ("set") if the keymap exists, "" otherwise.
-            "keymaps" => {
-                const KEYMAPS: &[&str] = &[
-                    "main",
-                    "emacs",
-                    "viins",
-                    "vicmd",
-                    "isearch",
-                    "command",
-                    "menuselect",
-                ];
-                if KEYMAPS.contains(&key) {
-                    Some("1".to_string())
-                } else {
-                    Some(String::new())
-                }
-            }
+            // widgets / keymaps arms deleted — both now route through
+            // canonical PARTAB / PARTAB_ARRAY entries (zleparameter.c:
+            // 132-133 SPECIALPMDEFs) that wire getpmwidgets / scanpm
+            // widgets / keymapsgetfn as fn pointers with C signatures.
 
             // === SIGNAL NAMES ===
             // $signals: array indexed by signal number (1-based) where

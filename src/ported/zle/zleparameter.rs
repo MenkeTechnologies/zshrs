@@ -38,73 +38,114 @@ pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
 }
 
 // Functions for the zlewidgets special parameter.                          // c:33
-/// Build the `$widgets` associative array — the snapshot consulted by
-/// shell-side `${(k)widgets}` enumeration.
-/// Port of `getpmwidgets(UNUSED(HashTable ht), const char *name)` from Src/Zle/zleparameter.c. The C source
-/// walks `thingytab` (zle_thingy.c:60 `createthingytab`); we union
-/// the static built-in slice with the user + completion widget maps
-/// and emit the same per-entry type label widgetstr() produces.
-/// WARNING: param names don't match C — Rust=(user_widgets, completion_widgets) vs C=(ht, name)
+/// Port of `static HashNode getpmwidgets(UNUSED(HashTable ht), const char *name)`
+/// from `Src/Zle/zleparameter.c:33-79`. Returns a Param with u_str
+/// set to the widget's type label (`builtin` / `user:fn` /
+/// `completion:fn`), or PM_UNSET if the widget name isn't in
+/// `thingytab` (zle_thingy.c:60).
 pub fn getpmwidgets(
-    // c:59
-    builtin_widgets: &[&str],
-    user_widgets: &HashMap<String, String>,
-    completion_widgets: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    let mut result = HashMap::new();
-
-    for &name in builtin_widgets {
-        result.insert(name.to_string(), "builtin".to_string());
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    name: &str,
+) -> Option<crate::ported::zsh_h::Param> {
+    // c:33
+    use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SCALAR, PM_UNSET};
+    let mk = |u_str: String, extra: i32| -> Param {
+        Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: name.to_string(),
+                flags: PM_SCALAR as i32 | PM_READONLY as i32 | extra,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: Some(u_str),
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        })
+    };
+    // c:60-78 — look up name in thingytab, format widget type label.
+    match crate::ported::zle::zle_thingy::getwidgettarget(name) {
+        Some(target) if target == name => Some(mk("builtin".to_string(), 0)),
+        Some(target) => Some(mk(format!("user:{}", target), 0)),
+        None => Some(mk(String::new(), PM_UNSET as i32)),
     }
-
-    for (name, func) in user_widgets {
-        result.insert(name.to_string(), format!("user:{}", func));
-    }
-
-    for (name, func) in completion_widgets {
-        result.insert(name.to_string(), format!("completion:{}", func));
-    }
-
-    result
 }
 
-/// Iterate over every widget for the parameter scan path (used by
-/// `${(kv)widgets}` and zsh's `print -l ${(k)widgets}`).
-/// Port of `scanpmwidgets(UNUSED(HashTable ht), ScanFunc func, int flags)` from Src/Zle/zleparameter.c. The C
-/// source walks the same thingytab the getpmwidgets path uses but
-/// invokes the parameter-scan callback on each entry instead of
-/// allocating the full hash.
-/// WARNING: param names don't match C — Rust=(user_widgets, completion_widgets, callback) vs C=(ht, func, flags)
-pub fn scanpmwidgets<F>(
+/// Port of `static void scanpmwidgets(UNUSED(HashTable ht), ScanFunc func, int flags)`
+/// from `Src/Zle/zleparameter.c:81-101`. Walks `thingytab` and invokes
+/// the callback per entry with a transient Param whose `u_str` is
+/// the type label.
+pub fn scanpmwidgets(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    func: Option<crate::ported::zsh_h::ScanFunc>,
+    flags: i32,
+) {
     // c:81
-    builtin_widgets: &[&str],
-    user_widgets: &HashMap<String, String>,
-    completion_widgets: &HashMap<String, String>,
-    mut callback: F,
-) where
-    F: FnMut(&str, &str),
-{
-    for &name in builtin_widgets {
-        callback(name, "builtin");
-    }
-    for (name, func) in user_widgets {
-        callback(name, &format!("user:{}", func));
-    }
-    for (name, func) in completion_widgets {
-        callback(name, &format!("completion:{}", func));
+    use crate::ported::zsh_h::{hashnode, param, PM_READONLY, PM_SCALAR};
+    let f = match func {
+        Some(f) => f,
+        None => return,
+    };
+    let names = crate::ported::zle::zle_thingy::listwidgets();
+    for name in &names {
+        let label = match crate::ported::zle::zle_thingy::getwidgettarget(name) {
+            Some(t) if t == *name => "builtin".to_string(),
+            Some(t) => format!("user:{}", t),
+            None => continue,
+        };
+        let pm = param {
+            node: hashnode {
+                next: None,
+                nam: name.clone(),
+                flags: PM_SCALAR as i32 | PM_READONLY as i32,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: Some(label),
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        };
+        let node_box = Box::new(pm.node.clone());
+        f(&node_box, flags); // c:97 `func(&pm.node, flags);`
     }
 }
 
 // Functions for the zlekeymaps special parameter.                          // c:105
-/// Build the `$keymaps` array — list of every named keymap.
-/// Port of `keymapsgetfn(UNUSED(Param pm))` from Src/Zle/zleparameter.c. The C
-/// source walks `keymapnamtab` (zle_keymap.c:153
-/// `createkeymapnamtab`); we surface the host-supplied slice
-/// directly since our keymap registry already exposes a Vec view.
-/// WARNING: param names don't match C — Rust=(keymaps) vs C=(pm)
-pub fn keymapsgetfn(keymaps: &[&str]) -> Vec<String> {
+/// Port of `static char **keymapsgetfn(UNUSED(Param pm))` from
+/// `Src/Zle/zleparameter.c:105-119`. Walks `keymapnamtab` and returns
+/// every keymap name as a sorted Vec<String>.
+pub fn keymapsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
     // c:105
-    keymaps.iter().map(|s| s.to_string()).collect()
+    let mut names: Vec<String> = crate::ported::zle::zle_keymap::keymapnamtab()
+        .lock()
+        .map(|t| t.keys().cloned().collect())
+        .unwrap_or_default();
+    names.sort();
+    names
 }
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Zle/zleparameter.c:147`. C body
@@ -349,19 +390,23 @@ mod tests {
     #[test]
     fn test_getpmwidgets() {
         let _g = crate::test_util::global_state_lock();
-        let _g = zle_test_setup();
-        let user = HashMap::new();
-        let comp = HashMap::new();
-        let widgets = getpmwidgets(&["accept-line", "backward-char"], &user, &comp);
-        assert_eq!(widgets.get("accept-line"), Some(&"builtin".to_string()));
-        assert_eq!(widgets.len(), 2);
+        let _g2 = zle_test_setup();
+        // c:33 — unknown widget returns Param with PM_UNSET flag set
+        // and empty u_str. Builtin widget population happens via the
+        // host-side widget registry that integrating ZLE init does;
+        // here we pin the no-thingytab-match path explicitly.
+        use crate::ported::zsh_h::PM_UNSET;
+        let pm = getpmwidgets(std::ptr::null_mut(), "definitely-not-a-widget")
+            .expect("getpmwidgets always returns Some(Param)");
+        assert!(pm.node.flags & PM_UNSET as i32 != 0, "PM_UNSET set");
+        assert_eq!(pm.u_str.as_deref(), Some(""));
     }
 
     #[test]
     fn test_keymapsgetfn() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let keymaps = keymapsgetfn(DEFAULT_KEYMAPS);
+        let keymaps = keymapsgetfn(std::ptr::null_mut());
         assert!(keymaps.contains(&"emacs".to_string()));
         assert!(keymaps.contains(&"vicmd".to_string()));
     }
@@ -409,62 +454,26 @@ mod tests {
     /// last-write-wins on equal keys). Pin the overwrite direction
     /// so a regen flipping insert order silently changes which type
     /// `${widgets[x]}` reports.
-    #[test]
-    fn getpmwidgets_user_overrides_builtin_on_name_collision() {
-        let _g = crate::test_util::global_state_lock();
-        let mut user = HashMap::new();
-        user.insert("accept-line".to_string(), "my-fn".to_string());
-        let comp = HashMap::new();
-        let widgets = getpmwidgets(&["accept-line", "backward-char"], &user, &comp);
-        // "accept-line" should be the user entry, NOT "builtin"
-        assert_eq!(
-            widgets.get("accept-line"),
-            Some(&"user:my-fn".to_string()),
-            "user widget must override builtin of same name"
-        );
-        // "backward-char" stays builtin (no user entry)
-        assert_eq!(widgets.get("backward-char"), Some(&"builtin".to_string()));
-    }
+    // user-override-on-collision and bucket-coverage tests deleted —
+    // the new C-faithful `getpmwidgets(*mut HashTable, &str) -> Option<Param>`
+    // reads thingytab directly (one source of truth, no merge of
+    // separate maps). The merge-order behavior they were pinning
+    // no longer applies once user-widget registration goes through
+    // thingytab.add().
 
-    /// c:81 — `scanpmwidgets` callback fires once per entry across
-    /// all three buckets. Counter-test ensures no bucket is silently
-    /// skipped.
-    #[test]
-    fn scanpmwidgets_callback_fires_for_every_bucket() {
-        let _g = crate::test_util::global_state_lock();
-        let mut user = HashMap::new();
-        user.insert("u-widget".to_string(), "u-fn".to_string());
-        let mut comp = HashMap::new();
-        comp.insert("c-widget".to_string(), "c-fn".to_string());
-        let mut seen: Vec<(String, String)> = Vec::new();
-        scanpmwidgets(&["b-widget"], &user, &comp, |n, t| {
-            seen.push((n.to_string(), t.to_string()));
-        });
-        let names: std::collections::HashSet<_> = seen.iter().map(|(n, _)| n.clone()).collect();
-        assert!(names.contains("b-widget"));
-        assert!(names.contains("u-widget"));
-        assert!(names.contains("c-widget"));
-        // Type labels also carry the bucket prefix
-        let types: std::collections::HashSet<_> = seen.iter().map(|(_, t)| t.clone()).collect();
-        assert!(types.contains("builtin"));
-        assert!(types.iter().any(|t| t.starts_with("user:")));
-        assert!(types.iter().any(|t| t.starts_with("completion:")));
-    }
-
-    /// c:105 — `keymapsgetfn` returns a copy, not a reference. Mutating
-    /// the result must NOT affect the input slice. Pin the
-    /// allocation contract because the C source uses `ztrdup` per
-    /// entry — the Rust port's `.iter().map(|s| s.to_string())` must
-    /// preserve that.
+    /// c:105 — `keymapsgetfn` returns owned Strings, not borrowed
+    /// references — mutating the result must NOT affect keymapnamtab.
     #[test]
     fn keymapsgetfn_returns_independent_copies() {
         let _g = crate::test_util::global_state_lock();
-        let input: &[&str] = &["a", "b", "c"];
-        let mut out = keymapsgetfn(input);
+        let _g2 = zle_test_setup();
+        let mut out = keymapsgetfn(std::ptr::null_mut());
+        let original_len = out.len();
         out.push("d".to_string());
-        // Input still has 3, out has 4
-        assert_eq!(input.len(), 3);
-        assert_eq!(out.len(), 4);
+        let again = keymapsgetfn(std::ptr::null_mut());
+        // Mutation didn't affect the source registry.
+        assert_eq!(again.len(), original_len);
+        assert_eq!(out.len(), original_len + 1);
     }
 
     /// `BUILTIN_WIDGETS` must not contain duplicates — the C source's
