@@ -3567,6 +3567,12 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2291
         getfn: reswordsgetfn,
     },
+    // c:2273 — `historywords`: histwgetfn (parameter.c:1217-1252).
+    PartabArrayEntry {
+        name: "historywords",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2273
+        getfn: histwgetfn,
+    },
     // Src/Zle/zleparameter.c:132 SPECIALPMDEF("keymaps", PM_ARRAY|PM_READONLY, ...).
     PartabArrayEntry {
         name: "keymaps",
