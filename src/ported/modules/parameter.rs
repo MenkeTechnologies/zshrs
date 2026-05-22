@@ -3635,6 +3635,11 @@ pub fn boot_(m: *const module) -> i32 {
     //                      hash-magic params (parameters, commands,
     //                      functions, etc.) are registered via the
     //                      partab dispatch in features_/enables_.
+    //
+    // zshrs's bin entry skips the canonical handlefeatures chain,
+    // so `crate::vm_helper::init_partab_params` is called directly
+    // from ShellExecutor::new() to install PM_SPECIAL placeholder
+    // Params for every PARTAB / PARTAB_ARRAY entry.
     0
 }
 
