@@ -2223,8 +2223,8 @@ use crate::ported::jobs::*;
 use crate::ported::math::*;
 use crate::ported::module::*;
 use crate::ported::modules::cap::*;
-use crate::ported::modules::tcp::bin_ztcp;
-use crate::ported::modules::termcap::bin_echotc;
+// bin_ztcp / bin_echotc imports deleted — zero callers since
+// `ztcp` / `echotc` route through dispatch_builtin in the bridge.
 use crate::ported::modules::terminfo::*;
 use crate::ported::options::*;
 use crate::ported::params::*;
