@@ -824,15 +824,7 @@ impl ShellExecutor {
         // calls were profiled.
         if crate::zprof::NCALLS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
             println!("{}", bold("function breakdown"));
-            {
-                let ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                crate::zprof::bin_zprof("profile", &[], &ops, 0);
-            };
+            crate::fusevm_bridge::dispatch_builtin("zprof", Vec::new());
         }
 
         // Per-command breakdown from tracing (if tracing is at debug level)
