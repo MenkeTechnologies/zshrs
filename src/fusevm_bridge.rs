@@ -798,34 +798,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // `unhash`/`unalias`/`unfunction` share `bin_unhash` (Src/builtin.c:
     // c:4350) but each carries its own funcid (BIN_UNHASH /
-    // BIN_UNALIAS / BIN_UNFUNCTION) in the BUILTINS table. Route each
-    // through `execbuiltin` so the correct funcid + optstr propagate
-    // — earlier wiring passed funcid=0 unconditionally and `unalias`
-    // silently no-op'd on the cmdnamtab path.
-    fn unhash_via_execbuiltin(name: &str, args: Vec<String>) -> i32 {
-        let bn_idx = crate::ported::builtin::BUILTINS
-            .iter()
-            .position(|b| b.node.nam == name);
-        if let Some(idx) = bn_idx {
-            let bn_static: &'static crate::ported::zsh_h::builtin =
-                &crate::ported::builtin::BUILTINS[idx];
-            let bn_ptr = bn_static as *const _ as *mut _;
-            crate::ported::builtin::execbuiltin(args, Vec::new(), bn_ptr)
-        } else {
-            1
-        }
-    }
+    // BIN_UNALIAS / BIN_UNFUNCTION) in the BUILTINS table.
+    // `unhash_via_execbuiltin` deleted — was a duplicate of
+    // `dispatch_builtin_raw` (same BUILTINS table walk + execbuiltin
+    // call). dispatch_builtin (with user-fn override probe) is the
+    // canonical entry; using it lets user `unalias()` / `unfunction()`
+    // wrappers take precedence per zsh's name-resolution order.
     vm.register_builtin(BUILTIN_UNHASH, |vm, argc| {
         let args = pop_args(vm, argc);
-        Value::Status(unhash_via_execbuiltin("unhash", args))
+        Value::Status(dispatch_builtin("unhash", args))
     });
     vm.register_builtin(BUILTIN_UNALIAS, |vm, argc| {
         let args = pop_args(vm, argc);
-        Value::Status(unhash_via_execbuiltin("unalias", args))
+        Value::Status(dispatch_builtin("unalias", args))
     });
     vm.register_builtin(BUILTIN_UNFUNCTION, |vm, argc| {
         let args = pop_args(vm, argc);
-        Value::Status(unhash_via_execbuiltin("unfunction", args))
+        Value::Status(dispatch_builtin("unfunction", args))
     });
 
     // Completion
