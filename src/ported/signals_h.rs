@@ -98,6 +98,20 @@ pub static SIGS: &[(&str, i32)] = &[
     ("ILL", libc::SIGILL),
     ("TRAP", libc::SIGTRAP),
     ("ABRT", libc::SIGABRT),
+    // c:signames.c — EMT exists on BSD-derived platforms (macOS,
+    // *BSD, Solaris). On Linux SIGEMT is glibc-defined as 7 (same
+    // slot as Linux's IOT), so include it there too — `awk
+    // signames2.awk` emits it whenever <signal.h> exposes the
+    // macro.
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+        target_os = "solaris",
+    ))]
+    ("EMT", libc::SIGEMT),
     ("BUS", libc::SIGBUS),
     ("FPE", libc::SIGFPE),
     ("KILL", libc::SIGKILL),
@@ -120,6 +134,17 @@ pub static SIGS: &[(&str, i32)] = &[
     ("PROF", libc::SIGPROF),
     ("WINCH", libc::SIGWINCH),
     ("IO", libc::SIGIO),
+    // c:signames.c — INFO is BSD-only (macOS, *BSD). signames2.awk
+    // emits it iff <signal.h> defines SIGINFO; libc-rs only exposes
+    // the constant on BSD-family targets.
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+    ))]
+    ("INFO", libc::SIGINFO),
     ("SYS", libc::SIGSYS),
 ];
 
@@ -147,6 +172,15 @@ pub static SIG_MSG: &[(i32, &str)] = &[
     (libc::SIGILL, "illegal hardware instruction"),
     (libc::SIGTRAP, "trace trap"),
     (libc::SIGABRT, "abort"),
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+        target_os = "solaris",
+    ))]
+    (libc::SIGEMT, "EMT trap"),
     (libc::SIGBUS, "bus error"),
     (libc::SIGFPE, "floating point exception"),
     (libc::SIGKILL, "killed"),
@@ -169,6 +203,14 @@ pub static SIG_MSG: &[(i32, &str)] = &[
     (libc::SIGPROF, "profile signal"),
     (libc::SIGWINCH, "window size changed"),
     (libc::SIGIO, "i/o ready"),
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+    ))]
+    (libc::SIGINFO, "information request"),
     (libc::SIGSYS, "invalid system call"),
 ];
 
