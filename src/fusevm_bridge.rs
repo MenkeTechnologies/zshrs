@@ -5181,50 +5181,6 @@ impl ZshrsHost {
     }
 }
 
-fn expand_dollar_refs(s: &str, exec: &crate::ported::vm_helper::ShellExecutor) -> String {
-    // Single-pass `$VAR` / `${VAR}` expansion for subscript bodies.
-    // Mirrors the small subset of paramsubst needed when the BUILTIN_
-    // PARAM_LENGTH handler resolves `${#arr[$i]}`.
-    let bytes: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != '$' {
-            out.push(bytes[i]);
-            i += 1;
-            continue;
-        }
-        if i + 1 >= bytes.len() {
-            out.push('$');
-            i += 1;
-            continue;
-        }
-        let next = bytes[i + 1];
-        if next == '{' {
-            if let Some(close) = bytes[i + 2..].iter().position(|&c| c == '}') {
-                let name: String = bytes[i + 2..i + 2 + close].iter().collect();
-                out.push_str(&exec.get_variable(&name));
-                i += 2 + close + 1;
-                continue;
-            }
-        }
-        if next.is_ascii_alphabetic() || next == '_' {
-            let start = i + 1;
-            let mut end = start;
-            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == '_') {
-                end += 1;
-            }
-            let name: String = bytes[start..end].iter().collect();
-            out.push_str(&exec.get_variable(&name));
-            i = end;
-            continue;
-        }
-        out.push('$');
-        i += 1;
-    }
-    out
-}
-
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
     let mut popped: Vec<fusevm::Value> = Vec::with_capacity(argc as usize);
     for _ in 0..argc {
