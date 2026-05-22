@@ -2349,11 +2349,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
-            crate::vm_helper::scan_magic_assoc_keys(&name).map(|keys| {
-                keys.iter()
-                    .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
-                    .collect::<Vec<_>>()
-            })
+            // Try canonical PARTAB dispatch first (Src/Modules/parameter.c:2235
+            // ports — partab_get routes through getpm* gsu callbacks).
+            // Fall through to legacy get_special_array_value for names not
+            // yet in PARTAB (terminfo/termcap/mapfile/sysparams/funcstack/
+            // dirstack and other PM_ARRAY-shape entries).
+            if let Some(keys) = crate::vm_helper::partab_scan_keys(&name) {
+                Some(
+                    keys.iter()
+                        .map(|k| crate::vm_helper::partab_get(&name, k).unwrap_or_default())
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                crate::vm_helper::scan_magic_assoc_keys(&name).map(|keys| {
+                    keys.iter()
+                        .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
+                        .collect::<Vec<_>>()
+                })
+            }
         });
         if let Some(vals) = magic_vals {
             // Distinguish "name IS a magic-assoc with no entries"

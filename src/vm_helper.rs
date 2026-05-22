@@ -3122,6 +3122,34 @@ thread_local! {
     static SCAN_KEYS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Lookup helper for `${name[key]}` magic-assoc reads — dispatches
+/// through canonical `PARTAB` (Src/Modules/parameter.c:2235 ports).
+/// Returns `None` if name isn't a known magic-assoc.
+pub fn partab_get(name: &str, key: &str) -> Option<String> {
+    for entry in crate::ported::modules::parameter::PARTAB.iter() {
+        if entry.name == name {
+            return (entry.getfn)(std::ptr::null_mut(), key).and_then(|p| p.u_str);
+        }
+    }
+    None
+}
+
+/// Scan helper for `${(k)name}` — enumerates keys via canonical
+/// scanfn, collected into Vec via SCAN_KEYS thread-local.
+pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
+    for entry in crate::ported::modules::parameter::PARTAB.iter() {
+        if entry.name == name {
+            SCAN_KEYS.with(|k| k.borrow_mut().clear());
+            fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+                SCAN_KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
+            }
+            (entry.scanfn)(std::ptr::null_mut(), Some(cb), 0);
+            return Some(SCAN_KEYS.with(|k| k.borrow().clone()));
+        }
+    }
+    None
+}
+
 pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
     fn collect<F: FnOnce(Option<crate::ported::zsh_h::ScanFunc>, i32)>(scan: F) -> Vec<String> {
         SCAN_KEYS.with(|k| k.borrow_mut().clear());
