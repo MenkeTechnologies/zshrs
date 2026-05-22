@@ -4057,7 +4057,19 @@ pub fn getsparam(name: &str) -> Option<String> {
                 return Some(convbase(pm.u_val, base));
             }
             if t == PM_EFLOAT || t == PM_FFLOAT {
-                return Some(convfloat_underscore(pm.u_dval, pm.width));
+                // c:2376 — `s = convfloat(getfn(pm), pm->base,
+                //                         pm->node.flags, NULL);`
+                // Pass pm.base (digit precision under `typeset -F N`
+                // / `-E N`) and pm.node.flags (carries PM_FFLOAT /
+                // PM_EFLOAT so the snprintf picks `%f` / `%e` instead
+                // of the default `%.17g` that ignores type). Was
+                // calling convfloat_underscore(u_dval, pm.width) which
+                // dropped both the format-flag bits and the precision
+                // arg, so every float printed at 17-digit `%g`
+                // precision regardless of typeset attributes —
+                // `local -F x=3.14` showed `3.1400000000000001`
+                // instead of `3.1400000000`.
+                return Some(convfloat(pm.u_dval, pm.base, pm.node.flags as u32));
             }
             if let Some(s) = pm.u_str.as_ref() {
                 return Some(s.clone());

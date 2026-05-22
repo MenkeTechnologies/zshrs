@@ -3624,6 +3624,36 @@ pub fn bin_typeset(
                         }
                     }
                 }
+                // c:1973-1989 (Src/builtin.c, inside typeset_single)
+                // — `if (arg) { int base = zstrtol(arg, ...) ;
+                // pm->base = base; }`. The precision arg from `-i N`,
+                // `-E N`, `-F N` (parsed by execbuiltin as
+                // ops.args[<F-arg-slot>]) lands on the param's `base`
+                // field, which convfloat reads as the format-digit
+                // count. Without this stamp, `typeset -F 2 x=3.14`
+                // ignored the `2` and printed at the default
+                // 10-digit precision.
+                {
+                    let prec_arg: Option<&str> =
+                        if (on & PM_INTEGER) != 0 && OPT_HASARG(&ops, b'i') {
+                            OPT_ARG(&ops, b'i')
+                        } else if (on & PM_EFLOAT) != 0 && OPT_HASARG(&ops, b'E') {
+                            OPT_ARG(&ops, b'E')
+                        } else if (on & PM_FFLOAT) != 0 && OPT_HASARG(&ops, b'F') {
+                            OPT_ARG(&ops, b'F')
+                        } else {
+                            None
+                        };
+                    if let Some(s) = prec_arg {
+                        if let Ok(b) = s.trim().parse::<i32>() {
+                            if let Ok(mut tab) = paramtab().write() {
+                                if let Some(pm) = tab.get_mut(n) {
+                                    pm.base = b;
+                                }
+                            }
+                        }
+                    }
+                }
                 // c:Src/params.c:3024 addenv — only mirror to OS env
                 // when PM_EXPORTED is in flags or already-exported.
                 let already_exported = env::var_os(n).is_some();
