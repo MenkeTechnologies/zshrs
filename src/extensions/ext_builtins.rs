@@ -7570,35 +7570,12 @@ use crate::ported::modules::clone::bin_clone as cl_bin_clone;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 impl ShellExecutor {
-    /// `limit` builtin entry. C dispatcher fills `Options ops` from
-    /// the `"sh"` flag set declared in rlimits.c:868
-    /// (`BUILTIN("limit", 0, bin_limit, 0, -1, 0, "sh", NULL)`),
-    /// then calls `bin_limit(name, argv, ops, 0)`.
-    pub(crate) fn bin_limit(&self, args: &[String]) -> i32 {
-        let (ops, rest) = build_short_opts(args, b"hs");
-        rl_bin_limit("limit", &rest, &ops, 0)
-    }
-
-    /// `unlimit` builtin entry. Flag set `"hs"` per rlimits.c:870.
-    pub(crate) fn bin_unlimit(&self, args: &[String]) -> i32 {
-        let (ops, rest) = build_short_opts(args, b"hs");
-        rl_bin_unlimit("unlimit", &rest, &ops, 0)
-    }
-
-    /// `ulimit` builtin entry. C declares the builtin with a NULL
-    /// option-string (rlimits.c:869) — `bin_ulimit` parses its own
-    /// `-H`/`-S`/`-N`/`-a`/letter flags inline and ignores the
-    /// dispatcher-filled `ops`. The bridge passes a zero-init
-    /// `options` to match.
-    pub(crate) fn bin_ulimit(&self, args: &[String]) -> i32 {
-        let ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        rl_bin_ulimit("ulimit", args, &ops, 0)
-    }
+    // bin_limit / bin_unlimit / bin_ulimit wrappers deleted — the
+    // bridge handlers now route directly through `dispatch_builtin`,
+    // which goes through `execbuiltin` (BUILTINS table optstr parse +
+    // HandlerFunc call). The optstrs ("sh"/"hs"/NULL) come from the
+    // BUILTINS entries themselves at src/ported/builtin.rs:9053-9082,
+    // not from manual `build_short_opts` calls.
 
     /// `sched` builtin entry. C declares the builtin with a NULL
     /// option-string (sched.c:375) — `bin_sched` parses its own
