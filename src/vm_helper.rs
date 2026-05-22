@@ -2382,32 +2382,10 @@ impl crate::ported::vm_helper::ShellExecutor {
 
             // === JOBS ===
 
-            // === HISTORY ===
-            "historywords" => {
-                // $historywords: flat list of words from recent history
-                // entries (zsh/Modules/parameter.c historywords_*).
-                // Each command is split on whitespace; the words are
-                // collected newest-first across the recent window.
-                if let Some(ref engine) = self.history {
-                    if let Ok(entries) = engine.recent(100) {
-                        let words: Vec<String> = entries
-                            .iter()
-                            .flat_map(|e| {
-                                e.command
-                                    .split_whitespace()
-                                    .map(|s| s.to_string())
-                                    .collect::<Vec<_>>()
-                            })
-                            .collect();
-                        if let Ok(idx) = key.parse::<usize>() {
-                            if idx >= 1 && idx <= words.len() {
-                                return Some(words[idx - 1].clone());
-                            }
-                        }
-                    }
-                }
-                Some(String::new())
-            }
+            // historywords arm deleted — routes through canonical
+            // PARTAB_ARRAY entry (parameter.c:2273 SPECIALPMDEF) +
+            // histwgetfn (parameter.c:1217-1252) which walks hist_ring
+            // newest-first with C-faithful word-offset slicing.
 
             // === MODULES ===
             // ${modules[name]} → "loaded" / "" per
