@@ -4994,8 +4994,13 @@ impl crate::ported::vm_helper::ShellExecutor {
                 }
                 let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
                 if nomatch {
+                    // See expand_glob below for the C-citation +
+                    // errflag-clear rationale; identical fix applies
+                    // here.
                     zerr(&format!("no matches found: {}", pattern));
-                    std::process::exit(1);
+                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+                    self.current_command_glob_failed.set(true);
+                    return Vec::new();
                 }
                 return vec![pattern.to_string()];
             }
@@ -5046,8 +5051,15 @@ impl crate::ported::vm_helper::ShellExecutor {
                 }
                 let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
                 if nomatch && Self::looks_like_glob(pattern) {
+                    // c:Src/glob.c:1877 — `zerr`. Set the per-
+                    // command glob-failed flag so the dispatch path
+                    // suppresses the actual command without exiting
+                    // the shell. See same fix below at the
+                    // expand_glob entry path.
                     zerr(&format!("no matches found: {}", pattern));
-                    std::process::exit(1);
+                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+                    self.current_command_glob_failed.set(true);
+                    return Vec::new();
                 }
                 return vec![pattern.to_string()];
             }
@@ -5272,15 +5284,23 @@ impl crate::ported::vm_helper::ShellExecutor {
                 return vec![];
             }
             // zsh's default is `setopt nomatch`: an unmatched glob
-            // emits "no matches found" on stderr and aborts the command
-            // (the shell exits in -c mode). bash-style "pass literal
-            // through" is the opt-out via `unsetopt nomatch`.
+            // emits "no matches found" on stderr, aborts the command
+            // with status 1, but the SCRIPT continues to the next
+            // top-level command (unless errexit is set). Mirrors
+            // Src/glob.c:1877 + the implicit per-list errflag bail
+            // that zsh's `execlist` interleaves with `lastval=1` —
+            // the parent execlist loop's `!errflag` test sees errflag
+            // momentarily set during the failed list and clears it
+            // before fetching the next list. zshrs's fusevm dispatch
+            // doesn't have an equivalent per-list errflag-clear, so
+            // we drop the ERRFLAG_ERROR bit here AFTER zerr has done
+            // its diagnostic side-effect; the per-command glob_failed
+            // cell is still set so the immediate command body is
+            // suppressed by the dispatcher (fusevm_bridge.rs:10245).
             let nomatch = crate::ported::options::opt_state_get("nomatch").unwrap_or(true);
             if nomatch && Self::looks_like_glob(pattern) {
                 zerr(&format!("no matches found: {}", pattern));
-                // zsh: command is aborted (skipped) with status 1,
-                // script continues. Set the flag the simple-command
-                // dispatcher checks; it returns early before exec.
+                errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
                 self.current_command_glob_failed.set(true);
                 return Vec::new();
             }
