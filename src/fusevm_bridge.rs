@@ -5657,46 +5657,11 @@ impl crate::ported::vm_helper::ShellExecutor {
             "printenv" => return self.builtin_printenv(&rest_vec),
             "tty" => return self.builtin_tty(&rest_vec),
             "chgrp" => {
-                // Canonical bin_chown per files.c:725 with func=BIN_CHGRP
-                // per the bintab entry at c:805. BUILTIN spec "hRs".
-                let mut ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                let mut positional: Vec<String> = Vec::new();
-                let mut i = 0;
-                while i < rest_vec.len() {
-                    let a = &rest_vec[i];
-                    if a == "--" {
-                        i += 1;
-                        positional.extend_from_slice(&rest_vec[i..]);
-                        break;
-                    }
-                    if let Some(rest) = a.strip_prefix('-') {
-                        if rest.is_empty() {
-                            positional.push(a.clone());
-                            i += 1;
-                            continue;
-                        }
-                        for c in rest.chars() {
-                            let cb = c as u8;
-                            if cb.is_ascii_alphabetic() {
-                                ops.ind[cb as usize] = 1;
-                            }
-                        }
-                    } else {
-                        positional.push(a.clone());
-                    }
-                    i += 1;
-                }
-                return crate::ported::modules::files::bin_chown(
-                    "chgrp",
-                    &positional,
-                    &ops,
-                    crate::ported::modules::files::BIN_CHGRP,
-                );
+                // Route through canonical dispatch_builtin which goes
+                // via execbuiltin → BUILTINS["chgrp"] (files.c:806)
+                // with BIN_CHGRP funcid + "hRs" optstr. Replaces 38
+                // lines of inline option-bit packing.
+                return crate::fusevm_bridge::dispatch_builtin("chgrp", rest_vec.clone());
             }
             "nproc" => return self.builtin_nproc(&rest_vec),
             "expr" => return self.builtin_expr(&rest_vec),
