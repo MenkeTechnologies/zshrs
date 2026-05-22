@@ -3007,76 +3007,18 @@ impl crate::ported::vm_helper::ShellExecutor {
             .copied()
             .collect()
     }
+    /// Build the `name → bool` default-option map. Routes through
+    /// canonical `options::default_on_options` (data-driven from
+    /// `ZSH_OPTIONS_SET` + `optns_flags` — port of `defset()` macro
+    /// at `Src/options.c:73`). Replaces a 60-line hardcoded
+    /// `defaults_on` array that drifted from upstream every time a
+    /// new option landed in optns[].
     pub(crate) fn default_options() -> HashMap<String, bool> {
-        let mut opts = HashMap::new();
-        // Initialize all options to false first
-        for opt in Self::all_zsh_options() {
-            opts.insert(opt.to_string(), false);
-        }
-        // Set zsh defaults (options marked with <D> or <Z> in zshoptions man page)
-        let defaults_on = [
-            "aliases",
-            "alwayslastprompt",
-            "appendhistory",
-            "autolist",
-            "automenu",
-            "autoparamkeys",
-            "autoparamslash",
-            "autoremoveslash",
-            "badpattern",
-            "banghist",
-            "bareglobqual",
-            "beep",
-            "bgnice",
-            "caseglob",
-            "casematch",
-            "checkjobs",
-            "checkrunningjobs",
-            "clobber",
-            "debugbeforecmd",
-            "equals",
-            "evallineno",
-            "exec",
-            "flowcontrol",
-            "functionargzero",
-            "glob",
-            "globalexport",
-            "globalrcs",
-            "hashcmds",
-            "hashdirs",
-            "hashlistall",
-            "histbeep",
-            "histsavebycopy",
-            "hup",
-            // INTERACTIVE is NOT default-on in zsh — C init sets it
-            // from isatty(0). Marking it default-on here makes the
-            // lexer's `!interact() || unset(SHINSTDIN)` comment gate
-            // (lex.c:678) false for non-tty script runs, so every
-            // `#`-line was re-lexed as a command. Drop from defaults;
-            // tty-driven init can flip it back on for real terminals.
-            "listambiguous",
-            "listbeep",
-            "listtypes",
-            "monitor",
-            "multibyte",
-            "multifuncdef",
-            "multios",
-            "nomatch",
-            "notify",
-            "promptcr",
-            "promptpercent",
-            "promptsp",
-            "rcs",
-            // SHINSTDIN — same story. Default off; init sets when
-            // stdin is the real interactive source.
-            "shortloops",
-            "unset",
-            "zle",
-        ];
-        for opt in defaults_on {
-            opts.insert(opt.to_string(), true);
-        }
-        opts
+        let on = crate::ported::options::default_on_options();
+        Self::all_zsh_options()
+            .into_iter()
+            .map(|n| (n.to_string(), on.contains(n)))
+            .collect()
     }
 
 }
