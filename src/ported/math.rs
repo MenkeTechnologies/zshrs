@@ -886,12 +886,23 @@ fn m_unary_set(v: bool) {
     M_UNARY.with(|c| c.set(v))
 }
 
+/// Accessor for the math-evaluator `noeval` counter (`Src/math.c:40`
+/// `int noeval`). C reads/writes the global directly — Rust ports
+/// the global as a thread-local `M_NOEVAL` (so nested evaluators
+/// stay isolated) and exposes the read via this `pub` accessor.
+/// Used by exec.c's `execsave` / `execrestore` save/restore frame
+/// (`Src/exec.c:6450,6486`) — the math state must round-trip across
+/// nested sublist evaluation so a ternary-arm `noeval++/--` inside
+/// one expression doesn't leak into outer evaluations.
 #[inline]
-fn m_noeval() -> i32 {
+pub fn m_noeval() -> i32 {
     M_NOEVAL.with(|c| c.get())
 }
+/// Setter paired with `m_noeval` — assigns the math-evaluator
+/// `noeval` counter. C does plain `noeval = en->noeval;`; this is
+/// the Rust thread-local equivalent.
 #[inline]
-fn m_noeval_set(v: i32) {
+pub fn m_noeval_set(v: i32) {
     M_NOEVAL.with(|c| c.set(v))
 }
 #[inline]
