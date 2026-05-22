@@ -925,7 +925,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZCOMPILE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.bin_zcompile(&args));
+        let status = dispatch_builtin("zcompile", args);
         Value::Status(status)
     });
 
