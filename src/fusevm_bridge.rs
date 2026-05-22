@@ -2454,11 +2454,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name = iter.next().unwrap_or_default();
         let value = iter.next().unwrap_or_default();
         with_executor(|exec| {
-            if let Some(mut arr) = exec.array(&name) {
-                arr.push(value.clone());
-                exec.set_array(name.clone(), arr);
-                // PFA-SMR aspect: `name+=elem` array push (scalar form
-                // resolved to existing indexed array). is_append=true.
+            // Array form: `arr+=elem` pushes a single element.
+            // Routes through canonical assignaparam(name, [value],
+            // ASSPM_AUGMENT) — Src/params.c:3357 c:3402-3412 augment
+            // path prepends prior scalar / appends to existing array.
+            if exec.array(&name).is_some() {
+                let _ = crate::ported::params::assignaparam(
+                    &name,
+                    vec![value.clone()],
+                    crate::ported::zsh_h::ASSPM_AUGMENT,
+                );
                 #[cfg(feature = "recorder")]
                 if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                     let ctx = exec.recorder_ctx();
@@ -2471,50 +2476,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 eprintln!("zshrs: {}: cannot use += on assoc without (key val)", name);
                 return;
             }
-            // typeset -i: `+=` is arithmetic add, not string concat.
-            // `typeset -i x=42; x+=8` must store 50, not "428". Per
-            // Src/params.c assignsparam:3270-3293, the PM_TYPE switch
-            // routes integer/float through matheval. Read PM_INTEGER
-            // from the canonical Param flags.
-            let is_integer = exec.is_integer_param(&name);
-            if is_integer {
-                let prev = exec.get_variable(&name);
-                let prev_n: i64 = prev.parse().unwrap_or(0);
-                let added = crate::ported::math::mathevali(&crate::ported::subst::singsub(&value))
-                    .unwrap_or(0);
-                let new_val = (prev_n + added).to_string();
-                exec.set_scalar(name.clone(), new_val.clone());
-                // PFA-SMR aspect: integer-typed append. The append
-                // operator is arithmetic; replay should restore the
-                // POST-add value so the bundle reflects end state.
-                #[cfg(feature = "recorder")]
-                if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
-                    let ctx = exec.recorder_ctx();
-                    let attrs = exec.recorder_attrs_for(&name);
-                    crate::recorder::emit_assign_typed(&name, &new_val, attrs, ctx);
-                }
-                return;
-            }
-            // Scalar concat.
-            let prev = exec.get_variable(&name);
-            let combined = format!("{}{}", prev, value);
-            exec.set_scalar(name.clone(), combined.clone());
-            // PFA-SMR aspect: scalar concat (`PATH+=":/foo"` and any
-            // other `NAME+=tail` shape). For PATH-family scalars the
-            // path-or-assign helper still emits a path_mod with the
-            // FULL post-concat value so replay knows the end state.
+            // Scalar / integer / float form: route through canonical
+            // assignsparam(name, value, ASSPM_AUGMENT). assignsparam
+            // dispatches to assignstrvalue (params.rs:3467) which
+            // walks PM_TYPE — PM_SCALAR concats, PM_INTEGER does
+            // arithmetic add (c:2775-2778 ASSPM_AUGMENT arm), PM_FLOAT
+            // adds float. Replaces 30 lines of inline arith/concat.
+            let _ = crate::ported::params::assignsparam(
+                &name,
+                &value,
+                crate::ported::zsh_h::ASSPM_AUGMENT,
+            );
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
                 let attrs = exec.recorder_attrs_for(&name);
+                // Re-read the canonical value via get_variable for the
+                // recorder bundle (assignsparam may have transformed it
+                // through integer/float arithmetic).
+                let final_val = exec.get_variable(&name);
                 let lower = name.to_ascii_lowercase();
                 if matches!(
                     lower.as_str(),
                     "path" | "fpath" | "manpath" | "module_path" | "cdpath"
                 ) {
-                    emit_path_or_assign(&name, std::slice::from_ref(&combined), attrs, true, &ctx);
+                    emit_path_or_assign(&name, std::slice::from_ref(&final_val), attrs, true, &ctx);
                 } else {
-                    crate::recorder::emit_assign_typed(&name, &combined, attrs, ctx);
+                    crate::recorder::emit_assign_typed(&name, &final_val, attrs, ctx);
                 }
             }
         });

@@ -3518,12 +3518,21 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 // via `gsu_scalar_for_special`); when set, dispatch
                 // through it. When unset, fall back to the default
                 // `strsetfn` path (C's stdscalar_gsu.setfn).
-                let len = v_str.len();
+                // c:2742-2746 — ASSPM_AUGMENT: prepend the existing
+                // value before storing. Without this, `PATH+=":/foo"`
+                // would replace PATH instead of appending.
+                let final_str = if (flags & ASSPM_AUGMENT) != 0 {
+                    let prev = pm.u_str.clone().unwrap_or_default();
+                    format!("{}{}", prev, v_str)
+                } else {
+                    v_str
+                };
+                let len = final_str.len();
                 let setfn_ptr = pm.gsu_s.as_ref().map(|g| g.setfn);
                 if let Some(setfn) = setfn_ptr {
-                    setfn(pm, v_str);                                        // c:2748
+                    setfn(pm, final_str);                                    // c:2748
                 } else {
-                    strsetfn(pm, v_str);                                     // c:2748 (default)
+                    strsetfn(pm, final_str);                                 // c:2748 (default)
                 }
                 if (pm.node.flags as u32 & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) != 0
                     && pm.width == 0
@@ -3589,7 +3598,17 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 } else {
                     mathevali(s).unwrap_or(0)
                 };
-                intsetfn(pm, ival);
+                // c:2775-2778 — `if (flags & ASSPM_AUGMENT) pm->u.val += val.l;
+                //                else pm->u.val = val.l;`. The augment
+                // path is what makes `integer x=42; x+=8` store 50 instead
+                // of 8. Without this the integer `+=` operator silently
+                // replaced.
+                let final_val = if (flags & ASSPM_AUGMENT) != 0 {
+                    pm.u_val.wrapping_add(ival)
+                } else {
+                    ival
+                };
+                intsetfn(pm, final_val);
                 if (pm.node.flags as u32 & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) != 0
                     && pm.width == 0
                 {
