@@ -8,7 +8,7 @@
 #![allow(non_camel_case_types, non_snake_case)]
 
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module};
+use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module, options};
 use std::io::Read;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::sync::{Mutex, OnceLock};
@@ -116,7 +116,7 @@ pub fn ask() -> i32 {
 pub fn bin_sync(
     _nam: &str,
     _args: &[String], // c:53
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     unsafe {
@@ -137,7 +137,7 @@ pub fn bin_sync(
 pub fn bin_mkdir(
     nam: &str,
     args: &[String], // c:63
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     let oumask = unsafe { libc::umask(0) }; // c:65
@@ -265,7 +265,7 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {
 pub fn bin_rmdir(
     nam: &str,
     args: &[String], // c:150
-    _ops: &crate::ported::zsh_h::options,
+    _ops: &options,
     _func: i32,
 ) -> i32 {
     let mut err = 0i32;
@@ -325,7 +325,7 @@ pub const MV_NOCHASETARGET: i32 = 1 << 5; // c:178
 pub fn bin_ln(
     nam: &str,
     args: &[String], // c:200
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     func: i32,
 ) -> i32 {
     let movefn: MoveFunc;
@@ -735,7 +735,7 @@ pub fn rm_dirpost(
 pub fn bin_rm(
     nam: &str,
     args: &[String], // c:616
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     let rmm = rmmagic {
@@ -817,7 +817,7 @@ pub fn chmod_dochmod(
 pub fn bin_chmod(
     nam: &str,
     args: &[String], // c:655
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     if args.is_empty() {
@@ -935,7 +935,7 @@ pub fn chown_dolchown(
 pub fn bin_chown(
     nam: &str,
     args: &[String], // c:725
-    ops: &crate::ported::zsh_h::options,
+    ops: &options,
     func: i32,
 ) -> i32 {
     if args.is_empty() {
@@ -1307,8 +1307,8 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 mod tests {
     use super::*;
 
-    fn empty_ops() -> crate::ported::zsh_h::options {
-        crate::ported::zsh_h::options {
+    fn empty_ops() -> options {
+        options {
             ind: [0u8; crate::ported::zsh_h::MAX_OPS],
             args: Vec::new(),
             argscount: 0,
