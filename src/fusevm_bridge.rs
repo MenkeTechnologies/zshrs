@@ -1558,21 +1558,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         let blocked = with_executor(|exec| {
-            // Two-statement assoc init: `typeset -A m; m=(k v k v ...)`.
-            // Route to sethparam through the executor — canonical path.
+            // Assoc init `typeset -A m; m=(k v k v ...)` — route to
+            // canonical sethparam (Src/params.c:3602) which parses the
+            // flat (k,v) pair list internally.
             if exec.assoc(&name).is_some() {
                 if !values.len().is_multiple_of(2) {
                     eprintln!("zshrs:1: bad set of key/value pairs for associative array");
                     return true;
                 }
-                let mut map: IndexMap<String, String> = IndexMap::new();
-                let mut it = values.clone().into_iter();
-                while let Some(k) = it.next() {
-                    if let Some(v) = it.next() {
-                        map.insert(k, v);
-                    }
-                }
-                exec.set_assoc(name.clone(), map);
+                let _ = crate::ported::params::sethparam(&name, values.clone());
                 #[cfg(feature = "recorder")]
                 if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                     let ctx = exec.recorder_ctx();
@@ -1588,16 +1582,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 return false;
             }
-            // Indexed-array: setaparam handles PM_UNIQUE dedupe and the
-            // type-flag flip internally. The tied-array mirror to a
-            // PM_TIED scalar (`typeset -T PATH path`) lives canonically
-            // in setaparam's setarrvalue dispatch in C zsh; until our
-            // assignaparam wires that, mirror here so PATH stays in
-            // sync after `path=(/x)`.
+            // Indexed-array: setaparam (Src/params.c:3766) wraps
+            // assignaparam with ASSPM_WARN — handles PM_UNIQUE dedupe,
+            // type-flag flip, PM_READONLY rejection.
+            //
+            // The tied-array mirror to a PM_TIED scalar
+            // (`typeset -T PATH path`) lives canonically in
+            // setarrvalue's dispatch in C zsh; until that wires
+            // through assignaparam, mirror here so PATH stays in sync
+            // after `path=(/x)`.
             if let Some((scalar_name, sep)) = exec.tied_array_to_scalar.get(&name).cloned() {
                 let joined = values.join(&sep);
                 exec.set_scalar(scalar_name, joined);
             }
+            let _ = crate::ported::params::setaparam(&name, values.clone());
+            // Mirror to legacy exec.arrays cache so other consumers
+            // (the bridge's exec.array() reader) see the new value.
             exec.set_array(name.clone(), values.clone());
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
@@ -1640,9 +1640,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         with_executor(|exec| {
-            // Assoc append: `typeset -A m; m+=(k1 v1 ...)` — merge pairs
-            // into the existing map via canonical set_assoc → sethparam.
+            // Assoc append `m+=(k1 v1 ...)`: route through canonical
+            // assignaparam (Src/params.c:3357) with ASSPM_AUGMENT,
+            // which dispatches to arrhashsetfn(pm, val, ASSPM_AUGMENT)
+            // at c:3850 to merge the (k,v) pairs into the existing
+            // map. Mirror to legacy exec.assoc cache.
             if exec.assoc(&name).is_some() {
+                let _ = crate::ported::params::assignaparam(
+                    &name,
+                    values.clone(),
+                    crate::ported::zsh_h::ASSPM_AUGMENT,
+                );
                 let mut map = exec.assoc(&name).unwrap_or_default();
                 let mut it = values.into_iter();
                 while let Some(k) = it.next() {
@@ -1653,21 +1661,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_assoc(name, map);
                 return;
             }
+            // Indexed-array append `arr+=(d e f)`: C parses this to
+            // an opcode that pre-concats `old + new` BEFORE assigning.
+            // The bridge does the same: read current, extend, write
+            // via canonical setaparam → assignaparam (which handles
+            // PM_UNIQUE dedupe in arrsetfn).
+            let prior = exec.array(&name).unwrap_or_default();
+            let mut merged = prior;
+            merged.extend(values.iter().cloned());
+            let _ = crate::ported::params::setaparam(&name, merged.clone());
+            // Mirror to legacy exec.arrays cache.
+            exec.set_array(name.clone(), merged.clone());
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
                 let attrs = exec.recorder_attrs_for(&name);
                 emit_path_or_assign(&name, &values, attrs, true, &ctx);
             }
-            // Indexed-array append. Read current via canonical
-            // exec.array, extend, write back through set_array →
-            // setaparam where assignaparam stamps PM_UNIQUE etc.
+            // Tied-scalar mirror — TODO faithful: should live in
+            // setarrvalue's gsu dispatch once boot_ paramtab wiring
+            // lands (Task #16).
             let tied_scalar = exec.tied_array_to_scalar.get(&name).cloned();
-            let mut target = exec.array(&name).unwrap_or_default();
-            target.extend(values);
-            exec.set_array(name.clone(), target);
             if let Some((scalar_name, sep)) = tied_scalar {
-                let joined = exec.array(&name).map(|a| a.join(&sep)).unwrap_or_default();
+                let joined = merged.join(&sep);
                 exec.set_scalar(scalar_name.clone(), joined.clone());
                 std::env::set_var(&scalar_name, &joined);
             }
