@@ -2565,17 +2565,12 @@ impl crate::ported::vm_helper::ShellExecutor {
         self.compsys_cache = None;
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
-        let ops = crate::ported::zsh_h::options {
-            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        crate::ported::builtin::bin_emulate(
+        // Route through canonical dispatch_builtin → BUILTINS["emulate"]
+        // (Src/builtin.c bin_emulate entry). execbuiltin parses the
+        // `-R` flag from the "LR" optstr automatically.
+        crate::fusevm_bridge::dispatch_builtin(
             "emulate",
-            &["sh".to_string(), "-R".to_string()],
-            &ops,
-            0,
+            vec!["sh".to_string(), "-R".to_string()],
         );
     }
     pub fn enter_ksh_mode(&mut self) {
@@ -2583,17 +2578,9 @@ impl crate::ported::vm_helper::ShellExecutor {
         self.compsys_cache = None;
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
-        let ops = crate::ported::zsh_h::options {
-            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        crate::ported::builtin::bin_emulate(
+        crate::fusevm_bridge::dispatch_builtin(
             "emulate",
-            &["ksh".to_string(), "-R".to_string()],
-            &ops,
-            0,
+            vec!["ksh".to_string(), "-R".to_string()],
         );
     }
 }

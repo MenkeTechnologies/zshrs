@@ -1024,17 +1024,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ZSYSTEM, |vm, argc| {
         let args = pop_args(vm, argc);
-        // bin_zsystem now takes the canonical C signature
-        // (name, args, ops, func) per Src/Modules/system.c:806.
-        let ops = crate::ported::zsh_h::options {
-            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        let _ = with_executor(|_exec| ());
-        let status = crate::modules::system::bin_zsystem("zsystem", &args, &ops, 0);
-        Value::Status(status)
+        // Canonical bin_zsystem per Src/Modules/system.c:806 via
+        // BUILTINS["zsystem"] entry.
+        Value::Status(dispatch_builtin("zsystem", args))
     });
 
     // PCRE
