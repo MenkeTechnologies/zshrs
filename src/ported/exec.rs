@@ -4936,3 +4936,134 @@ impl crate::ported::vm_helper::ShellExecutor {
         self.execute_script_zsh_pipeline(&script).unwrap_or(1)
     }
 }
+
+
+// =====================================================================
+// dispatch_function_call — moved from src/vm_helper.rs.
+// Partial port of `Src/exec.c::doshfunc` — the non-fusevm function-
+// call path used by signal-trap dispatch and other callers that
+// can't go through the fusevm Op::CallFunction route.
+// =====================================================================
+use crate::fusevm_bridge::{ExecutorContext, register_builtins};
+impl crate::ported::vm_helper::ShellExecutor {
+    /// Dispatch a function by name through the new (compiled) pipeline.
+    /// Mirrors `ZshrsHost::call_function`'s resolution order — checks
+    /// `functions_compiled` first, triggers autoload if needed, then falls
+    /// back to the legacy AST recompile path. Returns `None` if the name
+    /// isn't a function (caller falls back to external dispatch).
+    ///
+    /// This is the synchronous-side replacement for the legacy
+    /// `call_function(&ShellCommand, args)`. It avoids the AST detour when
+    /// the new pipeline already has a Chunk for the function.
+    pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
+        // Autoload prelude: if `name` isn't yet compiled but exists as
+        // a PM_UNDEFINED stub in shfunctab (registered by `autoload`
+        // builtin via `add_autoload_function` at builtin.rs:3654),
+        // materialize it via `loadautofn_by_name` (exec.rs) which reads
+        // the file from $fpath and stores raw body text on
+        // `shfunctab.body`. Then wrap as `name() { <body> }` and eval
+        // through the standard zsh pipeline — the wrap parses as a
+        // function-def, fusevm emits `BUILTIN_REGISTER_COMPILED_FN`,
+        // and the function lands in `functions_compiled`. This covers
+        // zsh-style autoload (default + `-z`); ksh-style (`-k` /
+        // KSH_AUTOLOAD) would eval the unwrapped body and rely on the
+        // file to define+call the function itself — TODO once needed.
+        if !self.functions_compiled.contains_key(name) {
+            if let Some(stub) = crate::ported::utils::getshfunc(name) {
+                if (stub.node.flags as u32 & crate::ported::zsh_h::PM_UNDEFINED) != 0 {
+                    let boxed = Box::new(stub.clone());
+                    let ptr = Box::into_raw(boxed);
+                    let _ = crate::ported::exec::loadautofn(ptr, 0, 0, 0);
+                    unsafe {
+                        let _ = Box::from_raw(ptr);
+                    }
+                    if let Some(body) =
+                        crate::ported::utils::getshfunc(name).and_then(|f| f.body)
+                    {
+                        let wrapped = format!("{name}() {{\n{body}\n}}");
+                        let _ = self.execute_script_zsh_pipeline(&wrapped);
+                    }
+                }
+            }
+        }
+        let chunk = self.functions_compiled.get(name).cloned()?;
+
+        // FUNCNEST guard — see `call_function` for the lower-than-
+        // zsh ceiling rationale. Cap at 100 by default (matches
+        // call_function's ceiling).
+        let funcnest_limit: usize = self
+            .scalar("FUNCNEST")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
+        if self.local_scope_depth >= funcnest_limit {
+            eprintln!(
+                "{}: maximum nested function level reached; increase FUNCNEST?",
+                name
+            );
+            return Some(1);
+        }
+        // Save and replace positional params + local-scope save/restore,
+        // mirroring the legacy `call_function(&ShellCommand, args)` and
+        // ZshrsHost::call_function.
+        let saved_params = self.pparams();
+        self.set_pparams(args.to_vec());
+        // FUNCTION_ARGZERO: zsh sets `\$0` inside a function to the
+        // function name (default-on option). The bytecode-level
+        // call_function path already does this; the dispatch path
+        // used by dynamic-command-name dispatch (`f=hook; \$f`)
+        // didn't, so plugin code reading `\$0` saw the binary path
+        // instead. Save and install the function name; restore on
+        // exit. Anonymous functions get the cosmetic `(anon)` per
+        // call_function above.
+        let display_name = if name.starts_with("_zshrs_anon_") {
+            "(anon)".to_string()
+        } else {
+            name.to_string()
+        };
+        let saved_zero = crate::ported::params::getsparam("0");
+        self.set_scalar("0".to_string(), display_name);
+        self.local_scope_depth += 1;
+        // c:Src/exec.c doshfunc startparamscope(): bump canonical
+        // `locallevel` so any `local`/`typeset` inside the body
+        // installs Params at the correct scope. endparamscope at
+        // exit decrements + restores Param.old chain.
+        crate::ported::params::locallevel.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let line_base = self.function_line_base.get(name).copied().unwrap_or(0);
+        let def_file = self.function_def_file.get(name).cloned().flatten();
+        self.prompt_funcstack
+            .push((name.to_string(), line_base, def_file));
+
+        crate::fusevm_disasm::maybe_print_stdout(&format!("function:{name}"), &chunk);
+        let mut vm = fusevm::VM::new(chunk);
+        register_builtins(&mut vm);
+        let _ctx = ExecutorContext::enter(self);
+        let _ = vm.run();
+        let status = vm.last_status;
+        drop(_ctx);
+
+        self.set_pparams(saved_params);
+        self.prompt_funcstack.pop();
+        // c:Src/exec.c doshfunc → endparamscope(). Decrements
+        // canonical locallevel and walks paramtab restoring the
+        // Param.old chain for every entry installed at this depth.
+        crate::ported::params::endparamscope();
+        self.local_scope_depth -= 1;
+        match saved_zero {
+            Some(v) => {
+                self.set_scalar("0".to_string(), v);
+            }
+            None => {
+                self.unset_scalar("0");
+            }
+        }
+
+        // Honor explicit `return N` from inside the function body.
+        if let Some(ret) = self.returning.take() {
+            self.set_last_status(ret);
+            Some(ret)
+        } else {
+            self.set_last_status(status);
+            Some(status)
+        }
+    }
+}
