@@ -2564,32 +2564,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // raw subscript text as a constant; without expansion, a key
         // like `$((1+1)),-1` failed `parse::<i64>()` for the lower
         // bound and the whole slice fell back to scalar concat.
-        // Special-flag keys `(I)pat` / `(R)pat` need `$VAR`
-        // resolution INSIDE the pat portion. C zsh's subscript
-        // parser at Src/params.c:1545-1580 calls `parsestr +
-        // singsub` on the body (the part AFTER the flag block) so
-        // `${arr[(I)$1]}` resolves `$1` to its positional value
-        // before scanning the array. zshrs previously skipped the
-        // whole-idx singsub on flag-prefixed keys with a comment
-        // claiming the matchers handled it — they don't. Split at
-        // the `)` of the flag block and singsub the pat portion
-        // only (the flag block has no $-refs to resolve).
-        if idx.contains('$') {
-            let flag_split = if idx.starts_with('(') {
-                idx.find(')').map(|p| p + 1)
-            } else {
-                None
-            };
-            if let Some(split) = flag_split {
-                let head = &idx[..split];
-                let tail = &idx[split..];
-                if tail.contains('$') {
-                    let expanded_tail = crate::ported::subst::singsub(tail);
-                    idx = format!("{}{}", head, expanded_tail);
-                }
-            } else {
-                idx = crate::ported::subst::singsub(&idx);
-            }
+        // Special-flag keys `(I)pat` / `(R)pat` skip this — those
+        // already get their `$VAR` resolution inside the matchers.
+        if idx.contains('$')
+            && !idx.starts_with("(I)")
+            && !idx.starts_with("(i)")
+            && !idx.starts_with("(R)")
+            && !idx.starts_with("(r)")
+            && !idx.starts_with("(K)")
+            && !idx.starts_with("(k)")
+        {
+            idx = crate::ported::subst::singsub(&idx);
         }
         // `${pipestatus[N]}` / `${PIPESTATUS[N]}` — pipeline exit
         // status array. Populated by BUILTIN_PIPELINE_EXEC after a
