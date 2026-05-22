@@ -1893,6 +1893,18 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     // with redir.varid populated. C does it inline at the start of
     // each STRING/TYPESET arm iteration; functionally equivalent.
 
+    // c:1843-1846 — leading-NOCORRECT prefix: `nocorrect echo hello`
+    // emits a NOCORRECT token at the start of par_simple. C sets
+    // `nocorrect = 1` and skips past via the `zshlex();` at the
+    // for-loop tail (c:1907). zshrs's par_simple (AST) had no
+    // NOCORRECT arm so the token was silently dropped and the
+    // following command line evaporated — `nocorrect echo hello`
+    // produced empty output.
+    while tok() == NOCORRECT {
+        set_nocorrect(1);                                                    // c:1846
+        zshlex();                                                            // c:1907 (loop-tail zshlex)
+    }
+
     // Parse leading assignments
     while tok() == ENVSTRING || tok() == ENVARRAY {
         if let Some(assign) = parse_assign() {

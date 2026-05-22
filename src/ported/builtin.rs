@@ -36,13 +36,9 @@ use crate::func_body_fmt::FuncBodyFmt;
 use crate::parse::{Redirect, ShellCommand};
 use crate::ported::compat::zgetcwd;
 use crate::ported::config_h::DEFAULT_PATH;
-use crate::ported::exec::{getfpfunc, loadautofn, FORKLEVEL, TRAP_RETURN, TRAP_STATE};
-use crate::ported::hashnameddir::{emptynameddirtable, nameddirtab, printnameddirnode};
-use crate::ported::hashtable::{
-    aliastab_lock, cmdnamtab_lock, createaliasnode, dircache_set, emptycmdnamtable, hnamcmp,
-    printaliasnode, printcmdnamnode, printshfuncexpand, reswdtab_lock, shfunctab_lock,
-    sufaliastab_lock,
-};
+use crate::ported::exec::{getfpfunc, iscom, loadautofn, FORKLEVEL, TRAP_RETURN, TRAP_STATE};
+use crate::ported::hashnameddir::{addnameddirnode, emptynameddirtable, fillnameddirtable, nameddirtab, printnameddirnode};
+use crate::ported::hashtable::{aliastab_lock, cmdnamtab_lock, createaliasnode, dircache_set, emptycmdnamtable, fillcmdnamtable, hnamcmp, printaliasnode, printcmdnamnode, printshfuncexpand, reswdtab_lock, scanmatchshfunc, scanshfunc, shfunctab_lock, sufaliastab_lock};
 // `curhist` (hist.rs static) NOT imported — there's an unavoidable
 // `let curhist` local in fc_main that mirrors C's `int curhist;` local
 // shadowing the global. Rule E says keep the C name. The static is
@@ -58,21 +54,14 @@ use crate::ported::mem::{queue_signals, unqueue_signals};
 use crate::ported::module::MATHFUNCS;
 use crate::ported::modules::parameter::{DIRSTACK, FUNCSTACK};
 use crate::ported::options::{dosetopt, emulation, optlookup, ZSH_OPTIONS_SET};
-use crate::ported::params::{
-    createparam, getiparam, getsparam, isident, locallevel as locallevel_param, paramtab, setaparam,
-    setiparam, setsparam, unsetparam, unsetparam_pm,
-};
+use crate::ported::params::{createparam, getiparam, getsparam, isident, locallevel as locallevel_param, locallevel, paramtab, printparamnode, setaparam, setiparam, setsparam, unsetparam, unsetparam_pm};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals::settrap;
-use crate::ported::utils::{
-    argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir,
-    printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn, zwarnnam,
-    GETKEYS_PRINT,
-};
+use crate::ported::utils::{argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir, print_if_link, printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn, zwarnnam, GETKEYS_PRINT};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
 use crate::ported::zle::compctl::compctlread;
-use crate::ported::zsh_h::{eprog, nameddir, options, ALIAS_GLOBAL, ALIAS_SUFFIX, BINF_KEEPNUM, DISABLED, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, MAX_OPS, MFF_STR, OPT_ARG, OPT_HASARG, OPT_ISSET, OPT_MINUS, OPT_PLUS, PM_ABSPATH_USED, PM_ARRAY, PM_CUR_FPATH, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF, PM_UNIQUE, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED, PM_UNALIASED, PM_UNDEFINED, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TYPESET_OPTSTR, XTRACE, asgment, builtin, hashnode, isset, mathfunc, param, shfunc, HandlerFunc, ASG_ARRAY, ASG_ARRAYP, ASG_KEY_VALUE, ASG_VALUEP, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, FUNCTIONARGZERO, HASHED, INTERACTIVE, MFF_USERFUNC, MONITOR, NULLBINCMD, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_AUTOLOAD, PM_DECLARED, PM_EXPORTED, PM_HIDE, PM_SCALAR, PM_SPECIAL, PM_TYPE, PM_UNSET, POSIXBUILTINS, PRINT_INCLUDEVALUE, TYPESETSILENT, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_DEFERRED, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC, alias};
+use crate::ported::zsh_h::{eprog, nameddir, options, ALIAS_GLOBAL, ALIAS_SUFFIX, BINF_KEEPNUM, DISABLED, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, MAX_OPS, MFF_STR, OPT_ARG, OPT_HASARG, OPT_ISSET, OPT_MINUS, OPT_PLUS, PM_ABSPATH_USED, PM_ARRAY, PM_CUR_FPATH, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF, PM_UNIQUE, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED, PM_UNALIASED, PM_UNDEFINED, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TYPESET_OPTSTR, XTRACE, asgment, builtin, hashnode, isset, mathfunc, param, shfunc, HandlerFunc, ASG_ARRAY, ASG_ARRAYP, ASG_KEY_VALUE, ASG_VALUEP, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, FUNCTIONARGZERO, HASHED, INTERACTIVE, MFF_USERFUNC, MONITOR, NULLBINCMD, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_AUTOLOAD, PM_DECLARED, PM_EXPORTED, PM_HIDE, PM_SCALAR, PM_SPECIAL, PM_TYPE, PM_UNSET, POSIXBUILTINS, PRINT_INCLUDEVALUE, TYPESETSILENT, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_DEFERRED, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC, alias, cmdnam, Meta};
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
 
@@ -535,11 +524,11 @@ pub fn execbuiltin(
     argc -= argv as i32; // c:424
 
     // c:426-429 — errflag check.
-    let ef = errflag.load(std::sync::atomic::Ordering::Relaxed);
+    let ef = errflag.load(Relaxed);
     if (ef & ERRFLAG_ERROR) != 0 {
         // c:426
         errflag
-            .fetch_and(!ERRFLAG_ERROR, std::sync::atomic::Ordering::Relaxed); // c:427
+            .fetch_and(!ERRFLAG_ERROR, Relaxed); // c:427
         return 1; // c:428
     }
 
@@ -1308,18 +1297,18 @@ pub fn set_pwd_env() {
     //          fall back to getcwd so a fresh shell starts with PWD
     //          populated.
     let pwd = getsparam("PWD").or_else(|| {
-        std::env::current_dir()
+        env::current_dir()
             .ok()
             .map(|p| p.to_string_lossy().into_owned())
     });
     if let Some(s) = pwd {
         setsparam("PWD", &s); // c:813
-        std::env::set_var("PWD", &s);
+        env::set_var("PWD", &s);
     }
     // c:818 — `setsparam("OLDPWD", oldpwd);` mirror; only fires when
     //          oldpwd is set (initially NULL on first shell).
     if let Some(s) = getsparam("OLDPWD") {
-        std::env::set_var("OLDPWD", &s);
+        env::set_var("OLDPWD", &s);
     }
 }
 
@@ -1350,15 +1339,15 @@ pub fn bin_cd(
     func: i32,
 ) -> i32 {
     // c:844 — `doprintdir = (doprintdir == -1);`
-    let prev = DOPRINTDIR.load(Ordering::Relaxed);
-    DOPRINTDIR.store(if prev == -1 { 1 } else { 0 }, Ordering::Relaxed); // c:844
+    let prev = DOPRINTDIR.load(Relaxed);
+    DOPRINTDIR.store(if prev == -1 { 1 } else { 0 }, Relaxed); // c:844
 
     // c:846-847 — `chasinglinks = OPT_ISSET(ops,'P') ||
     //              (isset(CHASELINKS) && !OPT_ISSET(ops,'L'));`
     let chase = OPT_ISSET(ops, b'P')                                         // c:846
         || (isset(optlookup("chaselinks"))
             && !OPT_ISSET(ops, b'L'));
-    CHASINGLINKS.store(chase as i32, Ordering::Relaxed);
+    CHASINGLINKS.store(chase as i32, Relaxed);
 
     queue_signals(); // c:848
 
@@ -1392,7 +1381,7 @@ pub fn bin_cd(
     //          Read from paramtab (the canonical zsh-side `pwd`
     //          global); was reading OS env which can lag behind.
     let old = getsparam("PWD");
-    if std::env::set_current_dir(&dest_path).is_err() {
+    if env::set_current_dir(&dest_path).is_err() {
         // chdir failed — pop placeholder and bail.
         if let Ok(mut d) = DIRSTACK.lock() {
             if !d.is_empty() {
@@ -1409,7 +1398,7 @@ pub fn bin_cd(
         //          (the OS env write below is the export side; the
         //          shell-side read must come from paramtab).
         setsparam("OLDPWD", &o);
-        std::env::set_var("OLDPWD", &o);
+        env::set_var("OLDPWD", &o);
     }
     // c:1241 — `pwd = new_pwd;` writes the LOGICAL path (the dest
     // argument as given to cd, not `getcwd()`). Symlink resolution
@@ -1418,11 +1407,11 @@ pub fn bin_cd(
     // Earlier port called `std::env::current_dir()` (= `getcwd(3)`),
     // which always resolves symlinks (e.g. /tmp → /private/tmp on
     // macOS), breaking logical-PWD parity with zsh.
-    let chase = CHASINGLINKS.load(std::sync::atomic::Ordering::Relaxed) != 0; // c:1203
+    let chase = CHASINGLINKS.load(Relaxed) != 0; // c:1203
     let pwd: String = if chase {
         // c:1203
         // c:1204 — `s = findpwd(new_pwd);` — resolved cwd.
-        match std::env::current_dir() {
+        match env::current_dir() {
             Ok(c) => c.to_string_lossy().into_owned(),
             Err(_) => dest_path.clone(),
         }
@@ -1431,7 +1420,7 @@ pub fn bin_cd(
     };
     // c:1242 — `setsparam("PWD", pwd);` + export side via env.
     setsparam("PWD", &pwd);
-    std::env::set_var("PWD", &pwd);
+    env::set_var("PWD", &pwd);
     cd_new_pwd(func, 0, OPT_ISSET(ops, b'q') as i32); // c:856
 
     unqueue_signals(); // c:858
@@ -1478,7 +1467,7 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
     } else if argv.len() == 1 {
         // c:887
         let arg = &argv[0];
-        DOPRINTDIR.fetch_add(1, Ordering::Relaxed); // c:891
+        DOPRINTDIR.fetch_add(1, Relaxed); // c:891
                                                     // c:892-908 — `+N`/`-N` numeric stack-index form.
         let posixcd = isset(optlookup("posixcd"));
         if !posixcd
@@ -1504,7 +1493,7 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
         //              route through paramtab via getsparam.
         if arg == "-" {
             // c:911
-            DOPRINTDIR.fetch_sub(1, Ordering::Relaxed);
+            DOPRINTDIR.fetch_sub(1, Relaxed);
             getsparam("OLDPWD")
         } else {
             Some(arg.clone()) // c:911
@@ -1528,7 +1517,7 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
                 out.push_str(&pwd[..idx]); // c:921
                 out.push_str(new_pat); // c:922
                 out.push_str(&pwd[idx + pat.len()..]); // c:923
-                DOPRINTDIR.fetch_add(1, Ordering::Relaxed);
+                DOPRINTDIR.fetch_add(1, Relaxed);
                 Some(out)
             }
         }
@@ -1557,7 +1546,7 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
         }
         zwarnnam(
             cnam,
-            &format!("{}: {}", std::io::Error::last_os_error(), dest),
+            &format!("{}: {}", io::Error::last_os_error(), dest),
         );
         return None;
     }
@@ -1667,7 +1656,7 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {
     };
 
     // c:1163-1166 — fixdir normalisation, skipped if chasing symlinks.
-    if CHASINGLINKS.load(Ordering::Relaxed) == 0 {
+    if CHASINGLINKS.load(Relaxed) == 0 {
         buf = fixdir(&buf); // c:1164
     }
 
@@ -1726,7 +1715,7 @@ pub fn cd_new_pwd(func: i32, dir: usize, quiet: i32) {
         }
         // c:1210-1218 — PUSHDIGNOREDUPS: dedupe matching entry.
         if isset(optlookup("pushdignoredups")) {
-            if let Some(cwd) = std::env::current_dir()
+            if let Some(cwd) = env::current_dir()
                 .ok()
                 .and_then(|p| p.to_str().map(String::from))
             {
@@ -1775,7 +1764,7 @@ pub fn printdirstack() {
     // legible. Same fix family as bin_dirs.
     let pwd = getsparam("PWD")
         .or_else(|| {
-            std::env::current_dir()
+            env::current_dir()
                 .ok()
                 .and_then(|p| p.to_str().map(String::from))
         })
@@ -1915,12 +1904,12 @@ pub fn bin_fc(
         let mut shs: i64; // c:1444
                           // c:1445 — `int level = OPT_ISSET(ops,'a') ? locallevel : -1;`
         let level: i32 = if OPT_ISSET(ops, b'a') {
-            locallevel_param.load(std::sync::atomic::Ordering::Relaxed)
+            locallevel_param.load(Relaxed)
         } else {
             -1
         };
-        hs = histsiz.load(Ordering::Relaxed); // c:1442
-        shs = savehistsiz.load(Ordering::Relaxed);
+        hs = histsiz.load(Relaxed); // c:1442
+        shs = savehistsiz.load(Relaxed);
         if !argv.is_empty() {
             // c:1445
             hf = argv.remove(0); // c:1446
@@ -1977,7 +1966,7 @@ pub fn bin_fc(
             // can stomp errno on some platforms. Capture the per-Err
             // raw_os_error directly so we read the SAME errno value
             // the stat call produced.
-            let stat_result = std::fs::metadata(&hf);
+            let stat_result = fs::metadata(&hf);
             let should_read = match &stat_result {
                 Ok(_) => true,                                    // c:1477 stat >= 0
                 Err(e) => e.raw_os_error() != Some(libc::ENOENT), // c:1477 errno != ENOENT
@@ -2082,7 +2071,7 @@ pub fn bin_fc(
     // c:1523-1527 — refuse inside ZLE.
     if crate::ported::builtins::sched::zleactive.load(
         // c:1523
-        std::sync::atomic::Ordering::Relaxed,
+        Relaxed,
     ) != 0
     {
         unqueue_signals(); // c:1524
@@ -2136,7 +2125,7 @@ pub fn bin_fc(
     //                the live `curhist` global at hist.rs directly. The
     //                FQN here is forced — bare `curhist` would resolve
     //                to the local `let curhist` we're declaring.
-    let curhist: i64 = crate::ported::hist::curhist.load(Ordering::Relaxed) as i64;
+    let curhist: i64 = crate::ported::hist::curhist.load(Relaxed) as i64;
     if last == -1 {
         // c:1573
         if OPT_ISSET(ops, b'l') && first < curhist {
@@ -2172,7 +2161,7 @@ pub fn bin_fc(
     if OPT_ISSET(ops, b'l') {
         // c:1606
         // c:1608 — `fclist(stdout, ops, first, last, asgf, pprog, 0);`
-        retval = fclist(&mut std::io::stdout(), ops, first, last, &asgf, None, 0);
+        retval = fclist(&mut io::stdout(), ops, first, last, &asgf, None, 0);
         unqueue_signals();
     } else {
         // c:1611-1668 — edit history range to a temp file, fcedit it,
@@ -2185,7 +2174,7 @@ pub fn bin_fc(
                 unqueue_signals(); // c:1624
                 zwarnnam(
                     "fc", // c:1625
-                    &format!("can't open temp file: {}", std::io::Error::last_os_error()),
+                    &format!("can't open temp file: {}", io::Error::last_os_error()),
                 );
             }
             Some((fd, fil)) => {
@@ -2203,12 +2192,12 @@ pub fn bin_fc(
                             "fc", // c:1636
                             "current history line would recurse endlessly, aborted",
                         );
-                        let _ = std::fs::remove_file(&fil); // c:1639 unlink
+                        let _ = fs::remove_file(&fil); // c:1639 unlink
                         return 1; // c:1640
                     }
                 }
                 ops.ind[b'n' as usize] = 1; // c:1644 No line numbers
-                let out = std::fs::OpenOptions::new()
+                let out = fs::OpenOptions::new()
                     .create(true)
                     .write(true)
                     .truncate(true)
@@ -2243,7 +2232,7 @@ pub fn bin_fc(
                             // c:1659
                             zwarnnam(
                                 "fc", // c:1660
-                                &format!("{}: {}", std::io::Error::last_os_error(), fil),
+                                &format!("{}: {}", io::Error::last_os_error(), fil),
                             );
                         } else {
                             // c:1663-1664 — `loop(0,1); retval = lastval;`
@@ -2253,14 +2242,14 @@ pub fn bin_fc(
                             // the next read; lastval reflects that result.
                             retval = LASTVAL.load(
                                 // c:1664
-                                std::sync::atomic::Ordering::Relaxed,
+                                Relaxed,
                             );
                         }
                     }
                 } else {
                     unqueue_signals(); // c:1667
                 }
-                let _ = std::fs::remove_file(&fil); // c:1671 unlink
+                let _ = fs::remove_file(&fil); // c:1671 unlink
             }
         }
     }
@@ -2290,7 +2279,7 @@ pub fn fcgetcomm(s: &str) -> i64 {
         if cmd != 0 || is_zero_prefix {
             if cmd < 0 {
                 // c:1693 — `cmd = addhistnum(curline.histnum, cmd, HIST_FOREIGN);`
-                let curh = crate::ported::hist::curhist.load(Ordering::Relaxed);
+                let curh = crate::ported::hist::curhist.load(Relaxed);
                 cmd = addhistnum(curh, cmd as i32, 1);
             }
             if cmd < 0 {
@@ -2346,7 +2335,7 @@ pub fn fcsubs(sp: &mut String, sub: &[(String, String)]) -> i32 {
 /// Was a 5-line stub returning 0; now actually emits the range.
 #[allow(clippy::too_many_arguments)]
 pub fn fclist(
-    out: &mut dyn std::io::Write, // c:1750
+    out: &mut dyn Write, // c:1750
     ops: &options,
     mut first: i64,
     mut last: i64,
@@ -2752,7 +2741,7 @@ pub fn typeset_single(
     if let Some(pm_r) = &pm_ref {
         let pm_flags = pm_r.node.flags as u32;
         let locallevel_v =
-            locallevel_param.load(std::sync::atomic::Ordering::Relaxed);
+            locallevel_param.load(Relaxed);
         if (pm_flags & PM_NAMEREF) != 0
             && ((off | on) as u32 & PM_NAMEREF) == 0
             && (pm_r.level == locallevel_v || (on as u32 & PM_LOCAL) == 0)
@@ -2803,7 +2792,7 @@ pub fn typeset_single(
 
     // c:2078-2091 — don't reuse if local-level changed and PM_LOCAL set.
     let pm_level = pm_ref.as_ref().map(|p| p.level).unwrap_or(0);
-    let locallevel_v = locallevel_param.load(std::sync::atomic::Ordering::Relaxed);
+    let locallevel_v = locallevel_param.load(Relaxed);
     if usepm != 0 && locallevel_v != pm_level && (on as u32 & PM_LOCAL) != 0 {
         // c:2078
         if (pm_flags & PM_SPECIAL) != 0                // c:2087
@@ -2933,7 +2922,7 @@ pub fn typeset_single(
         if let Some(pm_r) = unsafe { pm.as_mut() } {
             if OPT_ISSET(ops, b'p') {                                        // c:2242
                 // c:2243 — `paramtab->printnode(&pm->node, PRINT_TYPESET|with_ns);`
-                crate::ported::params::printparamnode(
+                printparamnode(
                     pm_r,
                     PRINT_TYPESET | with_ns,
                 );
@@ -2941,7 +2930,7 @@ pub fn typeset_single(
                 && (!isset(TYPESETSILENT) || OPT_ISSET(ops, b'm'))           // c:2245
             {
                 // c:2246 — `paramtab->printnode(&pm->node, PRINT_INCLUDEVALUE|with_ns);`
-                crate::ported::params::printparamnode(
+                printparamnode(
                     pm_r,
                     PRINT_INCLUDEVALUE | with_ns,
                 );
@@ -3257,7 +3246,7 @@ pub fn bin_typeset(
         for k in names {
             if let Ok(mut tab) = paramtab().write() {
                 if let Some(pm) = tab.get_mut(&k) {
-                    crate::ported::params::printparamnode(pm, printflags_final); // c:2792
+                    printparamnode(pm, printflags_final); // c:2792
                 }
             }
         }
@@ -3275,11 +3264,11 @@ pub fn bin_typeset(
         if OPT_MINUS(&ops, b'x') {
             // c:2802
             let globalexport = isset(optlookup("globalexport"));
-            let locallevel = locallevel_param.load(std::sync::atomic::Ordering::Relaxed);
+            let ll_v = locallevel_param.load(Relaxed);
             if globalexport {
                 // c:2803
                 ops.ind[b'g' as usize] = 1; // c:2804
-            } else if locallevel != 0 {
+            } else if ll_v != 0 {
                 // c:2805
                 on |= PM_LOCAL; // c:2806
             }
@@ -3374,7 +3363,7 @@ pub fn bin_typeset(
                     if let Some(pm) = tab.get_mut(arg_name) {
                         // c:2243 — `paramtab->printnode(&pm->node,
                         //   PRINT_TYPESET|with_ns);`
-                        crate::ported::params::printparamnode(
+                        printparamnode(
                             pm,
                             PRINT_TYPESET | with_ns,
                         );
@@ -3394,7 +3383,7 @@ pub fn bin_typeset(
         // already encodes this rule, but the literal C predicate
         // belongs here so the parity is visible at the call site.
         let cur_locallevel =
-            crate::ported::params::locallevel.load(std::sync::atomic::Ordering::Relaxed) as i32;
+            locallevel.load(Relaxed) as i32;
         let pm_reuse_local: bool = if pname_in_tab {
             let tab = paramtab().read().unwrap();
             let pm = tab.get(arg_name).unwrap();
@@ -3523,7 +3512,7 @@ pub fn bin_typeset(
                     // to alternating pairs.
                     let bracket_shape = !elems.is_empty()
                         && elems.iter().all(|e| e.starts_with('[') && e.contains("]="));
-                    let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+                    let mut map: IndexMap<String, String> = IndexMap::new();
                     if bracket_shape {
                         for e in &elems {
                             let close = e.find("]=").unwrap();
@@ -3637,9 +3626,9 @@ pub fn bin_typeset(
                 }
                 // c:Src/params.c:3024 addenv — only mirror to OS env
                 // when PM_EXPORTED is in flags or already-exported.
-                let already_exported = std::env::var_os(n).is_some();
+                let already_exported = env::var_os(n).is_some();
                 if (on & PM_EXPORTED) != 0 || already_exported {
-                    std::env::set_var(n, &folded); // c:3024 addenv
+                    env::set_var(n, &folded); // c:3024 addenv
                 }
             }
         } else if is_hashed || is_array {
@@ -3649,7 +3638,7 @@ pub fn bin_typeset(
             crate::fusevm_bridge::with_executor(|exec| {
                 if is_hashed {
                     if exec.assoc(&n_owned).is_none() {
-                        exec.set_assoc(n_owned.clone(), indexmap::IndexMap::new());
+                        exec.set_assoc(n_owned.clone(), IndexMap::new());
                     }
                 } else if exec.array(&n_owned).is_none() {
                     exec.set_array(n_owned.clone(), Vec::new());
@@ -3748,7 +3737,7 @@ pub fn bin_typeset(
                 // c:Src/params.c:3024 addenv — mirror PM_EXPORTED to OS env.
                 if (on as u32 & PM_EXPORTED) != 0 {
                     if let Some(val) = saved_val.as_deref().or(Some("")) {
-                        std::env::set_var(arg, val);
+                        env::set_var(arg, val);
                     }
                 }
             }
@@ -4595,8 +4584,8 @@ pub fn bin_functions(
         // and emit printnode in the format chosen by `pflags`. PRINT_NAMEONLY
         // → just the name; otherwise full `name () { … }` shape with autoload
         // stubs printed as `name () { # undefined; builtin autoload -XU }`.
-        crate::ported::hashtable::scanshfunc(|_nm, entry| {
-            crate::ported::hashtable::printshfuncexpand(entry, pflags, expand);
+        scanshfunc(|_nm, entry| {
+            printshfuncexpand(entry, pflags, expand);
         });
         unqueue_signals(); // c:3668
         return returnval;
@@ -4627,8 +4616,8 @@ pub fn bin_functions(
                     // each match through `printshfuncexpand` so autoload
                     // stubs come out as `name () { # undefined; builtin
                     // autoload -XU }` and loaded funcs print their body.
-                    crate::ported::hashtable::scanmatchshfunc(Some(pat), |_nm, entry| {
-                        crate::ported::hashtable::printshfuncexpand(entry, pflags, expand);
+                    scanmatchshfunc(Some(pat), |_nm, entry| {
+                        printshfuncexpand(entry, pflags, expand);
                     });
                 } else {
                     // c:3686-3699 — walk shfunctab, apply (on, off) and
@@ -4705,7 +4694,7 @@ pub fn bin_functions(
                 // pflags (PRINT_NAMEONLY / verbose). The previous Rust
                 // port just printed the name — `functions f` skipped
                 // the `f () { ... body ... }` body listing entirely.
-                crate::ported::hashtable::printshfuncexpand(shf_mut, pflags, expand); // c:3723
+                printshfuncexpand(shf_mut, pflags, expand); // c:3723
             }
         } else if (on & PM_UNDEFINED) != 0 {
             // c:3725
@@ -4815,7 +4804,7 @@ pub fn mkautofn(shf: *mut shfunc) -> *mut eprog {
     // p->nref=1 (permanent). Static-link path: synthesize a Box<eprog> that
     // satisfies the autoload trampoline contract.
     let p = Box::new(eprog {
-        len: 5 * std::mem::size_of::<u32>() as i32, // c:3796
+        len: 5 * size_of::<u32>() as i32, // c:3796
         prog: Vec::new(),                           // c:3797
         strs: None,                                 // c:3798
         shf: if shf.is_null() {
@@ -4991,7 +4980,7 @@ pub fn bin_unset(
                     .ok()
                     .as_deref_mut()
                     .map(|t| t.remove(nm)); // c:3900 paramtab removenode
-                std::env::remove_var(nm); // c:3905 delenv
+                env::remove_var(nm); // c:3905 delenv
             }
         }
     }
@@ -5125,7 +5114,7 @@ pub fn bin_whence(
         if let Some(path) = getsparam("PATH") {
             let path_arr: Vec<String> =
                 path.split(':').map(|s| s.to_string()).collect();
-            crate::ported::hashtable::fillcmdnamtable(&path_arr);
+            fillcmdnamtable(&path_arr);
         }
         // c:4030-4033 — `if (all) { pushheap(); matchednodes = newlinklist(); }`.
         // MATCHEDNODES is the Rust analog of `matchednodes`; pushheap
@@ -5227,7 +5216,7 @@ pub fn bin_whence(
                     // PATH-resident command name. Walk the canonical
                     // table (not std::fs::read_dir) so HASHED/non-
                     // HASHED distinction is preserved.
-                    let cmd_matches: Vec<(String, crate::ported::zsh_h::cmdnam)> = cmdnamtab_lock()
+                    let cmd_matches: Vec<(String, cmdnam)> = cmdnamtab_lock()
                         .read()
                         .map(|t| {
                             t.iter()
@@ -5252,7 +5241,7 @@ pub fn bin_whence(
                     }
                 }
             }
-            crate::ported::signals_h::run_queued_signals(); // c:4079
+            run_queued_signals(); // c:4079
         }
         unqueue_signals(); // c:4081
         if !all {
@@ -5317,7 +5306,7 @@ pub fn bin_whence(
                 // skip when the byte immediately before `.` would be
                 // a metafy escape (rare in real shell usage).
                 let pre_dot_not_meta = arg.as_bytes()[idx - 1] as u8
-                    != crate::ported::zsh_h::Meta;
+                    != Meta;
                 if after_dot_nonempty && dot_not_at_start && pre_dot_not_meta {
                     let suf = &arg[idx + 1..];
                     let suf_alias = sufaliastab_lock()
@@ -5435,7 +5424,7 @@ pub fn bin_whence(
                     // S_ISREG(stat). Was `Path::is_file()` which omits
                     // the X_OK check — would have flagged non-executable
                     // files as matches.
-                    if crate::ported::exec::iscom(&full) {
+                    if iscom(&full) {
                         // c:4150
                         if wd {
                             // c:4151
@@ -5454,7 +5443,7 @@ pub fn bin_whence(
                             // the final realpath; -S prints the whole
                             // chain.
                             if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'S') {
-                                crate::ported::utils::print_if_link(
+                                print_if_link(
                                     &full,
                                     OPT_ISSET(ops, b'S'),
                                 ); // c:4160
@@ -5462,7 +5451,7 @@ pub fn bin_whence(
                             println!(); // c:4161 fputc('\n', stdout)
                         }
                         informed = 1; // c:4163
-                    }
+                    } else {}
                 }
             }
             // c:4166-4171 — `if (!informed && (wd || v || csh))`. C:
@@ -5511,7 +5500,7 @@ pub fn bin_whence(
                 }
                 // c:4193-4194 — `-s`/`-S` symlink follow.
                 if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'S') {
-                    crate::ported::utils::print_if_link(
+                    print_if_link(
                         &cnam,
                         OPT_ISSET(ops, b'S'),
                     ); // c:4194
@@ -5587,14 +5576,14 @@ pub fn bin_hash(
             // `fillnameddirtable()`. cmdnamtab fill = walk every
             // PATH entry and hashdir() it.
             if dir_mode {
-                crate::ported::hashnameddir::fillnameddirtable();
+                fillnameddirtable();
             } else {
                 // Read $path (the lowercase array form) from env.
                 // c:4260 — fill cmdnamtab from $path. Read shell-side
                 //          $PATH so changes via `path=(...)` flow in.
                 let path_str = getsparam("PATH").unwrap_or_default();
                 let path_arr: Vec<String> = path_str.split(':').map(|s| s.to_string()).collect();
-                crate::ported::hashtable::fillcmdnamtable(&path_arr);
+                fillcmdnamtable(&path_arr);
             }
         }
         return 0; // c:4262
@@ -5695,7 +5684,7 @@ pub fn bin_hash(
                     dir: v.to_string(),
                     diff: 0,
                 };
-                crate::ported::hashnameddir::addnameddirnode(n, nd); // c:4314
+                addnameddirnode(n, nd); // c:4314
             } else {
                 // c:4313-4318 — `Cmdnam cn = zshcalloc(sizeof *cn);
                 //                 cn->node.flags = HASHED;
@@ -5704,7 +5693,7 @@ pub fn bin_hash(
                 // Insert into cmdnamtab so `hash myc` lookup hits it
                 // (was storing in `__zshrs_hash_*` env var — fakery
                 // that the user-facing `hash myc` query never read).
-                let cn = crate::ported::zsh_h::cmdnam {
+                let cn = cmdnam {
                     node: hashnode {
                         next: None,
                         nam: n.to_string(),
@@ -5713,7 +5702,7 @@ pub fn bin_hash(
                     name: None,
                     cmd: Some(v.to_string()),                                // c:4316
                 };
-                if let Ok(mut tab) = crate::ported::hashtable::cmdnamtab_lock().write() {
+                if let Ok(mut tab) = cmdnamtab_lock().write() {
                     tab.add(cn);                                             // c:4318 addnode
                 }
             }
@@ -5756,7 +5745,7 @@ pub fn bin_hash(
                 // previous Rust port skipped the cmdnamtab check, so
                 // a prior `hash myc=/path` insert was invisible to
                 // the matching `hash myc` query.
-                let in_cmdnamtab = crate::ported::hashtable::cmdnamtab_lock()
+                let in_cmdnamtab = cmdnamtab_lock()
                     .read()
                     .map(|t| t.get(n).is_some())
                     .unwrap_or(false);
@@ -6242,7 +6231,7 @@ pub fn bin_print(
     // dup's it for an owned descriptor, opens as a File for writes.
     // The previous Rust port silently dropped `-u`, so `print -u 2
     // hello` went to stdout instead of stderr.
-    let dest_fd: Option<std::fs::File> = if OPT_HASARG(ops, b'u') {
+    let dest_fd: Option<fs::File> = if OPT_HASARG(ops, b'u') {
         // c:4826
         let argptr = OPT_ARG(ops, b'u').unwrap_or("");
         // c:4827-4828 — undocumented `-up` aliases to coprocout.
@@ -6258,7 +6247,7 @@ pub fn bin_print(
                     return 1; // c:4845
                 }
                 use std::os::unix::io::FromRawFd;
-                Some(unsafe { std::fs::File::from_raw_fd(dup_fd) }) // c:4847
+                Some(unsafe { fs::File::from_raw_fd(dup_fd) }) // c:4847
             }
             Err(_) => {
                 zwarnnam(
@@ -6327,7 +6316,7 @@ pub fn bin_print(
         // c:4728 — `patcompile(*args, PAT_STATIC, NULL)`.
         let pat = &args[0];
         let pprog =
-            crate::ported::pattern::patcompile(pat, PAT_STATIC, None);
+            patcompile(pat, PAT_STATIC, None);
         match pprog {
             None => {
                 zwarnnam(name, &format!("bad pattern: {}", pat)); // c:4730
@@ -6338,7 +6327,7 @@ pub fn bin_print(
                 // (pattry(pprog, *p)) *t++ = *p;`. Keep matching args.
                 args[1..]
                     .iter()
-                    .filter(|a| crate::ported::pattern::pattry(&prog, a))
+                    .filter(|a| pattry(&prog, a))
                     .cloned()
                     .collect()
             }
@@ -6465,7 +6454,7 @@ pub fn bin_print(
             // would mangle a NUL inside a String literal via format
             // machinery, so route through stdout().write_all directly.
             use std::io::Write as _;
-            let stdout = std::io::stdout();
+            let stdout = io::stdout();
             let mut lk = stdout.lock();
             let _ = lk.write_all(body.as_bytes()); // c:5124
             let _ = lk.write_all(final_term); // c:5132
@@ -6515,7 +6504,7 @@ pub fn bin_shift(
             }) as i32; // c:5601
             idx = 1;
             // c:5602-5605 — `if (errflag) return 1;`.
-            if ret != 0 || errflag.load(Ordering::Relaxed) != 0 {
+            if ret != 0 || errflag.load(Relaxed) != 0 {
                 unqueue_signals(); // c:5604
                 return 1;
             }
@@ -6625,18 +6614,18 @@ pub fn bin_getopts(
     };
 
     // c:5681-5685 — `if (zoptind < 1) { zoptind = 1; optcind = 0; }`
-    let mut zoptind = ZOPTIND.load(Ordering::Relaxed);
+    let mut zoptind = ZOPTIND.load(Relaxed);
     if zoptind < 1 {
         // c:5681
         zoptind = 1;
-        OPTCIND.store(0, Ordering::Relaxed);
+        OPTCIND.store(0, Relaxed);
     }
-    let mut optcind = OPTCIND.load(Ordering::Relaxed);
+    let mut optcind = OPTCIND.load(Relaxed);
 
     // c:5686-5688 — `if (arrlen_lt(args, zoptind)) return 1;`
     if (args.len() as i32) < zoptind {
         // c:5686
-        ZOPTIND.store(zoptind, Ordering::Relaxed);
+        ZOPTIND.store(zoptind, Relaxed);
         return 1;
     }
 
@@ -6662,8 +6651,8 @@ pub fn bin_getopts(
         zoptind += 1;
         if zoptind as usize > args.len() {
             // c:5701
-            ZOPTIND.store(zoptind, Ordering::Relaxed);
-            OPTCIND.store(optcind, Ordering::Relaxed);
+            ZOPTIND.store(zoptind, Relaxed);
+            OPTCIND.store(optcind, Relaxed);
             setiparam("OPTIND", zoptind as i64);                            // c:5702
             return 1;
         }
@@ -6675,8 +6664,8 @@ pub fn bin_getopts(
     if optcind == 0 {
         // c:5705
         if lenstr < 2 || (!str_buf.starts_with('-') && !str_buf.starts_with('+')) {
-            ZOPTIND.store(zoptind, Ordering::Relaxed);
-            OPTCIND.store(optcind, Ordering::Relaxed);
+            ZOPTIND.store(zoptind, Relaxed);
+            OPTCIND.store(optcind, Relaxed);
             // c:5707 — mirror to $OPTIND so callers see the post-loop
             // pointer. Previous Rust port skipped this write on the
             // "no more options" exit; OPTIND stayed at the last
@@ -6687,8 +6676,8 @@ pub fn bin_getopts(
         if lenstr == 2 && &str_buf[..2] == "--" {
             // c:5708
             zoptind += 1;
-            ZOPTIND.store(zoptind, Ordering::Relaxed);
-            OPTCIND.store(0, Ordering::Relaxed);
+            ZOPTIND.store(zoptind, Relaxed);
+            OPTCIND.store(0, Relaxed);
             setiparam("OPTIND", zoptind as i64);                            // c:5711
             return 1;
         }
@@ -6726,8 +6715,8 @@ pub fn bin_getopts(
             zwarn(&format!("bad option: {}{}", prefix, opch as char)); // c:5736
             setsparam("OPTARG", "");
         }
-        ZOPTIND.store(zoptind, Ordering::Relaxed);
-        OPTCIND.store(optcind, Ordering::Relaxed);
+        ZOPTIND.store(zoptind, Relaxed);
+        OPTCIND.store(optcind, Relaxed);
         // Sync OPTIND env var so callers can read.
         setiparam("OPTIND", zoptind as i64);
         return 0;
@@ -6760,8 +6749,8 @@ pub fn bin_getopts(
                         prefix, opch as char
                     )); // c:5760
                 }
-                ZOPTIND.store(zoptind, Ordering::Relaxed);
-                OPTCIND.store(optcind, Ordering::Relaxed);
+                ZOPTIND.store(zoptind, Relaxed);
+                OPTCIND.store(optcind, Relaxed);
                 setiparam("OPTIND", zoptind as i64);
                 return 0;
             }
@@ -6792,8 +6781,8 @@ pub fn bin_getopts(
 
     // c:5788 — `setsparam(var, metafy(optbuf, lenoptbuf, META_DUP));`
     setsparam(&var, &optbuf);
-    ZOPTIND.store(zoptind, Ordering::Relaxed);
-    OPTCIND.store(optcind, Ordering::Relaxed);
+    ZOPTIND.store(zoptind, Relaxed);
+    OPTCIND.store(optcind, Relaxed);
     setiparam("OPTIND", zoptind as i64);
     0 // c:5790
 }
@@ -6811,7 +6800,7 @@ pub fn bin_break(
     // BIN_BREAK/CONTINUE/RETURN/EXIT/LOGOUT live at the top of this file
     // (c:5707-5712 in Src/builtin.c via the BUILTIN(...) table).
     // c:5811 — `int num = lastval, nump = 0, implicit;`
-    let mut num: i32 = LASTVAL.load(Ordering::Relaxed); // c:5811
+    let mut num: i32 = LASTVAL.load(Relaxed); // c:5811
     let mut nump = 0i32; // c:5811
     let implicit = argv.is_empty(); // c:5814
                                     // c:5815-5818 — first arg parsed as math expr.
@@ -6828,7 +6817,7 @@ pub fn bin_break(
         return 1; // c:5822
     }
 
-    let loops = LOOPS.load(Ordering::Relaxed);
+    let loops = LOOPS.load(Relaxed);
     match func {
         // c:5831-5842 — BIN_CONTINUE: must be in a loop, set contflag,
         // then fall through to BIN_BREAK's break-count assign.
@@ -6839,7 +6828,7 @@ pub fn bin_break(
                 zwarnnam(name, "not in while, until, select, or repeat loop"); // c:5833
                 return 1; // c:5834
             }
-            CONTFLAG.store(1, Ordering::Relaxed); // c:5836 FALLTHROUGH
+            CONTFLAG.store(1, Relaxed); // c:5836 FALLTHROUGH
                                                   // c:5837 — fallthrough to BIN_BREAK's loops==0 guard
                                                   // (impossible here since we already returned above) +
                                                   // break-count assign. Inlined directly. The previous
@@ -6847,7 +6836,7 @@ pub fn bin_break(
                                                   // dead-coded after the first guard.
             BREAKS.store(
                 if nump != 0 { num.min(loops) } else { 1 }, // c:5842
-                Ordering::Relaxed,
+                Relaxed,
             );
         }
         // c:5832-5838 — BIN_BREAK.
@@ -6860,28 +6849,28 @@ pub fn bin_break(
             }
             BREAKS.store(
                 if nump != 0 { num.min(loops) } else { 1 }, // c:5837
-                Ordering::Relaxed,
+                Relaxed,
             );
         }
         // c:5839-5860 — BIN_RETURN.
         x if x == BIN_RETURN => {
             let interactive = isset(optlookup("interactive"));
             let shinstdin = isset(optlookup("shinstdin"));
-            let locallevel = locallevel_param.load(Ordering::Relaxed);
-            let sourcelevel = crate::ported::init::sourcelevel.load(Ordering::Relaxed);
+            let ll_v = locallevel_param.load(Relaxed);
+            let sourcelevel = crate::ported::init::sourcelevel.load(Relaxed);
             // c:5840-5841 — `if ((interactive && shinstdin) || locallevel || sourcelevel)`
-            if (interactive && shinstdin) || locallevel != 0 || sourcelevel != 0 {
+            if (interactive && shinstdin) || ll_v != 0 || sourcelevel != 0 {
                 // c:5840
-                RETFLAG.store(1, Ordering::Relaxed); // c:5842
-                BREAKS.store(loops, Ordering::Relaxed); // c:5843
-                LASTVAL.store(num, Ordering::Relaxed); // c:5844
+                RETFLAG.store(1, Relaxed); // c:5842
+                BREAKS.store(loops, Relaxed); // c:5843
+                LASTVAL.store(num, Relaxed); // c:5844
                                                        // c:5845-5854 — inside a primed trap with the sentinel
                                                        // `trap_return == -2`, promote to TRAP_STATE_FORCE_RETURN
                                                        // and carry `lastval`. POSIXTRAPS + `implicit` opts out:
                                                        // POSIX semantics keep $? from before the trap fired.
                 let posixtraps = isset(optlookup("posixtraps"));
-                let cur_state = TRAP_STATE.load(Ordering::Relaxed);
-                let cur_return = TRAP_RETURN.load(Ordering::Relaxed);
+                let cur_state = TRAP_STATE.load(Relaxed);
+                let cur_return = TRAP_RETURN.load(Relaxed);
                 if cur_state == TRAP_STATE_PRIMED      // c:5845
                     && cur_return == -2                                      // c:5845
                     && !(posixtraps && implicit)
@@ -6890,9 +6879,9 @@ pub fn bin_break(
                     TRAP_STATE.store(
                         // c:5852
                         TRAP_STATE_FORCE_RETURN,
-                        Ordering::Relaxed,
+                        Relaxed,
                     );
-                    TRAP_RETURN.store(num, Ordering::Relaxed);
+                    TRAP_RETURN.store(num, Relaxed);
                     // c:5853
                 }
                 return num; // c:5855
@@ -6930,32 +6919,32 @@ pub fn bin_break(
             // Reusing the BIN_EXIT branch below by setting `func` to
             // BIN_EXIT isn't possible mid-match; inline the same
             // guard logic here.
-            let cur_locallevel = locallevel_param.load(Ordering::Relaxed);
-            let forklevel = FORKLEVEL.load(Ordering::Relaxed);
-            let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
+            let cur_locallevel = locallevel_param.load(Relaxed);
+            let forklevel = FORKLEVEL.load(Relaxed);
+            let shell_exiting = SHELL_EXITING.load(Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {
                 // c:5871
-                if STOPMSG.load(Ordering::Relaxed) == 0 {
+                if STOPMSG.load(Relaxed) == 0 {
                     zexit(0, ZEXIT_DEFERRED); // c:5884
                 }
-                if STOPMSG.load(Ordering::Relaxed) == 0 {
+                if STOPMSG.load(Relaxed) == 0 {
                     // c:5884
-                    let trap_state = TRAP_STATE.load(Ordering::Relaxed);
+                    let trap_state = TRAP_STATE.load(Relaxed);
                     if trap_state != 0 {
                         // c:5885
                         TRAP_STATE.store(
                             // c:5886
                             TRAP_STATE_FORCE_RETURN,
-                            Ordering::Relaxed,
+                            Relaxed,
                         );
                     }
-                    RETFLAG.store(1, Ordering::Relaxed); // c:5887
+                    RETFLAG.store(1, Relaxed); // c:5887
                     BREAKS.store(
-                        LOOPS.load(Ordering::Relaxed), // c:5888
-                        Ordering::Relaxed,
+                        LOOPS.load(Relaxed), // c:5888
+                        Relaxed,
                     );
-                    EXIT_PENDING.store(1, Ordering::Relaxed); // c:5889
-                    EXIT_VAL.store(num, Ordering::Relaxed); // c:5891
+                    EXIT_PENDING.store(1, Relaxed); // c:5889
+                    EXIT_VAL.store(num, Relaxed); // c:5891
                 }
             } else {
                 zexit(num, ZEXIT_NORMAL); // c:5894
@@ -6981,35 +6970,35 @@ pub fn bin_break(
         // a function would terminate without running EXIT traps or
         // unwinding the function stack.
         x if x == BIN_EXIT => {
-            let cur_locallevel = locallevel_param.load(Ordering::Relaxed);
-            let forklevel = FORKLEVEL.load(Ordering::Relaxed);
-            let shell_exiting = SHELL_EXITING.load(Ordering::Relaxed);
+            let cur_locallevel = locallevel_param.load(Relaxed);
+            let forklevel = FORKLEVEL.load(Relaxed);
+            let shell_exiting = SHELL_EXITING.load(Relaxed);
             if cur_locallevel > forklevel && shell_exiting != -1 {
                 // c:5871
                 // Probe via ZEXIT_DEFERRED — may set stopmsg.
-                if STOPMSG.load(Ordering::Relaxed) == 0 {
+                if STOPMSG.load(Relaxed) == 0 {
                     zexit(0, ZEXIT_DEFERRED); // c:5884
                 }
-                if STOPMSG.load(Ordering::Relaxed) == 0 {
+                if STOPMSG.load(Relaxed) == 0 {
                     // c:5884 still no stopmsg → defer
-                    let trap_state = TRAP_STATE.load(Ordering::Relaxed);
+                    let trap_state = TRAP_STATE.load(Relaxed);
                     if trap_state != 0 {
                         // c:5885
                         TRAP_STATE.store(
                             // c:5886
                             TRAP_STATE_FORCE_RETURN,
-                            Ordering::Relaxed,
+                            Relaxed,
                         );
                     }
-                    RETFLAG.store(1, Ordering::Relaxed); // c:5887
+                    RETFLAG.store(1, Relaxed); // c:5887
                     BREAKS.store(
-                        LOOPS.load(Ordering::Relaxed), // c:5888
-                        Ordering::Relaxed,
+                        LOOPS.load(Relaxed), // c:5888
+                        Relaxed,
                     );
-                    EXIT_PENDING.store(1, Ordering::Relaxed); // c:5889
+                    EXIT_PENDING.store(1, Relaxed); // c:5889
                                                               // exit_level not yet ported as a global; the
                                                               // RETFLAG path handles function-scope unwind.
-                    EXIT_VAL.store(num, Ordering::Relaxed); // c:5891
+                    EXIT_VAL.store(num, Relaxed); // c:5891
                 }
             } else {
                 zexit(num, ZEXIT_NORMAL); // c:5894
@@ -7079,7 +7068,7 @@ pub fn checkjobs() {
             // c:5917 — `zerr("you have running jobs.");`
             zerr("you have running jobs."); // c:5917
         }
-        STOPMSG.store(1, Ordering::Relaxed); // c:5919
+        STOPMSG.store(1, Relaxed); // c:5919
     }
 }
 
@@ -7120,12 +7109,12 @@ pub fn _realexit() -> ! {
 pub fn zexit(val: i32, from_where: i32) {
     // c:5977
     // c:5989 — `exit_val = val;`
-    EXIT_VAL.store(val, Ordering::Relaxed); // c:5989
+    EXIT_VAL.store(val, Relaxed); // c:5989
                                             // c:5990 — `if (shell_exiting == -1) { retflag = 1; breaks = loops; return; }`
-    if SHELL_EXITING.load(Ordering::Relaxed) == -1 {
+    if SHELL_EXITING.load(Relaxed) == -1 {
         // c:5990
-        RETFLAG.store(1, Ordering::Relaxed); // c:5991
-        BREAKS.store(LOOPS.load(Ordering::Relaxed), Ordering::Relaxed); // c:5992
+        RETFLAG.store(1, Relaxed); // c:5991
+        BREAKS.store(LOOPS.load(Relaxed), Relaxed); // c:5992
         return; // c:5993
     }
 
@@ -7136,13 +7125,13 @@ pub fn zexit(val: i32, from_where: i32) {
     // immediately rather than emitting the standard
     // \"zsh: you have running jobs\" + waiting for a confirmation exit.
     if isset(MONITOR)                                  // c:5996
-        && STOPMSG.load(Ordering::Relaxed) == 0
+        && STOPMSG.load(Relaxed) == 0
         && from_where != ZEXIT_SIGNAL
     {
         checkjobs(); // c:5999
-        if STOPMSG.load(Ordering::Relaxed) != 0 {
+        if STOPMSG.load(Relaxed) != 0 {
             // c:6000
-            STOPMSG.store(2, Ordering::Relaxed); // c:6001
+            STOPMSG.store(2, Relaxed); // c:6001
             return; // c:6002 defer
         }
     }
@@ -7154,15 +7143,15 @@ pub fn zexit(val: i32, from_where: i32) {
         // c:6006
         return;
     }
-    let prev_exiting = SHELL_EXITING.fetch_add(1, Ordering::Relaxed);
+    let prev_exiting = SHELL_EXITING.fetch_add(1, Relaxed);
     if prev_exiting != 0 && from_where != ZEXIT_NORMAL {
         // c:6007
         return;
     }
     // c:6014 — `shell_exiting = -1;`
-    SHELL_EXITING.store(-1, Ordering::Relaxed); // c:6014
+    SHELL_EXITING.store(-1, Relaxed); // c:6014
                                                 // c:6019 — `errflag = 0;`
-    errflag.store(0, Ordering::Relaxed); // c:6019
+    errflag.store(0, Relaxed); // c:6019
                                                                // c:6021-6024 — MONITOR → killrunjobs.
     if isset(MONITOR) {
         // c:6021
@@ -7230,7 +7219,7 @@ pub fn bin_dot(
     let mut found_path: Option<String> = None;
     if !name.starts_with('.') {
         // c:6087
-        let p = std::path::Path::new(&arg0);
+        let p = Path::new(&arg0);
         if p.exists() && !p.is_dir() {
             // c:6088-6089
             diddot = 1; // c:6090
@@ -7248,7 +7237,7 @@ pub fn bin_dot(
         else if arg0.starts_with("../") {
             dotdot += 1;
         } // c:6098
-        let p = std::path::Path::new(&arg0);
+        let p = Path::new(&arg0);
         if p.exists() && !p.is_dir() {
             found_path = Some(arg0.clone()); // c:6100
         }
@@ -7276,7 +7265,7 @@ pub fn bin_dot(
             } else {
                 format!("{}/{}", dir, arg0) // c:6114
             };
-            let p = std::path::Path::new(&buf);
+            let p = Path::new(&buf);
             if p.exists() && !p.is_dir() {
                 // c:6117-6118
                 found_path = Some(buf); // c:6119
@@ -7339,8 +7328,8 @@ pub fn bin_dot(
     // unwinding to the source caller. Also clear RETFLAG after the
     // sourced script returns so the unwind doesn't propagate to the
     // outer compile unit.
-    crate::ported::init::sourcelevel.fetch_add(1, Ordering::Relaxed); // c:1606
-    let result = match std::fs::read_to_string(&path) {
+    crate::ported::init::sourcelevel.fetch_add(1, Relaxed); // c:1606
+    let result = match fs::read_to_string(&path) {
         // c:6140
         Ok(src) => {
             crate::fusevm_bridge::with_executor(|exec| exec.execute_script(&src).unwrap_or(1))
@@ -7348,13 +7337,13 @@ pub fn bin_dot(
         // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
         Err(_) => 128 - 2,
     };
-    crate::ported::init::sourcelevel.fetch_sub(1, Ordering::Relaxed); // c:1644
+    crate::ported::init::sourcelevel.fetch_sub(1, Relaxed); // c:1644
                                                  // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
                                                  // sourced file's execute_script unwinds, the return has been
                                                  // serviced; clear the flag so the outer compile unit's main loop
                                                  // (init.rs:1252's `if retflag break` guard) doesn't see a stale
                                                  // request and abort `echo done` after `source foo`.
-    RETFLAG.store(0, Ordering::Relaxed); // c:5842 unwind
+    RETFLAG.store(0, Relaxed); // c:5842 unwind
                                          // c:6149 again — restore argzero on the success path as well.
     if let Some(prev) = saved_argzero {
         set_argzero(prev);
@@ -7367,18 +7356,18 @@ pub fn eval(argv: &[String]) -> i32 {
     // c:6151
     // c:6153 — `Eprog prog;` (declared inline below)
     // c:6154 — `char *oscriptname = scriptname;`
-    let oscriptname: Option<String> = crate::ported::utils::scriptname_get();
+    let oscriptname: Option<String> = scriptname_get();
     // c:6155 — `int oineval = ineval, fpushed;`
-    let oineval: i32 = INEVAL.load(std::sync::atomic::Ordering::Relaxed);
+    let oineval: i32 = INEVAL.load(Relaxed);
     let fpushed: bool;
     // c:6156 — `struct funcstack fstack;`
 
     // c:6163 — `ineval = !isset(EVALLINENO);`
     INEVAL.store(
-        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::EVALLINENO) { 1 } else { 0 },
-        std::sync::atomic::Ordering::Relaxed,
+        if !isset(crate::ported::zsh_h::EVALLINENO) { 1 } else { 0 },
+        Relaxed,
     );
-    let ineval_now = INEVAL.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    let ineval_now = INEVAL.load(Relaxed) != 0;
 
     if !ineval_now {                                                         // c:6164
         // c:6165 — `scriptname = "(eval)";`
@@ -7386,7 +7375,7 @@ pub fn eval(argv: &[String]) -> i32 {
         // c:6166-6196 — funcstack push: build a fstack frame describing
         // this eval, link it to the head of FUNCSTACK.
         let prev_frame = {
-            let stack = crate::ported::modules::parameter::FUNCSTACK
+            let stack = FUNCSTACK
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             stack.last().cloned()
@@ -7395,7 +7384,7 @@ pub fn eval(argv: &[String]) -> i32 {
             crate::ported::input::lineno.with(|c| c.get()) as i64;
         let caller = match &prev_frame {
             Some(p) => Some(p.name.clone()),
-            None => crate::ported::utils::argzero(),                         // c:6168 dupstring(argzero)
+            None => argzero(),                         // c:6168 dupstring(argzero)
         };
 
         // c:6182-6196 — flineno/filename derivation. Three cases:
@@ -7428,7 +7417,7 @@ pub fn eval(argv: &[String]) -> i32 {
             tp: crate::ported::zsh_h::FS_EVAL,                               // c:6170
         };
         {
-            let mut stack = crate::ported::modules::parameter::FUNCSTACK
+            let mut stack = FUNCSTACK
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             stack.push(frame);                                               // c:6197 funcstack = &fstack
@@ -7447,7 +7436,7 @@ pub fn eval(argv: &[String]) -> i32 {
         let head = prog.prog.first().copied().unwrap_or(0);
         if crate::ported::zsh_h::wc_code(head) != crate::ported::zsh_h::WC_LIST as u32 {
             /* No code to execute */                                          // c:6206
-            LASTVAL.store(0, std::sync::atomic::Ordering::Relaxed);          // c:6207
+            LASTVAL.store(0, Relaxed);          // c:6207
         } else {
             // c:6209 — `execode(prog, 1, 0, "eval");`. Routes through
             // the executor; in-process equivalent.
@@ -7455,35 +7444,35 @@ pub fn eval(argv: &[String]) -> i32 {
                 exec.run_command_substitution(&joined)
             });
             // c:6211-6212 — `if (errflag && !lastval) lastval = errflag;`
-            let ef = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
-            let lv = LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
+            let ef = errflag.load(Relaxed);
+            let lv = LASTVAL.load(Relaxed);
             if ef != 0 && lv == 0 {
-                LASTVAL.store(ef, std::sync::atomic::Ordering::Relaxed);
+                LASTVAL.store(ef, Relaxed);
             }
         }
     } else {
-        LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);              // c:6215
+        LASTVAL.store(1, Relaxed);              // c:6215
     }
 
     if fpushed {                                                             // c:6218
         // c:6219 — `funcstack = funcstack->prev;`
-        let mut stack = crate::ported::modules::parameter::FUNCSTACK
+        let mut stack = FUNCSTACK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         stack.pop();
     }
 
     // c:6221 — `errflag &= ~ERRFLAG_ERROR;`
-    crate::ported::utils::errflag.fetch_and(
-        !crate::ported::zsh_h::ERRFLAG_ERROR,
-        std::sync::atomic::Ordering::Relaxed,
+    errflag.fetch_and(
+        !ERRFLAG_ERROR,
+        Relaxed,
     );
     // c:6222 — `scriptname = oscriptname;`
     crate::ported::utils::set_scriptname(oscriptname);
     // c:6223 — `ineval = oineval;`
-    INEVAL.store(oineval, std::sync::atomic::Ordering::Relaxed);
+    INEVAL.store(oineval, Relaxed);
 
-    LASTVAL.load(std::sync::atomic::Ordering::Relaxed)                       // c:6225
+    LASTVAL.load(Relaxed)                       // c:6225
 }
 
 /// Port of `bin_emulate(char *nam, char **argv, Options ops, UNUSED(int func))` from Src/builtin.c:6232.
@@ -7511,7 +7500,7 @@ pub fn bin_emulate(
         }
         // c:6255-6271 — `switch(SHELL_EMULATION())` → name dispatch.
         let bits =
-            emulation.load(std::sync::atomic::Ordering::Relaxed) as i32;
+            emulation.load(Relaxed) as i32;
         let shname = if (bits & EMULATE_CSH) != 0 {
             "csh"
         }
@@ -7559,10 +7548,10 @@ pub fn bin_emulate(
             _ => EMULATE_ZSH,          // c:550
         };
         // c:6286 — `emulate(shname, opt_R, &emulation, cmdopts)`.
-        emulation.store(bits, std::sync::atomic::Ordering::Relaxed);
+        emulation.store(bits, Relaxed);
 
         // Build the cmdopts view that c:6286-6292 manipulates.
-        let mut cmdopts: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        let mut cmdopts: HashMap<String, bool> = HashMap::new();
         for n in ZSH_OPTIONS_SET.iter() {
             cmdopts.insert(
                 n.to_string(),
@@ -7730,7 +7719,7 @@ pub fn bin_read(
     // Print prompt if provided.
     if let Some(ref p) = prompt {
         eprint!("{}", p);
-        let _ = std::io::Write::flush(&mut std::io::stderr());
+        let _ = Write::flush(&mut io::stderr());
     }
 
     // Read one byte at a time until newline (or nchars when -k).
@@ -7741,7 +7730,7 @@ pub fn bin_read(
         let mut bytes_read = 0;
         while bytes_read < nchars as usize {
             let mut b = [0u8; 1];
-            match std::io::stdin().lock().read(&mut b) {
+            match io::stdin().lock().read(&mut b) {
                 Ok(1) => {
                     got[bytes_read] = b[0];
                     bytes_read += 1;
@@ -7752,7 +7741,7 @@ pub fn bin_read(
         buf = String::from_utf8_lossy(&got[..bytes_read]).into_owned();
     } else {
         // Read a line (default behaviour).
-        match std::io::stdin().read_line(&mut buf) {
+        match io::stdin().read_line(&mut buf) {
             Ok(0) => return 1, // EOF
             Ok(_) => {
                 if buf.ends_with('\n') {
@@ -7852,7 +7841,7 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {
     let mut buf = [0u8; 1];
     let fd = {
         use std::sync::atomic::Ordering;
-        let s = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+        let s = crate::ported::init::SHTTY.load(Relaxed);
         if s >= 0 {
             s
         } else {
@@ -7864,7 +7853,7 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {
         match n {
             1 => return buf[0] as i32, // c:7169
             0 => return -1,            // EOF
-            -1 if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted => {
+            -1 if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => {
                 continue
             }
             _ => return -1,
@@ -7879,7 +7868,7 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {
 pub fn testlex() {
     // c:7200
     // c:7203 — `if (tok == LEXERR) return;`
-    if TEST_TOK.load(Ordering::Relaxed) == TEST_LEXERR {
+    if TEST_TOK.load(Relaxed) == TEST_LEXERR {
         // c:7203
         return;
     }
@@ -7888,7 +7877,7 @@ pub fn testlex() {
         TESTARGS.clear_poison();
         e.into_inner()
     });
-    let mut idx = TESTARGS_IDX.load(Ordering::Relaxed) as usize;
+    let mut idx = TESTARGS_IDX.load(Relaxed) as usize;
     let cur = targs.get(idx).cloned(); // c:7206
     if let Some(t) = cur.as_ref() {
         if let Ok(mut ts) = TOKSTR.lock() {
@@ -7899,10 +7888,10 @@ pub fn testlex() {
     let none = cur.is_none() || cur.as_deref() == Some("");
     if none {
         // c:7207
-        let prev = TEST_TOK.load(Ordering::Relaxed);
+        let prev = TEST_TOK.load(Relaxed);
         TEST_TOK.store(
             if prev != 0 { TEST_NULLTOK } else { TEST_LEXERR }, // c:7210
-            Ordering::Relaxed,
+            Relaxed,
         );
         return;
     }
@@ -7918,9 +7907,9 @@ pub fn testlex() {
         ">" => TEST_OUTANG,  // c:7225
         _ => TEST_STRING,    // c:7227
     };
-    TEST_TOK.store(new_tok, Ordering::Relaxed);
+    TEST_TOK.store(new_tok, Relaxed);
     idx += 1; // c:7228 testargs++
-    TESTARGS_IDX.store(idx as i32, Ordering::Relaxed);
+    TESTARGS_IDX.store(idx as i32, Relaxed);
     let _ = &mut *targs; // ensure lock holds for the duration of mutation
 }
 
@@ -7980,8 +7969,8 @@ pub fn bin_test(
     // Static-link path: route through cond.rs's evalcond which handles
     // the full tokenization + parse + eval inline.
     let args_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
-    let options = std::collections::HashMap::new();
-    let mut variables = std::collections::HashMap::new();
+    let options = HashMap::new();
+    let mut variables = HashMap::new();
     // C `evalcond` reaches param values through `getvalue` / `getsparam`
     // which read paramtab. The previous Rust port populated the
     // variables map from `std::env::vars()` — the OS environment —
@@ -8002,7 +7991,7 @@ pub fn bin_test(
     // Layer env vars on top of paramtab for the rare case where the
     // OS env has a name paramtab hasn't yet imported (e.g. external
     // wrapper that exec'd zshrs with env vars).
-    for (k, v) in std::env::vars() {
+    for (k, v) in env::vars() {
         variables.entry(k).or_insert(v);
     }
     let posix = isset(optlookup("posixbuiltins"));
@@ -8237,9 +8226,9 @@ pub fn bin_let(
     // and return 2. The previous Rust port used a local `had_error` flag
     // and left the global `errflag` set — every subsequent command saw
     // the error state, defeating C's "let errors are local" contract.
-    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+    if (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
         // c:7476
-        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed); // c:7478
+        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7478
         return 2; // c:7479
     }
     // c:7482 — `return (val.type == MN_INTEGER) ? val.u.l == 0 : val.u.d == 0.0;`
@@ -9906,8 +9895,8 @@ static builtintab: OnceLock<HashMap<String, &'static builtin>> = OnceLock::new()
 /// `handlerfunc` to mirror C's "skip nodes with DISABLED set" walk.
 pub static BUILTINS_DISABLED: std::sync::LazyLock<
     // c:587 (Src/builtin.c)
-    std::sync::Mutex<std::collections::HashSet<String>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    Mutex<std::collections::HashSet<String>>,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
 
 // `shfunctab` is the canonical singleton at `hashtable::shfunctab_lock()`
 // (RwLock<shfunc_table>); the prior parallel `shfunctab_table()` /
@@ -9917,7 +9906,7 @@ pub static BUILTINS_DISABLED: std::sync::LazyLock<
 // methods (Src/zsh.h:281+ HashTable GSU pointers).
 
 // `matchednodes` global from Src/builtin.c:4550.
-pub static MATCHEDNODES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static MATCHEDNODES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 // `stopmsg` global from Src/jobs.c — non-zero when checkjobs() printed.
 pub static STOPMSG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
@@ -9935,7 +9924,7 @@ pub static SFCONTEXT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI3
                                                                                            // lives in src/ported/jobs.rs's JobTable; this mirror is updated by
                                                                                            // the spawn/wait paths that already touch STOPMSG. Empty → no jobs,
                                                                                            // matching the post-init state of `jobtab[]`.
-pub static JOBSTATS: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+pub static JOBSTATS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 
 // File-static globals for [_]realexit/zexit — c:5945+, init.c, signals.c.
 pub static SHELL_EXITING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
@@ -9959,9 +9948,9 @@ const TEST_STRING: i32 = 9; // c:7227
 
 // `testargs` / `curtestarg` / `tokstr` globals from Src/builtin.c — the
 // argv-style cursor that bin_test seeds and testlex() advances.
-pub static TESTARGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static TESTARGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub static TESTARGS_IDX: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-pub static TOKSTR: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+pub static TOKSTR: Mutex<String> = Mutex::new(String::new());
 
 // int doprintdir = 0; set in exec.c (for autocd, cdpath, etc.)            // c:722
 // `doprintdir` from Src/exec.c — set when an autocd'd command should
@@ -9973,7 +9962,7 @@ pub static DOPRINTDIR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 pub static CHASINGLINKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `pparams` global from Src/init.c — positional parameters $1..$N.
-pub static PPARAMS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub static PPARAMS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 // `zoptind` (Src/builtin.c:5667) and `optcind` (c:5670) — the two
 // pieces of getopts state. zoptind backs the user-visible $OPTIND.
@@ -10062,9 +10051,9 @@ pub fn BUILTIN(
 // `traps` mirror — sig name → body. Real `sigtrapped[]`/`siglists[]`
 // arrays live in src/ported/signals.rs; this Mutex is the static-link
 // shim that bin_trap reads/writes.
-static TRAPS_INNER: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, String>>,
-> = std::sync::OnceLock::new();
+static TRAPS_INNER: OnceLock<
+    Mutex<HashMap<String, String>>,
+> = OnceLock::new();
 
 #[allow(non_snake_case)]
 fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
@@ -10305,6 +10294,7 @@ fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
 // lives in exec.c, so the Rust port belongs in exec.rs). Call sites
 // import from the new path.
 pub use crate::ported::exec::findcmd;
+use crate::ported::signals_h::run_queued_signals;
 
 /// Port of `getsigidx(const char *s)` from Src/signals.c — return signal number for
 /// a name, or -1 if unknown. Strips optional `SIG` prefix; falls back
@@ -10384,8 +10374,8 @@ fn pat_enables(name: &str, argv: &[String], on: bool) -> i32 {
 // the accessor wrappers interleaved between real port fns.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub fn traps_table() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
-    TRAPS_INNER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+pub fn traps_table() -> &'static Mutex<HashMap<String, String>> {
+    TRAPS_INNER.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[cfg(test)]
@@ -10493,7 +10483,7 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let saved = emulation.load(std::sync::atomic::Ordering::Relaxed);
+        let saved = emulation.load(Relaxed);
 
         // Each (name, expected_bits) — name covers the canonical
         // shell names AND their `r`-prefix / first-char variants.
@@ -10505,16 +10495,16 @@ mod tests {
             ("rksh", EMULATE_KSH), // c:539-540
             ("bash", EMULATE_SH),  // c:548 'b'
         ] {
-            emulation.store(0, std::sync::atomic::Ordering::Relaxed);
+            emulation.store(0, Relaxed);
             bin_emulate("emulate", &[name.into()], &empty, 0);
-            let bits = emulation.load(std::sync::atomic::Ordering::Relaxed);
+            let bits = emulation.load(Relaxed);
             assert_eq!(
                 bits, expected,
                 "emulate {} must set bits {:#x}, got {:#x}",
                 name, expected, bits
             );
         }
-        emulation.store(saved, std::sync::atomic::Ordering::Relaxed);
+        emulation.store(saved, Relaxed);
     }
 
     /// c:7399 — `trap - SIGUSR1` (valid signal) MUST return 0, even
@@ -10946,7 +10936,7 @@ mod tests {
     }
 
     /// Shared mutex for bin_let tests that toggle the global errflag.
-    static BIN_LET_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static BIN_LET_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// `Src/builtin.c:7469-7484` — `bin_let` semantics:
     ///   1. Returns 0 (success) when the LAST arg evaluates to non-zero.
@@ -10960,8 +10950,8 @@ mod tests {
     fn bin_let_clears_errflag_on_math_error() {
         let _g = crate::test_util::global_state_lock();
         let _g = BIN_LET_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = errflag.load(Ordering::Relaxed);
-        errflag.store(0, Ordering::Relaxed);
+        let saved = errflag.load(Relaxed);
+        errflag.store(0, Relaxed);
 
         // 1. Last arg evaluates to non-zero → return 0.
         let ops = options {
@@ -10990,7 +10980,7 @@ mod tests {
         // effect (since exact bad-syntax behavior of the matheval port
         // is implementation-dependent — what we're pinning is the
         // bin_let response to a set errflag).
-        errflag.store(ERRFLAG_ERROR, Ordering::Relaxed);
+        errflag.store(ERRFLAG_ERROR, Relaxed);
         // Use a valid expression so matheval succeeds, but errflag
         // is already set from a prior step.
         let argv = vec!["1".to_string()];
@@ -11001,13 +10991,13 @@ mod tests {
         );
         // c:7478 — `errflag &= ~ERRFLAG_ERROR` must have run.
         assert_eq!(
-            errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR,
+            errflag.load(Relaxed) & ERRFLAG_ERROR,
             0,
             "c:7478 — ERRFLAG_ERROR must be CLEARED after let error"
         );
 
         // Restore.
-        errflag.store(saved, Ordering::Relaxed);
+        errflag.store(saved, Relaxed);
     }
 
     /// `Src/builtin.c:7474-7475` — C walks ALL argv via
@@ -11019,7 +11009,7 @@ mod tests {
     fn bin_let_walks_all_argv_last_wins() {
         let _g = crate::test_util::global_state_lock();
         let _g = BIN_LET_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        errflag.store(0, Ordering::Relaxed);
+        errflag.store(0, Relaxed);
 
         let ops = options {
             ind: [0; MAX_OPS],
@@ -11043,7 +11033,7 @@ mod tests {
             "c:7474 — last arg wins (here: 5 → return 0)"
         );
 
-        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
     }
 
     /// `Src/builtin.c:4799-4808` — `print -o` (sort) is CASE-SENSITIVE
@@ -11109,7 +11099,7 @@ mod tests {
     fn bin_print_printf_with_minus_z() {
         let _g = crate::test_util::global_state_lock();
         let mut ops = options {
-            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            ind: [0u8; MAX_OPS],
             args: Vec::new(),
             argscount: 0,
             argsalloc: 0,
@@ -11145,7 +11135,7 @@ mod tests {
     fn bin_print_minus_z_pushes_to_bufstack() {
         let _g = crate::test_util::global_state_lock();
         let mut ops = options {
-            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            ind: [0u8; MAX_OPS],
             args: Vec::new(),
             argscount: 0,
             argsalloc: 0,
@@ -11178,7 +11168,7 @@ mod tests {
     fn bin_print_minus_s_pushes_to_history() {
         let _g = crate::test_util::global_state_lock();
         let mut ops = options {
-            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            ind: [0u8; MAX_OPS],
             args: Vec::new(),
             argscount: 0,
             argsalloc: 0,
@@ -11218,7 +11208,7 @@ mod tests {
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
         let (rfd, wfd) = (fds[0], fds[1]);
         let mut ops = options {
-            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            ind: [0u8; MAX_OPS],
             args: Vec::new(),
             argscount: 0,
             argsalloc: 0,
@@ -11240,7 +11230,7 @@ mod tests {
         let mut buf = String::new();
         unsafe {
             use std::os::unix::io::FromRawFd;
-            let mut f = std::fs::File::from_raw_fd(rfd);
+            let mut f = fs::File::from_raw_fd(rfd);
             f.read_to_string(&mut buf).unwrap();
         }
         assert_eq!(
@@ -11259,7 +11249,7 @@ mod tests {
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
         let (rfd, wfd) = (fds[0], fds[1]);
         let mut ops = options {
-            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            ind: [0u8; MAX_OPS],
             args: Vec::new(),
             argscount: 0,
             argsalloc: 0,
@@ -11283,7 +11273,7 @@ mod tests {
         let mut buf = Vec::new();
         unsafe {
             use std::os::unix::io::FromRawFd;
-            let mut f = std::fs::File::from_raw_fd(rfd);
+            let mut f = fs::File::from_raw_fd(rfd);
             f.read_to_end(&mut buf).unwrap();
         }
         assert_eq!(
@@ -11307,7 +11297,7 @@ mod tests {
 
         // Build options with -u set to the write fd.
         let mut ops = options {
-            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            ind: [0u8; MAX_OPS],
             args: Vec::new(),
             argscount: 0,
             argsalloc: 0,
@@ -11342,7 +11332,7 @@ mod tests {
         let mut buf = String::new();
         unsafe {
             use std::os::unix::io::FromRawFd;
-            let mut f = std::fs::File::from_raw_fd(rfd);
+            let mut f = fs::File::from_raw_fd(rfd);
             f.read_to_string(&mut buf).unwrap();
         }
         assert_eq!(buf, "hello\n", "c:4847 — write should land on -u FD");
