@@ -2066,30 +2066,12 @@ impl ShellExecutor {
         0
     }
 
-    /// zgetattr/zsetattr/zdelattr/zlistattr - extended attributes
-    /// (zsh/attr module). Bridge to the canonical port at
-    /// `src/ported/modules/attr.rs` (`bin_getattr`/`bin_setattr`/
-    /// `bin_delattr`/`bin_listattr` from `Src/Modules/attr.c`).
-    /// Parses `-h` (operate on symlink) into the canonical `options`
-    /// struct, then dispatches to the matching `bin_*` free fn.
-    pub(crate) fn builtin_zattr(&mut self, cmd: &str, args: &[String]) -> i32 {
-        let (ops, positional) = build_short_opts(args, b"h");
-        match cmd {
-            "zgetattr" => {
-                crate::ported::modules::attr::bin_getattr("zgetattr", &positional, &ops, 0)
-            }
-            "zsetattr" => {
-                crate::ported::modules::attr::bin_setattr("zsetattr", &positional, &ops, 0)
-            }
-            "zdelattr" => {
-                crate::ported::modules::attr::bin_delattr("zdelattr", &positional, &ops, 0)
-            }
-            "zlistattr" => {
-                crate::ported::modules::attr::bin_listattr("zlistattr", &positional, &ops, 0)
-            }
-            _ => 1,
-        }
-    }
+    // zgetattr/zsetattr/zdelattr/zlistattr - extended attributes
+    // builtin_zattr deleted — zero callers. Was a Rust-only dispatcher
+    // wrapping the 4 zattr bin_* free fns; callers should use
+    // canonical dispatch_builtin("zgetattr"/etc, args) which goes
+    // through execbuiltin → BUILTINS entry (attr.c:NNN ports) with
+    // optstr parsing built in.
 }
 
 /// promptinit autoload — seeds `$prompt_themes` array + default
