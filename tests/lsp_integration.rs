@@ -423,6 +423,225 @@ fn formatting_strips_trailing_whitespace() {
     assert!(new_text.ends_with('\n'));
 }
 
+/// Find Usages on a function name must NOT match inside `"..."`
+/// strings or `# comments` — those are not real code references.
+/// Ported from stryke's `string_interior_mask` work.
+#[test]
+fn references_skip_matches_inside_strings_and_comments() {
+    let mut lsp = LspHandle::spawn();
+    let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
+    lsp.notify("initialized", json!({}));
+    let text = "function greet { echo hi }\ngreet\necho \"greet is a string\"\n# greet in a comment\necho 'greet single quoted'\n";
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///refs.zsh", "languageId": "zshrs",
+                "version": 1, "text": text,
+            }
+        }),
+    );
+    let _ = lsp.wait_diagnostics(Duration::from_millis(500));
+    let r = lsp.request(
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": "file:///refs.zsh" },
+            "position": { "line": 0, "character": 9 },
+            "context": { "includeDeclaration": true },
+        }),
+    );
+    let arr = r.as_array().expect("references array");
+    let lines: Vec<u64> = arr
+        .iter()
+        .filter_map(|loc| loc.pointer("/range/start/line").and_then(Value::as_u64))
+        .collect();
+    assert!(lines.contains(&0), "expected decl at line 0: {lines:?}");
+    assert!(lines.contains(&1), "expected ref at line 1: {lines:?}");
+    assert!(
+        !lines.contains(&2),
+        "must NOT include `greet` inside `\"greet is a string\"`: {lines:?}"
+    );
+    assert!(
+        !lines.contains(&3),
+        "must NOT include `greet` inside the `# comment`: {lines:?}"
+    );
+    assert!(
+        !lines.contains(&4),
+        "must NOT include `greet` inside single-quoted string: {lines:?}"
+    );
+    lsp.shutdown();
+}
+
+/// `textDocument/codeAction` must offer Extract Variable + Extract
+/// Constant for a non-empty selection. Pin titles + edit shape.
+#[test]
+fn code_action_offers_extract_variable_and_constant() {
+    let mut lsp = LspHandle::spawn();
+    let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
+    lsp.notify("initialized", json!({}));
+    let text = "local x=42\necho hi\n";
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///ca.zsh", "languageId": "zshrs",
+                "version": 1, "text": text,
+            }
+        }),
+    );
+    let _ = lsp.wait_diagnostics(Duration::from_millis(500));
+    // Select `42` cols 8..10 on line 0.
+    let r = lsp.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": "file:///ca.zsh" },
+            "range": {
+                "start": { "line": 0, "character": 8 },
+                "end":   { "line": 0, "character": 10 },
+            },
+            "context": { "diagnostics": [] },
+        }),
+    );
+    let arr = r.as_array().expect("array");
+    let titles: Vec<&str> = arr
+        .iter()
+        .filter_map(|a| a.get("title").and_then(Value::as_str))
+        .collect();
+    assert!(
+        titles.iter().any(|t| t.contains("variable")),
+        "expected Extract Variable: {titles:?}"
+    );
+    assert!(
+        titles.iter().any(|t| t.contains("constant")),
+        "expected Extract Constant: {titles:?}"
+    );
+    // Sanity-check the Extract Variable edit shape.
+    let var = arr
+        .iter()
+        .find(|a| {
+            a.get("title")
+                .and_then(Value::as_str)
+                .map(|t| t.contains("variable"))
+                .unwrap_or(false)
+        })
+        .unwrap();
+    let edits = var["edit"]["changes"]["file:///ca.zsh"]
+        .as_array()
+        .expect("edits");
+    assert!(
+        edits.iter().any(|e| e
+            .get("newText")
+            .and_then(Value::as_str)
+            .map(|s| s.starts_with("local EXTRACTED="))
+            .unwrap_or(false)),
+        "expected `local EXTRACTED=…` decl line: {edits:?}"
+    );
+    assert!(
+        edits.iter().any(|e| e.get("newText") == Some(&json!("$EXTRACTED"))),
+        "expected `$EXTRACTED` replacement: {edits:?}"
+    );
+    lsp.shutdown();
+}
+
+/// Caret-only Extract: no selection range, cursor parked on a word —
+/// the action must snap to the word and offer Extract Variable.
+#[test]
+fn code_action_with_caret_only_snaps_to_word() {
+    let mut lsp = LspHandle::spawn();
+    let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
+    lsp.notify("initialized", json!({}));
+    let text = "local total=42\n";
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///snap.zsh", "languageId": "zshrs",
+                "version": 1, "text": text,
+            }
+        }),
+    );
+    let _ = lsp.wait_diagnostics(Duration::from_millis(500));
+    // Caret on `total` (col 8, middle of the word) — empty range.
+    let r = lsp.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": "file:///snap.zsh" },
+            "range": {
+                "start": { "line": 0, "character": 8 },
+                "end":   { "line": 0, "character": 8 },
+            },
+            "context": { "diagnostics": [] },
+        }),
+    );
+    let arr = r.as_array().expect("array");
+    assert!(
+        !arr.is_empty(),
+        "caret-only should still offer extracts via snap: {r}"
+    );
+    lsp.shutdown();
+}
+
+/// Extract Variable inside a `"..."` string must wrap the selection
+/// in quotes so the decl is valid zsh. Without this, `local X=hello world`
+/// would be invalid.
+#[test]
+fn extract_variable_inside_double_quoted_string_wraps_rhs() {
+    let mut lsp = LspHandle::spawn();
+    let _ = lsp.request("initialize", json!({ "processId": 1, "capabilities": {} }));
+    lsp.notify("initialized", json!({}));
+    let text = "echo \"hello world\"\n";
+    lsp.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": "file:///dq.zsh", "languageId": "zshrs",
+                "version": 1, "text": text,
+            }
+        }),
+    );
+    let _ = lsp.wait_diagnostics(Duration::from_millis(500));
+    // Select `hello world` (between the quotes), cols 6..17 on line 0.
+    let r = lsp.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": "file:///dq.zsh" },
+            "range": {
+                "start": { "line": 0, "character": 6 },
+                "end":   { "line": 0, "character": 17 },
+            },
+            "context": { "diagnostics": [] },
+        }),
+    );
+    let arr = r.as_array().expect("array");
+    let var = arr
+        .iter()
+        .find(|a| {
+            a.get("title")
+                .and_then(Value::as_str)
+                .map(|t| t.contains("variable"))
+                .unwrap_or(false)
+        })
+        .expect("Extract Variable action");
+    let edits = var["edit"]["changes"]["file:///dq.zsh"]
+        .as_array()
+        .expect("edits");
+    let decl = edits
+        .iter()
+        .find(|e| {
+            e.get("newText")
+                .and_then(Value::as_str)
+                .map(|s| s.starts_with("local "))
+                .unwrap_or(false)
+        })
+        .expect("decl edit");
+    let decl_text = decl["newText"].as_str().unwrap();
+    assert!(
+        decl_text.contains("=\"hello world\""),
+        "RHS must be string-wrapped: {decl_text}"
+    );
+    lsp.shutdown();
+}
+
 #[test]
 fn rename_emits_workspace_edits_for_all_occurrences() {
     let mut lsp = LspHandle::spawn();
