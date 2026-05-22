@@ -231,7 +231,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // zunderscore in execcmd_exec for every simple command,
         // including builtins.
         crate::ported::params::set_zunderscore(&args);
-        let status = with_executor(|exec| exec.builtin_echo(&args, &[]));
+        let status = dispatch_builtin("echo", args);
         Value::Status(status)
     });
 
@@ -247,16 +247,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_PRINTF, |vm, argc| {
         let args = pop_args(vm, argc);
-        if let Some(s) = try_user_fn_override("printf", &args) {
-            return Value::Status(s);
-        }
-        let status = with_executor(|exec| exec.builtin_printf(&args));
+        let status = dispatch_builtin("printf", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_EXPORT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_export(&args));
+        let status = dispatch_builtin("export", args);
         Value::Status(status)
     });
 
@@ -352,7 +349,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // (`pm->old = oldpm` at Src/params.c:1137 inside createparam,
         // `pm->level = locallevel` at Src/builtin.c:2576 inside
         // typeset_single). The dispatcher only routes args.
-        let status = with_executor(|exec| exec.builtin_local(&args));
+        let status = dispatch_builtin("local", args);
         Value::Status(status)
     });
 
@@ -369,25 +366,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_DECLARE, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_declare(&args));
+        let status = dispatch_builtin("declare", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_READONLY, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_readonly(&args));
+        let status = dispatch_builtin("readonly", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_INTEGER, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_integer(&args));
+        let status = dispatch_builtin("integer", args);
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_FLOAT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_float(&args));
+        let status = dispatch_builtin("float", args);
         Value::Status(status)
     });
 
