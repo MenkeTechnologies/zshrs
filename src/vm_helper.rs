@@ -1280,12 +1280,6 @@ impl ShellExecutor {
     // host_set_pending_stdin / host_exec_external moved to src/fusevm_bridge.rs
     // (extension; not a port of Src/exec.c).
 
-    /// Add a directory to fpath
-    pub fn add_fpath(&mut self, path: PathBuf) {
-        if !self.fpath.contains(&path) {
-            self.fpath.insert(0, path);
-        }
-    }
 
     /// Tab expansion — direct port of `zexpandtabs(const char *s, int len, int width, int startpos, FILE *fout, int all)` in zsh/Src/utils.c:5973.
     /// Moved to `crate::ported::utils::zexpandtabs`; re-exported below.
@@ -1930,15 +1924,6 @@ impl ShellExecutor {
         self.function_source.get(name).cloned()
     }
 
-    /// Remove a function from both tables (compiled chunk + canonical
-    /// source). Returns true iff at least one table held it.
-    pub fn remove_function(&mut self, name: &str) -> bool {
-        let a = self.functions_compiled.remove(name).is_some();
-        let c = self.function_source.remove(name).is_some();
-        let _ = self.function_line_base.remove(name);
-        let _ = self.function_def_file.remove(name);
-        a || c
-    }
 
     /// Sorted list of every known function name (union of compiled + source).
     pub fn function_names(&self) -> Vec<String> {
