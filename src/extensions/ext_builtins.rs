@@ -7587,43 +7587,11 @@ impl ShellExecutor {
     }
 }
 
-// Build a `struct options` (zsh.h:1416) from the leading `-X[Y…]`
-// short-flag run, accepting only letters in `allowed`. Each set
-// flag's `ind[c]` gets the OPT_MINUS bit (1, per zsh.h:1400) so
-// `OPT_ISSET`/`OPT_MINUS` both report it as set. Stops at the first
-// non-flag arg, `--`, or unknown letter. Returns the built `options`
-// and the residual argv. This is the dispatcher slice C does inside
-// `Src/builtin.c:parseopts`.
-fn build_short_opts(args: &[String], allowed: &[u8]) -> (options, Vec<String>) {
-    let mut ops = options {
-        ind: [0u8; MAX_OPS],
-        args: Vec::new(),
-        argscount: 0,
-        argsalloc: 0,
-    };
-    let mut i: usize = 0;
-    while i < args.len() {
-        let a = args[i].as_bytes();
-        if a.len() < 2 || a[0] != b'-' || a == b"--" {
-            break;
-        }
-        let mut ok = true;
-        for &c in &a[1..] {
-            if !allowed.contains(&c) {
-                ok = false;
-                break;
-            }
-        }
-        if !ok {
-            break;
-        }
-        for &c in &a[1..] {
-            ops.ind[c as usize] = 1;
-        }
-        i += 1;
-    }
-    (ops, args[i..].to_vec())
-}
+// build_short_opts deleted — was a Rust-only short-opt parser
+// duplicating execbuiltin's optstr walk. All callers (zattr family,
+// zsocket, chgrp, mkdir, etc.) now route through dispatch_builtin
+// which goes via execbuiltin → BUILTINS[name].optstr → automatic
+// parsing.
 
 // ─────────────────────────────────────────────────────────
 // Extracted from `impl ShellExecutor` per the FAKE DUP audit:
