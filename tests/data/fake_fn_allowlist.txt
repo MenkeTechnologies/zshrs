@@ -903,15 +903,11 @@ exec_sethparam
 exec_sync_state_from_paramtab
 exec_getsparam
 
-# subst.rs splice walker for zsh/parameter magic-assoc names
-# (${commands[@]}/${functions[@]}/${aliases[@]}/etc.). C dispatches
-# via per-table `scanpm<X>` walkers (Src/Modules/parameter.c:124+)
-# each driven through a HashTable.scantab callback with a ScanFunc
-# `fn(&HashNode, i32)` pointer that can't capture state. The Rust
-# port collapses the per-name scanners into one match arm so the
-# splice can `join` the values; the names dispatched here are the
-# same set the per-key getpm<X> path handles via the const-fn arms.
-splice_magic_assoc
+# splice_magic_assoc deleted — magic-assoc splice/scan now routes
+# through canonical PARTAB / PARTAB_ARRAY in src/ported/modules/
+# parameter.rs::PARTAB + crate::vm_helper::partab_scan_keys /
+# partab_array_get. Per-name scan invocation goes through the
+# entry's canonical scanpmX fn pointer.
 
 # subst.rs SUB_FLAGS thread_local accessors. C stores `sub_flags`
 # as a static int in subst.c (Src/subst.c:2169); Rust uses a
