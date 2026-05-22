@@ -4031,3 +4031,877 @@ mod paramtypestr_table_tests {
         assert!(i_ro < i_exp, "c:75-82 — -readonly must precede -export");
     }
 }
+
+
+use crate::func_body_fmt::FuncBodyFmt;
+use crate::ported::zle::zle_thingy::{getwidgettarget, listwidgets};
+use std::env;
+use std::ffi::{CStr, CString};
+
+// =====================================================================
+// get_special_array_value — moved from src/vm_helper.rs.
+// FAKE/PARTIAL PORT: dispatcher consolidating the per-module
+// getpm*/scanpm* table-lookup functions from Modules/parameter.c
+// + Modules/mapfile.c + Modules/datetime.c + etc.
+//
+// Real zsh: each module registers its own param-table with per-name
+// `getfn`/`scanfn` GSU callbacks (e.g. getpmparameter c:84,
+// getpmcommand c:147, getpmfunction c:280, scanpmoptions c:1029).
+// Param lookup `$parameters[foo]` walks the param hashtable, finds
+// the special-name entry, invokes that entry's `getfn(pm, name)`
+// to materialize the value lazily.
+//
+// zshrs (current): one big match dispatcher keyed by array_name.
+// Eventually each arm migrates to its owning module's getfn shim
+// + we wire `params::getsparam`/`scanparam` to dispatch through
+// the param-table's GSU like C does. Until then, this lives here
+// (next to canonical Modules/parameter.c port).
+// =====================================================================
+impl crate::ported::vm_helper::ShellExecutor {
+    /// Get value from zsh/parameter special arrays (options, commands, functions, etc.)
+    /// Returns Some(value) if this is a special array access, None otherwise
+    pub fn get_special_array_value(&self, array_name: &str, key: &str) -> Option<String> {
+        match array_name {
+            // === ZSH/MAPFILE module ===
+            // `${mapfile[/path]}` reads the file's contents. Direct
+            // port of `getpmmapfile(UNUSED(HashTable ht), const char *name)` (Src/Modules/mapfile.c:217)
+            // which calls `get_contents()` (line 167) on the path.
+            // Splice (`@`/`*`) returns the CWD entry list per
+            // `scanpmmapfile()` (line 240).
+            "mapfile" => {
+                if key == "@" || key == "*" {
+                    // Inline readdir loop — direct port of
+                    // scanpmmapfile (Src/Modules/mapfile.c:241).
+                    let mut files: Vec<String> = Vec::new();
+                    if let Ok(rd) = std::fs::read_dir(".") {
+                        for entry in rd.flatten() {
+                            let path = entry.path();
+                            if path.is_file() {
+                                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                                    files.push(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    return Some(files.join(" "));
+                }
+                Some(crate::modules::mapfile::get_contents(key).unwrap_or_default())
+            }
+            // === ZSH/SYSTEM — errnos / sysparams ===
+            "errnos" => {
+                let table = crate::modules::system::ERRNO_NAMES;
+                if key == "@" || key == "*" {
+                    return Some(
+                        table
+                            .iter()
+                            .map(|(n, _)| (*n).to_string())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    );
+                }
+                if let Ok(n) = key.parse::<i64>() {
+                    let len = table.len() as i64;
+                    let pos = if n > 0 {
+                        (n - 1) as usize
+                    } else if n < 0 {
+                        let p = len + n;
+                        if p < 0 {
+                            return Some(String::new());
+                        }
+                        p as usize
+                    } else {
+                        return Some(String::new());
+                    };
+                    if let Some((name, _)) = table.get(pos) {
+                        return Some((*name).to_string());
+                    }
+                }
+                Some(String::new())
+            }
+            "sysparams" => {
+                let pid = std::process::id().to_string();
+                let ppid = unsafe { libc::getppid() }.to_string();
+                if key == "@" || key == "*" {
+                    return Some(format!("{} {}", pid, ppid));
+                }
+                Some(match key {
+                    "pid" => pid,
+                    "ppid" => ppid,
+                    "procsubstpid" => "0".to_string(),
+                    _ => String::new(),
+                })
+            }
+            // === SHELL OPTIONS ===
+            "options" => {
+                if key == "@" || key == "*" {
+                    // Return all options as "name=on/off" pairs.
+                    let opts: Vec<String> = crate::ported::options::opt_state_snapshot()
+                        .iter()
+                        .map(|(k, v)| format!("{}={}", k, if *v { "on" } else { "off" }))
+                        .collect();
+                    return Some(opts.join(" "));
+                }
+                let opt_name = key.to_lowercase().replace('_', "");
+                let is_on = crate::ported::options::opt_state_get(&opt_name).unwrap_or(false);
+                Some(if is_on {
+                    "on".to_string()
+                } else {
+                    "off".to_string()
+                })
+            }
+
+            // === ALIASES ===
+            // ${aliases[@]} returns values in sorted-name order.
+            // Iterating HashMap::values() gave random order; tests
+            // and prompt code that snapshot ${(v)aliases} flickered.
+            "aliases" => {
+                // Read from canonical `aliastab` (`Src/hashtable.c:1210`,
+                // ported at `src/ported/hashtable.rs::aliastab_lock`).
+                // bin_alias writes through `aliastab.add()` — the local
+                // `exec.aliases` HashMap is a stale init-time snapshot.
+                if let Ok(tab) = crate::ported::hashtable::aliastab_lock().read() {
+                    if key == "@" || key == "*" {
+                        let mut names: Vec<&String> = tab.iter().map(|(n, _)| n).collect();
+                        names.sort();
+                        let vals: Vec<String> = names
+                            .iter()
+                            .filter_map(|n| tab.get(n).map(|a| a.text.clone()))
+                            .collect();
+                        return Some(vals.join(" "));
+                    }
+                    return Some(tab.get(key).map(|a| a.text.clone()).unwrap_or_default());
+                }
+                Some(self.alias(key).unwrap_or_default())
+            }
+            "galiases" => {
+                if key == "@" || key == "*" {
+                    let entries = self.global_alias_entries();
+                    let vals: Vec<String> = entries.into_iter().map(|(_, v)| v).collect();
+                    return Some(vals.join(" "));
+                }
+                Some(self.global_alias(key).unwrap_or_default())
+            }
+            "saliases" => {
+                if key == "@" || key == "*" {
+                    let entries = self.suffix_alias_entries();
+                    let vals: Vec<String> = entries.into_iter().map(|(_, v)| v).collect();
+                    return Some(vals.join(" "));
+                }
+                Some(self.suffix_alias(key).unwrap_or_default())
+            }
+
+            // === TERMINFO (zsh/terminfo module) ===
+            // `${terminfo[capname]}` returns the escape sequence for
+            // capability `capname`. Direct port of zsh/Src/Modules/
+            // terminfo.c — the C version calls `tigetstr(name)` from
+            // ncurses; we map the common-subset capability names to
+            // standard xterm/VT escape sequences inline. Covers the
+            // function-keys / cursor-motion / clear / color set that
+            // user keymaps query (`key[F1]=$terminfo[kf1]` etc.).
+            "terminfo" => {
+                // Lazy lookup via ncurses tigetstr/tigetnum/tigetflag
+                // — the pre-populated assoc init seeds the common
+                // subset, but a script may query any cap by name
+                // (`$terminfo[acsc]`, `$terminfo[colors]`). Mirror
+                // zsh's terminfo.c::getterminfo lazy-resolve path.
+                Some(crate::modules::terminfo::getterminfo(key).unwrap_or_default())
+            }
+            // `termcap` is dispatched in the `magic_assoc_lookup`
+            // function (the primary special-array path) so that
+            // ${termcap[cl]} resolves before this fallback runs.
+            // Keeping a no-op arm here avoids a spurious "unknown
+            // assoc" diagnostic if a caller bypasses
+            // magic_assoc_lookup.
+            "termcap" => Some(crate::modules::termcap::gettermcap(key).unwrap_or_default()),
+
+            // === FUNCTIONS ===
+            "functions" => {
+                if key == "@" || key == "*" {
+                    return Some(self.function_names().join(" "));
+                }
+                // Apply zsh's getfn_functions formatter — leading-tab
+                // body, no trailing `;`. Direct port of Src/exec.c
+                // shipped via compile_zsh's fast path; this branch
+                // is the slow-path/subst_port entry that previously
+                // returned the raw user-typed source. Keeps
+                // `${functions[foo]:0:20}` (substring extraction)
+                // consistent with the fast-path `\$functions[foo]`.
+                let text = self.function_definition_text(key)?;
+                let formatted = FuncBodyFmt::render(text.trim());
+                Some(format!("\t{}", formatted))
+            }
+            "functions_source" => {
+                // ${functions_source[name]} → file path where the
+                // function was defined. zsh/Src/Modules/parameter.c
+                // exposes this as an assoc keyed by function name.
+                // For autoload functions we recover the source path
+                // via the same fpath walk that loads them; for inline
+                // functions we don't yet track the defining file, so
+                // emit empty in that case.
+                // find_function_file deleted with old exec.c stubs.
+                if key == "@" || key == "*" {
+                    let _ = self.function_names();
+                    return Some(String::new());
+                }
+                {
+                    let _ = key;
+                    Some(String::new())
+                }
+            }
+
+            // === COMMANDS (command hash table) ===
+            // ${commands[name]} → full path (or empty), per
+            // zsh/Modules/parameter.c. The @/* expansion enumerates
+            // every command on PATH (deduplicated, first-wins).
+            "commands" => {
+                if key == "@" || key == "*" {
+                    let path_var = env::var("PATH").unwrap_or_default();
+                    let mut seen: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    let mut names: Vec<String> = Vec::new();
+                    // Hashed entries first (rehash population) — read
+                    // from canonical `cmdnamtab` (Src/exec.c:5260).
+                    if let Ok(tab) = crate::ported::hashtable::cmdnamtab_lock().read() {
+                        for (k, _) in tab.iter() {
+                            if seen.insert(k.clone()) {
+                                names.push(k.clone());
+                            }
+                        }
+                    }
+                    for dir in path_var.split(':') {
+                        if dir.is_empty() {
+                            continue;
+                        }
+                        if let Ok(entries) = std::fs::read_dir(dir) {
+                            for entry in entries.flatten() {
+                                if let Ok(name) = entry.file_name().into_string() {
+                                    if seen.insert(name.clone()) {
+                                        names.push(name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    names.sort();
+                    return Some(names.join(" "));
+                }
+                if let Some(path) = self.find_in_path(key) {
+                    Some(path)
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === BUILTINS ===
+            "builtins" => {
+                let builtins: Vec<&str> = crate::vm_helper::BUILTIN_NAMES
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+                if key == "@" || key == "*" {
+                    return Some(builtins.join(" "));
+                }
+                if builtins.iter().any(|b| *b == key) {
+                    Some("defined".to_string())
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === PARAMETERS ===
+            // ${parameters[name]} → full attribute string per
+            // VarAttr::format_zsh (e.g. 'integer-readonly-export').
+            // @/* enumerates every parameter name, sorted+deduped.
+            "parameters" => {
+                if key == "@" || key == "*" {
+                    let mut names: std::collections::BTreeSet<String> =
+                        if let Ok(tab) = crate::ported::params::paramtab().read() {
+                            tab.keys().cloned().collect()
+                        } else {
+                            std::collections::BTreeSet::new()
+                        };
+                    if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                        names.extend(m.keys().cloned());
+                    }
+                    let v: Vec<String> = names.into_iter().collect();
+                    return Some(v.join(" "));
+                }
+                // Read PM_TYPE from paramtab Param flags first
+                // (canonical). PM_INTEGER → "integer", PM_FFLOAT|
+                // PM_EFLOAT → "float", PM_HASHED → "association",
+                // PM_ARRAY → "array", scalar default. Append PM_LOWER
+                // / PM_UPPER / PM_READONLY / PM_EXPORTED suffixes.
+                let flags = self.param_flags(key) as u32;
+                if flags != 0 || self.array(key).is_some() || self.assoc(key).is_some() {
+                    let base = if flags & PM_INTEGER != 0 {
+                        "integer"
+                    } else if flags & (PM_EFLOAT | PM_FFLOAT) != 0 {
+                        "float"
+                    } else if flags & PM_HASHED != 0 || self.assoc(key).is_some() {
+                        "association"
+                    } else if flags & PM_ARRAY != 0 || self.array(key).is_some() {
+                        "array"
+                    } else {
+                        "scalar"
+                    };
+                    let mut out = String::from(base);
+                    if flags & PM_LEFT != 0 {
+                        out.push_str("-left");
+                    }
+                    if flags & PM_RIGHT_B != 0 {
+                        out.push_str("-right_blanks");
+                    }
+                    if flags & PM_RIGHT_Z != 0 {
+                        out.push_str("-right_zeros");
+                    }
+                    if flags & PM_LOWER != 0 {
+                        out.push_str("-lower");
+                    }
+                    if flags & PM_UPPER != 0 {
+                        out.push_str("-upper");
+                    }
+                    if flags & PM_READONLY != 0 {
+                        out.push_str("-readonly");
+                    }
+                    if flags & PM_EXPORTED != 0 {
+                        out.push_str("-export");
+                    }
+                    return Some(out);
+                }
+                if self.has_assoc(key) {
+                    Some("association".to_string())
+                } else if self.has_array(key) {
+                    Some("array".to_string())
+                } else if self.has_scalar(key) || std::env::var(key).is_ok() {
+                    Some("scalar".to_string())
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === NAMED DIRECTORIES ===
+            // ${nameddirs[@]} returns paths in sorted-name order (was
+            // HashMap::values() with random iteration).
+            "nameddirs" => {
+                // Canonical `nameddirtab` lives in
+                // `src/ported/hashnameddir.rs` (port of `Src/hashnameddir.c`).
+                let tab = crate::ported::hashnameddir::nameddirtab();
+                if key == "@" || key == "*" {
+                    let snapshot: Vec<(String, String)> = tab
+                        .lock()
+                        .ok()
+                        .map(|g| g.iter().map(|(k, v)| (k.clone(), v.dir.clone())).collect())
+                        .unwrap_or_default();
+                    let mut keys: Vec<&(String, String)> = snapshot.iter().collect();
+                    keys.sort_by(|a, b| a.0.cmp(&b.0));
+                    let vals: Vec<String> = keys.iter().map(|(_, v)| v.clone()).collect();
+                    return Some(vals.join(" "));
+                }
+                Some(
+                    tab.lock()
+                        .ok()
+                        .and_then(|g| g.get(key).map(|nd| nd.dir.clone()))
+                        .unwrap_or_default(),
+                )
+            }
+
+            // === USER DIRECTORIES ===
+            // ${userdirs[name]} → home directory of user `name` per
+            // zsh/Modules/parameter.c userdirs_*. With @/* expansion,
+            // walk getpwent(3) to enumerate every passwd entry's
+            // home directory.
+            "userdirs" => {
+                #[cfg(unix)]
+                {
+                    if key == "@" || key == "*" {
+                        let mut homes: Vec<String> = Vec::new();
+                        unsafe {
+                            libc::setpwent();
+                            loop {
+                                let pwd = libc::getpwent();
+                                if pwd.is_null() {
+                                    break;
+                                }
+                                let dir = CStr::from_ptr((*pwd).pw_dir);
+                                homes.push(dir.to_string_lossy().to_string());
+                            }
+                            libc::endpwent();
+                        }
+                        homes.sort();
+                        homes.dedup();
+                        return Some(homes.join(" "));
+                    }
+                    if let Ok(name) = CString::new(key) {
+                        unsafe {
+                            let pwd = libc::getpwnam(name.as_ptr());
+                            if !pwd.is_null() {
+                                let dir = CStr::from_ptr((*pwd).pw_dir);
+                                return Some(dir.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+
+            // === USER GROUPS ===
+            // ${usergroups[name]} → GID of group `name`. With @/*
+            // expansion, walk getgrent(3) to enumerate every group's
+            // gid.
+            "usergroups" => {
+                #[cfg(unix)]
+                {
+                    if key == "@" || key == "*" {
+                        let mut gids: Vec<String> = Vec::new();
+                        unsafe {
+                            libc::setgrent();
+                            loop {
+                                let grp = libc::getgrent();
+                                if grp.is_null() {
+                                    break;
+                                }
+                                let name = CStr::from_ptr((*grp).gr_name);
+                                gids.push(name.to_string_lossy().to_string());
+                            }
+                            libc::endgrent();
+                        }
+                        gids.sort();
+                        gids.dedup();
+                        return Some(gids.join(" "));
+                    }
+                    if let Ok(name) = CString::new(key) {
+                        unsafe {
+                            let grp = libc::getgrnam(name.as_ptr());
+                            if !grp.is_null() {
+                                return Some((*grp).gr_gid.to_string());
+                            }
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+
+            // === DIRECTORY STACK ===
+            // Canonical `dirstack` lives in `modules/parameter.rs::DIRSTACK`
+            // — mirror of the C `dirstack` global (`Src/builtin.c:1456`).
+            "dirstack" => {
+                let dirs = crate::ported::modules::parameter::DIRSTACK
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default();
+                if key == "@" || key == "*" {
+                    return Some(dirs.join(" "));
+                }
+                if let Ok(idx) = key.parse::<usize>() {
+                    Some(dirs.get(idx).cloned().unwrap_or_default())
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === JOBS ===
+            "jobstates" => {
+                if key == "@" || key == "*" {
+                    let states: Vec<String> = self
+                        .jobs
+                        .iter()
+                        .map(|(id, job)| format!("{}:{:?}", id, job.state))
+                        .collect();
+                    return Some(states.join(" "));
+                }
+                if let Ok(id) = key.parse::<usize>() {
+                    if let Some(job) = self.jobs.get(id) {
+                        return Some(format!("{:?}", job.state));
+                    }
+                }
+                Some(String::new())
+            }
+            "jobtexts" => {
+                if key == "@" || key == "*" {
+                    let texts: Vec<String> = self
+                        .jobs
+                        .iter()
+                        .map(|(_, job)| job.command.clone())
+                        .collect();
+                    return Some(texts.join(" "));
+                }
+                if let Ok(id) = key.parse::<usize>() {
+                    if let Some(job) = self.jobs.get(id) {
+                        return Some(job.command.clone());
+                    }
+                }
+                Some(String::new())
+            }
+            "jobdirs" => {
+                // ${jobdirs[N]}: cwd at the time job N was launched.
+                // We don't yet capture per-job cwd at launch (would
+                // need a JobInfo.cwd field plumbed through add_job),
+                // so use the current PWD as a best-effort proxy. With
+                // @/* expansion, return one entry per active job so
+                // arr-length math (${#jobdirs}) matches ${#jobtexts}.
+                let pwd = self
+                    .scalar("PWD")
+                    .or_else(|| env::var("PWD").ok())
+                    .unwrap_or_default();
+                if key == "@" || key == "*" {
+                    let n = self.jobs.iter().count();
+                    return Some(vec![pwd; n].join(" "));
+                }
+                if let Ok(id) = key.parse::<usize>() {
+                    if self.jobs.get(id).is_some() {
+                        return Some(pwd);
+                    }
+                }
+                Some(String::new())
+            }
+
+            // === HISTORY ===
+            "history" => {
+                if key == "@" || key == "*" {
+                    // Return recent history
+                    if let Some(ref engine) = self.history {
+                        if let Ok(entries) = engine.recent(100) {
+                            let cmds: Vec<String> =
+                                entries.iter().map(|e| e.command.clone()).collect();
+                            return Some(cmds.join("\n"));
+                        }
+                    }
+                    return Some(String::new());
+                }
+                if let Ok(num) = key.parse::<usize>() {
+                    if let Some(ref engine) = self.history {
+                        if let Ok(Some(entry)) = engine.get_by_offset(num.saturating_sub(1)) {
+                            return Some(entry.command);
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+            "historywords" => {
+                // $historywords: flat list of words from recent history
+                // entries (zsh/Modules/parameter.c historywords_*).
+                // Each command is split on whitespace; the words are
+                // collected newest-first across the recent window.
+                if let Some(ref engine) = self.history {
+                    if let Ok(entries) = engine.recent(100) {
+                        let words: Vec<String> = entries
+                            .iter()
+                            .flat_map(|e| {
+                                e.command
+                                    .split_whitespace()
+                                    .map(|s| s.to_string())
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect();
+                        if key == "@" || key == "*" {
+                            return Some(words.join(" "));
+                        }
+                        if let Ok(idx) = key.parse::<usize>() {
+                            if idx >= 1 && idx <= words.len() {
+                                return Some(words[idx - 1].clone());
+                            }
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+
+            // === MODULES ===
+            // ${modules[name]} → "loaded" / "" per
+            // zsh/Src/Modules/parameter.c modules_*. zshrs tracks
+            // loaded modules via `_module_<name>` keys in
+            // self.options (see bin_zmodload). Always-loaded
+            // built-in modules are surfaced unconditionally so
+            // compsys's `[[ ${+modules[zsh/zutil]} ]]` gating works.
+            "modules" => {
+                const ALWAYS_LOADED: &[&str] = &[
+                    "zsh/parameter",
+                    "zsh/zutil",
+                    "zsh/complete",
+                    "zsh/complist",
+                    "zsh/zle",
+                    "zsh/main",
+                    "zsh/files",
+                ];
+                let user_loaded: Vec<String> = crate::ported::options::opt_state_snapshot()
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        if *v {
+                            k.strip_prefix("_module_").map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if key == "@" || key == "*" {
+                    let mut all: Vec<String> = ALWAYS_LOADED
+                        .iter()
+                        .map(|s| s.to_string())
+                        .chain(user_loaded.iter().cloned())
+                        .collect();
+                    all.sort();
+                    all.dedup();
+                    return Some(all.join(" "));
+                }
+                if ALWAYS_LOADED.contains(&key)
+                    || crate::ported::options::opt_state_get(&format!("_module_{}", key))
+                        .unwrap_or(false)
+                {
+                    Some("loaded".to_string())
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === RESERVED WORDS ===
+            "reswords" => {
+                let reswords = [
+                    "do",
+                    "done",
+                    "esac",
+                    "then",
+                    "elif",
+                    "else",
+                    "fi",
+                    "for",
+                    "case",
+                    "if",
+                    "while",
+                    "function",
+                    "repeat",
+                    "time",
+                    "until",
+                    "select",
+                    "coproc",
+                    "nocorrect",
+                    "foreach",
+                    "end",
+                    "in",
+                ];
+                if key == "@" || key == "*" {
+                    return Some(reswords.join(" "));
+                }
+                if let Ok(idx) = key.parse::<usize>() {
+                    Some(reswords.get(idx).map(|s| s.to_string()).unwrap_or_default())
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === PATCHARS (characters with special meaning in patterns) ===
+            "patchars" => {
+                let patchars = ["?", "*", "[", "]", "^", "#", "~", "(", ")", "|"];
+                if key == "@" || key == "*" {
+                    return Some(patchars.join(" "));
+                }
+                if let Ok(idx) = key.parse::<usize>() {
+                    Some(patchars.get(idx).map(|s| s.to_string()).unwrap_or_default())
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === FUNCTION CALL STACK ===
+            // $funcstack: array of function names in the current call
+            // chain (innermost first). Already maintained by the
+            // function-call code at vm_helper:7828-7835. Surface it here
+            // so `${funcstack[1]}` / `${funcstack[@]}` reads work.
+            // funcfiletrace / funcsourcetrace need separate tables (file
+            // and definition tracking) which we don't yet wire; emit
+            // empty for those until they're populated.
+            "funcstack" => {
+                if let Some(stack) = self.array("funcstack") {
+                    if key == "@" || key == "*" {
+                        return Some(stack.join(" "));
+                    }
+                    if let Ok(idx) = key.parse::<usize>() {
+                        // zsh subscripts are 1-based.
+                        if idx >= 1 && idx <= stack.len() {
+                            return Some(stack[idx - 1].clone());
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+            "functrace" => {
+                // $functrace: `caller_name:callsite_lineno` for each
+                // frame. We don't yet track call-site line numbers, so
+                // synthesize from funcstack with a `:0` placeholder
+                // line. This still lets scripts that test
+                // `[[ -n $functrace[1] ]]` work without false-empty.
+                if let Some(stack) = self.array("funcstack") {
+                    let synth: Vec<String> = stack.iter().map(|n| format!("{}:0", n)).collect();
+                    if key == "@" || key == "*" {
+                        return Some(synth.join(" "));
+                    }
+                    if let Ok(idx) = key.parse::<usize>() {
+                        if idx >= 1 && idx <= synth.len() {
+                            return Some(synth[idx - 1].clone());
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+            "funcfiletrace" | "funcsourcetrace" => {
+                // Would need file:line where each function was called
+                // from / defined in. Per-frame file tracking is not yet
+                // wired — return empty.
+                Some(String::new())
+            }
+
+            // === DISABLED VARIANTS (dis_*) ===
+            // ${dis_builtins[name]} → "defined" if the builtin was
+            // disabled via `disable name`. Tracked through
+            // self.options['_disabled_<name>']. The other dis_*
+            // variants (aliases/functions/reswords/patchars) lose
+            // their entries entirely on disable in zshrs's table
+            // model (see do_enable_disable at vm_helper:31371) so the
+            // disabled list isn't recoverable post-disable; emit
+            // empty for those.
+            "dis_builtins" => {
+                let disabled: Vec<String> = crate::ported::options::opt_state_snapshot()
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        if *v {
+                            k.strip_prefix("_disabled_").map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if key == "@" || key == "*" {
+                    let mut sorted = disabled.clone();
+                    sorted.sort();
+                    return Some(sorted.join(" "));
+                }
+                if disabled.iter().any(|d| d == key) {
+                    Some("defined".to_string())
+                } else {
+                    Some(String::new())
+                }
+            }
+            "dis_aliases"
+            | "dis_galiases"
+            | "dis_saliases"
+            | "dis_functions"
+            | "dis_functions_source"
+            | "dis_reswords"
+            | "dis_patchars" => Some(String::new()),
+
+            // === ZLE WIDGETS ===
+            // ${widgets[name]} → widget-type prefix per
+            // zsh/Src/Zle/zleparameter.c widgets_*: "builtin",
+            // "user:<funcname>", or "completion:<funcname>".
+            // Distinguishes builtin vs user-defined so
+            // ${(t)widgets[name]} works.
+            "widgets" => {
+                if key == "@" || key == "*" {
+                    let mut names = listwidgets();
+                    names.sort();
+                    return Some(names.join(" "));
+                }
+                if let Some(target) = getwidgettarget(key) {
+                    if target == key {
+                        Some("builtin".to_string())
+                    } else {
+                        Some(format!("user:{}", target))
+                    }
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === ZLE KEYMAPS ===
+            // ${keymaps[N]} per zleparameter.c keymaps_*: list of
+            // available keymap names. Single-key lookup returns 1
+            // ("set") if the keymap exists, "" otherwise.
+            "keymaps" => {
+                const KEYMAPS: &[&str] = &[
+                    "main",
+                    "emacs",
+                    "viins",
+                    "vicmd",
+                    "isearch",
+                    "command",
+                    "menuselect",
+                ];
+                if key == "@" || key == "*" {
+                    return Some(KEYMAPS.join(" "));
+                }
+                if KEYMAPS.contains(&key) {
+                    Some("1".to_string())
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === SIGNAL NAMES ===
+            // $signals: array indexed by signal number (1-based) where
+            // each slot holds the bare signal name. Direct port of
+            // zsh/Modules/parameter.c signals_*. zshrs uses libc signal
+            // constants so the mapping matches the host platform
+            // (macOS USR1=30, Linux USR1=10).
+            "signals" => {
+                let map: &[(i32, &str)] = &[
+                    (libc::SIGHUP, "HUP"),
+                    (libc::SIGINT, "INT"),
+                    (libc::SIGQUIT, "QUIT"),
+                    (libc::SIGILL, "ILL"),
+                    (libc::SIGTRAP, "TRAP"),
+                    (libc::SIGABRT, "ABRT"),
+                    #[cfg(target_os = "macos")]
+                    (libc::SIGEMT, "EMT"),
+                    (libc::SIGFPE, "FPE"),
+                    (libc::SIGKILL, "KILL"),
+                    (libc::SIGBUS, "BUS"),
+                    (libc::SIGSEGV, "SEGV"),
+                    (libc::SIGSYS, "SYS"),
+                    (libc::SIGPIPE, "PIPE"),
+                    (libc::SIGALRM, "ALRM"),
+                    (libc::SIGTERM, "TERM"),
+                    (libc::SIGURG, "URG"),
+                    (libc::SIGSTOP, "STOP"),
+                    (libc::SIGTSTP, "TSTP"),
+                    (libc::SIGCONT, "CONT"),
+                    (libc::SIGCHLD, "CHLD"),
+                    (libc::SIGTTIN, "TTIN"),
+                    (libc::SIGTTOU, "TTOU"),
+                    (libc::SIGIO, "IO"),
+                    (libc::SIGXCPU, "XCPU"),
+                    (libc::SIGXFSZ, "XFSZ"),
+                    (libc::SIGVTALRM, "VTALRM"),
+                    (libc::SIGPROF, "PROF"),
+                    (libc::SIGWINCH, "WINCH"),
+                    #[cfg(target_os = "macos")]
+                    (libc::SIGINFO, "INFO"),
+                    (libc::SIGUSR1, "USR1"),
+                    (libc::SIGUSR2, "USR2"),
+                ];
+                if key == "@" || key == "*" {
+                    // Return one entry per signal in numeric order (1..N).
+                    let max = map.iter().map(|(n, _)| *n).max().unwrap_or(0) as usize;
+                    let mut slots: Vec<String> = vec![String::new(); max];
+                    for (n, name) in map {
+                        if (*n as usize) >= 1 && (*n as usize) <= max {
+                            slots[*n as usize - 1] = (*name).to_string();
+                        }
+                    }
+                    return Some(slots.join(" "));
+                }
+                // Numeric subscript -> name; name -> empty (zsh's
+                // $signals is keyed by number).
+                if let Ok(n) = key.parse::<i32>() {
+                    for (sig_num, name) in map {
+                        if *sig_num == n {
+                            return Some((*name).to_string());
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+
+            // Not a special array
+            _ => None,
+        }
+    }
+}
