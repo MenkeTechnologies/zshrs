@@ -2573,191 +2573,66 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // BUILTIN_SET_VAR — `name=value` runtime scalar assignment.
+    // PURE PASSTHRU: hand to canonical `setsparam` (C port of
+    // `Src/params.c::setsparam`). That walks assignsparam →
+    // assignstrvalue which already does:
+    //   - readonly rejection (zerr + errflag at c:2701)
+    //   - PM_INTEGER math evaluation (mathevali at c:3590)
+    //   - PM_EFLOAT / PM_FFLOAT float coercion (c:3608)
+    //   - PM_LOWER / PM_UPPER case fold (via setstrvalue)
+    //   - GSU special-param dispatch (homesetfn / ifssetfn / etc.)
+    //   - allexport env mirror via the PM_EXPORTED setfn
+    //
+    // Bridge-only concerns kept here:
+    //   - inline_env_stack (zsh `X=foo cmd` scoped env)
+    //   - recorder emission (PFA-SMR)
+    //   - vm.last_status propagation for `a=$(cmd)` exit-code chaining
     vm.register_builtin(BUILTIN_SET_VAR, |vm, argc| {
         let args = pop_args(vm, argc);
         let mut iter = args.into_iter();
         let name = iter.next().unwrap_or_default();
         let value = iter.next().unwrap_or_default();
-        let blocked = with_executor(|exec| {
-            // zsh has a fixed set of intrinsic read-only specials that
-            // can never be assigned to from script. This is a hard
-            // wired list (params.c `ROVAR` flag) — not user-settable.
-            // NOTE: `_` is NOT readonly — zsh allows assignments to
-            // and `unset` of it (it's just the last-arg auto-update).
-            // ZSH_ARGZERO is also writable in zsh per Src/params.c
-            // (uses PM_SCALAR without PM_READONLY); zinit's startup
-            // line `ZSH_ARGZERO=$0` relies on this.
-            let is_intrinsic_ro = matches!(name.as_str(), "PPID" | "LINENO" | "argv0" | "ARGC");
-            let is_ro = is_intrinsic_ro || exec.is_readonly_param(&name);
-            if is_ro {
-                eprintln!("zshrs:1: read-only variable: {}", name);
-                // Mirror zsh -c: read-only assignment failure aborts
-                // the shell with status 1, not just the command.
-                std::process::exit(1);
-            }
-            // If the variable was previously declared `integer` (or
-            // `typeset -i`), arith-evaluate the value before storing.
-            // zsh: `integer i; i=5*3` stores 15. Mirrors C's PM_TYPE
-            // dispatch at Src/params.c assignsparam:3270.
-            let is_integer = exec.is_integer_param(&name);
-            // `typeset -i N` base-formatting reads `Param.base` directly
-            // (Src/zsh.h:1860 — int print base). Per C convfloat /
-            // convbase in params.c, base==0 means default decimal.
-            let int_base: Option<u32> = if is_integer {
-                let b = crate::ported::params::paramtab()
-                    .read()
-                    .ok()
-                    .and_then(|t| t.get(&name).map(|pm| pm.base))
-                    .unwrap_or(0);
-                if b > 0 {
-                    Some(b as u32)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            let stored = if is_integer && !value.is_empty() {
-                let evaluated =
-                    crate::ported::math::mathevali(&crate::ported::subst::singsub(&value))
-                        .unwrap_or(0)
-                        .to_string();
-                if let Some(base) = int_base {
-                    evaluated
-                        .parse::<i64>()
-                        .map(|n| format_int_in_base(n, base))
-                        .unwrap_or(evaluated)
-                } else {
-                    evaluated
-                }
-            } else {
-                value.clone()
-            };
-            // c:Src/params.c — `typeset -l` (PM_LOWER) / `-u`
-            // (PM_UPPER) case-fold the assigned value before storage.
-            // Direct port of the PM_LOWER/PM_UPPER setstrvalue arms.
-            let stored = if exec.is_uppercase_param(&name) {
-                stored.to_uppercase()
-            } else if exec.is_lowercase_param(&name) {
-                stored.to_lowercase()
-            } else {
-                stored
-            };
-            // Mirror scalar→array if name is the scalar side of a
-            // typeset -T tie. Direct port of Src/params.c PM_TIED:
-            // assigning to PATH must update both `path` (the array
-            // mirror) and the process env (so child execs see the
-            // new value, and so find_in_path / external lookups
-            // resolve correctly). Without the env::set_var step
-            // here, `PATH=/nope; ls` continued to find ls via the
-            // shell's startup-time env PATH.
-            if let Some((arr_name, sep)) = exec.tied_scalar_to_array.get(&name).cloned() {
-                let parts: Vec<String> = if stored.is_empty() {
-                    Vec::new()
-                } else {
-                    stored.split(&sep).map(String::from).collect()
-                };
-                exec.set_array(arr_name, parts);
-                std::env::set_var(&name, &stored);
-                // Clear the command hash on PATH change so subsequent
-                // command lookups walk the new PATH instead of
-                // returning stale absolute paths from before the
-                // assignment. zsh's bin_set rehashes lazily; this is
-                // the simplest equivalent.
-                if name == "PATH" {
-                    if let Ok(mut t) = crate::ported::hashtable::cmdnamtab_lock().write() {
-                        t.clear();
-                    }
-                }
-                let _ = exec; // silence unused-binding in the no-PATH branch
-            }
-            // zsh enforces a minimum of 1 on `HISTSIZE` — `HISTSIZE=0`
-            // and `HISTSIZE=-5` both clamp to `1`. Mirror at storage
-            // time so subsequent reads return the clamped value.
-            let stored = if name == "HISTSIZE" {
-                stored
-                    .parse::<i64>()
-                    .map(|n| n.max(1).to_string())
-                    .unwrap_or_else(|_| stored.clone())
-            } else {
-                stored
-            };
-            // If we're inside an inline-assignment frame (`X=foo cmd`
-            // is currently exec'ing the prefix), record the previous
-            // value so END_INLINE_ENV can restore it after the command
-            // returns. Then export the new value to the env so the
-            // child sees it. zsh's `X=foo cmd` semantics: shell
-            // variable AND env entry both vanish after cmd returns.
-            let in_inline_env = !exec.inline_env_stack.is_empty();
-            if in_inline_env {
+        with_executor(|exec| {
+            // Inline-assignment frame tracking (`X=foo cmd` reverts on
+            // command return).
+            if !exec.inline_env_stack.is_empty() {
                 let prev_var = crate::ported::params::getsparam(&name);
                 let prev_env = std::env::var(&name).ok();
                 exec.inline_env_stack
                     .last_mut()
                     .unwrap()
                     .push((name.clone(), prev_var, prev_env));
-                std::env::set_var(&name, &stored);
+                std::env::set_var(&name, &value);
             }
-            exec.set_scalar(name.clone(), stored.clone());
-            // Mirror the write into paramtab (the C-port canonical
-            // store at `Src/params.c:3350 setsparam`). Without this,
-            // `src/ported/subst.rs::vars_get` and
-            // `src/ported/params.rs::getsparam` see paramtab-only and
-            // miss script-level `x=hello` assignments — heredoc body
-            // substitution, `${x}` inside `singsub`, and any other
-            // C-port reader that doesn't go through fusevm's typed-
-            // variable path returns empty. paramtab IS the C-source
-            // canonical scalar store; this mirror keeps it coherent
-            // with the parallel `exec.variables` HashMap.
-            crate::ported::params::setsparam(&name, &stored); // c:params.c:3350
-                                                              // `set -o allexport`: every assignment auto-exports the var.
-                                                              // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
-                                                              // Without this, env didn't see user-set scalars.
-            let allexport = crate::ported::options::opt_state_get("allexport").unwrap_or(false);
-            let already_exported =
-                (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
+            // Canonical setsparam handles readonly, integer math, case
+            // fold, GSU dispatch.
+            crate::ported::params::setsparam(&name, &value);
+            // PM_EXPORTED / allexport env mirror — read AFTER setsparam
+            // so the flag bit reflects any GSU setfn side-effects.
+            let allexport =
+                crate::ported::options::opt_state_get("allexport").unwrap_or(false);
+            let already_exported = (exec.param_flags(&name) as u32
+                & crate::ported::zsh_h::PM_EXPORTED)
+                != 0;
             if allexport || already_exported {
-                std::env::set_var(&name, &stored);
+                std::env::set_var(&name, &value);
             }
-            // PFA-SMR aspect: every top-level scalar assignment
-            // (`VAR=value`) compiles to BUILTIN_SET_VAR, so this is the
-            // chokepoint. Skip the recorder when inside a function scope
-            // (those are runtime locals, not config state) and skip the
-            // intrinsic specials zsh maintains itself.
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled()
                 && exec.local_scope_depth == 0
                 && !matches!(
                     name.as_str(),
-                    "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC" | "?" | "_" | "RANDOM"
+                    "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC"
+                    | "?" | "_" | "RANDOM"
                 )
             {
                 let ctx = exec.recorder_ctx();
                 let attrs = exec.recorder_attrs_for(&name);
-                crate::recorder::emit_assign_typed(&name, &stored, attrs, ctx);
+                crate::recorder::emit_assign_typed(&name, &value, attrs, ctx);
             }
-            false
         });
-        if blocked {
-            return Value::Status(1);
-        }
-        // Propagate cmd-subst's exit status to $?. zsh: `a=$(false);
-        // echo $?` → 1. run_command_substitution sets last_status
-        // before returning; we pick it up here so the assignment's
-        // status reflects the cmd-subst result.
-        //
-        // CRITICAL: read `vm.last_status` (live), NOT
-        // `exec.last_status` (stale — only synced at statement
-        // boundaries; see the BUILTIN_RETURN handler ~line 1003).
-        // compile_assign emits LoadInt(0) + SetStatus BEFORE the
-        // RHS is evaluated specifically to clear the live status,
-        // so a plain assignment (no cmd-subst) reads back 0 and a
-        // `$(...)` value reads back the subst's exit. Reading the
-        // stale exec field here would always propagate the previous
-        // command's status, breaking `false; a=plain; echo $?` → 1
-        // (should be 0).
-        let captured = vm.last_status;
-        Value::Status(captured)
+        Value::Status(vm.last_status)
     });
 
     // BUILTIN_REGISTER_FUNCTION (id 282) was a legacy JSON-AST body
