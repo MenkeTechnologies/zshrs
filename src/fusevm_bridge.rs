@@ -3911,80 +3911,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
+    // BUILTIN_PARAM_FILTER — `${var:#pat}` / `${var:|name}` etc.
+    // PURE PASSTHRU: rebuild `${name:#pat}` and route to paramsubst.
     vm.register_builtin(BUILTIN_PARAM_FILTER, |vm, _argc| {
-        let pattern_raw = vm.pop().to_str();
+        let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // Expand `$VAR` / `${VAR}` / `$(cmd)` / `$((expr))` references in
-        // the pattern before matching. Direct port of Src/subst.c:3192
-        // case '#' arm which calls singsub on the operand. zinit's
-        // `${(@)region_highlight:#$_LAST_HIGHLIGHT}` and similar idioms
-        // rely on the pattern being expanded first.
-        let pattern = if pattern_raw.contains('$') || pattern_raw.contains('`') {
-            crate::ported::subst::singsub(&pattern_raw)
-        } else {
-            pattern_raw
-        };
-        let arr_val = with_executor(|exec| exec.array(&name));
-        // Inline of the deleted extendedglob_match helper (Src/glob.c
-        // pattern_match path): leading `^` inverts when extendedglob is
-        // set; otherwise falls through to glob_match_static. Plain
-        // literal-equal path retained for the no-meta-char case
-        // (cheaper than running a regex compile on every element).
-        let matches_glob = |s: &str, pat: &str| -> bool {
-            let starts_neg = pat.starts_with('^');
-            if pat.contains('*') || pat.contains('?') || pat.contains('[') || starts_neg {
-                let extendedglob = with_executor(|exec| {
-                    crate::ported::options::opt_state_get("extendedglob").unwrap_or(false)
-                });
-                if extendedglob {
-                    if let Some(neg) = pat.strip_prefix('^') {
-                        return !crate::vm_helper::glob_match_static(s, neg);
-                    }
-                }
-                crate::vm_helper::glob_match_static(s, pat)
-            } else {
-                s == pat
-            }
-        };
-        // (M) flag inverts the filter: keep matching elements, drop
-        // non-matching (vs default which drops matches). Direct port
-        // of subst.c's SUB_MATCH bit which getmatch consults to
-        // pick the "matched" disposition over the "rest" default.
-        let invert = {
-            let sf = crate::ported::subst::sub_flags_get(); // c:2171
-            let inv = (sf & 0x0008) != 0; // c:2171 SUB_MATCH
-            crate::ported::subst::sub_flags_set(0); // c:2169 (consume)
-            inv
-        };
-        if let Some(arr) = arr_val {
-            let kept: Vec<fusevm::Value> = arr
-                .into_iter()
-                .filter(|elem| {
-                    // c:2171
-                    let m = matches_glob(elem, &pattern); // c:2171
-                    if invert {
-                        m
-                    } else {
-                        !m
-                    } // c:2171
-                })
-                .map(fusevm::Value::str)
-                .collect();
-            return fusevm::Value::Array(kept);
+        let body = format!("${{{}:#{}}}", name, pattern);
+        let mut ret_flags: i32 = 0;
+        let (_full, _pos, nodes) =
+            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            with_executor(|exec| exec.set_last_status(1));
         }
-        let val = with_executor(|exec| exec.get_variable(&name));
-        let m = matches_glob(&val, &pattern);
-        if invert {
-            // c:2171
-            if m {
-                fusevm::Value::str(val)
-            } else {
-                fusevm::Value::str(String::new())
-            } // c:2171
-        } else if m {
-            fusevm::Value::str(String::new())
+        if nodes.is_empty() {
+            fusevm::Value::Array(Vec::new())
+        } else if nodes.len() == 1 {
+            fusevm::Value::str(nodes.into_iter().next().unwrap())
         } else {
-            fusevm::Value::str(val)
+            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
         }
     });
 
@@ -5120,661 +5064,60 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // `${#name}` — pops [name]. Returns the value's element count for
     // arrays (indexed and assoc) or character length for scalars.
+    // BUILTIN_PARAM_LENGTH — `${#name}`. PURE PASSTHRU.
     vm.register_builtin(BUILTIN_PARAM_LENGTH, |vm, _argc| {
-        let name_raw = vm.pop().to_str();
-        // Strip `[@]` / `[*]` subscript suffix — `${#arr[@]}` and
-        // `${#m[@]}` are element-count forms, same as `${#arr}` /
-        // `${#m}`. Fast paths sometimes hand us the bare name and
-        // sometimes leave the subscript attached.
-        let name = name_raw
-            .strip_suffix("[@]")
-            .or_else(|| name_raw.strip_suffix("[*]"))
-            .unwrap_or(&name_raw)
-            .to_string();
-        // `${#arr[N]}` — length of the Nth ELEMENT, not the array
-        // count. Verified empirically: arr=(aa bb ccc); ${#arr[2]} → 2
-        // in real zsh. Resolve the bare name + bracketed subscript
-        // (with embedded `$VAR` references expanded) to a single
-        // value, then count its chars. Skip `[@]` / `[*]` — those
-        // were stripped above as splice forms.
-        if let Some(open) = name.find('[') {
-            if name.ends_with(']') && &name[open..] != "[@]" && &name[open..] != "[*]" {
-                let bare = &name[..open];
-                let raw_idx = &name[open + 1..name.len() - 1];
-                let elem = with_executor(|exec| {
-                    // Expand `$VAR` / `${VAR}` references inside the
-                    // subscript before lookup (single dollar pass).
-                    let resolved_idx = expand_dollar_refs(raw_idx, exec);
-                    if let Some(arr) = exec.array(bare) {
-                        if let Ok(n) = resolved_idx.trim().parse::<i64>() {
-                            let len = arr.len() as i64;
-                            let idx = if n > 0 {
-                                n - 1
-                            } else if n < 0 {
-                                len + n
-                            } else {
-                                -1
-                            };
-                            if idx >= 0 && (idx as usize) < arr.len() {
-                                return arr[idx as usize].clone();
-                            }
-                        }
-                        return String::new();
-                    }
-                    if let Some(map) = exec.assoc(bare) {
-                        return map.get(resolved_idx.as_str()).cloned().unwrap_or_default();
-                    }
-                    String::new()
-                });
-                return fusevm::Value::str(elem.chars().count().to_string());
-            }
+        let name = vm.pop().to_str();
+        let body = format!("${{#{}}}", name);
+        let mut ret_flags: i32 = 0;
+        let (_full, _pos, nodes) =
+            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            with_executor(|exec| exec.set_last_status(1));
         }
-        let count = with_executor(|exec| {
-            // ${#@} / ${#*} → count of positional params (= $#).
-            // Without this, `@`/`*` fell through to `get_variable`
-            // which returned the IFS-joined positional string and
-            // we counted chars (5 for "a b c" instead of 3).
-            if name == "@" || name == "*" || name == "argv" {
-                return exec.pparams().len();
-            }
-            // Magic-array specials whose length is data-driven, not
-            // taken from `exec.arrays`/`exec.assoc_arrays`. Direct
-            // ports of the relevant `SPECIALPMDEF` entries:
-            //   - `errnos`     → Src/Modules/system.c:902
-            //   - `commands`   → Src/Modules/parameter.c
-            //   - `aliases`    → Src/Modules/parameter.c
-            //   - `functions`  → Src/Modules/parameter.c
-            //   - `parameters` → Src/Modules/parameter.c
-            //   - `options`    → Src/Modules/parameter.c
-            //   - `sysparams`  → Src/Modules/system.c:904
-            match name.as_str() {
-                "errnos" => return crate::modules::system::ERRNO_NAMES.len(),
-                "epochtime" => return 2, // [seconds, nanoseconds]
-                "commands" => {
-                    return crate::ported::hashtable::cmdnamtab_lock()
-                        .read()
-                        .map(|t| t.len())
-                        .unwrap_or(0)
-                }
-                "aliases" => return exec.alias_entries().len(),
-                "galiases" => return exec.global_alias_entries().len(),
-                "saliases" => return exec.suffix_alias_entries().len(),
-                "functions" => return exec.function_names().len(),
-                "options" => return crate::ported::options::opt_state_len(),
-                "sysparams" => return 3, // pid, ppid, procsubstpid
-                // Magic-assoc lengths backed by canonical scanners.
-                // Direct ports of parameter.c SPECIALPMDEF entries —
-                // each scan callback emits one entry per node, so the
-                // count is the length of the scan_magic_assoc_keys
-                // collected list.
-                "builtins" | "dis_builtins" | "dis_functions" | "dis_aliases" | "dis_galiases"
-                | "dis_saliases" => {
-                    return crate::vm_helper::scan_magic_assoc_keys(&name)
-                        .map(|v| v.len())
-                        .unwrap_or(0);
-                }
-                _ => {}
-            }
-            if let Some(arr) = exec.array(&name) {
-                arr.len()
-            } else if let Some(assoc) = exec.assoc(&name) {
-                assoc.len()
-            } else {
-                exec.get_variable(&name).chars().count()
-            }
-        });
-        fusevm::Value::str(count.to_string())
+        if nodes.is_empty() {
+            fusevm::Value::str("0")
+        } else if nodes.len() == 1 {
+            fusevm::Value::str(nodes.into_iter().next().unwrap())
+        } else {
+            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+        }
     });
 
     // `${var/pat/repl}` / `${var//pat/repl}` / `${var/#pat/repl}` /
     // `${var/%pat/repl}` — Pops [name, pattern, replacement, op_byte].
     // op: 0=first, 1=all, 2=anchor-prefix (`/#`), 3=anchor-suffix (`/%`).
+    // BUILTIN_PARAM_REPLACE — `${var/pat/repl}` / `${var//pat/repl}` /
+    // `${var/#pat/repl}` / `${var/%pat/repl}`. PURE PASSTHRU.
     vm.register_builtin(BUILTIN_PARAM_REPLACE, |vm, _argc| {
-        let dq_flag = vm.pop().to_int() != 0;
+        let _dq_flag = vm.pop().to_int() != 0;
         let op = vm.pop().to_int() as u8;
-        let repl_raw = vm.pop().to_str();
-        let pattern_raw = vm.pop().to_str();
+        let repl = vm.pop().to_str();
+        let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // SUB_* flag bits set by the (M)/(R)/(B)/(E)/(N)/(S) flag-loop
-        // arms. Direct port of zsh's getmatch() flag dispatch — these
-        // alter the disposition of the match result:
-        //   M=0x08 — return matched portion
-        //   R=0x10 — return rest after match
-        //   B=0x20 — return 1-based start index
-        //   E=0x40 — return 1-based end index
-        //   N=0x80 — return match length
-        //   S=0x04 — substring search (anywhere) instead of anchored
-        // Read once and consume so subsequent paramsubst calls see
-        // a clean slate — direct port of subst.c flag-loop pattern.
-        let (sub_match, sub_rest, sub_bind, sub_eind, sub_len, _sub_substr) = {
-            let f = crate::ported::subst::sub_flags_get();
-            crate::ported::subst::sub_flags_set(0);
-            (
-                (f & 0x0008) != 0, // c:2171 M
-                (f & 0x0010) != 0, // c:2174 R
-                (f & 0x0020) != 0, // c:2177 B
-                (f & 0x0040) != 0, // c:2180 E
-                (f & 0x0080) != 0, // c:2183 N
-                (f & 0x0004) != 0, // c:2186 S
-            )
+        // op encoding: 0 = first `/`, 1 = all `//`, 2 = anchor-prefix
+        // `/#`, 3 = anchor-suffix `/%`. The brace form distinguishes
+        // first-vs-all by single vs doubled slash, and anchored by
+        // a `#` or `%` immediately after the slash(es).
+        let body = match op {
+            0 => format!("${{{}/{}/{}}}", name, pattern, repl),
+            1 => format!("${{{}//{}/{}}}", name, pattern, repl),
+            2 => format!("${{{}/#{}/{}}}", name, pattern, repl),
+            3 => format!("${{{}/%{}/{}}}", name, pattern, repl),
+            _ => format!("${{{}/{}/{}}}", name, pattern, repl),
         };
-        // Both pattern and replacement get parameter / cmd-subst /
-        // arith expansion before use (zsh semantics — `${s/$pat/X}`
-        // resolves $pat).
-        // Untokenize before pattern compile — zsh's lexer leaves
-        // Snull/DQ markers and meta-encoded metachars in the
-        // pattern stream. regex::Regex::new errors on those bytes,
-        // and even when it compiles, it matches against tokenized
-        // text rather than the user's literal pattern. Direct port
-        // of bin_test's `untokenize(pattern)` call before patcompile.
-        let pattern = crate::ported::subst::singsub(&pattern_raw);
-        let pattern = crate::lex::untokenize(&pattern);
-        // Replacement: full singsub with skip_filesub so a literal
-        // leading `~` in the replacement reaches the output as-is
-        // (per zsh, `${var/#pat/~}` keeps the tilde — the
-        // p10k / oh-my-zsh idiom of replacing `$HOME` with `~` for
-        // display). Was using a hand-rolled `expand_no_tilde` that
-        // only handled `$VAR` / `${VAR}` references, missing
-        // `$(cmd)` and `$((expr))` in templates like
-        // `\${var//foo/$(date +%s)}`.
-        // Inline `singsub-with-skip_filesub` — C zsh sets the flag
-        // inline before calling singsub rather than wrapping in a
-        // helper. Direct port of the prefork SUB_FLAG | SKIP_FILESUB
-        // pattern. PORT.md: no helpers without C counterpart.
-        let repl = with_executor(|exec| {
-            let saved = crate::ported::subst::SKIP_FILESUB.with(|c| c.get());
-            crate::ported::subst::SKIP_FILESUB.with(|c| c.set(true));
-            let r = crate::ported::subst::singsub(&repl_raw);
-            crate::ported::subst::SKIP_FILESUB.with(|c| c.set(saved));
-            if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-                exec.set_last_status(1);
-            }
-            r
-        });
-        let repl = crate::lex::untokenize(&repl);
-        // Strip backslash escapes from the pattern. zsh: `\X` in a
-        // ${var/pat/repl} pattern means "literal X" — the backslash
-        // is removed and X is used as a literal char (regardless of
-        // whether X is a pattern metachar). Without this, `${a//\:/-}`
-        // tried to match the literal "\:" in $a which never matched.
-        // We preserve `\\` (literal backslash) and `\X` for X in the
-        // pattern-meta set, since regex compile expects those raw.
-        let pattern = {
-            let mut out = String::with_capacity(pattern.len());
-            let mut it = pattern.chars().peekable();
-            while let Some(c) = it.next() {
-                if c == '\\' {
-                    if let Some(&nx) = it.peek() {
-                        // For non-meta chars, drop the backslash.
-                        // For metas keep the escape so regex still
-                        // matches them literally below.
-                        // Keep escape only for actual zsh pattern
-                        // metachars (the ones that have special pattern
-                        // meaning). `.` is regex-meta but NOT zsh-meta,
-                        // so `\.` drops the backslash → literal `.`.
-                        if matches!(nx, '?' | '*' | '[' | ']' | '(' | ')' | '|' | '\\') {
-                            out.push(c);
-                        } else {
-                            out.push(nx);
-                            it.next();
-                        }
-                    } else {
-                        out.push(c);
-                    }
-                } else {
-                    out.push(c);
-                }
-            }
-            out
-        };
-        // Inline pattern flags `(#i)` / `(#l)` / `(#I)` / `(#b)` apply
-        // to ${var//pat/repl}. `(#b)` enables backref capture: each
-        // `(...)` group in the pattern becomes accessible via
-        // `${match[N]}` (1-based) in the replacement. Per
-        // Src/pattern.c — the C source uses `pat_pure` flags +
-        // `pat_subme` arrays; the Rust port plumbs through
-        // `regex::Captures` and writes `state.arrays["match"]`
-        // before each replacement-string expansion.
-        // Inline glob-flag pre-parse — direct call to patgetglobflags
-        // + bit-mask extraction (matches C pattern.c:1066+ inline).
-        let (pattern, case_insensitive_repl, _l_flag_repl, _approx_repl, backref_mode) =
-            if let Some((bits, _assert, consumed)) =
-                crate::ported::pattern::patgetglobflags(&pattern)
-            {
-                let ci = (bits & crate::ported::zsh_h::GF_IGNCASE) != 0;
-                let l = (bits & crate::ported::zsh_h::GF_LCMATCHUC) != 0;
-                let errs = bits & 0xff;
-                let approx = if errs != 0 { Some(errs as u32) } else { None };
-                let br = (bits & crate::ported::zsh_h::GF_BACKREF) != 0;
-                (pattern[consumed..].to_string(), ci, l, approx, br)
-            } else {
-                (pattern.clone(), false, false, None, false)
-            };
-        // zsh patterns in ${var/pat/repl} support `?`, `*`, `[...]`,
-        // anchored `#`/`%` (handled via op codes 2/3). Compile to a
-        // regex for the actual matching; falls back to plain string
-        // when the pattern has no glob metas (faster).
-        // Include `(` as a glob trigger — zsh's `(...)` is a grouping
-        // (with `|` for alternation). `${a/(?)/X}` should match like
-        // `${a/?/X}` (paren is the group). Without `(` in the trigger
-        // set, paren patterns fell into the literal-string path and
-        // matched nothing.
-        // `#` (and its `##` repetition pair) is an extendedglob
-        // postfix metachar — `a##` = one-or-more `a`. Include it
-        // in the trigger set so `${var//a##/X}` routes through the
-        // regex compile path instead of the literal-string fallback.
-        // Bare `#` alone is non-meta — but it's safe to over-trigger
-        // here because the regex compiler escapes literals it can't
-        // interpret as quantifier postfix anyway.
-        let has_glob = pattern
-            .chars()
-            .any(|c| matches!(c, '?' | '*' | '[' | ']' | '(' | '#'));
-        // backref_mode (set by `(#b)` / `(#m)` / `(#M)` flags) needs
-        // per-match capture iteration so `$match[N]` / `$MATCH` /
-        // `$MBEGIN` / `$MEND` resolve PER-replacement against the
-        // current capture. The literal-string replace path skips
-        // captures entirely, so MATCH stays empty. Force the regex
-        // path when backref_mode is set even for literal patterns.
-        let glob_re: Option<regex::Regex> = if has_glob || case_insensitive_repl || backref_mode {
-            // Convert the glob pattern to a regex string:
-            //   ? → . (any single char)
-            //   * → .* (any seq)
-            //   [...] → kept as-is (regex char class)
-            //   ( ) → kept as regex group; | as alternation
-            //   other regex metas → escaped
-            let mut re = String::with_capacity(pattern.len() * 2);
-            let mut chars = pattern.chars().peekable();
-            // `#` / `##` extendedglob postfix detector for the
-            // BUILTIN_PARAM_REPLACE pattern compile. Matches the
-            // same handling in subst_port::glob_to_regex_capturing
-            // and vm_helper::glob_match_static — direct port of zsh's
-            // pattern.c Pound/POUND2 cases. Used by zinit's
-            // main-message-formatter pattern `[^\}]##` (one-or-
-            // more non-`}`).
-            let consume_postfix =
-                |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<&'static str> {
-                    if chars.peek() == Some(&'#') {
-                        chars.next();
-                        if chars.peek() == Some(&'#') {
-                            chars.next();
-                            Some("+")
-                        } else {
-                            Some("*")
-                        }
-                    } else {
-                        None
-                    }
-                };
-            while let Some(c) = chars.next() {
-                match c {
-                    '?' => {
-                        re.push('.');
-                        if let Some(q) = consume_postfix(&mut chars) {
-                            re.push_str(q);
-                        }
-                    }
-                    '*' => {
-                        re.push_str(".*");
-                        if let Some(q) = consume_postfix(&mut chars) {
-                            re.push_str(q);
-                        }
-                    }
-                    '[' => {
-                        // Pass through to the closing ']' (already
-                        // valid regex syntax for most char classes).
-                        // zsh uses BOTH `[!...]` and `[^...]` for class
-                        // negation; regex only accepts `^`. Translate
-                        // a leading `!` after `[` to `^`. Track escape
-                        // state so `[\]…]` (escaped `]` inside class)
-                        // doesn't terminate the class on the FIRST `]`.
-                        // Direct port of zsh's pattern.c P_BRACT_END:
-                        // a backslash-quoted `]` inside a class stays
-                        // literal. Used by hist-substring's
-                        // `[\][()|\\*?#<>~^]` pattern.
-                        re.push('[');
-                        if chars.peek() == Some(&'!') {
-                            chars.next();
-                            re.push('^');
-                        }
-                        // First-char `]` is literal in zsh and regex
-                        // (POSIX rule), so allow it without closing.
-                        let mut first = true;
-                        let mut escaped = false;
-                        while let Some(cc) = chars.next() {
-                            if escaped {
-                                re.push(cc);
-                                escaped = false;
-                                first = false;
-                                continue;
-                            }
-                            if cc == '\\' {
-                                re.push(cc);
-                                escaped = true;
-                                continue;
-                            }
-                            if cc == ']' && !first {
-                                re.push(cc);
-                                break;
-                            }
-                            re.push(cc);
-                            first = false;
-                        }
-                        if let Some(q) = consume_postfix(&mut chars) {
-                            re.push_str(q);
-                        }
-                    }
-                    '\\' => {
-                        // `\\(#e)` / `\\(#s)` — escaped backslash
-                        // followed by end/start anchor. After
-                        // expand_string's `\x00\` preprocessing,
-                        // this arrives as `\(#e)` (one backslash
-                        // already consumed as escape-marker). Per
-                        // zsh's pattern.c, `\\` in a pattern is
-                        // escape-backslash (literal `\`). When that
-                        // literal `\` is followed by `(#e)` /
-                        // `(#s)`, emit `\\$` / `\\^`. Detected
-                        // here as 5-char `\(#e)` (one `\` then
-                        // `(#e)` which the (#e) arm below would
-                        // otherwise treat as anchor with a literal
-                        // `(` — losing the backslash). Used by
-                        // zinit's `(#b)((*)\\(#e)|(*))`.
-                        let mut peek = chars.clone();
-                        let p1 = peek.next();
-                        let p2 = peek.next();
-                        let p3 = peek.next();
-                        let p4 = peek.next();
-                        if p1 == Some('(')
-                            && p2 == Some('#')
-                            && (p3 == Some('e') || p3 == Some('s'))
-                            && p4 == Some(')')
-                        {
-                            re.push_str("\\\\");
-                            chars.next();
-                            chars.next();
-                            chars.next();
-                            chars.next();
-                            re.push(if p3 == Some('e') { '$' } else { '^' });
-                            continue;
-                        }
-                        re.push('\\');
-                        if let Some(next) = chars.next() {
-                            re.push(next);
-                        }
-                    }
-                    // `(#e)` / `(#s)` end/start anchors — direct port
-                    // of zsh's pattern.c P_EOL / P_BOL tokens. 4-char
-                    // lookahead detects them; emit regex `$` / `^`.
-                    // Used by zinit's
-                    // `(#b)((*)\\(#e)|(*))` array-replace pattern.
-                    '(' if {
-                        let mut peek = chars.clone();
-                        let p1 = peek.next();
-                        let p2 = peek.next();
-                        let p3 = peek.next();
-                        p1 == Some('#') && (p2 == Some('e') || p2 == Some('s')) && p3 == Some(')')
-                    } =>
-                    {
-                        chars.next(); // consume '#'
-                        let kind = chars.next().unwrap(); // 'e' or 's'
-                        chars.next(); // consume ')'
-                        re.push(if kind == 'e' { '$' } else { '^' });
-                    }
-                    // `(`, `|` are zsh group/alternation operators
-                    // — keep them as regex equivalents. `)` may be
-                    // followed by `#`/`##` postfix applied to the
-                    // closed group (e.g. `(foo|bar)##` = one-or-more
-                    // of foo/bar).
-                    '(' | '|' => re.push(c),
-                    ')' => {
-                        re.push(c);
-                        if let Some(q) = consume_postfix(&mut chars) {
-                            re.push_str(q);
-                        }
-                    }
-                    // Regex meta chars that are NOT glob metas — escape
-                    // so the regex compiler treats them literally.
-                    '.' | '+' | '^' | '$' | '{' | '}' => {
-                        re.push('\\');
-                        re.push(c);
-                    }
-                    _ => {
-                        re.push(c);
-                        if let Some(q) = consume_postfix(&mut chars) {
-                            re.push_str(q);
-                        }
-                    }
-                }
-            }
-            // Apply `(#i)` case-insensitive flag if it was present
-            // in the original pattern. Same `(?i)` prefix as
-            // glob_match_static uses.
-            let final_re = if case_insensitive_repl {
-                format!("(?i){}", re)
-            } else {
-                re
-            };
-            regex::Regex::new(&final_re).ok()
-        } else {
-            None
-        };
-        let one = |val: String| -> String {
-            // SUB_M/R/B/E/N short-circuit — alter the disposition
-            // before doing the actual replacement. Direct port of
-            // zsh's getmatch() which returns one of these views
-            // instead of the substituted string when the bit is set.
-            // Matched-portion / rest / position / length variants
-            // all skip the replacement template entirely.
-            let any_disposition = sub_match || sub_rest || sub_bind || sub_eind || sub_len;
-            if any_disposition {
-                if let Some(ref rx) = glob_re {
-                    if let Some(m) = rx.find(&val) {
-                        if sub_match {
-                            return m.as_str().to_string();
-                        }
-                        if sub_rest {
-                            return val[m.end()..].to_string();
-                        }
-                        if sub_bind {
-                            return (m.start() + 1).to_string();
-                        }
-                        if sub_eind {
-                            return m.end().to_string();
-                        }
-                        if sub_len {
-                            return (m.end() - m.start()).to_string();
-                        }
-                    } else {
-                        // No match: M/R return empty, B/E/N return 0.
-                        if sub_match || sub_rest {
-                            return String::new();
-                        }
-                        return "0".to_string();
-                    }
-                } else if let Some(pos) = val.find(pattern.as_str()) {
-                    let end = pos + pattern.len();
-                    if sub_match {
-                        return pattern.clone();
-                    }
-                    if sub_rest {
-                        return val[end..].to_string();
-                    }
-                    if sub_bind {
-                        return (pos + 1).to_string();
-                    }
-                    if sub_eind {
-                        return end.to_string();
-                    }
-                    if sub_len {
-                        return pattern.len().to_string();
-                    }
-                } else {
-                    if sub_match || sub_rest {
-                        return String::new();
-                    }
-                    return "0".to_string();
-                }
-            }
-            if let Some(ref rx) = glob_re {
-                // Helper that runs ONE replacement: takes the
-                // captures, populates `state.arrays["match"]`
-                // (1-based indexing), then expands the replacement
-                // template via `expand_string` so `$match[N]` in
-                // the template resolves to the just-captured group.
-                // Mirrors C zsh's pat_subme + addbackref handling
-                // around Src/pattern.c (pattry, patmatch).
-                let expand_repl_with_caps = |caps: &regex::Captures| -> String {
-                    if backref_mode {
-                        with_executor(|exec| {
-                            // `(#b)` — per-group captures into `match[N]`
-                            // (1-based array). Also seed `MATCH` with the
-                            // whole-match text so `(#m)` plus `$MATCH` in
-                            // the replacement returns the matched portion.
-                            // Direct port of Src/pattern.c addbackref +
-                            // pat_pure_m which sets both views.
-                            let mut arr = Vec::with_capacity(caps.len());
-                            let mut begins = Vec::with_capacity(caps.len());
-                            let mut ends = Vec::with_capacity(caps.len());
-                            for i in 1..caps.len() {
-                                if let Some(m) = caps.get(i) {
-                                    arr.push(m.as_str().to_string());
-                                    begins.push((m.start() + 1).to_string());
-                                    ends.push(m.end().to_string());
-                                } else {
-                                    arr.push(String::new());
-                                    begins.push("0".to_string());
-                                    ends.push("0".to_string());
-                                }
-                            }
-                            exec.set_array("match".to_string(), arr);
-                            // mbegin/mend arrays — 1-based start
-                            // and end positions of each capture
-                            // group. Direct port of zsh's
-                            // pat_pure_m population.
-                            exec.set_array("mbegin".to_string(), begins);
-                            exec.set_array("mend".to_string(), ends);
-                            if let Some(m0) = caps.get(0) {
-                                exec.set_scalar("MATCH".to_string(), m0.as_str().to_string());
-                                exec.set_scalar("MBEGIN".to_string(), (m0.start() + 1).to_string());
-                                exec.set_scalar("MEND".to_string(), m0.end().to_string());
-                            }
-                        });
-                        crate::ported::subst::singsub(&repl_raw)
-                    } else {
-                        repl.clone()
-                    }
-                };
-                match op {
-                    0 => {
-                        if backref_mode {
-                            // `replacen` doesn't expose Captures —
-                            // reimplement: find first match, expand
-                            // replacement from its caps, splice.
-                            if let Some(caps) = rx.captures(&val) {
-                                let m = caps.get(0).unwrap();
-                                let r = expand_repl_with_caps(&caps);
-                                return format!("{}{}{}", &val[..m.start()], r, &val[m.end()..]);
-                            }
-                            val
-                        } else {
-                            rx.replacen(&val, 1, repl.as_str()).to_string()
-                        }
-                    }
-                    1 => {
-                        if backref_mode {
-                            // Iterate each match, build output piecewise.
-                            let mut out = String::with_capacity(val.len());
-                            let mut last = 0usize;
-                            for caps in rx.captures_iter(&val) {
-                                let m = caps.get(0).unwrap();
-                                out.push_str(&val[last..m.start()]);
-                                let r = expand_repl_with_caps(&caps);
-                                out.push_str(&r);
-                                last = m.end();
-                            }
-                            out.push_str(&val[last..]);
-                            out
-                        } else {
-                            rx.replace_all(&val, repl.as_str()).to_string()
-                        }
-                    }
-                    2 => {
-                        // Anchored prefix: only match at start.
-                        if let Some(caps) = rx.captures(&val) {
-                            let m = caps.get(0).unwrap();
-                            if m.start() == 0 {
-                                let r = if backref_mode {
-                                    expand_repl_with_caps(&caps)
-                                } else {
-                                    repl.clone()
-                                };
-                                return format!("{}{}", r, &val[m.end()..]);
-                            }
-                        }
-                        val
-                    }
-                    3 => {
-                        // Anchored suffix: last match whose end is val.len().
-                        let mut last_caps: Option<regex::Captures> = None;
-                        for caps in rx.captures_iter(&val) {
-                            let m = caps.get(0).unwrap();
-                            if m.end() == val.len() {
-                                last_caps = Some(caps);
-                            }
-                        }
-                        if let Some(caps) = last_caps {
-                            let m = caps.get(0).unwrap();
-                            let r = if backref_mode {
-                                expand_repl_with_caps(&caps)
-                            } else {
-                                repl.clone()
-                            };
-                            return format!("{}{}", &val[..m.start()], r);
-                        }
-                        val
-                    }
-                    _ => val,
-                }
-            } else {
-                match op {
-                    0 => val.replacen(&pattern, &repl, 1),
-                    1 => val.replace(&pattern, &repl),
-                    2 => {
-                        if val.starts_with(&pattern) {
-                            format!("{}{}", repl, &val[pattern.len()..])
-                        } else {
-                            val
-                        }
-                    }
-                    3 => {
-                        if val.ends_with(&pattern) {
-                            format!("{}{}", &val[..val.len() - pattern.len()], repl)
-                        } else {
-                            val
-                        }
-                    }
-                    _ => val,
-                }
-            }
-        };
-        // Array case: per-element replacement (default), or
-        // join-then-replace when in DQ context. zsh: `"${a/o/O}"`
-        // for `a=(one two three)` joins to "one two three", then
-        // does the FIRST replacement only -> "One two three".
-        // Unquoted `${a/o/O}` per-element first -> "One twO three".
-        let arr_val = with_executor(|exec| exec.array(&name));
-        if let Some(arr) = arr_val {
-            if dq_flag {
-                let joined = arr.join(" ");
-                return fusevm::Value::str(one(joined));
-            }
-            let mapped: Vec<fusevm::Value> = arr
-                .into_iter()
-                .map(|s| fusevm::Value::str(one(s)))
-                .collect();
-            return fusevm::Value::Array(mapped);
+        let mut ret_flags: i32 = 0;
+        let (_full, _pos, nodes) =
+            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            with_executor(|exec| exec.set_last_status(1));
         }
-        let val = with_executor(|exec| exec.get_variable(&name));
-        fusevm::Value::str(one(val))
+        if nodes.is_empty() {
+            fusevm::Value::Array(Vec::new())
+        } else if nodes.len() == 1 {
+            fusevm::Value::str(nodes.into_iter().next().unwrap())
+        } else {
+            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+        }
     });
 
     vm.register_builtin(BUILTIN_REGISTER_COMPILED_FN, |vm, argc| {
