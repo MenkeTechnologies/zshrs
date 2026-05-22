@@ -641,11 +641,11 @@ impl ShellExecutor {
 
     /// Test whether an array parameter exists in paramtab.
     pub fn has_array(&self, name: &str) -> bool {
-        crate::ported::params::paramtab()
-            .read()
-            .ok()
-            .and_then(|t| t.get(name).map(|pm| pm.u_arr.is_some()))
-            .unwrap_or(false)
+        // Canonical: getaparam(name).is_some() — includes PM_TYPE check
+        // + digit-first-name rejection. The inline u_arr.is_some()
+        // shortcut returned true for PM_HASHED Params that had
+        // u_arr=Some, which is structurally wrong.
+        crate::ported::params::getaparam(name).is_some()
     }
 
     /// Test whether an associative array parameter exists. Reads
