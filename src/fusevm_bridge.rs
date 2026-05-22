@@ -1010,15 +1010,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_SYNC, |vm, argc| {
         let args = pop_args(vm, argc);
-        // Canonical bin_sync per files.c:53 — `sync(); return 0;`.
-        let ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        let status = crate::ported::modules::files::bin_sync("sync", &args, &ops, 0);
-        Value::Status(status)
+        // Canonical bin_sync per files.c:53 via BUILTINS["sync"] entry.
+        Value::Status(dispatch_builtin("sync", args))
     });
 
     vm.register_builtin(BUILTIN_MKDIR, |vm, argc| {
@@ -1030,17 +1023,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_STRFTIME, |vm, argc| {
         let args = pop_args(vm, argc);
-        // Canonical bin_strftime takes (nam, argv, ops, func) per
-        // Src/Modules/datetime.c:187. Adapt &[String] → &[&str] +
-        // empty options inline (datetime parses no flags).
-        let ops = options {
-            ind: [0u8; MAX_OPS],
-            args: Vec::new(),
-            argscount: 0,
-            argsalloc: 0,
-        };
-        let status = crate::ported::modules::datetime::bin_strftime("strftime", &args, &ops, 0);
-        Value::Status(status)
+        // Canonical bin_strftime per Src/Modules/datetime.c:187 via
+        // BUILTINS["strftime"] entry. execbuiltin walks the optstr.
+        Value::Status(dispatch_builtin("strftime", args))
     });
 
     vm.register_builtin(BUILTIN_ZSLEEP, |vm, argc| {
