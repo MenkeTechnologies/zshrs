@@ -2349,14 +2349,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
-            // Dispatch priority (Src/Modules/parameter.c:2235-2298 ports):
+            // Canonical PARTAB dispatch (Src/Modules/parameter.c:2235-
+            // 2298 + Src/Modules/{mapfile,terminfo,termcap,system}.c +
+            // Src/Zle/zleparameter.c SPECIALPMDEFs):
             //   1. PARTAB_ARRAY: PM_ARRAY entries → whole-array getfn
-            //      (dirstack/funcstack/patchars/reswords/etc.).
-            //   2. PARTAB:       PM_HASHED entries → scan keys + per-key get
-            //      (aliases/commands/functions/options/history/jobs/etc.).
-            //   3. Legacy get_special_array_value for the few unported
-            //      names (terminfo/termcap/mapfile/sysparams/errnos +
-            //      historywords until its getfn lands).
+            //   2. PARTAB:       PM_HASHED entries → scan keys + per-key
+            //
+            // Every magic-assoc name now routes through canonical
+            // getpm*/scanpm* fn pointers. The legacy
+            // `get_special_array_value` dispatcher has been deleted.
+            let _ = exec;
             if let Some(values) = crate::vm_helper::partab_array_get(&name) {
                 Some(values)
             } else if let Some(keys) = crate::vm_helper::partab_scan_keys(&name) {
@@ -2366,11 +2368,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         .collect::<Vec<_>>(),
                 )
             } else {
-                crate::vm_helper::scan_magic_assoc_keys(&name).map(|keys| {
-                    keys.iter()
-                        .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
-                        .collect::<Vec<_>>()
-                })
+                None
             }
         });
         if let Some(vals) = magic_vals {
