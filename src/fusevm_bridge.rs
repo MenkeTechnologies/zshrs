@@ -5609,77 +5609,19 @@ impl crate::ported::vm_helper::ShellExecutor {
             "zpty" => return crate::fusevm_bridge::dispatch_builtin("zpty", rest_vec.clone()),
             "ztcp" => return crate::fusevm_bridge::dispatch_builtin("ztcp", rest_vec.clone()),
             "zsocket" => {
-                // Shim — parses the BUILTIN spec "ad:ltv" from
-                // socket.c:276 into a real `options` struct, then
-                // invokes the canonical free-fn port at
-                // crate::ported::modules::socket::bin_zsocket whose
-                // signature matches C `bin_zsocket(nam, args, ops,
-                // func)` exactly.
-                let mut ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                let mut positional: Vec<String> = Vec::new();
-                let mut i = 0;
-                while i < rest_vec.len() {
-                    let a = &rest_vec[i];
-                    if a == "--" {
-                        i += 1;
-                        positional.extend_from_slice(&rest_vec[i..]);
-                        break;
-                    }
-                    if let Some(rest) = a.strip_prefix('-') {
-                        if rest.is_empty() {
-                            positional.push(a.clone());
-                            i += 1;
-                            continue;
-                        }
-                        let chars: Vec<char> = rest.chars().collect();
-                        let mut j = 0;
-                        while j < chars.len() {
-                            let c = chars[j] as u8;
-                            if c == b'd' {
-                                ops.ind[c as usize] = (ops.args.len() + 1) as u8;
-                                let rest_after = &rest[j + 1..];
-                                if !rest_after.is_empty() {
-                                    ops.args.push(rest_after.to_string());
-                                } else {
-                                    i += 1;
-                                    ops.args.push(rest_vec.get(i).cloned().unwrap_or_default());
-                                }
-                                ops.argscount = ops.args.len() as i32;
-                                break;
-                            }
-                            if c.is_ascii_alphabetic() {
-                                ops.ind[c as usize] = 1;
-                            }
-                            j += 1;
-                        }
-                    } else {
-                        positional.push(a.clone());
-                    }
-                    i += 1;
-                }
-                return bin_zsocket("zsocket", &positional, &ops, 0);
+                // Route through canonical dispatch_builtin which goes
+                // via execbuiltin's BUILTINS["zsocket"].optstr parse
+                // ("ad:ltv" per Src/Modules/socket.c:276 BUILTIN spec).
+                // Replaces 55 lines of inline option-bit packing that
+                // duplicated execbuiltin's flag-parser.
+                return crate::fusevm_bridge::dispatch_builtin("zsocket", rest_vec.clone());
             }
             "private" => {
-                // bin_private now takes the canonical C signature
-                // (name, args, ops, func, assigns) per Src/Modules/
-                // param_private.c:217.
-                let mut ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                return crate::modules::param_private::bin_private(
-                    "private",
-                    &rest_vec,
-                    &ops,
-                    0,
-                );
+                // Route through canonical dispatch_builtin → execbuiltin
+                // → BUILTINS["private"] handler (param_private.c:217).
+                // Eliminates a 16-line inline ops-construct + direct
+                // bin_private call.
+                return crate::fusevm_bridge::dispatch_builtin("private", rest_vec.clone());
             }
             "zformat" => {
                 return crate::fusevm_bridge::dispatch_builtin("zformat", rest_vec.clone())
@@ -5689,24 +5631,10 @@ impl crate::ported::vm_helper::ShellExecutor {
             }
             // `unalias`/`unhash`/`unfunction` share `bin_unhash` but
             // each carries its own funcid (BIN_UNALIAS / BIN_UNHASH /
-            // BIN_UNFUNCTION) in the BUILTINS table. Route through
-            // execbuiltin so the correct funcid + optstr propagate —
-            // without this `unalias` was a silent no-op.
+            // BIN_UNFUNCTION) — dispatch_builtin handles the BUILTINS
+            // lookup + funcid propagation via execbuiltin.
             "unalias" | "unhash" | "unfunction" => {
-                // Fallback when fusevm doesn't have a BUILTIN_*
-                // opcode registered for the name (e.g. shell-builtin
-                // table mismatch). Route through execbuiltin with the
-                // correct entry from BUILTINS.
-                let bn_idx = crate::ported::builtin::BUILTINS
-                    .iter()
-                    .position(|b| b.node.nam == cmd.as_str());
-                if let Some(idx) = bn_idx {
-                    let bn_static: &'static crate::ported::zsh_h::builtin =
-                        &crate::ported::builtin::BUILTINS[idx];
-                    let bn_ptr = bn_static as *const _ as *mut _;
-                    return crate::ported::builtin::execbuiltin(rest_vec, Vec::new(), bn_ptr);
-                }
-                return 1;
+                return crate::fusevm_bridge::dispatch_builtin(cmd.as_str(), rest_vec.clone());
             }
             // zsh-bundled rename helpers — implemented natively in
             // Rust so `autoload -U zmv` works without shipping the
@@ -5716,17 +5644,9 @@ impl crate::ported::vm_helper::ShellExecutor {
             "zln" => return crate::extensions::ext_builtins::zmv(&rest_vec, "ln"),
             "zcalc" => return crate::extensions::ext_builtins::zcalc(&rest_vec),
             "zselect" => {
-                // Canonical bin_zselect per zselect.c:65 takes
-                // (nam, args, ops, func); the C source parses its
-                // own option string inline, so an empty Options is
-                // sufficient at this call site.
-                let ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                return crate::ported::modules::zselect::bin_zselect("zselect", &rest_vec, &ops, 0);
+                // Route through canonical dispatch_builtin which goes
+                // via execbuiltin → BUILTINS["zselect"] (zselect.c:272).
+                return crate::fusevm_bridge::dispatch_builtin("zselect", rest_vec.clone());
             }
             "cap" => return crate::fusevm_bridge::dispatch_builtin("cap", rest_vec.clone()),
             "getcap" => return crate::fusevm_bridge::dispatch_builtin("getcap", rest_vec.clone()),
