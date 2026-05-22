@@ -2528,11 +2528,28 @@ pub fn paramsubst(
         // flag_q*, flag_z_*, flag_g_*, etc.) all collapsed back to
         // their canonical C single-int state slots per Rule D.
 
-        // c:1658 — `int isarr = 0;`. -1=force-keep-empty, 0=scalar,
-        // 1=array, 2=split-scalar (see c:1647-1657 comment). Tracked
-        // implicitly by Rust via Option<Vec<String>> in current port;
-        // a true isarr int is not yet wired in — placeholder pending
-        // full LinkList-based rewrite.
+        // c:1658 — `int isarr = 0;`. State machine per c:1647-1657:
+        //   -1 = force-keep-empty (nojoin set)
+        //    0 = scalar shape (single string in `value`)
+        //    1 = array shape (multi-element list)
+        //    2 = split-scalar (array came from splitting a scalar)
+        //
+        // Transitions ported from C (each with c:NNN cite at the
+        // mutation site):
+        //   c:2714 isarr=0 after assoc-key-flag scalar pick
+        //   c:2859 isarr=0 after subscript single-element pick
+        //   c:2887 isarr=0 after numeric subscript single-pick
+        //   c:2923 isarr=v->scanflags=0 after getindex single-slot
+        //   c:3030 isarr=-1 when nojoin set
+        //   c:3034 isarr=0 when qt && !getlen && isarr>0 (sepjoin)
+        //   c:3197 isarr=0 after substring-on-scalar
+        //   c:4235 isarr=1 when arrasg forces array shape
+        //
+        // Used as the canonical gate at c:4245 (`if (isarr)`) for
+        // sort/unique/splat. Replaces the Rust-only
+        // `split_parts.is_some()` proxy that was structurally drifting
+        // from C's explicit int state.
+        let mut isarr: i32 = 0; // c:1658
 
         // c:1663 — `int plan9 = isset(RCEXPANDPARAM);`
         let mut plan9 = isset(RCEXPANDPARAM); // c:1663
@@ -3970,6 +3987,8 @@ pub fn paramsubst(
             value = assoc_get(&var_name) // c:2256
                 .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")) // c:2256
                 .unwrap_or_default();
+            // c:2922 — getarrvalue sets isarr=1 for assoc-value fetch.
+            isarr = 1;
         } else if (nojoin == 2) {
             // c:2167
             // (@) array splat — preserve element shape via space-join.
@@ -3979,9 +3998,22 @@ pub fn paramsubst(
                 .as_ref()
                 .map(|a| a.join(" "))
                 .unwrap_or_else(|| raw_value.clone());
+            // c:2922 — getarrvalue sets isarr=1; nojoin=2 keeps it.
+            if arrays_contains(&var_name) || assoc_contains(&var_name) {
+                isarr = 1;
+            }
         } else {
             // c:N/A
             value = raw_value.clone();
+            // c:2922 — getarrvalue sets isarr=1 when source is an
+            // indexed/assoc array. raw_value is already sepjoin'd
+            // (per `getsparam` returning `sepjoin(arr)`), but the
+            // underlying aval is array-shaped — track via isarr so
+            // the c:3029-3036 transition + c:4245 sort/splat gates
+            // see the correct state.
+            if subscript.is_none() && (arrays_contains(&var_name) || assoc_contains(&var_name)) {
+                isarr = 1;
+            }
         }
         // subst.c:3885-3887 YUK — empty / empty-first array → scalar "" when !plan9
         if !plan9 && (nojoin == 2) {
@@ -3989,6 +4021,45 @@ pub fn paramsubst(
                 if a.first().map_or(true, |s| s.is_empty()) {
                     value = String::new();
                 }
+            }
+        }
+        // c:3029-3036 — array → scalar transition under DQ-join.
+        // Direct port:
+        //   if (isarr) {
+        //       if (nojoin)
+        //           isarr = -1;
+        //       if (qt && !getlen && isarr > 0) {
+        //           val = sepjoin(aval, sep, 1);
+        //           isarr = 0;
+        //       }
+        //   }
+        // The `qt && !getlen && isarr > 0` arm fires for DQ-wrapped
+        // array reads without `(#)` length or `(@)` nojoin: the
+        // array collapses to a scalar via sepjoin BEFORE operator
+        // processing. After this, isarr=0 means the c:4245 sort/
+        // unique/splat block is skipped (matches `if (isarr)` gate).
+        // For `(@)arr`, nojoin=2 keeps isarr at -1 not 0, so the
+        // block STILL fires and splats per the explicit @-override.
+        if isarr != 0 {
+            // c:3029
+            if nojoin != 0 {
+                // c:3030
+                isarr = -1; // c:3030
+            }
+            // c:3032 — `if (qt && !getlen && isarr > 0)`. The
+            // `!getlen` clause is unconditionally true here:
+            // zshrs's ${#name} length-form is handled in an earlier
+            // arm that returns before reaching this transition, so
+            // `getlen` is always 0 at this point in the flow.
+            if qt && isarr > 0 {
+                // c:3032
+                // value already holds the sepjoin'd form from the
+                // value-init block above (raw_value via getsparam =
+                // sepjoin(arr) at params.c:2367, OR the arr.join(" ")
+                // branch). The C source does sepjoin here; we
+                // mirror by leaving `value` as-is (already joined)
+                // and zeroing isarr to signal scalar shape.
+                isarr = 0; // c:3034
             }
         }
         // split_parts: tracks any post-operator array-shape result
@@ -5118,9 +5189,13 @@ pub fn paramsubst(
         }
         // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
         // subst.c:4180-4253 array sortit/unique post-processing.
-        // Applies on space-joined value; reassembles after.
-        if sortit != SORTIT_ANYOLDHOW || unique {
-            // c:4290 if (sortit != SORTIT_ANYOLDHOW)
+        //
+        // c:4245 — `if (isarr) { ... }` — the sort + unique +
+        // splat block is INSIDE this gate. Scalar shape (isarr=0)
+        // after DQ sepjoin at c:3034 means no sort applies. C does
+        // not have a separate "sort the joined string" path.
+        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) {
+            // c:4245 + c:4290
             // Sort/unique source: prefer split_parts (any prior
             // operator result like :# filter, (s::) split, or
             // assoc-splat) so sort applies to the actual element
