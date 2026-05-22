@@ -140,20 +140,6 @@ pub mod zsh_version {
 /// Match an intercept pattern against a command name or full command string.
 /// Supports: exact match, glob ("git *", "_*", "*"), or "all".
 
-/// Get or compile a regex, caching the result
-pub(crate) fn cached_regex(pattern: &str) -> Option<regex::Regex> {
-    let mut cache = REGEX_CACHE.lock();
-    if let Some(re) = cache.get(pattern) {
-        return Some(re.clone());
-    }
-    match regex::Regex::new(pattern) {
-        Ok(re) => {
-            cache.insert(pattern.to_string(), re.clone());
-            Some(re)
-        }
-        Err(_) => None,
-    }
-}
 
 /// O(1) builtin-name lookup set derived from the canonical
 /// `BUILTINS` table (`src/ported/builtin.rs:122`, the 1:1 port of
@@ -184,45 +170,7 @@ pub(crate) static BUILTIN_NAMES: LazyLock<HashSet<String>> = LazyLock::new(|| {
     s
 });
 
-/// Slice an array per zsh `${arr:offset[:length]}` semantics: the
-/// offset is 0-based "skip N elements" (so `${arr:1:2}` returns
-/// elements at indices 1,2). Negative offset counts from the end.
-/// `length < 0` means "to the end".
-pub(crate) fn slice_array_zero_based(arr: &[String], offset: i64, length: i64) -> Vec<String> {
-    let n = arr.len() as i64;
-    if n == 0 {
-        return Vec::new();
-    }
-    let start = if offset < 0 {
-        (n + offset).max(0) as usize
-    } else {
-        (offset as usize).min(arr.len())
-    };
-    let take = if length < 0 {
-        arr.len().saturating_sub(start)
-    } else {
-        (length as usize).min(arr.len().saturating_sub(start))
-    };
-    arr.iter().skip(start).take(take).cloned().collect()
-}
 
-/// Same shape but for positional params (`@`/`*`). zsh treats
-/// position 0 as `$0` (the script/shell name). For `${@:0}` it
-/// includes `$0`; for `${@:1}` it skips `$0` and starts at `$1`.
-/// Internally `positional_params[0]` is `$1`, so we prepend `$0`
-/// then slice 0-based.
-pub(crate) fn slice_positionals(exec: &ShellExecutor, offset: i64, length: i64) -> Vec<String> {
-    let pp = exec.pparams();
-    let mut all: Vec<String> = Vec::with_capacity(pp.len() + 1);
-    all.push(
-        exec.scalar("0")
-            .unwrap_or_else(|| std::env::args().next().unwrap_or_default()),
-    );
-    for p in pp {
-        all.push(p);
-    }
-    slice_array_zero_based(&all, offset, length)
-}
 
 use crate::exec_jobs::{JobState, JobTable};
 use crate::parse::{Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag};
@@ -1249,10 +1197,6 @@ impl ShellExecutor {
     // host_apply_redirect / host_redirect_scope_begin / host_redirect_scope_end /
     // host_set_pending_stdin / host_exec_external moved to src/fusevm_bridge.rs
     // (extension; not a port of Src/exec.c).
-
-
-    /// Tab expansion — direct port of `zexpandtabs(const char *s, int len, int width, int startpos, FILE *fout, int all)` in zsh/Src/utils.c:5973.
-    /// Moved to `crate::ported::utils::zexpandtabs`; re-exported below.
 
     /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
     /// Bytecode is stored in rkyv keyed by (path, mtime).
@@ -2959,12 +2903,6 @@ impl crate::ported::vm_helper::ShellExecutor {
     }
 
 }
-
-// =====================================================================
-// MOVED FROM: src/ported/options.rs
-// =====================================================================
-
-impl crate::ported::vm_helper::ShellExecutor {}
 
 // =====================================================================
 // MOVED FROM: src/ported/params.rs
