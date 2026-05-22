@@ -2143,38 +2143,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
-    // `[[ s =~ pat ]]` regex match — extra-builtin fallback path so the
-    // conditional grammar can route here when Op::RegexMatch isn't wired.
-    // Uses the same regex cache as the host method.
-    vm.register_builtin(BUILTIN_REGEX_MATCH, |vm, _argc| {
-        let pat = vm.pop().to_str();
-        let s = vm.pop().to_str();
-        // Same untokenize before regex compile as ZshrsHost::regex_match
-        // — Snull/DQ markers from quoted patterns must be stripped
-        // before the regex engine sees them. Direct port of
-        // bin_test/cond_match's untokenize() call.
-        let pat = crate::lex::untokenize(&pat);
-        let s = crate::lex::untokenize(&s);
-        let mut cache = REGEX_CACHE.lock();
-        let matched = if let Some(re) = cache.get(&pat) {
-            re.is_match(&s)
-        } else {
-            match regex::Regex::new(&pat) {
-                Ok(re) => {
-                    let m = re.is_match(&s);
-                    cache.insert(pat.clone(), re);
-                    m
-                }
-                Err(_) => false,
-            }
-        };
-        if matched {
-            Value::Status(0)
-        } else {
-            Value::Status(1)
-        }
-    });
-
     // `*(qual)` glob qualifier filter. Stack: [pattern, qualifier].
     // Pattern is glob-expanded normally, then each result is filtered by the
     // qualifier predicate. Common qualifiers:
@@ -2226,52 +2194,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
-    // `m[k]+=tail` — append onto the existing value (string concat). Mirrors
-    // zsh's += behavior on assoc-array entries. Missing key creates it with
-    // just `tail`, matching SET_ASSOC's create-on-demand.
-    vm.register_builtin(BUILTIN_APPEND_ASSOC, |vm, _argc| {
-        let tail = vm.pop().to_str();
-        let key = vm.pop().to_str();
-        let name = vm.pop().to_str();
-        with_executor(|exec| {
-            exec.unset_scalar(&name);
-            let mut map = exec.assoc(&name).unwrap_or_default();
-            match map.get_mut(&key) {
-                Some(existing) => existing.push_str(&tail),
-                None => {
-                    map.insert(key.clone(), tail.clone());
-                }
-            }
-            exec.set_assoc(name.clone(), map);
-            // PFA-SMR aspect: assoc subscript-append `m[k]+=tail`.
-            // Recorder emits a structured assoc event with the
-            // POST-append value so replay reconstructs end state
-            // directly (no need to model the +=tail concat).
-            #[cfg(feature = "recorder")]
-            if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
-                let ctx = exec.recorder_ctx();
-                let attrs = exec.recorder_attrs_for(&name);
-                let new_val = exec
-                    .assoc(&name)
-                    .and_then(|m| m.get(&key).cloned())
-                    .unwrap_or_default();
-                crate::recorder::emit_assoc_assign(
-                    &name,
-                    vec![(key.clone(), new_val)],
-                    attrs,
-                    true,
-                    ctx,
-                );
-            }
-        });
-        Value::Status(0)
-    });
 
-    vm.register_builtin(BUILTIN_ARRAY_LENGTH, |vm, _argc| {
-        let name = vm.pop().to_str();
-        let len = with_executor(|exec| exec.array(&name).map(|a| a.len()).unwrap_or(0));
-        Value::str(len.to_string())
-    });
 
     // `${arr[*]}` — join array elements with the first IFS char into
     // a single string. Matches zsh: in DQ context this preserves the
@@ -3039,14 +2962,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .unwrap_or(0)
         });
         fusevm::Value::Status(try_status)
-    });
-
-    vm.register_builtin(BUILTIN_UNKNOWN_COND, |vm, _argc| {
-        // Unused — the diagnostic is emitted at compile time
-        // (BUILTIN dispatch wasn't reliably firing for this path).
-        // Kept registered as a no-op placeholder.
-        let _ = vm.pop();
-        fusevm::Value::Bool(false)
     });
 
     vm.register_builtin(BUILTIN_IS_TTY, |vm, _argc| {
@@ -4533,7 +4448,6 @@ pub const BUILTIN_ARRAY_INDEX: u16 = 289;
 
 /// `${#arr[@]}` and `${#arr}` (when arr is an array name) — array length.
 /// Pops one arg: name. Returns Value::str of len.
-pub const BUILTIN_ARRAY_LENGTH: u16 = 291;
 
 /// `${arr[@]}` — splice all elements as a Value::Array. Pops one arg: name.
 /// The Array gets flattened by Op::Exec/ExecBg/CallFunction into argv.
@@ -4573,7 +4487,6 @@ pub const BUILTIN_RUN_SELECT: u16 = 296;
 
 /// `m[k]+=value` — append onto an existing assoc-array value (string concat).
 /// If the key doesn't exist, behaves like SET_ASSOC. Stack: [name, key, value].
-pub const BUILTIN_APPEND_ASSOC: u16 = 298;
 
 /// `break` from inside a body that runs on a sub-VM (select, future loop-via-
 /// builtin constructs). Sets `executor.loop_signal = Some(LoopSignal::Break)`.
@@ -4591,11 +4504,9 @@ pub const BUILTIN_BRACE_EXPAND: u16 = 301;
 
 /// Glob qualifier filter: `*(qualifier)` filters glob results by predicate.
 /// Pops [pattern, qualifier_string]. Returns Value::Array of matching paths.
-pub const BUILTIN_GLOB_QUALIFIED: u16 = 302;
 
 /// Re-export the regex_match host method as a builtin so `[[ s =~ pat ]]`
 /// works even when fusevm's Op::RegexMatch isn't routed (compat fallback).
-pub const BUILTIN_REGEX_MATCH: u16 = 303;
 
 /// Word-split a string on IFS (default: whitespace). Pops one string,
 /// returns Value::Array of fields. Used in array-literal context where
@@ -4757,7 +4668,6 @@ pub const BUILTIN_SET_SUBSCRIPT_RANGE: u16 = 323;
 /// pushes Bool(false). Without this, unknown conditions silently
 /// returned false matching neither zsh's error format nor the
 /// expected status code (zsh returns 2 for parse error).
-pub const BUILTIN_UNKNOWN_COND: u16 = 324;
 
 /// `[[ -t fd ]]` — fd-is-a-tty check. Stack: \[fd_string\].
 /// Routes through libc::isatty. Pushes Bool.
