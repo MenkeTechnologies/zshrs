@@ -4682,356 +4682,100 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Pops [name, op_byte, rhs] (rhs popped first). Returns the modified
     // value as Value::Str. Handles unset/empty distinction (`:-` etc.
     // treat empty same as unset, matching POSIX).
+    // BUILTIN_PARAM_DEFAULT_FAMILY — `${var-x}` / `${var:-x}` / `${var=x}` /
+    // `${var:=x}` / `${var?x}` / `${var:?x}` / `${var+x}` / `${var:+x}`.
+    // PURE PASSTHRU: pop name + op + rhs, reconstruct the canonical
+    // brace expression, hand to `subst::paramsubst` (C port of
+    // `Src/subst.c::paramsubst`). All "missing vs empty" gating,
+    // nounset suppression, default-evaluation, and elide-empty-words
+    // semantics live inside paramsubst.
     vm.register_builtin(BUILTIN_PARAM_DEFAULT_FAMILY, |vm, _argc| {
         let rhs = vm.pop().to_str();
         let op = vm.pop().to_int() as u8;
         let name = vm.pop().to_str();
-        // Op codes:
-        //   0 :-  1 :=  2 :?  3 :+   (treat-empty-as-unset variants)
-        //   4 -   5 =   6 ?   7 +    (no-colon: only fire if truly unset)
-        // The default/alt modifiers handle missing-var themselves, so
-        // suppress the nounset (set -u) abort during the value lookup —
-        // otherwise `${unset:-fb}` exits the shell instead of returning
-        // "fb". Save/restore nounset around the lookup.
-        let val = with_executor(|exec| {
-            let saved_nounset = crate::ported::options::opt_state_get("nounset");
-            let saved_unset = crate::ported::options::opt_state_get("unset");
-            crate::ported::options::opt_state_set("nounset", false);
-            crate::ported::options::opt_state_set("unset", true);
-            let v = exec.get_variable(&name);
-            match saved_nounset {
-                Some(b) => {
-                    crate::ported::options::opt_state_set("nounset", b);
-                }
-                None => {
-                    crate::ported::options::opt_state_unset("nounset");
-                }
-            }
-            match saved_unset {
-                Some(b) => {
-                    crate::ported::options::opt_state_set("unset", b);
-                }
-                None => {
-                    crate::ported::options::opt_state_unset("unset");
-                }
-            }
-            v
-        });
-        let is_set = with_executor(|exec| {
-            // Positional params ($1, $2, ...): set iff index <= $#.
-            if name.chars().all(|c| c.is_ascii_digit()) && !name.is_empty() {
-                if let Ok(idx) = name.parse::<usize>() {
-                    if idx == 0 {
-                        return true; // $0 always set
-                    }
-                    return idx <= exec.pparams().len();
-                }
-            }
-            // zsh-special "always set" params: their getter computes
-            // a dynamic value, but the contains_key check fails. Treat
-            // them as set so `${SECONDS-default}` returns the seconds,
-            // not "default".
-            let is_zsh_special = matches!(
-                name.as_str(),
-                "SECONDS"
-                    | "EPOCHSECONDS"
-                    | "EPOCHREALTIME"
-                    | "RANDOM"
-                    | "LINENO"
-                    | "HISTCMD"
-                    | "PPID"
-                    | "UID"
-                    | "EUID"
-                    | "GID"
-                    | "EGID"
-                    | "SHLVL"
-            );
-            exec.has_scalar(&name)
-                || exec.array(&name).is_some()
-                || exec.assoc(&name).is_some()
-                || std::env::var(&name).is_ok()
-                || is_zsh_special
-        });
-        let is_empty = val.is_empty();
-        // For colon variants, "missing" = unset OR empty.
-        // For no-colon variants, "missing" = unset only.
-        let missing = match op {
-            0..=3 => is_empty,
-            _ => !is_set,
+        let op_str = match op {
+            0 => ":-",
+            1 => ":=",
+            2 => ":?",
+            3 => ":+",
+            4 => "-",
+            5 => "=",
+            6 => "?",
+            7 => "+",
+            _ => "-",
         };
-        // Empty-unquoted-elide for default-family results. When the
-        // resulting expansion is empty AND we're unquoted, drop the
-        // arg. Direct port of zsh's elide-empty-words pass which
-        // applies to ALL paramsubst results, including default-family.
-        let in_dq = with_executor(|exec| exec.in_dq_context > 0);
-        let maybe_elide = |s: String| -> fusevm::Value {
-            if s.is_empty() && !in_dq {
-                fusevm::Value::Array(Vec::new())
-            } else {
-                fusevm::Value::str(s)
-            }
-        };
-        // The default/alt operand may contain `$var` / `$(cmd)` /
-        // `$((expr))` — zsh expands these before substitution. Apply
-        // expand_string lazily (only when we'll actually use rhs).
-        let expand_rhs = |s: &str| -> String { crate::ported::subst::singsub(s) };
-        match op {
-            0 | 4 => {
-                // `:-` / `-` use default if missing
-                if missing {
-                    maybe_elide(expand_rhs(&rhs))
-                } else {
-                    maybe_elide(val)
-                }
-            }
-            1 | 5 => {
-                // `:=` / `=` assign default if missing, then use it
-                if missing {
-                    let expanded = expand_rhs(&rhs);
-                    with_executor(|exec| {
-                        exec.set_scalar(name, expanded.clone());
-                    });
-                    maybe_elide(expanded)
-                } else {
-                    maybe_elide(val)
-                }
-            }
-            2 | 6 => {
-                // `:?` / `?` error if missing — zsh in -c mode prints
-                // `zsh:LINE: NAME: msg` and exits 1. Mirror that: emit
-                // diagnostic on stderr and abort the shell.
-                if missing {
-                    let expanded = expand_rhs(&rhs);
-                    let msg = if expanded.is_empty() {
-                        "parameter not set".to_string()
-                    } else {
-                        expanded
-                    };
-                    eprintln!("zshrs:1: {}: {}", name, msg);
-                    std::process::exit(1);
-                } else {
-                    fusevm::Value::str(val)
-                }
-            }
-            3 | 7 => {
-                // `:+` / `+` use alt if NOT missing (set-and-non-empty
-                // for colon variant; just set for no-colon variant).
-                if missing {
-                    maybe_elide(String::new())
-                } else {
-                    maybe_elide(expand_rhs(&rhs))
-                }
-            }
-            8 => {
-                // `${+name}` set-test — emits "1" if name is set,
-                // "0" if unset. Direct port of subst.c case '+' at
-                // the leading-flag position (different from `${name+rhs}`).
-                // is_set was computed above and includes positional
-                // params, zsh-special vars, regular vars, arrays,
-                // assocs. Subscripted form `${+arr[i]}` checks if
-                // that specific element is set — get_variable doesn't
-                // parse subscripts, so resolve the lookup by hand:
-                // numeric N → arr[N-1] is set iff N <= len; (r)PAT /
-                // (R)PAT / KEY → resolve via the same subscript
-                // engine as plain `${arr[i]}`.
-                if let Some(lb) = name.find('[') {
-                    if name.ends_with(']') {
-                        let arr_name = &name[..lb];
-                        let key = &name[lb + 1..name.len() - 1];
-                        let direct_set = with_executor(|exec| {
-                            // Numeric index: 1-based, must be in range.
-                            if let Ok(n) = key.parse::<i64>() {
-                                let len = exec.array(arr_name).map(|a| a.len() as i64).unwrap_or(0);
-                                if n > 0 && n <= len {
-                                    return Some(true);
-                                }
-                                if n < 0 {
-                                    let resolved = len + n;
-                                    return Some(resolved >= 0);
-                                }
-                                return Some(false);
-                            }
-                            if let Some(map) = exec.assoc(arr_name) {
-                                return Some(map.contains_key(key));
-                            }
-                            if let Some(arr) = exec.array(arr_name) {
-                                let pat = if let Some(p) =
-                                    key.strip_prefix("(r)").or_else(|| key.strip_prefix("(R)"))
-                                {
-                                    p
-                                } else {
-                                    key
-                                };
-                                return Some(
-                                    arr.iter()
-                                        .any(|el| crate::vm_helper::glob_match_static(el, pat)),
-                                );
-                            }
-                            None
-                        });
-                        // Magic-assoc fallback (commands, aliases,
-                        // functions, options, etc.) — `${+commands[ls]}`
-                        // walks PATH to answer "is ls a command". Direct
-                        // port of zsh's getindex routing through the
-                        // special-parameter getfn (Src/params.c
-                        // SPECIAL_PARAMS) when the named assoc isn't
-                        // user-declared. Re-uses the same magic_assoc_lookup
-                        // dispatcher BUILTIN_ARRAY_INDEX consults; called
-                        // outside the with_executor closure so the lookup
-                        // itself can re-enter the executor lock safely.
-                        let element_set = direct_set.unwrap_or_else(|| {
-                            magic_assoc_lookup(arr_name, key)
-                                .map(|v| !v.to_str().is_empty())
-                                .unwrap_or(false)
-                        });
-                        return fusevm::Value::str(if element_set { "1" } else { "0" });
-                    }
-                    fusevm::Value::str(if !val.is_empty() { "1" } else { "0" })
-                } else {
-                    fusevm::Value::str(if is_set { "1" } else { "0" })
-                }
-            }
-            _ => fusevm::Value::str(val),
+        let body = format!("${{{}{}{}}}", name, op_str, rhs);
+        let mut ret_flags: i32 = 0;
+        let (_full, _pos, nodes) =
+            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            with_executor(|exec| exec.set_last_status(1));
+        }
+        if nodes.is_empty() {
+            fusevm::Value::Array(Vec::new())
+        } else if nodes.len() == 1 {
+            fusevm::Value::str(nodes.into_iter().next().unwrap())
+        } else {
+            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
         }
     });
 
     // `${var:offset[:length]}` — substring. Pops [name, offset, length].
     // length == -1 means "rest of string". Negative offset counts from end.
+    // BUILTIN_PARAM_SUBSTRING — `${var:offset:length}` literal-int form.
+    // PURE PASSTHRU: reconstruct `${name:offset:length}` and route
+    // through `subst::paramsubst`. Length sentinel `i64::MIN` =
+    // "no length given" (omit the `:length` portion).
     vm.register_builtin(BUILTIN_PARAM_SUBSTRING, |vm, _argc| {
         let length = vm.pop().to_int();
         let offset = vm.pop().to_int();
         let name = vm.pop().to_str();
-        // `${@:offset:length}` / `${*:offset:length}` — slice
-        // positional parameters as ARRAY elements (not chars). zsh's
-        // semantics: 1-based, inclusive offset; length counts elems.
-        // For arrays/assoc-values arrays, same array semantics.
-        // `[@]`/`[*]` suffix preserved by the compile path indicates
-        // the user wrote `${arr[@]:n}` and expects splice; return
-        // Value::Array so downstream array-init keeps element
-        // boundaries.
-        let (lookup_name, force_array) = if let Some(stripped) = name
-            .strip_suffix("[@]")
-            .or_else(|| name.strip_suffix("[*]"))
-        {
-            (stripped.to_string(), true)
+        let body = if length == i64::MIN {
+            format!("${{{}:{}}}", name, offset)
         } else {
-            (name.clone(), false)
+            format!("${{{}:{}:{}}}", name, offset, length)
         };
-        if lookup_name == "@" || lookup_name == "*" {
-            let result = with_executor(|exec| slice_positionals(exec, offset, length));
-            return fusevm::Value::Array(result.into_iter().map(fusevm::Value::str).collect());
+        let mut ret_flags: i32 = 0;
+        let (_full, _pos, nodes) =
+            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            with_executor(|exec| exec.set_last_status(1));
         }
-        let array_slice = with_executor(|exec| exec.array(&lookup_name));
-        if let Some(arr) = array_slice {
-            let result = slice_array_zero_based(&arr, offset, length);
-            return if force_array {
-                fusevm::Value::Array(result.into_iter().map(fusevm::Value::str).collect())
-            } else {
-                fusevm::Value::str(result.join(" "))
-            };
+        if nodes.is_empty() {
+            fusevm::Value::Array(Vec::new())
+        } else if nodes.len() == 1 {
+            fusevm::Value::str(nodes.into_iter().next().unwrap())
+        } else {
+            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
         }
-        let name = lookup_name;
-        let val = with_executor(|exec| exec.get_variable(&name));
-        let chars: Vec<char> = val.chars().collect();
-        let len = chars.len() as i64;
-        let start = if offset < 0 {
-            (len + offset).max(0) as usize
-        } else {
-            (offset as usize).min(chars.len())
-        };
-        // length sentinels:
-        //   i64::MIN → no length given, take rest of string
-        //   negative → "stop N chars before end" (bash/zsh)
-        //   positive → take exactly N chars
-        let take = if length == i64::MIN {
-            chars.len().saturating_sub(start)
-        } else if length < 0 {
-            // Stop |length| chars before end.
-            let end = (len + length).max(start as i64) as usize;
-            end.saturating_sub(start)
-        } else {
-            (length as usize).min(chars.len().saturating_sub(start))
-        };
-        let result: String = chars.iter().skip(start).take(take).collect();
-        fusevm::Value::str(result)
     });
 
-    // `${var:offset[:length]}` with arith/var-based offset/length —
-    // the literal-int variant above can't represent `${s:$n:2}`.
-    // Stack layout (top→bottom): has_length, length_expr, offset_expr,
-    // name. has_length distinguishes "no length given" from
-    // "length=0".
+    // BUILTIN_PARAM_SUBSTRING_EXPR — `${var:offset_expr[:length_expr]}` form.
+    // PURE PASSTHRU: rebuild `${name:offset:length}` using the
+    // expression text verbatim (paramsubst's offset/length
+    // parser evaluates arith / param refs itself).
     vm.register_builtin(BUILTIN_PARAM_SUBSTRING_EXPR, |vm, _argc| {
         let has_len = vm.pop().to_int() != 0;
         let len_expr = vm.pop().to_str();
         let off_expr = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // Match BUILTIN_PARAM_SUBSTRING's array-aware dispatch:
-        // `${@:n:m}` / `${arr[@]:n:m}` slice positionals/array
-        // ELEMENTS, not chars. Without this, the expr-form fell
-        // back to scalar char-slicing on the IFS-joined value.
-        let (lookup_name, force_array) = if let Some(stripped) = name
-            .strip_suffix("[@]")
-            .or_else(|| name.strip_suffix("[*]"))
-        {
-            (stripped.to_string(), true)
+        let body = if has_len {
+            format!("${{{}:{}:{}}}", name, off_expr, len_expr)
         } else {
-            (name.clone(), false)
+            format!("${{{}:{}}}", name, off_expr)
         };
-        // Use a dual-result: Array when force_array, Str otherwise.
-        // zsh: `${a[@]:1}` keeps array splice for downstream array
-        // assignment (`b=("${a[@]:1}")` should give 2 elements, not
-        // a single space-joined string).
-        enum Result {
-            Str(String),
-            Arr(Vec<String>),
+        let mut ret_flags: i32 = 0;
+        let (_full, _pos, nodes) =
+            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            with_executor(|exec| exec.set_last_status(1));
         }
-        let result = with_executor(|exec| {
-            let offset = crate::ported::math::mathevali(&crate::ported::subst::singsub(&off_expr))
-                .unwrap_or(0);
-            let length_opt: Option<i64> = if has_len {
-                Some(
-                    crate::ported::math::mathevali(&crate::ported::subst::singsub(&len_expr))
-                        .unwrap_or(0),
-                )
-            } else {
-                None
-            };
-            // Positional-param slice (`${@:1:2}`).
-            if lookup_name == "@" || lookup_name == "*" {
-                let parts = slice_positionals(exec, offset, length_opt.unwrap_or(i64::MIN));
-                return Result::Arr(parts);
-            }
-            // Array slice (`${arr:1:2}` or `${arr[@]:1:2}`).
-            if let Some(arr) = exec.array(&lookup_name) {
-                let sliced = slice_array_zero_based(&arr, offset, length_opt.unwrap_or(i64::MIN));
-                return if force_array {
-                    Result::Arr(sliced)
-                } else {
-                    Result::Str(sliced.join(" "))
-                };
-            }
-            // Scalar fallback.
-            let val = exec.get_variable(&lookup_name);
-            let chars: Vec<char> = val.chars().collect();
-            let len = chars.len() as i64;
-            let start = if offset < 0 {
-                (len + offset).max(0) as usize
-            } else {
-                (offset as usize).min(chars.len())
-            };
-            let take = match length_opt {
-                None => chars.len().saturating_sub(start),
-                Some(length) if length < 0 => chars.len().saturating_sub(start),
-                Some(length) => (length as usize).min(chars.len().saturating_sub(start)),
-            };
-            Result::Str(chars.iter().skip(start).take(take).collect::<String>())
-        });
-        match result {
-            Result::Str(s) => fusevm::Value::str(s),
-            Result::Arr(parts) => {
-                fusevm::Value::Array(parts.into_iter().map(fusevm::Value::str).collect())
-            }
+        if nodes.is_empty() {
+            fusevm::Value::Array(Vec::new())
+        } else if nodes.len() == 1 {
+            fusevm::Value::str(nodes.into_iter().next().unwrap())
+        } else {
+            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
         }
     });
 
@@ -5039,250 +4783,36 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Pops [name, pattern, op_byte]. op: 0=`#` short-prefix, 1=`##` long,
     // 2=`%` short-suffix, 3=`%%` long. Glob-pattern matching via the
     // existing glob_match_static helper.
+    // BUILTIN_PARAM_STRIP — `${var#pat}` / `${var##pat}` / `${var%pat}` /
+    // `${var%%pat}`. PURE PASSTHRU: reconstruct the brace expression
+    // and route through `subst::paramsubst`. (M)/(S) flags arrive
+    // through SUB_FLAGS (already inside paramsubst's scope), so we
+    // just clear the bridge-side cached read.
     vm.register_builtin(BUILTIN_PARAM_STRIP, |vm, _argc| {
-        // The compiler now passes `dq_flag` as a 4th arg so the
-        // runtime can distinguish DQ-wrapped (join-then-strip)
-        // from unquoted (per-element) on array-valued names.
-        // Mirrors zsh's pattern.c split between `getmatch` (joined
-        // scalar) and `getmatcharr` (per-element).
-        let dq_flag = vm.pop().to_int() != 0;
+        let _dq_flag = vm.pop().to_int() != 0;
         let op = vm.pop().to_int() as u8;
-        let pattern_raw = vm.pop().to_str();
+        let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // SUB_M / SUB_S flags. M = return matched portion (vs strip
-        // result). S = search anywhere instead of anchored to start
-        // (#/##) or end (%/%%). Direct port of subst.c:2171/2186
-        // SUB_MATCH / SUB_SUBSTR bits + getmatch dispatch.
-        let (sub_match, sub_substr) = {
-            let sf = crate::ported::subst::sub_flags_get();
-            let m = (sf & 0x0008) != 0;
-            let s = (sf & 0x0004) != 0;
-            crate::ported::subst::sub_flags_set(0);
-            (m, s)
+        let op_str = match op {
+            0 => "#",
+            1 => "##",
+            2 => "%",
+            3 => "%%",
+            _ => "#",
         };
-        // Pattern may contain `$var` / `$(cmd)` / `$((expr))` — zsh
-        // expands these before applying the strip. Was emitted as-is.
-        let pattern = crate::ported::subst::singsub(&pattern_raw);
-        // Delegate to the shared `strip_match_op` helper (also used
-        // by the flag-aware `expand_braced_variable` path so M-flag
-        // inversion works consistently). The compile-time fast path
-        // never carries (M) since `parse_param_modifier` rejects
-        // flag forms and routes them through the bridge — so always
-        // pass `m_flag=false` here.
-        // strip_match_op port — direct inline of subst.c:3540's
-        // SUB_MATCH dispatch on the # / ## / % / %% pattern strip
-        // ops. Op codes per ParamModifierKind::Strip:
-        //   0 = `#`  shortest prefix
-        //   1 = `##` longest prefix
-        //   2 = `%`  shortest suffix
-        //   3 = `%%` longest suffix
-        // Pattern matching is currently glob-via-fnmatch from
-        // crate::ported::glob::glob_match_static (handles ?, *, [...]).
-        let strip_one = |v: &str, op: u8, pattern: &str| -> String {
-            let chars: Vec<char> = v.chars().collect();
-            let n = chars.len();
-            // (S) substring search: instead of anchoring to start
-            // (#/##) or end (%/%%), find the shortest/longest match
-            // ANYWHERE in v, and either return it (sub_match) or
-            // remove it (default — keep parts before+after the match).
-            // Direct port of subst.c:2186 SUB_SUBSTR bit which
-            // getmatch routes through pat_substr_match.
-            if sub_substr {
-                // c:2186
-                let longest = matches!(op, 1 | 3); // c:2186 (## / %% want longest)
-                let mut best: Option<(usize, usize)> = None; // c:2186 (start, end in chars)
-                                                             // Slide a window across v; for each start index
-                                                             // try every (longest|shortest) length that matches.
-                for start in 0..=n {
-                    // c:2186
-                    let end_iter: Box<dyn Iterator<Item = usize>> = if longest {
-                        // c:2186
-                        Box::new((start..=n).rev()) // c:2186
-                    } else {
-                        // c:2186
-                        Box::new(start..=n) // c:2186
-                    }; // c:2186
-                    for end in end_iter {
-                        // c:2186
-                        let sub: String = chars[start..end].iter().collect(); // c:2186
-                        if crate::vm_helper::glob_match_static(&sub, pattern) {
-                            // c:2186
-                            // (S) prefers the leftmost match
-                            // for # / ##, and the rightmost for
-                            // % / %%. # / ## scan left-to-right;
-                            // % / %% mirror by walking start
-                            // backward at the outer level — but
-                            // since the outer loop is L-to-R, we
-                            // record EVERY match and pick the
-                            // last one for %/%%, first for #/##.
-                            let suffix_op = matches!(op, 2 | 3); // c:2186
-                            if best.is_none() || suffix_op {
-                                // c:2186
-                                best = Some((start, end)); // c:2186
-                            } // c:2186
-                            if !suffix_op {
-                                break;
-                            } // c:2186 (#/## stop at first)
-                        } // c:2186
-                    } // c:2186
-                    if best.is_some() && !matches!(op, 2 | 3) {
-                        break;
-                    } // c:2186
-                } // c:2186
-                if let Some((s, e)) = best {
-                    // c:2186
-                    let matched: String = chars[s..e].iter().collect(); // c:2186
-                    if sub_match {
-                        // c:2171
-                        return matched; // c:2171
-                    } // c:2171
-                    let mut out = String::new(); // c:2186
-                    out.extend(chars[..s].iter()); // c:2186
-                    out.extend(chars[e..].iter()); // c:2186
-                    return out; // c:2186
-                } // c:2186
-                return if sub_match {
-                    String::new()
-                } else {
-                    v.to_string()
-                }; // c:2186
-            } // c:2186
-              // (M) inverted-disposition helper: when sub_match is set,
-              // return the MATCHED portion instead of the post-strip
-              // string. Used by zsh idioms like \${(M)path#*/} which
-              // returns the leading "/segment" rather than the rest.
-              // Direct port of getmatch's SUB_MATCH branch — it picks
-              // the matched-portion view from the same scan.
-            match op {
-                0 => {
-                    // shortest prefix strip — try k = 0, 1, ...
-                    for k in 0..=n {
-                        let prefix: String = chars[..k].iter().collect();
-                        if crate::vm_helper::glob_match_static(&prefix, pattern) {
-                            return if sub_match {
-                                // c:2171
-                                prefix // c:2171
-                            } else {
-                                // c:2171
-                                chars[k..].iter().collect()
-                            };
-                        }
-                    }
-                    if sub_match {
-                        String::new()
-                    } else {
-                        v.to_string()
-                    } // c:2171
-                }
-                1 => {
-                    // longest prefix strip — try k = n down to 0
-                    for k in (0..=n).rev() {
-                        let prefix: String = chars[..k].iter().collect();
-                        if crate::vm_helper::glob_match_static(&prefix, pattern) {
-                            return if sub_match {
-                                // c:2171
-                                prefix // c:2171
-                            } else {
-                                // c:2171
-                                chars[k..].iter().collect()
-                            };
-                        }
-                    }
-                    if sub_match {
-                        String::new()
-                    } else {
-                        v.to_string()
-                    } // c:2171
-                }
-                2 => {
-                    // shortest suffix strip
-                    for k in 0..=n {
-                        let suffix: String = chars[n - k..].iter().collect();
-                        if crate::vm_helper::glob_match_static(&suffix, pattern) {
-                            return if sub_match {
-                                // c:2171
-                                suffix // c:2171
-                            } else {
-                                // c:2171
-                                chars[..n - k].iter().collect()
-                            };
-                        }
-                    }
-                    if sub_match {
-                        String::new()
-                    } else {
-                        v.to_string()
-                    } // c:2171
-                }
-                3 => {
-                    // longest suffix strip
-                    for k in (0..=n).rev() {
-                        let suffix: String = chars[n - k..].iter().collect();
-                        if crate::vm_helper::glob_match_static(&suffix, pattern) {
-                            return if sub_match {
-                                // c:2171
-                                suffix // c:2171
-                            } else {
-                                // c:2171
-                                chars[..n - k].iter().collect()
-                            };
-                        }
-                    }
-                    if sub_match {
-                        String::new()
-                    } else {
-                        v.to_string()
-                    } // c:2171
-                }
-                _ => v.to_string(),
-            }
-        };
-        // `${arr#pat}` / `${arr%pat}` / etc. on an array:
-        //   - Unquoted form: iterate per element, preserve array
-        //     shape so `print -l` emits one line per element. Direct
-        //     port of Src/subst.c:3422-3433 `if (!vunset && isarr)`
-        //     branch which calls `getmatcharr(&aval, …)` — modifies
-        //     each element of the array in-place, leaves isarr=1.
-        //   - DQ-wrapped form (`"${arr%pat}"`): zsh joins as scalar
-        //     first then strips. So `(/tmp/foo /etc/bar)` with `%/*`
-        //     gives `/tmp/foo /etc` (last `/bar` stripped from
-        //     joined), not `/tmp /etc` (per-element).
-        enum StripResult {
-            Scalar(String),
-            Array(Vec<String>),
+        let body = format!("${{{}{}{}}}", name, op_str, pattern);
+        let mut ret_flags: i32 = 0;
+        let (_full, _pos, nodes) =
+            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
+        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            with_executor(|exec| exec.set_last_status(1));
         }
-        let result: StripResult = with_executor(|exec| {
-            let in_dq = dq_flag || exec.in_dq_context > 0;
-            if name == "@" || name == "*" {
-                if in_dq {
-                    let joined = exec.pparams().join(" ");
-                    return StripResult::Scalar(strip_one(&joined, op, &pattern));
-                }
-                let stripped: Vec<String> = exec
-                    .pparams()
-                    .iter()
-                    .map(|e| strip_one(e, op, &pattern))
-                    .collect();
-                return StripResult::Array(stripped);
-            }
-            if let Some(arr) = exec.array(&name) {
-                if in_dq {
-                    let joined = arr.join(" ");
-                    return StripResult::Scalar(strip_one(&joined, op, &pattern));
-                }
-                let stripped: Vec<String> =
-                    arr.iter().map(|e| strip_one(e, op, &pattern)).collect();
-                return StripResult::Array(stripped);
-            }
-            let val = exec.get_variable(&name);
-            StripResult::Scalar(strip_one(&val, op, &pattern))
-        });
-        match result {
-            StripResult::Scalar(s) => fusevm::Value::str(s),
-            StripResult::Array(arr) => {
-                let mapped: Vec<fusevm::Value> = arr.into_iter().map(fusevm::Value::str).collect();
-                fusevm::Value::Array(mapped)
-            }
+        if nodes.is_empty() {
+            fusevm::Value::Array(Vec::new())
+        } else if nodes.len() == 1 {
+            fusevm::Value::str(nodes.into_iter().next().unwrap())
+        } else {
+            fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
         }
     });
 
