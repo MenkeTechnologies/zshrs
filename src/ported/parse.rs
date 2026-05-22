@@ -154,9 +154,10 @@ pub fn parse_context_save(ps: &mut parse_stack) {
     ps.lex_heredocs = LEX_HEREDOCS.with_borrow_mut(|v| std::mem::take(v));
     // parse.c:302-310 — save lexer-side state.
     ps.incmdpos = incmdpos();
-    // parse.c:303 — aliasspaceflag — not yet a LEX_* thread_local.
-    // STUB; Phase 7 wires it. Same for the few below marked STUB.
-    ps.aliasspaceflag = 0;
+    // parse.c:303 — `ps->aliasspaceflag = aliasspaceflag;`. Mirrors
+    // lex.c LEX_ALIAS_SPACE_FLAG so nested parses preserve the
+    // HISTIGNORESPACE-via-alias state across parser re-entry.
+    ps.aliasspaceflag = crate::ported::lex::LEX_ALIAS_SPACE_FLAG.with(|c| c.get());
     ps.incond = incond();
     ps.inredir = inredir();
     ps.incasepat = incasepat();
@@ -200,7 +201,8 @@ pub fn parse_context_restore(ps: &parse_stack) {
     // zshrs-only: restore the parallel AST-glue Vec.
     LEX_HEREDOCS.with_borrow_mut(|v| *v = ps.lex_heredocs.clone());
     set_incmdpos(ps.incmdpos);
-    // aliasspaceflag STUB until Phase 7.
+    // parse.c:334 — `aliasspaceflag = ps->aliasspaceflag;`.
+    crate::ported::lex::LEX_ALIAS_SPACE_FLAG.with(|c| c.set(ps.aliasspaceflag));
     set_incond(ps.incond);
     set_inredir(ps.inredir);
     set_incasepat(ps.incasepat);
@@ -718,6 +720,10 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
     // parse.c:616-619 — reset state and prime the lexer.
     set_tok(ENDINPUT);
     set_incmdpos(true);
+    // parse.c:618 — `aliasspaceflag = 0;`. Fresh event: discard any
+    // alias-space carry-over from a prior parse so HISTIGNORESPACE
+    // doesn't suppress the next entered command line.
+    crate::ported::lex::LEX_ALIAS_SPACE_FLAG.with(|c| c.set(0));
     zshlex();
     // parse.c:620 — `init_parse();`
     init_parse();

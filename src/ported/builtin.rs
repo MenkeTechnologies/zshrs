@@ -4559,7 +4559,7 @@ pub fn bin_functions(
                     let mut new_slot: Option<String> = None;
                     dircache_set(&mut new_slot, Some(&argv[0])); // c:3650
                     shf_mut.filename = new_slot;
-                    on |= PM_UNDEFINED >> 9 << 9; // placeholder for PM_LOADDIR bit set
+                    on |= PM_LOADDIR; // c:3294 — `shf->node.flags |= PM_LOADDIR;`
                 }
             }
             // c:3653 — `shf->node.flags = on;`
