@@ -2839,14 +2839,43 @@ pub fn bin_zmodload_exist(
         return 0; // c:2631
     }
     // c:2633-2640 — for each arg, test existence.
+    // C:
+    //   for (; !ret && *args; args++) {
+    //       if (!(m = find_module(*args, FINDMOD_ALIASP, NULL))
+    //           || !m->u.handle
+    //           || (m->node.flags & MOD_UNLOAD))
+    //           ret = 1;
+    //   }
+    // The `!m->u.handle` clause is union-typed in C: for static-link
+    // modules it reads `m->u.linked` (non-NULL when linked, NULL when
+    // pre-registered but not yet bound); for dynamic modules it's the
+    // dlopen handle. Translate to: handle.is_none() && linked.is_none()
+    // — both representations of "no live binding."
     let mut ret: i32 = 0;
     for arg in args {
         // c:2635
         if ret != 0 {
             break;
         }
-        if find_module(table, arg, FINDMOD_ALIASP).is_none() {
+        let canon = match find_module(table, arg, FINDMOD_ALIASP) {
             // c:2636
+            Some(n) => n,
+            None => {
+                ret = 1; // c:2639
+                continue;
+            }
+        };
+        let live = match table.modules.get(&canon) {
+            Some(m) => {
+                // c:2637 — `!m->u.handle` (union-semantics).
+                let bound = m.handle.is_some() || m.linked.is_some();
+                // c:2638 — `(m->node.flags & MOD_UNLOAD)`.
+                let unloading = (m.node.flags & MOD_UNLOAD) != 0;
+                bound && !unloading
+            }
+            None => false,
+        };
+        if !live {
             ret = 1; // c:2639
         }
     }

@@ -484,8 +484,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
-        let saved = crate::ported::params::ifsgetfn();
-        crate::ported::params::ifssetfn(":".to_string());
+        let mut __pm = crate::ported::zsh_h::param::default();
+        let saved = crate::ported::params::ifsgetfn(&__pm);
+        crate::ported::params::ifssetfn(&mut __pm, ":".to_string());
         assert!(
             isep(b':'),
             "c:4795 — new IFS chars must get ISEP after ifssetfn"
@@ -493,7 +494,7 @@ mod tests {
         assert!(!isep(b' '), "c:4795 — old IFS chars dropped after ifssetfn");
         assert!(!isep(b'\t'));
         // Restore.
-        crate::ported::params::ifssetfn(saved);
+        crate::ported::params::ifssetfn(&mut __pm, saved);
         assert!(isep(b' '), "default IFS restored");
     }
 
@@ -604,8 +605,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
-        let saved = crate::ported::params::wordcharsgetfn();
-        crate::ported::params::wordcharssetfn(":".to_string());
+        let mut __pm = crate::ported::zsh_h::param::default();
+        let saved = crate::ported::params::wordcharsgetfn(&__pm);
+        crate::ported::params::wordcharssetfn(&mut __pm, ":".to_string());
         assert!(iword(b':'), "c:5143 — new WORDCHARS member must get IWORD");
         // Old DEFAULT_WORDCHARS chars (e.g. `*`, `?`) lose IWORD when
         // WORDCHARS becomes ":".
@@ -618,7 +620,7 @@ mod tests {
         assert!(iword(b'a'));
         assert!(iword(b'0'));
         // Restore.
-        crate::ported::params::wordcharssetfn(saved);
+        crate::ported::params::wordcharssetfn(&mut __pm, saved);
         assert!(iword(b'*'), "DEFAULT_WORDCHARS restored");
     }
 
