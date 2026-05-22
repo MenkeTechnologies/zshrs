@@ -9922,6 +9922,54 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ),
+        // c:Src/Modules/files.c:816-824 — zf_* aliases. Same handlers as
+        // chmod/chown/ln/mkdir/rm/rmdir/sync but separate BUILTIN entries
+        // so `autoload -U zf_*` resolves and `zsh -f` sees them all.
+        BUILTIN(
+            "zf_chgrp", 0,
+            Some(crate::ported::modules::files::bin_chown as HandlerFunc),
+            2, -1, crate::ported::modules::files::BIN_CHGRP, Some("hRs"), None,
+        ), // c:816
+        BUILTIN(
+            "zf_chmod", 0,
+            Some(crate::ported::modules::files::bin_chmod as HandlerFunc),
+            2, -1, 0, Some("Rs"), None,
+        ), // c:817
+        BUILTIN(
+            "zf_chown", 0,
+            Some(crate::ported::modules::files::bin_chown as HandlerFunc),
+            2, -1, crate::ported::modules::files::BIN_CHOWN, Some("hRs"), None,
+        ), // c:818
+        BUILTIN(
+            "zf_ln", 0,
+            Some(crate::ported::modules::files::bin_ln as HandlerFunc),
+            1, -1, crate::ported::modules::files::BIN_LN, Some("dfins"), None,
+        ), // c:819
+        BUILTIN(
+            "zf_mkdir", 0,
+            Some(crate::ported::modules::files::bin_mkdir as HandlerFunc),
+            1, -1, 0, Some("pm:"), None,
+        ), // c:820
+        BUILTIN(
+            "zf_mv", 0,
+            Some(crate::ported::modules::files::bin_ln as HandlerFunc),
+            2, -1, crate::ported::modules::files::BIN_MV, Some("fi"), None,
+        ), // c:821
+        BUILTIN(
+            "zf_rm", 0,
+            Some(crate::ported::modules::files::bin_rm as HandlerFunc),
+            1, -1, 0, Some("dfiRrs"), None,
+        ), // c:822
+        BUILTIN(
+            "zf_rmdir", 0,
+            Some(crate::ported::modules::files::bin_rmdir as HandlerFunc),
+            1, -1, 0, None, None,
+        ), // c:823
+        BUILTIN(
+            "zf_sync", 0,
+            Some(crate::ported::modules::files::bin_sync as HandlerFunc),
+            0, 0, 0, None, None,
+        ), // c:824
     ]
 });
 // hash table containing builtin commands                                   // c:143
@@ -10601,7 +10649,7 @@ mod tests {
         // Total Rust BUILTINS table size pinned at 146 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 147,
+        assert_eq!(BUILTINS.len(), 156,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 

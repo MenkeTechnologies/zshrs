@@ -5697,101 +5697,12 @@ impl crate::ported::vm_helper::ShellExecutor {
             // prefixed forms exist so a script can portably reach
             // the builtin even when a function or alias has shadowed
             // the bare name. Each arm routes through the canonical
-            // free-fn port of Src/Modules/files.c, parsing the BUILTIN
-            // optstr inline since the framework doesn't pre-parse.
-            "zf_mkdir" | "mkdir" => {
-                let mut ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                let mut positional: Vec<String> = Vec::new();
-                let mut i = 0;
-                while i < rest_vec.len() {
-                    let a = &rest_vec[i];
-                    if a == "--" {
-                        i += 1;
-                        positional.extend_from_slice(&rest_vec[i..]);
-                        break;
-                    }
-                    if let Some(rest) = a.strip_prefix('-') {
-                        if rest.is_empty() {
-                            positional.push(a.clone());
-                            i += 1;
-                            continue;
-                        }
-                        let chars: Vec<char> = rest.chars().collect();
-                        let mut j = 0;
-                        while j < chars.len() {
-                            let c = chars[j] as u8;
-                            if c == b'm' {
-                                ops.ind[c as usize] = (ops.args.len() + 1) as u8;
-                                let rest_after = &rest[j + 1..];
-                                if !rest_after.is_empty() {
-                                    ops.args.push(rest_after.to_string());
-                                } else {
-                                    i += 1;
-                                    ops.args.push(rest_vec.get(i).cloned().unwrap_or_default());
-                                }
-                                ops.argscount = ops.args.len() as i32;
-                                break;
-                            }
-                            if c.is_ascii_alphabetic() {
-                                ops.ind[c as usize] = 1;
-                            }
-                            j += 1;
-                        }
-                    } else {
-                        positional.push(a.clone());
-                    }
-                    i += 1;
-                }
-                return crate::ported::modules::files::bin_mkdir(cmd, &positional, &ops, 0);
-            }
-            "zf_rm" => {
-                let mut ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                let mut positional: Vec<String> = Vec::new();
-                let mut i = 0;
-                while i < rest_vec.len() {
-                    let a = &rest_vec[i];
-                    if a == "--" {
-                        i += 1;
-                        positional.extend_from_slice(&rest_vec[i..]);
-                        break;
-                    }
-                    if let Some(rest) = a.strip_prefix('-') {
-                        if rest.is_empty() {
-                            positional.push(a.clone());
-                            i += 1;
-                            continue;
-                        }
-                        for c in rest.chars() {
-                            let cb = c as u8;
-                            if cb.is_ascii_alphabetic() {
-                                ops.ind[cb as usize] = 1;
-                            }
-                        }
-                    } else {
-                        positional.push(a.clone());
-                    }
-                    i += 1;
-                }
-                return crate::ported::modules::files::bin_rm("zf_rm", &positional, &ops, 0);
-            }
-            "zf_rmdir" => {
-                let ops = options {
-                    ind: [0u8; MAX_OPS],
-                    args: Vec::new(),
-                    argscount: 0,
-                    argsalloc: 0,
-                };
-                return crate::ported::modules::files::bin_rmdir("zf_rmdir", &rest_vec, &ops, 0);
+            // zf_* aliases route through canonical BUILTINS entries
+            // (files.c:816-824) — execbuiltin parses each fn's optstr
+            // automatically.
+            "mkdir" | "zf_mkdir" | "zf_rm" | "zf_rmdir" | "zf_chmod"
+            | "zf_chown" | "zf_chgrp" | "zf_ln" | "zf_mv" | "zf_sync" => {
+                return crate::fusevm_bridge::dispatch_builtin(cmd.as_str(), rest_vec.clone());
             }
             // `zstat` — port of zsh/stat module (Src/Modules/stat.c
             // BUILTIN("zstat", …)). Returns file metadata as
