@@ -2295,13 +2295,6 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// Returns Some(value) if this is a special array access, None otherwise
     pub fn get_special_array_value(&self, array_name: &str, key: &str) -> Option<String> {
         match array_name {
-            // === ZSH/MAPFILE module ===
-            // Route through canonical Src/Modules/mapfile.c ports:
-            //   single key — getpmmapfile c:217 / get_contents c:167
-            //   @ / *      — scanpmmapfile c:241 (CWD entry list)
-            "mapfile" => {
-                Some(crate::ported::modules::mapfile::get_contents(key).unwrap_or_default())
-            }
             // === ZSH/SYSTEM — errnos / sysparams ===
             "errnos" => {
                 let table = crate::modules::system::ERRNO_NAMES;
@@ -2862,19 +2855,9 @@ pub fn scan_magic_assoc_keys(name: &str) -> Option<Vec<String>> {
         // when those land in Src/Modules/parameter.c port.
         "reswords" | "dis_reswords" | "historywords"
         | "usergroups" | "errnos" | "sysparams" | "dirstack" => Some(Vec::new()),
-        // `mapfile` — zsh/mapfile module's magic assoc. Keys are
-        // discoverable via `scanpmmapfile` (Src/Modules/mapfile.c:241)
-        // which walks `.` but uses an empty value list per the
-        // comment "grotesquely wasteful to read every file into
-        // memory." Routing through here lets `${mapfile[$path]}`
-        // hit get_special_array_value's "mapfile" arm and call
-        // get_contents() directly.
-        "mapfile" => Some(
-            crate::modules::mapfile::scanpmmapfile()
-                .into_iter()
-                .map(|(k, _v)| k)
-                .collect(),
-        ),
+        // `mapfile` — zsh/mapfile module's magic assoc. Walks via
+        // canonical scanpmmapfile (Src/Modules/mapfile.c:241).
+        "mapfile" => Some(collect(|f, fl| crate::ported::modules::mapfile::scanpmmapfile(null_ht, f, fl))),
         _ => None,
     }
 }

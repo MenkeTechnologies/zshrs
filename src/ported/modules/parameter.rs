@@ -3454,6 +3454,15 @@ pub static PARTAB: &[PartabHashEntry] = &[
         getfn: getpmfunction_source,
         scanfn: scanpmfunction_source,
     },
+    // Src/Modules/mapfile.c:212 SPECIALPMDEF("mapfile", 0, ...).
+    // Separate module from parameter.c but same PARTAB shape — both
+    // register via boot_/enables_ into paramtab.
+    PartabHashEntry {
+        name: "mapfile",
+        flags: PM_HASHED as i32, // mapfile.c:212 SPECIALPMDEF flags=0
+        getfn: crate::ported::modules::mapfile::getpmmapfile,
+        scanfn: crate::ported::modules::mapfile::scanpmmapfile,
+    },
 ];
 
 // scanpmfunction_source / scanpmdisfunction_source already ported
