@@ -1119,8 +1119,13 @@ pub fn quotesubst(str: &str) -> String {
 pub fn globlist(list: &mut LinkList, flags: i32) {
     // c:489
     // c:489
-    // C: `badcshglob = 0;` — reset the csh-glob diagnostic counter
-    // (we don't track this; csh-glob option is rare).
+    // c:491 — `badcshglob = 0;` — reset per-command-line csh-glob
+    // diagnostic counter. Each subsequent zglob run ORs in bit 1
+    // (failure under CSHNULLGLOB) / bit 2 (success); the terminal
+    // diagnostic below checks the OR for the "all-failed-no-success"
+    // case.
+    crate::ported::glob::BADCSHGLOB
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     let mut node_idx = 0; // c:493
 
     while node_idx < list.nodes.len() && !errflag_set() {
@@ -1180,9 +1185,23 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
             node_idx += expanded.len(); // advance past all
         }
     }
-    // C: `if (noerrs) badcshglob = 0; else if (badcshglob == 1)
-    // zerr("no match");` — diagnostic emit. Skipped here pending
-    // badcshglob counter port.
+    // c:506-509 — `if (noerrs) badcshglob = 0; else if (badcshglob == 1)
+    //                zerr("no match");`. Emit the CSHNULLGLOB "no
+    // match" error when every expansion failed (== 1, not |= 2).
+    // Suppressed when noerrs is set (e.g. inside `eval` error-
+    // checking blocks).
+    // c:507 — `noerrs` from exec.c:117 (Rust: exec.rs:122 pub static).
+    let noerrs = crate::ported::exec::noerrs
+        .load(std::sync::atomic::Ordering::Relaxed)
+        != 0;
+    let badcshglob =
+        crate::ported::glob::BADCSHGLOB.load(std::sync::atomic::Ordering::Relaxed);
+    if noerrs {
+        crate::ported::glob::BADCSHGLOB
+            .store(0, std::sync::atomic::Ordering::Relaxed); // c:507
+    } else if badcshglob == 1 {
+        crate::ported::utils::zerr("no match"); // c:509
+    }
 } // c:510
 
 /// Perform substitution on a single word

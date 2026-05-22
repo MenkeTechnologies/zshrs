@@ -231,6 +231,17 @@ pub static CURGLOBDATA: std::sync::Mutex<globdata> = std::sync::Mutex::new(globd
     gf_post_words: None,
 });
 
+/// Port of `int badcshglob` from `Src/glob.c:103`. Tracks csh-glob
+/// diagnostic state across a single command line: bit 1 = "at
+/// least one expansion failed" (CSHNULLGLOB and no matches),
+/// bit 2 = "at least one expansion produced output". `globlist`
+/// resets to 0 at entry, ORs the bits as each `zglob` runs, then
+/// emits "no match" iff the final value is 1 (some failed, none
+/// succeeded). Used to make `*.nope *.ok` succeed without
+/// diagnostic, but `*.nope alone` error out under CSHNULLGLOB.
+pub static BADCSHGLOB: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0); // c:103
+
 /// Port of `struct complist` from `Src/glob.c:252`.
 /// C body:
 /// ```c
@@ -1313,6 +1324,19 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
     list.remove(np);                                                         // c:1238
 
     let matches = glob_path(&ostr);                                          // c:1240-1995 body
+
+    // c:1871-1875 — badcshglob accounting. Each zglob run updates
+    // the per-command-line counter so globlist's terminal diagnostic
+    // can distinguish "some failures, no successes" (emit error)
+    // from "some failures, some successes" (silent).
+    if !matches.is_empty() {
+        // c:1872 — `badcshglob |= 2;` (at least one expansion OK).
+        BADCSHGLOB.fetch_or(2, std::sync::atomic::Ordering::Relaxed);
+    } else if crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHNULLGLOB) {
+        // c:1874-1875 — `badcshglob |= 1;` (at least one expansion
+        // failed) under CSHNULLGLOB.
+        BADCSHGLOB.fetch_or(1, std::sync::atomic::Ordering::Relaxed);
+    }
 
     // c:1846-1848 — NOMATCH path: when no matches and !nountok,
     // re-untokenize and insert the original placeholder back.
