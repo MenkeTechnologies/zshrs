@@ -3010,17 +3010,21 @@ pub fn checkrmall(s: &str) -> bool {
                             // c:2880-2892 — opendir + readdir loop, count entries (skip
                             // dotfiles when !GLOBDOTS), cap at max_count.
     let ignoredots = !isset(GLOBDOTS); // c:2881
-    for fname in zreaddir(s_abs, 1) {
-        // c:2880 opendir/zreaddir
-        if ignoredots && fname.starts_with('.') {
-            // c:2885
-            continue; // c:2886
+    // c:2880 — `if (!(dir = opendir(unmeta(s)))) return;` then
+    //          `while ((fn = zreaddir(dir, 1))) { ... }`.
+    if let Ok(mut dir) = fs::read_dir(s_abs) {
+        while let Some(fname) = zreaddir(&mut dir, 1) {
+            if ignoredots && fname.starts_with('.') {
+                // c:2885
+                continue; // c:2886
+            }
+            count += 1; // c:2887
+            if count > max_count {
+                // c:2888
+                break; // c:2889
+            }
         }
-        count += 1; // c:2887
-        if count > max_count {
-            // c:2888
-            break; // c:2889
-        }
+        // c:closedir(dir) auto on drop
     }
     // c:2893-2904 — four-arm prompt based on file count.
     let stderr_h = io::stderr();
@@ -5622,30 +5626,31 @@ pub fn ztrsub(buf: &str, start: usize, end: usize) -> usize {
 /// Port of `char *zreaddir(DIR *dir, int ignoredots)` from
 /// `Src/utils.c:5217`.
 ///
-/// Returns the directory entries (each as a metafied String).
-/// The C source's `ignoredots` parameter controls whether `.` and
-/// `..` are filtered: `1` skips them (the common case — c:5232
-/// `while (ignoredots && de->d_name[0] == '.' && ...)`), `0`
-/// retains them (used by `spnamepat` spell-correction at c:4648).
+/// Port of `char *zreaddir(DIR *dir, int ignoredots)` from
+/// `Src/utils.c:5217-5240`. Pulls the next entry from a DIR* the
+/// caller owns; returns the entry's bare name (metafied String) or
+/// `None` at EOF. The C source's `ignoredots` flag (c:5232) skips
+/// `.` and `..` when set; callers (`spnamepat` at c:4648) that
+/// want dot entries pass 0.
 ///
-/// The previous Rust port hardcoded the dot-skip — the `ignoredots`
-/// arg wasn't exposed, so callers that wanted dotfiles included
-/// (the C `zreaddir(dd, 0)` path at utils.c:4648) silently got the
-/// filtered view. Fixed by accepting the `ignoredots` flag.
-/// WARNING: param names don't match C — Rust=(path, ignoredots) vs C=(dir, ignoredots)
-pub fn zreaddir(path: &str, ignoredots: i32) -> Vec<String> {
+/// Caller pattern matches C exactly:
+///   let mut dir = fs::read_dir(path)?;
+///   while let Some(name) = zreaddir(&mut dir, 1) { ... }
+///   // dir auto-closed on drop (= closedir)
+pub fn zreaddir(dir: &mut fs::ReadDir, ignoredots: i32) -> Option<String> {
     // c:5217
-    match fs::read_dir(path) {
-        Ok(entries) => entries
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.file_name().into_string().ok())
-            // c:5232 — `if (ignoredots && de->d_name[0] == '.' &&
-            //              (!de->d_name[1] || (de->d_name[1] == '.' && !de->d_name[2])))`.
-            // Skip exactly `.` and `..` when ignoredots is set.
-            .filter(|s| !(ignoredots != 0 && (s == "." || s == "..")))
-            .collect(),
-        Err(_) => Vec::new(),
+    for entry in dir.by_ref() {
+        // c:5221 readdir loop
+        let Ok(e) = entry else { continue };
+        let Ok(name) = e.file_name().into_string() else { continue };
+        // c:5232 — `if (ignoredots && de->d_name[0] == '.' &&
+        //              (!de->d_name[1] || (de->d_name[1] == '.' && !de->d_name[2])))`.
+        if ignoredots != 0 && (name == "." || name == "..") {
+            continue; // c:5234
+        }
+        return Some(name); // c:5238 return de->d_name
     }
+    None // c:5240 — fell off the end
 }
 
 /// Port of `int zputs(char const *s, FILE *stream)` from `Src/utils.c:5263-5282`.
@@ -11703,13 +11708,13 @@ mod tests {
         }
     }
 
-    /// `Src/utils.c:5217-5232` — `zreaddir(dir, ignoredots)` exposes
-    /// the dot-filter as a parameter. Two paths:
+    /// `Src/utils.c:5217-5240` — `zreaddir(dir, ignoredots)` exposes
+    /// the dot-filter as a parameter and returns one entry per call.
+    /// Two paths:
     /// * `ignoredots=1` (the common case at c:590/655/1653/2884) —
     ///   `.` and `..` are filtered out.
     /// * `ignoredots=0` (used at c:4648 for spelling correction) —
     ///   `.` and `..` are RETAINED as valid candidates.
-    /// The previous Rust port hardcoded the skip. Pin both arms.
     #[test]
     #[cfg(unix)]
     fn zreaddir_honors_ignoredots_flag() {
@@ -11721,7 +11726,11 @@ mod tests {
         fs::write(base.join("file"), "x").unwrap();
 
         // c:5232 — ignoredots=1: skip `.` and `..`, keep `file`.
-        let with_skip = zreaddir(base.to_str().unwrap(), 1);
+        let mut dir = fs::read_dir(&base).unwrap();
+        let mut with_skip: Vec<String> = Vec::new();
+        while let Some(n) = zreaddir(&mut dir, 1) {
+            with_skip.push(n);
+        }
         assert!(
             with_skip.contains(&"file".to_string()),
             "c:5232 — real entry survives ignoredots=1"
@@ -11736,17 +11745,18 @@ mod tests {
         );
 
         // c:4648-equivalent — ignoredots=0: KEEP `.` and `..`.
-        let without_skip = zreaddir(base.to_str().unwrap(), 0);
+        // (libstd's fs::read_dir filters them before exposing on
+        // macOS/Linux, so the without_skip set is functionally
+        // identical here — pin only that the API path doesn't error.)
+        let mut dir2 = fs::read_dir(&base).unwrap();
+        let mut without_skip: Vec<String> = Vec::new();
+        while let Some(n) = zreaddir(&mut dir2, 0) {
+            without_skip.push(n);
+        }
         assert!(
             without_skip.contains(&"file".to_string()),
             "ignoredots=0 still yields real entries"
         );
-        // On most filesystems readdir returns `.` and `..` first.
-        // Whether Rust's `fs::read_dir` exposes them is platform-
-        // dependent — on macOS/Linux it does NOT (libstd filters
-        // them before returning). So we can't pin their presence
-        // reliably; pin only that the API path doesn't error out.
-        let _ = without_skip;
 
         let _ = fs::remove_file(base.join("file"));
         let _ = fs::remove_dir(&base);
