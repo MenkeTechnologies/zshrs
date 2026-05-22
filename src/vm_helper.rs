@@ -3217,47 +3217,6 @@ impl crate::ported::vm_helper::ShellExecutor {}
 // =====================================================================
 
 impl crate::ported::vm_helper::ShellExecutor {
-    /// Parse subscript range like "1" or "1,5" or "-1" or "1,-1"
-    pub(crate) fn parse_subscript_range(&self, s: &str, len: usize) -> Option<(usize, usize)> {
-        if s.is_empty() || len == 0 {
-            return None;
-        }
-
-        let parts: Vec<&str> = s.split(',').collect();
-
-        let parse_idx = |idx_str: &str| -> Option<usize> {
-            let idx: i64 = idx_str.trim().parse().ok()?;
-            if idx < 0 {
-                // Negative index from end
-                let abs = (-idx) as usize;
-                if abs > len {
-                    None
-                } else {
-                    Some(len - abs)
-                }
-            } else if idx == 0 {
-                Some(0)
-            } else {
-                // 1-indexed
-                Some((idx as usize).saturating_sub(1).min(len))
-            }
-        };
-
-        match parts.len() {
-            1 => {
-                // Single element [n]
-                let idx = parse_idx(parts[0])?;
-                Some((idx, idx + 1))
-            }
-            2 => {
-                // Range [n,m]
-                let start = parse_idx(parts[0])?;
-                let end = parse_idx(parts[1])?.saturating_add(1);
-                Some((start.min(end), start.max(end)))
-            }
-            _ => None,
-        }
-    }
     /// Get value from zsh/parameter special arrays (options, commands, functions, etc.)
     /// Returns Some(value) if this is a special array access, None otherwise
     pub fn get_special_array_value(&self, array_name: &str, key: &str) -> Option<String> {
