@@ -9654,6 +9654,17 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ), // c:637
+        // c:Src/Modules/stat.c:638 — `zstat` alias, same handler.
+        BUILTIN(
+            "zstat",
+            0,
+            Some(crate::ported::modules::stat::bin_stat as HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        ), // c:638
         // c:Src/Modules/watch.c:694 — zsh/watch module's `log`.
         BUILTIN(
             "log",
@@ -10649,7 +10660,7 @@ mod tests {
         // Total Rust BUILTINS table size pinned at 146 to catch
         // accidental additions/removals. Bump alongside intentional
         // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 156,
+        assert_eq!(BUILTINS.len(), 157,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
