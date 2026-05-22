@@ -2342,21 +2342,10 @@ impl crate::ported::vm_helper::ShellExecutor {
             // standard xterm/VT escape sequences inline. Covers the
             // function-keys / cursor-motion / clear / color set that
             // user keymaps query (`key[F1]=$terminfo[kf1]` etc.).
-            "terminfo" => {
-                // Lazy lookup via ncurses tigetstr/tigetnum/tigetflag
-                // — the pre-populated assoc init seeds the common
-                // subset, but a script may query any cap by name
-                // (`$terminfo[acsc]`, `$terminfo[colors]`). Mirror
-                // zsh's terminfo.c::getterminfo lazy-resolve path.
-                Some(crate::modules::terminfo::getterminfo(key).unwrap_or_default())
-            }
-            // `termcap` is dispatched in the `magic_assoc_lookup`
-            // function (the primary special-array path) so that
-            // ${termcap[cl]} resolves before this fallback runs.
-            // Keeping a no-op arm here avoids a spurious "unknown
-            // assoc" diagnostic if a caller bypasses
-            // magic_assoc_lookup.
-            "termcap" => Some(crate::modules::termcap::gettermcap(key).unwrap_or_default()),
+            // terminfo / termcap arms deleted — both now route through
+            // canonical PARTAB entries (terminfo.c:291 + termcap.c:299
+            // SPECIALPMDEFs) that wire getterminfo/gettermcap as
+            // HashGetFn fn pointers with proper C signatures.
 
             // === FUNCTIONS ===
 

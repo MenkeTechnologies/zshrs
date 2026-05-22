@@ -181,24 +181,23 @@ pub fn bin_echoti(
 /// `setupterm()` call zsh's setup_/boot_ hook performs at terminfo.c:
 /// init_term path; collapsed into a OnceLock here since zshrs has no
 /// per-module init function shape.
-/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getterminfo(name: &str) -> Option<String> {
+/// Port of `static HashNode getterminfo(UNUSED(HashTable ht), const char *name)`
+/// from `Src/Modules/terminfo.c:135-177`. Returns a synthesised Param
+/// with PM_INTEGER (numeric cap), PM_SCALAR yes/no (boolean cap),
+/// PM_SCALAR escape-string (string cap), or PM_UNSET ("" + flag).
+pub fn getterminfo(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Option<crate::ported::zsh_h::Param> {
     // c:135
+    use crate::ported::zsh_h::{hashnode, param, PM_INTEGER, PM_READONLY, PM_SCALAR, PM_UNSET};
     const TERM_BAD: i32 = 1 << 1;
 
     // c:142 — `if (termflags & TERM_BAD) return NULL;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {
-        // c:142
-        return None; // c:143
+        return None;
     }
     // c:144 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return NULL;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
-        // c:144
-        let interactive =
-            isset(optlookup("interactive"));
-        if interactive {
-            // c:144
-            return None; // c:145
+        if isset(optlookup("interactive")) {
+            return None;
         }
     }
 
@@ -211,78 +210,127 @@ pub fn getterminfo(name: &str) -> Option<String> {
         return None;
     }
 
+    // Helper: build a Param shell with the given flags + u_str/u_val.
+    let mk_str = |s: String, extra_flags: i32| -> crate::ported::zsh_h::Param {
+        Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: name.to_string(),
+                flags: PM_READONLY as i32 | extra_flags,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: Some(s),
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        })
+    };
+
     // c:147 — `nameu = dupstring(name); unmetafy(nameu, &len);`
-    let mut buf = name.as_bytes().to_vec(); // c:147
-    crate::ported::utils::unmetafy(&mut buf); // c:148
+    let mut buf = name.as_bytes().to_vec();
+    crate::ported::utils::unmetafy(&mut buf);
     let nameu = match std::str::from_utf8(&buf) {
         Ok(s) => s.to_string(),
         Err(_) => return None,
     };
     let cname = std::ffi::CString::new(nameu).ok()?;
 
-    // c:155 — `if (((num = tigetnum(nameu)) != -1) && (num != -2)) { ... PM_INTEGER; }`
     unsafe {
-        let n = tigetnum(cname.as_ptr()); // c:155
+        // c:155 — PM_INTEGER for tigetnum hit.
+        let n = tigetnum(cname.as_ptr());
         if n != -1 && n != -2 {
-            // c:155
-            // c:156-158 — pm->u.val = num; PM_INTEGER.
-            return Some(n.to_string()); // c:157
+            // c:156-158 — `pm->u.val = num; PM_INTEGER;`
+            let mut pm = mk_str(String::new(), PM_INTEGER as i32);
+            pm.u_val = n as i64;
+            pm.u_str = None;
+            return Some(pm);
         }
-        // c:159 — `else if ((num = tigetflag(nameu)) != -1) { PM_SCALAR; }`
-        let b = tigetflag(cname.as_ptr()); // c:159
+        // c:159-162 — PM_SCALAR yes/no for tigetflag hit.
+        let b = tigetflag(cname.as_ptr());
         if b != -1 {
-            // c:159
-            // c:160 — `pm->u.str = num ? dupstring("yes") : dupstring("no");`
-            return Some(if b != 0 {
-                "yes".to_string()
-            } else {
-                "no".to_string()
-            }); // c:160
+            let s = if b != 0 { "yes" } else { "no" }.to_string();
+            return Some(mk_str(s, PM_SCALAR as i32));
         }
-        // c:163 — `else if ((tistr = (char *)tigetstr(nameu)) != NULL && tistr != (char *)-1)`
-        let tistr = tigetstr(cname.as_ptr()); // c:163
+        // c:163-167 — PM_SCALAR escape string for tigetstr hit.
+        let tistr = tigetstr(cname.as_ptr());
         let s_addr = tistr as isize;
         if !tistr.is_null() && s_addr != -1 {
-            // c:163
-            // c:164 — `pm->u.str = metafy(tistr, -1, META_HEAPDUP);`
             let raw = std::ffi::CStr::from_ptr(tistr)
                 .to_string_lossy()
                 .into_owned();
-            return Some(crate::ported::utils::metafy(&raw)); // c:164
+            return Some(mk_str(crate::ported::utils::metafy(&raw), PM_SCALAR as i32));
         }
     }
-    // c:170 — fall through to PM_UNSET → empty string.
-    None // c:170
+    // c:168-173 — `pm->u.str = ""; pm->node.flags |= PM_UNSET;`
+    Some(mk_str(String::new(), PM_SCALAR as i32 | PM_UNSET as i32))
 }
 
-// === auto-generated stubs ===
-/// Port of `scanterminfo(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/terminfo.c:177`. The
-/// magic-assoc scan callback for `${(k)terminfo}` /
-/// `${(kv)terminfo}`. Walks the bool/num/string capability-name
-/// tables (`boolnames`/`numnames`/`strnames` from libtermcap, or
-/// the static fallback arrays at terminfo.c:184-225 when libtermcap
-/// doesn't expose them) and yields each (name, value) pair where
-/// the capability resolves.
-///
-/// C signature: `static void scanterminfo(HashTable ht, ScanFunc func, int flags)`.
-/// Rust port returns `Vec<(String, String)>` since zshrs doesn't
-/// model the ScanFunc callback shape; iteration order matches C.
-/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scanterminfo() -> Vec<(String, String)> {
+/// Port of `static void scanterminfo(UNUSED(HashTable ht), ScanFunc func, int flags)`
+/// from `Src/Modules/terminfo.c:177-289`. Walks the bool/num/string
+/// capability tables and invokes the callback per resolved cap.
+pub fn scanterminfo(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    func: Option<crate::ported::zsh_h::ScanFunc>,
+    flags: i32,
+) {
     // c:177
-    let mut out = Vec::new();
+    use crate::ported::zsh_h::{hashnode, param, PM_SCALAR};
+    let f = match func {
+        Some(f) => f,
+        None => return,
+    };
+    let emit_cap = |cap_name: &str, val: &str| {
+        let pm = param {
+            node: hashnode {
+                next: None,
+                nam: cap_name.to_string(),
+                flags: PM_SCALAR as i32,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: Some(val.to_string()),
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        };
+        let node_box = Box::new(pm.node.clone());
+        f(&node_box, flags);
+    };
 
     // c:152-153 — `if (termflags & TERM_BAD) return;`. The full
     // termflag check at getterminfo's entry mirrors here too.
     const TERM_BAD: i32 = 1 << 1;
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {
-        return out;
+        return;
     }
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
         let interactive =
             isset(optlookup("interactive"));
         if interactive {
-            return out;
+            return;
         }
     }
     static INITIALIZED: OnceLock<bool> = OnceLock::new();
@@ -291,7 +339,7 @@ pub fn scanterminfo() -> Vec<(String, String)> {
         unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
     });
     if !ok {
-        return out;
+        return;
     }
 
     // c:184-194 — boolnames fallback when libtermcap doesn't export them.
@@ -357,7 +405,7 @@ pub fn scanterminfo() -> Vec<(String, String)> {
         if n != -1 {
             // c:258
             let v = if n != 0 { "yes" } else { "no" }; // c:259
-            out.push((cap.to_string(), v.to_string())); // c:261
+            emit_cap(cap, v); // c:261 func(&pm.node, flags)
         }
     }
 
@@ -371,7 +419,7 @@ pub fn scanterminfo() -> Vec<(String, String)> {
         let n = unsafe { tigetnum(cn.as_ptr()) }; // c:269
         if n != -1 && n != -2 {
             // c:269
-            out.push((cap.to_string(), n.to_string())); // c:270-272
+            emit_cap(cap, &n.to_string()); // c:270-272 func(&pm.node, flags)
         }
     }
 
@@ -390,10 +438,9 @@ pub fn scanterminfo() -> Vec<(String, String)> {
                 .to_string_lossy()
                 .into_owned();
             // c:283 — `pm->u.str = metafy(tistr, -1, META_HEAPDUP);`
-            out.push((cap.to_string(), crate::ported::utils::metafy(&bytes))); // c:283-285
+            emit_cap(cap, &crate::ported::utils::metafy(&bytes)); // c:283-285
         }
     }
-    out
 }
 
 // ===========================================================
@@ -576,14 +623,27 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 mod tests {
     use super::*;
 
-    /// c:135 — `getterminfo` for an unknown capability name must
-    /// return None regardless of `$TERM`. Catches a regression where
-    /// libc::tigetstr's `(unsigned char*)-1` sentinel (returned when
-    /// the cap is unknown) leaks through as a valid pointer.
+    /// c:135 — `getterminfo` for an unknown capability name returns
+    /// a Param with PM_UNSET flag set + empty u_str. C semantics:
+    /// returns non-NULL HashNode wrapping a PM_UNSET Param (c:168-
+    /// 173). Catches a regression where libc::tigetstr's
+    /// `(unsigned char*)-1` sentinel leaks through as a valid pointer.
     #[test]
-    fn getterminfo_unknown_cap_returns_none() {
+    fn getterminfo_unknown_cap_returns_unset_param() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getterminfo("definitely_not_a_real_cap_name_zshrs").is_none());
+        use crate::ported::zsh_h::PM_UNSET;
+        // termflags check may early-return None if $TERM is bad; treat
+        // both Some(unset) and None as acceptable for this regression.
+        if let Some(pm) = getterminfo(
+            std::ptr::null_mut(),
+            "definitely_not_a_real_cap_name_zshrs",
+        ) {
+            assert!(
+                pm.node.flags & PM_UNSET as i32 != 0,
+                "PM_UNSET flag must be set for unknown cap"
+            );
+            assert_eq!(pm.u_str.as_deref(), Some(""), "u_str empty for unknown cap");
+        }
     }
 
     /// c:64 — `echoti` without a cap-name argument must error. The
@@ -629,7 +689,8 @@ mod tests {
         unsafe {
             std::env::set_var("TERM", "dumb");
         }
-        let _ = scanterminfo();
+        fn cb(_n: &crate::ported::zsh_h::HashNode, _f: i32) {}
+        scanterminfo(std::ptr::null_mut(), Some(cb), 0);
         match old {
             Some(v) => unsafe {
                 std::env::set_var("TERM", v);
