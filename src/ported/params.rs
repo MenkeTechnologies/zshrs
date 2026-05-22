@@ -8961,7 +8961,8 @@ mod gsu_tests {
     #[test]
     fn usernamegetfn_matches_libc_getpwuid_for_current_uid() {
         let _g = crate::test_util::global_state_lock();
-        let uname = usernamegetfn();
+        let __pm = crate::ported::zsh_h::param::default();
+        let uname = usernamegetfn(&__pm);
         // The current process is running as some uid; the getter
         // must return either a populated name OR an empty string
         // (when getpwuid fails, e.g. sandboxed builds). It must
@@ -9005,10 +9006,11 @@ mod gsu_tests {
     #[test]
     fn test_ifs_round_trip() {
         let _g = crate::test_util::global_state_lock();
-        let original = ifsgetfn();
-        ifssetfn(":,;".to_string());
-        assert_eq!(ifsgetfn(), ":,;");
-        ifssetfn(original);
+        let mut __pm = crate::ported::zsh_h::param::default();
+        let original = ifsgetfn(&__pm);
+        ifssetfn(&mut __pm, ":,;".to_string());
+        assert_eq!(ifsgetfn(&__pm), ":,;");
+        ifssetfn(&mut __pm, original);
     }
 
     #[test]
@@ -9220,10 +9222,11 @@ mod gsu_tests {
     #[test]
     fn test_keyboardhack_one_char() {
         let _g = crate::test_util::global_state_lock();
-        keyboardhacksetfn("\\".to_string());
-        assert_eq!(keyboardhackgetfn(), "\\");
-        keyboardhacksetfn(String::new());
-        assert_eq!(keyboardhackgetfn(), "");
+        let mut __pm = crate::ported::zsh_h::param::default();
+        keyboardhacksetfn(&mut __pm, "\\".to_string());
+        assert_eq!(keyboardhackgetfn(&__pm), "\\");
+        keyboardhacksetfn(&mut __pm, String::new());
+        assert_eq!(keyboardhackgetfn(&__pm), "");
     }
 
     /// Pin: `keyboardhacksetfn` accepts ASCII chars cleanly per
@@ -9240,19 +9243,20 @@ mod gsu_tests {
     #[test]
     fn keyboardhacksetfn_handles_ascii_and_empty() {
         let _g = crate::test_util::global_state_lock();
+        let mut __pm = crate::ported::zsh_h::param::default();
         // c:5056 — single ASCII char stored.
-        keyboardhacksetfn(";".to_string());
+        keyboardhacksetfn(&mut __pm, ";".to_string());
         assert_eq!(
-            keyboardhackgetfn(),
+            keyboardhackgetfn(&__pm),
             ";",
             "c:5056 — single ASCII char stored verbatim"
         );
         // c:5056 — different ASCII char stored.
-        keyboardhacksetfn(",".to_string());
-        assert_eq!(keyboardhackgetfn(), ",");
+        keyboardhacksetfn(&mut __pm, ",".to_string());
+        assert_eq!(keyboardhackgetfn(&__pm), ",");
         // c:5058 — empty input clears to '\0'.
-        keyboardhacksetfn(String::new());
-        assert_eq!(keyboardhackgetfn(), "");
+        keyboardhacksetfn(&mut __pm, String::new());
+        assert_eq!(keyboardhackgetfn(&__pm), "");
     }
 
     #[test]
@@ -10479,15 +10483,16 @@ mod tests {
     #[test]
     fn homesetfn_stores_value_for_getfn() {
         let _g = crate::test_util::global_state_lock();
-        let saved = homegetfn();
-        homesetfn("/tmp/zshrs_test_home".to_string());
+        let mut __pm = crate::ported::zsh_h::param::default();
+        let saved = homegetfn(&__pm);
+        homesetfn(&mut __pm, "/tmp/zshrs_test_home".to_string());
         assert_eq!(
-            homegetfn(),
+            homegetfn(&__pm),
             "/tmp/zshrs_test_home",
             "c:5121-5126 — homesetfn → homegetfn round-trip"
         );
         // Restore.
-        homesetfn(saved);
+        homesetfn(&mut __pm, saved);
     }
 
     /// `Src/params.c:5125-5126` — empty input becomes `ztrdup("")`.
@@ -10495,10 +10500,11 @@ mod tests {
     #[test]
     fn homesetfn_empty_input_stores_empty() {
         let _g = crate::test_util::global_state_lock();
-        let saved = homegetfn();
-        homesetfn(String::new());
-        assert_eq!(homegetfn(), "", "c:5126 — empty x stores empty (no panic)");
-        homesetfn(saved);
+        let mut __pm = crate::ported::zsh_h::param::default();
+        let saved = homegetfn(&__pm);
+        homesetfn(&mut __pm, String::new());
+        assert_eq!(homegetfn(&__pm), "", "c:5126 — empty x stores empty (no panic)");
+        homesetfn(&mut __pm, saved);
     }
 
     /// `Src/params.c:5004-5011` — `errnosetfn(x)` writes errno
