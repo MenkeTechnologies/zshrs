@@ -205,16 +205,40 @@ pub fn bin_echotc(
     0 // c:144
 }
 
-/// Port of `gettermcap(UNUSED(HashTable ht), const char *name)` from `Src/Modules/termcap.c:144`. The
-/// magic-assoc lookup callback for `${termcap[name]}`. Looks up
-/// the capability name and returns its (possibly empty) value.
-///
-/// C signature: `static HashNode gettermcap(HashTable ht, const char *name)`.
-/// Rust returns `Option<String>` — `Some(value)` for known caps,
-/// `None` for unknown (matching C's PM_UNSET on no match).
-/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn gettermcap(name: &str) -> Option<String> {
+/// Port of `static HashNode gettermcap(UNUSED(HashTable ht), const char *name)`
+/// from `Src/Modules/termcap.c:144-199`. Synthesised Param with
+/// PM_SCALAR + value or PM_UNSET on no match.
+pub fn gettermcap(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Option<crate::ported::zsh_h::Param> {
     // c:144
+    use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SCALAR, PM_UNSET};
+
+    let mk = |s: String, extra: i32| -> Param {
+        Box::new(param {
+            node: hashnode {
+                next: None,
+                nam: name.to_string(),
+                flags: PM_READONLY as i32 | extra,
+            },
+            u_data: 0,
+            u_arr: None,
+            u_str: Some(s),
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level: 0,
+        })
+    };
+
     if !ensure_termcap_loaded() {
         return None;
     }
@@ -225,30 +249,29 @@ pub fn gettermcap(name: &str) -> Option<String> {
     let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let raw = unsafe { tgetstr(n_c.as_ptr(), &mut area) }; // c:163
     if !raw.is_null() {
-        return Some(
-            unsafe { std::ffi::CStr::from_ptr(raw) }
-                .to_string_lossy()
-                .into_owned(),
-        );
+        let s = unsafe { std::ffi::CStr::from_ptr(raw) }
+            .to_string_lossy()
+            .into_owned();
+        return Some(mk(s, PM_SCALAR as i32));
     }
     // c:170 — numeric cap fallback.
     let n = unsafe { tgetnum(n_c.as_ptr()) }; // c:170
     if n != -1 {
-        return Some(n.to_string());
+        return Some(mk(n.to_string(), PM_SCALAR as i32));
     }
     // c:175 — boolean cap fallback.
     match unsafe { tgetflag(n_c.as_ptr()) } {
-        // c:175
-        1 => Some("yes".to_string()),
+        1 => Some(mk("yes".to_string(), PM_SCALAR as i32)),
         0 => {
             // Known but off → "" only if it's in BOOLCODES.
             if BOOLCODES.iter().any(|b| *b == name) {
-                Some(String::new())
+                Some(mk(String::new(), PM_SCALAR as i32))
             } else {
-                None
+                // c:191-193 — `pm->u.str = ""; pm->node.flags |= PM_UNSET;`
+                Some(mk(String::new(), PM_SCALAR as i32 | PM_UNSET as i32))
             }
         }
-        _ => None,
+        _ => Some(mk(String::new(), PM_SCALAR as i32 | PM_UNSET as i32)),
     }
 }
 
@@ -257,26 +280,62 @@ pub fn gettermcap(name: &str) -> Option<String> {
 /// Walks the bool/num/string code arrays and yields each
 /// (name, value) pair where the capability is known.
 ///
-/// C signature: `static void scantermcap(HashTable ht, ScanFunc func, int flags)`.
-/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scantermcap() -> Vec<(String, String)> {
+/// Port of `static void scantermcap(UNUSED(HashTable ht), ScanFunc func, int flags)`
+/// from `Src/Modules/termcap.c:200-235`. Walks the bool/num/string
+/// code arrays and invokes the callback per known cap.
+pub fn scantermcap(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    func: Option<crate::ported::zsh_h::ScanFunc>,
+    flags: i32,
+) {
     // c:200
-    // c:200-235 — walk boolcodes/numcodes/strcodes, emit (name, value)
-    // for each cap libtermcap reports as present.
-    let mut out = Vec::new();
+    use crate::ported::zsh_h::{hashnode, param, PM_SCALAR};
+    let f = match func {
+        Some(f) => f,
+        None => return,
+    };
     if !ensure_termcap_loaded() {
-        return out;
+        return;
     }
     for &name in BOOLCODES
         .iter()
         .chain(NUMCODES.iter())
         .chain(STRCODES.iter())
     {
-        if let Some(v) = gettermcap(name) {
-            out.push((name.to_string(), v));
+        if let Some(pm) = gettermcap(std::ptr::null_mut(), name) {
+            // Skip PM_UNSET entries (unknown caps).
+            use crate::ported::zsh_h::PM_UNSET;
+            if (pm.node.flags & PM_UNSET as i32) != 0 {
+                continue;
+            }
+            let node = param {
+                node: hashnode {
+                    next: None,
+                    nam: name.to_string(),
+                    flags: PM_SCALAR as i32,
+                },
+                u_data: 0,
+                u_arr: None,
+                u_str: pm.u_str.clone(),
+                u_val: 0,
+                u_dval: 0.0,
+                u_hash: None,
+                gsu_s: None,
+                gsu_i: None,
+                gsu_f: None,
+                gsu_a: None,
+                gsu_h: None,
+                base: 0,
+                width: 0,
+                env: None,
+                ename: None,
+                old: None,
+                level: 0,
+            };
+            let node_box = Box::new(node.node.clone());
+            f(&node_box, flags);
         }
     }
-    out
 }
 
 // `capability_lookup` removed — Rust-only invention with hardcoded
@@ -534,23 +593,35 @@ mod tests {
     #[test]
     fn gettermcap_co_returns_columns() {
         let _g = crate::test_util::global_state_lock();
-        let v = gettermcap("co");
-        assert!(v.is_some());
-        let n: i32 = v.unwrap().parse().unwrap_or(0);
+        let pm = gettermcap(std::ptr::null_mut(), "co").expect("co must resolve to Param");
+        let v = pm.u_str.as_deref().unwrap_or("");
+        let n: i32 = v.parse().unwrap_or(0);
         assert!(n > 0);
     }
 
     #[test]
-    fn gettermcap_unknown_returns_none() {
+    fn gettermcap_unknown_returns_unset_param() {
         let _g = crate::test_util::global_state_lock();
-        assert!(gettermcap("zz_nonexistent").is_none());
+        use crate::ported::zsh_h::PM_UNSET;
+        // C semantics (c:191-193): unknown caps return non-NULL Param
+        // with PM_UNSET flag + empty u_str (not NULL HashNode).
+        if let Some(pm) = gettermcap(std::ptr::null_mut(), "zz_nonexistent") {
+            assert!(pm.node.flags & PM_UNSET as i32 != 0, "PM_UNSET set");
+        }
     }
 
     #[test]
     fn scantermcap_emits_bool_caps() {
         let _g = crate::test_util::global_state_lock();
-        let v = scantermcap();
-        assert!(v.iter().any(|(k, _)| k == "am"));
+        use std::sync::Mutex;
+        static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        SEEN.lock().unwrap().clear();
+        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+            SEEN.lock().unwrap().push(node.nam.clone());
+        }
+        scantermcap(std::ptr::null_mut(), Some(cb), 0);
+        let seen = SEEN.lock().unwrap().clone();
+        assert!(seen.iter().any(|k| k == "am"));
     }
 
     /// c:80-85 — `bin_echotc` with no args writes "missing argument"
@@ -619,9 +690,16 @@ mod tests {
     #[test]
     fn scantermcap_keys_are_unique() {
         let _g = crate::test_util::global_state_lock();
-        let v = scantermcap();
+        use std::sync::Mutex;
+        static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        KEYS.lock().unwrap().clear();
+        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+            KEYS.lock().unwrap().push(node.nam.clone());
+        }
+        scantermcap(std::ptr::null_mut(), Some(cb), 0);
+        let collected = KEYS.lock().unwrap().clone();
         let mut seen = std::collections::HashSet::new();
-        for (k, _) in &v {
+        for k in &collected {
             assert!(
                 seen.insert(k.clone()),
                 "duplicate termcap key emitted: {}",
@@ -636,7 +714,14 @@ mod tests {
     #[test]
     fn scantermcap_keys_are_nonempty() {
         let _g = crate::test_util::global_state_lock();
-        for (k, _) in scantermcap() {
+        use std::sync::Mutex;
+        static KEYS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        KEYS.lock().unwrap().clear();
+        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+            KEYS.lock().unwrap().push(node.nam.clone());
+        }
+        scantermcap(std::ptr::null_mut(), Some(cb), 0);
+        for k in KEYS.lock().unwrap().iter() {
             assert!(
                 !k.is_empty(),
                 "scantermcap emitted empty key — null entry leak?"
@@ -650,14 +735,16 @@ mod tests {
     #[test]
     fn gettermcap_is_case_sensitive() {
         let _g = crate::test_util::global_state_lock();
-        // "co" is the columns cap; "CO" is unknown.
-        let r1 = gettermcap("co");
-        let r2 = gettermcap("CO");
-        assert!(r1.is_some());
-        assert!(
-            r2.is_none(),
-            "termcap names must be case-sensitive; uppercase resolved unexpectedly"
-        );
+        use crate::ported::zsh_h::PM_UNSET;
+        // "co" is the columns cap; "CO" is unknown (PM_UNSET).
+        let r1 = gettermcap(std::ptr::null_mut(), "co").expect("co Param");
+        assert!(r1.node.flags & PM_UNSET as i32 == 0, "co must be set");
+        if let Some(r2) = gettermcap(std::ptr::null_mut(), "CO") {
+            assert!(
+                r2.node.flags & PM_UNSET as i32 != 0,
+                "termcap names case-sensitive; CO must be PM_UNSET"
+            );
+        }
     }
 
     /// c:323-365 — module-lifecycle stubs all return 0 in C.

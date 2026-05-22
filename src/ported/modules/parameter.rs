@@ -3463,6 +3463,20 @@ pub static PARTAB: &[PartabHashEntry] = &[
         getfn: crate::ported::modules::mapfile::getpmmapfile,
         scanfn: crate::ported::modules::mapfile::scanpmmapfile,
     },
+    // Src/Modules/terminfo.c:291 SPECIALPMDEF("terminfo", PM_READONLY, ...).
+    PartabHashEntry {
+        name: "terminfo",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // terminfo.c:291
+        getfn: crate::ported::modules::terminfo::getterminfo,
+        scanfn: crate::ported::modules::terminfo::scanterminfo,
+    },
+    // Src/Modules/termcap.c:299 SPECIALPMDEF("termcap", PM_READONLY, ...).
+    PartabHashEntry {
+        name: "termcap",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // termcap.c:299
+        getfn: crate::ported::modules::termcap::gettermcap,
+        scanfn: crate::ported::modules::termcap::scantermcap,
+    },
 ];
 
 // scanpmfunction_source / scanpmdisfunction_source already ported
