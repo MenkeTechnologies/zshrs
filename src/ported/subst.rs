@@ -3702,6 +3702,56 @@ pub fn paramsubst(
                     } else {
                         None
                     }
+                } else if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                    // c:Src/params.c:1411-1418 — `(i)/(I)/(r)/(R)` flag
+                    // subscript on a magic-assoc (parameters/commands/
+                    // aliases/functions/options/etc.). Same semantics
+                    // as on a user-defined assoc:
+                    //   (i)pat: scan keys, return first matching key
+                    //   (I)pat: scan keys, return all matching keys
+                    //   (r)pat: scan keys, return value of first match
+                    //   (R)pat: scan keys, return values of all matches
+                    let s = s.trim_start();
+                    let rest = s.strip_prefix('(')?;
+                    let close = rest.find(')')?;
+                    let flags = rest[..close].to_string();
+                    let pat = rest[close + 1..].to_string();
+                    if flags
+                        .chars()
+                        .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b'))
+                    {
+                        Some((flags, pat))
+                    } else {
+                        None
+                    }
+                })(sub)
+                {
+                    // Route through the magic-assoc scan + per-key get.
+                    if let Some(keys) = crate::vm_helper::partab_scan_keys(&var_name) {
+                        let by_key = flags.contains('I') || flags.contains('i');
+                        let return_all = flags.contains('I') || flags.contains('R');
+                        let mut out: Vec<String> = Vec::new();
+                        for k in &keys {
+                            let hay = if by_key {
+                                k.clone()
+                            } else {
+                                crate::vm_helper::partab_get(&var_name, k).unwrap_or_default()
+                            };
+                            if patmatch(&pat, &hay) {
+                                out.push(if by_key {
+                                    k.clone()
+                                } else {
+                                    crate::vm_helper::partab_get(&var_name, k).unwrap_or_default()
+                                });
+                                if !return_all {
+                                    break;
+                                }
+                            }
+                        }
+                        Some(out.join(" "))
+                    } else {
+                        None
+                    }
                 } else {
                     crate::vm_helper::partab_get(&var_name, sub)
                 }
@@ -4156,7 +4206,17 @@ pub fn paramsubst(
                                     names.join(" ")
                                 })
                         }
-                        _ => None, // c:2247
+                        // c:Src/Modules/parameter.c — generic PARTAB
+                        // magic-assoc fallback (parameters/builtins/
+                        // options/modules/reswords/nameddirs/...) via
+                        // the canonical scanfn dispatch. Without this,
+                        // `${(k)parameters}` returned empty.
+                        _ => {
+                            crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
+                                keys.sort();
+                                keys.join(" ")
+                            })
+                        }
                     } // c:2247
                 }) // c:2247
                 .unwrap_or_default();
