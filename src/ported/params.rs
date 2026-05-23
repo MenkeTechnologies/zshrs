@@ -4944,9 +4944,20 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         pm.node.flags |= PM_UNIQUE as i32;
     }
     let val_final = if uniq { simple_arrayuniq(val) } else { val };
-    pm.u_arr = Some(val_final.clone());
-    pm.u_str = None;
-    pm.u_hash = None;
+    // c:3434 — `setarrvalue(v, val);` → `gsu.a->setfn(pm, val)` for
+    // PM_SPECIAL params (PATH/path → pathsetfn rebuilds $PATH cstring;
+    // FPATH/fpath → fpathsetfn rebuilds; MANPATH etc.). Without this
+    // dispatch, env var pairs (PATH vs path) drift apart on array
+    // assignment. Fall back to direct u_arr write when no gsu_a is
+    // wired (regular non-special arrays).
+    let setfn_ptr = pm.gsu_a.as_ref().map(|g| g.setfn);
+    if let Some(setfn) = setfn_ptr {
+        setfn(pm, val_final.clone()); // c:3434
+    } else {
+        pm.u_arr = Some(val_final.clone());
+        pm.u_str = None;
+        pm.u_hash = None;
+    }
     let cloned = pm.clone();
     drop(tab);
     // c:Src/params.c:3262 IPDEF9 — \`argv\`/\`@\`/\`*\` are aliases for
