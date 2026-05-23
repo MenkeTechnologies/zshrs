@@ -4667,24 +4667,28 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // c:3343 `assignstrvalue(v, val, flags)`. C aliases `v->pm`
     // through to the param in the hash table; Rust's borrow rules
     // forbid holding `&mut Param` and wrapping it in `value.pm:
-    // Option<Param>` at once, so we take the Param out of the table,
-    // wrap, dispatch through the existing `assignstrvalue` port
-    // (params.c:2692), and put the mutated Param back. The previous
-    // Rust body wrote `pm.u_str = val` directly, skipping the
-    // PM_INTEGER / PM_EFLOAT / PM_FFLOAT / PM_ARRAY arms entirely —
-    // `integer i=0; i=5; print $i` printed 0 because `getsparam`
-    // reads `pm.u_val` for PM_INTEGER (params.rs:3757) while the
-    // write only touched `pm.u_str`.
-    let taken = tab.remove(name).unwrap(); // c:3343
-    drop(tab); // c:3343
+    // Option<Param>` at once. Previous port used `tab.remove(name)`
+    // to take ownership during dispatch, then re-insert — but
+    // assignstrvalue's PM_INTEGER arm calls `mathevali(val)` which
+    // looks up identifiers via paramtab. With the param removed,
+    // `X=X+1` evaluated `X` as unset (=0) and stored `0+1=1`.
+    // Symptom: `typeset -gi X=5; X=X+1; echo $X` printed 1 instead
+    // of 6 — broke self-referential integer arithmetic which p10k
+    // uses for counters, frame depth, hook chain index, etc.
+    //
+    // Fix: clone the Param into the value struct so the original
+    // stays in the table during mathevali's identifier lookup,
+    // then overwrite the table entry with the mutated clone.
+    let pm_clone = tab.get(name).unwrap().clone(); // c:3343
+    drop(tab); // release write lock — assignstrvalue may take it
     let mut v = value {
         // c:3343
-        pm: Some(taken), // c:3343
-        arr: Vec::new(), // c:3343
-        scanflags: 0,    // c:3343
-        valflags: 0,     // c:3343
-        start: 0,        // c:3343
-        end: -1,         // c:3343
+        pm: Some(pm_clone), // c:3343
+        arr: Vec::new(),    // c:3343
+        scanflags: 0,       // c:3343
+        valflags: 0,        // c:3343
+        start: 0,           // c:3343
+        end: -1,            // c:3343
     }; // c:3343
     assignstrvalue(Some(&mut v), Some(val.to_string()), flags); // c:3343
     let cloned = v.pm.as_ref().cloned(); // c:3345
