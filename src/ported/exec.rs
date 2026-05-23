@@ -1699,16 +1699,13 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
 /// unqueue_signals();
 /// ```
 ///
-/// (a) `wrap->module->wrapper++/--` (c:6178/6180) — Rust Module
-///     doesn't have a `wrapper` refcount field; we skip the bump,
-///     which means a wrapper handler that recursively unloads its
-///     own module won't be deferred. Re-port Module to add
-///     `wrapper: AtomicI32` when wrapper modules ship.
-/// (b) `unload_module(wrap->module)` (c:6184) — the registry's
-///     `unload_module(&mut self, name)` takes a name not a module
-///     ref; we'd need the wrapper to carry the module name to
-///     route correctly. Skipped for now (no shipping wrapper
-///     modules use this path).
+/// (a) `wrap->module->wrapper++/--` (c:6178/6180) — IS now wired
+///     against `module::MODULESTAB.modules[name].wrapper` (i32),
+///     looked up by `wrap.module.node.nam`. Recursive unload during
+///     handler defers correctly.
+/// (b) `unload_module(wrap->module)` (c:6184) — IS now wired via
+///     `modulestab.unload_module(name)` when wrapper hits 0 AND
+///     MOD_UNLOAD flag is set on the module's hashnode.
 /// (c) `execode(prog, 1, 0, "shfunc")` (c:6195) — IS now ported
 ///     (exec.rs:6047). Body uses execode for the no-source
 ///     (compiled-wordcode) branch and fusevm for the
@@ -1735,6 +1732,16 @@ pub fn runshfunc(
     while let Some(w) = wrap {
         // c:6177
         // c:6178 — wrap->module->wrapper++ (WARNING a).
+        // c:6178 — `wrap->module->wrapper++;` — bump refcount so a
+        // recursive unload during the handler defers until we return.
+        let mod_name: Option<String> = w.module.as_ref().map(|m| m.node.nam.clone());
+        if let Some(ref n) = mod_name {
+            if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+                if let Some(m) = tab.modules.get_mut(n) {
+                    m.wrapper += 1;
+                }
+            }
+        }
         let cont = if let Some(h) = w.handler {
             // c:6179 — WrapFunc takes Eprog by value + next FuncWrap by value.
             // We pass an empty next sentinel (wrapper-chain walks are
@@ -1749,8 +1756,28 @@ pub fn runshfunc(
         } else {
             1
         };
-        // c:6180 — wrap->module->wrapper-- (WARNING a).
-        // c:6182-6184 — unload_module deferred check (WARNING b).
+        // c:6180 — `wrap->module->wrapper--;`
+        // c:6182-6184 — `if (!wrap->module->wrapper && (flags & MOD_UNLOAD)) unload_module(wrap->module);`
+        if let Some(ref n) = mod_name {
+            let should_unload = {
+                if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+                    if let Some(m) = tab.modules.get_mut(n) {
+                        m.wrapper -= 1;
+                        m.wrapper == 0
+                            && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) != 0
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            if should_unload {
+                if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+                    let _ = tab.unload_module(n); // c:6184
+                }
+            }
+        }
         if cont == 0 {
             // c:6186 — wrapper claimed the call.
             unqueue_signals(); // c:6189
