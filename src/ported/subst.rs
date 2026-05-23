@@ -5082,7 +5082,27 @@ pub fn paramsubst(
                     })
                     .unwrap_or(false);
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript_one) {
-                    let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
+                    // c:Src/subst.c:3870 — single-`/` on array replaces
+                    // ONLY the first matching element (first hit
+                    // across the whole array, not per-element). Other
+                    // elements pass through unchanged. Tests on
+                    // `(ap b cp)/p/P` confirm zsh outputs `aP b cp`,
+                    // i.e. third element's `p` is NOT replaced.
+                    let mut done = false;
+                    let new_arr: Vec<String> = arr
+                        .iter()
+                        .map(|e| {
+                            if done {
+                                e.clone()
+                            } else {
+                                let replaced = replace_one(e);
+                                if replaced != *e {
+                                    done = true;
+                                }
+                                replaced
+                            }
+                        })
+                        .collect();
                     value = new_arr.join(" "); // c:3870
                     split_parts = Some(new_arr); // c:3870
                 } else {
