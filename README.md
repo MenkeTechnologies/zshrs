@@ -11,7 +11,7 @@
 [![Crates.io](https://img.shields.io/crates/v/zshrs.svg)](https://crates.io/crates/zshrs)
 [![Downloads](https://img.shields.io/crates/d/zshrs.svg)](https://crates.io/crates/zshrs)
 [![Docs.rs](https://docs.rs/zshrs/badge.svg)](https://docs.rs/zshrs)
-[![Docs](https://img.shields.io/badge/docs-online-blue.svg)](https://menketechnologies.github.io/zshrs/)
+ [![Docs](https://img.shields.io/badge/docs-online-blue.svg)](https://menketechnologies.github.io/zshrs/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ### `[THE FIRST COMPILED UNIX SHELL]`
@@ -22,7 +22,7 @@
 
 The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **318k+ lines, 386 source files** across a 4-crate workspace (`zshrs` runtime, `compsys`, `zshrs-daemon`), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 89 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 31 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, fish-style autosuggest/abbrev/highlight, persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **100% ZLE widget coverage** (193/193 entries from zsh's `Src/Zle/iwidgets.list` — history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 48 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility.
 
-### [`Docs`](https://menketechnologies.github.io/zshrs/index.html) · [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](compsys/)
+### [`Read the Docs`](https://menketechnologies.github.io/zshrs/index.html) &middot; [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](compsys/)
 
 ---
 
