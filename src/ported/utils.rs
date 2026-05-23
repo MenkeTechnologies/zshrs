@@ -1608,10 +1608,12 @@ pub fn preprompt() {
     let period = crate::ported::params::getiparam("PERIOD");
     let mailcheck = crate::ported::params::getiparam("MAILCHECK");
 
-    // c:1538-1543 — `winch_unblock(); winch_block();` — window-change signal
-    // pump. Deferred: zshrs's signal layer doesn't expose the C winch_un/
-    // block pair as separate primitives, and the prompt path runs outside
-    // an interactive ZLE session in zshrs today.
+    // c:1538-1543 — `winch_unblock(); ... winch_block();` — let any
+    // pending SIGWINCH fire so the prompt picks up the latest column
+    // count, then re-block to prevent the resize-handler from
+    // interrupting prompt rendering mid-paint.
+    crate::ported::signals_h::winch_unblock();
+    crate::ported::signals_h::winch_block();
 
     // c:1545-1567 — PROMPT_SP heuristic (move prompt to new line on
     // dangling output). Deferred: needs zterm_columns + hasxn + raw
