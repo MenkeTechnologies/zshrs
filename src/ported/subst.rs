@@ -2156,10 +2156,16 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
     } // c:1445
 
     // C: `ret = mathevali(p);` — evaluate as integer math.
+    // c:1446 `if (errflag) return -1;` — the C body relies on mathevali's
+    // internal zerr() to have already written to stderr; Rust's
+    // mathevali captures the message in Err — surface it here.
     let ret = match mathevali(&expanded) {
         // c:1447
-        Ok(n) => n,            // c:1447
-        Err(_) => return None, // c:1448
+        Ok(n) => n, // c:1447
+        Err(msg) => {
+            zerr(&msg);           // emit error to stderr (C side-effect)
+            return None; // c:1448
+        }
     };
 
     // C: `if (ret < 0) ret = -ret;` — absolute value.
@@ -2269,13 +2275,14 @@ pub fn substevalchar(ptr: &str) -> Option<String> {
     let ires = match mathevali(ptr) {
         // c:1497
         Ok(n) => n, // c:1497
-        Err(_) => {
+        Err(msg) => {
             // c:1499
             // C: `return noerrs ? dupstring("") : NULL;` —
             // empty string when noerrs flag is set, NULL otherwise.
-            // Rust port returns Some("") so callers see a clean
-            // empty value rather than aborting; the `noerrs` global
-            // is at the parser layer and isn't plumbed here yet.
+            // The C path's zerr() inside mathevali wrote the message
+            // to stderr before this return; Rust's mathevali captures
+            // it in Err — surface it via zerr().
+            zerr(&msg);
             return Some(String::new()); // c:1500
         } // c:1502
     }; // c:1502
