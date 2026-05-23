@@ -4222,18 +4222,42 @@ pub fn paramsubst(
         // )` got 1 element instead of zsh's 103.
         let mut magic_assoc_array: Option<Vec<String>> = None;
         if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 {
-            // c:2247 (kv)
-            value = assoc_get(&var_name) // c:2247
+            // c:2247 (kv) — interleaved key/value pairs. Walk assoc
+            // first, then the magic-assoc fallback (aliases/functions/
+            // commands/parameters/builtins/options/...) interleaving
+            // each key with its value.
+            magic_assoc_array = assoc_get(&var_name)
                 .map(|m| {
-                    // c:2247
-                    let mut out: Vec<String> = Vec::with_capacity(m.len() * 2); // c:2247
+                    let mut out: Vec<String> = Vec::with_capacity(m.len() * 2);
                     for (k, v) in m {
-                        // c:2247
-                        out.push(k.clone()); // c:2247
-                        out.push(v.clone()); // c:2247
-                    } // c:2247
-                    out.join(" ") // c:2247
-                }) // c:2247
+                        out.push(k.clone());
+                        out.push(v.clone());
+                    }
+                    out
+                })
+                .or_else(|| match var_name.as_str() {
+                    "aliases" => aliastab_lock().read().ok().map(|t| {
+                        let mut entries: Vec<(String, String)> = t
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.text.clone()))
+                            .collect();
+                        entries.sort_by(|a, b| a.0.cmp(&b.0));
+                        entries.into_iter().flat_map(|(k, v)| [k, v]).collect()
+                    }),
+                    _ => crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
+                        keys.sort();
+                        keys.into_iter()
+                            .flat_map(|k| {
+                                let v = crate::vm_helper::partab_get(&var_name, &k)
+                                    .unwrap_or_default();
+                                [k, v]
+                            })
+                            .collect()
+                    }),
+                });
+            value = magic_assoc_array
+                .as_ref()
+                .map(|v| v.join(" "))
                 .unwrap_or_default(); // c:2247
         } else if (hkeys & SCANPM_WANTKEYS) != 0 {
             // c:2247
@@ -4333,9 +4357,32 @@ pub fn paramsubst(
                 }) // c:2247
                 .unwrap_or_default();
         } else if (hvals & SCANPM_WANTVALS) != 0 {
-            // c:2256
-            value = assoc_get(&var_name) // c:2256
-                .map(|m| m.values().cloned().collect::<Vec<_>>().join(" ")) // c:2256
+            // c:2256 — (v) flag: values as array, with magic-assoc
+            // fallback chain matching the (k) arm above so
+            // \`\${(v)options}\` etc. splat.
+            magic_assoc_array = assoc_get(&var_name)
+                .map(|m| m.values().cloned().collect::<Vec<String>>())
+                .or_else(|| {
+                    // Magic-assoc value-side fallback: route through
+                    // partab_array_get for PARTAB_ARRAY entries (the
+                    // canonical scanfn dispatch returns ordered values).
+                    // For non-array magic-assoc names, scan keys + look
+                    // up each via partab_get to build the value list.
+                    crate::vm_helper::partab_array_get(&var_name).or_else(|| {
+                        crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
+                            keys.sort();
+                            keys.into_iter()
+                                .map(|k| {
+                                    crate::vm_helper::partab_get(&var_name, &k)
+                                        .unwrap_or_default()
+                                })
+                                .collect()
+                        })
+                    })
+                });
+            value = magic_assoc_array
+                .as_ref()
+                .map(|v| v.join(" "))
                 .unwrap_or_default();
             // c:2922 — getarrvalue sets isarr=1 for assoc-value fetch.
             isarr = 1;
