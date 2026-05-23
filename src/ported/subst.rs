@@ -3594,12 +3594,17 @@ pub fn paramsubst(
                     // c:2916 (full array)
                     arr.join(" ")
                 } else if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
-                    // (I)/(i)/(R)/(r) array subscript flags —
-                    // (i)pat returns 1-based index of first matching
-                    // element, (I)pat returns all indices joined,
-                    // (r)pat returns first matching VALUE, (R)pat
-                    // returns all matching values. Direct port of
-                    // Src/params.c getarg array-pattern routing.
+                    // c:Src/params.c:1411-1418 — `(i)/(I)/(r)/(R)`
+                    // array subscript flags. Per C:
+                    //   (i)pat: rev=ind=1, down=0 → first match, INDEX
+                    //   (I)pat: rev=ind=down=1   → LAST  match, INDEX
+                    //   (r)pat: rev=1, ind=0, down=0 → first match, VALUE
+                    //   (R)pat: rev=1, ind=0, down=1 → LAST  match, VALUE
+                    //
+                    // `down=1` means scan from the end of the array
+                    // backward. The previous Rust port treated capital
+                    // forms as "all matches joined" which is wrong —
+                    // they're LAST-match (single return).
                     let s = s.trim_start();
                     let rest = s.strip_prefix('(')?;
                     let close = rest.find(')')?;
@@ -3615,29 +3620,33 @@ pub fn paramsubst(
                     }
                 })(sub)
                 {
-                    let return_index = flags.contains('I') || flags.contains('i');
-                    let return_all = flags.contains('I') || flags.contains('R');
-                    let mut out: Vec<String> = Vec::new();
-                    for (idx, elem) in arr.iter().enumerate() {
+                    let return_index = flags.contains('I') || flags.contains('i'); // c:1412/1416 ind=1
+                    let down = flags.contains('I') || flags.contains('R'); // c:1416/c:1418 down=1
+                    let mut found_idx: Option<usize> = None; // c:1500
+                    let iter: Box<dyn Iterator<Item = (usize, &String)>> = if down {
+                        Box::new(arr.iter().enumerate().rev())
+                    } else {
+                        Box::new(arr.iter().enumerate())
+                    };
+                    for (idx, elem) in iter {
                         if patmatch(&pat, elem) {
-                            if return_index {
-                                out.push((idx + 1).to_string());
-                            } else {
-                                out.push(elem.clone());
-                            }
-                            if !return_all {
-                                break;
-                            }
+                            found_idx = Some(idx);
+                            break;
                         }
                     }
-                    if out.is_empty() && return_index {
-                        // (i) returns one-past-end on no-match (zsh
-                        // convention so $arr[$arr[(i)pat]] yields
-                        // empty string for missing); (I) returns
-                        // empty string. Direct port of params.c.
-                        (arr.len() + 1).to_string()
-                    } else {
-                        out.join(" ")
+                    match found_idx {
+                        Some(idx) if return_index => (idx + 1).to_string(),
+                        Some(idx) => arr[idx].clone(),
+                        None if return_index && !down => {
+                            // c:2945 — (i) no-match: one-past-end
+                            // so `$arr[$arr[(i)pat]]` yields empty.
+                            (arr.len() + 1).to_string()
+                        }
+                        None if return_index && down => {
+                            // c:2945 — (I) no-match: 0 (before first).
+                            "0".to_string()
+                        }
+                        None => String::new(),
                     }
                 } else if let Ok(idx_n) = sub.parse::<i64>() {
                     // c:2926 (numeric index)
