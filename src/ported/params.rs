@@ -4914,6 +4914,18 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
         return None;
     }
+    // c:3415-3420 — `if (PM_TYPE(pm->node.flags) != PM_ARRAY &&
+    //                   (pm->node.flags & PM_SPECIAL)) { zerr; return; }`
+    // Special params have fixed types (e.g., $SECONDS is INTEGER);
+    // can't promote them to PM_ARRAY through assignment.
+    if existed {
+        let pm_type = prior_flags as u32 & PM_TYPE(u32::MAX);
+        if pm_type != PM_ARRAY && (prior_flags as u32 & PM_SPECIAL) != 0 {
+            zerr(&format!("{}: can't change type of a special parameter", name));
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+            return None;
+        }
+    }
 
     // c:3402-3412 — ASSPM_AUGMENT preserve-old prepend. When the
     // previous value was a scalar (not array/hashed) and we're
