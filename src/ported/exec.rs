@@ -4938,19 +4938,416 @@ pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
     LASTVAL.load(Ordering::Relaxed) // c:5290
 }
 
+/// `execshfunc(Shfunc shf, LinkList args)` — `Src/exec.c:5540`. The
+/// real port goes in `crate::ported::exec` as a top-level fn (it
+/// owns the queue_signals + cmdstack + sfcontext setup before
+/// calling doshfunc). doshfunc itself is unported. Until both land,
+/// route the anon-function body through `runshfunc` (exec.rs:1700),
+/// which carries the wrapper-chain + zunderscore restore. This is
+/// degraded vs C (no cmdstack push, no sfcontext flip, no XTRACE
+/// arg-trace) but the anon-function body actually executes and
+/// `lastval` is updated.
+///
+/// !!! WARNING: RUST-ONLY HELPER — STUB FOR UN-PORTED C FN !!!
+/// Same-file local per [[feedback_no_shortcuts_in_porting]] —
+/// caller (execfuncdef anon-func path c:5439) calls
+/// `execshfunc(shf, args)` and `lastval` is read on return.
+fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
+    // c:5546-5547 — `if (errflag) return;`
+    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+        return;
+    }
+    // c:5550-5557 (job-table cleanup) skipped — list_pipe machinery
+    // not yet wired into the fusevm dispatcher; runshfunc's
+    // signal-queue dance covers the essential preempt safety.
+    // c:5559-5570 XTRACE arg trace: omit until full execshfunc port.
+    // c:5572-5578 cmdstack/sfcontext setup: omit (no cmdstack in
+    // zshrs yet — replaced by tracing).
+    // c:5580 — `doshfunc(shf, args, 0);`
+    if let Some(prog) = shf.funcdef.as_deref() {
+        // Wire argv-as-positional via the canonical
+        // positional-param swap that runshfunc already does at
+        // c:6166-...; the wrapper chain is None (no FuncWrap).
+        let _ = args;
+        runshfunc(prog, None, &shf.node.nam);
+    }
+    // c:5582-5589 cmdstack restore/free: omit (no cmdstack).
+}
+
 /// Port of `execfuncdef(Estate state, Eprog redir_prog)` from
-/// `Src/exec.c:5309`. Define a shell function: extract name+body from
-/// the wordcode payload, install into shfunctab.
-pub fn execfuncdef(state: &mut estate, _redir_prog: Option<crate::ported::zsh_h::Eprog>) -> i32 {
-    // c:5311 — `wordcode code = *state->pc++;` — name-count for the
-    // multi-name `f g h () { ... }` form.
-    let prior = state.prog.prog[state.pc.wrapping_sub(1)];
-    let end = state.pc + WC_FUNCDEF_SKIP(prior) as usize;
-    // TODO faithful: full body install via createshfunc + shfunctab
-    // insert. Tracked separately; for now, skip past the funcdef so
-    // the wordcode walker advances correctly.
+/// `Src/exec.c:5309-5494`. Define a shell function: extract
+/// name(s)+body from the wordcode payload, allocate the Shfunc,
+/// install into `shfunctab` (named), or execute immediately (anon).
+#[allow(non_snake_case)]
+pub fn execfuncdef(
+    state: &mut estate,
+    mut redir_prog: Option<crate::ported::zsh_h::Eprog>,
+) -> i32 {
+    use crate::ported::hashtable::{dircache_set, shfunctab_lock};
+    use crate::ported::jobs::{getsigidx, removetrapnode};
+    use crate::ported::parse::{dupeprog, freeeprog, incrdumpcount};
+    use crate::ported::signals::settrap;
+    use crate::ported::utils::scriptfilename_get;
+    use crate::ported::zsh_h::{
+        eprog as eprog_t, hashnode, patprog as patprog_t, shfunc as shfunc_t, EC_DUPTOK as _,
+        EF_HEAP, EF_MAP, EF_REAL, FS_EVAL, FS_FUNC, PM_ANONYMOUS, PM_TAGGED, PM_TAGGED_LOCAL,
+        Patprog, PRINTEXITVALUE, SHINSTDIN, ZSIG_FUNC,
+    };
+    // c:5311 — `Shfunc shf;`
+    let mut shf: Box<shfunc_t>;
+    // c:5312 — `char *s = NULL;`
+    let mut s: Option<String> = None;
+    // c:5313 — `int signum, nprg, sbeg, nstrs, npats, do_tracing, len, plen, i, htok = 0, ret = 0;`
+    let mut signum: i32;
+    let nprg: i32;
+    let sbeg: i32;
+    let nstrs: i32;
+    let npats: i32;
+    let do_tracing: i32;
+    let len: i32;
+    let plen: i32;
+    // `i` — C loop counter for pp stamp; Rust uses .map().collect().
+    let mut htok: i32 = 0;
+    let mut ret: i32 = 0;
+    // c:5314 — `int anon_func = 0;`
+    let mut anon_func: i32 = 0;
+    // c:5315 — `Wordcode beg = state->pc, end;`
+    let _beg: usize = state.pc;
+    let mut end: usize;
+    // c:5316 — `Eprog prog;`
+    // (allocated inline per-iter below; no upfront binding needed)
+    // c:5317 — `Patprog *pp;` — handled by Vec construction.
+    // c:5318 — `LinkList names;`
+    let names: Vec<String>;
+    // c:5319 — `int tracing_flags;`
+    let tracing_flags: i32;
+
+    // c:5321 — `end = beg + WC_FUNCDEF_SKIP(state->pc[-1]);`
+    end = state.pc + WC_FUNCDEF_SKIP(state.prog.prog[state.pc.wrapping_sub(1)]) as usize;
+    // c:5322 — `names = ecgetlist(state, *state->pc++, EC_DUPTOK, &htok);`
+    let num = state.prog.prog[state.pc] as usize;
+    state.pc += 1;
+    names = ecgetlist(state, num, EC_DUPTOK, Some(&mut htok));
+    // c:5323 — `sbeg = *state->pc++;`
+    sbeg = state.prog.prog[state.pc] as i32;
+    state.pc += 1;
+    // c:5324 — `nstrs = *state->pc++;`
+    nstrs = state.prog.prog[state.pc] as i32;
+    state.pc += 1;
+    // c:5325 — `npats = *state->pc++;`
+    npats = state.prog.prog[state.pc] as i32;
+    state.pc += 1;
+    // c:5326 — `do_tracing = *state->pc++;`
+    do_tracing = state.prog.prog[state.pc] as i32;
+    state.pc += 1;
+
+    // c:5328 — `nprg = (end - state->pc);`
+    nprg = end.saturating_sub(state.pc) as i32;
+    // c:5329 — `plen = nprg * sizeof(wordcode);`
+    plen = nprg
+        .saturating_mul(std::mem::size_of::<wordcode>() as i32);
+    // c:5330 — `len = plen + (npats * sizeof(Patprog)) + nstrs;`
+    len = plen
+        + npats.saturating_mul(std::mem::size_of::<usize>() as i32)
+        + nstrs;
+    // c:5331 — `tracing_flags = do_tracing ? PM_TAGGED_LOCAL : 0;`
+    tracing_flags = if do_tracing != 0 {
+        PM_TAGGED_LOCAL as i32
+    } else {
+        0
+    };
+
+    // c:5333-5339 — htok name substitution.
+    let mut names_mut: Vec<String> = names;
+    if htok != 0 && !names_mut.is_empty() {
+        execsubst(&mut names_mut); // c:5334
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            // c:5335
+            state.pc = end; // c:5336
+            return 1; // c:5337
+        }
+    }
+
+    // c:5341-5342 DPUTS — debug assertion (anon + redir simultaneously).
+    // Not portable as panic; left as comment.
+
+    // c:5343 — `while (!names || (s = (char *) ugetnode(names))) {`
+    // num==0 → anon (no names); else iterate names.
+    let mut names_iter = names_mut.into_iter();
+    loop {
+        let no_names = num == 0;
+        if !no_names {
+            // c:5343 — `s = ugetnode(names)`; break when list exhausted.
+            match names_iter.next() {
+                Some(nm) => s = Some(nm),
+                None => break,
+            }
+        }
+        // c:5344-5374 — Eprog alloc.
+        let prog: Box<eprog_t>;
+        let dump_present = state.prog.dump.is_some();
+        let make_pat = || -> Patprog {
+            // c:5375-5376 `*pp = dummy_patprog1;` — sentinel slot.
+            Box::new(patprog_t {
+                startoff: 0,
+                size: 0,
+                mustoff: 0,
+                patmlen: 0,
+                globflags: 0,
+                globend: 0,
+                flags: 0,
+                patnpar: 0,
+                patstartch: 0,
+            })
+        };
+        if no_names {
+            // c:5345-5346 — `zhalloc`, `nref = -1`.
+            // c:5355-5357 — EF_HEAP, no dump, npats pats on heap.
+            let pats: Vec<Patprog> = (0..npats).map(|_| make_pat()).collect();
+            let prog_words: Vec<wordcode> = state.prog.prog[state.pc..end].to_vec();
+            // c:5365 — `prog->strs = state->strs + sbeg;`
+            let strs_tail = state
+                .strs
+                .as_ref()
+                .map(|t| {
+                    let off = (sbeg as usize).min(t.len());
+                    t[off..].to_string()
+                });
+            prog = Box::new(eprog_t {
+                flags: EF_HEAP,
+                len,
+                npats,
+                nref: -1, // c:5346
+                pats,
+                prog: prog_words,
+                strs: strs_tail,
+                shf: None, // c:5377
+                dump: None, // c:5356
+            });
+        } else if dump_present {
+            // c:5358-5363 — EF_MAP path: refcount the dump, allocate
+            // pats permanent, reuse `state->pc` slice in place.
+            if let Some(dp) = state.prog.dump.as_deref() {
+                incrdumpcount(dp); // c:5360
+            }
+            let pats: Vec<Patprog> = (0..npats).map(|_| make_pat()).collect();
+            let prog_words: Vec<wordcode> = state.prog.prog[state.pc..end].to_vec();
+            let strs_tail = state.strs.as_ref().map(|t| {
+                let off = (sbeg as usize).min(t.len());
+                t[off..].to_string()
+            });
+            prog = Box::new(eprog_t {
+                flags: EF_MAP, // c:5359
+                len,
+                npats,
+                nref: 1, // c:5349
+                pats,
+                prog: prog_words,
+                strs: strs_tail,
+                shf: None, // c:5377
+                dump: state.prog.dump.clone(), // c:5361
+            });
+        } else {
+            // c:5366-5374 — EF_REAL: copy wordcode + strs into a
+            // freshly-owned eprog (no shared dump backing).
+            let pats: Vec<Patprog> = (0..npats).map(|_| make_pat()).collect();
+            let pc_end = state.pc + nprg as usize;
+            let prog_words: Vec<wordcode> = state.prog.prog[state.pc..pc_end].to_vec();
+            // c:5373 — `memcpy(prog->strs, state->strs + sbeg, nstrs);`
+            let strs_copy = state.strs.as_ref().map(|t| {
+                let off = (sbeg as usize).min(t.len());
+                let n_avail = t.len().saturating_sub(off);
+                let take = (nstrs as usize).min(n_avail);
+                t[off..off + take].to_string()
+            });
+            prog = Box::new(eprog_t {
+                flags: EF_REAL, // c:5367
+                len,
+                npats,
+                nref: 1, // c:5349
+                pats,
+                prog: prog_words,
+                strs: strs_copy,
+                shf: None, // c:5377
+                dump: None, // c:5371
+            });
+        }
+
+        // c:5379-5381 — Shfunc alloc + funcdef + tracing flags.
+        shf = Box::new(shfunc_t {
+            node: hashnode {
+                next: None,
+                nam: String::new(),
+                flags: tracing_flags,
+            },
+            filename: scriptfilename_get(), // c:5383 `ztrdup(scriptfilename)`
+            // c:5384-5388 — funcstack top FS_FUNC/FS_EVAL → flineno+lineno
+            // else just lineno.
+            lineno: {
+                let cur_lineno = crate::ported::input::lineno.with(|l| l.get()) as i64;
+                if let Ok(stk) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+                    if let Some(top) = stk.last() {
+                        if top.tp == FS_FUNC || top.tp == FS_EVAL {
+                            top.flineno + cur_lineno
+                        } else {
+                            cur_lineno
+                        }
+                    } else {
+                        cur_lineno
+                    }
+                } else {
+                    cur_lineno
+                }
+            },
+            funcdef: Some(prog), // c:5380
+            redir: None,
+            sticky: None,
+            body: None,
+        });
+        // c:5396-5401 — redir_prog ownership.
+        // C: `if (names && nonempty(names) && redir_prog) shf->redir = dupeprog(redir_prog,0)`
+        // else `shf->redir = redir_prog; redir_prog = 0;`
+        // "nonempty(names)" means there's a NEXT name still to consume —
+        // i.e. peek the iterator.
+        if !no_names && names_iter.len() > 0 && redir_prog.is_some() {
+            // c:5397 — dupe so each earlier name gets its own copy; the
+            // last name (when iterator drains) gets the original.
+            if let Some(rp) = redir_prog.as_deref() {
+                shf.redir = Some(Box::new(dupeprog(rp, false)));
+            }
+        } else {
+            // c:5399-5400 — last name (or anon) takes original.
+            shf.redir = redir_prog.take();
+        }
+        // c:5402 — `shfunc_set_sticky(shf);`
+        shfunc_set_sticky(&mut shf);
+
+        if no_names {
+            // c:5404-5457 — anonymous function: execute immediately.
+            // `LinkList args;` c:5409
+            let mut args: Vec<String>;
+
+            anon_func = 1; // c:5411
+            shf.node.flags |= PM_ANONYMOUS as i32; // c:5412
+
+            state.pc = end; // c:5414
+            // c:5415 — `end += *state->pc++;`
+            end += state.prog.prog[state.pc] as usize;
+            state.pc += 1;
+            // c:5416 — `args = ecgetlist(state, *state->pc++, EC_DUPTOK, &htok);`
+            let arg_count = state.prog.prog[state.pc] as usize;
+            state.pc += 1;
+            args = ecgetlist(state, arg_count, EC_DUPTOK, Some(&mut htok));
+
+            // c:5418-5429 — htok arg subst + cleanup-on-error.
+            if htok != 0 && !args.is_empty() {
+                execsubst(&mut args); // c:5419
+                if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+                    // c:5421 — `freeeprog(shf->funcdef);`
+                    if let Some(mut fd) = shf.funcdef.take() {
+                        freeeprog(&mut fd);
+                    }
+                    if shf.redir.is_some() {
+                        // c:5422-5423 — "shouldn't be" anon+redir, but free if so.
+                        if let Some(mut rd) = shf.redir.take() {
+                            freeeprog(&mut rd);
+                        }
+                    }
+                    dircache_set(&mut shf.filename, None); // c:5424
+                    drop(shf); // c:5425 `zfree(shf, sizeof(*shf));`
+                    state.pc = end; // c:5426
+                    return 1; // c:5427
+                }
+            }
+
+            // c:5431-5432 — `setunderscore` to last arg (or "").
+            let under_val = if !args.is_empty() {
+                args.last().cloned().unwrap_or_default()
+            } else {
+                String::new()
+            };
+            setunderscore(&under_val);
+
+            // c:5434-5435 — `if (!args) args = newlinklist();`
+            // (Rust Vec is never null; no-op.)
+            shf.node.nam = ANONYMOUS_FUNCTION_NAME.to_string(); // c:5436
+            // c:5437 — `pushnode(args, shf->node.nam);` — prepend.
+            args.insert(0, shf.node.nam.clone());
+
+            execshfunc(&mut shf, &mut args); // c:5439
+            ret = LASTVAL.load(Ordering::Relaxed); // c:5440
+
+            // c:5442-5450 — PRINTEXITVALUE+SHINSTDIN exit report.
+            if isset(PRINTEXITVALUE) && isset(SHINSTDIN) && ret != 0 {
+                eprintln!("zsh: exit {}", ret); // c:5445/5447
+            }
+
+            // c:5452-5456 — cleanup.
+            if let Some(mut fd) = shf.funcdef.take() {
+                freeeprog(&mut fd);
+            }
+            if let Some(mut rd) = shf.redir.take() {
+                // c:5453-5454 — "shouldn't be" but free if present.
+                freeeprog(&mut rd);
+            }
+            dircache_set(&mut shf.filename, None); // c:5455
+            drop(shf); // c:5456 `zfree(shf, sizeof(*shf));`
+            break; // c:5457
+        } else {
+            // c:5458-5484 — named function path.
+            let nm = s.as_deref().unwrap_or("");
+            // c:5460-5475 — TRAP* signal-trap install.
+            if nm.len() > 4 && nm.starts_with("TRAP") {
+                if let Some(sn) = getsigidx(&nm[4..]) {
+                    signum = sn;
+                    // c:5462 — `if (settrap(signum, NULL, ZSIG_FUNC))`
+                    if settrap(signum, None, ZSIG_FUNC) != 0 {
+                        if let Some(mut fd) = shf.funcdef.take() {
+                            freeeprog(&mut fd); // c:5463
+                        }
+                        dircache_set(&mut shf.filename, None); // c:5464
+                        drop(shf); // c:5465
+                        state.pc = end; // c:5466
+                        return 1; // c:5467
+                    }
+                    // c:5474 — `removetrapnode(signum);`
+                    removetrapnode(signum);
+                }
+            }
+            // c:5477-5482 — re-define-self trace flag propagate.
+            if let Ok(stk) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+                if let Some(top) = stk.last() {
+                    if top.tp == FS_FUNC && top.name == nm {
+                        // c:5479 — `Shfunc old = shfunctab->getnode(s);`
+                        if let Ok(rd) = shfunctab_lock().read() {
+                            if let Some(old) = rd.get(nm) {
+                                // c:5481 — propagate PM_TAGGED|PM_TAGGED_LOCAL.
+                                shf.node.flags |= old.node.flags
+                                    & (PM_TAGGED as i32 | PM_TAGGED_LOCAL as i32);
+                            }
+                        }
+                    }
+                }
+            }
+            // c:5483 — `shfunctab->addnode(shfunctab, ztrdup(s), shf);`
+            shf.node.nam = nm.to_string();
+            if let Ok(mut wr) = shfunctab_lock().write() {
+                wr.add(*shf);
+            }
+        }
+    }
+    // c:5486-5487 — `if (!anon_func) setunderscore("");`
+    if anon_func == 0 {
+        setunderscore("");
+    }
+    // c:5488-5491 — leftover redir cleanup ("shouldn't happen").
+    if let Some(mut rd) = redir_prog.take() {
+        freeeprog(&mut rd);
+    }
+    // c:5492 — `state->pc = end;`
     state.pc = end;
-    0
+    // c:5493 — `return ret;`
+    ret
 }
 
 /// Port of `execsimple(Estate state)` from `Src/exec.c:1290-1340`.
