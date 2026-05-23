@@ -59,6 +59,17 @@ use crate::ported::zsh_h::{builtin, eprog, execstack, funcwrap, hashnode, multio
 use crate::zsh_h::XTRACE;
 use crate::ported::zsh_system_h::timespec as ZshTimespec;
 
+/// Port of the anonymous `enum { ... }` from `Src/exec.c:35-40`.
+/// Flag bits passed as the `addflags` argument to `addvars` /
+/// `addvarsfromargs`:
+///   - `ADDVAR_EXPORT`  (1<<0) — export each assignment for the
+///                                command `VAR=val cmd ...` form.
+///   - `ADDVAR_RESTORE` (1<<2) — the variable list is being restored
+///                                later (implicit local scope), so
+///                                suppress `ASSPM_WARN`.
+pub const ADDVAR_EXPORT: i32 = 1 << 0; // c:37 (Src/exec.c)
+pub const ADDVAR_RESTORE: i32 = 1 << 2; // c:39 (Src/exec.c)
+
 /// Port of `int trap_state;` from `Src/exec.c:134`. Tracks whether
 /// a trap handler is currently being processed and, paired with
 /// `TRAP_RETURN` below, whether a `return` inside the trap should
@@ -4507,6 +4518,17 @@ pub fn quote_tokenized_output(str_in: &str, file: &mut impl std::io::Write) -> s
 use crate::ported::r#loop::try_tryflag;
 use crate::ported::math::{matheval as wc_matheval, mathevali as wc_mathevali};
 use crate::ported::pattern::{patcompile, pattry};
+
+// Addvars-specific imports (Src/exec.c:2497 port at exec.rs::addvars).
+use crate::ported::linklist::LinkList;
+use crate::ported::params::{assignaparam, assignsparam, unsetparam};
+use crate::ported::pattern::haswilds;
+use crate::ported::subst::{globlist, prefork};
+use crate::ported::zsh_h::{
+    ALLEXPORT, ASSPM_AUGMENT, ASSPM_KEY_VALUE, ASSPM_WARN, GLOBASSIGN, KSHARRAYS, PREFORK_ASSIGN,
+    PREFORK_KEY_VALUE, PREFORK_SINGLE, WC_ASSIGN, WC_ASSIGN_INC, WC_ASSIGN_NUM, WC_ASSIGN_SCALAR,
+    WC_ASSIGN_TYPE, WC_ASSIGN_TYPE2,
+};
 use crate::ported::parse::{ecgetlist, ecgetstr};
 use crate::ported::params::setloopvar;
 use crate::ported::mem::freeheap;
@@ -4545,19 +4567,248 @@ fn execsubst(list: &mut Vec<String>) {
     }
 }
 
-/// `addvars(Estate state, Wordcode pc, int addflags)` — `Src/exec.c:2547`.
-/// Process WC_ASSIGN nodes inline of a simple command (executes the
-/// `var=value` / `arr=(v1 v2)` assignments stacked before argv). Full
-/// port pending the params-write substrate; this stub advances past
-/// the assignment block without applying the writes — matches what
-/// the AST-side `compile_zsh.rs::compile_assign` already does, so
-/// the wordcode-VM and AST paths agree on no-op here while the
-/// substrate lands.
-fn addvars(_state: &mut estate, _pc: usize, _addflags: i32) {
-    // c:2547 — TODO faithful: needs paramtab-write through assignsparam /
-    // assignaparam plus WC_ASSIGN_KIND/_TYPE/_NUM dispatch. Tracked at
-    // tests/data/fake_fn_allowlist.txt; until ported, no-op (the
-    // assignment path is already handled by the fusevm compiler).
+/// Direct port of `static void addvars(Estate state, Wordcode pc,
+/// int addflags)` from `Src/exec.c:2497-2648`. Process the WC_ASSIGN
+/// nodes stacked inline of a simple command — the `var=value` and
+/// `arr=(v1 v2 v3)` assignments that precede argv. Walks the wordcode
+/// at `pc`, extracts each assignment's name + value (scalar or array),
+/// optionally preforks + globs the tokenised RHS, and routes through
+/// `assignsparam` (scalar) or `assignaparam` (array).
+///
+/// XTRACE side-effect: prints `name=value ` / `name=( v1 v2 ) ` to
+/// stderr (C uses xtrerr; zshrs uses eprint!).
+///
+/// `STTY=...` in an inline-export form (`STTY=raw cmd`) gets captured
+/// into the file-static `STTYval` for `execute()` to apply pre-exec.
+fn addvars(state: &mut estate, pc: usize, addflags: i32) {
+    // c:2501 — locals.
+    let mut vl: LinkList<String>; // c:2501 `LinkList vl;`
+    let xtr: bool; // c:2502 `int xtr,`
+    let mut isstr: bool; // c:2502 `int isstr,`
+    let mut htok: i32 = 0; // c:2502 `int htok = 0;`
+    let mut arr: Vec<String>; // c:2503 `char **arr, **ptr, *name;`
+    let mut name: String;
+    let mut flags: i32; // c:2504 `int flags;`
+    let opc = state.pc; // c:2506 `Wordcode opc = state->pc;`
+    let mut ac: wordcode; // c:2507 `wordcode ac;`
+    // c:2508 `local_list1(svl);` — stack-local one-element LinkList
+    // for the scalar-assignment path. Rust uses a fresh LinkList per
+    // iteration; equivalent semantics.
+
+    // c:2510-2515 — comment about WARNCREATEGLOBAL warning suppression
+    // when the assignment list is implicitly local (ADDVAR_RESTORE).
+    flags = if (addflags & ADDVAR_RESTORE) == 0 {
+        ASSPM_WARN // c:2516
+    } else {
+        0 // c:2516
+    };
+    xtr = isset(XTRACE); // c:2517 `xtr = isset(XTRACE);`
+    if xtr {
+        // c:2518
+        printprompt4(); // c:2519
+        doneps4.store(1, Ordering::Relaxed); // c:2520 `doneps4 = 1;`
+    }
+    state.pc = pc; // c:2522 `state->pc = pc;`
+
+    // c:2523 `while (wc_code(ac = *state->pc++) == WC_ASSIGN) {`
+    loop {
+        if state.pc >= state.prog.prog.len() {
+            break;
+        }
+        ac = state.prog.prog[state.pc];
+        state.pc += 1;
+        if wc_code(ac) != WC_ASSIGN {
+            // Step back so the WC_SIMPLE / outer dispatcher sees the
+            // non-assignment opcode. C's `state->pc++` post-increment
+            // already pointed past WC_ASSIGN; we need to unconsume.
+            state.pc -= 1;
+            break;
+        }
+        let mut myflags = flags; // c:2524 `int myflags = flags;`
+        name = ecgetstr(state, EC_DUPTOK, Some(&mut htok)); // c:2525
+        if htok != 0 {
+            // c:2526 `if (htok) untokenize(name);`
+            name = untokenize(&name).to_string(); // c:2527
+        }
+        if WC_ASSIGN_TYPE2(ac) == WC_ASSIGN_INC {
+            // c:2528
+            myflags |= ASSPM_AUGMENT; // c:2529
+        }
+        if xtr {
+            // c:2530
+            // c:2531-2532 — fprintf(xtrerr, ... "%s+=" : "%s=", name);
+            if WC_ASSIGN_TYPE2(ac) == WC_ASSIGN_INC {
+                eprint!("{}+=", name); // c:2532
+            } else {
+                eprint!("{}=", name); // c:2532
+            }
+        }
+
+        // c:2533 `if ((isstr = (WC_ASSIGN_TYPE(ac) == WC_ASSIGN_SCALAR))) {`
+        isstr = WC_ASSIGN_TYPE(ac) == WC_ASSIGN_SCALAR;
+        if isstr {
+            // c:2534 `init_list1(svl, ecgetstr(state, EC_DUPTOK, &htok));`
+            let svl_val = ecgetstr(state, EC_DUPTOK, Some(&mut htok));
+            vl = LinkList::new();
+            vl.push_back(svl_val);
+            // c:2535 `vl = &svl;` — vl already points at the new list.
+        } else {
+            // c:2537 `vl = ecgetlist(state, WC_ASSIGN_NUM(ac), EC_DUPTOK, &htok);`
+            let items = ecgetlist(
+                state,
+                WC_ASSIGN_NUM(ac) as usize,
+                EC_DUPTOK,
+                Some(&mut htok),
+            );
+            vl = LinkList::new();
+            for it in items {
+                vl.push_back(it);
+            }
+            if errflag.load(Ordering::Relaxed) != 0 {
+                // c:2538-2541
+                state.pc = opc; // c:2539
+                return; // c:2540
+            }
+        }
+
+        // c:2544 `if (vl && htok) {`
+        if htok != 0 {
+            // c:2545 `int prefork_ret = 0;`
+            let mut prefork_ret: i32 = 0;
+            // c:2546-2547 — prefork(vl, (isstr ? PREFORK_SINGLE|PREFORK_ASSIGN
+            //                          : PREFORK_ASSIGN), &prefork_ret);
+            let pf_flags = if isstr {
+                PREFORK_SINGLE | PREFORK_ASSIGN
+            } else {
+                PREFORK_ASSIGN
+            };
+            prefork(&mut vl, pf_flags, &mut prefork_ret); // c:2547
+            if errflag.load(Ordering::Relaxed) != 0 {
+                // c:2548
+                state.pc = opc; // c:2549
+                return; // c:2550
+            }
+            if (prefork_ret & PREFORK_KEY_VALUE) != 0 {
+                // c:2552
+                myflags |= ASSPM_KEY_VALUE; // c:2553
+            }
+            // c:2554-2555 — `if (!isstr || (isset(GLOBASSIGN) && isstr &&
+            //                  haswilds((char *)getdata(firstnode(vl)))))`
+            let needs_glob = if !isstr {
+                true
+            } else {
+                isset(GLOBASSIGN)
+                    && isstr
+                    && !vl.is_empty()
+                    && haswilds(vl.nodes.front().map(|s| s.as_str()).unwrap_or(""))
+            };
+            if needs_glob {
+                globlist(&mut vl, prefork_ret); // c:2556
+                // c:2557-2562 — `if (isset(GLOBASSIGN) && isstr)
+                //                  unsetparam(name);`
+                if isset(GLOBASSIGN) && isstr {
+                    unsetparam(&name); // c:2562
+                }
+                if errflag.load(Ordering::Relaxed) != 0 {
+                    // c:2563
+                    state.pc = opc; // c:2564
+                    return; // c:2565
+                }
+            }
+        }
+        // c:2569 `if (isstr && (empty(vl) || !nextnode(firstnode(vl))))`
+        // — scalar-assignment path: zero or one element after prefork.
+        if isstr && (vl.is_empty() || vl.len() == 1) {
+            let val: String; // c:2571 `char *val;`
+            if vl.is_empty() {
+                // c:2574
+                val = String::new(); // c:2575 `val = ztrdup("");`
+            } else {
+                // c:2577 `untokenize(peekfirst(vl));`
+                let peek = vl.nodes.front().cloned().unwrap_or_default();
+                val = untokenize(&peek).to_string(); // c:2577-2578
+                // c:2578 `val = ztrdup(ugetnode(vl));` — ugetnode pops;
+                // we just cloned the front above. Equivalent.
+            }
+            if xtr {
+                // c:2580
+                eprint!("{}", quotedzputs(&val)); // c:2581
+                eprint!(" "); // c:2582 `fputc(' ', xtrerr);`
+            }
+            // c:2584 `if ((addflags & ADDVAR_EXPORT) && !strchr(name, '['))`
+            let pm = if (addflags & ADDVAR_EXPORT) != 0 && !name.contains('[') {
+                // c:2585 `if (strcmp(name, "STTY") == 0)`
+                if name == "STTY" {
+                    // c:2586-2587 — `STTYval = ztrdup(val);`
+                    let mut stty = STTYval.lock().unwrap();
+                    *stty = Some(val.clone()); // c:2587
+                }
+                // c:2589 `allexp = opts[ALLEXPORT];`
+                let allexp = isset(ALLEXPORT);
+                // c:2590 `opts[ALLEXPORT] = 1;` — temporarily set.
+                opt_state_set("allexport", true);
+                if isset(KSHARRAYS) {
+                    // c:2591
+                    unsetparam(&name); // c:2592
+                }
+                let pm = assignsparam(&name, &val, myflags); // c:2593
+                // c:2594 `opts[ALLEXPORT] = allexp;` — restore.
+                opt_state_set("allexport", allexp);
+                pm
+            } else {
+                // c:2595
+                assignsparam(&name, &val, myflags) // c:2596
+            };
+            if pm.is_none() {
+                // c:2597 `if (!pm)`
+                LASTVAL.store(1, Ordering::Relaxed); // c:2598 `lastval = 1;`
+                // c:2599-2604 — "cheating" comment: don't zerr.
+                if cmdoutval.load(Ordering::Relaxed) == 0 {
+                    // c:2605 `if (!cmdoutval)`
+                    cmdoutval.store(1, Ordering::Relaxed); // c:2606
+                }
+            }
+            if errflag.load(Ordering::Relaxed) != 0 {
+                // c:2608
+                state.pc = opc; // c:2609
+                return; // c:2610
+            }
+            continue; // c:2612
+        }
+        // c:2614 `if (vl) { ... }` — array-assignment path: drain vl
+        // into a fresh `char **arr`.
+        // c:2615-2619 `ptr = arr = zalloc(...); while (nonempty(vl)) *ptr++ = ztrdup(ugetnode(vl));`
+        arr = Vec::with_capacity(vl.len() + 1);
+        while let Some(s) = vl.pop_front() {
+            arr.push(s);
+        }
+        // c:2623 `*ptr = NULL;` — C terminator; Rust Vec doesn't need it.
+        if xtr {
+            // c:2624
+            eprint!("( "); // c:2625
+            for s in &arr {
+                // c:2626 `for (ptr = arr; *ptr; ptr++)`
+                eprint!("{}", quotedzputs(s)); // c:2627
+                eprint!(" "); // c:2628
+            }
+            eprint!(") "); // c:2630
+        }
+        // c:2632 `if (!assignaparam(name, arr, myflags))`
+        if assignaparam(&name, arr, myflags).is_none() {
+            LASTVAL.store(1, Ordering::Relaxed); // c:2633
+            // c:2634-2638 — "cheating" comment.
+            if cmdoutval.load(Ordering::Relaxed) == 0 {
+                // c:2639
+                cmdoutval.store(1, Ordering::Relaxed); // c:2640
+            }
+        }
+        if errflag.load(Ordering::Relaxed) != 0 {
+            // c:2642
+            state.pc = opc; // c:2643
+            return; // c:2644
+        }
+    }
+    state.pc = opc; // c:2647 `state->pc = opc;`
 }
 
 // execfuncs[] dispatch table from `Src/exec.c:5499` is inlined as a
