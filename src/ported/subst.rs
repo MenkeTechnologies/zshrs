@@ -5452,6 +5452,12 @@ pub fn paramsubst(
                                 .find(|sp| sp.name == var_name.as_str())
                             {
                                 bits |= sp.pm_type as u32;
+                                // c:Src/params.c — overlay the canonical
+                                // pm_flags too (PM_READONLY for #/?,
+                                // PM_TIED for path/PATH etc.). Without
+                                // this, \${(t)?} read "integer-special"
+                                // instead of "integer-readonly-special".
+                                bits |= sp.pm_flags as u32;
                             }
                             // c:Src/params.c PM_EXPORTED — present iff
                             // the name has a non-null `pm->env` entry,
