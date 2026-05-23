@@ -10445,23 +10445,49 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
                     _ => break,
                 }
             }
-            while let Some(&c) = iter.peek() {
-                if c.is_ascii_digit() {
-                    spec.push(c);
-                    iter.next();
-                } else {
-                    break;
-                }
-            }
-            if iter.peek() == Some(&'.') {
-                spec.push('.');
-                iter.next();
+            // c:Src/builtin.c:4791-4796 — width can be either a
+            // digit literal or `*` (consume next arg as width).
+            // Without `*` handling, `printf '%*d' 4 7` rendered the
+            // literal `%*d` because the iter saw `*` and aborted the
+            // spec walk before reaching the conversion char.
+            if iter.peek() == Some(&'*') {
+                iter.next(); // c:4796 — consume the `*` marker
+                let w: i64 = args
+                    .get(arg_i)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                arg_i += 1;
+                spec.push_str(&w.to_string());
+            } else {
                 while let Some(&c) = iter.peek() {
                     if c.is_ascii_digit() {
                         spec.push(c);
                         iter.next();
                     } else {
                         break;
+                    }
+                }
+            }
+            if iter.peek() == Some(&'.') {
+                spec.push('.');
+                iter.next();
+                // `.` precision: also accepts `*` per c:4796 same as width.
+                if iter.peek() == Some(&'*') {
+                    iter.next();
+                    let p: i64 = args
+                        .get(arg_i)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    arg_i += 1;
+                    spec.push_str(&p.to_string());
+                } else {
+                    while let Some(&c) = iter.peek() {
+                        if c.is_ascii_digit() {
+                            spec.push(c);
+                            iter.next();
+                        } else {
+                            break;
+                        }
                     }
                 }
             }
