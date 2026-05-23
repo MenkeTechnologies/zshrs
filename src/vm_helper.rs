@@ -956,15 +956,17 @@ impl ShellExecutor {
             crate::ported::modules::watch::DEFAULT_WATCHFMT.to_string(),
         );
 
-        // `$FUNCNEST` default. Real zsh defaults to 500 (Src/zsh.h
-        // MAXNEST), but zshrs's bytecode-VM recursion eats ~40KB of
-        // Rust stack per frame and tops out around 150 on the
-        // default 8MB stack. We seed `100` here so plugin probes
-        // (`${FUNCNEST:-default}`) get a realistic cap that
-        // matches what `call_function` actually enforces. Users
-        // who need deeper need to raise FUNCNEST explicitly AND
-        // run with a larger stack (RUST_MIN_STACK).
-        variables.insert("FUNCNEST".to_string(), "100".to_string());
+        // `$FUNCNEST` default. Real zsh defaults to 500 (compile-time
+        // MAX_FUNCTION_DEPTH at configure.ac:400 / config.h:1004
+        // `#define MAX_FUNCTION_DEPTH 500`, used at Src/params.c:113
+        // to initialize `zsh_funcnest`). Match the canonical value so
+        // `$FUNCNEST` reads identically to zsh; the cap is advisory
+        // (call_function enforces against this) so users with stack
+        // pressure can lower it. Bumped from 100 (zshrs-only override
+        // for the Rust 8MB stack) — was a parity gap because every
+        // plugin probe that reads `${FUNCNEST:-N}` saw 100 instead
+        // of 500.
+        variables.insert("FUNCNEST".to_string(), "500".to_string());
 
         // Run setlocale(LC_ALL, "") so nl_langinfo() (used by the
         // `langinfo` module) returns the host's actual locale instead

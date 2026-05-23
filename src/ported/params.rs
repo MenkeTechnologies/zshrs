@@ -3096,7 +3096,7 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
         // than `255` per zsh's `$x`-expansion + `typeset -p`.
         convbase_underscore(
             intgetfn(pm),
-            if pm.base > 0 { pm.base as u32 } else { 10 }, // c:2373 pm->base
+            if pm.base > 0 { pm.base } else { 10 }, // c:2373 pm->base
             pm.width, // c:2373 pm->width for underscore grouping
         )
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
@@ -3429,8 +3429,8 @@ pub fn export_param(pm: &mut param) {
     }
     let val: String = if t == PM_INTEGER {
         // c:2664 — `convbase(buf, pm->gsu.i->getfn(pm), pm->base)`.
-        let base = if pm.base > 0 { pm.base as u32 } else { 10 };
-        convbase(intgetfn(pm), base) // c:2664
+        let base = if pm.base > 0 { pm.base } else { 10 };
+        convbase(intgetfn(pm), base as u32) // c:2664
     } else if (pm.node.flags as u32 & (PM_EFLOAT | PM_FFLOAT)) != 0 {
         // c:2668 — `convfloat(pm->gsu.f->getfn(pm), pm->base,
         //                     pm->node.flags, NULL)`.
@@ -3765,7 +3765,7 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
             // c:2864 — `convbase_underscore(val.u.l, pm->base, pm->width)`.
             convbase_underscore(
                 val.l,
-                if pm.base > 0 { pm.base as u32 } else { 10 },
+                if pm.base > 0 { pm.base } else { 10 },
                 pm.width,
             )
         } else {
@@ -4072,8 +4072,8 @@ pub fn getsparam(name: &str) -> Option<String> {
             // got nothing.
             let t = PM_TYPE(pm.node.flags as u32);
             if t == PM_INTEGER {
-                let base = if pm.base > 0 { pm.base as u32 } else { 10 };
-                return Some(convbase(pm.u_val, base));
+                let base = if pm.base > 0 { pm.base } else { 10 };
+                return Some(convbase(pm.u_val, base as u32));
             }
             if t == PM_EFLOAT || t == PM_FFLOAT {
                 // c:2376 — `s = convfloat(getfn(pm), pm->base,
@@ -5099,7 +5099,7 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 } else {
                     convbase_underscore(
                         val.l,
-                        if pm.base > 0 { pm.base as u32 } else { 10 },
+                        if pm.base > 0 { pm.base } else { 10 },
                         pm.width,
                     )
                 };
@@ -7494,9 +7494,19 @@ pub fn convbase(val: i64, base: u32) -> String {
 
 /// Convert integer to string with underscores for readability
 /// Port of `convbase_underscore(char *s, zlong v, int base, int underscore)` from `Src/params.c:5646`.
+///
+/// `base` is `i32` not `u32` because zsh uses NEGATIVE `base` values
+/// (set by `[##N]`) to mean "emit `N`-radix digits WITHOUT the `N#`
+/// prefix" — convbase_ptr at params.rs:7435-7451 handles the sign:
+/// positive `b` produces `b#NNN`, negative `b` produces bare `NNN`
+/// (absolute value of `b` is the actual radix).
+///
+/// Previous Rust signature `base: u32` silently dropped the sign, so
+/// `$(([##16] 255))` (outputradix=-16) ended up as `convbase(255, 16)`
+/// = `"16#FF"` instead of `"FF"`.
 /// WARNING: param names don't match C — Rust=(val, base, underscore) vs C=(s, v, base, underscore)
-pub fn convbase_underscore(val: i64, base: u32, underscore: i32) -> String {
-    let s = convbase(val, base);
+pub fn convbase_underscore(val: i64, base: i32, underscore: i32) -> String {
+    let s = convbase_ptr(val, base).0;
     if underscore <= 0 {
         return s;
     }

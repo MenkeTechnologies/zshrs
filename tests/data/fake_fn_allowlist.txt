@@ -1491,6 +1491,11 @@ m_noeval_inc
 m_noeval_set
 m_octal_zeroes
 m_octal_zeroes_set
+m_outputradix_set
+m_outputunderscore_set
+outputradix
+outputunderscore
+reset_output_format
 m_pid
 m_pid_set
 m_pos
