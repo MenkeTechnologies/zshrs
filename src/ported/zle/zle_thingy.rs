@@ -1232,15 +1232,20 @@ pub fn bin_zle_flags(_name: &str, args: &[String], _ops: &options, _func: i32) -
                         // c:685-688 — if a numeric arg is active and a
                         // PM_SPECIAL `NUMERIC` param exists, clear its
                         // PM_UNSET bit so the value becomes visible to
-                        // the widget. !!! WARNING: PARTIAL PORT —
-                        // paramtab access through getnode + PM_SPECIAL/
-                        // PM_UNSET mutation is gated on the paramtab
-                        // Rust port exposing a mutable getnode; that
-                        // surface isn't ported as a writable lookup
-                        // yet. Skipping leaves NUMERIC param visibility
-                        // unchanged.
+                        // the widget.
                         let zm_flags = ZMOD.lock().unwrap().flags;
-                        let _ = zm_flags & (MOD_MULT | MOD_TMULT); // c:685 guard
+                        if (zm_flags & (MOD_MULT | MOD_TMULT)) != 0 {
+                            // c:685 — numeric arg present.
+                            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                                if let Some(pm) = tab.get_mut("NUMERIC") {
+                                    if (pm.node.flags as u32 & crate::ported::zsh_h::PM_SPECIAL) != 0 {
+                                        // c:687 — clear PM_UNSET so widget sees value.
+                                        pm.node.flags &=
+                                            !(crate::ported::zsh_h::PM_UNSET as i32);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {
