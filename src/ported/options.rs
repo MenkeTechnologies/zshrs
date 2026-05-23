@@ -20,8 +20,8 @@ use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
     interact, isset, opt_name, options, APPENDHISTORY, BANGHIST, CHASELINKS, EMACSMODE,
     EMULATE_CSH, EMULATE_FULLY, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH, EXECOPT,
-    GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, INTERACTIVE, MAILWARNING, Meta, MONITOR,
-    MULTIBYTE, OPT_INVALID, OPT_SIZE, PAT_HEAPDUP, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
+    GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, INTERACTIVE, LOGINSHELL, MAILWARNING, Meta,
+    MONITOR, MULTIBYTE, OPT_INVALID, OPT_SIZE, PAT_HEAPDUP, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
     SUNKEYBOARDHACK, USEZLE, VIMODE,
 };
 use crate::utils::inittyptab;
@@ -614,6 +614,11 @@ pub fn optlookup(name: &str) -> i32 {
         "promptvars" => Some(PROMPTSUBST),    // c:278 PROMPTSUBST
         "stdin" => Some(SHINSTDIN),           // c:279 SHINSTDIN
         "trackall" => Some(HASHCMDS),         // c:280 HASHCMDS
+        // c:Src/options.c:193 — `login` is a second optiontab entry
+        // (OPT_SPECIAL) that resolves to the same optno as
+        // `loginshell`. Mirror as a name alias here so `setopt login`
+        // and `$options[login]` both reach LOGINSHELL's slot.
+        "login" => Some(LOGINSHELL), // c:193
         _ => None,
     };
     if let Some(optno) = alias_optno {
