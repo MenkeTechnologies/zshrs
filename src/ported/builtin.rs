@@ -3555,6 +3555,28 @@ pub fn bin_typeset(
                         exec.set_array(n_owned, elems_owned);
                     });
                 }
+                // c:2510-2520 — `on = pm->node.flags;` then stamp the
+                // attribute bits on the just-assigned param. The
+                // scalar-assign arm below does the same; the array /
+                // assoc `=(...)` init path was missing this, so
+                // `typeset -ax ARR=(a b)` left PM_EXPORTED unset on
+                // the paramtab entry. `(t)ARR` then read `array`
+                // instead of `array-export`, and `typeset -p ARR`
+                // emitted `typeset -a ARR=...` instead of `-ax`.
+                let post_assign_mask = (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B
+                    | PM_RIGHT_Z | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE)
+                    as i32;
+                let post_assign_to_set = (on
+                    & (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z
+                       | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE))
+                    as i32;
+                if post_assign_to_set != 0 {
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(n) {
+                            pm.node.flags = (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                        }
+                    }
+                }
             } else {
                 // c:3010-3030 — `name=value` scalar assign. C-canonical
                 // `setsparam` (Src/params.c:3350) writes paramtab; the
