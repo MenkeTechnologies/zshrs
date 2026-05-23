@@ -1591,12 +1591,44 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
 /// + `precmd_functions` array, the `periodic` hook on its
 /// PERIOD-second cadence, and walks the prepromptfns registry.
 pub fn preprompt() {
+    // c:1532 `static time_t lastperiodic;` — periodic-hook last-fire timestamp.
     static LAST_PERIODIC: AtomicI64 = AtomicI64::new(0);
+    // c:1447 `static time_t lastmailcheck;` — mailcheck last-fire timestamp.
+    static LAST_MAILCHECK: AtomicI64 = AtomicI64::new(0);
 
-    callhookfunc("precmd", None, 1, std::ptr::null_mut());
-
-    // C: `if ((period = getiparam("PERIOD")))`. paramtab read; was OS env.
+    // c:1535-1536 — `zlong period = getiparam("PERIOD"); zlong mailcheck
+    //                = getiparam("MAILCHECK");`
     let period = crate::ported::params::getiparam("PERIOD");
+    let mailcheck = crate::ported::params::getiparam("MAILCHECK");
+
+    // c:1538-1543 — `winch_unblock(); winch_block();` — window-change signal
+    // pump. Deferred: zshrs's signal layer doesn't expose the C winch_un/
+    // block pair as separate primitives, and the prompt path runs outside
+    // an interactive ZLE session in zshrs today.
+
+    // c:1545-1567 — PROMPT_SP heuristic (move prompt to new line on
+    // dangling output). Deferred: needs zterm_columns + hasxn + raw
+    // shout writes + countprompt — the live-terminal substrate that
+    // zshrs's non-interactive `-c` path doesn't use.
+
+    // c:1569-1572 — `if (unset(NOTIFY)) scanjobs();` — sync job-status
+    // print before prompt. Deferred: zshrs's scanjobs has a different
+    // signature (takes &JobTable + returns Vec<String>) and the job
+    // table is plumbed through a separate executor lifecycle.
+
+    // c:1573-1574 — `if (errflag) return;` — bail if a previous error
+    // already set the global flag.
+    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+        return;
+    }
+
+    // c:1576-1580 — `callhookfunc("precmd", NULL, 1, NULL);` + errflag bail.
+    callhookfunc("precmd", None, 1, std::ptr::null_mut());
+    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+        return;
+    }
+
+    // c:1582-1589 — periodic-hook dispatch on PERIOD cadence.
     if period > 0 {
         let now = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1608,7 +1640,47 @@ pub fn preprompt() {
             LAST_PERIODIC.store(now, Ordering::Relaxed);
         }
     }
+    // c:1588-1589 — `if (errflag) return;` post-periodic bail.
+    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+        return;
+    }
 
+    // c:1591-1611 — mail check: `if (mailcheck && difftime(now,
+    // lastmailcheck) > mailcheck)` walk MAILPATH (or scalar MAIL) via
+    // checkmailpath. Faithful port — checkmailpath already exists at
+    // utils.rs:1623, getaparam exists for the MAILPATH array.
+    let currentmailcheck = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    if mailcheck > 0
+        && (currentmailcheck - LAST_MAILCHECK.load(Ordering::Relaxed)) > mailcheck
+    {
+        // c:1597 — `if (mailpath && *mailpath && **mailpath)`
+        let mailpath = crate::ported::params::getaparam("MAILPATH");
+        let has_mailpath = mailpath
+            .as_ref()
+            .map(|p| !p.is_empty() && p.first().map(|s| !s.is_empty()).unwrap_or(false))
+            .unwrap_or(false);
+        if has_mailpath {
+            // c:1598 `checkmailpath(mailpath);`
+            let _ = checkmailpath(mailpath.as_deref().unwrap()); // c:1598
+        } else {
+            // c:1600-1608 — `if ((mailfile = getsparam("MAIL")) && *mailfile)
+            //                  { x[0]=mailfile; x[1]=NULL; checkmailpath(x); }`
+            crate::ported::signals::queue_signals(); // c:1600
+            if let Some(mailfile) = crate::ported::params::getsparam("MAIL") {
+                if !mailfile.is_empty() {
+                    let x = vec![mailfile]; // c:1604-1605
+                    let _ = checkmailpath(&x); // c:1606
+                }
+            }
+            crate::ported::signals::unqueue_signals(); // c:1608
+        }
+        LAST_MAILCHECK.store(currentmailcheck, Ordering::Relaxed); // c:1610
+    }
+
+    // c:1613-1618 — `if (prepromptfns) for (...) ppnode->func();`
     let snapshot: Vec<fn()> = PREPROMPT_FNS.lock().unwrap().clone();
     for f in snapshot {
         f();
