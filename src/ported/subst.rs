@@ -811,8 +811,13 @@ fn stringsubst(
                                                                                  // instead of getoutput.
                     let trimmed = cmd.trim_start();
                     let output = if let Some(rest) = trimmed.strip_prefix('<') {
-                        let path = rest.trim();
-                        std::fs::read_to_string(path).unwrap_or_default()
+                        // c:Src/subst.c — `$(<filename)` runs the file
+                        // path through parameter expansion first. zsh
+                        // accepts `$(<$tf)` etc.; route through singsub
+                        // so the path arg gets the same prefork/multsub
+                        // as a quoted operand.
+                        let path = singsub(rest.trim());
+                        std::fs::read_to_string(path.trim()).unwrap_or_default()
                     } else {
                         // c:exec.c:4712 — `getoutput(cmd, 1)`. Caller
                         // here is splicing the result into a string
