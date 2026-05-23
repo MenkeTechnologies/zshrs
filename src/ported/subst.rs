@@ -6370,22 +6370,18 @@ pub fn paramsubst(
             errflag_set_error();
         }
 
-        // (V) visible — render control chars as ^X form.
-        // Port of subst.c:2232 mods bit 1. Per-element on arrays.
+        // (V) visible — render non-printable chars per zsh's
+        // `nicechar` style (`\t` and `\n` get backslash forms, other
+        // controls under 0x20 use `^X`, 0x7f → `^?`, high-bit bytes →
+        // `\M-X`). Port of subst.c:2232 mods bit 1 calling
+        // Src/utils.c:520 nicechar via Src/utils.c:4157. The previous
+        // Rust port used `^X` uniformly so `(V)$'a\tb'` rendered
+        // `a^Ib` instead of zsh's `a\tb`.
         let visible_one = |s: &str| -> String {
             // c:2232
             let mut out = String::with_capacity(s.len());
             for c in s.chars() {
-                let cp = c as u32;
-                if cp < 0x20 {
-                    // c:2232 (control chars)
-                    out.push('^');
-                    out.push(((cp + b'@' as u32) as u8) as char);
-                } else if cp == 0x7f {
-                    out.push_str("^?");
-                } else {
-                    out.push(c);
-                }
+                out.push_str(&crate::ported::utils::nicechar(c)); // c:520
             }
             out
         };
