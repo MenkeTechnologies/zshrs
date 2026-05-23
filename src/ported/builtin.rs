@@ -10376,10 +10376,27 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
                     }
                     arg_i += 1;
                 }
-                // c:builtin.c:4825 %q — shell-quote the arg.
+                // c:builtin.c:5403-5409 %q — shell-quote the arg using
+                // QT_BACKSLASH_SHOWNULL (backslash-escape form), NOT
+                // QT_QUOTEDZPUTS (single-quote form).
+                //
+                //   c: stringval = quotestring(metafy(curarg, …),
+                //                              QT_BACKSLASH_SHOWNULL);
+                //
+                // Symptom of the previous quotedzputs choice:
+                //   printf "%q\n" "a b c"
+                //   zshrs (before): 'a b c'        zsh: a\ b\ c
+                //
+                // p10k uses `printf "%q "` for shell-quoting cached
+                // command lines; the difference makes those caches
+                // unreadable in zsh-syntax debuggers expecting the
+                // backslash form.
                 Some('q') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    out.push_str(&quotedzputs(&a));
+                    out.push_str(&crate::ported::utils::quotestring(
+                        &a,
+                        crate::ported::zsh_h::QT_BACKSLASH_SHOWNULL,
+                    ));
                     arg_i += 1;
                 }
                 // c:builtin.c:4810 %b — interpret backslash escapes
