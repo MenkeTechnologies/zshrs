@@ -3000,19 +3000,22 @@ pub fn commandnotfound(arg0: &str, args: &mut Vec<String>) -> i32 {
         LASTVAL.store(127, Ordering::Relaxed); // c:675
         return 1; // c:676
     }
-    // c:679 — `pushnode(args, arg0);` — prepend arg0.
+    // c:679 — `pushnode(args, arg0);` — prepend arg0 (handler name
+    // is the first positional arg per C convention).
     args.insert(0, arg0.to_string());
-    // c:680 — `lastval = doshfunc(shf, args, 1);`
-    // WARNING — DIVERGENCE: `doshfunc` (c:5823) is not yet ported.
-    // Route through the executor's function dispatch so the handler
-    // actually fires; the C `noreturnval=1` arg is the "don't pop
-    // funcstack into $? after return" flag — fusevm's
-    // dispatch_function_call already manages funcstack correctly.
-    let status = with_executor(|exec| {
-        exec.dispatch_function_call("command_not_found_handler", args)
-            .unwrap_or(127)
-    });
-    LASTVAL.store(status, Ordering::Relaxed);
+    args.insert(0, "command_not_found_handler".to_string());
+    // c:680 — `lastval = doshfunc(shf, args, 1);` — dispatch through
+    // execshfunc (exec.rs:5009), which swaps PPARAMS, runshfuncs the
+    // body, and updates LASTVAL. doshfunc itself isn't ported; this
+    // covers the noreturnval=1 contract via execshfunc's
+    // PPARAMS-save/restore wrap.
+    let shf_clone: Option<crate::ported::zsh_h::shfunc> = shfunctab_lock()
+        .read()
+        .ok()
+        .and_then(|t| t.get("command_not_found_handler").cloned());
+    if let Some(mut shf) = shf_clone {
+        crate::ported::exec::execshfunc(&mut shf, args);
+    }
     0 // c:681
 }
 
