@@ -1269,6 +1269,31 @@ pub fn iscom(s: &str) -> bool {
     meta.file_type().is_file()
 }
 
+/// Port of `int isreallycom(Cmdnam cn)` from `Src/exec.c:972-987`.
+///
+/// Verify that a hashed/cached cmdnamtab entry still names a real
+/// external command (X-perm + regular file). For HASHED entries
+/// (`cn->u.cmd` carries the absolute path), test the path directly;
+/// otherwise concatenate `name[0] + "/" + nam` and test that.
+/// Used by `execcmd_exec` to drop stale cmdnamtab hits before they
+/// turn into a failed `execve` syscall.
+pub fn isreallycom(cn: &cmdnam) -> bool {
+    // c:972
+    let fullnam: String;
+    if (cn.node.flags & crate::ported::zsh_h::HASHED) != 0 {
+        // c:977-978 — `strcpy(fullnam, cn->u.cmd);`
+        fullnam = cn.cmd.clone().unwrap_or_default();
+    } else if cn.name.is_none() || cn.name.as_ref().unwrap().is_empty() {
+        // c:979-980 — `if (!cn->u.name) return 0;`
+        return false;
+    } else {
+        // c:982-984 — `strcpy + strcat("/") + strcat(nam)`
+        let path0 = &cn.name.as_ref().unwrap()[0];
+        fullnam = format!("{}/{}", path0, cn.node.nam);
+    }
+    iscom(&fullnam) // c:986
+}
+
 /// Port of `int isrelative(char *s)` from `Src/exec.c:996`.
 ///
 /// C body:
@@ -7038,12 +7063,9 @@ pub fn execcmd_exec(
     fn restore_params(_restorelist: Vec<String>, _removelist: Vec<String>) {
         // Empty stub; no-op until save_params lands.
     }
-    // SUBSTRATE GAP: isreallycom @ Src/exec.c:2670 — verify the
-    // cmdnamtab entry still points to a real external command.
-    // Default true so cached entries stay valid.
-    fn isreallycom(_cn: &cmdnam) -> bool {
-        true
-    }
+    // isreallycom — top-level port at exec.rs (c:972). Bridges the
+    // local shadow that this fn body used pre-port.
+    use crate::ported::exec::isreallycom;
     // SUBSTRATE GAP: execautofn_basic @ Src/exec.c:5050 — simplified
     // autofn entry that runs a function pre-loaded for redirs.
     fn execautofn_basic(_state: &mut estate, _do_exec: i32) -> i32 {
