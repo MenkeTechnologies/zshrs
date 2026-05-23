@@ -3649,7 +3649,16 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 } else {
                     mn.l as f64
                 };
-                floatsetfn(pm, d);
+                // c:2775-2778 — ASSPM_AUGMENT path: `float x=1.5; x+=0.25`
+                // adds 0.25 to the current u_dval rather than replacing.
+                // Mirrors the integer-augment block above; without it
+                // `+=` was a plain `=`.
+                let final_d = if (flags & ASSPM_AUGMENT) != 0 {
+                    pm.u_dval + d
+                } else {
+                    d
+                };
+                floatsetfn(pm, final_d);
                 if (pm.node.flags as u32 & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) != 0
                     && pm.width == 0
                 {
