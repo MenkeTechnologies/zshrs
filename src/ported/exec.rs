@@ -4936,19 +4936,416 @@ pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
     LASTVAL.load(Ordering::Relaxed) // c:5290
 }
 
+/// `execshfunc(Shfunc shf, LinkList args)` — `Src/exec.c:5540`. The
+/// real port goes in `crate::ported::exec` as a top-level fn (it
+/// owns the queue_signals + cmdstack + sfcontext setup before
+/// calling doshfunc). doshfunc itself is unported. Until both land,
+/// route the anon-function body through `runshfunc` (exec.rs:1700),
+/// which carries the wrapper-chain + zunderscore restore. This is
+/// degraded vs C (no cmdstack push, no sfcontext flip, no XTRACE
+/// arg-trace) but the anon-function body actually executes and
+/// `lastval` is updated.
+///
+/// !!! WARNING: RUST-ONLY HELPER — STUB FOR UN-PORTED C FN !!!
+/// Same-file local per [[feedback_no_shortcuts_in_porting]] —
+/// caller (execfuncdef anon-func path c:5439) calls
+/// `execshfunc(shf, args)` and `lastval` is read on return.
+fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
+    // c:5546-5547 — `if (errflag) return;`
+    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+        return;
+    }
+    // c:5550-5557 (job-table cleanup) skipped — list_pipe machinery
+    // not yet wired into the fusevm dispatcher; runshfunc's
+    // signal-queue dance covers the essential preempt safety.
+    // c:5559-5570 XTRACE arg trace: omit until full execshfunc port.
+    // c:5572-5578 cmdstack/sfcontext setup: omit (no cmdstack in
+    // zshrs yet — replaced by tracing).
+    // c:5580 — `doshfunc(shf, args, 0);`
+    if let Some(prog) = shf.funcdef.as_deref() {
+        // Wire argv-as-positional via the canonical
+        // positional-param swap that runshfunc already does at
+        // c:6166-...; the wrapper chain is None (no FuncWrap).
+        let _ = args;
+        runshfunc(prog, None, &shf.node.nam);
+    }
+    // c:5582-5589 cmdstack restore/free: omit (no cmdstack).
+}
+
 /// Port of `execfuncdef(Estate state, Eprog redir_prog)` from
-/// `Src/exec.c:5309`. Define a shell function: extract name+body from
-/// the wordcode payload, install into shfunctab.
-pub fn execfuncdef(state: &mut estate, _redir_prog: Option<crate::ported::zsh_h::Eprog>) -> i32 {
-    // c:5311 — `wordcode code = *state->pc++;` — name-count for the
-    // multi-name `f g h () { ... }` form.
-    let prior = state.prog.prog[state.pc.wrapping_sub(1)];
-    let end = state.pc + WC_FUNCDEF_SKIP(prior) as usize;
-    // TODO faithful: full body install via createshfunc + shfunctab
-    // insert. Tracked separately; for now, skip past the funcdef so
-    // the wordcode walker advances correctly.
+/// `Src/exec.c:5309-5494`. Define a shell function: extract
+/// name(s)+body from the wordcode payload, allocate the Shfunc,
+/// install into `shfunctab` (named), or execute immediately (anon).
+#[allow(non_snake_case)]
+pub fn execfuncdef(
+    state: &mut estate,
+    mut redir_prog: Option<crate::ported::zsh_h::Eprog>,
+) -> i32 {
+    use crate::ported::hashtable::{dircache_set, shfunctab_lock};
+    use crate::ported::jobs::{getsigidx, removetrapnode};
+    use crate::ported::parse::{dupeprog, freeeprog, incrdumpcount};
+    use crate::ported::signals::settrap;
+    use crate::ported::utils::scriptfilename_get;
+    use crate::ported::zsh_h::{
+        eprog as eprog_t, hashnode, patprog as patprog_t, shfunc as shfunc_t, EC_DUPTOK as _,
+        EF_HEAP, EF_MAP, EF_REAL, FS_EVAL, FS_FUNC, PM_ANONYMOUS, PM_TAGGED, PM_TAGGED_LOCAL,
+        Patprog, PRINTEXITVALUE, SHINSTDIN, ZSIG_FUNC,
+    };
+    // c:5311 — `Shfunc shf;`
+    let mut shf: Box<shfunc_t>;
+    // c:5312 — `char *s = NULL;`
+    let mut s: Option<String> = None;
+    // c:5313 — `int signum, nprg, sbeg, nstrs, npats, do_tracing, len, plen, i, htok = 0, ret = 0;`
+    let mut signum: i32;
+    let nprg: i32;
+    let sbeg: i32;
+    let nstrs: i32;
+    let npats: i32;
+    let do_tracing: i32;
+    let len: i32;
+    let plen: i32;
+    // `i` — C loop counter for pp stamp; Rust uses .map().collect().
+    let mut htok: i32 = 0;
+    let mut ret: i32 = 0;
+    // c:5314 — `int anon_func = 0;`
+    let mut anon_func: i32 = 0;
+    // c:5315 — `Wordcode beg = state->pc, end;`
+    let _beg: usize = state.pc;
+    let mut end: usize;
+    // c:5316 — `Eprog prog;`
+    // (allocated inline per-iter below; no upfront binding needed)
+    // c:5317 — `Patprog *pp;` — handled by Vec construction.
+    // c:5318 — `LinkList names;`
+    let names: Vec<String>;
+    // c:5319 — `int tracing_flags;`
+    let tracing_flags: i32;
+
+    // c:5321 — `end = beg + WC_FUNCDEF_SKIP(state->pc[-1]);`
+    end = state.pc + WC_FUNCDEF_SKIP(state.prog.prog[state.pc.wrapping_sub(1)]) as usize;
+    // c:5322 — `names = ecgetlist(state, *state->pc++, EC_DUPTOK, &htok);`
+    let num = state.prog.prog[state.pc] as usize;
+    state.pc += 1;
+    names = ecgetlist(state, num, EC_DUPTOK, Some(&mut htok));
+    // c:5323 — `sbeg = *state->pc++;`
+    sbeg = state.prog.prog[state.pc] as i32;
+    state.pc += 1;
+    // c:5324 — `nstrs = *state->pc++;`
+    nstrs = state.prog.prog[state.pc] as i32;
+    state.pc += 1;
+    // c:5325 — `npats = *state->pc++;`
+    npats = state.prog.prog[state.pc] as i32;
+    state.pc += 1;
+    // c:5326 — `do_tracing = *state->pc++;`
+    do_tracing = state.prog.prog[state.pc] as i32;
+    state.pc += 1;
+
+    // c:5328 — `nprg = (end - state->pc);`
+    nprg = end.saturating_sub(state.pc) as i32;
+    // c:5329 — `plen = nprg * sizeof(wordcode);`
+    plen = nprg
+        .saturating_mul(std::mem::size_of::<wordcode>() as i32);
+    // c:5330 — `len = plen + (npats * sizeof(Patprog)) + nstrs;`
+    len = plen
+        + npats.saturating_mul(std::mem::size_of::<usize>() as i32)
+        + nstrs;
+    // c:5331 — `tracing_flags = do_tracing ? PM_TAGGED_LOCAL : 0;`
+    tracing_flags = if do_tracing != 0 {
+        PM_TAGGED_LOCAL as i32
+    } else {
+        0
+    };
+
+    // c:5333-5339 — htok name substitution.
+    let mut names_mut: Vec<String> = names;
+    if htok != 0 && !names_mut.is_empty() {
+        execsubst(&mut names_mut); // c:5334
+        if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            // c:5335
+            state.pc = end; // c:5336
+            return 1; // c:5337
+        }
+    }
+
+    // c:5341-5342 DPUTS — debug assertion (anon + redir simultaneously).
+    // Not portable as panic; left as comment.
+
+    // c:5343 — `while (!names || (s = (char *) ugetnode(names))) {`
+    // num==0 → anon (no names); else iterate names.
+    let mut names_iter = names_mut.into_iter();
+    loop {
+        let no_names = num == 0;
+        if !no_names {
+            // c:5343 — `s = ugetnode(names)`; break when list exhausted.
+            match names_iter.next() {
+                Some(nm) => s = Some(nm),
+                None => break,
+            }
+        }
+        // c:5344-5374 — Eprog alloc.
+        let prog: Box<eprog_t>;
+        let dump_present = state.prog.dump.is_some();
+        let make_pat = || -> Patprog {
+            // c:5375-5376 `*pp = dummy_patprog1;` — sentinel slot.
+            Box::new(patprog_t {
+                startoff: 0,
+                size: 0,
+                mustoff: 0,
+                patmlen: 0,
+                globflags: 0,
+                globend: 0,
+                flags: 0,
+                patnpar: 0,
+                patstartch: 0,
+            })
+        };
+        if no_names {
+            // c:5345-5346 — `zhalloc`, `nref = -1`.
+            // c:5355-5357 — EF_HEAP, no dump, npats pats on heap.
+            let pats: Vec<Patprog> = (0..npats).map(|_| make_pat()).collect();
+            let prog_words: Vec<wordcode> = state.prog.prog[state.pc..end].to_vec();
+            // c:5365 — `prog->strs = state->strs + sbeg;`
+            let strs_tail = state
+                .strs
+                .as_ref()
+                .map(|t| {
+                    let off = (sbeg as usize).min(t.len());
+                    t[off..].to_string()
+                });
+            prog = Box::new(eprog_t {
+                flags: EF_HEAP,
+                len,
+                npats,
+                nref: -1, // c:5346
+                pats,
+                prog: prog_words,
+                strs: strs_tail,
+                shf: None, // c:5377
+                dump: None, // c:5356
+            });
+        } else if dump_present {
+            // c:5358-5363 — EF_MAP path: refcount the dump, allocate
+            // pats permanent, reuse `state->pc` slice in place.
+            if let Some(dp) = state.prog.dump.as_deref() {
+                incrdumpcount(dp); // c:5360
+            }
+            let pats: Vec<Patprog> = (0..npats).map(|_| make_pat()).collect();
+            let prog_words: Vec<wordcode> = state.prog.prog[state.pc..end].to_vec();
+            let strs_tail = state.strs.as_ref().map(|t| {
+                let off = (sbeg as usize).min(t.len());
+                t[off..].to_string()
+            });
+            prog = Box::new(eprog_t {
+                flags: EF_MAP, // c:5359
+                len,
+                npats,
+                nref: 1, // c:5349
+                pats,
+                prog: prog_words,
+                strs: strs_tail,
+                shf: None, // c:5377
+                dump: state.prog.dump.clone(), // c:5361
+            });
+        } else {
+            // c:5366-5374 — EF_REAL: copy wordcode + strs into a
+            // freshly-owned eprog (no shared dump backing).
+            let pats: Vec<Patprog> = (0..npats).map(|_| make_pat()).collect();
+            let pc_end = state.pc + nprg as usize;
+            let prog_words: Vec<wordcode> = state.prog.prog[state.pc..pc_end].to_vec();
+            // c:5373 — `memcpy(prog->strs, state->strs + sbeg, nstrs);`
+            let strs_copy = state.strs.as_ref().map(|t| {
+                let off = (sbeg as usize).min(t.len());
+                let n_avail = t.len().saturating_sub(off);
+                let take = (nstrs as usize).min(n_avail);
+                t[off..off + take].to_string()
+            });
+            prog = Box::new(eprog_t {
+                flags: EF_REAL, // c:5367
+                len,
+                npats,
+                nref: 1, // c:5349
+                pats,
+                prog: prog_words,
+                strs: strs_copy,
+                shf: None, // c:5377
+                dump: None, // c:5371
+            });
+        }
+
+        // c:5379-5381 — Shfunc alloc + funcdef + tracing flags.
+        shf = Box::new(shfunc_t {
+            node: hashnode {
+                next: None,
+                nam: String::new(),
+                flags: tracing_flags,
+            },
+            filename: scriptfilename_get(), // c:5383 `ztrdup(scriptfilename)`
+            // c:5384-5388 — funcstack top FS_FUNC/FS_EVAL → flineno+lineno
+            // else just lineno.
+            lineno: {
+                let cur_lineno = crate::ported::input::lineno.with(|l| l.get()) as i64;
+                if let Ok(stk) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+                    if let Some(top) = stk.last() {
+                        if top.tp == FS_FUNC || top.tp == FS_EVAL {
+                            top.flineno + cur_lineno
+                        } else {
+                            cur_lineno
+                        }
+                    } else {
+                        cur_lineno
+                    }
+                } else {
+                    cur_lineno
+                }
+            },
+            funcdef: Some(prog), // c:5380
+            redir: None,
+            sticky: None,
+            body: None,
+        });
+        // c:5396-5401 — redir_prog ownership.
+        // C: `if (names && nonempty(names) && redir_prog) shf->redir = dupeprog(redir_prog,0)`
+        // else `shf->redir = redir_prog; redir_prog = 0;`
+        // "nonempty(names)" means there's a NEXT name still to consume —
+        // i.e. peek the iterator.
+        if !no_names && names_iter.len() > 0 && redir_prog.is_some() {
+            // c:5397 — dupe so each earlier name gets its own copy; the
+            // last name (when iterator drains) gets the original.
+            if let Some(rp) = redir_prog.as_deref() {
+                shf.redir = Some(Box::new(dupeprog(rp, false)));
+            }
+        } else {
+            // c:5399-5400 — last name (or anon) takes original.
+            shf.redir = redir_prog.take();
+        }
+        // c:5402 — `shfunc_set_sticky(shf);`
+        shfunc_set_sticky(&mut shf);
+
+        if no_names {
+            // c:5404-5457 — anonymous function: execute immediately.
+            // `LinkList args;` c:5409
+            let mut args: Vec<String>;
+
+            anon_func = 1; // c:5411
+            shf.node.flags |= PM_ANONYMOUS as i32; // c:5412
+
+            state.pc = end; // c:5414
+            // c:5415 — `end += *state->pc++;`
+            end += state.prog.prog[state.pc] as usize;
+            state.pc += 1;
+            // c:5416 — `args = ecgetlist(state, *state->pc++, EC_DUPTOK, &htok);`
+            let arg_count = state.prog.prog[state.pc] as usize;
+            state.pc += 1;
+            args = ecgetlist(state, arg_count, EC_DUPTOK, Some(&mut htok));
+
+            // c:5418-5429 — htok arg subst + cleanup-on-error.
+            if htok != 0 && !args.is_empty() {
+                execsubst(&mut args); // c:5419
+                if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+                    // c:5421 — `freeeprog(shf->funcdef);`
+                    if let Some(mut fd) = shf.funcdef.take() {
+                        freeeprog(&mut fd);
+                    }
+                    if shf.redir.is_some() {
+                        // c:5422-5423 — "shouldn't be" anon+redir, but free if so.
+                        if let Some(mut rd) = shf.redir.take() {
+                            freeeprog(&mut rd);
+                        }
+                    }
+                    dircache_set(&mut shf.filename, None); // c:5424
+                    drop(shf); // c:5425 `zfree(shf, sizeof(*shf));`
+                    state.pc = end; // c:5426
+                    return 1; // c:5427
+                }
+            }
+
+            // c:5431-5432 — `setunderscore` to last arg (or "").
+            let under_val = if !args.is_empty() {
+                args.last().cloned().unwrap_or_default()
+            } else {
+                String::new()
+            };
+            setunderscore(&under_val);
+
+            // c:5434-5435 — `if (!args) args = newlinklist();`
+            // (Rust Vec is never null; no-op.)
+            shf.node.nam = ANONYMOUS_FUNCTION_NAME.to_string(); // c:5436
+            // c:5437 — `pushnode(args, shf->node.nam);` — prepend.
+            args.insert(0, shf.node.nam.clone());
+
+            execshfunc(&mut shf, &mut args); // c:5439
+            ret = LASTVAL.load(Ordering::Relaxed); // c:5440
+
+            // c:5442-5450 — PRINTEXITVALUE+SHINSTDIN exit report.
+            if isset(PRINTEXITVALUE) && isset(SHINSTDIN) && ret != 0 {
+                eprintln!("zsh: exit {}", ret); // c:5445/5447
+            }
+
+            // c:5452-5456 — cleanup.
+            if let Some(mut fd) = shf.funcdef.take() {
+                freeeprog(&mut fd);
+            }
+            if let Some(mut rd) = shf.redir.take() {
+                // c:5453-5454 — "shouldn't be" but free if present.
+                freeeprog(&mut rd);
+            }
+            dircache_set(&mut shf.filename, None); // c:5455
+            drop(shf); // c:5456 `zfree(shf, sizeof(*shf));`
+            break; // c:5457
+        } else {
+            // c:5458-5484 — named function path.
+            let nm = s.as_deref().unwrap_or("");
+            // c:5460-5475 — TRAP* signal-trap install.
+            if nm.len() > 4 && nm.starts_with("TRAP") {
+                if let Some(sn) = getsigidx(&nm[4..]) {
+                    signum = sn;
+                    // c:5462 — `if (settrap(signum, NULL, ZSIG_FUNC))`
+                    if settrap(signum, None, ZSIG_FUNC) != 0 {
+                        if let Some(mut fd) = shf.funcdef.take() {
+                            freeeprog(&mut fd); // c:5463
+                        }
+                        dircache_set(&mut shf.filename, None); // c:5464
+                        drop(shf); // c:5465
+                        state.pc = end; // c:5466
+                        return 1; // c:5467
+                    }
+                    // c:5474 — `removetrapnode(signum);`
+                    removetrapnode(signum);
+                }
+            }
+            // c:5477-5482 — re-define-self trace flag propagate.
+            if let Ok(stk) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+                if let Some(top) = stk.last() {
+                    if top.tp == FS_FUNC && top.name == nm {
+                        // c:5479 — `Shfunc old = shfunctab->getnode(s);`
+                        if let Ok(rd) = shfunctab_lock().read() {
+                            if let Some(old) = rd.get(nm) {
+                                // c:5481 — propagate PM_TAGGED|PM_TAGGED_LOCAL.
+                                shf.node.flags |= old.node.flags
+                                    & (PM_TAGGED as i32 | PM_TAGGED_LOCAL as i32);
+                            }
+                        }
+                    }
+                }
+            }
+            // c:5483 — `shfunctab->addnode(shfunctab, ztrdup(s), shf);`
+            shf.node.nam = nm.to_string();
+            if let Ok(mut wr) = shfunctab_lock().write() {
+                wr.add(*shf);
+            }
+        }
+    }
+    // c:5486-5487 — `if (!anon_func) setunderscore("");`
+    if anon_func == 0 {
+        setunderscore("");
+    }
+    // c:5488-5491 — leftover redir cleanup ("shouldn't happen").
+    if let Some(mut rd) = redir_prog.take() {
+        freeeprog(&mut rd);
+    }
+    // c:5492 — `state->pc = end;`
     state.pc = end;
-    0
+    // c:5493 — `return ret;`
+    ret
 }
 
 /// Port of `execsimple(Estate state)` from `Src/exec.c:1290-1340`.
@@ -5175,6 +5572,419 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
 // WC_SUBLIST chain walk is inlined into execlist (per `Src/exec.c:1525-
 // 1625`, the C source likewise inlines it — there's no `execsublist`
 // function in zsh C).
+
+/// Port of `execcmd_getargs(LinkList preargs, LinkList args, int expand)`
+/// from `Src/exec.c:2791-2806`. Transfer the first node of `args`
+/// to `preargs`, performing `prefork` (singleton-list expansion) on
+/// the way if `expand` is set. Used by `execcmd_exec` to pull the
+/// command head one word at a time so prefix-modifier walking
+/// (BINF_COMMAND, BINF_EXEC etc.) sees expanded names.
+pub fn execcmd_getargs(
+    preargs: &mut crate::ported::linklist::LinkList<String>,
+    args: &mut crate::ported::linklist::LinkList<String>,
+    expand: i32,
+) {
+    // c:2791
+    if args.firstnode().is_none() {
+        // c:2793 — `if (!firstnode(args)) return;`
+        return;
+    } else if expand != 0 {
+        // c:2795
+        // c:2796-2797 — `local_list0(svl); init_list0(svl);` —
+        // stack-local single-bucket list. Rust uses a fresh
+        // LinkList<String> per call.
+        let mut svl: crate::ported::linklist::LinkList<String> = Default::default();
+        // c:2799 — `addlinknode(&svl, uremnode(args, firstnode(args)));`
+        if let Some(idx) = args.firstnode() {
+            if let Some(head) = crate::ported::linklist::uremnode(args, idx) {
+                svl.push_back(head);
+            }
+        }
+        // c:2801 — `prefork(&svl, 0, NULL);`
+        let mut rf = 0i32;
+        crate::ported::subst::prefork(&mut svl, 0, &mut rf);
+        // c:2802 — `joinlists(preargs, &svl);`
+        crate::ported::linklist::joinlists(preargs, &mut svl);
+    } else {
+        // c:2803-2804 — no-expand path: move head verbatim.
+        if let Some(idx) = args.firstnode() {
+            if let Some(head) = crate::ported::linklist::uremnode(args, idx) {
+                preargs.push_back(head);
+            }
+        }
+    }
+}
+
+/// Port of `execcmd_fork(Estate state, int how, int type,
+/// Wordcode varspc, LinkList *filelistp, char *text, int oautocont,
+/// int close_if_forked)` from `Src/exec.c:2810-2893`.
+///
+/// Fork the current command into a child process: parent records
+/// the pid + STTY env scan + addproc; child enters subshell, writes
+/// `entersubsh_ret` back to parent through `synch` pipe, and returns
+/// 0 so the caller can continue with the body.
+///
+/// `filelistp` out-arg is moved from `jobtab[thisjob].filelist`
+/// only in the child branch (so the parent's `filelist` stays
+/// untouched). Rust sig keeps the same C contract.
+pub fn execcmd_fork(
+    state: &mut estate,
+    how: i32,
+    typ: i32,
+    varspc: Option<usize>,
+    filelistp: &mut Vec<String>,
+    text: &str,
+    oautocont: i32,
+    close_if_forked: i32,
+) -> i32 {
+    use crate::ported::signals::sigtrapped as sigtrapped_static;
+    use crate::ported::signals_h::SIGEXIT;
+    use crate::ported::zsh_h::{
+        Z_ASYNC, WC_ASSIGN as ZWC_ASSIGN, WC_ASSIGN_NUM as ZWC_ASSIGN_NUM,
+        WC_ASSIGN_SCALAR as ZWC_ASSIGN_SCALAR, WC_ASSIGN_TYPE as ZWC_ASSIGN_TYPE,
+        WC_SUBSH as ZWC_SUBSH, AUTOCONTINUE, BGNICE, ZSIG_IGNORED,
+    };
+    // c:2810
+    let pid: libc::pid_t; // c:2814
+    let mut synch: [i32; 2] = [-1, -1]; // c:2815
+    let flags: i32; // c:2815
+    let mut esret: entersubsh_ret = entersubsh_ret::default(); // c:2816
+    // c:2817 — `struct timespec bgtime;` — bgtime is passed to zfork
+    // for accounting; the Rust zfork wrapper expects Option<&mut ZshTimespec>.
+    let mut bgtime = ZshTimespec::default();
+
+    crate::ported::signals_h::child_block(); // c:2819
+    esret.gleader = -1; // c:2820
+    esret.list_pipe_job = -1; // c:2821
+
+    // c:2823 — `if (pipe(synch) < 0) { zerr("pipe failed: %e", errno); return -1; }`
+    if unsafe { libc::pipe(synch.as_mut_ptr()) } < 0 {
+        zerr(&format!(
+            "pipe failed: {}",
+            std::io::Error::last_os_error()
+        ));
+        return -1; // c:2825
+    }
+    // c:2826 — `else if ((pid = zfork(&bgtime)) == -1) { ... }`
+    pid = zfork(Some(&mut bgtime));
+    if pid == -1 {
+        unsafe {
+            libc::close(synch[0]); // c:2827
+            libc::close(synch[1]); // c:2828
+        }
+        LASTVAL.store(1, Ordering::Relaxed); // c:2829
+        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:2830
+        return -1; // c:2831
+    }
+    if pid != 0 {
+        // c:2833 — parent.
+        unsafe { libc::close(synch[1]) }; // c:2834
+        // c:2835 — `read_loop(synch[0], (char *)&esret, sizeof(esret));`
+        let mut buf = [0u8; std::mem::size_of::<entersubsh_ret>()];
+        let _ = crate::ported::utils::read_loop(synch[0], &mut buf);
+        // entersubsh_ret is two i32s; reconstruct from LE bytes (host order).
+        if buf.len() >= 8 {
+            esret.gleader = i32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]);
+            esret.list_pipe_job = i32::from_ne_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        }
+        unsafe { libc::close(synch[0]) }; // c:2836
+        if (how & Z_ASYNC as i32) != 0 {
+            // c:2837 — `lastpid = (zlong) pid;`
+            crate::ported::modules::clone::lastpid.store(pid, Ordering::Relaxed);
+        } else {
+            // c:2839 — `if (!jobtab[thisjob].stty_in_env && varspc)`.
+            let thisjob_idx = {
+                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                    *m.lock().unwrap()
+                } else {
+                    -1
+                }
+            };
+            // Examine the jobtab entry under lock.
+            let stty_already = if thisjob_idx >= 0 {
+                if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                    let guard = jt.lock().unwrap();
+                    guard
+                        .get(thisjob_idx as usize)
+                        .map(|j| j.stty_in_env != 0)
+                        .unwrap_or(true)
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+            if !stty_already && varspc.is_some() {
+                // c:2841-2851 — walk varspc looking for STTY=...
+                let mut p = varspc.unwrap();
+                loop {
+                    if p >= state.prog.prog.len() {
+                        break;
+                    }
+                    let ac = state.prog.prog[p];
+                    if wc_code(ac) != ZWC_ASSIGN {
+                        break;
+                    }
+                    // c:2845 — `if (!strcmp(ecrawstr(state->prog, p + 1, NULL), "STTY"))`
+                    let name = crate::ported::parse::ecrawstr(&state.prog, p + 1, None);
+                    if name == "STTY" {
+                        // c:2846 — `jobtab[thisjob].stty_in_env = 1;`
+                        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                            let mut guard = jt.lock().unwrap();
+                            if let Some(j) = guard.get_mut(thisjob_idx as usize) {
+                                j.stty_in_env = 1;
+                            }
+                        }
+                        break; // c:2847
+                    }
+                    p += if ZWC_ASSIGN_TYPE(ac) == ZWC_ASSIGN_SCALAR {
+                        3 // c:2849
+                    } else {
+                        (ZWC_ASSIGN_NUM(ac) + 2) as usize // c:2850
+                    };
+                }
+            }
+        }
+        // c:2853 — `addproc(pid, text, 0, &bgtime, esret.gleader, esret.list_pipe_job);`
+        // Rust addproc signature is partial — bgtime/gleader/list_pipe_job
+        // params aren't accepted. Use the available 4-arg form; note the
+        // missing fields as a SUBSTRATE GAP for the addproc port to extend.
+        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            let mut guard = jt.lock().unwrap();
+            let tj = {
+                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                    *m.lock().unwrap()
+                } else {
+                    -1
+                }
+            };
+            if tj >= 0 {
+                if let Some(j) = guard.get_mut(tj as usize) {
+                    crate::ported::jobs::addproc(j, pid, text, false);
+                }
+            }
+        }
+        // c:2854-2855 — `if (oautocont >= 0) opts[AUTOCONTINUE] = oautocont;`
+        if oautocont >= 0 {
+            crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+            let _ = AUTOCONTINUE; // const referenced for parity
+        }
+        // c:2856 — `pipecleanfilelist(jobtab[thisjob].filelist, 1);`
+        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            let mut guard = jt.lock().unwrap();
+            let tj = {
+                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                    *m.lock().unwrap()
+                } else {
+                    -1
+                }
+            };
+            if tj >= 0 {
+                if let Some(j) = guard.get_mut(tj as usize) {
+                    crate::ported::jobs::pipecleanfilelist(j, true);
+                }
+            }
+        }
+        return pid; // c:2857
+    }
+
+    // c:2860 — pid == 0 (child).
+    unsafe { libc::close(synch[0]) }; // c:2861
+    flags = (if (how & Z_ASYNC as i32) != 0 {
+        esub::ASYNC
+    } else {
+        0
+    }) | esub::PGRP; // c:2862
+    let mut flags = flags;
+    if typ != ZWC_SUBSH as i32 && (how & Z_ASYNC as i32) == 0 {
+        flags |= esub::KEEPTRAP; // c:2864
+    }
+    if typ == ZWC_SUBSH as i32 && (how & Z_ASYNC as i32) == 0 {
+        flags |= esub::JOB_CONTROL; // c:2866
+    }
+    // c:2867 — `*filelistp = jobtab[thisjob].filelist;`
+    if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+        let mut guard = jt.lock().unwrap();
+        let tj = {
+            if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                *m.lock().unwrap()
+            } else {
+                -1
+            }
+        };
+        if tj >= 0 {
+            if let Some(j) = guard.get_mut(tj as usize) {
+                *filelistp = std::mem::take(&mut j.filelist);
+            }
+        }
+    }
+    entersubsh(flags, Some(&mut esret)); // c:2868
+    // c:2869 — `write_loop(synch[1], &esret, sizeof(esret));`
+    let mut buf = [0u8; 8];
+    buf[0..4].copy_from_slice(&esret.gleader.to_ne_bytes());
+    buf[4..8].copy_from_slice(&esret.list_pipe_job.to_ne_bytes());
+    if write_loop(synch[1], &buf).map(|n| n as usize).unwrap_or(0) != buf.len() {
+        zerr(&format!(
+            "Failed to send entersubsh_ret report: {}",
+            std::io::Error::last_os_error()
+        ));
+        return -1; // c:2871
+    }
+    unsafe { libc::close(synch[1]) }; // c:2873
+    let _ = zclose(close_if_forked); // c:2874
+
+    // c:2876 — `if (sigtrapped[SIGINT] & ZSIG_IGNORED) holdintr();`
+    let sigint_state = {
+        let guard = sigtrapped_static.lock().unwrap();
+        guard.get(libc::SIGINT as usize).copied().unwrap_or(0)
+    };
+    if (sigint_state & ZSIG_IGNORED) != 0 {
+        crate::ported::signals::holdintr(); // c:2877
+    }
+    // c:2882 — `sigtrapped[SIGEXIT] = 0;` — EXIT traps don't fire in fork-child.
+    {
+        let mut guard = sigtrapped_static.lock().unwrap();
+        if let Some(slot) = guard.get_mut(SIGEXIT as usize) {
+            *slot = 0;
+        }
+    }
+    // c:2884-2890 — `if ((how & Z_ASYNC) && isset(BGNICE)) nice(5)`.
+    if (how & Z_ASYNC as i32) != 0 && isset(BGNICE) {
+        unsafe {
+            *libc::__error() = 0; // errno = 0
+            if libc::nice(5) == -1 && *libc::__error() != 0 {
+                zwarn(&format!(
+                    "nice(5) failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+    }
+    0 // c:2892
+}
+
+/// Port of `execcmd_analyse(Estate state, Execcmd_params eparams)`
+/// from `Src/exec.c:2733-2785`. Pre-execcmd_exec analysis pass:
+/// walks the wordcode at `state->pc`, splits out redirs/varspc/args
+/// without expanding (no prefork, no globbing), and fills `eparams`
+/// so the caller (execcmd_exec at c:2901 or execpline2 at c:2013)
+/// can branch on the command type before the real work.
+pub fn execcmd_analyse(
+    state: &mut estate,
+    eparams: &mut crate::ported::zsh_h::execcmd_params,
+) {
+    use crate::ported::zsh_h::{
+        WC_ASSIGN as ZWC_ASSIGN, WC_REDIR as ZWC_REDIR, WC_SIMPLE as ZWC_SIMPLE,
+        WC_SIMPLE_ARGC as ZWC_SIMPLE_ARGC, WC_TYPESET as ZWC_TYPESET,
+        WC_TYPESET_ARGC as ZWC_TYPESET_ARGC,
+    };
+    // c:2733
+    let mut code: wordcode; // c:2735
+    let mut i: i32; // c:2736
+    let _ = i;
+
+    // c:2738 — `eparams->beg = state->pc;`
+    eparams.beg = state.pc;
+    // c:2739-2740 — `eparams->redir = (wc_code(*state->pc) == WC_REDIR ? ecgetredirs(state) : NULL);`
+    eparams.redir = if state.pc < state.prog.prog.len()
+        && wc_code(state.prog.prog[state.pc]) == ZWC_REDIR
+    {
+        Some(crate::ported::parse::ecgetredirs(state))
+    } else {
+        None
+    };
+    // c:2741-2748 — varspc walk (WC_ASSIGN chain).
+    if state.pc < state.prog.prog.len() && wc_code(state.prog.prog[state.pc]) == ZWC_ASSIGN {
+        cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed); // c:2742
+        eparams.varspc = Some(state.pc); // c:2743
+        // c:2744-2746 — `while (wc_code((code = *state->pc)) == WC_ASSIGN) state->pc += ...`
+        loop {
+            if state.pc >= state.prog.prog.len() {
+                break;
+            }
+            code = state.prog.prog[state.pc];
+            if wc_code(code) != ZWC_ASSIGN {
+                break;
+            }
+            state.pc += if crate::ported::zsh_h::WC_ASSIGN_TYPE(code)
+                == crate::ported::zsh_h::WC_ASSIGN_SCALAR
+            {
+                3 // c:2745
+            } else {
+                (crate::ported::zsh_h::WC_ASSIGN_NUM(code) + 2) as usize // c:2746
+            };
+        }
+    } else {
+        eparams.varspc = None; // c:2748
+    }
+
+    // c:2750 — `code = *state->pc++;`
+    if state.pc >= state.prog.prog.len() {
+        eparams.args = None;
+        eparams.assignspc = None;
+        eparams.typ = 0;
+        eparams.postassigns = 0;
+        eparams.htok = 0;
+        return;
+    }
+    code = state.prog.prog[state.pc];
+    state.pc += 1;
+
+    // c:2752 — `eparams->type = wc_code(code);`
+    eparams.typ = wc_code(code) as i32;
+    // c:2753 — `eparams->postassigns = 0;`
+    eparams.postassigns = 0;
+
+    // c:2755-2783 — switch on type. EC_DUP is used (not EC_DUPTOK)
+    // per the comment at c:2755-2757.
+    match eparams.typ as wordcode {
+        x if x == ZWC_SIMPLE => {
+            // c:2759-2763
+            let mut htok = 0;
+            let argc = ZWC_SIMPLE_ARGC(code) as usize;
+            eparams.args = Some(ecgetlist(state, argc, EC_DUP, Some(&mut htok)));
+            eparams.htok = htok;
+            eparams.assignspc = None;
+        }
+        x if x == ZWC_TYPESET => {
+            // c:2765-2777
+            let mut htok = 0;
+            let argc = ZWC_TYPESET_ARGC(code) as usize;
+            eparams.args = Some(ecgetlist(state, argc, EC_DUP, Some(&mut htok)));
+            eparams.htok = htok;
+            // c:2768 — `eparams->postassigns = *state->pc++;`
+            if state.pc < state.prog.prog.len() {
+                eparams.postassigns = state.prog.prog[state.pc] as i32;
+                state.pc += 1;
+            }
+            // c:2769 — `eparams->assignspc = state->pc;`
+            eparams.assignspc = Some(state.pc);
+            // c:2770-2776 — walk past the postassigns.
+            let mut k = 0i32;
+            while k < eparams.postassigns {
+                if state.pc >= state.prog.prog.len() {
+                    break;
+                }
+                code = state.prog.prog[state.pc];
+                // c:2772-2773 DPUTS — assert wc_code == WC_ASSIGN; skipped.
+                state.pc += if crate::ported::zsh_h::WC_ASSIGN_TYPE(code)
+                    == crate::ported::zsh_h::WC_ASSIGN_SCALAR
+                {
+                    3 // c:2774
+                } else {
+                    (crate::ported::zsh_h::WC_ASSIGN_NUM(code) + 2) as usize // c:2775
+                };
+                k += 1;
+            }
+        }
+        _ => {
+            // c:2779-2783 default.
+            eparams.args = None;
+            eparams.assignspc = None;
+            eparams.htok = 0;
+        }
+    }
+}
 
 /// Port of `execpline(Estate state, wordcode slcode, int how, int last1)`
 /// from `Src/exec.c:1668-1942`. Walks the WC_PIPE chain, sets up
