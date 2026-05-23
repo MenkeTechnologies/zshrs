@@ -8362,6 +8362,24 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
         let pp = crate::ported::builtin::PPARAMS.lock().ok()?;
         return Some(pp.clone());
     }
+    // c:Src/Modules/parameter.c:2239 — `dirstack` PM_SPECIAL array
+    // reads the canonical DIRSTACK LinkList via dirs_gsu.getfn.
+    // paramtab has no u_arr backing for it; route here so
+    // `$dirstack` / `${#dirstack}` / `${dirstack[N]}` read live.
+    if name == "dirstack" {
+        if let Ok(d) = crate::ported::modules::parameter::DIRSTACK.lock() {
+            return Some(d.clone());
+        }
+    }
+    // c:Src/Modules/parameter.c — `funcstack` PM_SPECIAL array
+    // reads the canonical FUNCSTACK Vec via getfn. Same routing
+    // as dirstack above so `$#funcstack` returns the call-depth.
+    // FUNCSTACK holds funcstack structs; surface the .name field.
+    if name == "funcstack" {
+        if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+            return Some(f.iter().map(|fs| fs.name.clone()).collect());
+        }
+    }
     let tab = paramtab().read().ok()?;
     let pm = tab.get(name)?;
     pm.u_arr.clone()
