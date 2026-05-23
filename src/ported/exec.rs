@@ -7223,10 +7223,24 @@ pub fn execcmd_exec(
     {
         // c:2979-2981
         if unset(NOTIFY) {
-            // c:2982
-            // c:2983 — `scanjobs();` — print done jobs.
-            // SUBSTRATE GAP: scanjobs(&JobTable) — JOBTAB is Mutex<Vec<job>>,
-            // scanjobs expects a different wrapper. Skipped for now.
+            // c:2982 — `scanjobs();` inlined: walk JOBTAB and printjob
+            // each STAT_CHANGED entry. C scanjobs body at jobs.c:1993
+            // is identical to this 5-line walk.
+            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                let mut guard = jt.lock().unwrap();
+                let long_list = isset(crate::ported::zsh_h::LONGLISTJOBS);
+                for i in 1..guard.len() {
+                    // jobs.c:1997 — `for (i = 1; i <= maxjob; i++)`
+                    if (guard[i].stat & crate::ported::zsh_h::STAT_CHANGED) != 0 {
+                        let s = crate::ported::jobs::printjob(
+                            &guard[i], i, long_list, None, None,
+                        ); // jobs.c:1999
+                        if !s.is_empty() {
+                            eprint!("{}", s);
+                        }
+                    }
+                }
+            }
         }
         // c:2984 — `if (findjobnam(peekfirst(args)) != -1)`
         let head = args.as_ref().unwrap()[0].clone();
@@ -8647,11 +8661,22 @@ pub fn execcmd_exec(
                 if let Some(ref mut shf) = shf_clone {
                     crate::ported::exec::execshfunc(shf, &mut a_vec);
                 }
-                // c:4105 — `pipecleanfilelist(filelist, 0);`
-                // SUBSTRATE GAP: filelist mutation — exec.rs has
-                // pipecleanfilelist but it takes &mut job; the
-                // filelist local is Vec<String> here. Skip until
-                // wiring is rationalised.
+                // c:4105 — `pipecleanfilelist(filelist, 0);` — clean
+                // out the proc_subst entries from the current job's
+                // filelist after the shfunc body ran. Route through
+                // JOBTAB[thisjob].
+                if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                    let mut guard = jt.lock().unwrap();
+                    let tj = crate::ported::jobs::THISJOB
+                        .get()
+                        .map(|m| *m.lock().unwrap())
+                        .unwrap_or(-1);
+                    if tj >= 0 {
+                        if let Some(j) = guard.get_mut(tj as usize) {
+                            crate::ported::jobs::pipecleanfilelist(j, false);
+                        }
+                    }
+                }
             } else {
                 // c:4107 — builtin path.
                 let mut assigns: Vec<crate::ported::zsh_h::asgment> = Vec::new();                // c:4108
