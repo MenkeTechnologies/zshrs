@@ -923,7 +923,23 @@ pub fn zshrs_main() {
         // form is the literal string "cmdarg". Plugins (zinit's
         // `[[ $ZSH_EVAL_CONTEXT == *cmdarg* ]]` predicate, p10k's
         // turbo-mode hooks) gate on this.
-        zsh::ported::params::setsparam("ZSH_EVAL_CONTEXT", "cmdarg");
+        // ZSH_EVAL_CONTEXT carries PM_READONLY (declared at
+        // params.rs special_params:836), so setsparam would be
+        // rejected by assignstrvalue's PM_READONLY guard. Write
+        // u_str directly — same pattern BUILTIN_SET_LINENO uses
+        // for the LINENO bypass. C zsh's PM_SPECIAL GSU setfn
+        // handles this implicitly; the Rust port lacks the GSU
+        // vtable so internal writes bypass via direct paramtab
+        // mutation.
+        if let Ok(mut tab) = zsh::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                pm.u_str = Some("cmdarg".to_string());
+                pm.node.flags &= !(zsh::ported::zsh_h::PM_UNSET as i32);
+            } else {
+                drop(tab);
+                zsh::ported::params::setsparam("ZSH_EVAL_CONTEXT", "cmdarg");
+            }
+        }
         // POSIX `sh -c script [name [args...]]` semantics
         // (Src/init.c:271 + 479): the next non-option arg AFTER the
         // command string becomes $0; remaining args become $1, $2, …
