@@ -711,17 +711,24 @@ pub struct builtin {
 }
 
 /// Port of `struct execcmd_params` from `Src/zsh.h:1492-1501`.
+///
+/// C's `Wordcode beg/varspc/assignspc` are `wordcode *` — raw pointers
+/// into the running wordcode stream owned by `state->prog`. Rust's
+/// safe analog is `usize` (index into `state.prog.prog`); `None`
+/// stands in for C's `NULL`. The wordcode bytes themselves stay in
+/// `state.prog` — eparams just records start offsets.
 #[allow(non_camel_case_types)]
+#[derive(Default)]
 pub struct execcmd_params {
     // c:1492
-    pub args: Option<LinkList>,  // c:1493
-    pub redir: Option<LinkList>, // c:1494
-    pub beg: Wordcode,           // c:1495
-    pub varspc: Wordcode,        // c:1496
-    pub assignspc: Wordcode,     // c:1497
-    pub typ: i32,                // c:1498 (Rust keyword `type`)
-    pub postassigns: i32,        // c:1499
-    pub htok: i32,               // c:1500
+    pub args: Option<Vec<String>>,  // c:1493 LinkList args
+    pub redir: Option<Vec<redir>>,  // c:1494 LinkList redir
+    pub beg: usize,                 // c:1495 Wordcode beg (pc index)
+    pub varspc: Option<usize>,      // c:1496 Wordcode varspc (NULL → None)
+    pub assignspc: Option<usize>,   // c:1497 Wordcode assignspc
+    pub typ: i32,                   // c:1498 (Rust keyword `type`)
+    pub postassigns: i32,           // c:1499
+    pub htok: i32,                  // c:1500
 }
 
 /// Port of `struct module` from `Src/zsh.h:1503-1513`. C uses a union
