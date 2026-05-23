@@ -4213,6 +4213,14 @@ pub fn paramsubst(
         // assoc_arrays, route through the function_names / alias_names
         // sets. Direct port of zsh's per-magic-table getfn dispatch.
         let mut value: String; // c:2247
+        // c:Src/Modules/parameter.c — magic-assoc (k)/(v)/(kv) reads
+        // return array shape (each key/value as a distinct word). The
+        // value computation below joins them with space for the scalar
+        // path; capture the unjoined Vec here so the split_parts
+        // declared post-value can pick it up and the auto_splat block
+        // emits multiple result_nodes. Without this, `a=( ${(k)builtins}
+        // )` got 1 element instead of zsh's 103.
+        let mut magic_assoc_array: Option<Vec<String>> = None;
         if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 {
             // c:2247 (kv)
             value = assoc_get(&var_name) // c:2247
@@ -4229,6 +4237,34 @@ pub fn paramsubst(
                 .unwrap_or_default(); // c:2247
         } else if (hkeys & SCANPM_WANTKEYS) != 0 {
             // c:2247
+            // Capture the keys-as-Vec for split_parts splat (see
+            // magic_assoc_array declaration above). Walk every source
+            // path the value-build below walks (assoc + magic-assoc
+            // tables + PARTAB fallback) and pick the FIRST non-empty
+            // key list as the array shape.
+            magic_assoc_array = assoc_get(&var_name)
+                .map(|m| m.keys().cloned().collect::<Vec<String>>())
+                .or_else(|| match var_name.as_str() {
+                    "aliases" => aliastab_lock().read().ok().map(|t| {
+                        let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
+                        names.sort();
+                        names
+                    }),
+                    "functions" | "dis_functions" => shfunctab_lock().read().ok().map(|t| {
+                        let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
+                        names.sort();
+                        names
+                    }),
+                    "commands" => cmdnamtab_lock().read().ok().map(|t| {
+                        let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
+                        names.sort();
+                        names
+                    }),
+                    _ => crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
+                        keys.sort();
+                        keys
+                    }),
+                });
             value = assoc_get(&var_name) // c:2247
                 .map(|m| m.keys().cloned().collect::<Vec<_>>().join(" ")) // c:2247
                 .or_else(|| {
@@ -4401,6 +4437,18 @@ pub fn paramsubst(
         // (e.g. :# filter, (s::) split) so the auto-splat block
         // below splats those instead of the original backing array.
         let mut split_parts: Option<Vec<String>> = None; // c:3950
+        // c:Src/Modules/parameter.c — magic-assoc (k)/(v) reads
+        // captured by magic_assoc_array (declared near `value` above).
+        // Seed split_parts so the auto_splat block emits each key/
+        // value as its own result_node. C achieves this via SCANPM_*
+        // → isarr=1; the Rust port collapses to a single scalar
+        // without this seed.
+        if let Some(ref keys) = magic_assoc_array {
+            if !keys.is_empty() {
+                split_parts = Some(keys.clone());
+                isarr = 1;
+            }
+        }
         if !rest.is_empty() {
             let r = rest.as_str();
             if let Some(pat) = r.strip_prefix(":#") {
