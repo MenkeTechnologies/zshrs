@@ -8137,11 +8137,18 @@ fn vars_get(name: &str) -> Option<String> {
     crate::ported::params::getsparam(name)
 }
 
-/// True if `name` exists in `paramtab` (any type).
+/// True if `name` exists in `paramtab` (any type), OR in the process
+/// environment. zsh imports every env var into paramtab at startup
+/// (createparamtable → addenv → setsparam loop); the Rust port's
+/// env import is lazy — env reads route through getsparam's env
+/// fallback only on access. \`\${+ENVVAR}\` queried env vars that
+/// hadn't been touched yet returned 0 even though zsh would treat
+/// them as set. Add the env::var check so the chkset path matches.
 fn vars_contains(name: &str) -> bool {
     paramtab()
         .read()
         .map_or(false, |tab| tab.contains_key(name))
+        || std::env::var(name).is_ok()
 }
 
 /// Read an array parameter from `paramtab`. Equivalent to C's
