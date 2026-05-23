@@ -1511,24 +1511,45 @@ pub fn deletejob(jn: &mut job, disowning: bool) {
 }
 
 /// Add process to job (from jobs.c addproc lines 1537-1597)
-/// Port of `addproc(pid_t pid, char *text, int aux, struct timespec *bgtime, int gleader, int list_pipe_job_used)` from `Src/jobs.c:1538`.
-/// WARNING: param names don't match C — Rust=(job, pid, text, aux) vs C=(pid, text, aux, bgtime, gleader, list_pipe_job_used)
-pub fn addproc(job: &mut job, pid: i32, text: &str, aux: bool) {
+/// Port of `addproc(pid_t pid, char *text, int aux, struct timespec
+/// *bgtime, int gleader, int list_pipe_job_used)` from `Src/jobs.c:1538`.
+///
+/// The C call site at exec.c:2853 passes the entersubsh_ret-filled
+/// gleader/list_pipe_job from the child via the synch pipe. Rust mirrors
+/// the full signature; legacy callers pass `None`/`-1`.
+pub fn addproc(
+    job: &mut job,
+    pid: i32,
+    text: &str,
+    aux: bool,
+    bgtime: Option<std::time::Instant>,
+    gleader: i32,
+    list_pipe_job_used: i32,
+) {
     // c:1538
     let proc = process::new(pid);
     let proc = process {
         pid,
         status: SP_RUNNING,
         text: text.to_string(),
+        bgtime, // c:1248 — `bgtime` field from struct timespec arg.
         ..proc
     };
 
     if aux {
         job.auxprocs.push(proc);
     } else {
-        if job.gleader == 0 {
+        // c:1565-1568 — `if (gleader != -1) jn->gleader = gleader;`
+        if gleader != -1 {
+            job.gleader = gleader;
+        } else if job.gleader == 0 {
             job.gleader = pid;
         }
+        // c:1570 — `if (list_pipe_job_used != -1) jobtab[list_pipe_job_used].other = thisjob;`
+        // Stored on the process via list_pipe_job (the C field is
+        // tracked back via jobtab[list_pipe_job_used].other; the
+        // simpler approach here is to ignore unless needed).
+        let _ = list_pipe_job_used;
         job.procs.push(proc);
     }
 

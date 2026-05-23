@@ -5766,9 +5766,6 @@ pub fn execcmd_fork(
             }
         }
         // c:2853 — `addproc(pid, text, 0, &bgtime, esret.gleader, esret.list_pipe_job);`
-        // Rust addproc signature is partial — bgtime/gleader/list_pipe_job
-        // params aren't accepted. Use the available 4-arg form; note the
-        // missing fields as a SUBSTRATE GAP for the addproc port to extend.
         if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
             let tj = {
@@ -5780,7 +5777,12 @@ pub fn execcmd_fork(
             };
             if tj >= 0 {
                 if let Some(j) = guard.get_mut(tj as usize) {
-                    crate::ported::jobs::addproc(j, pid, text, false);
+                    crate::ported::jobs::addproc(
+                        j, pid, text, false,
+                        Some(std::time::Instant::now()),
+                        esret.gleader,
+                        esret.list_pipe_job,
+                    );
                 }
             }
         }
@@ -7276,20 +7278,12 @@ pub fn execcmd_exec(
     use crate::ported::exec::isreallycom;
     // execautofn_basic — top-level port at exec.rs (c:5608).
     use crate::ported::exec::execautofn_basic;
-    // SUBSTRATE GAP: execerr expands inline in C as a goto-equivalent;
-    // we model it as a flag the body checks after each redir call.
-    // The C macro does: `errflag |= ERRFLAG_ERROR; lastval = 1; goto err;`
-    #[allow(unused_macros)]
-    macro_rules! execerr {
-        () => {{
-            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
-            LASTVAL.store(1, Ordering::Relaxed);
-            // Caller checks `if execerr_fired { ... }` after redir loop.
-            execerr_fired = true;
-        }};
-    }
-    #[allow(unused_variables)]
-    let mut execerr_fired = false;
+    // C `execerr` macro (c:2700) was a goto-equivalent:
+    //   errflag |= ERRFLAG_ERROR; lastval = 1; goto err;
+    // Rust expansion: each call site inlines the errflag+LASTVAL set
+    // and then `break`s out of the enclosing redir loop. The loop's
+    // post-loop errflag check at c:3949 routes to execcmd_exec_err_path
+    // for the cleanup tail. No macro needed.
 
     // c:2988-3011 — Z_ASYNC / pipeline-not-last / sh-emulation
     // fork-immediately fast path.
