@@ -1610,42 +1610,109 @@ pub fn waitforpid(pid: i32) -> Option<i32> {
 
 /// Port of `zwaitjob(int job, int wait_cmd)` from `Src/jobs.c:1673`.
 ///
-/// `wait_cmd` is the "from interactive `wait` builtin" flag. C uses it
-/// to (a) thread through `queue_traps(wait_cmd)` so signal-trap firing
-/// is allowed inside the wait, (b) thread through
-/// `signal_suspend(SIGCHLD, wait_cmd)` so trapped non-CHLD signals can
-/// interrupt the suspend with `last_signal`. The Rust port doesn't yet
-/// drive a signal_suspend wait-loop (waitforpid is a synchronous
-/// libc::waitpid wrap), so wait_cmd informs queue_traps for trap
-/// dispatch coherence; the interrupt-by-trapped-signal early-exit
-/// path (c:1702-1708, `return 128 + last_signal`) is deferred until
-/// the suspend-loop rewrite lands.
+/// `wait_cmd` is the "from interactive `wait` builtin" flag. Threads
+/// through `queue_traps(wait_cmd)` so signal-trap firing is allowed
+/// inside the wait, and through `signal_suspend(SIGCHLD, wait_cmd)`
+/// so trapped non-CHLD signals can interrupt the suspend (returning
+/// `128 + last_signal` so the wait builtin propagates the interrupt).
+///
+/// Body uses the canonical SIGCHLD-driven async pattern: signal_suspend
+/// blocks until the SIGCHLD handler (signals.rs::zhandler) reaps via
+/// wait_for_processes + routes through update_bg_job, which sets
+/// STAT_DONE / STAT_STOPPED on the job. The loop checks job.stat
+/// after each wake. Mirrors `Src/jobs.c:1673-1750`.
 pub fn zwaitjob(job: &mut job, wait_cmd: i32) -> Option<i32> {
     // c:1673
-    if job.procs.is_empty() {
+    if job.procs.is_empty() && job.auxprocs.is_empty() {
+        // c:1736-1740 — no procs: deletejob + pipestats[0]=lastval and return.
         return Some(0);
     }
 
-    // c:1679 — `queue_traps(wait_cmd);` — lets trap handlers fire
-    // during the wait. queue_traps is in signals.rs.
-    crate::ported::signals::queue_traps(wait_cmd);
+    use crate::ported::zsh_h::{ERRFLAG_ERROR, STAT_DONE, STAT_STOPPED, ZSIG_TRAPPED, INTERACTIVE};
+    use crate::ported::utils::errflag;
 
-    let mut last_status = 0;
-    for proc in &mut job.procs {
-        if proc.is_running() {
-            if let Some(status) = waitforpid(proc.pid) {
-                proc.status = status << 8;
-                last_status = status;
-            }
-        } else {
-            last_status = proc.exit_status();
-        }
+    // c:1675 — `int q = queue_signal_level();`
+    let q = crate::ported::signals_h::queue_signal_level();
+    // c:1678 — `child_block();`
+    crate::ported::signals_h::child_block();
+    // c:1679 — `queue_traps(wait_cmd);`
+    crate::ported::signals::queue_traps(wait_cmd);
+    // c:1680 — `dont_queue_signals();`
+    crate::ported::signals_h::dont_queue_signals();
+
+    // c:1682 — `jn->stat |= STAT_LOCKED;`
+    job.stat |= crate::ported::zsh_h::STAT_LOCKED;
+    // c:1683-1684 — STAT_CHANGED → printjob (deferred — needs jobtab index).
+    // c:1685-1697 — pipecleanfilelist for proc-subst fds.
+    if !job.filelist.is_empty() {
+        crate::ported::jobs::pipecleanfilelist(job, false);
     }
 
-    job.stat |= stat::DONE;
-    // c:1742 — `unqueue_traps();` — pair with queue_traps above.
+    // c:1698-1735 — main wait loop.
+    let interact = isset(INTERACTIVE);
+    loop {
+        // c:1698 — `while (!(errflag & ERRFLAG_ERROR) && jn->stat &&
+        //            !(jn->stat & STAT_DONE) &&
+        //            !(interact && (jn->stat & STAT_STOPPED)))`
+        if (errflag.load(std::sync::atomic::Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+            break;
+        }
+        if job.stat == 0 {
+            break;
+        }
+        if (job.stat & STAT_DONE) != 0 {
+            break;
+        }
+        if interact && (job.stat & STAT_STOPPED) != 0 {
+            break;
+        }
+
+        // c:1701 — `signal_suspend(SIGCHLD, wait_cmd);` — block until
+        // SIGCHLD; handler routes through update_bg_job which sets
+        // STAT_DONE/STOPPED on `job`.
+        let _ = crate::ported::signals::signal_suspend(libc::SIGCHLD, wait_cmd != 0);
+
+        // c:1702-1708 — `if (last_signal != SIGCHLD && wait_cmd &&
+        //                  last_signal >= 0 && sigtrapped[ls] & ZSIG_TRAPPED)
+        //                  { return 128 + last_signal; }`
+        let ls = crate::ported::signals::last_signal.load(std::sync::atomic::Ordering::Relaxed);
+        if ls != libc::SIGCHLD && wait_cmd != 0 && ls >= 0 {
+            let trapped_flag = {
+                let guard = crate::ported::signals::sigtrapped.lock().unwrap();
+                guard.get(ls as usize).copied().unwrap_or(0)
+            };
+            if (trapped_flag & ZSIG_TRAPPED) != 0 {
+                // c:1705-1707 — builtin wait interrupted by trapped signal.
+                crate::ported::signals_h::restore_queue_signals(q);
+                crate::ported::signals::unqueue_traps();
+                crate::ported::signals_h::child_unblock();
+                return Some(128 + ls); // c:1707
+            }
+        }
+        // c:1729-1730 — `if (subsh) killjb(jn, SIGCONT);` — keep stopped
+        // grandchildren running when we ourselves are a subshell.
+        if crate::ported::exec::subsh.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            // killjb wants &mut [job]; we have &mut job here. Inline the
+            // SIGCONT via killpg on the job's gleader if set.
+            if job.gleader != 0 {
+                unsafe {
+                    libc::killpg(job.gleader, libc::SIGCONT);
+                }
+            }
+        }
+        // c:1731-1733 — STAT_SUPERJOB handle_sub deferred (sub-job
+        // dispatch is jobtab-index-keyed; needs the live jobtab access).
+        // Re-block before next suspend so SIGCHLD pump isn't lost.
+        crate::ported::signals_h::child_block();
+    }
+
+    // c:1741-1744 — restore + return 0.
+    crate::ported::signals_h::restore_queue_signals(q);
     crate::ported::signals::unqueue_traps();
-    Some(last_status)
+    crate::ported::signals_h::child_unblock();
+    // last_status read for the legacy caller — derive from procs.
+    let last_status = job.procs.last().map(|p| p.exit_status()).unwrap_or(0);
+    Some(last_status) // c:1745
 }
 
 // wait for running job to finish                                           // c:1763

@@ -384,8 +384,23 @@ extern "C" fn zhandler(sig: libc::c_int) {
     // c:429-498 — per-signal dispatch.
     match sig {
         libc::SIGCHLD => {
-            // c:430
-            let _ = wait_for_processes();
+            // c:430-431 — `wait_for_processes();` — reap zombies AND
+            // route their (pid, status) pairs through update_bg_job so
+            // job.stat picks up STAT_DONE / STAT_STOPPED bits. Without
+            // the route, signal_suspend-driven waits in zwaitjob can't
+            // see jobs as completed.
+            let reaped = wait_for_processes();
+            if !reaped.is_empty() {
+                if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                    if let Ok(mut guard) = jt.lock() {
+                        for (pid, status) in reaped {
+                            let _ = crate::ported::jobs::update_bg_job(
+                                &mut guard, pid, status,
+                            );
+                        }
+                    }
+                }
+            }
         }
         libc::SIGPIPE => {
             // c:434
