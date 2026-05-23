@@ -8357,8 +8357,12 @@ pub fn execcmd_exec(
                     let mut guard = jt.lock().unwrap();
                     if let Some(j) = guard.get_mut(thisjob as usize) {
                         j.stat |= STAT_CURSH;                              // c:3678
-                        // SUBSTRATE: j.procs check skipped — type-mapping requires inspection of job struct
-                        if false {
+                        // c:3679-3680 — `if (!jobtab[thisjob].procs)
+                        //                  jobtab[thisjob].stat |= STAT_NOPRINT;`
+                        // Suppress the "[N] done" print for jobs that
+                        // never forked a real process (cursh / builtin /
+                        // null exec).
+                        if j.procs.is_empty() {
                             j.stat |= STAT_NOPRINT;                        // c:3680
                         }
                         if is_builtin != 0 {
