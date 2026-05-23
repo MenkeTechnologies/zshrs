@@ -10407,6 +10407,16 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
                     out.push_str(&s);
                     arg_i += 1;
                 }
+                // c:builtin.c:5420 — `%n` consumes its arg but writes
+                // nothing. C printf writes the byte-count-so-far to
+                // the int pointer; zsh has no pointer to write to, so
+                // it silently drops the directive. Previous Rust port
+                // fell to the unknown-arm and emitted literal `%n`,
+                // breaking `printf "%n" x; echo y` (zsh emits `y`,
+                // zshrs emitted `%ny`).
+                Some('n') => {
+                    arg_i += 1;
+                }
                 Some(other) => {
                     out.push('%');
                     out.push(other);
