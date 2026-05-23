@@ -49,8 +49,8 @@
             implementationClass="com.menketechnologies.zshrs.ZshrsFileType"
             fieldName="INSTANCE"
             language="zshrs"
-            extensions="zsh"
-            fileNames=".zshrc;.zshenv;.zlogin;.zlogout;.zprofile;.zpreztorc"/>
+            extensions="zsh;sh;bash;ksh"
+            fileNames=".zshrc;.zshenv;.zlogin;.zlogout;.zprofile;.zpreztorc;.bashrc;.bash_profile;.bash_login;.bash_logout;.kshrc;.profile"/>
 
         <!-- Parser definition (flat — token-stream PSI, no nested AST). Required
              for line-comment toggle, brace match, refactoring keymaps, and LSP
@@ -85,6 +85,13 @@
         <platform.lsp.serverSupportProvider
             implementation="com.menketechnologies.zshrs.lsp.ZshrsLspServerSupportProvider"/>
 
+        <!-- Cmd-B (Go To → Declaration or Usages):
+             * on a usage, the platform's auto-wired LSP goto handles it;
+             * on a decl, this bridge fires ShowUsages (popup), because
+               the platform won't bridge to it for an LSP-backed language
+               without PSI refs. -->
+        <gotoDeclarationHandler implementation="com.menketechnologies.zshrs.navigate.ZshrsGotoDeclarationHandler"/>
+
         <!-- Settings -->
         <applicationService serviceImplementation="com.menketechnologies.zshrs.ZshrsSettings"/>
         <applicationConfigurable
@@ -102,6 +109,12 @@
 
         <!-- Debugger: line-breakpoint type -->
         <xdebugger.breakpointType implementation="com.menketechnologies.zshrs.dap.ZshrsBreakpointType"/>
+
+        <!-- Notifications for refactoring failure modes (no LSP, no
+             matching code action, etc.). Without this registration
+             `NotificationGroupManager.getNotificationGroup` returns
+             null and balloons silently no-op. -->
+        <notificationGroup id="zshrs Refactoring" displayType="BALLOON"/>
 
         <!-- Reflection tool window -->
         <toolWindow

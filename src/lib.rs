@@ -201,6 +201,14 @@ pub mod worker;
 pub mod zwc;
 #[path = "extensions/zwc_decode.rs"]
 pub mod zwc_decode;
+#[path = "extensions/zsh_option_docs.rs"]
+pub mod zsh_option_docs;
+#[path = "extensions/zsh_builtin_docs.rs"]
+pub mod zsh_builtin_docs;
+#[path = "extensions/zsh_keyword_docs.rs"]
+pub mod zsh_keyword_docs;
+#[path = "extensions/zsh_special_var_docs.rs"]
+pub mod zsh_special_var_docs;
 // Backwards-compat re-export so `crate::rlimits::…` keeps resolving.
 pub use builtins::rlimits;
 
