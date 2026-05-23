@@ -303,6 +303,15 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
 pub(crate) fn mathevall() -> Result<mnumber, String> {
     m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
+    // c:Src/math.c:1485-1488 — `outputradix = outputunderscore = 0;`
+    // at the top of each eval so a `[#16]` from a prior `$((…))`
+    // doesn't leak into the next. The C body comment notes "maintain
+    // outputradix and outputunderscore across levels of evaluation"
+    // i.e. they DO persist across the levels-of-evaluation save/
+    // restore that `new()` performs (which is why this lives at the
+    // top of mathevall, NOT inside the save block).
+    reset_output_format();
+
     // Skip leading whitespace and Nularg
     while let Some(c) = peek() {
         if c.is_whitespace() || c == '\u{a1}' {
@@ -796,6 +805,44 @@ thread_local! {
     /// Rust port returns errors via this Option then `mathevall`
     /// surfaces it as `Result::Err`.
     static M_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// `int outputradix` (math.c:580) — output base for the result.
+    /// Set by `[#N]` (positive N, with `N#` prefix) or `[##N]`
+    /// (negative N, bare digits). Read by subst.rs's `$((…))`
+    /// formatter at math.c:4493-4498.
+    static M_OUTPUTRADIX: Cell<i32> = const { Cell::new(0) };               // c:580
+    /// `int outputunderscore` (math.c:583) — group every N digits with
+    /// `_` for readable hex/decimal output. Set by `[#N_M]` /
+    /// `[##N_M]` / `[#_M]`. Read alongside outputradix.
+    static M_OUTPUTUNDERSCORE: Cell<i32> = const { Cell::new(0) };          // c:583
+}
+
+/// `outputradix` accessor for subst.rs's `$((…))` formatter.
+/// Returns 0 if no `[#…]` directive was seen during the most
+/// recent matheval. Caller is responsible for clearing via
+/// `set_output_format(0, 0)` if it wants per-call state.
+pub fn outputradix() -> i32 {
+    M_OUTPUTRADIX.with(|c| c.get())
+}
+
+/// `outputunderscore` accessor — see [`outputradix`].
+pub fn outputunderscore() -> i32 {
+    M_OUTPUTUNDERSCORE.with(|c| c.get())
+}
+
+/// Reset the output-format state. Called by `mathevall` before
+/// each evaluation so `[#16]` from a prior `$((…))` doesn't leak
+/// into the next call.
+pub fn reset_output_format() {
+    M_OUTPUTRADIX.with(|c| c.set(0));
+    M_OUTPUTUNDERSCORE.with(|c| c.set(0));
+}
+
+fn m_outputradix_set(v: i32) {
+    M_OUTPUTRADIX.with(|c| c.set(v));
+}
+
+fn m_outputunderscore_set(v: i32) {
+    M_OUTPUTUNDERSCORE.with(|c| c.set(v));
 }
 
 // ============================================================
@@ -1475,15 +1522,91 @@ pub(crate) fn zzlex() -> i32 {
                     });
                     return NUM;
                 }
-                // Output format specifier [#base] - skip for now
+                // c:Src/math.c:798-832 — `[#N]` / `[##N]` / `[#_M]`
+                // output format specifier. Set outputradix to ±N and
+                // outputunderscore to M (digit-grouping width).
+                //
+                //   `[#N]`        outputradix = +N    (emit `N#` prefix)
+                //   `[##N]`       outputradix = -N    (bare digits, no prefix)
+                //   `[#N_M]`      ... plus underscore every M digits
+                //   `[#_M]`       outputradix unchanged, underscore = M
+                //   `[#_]`        outputradix unchanged, underscore = 3 (default)
+                //
+                // Previous Rust port matched `[#…]` and SILENTLY DROPPED
+                // the directive, so `$(([##16] 255))` returned `255` (decimal)
+                // instead of `FF`. p10k uses `[##16]` in glyph-code emitters
+                // and `[#16]` in icon-byte formatting; both were broken.
                 if peek() == Some('#') {
-                    while let Some(c) = peek() {
-                        if c == ']' {
-                            advance();
-                            break;
-                        }
-                        advance();
+                    advance(); // c:798 — skip first `#`
+                    let mut n: i32 = 1; // c:799
+                    if peek() == Some('#') {
+                        // c:800 — second `#` flips sign for "no prefix"
+                        n = -1; // c:801
+                        advance(); // c:802
                     }
+                    let p_now = peek().unwrap_or('\0');
+                    if !is_digit(p_now) && p_now != '_' {
+                        // c:804-805
+                        m_error_set("bad output format specification".to_string());
+                        return EOI;
+                    }
+                    let mut checkradix = false;
+                    if is_digit(p_now) {
+                        // c:806-809 — `outputradix = n * zstrtol(ptr, &ptr, 10);`
+                        let rstart = m_pos();
+                        while let Some(c) = peek() {
+                            if is_digit(c) {
+                                advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        let radix_str: String =
+                            m_input_clone()[rstart..m_pos()].to_string();
+                        let radix: i32 = radix_str.parse().unwrap_or(10);
+                        m_outputradix_set(n * radix); // c:807
+                        checkradix = true; // c:808
+                    }
+                    if peek() == Some('_') {
+                        // c:810-816 — `[…_M]` underscore digit-grouping width.
+                        advance(); // c:811
+                        let us_now = peek().unwrap_or('\0');
+                        if is_digit(us_now) {
+                            let ustart = m_pos();
+                            while let Some(c) = peek() {
+                                if is_digit(c) {
+                                    advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                            let us_str: String =
+                                m_input_clone()[ustart..m_pos()].to_string();
+                            m_outputunderscore_set(us_str.parse().unwrap_or(3));
+                            // c:812-813
+                        } else {
+                            m_outputunderscore_set(3); // c:814-815 default
+                        }
+                    }
+                    if peek() != Some(']') {
+                        // c:822-823
+                        m_error_set("bad output format specification".to_string());
+                        return EOI;
+                    }
+                    advance(); // c:832 — skip `]`
+                    if checkradix {
+                        // c:824-831 — validate base ∈ [2, 36].
+                        let abs_n = M_OUTPUTRADIX.with(|c| c.get()).abs();
+                        if !(2..=36).contains(&abs_n) {
+                            m_error_set(format!(
+                                "invalid base (must be 2 to 36 inclusive): {}",
+                                M_OUTPUTRADIX.with(|c| c.get())
+                            ));
+                            return EOI;
+                        }
+                    }
+                    // c:833 — `break;` — fall through to the next token
+                    // (the format directive doesn't yield a NUM itself).
                     continue;
                 }
                 m_error_set("bad output format specification".to_string());

@@ -7007,15 +7007,26 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
         },
     };
 
-    // c: math.c:580-583 — `outputradix` / `outputunderscore` are set while
-    // parsing `[#…]` / `[##…]` math prefixes. `crate::math::matheval` does not
-    // yet thread `outputunderscore` back to callers; keep 0 (no `_` grouping)
-    // until that lands. `OUTPUT_RADIX` shell-style override is a zshrs bridge.
-    let outputunderscore: i32 = 0; // c:583 equivalent when no `[#…_…]` active
-    let outputradix = vars_get("OUTPUT_RADIX")
-        .as_ref()
-        .and_then(|s| s.parse::<i32>().ok())
-        .unwrap_or(0); // c:4492
+    // c: math.c:580-583 — `outputradix` / `outputunderscore` are set
+    // while parsing `[#N]` / `[##N]` / `[#N_M]` math prefixes; both
+    // statics live in math.rs. `crate::math::outputradix()` /
+    // `outputunderscore()` are accessors that read those statics.
+    //
+    // Fall back to the `OUTPUT_RADIX` shell-style env override (a
+    // zshrs-only convenience for callers that can't put `[##16]`
+    // inside the `$((…))` body) when the per-call radix is 0.
+    let outputradix = {
+        let r = crate::math::outputradix();
+        if r != 0 {
+            r // c:580 — `[#N]`/`[##N]` set this during matheval
+        } else {
+            vars_get("OUTPUT_RADIX")
+                .as_ref()
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(0) // c:4492 (env fallback)
+        }
+    };
+    let outputunderscore: i32 = crate::math::outputunderscore(); // c:583
     let b: String = if v.type_ == MN_UNSET {
         "0".to_string() // c:4498 — MN_UNSET falls through to zero in practice
     } else if (v.type_ == MN_FLOAT) && outputradix == 0 {
@@ -7028,7 +7039,7 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
         } else {
             v.l
         };
-        convbase_underscore(l, outputradix as u32, outputunderscore)
+        convbase_underscore(l, outputradix, outputunderscore)
     }; // c:4499
 
     // C: `t = *bptr = hcalloc(...); …; strcat(t, rest);` — concat
