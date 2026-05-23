@@ -5463,6 +5463,15 @@ pub fn intsetfn(pm: &mut param, x: i64) {
             intsecondssetfn(x);
             return;
         }
+        // c:Src/params.c:4552 randomsetfn — `RANDOM=N` calls
+        // srand(N). Without this dispatch, $RANDOM writes only u.val
+        // and the next read returns rand()'s next value from the
+        // PROCESS-START seed, not the user-requested seed. Same
+        // name-based dispatch shape as SECONDS above.
+        "RANDOM" => {
+            randomsetfn(x);
+            return;
+        }
         _ => {}
     }
     pm.u_val = x;
