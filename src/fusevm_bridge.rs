@@ -3715,12 +3715,37 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if mode == 5 {
                     exec.in_scalar_assign += 1;
                 }
-                let out = crate::ported::subst::singsub(&prepped);
+                // Mode 1 = argv DQ word; mode 5 = scalar-assign RHS.
+                // In C zsh, the corresponding prefork-on-list paths
+                // are: argv → `prefork(argv_list, 0)` returns multi-
+                // word LinkList (Src/exec.c::execcmd), assignment →
+                // `prefork(rhs_list, PREFORK_SINGLE|PREFORK_ASSIGN)`
+                // returns single-word (Src/exec.c::addvars line
+                // 2546). zshrs's `multsub` (Src/subst.c:544) is the
+                // multi-result variant; `singsub` (Src/subst.c:514)
+                // asserts ≤1 node. Mode 5 keeps singsub; mode 1
+                // switches to multsub so `"${(@)arr}"`/`"$@"`/
+                // `"${arr[@]}"` in argv context emit multiple words
+                // as the C path would.
+                let result_value = if mode == 5 {
+                    let out = crate::ported::subst::singsub(&prepped);
+                    Value::str(out)
+                } else {
+                    let (_first, nodes, _ms_ws, _ret) =
+                        crate::ported::subst::multsub(&prepped, 0);
+                    if nodes.is_empty() {
+                        Value::str(String::new())
+                    } else if nodes.len() == 1 {
+                        Value::str(nodes.into_iter().next().unwrap())
+                    } else {
+                        Value::Array(nodes.into_iter().map(Value::str).collect())
+                    }
+                };
                 if mode == 5 {
                     exec.in_scalar_assign -= 1;
                 }
                 exec.in_dq_context -= 1;
-                Value::str(out)
+                result_value
             }
             2 => {
                 // SingleQuoted: pure literal, strip outer `'…'`.

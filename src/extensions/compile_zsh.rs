@@ -2279,10 +2279,17 @@ impl ZshCompiler {
 
         // Fast path: `${(flags)NAME}` — zsh parameter flags. Emit
         // BUILTIN_PARAM_FLAG with [name, flags] on the stack.
-        // If the whole word is wrapped in raw DNULLs (`\u{9e}`), it's
-        // double-quoted — prefix the flags with `\u{02}` so the
-        // runtime knows to skip array-only flags ((o)/(O)/(n)/(i)/
-        // (M)/(u)) per zsh's DQ semantics.
+        //
+        // Skip the fast-path in DQ context. The fast-path calls
+        // paramsubst directly with qt=false hardcoded, bypassing
+        // the lexer → prefork → stringsubst → paramsubst chain
+        // where C zsh's `qt = c == Qstring` (Src/subst.c:283)
+        // would have propagated DQ. Falling through to the default
+        // text-expansion path emits BUILTIN_EXPAND_TEXT mode 1
+        // which routes through multsub → prefork → stringsubst,
+        // and the Qstring-preserving `untokenize_preserve_quotes`
+        // ensures the `$` is tokenized as `\u{8c}` so stringsubst
+        // sees Qstring and sets qt=true. This is the C path.
         if !has_bnull {
             if let Some((flags, name)) = parse_zsh_flag(&untoked) {
                 // DQ context: either the raw word is itself DQ-wrapped,
@@ -2290,6 +2297,10 @@ impl ZshCompiler {
                 // DQ-wrapped parent (tracked via dq_context_depth).
                 let dq_wrapped = (s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2)
                     || self.dq_context_depth > 0;
+                if dq_wrapped {
+                    // Fall through to the default text-expansion path.
+                    let _ = (flags, name);
+                } else {
                 // Detect `[@]`/`[*]` on the ORIGINAL untoked text since
                 // parse_zsh_flag stripped the suffix from `name`. This
                 // flag is encoded into the runtime flags string with
@@ -2326,6 +2337,7 @@ impl ZshCompiler {
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
                 return;
+                }
             }
         }
 
@@ -4469,6 +4481,19 @@ enum WordSegment {
 /// word sticks only to the first or last array element.
 fn is_splice_expansion(s: &str) -> bool {
     let pq = crate::lex::untokenize_preserve_quotes(s);
+    // c:Src/zsh.h:167 Qstring (`\u{8c}`) is the DQ-context `$` marker
+    // — preserved by untokenize_preserve_quotes so stringsubst's qt
+    // detection at Src/subst.c:283 can fire. For splice-shape
+    // detection, treat both `$` and Qstring uniformly: strip outer
+    // DQ if present (Dnull → `"` is also preserved), then normalize
+    // Qstring → `$` for the prefix-match.
+    let normalized: String = pq
+        .trim_start_matches('"')
+        .trim_end_matches('"')
+        .chars()
+        .map(|c| if c == crate::ported::zsh_h::Qstring { '$' } else { c })
+        .collect();
+    let pq = normalized;
     if pq == "$@" || pq == "$*" || pq == "${@}" || pq == "${*}" {
         return true;
     }
@@ -4535,6 +4560,16 @@ fn is_splice_expansion(s: &str) -> bool {
 /// every literal segment.
 fn is_distribute_expansion(s: &str) -> bool {
     let pq = crate::lex::untokenize_preserve_quotes(s);
+    // Same Qstring-aware normalization as is_splice_expansion — see
+    // there for rationale. Treat DQ-wrapped Qstring `$` identically
+    // to bare `$` for distribute-shape detection.
+    let normalized: String = pq
+        .trim_start_matches('"')
+        .trim_end_matches('"')
+        .chars()
+        .map(|c| if c == crate::ported::zsh_h::Qstring { '$' } else { c })
+        .collect();
+    let pq = normalized;
     if let Some(inner) = pq.strip_prefix("${").and_then(|t| t.strip_suffix('}')) {
         if inner.starts_with('^') {
             return true;
