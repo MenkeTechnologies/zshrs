@@ -271,9 +271,11 @@ pub fn getterminfo(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Opt
         let n = tigetnum(cname.as_ptr());
         if n != -1 && n != -2 {
             // c:156-158 — `pm->u.val = num; PM_INTEGER;`
-            let mut pm = mk_str(String::new(), PM_INTEGER as i32);
+            // Also stamp u_str with the decimal form so callers that
+            // only consume u_str (like vm_helper::partab_get) see the
+            // value. `$terminfo[colors]` reads as 256, not empty.
+            let mut pm = mk_str((n as i64).to_string(), PM_INTEGER as i32);
             pm.u_val = n as i64;
-            pm.u_str = None;
             return Some(pm);
         }
         // c:159-162 — PM_SCALAR yes/no for tigetflag hit.
