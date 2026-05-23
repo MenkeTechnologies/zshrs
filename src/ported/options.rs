@@ -1629,8 +1629,35 @@ fn optno_by_name(name: &str) -> Option<i32> {
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Read the live
 /// state of `name` from the process-wide option store.
+///
+/// Alias-aware: OPT_ALIAS rows (`hashall` → HASHCMDS, `histappend` →
+/// APPENDHISTORY, `braceexpand` → -IGNOREBRACES, `log` →
+/// -HISTNOFUNCTIONS, `physical` → CHASELINKS, etc.) route through
+/// `optlookup` to the canonical slot. Negative aliases invert the
+/// returned value. This mirrors C zsh's `isset(optlookup(name))`
+/// path where `$options[ALIAS]` reads the same slot as
+/// `$options[CANONICAL]`. Without this, alias names that got
+/// populated into the live-state map by `default_options()`
+/// returned their static default (usually `false`) instead of the
+/// canonical option's runtime state.
 pub fn opt_state_get(name: &str) -> Option<bool> {
     let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    // Route through optlookup for canonicalisation. If the name
+    // resolves to a different canonical, read THAT slot.
+    let optno = optlookup(name);
+    if optno != OPT_INVALID {
+        let (target_optno, negate) = if optno < 0 { (-optno, true) } else { (optno, false) };
+        let target_name = opt_name(target_optno);
+        if !target_name.is_empty() && target_name != name {
+            // Alias path — return canonical's state (negated for `no…` aliases).
+            if let Ok(g) = m.read() {
+                if let Some(&v) = g.get(target_name) {
+                    return Some(if negate { !v } else { v });
+                }
+            }
+        }
+    }
+    // Direct read for canonical names.
     m.read().ok().and_then(|g| g.get(name).copied())
 }
 
