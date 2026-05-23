@@ -4148,12 +4148,43 @@ impl ZshCompiler {
             "-pcre-match" => self.builder.emit(Op::RegexMatch, 0),
             "<" => self.builder.emit(Op::StrLt, 0),
             ">" => self.builder.emit(Op::StrGt, 0),
-            "-eq" => self.builder.emit(Op::NumEq, 0),
-            "-ne" => self.builder.emit(Op::NumNe, 0),
-            "-lt" => self.builder.emit(Op::NumLt, 0),
-            "-le" => self.builder.emit(Op::NumLe, 0),
-            "-gt" => self.builder.emit(Op::NumGt, 0),
-            "-ge" => self.builder.emit(Op::NumGe, 0),
+            // c:Src/cond.c:415 — `-eq`/`-ne`/`-lt`/`-gt`/`-le`/`-ge`
+            // operands undergo arithmetic evaluation via `mathevali`.
+            // So `[[ x -eq 5 ]]` (where x=5) is `mathevali("x") -eq
+            // mathevali("5")` = `5 -eq 5` = TRUE, not literal-string
+            // comparison of "x" vs "5".
+            //
+            // The compile_zsh path pushes left + right as STRINGS via
+            // compile_word_str, and Op::NumEq's to_float() on a bare
+            // identifier returns 0.0. Apply BUILTIN_ARITH_EVAL to both
+            // operands first so the cmp opcodes see numeric values.
+            //
+            // Stack walk (before this fix):  [..., L_str, R_str] → NumEq
+            //                                                  ↓ to_float
+            //                                                  0.0 == 5.0 → false
+            //
+            // Stack walk (after):  [..., L_str, R_str]
+            //                        ARITH_EVAL (pops R) → [..., L_str, arith(R)]
+            //                        Swap                → [..., arith(R), L_str]
+            //                        ARITH_EVAL (pops L) → [..., arith(R), arith(L)]
+            //                        Swap                → [..., arith(L), arith(R)]
+            //                        NumEq               → result
+            "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge" => {
+                let arith_id = crate::vm_helper::BUILTIN_ARITH_EVAL;
+                self.builder.emit(Op::CallBuiltin(arith_id, 1), 0);
+                self.builder.emit(Op::Swap, 0);
+                self.builder.emit(Op::CallBuiltin(arith_id, 1), 0);
+                self.builder.emit(Op::Swap, 0);
+                match op {
+                    "-eq" => self.builder.emit(Op::NumEq, 0),
+                    "-ne" => self.builder.emit(Op::NumNe, 0),
+                    "-lt" => self.builder.emit(Op::NumLt, 0),
+                    "-le" => self.builder.emit(Op::NumLe, 0),
+                    "-gt" => self.builder.emit(Op::NumGt, 0),
+                    "-ge" => self.builder.emit(Op::NumGe, 0),
+                    _ => unreachable!(),
+                }
+            }
             "-ef" => self
                 .builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SAME_FILE, 2), 0),
