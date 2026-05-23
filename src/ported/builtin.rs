@@ -57,7 +57,7 @@ use crate::ported::options::{dosetopt, emulation, optlookup, ZSH_OPTIONS_SET};
 use crate::ported::params::{createparam, getiparam, getsparam, isident, locallevel as locallevel_param, locallevel, paramtab, printparamnode, setaparam, setiparam, setsparam, unsetparam, unsetparam_pm};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals::settrap;
-use crate::ported::utils::{argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir, print_if_link, printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn, zwarnnam, GETKEYS_PRINT};
+use crate::ported::utils::{argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir, print_if_link, printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn, zwarnnam, GETKEYS_ECHO, GETKEYS_PRINT};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
 use crate::ported::zle::compctl::compctlread;
@@ -6443,14 +6443,36 @@ pub fn bin_print(
     // BIN_ECHO with `-E` keeps escapes literal. Without this, `print
     // -- ${(q)a}` for `a="he llo"` emitted `he\ llo` instead of zsh's
     // `he llo` (the (q) flag's backslash gets consumed by print).
-    if !raw {
-        let echo_E = echo_mode && OPT_ISSET(ops, b'E');
-        if !echo_E {
-            for a in processed_args.iter_mut() {
-                let (s, _) =
-                    getkeystring_with(a, GETKEYS_PRINT);
-                *a = s;
-            }
+    // c:builtin.c:4747-4767 — escape interpretation dispatch.
+    //   - `fmt` (printf format already chosen via -f) or
+    //     `(!-e && (-R || -r || -E))` → unmetafy only, NO escape
+    //     interpretation (raw passthrough).
+    //   - Otherwise pick `escape_how` per c:4754-4760:
+    //       `-b`                            → GETKEYS_BINDKEY (skip — `-b`
+    //                                          isn't wired in this port)
+    //       func != BIN_ECHO && !`-e`       → GETKEYS_PRINT (with EMACS:
+    //                                          unknown `\<c>` → `<c>`)
+    //       else (BIN_ECHO or `-e`)         → GETKEYS_ECHO (preserves
+    //                                          unknown `\<c>` as `\<c>`)
+    //
+    // Previous Rust port unconditionally used GETKEYS_PRINT for both
+    // `echo` and `print` — `echo "${(qq)s}"` for `s="a'b"` stripped
+    // the `\` from the `(qq)`-emitted `'a'\''b'` because GETKEYS_PRINT
+    // includes GETKEY_EMACS. zsh keeps the `\` (echo uses GETKEYS_ECHO,
+    // no EMACS).
+    let dash_e = OPT_ISSET(ops, b'e');
+    let suppress_escapes = OPT_ISSET(ops, b'R')
+        || OPT_ISSET(ops, b'r')
+        || (echo_mode && OPT_ISSET(ops, b'E'));
+    if !suppress_escapes || dash_e {
+        let escape_how: u32 = if !echo_mode && !dash_e {
+            GETKEYS_PRINT // c:4758
+        } else {
+            GETKEYS_ECHO // c:4760
+        };
+        for a in processed_args.iter_mut() {
+            let (s, _) = getkeystring_with(a, escape_how);
+            *a = s;
         }
     }
     let body = processed_args.join(sep);
