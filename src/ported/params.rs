@@ -9100,6 +9100,22 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "HISTSIZE" => Some(histsizegetfn().to_string()),
         "SAVEHIST" => Some(savehistsizegetfn().to_string()),
         "#" | "ARGC" => Some(poundgetfn().to_string()),
+        // c:Src/params.c:871 — `setsparam("TIMEFMT", DEFAULT_TIMEFMT)`.
+        // createparamtable seeds this; the zshrs main binary skips
+        // that init path so paramtab is empty for TIMEFMT. Route
+        // here from the canonical default. paramtab check first so
+        // an explicit user-set value sticks.
+        "TIMEFMT" => {
+            let tab_val = paramtab().read().ok().and_then(|t| {
+                t.get("TIMEFMT").and_then(|pm| pm.u_str.clone())
+            });
+            if let Some(v) = tab_val {
+                if !v.is_empty() {
+                    return Some(v);
+                }
+            }
+            Some(crate::ported::zsh_system_h::DEFAULT_TIMEFMT.to_string())
+        }
         // $0 routes through utils::argzero.
         "0" => argzero(),
         // POSIX shell-special scalars. C dispatches these through
