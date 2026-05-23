@@ -5349,17 +5349,16 @@ pub fn paramsubst(
                 if indord == 0 {
                     // c:4292 if (!indord)
                     if (sortit & SORTIT_NUMERICALLY) != 0 {
-                        // c:4189 SORTIT_NUMERICALLY
-                        // SORTIT_NUMERICALLY_SIGNED (c:2222) is a
-                        // bit-OR on top of NUMERICALLY; f64 parse
-                        // already handles signed values uniformly so
-                        // (n) and (n-) produce the same compare here.
+                        // c:Src/sort.c:137-171 eltpcmp natural-sort:
+                        // advance past common prefix, then at the
+                        // first differing position, if either is a
+                        // digit, parse the digit run on each side as
+                        // a number and compare. SIGNED (c:154) treats
+                        // a leading `-` followed by digits as negative.
+                        let signed_mode = (sortit & SORTIT_NUMERICALLY_SIGNED) != 0;
                         sorted.sort_by(|a, b| {
-                            // c:4189
-                            let na: f64 = a.parse().unwrap_or(0.0); // c:4189
-                            let nb: f64 = b.parse().unwrap_or(0.0); // c:4189
-                            na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
-                        }); // c:4189
+                            zstrcmp(a, b, signed_mode)
+                        });
                     } else if (sortit & SORTIT_IGNORING_CASE) != 0 {
                         // c:4187 SORTIT_IGNORING_CASE
                         sorted.sort_by_key(|a| a.to_lowercase()); // c:4187
@@ -6176,6 +6175,12 @@ pub fn paramsubst(
             if !parts.is_empty() {
                 value = parts.join(" ");
                 split_parts = Some(parts);
+                // c:3274 — `isarr = nojoin ? 1 : 2;` mark this as a
+                // split-from-scalar so the c:4245 splat block fires
+                // and the c:3032 sepjoin-on-qt skips (per c:3317
+                // !spsep guard equivalent — force_split is the
+                // spbreak=2 path which has the same effect).
+                isarr = if nojoin != 0 { 1 } else { 2 };
             }
         }
         // ${==name} forced no-split — just consume the flag, no
@@ -7655,18 +7660,141 @@ thread_local! {
 // `convbase` lives in src/ported/utils.rs (canonical port of
 // Src/utils.c). Callers below import via the full path.
 
+/// Port of `zstrcmp(const char *as, const char *bs, int sortflags)`
+/// from `Src/sort.c:191`. zsh's natural-sort comparator wrapper
+/// around `eltpcmp` (c:71-179) — advances past common prefix, then
+/// when either side has a digit at the differing position, parses
+/// the digit run on each side as a number and compares numerically
+/// (more digits = larger, leading zeros stripped). Signed mode
+/// (`SORTIT_NUMERICALLY_SIGNED` per c:154) treats `-DIGITS` as
+/// negative.
+///
+/// The previous Rust port did `a.parse::<f64>().unwrap_or(0.0)`
+/// which fails on natural-sort inputs like `file10` (parses to 0,
+/// stable-sort preserves input order). Direct port of c:137-178.
+fn zstrcmp(a: &str, b: &str, signed_mode: bool) -> std::cmp::Ordering {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    let mut ai = 0usize;
+    let mut bi = 0usize;
+    // c:139 — advance past common prefix.
+    while ai < ab.len() && bi < bb.len() && ab[ai] == bb[bi] {
+        ai += 1;
+        bi += 1;
+    }
+    let a_c = ab.get(ai).copied().unwrap_or(0);
+    let b_c = bb.get(bi).copied().unwrap_or(0);
+    // c:152-171 — `if (idigit(*as) || idigit(*bs))`. Numeric arm
+    // fires when either side has a digit at the differing position.
+    if a_c.is_ascii_digit() || b_c.is_ascii_digit() {
+        // c:143-151 — signed mode: `-DIGITS` is negative.
+        let mut mul: i32 = 1;
+        if signed_mode {
+            if a_c == b'-' && ab.get(ai + 1).map_or(false, |c| c.is_ascii_digit())
+                && b_c.is_ascii_digit()
+            {
+                return std::cmp::Ordering::Less;
+            }
+            if b_c == b'-' && bb.get(bi + 1).map_or(false, |c| c.is_ascii_digit())
+                && a_c.is_ascii_digit()
+            {
+                return std::cmp::Ordering::Greater;
+            }
+        }
+        // c:153 — back up past any prior digits in BOTH strings to
+        // find the start of the number. Both `as` and `bs` share
+        // the same prefix, so backing up matches.
+        while ai > 0 && ab[ai - 1].is_ascii_digit() {
+            ai -= 1;
+            bi -= 1;
+        }
+        // c:154 — signed: prior char is `-` → negate.
+        if signed_mode && ai > 0 && ab[ai - 1] == b'-' {
+            mul = -1;
+        }
+        if ab.get(ai).copied().map_or(false, |c| c.is_ascii_digit())
+            && bb.get(bi).copied().map_or(false, |c| c.is_ascii_digit())
+        {
+            // c:156-159 — skip leading zeros on both sides.
+            while ab.get(ai) == Some(&b'0') {
+                ai += 1;
+            }
+            while bb.get(bi) == Some(&b'0') {
+                bi += 1;
+            }
+            // c:160 — `for (; idigit(*as) && *as == *bs; as++, bs++);`
+            while ai < ab.len()
+                && bi < bb.len()
+                && ab[ai].is_ascii_digit()
+                && ab[ai] == bb[bi]
+            {
+                ai += 1;
+                bi += 1;
+            }
+            // c:161-168 — compare first differing digit, then count
+            // remaining digits.
+            let a_at = ab.get(ai).copied().unwrap_or(0);
+            let b_at = bb.get(bi).copied().unwrap_or(0);
+            if a_at.is_ascii_digit() || b_at.is_ascii_digit() {
+                let cmp_raw = a_at as i32 - b_at as i32;
+                let mut ai2 = ai;
+                let mut bi2 = bi;
+                while ai2 < ab.len()
+                    && bi2 < bb.len()
+                    && ab[ai2].is_ascii_digit()
+                    && bb[bi2].is_ascii_digit()
+                {
+                    ai2 += 1;
+                    bi2 += 1;
+                }
+                let a_more = ai2 < ab.len() && ab[ai2].is_ascii_digit();
+                let b_more = bi2 < bb.len() && bb[bi2].is_ascii_digit();
+                if a_more && !b_more {
+                    return if mul > 0 {
+                        std::cmp::Ordering::Greater
+                    } else {
+                        std::cmp::Ordering::Less
+                    };
+                }
+                if b_more && !a_more {
+                    return if mul > 0 {
+                        std::cmp::Ordering::Less
+                    } else {
+                        std::cmp::Ordering::Greater
+                    };
+                }
+                // Same digit count after this position — compare
+                // first-differing digit value.
+                let ord = match (cmp_raw * mul).cmp(&0) {
+                    std::cmp::Ordering::Less => std::cmp::Ordering::Less,
+                    std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
+                    std::cmp::Ordering::Greater => std::cmp::Ordering::Greater,
+                };
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+        }
+    }
+    // c:175 — fall through to byte-wise compare.
+    a.cmp(b)
+}
+
 /// Multsub flags (from subst.c)
 // `pub mod multsub_flags { … }` — DELETED per user directive; was
 // a Rust-only u32 wrapper duplicating the canonical i32 constants
 // in `zsh_h::MULTSUB_*` (c:zsh.h:2046-2059). Use those directly.
 // c:zsh.h:2046-2059
 
-/// Read a scalar variable from `paramtab`. Equivalent to C's
-/// `getsparam(name)` (`Src/params.c:3194`) for the scalar case.
+/// Read a scalar variable. Routes through canonical `getsparam`
+/// (`Src/params.c:3076`) — the C function dispatches through
+/// `Param.gsu->getfn` for PM_SPECIAL params like IFS (whose value
+/// is computed by `ifsgetfn` and not stored in `u_str`). The
+/// previous Rust port read `pm.u_str` directly, which returned
+/// None for PM_SPECIAL scalars — breaking PREFORK_SPLIT's
+/// IFS-based splitting because `multsub` couldn't read $IFS.
 fn vars_get(name: &str) -> Option<String> {
-    let tab = paramtab().read().ok()?;
-    let pm = tab.get(name)?;
-    pm.u_str.clone()
+    crate::ported::params::getsparam(name)
 }
 
 /// True if `name` exists in `paramtab` (any type).

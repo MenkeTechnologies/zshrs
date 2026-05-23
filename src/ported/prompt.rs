@@ -142,10 +142,21 @@ pub(crate) mod prompt_tls {
                 .and_then(|s| s.parse::<i64>().ok())
                 .unwrap_or(1);
         });
-        // c:utils.c:36 scriptname
+        // c:utils.c:36 scriptname — the ACTIVE script/function name
+        // (updated on doshfunc entry per c:5903). %N reads this.
         let scriptname = crate::ported::utils::scriptname_get();
         SCRIPTNAME.with(|c| *c.borrow_mut() = scriptname.clone().or_else(|| getsparam("0")));
-        SCRIPTFILENAME.with(|c| *c.borrow_mut() = scriptname.clone().or_else(|| getsparam("0")));
+        // c:init.c scriptfilename — the FILE the current code was
+        // PARSED from. C zsh init.c:479 sets `scriptname =
+        // scriptfilename = "zsh"` for the -c invocation; doshfunc
+        // at c:5903 overrides scriptname but NOT scriptfilename.
+        // Routes through `scriptfilename_get` (canonical static
+        // mirror of C's file-static `scriptfilename`).
+        SCRIPTFILENAME.with(|c| {
+            *c.borrow_mut() = crate::ported::utils::scriptfilename_get()
+                .or_else(|| scriptname.clone())
+                .or_else(|| getsparam("0"));
+        });
         FUNC_LINE_BASE.with(|c| *c.borrow_mut() = None);
         FUNCSTACK_FILENAME.with(|c| {
             *c.borrow_mut() = FUNCSTACK
