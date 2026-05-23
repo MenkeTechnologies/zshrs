@@ -4851,11 +4851,29 @@ pub fn execcursh(state: &mut estate, do_exec: i32) -> i32 {
     let end = state.pc + WC_CURSH_SKIP(prior) as usize;
     // c:475 — `state->pc++;` skip the try/always-only word.
     state.pc += 1;
-    // c:482-486 — `if (!list_pipe && thisjob != -1 && thisjob != list_pipe_job
-    //              && !hasprocs(thisjob)) deletejob(jobtab + thisjob, 0);`
-    // TODO faithful: needs list_pipe / list_pipe_job state + hasprocs +
-    // deletejob primitives. Skipped — the fusevm compiler doesn't
-    // expose tree-walker job slots, so this path doesn't observe them.
+    // c:482-486 — drop empty job slot before nested cmd: if outer-pipe
+    // bookkeeping is clean AND thisjob is a real job that's not the
+    // pipe-leader AND has no procs yet, deletejob() recycles it. Avoids
+    // leaking job-table slots when execcursh recurses.
+    {
+        let lp = list_pipe.load(Ordering::Relaxed);
+        let lpj = list_pipe_job.load(Ordering::Relaxed);
+        let tj = crate::ported::jobs::THISJOB
+            .get()
+            .map(|m| *m.lock().unwrap())
+            .unwrap_or(-1);
+        if lp == 0 && tj != -1 && tj != lpj {
+            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                let mut guard = jt.lock().unwrap();
+                let has = crate::ported::jobs::hasprocs(&guard, tj as usize);
+                if !has {
+                    if let Some(j) = guard.get_mut(tj as usize) {
+                        crate::ported::jobs::deletejob(j, false);
+                    }
+                }
+            }
+        }
+    }
     cmdpush(CS_CURSH as u8); // c:487 — `cmdpush(CS_CURSH);`
     let _ = execlist(state, 1, do_exec); // c:488 — `execlist(state, 1, do_exec);`
     cmdpop(); // c:489 — `cmdpop();`
@@ -4948,9 +4966,10 @@ pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
     let prior = state.prog.prog[state.pc.wrapping_sub(1)];
     // c:5284-5287 — empty `time` (no pipeline) — print accumulated shell time.
     if WC_TIMED_TYPE(prior) == WC_TIMED_EMPTY {
-        // c:5285 — `shelltime(NULL,NULL,NULL,0);` — TODO faithful: needs
-        // shelltime port. Without it, just return 0 like C's `return 0`.
-        return 0;
+        // c:5285 — `shelltime(NULL,NULL,NULL,0);` — print accumulated
+        // shell+kids time deltas since last call.
+        crate::ported::jobs::shelltime(None, None, None, 0);
+        return 0; // c:5286
     }
     // c:5288 — `execpline(state, *state->pc++, Z_TIMED|Z_SYNC, 0);`
     let slcode = state.prog.prog[state.pc];
@@ -5482,8 +5501,11 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
         && (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0
     {
         let ltype = WC_LIST_TYPE(code) as i32;
-        // c:1392 — `csp = cmdsp;` (cmdstack save/restore is mctx —
-        // TODO faithful: needs cmdpush/cmdpop integration).
+        // c:1396 — `csp = cmdsp;` — snapshot cmdstack depth at start
+        // of this WC_LIST iteration; restored at end so partial
+        // cmdpush sequences (e.g. from execcond, execfuncs) don't
+        // leak into the next sublist.
+        let csp = crate::ported::prompt::CMDSTACK.with(|s| s.borrow().len());
         // c:1502-1509 — Z_SIMPLE fast-path.
         if (ltype & Z_SIMPLE as i32) != 0 {
             let next_pc = state.pc + WC_LIST_SKIP(code) as usize;
@@ -5562,6 +5584,16 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
                 state.pc += 1;
             }
         }
+        // c:1593 — `cmdsp = csp;` — restore cmdstack depth to the
+        // snapshot taken at start of iteration. Reverses any cmdpush
+        // calls made by nested execcond / execfuncs / execcmd_exec
+        // that didn't pop cleanly.
+        crate::ported::prompt::CMDSTACK.with(|s| {
+            let mut g = s.borrow_mut();
+            if g.len() > csp {
+                g.truncate(csp);
+            }
+        });
         // c:1626-1634 — donetrap is reset between sublists.
         donetrap = 0;
         // c:1640-1645 — fetch next WC_LIST header (or break out).

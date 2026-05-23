@@ -1240,8 +1240,9 @@ pub fn refreshline(ln: i32) {
                 let mut i_try = 1i32; // c:1978
                 while (i_try as usize) < ol.len() && ol[i_try as usize].chr != '\0' {
                     // c:1979 — `tcdelcost(i) < wpfxlen(ol + i, nl)`
-                    // !!! STUB: wpfxlen — Src/Zle/zle_refresh.c.
-                    let cheap_delete = false; // stub
+                    let ol_tail = &ol[i_try as usize..];
+                    let cheap_delete =
+                        tcdelcost(i_try) < wpfxlen(ol_tail, &nl) as i32;
                     if cheap_delete {
                         // c:1985-1990 — apply attributes, tc_delchars(i)
                         // !!! STUB: treplaceattrs / applytextattributes /
@@ -1270,8 +1271,9 @@ pub fn refreshline(ln: i32) {
                 let mut i_try = 1i32; // c:2014
                 while (i_try as usize) < nl.len() && nl[i_try as usize].chr != '\0' {
                     // c:2015 — `tcinscost(i) < wpfxlen(ol, nl + i)`
-                    // !!! STUB.
-                    let cheap_insert = false; // stub
+                    let nl_tail = &nl[i_try as usize..];
+                    let cheap_insert =
+                        tcinscost(i_try) < wpfxlen(&ol, nl_tail) as i32;
                     if cheap_insert {
                         // c:2016-2018 — tc_inschars(i); zwrite(nl, i);
                         for _ in 0..i_try {
