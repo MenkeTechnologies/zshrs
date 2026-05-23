@@ -7938,6 +7938,13 @@ pub fn bin_read(
     let mut buf = String::new();
     if OPT_ISSET(ops, b'k') {
         // c:6588
+        // c:Src/builtin.c — `-k 0` (zero chars requested) is a no-op
+        // read that zsh treats as failure (returns 1) because no
+        // bytes can be consumed. Mirror so `read -k 0` exits 1
+        // instead of "succeeding" with an empty buffer.
+        if nchars <= 0 {
+            return 1;
+        }
         let mut got = vec![0u8; nchars as usize];
         let mut bytes_read = 0;
         while bytes_read < nchars as usize {
