@@ -3965,6 +3965,15 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
         expected,
         arr.len() // c:3030-3031
     );
+
+    // c:2966-2967 — `if (pm->node.flags & PM_UNIQUE) arrunique(pm->u.arr);`
+    // Dedupe in-place preserving first occurrence. Without this,
+    // `typeset -U arr; arr[2]=foo` leaves duplicates that violate the
+    // PM_UNIQUE invariant.
+    if (pm.node.flags as u32 & PM_UNIQUE) != 0 {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        arr.retain(|s| seen.insert(s.clone())); // c:2967
+    }
 }
 
 /// Retrieve integer parameter.
