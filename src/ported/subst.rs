@@ -3875,26 +3875,89 @@ pub fn paramsubst(
             return (full.clone(), new_pos_in_full, vec![full]); // c:3600
         }
 
-        // (#)var → element count of array/assoc (or char count of
-        // scalar). Port of subst.c:2128 length_op fast path.
+        // c:2588 — `getlen = 1 + whichlen` at the `#` prefix arm.
+        // Port of subst.c:3845-3876 length dispatch:
+        //   getlen == 1: array element count OR scalar char count
+        //   getlen == 2: char count of joined value (`(c)` flag)
+        //   getlen == 3: word count, no multi-IFS (`(w)` flag)
+        //   getlen >= 4: word count, multi-IFS (`(W)` flag)
         if length_op {
-            // c:2128
+            // c:3845
             let _ = post_flags_start;
-            let n = if let Some(arr) = arrays_get(&var_name) {
-                arr.len() // c:2128 (array len)
-            } else if let Some(map) = assoc_get(&var_name) {
-                map.len() // c:2128 (assoc len)
+            let getlen = 1 + whichlen; // c:2588
+            let is_array_source = arrays_contains(&var_name) || assoc_contains(&var_name);
+            let n: usize = if is_array_source {
+                // c:3849 if (isarr)
+                if getlen == 1 {
+                    // c:3853 element count
+                    if let Some(arr) = arrays_get(&var_name) {
+                        arr.len() // c:3854
+                    } else if let Some(map) = assoc_get(&var_name) {
+                        map.len() // c:3854 (assoc len)
+                    } else {
+                        0
+                    }
+                } else if getlen == 2 {
+                    // c:3855 — sum char widths joined with sep
+                    // (sep defaults to first IFS char which is ' ').
+                    // C: `len = -sl; for (...) len += sl + STRLEN(elem)`.
+                    // For arr=("abc","def"): len = -1 + 1+3 + 1+3 = 7.
+                    let arr: Vec<String> = if let Some(a) = arrays_get(&var_name) {
+                        a
+                    } else if let Some(m) = assoc_get(&var_name) {
+                        m.values().cloned().collect()
+                    } else {
+                        Vec::new()
+                    };
+                    if arr.is_empty() {
+                        0
+                    } else {
+                        let sl = sep
+                            .as_deref()
+                            .map(|s| s.chars().count())
+                            .unwrap_or(1); // c:3851
+                        let mut len: i64 = -(sl as i64); // c:3857
+                        for elem in &arr {
+                            len += (sl as i64) + (elem.chars().count() as i64); // c:3858
+                        }
+                        len.max(0) as usize
+                    }
+                } else {
+                    // c:3862 — wordcount each elem, multi-IFS if getlen>3
+                    let multi = if getlen > 3 { 1 } else { 0 }; // c:3864
+                    let arr: Vec<String> = if let Some(a) = arrays_get(&var_name) {
+                        a
+                    } else if let Some(m) = assoc_get(&var_name) {
+                        m.values().cloned().collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut total: i32 = 0;
+                    for elem in &arr {
+                        total += crate::ported::utils::wordcount(
+                            elem,
+                            spsep.as_deref(),
+                            multi,
+                        );
+                    }
+                    total.max(0) as usize
+                }
             } else {
-                raw_value.chars().count() // c:2128 (scalar char-count)
+                // c:3866 (scalar)
+                if getlen < 3 {
+                    // c:3867 char count
+                    raw_value.chars().count()
+                } else {
+                    // c:3869 word count
+                    let multi = if getlen > 3 { 1 } else { 0 };
+                    crate::ported::utils::wordcount(
+                        &raw_value,
+                        spsep.as_deref(),
+                        multi,
+                    )
+                    .max(0) as usize
+                }
             };
-            // Splice the count back into the surrounding string per
-            // the convention used by `${...}` arms below — the caller
-            // (stringsubst) reads the linknode by index, not the
-            // returned `new_str`. Returning `(n, new_pos, vec![])`
-            // (as this arm did before) caused stringsubst to clear
-            // the linknode because its `new_nodes.is_empty()` branch
-            // sets data to "". Without this fix, `${##}` lost the
-            // computed count.
             let n_str = n.to_string();
             let prefix: String = chars[..start_pos].iter().collect();
             let suffix: String = if new_pos < chars.len() {
