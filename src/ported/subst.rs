@@ -9275,6 +9275,337 @@ mod tests {
         assert_eq!(r.1, "unclosed_content");
         assert_eq!(r.2, "", "c:1348 — no close-delim → rest is empty");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Parameter-expansion forms anchored to real zsh 5.9.
+    // Each test sets a param via `setsparam`, runs the expansion through
+    // `paramsubst`, and asserts the value `zsh -c 'print -r -- "<expr>"'`
+    // produces. Where zshrs diverges, the test fails — that failure is
+    // the bug surface to fix.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Set a scalar then run paramsubst on `expr` and return the result.
+    fn psubst_one(name: &str, value: &str, expr: &str) -> String {
+        errflag.store(0, Ordering::Relaxed);
+        setsparam(name, value);
+        let (out, _, _) = paramsubst(expr, 0, false, 0, &mut 0);
+        out
+    }
+
+    // ── Default operators ────────────────────────────────────────────
+    /// `${F:-bar}` where F=foo → `foo` (param is set, default ignored).
+    #[test]
+    fn paramsubst_colon_dash_keeps_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_F", "foo", "${PS_F:-bar}"), "foo");
+    }
+
+    /// `${F:-bar}` where F="" → `bar` (empty = use default with `:-`).
+    #[test]
+    fn paramsubst_colon_dash_replaces_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_E", "", "${PS_E:-bar}"), "bar");
+    }
+
+    /// `${F-bar}` where F="" → `` (empty BUT set, no `:`, keep empty).
+    #[test]
+    fn paramsubst_dash_only_unset_check_keeps_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_E2", "", "${PS_E2-bar}"), "");
+    }
+
+    /// `${F:+alt}` where F=foo → `alt` (set/nonempty → use alt).
+    #[test]
+    fn paramsubst_colon_plus_uses_alt_when_set() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_AF", "foo", "${PS_AF:+alt}"), "alt");
+    }
+
+    /// `${F:+alt}` where F="" → `` (empty → no alt).
+    #[test]
+    fn paramsubst_colon_plus_empty_when_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_AE", "", "${PS_AE:+alt}"), "");
+    }
+
+    // ── Substring ────────────────────────────────────────────────────
+    /// `${H:0:1}` where H=hello → `h`.
+    #[test]
+    fn paramsubst_substring_first_char() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_H", "hello", "${PS_H:0:1}"), "h");
+    }
+
+    /// `${H:1:3}` where H=hello → `ell`.
+    #[test]
+    fn paramsubst_substring_middle_three() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_H2", "hello", "${PS_H2:1:3}"), "ell");
+    }
+
+    /// `${H:2}` where H=hello → `llo` (offset, no length = rest of string).
+    #[test]
+    fn paramsubst_substring_offset_only() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_H3", "hello", "${PS_H3:2}"), "llo");
+    }
+
+    /// `${H:0:5}` where H=hello → `hello` (length equals full).
+    #[test]
+    fn paramsubst_substring_full_length() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_H4", "hello", "${PS_H4:0:5}"), "hello");
+    }
+
+    // ── Length ───────────────────────────────────────────────────────
+    /// `${#H}` where H=hello → `5`.
+    #[test]
+    fn paramsubst_length_of_5char_string() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_LH", "hello", "${#PS_LH}"), "5");
+    }
+
+    /// `${#E}` where E="" → `0`.
+    #[test]
+    fn paramsubst_length_of_empty_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_LE", "", "${#PS_LE}"), "0");
+    }
+
+    // ── Prefix strip ─────────────────────────────────────────────────
+    /// `${P#*/}` where P=/path/to/file.txt.bak → `path/to/file.txt.bak`
+    /// (shortest prefix matching `*/` is just `/`).
+    #[test]
+    fn paramsubst_strip_shortest_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_P", "/path/to/file.txt.bak", "${PS_P#*/}"),
+            "path/to/file.txt.bak"
+        );
+    }
+
+    /// `${P##*/}` → `file.txt.bak` (longest `*/` match).
+    #[test]
+    fn paramsubst_strip_longest_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_P2", "/path/to/file.txt.bak", "${PS_P2##*/}"),
+            "file.txt.bak"
+        );
+    }
+
+    // ── Suffix strip ─────────────────────────────────────────────────
+    /// `${P%.bak}` → `/path/to/file.txt`.
+    #[test]
+    fn paramsubst_strip_literal_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_PS", "/path/to/file.txt.bak", "${PS_PS%.bak}"),
+            "/path/to/file.txt"
+        );
+    }
+
+    /// `${P%.*}` → `/path/to/file.txt` (shortest `.*` from end).
+    #[test]
+    fn paramsubst_strip_shortest_suffix_glob() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_PSS", "/path/to/file.txt.bak", "${PS_PSS%.*}"),
+            "/path/to/file.txt"
+        );
+    }
+
+    /// `${P%%.*}` → `/path/to/file` (longest `.*` from end).
+    #[test]
+    fn paramsubst_strip_longest_suffix_glob() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_PSL", "/path/to/file.txt.bak", "${PS_PSL%%.*}"),
+            "/path/to/file"
+        );
+    }
+
+    // ── Replace ──────────────────────────────────────────────────────
+    /// `${S/X/_}` where S=aXbXc → `a_bXc` (first match only).
+    #[test]
+    fn paramsubst_replace_first_match() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_S", "aXbXc", "${PS_S/X/_}"), "a_bXc");
+    }
+
+    /// `${S//X/_}` → `a_b_c` (all matches).
+    #[test]
+    fn paramsubst_replace_all_matches() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_S2", "aXbXc", "${PS_S2//X/_}"), "a_b_c");
+    }
+
+    /// `${S/#a/Z}` → `ZXbXc` (anchored at start).
+    #[test]
+    fn paramsubst_replace_anchored_start() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_S3", "aXbXc", "${PS_S3/#a/Z}"), "ZXbXc");
+    }
+
+    /// `${S/%c/Z}` → `aXbXZ` (anchored at end).
+    #[test]
+    fn paramsubst_replace_anchored_end() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_S4", "aXbXc", "${PS_S4/%c/Z}"), "aXbXZ");
+    }
+
+    // ── Case-conversion flags ────────────────────────────────────────
+    /// `${(L)MIX}` where MIX=aBcDeF → `abcdef`.
+    #[test]
+    fn paramsubst_flag_L_lowercases() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_MIX1", "aBcDeF", "${(L)PS_MIX1}"), "abcdef");
+    }
+
+    /// `${(U)MIX}` where MIX=aBcDeF → `ABCDEF`.
+    #[test]
+    fn paramsubst_flag_U_uppercases() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_MIX2", "aBcDeF", "${(U)PS_MIX2}"), "ABCDEF");
+    }
+
+    /// `${(C)MIX}` where MIX=aBcDeF → `Abcdef` (capitalize whole string =
+    /// first char up, rest down). NOT per-word capitalization.
+    #[test]
+    fn paramsubst_flag_C_capitalizes_first_char_only() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_MIX3", "aBcDeF", "${(C)PS_MIX3}"), "Abcdef");
+    }
+
+    // ── Path modifiers via paramsubst (modify() is tested directly above) ─
+    /// `${P:h}` where P=/path/to/file.txt.bak → `/path/to`.
+    #[test]
+    fn paramsubst_modifier_head() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_MH", "/path/to/file.txt.bak", "${PS_MH:h}"),
+            "/path/to"
+        );
+    }
+
+    /// `${P:t}` → `file.txt.bak`.
+    #[test]
+    fn paramsubst_modifier_tail() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_MT", "/path/to/file.txt.bak", "${PS_MT:t}"),
+            "file.txt.bak"
+        );
+    }
+
+    /// `${P:r}` → `/path/to/file.txt` (root = strip last extension).
+    #[test]
+    fn paramsubst_modifier_root_strips_one_extension() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_MR", "/path/to/file.txt.bak", "${PS_MR:r}"),
+            "/path/to/file.txt"
+        );
+    }
+
+    /// `${P:e}` → `bak` (extension only).
+    #[test]
+    fn paramsubst_modifier_extension() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_ME", "/path/to/file.txt.bak", "${PS_ME:e}"),
+            "bak"
+        );
+    }
+
+    /// `${name}` brace form matches bare `$name` when there is no operator.
+    #[test]
+    fn paramsubst_braced_bare_equals_unbraced_bare() {
+        let _g = crate::test_util::global_state_lock();
+        setsparam("PS_BB", "value");
+        let (a, _, _) = paramsubst("$PS_BB", 0, false, 0, &mut 0);
+        let (b, _, _) = paramsubst("${PS_BB}", 0, false, 0, &mut 0);
+        assert_eq!(a, b);
+        assert_eq!(a, "value");
+    }
+
+    // ── Advanced shapes more likely to surface zshrs gaps ────────────
+    // Anchored against zsh 5.9 via `print -r --`.
+
+    /// `${H:(-2)}` where H=hello → `lo` (negative offset = from end).
+    #[test]
+    fn paramsubst_substring_negative_offset() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_NEG", "hello", "${PS_NEG:(-2)}"), "lo");
+    }
+
+    /// `${H:(-3):2}` where H=hello → `ll` (negative offset + length).
+    #[test]
+    fn paramsubst_substring_negative_offset_with_length() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_NEG2", "hello", "${PS_NEG2:(-3):2}"),
+            "ll"
+        );
+    }
+
+    /// `${H:0:-1}` where H=hello → `hell` (negative length = drop last N).
+    #[test]
+    fn paramsubst_substring_negative_length() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(psubst_one("PS_NL", "hello", "${PS_NL:0:-1}"), "hell");
+    }
+
+    /// `${(q)X}` where X="hi there" → `hi\ there` (backslash-escape spaces).
+    #[test]
+    fn paramsubst_flag_q_backslash_escapes_whitespace() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_Q", "hi there", "${(q)PS_Q}"),
+            r"hi\ there"
+        );
+    }
+
+    /// `${(q-)X}` where X="hi there" → `'hi there'` (single-quote when needed).
+    #[test]
+    fn paramsubst_flag_qdash_uses_single_quotes_when_needed() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_QD", "hi there", "${(q-)PS_QD}"),
+            "'hi there'"
+        );
+    }
+
+    /// `${X:gs/X/_/}` where X="aXbXcXd" → `a_b_c_d` (gsub modifier).
+    #[test]
+    fn paramsubst_modifier_gs_replaces_all() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PS_GS", "aXbXcXd", "${PS_GS:gs/X/_/}"),
+            "a_b_c_d"
+        );
+    }
+
+    /// `${(P)REF}` where REF points at target name → target's value.
+    #[test]
+    fn paramsubst_flag_P_dereferences_indirect_name() {
+        let _g = crate::test_util::global_state_lock();
+        setsparam("PSU_TARGET", "real_value");
+        let (out, _, _) = paramsubst(
+            "${(P)PSU_REF}",
+            0,
+            false,
+            0,
+            &mut 0,
+        );
+        // Run psubst_one to set PSU_REF; can't reuse psubst_one here
+        // because we need TWO params set, not just one.
+        setsparam("PSU_REF", "PSU_TARGET");
+        let (out2, _, _) =
+            paramsubst("${(P)PSU_REF}", 0, false, 0, &mut 0);
+        let _ = out;
+        assert_eq!(out2, "real_value");
+    }
 } // c:3193
 
 // ============================================================================
