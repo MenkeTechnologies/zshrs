@@ -3609,10 +3609,12 @@ pub fn paramsubst(
                 {
                     let by_key = flags.contains('I') || flags.contains('i');
                     let return_all = flags.contains('I') || flags.contains('R');
+                    let exact = flags.contains('e'); // c:1419 e flag — literal compare
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        if patmatch(&pat, hay) {
+                        let matched = if exact { hay == pat.as_str() } else { patmatch(&pat, hay) };
+                        if matched {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all {
                                 break;
@@ -3657,6 +3659,7 @@ pub fn paramsubst(
                 {
                     let return_index = flags.contains('I') || flags.contains('i'); // c:1412/1416 ind=1
                     let down = flags.contains('I') || flags.contains('R'); // c:1416/c:1418 down=1
+                    let exact = flags.contains('e'); // c:Src/params.c:1419 e flag — literal compare, no glob
                     let mut found_idx: Option<usize> = None; // c:1500
                     let iter: Box<dyn Iterator<Item = (usize, &String)>> = if down {
                         Box::new(arr.iter().enumerate().rev())
@@ -3664,7 +3667,8 @@ pub fn paramsubst(
                         Box::new(arr.iter().enumerate())
                     };
                     for (idx, elem) in iter {
-                        if patmatch(&pat, elem) {
+                        let matched = if exact { elem == &pat } else { patmatch(&pat, elem) };
+                        if matched {
                             found_idx = Some(idx);
                             break;
                         }
@@ -3777,6 +3781,7 @@ pub fn paramsubst(
                     if let Some(keys) = crate::vm_helper::partab_scan_keys(&var_name) {
                         let by_key = flags.contains('I') || flags.contains('i');
                         let return_all = flags.contains('I') || flags.contains('R');
+                        let exact = flags.contains('e'); // c:1419 e flag — literal compare
                         let mut out: Vec<String> = Vec::new();
                         for k in &keys {
                             let hay = if by_key {
@@ -3784,7 +3789,8 @@ pub fn paramsubst(
                             } else {
                                 crate::vm_helper::partab_get(&var_name, k).unwrap_or_default()
                             };
-                            if patmatch(&pat, &hay) {
+                            let matched = if exact { hay == pat } else { patmatch(&pat, &hay) };
+                            if matched {
                                 out.push(if by_key {
                                     k.clone()
                                 } else {
@@ -3831,7 +3837,8 @@ pub fn paramsubst(
                 {
                     let return_index = flags.contains('I') || flags.contains('i');
                     let want_last = flags.contains('I') || flags.contains('R');
-                    // Sliding-window glob match across the string.
+                    let exact = flags.contains('e'); // c:1419 e — literal compare, no glob
+                    // Sliding-window match across the string (glob unless (e)).
                     let n = s_chars.len();
                     let mut found: Option<(usize, usize)> = None;
                     'outer: for start in 0..=n {
@@ -3842,7 +3849,8 @@ pub fn paramsubst(
                         };
                         for len in lengths {
                             let cand: String = s_chars[start..start + len].iter().collect();
-                            if patmatch(&pat, &cand) {
+                            let matched = if exact { cand == pat } else { patmatch(&pat, &cand) };
+                            if matched {
                                 found = Some((start, start + len));
                                 if !want_last {
                                     break 'outer;
@@ -6916,10 +6924,12 @@ pub fn paramsubst(
                 {
                     let by_key = flags.contains('I') || flags.contains('i');
                     let return_all = flags.contains('I') || flags.contains('R');
+                    let exact = flags.contains('e'); // c:1419 e flag — literal compare
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        if patmatch(&pat, hay) {
+                        let matched = if exact { hay == pat.as_str() } else { patmatch(&pat, hay) };
+                        if matched {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all {
                                 break;
