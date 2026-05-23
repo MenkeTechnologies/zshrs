@@ -4039,7 +4039,14 @@ pub fn paramsubst(
             // scalar fallback).
             let magic_keys: Option<Vec<String>> =
                 if !arrays_contains(&var_name) && !assoc_contains(&var_name) {
-                    crate::vm_helper::partab_scan_keys(&var_name)
+                    // Try PARTAB (hashed magic-assocs: aliases /
+                    // functions / parameters / commands / options /
+                    // widgets / etc.) first; fall through to
+                    // PARTAB_ARRAY for array magic-assocs
+                    // (patchars / pipestatus / dirstack / ...).
+                    crate::vm_helper::partab_scan_keys(&var_name).or_else(|| {
+                        crate::vm_helper::partab_array_get(&var_name)
+                    })
                 } else {
                     None
                 };
