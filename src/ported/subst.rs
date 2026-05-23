@@ -6876,11 +6876,35 @@ pub fn paramsubst(
             }
         }
         if name_end > name_start {
-            // Synthesize `${+NAME}` and recurse.
-            let name: String = chars[name_start..name_end].iter().collect();
+            // Optional `[subscript]` — `$+arr[key]` checks per-element.
+            // Walk bracketed subscript depth-tracked so `$+arr[$a[1]]`
+            // works. Same as the bare-name `$NAME[SUB]` arm below.
+            let mut sub_end = name_end;
+            if chars.get(sub_end).copied() == Some('[') {
+                let mut depth = 1;
+                let mut q = sub_end + 1;
+                while q < chars.len() && depth > 0 {
+                    match chars[q] {
+                        '[' => depth += 1,
+                        ']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    q += 1;
+                }
+                if depth == 0 && q < chars.len() && chars[q] == ']' {
+                    sub_end = q + 1;
+                }
+            }
+            // Synthesize `${+NAME[SUB]}` and recurse.
+            let name_with_sub: String = chars[name_start..sub_end].iter().collect();
             let prefix: String = chars[..start_pos].iter().collect();
-            let suffix: String = chars[name_end..].iter().collect();
-            let rewritten = format!("{}${{+{}}}{}", prefix, name, suffix);
+            let suffix: String = chars[sub_end..].iter().collect();
+            let rewritten = format!("{}${{+{}}}{}", prefix, name_with_sub, suffix);
             return paramsubst(
                 &rewritten,
                 prefix.chars().count(),
