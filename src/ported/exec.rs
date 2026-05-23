@@ -1932,15 +1932,10 @@ pub fn search_defpath(cmd: &str, plen: usize) -> Option<String> {
 /// FDT_EXTERNAL fd number. Returns 1 on OK, 0 on refusal (zwarn
 /// already emitted).
 ///
-/// =================== WARNING — DIVERGENCE ====================
-/// The NOCLOBBER + FDT_EXTERNAL clause at c:2205-2213 needs
-/// `max_zsh_fd` and `fdtable[fd]` — neither global is yet modeled
-/// in zshrs (the fdtable port is a no-op shim at utils.rs:1978).
-/// That clause is skipped here. Without it, the only refusal path
-/// is the PM_READONLY guard at c:2191; the param-fd-already-open
-/// case falls through to OK and the upcoming open(2) clobbers it.
-/// Re-enable when fdtable lands.
-/// =============================================================
+/// NOCLOBBER + FDT_EXTERNAL clause now ported (c:2199-2213). When
+/// NOCLOBBER is set and the param's value is the fd-number of an
+/// FDT_EXTERNAL-marked fd in the fdtable, refuse with a warning so
+/// the existing fd doesn't get clobbered by the upcoming open(2).
 pub fn checkclobberparam(f: &redir) -> i32 {
     // c:2178
     // c:2182 — `char *s = f->varid;`
@@ -1969,13 +1964,32 @@ pub fn checkclobberparam(f: &redir) -> i32 {
         // c:2195 — `errno = 0;` not flagged as a system error.
         return 0; // c:2196
     }
-    // c:2199-2213 — NOCLOBBER + FDT_EXTERNAL refusal. SKIPPED — see
-    // WARNING above (fdtable not modeled). When fdtable lands, port:
-    //   if !isset(CLOBBER)
-    //     && getstrvalue(v) parses as int fd
-    //     && fd <= max_zsh_fd
-    //     && fdtable[fd] == FDT_EXTERNAL
-    //   then zwarn + return 0.
+    // c:2199-2213 — NOCLOBBER + FDT_EXTERNAL refusal: if NOCLOBBER set
+    // AND the param holds a valid fd that's already in our fdtable as
+    // FDT_EXTERNAL (allocated by sysopen / coproc / etc.), refuse the
+    // open so we don't clobber it.
+    if !isset(CLOBBER) {
+        // c:2201 — `getstrvalue(v)` — read the param's string form.
+        let val_str = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(&s).and_then(|p| p.u_str.clone()))
+            .unwrap_or_default();
+        if let Ok(fd) = val_str.trim().parse::<i32>() {
+            // c:2202 — `if (fd <= max_zsh_fd && fdtable[fd] == FDT_EXTERNAL)`
+            let max_fd = crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed);
+            if fd >= 0 && fd <= max_fd {
+                let kind = crate::ported::utils::fdtable_get(fd);
+                if kind == crate::ported::zsh_h::FDT_EXTERNAL {
+                    zwarn(&format!(
+                        "{}: file descriptor {} already open",
+                        s, fd
+                    )); // c:2206-2210
+                    return 0; // c:2211
+                }
+            }
+        }
+    }
     1 // c:2214
 }
 
