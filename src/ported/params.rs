@@ -9116,6 +9116,22 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             }
             Some(crate::ported::zsh_system_h::DEFAULT_TIMEFMT.to_string())
         }
+        // c:Src/init.c:1214-1215 — `nullcmd = ztrdup("cat");
+        // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. Same as
+        // TIMEFMT — createparamtable seeds these; without it,
+        // `${NULLCMD:-x}` reads empty. Route here so the canonical
+        // defaults stick when paramtab is empty.
+        "NULLCMD" => {
+            let tab_val = paramtab().read().ok().and_then(|t| {
+                t.get("NULLCMD").and_then(|pm| pm.u_str.clone())
+            });
+            if let Some(v) = tab_val {
+                if !v.is_empty() {
+                    return Some(v);
+                }
+            }
+            Some("cat".to_string()) // c:Src/init.c:1214
+        }
         // $0 routes through utils::argzero.
         "0" => argzero(),
         // POSIX shell-special scalars. C dispatches these through
