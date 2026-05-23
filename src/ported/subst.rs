@@ -4005,14 +4005,28 @@ pub fn paramsubst(
         } else {
             // c:N/A
             value = raw_value.clone();
-            // c:2922 — getarrvalue sets isarr=1 when source is an
-            // indexed/assoc array. raw_value is already sepjoin'd
-            // (per `getsparam` returning `sepjoin(arr)`), but the
-            // underlying aval is array-shaped — track via isarr so
-            // the c:3029-3036 transition + c:4245 sort/splat gates
-            // see the correct state.
-            if subscript.is_none() && (arrays_contains(&var_name) || assoc_contains(&var_name)) {
-                isarr = 1;
+            // c:2915-2916 — isarr derived from v->scanflags:
+            //   if (SCANPM_ISVAR_AT)  → isarr = -1  (`$arr[@]` shape)
+            //   else if (scanflags)   → isarr =  1  (array-result)
+            //   else                  → isarr =  0  (scalar pick)
+            //
+            // c:2027-2029 sets SCANPM_ISVAR_AT for `[@]`/`[*]` subscript
+            // when the underlying var is array-shaped. Mirror by
+            // checking subscript == "@"/"*" + var is array/assoc.
+            // isarr = -1 stays past the c:3029 transition (qt > 0
+            // check is `isarr > 0` so -1 is preserved), so the
+            // c:4245 `if (isarr)` sort/splat block fires in DQ for
+            // `[@]` — matching zsh's "${arr[@]}" splat behavior.
+            //
+            // Range subscript `[N,M]` gives isarr=1 (positive) so
+            // the c:3032 qt-sepjoin fires → isarr=0 in DQ, sort
+            // skipped, value stays joined. That's the test-
+            // documented "in DQ the slice JOINS" behavior.
+            let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
+            if (arrays_contains(&var_name) || assoc_contains(&var_name))
+                && (subscript.is_none() || is_at_subscript)
+            {
+                isarr = if is_at_subscript { -1 } else { 1 };
             }
         }
         // subst.c:3885-3887 YUK — empty / empty-first array → scalar "" when !plan9
@@ -6047,7 +6061,17 @@ pub fn paramsubst(
             && pf_flags & PREFORK_SINGLE == 0
             && rest.is_empty()
             && split_parts.is_some();
-        let auto_splat = force_splat_from_eq                 // c:2566
+        // c:4245 — `if (isarr)`. The sort + splat block fires whenever
+        // isarr is non-zero. isarr survived c:3029-3036 because:
+        //   - `[@]` subscript sets isarr=-1 at c:2915 (SCANPM_ISVAR_AT)
+        //     and the c:3032 sepjoin is gated on `isarr > 0`, so -1
+        //     is preserved through DQ.
+        //   - `(@)` flag sets nojoin=2; c:3030 sets isarr=-1 if nojoin;
+        //     same preservation through c:3032.
+        // Bare array reads in DQ get isarr=0 at c:3034 (sepjoin'd),
+        // and that's how they end up joined — exactly what we want.
+        let auto_splat = isarr != 0                          // c:4245
+            || force_splat_from_eq                           // c:2566
             || (!(nojoin == 2)                                     // c:3950
             && !qt                                           // c:3950 (only outside DQ)
             && pf_flags & PREFORK_SINGLE == 0         // c:3950 (multsub context)
