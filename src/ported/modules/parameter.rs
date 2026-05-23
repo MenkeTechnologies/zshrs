@@ -134,25 +134,22 @@ pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:99
     // c:99-140 — `if ((pm = (Param)paramtab->getnode2(paramtab, name)))`
     //              then dispatch on `PM_TYPE(pm->node.flags)` for the
-    //              type-letter. paramtab is bucket-2-consolidated now.
+    //              type-letter and append all PM_* modifier suffixes
+    //              (-readonly, -export, -tied, -special, -local, etc.)
+    //              per c:120-200. The full encoding is what
+    //              `paramtypestr` (this module, line 51) produces;
+    //              previous getpmparameter inlined a stripped-down
+    //              dispatch that returned just the base type letter,
+    //              dropping the modifier suffixes entirely. Mirror C
+    //              by routing through paramtypestr.
+    //
+    // Symptom of the previous form:
+    //   typeset -gx VAR=val; echo "${parameters[VAR]}"
+    //   zshrs (before): scalar        zsh: scalar-export
     let value = {
         let tab = crate::ported::params::paramtab().read().unwrap();
         tab.get(name)
-            .map(|pm| {
-                let t = PM_TYPE(pm.node.flags as u32);
-                // c:140 — type-letter table.
-                if t == PM_ARRAY {
-                    "array".to_string()
-                } else if t == PM_HASHED {
-                    "association".to_string()
-                } else if t == PM_INTEGER {
-                    "integer".to_string()
-                } else if t == PM_EFLOAT || t == PM_FFLOAT {
-                    "float".to_string()
-                } else {
-                    "scalar".to_string()
-                }
-            })
+            .map(|pm| paramtypestr(pm))
             .unwrap_or_default()
     };
     let found = !value.is_empty();
@@ -413,8 +410,31 @@ pub fn setpmcommands(pm: Param, ht: *mut HashTable) {
 #[allow(unused_variables)]
 pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:213
+    // c:218-222 — `if (!cmdnamtab->getnode(cmdnamtab, name) &&
+    //              isset(HASHLISTALL)) { cmdnamtab->filltable(...);
+    //              cmd = cmdnamtab->getnode(...); }`
+    // Walk cmdnamtab; if miss AND HASHLISTALL set (default ON in
+    // zsh), fill the table from $PATH and retry.
+    //
+    // p10k / zinit hit `${commands[name]}` for every command-check
+    // they do (`whence -p`-equivalent without a fork). Without the
+    // HASHLISTALL-driven filltable, lookups returned empty for any
+    // command the shell hadn't explicitly `hash`'d yet.
+    let entry_exists = cmdnamtab_lock()
+        .read()
+        .ok()
+        .and_then(|g| g.get(name).cloned())
+        .is_some();
+    if !entry_exists && crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHLISTALL) {
+        // c:220
+        if let Some(path) = crate::ported::params::getsparam("PATH") {
+            let path_arr: Vec<String> =
+                path.split(':').map(|s| s.to_string()).collect();
+            crate::ported::hashtable::fillcmdnamtable(&path_arr); // c:220
+        }
+    }
     let g = cmdnamtab_lock().read().ok()?;
-    let entry = g.get(name); // c:218 cmdnamtab->getnode
+    let entry = g.get(name); // c:218/221 cmdnamtab->getnode
     let (value, found) = if let Some(cmd) = entry {
         // c:227
         let v = if (cmd.node.flags & HASHED as i32) != 0 {
