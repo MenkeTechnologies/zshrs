@@ -7269,11 +7269,21 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
     let v = match crate::math::matheval(&expanded) {
         // c:4490 matheval
         Ok(n) => n,
-        Err(_) => crate::math::mnumber {
-            l: 0,
-            d: 0.0,
-            type_: MN_UNSET,
-        },
+        Err(msg) => {
+            // c:math.c::checkunary `zerr(...)` side effect — C's
+            // matheval emits the parse-error string via zerr() which
+            // writes to stderr AND sets errflag. The Rust port's
+            // matheval returns Err with the message but doesn't
+            // surface it; without this propagation, malformed math
+            // like `$((1 2))` silently returned 0 (MN_UNSET) instead
+            // of zsh's `bad math expression: operator expected at ...`.
+            zerr(&msg);
+            crate::math::mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_UNSET,
+            }
+        }
     };
 
     // c: math.c:580-583 — `outputradix` / `outputunderscore` are set
