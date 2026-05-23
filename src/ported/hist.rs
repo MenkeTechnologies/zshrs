@@ -3535,7 +3535,27 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
     if contents.is_empty() {
         return;
     }
-    let _ = lockhistfile(Some(&path), 1);
+    // c:2700-2706 — lockhistfile return codes:
+    //   0 — lock acquired, proceed
+    //   2 — locking failed but "reading anyway"; warn + continue
+    //   else — locking failed hard; zerr + bail
+    let lock_ret = lockhistfile(Some(&path), 1);
+    if lock_ret != 0 {
+        if lock_ret == 2 {
+            crate::ported::utils::zwarn(&format!(
+                "locking failed for {}: {}: reading anyway",
+                path,
+                std::io::Error::last_os_error()
+            ));
+        } else {
+            crate::ported::utils::zerr(&format!(
+                "locking failed for {}: {}",
+                path,
+                std::io::Error::last_os_error()
+            ));
+            return;
+        }
+    }
 
     let mut current: Option<(i64, i64, String)> = None;
     for raw_line in contents.lines() {
