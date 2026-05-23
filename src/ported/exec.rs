@@ -4216,26 +4216,20 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
 /// _realexit();
 /// ```
 ///
-/// =================== WARNING — DIVERGENCE ====================
-/// (a) `addproc` Rust signature drift (jobs.rs:1516 takes
-///     `(&mut job, pid, text, aux)` 4-arg; C is 6-arg with
-///     `bgtime`/`gleader`/`list_pipe_job`). For now we set
-///     `procsubstpid` only; the job-table side won't see the child.
-///     Re-port addproc to 6-arg to unblock.
-/// (b) `entersubsh` not yet ported (exec.c:1080+). We approximate
-///     the ESUB_ASYNC|ESUB_PGRP|ESUB_NOMONITOR contract by setting
-///     `setsid()` + ignoring SIGINT (the minimum needed for the
-///     child to not steal tty interrupts). Full port re-establishes
-///     pgrp handling, trap reset, monitor disable.
-/// (c) `execode(prog, ...)` not yet ported. zshrs has no wordcode
-///     walker; we route the substituted body through the same
-///     fusevm pipeline `execstring` uses. The eprog from parsecmd
-///     is only used as a validity check — the actual execution
-///     re-reads `body` (which equals what parsecmd already
-///     consumed).
+/// (a) `addproc` is now 7-arg (jobs.rs:1516) — wired at the
+///     procsubst pid recording site (c:5141-5142) earlier this
+///     session; the child IS now recorded in JOBTAB[thisjob].
+/// (b) `entersubsh` IS now ported (exec.rs:3934) including the
+///     ESUB_PGRP pipeline group-leadership path — wired this
+///     session for getpipe's `entersubsh(ESUB_ASYNC|ESUB_PGRP|
+///     ESUB_NOMONITOR, NULL)` call.
+/// (c) `execode(prog, ...)` IS now ported (exec.rs:6047) — getpipe
+///     can route through execode for the parsed eprog. Currently
+///     this caller still uses the fusevm pipeline for cache
+///     coherence with execstring; switch over when the wordcode
+///     walker becomes the primary path.
 /// (d) `_realexit()` flushes stdio + jobs + history. We use bare
 ///     `std::process::exit(lastval)` for now.
-/// =============================================================
 pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     // c:5119
     let bytes = cmd.as_bytes();
