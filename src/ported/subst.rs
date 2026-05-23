@@ -2808,68 +2808,96 @@ pub fn paramsubst(
                         evalchar = true;
                     } // c:1673 (# evalchar)
                     'l' | 'r' => {
-                        // c:2319 (l/r pad)
-                        // Consume `:N:STR1:STR2:` form.
-                        // C: `s++; del0 = s; num = get_intarg(&s, &dellen);`
+                        // c:2319-2378 (l/r pad). Direct port of the
+                        // get_intarg / get_strarg sequence:
+                        //   s++; del0 = s; num = get_intarg(&s, &dellen);
+                        //   if (!dellen || memcmp(del0, s, dellen)) { s--; break; }
+                        //   t = get_strarg(s, &arglen); ... (STR1)
+                        //   if (memcmp(del0, s, dellen)) { s--; break; }
+                        //   t = get_strarg(s, &arglen); ... (STR2)
+                        //
+                        // `get_intarg` calls `get_strarg(s)` which reads
+                        // the FIRST byte as delimiter and advances `s`
+                        // to point PAST the closing delimiter. So after
+                        // `(l:5:`, s lands at `)`. The dellen-check
+                        // then compares del0 ("`:`") with the byte at
+                        // the new s — if it's `)` (not `:`), the str1
+                        // path is skipped.
                         let is_left = fc == 'l'; // c:2320
-                        idx += 1; // c:2323
+                        idx += 1; // c:2323 — s++ past 'l'/'r'
                         if idx >= body_chars.len() {
                             break;
                         }
-                        let del = body_chars[idx]; // c:2324 (del0)
-                        idx += 1; // c:2324
-                                  // Parse N — digits up to next del.
-                        let mut num_str = String::new(); // c:2326
+                        let del = body_chars[idx]; // c:2325 del0 = s
+                        idx += 1; // get_strarg(s) advances past opening del
+                        // Parse N — digits up to closing del.
+                        let mut num_str = String::new();
                         while idx < body_chars.len() && body_chars[idx].is_ascii_digit() {
                             num_str.push(body_chars[idx]);
                             idx += 1;
                         }
                         let n: i64 = num_str.parse().unwrap_or(0); // c:2326
+                        // c:1441 — `*s = t + arglen` advances PAST the
+                        // closing delimiter. Mirror by skipping the
+                        // closing del.
+                        if idx < body_chars.len() && body_chars[idx] == del {
+                            idx += 1;
+                        }
                         if is_left {
                             prenum = n;
                         } else {
                             postnum = n;
                         } // c:2329-2331
-                          // Optional STR1 (mul) after another del.
-                        if idx < body_chars.len() && body_chars[idx] == del {
-                            idx += 1; // c:2336
-                            let s1_start = idx; // c:2336
-                            while idx < body_chars.len() && body_chars[idx] != del {
-                                idx += 1;
-                            }
-                            let s1: String = body_chars[s1_start..idx].iter().collect();
-                            // STR1 — untok_and_escape(s + arglen, escapes,
-                            // tok_arg); escapes is `(p)` in this block.
-                            let s1 = untok_and_escape(&s1, escapes, tok_arg);
-                            if is_left {
-                                premul = Some(s1);
-                            } else {
-                                postmul = Some(s1);
-                            }
-                            if idx < body_chars.len() {
-                                // c:2354
-                                idx += 1; // skip del
-                            }
-                            // Optional STR2 (one-time) after another del.
-                            if idx < body_chars.len() && body_chars[idx] == del {
-                                idx += 1; // c:2360
-                                let s2_start = idx;
-                                while idx < body_chars.len() && body_chars[idx] != del {
-                                    idx += 1;
-                                }
-                                let s2: String = body_chars[s2_start..idx].iter().collect();
-                                let s2 = untok_and_escape(&s2, escapes, tok_arg);
-                                if is_left {
-                                    preone = Some(s2);
-                                } else {
-                                    postone = Some(s2);
-                                }
-                                if idx < body_chars.len() {
-                                    idx += 1;
-                                } // skip del
-                            }
+                        // c:2334 — `if (!dellen || memcmp(del0, s, dellen)) break;`.
+                        // After the get_intarg advance, s points at
+                        // either another delimiter (continue with STR1)
+                        // or a non-delimiter (closing `)`, end of flag).
+                        // Use `continue` (not the match's bottom
+                        // increment) so idx stays at the current
+                        // position — the outer ')' arm picks up the
+                        // closing paren next iteration.
+                        if idx >= body_chars.len() || body_chars[idx] != del {
+                            continue;
                         }
-                        continue; // c:2374 (loop continues from idx)
+                        // c:2339 — STR1 (multi-pad). `get_strarg`
+                        // reads from `:` and walks until matching `:`.
+                        idx += 1; // skip opening del
+                        let s1_start = idx;
+                        while idx < body_chars.len() && body_chars[idx] != del {
+                            idx += 1;
+                        }
+                        let s1_raw: String = body_chars[s1_start..idx].iter().collect();
+                        let s1 = untok_and_escape(&s1_raw, escapes, tok_arg);
+                        if is_left {
+                            premul = Some(s1);
+                        } else {
+                            postmul = Some(s1);
+                        }
+                        if idx < body_chars.len() {
+                            idx += 1; // skip closing del of STR1
+                        }
+                        // c:2354 — `if (memcmp(del0, s, dellen)) break;`
+                        // — check for another delimiter to introduce STR2.
+                        if idx >= body_chars.len() || body_chars[idx] != del {
+                            continue;
+                        }
+                        // c:2360 — STR2 (one-time pad).
+                        idx += 1;
+                        let s2_start = idx;
+                        while idx < body_chars.len() && body_chars[idx] != del {
+                            idx += 1;
+                        }
+                        let s2_raw: String = body_chars[s2_start..idx].iter().collect();
+                        let s2 = untok_and_escape(&s2_raw, escapes, tok_arg);
+                        if is_left {
+                            preone = Some(s2);
+                        } else {
+                            postone = Some(s2);
+                        }
+                        if idx < body_chars.len() {
+                            idx += 1;
+                        }
+                        continue; // c:2374
                     }
                     'o' => {
                         // c:2207
