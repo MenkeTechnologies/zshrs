@@ -548,20 +548,55 @@ fn diagnose(text: &str) -> Vec<Value> {
         if trimmed.starts_with('#') {
             continue;
         }
-        // Token-level scan
+        // Token-level scan. Pairings tracked on `stack`:
+        //   '('  — single paren            ')'
+        //   '{'  — single brace            '}'
+        //   '['  — single bracket          ']'
+        //   'A'  — arithmetic `((`         `))`
+        //   'D'  — conditional `[[`        `]]`
         let mut i = 0usize;
         let bytes = line.as_bytes();
         while i < bytes.len() {
             let c = bytes[i] as char;
             match c {
-                '(' | '{' | '[' => stack.push((c, line_no, i)),
+                '(' => {
+                    // `((` opens an arithmetic expression — paired with `))`,
+                    // not two single parens.
+                    if bytes.get(i + 1) == Some(&b'(') {
+                        stack.push(('A', line_no, i));
+                        i += 2;
+                        continue;
+                    }
+                    stack.push(('(', line_no, i));
+                }
                 ')' => {
+                    // `))` closes arithmetic.
+                    if bytes.get(i + 1) == Some(&b')')
+                        && stack.last().map(|x| x.0) == Some('A')
+                    {
+                        stack.pop();
+                        i += 2;
+                        continue;
+                    }
                     if stack.last().map(|x| x.0) == Some('(') {
                         stack.pop();
                     } else {
-                        diags.push(diagnostic(line_no, i, 1, "unmatched `)`", 1));
+                        // Bare `)` inside an open `case ... esac` is a
+                        // pattern-arm terminator, not a paren mismatch.
+                        let in_case =
+                            block_stack.iter().any(|(kw, _, _)| *kw == "case");
+                        if !in_case {
+                            diags.push(diagnostic(
+                                line_no,
+                                i,
+                                1,
+                                "unmatched `)`",
+                                1,
+                            ));
+                        }
                     }
                 }
+                '{' => stack.push(('{', line_no, i)),
                 '}' => {
                     if stack.last().map(|x| x.0) == Some('{') {
                         stack.pop();
@@ -569,12 +604,35 @@ fn diagnose(text: &str) -> Vec<Value> {
                         diags.push(diagnostic(line_no, i, 1, "unmatched `}`", 1));
                     }
                 }
+                '[' => {
+                    // `[[` opens a zsh conditional expression — paired
+                    // with `]]`, not two single brackets.
+                    if bytes.get(i + 1) == Some(&b'[') {
+                        stack.push(('D', line_no, i));
+                        i += 2;
+                        continue;
+                    }
+                    stack.push(('[', line_no, i));
+                }
                 ']' => {
+                    if bytes.get(i + 1) == Some(&b']')
+                        && stack.last().map(|x| x.0) == Some('D')
+                    {
+                        stack.pop();
+                        i += 2;
+                        continue;
+                    }
                     if stack.last().map(|x| x.0) == Some('[') {
                         stack.pop();
                     } else {
                         diags.push(diagnostic(line_no, i, 1, "unmatched `]`", 1));
                     }
+                }
+                '\\' => {
+                    // Backslash escapes the next char outside of strings —
+                    // skip it so `\#`, `\$`, `\(`, `\)`, etc. don't mis-trip.
+                    i += 2;
+                    continue;
                 }
                 '"' | '\'' | '`' => {
                     // Skip past matching quote
@@ -592,7 +650,31 @@ fn diagnose(text: &str) -> Vec<Value> {
                         i += 1;
                     }
                 }
-                '#' => break,
+                '#' => {
+                    // `#` starts a line comment only when preceded by
+                    // whitespace, `;`, `&`, `|`, `(`, or BOL — otherwise
+                    // it's part of `$#` (argc), `${#var}` (length), or
+                    // similar parameter expansion and must not terminate
+                    // the scan.
+                    let prev = if i == 0 {
+                        None
+                    } else {
+                        Some(bytes[i - 1] as char)
+                    };
+                    let is_comment_start = match prev {
+                        None => true,
+                        Some(p) => {
+                            p.is_whitespace()
+                                || p == ';'
+                                || p == '&'
+                                || p == '|'
+                                || p == '('
+                        }
+                    };
+                    if is_comment_start {
+                        break;
+                    }
+                }
                 _ => {}
             }
             i += 1;
@@ -817,6 +899,29 @@ pub(crate) enum HoverGate {
 ///     in `'...'` (where `\` is literal).
 fn position_inside_string_literal(line_text: &str, start: usize, end: usize) -> bool {
     let bytes = line_text.as_bytes();
+    // `$NAME` inside a double-quoted / backtick string is code (a
+    // parameter reference, expanded at runtime), not opaque text —
+    // hovering should pop the doc for the variable. Same rule as the
+    // semantic-tokens kind-aware mask. Two cases:
+    //   1. `word_span_at` included the `$` sigil (span starts with `$`).
+    //   2. Span is identifier-only (e.g. cursor mid-name) and the
+    //      byte immediately before is `$`.
+    let cap = end.min(bytes.len());
+    if start < cap && bytes[start] == b'$'
+        && bytes[start + 1..cap]
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+    {
+        return false;
+    }
+    if start > 0 && start < cap && bytes[start - 1] == b'$' {
+        let span_ok = bytes[start..cap]
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'_');
+        if span_ok {
+            return false;
+        }
+    }
     let limit = start.min(bytes.len());
     let mut i = 0;
     let mut in_str: Option<u8> = None;
@@ -912,6 +1017,7 @@ fn word_span_at(line_text: &str, col: usize) -> Option<(usize, usize)> {
     if col > bytes.len() {
         return None;
     }
+    // Phase 1: strict identifier walk (same as `word_at`).
     let mut start = col;
     while start > 0 {
         let c = bytes[start - 1] as char;
@@ -932,6 +1038,45 @@ fn word_span_at(line_text: &str, col: usize) -> Option<(usize, usize)> {
     }
     if start == end {
         return None;
+    }
+    // Phase 2: extend through `-IDENT` segments for zsh function/command
+    // names. Skipped when this is a parameter expansion (`$var` or
+    // `${var…}`) since variable names forbid `-` per `iident`.
+    let is_dollar_var = bytes[start] == b'$';
+    let in_braced = start > 0 && bytes[start - 1] == b'{';
+    if !is_dollar_var && !in_braced {
+        while end < bytes.len() && bytes[end] == b'-' {
+            let mut p = end + 1;
+            while p < bytes.len() {
+                let c = bytes[p] as char;
+                if c == '_' || c.is_alphanumeric() {
+                    p += 1;
+                } else {
+                    break;
+                }
+            }
+            if p > end + 1 {
+                end = p;
+            } else {
+                break;
+            }
+        }
+        while start > 1 && bytes[start - 1] == b'-' {
+            let mut p = start - 1;
+            while p > 0 {
+                let c = bytes[p - 1] as char;
+                if c == '_' || c.is_alphanumeric() {
+                    p -= 1;
+                } else {
+                    break;
+                }
+            }
+            if p < start - 1 {
+                start = p;
+            } else {
+                break;
+            }
+        }
     }
     Some((start, end))
 }
@@ -994,6 +1139,70 @@ pub(crate) fn line_position_inside_string_or_comment(line: &str, end: usize) -> 
     in_dq || in_sq || in_bt
 }
 
+/// Like [`line_position_inside_string_or_comment`] but ONLY flags
+/// positions that zsh would NOT interpolate parameters in:
+///   * inside `'...'` single-quoted strings (opaque to expansion)
+///   * after a `#` line-comment
+///
+/// Use this when scanning for variable references — `$VAR` inside
+/// `"..."` (and inside backticks) IS a real reference because zsh
+/// interpolates parameters in both contexts.
+pub(crate) fn line_position_inside_uninterpolating_context(line: &str, end: usize) -> bool {
+    let bytes = line.as_bytes();
+    let cap = end.min(bytes.len());
+    let mut in_dq = false;
+    let mut in_sq = false;
+    let mut in_bt = false;
+    let mut i = 0;
+    while i < cap {
+        let c = bytes[i];
+        if in_dq {
+            if c == b'\\' && i + 1 < cap {
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_dq = false;
+            }
+        } else if in_sq {
+            if c == b'\'' {
+                in_sq = false;
+            }
+        } else if in_bt {
+            if c == b'\\' && i + 1 < cap {
+                i += 2;
+                continue;
+            }
+            if c == b'`' {
+                in_bt = false;
+            }
+        } else if c == b'#' {
+            // `#` only opens a comment when preceded by whitespace /
+            // statement boundary; `$#` (argc), `${#var}` (length),
+            // etc. don't. We approximate by checking the previous
+            // byte — bottoms out as "start of line" allowed.
+            let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
+            let starts_comment = match prev {
+                None => true,
+                Some(p) => matches!(p, b' ' | b'\t' | b';' | b'&' | b'|' | b'('),
+            };
+            if starts_comment {
+                return true;
+            }
+        } else if c == b'"' {
+            in_dq = true;
+        } else if c == b'\'' {
+            in_sq = true;
+        } else if c == b'`' {
+            in_bt = true;
+        }
+        i += 1;
+    }
+    // Only `in_sq` masks — double-quoted and backtick contexts
+    // permit `$VAR` interpolation, so we DON'T mask them.
+    in_sq
+}
+
 pub(crate) fn line_starts_comment_before(line: &str, end: usize) -> bool {
     let bytes = line.as_bytes();
     let cap = end.min(bytes.len());
@@ -1041,6 +1250,32 @@ pub(crate) fn line_starts_comment_before(line: &str, end: usize) -> bool {
 }
 
 pub fn lookup_doc(name: &str) -> String {
+    // Upstream-yodl-derived tables come first — they carry the real
+    // `man zshall` prose. The hand-curated stub tables below still
+    // exist as a fallback for any entry the yo parser missed.
+    //
+    // Source files (regenerate via `scripts/gen_option_docs.py`):
+    //   * Doc/Zsh/grammar.yo    → KEYWORD_DOCS    (`lookup_keyword_doc`)
+    //   * Doc/Zsh/builtins.yo   → BUILTIN_DOCS    (`lookup_builtin_doc`)
+    //   * Doc/Zsh/params.yo     → SPECIAL_VAR_DOCS (`lookup_special_var_doc`)
+    //   * Doc/Zsh/options.yo    → OPTION_DOCS     (`lookup_option_doc`)
+    if let Some((canon, body)) = crate::zsh_keyword_docs::lookup_keyword_doc(name) {
+        return format!("**{}** — _zsh keyword_\n\n{}", canon, body);
+    }
+    if let Some((canon, body)) = crate::zsh_builtin_docs::lookup_builtin_doc(name) {
+        return format!("**{}** — _zsh builtin_\n\n{}", canon, body);
+    }
+    // Special vars: try both `$VAR` and bare `VAR` forms — the yo
+    // source stores names without `$`, but the LSP hover may pass
+    // either spelling.
+    let bare = name.strip_prefix('$').unwrap_or(name);
+    if let Some((canon, body)) = crate::zsh_special_var_docs::lookup_special_var_doc(bare) {
+        return format!("**${}** — _special variable_\n\n{}", canon, body);
+    }
+    if let Some((canon, body)) = crate::zsh_option_docs::lookup_option_doc(name) {
+        return format!("**{}** — _zsh option_\n\n{}", canon, body);
+    }
+    // Hand-curated stub fallback for anything still uncovered.
     if let Some(d) = KEYWORD_DOCS.iter().find(|(k, _)| *k == name) {
         return format!("**{}** — _zsh keyword_\n\n{}", d.0, d.1);
     }
@@ -1256,6 +1491,15 @@ fn definition(state: &State, params: &Value) -> Value {
         Some(w) if !w.is_empty() => w,
         _ => return Value::Null,
     };
+    let bare = word.strip_prefix('$').unwrap_or(&word);
+    // Try AST first — scans every file in the workspace for a
+    // `FuncDef` whose name matches, or a top-level assignment if the
+    // cursor is on a `$var` reference. Falls through to the textual
+    // single-file scan below on parse failure.
+    if let Some(v) = definition_via_ast(state, &word, bare) {
+        return v;
+    }
+    // Textual fallback (single file only, function defs only).
     for (i, l) in text.lines().enumerate() {
         let t = l.trim_start();
         let is_def = t.starts_with(&format!("function {}", word))
@@ -1273,6 +1517,187 @@ fn definition(state: &State, params: &Value) -> Value {
         }
     }
     Value::Null
+}
+
+/// Cross-file AST-backed definition lookup. `word` is the raw cursor
+/// word (may have a `$` prefix); `bare` is the same string with any
+/// leading `$` stripped.
+///
+/// Returns:
+/// * `Some(Location)` if a single matching decl is found
+/// * `Some(Location[])` if multiple decls share the name (zsh allows
+///   per-file shadowing; surface all and let the client pick)
+/// * `None` if any active-file parse fails or no decl is found —
+///   caller falls back to the textual scan.
+fn definition_via_ast(state: &State, word: &str, bare: &str) -> Option<Value> {
+    use crate::lsp_symbols::{find_ast_occurrences, SymbolKind};
+    // `$x` cursor → look up Global decl. Bare cursor → look up Func
+    // decl. (Locals don't cross files.) For bare words we also try
+    // Global as a fallback (e.g. cursor on `FOO` in `echo FOO=1`).
+    let kind = if word.starts_with('$') {
+        SymbolKind::Global
+    } else {
+        SymbolKind::Func
+    };
+    let mut hits: Vec<Value> = Vec::new();
+    for (uri, src) in state.all_docs() {
+        let lines = find_ast_occurrences(&src, bare, kind.clone());
+        for line in lines {
+            // Only count decl-shaped occurrences. For Func kind that's
+            // any `FuncDef.names` match (the walker only emits at the
+            // FuncDef line for Func, plus call-site lines — discriminate
+            // by re-reading the line). For Global it's any line that
+            // starts an assignment / `local`/`typeset`.
+            if !line_is_decl(&src, line, bare, &kind) {
+                continue;
+            }
+            if let Some((start, end)) = find_first_word_col(&src, line, bare) {
+                hits.push(json!({
+                    "uri": uri,
+                    "range": {
+                        "start": { "line": line, "character": start },
+                        "end":   { "line": line, "character": end },
+                    },
+                }));
+            }
+        }
+    }
+    if hits.is_empty() {
+        // Fallback once for Global → Func or vice versa, in case the
+        // cursor's `$` heuristic guessed wrong.
+        let alt = if matches!(kind, SymbolKind::Global) {
+            SymbolKind::Func
+        } else {
+            SymbolKind::Global
+        };
+        for (uri, src) in state.all_docs() {
+            let lines = find_ast_occurrences(&src, bare, alt.clone());
+            for line in lines {
+                if !line_is_decl(&src, line, bare, &alt) {
+                    continue;
+                }
+                if let Some((start, end)) = find_first_word_col(&src, line, bare) {
+                    hits.push(json!({
+                        "uri": uri,
+                        "range": {
+                            "start": { "line": line, "character": start },
+                            "end":   { "line": line, "character": end },
+                        },
+                    }));
+                }
+            }
+        }
+    }
+    match hits.len() {
+        0 => None,
+        1 => Some(hits.into_iter().next().unwrap()),
+        _ => Some(Value::Array(hits)),
+    }
+}
+
+/// True when `(line, name)` in `src` is a *declaration* site for the
+/// given kind. Used to filter `find_ast_occurrences` results down to
+/// just the decls (occurrences emit both decls AND refs).
+fn line_is_decl(src: &str, line: u32, name: &str, kind: &crate::lsp_symbols::SymbolKind) -> bool {
+    let l = match src.lines().nth(line as usize) {
+        Some(l) => l,
+        None => return false,
+    };
+    let t = l.trim_start();
+    use crate::lsp_symbols::SymbolKind;
+    match kind {
+        SymbolKind::Func => {
+            t.starts_with(&format!("function {}", name))
+                || t.starts_with(&format!("function {} ", name))
+                || t.starts_with(&format!("{}()", name))
+                || t.starts_with(&format!("{} ()", name))
+        }
+        SymbolKind::Global | SymbolKind::Local => {
+            // Any line that starts an assignment to `name`.
+            // Forms: `name=value`, `local name=value`, `typeset name`,
+            // `export name=value`, `name+=value`.
+            let prefixes = [
+                format!("{}=", name),
+                format!("{}+=", name),
+                format!("local {}", name),
+                format!("typeset {}", name),
+                format!("declare {}", name),
+                format!("private {}", name),
+                format!("export {}", name),
+                format!("readonly {}", name),
+                format!("integer {}", name),
+                format!("float {}", name),
+            ];
+            prefixes.iter().any(|p| t.starts_with(p.as_str()))
+        }
+    }
+}
+
+/// Find the first whole-word occurrence of `name` on `src`'s `line`.
+/// Returns `(start_col, end_col)` in UTF-16 code units approximated by
+/// char count. Whole-word means surrounded by non-ident, non-`-` chars
+/// (matches the boundary used in [`references`]).
+fn find_first_word_col(src: &str, line: u32, name: &str) -> Option<(u32, u32)> {
+    let l = src.lines().nth(line as usize)?;
+    let mut start = 0;
+    while let Some(p) = l[start..].find(name) {
+        let abs = start + p;
+        let before = l[..abs].chars().last();
+        let after = l[abs + name.len()..].chars().next();
+        let ok_b = before
+            .map(|c| !(c.is_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(true);
+        let ok_a = after
+            .map(|c| !(c.is_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(true);
+        if ok_b && ok_a && !line_position_inside_string_or_comment(l, abs) {
+            return Some((abs as u32, (abs + name.len()) as u32));
+        }
+        start = abs + name.len();
+    }
+    None
+}
+
+/// Every whole-word column of `name` on `line`. Used by the AST refs
+/// path to compute LSP ranges from AST-tracked (line, name) pairs.
+///
+/// `is_variable_ref` toggles the mask used to skip false matches
+/// inside strings. Variable refs (`$VAR`) interpolate inside `"..."`
+/// and backticks, so those contexts are KEPT; only `'...'` and
+/// comments mask. Function-name matches (which are literal) always
+/// mask quoted regions and comments.
+fn find_all_word_cols(line_text: &str, name: &str) -> Vec<(u32, u32)> {
+    find_all_word_cols_kinded(line_text, name, false)
+}
+
+fn find_all_word_cols_kinded(
+    line_text: &str,
+    name: &str,
+    is_variable_ref: bool,
+) -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    while let Some(p) = line_text[start..].find(name) {
+        let abs = start + p;
+        let before = line_text[..abs].chars().last();
+        let after = line_text[abs + name.len()..].chars().next();
+        let ok_b = before
+            .map(|c| !(c.is_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(true);
+        let ok_a = after
+            .map(|c| !(c.is_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(true);
+        let masked = if is_variable_ref {
+            line_position_inside_uninterpolating_context(line_text, abs)
+        } else {
+            line_position_inside_string_or_comment(line_text, abs)
+        };
+        if ok_b && ok_a && !masked {
+            out.push((abs as u32, (abs + name.len()) as u32));
+        }
+        start = abs + name.len();
+    }
+    out
 }
 
 fn references(state: &State, params: &Value) -> Value {
@@ -1297,6 +1722,14 @@ fn references(state: &State, params: &Value) -> Value {
         Some(w) if !w.is_empty() => w,
         _ => return Value::Array(vec![]),
     };
+    // AST-backed cross-file path. Mirrors strykelang's SymbolTable
+    // approach: parse the active file, resolve cursor → SymbolId,
+    // then walk every workspace file looking for occurrences matching
+    // the symbol's kind. Falls through to the textual scan below on
+    // parse failure (e.g. mid-edit syntax error).
+    if let Some(v) = references_via_ast(state, &active_uri, &active_text, line_no as u32, &word) {
+        return v;
+    }
     // Scan every document we know about — open buffers AND the
     // workspace cache populated at `initialize`. Files that exist on
     // disk but the user hasn't opened still participate in rename, as
@@ -1318,11 +1751,16 @@ fn references(state: &State, params: &Value) -> Value {
                 let abs = start + p;
                 let before = l[..abs].chars().last();
                 let after = l[abs + word.len()..].chars().next();
+                // Whole-word boundary: chars immediately before/after
+                // the match must NOT be ident chars OR `-`. Excluding
+                // `-` is what stops `daemon-ping` from spuriously
+                // matching inside `daemon-ping-x` after the word-at
+                // logic learned to include `-` in zsh function names.
                 let ok_b = before
-                    .map(|c| !(c.is_alphanumeric() || c == '_'))
+                    .map(|c| !(c.is_alphanumeric() || c == '_' || c == '-'))
                     .unwrap_or(true);
                 let ok_a = after
-                    .map(|c| !(c.is_alphanumeric() || c == '_'))
+                    .map(|c| !(c.is_alphanumeric() || c == '_' || c == '-'))
                     .unwrap_or(true);
                 // Skip matches inside string literals OR after a `#`
                 // comment-opener — string content and comment text are
@@ -1350,6 +1788,148 @@ fn references(state: &State, params: &Value) -> Value {
         "scanned",
     );
     Value::Array(out)
+}
+
+/// AST-backed cross-file find-references. Returns `None` if any of:
+/// * the active file fails to parse
+/// * the cursor doesn't resolve to a known symbol in that file
+///
+/// in which case the caller falls back to the textual scan. On
+/// success returns the full LSP `Location[]` JSON array.
+///
+/// Algorithm (matches strykelang's SymbolTable approach):
+/// 1. Build [`SymbolTable`] for the active file, resolve cursor
+///    `(line, word)` → SymbolId → (name, kind).
+/// 2. Active file: emit every line that the SymbolTable already
+///    recorded as a decl or ref of that id.
+/// 3. Other workspace files: kind-gated walk via
+///    [`find_ast_occurrences`].  Locals don't cross files.
+/// 4. Re-scan each (line, name) to compute the column range — the
+///    AST loses column info, so this is the same trick stryke uses.
+fn references_via_ast(
+    state: &State,
+    active_uri: &str,
+    active_text: &str,
+    cursor_line: u32,
+    cursor_word: &str,
+) -> Option<Value> {
+    use crate::lsp_symbols::{find_ast_occurrences, SymbolKind, SymbolTable};
+
+    // `$var` cursor → strip the `$` so the symbol-name match works.
+    let bare = cursor_word.strip_prefix('$').unwrap_or(cursor_word);
+
+    let active_table = SymbolTable::build(active_text)?;
+    // Resolve cursor → (name, kind). If the active file declares the
+    // symbol, use that. Otherwise look across the workspace for any
+    // file that declares it (typical for `function daemon-ping` in
+    // lib.zsh called from main.zsh — main.zsh has no decl).
+    let (name, kind) = match active_table
+        .symbol_at(cursor_line, bare)
+        .and_then(|id| active_table.symbols.iter().find(|s| s.id == id))
+    {
+        Some(sym) => (sym.name.clone(), sym.kind.clone()),
+        None => {
+            let mut found: Option<SymbolKind> = None;
+            'outer: for (other_uri, src) in state.all_docs() {
+                if other_uri == active_uri {
+                    continue;
+                }
+                let Some(t) = SymbolTable::build(&src) else {
+                    continue;
+                };
+                for s in &t.symbols {
+                    if s.name == bare
+                        && matches!(s.kind, SymbolKind::Func | SymbolKind::Global)
+                    {
+                        found = Some(s.kind.clone());
+                        break 'outer;
+                    }
+                }
+            }
+            let default_kind = if cursor_word.starts_with('$') {
+                SymbolKind::Global
+            } else {
+                SymbolKind::Func
+            };
+            (bare.to_string(), found.unwrap_or(default_kind))
+        }
+    };
+
+    let mut out: Vec<Value> = Vec::new();
+
+    // Variables interpolate inside `"..."` and backticks; functions
+    // don't. Pick the mask via `is_var` so `$VAR` refs inside
+    // double-quoted strings (the common case for command flags, URLs,
+    // messages) are surfaced as real references.
+    let is_var = matches!(kind, SymbolKind::Global | SymbolKind::Local);
+
+    // Active file occurrences. Prefer SymbolTable-resolved sites when
+    // the symbol is declared here (gives us decl + same-file refs at
+    // once); otherwise fall back to the AST occurrence walker.
+    let active_lines: Vec<&str> = active_text.lines().collect();
+    if let Some(id) = active_table.symbol_at(cursor_line, &name) {
+        for (line, n) in active_table.occurrences(id) {
+            if let Some(lt) = active_lines.get(line as usize) {
+                for (s, e) in find_all_word_cols_kinded(lt, &n, is_var) {
+                    out.push(json!({
+                        "uri": active_uri,
+                        "range": {
+                            "start": { "line": line, "character": s },
+                            "end":   { "line": line, "character": e },
+                        },
+                    }));
+                }
+            }
+        }
+    } else {
+        let lines = find_ast_occurrences(active_text, &name, kind.clone());
+        for line in lines {
+            if let Some(lt) = active_lines.get(line as usize) {
+                for (s, e) in find_all_word_cols_kinded(lt, &name, is_var) {
+                    out.push(json!({
+                        "uri": active_uri,
+                        "range": {
+                            "start": { "line": line, "character": s },
+                            "end":   { "line": line, "character": e },
+                        },
+                    }));
+                }
+            }
+        }
+    }
+
+    // Cross-file: only for symbols that cross file boundaries.
+    if !matches!(kind, SymbolKind::Local) {
+        for (uri, src) in state.all_docs() {
+            if uri == active_uri {
+                continue;
+            }
+            let lines = find_ast_occurrences(&src, &name, kind.clone());
+            let src_lines: Vec<&str> = src.lines().collect();
+            for line in lines {
+                if let Some(lt) = src_lines.get(line as usize) {
+                    for (s, e) in find_all_word_cols_kinded(lt, &name, is_var) {
+                        out.push(json!({
+                            "uri": uri,
+                            "range": {
+                                "start": { "line": line, "character": s },
+                                "end":   { "line": line, "character": e },
+                            },
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::debug!(
+        target: "zshrs::lsp::references_ast",
+        %name,
+        ?kind,
+        n_results = out.len(),
+        "AST-resolved",
+    );
+    Some(Value::Array(out))
 }
 
 fn document_highlights(state: &State, params: &Value) -> Value {
@@ -1525,32 +2105,171 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                 );
                 break;
             }
-            // Strings
+            // Strings.
+            //
+            // Single-quoted `'...'` is opaque to parameter expansion —
+            // emit one big string token.
+            //
+            // Double-quoted `"..."` and backtick `` `...` `` interpolate
+            // `$var` / `${var}` / `$(cmd)`. Walk the contents and emit
+            // alternating string / variable sub-tokens so the editor can
+            // colorize `$var` distinctly from the surrounding string.
+            // Mirrors the strykelang plugin's behavior — the user's
+            // mental model is "the dollar sigil glows, even inside a
+            // string."
             if rest.starts_with('"') || rest.starts_with('\'') || rest.starts_with('`') {
                 let q = rest.as_bytes()[0] as char;
-                let mut end = 1;
-                while end < rest.len() {
-                    let c = rest.as_bytes()[end] as char;
-                    if c == '\\' && q != '\'' && end + 1 < rest.len() {
-                        end += 2;
+                let bb = rest.as_bytes();
+                // Locate the closing quote first; same logic as before
+                // so the overall span doesn't change.
+                let mut close = 1;
+                while close < bb.len() {
+                    let c = bb[close] as char;
+                    if c == '\\' && q != '\'' && close + 1 < bb.len() {
+                        close += 2;
                         continue;
                     }
                     if c == q {
-                        end += 1;
+                        close += 1;
                         break;
                     }
-                    end += 1;
+                    close += 1;
                 }
-                push_tok(
-                    &mut data,
-                    &mut last_line,
-                    &mut last_col,
-                    ln,
-                    col as u32,
-                    end as u32,
-                    1,
-                );
-                col += end;
+                // Single-quoted: one opaque token.
+                if q == '\'' {
+                    push_tok(
+                        &mut data,
+                        &mut last_line,
+                        &mut last_col,
+                        ln,
+                        col as u32,
+                        close as u32,
+                        1,
+                    );
+                    col += close;
+                    continue;
+                }
+                // Interpolating string: emit segments.
+                // `seg_start` is offset within `rest` of the current
+                // un-emitted string segment (starts at 1 to include the
+                // opening quote in the first string segment).
+                let mut seg_start = 0usize;
+                let mut p = 1usize;
+                // Inner-end excludes the closing quote so we don't try
+                // to interpolate past it; if the string was unterminated
+                // (`close == bb.len()` and last char is NOT `q`), keep
+                // going to end-of-line.
+                let inner_end = if close > 0 && close <= bb.len() && bb.get(close - 1) == Some(&(q as u8)) {
+                    close - 1
+                } else {
+                    close
+                };
+                let flush_string =
+                    |data: &mut Vec<u32>, last_line: &mut u32, last_col: &mut u32,
+                     col: usize, seg_start: usize, seg_end: usize| {
+                        if seg_end > seg_start {
+                            push_tok(
+                                data,
+                                last_line,
+                                last_col,
+                                ln,
+                                (col + seg_start) as u32,
+                                (seg_end - seg_start) as u32,
+                                1, // string
+                            );
+                        }
+                    };
+                while p < inner_end {
+                    let c = bb[p] as char;
+                    // Skip escape sequences `\X` (backslash applies in
+                    // double-quoted strings only when followed by `$`,
+                    // `\``, `"`, `\\`, newline — but for highlighting
+                    // we just skip 2 bytes to avoid `\$` triggering an
+                    // interpolation marker).
+                    if c == '\\' && q != '\'' && p + 1 < inner_end {
+                        p += 2;
+                        continue;
+                    }
+                    if c == '$' {
+                        // Flush the string segment up to here.
+                        flush_string(&mut data, &mut last_line, &mut last_col, col, seg_start, p);
+                        // Scan the `$var` / `${var}` / `$(cmd)` / `$((expr))`
+                        // expansion. Keep it simple: match the existing
+                        // `Variable` arm below for plain `$var` and
+                        // `${...}`; for `$(...)` / `$((...))` skip past
+                        // the matching close paren counting depth.
+                        let var_start = p;
+                        let mut q2 = p + 1;
+                        if q2 < inner_end && bb[q2] == b'{' {
+                            // ${...} — find matching close brace, allowing
+                            // one level of nested braces (e.g. `${(@)arr}`,
+                            // `${x:-${y}}`).
+                            let mut depth = 1i32;
+                            q2 += 1;
+                            while q2 < inner_end && depth > 0 {
+                                match bb[q2] {
+                                    b'{' => depth += 1,
+                                    b'}' => depth -= 1,
+                                    _ => {}
+                                }
+                                q2 += 1;
+                            }
+                        } else if q2 < inner_end && bb[q2] == b'(' {
+                            // $(...) or $((...)) — count parens.
+                            let mut depth = 1i32;
+                            q2 += 1;
+                            while q2 < inner_end && depth > 0 {
+                                match bb[q2] {
+                                    b'(' => depth += 1,
+                                    b')' => depth -= 1,
+                                    _ => {}
+                                }
+                                q2 += 1;
+                            }
+                        } else {
+                            // Bare `$var` — alphanum / `_` body.
+                            while q2 < inner_end {
+                                let cc = bb[q2] as char;
+                                if cc.is_alphanumeric() || cc == '_' {
+                                    q2 += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            // Single-char specials: $0..$9, $?, $!, $$,
+                            // $#, $*, $@, $-, $_.
+                            if q2 == p + 1 && q2 < inner_end {
+                                let cc = bb[q2] as char;
+                                if "?!$#*@-_0123456789".contains(cc) {
+                                    q2 += 1;
+                                }
+                            }
+                        }
+                        if q2 > var_start + 1 {
+                            // Emit as `variable` (token type 6).
+                            push_tok(
+                                &mut data,
+                                &mut last_line,
+                                &mut last_col,
+                                ln,
+                                (col + var_start) as u32,
+                                (q2 - var_start) as u32,
+                                6,
+                            );
+                            seg_start = q2;
+                            p = q2;
+                            continue;
+                        }
+                        // Lone `$` (no name follows) — let it stay in
+                        // the string segment.
+                        p += 1;
+                        continue;
+                    }
+                    p += 1;
+                }
+                // Trailing string segment (includes the closing quote).
+                flush_string(&mut data, &mut last_line, &mut last_col, col, seg_start, close);
+                col += close;
                 continue;
             }
             // Variable
@@ -2088,7 +2807,8 @@ fn word_at(text: &str, line_no: usize, col: usize) -> Option<String> {
         return None;
     }
     let bytes = line.as_bytes();
-    // Allow `$` prefix for special variables ($! $? $@)
+    // Phase 1: strict identifier walk (`[A-Za-z0-9_]`). `$` is allowed
+    // on the LEFT only — it's the parameter-expansion prefix marker.
     let mut start = col;
     while start > 0 {
         let c = bytes[start - 1] as char;
@@ -2109,6 +2829,54 @@ fn word_at(text: &str, line_no: usize, col: usize) -> Option<String> {
     }
     if start == end {
         return None;
+    }
+    // Phase 2: zsh function/command names allow `-` (e.g. `daemon-ping`,
+    // `daemon-job-submit`). Extend the word through `-NAME` segments at
+    // both ends, but ONLY when this is not a parameter-expansion (which
+    // forbids `-` in identifier chars per `Src/lex.c iident` /
+    // `Src/params.c isident`). Discriminator:
+    //   * `bytes[start] == '$'`         → bare `$var` parameter
+    //   * `bytes[start - 1] == '{'`     → `${var…}` braced expansion;
+    //                                     inside `${var-default}` the
+    //                                     `-` is the default-value
+    //                                     operator, not part of the name
+    let is_dollar_var = bytes[start] == b'$';
+    let in_braced = start > 0 && bytes[start - 1] == b'{';
+    if !is_dollar_var && !in_braced {
+        // Extend right through `-IDENT` segments.
+        while end < bytes.len() && bytes[end] == b'-' {
+            let mut p = end + 1;
+            while p < bytes.len() {
+                let c = bytes[p] as char;
+                if c == '_' || c.is_alphanumeric() {
+                    p += 1;
+                } else {
+                    break;
+                }
+            }
+            if p > end + 1 {
+                end = p;
+            } else {
+                break;
+            }
+        }
+        // Extend left through `IDENT-` segments.
+        while start > 1 && bytes[start - 1] == b'-' {
+            let mut p = start - 1;
+            while p > 0 {
+                let c = bytes[p - 1] as char;
+                if c == '_' || c.is_alphanumeric() {
+                    p -= 1;
+                } else {
+                    break;
+                }
+            }
+            if p < start - 1 {
+                start = p;
+            } else {
+                break;
+            }
+        }
     }
     Some(line[start..end].to_string())
 }
@@ -2563,6 +3331,51 @@ mod tests {
         assert_eq!(word_at(src, 0, 6), Some("$HOME".into()));
     }
 
+    // Regression pins (2026-05-23): zsh function/command names allow
+    // `-` (e.g. `daemon-ping`, `daemon-job-submit`). Before the fix,
+    // `word_at` stopped at `-` and rename/find-refs only matched the
+    // segment after the last `-`. Now `-NAME` segments are included
+    // for non-`$`-prefixed words, while `$var` / `${var-default}`
+    // contexts stay at the strict-identifier boundary.
+
+    #[test]
+    fn word_at_extends_through_hyphen_for_function_name() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "daemon-ping arg\n";
+        // Cursor on `daemon` segment.
+        assert_eq!(word_at(src, 0, 0), Some("daemon-ping".into()));
+        assert_eq!(word_at(src, 0, 3), Some("daemon-ping".into()));
+        // Cursor on `ping` segment.
+        assert_eq!(word_at(src, 0, 7), Some("daemon-ping".into()));
+        assert_eq!(word_at(src, 0, 10), Some("daemon-ping".into()));
+    }
+
+    #[test]
+    fn word_at_extends_through_multiple_hyphens() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "daemon-job-submit -- cmd\n";
+        assert_eq!(word_at(src, 0, 8), Some("daemon-job-submit".into()));
+        assert_eq!(word_at(src, 0, 13), Some("daemon-job-submit".into()));
+    }
+
+    #[test]
+    fn word_at_dollar_var_does_not_extend_through_hyphen() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "echo $x-y suffix\n";
+        // `$x-y` in shell expands `$x` then literal `-y`. Caret on
+        // `x` must return `$x`, NOT `$x-y`.
+        assert_eq!(word_at(src, 0, 6), Some("$x".into()));
+    }
+
+    #[test]
+    fn word_at_braced_var_does_not_extend_through_hyphen() {
+        let _g = crate::test_util::global_state_lock();
+        let src = "echo ${x-default}\n";
+        // `${x-default}` is the `${VAR-WORD}` (default-if-unset)
+        // operator. Caret on `x` must return `x`, NOT `x-default`.
+        assert_eq!(word_at(src, 0, 7), Some("x".into()));
+    }
+
     #[test]
     fn word_at_returns_none_off_word() {
         let _g = crate::test_util::global_state_lock();
@@ -2616,14 +3429,29 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let doc = lookup_doc("cd");
         assert!(doc.starts_with("**cd**"), "got: {}", doc);
-        assert!(doc.contains("working directory"));
+        // Upstream `Doc/Zsh/builtins.yo` `cd` description.
+        assert!(
+            doc.contains("Change the current directory"),
+            "expected upstream cd prose; got: {}",
+            doc
+        );
     }
 
     #[test]
     fn lookup_doc_handles_keywords_and_special_vars() {
         let _g = crate::test_util::global_state_lock();
-        assert!(lookup_doc("if").contains("Conditional"));
-        assert!(lookup_doc("$?").contains("Exit status"));
+        // Upstream `Doc/Zsh/grammar.yo` `if` description.
+        assert!(
+            lookup_doc("if").contains("zero exit status"),
+            "expected upstream if prose; got: {}",
+            lookup_doc("if")
+        );
+        // Upstream `Doc/Zsh/params.yo` `?` description (stripped of $).
+        assert!(
+            lookup_doc("$?").contains("exit status"),
+            "expected $? doc; got: {}",
+            lookup_doc("$?")
+        );
     }
 
     #[test]
@@ -2678,6 +3506,100 @@ mod tests {
         assert!(
             d.is_empty(),
             "string-internal braces tripped diagnose: {:?}",
+            d
+        );
+    }
+
+    // Pins for the four false-positive classes that flagged 197
+    // bogus diagnostics on a 575-line daemon helper before fixes:
+    //   1. `#` inside `$#` / `${#var}` aborting the line scan.
+    //   2. `[[ ... ]]` parsed as two single brackets.
+    //   3. `(( ... ))` arithmetic parsed as two single parens.
+    //   4. `)` as case-arm pattern terminator flagged as unmatched.
+
+    #[test]
+    fn diagnose_does_not_flag_dollar_hash_as_comment() {
+        let _g = crate::test_util::global_state_lock();
+        // `$#` is the arg-count special variable, not a comment.
+        // Pre-fix this terminated the line scan and left `[[`
+        // unclosed → cascade of 100+ false positives downstream.
+        let src = "[[ $# -gt 0 ]] && echo args\n";
+        let d = diagnose(src);
+        assert!(
+            d.is_empty(),
+            "`$#` mis-handled as comment marker: {:?}",
+            d
+        );
+    }
+
+    #[test]
+    fn diagnose_does_not_flag_param_length_as_comment() {
+        let _g = crate::test_util::global_state_lock();
+        // `${#var}` is parameter-length expansion.
+        let src = "echo ${#args}\nif [[ ${#arr} -gt 0 ]]; then echo nonempty; fi\n";
+        let d = diagnose(src);
+        assert!(
+            d.is_empty(),
+            "`${{#var}}` mis-handled as comment marker: {:?}",
+            d
+        );
+    }
+
+    #[test]
+    fn diagnose_handles_double_bracket_as_pair() {
+        let _g = crate::test_util::global_state_lock();
+        // `[[ ... ]]` is a single zsh conditional expression — must
+        // not be parsed as two `[`/`]` token pairs.
+        let src = "[[ -n \"$x\" ]]\n";
+        let d = diagnose(src);
+        assert!(
+            d.is_empty(),
+            "`[[ ]]` mis-handled as two `[`s: {:?}",
+            d
+        );
+    }
+
+    #[test]
+    fn diagnose_handles_arithmetic_double_paren_as_pair() {
+        let _g = crate::test_util::global_state_lock();
+        // `(( ... ))` is a single arithmetic expression.
+        let src = "(( i++ ))\n";
+        let d = diagnose(src);
+        assert!(
+            d.is_empty(),
+            "`(( ))` mis-handled as two `(`s: {:?}",
+            d
+        );
+    }
+
+    #[test]
+    fn diagnose_does_not_flag_case_arm_paren_as_unmatched() {
+        let _g = crate::test_util::global_state_lock();
+        // Bare `)` inside an open `case ... esac` block is a
+        // pattern-arm terminator, not a paren mismatch.
+        let src = "case \"$x\" in\n  -h|--help) echo usage ;;\n  *) echo other ;;\nesac\n";
+        let d = diagnose(src);
+        assert!(
+            d.is_empty(),
+            "case-arm `)` flagged as unmatched: {:?}",
+            d
+        );
+    }
+
+    #[test]
+    fn diagnose_still_flags_unmatched_paren_outside_case() {
+        let _g = crate::test_util::global_state_lock();
+        // Sanity: the case-arm exemption must NOT swallow a real
+        // unmatched `)` outside of any case block.
+        let src = "echo bare )\n";
+        let d = diagnose(src);
+        assert!(
+            d.iter()
+                .any(|v| v["message"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("unmatched `)`")),
+            "real unmatched `)` was not flagged: {:?}",
             d
         );
     }
