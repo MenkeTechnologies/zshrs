@@ -7821,9 +7821,45 @@ pub fn execcmd_exec(
                 }
             }
         }
-        // c:3561-3579 — shf->redir append. Substrate path not wired
-        // (no shfunc.redir field in current zsh_h.rs Shfunc port).
-        // SUBSTRATE GAP: shf->redir tail append @ Src/exec.c:3563-3579
+        // c:3561-3579 — shf->redir append: a function definition can
+        // carry extra redirs (`f() { ... } < file`), captured as a
+        // separate Eprog in shf->redir. Walk that Eprog with a temp
+        // estate, extract its redirs with ecgetredirs, then merge
+        // into the live `redir` list.
+        // Resolve shfunc by name (hn is *mut builtin so we go through
+        // shfunctab as in the dispatch site at c:4102).
+        let shfn_name = args
+            .as_ref()
+            .and_then(|v| v.first())
+            .cloned()
+            .unwrap_or_default();
+        let shf_redir_eprog: Option<crate::ported::zsh_h::Eprog> = {
+            if let Ok(tab) = shfunctab_lock().read() {
+                tab.get(&shfn_name).and_then(|s| s.redir.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(red_eprog) = shf_redir_eprog {
+            // c:3566-3571 — build temp estate from shf->redir.
+            let mut tmp_state = estate {
+                prog: red_eprog.clone(),
+                pc: 0,
+                strs: red_eprog.strs.clone(),
+                strs_offset: 0,
+            };
+            // c:3572 — `redir2 = ecgetredirs(&s);`
+            let redir2 = crate::ported::parse::ecgetredirs(&mut tmp_state);
+            // c:3573-3578 — merge into existing redir.
+            if redir.is_none() {
+                redir = Some(redir2); // c:3574
+            } else if let Some(ref mut r) = redir {
+                // c:3576-3577 — append.
+                for n in redir2 {
+                    r.push(n);
+                }
+            }
+        }
     }
 
     // c:3582-3591 — errflag bail-out (2).
