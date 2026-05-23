@@ -3648,21 +3648,18 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
 /// filename. Optimised path: `=(<<<heredoc-str)` writes the
 /// heredoc body directly without a fork.
 ///
-/// =================== WARNING — DIVERGENCE ====================
-/// (a) `addfilelist` Rust signature `(&mut job, name, fd)` vs C
-///     `addfilelist(name, fd)`. We can't grab the current job
-///     handle without a jobs-mod refactor. Filelist registration
-///     SKIPPED — the temp file will be cleaned by the system temp
-///     reaper, not by zsh's job-exit hook. Re-port addfilelist
-///     to match C 2-arg shape to unblock.
+/// (a) `addfilelist(nam, 0)` (c:4960) now wired via JOBTAB[thisjob]
+///     so the temp file gets cleaned at job exit (this session).
 /// (b) `waitforpid` Rust takes 1 arg `pid`, C takes `(pid, full)`.
 ///     Behavior matches the `full=0` case anyway.
-/// (c) `entersubsh` not ported — child does setsid only.
-/// (d) `execode` not ported — re-feed body via fusevm pipeline.
-/// (e) `_realexit` not ported — bare std::process::exit(0).
-/// (f) TMPSUFFIX link()-rename block (c:4951-4958) skipped for now
-///     until addfilelist re-port lands.
-/// =============================================================
+/// (c) `entersubsh` is now ported (exec.rs:3934) — wire it here when
+///     re-routing the fork path away from setsid-only fallback.
+/// (d) `execode` is now ported (exec.rs:6047) — the body still
+///     re-feeds through fusevm for cache coherence with execstring.
+/// (e) `_realexit` flushes stdio + jobs + history. We use bare
+///     `std::process::exit(0)` for now.
+/// (f) TMPSUFFIX link()-rename block (c:4951-4958) deferred; rare
+///     `setopt suffix_alias` interaction with =(…).
 pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:4910
     let bytes = cmd.as_bytes();
@@ -3802,19 +3799,21 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
 /// `Src/exec.c:5025` — `<(cmd)` / `>(cmd)` process substitution
 /// via `/dev/fd/N` (PATH_DEV_FD branch; modern Linux/macOS).
 ///
-/// =================== WARNING — DIVERGENCE ====================
 /// (a) PATH_DEV_FD branch only — the FIFO fallback (`!PATH_DEV_FD`
 ///     path c:5037-5064) is omitted; modern Linux/macOS both
-///     provide /dev/fd. namedpipe() is ported (exec.rs:2701) but
+///     provide /dev/fd. `namedpipe()` is ported (exec.rs:2701) but
 ///     unused here.
-/// (b) `addproc` Rust 4-arg drift (see getpipe WARNING a) —
-///     procsubstpid set only.
-/// (c) `addfilelist(NULL, fd)` skipped (see getoutputfile WARNING a).
-/// (d) `entersubsh` not ported — setsid only.
-/// (e) `execode` not ported — re-feed body via fusevm.
-/// (f) `_realexit` not ported — bare exit(LASTVAL).
+/// (b) `addproc` now 7-arg; procsubst pid recorded via aux=true on
+///     the current job (wired this session at c:5141-5142).
+/// (c) `addfilelist(NULL, fd)` now wired via JOBTAB[thisjob] (this
+///     session at c:5087).
+/// (d) `entersubsh` is now ported (exec.rs:3934) — wired below at
+///     c:5063 (`entersubsh(ESUB_ASYNC|ESUB_PGRP, NULL)`).
+/// (e) `execode` is now ported (exec.rs:6047). Body still
+///     re-feeds through fusevm for cache coherence.
+/// (f) `_realexit` flushes stdio + jobs + history. We use bare
+///     `std::process::exit(LASTVAL)` for now.
 /// (g) `fdtable[fd] = FDT_PROC_SUBST` (c:5086) — set via fdtable_set.
-/// =============================================================
 pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     // c:5025
     let bytes = cmd.as_bytes();
