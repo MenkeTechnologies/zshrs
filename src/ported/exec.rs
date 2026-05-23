@@ -5674,7 +5674,16 @@ pub fn execsimple(state: &mut estate) -> i32 {
         LASTVAL.store(0, Ordering::Relaxed);
         return 0;
     }
-    // c:1303-1304 — set lineno (skipped: ineval/IN_EVAL_TRAP scaffolding).
+    // c:1301-1303 — `if (!IN_EVAL_TRAP() && !ineval && code) lineno = code - 1;`
+    // In evaluated traps, don't modify the line number (the trap
+    // dispatcher restores it). `code` here is the wordcode-encoded
+    // line number from the WC_SIMPLE entry at state.pc-1.
+    if !crate::ported::zsh_h::IN_EVAL_TRAP()
+        && crate::ported::builtin::INEVAL.load(Ordering::SeqCst) == 0
+        && code != 0
+    {
+        crate::ported::input::lineno.with(|l| l.set((code as usize).saturating_sub(1)));
+    }
     // c:1306 — `code = wc_code(*state->pc++);`
     code = wc_code(state.prog.prog[state.pc]);
     state.pc += 1;
