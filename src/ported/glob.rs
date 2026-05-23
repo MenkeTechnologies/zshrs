@@ -2423,42 +2423,116 @@ pub fn qualiscom(name: &str, buf: &libc::stat, r#mod: i64, dummy: &str) -> i32 {
     (is_reg && (buf.st_mode as u32 & s_ixugo) != 0) as i32 // c:3820
 }
 
-/// Parse size modifier (from glob.c qualsize)
-/// Parse a size-unit glob-qualifier argument (`L`).
-/// Port of the size-conversion arms inside `qgetnum()`
-/// (Src/glob.c:3827).
-pub fn qualsize(s: &str, units: char) -> Option<(i64, &str)> {
-    let (mut num, rest) = qgetnum(s)?;
+/// Port of `static int g_units;` from `Src/glob.c`. Time/size unit
+/// selector for the qualtime / qualsize qualifier predicates. Values
+/// come from the TT_* enum (TT_DAYS=0, TT_HOURS=1, TT_MINS=2,
+/// TT_WEEKS=3, TT_MONTHS=4 for time; TT_BYTES=0, TT_POSIX_BLOCKS=1,
+/// TT_KILOBYTES=2, etc. for size).
+pub static g_units: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-    match units {
-        'k' | 'K' => num *= 1024,
-        'm' | 'M' => num *= 1024 * 1024,
-        'g' | 'G' => num *= 1024 * 1024 * 1024,
-        't' | 'T' => num *= 1024 * 1024 * 1024 * 1024,
-        'p' | 'P' => num *= 512,
-        _ => {}
+/// Port of `static int g_range;` from `Src/glob.c`. Comparison
+/// direction for qualtime / qualsize / qualnlink: -1 = `<`, 0 = `==`,
+/// +1 = `>`. Set by the glob qualifier parser.
+pub static g_range: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `static int g_amc;` from `Src/glob.c`. Which mtime to read
+/// for qualtime: 0 = atime, 1 = mtime, 2 = ctime. Set by the `am`,
+/// `mm`, `cm` qualifier letters.
+pub static g_amc: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Direct port of `static int qualsize(UNUSED(char *name),
+/// struct stat *buf, off_t size, UNUSED(char *dummy))` from
+/// `Src/glob.c:3825-3866`. Glob-qualifier predicate: returns true
+/// when `buf->st_size` (scaled by `g_units`) compares to `size`
+/// via `g_range`.
+///
+/// **Previous fakery:** the file held a same-named helper that was
+/// actually a unit-conversion *parser* `(s, units) -> Option<(i64,
+/// &str)>` — wrong shape, wrong semantics, zero callers. The
+/// canonical C signature is restored here; the qualifier-eval site
+/// at glob.rs:3914 already inlines the equivalent (uses
+/// qualifier::Size struct fields) and is the live path.
+#[allow(non_snake_case)]
+pub fn qualsize(_name: &str, buf: &std::fs::Metadata, size: i64, _dummy: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::atomic::Ordering;
+    // c:3831 `zlong scaled = buf->st_size;`
+    let mut scaled: i64 = buf.size() as i64;
+    // c:3837-3860 — switch (g_units) ceiling-divide by the unit.
+    match g_units.load(Ordering::SeqCst) {
+        x if x == TT_POSIX_BLOCKS => {
+            scaled = (scaled + 511) / 512; // c:3838-3841
+        }
+        x if x == TT_KILOBYTES => {
+            scaled = (scaled + 1023) / 1024; // c:3842-3845
+        }
+        x if x == TT_MEGABYTES => {
+            scaled = (scaled + 1_048_575) / 1_048_576; // c:3846-3849
+        }
+        x if x == TT_GIGABYTES => {
+            scaled = (scaled + 1_073_741_823) / 1_073_741_824; // c:3851-3854
+        }
+        x if x == TT_TERABYTES => {
+            scaled = (scaled + 1_099_511_627_775) / 1_099_511_627_776; // c:3855-3858
+        }
+        _ => {} // c:3860 default: bytes — no scaling.
     }
-
-    Some((num, rest))
+    // c:3862-3864 — `g_range < 0 ? < : g_range > 0 ? > : ==`.
+    let r = g_range.load(Ordering::SeqCst);
+    if r < 0 {
+        scaled < size
+    } else if r > 0 {
+        scaled > size
+    } else {
+        scaled == size
+    }
 }
 
-/// Parse time modifier (from glob.c qualtime)
-/// Parse a time-unit glob-qualifier argument (`m`/`a`/`c`).
-/// Port of the time-conversion arms inside `qgetnum()`
-/// (Src/glob.c:3872).
-pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {
-    // c:3872
-    let (mut num, rest) = qgetnum(s)?;
-
-    match units {
-        'h' => num *= 3600,
-        'd' => num *= 86400,
-        'w' => num *= 604800,
-        'M' => num *= 2592000,
-        _ => {}
+/// Direct port of `static int qualtime(UNUSED(char *name),
+/// struct stat *buf, off_t days, UNUSED(char *dummy))` from
+/// `Src/glob.c:3870-3901`. Glob-qualifier predicate: returns true
+/// when `now - buf->{a,m,c}time` (selected by `g_amc`, scaled by
+/// `g_units`) compares to `days` via `g_range`.
+///
+/// **Previous fakery:** same misshapen parser as the qualsize one
+/// above. Restored to C signature; the qualifier-eval site at
+/// glob.rs:3940 already inlines the equivalent (uses qualifier::
+/// Atime struct fields with the live atime/mtime/ctime read).
+#[allow(non_snake_case)]
+pub fn qualtime(_name: &str, buf: &std::fs::Metadata, days: i64, _dummy: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::atomic::Ordering;
+    // c:3876-3878 — `time(&now); diff = now - (g_amc == 0 ? st_atime
+    //                  : g_amc == 1 ? st_mtime : st_ctime);`
+    let now: i64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let amc = g_amc.load(Ordering::SeqCst);
+    let stamp: i64 = match amc {
+        0 => buf.atime(), // c:3877
+        1 => buf.mtime(), // c:3877
+        _ => buf.ctime(), // c:3878
+    };
+    let mut diff: i64 = now - stamp;
+    // c:3880-3896 — scale by g_units.
+    match g_units.load(Ordering::SeqCst) {
+        x if x == TT_DAYS => diff /= 86400,    // c:3881-3883
+        x if x == TT_HOURS => diff /= 3600,    // c:3884-3886
+        x if x == TT_MINS => diff /= 60,       // c:3887-3889
+        x if x == TT_WEEKS => diff /= 604800,  // c:3890-3892
+        x if x == TT_MONTHS => diff /= 2592000, // c:3893-3895
+        _ => {}                                // c:3896 default: seconds.
     }
-
-    Some((num, rest))
+    // c:3898-3900 — same range comparison as qualsize.
+    let r = g_range.load(Ordering::SeqCst);
+    if r < 0 {
+        diff < days
+    } else if r > 0 {
+        diff > days
+    } else {
+        diff == days
+    }
 }
 
 /// Port of `static int qualsheval(char *name, UNUSED(struct stat *buf),
