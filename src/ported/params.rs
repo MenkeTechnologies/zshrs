@@ -5437,6 +5437,25 @@ pub fn intgetfn(pm: &param) -> i64 {
 /// Port of `intsetfn(Param pm, zlong x)` from `Src/params.c:4002`. C body:
 /// `pm->u.val = x;`
 pub fn intsetfn(pm: &mut param, x: i64) {
+    // c:Src/params.c:4575 — PM_SPECIAL integers have per-name gsu_i->setfn
+    // hooks: SECONDS routes through intsecondssetfn (shtimer math),
+    // RANDOM seeds the PRNG, etc. The default intsetfn is the fallback
+    // for non-special integers (pm->u.val write).
+    //
+    // Rust port lookup_special_var dispatches GETTERS by name; the
+    // setters need symmetric dispatch so `SECONDS=N` actually moves
+    // shtimer instead of writing u.val which intsecondsgetfn never
+    // reads. Without this, `$SECONDS` always read the time-since-shtimer
+    // delta regardless of writes.
+    // Name-based dispatch (not flag-based): some assignment paths
+    // construct a fresh param shell for tc and lose PM_SPECIAL.
+    match pm.node.nam.as_str() {
+        "SECONDS" => {
+            intsecondssetfn(x);
+            return;
+        }
+        _ => {}
+    }
     pm.u_val = x;
 }
 
@@ -5449,6 +5468,18 @@ pub fn floatgetfn(pm: &param) -> f64 {
 /// Port of `floatsetfn(Param pm, double x)` from `Src/params.c:4020`. C body:
 /// `pm->u.dval = x;`
 pub fn floatsetfn(pm: &mut param, x: f64) {
+    // c:Src/params.c:4603 floatsecondssetfn — PM_SPECIAL float SECONDS
+    // routes through shtimer math. Symmetric with intsetfn's SECONDS
+    // dispatch above and lookup_special_var's getter.
+    // c:Src/params.c:4603 floatsecondssetfn — PM_SPECIAL float SECONDS
+    // routes through shtimer math. Symmetric with intsetfn's SECONDS
+    // dispatch above and lookup_special_var's getter. Some assignment
+    // paths construct a fresh `param` shell for tc (type-conversion)
+    // and lose PM_SPECIAL, so name-only dispatch is the safe fallback.
+    if pm.node.nam == "SECONDS" {
+        floatsecondssetfn(x);
+        return;
+    }
     pm.u_dval = x;
 }
 
@@ -8988,7 +9019,29 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "TTYIDLE" => Some(ttyidlegetfn().to_string()),
         "ERRNO" => Some(errnogetfn().to_string()),
         // Time callbacks.
-        "SECONDS" => Some(intsecondsgetfn().to_string()),
+        "SECONDS" => {
+            // c:Src/params.c:4561/4591 — PM_TYPE dispatches between
+            // intsecondsgetfn (PM_INTEGER, default) and floatsecondsgetfn
+            // (PM_EFLOAT/PM_FFLOAT after `typeset -F`/`-E SECONDS`). The
+            // pm's gsu_i vs gsu_f vtable swap happens in setfn during
+            // typeset; we read pm.flags from paramtab here.
+            let pm_type = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get("SECONDS").map(|pm| PM_TYPE(pm.node.flags as u32)))
+                .unwrap_or(PM_INTEGER);
+            if pm_type == PM_EFLOAT || pm_type == PM_FFLOAT {
+                let v = floatsecondsgetfn();
+                let base = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get("SECONDS").map(|pm| pm.base))
+                    .unwrap_or(0);
+                Some(convfloat(v, base, pm_type))
+            } else {
+                Some(intsecondsgetfn().to_string())
+            }
+        }
         // zsh/datetime module params. In recent zsh these are
         // auto-loaded via `zmodload zsh/datetime` and the param
         // appears in paramtab via the module's `p:NAME` feature
