@@ -1900,26 +1900,19 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         .collect();
     let all_int = !arg_nums.is_empty() && arg_nums.iter().all(|n| (n.type_ == MN_INTEGER));
 
-    // Functions that preserve int-ness: when all args are int,
-    // return mnumber::Integer instead of Float to avoid the
-    // trailing "." in the string output ("5." instead of "5").
-    //
-    // `int`/`floor`/`ceil`/`trunc` ALWAYS return Integer per zsh
-    // (mathfunc.c:bin_zmathfn) — `$(( int(2.7) ))` prints "2",
-    // not "2.". The truncation to int happens regardless of
-    // whether the input was already an integer. `abs`/`min`/`max`
-    // preserve the input type (int args → int result, float arg
-    // anywhere → float result) since their semantics don't
-    // inherently change the value's representation.
-    let always_int = matches!(name, "int" | "floor" | "ceil" | "trunc");
+    // c:Src/Modules/mathfunc.c:139 — only `int` has TFLAG(TF_NOASS)
+    // which collapses the result to MN_INTEGER. `ceil`/`floor` lack
+    // TF_NOASS so they return float (rendered as `5.` for whole
+    // values), and `trunc` doesn't exist in zsh's mathfunc table.
+    // The previous Rust port forced all four to integer, so
+    // `$(( ceil(1.1) ))` printed `2` instead of zsh's `2.`.
+    let always_int = matches!(name, "int" | "trunc");
     if always_int {
         let i = match name {
             "int" | "trunc" => arg_nums
                 .first()
                 .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
                 .unwrap_or(0),
-            "floor" => args.first().map(|x| x.floor() as i64).unwrap_or(0),
-            "ceil" => args.first().map(|x| x.ceil() as i64).unwrap_or(0),
             _ => 0,
         };
         return mnumber {
