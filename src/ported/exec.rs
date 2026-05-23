@@ -6011,6 +6011,97 @@ pub fn execcmd_analyse(
     }
 }
 
+/// Port of `char **zsh_eval_context;` from `Src/exec.c` (zsh.export:355).
+/// Stack of `"context"` labels used by `eval`-style nested execution:
+/// `bin_dot`, `bin_eval`, `execode`, autoloads. Each `execode(prog,
+/// ..., "context")` pushes its label and pops on return.
+pub static zsh_eval_context: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Port of `void execode(Eprog p, int dont_change_job, int exiting,
+/// char *context)` from `Src/exec.c:1245-1282`. Set up an `estate`
+/// around the given Eprog and run `execlist`. Maintains the
+/// `zsh_eval_context` stack so `$ZSH_EVAL_CONTEXT` reflects the
+/// call chain.
+pub fn execode(p: crate::ported::zsh_h::Eprog, dont_change_job: i32, exiting: i32, context: &str) {
+    // c:1245
+    let prog_ref = *p;
+    // c:1247 — `struct estate s;`
+    let mut s = estate {
+        prog: Box::new(prog_ref.clone()),
+        // c:1269 — `s.pc = p->prog;` — start at index 0.
+        pc: 0,
+        // c:1270 — `s.strs = p->strs;`
+        strs: prog_ref.strs.clone(),
+        strs_offset: 0,
+    };
+    // c:1251-1266 — push context onto zsh_eval_context.
+    let pushed = {
+        if let Ok(mut ctx) = zsh_eval_context.lock() {
+            ctx.push(context.to_string());
+            true
+        } else {
+            false
+        }
+    };
+    // c:1271 — `useeprog(p);`
+    crate::ported::parse::useeprog(&mut s.prog);
+    // c:1273 — `execlist(&s, dont_change_job, exiting);`
+    execlist(&mut s, dont_change_job, exiting);
+    // c:1275 — `freeeprog(p);`
+    crate::ported::parse::freeeprog(&mut s.prog);
+    // c:1281 — `zsh_eval_context[alen] = NULL;` — pop our entry.
+    if pushed {
+        if let Ok(mut ctx) = zsh_eval_context.lock() {
+            ctx.pop();
+        }
+    }
+}
+
+/// Port of `execautofn_basic(Estate state, UNUSED(int do_exec))` from
+/// `Src/exec.c:5608-5630`. Run a pre-loaded autoload function body
+/// via `execode`, snapshotting `scriptname`/`scriptfilename` around
+/// the call so `%N` / `%x` reflect the autoload target during
+/// execution.
+pub fn execautofn_basic(state: &mut estate, _do_exec: i32) -> i32 {
+    // c:5608
+    // c:5613 — `shf = state->prog->shf;`
+    let shf = match state.prog.shf.as_deref() {
+        Some(s) => s.clone(),
+        None => return LASTVAL.load(Ordering::Relaxed),
+    };
+
+    // c:5619-5620 — funcstack filename catch-up. zshrs's funcstack
+    // top-of-stack tracking is in modules::parameter::FUNCSTACK.
+    {
+        let mut stk = crate::ported::modules::parameter::FUNCSTACK.lock().unwrap();
+        if let Some(top) = stk.last_mut() {
+            if top.filename.is_none() {
+                // c:5620 — `funcstack->filename = getshfuncfile(shf);`
+                top.filename = crate::ported::hashtable::getshfuncfile(&shf.node.nam);
+            }
+        }
+    }
+
+    // c:5622-5623 — `oldscriptname/oldscriptfilename = scriptname/scriptfilename;`
+    let oldscriptname = crate::ported::utils::scriptname_get();
+    let oldscriptfilename = crate::ported::utils::scriptfilename_get();
+    // c:5624 — `scriptname = dupstring(shf->node.nam);`
+    crate::ported::utils::set_scriptname(Some(shf.node.nam.clone()));
+    // c:5625 — `scriptfilename = getshfuncfile(shf);`
+    crate::ported::utils::set_scriptfilename(crate::ported::hashtable::getshfuncfile(
+        &shf.node.nam,
+    ));
+    // c:5626 — `execode(shf->funcdef, 1, 0, "loadautofunc");`
+    if let Some(funcdef) = shf.funcdef.clone() {
+        execode(funcdef, 1, 0, "loadautofunc");
+    }
+    // c:5627-5628 — restore.
+    crate::ported::utils::set_scriptname(oldscriptname);
+    crate::ported::utils::set_scriptfilename(oldscriptfilename);
+
+    LASTVAL.load(Ordering::Relaxed) // c:5630
+}
+
 /// Port of `execpline2(Estate state, wordcode pcode, int how, int input,
 /// int output, int last1)` from `Src/exec.c:1989-2040`. Recursive
 /// multi-stage pipe walker: at each step, analyse the current
@@ -7066,11 +7157,8 @@ pub fn execcmd_exec(
     // isreallycom — top-level port at exec.rs (c:972). Bridges the
     // local shadow that this fn body used pre-port.
     use crate::ported::exec::isreallycom;
-    // SUBSTRATE GAP: execautofn_basic @ Src/exec.c:5050 — simplified
-    // autofn entry that runs a function pre-loaded for redirs.
-    fn execautofn_basic(_state: &mut estate, _do_exec: i32) -> i32 {
-        0
-    }
+    // execautofn_basic — top-level port at exec.rs (c:5608).
+    use crate::ported::exec::execautofn_basic;
     // SUBSTRATE GAP: execerr expands inline in C as a goto-equivalent;
     // we model it as a flag the body checks after each redir call.
     // The C macro does: `errflag |= ERRFLAG_ERROR; lastval = 1; goto err;`
