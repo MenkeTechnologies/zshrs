@@ -6440,19 +6440,26 @@ pub fn execpline2(
 /// multi-stage pipelines fall back to sequential execution (status
 /// of last stage) until pipe + fork land.
 pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> i32 {
-    use crate::ported::zsh_h::Z_TIMED;
-    // c:1675-1677 — empty pipeline returns lastval=0.
+    use crate::ported::zsh_h::{WC_SUBLIST_FLAGS, WC_SUBLIST_NOT, Z_TIMED};
+    let slflags = WC_SUBLIST_FLAGS(slcode); // c:1673
+    // c:1677-1680 — `if (wc_code(code) != WC_PIPE && !(how & Z_TIMED))
+    //                  return lastval = (slflags & WC_SUBLIST_NOT) != 0;
+    //                else if (slflags & WC_SUBLIST_NOT) last1 = 0;`
     if state.pc >= state.prog.prog.len() || wc_code(state.prog.prog[state.pc]) != WC_PIPE {
         if (how & Z_TIMED as i32) == 0 {
-            // c:1677-1678 — `if (wc_code(code) != WC_PIPE && !(how & Z_TIMED)) lastval = 0;`
+            let ret = if (slflags & WC_SUBLIST_NOT) != 0 { 1 } else { 0 };
+            LASTVAL.store(ret, Ordering::Relaxed);
+            return ret;
         }
-        return 0;
+    }
+    let mut last1 = last1;
+    if (slflags & WC_SUBLIST_NOT) != 0 {
+        last1 = 0; // c:1680
     }
     let mut code = state.prog.prog[state.pc];
     state.pc += 1;
     let mut last_status: i32 = 0;
     use crate::ported::zsh_h::{WC_PIPE_END, WC_PIPE_TYPE};
-    let _ = slcode;
     let _ = how;
     let _ = last1;
     // c:1700-1940 — main WC_PIPE loop. Each iter: exec one cmd, advance.
