@@ -9292,7 +9292,21 @@ pub fn execcmd_exec(
             } else {
                 // c:4315 — `( ... )` — WC_SUBSH.
                 crate::ported::exec::list_pipe.store(0, Ordering::Relaxed); // c:4318
-                // c:4319 — pipecleanfilelist (skipped — see above).
+                // c:4319 — `pipecleanfilelist(filelist, 0);` — clean
+                // proc-subst entries from the current job's filelist
+                // before recursing into the subshell body.
+                if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                    let mut guard = jt.lock().unwrap();
+                    let tj = crate::ported::jobs::THISJOB
+                        .get()
+                        .map(|m| *m.lock().unwrap())
+                        .unwrap_or(-1);
+                    if tj >= 0 {
+                        if let Some(j) = guard.get_mut(tj as usize) {
+                            crate::ported::jobs::pipecleanfilelist(j, false);
+                        }
+                    }
+                }
                 state.pc += 1;                                             // c:4324 — `state->pc++;`
                 let _ = crate::ported::exec::execlist(state, 0, 1);        // c:4325
             }
