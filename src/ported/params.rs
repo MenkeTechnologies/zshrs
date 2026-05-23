@@ -8960,7 +8960,10 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "0" => argzero(),
         // POSIX shell-special scalars. C dispatches these through
         // dedicated gsu getfn callbacks (Src/params.c special_assigns).
-        "?" => Some(
+        // c:Src/params.c lastvalgetfn — `?` and `status` are aliases
+        // for the last-command exit code (lastval). C wires them via
+        // separate IPDEF entries that share the same getfn.
+        "?" | "status" => Some(
             LASTVAL
                 .load(Ordering::Relaxed)
                 .to_string(),
