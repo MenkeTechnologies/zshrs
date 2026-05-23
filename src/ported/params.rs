@@ -4838,13 +4838,17 @@ static REALPARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> = OnceLock::
 /// from `Src/params.c:3357`. Writes an array value into paramtab
 /// and returns the new/updated Param.
 ///
-/// Pending C semantics:
-///   - PM_READONLY rejection (c:3370-3381 via setarrvalue chain)
+/// Ported semantics:
+///   - PM_READONLY rejection (c:3370-3381)
 ///   - PM_NAMEREF type-change reject (c:3395-3398)
-///   - resetparam from non-array (c:3415-3420)
 ///   - ASSPM_AUGMENT (`a+=val`) preserve-old prepend (c:3404-3412)
 ///   - PM_UNIQUE dedupe (c:3401)
-///   - element-wise `a[k]=v` slice path (c:3373-3389)
+///   - element-wise `a[k]=v` slice path pre-check (c:3373-3389)
+///   - PM_HASHED slice rejection (c:3384-3391)
+///
+/// Pending (rare paths):
+///   - resetparam from non-array (c:3415-3420) — handled implicitly
+///     by the type-mask rewrite below; matches C observable behavior.
 pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // c:3357
     // c:3366-3370 — `if (!isident(s)) { zerr; return NULL }`.
@@ -4900,6 +4904,15 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     }
     if !existed {
         createparam(name, PM_ARRAY as i32)?;
+    }
+
+    // c:3370-3381 PM_READONLY rejection — C routes through setarrvalue
+    // → arrsetfn which emits "read-only variable: X" and returns NULL.
+    // Rust write path bypasses gsu setfn, so mirror the check here.
+    if existed && (prior_flags as u32 & PM_READONLY) != 0 {
+        zerr(&format!("read-only variable: {}", name));
+        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+        return None;
     }
 
     // c:3402-3412 — ASSPM_AUGMENT preserve-old prepend. When the
