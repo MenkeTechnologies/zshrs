@@ -3703,6 +3703,35 @@ pub fn bin_typeset(
                         }
                     }
                 }
+                // c:2009-2014 typeset_setwidth — `-L N` / `-R N` / `-Z N`
+                // install pm.width = N. The auto-fallback in assignsparam
+                // (PM_INTEGER block at params.rs:3619) stamps width to
+                // s.len() when PM_RIGHT_Z is set but width==0; that lands
+                // BEFORE the post-assign PM_RIGHT_Z stamp here, so the
+                // user's explicit `-Z 6` was being overwritten by the
+                // value's char count. Set width AFTER setsparam so the
+                // explicit option arg wins over the auto-fallback.
+                {
+                    let width_arg: Option<&str> =
+                        if (on as u32 & PM_LEFT) != 0 && OPT_HASARG(&ops, b'L') {
+                            OPT_ARG(&ops, b'L')
+                        } else if (on as u32 & PM_RIGHT_B) != 0 && OPT_HASARG(&ops, b'R') {
+                            OPT_ARG(&ops, b'R')
+                        } else if (on as u32 & PM_RIGHT_Z) != 0 && OPT_HASARG(&ops, b'Z') {
+                            OPT_ARG(&ops, b'Z')
+                        } else {
+                            None
+                        };
+                    if let Some(s) = width_arg {
+                        if let Ok(w) = s.trim().parse::<i32>() {
+                            if let Ok(mut tab) = paramtab().write() {
+                                if let Some(pm) = tab.get_mut(n) {
+                                    pm.width = w;
+                                }
+                            }
+                        }
+                    }
+                }
                 // c:Src/params.c:3024 addenv — only mirror to OS env
                 // when PM_EXPORTED is in flags or already-exported.
                 let already_exported = env::var_os(n).is_some();

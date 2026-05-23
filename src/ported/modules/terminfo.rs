@@ -85,6 +85,25 @@ pub fn bin_echoti(
         Err(_) => return 1,
     };
 
+    // c:Src/utils.c:390 — boot_terminfo → zsetupterm() must run real
+    // ncurses setupterm so tigetnum/tigetflag/tigetstr have a cur_term.
+    // The Rust zsetupterm in utils.rs is a counter-only stub (no FFI),
+    // so without this guard tigetnum("cols") returns -2 (uninitialized)
+    // and echoti drops into "no such capability". Mirror the cur_term
+    // init pattern from terminfosetfn/terminfogetfn below.
+    static ECHOTI_TERM_READY: OnceLock<bool> = OnceLock::new();
+    let term_ok = *ECHOTI_TERM_READY.get_or_init(|| {
+        let mut errret: libc::c_int = 0;
+        unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
+    });
+    if !term_ok {
+        crate::ported::utils::zwarnnam(
+            name,
+            &format!("no such terminfo capability: {}", s),
+        );
+        return 1;
+    }
+
     // c:81 — `if (((num = tigetnum(s)) != -1) && (num != -2)) { ... }`.
     let num = unsafe { tigetnum(cs.as_ptr()) }; // c:81
     if num != -1 && num != -2 {

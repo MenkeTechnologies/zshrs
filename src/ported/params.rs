@@ -4078,30 +4078,83 @@ pub fn getsparam(name: &str) -> Option<String> {
             // which always missed → `read REPLY` after `(( REPLY=42 ))`
             // got nothing.
             let t = PM_TYPE(pm.node.flags as u32);
-            if t == PM_INTEGER {
+            // c:2390-2538 — when PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z + width
+            // are set, getstrvalue (called from getsparam in C) applies
+            // padding. Mirror that here so `$var` expansion respects
+            // `typeset -Z N` / `-L N` / `-R N` even when the caller
+            // didn't go through getstrvalue. Numeric prefix detection
+            // (leading blanks/minus/0x/base#) follows params.rs:3156.
+            let pad_flags = (pm.node.flags as u32) & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z);
+            let raw: Option<String> = if t == PM_INTEGER {
                 let base = if pm.base > 0 { pm.base } else { 10 };
-                return Some(convbase(pm.u_val, base as u32));
-            }
-            if t == PM_EFLOAT || t == PM_FFLOAT {
-                // c:2376 — `s = convfloat(getfn(pm), pm->base,
-                //                         pm->node.flags, NULL);`
-                // Pass pm.base (digit precision under `typeset -F N`
-                // / `-E N`) and pm.node.flags (carries PM_FFLOAT /
-                // PM_EFLOAT so the snprintf picks `%f` / `%e` instead
-                // of the default `%.17g` that ignores type). Was
-                // calling convfloat_underscore(u_dval, pm.width) which
-                // dropped both the format-flag bits and the precision
-                // arg, so every float printed at 17-digit `%g`
-                // precision regardless of typeset attributes —
-                // `local -F x=3.14` showed `3.1400000000000001`
-                // instead of `3.1400000000`.
-                return Some(convfloat(pm.u_dval, pm.base, pm.node.flags as u32));
-            }
-            if let Some(s) = pm.u_str.as_ref() {
-                return Some(s.clone());
-            }
-            if let Some(arr) = pm.u_arr.as_ref() {
-                return Some(arr.join(" "));
+                Some(convbase(pm.u_val, base as u32))
+            } else if t == PM_EFLOAT || t == PM_FFLOAT {
+                Some(convfloat(pm.u_dval, pm.base, pm.node.flags as u32))
+            } else if let Some(s) = pm.u_str.as_ref() {
+                Some(s.clone())
+            } else { pm.u_arr.as_ref().map(|arr| arr.join(" ")) };
+            if let Some(mut s) = raw {
+                if pad_flags != 0 && pm.width > 0 {
+                    let fwidth = pm.width as usize;
+                    let numeric_pm = (pm.node.flags as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT)) != 0;
+                    if pad_flags == PM_LEFT || pad_flags == (PM_LEFT | PM_RIGHT_Z) {
+                        let trimmed: &str = if pad_flags & PM_RIGHT_Z != 0 {
+                            s.trim_start_matches('0')
+                        } else {
+                            s.trim_start_matches(|c: char| c == ' ' || c == '\t')
+                        };
+                        let len = trimmed.chars().count();
+                        let take = len.min(fwidth);
+                        let mut out: String = trimmed.chars().take(take).collect();
+                        if fwidth > take {
+                            out.extend(std::iter::repeat(' ').take(fwidth - take));
+                        }
+                        s = out;
+                    } else if pad_flags & (PM_RIGHT_B | PM_RIGHT_Z) != 0 {
+                        let charlen = s.chars().count();
+                        if charlen < fwidth {
+                            let mut zero = true;
+                            let mut valprefend: usize = 0;
+                            if pad_flags & PM_RIGHT_Z != 0 {
+                                let bytes = s.as_bytes();
+                                let mut tpos = 0usize;
+                                while tpos < bytes.len() && (bytes[tpos] == b' ' || bytes[tpos] == b'\t') {
+                                    tpos += 1;
+                                }
+                                if numeric_pm && tpos < bytes.len() && bytes[tpos] == b'-' {
+                                    tpos += 1;
+                                }
+                                if (pm.node.flags as u32 & PM_INTEGER) != 0
+                                    && tpos + 1 < bytes.len()
+                                    && bytes[tpos] == b'0'
+                                    && bytes[tpos + 1] == b'x'
+                                {
+                                    tpos += 2;
+                                } else if (pm.node.flags as u32 & PM_INTEGER) != 0 {
+                                    if let Some(hash_off) = bytes[tpos..].iter().position(|&b| b == b'#') {
+                                        tpos += hash_off + 1;
+                                    }
+                                }
+                                valprefend = tpos;
+                                if tpos == bytes.len() {
+                                    zero = false;
+                                } else if !numeric_pm && !bytes[tpos].is_ascii_digit() {
+                                    zero = false;
+                                }
+                            }
+                            let pad_char = if (pad_flags & PM_RIGHT_B) != 0 || !zero { ' ' } else { '0' };
+                            let pad_count = fwidth - charlen;
+                            let prefix = &s[..valprefend];
+                            let rest = &s[valprefend..];
+                            let mut out = String::with_capacity(fwidth);
+                            out.push_str(prefix);
+                            out.extend(std::iter::repeat(pad_char).take(pad_count));
+                            out.push_str(rest);
+                            s = out;
+                        }
+                    }
+                }
+                return Some(s);
             }
         }
     }
