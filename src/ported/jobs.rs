@@ -2661,10 +2661,25 @@ pub fn bin_fg(
     // so the table reflects the current state before we list/dispatch.
     wait_for_processes();
 
-    // c:2477-2478 — `if (unset(NOTIFY)) scanjobs();`
-    // (scanjobs walks the table marking finished jobs for printing).
-    // Skipped: scanjobs port isn't surfaced as a free fn; consumers
-    // that need the print-on-prompt notify will route through it.
+    // c:2477-2478 — `if (unset(NOTIFY)) scanjobs();` — walk jobtab[i]
+    // printing each STAT_CHANGED entry inline. Same pattern used by
+    // preprompt (utils.rs) and execcmd_exec's AUTORESUME branch.
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::NOTIFY) {
+        if let Some(jt) = JOBTAB.get() {
+            let mut guard = jt.lock().unwrap();
+            let long_list = crate::ported::zsh_h::isset(
+                crate::ported::zsh_h::LONGLISTJOBS,
+            );
+            for i in 1..guard.len() {
+                if (guard[i].stat & crate::ported::zsh_h::STAT_CHANGED) != 0 {
+                    let s = printjob(&guard[i], i, long_list, None, None);
+                    if !s.is_empty() {
+                        eprint!("{}", s);
+                    }
+                }
+            }
+        }
+    }
 
     // c:2480-2481 — refresh CURJOB unless we're listing a frozen
     // oldjobtab snapshot from `jobs` in a non-monitor shell.
