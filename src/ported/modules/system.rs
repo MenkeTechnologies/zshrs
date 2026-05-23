@@ -26,7 +26,7 @@
 use crate::ported::math::{matheval, mnumber, MN_FLOAT, MN_INTEGER};
 use crate::ported::options::{opt_state_get, opt_state_set};
 use crate::ported::params::{isident, paramtab, setiparam, setsparam};
-use crate::ported::utils::{metafy, movefd, unmeta, zclose, zstrtol, zwarnnam};
+use crate::ported::utils::{metafy, movefd, unmeta, zclose, zerr, zstrtol, zwarnnam};
 use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module, options};
 use std::sync::{Mutex, OnceLock};
 
@@ -139,9 +139,15 @@ pub fn bin_sysread(
     // poll branch (c:129-152).
     if let Some(t_str) = timeout_arg {
         // c:137 — `to_mn = matheval(OPT_ARG(ops,'t'));`
+        // c:138-139 `if (errflag) return 1;` — mathevali's zerr already
+        // wrote the diagnostic in C; Rust captures it in Err — surface
+        // it via zerr() so callers see the parse error on stderr.
         let to_mn = match matheval(t_str) {
             Ok(m) => m,
-            Err(_) => return 1, // c:138-139 errflag
+            Err(msg) => {
+                zerr(&msg);
+                return 1; // c:138-139 errflag
+            }
         };
         // c:140-143 — float→int conversion of seconds × 1000.
         let to_int: i32 = if to_mn.type_ == MN_FLOAT {
@@ -567,9 +573,12 @@ pub fn bin_sysseek(
         None => return 1,
     };
     let pos = match crate::ported::math::mathevali(&pos_str) {
-        // c:461
+        // c:461 — mathevali errflag → zerr already in C; surface Err msg.
         Ok(v) => v,
-        Err(_) => return 1,
+        Err(msg) => {
+            zerr(&msg);
+            return 1;
+        }
     };
     // c:462 — `return (lseek(fd, pos, w) == -1) ? 2 : 0;`
     if unsafe { libc::lseek(fd, pos as libc::off_t, w) } == -1 {
@@ -789,7 +798,10 @@ pub fn bin_zsystem_flock(
                     };
                     let tp = match matheval(&optarg) {
                         Ok(m) => m,
-                        Err(_) => return 1,
+                        Err(msg) => {
+                            zerr(&msg);
+                            return 1;
+                        }
                     };
                     timeout = if (tp.type_ & MN_FLOAT) != 0 {
                         // c:604
@@ -823,7 +835,10 @@ pub fn bin_zsystem_flock(
                     };
                     let mut tp = match matheval(&optarg) {
                         Ok(m) => m,
-                        Err(_) => return 1,
+                        Err(msg) => {
+                            zerr(&msg);
+                            return 1;
+                        }
                     };
                     if (tp.type_ & MN_FLOAT) == 0 {
                         // c:636
@@ -865,7 +880,10 @@ pub fn bin_zsystem_flock(
     if unlock {
         let flock_fd: i32 = match crate::ported::math::mathevali(path) {
             Ok(v) => v as i32,
-            Err(_) => return 1,
+            Err(msg) => {
+                zerr(&msg);
+                return 1;
+            }
         };
         // c:676 — zcloselockfd(flock_fd) returns -1 if not in our lockfd table.
         if crate::ported::utils::zcloselockfd(flock_fd) < 0 {
