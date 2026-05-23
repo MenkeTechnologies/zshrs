@@ -1166,6 +1166,105 @@ impl ShellExecutor {
         for (k, v) in &arrays {
             setaparam(k, v.clone()); // c:params.c:3595
         }
+        // c:Src/params.c:384-394 — IPDEF8/IPDEF9 macros stamp
+        // `PM_SCALAR|PM_SPECIAL` (IPDEF8 for `PATH`/`FPATH`/etc.) and
+        // `PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT` (IPDEF9 for `path`/
+        // `fpath`/etc.) on every entry in the createparamtable table.
+        // setsparam/setaparam above create plain PM_SCALAR/PM_ARRAY
+        // entries; this loop applies the PM_SPECIAL + PM_TIED bits
+        // (plus the IPDEF9 PM_DONTIMPORT bit on the array side) so
+        // `${(t)PATH}` reads `scalar-tied-export-special` and
+        // `${(t)path}` reads `array-tied-special`.
+        //
+        // Walks the `special_params` table (params.rs:464+) which is
+        // the Rust port of the C IPDEF list. For each entry: OR the
+        // declared pm_flags onto the existing paramtab entry. The
+        // tied-pair entries (PM_TIED) also need PM_SPECIAL OR'd in
+        // since the IPDEF8/IPDEF9 macros add PM_SPECIAL implicitly;
+        // the table declares only the per-entry-distinct flags.
+        {
+            use crate::ported::params::{paramtab, special_params};
+            use crate::ported::zsh_h::{PM_ARRAY, PM_DONTIMPORT, PM_SCALAR, PM_SPECIAL, PM_TIED};
+            if let Ok(mut tab) = paramtab().write() {
+                // Stamp PM_SPECIAL onto every entry the special_params
+                // table declares. For tied scalars (PATH/FPATH/etc),
+                // also walks `tied_name` to apply IPDEF9-flag bits
+                // (PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT|PM_TIED) onto the
+                // partner array entry (path/fpath/etc) — those array
+                // names aren't in the special_params table directly
+                // but C zsh's createparamtable emits IPDEF9 rows for
+                // them at Src/params.c:425-432.
+                use crate::ported::zsh_h::{hashnode, param, PM_DONTIMPORT as PM_DI};
+                for entry in special_params.iter() {
+                    // c:384/394 IPDEF8/9 — `D|PM_SCALAR|PM_SPECIAL` or
+                    // `D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`.
+                    //
+                    // Mask `entry.pm_flags` to ONLY the attribute bits
+                    // that are safe to OR onto an existing Param without
+                    // changing assignment semantics. PM_READONLY in
+                    // particular MUST NOT be OR'd here: LINENO declares
+                    // PM_READONLY in the table (it's a getter-only param
+                    // from userspace's perspective), but the runtime's
+                    // own BUILTIN_SET_LINENO opcode writes via setsparam
+                    // and would be rejected. C zsh handles this via the
+                    // PM_SPECIAL GSU setfn bypass; the Rust port doesn't
+                    // route setsparam through the GSU vtable yet, so
+                    // keep the entries WRITABLE and just attach the
+                    // metadata bits userspace introspection cares about.
+                    let safe_pm_flags =
+                        entry.pm_flags & (PM_TIED | PM_DI);
+                    let mut bits = safe_pm_flags | PM_SPECIAL;
+                    if entry.pm_type == PM_ARRAY {
+                        bits |= PM_DI;
+                    }
+                    let _ = PM_SCALAR;
+                    let _ = PM_DONTIMPORT;
+                    if let Some(pm) = tab.get_mut(entry.name) {
+                        pm.node.flags |= bits as i32;
+                    } else if entry.pm_type == PM_SCALAR {
+                        // Param hasn't been created yet (e.g. PATH gets
+                        // imported lazily via the env fallback in
+                        // getsparam at params.rs:4104). Seed an empty
+                        // PM_SCALAR placeholder carrying the canonical
+                        // flag set so subsequent setsparam / `(t)PATH`
+                        // observers see the IPDEF8 attribute bits.
+                        let pm: crate::ported::zsh_h::Param = Box::new(param {
+                            node: hashnode {
+                                next: None,
+                                nam: entry.name.to_string(),
+                                flags: (entry.pm_type as i32) | bits as i32,
+                            },
+                            u_data: 0,
+                            u_arr: None,
+                            u_str: None,
+                            u_val: 0,
+                            u_dval: 0.0,
+                            u_hash: None,
+                            gsu_s: None,
+                            gsu_i: None,
+                            gsu_f: None,
+                            gsu_a: None,
+                            gsu_h: None,
+                            base: 0,
+                            width: 0,
+                            env: None,
+                            ename: None,
+                            old: None,
+                            level: 0,
+                        });
+                        tab.insert(entry.name.to_string(), pm);
+                    }
+                    // Tied partner side. For PATH ↔ path, FPATH ↔ fpath, etc.
+                    // C zsh IPDEF9 stamps PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT|PM_TIED.
+                    if let Some(tied) = entry.tied_name {
+                        if let Some(pm) = tab.get_mut(tied) {
+                            let partner_bits = PM_ARRAY | PM_SPECIAL | PM_DONTIMPORT | PM_TIED;
+                            pm.node.flags |= partner_bits as i32;
+                        }
+                    }
+                }
+            }
+        }
         // Populate paramtab with PM_SPECIAL placeholder Params for
         // every PARTAB / PARTAB_ARRAY magic-assoc name. Mirrors
         // what C's zsh/parameter module boot_ → handlefeatures
