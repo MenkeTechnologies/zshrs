@@ -6276,10 +6276,20 @@ pub fn paramsubst(
                 .unwrap_or_default();
             named.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
             let dir_one = |s: &str| -> String {
-                // c:2229
-                // Try named-dirs first (most specific wins).
+                // c:Src/utils.c:1127 finddir — HOME first (so the bare
+                // `~` wins when $HOME equals a named-dir path),
+                // then nameddirtab. The previous order (named first)
+                // made `hash -d hm=$HOME; (D)$HOME` render as `~hm`
+                // instead of zsh's `~`.
+                if let Some(ref h) = home_opt {
+                    if !h.is_empty() && s.starts_with(h.as_str()) {
+                        let r = &s[h.len()..];
+                        if r.is_empty() || r.starts_with('/') {
+                            return format!("~{}", r);
+                        }
+                    }
+                }
                 for (name, path) in &named {
-                    // c:2229
                     if !path.is_empty() && s.starts_with(path.as_str()) {
                         let r = &s[path.len()..];
                         if r.is_empty() || r.starts_with('/') {
@@ -6287,20 +6297,8 @@ pub fn paramsubst(
                         }
                     }
                 }
-                // Fall back to $HOME contraction.
-                if let Some(ref h) = home_opt {
-                    // c:2229
-                    if !h.is_empty() && s.starts_with(h.as_str()) {
-                        // c:2229
-                        let r = &s[h.len()..]; // c:2229
-                        if r.is_empty() || r.starts_with('/') {
-                            // c:2229
-                            return format!("~{}", r); // c:2229
-                        } // c:2229
-                    } // c:2229
-                } // c:2229
-                s.to_string() // c:2229
-            }; // c:2229
+                s.to_string()
+            };
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| dir_one(s)).collect();
                 value = new_parts.join(" ");
@@ -6620,32 +6618,14 @@ pub fn paramsubst(
                     // c:4155 if (mods & 1)
                     return s.to_string(); // c:4156
                 } // c:4156
-                  // Replace $HOME with `~`; replace each named-dir
-                  // path with `~name`. Direct port of substnamedir.
-                let mut out = s.to_string();
-                if let Some(home) = getsparam("HOME") {
-                    if !home.is_empty() && out.starts_with(&home) {
-                        out = format!("~{}", &out[home.len()..]);
-                    }
-                }
-                // Named-dir entries from canonical nameddirtab —
-                // longest-prefix-first to avoid shallow-prefix
-                // shadowing. Mirrors C's `mod_export HashTable
-                // nameddirtab` (hashnameddir.c:48).
-                if let Ok(t) = nameddirtab().lock() {
-                    let mut entries: Vec<(String, String)> = t
-                        .iter()
-                        .map(|(k, nd)| (k.clone(), nd.dir.clone()))
-                        .collect();
-                    entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.len()));
-                    for (name, path) in &entries {
-                        if !path.is_empty() && out.starts_with(path.as_str()) {
-                            out = format!("~{}{}", name, &out[path.len()..]);
-                            break;
-                        }
-                    }
-                }
-                out
+                  // c:Src/utils.c:1127 finddir — checks $HOME first
+                  // (so `~` wins over any `~name` whose path equals
+                  // $HOME), then walks nameddirtab. The previous
+                  // inline impl let nameddirtab matches override the
+                  // HOME wrap when both had the same path, so
+                  // `hash -d hm=$HOME` + `(D)$HOME` rendered as
+                  // `~hm` instead of `~`.
+                crate::ported::utils::finddir(s).unwrap_or_else(|| s.to_string())
             };
             let render_v = |s: &str| -> String {
                 // c:4157
