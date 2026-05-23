@@ -1480,11 +1480,31 @@ pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {
     // Read the live option state via the canonical opt_state_get
     // accessor (Src/ported/options.rs:1623) so `\${options[NAME]}`
     // reads the actual runtime state, not an empty placeholder.
-    let valid = optlookup(name) > 0; // c:1003
-    let (value, found) = if valid {
+    //
+    // optlookup returns SIGNED optno: positive means the canonical
+    // name (e.g. "rcs" → +RCS_OPTNUM), negative means a "no…" alias
+    // (e.g. "norcs" → -RCS_OPTNUM) which is the INVERSE — when RCS
+    // is OFF, "norcs" is "on".
+    let optno = optlookup(name); // c:1003
+    let (value, found) = if optno != 0 {
         // c:1005 — "on" if set, "off" otherwise.
+        // For negative optno (the "no" alias), invert the state so
+        // `options[norcs]` reports the inverse of `options[rcs]`.
         let on = crate::ported::options::opt_state_get(name)
-            .unwrap_or(false);
+            .unwrap_or_else(|| {
+                // Fallback: lookup via canonical (no-prefix-stripped)
+                // name. Necessary because opt_state_get is keyed on
+                // the canonical option name; "norcs" misses the
+                // direct lookup, so retry with the stripped name and
+                // negate.
+                let stripped = name.strip_prefix("no").unwrap_or(name);
+                let s = crate::ported::options::opt_state_get(stripped).unwrap_or(false);
+                if optno < 0 {
+                    !s
+                } else {
+                    s
+                }
+            });
         (
             if on { "on".to_string() } else { "off".to_string() },
             true,
