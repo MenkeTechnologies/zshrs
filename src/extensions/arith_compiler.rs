@@ -863,3 +863,456 @@ impl<'a> ArithCompiler<'a> {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tests — pure-expression evaluation via ArithCompiler → fusevm::VM.
+//
+// These tests pin the compiler's emitted bytecode by *running* the result and
+// asserting the numeric output. Variable / identifier paths need executor
+// pre-loading and are exercised by integration tests in tests/zshrs_shell.rs
+// — the unit tests below stay literal-only so they need no shell context.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fusevm::{VMResult, Value};
+
+    /// Compile + run an arithmetic expression. Panics on VM error so a
+    /// regression surfaces with the expression text.
+    fn eval(expr: &str) -> Value {
+        let chunk = ArithCompiler::new(expr).compile();
+        let mut vm = fusevm::VM::new(chunk);
+        match vm.run() {
+            VMResult::Ok(v) => v,
+            VMResult::Halted => Value::Undef,
+            VMResult::Error(e) => panic!("VM error evaluating {expr:?}: {e}"),
+        }
+    }
+
+    fn eval_int(expr: &str) -> i64 {
+        eval(expr).to_int()
+    }
+
+    fn eval_float(expr: &str) -> f64 {
+        eval(expr).to_float()
+    }
+
+    // ── Integer literals ─────────────────────────────────────────────────
+    #[test]
+    fn literal_zero() {
+        assert_eq!(eval_int("0"), 0);
+    }
+
+    #[test]
+    fn literal_small_positive() {
+        assert_eq!(eval_int("42"), 42);
+    }
+
+    #[test]
+    fn literal_large() {
+        assert_eq!(eval_int("1000000000"), 1_000_000_000);
+    }
+
+    #[test]
+    fn literal_hex_lowercase() {
+        assert_eq!(eval_int("0xff"), 255);
+    }
+
+    #[test]
+    fn literal_hex_uppercase() {
+        assert_eq!(eval_int("0XDEAD"), 0xDEAD);
+    }
+
+    #[test]
+    fn literal_hex_mixed() {
+        assert_eq!(eval_int("0xCaFe"), 0xCAFE);
+    }
+
+    #[test]
+    fn literal_octal() {
+        // C-style 0NNN — `017` is 15 decimal.
+        assert_eq!(eval_int("017"), 0o17);
+    }
+
+    #[test]
+    fn literal_octal_zero_prefix_only() {
+        // `0` alone is decimal zero; the octal path requires a digit AFTER `0`.
+        assert_eq!(eval_int("0"), 0);
+    }
+
+    // ── Float literals ───────────────────────────────────────────────────
+    #[test]
+    fn literal_float_simple() {
+        assert!((eval_float("3.14") - 3.14).abs() < 1e-9);
+    }
+
+    #[test]
+    fn literal_float_no_fractional_digits() {
+        // `5.` parses as 5.0 per read_number()'s `.` handling.
+        assert!((eval_float("5.") - 5.0).abs() < 1e-9);
+    }
+
+    // ── Addition / subtraction ───────────────────────────────────────────
+    #[test]
+    fn add_two_ints() {
+        assert_eq!(eval_int("40 + 2"), 42);
+    }
+
+    #[test]
+    fn sub_two_ints() {
+        assert_eq!(eval_int("50 - 8"), 42);
+    }
+
+    #[test]
+    fn sub_into_negative() {
+        assert_eq!(eval_int("5 - 10"), -5);
+    }
+
+    #[test]
+    fn add_chain_left_associative() {
+        assert_eq!(eval_int("1 + 2 + 3 + 4"), 10);
+    }
+
+    #[test]
+    fn sub_chain_left_associative() {
+        // (((100 - 1) - 2) - 3) = 94, NOT 100 - (1 - 2 - 3) = 104
+        assert_eq!(eval_int("100 - 1 - 2 - 3"), 94);
+    }
+
+    // ── Multiplication / division / modulo ──────────────────────────────
+    #[test]
+    fn mul_two_ints() {
+        assert_eq!(eval_int("6 * 7"), 42);
+    }
+
+    #[test]
+    fn div_two_ints() {
+        assert_eq!(eval_int("84 / 2"), 42);
+    }
+
+    #[test]
+    fn mod_two_ints() {
+        assert_eq!(eval_int("17 % 5"), 2);
+    }
+
+    #[test]
+    fn mod_evenly_divides() {
+        assert_eq!(eval_int("10 % 5"), 0);
+    }
+
+    // ── Precedence ───────────────────────────────────────────────────────
+    #[test]
+    fn precedence_mul_over_add() {
+        assert_eq!(eval_int("2 + 3 * 4"), 14);
+    }
+
+    #[test]
+    fn precedence_div_over_sub() {
+        assert_eq!(eval_int("20 - 10 / 2"), 15);
+    }
+
+    #[test]
+    fn precedence_parens_override() {
+        assert_eq!(eval_int("(2 + 3) * 4"), 20);
+    }
+
+    #[test]
+    fn precedence_nested_parens() {
+        assert_eq!(eval_int("((1 + 2) * (3 + 4))"), 21);
+    }
+
+    #[test]
+    fn precedence_pow_over_mul() {
+        // 2 * 3 ** 2 = 2 * 9 = 18, not (2*3)**2 = 36
+        assert_eq!(eval_int("2 * 3 ** 2"), 18);
+    }
+
+    #[test]
+    fn pow_right_associative() {
+        // 2 ** 3 ** 2 = 2 ** 9 = 512, not (2**3)**2 = 64
+        assert_eq!(eval_int("2 ** 3 ** 2"), 512);
+    }
+
+    // ── Unary operators ──────────────────────────────────────────────────
+    #[test]
+    fn unary_minus_literal() {
+        assert_eq!(eval_int("-5"), -5);
+    }
+
+    #[test]
+    fn unary_minus_expr() {
+        assert_eq!(eval_int("-(3 + 4)"), -7);
+    }
+
+    #[test]
+    fn unary_plus_is_noop() {
+        assert_eq!(eval_int("+42"), 42);
+    }
+
+    #[test]
+    fn double_negation_requires_separator() {
+        // `--5` parses as pre-decrement (the `--` token), NOT two unary minuses.
+        // Real double negation needs a space or parens between the two `-`s.
+        assert_eq!(eval_int("- -5"), 5);
+        assert_eq!(eval_int("-(-5)"), 5);
+    }
+
+    #[test]
+    fn unary_minus_binds_tighter_than_pow() {
+        // Our grammar: unary_expr → unary_expr (right-recursive), then primary.
+        // `-2 ** 2` parses as `(-2) ** 2` = 4 with this layout (pow is below
+        // unary). Pinning current behavior — if it changes, this test surfaces
+        // the change explicitly.
+        assert_eq!(eval_int("-2 ** 2"), 4);
+    }
+
+    // ── Bitwise ──────────────────────────────────────────────────────────
+    #[test]
+    fn bitand_basic() {
+        assert_eq!(eval_int("0xFF & 0x0F"), 0x0F);
+    }
+
+    #[test]
+    fn bitor_basic() {
+        assert_eq!(eval_int("0x10 | 0x01"), 0x11);
+    }
+
+    #[test]
+    fn bitxor_basic() {
+        assert_eq!(eval_int("0xFF ^ 0x0F"), 0xF0);
+    }
+
+    #[test]
+    fn bitnot_zero_is_minus_one() {
+        assert_eq!(eval_int("~0"), -1);
+    }
+
+    #[test]
+    fn bitnot_one() {
+        // ~1 = -2 (two's-complement)
+        assert_eq!(eval_int("~1"), -2);
+    }
+
+    #[test]
+    fn bitwise_precedence_and_over_or() {
+        // & binds tighter than | → 1 | (2 & 0) = 1 | 0 = 1
+        assert_eq!(eval_int("1 | 2 & 0"), 1);
+    }
+
+    // ── Shifts ───────────────────────────────────────────────────────────
+    #[test]
+    fn shl_basic() {
+        assert_eq!(eval_int("1 << 4"), 16);
+    }
+
+    #[test]
+    fn shr_basic() {
+        assert_eq!(eval_int("16 >> 2"), 4);
+    }
+
+    #[test]
+    fn shl_chain() {
+        assert_eq!(eval_int("1 << 1 << 2"), 8);
+    }
+
+    // ── Comparison ───────────────────────────────────────────────────────
+    #[test]
+    fn cmp_eq_true() {
+        assert_eq!(eval_int("5 == 5"), 1);
+    }
+
+    #[test]
+    fn cmp_eq_false() {
+        assert_eq!(eval_int("5 == 6"), 0);
+    }
+
+    #[test]
+    fn cmp_ne_true() {
+        assert_eq!(eval_int("5 != 6"), 1);
+    }
+
+    #[test]
+    fn cmp_lt_true() {
+        assert_eq!(eval_int("3 < 5"), 1);
+    }
+
+    #[test]
+    fn cmp_lt_false_on_equal() {
+        assert_eq!(eval_int("5 < 5"), 0);
+    }
+
+    #[test]
+    fn cmp_le_true_on_equal() {
+        assert_eq!(eval_int("5 <= 5"), 1);
+    }
+
+    #[test]
+    fn cmp_gt_true() {
+        assert_eq!(eval_int("5 > 3"), 1);
+    }
+
+    #[test]
+    fn cmp_ge_true_on_equal() {
+        assert_eq!(eval_int("5 >= 5"), 1);
+    }
+
+    // ── Logical ──────────────────────────────────────────────────────────
+    #[test]
+    fn logand_true_true() {
+        assert_eq!(eval_int("1 && 1"), 1);
+    }
+
+    #[test]
+    fn logand_short_circuits_on_false() {
+        // 0 && X — short-circuit means RHS doesn't matter.
+        assert_eq!(eval_int("0 && 99"), 0);
+    }
+
+    #[test]
+    fn logor_true_short_circuits() {
+        // 1 || X — short-circuit yields 1 regardless of RHS.
+        assert_eq!(eval_int("1 || 0"), 1);
+    }
+
+    #[test]
+    fn logor_both_false() {
+        assert_eq!(eval_int("0 || 0"), 0);
+    }
+
+    #[test]
+    fn lognot_true() {
+        assert_eq!(eval_int("!0"), 1);
+    }
+
+    #[test]
+    fn lognot_false() {
+        assert_eq!(eval_int("!1"), 0);
+    }
+
+    #[test]
+    fn lognot_double() {
+        // !!5 == truthy(5) == 1
+        assert_eq!(eval_int("!!5"), 1);
+    }
+
+    // ── Ternary ──────────────────────────────────────────────────────────
+    #[test]
+    fn ternary_true_branch() {
+        assert_eq!(eval_int("1 ? 10 : 20"), 10);
+    }
+
+    #[test]
+    fn ternary_false_branch() {
+        assert_eq!(eval_int("0 ? 10 : 20"), 20);
+    }
+
+    #[test]
+    fn ternary_condition_is_expression() {
+        assert_eq!(eval_int("(3 < 5) ? 100 : 200"), 100);
+    }
+
+    #[test]
+    fn ternary_nested_in_true_branch() {
+        assert_eq!(eval_int("1 ? (0 ? 1 : 2) : 3"), 2);
+    }
+
+    // ── Float arithmetic ─────────────────────────────────────────────────
+    #[test]
+    fn float_add() {
+        assert!((eval_float("1.5 + 2.5") - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn float_div_does_not_truncate() {
+        // 1.0 / 4.0 keeps fractional part. C zsh: `(( 1.0 / 4.0 ))` = 0.25.
+        assert!((eval_float("1.0 / 4.0") - 0.25).abs() < 1e-9);
+    }
+
+    // ── collect_identifiers (pure helper) ────────────────────────────────
+    #[test]
+    fn collect_identifiers_bare() {
+        let c = ArithCompiler::new("");
+        let names = c.collect_identifiers("a + b * c");
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn collect_identifiers_dollar_prefixed() {
+        let c = ArithCompiler::new("");
+        let names = c.collect_identifiers("$x + 1");
+        assert_eq!(names, vec!["x"]);
+    }
+
+    #[test]
+    fn collect_identifiers_braced() {
+        let c = ArithCompiler::new("");
+        let names = c.collect_identifiers("${count} * 2");
+        assert_eq!(names, vec!["count"]);
+    }
+
+    #[test]
+    fn collect_identifiers_positional() {
+        let c = ArithCompiler::new("");
+        let names = c.collect_identifiers("$1 + $2");
+        assert_eq!(names, vec!["1", "2"]);
+    }
+
+    #[test]
+    fn collect_identifiers_dedups() {
+        let c = ArithCompiler::new("");
+        let names = c.collect_identifiers("a + a + b + a");
+        assert_eq!(names, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn collect_identifiers_ignores_pure_numeric() {
+        let c = ArithCompiler::new("");
+        let names = c.collect_identifiers("42 + 7 * 3");
+        assert!(names.is_empty(), "got names: {names:?}");
+    }
+
+    // ── slot_for (variable slot allocator) ───────────────────────────────
+    #[test]
+    fn slot_for_first_var_gets_slot_zero() {
+        let mut c = ArithCompiler::new("");
+        assert_eq!(c.slot_for("x"), 0);
+    }
+
+    #[test]
+    fn slot_for_second_var_gets_slot_one() {
+        let mut c = ArithCompiler::new("");
+        let _ = c.slot_for("x");
+        assert_eq!(c.slot_for("y"), 1);
+    }
+
+    #[test]
+    fn slot_for_repeated_name_returns_same_slot() {
+        let mut c = ArithCompiler::new("");
+        let s1 = c.slot_for("a");
+        let s2 = c.slot_for("a");
+        assert_eq!(s1, s2);
+    }
+
+    // ── Chunk shape ──────────────────────────────────────────────────────
+    #[test]
+    fn compile_emits_pushframe_and_returnvalue_brackets() {
+        let chunk = ArithCompiler::new("1").compile();
+        assert!(
+            matches!(chunk.ops.first(), Some(Op::PushFrame)),
+            "first op should be PushFrame, got {:?}",
+            chunk.ops.first()
+        );
+        assert!(
+            matches!(chunk.ops.last(), Some(Op::ReturnValue)),
+            "last op should be ReturnValue, got {:?}",
+            chunk.ops.last()
+        );
+    }
+
+    #[test]
+    fn compile_sets_source_marker() {
+        let chunk = ArithCompiler::new("1").compile();
+        assert_eq!(chunk.source, "$((...))");
+    }
+}
