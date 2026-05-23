@@ -5651,7 +5651,17 @@ pub fn paramsubst(
                 p += 1; // c:2439
             } // c:2439
             push_word(&mut cur, &mut words); // c:2439
-            value = words.join(" "); // c:2439
+            // c:4174-4198 — bufferwords result becomes a word list:
+            // when there are multiple words OR isarr was set, the
+            // value is the list (aval), else the single joined val.
+            // Mirror by setting split_parts so the auto_splat block
+            // (or DQ join via sepjoin gate) consumes the list.
+            // Per c:3274 split-from-scalar convention, isarr = 2.
+            value = words.join(" "); // c:4191 single-word case
+            if !words.is_empty() {
+                split_parts = Some(words); // c:4194
+                isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274 split-from-scalar
+            }
         } // c:2473
 
         // (D) dir-magic — replace $HOME and any nameddir prefix with
