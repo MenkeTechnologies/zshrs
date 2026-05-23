@@ -5337,6 +5337,38 @@ pub fn paramsubst(
                     tab.get(&var_name).map(|pm| {
                         // c:2814
                         let f = pm.node.flags as u32; // c:2814
+                        // c:Src/params.c paramtype-from-flags read.
+                        // For PM_SPECIAL params, the pm_type bits aren't
+                        // always carried on the paramtab entry (env-
+                        // imported specials like SHLVL come in as
+                        // PM_SCALAR even though IPDEF5 declares them
+                        // PM_INTEGER). Overlay the canonical pm_type
+                        // from special_params so (t) reads match zsh
+                        // (`integer-export-special` instead of
+                        // `scalar-special` for $SHLVL). Also detect
+                        // env-presence to set PM_EXPORTED on params
+                        // that came in via the environment but whose
+                        // paramtab entry didn't carry the flag (set-
+                        // before-export sequence loses the flag).
+                        let f_overlay = if (f & PM_SPECIAL) != 0 {
+                            let mut bits = f;
+                            if let Some(sp) = crate::ported::params::special_params
+                                .iter()
+                                .find(|sp| sp.name == var_name.as_str())
+                            {
+                                bits |= sp.pm_type as u32;
+                            }
+                            // c:Src/params.c PM_EXPORTED — present iff
+                            // the name has a non-null `pm->env` entry,
+                            // which mirrors std::env::var Ok in Rust.
+                            if std::env::var(&var_name).is_ok() {
+                                bits |= PM_EXPORTED;
+                            }
+                            bits
+                        } else {
+                            f
+                        };
+                        let f = f_overlay;
                         let val = if f & PM_HASHED != 0 {
                             "association"
                         }
