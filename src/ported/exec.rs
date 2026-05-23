@@ -5986,6 +5986,144 @@ pub fn execcmd_analyse(
     }
 }
 
+/// Port of `execpline2(Estate state, wordcode pcode, int how, int input,
+/// int output, int last1)` from `Src/exec.c:1989-2040`. Recursive
+/// multi-stage pipe walker: at each step, analyse the current
+/// command, fork-into-pipe (if mid-pipeline) or exec directly (if
+/// WC_PIPE_END), then recurse on the next stage with `pipes[0]` as
+/// its input fd.
+pub fn execpline2(
+    state: &mut estate,
+    pcode: wordcode,
+    how: i32,
+    input: i32,
+    output: i32,
+    last1: i32,
+) {
+    use crate::ported::builtin::{BREAKS, INEVAL, RETFLAG};
+    use crate::ported::zsh_h::{
+        execcmd_params, CS_PIPE, WC_PIPE_END, WC_PIPE_LINENO as ZWC_PIPE_LINENO,
+        WC_PIPE_TYPE as ZWC_PIPE_TYPE, Z_ASYNC,
+    };
+    // c:1991
+    let mut eparams: execcmd_params = execcmd_params::default(); // c:1994 `struct execcmd_params eparams;`
+
+    // c:1996-1997 — `if (breaks || retflag) return;`
+    if BREAKS.load(Ordering::SeqCst) != 0 || RETFLAG.load(Ordering::SeqCst) != 0 {
+        return;
+    }
+
+    // c:1999-2001 — `if (!IN_EVAL_TRAP() && !ineval && WC_PIPE_LINENO(pcode))
+    //                  lineno = WC_PIPE_LINENO(pcode) - 1;`
+    if !crate::ported::zsh_h::IN_EVAL_TRAP()
+        && INEVAL.load(Ordering::SeqCst) == 0
+        && ZWC_PIPE_LINENO(pcode) != 0
+    {
+        let new_lineno = ZWC_PIPE_LINENO(pcode).saturating_sub(1) as usize;
+        crate::ported::input::lineno.with(|l| l.set(new_lineno));
+    }
+
+    // c:2003-2011 — pline_level == 1 → snapshot to list_pipe_text for `jobs` output.
+    if pline_level.load(Ordering::Relaxed) == 1 {
+        // c:2003
+        if (how & Z_ASYNC as i32) != 0 || sfcontext.load(Ordering::Relaxed) == 0 {
+            // c:2004 — `(how & Z_ASYNC) || !sfcontext`
+            // c:2005-2008 — `strcpy(list_pipe_text, getjobtext(state->prog,
+            //   state->pc + (WC_PIPE_TYPE(pcode) == WC_PIPE_END ? 0 : 1)));`
+            let pc_for_text = state.pc
+                + if ZWC_PIPE_TYPE(pcode) == WC_PIPE_END {
+                    0
+                } else {
+                    1
+                };
+            let text = crate::ported::text::getjobtext(state.prog.clone(), Some(pc_for_text));
+            if let Ok(mut lpt) = LIST_PIPE_TEXT.lock() {
+                *lpt = text;
+            }
+        } else {
+            // c:2010 — `list_pipe_text[0] = '\0';`
+            if let Ok(mut lpt) = LIST_PIPE_TEXT.lock() {
+                lpt.clear();
+            }
+        }
+    }
+
+    if ZWC_PIPE_TYPE(pcode) == WC_PIPE_END {
+        // c:2012-2014 — terminal stage: analyse + exec directly.
+        execcmd_analyse(state, &mut eparams); // c:2013
+        execcmd_exec(
+            state,
+            &mut eparams,
+            input,
+            output,
+            how,
+            if last1 != 0 { 1 } else { 2 }, // c:2014 `last1 ? 1 : 2`
+            -1, // c:2014 close_if_forked = -1
+        );
+    } else {
+        // c:2015-2039 — non-terminal stage: pipe + fork + recurse.
+        let mut pipes: [i32; 2] = [-1, -1]; // c:2016
+        let old_list_pipe = list_pipe.load(Ordering::Relaxed); // c:2017
+        // c:2018 — `Wordcode next = state->pc + (*state->pc);`
+        let next = if state.pc < state.prog.prog.len() {
+            state.pc + state.prog.prog[state.pc] as usize
+        } else {
+            state.pc
+        };
+        // c:2020 — `++state->pc;`
+        if state.pc < state.prog.prog.len() {
+            state.pc += 1;
+        }
+        execcmd_analyse(state, &mut eparams); // c:2021
+
+        if mpipe(&mut pipes) < 0 {
+            // c:2023-2025 — pipe() failure — `/* FIXME */` in C, fall through.
+        }
+
+        // c:2027 — `addfilelist(NULL, pipes[0]);`
+        // C uses the current thisjob's filelist; Rust port wires through JOBTAB.
+        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            let mut guard = jt.lock().unwrap();
+            let tj = {
+                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                    *m.lock().unwrap()
+                } else {
+                    -1
+                }
+            };
+            if tj >= 0 {
+                if let Some(j) = guard.get_mut(tj as usize) {
+                    crate::ported::jobs::addfilelist(j, None, pipes[0]);
+                }
+            }
+        }
+
+        // c:2028 — `execcmd_exec(state, &eparams, input, pipes[1], how, 0, pipes[0]);`
+        execcmd_exec(state, &mut eparams, input, pipes[1], how, 0, pipes[0]);
+        let _ = zclose(pipes[1]); // c:2029
+        state.pc = next; // c:2030
+
+        // c:2034 — `cmdpush(CS_PIPE);`
+        crate::ported::prompt::cmdpush(CS_PIPE as u8);
+        // c:2035 — `list_pipe = 1;`
+        list_pipe.store(1, Ordering::Relaxed);
+        // c:2036 — `execpline2(state, *state->pc++, how, pipes[0], output, last1);`
+        let next_pcode = if state.pc < state.prog.prog.len() {
+            state.prog.prog[state.pc]
+        } else {
+            0
+        };
+        if state.pc < state.prog.prog.len() {
+            state.pc += 1;
+        }
+        execpline2(state, next_pcode, how, pipes[0], output, last1);
+        // c:2037 — `list_pipe = old_list_pipe;`
+        list_pipe.store(old_list_pipe, Ordering::Relaxed);
+        // c:2038 — `cmdpop();`
+        crate::ported::prompt::cmdpop();
+    }
+}
+
 /// Port of `execpline(Estate state, wordcode slcode, int how, int last1)`
 /// from `Src/exec.c:1668-1942`. Walks the WC_PIPE chain, sets up
 /// pipes/fork between stages, handles Z_TIMED / Z_ASYNC.
