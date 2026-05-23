@@ -4998,10 +4998,11 @@ pub fn setaparam(name: &str, val: Vec<String>) -> Option<Param> {
 /// alternating key,value list) into paramtab + the parallel
 /// `paramtab_hashed_storage` table; returns the new Param.
 ///
-/// Pending C semantics:
-///   - PM_READONLY rejection
-///   - resetparam(PM_HASHED) for type-change
+/// Ported C semantics:
+///   - PM_READONLY rejection (c:3625 via setarrvalue chain in C; here inline)
 ///   - PM_SPECIAL type-change reject (c:3637)
+/// Pending:
+///   - resetparam(PM_HASHED) for non-special type-change (rare)
 pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
     // c:3611-3615 — `if (!isident(s)) { zerr; return NULL }`.
     if !isident(name) {
@@ -5012,6 +5013,29 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
     if name.contains('[') {
         zerr("nested associative arrays not yet supported");
         return None;
+    }
+
+    // c:3625 — PM_READONLY rejection. C routes through gsu.h->setfn
+    // which checks readonly inside hashsetfn / arrhashsetfn; Rust
+    // bypasses that path, so check explicitly here.
+    {
+        let tab = paramtab().read().unwrap();
+        if let Some(pm) = tab.get(name) {
+            if (pm.node.flags as u32 & PM_READONLY) != 0 {
+                zerr(&format!("read-only variable: {}", name));
+                errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                return None;
+            }
+            // c:3637 — `if (PM_TYPE(pm->node.flags) != PM_HASHED &&
+            //              (pm->node.flags & PM_SPECIAL)) { zerr; return; }`
+            // Can't change type of a PM_SPECIAL non-hashed param.
+            let pm_type = pm.node.flags as u32 & PM_TYPE(u32::MAX);
+            if pm_type != PM_HASHED && (pm.node.flags as u32 & PM_SPECIAL) != 0 {
+                zerr(&format!("{}: can't change type of a special parameter", name));
+                errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                return None;
+            }
+        }
     }
 
     // c:3625 — fetchvalue / createparam(PM_HASHED) if missing.
