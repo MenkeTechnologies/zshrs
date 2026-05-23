@@ -4699,8 +4699,23 @@ pub fn glob_path(pattern: &str) -> Vec<String> {
     // Main walk via the canonical glob driver.
     let mut state = globdata::new();
     let matches = globdata_glob(&mut state, pattern);
-    if matches.is_empty() && !null_glob {
-        return vec![pattern.to_string()];
+    if matches.is_empty() {
+        // c:1567-1569 — per-glob `(N)` qualifier acts like setopt
+        // nullglob for THIS expression. globdata_glob's inner
+        // expand_glob parses the qualifier into state.qualifiers,
+        // but that state doesn't reach back here; re-parse the
+        // qualifier-set off the pattern to make the no-match
+        // decision. Mirrors the C path where `gf_nullglob` lives
+        // in the per-call globdata struct and the no-match arm
+        // at c:1846-1848 consults it.
+        let nullglob_per_qual = parse_qualifiers(pattern)
+            .1
+            .map(|q| q.nullglob)
+            .unwrap_or(false);
+        if !null_glob && !nullglob_per_qual {
+            return vec![pattern.to_string()];
+        }
+        return Vec::new();
     }
     matches
 }
