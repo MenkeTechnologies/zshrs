@@ -8141,11 +8141,51 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
 
 /// True if `name` is an array in `paramtab`.
 fn arrays_contains(name: &str) -> bool {
-    paramtab()
+    // c:Src/params.c:3262 IPDEF9 — pparams is the @/argv array.
+    if name == "@" || name == "*" || name == "argv" {
+        return true;
+    }
+    // c:Src/params.c:425-434 — tied-array IPDEF9 lowercase partners
+    // (path/fpath/cdpath/mailpath/manpath/psvar/module_path) exist
+    // whenever their uppercase scalar partner is set. The Rust port
+    // doesn't auto-create the lowercase paramtab entry, so
+    // `${+module_path}` etc. returned 0 even though MODULE_PATH was
+    // set. Mirror the tied-partner aliasing here.
+    let tied_partner = match name {
+        "path" => Some("PATH"),
+        "fpath" => Some("FPATH"),
+        "cdpath" => Some("CDPATH"),
+        "mailpath" => Some("MAILPATH"),
+        "manpath" => Some("MANPATH"),
+        "psvar" => Some("PSVAR"),
+        "module_path" => Some("MODULE_PATH"),
+        "zsh_eval_context" => Some("ZSH_EVAL_CONTEXT"),
+        "fignore" => Some("FIGNORE"),
+        _ => None,
+    };
+    if paramtab()
         .read()
         .map_or(false, |tab| {
             tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
         })
+    {
+        return true;
+    }
+    // Tied partner exists → array partner is conceptually set. C's
+    // `$+name` returns 1 iff the paramtab entry exists, regardless
+    // of value (including empty). Mirror via paramtab.contains_key
+    // on the UPPERCASE partner. Falls back to env presence for the
+    // hand-off case where the param hasn't been entered into
+    // paramtab yet (env-import lazy path).
+    if let Some(partner) = tied_partner {
+        let in_tab = paramtab()
+            .read()
+            .map_or(false, |tab| tab.contains_key(partner));
+        if in_tab || std::env::var(partner).is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Insert / replace an array parameter. Writes through the
