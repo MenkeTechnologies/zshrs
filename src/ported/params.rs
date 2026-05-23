@@ -3826,9 +3826,11 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
 ///   - PM_HASHED with other bounds → zerr slice-of-assoc (c:2929-2932)
 ///   - PM_ARRAY with slice → bounds adjust + splice (c:2933+)
 ///
-/// Pending: ASSPM_AUGMENT prepend (c:2945-2954), PM_UNIQUE dedupe
-/// after assign (c:2966-2967), VALFLAG_INV + !KSHARRAYS off-by-one
-/// (c:2938-2942).
+/// VALFLAG_INV + !KSHARRAYS off-by-one (c:2938-2942) is ported below.
+/// PM_UNIQUE dedupe (c:2966-2967) is ported at the tail. ASSPM_AUGMENT
+/// prepend (c:2945-2954) for slice-AUGMENT remains deferred — rare path
+/// (`a[i,j]+=...` array+=) that requires snapshotting the pre-existing
+/// slice value before splice.
 pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     // c:2895
     // c:2897-2898 — `if (unset(EXECOPT)) return;`. Match the same
