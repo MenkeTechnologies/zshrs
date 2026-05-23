@@ -2175,18 +2175,14 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
 /// via `mpipe`, or appends another fd to an already-split stream
 /// (re-allocating `mfds[fd1]` past the MULTIOUNIT boundary).
 ///
-/// =================== WARNING — DIVERGENCE ====================
-/// `hrealloc` at c:2485 grows the multio struct past MULTIOUNIT in C
-/// (variable-length tail). The Rust port `multio` (zsh_h.rs:1390)
-/// declares `fds: [i32; MULTIOUNIT]` (fixed 8-slot array). The
-/// extend-past-MULTIOUNIT branch falls back to a zerr() since we
-/// can't append past the array bound. Re-port `multio` as
-/// `Vec<i32>` (or a sized-tail variant) to remove this cap.
+/// `multio.fds` is now `Vec<i32>` (zsh_h.rs:1397) so the C
+/// `hrealloc` at c:2485 maps to `Vec::push`; MULTIOUNIT is no
+/// longer a hard cap (still 8 for the initial allocation, grown
+/// on demand thereafter).
 ///
 /// `fdtable[fdN] |= FDT_SAVED_MASK` at c:2440 — Rust fdtable_set
 /// stores the int value but doesn't expose a bitwise-OR setter; we
 /// re-read + OR + re-store as two atomic-feeling steps.
-/// =============================================================
 pub fn addfd(
     forked: i32,
     save: &mut [i32; 10],
@@ -3725,7 +3721,21 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         return None; // c:4949
     }
     // c:4951-4958 — TMPSUFFIX link block (see WARNING f).
-    // addfilelist(nam, 0) — see WARNING (a).
+    // c:4960 — `addfilelist(nam, 0);` — register temp file in current
+    // job's filelist so it's unlinked at job exit (not relying on the
+    // OS temp-reaper).
+    if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+        let mut guard = jt.lock().unwrap();
+        let tj = crate::ported::jobs::THISJOB
+            .get()
+            .map(|m| *m.lock().unwrap())
+            .unwrap_or(-1);
+        if tj >= 0 {
+            if let Some(j) = guard.get_mut(tj as usize) {
+                crate::ported::jobs::addfilelist(j, Some(&nam), 0);
+            }
+        }
+    }
     if let Some(sv) = s {
         // c:4962 — optimised here-string write path.
         let mut buf: Vec<u8> = sv.into_bytes();
@@ -3835,8 +3845,21 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         }
         let fd = pipes[(1 - out) as usize]; // c:5085
         fdtable_set(fd, FDT_PROC_SUBST); // c:5086
-                                         // c:5087 — addfilelist(NULL, fd) skipped (WARNING c)
-                                         // c:5088-5091 — addproc skipped (WARNING b)
+        // c:5087 — `addfilelist(NULL, fd);` — register the proc-subst
+        // pipe fd in the current job's filelist so it's closed at job exit.
+        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            let mut guard = jt.lock().unwrap();
+            let tj = crate::ported::jobs::THISJOB
+                .get()
+                .map(|m| *m.lock().unwrap())
+                .unwrap_or(-1);
+            if tj >= 0 {
+                if let Some(j) = guard.get_mut(tj as usize) {
+                    crate::ported::jobs::addfilelist(j, None, fd);
+                }
+            }
+        }
+        // c:5088-5091 — addproc skipped (WARNING b)
         procsubstpid.store(pid, Ordering::Relaxed); // c:5092
         return Some(pnam); // c:5093
     }
