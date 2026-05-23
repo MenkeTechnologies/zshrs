@@ -75,6 +75,14 @@ thread_local! {
 // Set before VM execution, cleared after. Used by builtin handlers.
 thread_local! {
     static CURRENT_EXECUTOR: RefCell<Option<*mut ShellExecutor>> = const { RefCell::new(None) };
+    /// Set by subshell_end after a deferred subshell `exit N` lands.
+    /// Read + cleared by the next GET_VAR sync_status path so the
+    /// vm.last_status → LASTVAL sync doesn't clobber the deferred
+    /// exit status. RUST-ONLY: needed because zshrs runs subshells
+    /// in-process (no fork) so vm.last_status doesn't track the
+    /// subshell's exit; C zsh's subshell forks and the child's
+    /// process::exit(N) becomes $? in the parent automatically.
+    static SUBSHELL_EXIT_STATUS_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// RAII guard that sets/clears the thread-local executor pointer.
@@ -2275,13 +2283,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let args = pop_args(vm, argc);
         let name = args.into_iter().next().unwrap_or_default();
         let live_status = vm.last_status;
+        // Suppress sync when a deferred subshell exit just landed:
+        // LASTVAL holds the correct deferred status, vm.last_status
+        // is stale (post-subshell vm doesn't propagate status). See
+        // SUBSHELL_EXIT_STATUS_PENDING TLS declaration for rationale.
+        let suppress_sync = SUBSHELL_EXIT_STATUS_PENDING.with(|c| {
+            let prev = c.get();
+            c.set(false);
+            prev
+        });
         // `$@` and `$*` need splice semantics — return Value::Array of
         // positional params so for-loop's BUILTIN_ARRAY_FLATTEN spreads them
         // and pop_args splits them into argv slots. zsh's `"$@"` bslashquote-each-
         // word semantics matches: each pos-param becomes its own arg.
         // Same for arrays accessed by name (e.g. `$arr` in some contexts).
         let sync_status = |exec: &mut ShellExecutor| {
-            exec.set_last_status(live_status);
+            if !suppress_sync {
+                exec.set_last_status(live_status);
+            }
         };
         if name == "@" || name == "*" {
             return with_executor(|exec| {
@@ -4802,6 +4821,11 @@ impl fusevm::ShellHost for ZshrsHost {
                 .unwrap_or(0);
             exec.set_scalar("ZSH_SUBSHELL".to_string(), (level + 1).to_string());
         });
+        // Bump SUBSHELL_DEPTH so zexit defers process::exit (see
+        // SUBSHELL_DEPTH declaration in src/ported/builtin.rs for
+        // rationale).
+        crate::ported::builtin::SUBSHELL_DEPTH
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn subshell_end(&mut self) {
@@ -4872,6 +4896,35 @@ impl fusevm::ShellHost for ZshrsHost {
                 exec.traps = snap.traps;
             }
         });
+        // Decrement SUBSHELL_DEPTH. If a deferred subshell exit
+        // landed inside (EXIT_PENDING set with depth > 0), promote
+        // the deferred status into the subshell's exit status now
+        // that we're at the boundary, then clear so the parent
+        // continues. Matches C zsh's "subshell-exit-via-fork"
+        // boundary where the child's process::exit(N) becomes
+        // $WAITSTATUS / $? in the parent.
+        crate::ported::builtin::SUBSHELL_DEPTH
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        let exit_pending = crate::ported::builtin::EXIT_PENDING
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if exit_pending != 0 {
+            let val = crate::ported::builtin::EXIT_VAL
+                .load(std::sync::atomic::Ordering::Relaxed);
+            with_executor(|exec| exec.set_last_status(val));
+            crate::ported::builtin::EXIT_PENDING
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::RETFLAG
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::BREAKS
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            // Set the post-subshell-exit guard. The next GET_VAR
+            // sync_status path consults this to skip its
+            // vm.last_status→LASTVAL sync (which would overwrite the
+            // deferred-exit status we just set with stale vm state
+            // since SubshellEnd doesn't propagate status into the
+            // VM). Cleared as soon as the next sync_status sees it.
+            SUBSHELL_EXIT_STATUS_PENDING.with(|c| c.set(true));
+        }
     }
 
     fn redirect(&mut self, fd: u8, op: u8, target: &str) {

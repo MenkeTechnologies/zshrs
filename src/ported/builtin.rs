@@ -7188,6 +7188,21 @@ pub fn zexit(val: i32, from_where: i32) {
         crate::ported::signals::killrunjobs(if from_where == ZEXIT_SIGNAL { 1 } else { 0 });
         // c:6023
     }
+    // !!! RUST-ONLY GATE: see SUBSHELL_DEPTH declaration above for
+    // rationale. C zsh's realexit at c:5953 unconditionally calls
+    // process::exit because the subshell was forked; in zshrs the
+    // subshell runs in-process, so process::exit would kill the
+    // whole shell. Defer: set EXIT_PENDING + EXIT_VAL + reset
+    // SHELL_EXITING so the subshell_end unwind in fusevm_bridge
+    // catches and propagates the status to the parent.
+    if SUBSHELL_DEPTH.load(Relaxed) > 0 {
+        SHELL_EXITING.store(0, Relaxed);
+        EXIT_VAL.store(val, Relaxed);
+        EXIT_PENDING.store(1, Relaxed);
+        RETFLAG.store(1, Relaxed);
+        BREAKS.store(LOOPS.load(Relaxed), Relaxed);
+        return;
+    }
     realexit(); // c:6082
 }
 
@@ -10031,6 +10046,30 @@ pub static JOBSTATS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 pub static SHELL_EXITING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static EXIT_PENDING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static EXIT_VAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// ====================================================================
+// !!! WARNING: RUST-ONLY ATOMIC — NO DIRECT C COUNTERPART !!!
+// ====================================================================
+// C zsh forks for `(...)` subshells; the child runs to completion
+// then exits via process::exit, and the parent (post-fork) continues.
+// zshrs runs subshells in-process via fusevm_bridge::subshell_begin/
+// subshell_end (no fork), so `exit N` inside a subshell would call
+// realexit() → process::exit(N) and terminate the WHOLE shell —
+// breaking `(exit 7); echo $?` (expected: `7\n`, observed: shell
+// dies with code 7).
+//
+// This counter is bumped by subshell_begin / decremented by
+// subshell_end. zexit() at c:5977 checks it before realexit and,
+// when > 0, sets EXIT_VAL + EXIT_PENDING and returns — letting the
+// subshell unwinder catch the deferred exit at its boundary
+// (mirroring what the deferred-exit path at c:5871-5891 does for
+// function-scope exit).
+//
+// In C zsh, equivalent state is `forklevel` AT EXACTLY the subshell
+// depth that fork would create — but the C check `locallevel >
+// forklevel` is FALSE at subshell-top precisely so the fork can
+// exit the child via realexit. Without fork, we need this extra
+// gate.
+pub static SUBSHELL_DEPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static LASTVAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 // `tok` for the test builtin — Src/builtin.c:7000 ranges. The full enum
