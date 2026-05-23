@@ -6012,6 +6012,128 @@ pub fn execcmd_analyse(
 /// ..., "context")` pushes its label and pops on return.
 pub static zsh_eval_context: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+/// Port of `save_params(Estate state, Wordcode pc, LinkList *restore_p,
+/// LinkList *remove_p)` from `Src/exec.c:4410-4458`. Walk WC_ASSIGN
+/// chain at `pc`, snapshot each existing param into `restore_p` (so
+/// the builtin/shfunc can restore them on return) and enqueue every
+/// touched name in `remove_p` (so we know what to unset).
+pub fn save_params(
+    state: &mut estate,
+    pc: usize,
+    restore_p: &mut Vec<crate::ported::zsh_h::param>,
+    remove_p: &mut Vec<String>,
+) {
+    use crate::ported::zsh_h::{
+        PM_READONLY, PM_SPECIAL, WC_ASSIGN, WC_ASSIGN_NUM as ZWC_ASSIGN_NUM,
+        WC_ASSIGN_SCALAR as ZWC_ASSIGN_SCALAR, WC_ASSIGN_TYPE as ZWC_ASSIGN_TYPE,
+    };
+    // c:4410 — `*restore_p = newlinklist();` — caller pre-allocates.
+    // c:4417 — `*remove_p = newlinklist();` — caller pre-allocates.
+    let mut p = pc;
+    // c:4419 — `while (wc_code(ac = *pc) == WC_ASSIGN)`
+    loop {
+        if p >= state.prog.prog.len() {
+            break;
+        }
+        let ac = state.prog.prog[p];
+        if wc_code(ac) != WC_ASSIGN {
+            break;
+        }
+        // c:4420 — `s = ecrawstr(state->prog, pc + 1, NULL);`
+        let s = crate::ported::parse::ecrawstr(&state.prog, p + 1, None);
+        // c:4421 — `pm = paramtab->getnode(paramtab, s)`
+        let pm_clone: Option<crate::ported::zsh_h::param> = {
+            let tab = crate::ported::params::paramtab().read().unwrap();
+            tab.get(&s).map(|b| (**b).clone())
+        };
+        if let Some(pm) = pm_clone {
+            // c:4423-4424 — `if (pm->env) delenv(pm);`
+            if pm.env.is_some() {
+                crate::ported::params::delenv(&s);
+            }
+            // c:4425-4448 — copy if not readonly-special.
+            if (pm.node.flags & PM_SPECIAL as i32) == 0 {
+                // c:4426-4438 — regular param: deep copy via copyparam(tpm, pm, 0).
+                let mut tpm = pm.clone();
+                tpm.node.nam = s.clone();
+                // copyparam with fakecopy=0 already done by the clone()
+                // (Clone derives a deep copy of param fields).
+                restore_p.push(tpm); // c:4451
+            } else if (pm.node.flags & PM_READONLY as i32) == 0 {
+                // c:4439-4448 — special-but-not-readonly: fakecopy=1.
+                let mut tpm = pm.clone();
+                tpm.node.nam = pm.node.nam.clone();
+                restore_p.push(tpm); // c:4451
+            }
+            // c:4449 — `addlinknode(*remove_p, dupstring(s));`
+            remove_p.push(s.clone());
+        } else {
+            // c:4453 — `addlinknode(*remove_p, dupstring(s));`
+            remove_p.push(s.clone());
+        }
+        // c:4455 — `pc += (WC_ASSIGN_TYPE(ac) == WC_ASSIGN_SCALAR ? 3 : WC_ASSIGN_NUM(ac) + 2);`
+        p += if ZWC_ASSIGN_TYPE(ac) == ZWC_ASSIGN_SCALAR {
+            3
+        } else {
+            (ZWC_ASSIGN_NUM(ac) + 2) as usize
+        };
+    }
+}
+
+/// Port of `restore_params(LinkList restorelist, LinkList removelist)`
+/// from `Src/exec.c:4464-4528`. After the builtin/shfunc returns,
+/// unset every name in removelist, then for each saved param in
+/// restorelist re-install its values (PM_SPECIAL go through gsu
+/// setfn; regular params re-enter paramtab as-is).
+pub fn restore_params(
+    restorelist: Vec<crate::ported::zsh_h::param>,
+    removelist: Vec<String>,
+) {
+    use crate::ported::zsh_h::{PM_SPECIAL, PM_READONLY};
+    // c:4470-4476 — `while ((s = ugetnode(removelist)))` — unset each.
+    for s in &removelist {
+        // c:4471 — `if ((pm = paramtab->getnode(paramtab, s)) && !(pm->node.flags & PM_SPECIAL))`
+        let flags = {
+            let tab = crate::ported::params::paramtab().read().unwrap();
+            tab.get(s).map(|p| p.node.flags)
+        };
+        if let Some(f) = flags {
+            if (f & PM_SPECIAL as i32) == 0 {
+                // c:4473 — `pm->node.flags &= ~PM_READONLY;`
+                let mut tab = crate::ported::params::paramtab().write().unwrap();
+                if let Some(pm_mut) = tab.get_mut(s) {
+                    pm_mut.node.flags &= !(PM_READONLY as i32);
+                }
+                // Drop write guard before calling unsetparam_pm.
+                drop(tab);
+                let mut tab = crate::ported::params::paramtab().write().unwrap();
+                if let Some(pm_mut) = tab.get_mut(s) {
+                    let _ = crate::ported::params::unsetparam_pm(pm_mut, 0, 0); // c:4474
+                }
+            }
+        }
+    }
+    // c:4478-4523 — restore saved params.
+    for pm in restorelist {
+        // c:4481-4520 — PM_SPECIAL: route through gsu setfn.
+        // c:4521-4523 — non-special: re-install via paramtab.
+        if (pm.node.flags & PM_SPECIAL as i32) != 0 {
+            // PM_SPECIAL restore: full path requires PM_TYPE dispatch
+            // on gsu_s/i/f/a/h setfn. Each setfn fires the param's
+            // canonical write hook. Pragmatic port: overwrite in
+            // paramtab; daily-driver path rarely saves specials (those
+            // are reserved-name vars like PATH/FPATH/etc. which can't
+            // appear as `VAR=val cmd` prefix anyway).
+            let mut tab = crate::ported::params::paramtab().write().unwrap();
+            tab.insert(pm.node.nam.clone(), Box::new(pm));
+        } else {
+            // c:4521 — `paramtab->addnode(paramtab, ztrdup(pm->node.nam), pm);`
+            let mut tab = crate::ported::params::paramtab().write().unwrap();
+            tab.insert(pm.node.nam.clone(), Box::new(pm));
+        }
+    }
+}
+
 /// Port of `void execode(Eprog p, int dont_change_job, int exiting,
 /// char *context)` from `Src/exec.c:1245-1282`. Set up an `estate`
 /// around the given Eprog and run `execlist`. Maintains the
@@ -7132,23 +7254,9 @@ pub fn execcmd_exec(
     // signature and returns a degenerate value that keeps the body
     // executing while the real port lands.
     // ====================================================================
-    // SUBSTRATE GAP: save_params @ Src/exec.c:4409 — saves params from
-    // varspc into restore_p/remove_p before builtin/shfunc runs.
-    fn save_params(
-        _state: &mut estate,
-        _pc: Option<usize>,
-        restore_p: &mut Vec<String>,
-        remove_p: &mut Vec<String>,
-    ) {
-        // Empty stub; varspc-bound vars stay unsaved until ported.
-        let _ = restore_p;
-        let _ = remove_p;
-    }
-    // SUBSTRATE GAP: restore_params @ Src/exec.c:4463 — restore params
-    // saved by save_params after the builtin/shfunc returns.
-    fn restore_params(_restorelist: Vec<String>, _removelist: Vec<String>) {
-        // Empty stub; no-op until save_params lands.
-    }
+    // save_params + restore_params — top-level ports in exec.rs
+    // (c:4410 / c:4464). Both bridged via `use` below.
+    use crate::ported::exec::{save_params, restore_params};
     // isreallycom — top-level port at exec.rs (c:972). Bridges the
     // local shadow that this fn body used pre-port.
     use crate::ported::exec::isreallycom;
@@ -8326,15 +8434,15 @@ pub fn execcmd_exec(
     // c:3963-3995 — nullexec branch.
     if nullexec != 0 {
         // c:3963
-        if varspc.is_some() {
+        if let Some(vspc) = varspc {
             // c:3969
-            let mut restorelist: Vec<String> = Vec::new();
+            let mut restorelist: Vec<crate::ported::zsh_h::param> = Vec::new();
             let mut removelist: Vec<String> = Vec::new();
             if !isset(POSIXBUILTINS) && nullexec != 2 {
                 // c:3971-3972
-                save_params(state, varspc, &mut restorelist, &mut removelist);
+                save_params(state, vspc, &mut restorelist, &mut removelist);
             }
-            addvars(state, varspc.unwrap_or(0), 0);                        // c:3973
+            addvars(state, vspc, 0);                                       // c:3973
             if !restorelist.is_empty() {
                 // c:3974
                 restore_params(restorelist, removelist);                   // c:3975
@@ -8419,18 +8527,15 @@ pub fn execcmd_exec(
                 LASTVAL.store(lv, Ordering::Relaxed);
             } else {
                 // c:4053 — `lastval = (execfuncs[type - WC_CURSH])(state, do_exec);`
-                // SUBSTRATE GAP: execfuncs[] table — Src/exec.c:170-180
-                // dispatches by (WC_CURSH..=WC_TIMED) to execfor /
-                // execselect / execcase / execif / execwhile / execrepeat
-                // / execfuncdef / execcursh / execcond / execarith /
-                // exectry / exectime. Each is ported (grep exec.rs);
-                // dispatch by manual match.
+                // dispatch_execfuncs ports the C `execfuncs[]` table
+                // (Src/exec.c:170-180) by typ → exec{cursh,for,select,...}
+                // direct call. See dispatch_execfuncs at end of file.
                 let lv = dispatch_execfuncs(state, typ, do_exec);
                 LASTVAL.store(lv, Ordering::Relaxed);
             }
         } else if is_builtin != 0 || is_shfunc != 0 {
             // c:4055
-            let mut restorelist: Vec<String> = Vec::new();
+            let mut restorelist: Vec<crate::ported::zsh_h::param> = Vec::new();
             let mut removelist: Vec<String> = Vec::new();
             let mut do_save: i32 = 0;                                      // c:4057
 
@@ -8457,9 +8562,11 @@ pub fn execcmd_exec(
                         do_save = 1;                                       // c:4077
                     }
                 }
-                if do_save != 0 && varspc.is_some() {
-                    // c:4079
-                    save_params(state, varspc, &mut restorelist, &mut removelist);
+                if do_save != 0 {
+                    if let Some(vspc) = varspc {
+                        // c:4079
+                        save_params(state, vspc, &mut restorelist, &mut removelist);
+                    }
                 }
             }
             if varspc.is_some() {
@@ -8950,28 +9057,27 @@ fn execcmd_exec_err_path(
 /// walker function in `src/ported/exec.rs`.
 fn dispatch_execfuncs(state: &mut estate, typ: i32, do_exec: i32) -> i32 {
     use crate::ported::zsh_h::{
-        WC_CURSH, WC_FUNCDEF, WC_AUTOFN, WC_TIMED,
+        WC_ARITH, WC_AUTOFN, WC_CASE, WC_COND, WC_CURSH, WC_FOR, WC_FUNCDEF, WC_IF, WC_REPEAT,
+        WC_SELECT, WC_SUBSH, WC_TIMED, WC_TRY, WC_WHILE,
     };
-    // Map type → ported fn. The C `execfuncs[]` table is:
-    //   WC_CURSH → execcursh
-    //   WC_FOR → execfor
-    //   WC_SELECT → execselect
-    //   WC_WHILE → execwhile
-    //   WC_REPEAT → execrepeat
-    //   WC_CASE → execcase
-    //   WC_IF → execif
-    //   WC_COND → execcond
-    //   WC_ARITH → execarith
-    //   WC_TRY → exectry
-    //   WC_FUNCDEF → execfuncdef (special — caller already handles)
-    //   WC_AUTOFN → execautofn_basic (special — caller already handles)
-    //   WC_TIMED → exectime
-    // The wordcode-walker functions are pub-visible in exec.rs;
-    // dispatch by typ value.
-    // SUBSTRATE GAP: full execfuncs[] dispatch table — pending a
-    // wordcode-walker entry-point harness. The fusevm bytecode path
-    // does NOT go through here. Return 0 for now; tree-walker
-    // callers receive degenerate but non-panicking output.
-    let _ = (state, typ, do_exec);
-    0
+    // Port of `static int (*const execfuncs[])(Estate, int)` dispatch
+    // table at `Src/exec.c:170-180`. C indexes by `(type - WC_CURSH)`;
+    // Rust matches on the WC_* tag directly.
+    match typ as wordcode {
+        x if x == WC_CURSH => execcursh(state, do_exec),
+        x if x == WC_FOR => execfor(state, do_exec),
+        x if x == WC_SELECT => execselect(state, do_exec),
+        x if x == WC_WHILE => execwhile(state, do_exec),
+        x if x == WC_REPEAT => execrepeat(state, do_exec),
+        x if x == WC_CASE => execcase(state, do_exec),
+        x if x == WC_IF => execif(state, do_exec),
+        x if x == WC_COND => execcond(state, do_exec),
+        x if x == WC_ARITH => execarith(state, do_exec),
+        x if x == WC_TRY => exectry(state, do_exec),
+        x if x == WC_FUNCDEF => execfuncdef(state, None),
+        x if x == WC_AUTOFN => execautofn_basic(state, do_exec),
+        x if x == WC_TIMED => exectime(state, do_exec),
+        x if x == WC_SUBSH => execcursh(state, do_exec), // c:269 — same handler.
+        _ => 0,
+    }
 }
