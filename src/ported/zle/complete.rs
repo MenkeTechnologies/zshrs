@@ -2392,10 +2392,37 @@ pub fn enables_(m: *const module) -> i32 {
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
     // c:1758
-    // TODO: hookfn-sig refactor — re-enable these six registrations
-    // once compcore/compresult handlers carry the (Hookdef, void *)
-    // shape. See port note above.
+    // Register the two no-arg hooks via Hookfn-shape thunks. The four
+    // typed-arg hooks (complete/before_complete/after_complete/
+    // accept_completion) carry varied signatures and require
+    // per-hook payload structs to thread through `(Hookdef, void*)` —
+    // tracked for follow-up. The fallback handlers in zle_h.rs fire
+    // when no Hookfn is registered (c:993-995), so the unregistered
+    // four remain observationally neutral.
+    let _ = crate::ported::module::addhookfunc("list_matches", list_matches_hook);
+    let _ = crate::ported::module::addhookfunc("invalidate_list", invalidate_list_hook);
     0 // c:1767
+}
+
+/// Hookfn-shape thunk for `list_matches` — bridges the
+/// `(Hookdef, void*) -> i32` Hookfn signature to the typed
+/// `list_matches() -> i32` handler in compresult.rs.
+fn list_matches_hook(
+    _h: *mut crate::ported::zsh_h::hookdef,
+    _d: *mut std::ffi::c_void,
+) -> i32 {
+    // c:1763 — `addhookfunc("list_matches", list_matches);`
+    crate::ported::zle::compresult::list_matches()
+}
+
+/// Hookfn-shape thunk for `invalidate_list` — same shape as
+/// `list_matches_hook`.
+fn invalidate_list_hook(
+    _h: *mut crate::ported::zsh_h::hookdef,
+    _d: *mut std::ffi::c_void,
+) -> i32 {
+    // c:1764 — `addhookfunc("invalidate_list", invalidate_list);`
+    crate::ported::zle::compresult::invalidate_list()
 }
 
 /// Direct port of `int cleanup_(Module m)` from `Src/Zle/complete.c:1772`.
@@ -2405,6 +2432,10 @@ pub fn boot_(m: *const module) -> i32 {
 #[allow(unused_variables)]
 pub fn cleanup_(m: *const module) -> i32 {
     // c:1772
+    // c:1775-1780 — unregister the two no-arg hooks installed by boot_.
+    // Mirrors the registration: deletehookfunc removes one Hookfn entry.
+    let _ = crate::ported::module::deletehookfunc("list_matches", list_matches_hook);
+    let _ = crate::ported::module::deletehookfunc("invalidate_list", invalidate_list_hook);
     0 // c:1783
 }
 
