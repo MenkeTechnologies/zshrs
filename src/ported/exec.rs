@@ -1768,11 +1768,22 @@ pub fn runshfunc(
     }
     // c:6194 — startparamscope (just inc_locallevel internally).
     inc_locallevel();
-    // c:6195 — execode(prog, 1, 0, "shfunc") — WARNING (c).
+    // c:6195 — `execode(prog, 1, 0, "shfunc");` — run the function
+    // body. Prefer the canonical execode (exec.rs:6047) which walks
+    // execlist on a fresh estate over the prog. If prog.strs carries
+    // the original source (autoloaded fns that the lazy-compile path
+    // populated), route through the fusevm pipeline for cache
+    // coherence with execstring.
     if let Some(ref src) = prog.strs {
         let _ = with_executor(|e| e.execute_script_zsh_pipeline(src));
     } else {
-        // No source — fall back to looking up the function body by name.
+        // Pure wordcode body — drive via the canonical execode.
+        crate::ported::exec::execode(
+            Box::new(prog.clone()),
+            1,
+            0,
+            "shfunc",
+        );
         let _ = name;
     }
     if let Some(ou_str) = ou {
