@@ -2371,12 +2371,16 @@ pub fn fclist(
     let start_ev = match gethistent(first, near) {
         Some(e) => e,
         None => {
+            // c:Src/builtin.c — `no such event: <N>` carries the
+            // requested event number so the user can see which
+            // index missed. zsh appends the failing event id;
+            // the bare `no such event` message diverged.
             zwarnnam(
                 "fc",
-                if first == last {
-                    "no such event"
+                &if first == last {
+                    format!("no such event: {}", first)
                 } else {
-                    "no events in that range"
+                    "no events in that range".to_string()
                 },
             );
             return 1;
