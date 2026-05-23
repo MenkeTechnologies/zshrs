@@ -5561,7 +5561,18 @@ pub fn paramsubst(
                         // and returns PM_HASHED type tag.
                         "association".to_string() // c:2814
                     } else if is_set {
-                        "scalar".to_string()
+                        // c:Src/params.c — env-only vars (paramtab
+                        // miss + env::var hit) carry PM_EXPORTED.
+                        // C zsh imports every env var at startup so
+                        // the paramtab path catches them; Rust's
+                        // lazy import means env-only vars miss the
+                        // paramtab arm and land here. Tag with
+                        // `-export` to match zsh.
+                        if std::env::var(&var_name).is_ok() {
+                            "scalar-export".to_string()
+                        } else {
+                            "scalar".to_string()
+                        }
                     } else {
                         String::new()
                     }
