@@ -4139,8 +4139,15 @@ pub fn paramsubst(
             // zshrs's ${#name} length-form is handled in an earlier
             // arm that returns before reaching this transition, so
             // `getlen` is always 0 at this point in the flow.
-            if qt && isarr > 0 {
-                // c:3032
+            //
+            // The C source at c:3317 adds `!spsep && spbreak < 2` to
+            // the same gate inside the substitution-operator arms.
+            // The (s) flag (sets spsep) is a deliberate "preserve
+            // split-from-scalar shape in DQ" signal — without the
+            // !spsep guard, `"${(s. .)str}"` would sepjoin back to
+            // scalar instead of splatting per-word.
+            if qt && isarr > 0 && spsep.is_none() {
+                // c:3032 + c:3317 !spsep guard
                 // value already holds the sepjoin'd form from the
                 // value-init block above (raw_value via getsparam =
                 // sepjoin(arr) at params.c:2367, OR the arr.join(" ")
@@ -5382,6 +5389,13 @@ pub fn paramsubst(
             let join_with = sep.as_deref().unwrap_or(" "); // c:3950
             value = parts.join(join_with);
             split_parts = Some(parts); // c:3950
+            // c:3274 — `isarr = nojoin ? 1 : 2;`. The value 2 is
+            // C's "array came from splitting a scalar" sentinel
+            // (Src/subst.c:1647-1657 comment). The c:3317 qt-sepjoin
+            // transition skips when `spsep` is set, so isarr=2
+            // survives DQ and the splat block at c:4245 fires —
+            // matching zsh's `"${(s. .)str}"` per-word output.
+            isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
         } else if let Some(ref sp) = sep {
             // c:3963 (j with no s)
             // (j:STR:) — join an array with STR. Source priority:
