@@ -3687,6 +3687,48 @@ pub fn paramsubst(
                         }
                         None => String::new(),
                     }
+                } else if let Some((flag_body, num_str)) = (|s: &str| -> Option<(String, String)> {
+                    // c:Src/params.c:1437 (w)/(W)/(s.X.) — word-split
+                    // subscript: treat array as scalar joined by space
+                    // then split by the flag's separator, return Nth
+                    // word. For arrays the join+split round-trip
+                    // typically yields the original elements when (w)
+                    // / (W) uses whitespace, so the result is
+                    // equivalent to a plain numeric subscript. Match
+                    // here so `${arr[(w)1]}` works in array context.
+                    let s = s.trim_start();
+                    let rest = s.strip_prefix('(')?;
+                    let close = rest.find(')')?;
+                    let f = rest[..close].to_string();
+                    let n = rest[close + 1..].to_string();
+                    if !f.chars().all(|c| matches!(c, 'w' | 'W' | 'p')) {
+                        return None;
+                    }
+                    Some((f, n))
+                })(sub)
+                {
+                    let _ = flag_body;
+                    if let Ok(idx_n) = num_str.parse::<i64>() {
+                        let len = arr.len() as i64;
+                        let i = if idx_n == 0 {
+                            if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                                0
+                            } else {
+                                -1
+                            }
+                        } else if idx_n < 0 {
+                            len + idx_n
+                        } else {
+                            idx_n - 1
+                        };
+                        if i >= 0 && (i as usize) < arr.len() {
+                            arr[i as usize].clone()
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    }
                 } else if let Ok(idx_n) = sub.parse::<i64>() {
                     // c:2926 (numeric index)
                     let len = arr.len() as i64;
