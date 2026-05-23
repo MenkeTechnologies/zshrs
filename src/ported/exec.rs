@@ -3829,7 +3829,19 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     } else {
         0
     };
-    // c:5068 — `if (thisjob == -1)` guard skipped (thisjob model differs).
+    // c:5068-5071 — `if (thisjob == -1) { zerr(...); return NULL; }` —
+    // proc subst needs a host job to attach the child to.
+    let tj_check = crate::ported::jobs::THISJOB
+        .get()
+        .map(|m| *m.lock().unwrap())
+        .unwrap_or(-1);
+    if tj_check == -1 {
+        zerr(&format!(
+            "process substitution {} cannot be used here",
+            cmd
+        )); // c:5069
+        return None; // c:5070
+    }
     // c:5072 — PATH_DEV_FD path: allocate buffer for the /dev/fd/N string.
     let mut ends_at: usize = 0;
     let _prog = parsecmd(cmd, Some(&mut ends_at))?; // c:5073
