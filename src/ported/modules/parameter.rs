@@ -1477,15 +1477,18 @@ pub fn setpmoptions(pm: Param, ht: *mut HashTable) {
 pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:988
     // c:991-1010 — synth Param: u.str = (isset(opt)) ? "on" : "off".
-    // Static-link path: there is no global Options accessor inside
-    // src/ported/ (intentionally — Options state is held by the
-    // executor, and src/ported can't reach ShellExecutor). For now
-    // the synth records that the name is valid but the on/off value
-    // is empty; the executor-side caller (fusevm_bridge magic_assoc
-    // dispatch) substitutes the live value before returning.
+    // Read the live option state via the canonical opt_state_get
+    // accessor (Src/ported/options.rs:1623) so `\${options[NAME]}`
+    // reads the actual runtime state, not an empty placeholder.
     let valid = optlookup(name) > 0; // c:1003
     let (value, found) = if valid {
-        (String::new(), true) // c:1005 (value-blank, executor fills)
+        // c:1005 — "on" if set, "off" otherwise.
+        let on = crate::ported::options::opt_state_get(name)
+            .unwrap_or(false);
+        (
+            if on { "on".to_string() } else { "off".to_string() },
+            true,
+        )
     } else {
         (String::new(), false) // c:1009
     };
