@@ -166,6 +166,16 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         let arr_name = &name[..bracket];
         let idx_str = &name[bracket + 1..close];
         // Recursively eval the index (so a[i+1], h[$k], etc work).
+        // CRITICAL: save/restore evaluator state around the recursive
+        // matheval — without this, the inner call's `push(idx_value)`
+        // contaminates the OUTER expression's operand stack. Bug
+        // manifested as `$((1 + arr[1]))` returning 10 (just arr[1])
+        // because the outer NUM(1) got popped by the inner eval's
+        // op() during `op(PLUS)` (which sees [NUM(1), ID(arr[1]),
+        // NUM(1_from_idx_eval)] instead of [NUM(1), ID(arr[1])]).
+        // C mathevall at math.c:367 does the same xyy* save/restore
+        // around recursive entry.
+        let saved = save_state();
         let idx_val = matheval(idx_str)
             .map(|n| {
                 if n.type_ == MN_FLOAT {
@@ -175,6 +185,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 }
             })
             .unwrap_or(0);
+        restore_state(saved);
         // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
         if let Ok(tab) = crate::ported::params::paramtab().read() {
             if let Some(pm) = tab.get(arr_name) {
