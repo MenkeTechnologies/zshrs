@@ -5575,6 +5575,296 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
 // 1625`, the C source likewise inlines it — there's no `execsublist`
 // function in zsh C).
 
+/// Port of `execcmd_getargs(LinkList preargs, LinkList args, int expand)`
+/// from `Src/exec.c:2791-2806`. Transfer the first node of `args`
+/// to `preargs`, performing `prefork` (singleton-list expansion) on
+/// the way if `expand` is set. Used by `execcmd_exec` to pull the
+/// command head one word at a time so prefix-modifier walking
+/// (BINF_COMMAND, BINF_EXEC etc.) sees expanded names.
+pub fn execcmd_getargs(
+    preargs: &mut crate::ported::linklist::LinkList<String>,
+    args: &mut crate::ported::linklist::LinkList<String>,
+    expand: i32,
+) {
+    // c:2791
+    if args.firstnode().is_none() {
+        // c:2793 — `if (!firstnode(args)) return;`
+        return;
+    } else if expand != 0 {
+        // c:2795
+        // c:2796-2797 — `local_list0(svl); init_list0(svl);` —
+        // stack-local single-bucket list. Rust uses a fresh
+        // LinkList<String> per call.
+        let mut svl: crate::ported::linklist::LinkList<String> = Default::default();
+        // c:2799 — `addlinknode(&svl, uremnode(args, firstnode(args)));`
+        if let Some(idx) = args.firstnode() {
+            if let Some(head) = crate::ported::linklist::uremnode(args, idx) {
+                svl.push_back(head);
+            }
+        }
+        // c:2801 — `prefork(&svl, 0, NULL);`
+        let mut rf = 0i32;
+        crate::ported::subst::prefork(&mut svl, 0, &mut rf);
+        // c:2802 — `joinlists(preargs, &svl);`
+        crate::ported::linklist::joinlists(preargs, &mut svl);
+    } else {
+        // c:2803-2804 — no-expand path: move head verbatim.
+        if let Some(idx) = args.firstnode() {
+            if let Some(head) = crate::ported::linklist::uremnode(args, idx) {
+                preargs.push_back(head);
+            }
+        }
+    }
+}
+
+/// Port of `execcmd_fork(Estate state, int how, int type,
+/// Wordcode varspc, LinkList *filelistp, char *text, int oautocont,
+/// int close_if_forked)` from `Src/exec.c:2810-2893`.
+///
+/// Fork the current command into a child process: parent records
+/// the pid + STTY env scan + addproc; child enters subshell, writes
+/// `entersubsh_ret` back to parent through `synch` pipe, and returns
+/// 0 so the caller can continue with the body.
+///
+/// `filelistp` out-arg is moved from `jobtab[thisjob].filelist`
+/// only in the child branch (so the parent's `filelist` stays
+/// untouched). Rust sig keeps the same C contract.
+pub fn execcmd_fork(
+    state: &mut estate,
+    how: i32,
+    typ: i32,
+    varspc: Option<usize>,
+    filelistp: &mut Vec<String>,
+    text: &str,
+    oautocont: i32,
+    close_if_forked: i32,
+) -> i32 {
+    use crate::ported::signals::sigtrapped as sigtrapped_static;
+    use crate::ported::signals_h::SIGEXIT;
+    use crate::ported::zsh_h::{
+        Z_ASYNC, WC_ASSIGN as ZWC_ASSIGN, WC_ASSIGN_NUM as ZWC_ASSIGN_NUM,
+        WC_ASSIGN_SCALAR as ZWC_ASSIGN_SCALAR, WC_ASSIGN_TYPE as ZWC_ASSIGN_TYPE,
+        WC_SUBSH as ZWC_SUBSH, AUTOCONTINUE, BGNICE, ZSIG_IGNORED,
+    };
+    // c:2810
+    let pid: libc::pid_t; // c:2814
+    let mut synch: [i32; 2] = [-1, -1]; // c:2815
+    let flags: i32; // c:2815
+    let mut esret: entersubsh_ret = entersubsh_ret::default(); // c:2816
+    // c:2817 — `struct timespec bgtime;` — bgtime is passed to zfork
+    // for accounting; the Rust zfork wrapper expects Option<&mut ZshTimespec>.
+    let mut bgtime = ZshTimespec::default();
+
+    crate::ported::signals_h::child_block(); // c:2819
+    esret.gleader = -1; // c:2820
+    esret.list_pipe_job = -1; // c:2821
+
+    // c:2823 — `if (pipe(synch) < 0) { zerr("pipe failed: %e", errno); return -1; }`
+    if unsafe { libc::pipe(synch.as_mut_ptr()) } < 0 {
+        zerr(&format!(
+            "pipe failed: {}",
+            std::io::Error::last_os_error()
+        ));
+        return -1; // c:2825
+    }
+    // c:2826 — `else if ((pid = zfork(&bgtime)) == -1) { ... }`
+    pid = zfork(Some(&mut bgtime));
+    if pid == -1 {
+        unsafe {
+            libc::close(synch[0]); // c:2827
+            libc::close(synch[1]); // c:2828
+        }
+        LASTVAL.store(1, Ordering::Relaxed); // c:2829
+        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:2830
+        return -1; // c:2831
+    }
+    if pid != 0 {
+        // c:2833 — parent.
+        unsafe { libc::close(synch[1]) }; // c:2834
+        // c:2835 — `read_loop(synch[0], (char *)&esret, sizeof(esret));`
+        let mut buf = [0u8; std::mem::size_of::<entersubsh_ret>()];
+        let _ = crate::ported::utils::read_loop(synch[0], &mut buf);
+        // entersubsh_ret is two i32s; reconstruct from LE bytes (host order).
+        if buf.len() >= 8 {
+            esret.gleader = i32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]);
+            esret.list_pipe_job = i32::from_ne_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        }
+        unsafe { libc::close(synch[0]) }; // c:2836
+        if (how & Z_ASYNC as i32) != 0 {
+            // c:2837 — `lastpid = (zlong) pid;`
+            crate::ported::modules::clone::lastpid.store(pid, Ordering::Relaxed);
+        } else {
+            // c:2839 — `if (!jobtab[thisjob].stty_in_env && varspc)`.
+            let thisjob_idx = {
+                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                    *m.lock().unwrap()
+                } else {
+                    -1
+                }
+            };
+            // Examine the jobtab entry under lock.
+            let stty_already = if thisjob_idx >= 0 {
+                if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                    let guard = jt.lock().unwrap();
+                    guard
+                        .get(thisjob_idx as usize)
+                        .map(|j| j.stty_in_env != 0)
+                        .unwrap_or(true)
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+            if !stty_already && varspc.is_some() {
+                // c:2841-2851 — walk varspc looking for STTY=...
+                let mut p = varspc.unwrap();
+                loop {
+                    if p >= state.prog.prog.len() {
+                        break;
+                    }
+                    let ac = state.prog.prog[p];
+                    if wc_code(ac) != ZWC_ASSIGN {
+                        break;
+                    }
+                    // c:2845 — `if (!strcmp(ecrawstr(state->prog, p + 1, NULL), "STTY"))`
+                    let name = crate::ported::parse::ecrawstr(&state.prog, p + 1, None);
+                    if name == "STTY" {
+                        // c:2846 — `jobtab[thisjob].stty_in_env = 1;`
+                        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                            let mut guard = jt.lock().unwrap();
+                            if let Some(j) = guard.get_mut(thisjob_idx as usize) {
+                                j.stty_in_env = 1;
+                            }
+                        }
+                        break; // c:2847
+                    }
+                    p += if ZWC_ASSIGN_TYPE(ac) == ZWC_ASSIGN_SCALAR {
+                        3 // c:2849
+                    } else {
+                        (ZWC_ASSIGN_NUM(ac) + 2) as usize // c:2850
+                    };
+                }
+            }
+        }
+        // c:2853 — `addproc(pid, text, 0, &bgtime, esret.gleader, esret.list_pipe_job);`
+        // Rust addproc signature is partial — bgtime/gleader/list_pipe_job
+        // params aren't accepted. Use the available 4-arg form; note the
+        // missing fields as a SUBSTRATE GAP for the addproc port to extend.
+        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            let mut guard = jt.lock().unwrap();
+            let tj = {
+                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                    *m.lock().unwrap()
+                } else {
+                    -1
+                }
+            };
+            if tj >= 0 {
+                if let Some(j) = guard.get_mut(tj as usize) {
+                    crate::ported::jobs::addproc(j, pid, text, false);
+                }
+            }
+        }
+        // c:2854-2855 — `if (oautocont >= 0) opts[AUTOCONTINUE] = oautocont;`
+        if oautocont >= 0 {
+            crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+            let _ = AUTOCONTINUE; // const referenced for parity
+        }
+        // c:2856 — `pipecleanfilelist(jobtab[thisjob].filelist, 1);`
+        if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+            let mut guard = jt.lock().unwrap();
+            let tj = {
+                if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                    *m.lock().unwrap()
+                } else {
+                    -1
+                }
+            };
+            if tj >= 0 {
+                if let Some(j) = guard.get_mut(tj as usize) {
+                    crate::ported::jobs::pipecleanfilelist(j, true);
+                }
+            }
+        }
+        return pid; // c:2857
+    }
+
+    // c:2860 — pid == 0 (child).
+    unsafe { libc::close(synch[0]) }; // c:2861
+    flags = (if (how & Z_ASYNC as i32) != 0 {
+        esub::ASYNC
+    } else {
+        0
+    }) | esub::PGRP; // c:2862
+    let mut flags = flags;
+    if typ != ZWC_SUBSH as i32 && (how & Z_ASYNC as i32) == 0 {
+        flags |= esub::KEEPTRAP; // c:2864
+    }
+    if typ == ZWC_SUBSH as i32 && (how & Z_ASYNC as i32) == 0 {
+        flags |= esub::JOB_CONTROL; // c:2866
+    }
+    // c:2867 — `*filelistp = jobtab[thisjob].filelist;`
+    if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+        let mut guard = jt.lock().unwrap();
+        let tj = {
+            if let Some(m) = crate::ported::jobs::THISJOB.get() {
+                *m.lock().unwrap()
+            } else {
+                -1
+            }
+        };
+        if tj >= 0 {
+            if let Some(j) = guard.get_mut(tj as usize) {
+                *filelistp = std::mem::take(&mut j.filelist);
+            }
+        }
+    }
+    entersubsh(flags, Some(&mut esret)); // c:2868
+    // c:2869 — `write_loop(synch[1], &esret, sizeof(esret));`
+    let mut buf = [0u8; 8];
+    buf[0..4].copy_from_slice(&esret.gleader.to_ne_bytes());
+    buf[4..8].copy_from_slice(&esret.list_pipe_job.to_ne_bytes());
+    if write_loop(synch[1], &buf).map(|n| n as usize).unwrap_or(0) != buf.len() {
+        zerr(&format!(
+            "Failed to send entersubsh_ret report: {}",
+            std::io::Error::last_os_error()
+        ));
+        return -1; // c:2871
+    }
+    unsafe { libc::close(synch[1]) }; // c:2873
+    let _ = zclose(close_if_forked); // c:2874
+
+    // c:2876 — `if (sigtrapped[SIGINT] & ZSIG_IGNORED) holdintr();`
+    let sigint_state = {
+        let guard = sigtrapped_static.lock().unwrap();
+        guard.get(libc::SIGINT as usize).copied().unwrap_or(0)
+    };
+    if (sigint_state & ZSIG_IGNORED) != 0 {
+        crate::ported::signals::holdintr(); // c:2877
+    }
+    // c:2882 — `sigtrapped[SIGEXIT] = 0;` — EXIT traps don't fire in fork-child.
+    {
+        let mut guard = sigtrapped_static.lock().unwrap();
+        if let Some(slot) = guard.get_mut(SIGEXIT as usize) {
+            *slot = 0;
+        }
+    }
+    // c:2884-2890 — `if ((how & Z_ASYNC) && isset(BGNICE)) nice(5)`.
+    if (how & Z_ASYNC as i32) != 0 && isset(BGNICE) {
+        unsafe {
+            *libc::__error() = 0; // errno = 0
+            if libc::nice(5) == -1 && *libc::__error() != 0 {
+                zwarn(&format!(
+                    "nice(5) failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+    }
+    0 // c:2892
+}
+
 /// Port of `execcmd_analyse(Estate state, Execcmd_params eparams)`
 /// from `Src/exec.c:2733-2785`. Pre-execcmd_exec analysis pass:
 /// walks the wordcode at `state->pc`, splits out redirs/varspc/args
