@@ -1095,24 +1095,45 @@ pub fn bin_zstyle(
 pub fn bin_zformat(
     nam: &str,
     args: &[String], // c:955
-    _ops: &options,
+    ops: &options,
     _func: i32,
 ) -> i32 {
     let mut presence = 0i32; // c:958
-    if args.is_empty() {
-        // c:960
+    // C bin_zformat reads `args[0]` as the `-X` option directly (the
+    // BUILTIN spec doesn't pre-parse flags). zshrs's dispatch layer
+    // pre-parses flags into `ops` and strips them from args, so
+    // args[0] here is already the FIRST positional. Reconstruct the
+    // opt char from the parsed ops to match C's args[0][1] read.
+    let opt: u8 = if OPT_ISSET(ops, b'f') {
+        b'f'
+    } else if OPT_ISSET(ops, b'F') {
+        b'F'
+    } else if OPT_ISSET(ops, b'a') {
+        b'a'
+    } else if !args.is_empty() {
+        // Fallback to the C-shape read for old callers that still
+        // pass `-X` as args[0].
+        let opt_arg = &args[0];
+        let bytes = opt_arg.as_bytes();
+        if bytes.is_empty() || bytes[0] != b'-' || bytes.len() != 2 {
+            zwarnnam(nam, &format!("invalid argument: {}", opt_arg)); // c:962
+            return 1;
+        }
+        bytes[1]
+    } else {
         zwarnnam(nam, &format!("invalid argument: {}", ""));
         return 1;
-    }
-    let opt_arg = &args[0];
-    let bytes = opt_arg.as_bytes();
-    if bytes.is_empty() || bytes[0] != b'-' || bytes.len() != 2 {
-        // c:960-963
-        zwarnnam(nam, &format!("invalid argument: {}", opt_arg));
-        return 1; // c:962
-    }
-    let opt = bytes[1]; // c:961
-    let args = &args[1..]; // c:965 args++
+    };
+    // If ops carried the flag, args is already the post-flag list.
+    // If we read opt from args[0] (fallback path), advance past it.
+    let args_used_opt_from_args0 = !OPT_ISSET(ops, b'f')
+        && !OPT_ISSET(ops, b'F')
+        && !OPT_ISSET(ops, b'a');
+    let args: &[String] = if args_used_opt_from_args0 {
+        &args[1..] // c:965 args++
+    } else {
+        args
+    };
 
     match opt {
         // c:967
