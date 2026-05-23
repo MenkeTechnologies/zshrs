@@ -184,6 +184,22 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
 /// Without this, compile-time builtin resolution silently ignored
 /// user wrappers (e.g. ZPWR's `cd () { builtin cd "$@"; … }`).
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
+    // c:Src/exec.c — when any redirect in the current scope failed
+    // (e.g. noclobber blocked a `>` overwrite), zsh refuses to
+    // execute the command and exits with status 1. The Rust port
+    // still applied the command (writing to the /dev/null sink
+    // installed by host_apply_redirect's noclobber arm) so the
+    // success status overwrote the intended 1. Short-circuit here
+    // for builtins (the external-exec equivalent lives in
+    // ZshrsHost::exec).
+    let redir_failed = with_executor(|exec| {
+        let f = exec.redirect_failed;
+        exec.redirect_failed = false;
+        f
+    });
+    if redir_failed {
+        return 1;
+    }
     if let Some(status) = try_user_fn_override(name, &args) {
         return status;
     }
@@ -4944,6 +4960,23 @@ impl fusevm::ShellHost for ZshrsHost {
 
     fn with_redirects_end(&mut self) {
         with_executor(|exec| exec.host_redirect_scope_end());
+        // c:Src/exec.c:5172 — if any redirect in this scope failed
+        // (noclobber-blocked, ENOENT for read, etc.), the command's
+        // exit status is forced to 1 regardless of what the (still-
+        // executed) command's own exit was. C zsh prevents the
+        // command from running at all when a redirect fails; the
+        // Rust port still runs it (sinking output to /dev/null in
+        // the noclobber arm at host_apply_redirect:5481) and then
+        // overrides $? here. Same observable effect for the common
+        // pattern `echo x > existing-file` under noclobber.
+        let failed = with_executor(|exec| {
+            let f = exec.redirect_failed;
+            exec.redirect_failed = false;
+            f
+        });
+        if failed {
+            with_executor(|exec| exec.set_last_status(1));
+        }
     }
 
     fn heredoc(&mut self, content: &str) {
@@ -4970,6 +5003,22 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn exec(&mut self, args: Vec<String>) -> i32 {
+        // c:Src/exec.c — when any redirect in the current scope
+        // failed (e.g. noclobber blocked a `>` overwrite), zsh
+        // refuses to execute the command and exits with status 1.
+        // The Rust port still applied the command (writing to the
+        // /dev/null sink installed by host_apply_redirect's
+        // noclobber arm), but the success status overwrote the
+        // intended `1`. Short-circuit here so the exec returns 1
+        // without running the body.
+        let redir_failed = with_executor(|exec| {
+            let f = exec.redirect_failed;
+            exec.redirect_failed = false;
+            f
+        });
+        if redir_failed {
+            return 1;
+        }
         // Track `$_` as the last argument of the last command (zsh /
         // bash convention). Empty arglists leave it untouched.
         if let Some(last) = args.last() {
@@ -5481,6 +5530,14 @@ impl ShellExecutor {
                 if noclobber && std::path::Path::new(target).exists() {
                     eprintln!("zshrs:1: file exists: {}", target);
                     self.set_last_status(1);
+                    // c:Src/exec.c — set redirect_failed so the scope-end
+                    // hook (`with_redirects_end` in this file) forces
+                    // $? to 1 regardless of the still-running command's
+                    // own exit. Without this the next command (e.g.
+                    // `echo x` writing to /dev/null below) succeeds
+                    // and overwrites the redirect-failure status,
+                    // making noclobber unobservable from $?.
+                    self.redirect_failed = true;
                     // Sink the upcoming command's stdout to /dev/null
                     // so we don't leak its output to the terminal.
                     // zsh skips the command entirely; we approximate by
