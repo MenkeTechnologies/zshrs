@@ -5182,9 +5182,39 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
         return;
     }
-    // c:5550-5557 (job-table cleanup) skipped — list_pipe machinery
-    // not yet wired into the fusevm dispatcher; runshfunc's
-    // signal-queue dance covers the essential preempt safety.
+    // c:5550-5557 — drop empty job slot before nested shfunc invoke:
+    // if outer-pipe bookkeeping is clean AND thisjob is a real job
+    // that's not the pipe-leader AND has no procs yet, deletejob()
+    // recycles it. Avoids leaking job-table slots across recursive
+    // function calls. Same pattern as execcursh's c:482-486.
+    {
+        let lp = list_pipe.load(Ordering::Relaxed);
+        let lpj = list_pipe_job.load(Ordering::Relaxed);
+        let tj = crate::ported::jobs::THISJOB
+            .get()
+            .map(|m| *m.lock().unwrap())
+            .unwrap_or(-1);
+        if lp == 0 && tj != -1 && tj != lpj {
+            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                let mut guard = jt.lock().unwrap();
+                let has = crate::ported::jobs::hasprocs(&guard, tj as usize);
+                if !has {
+                    // c:5554-5555 — `last_file_list = jobtab[thisjob].filelist;
+                    //                jobtab[thisjob].filelist = NULL;` — preserve
+                    //                the filelist so deletejob doesn't unlink temp
+                    //                files. Rust take()s the Vec into a local.
+                    let _last_file_list: Vec<String> = if let Some(j) = guard.get_mut(tj as usize) {
+                        std::mem::take(&mut j.filelist)
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(j) = guard.get_mut(tj as usize) {
+                        crate::ported::jobs::deletejob(j, false); // c:5556
+                    }
+                }
+            }
+        }
+    }
     // c:5559-5570 XTRACE arg trace: omit until full execshfunc port.
     // c:5572-5578 cmdstack/sfcontext setup: omit (no cmdstack in
     // zshrs yet — replaced by tracing).
