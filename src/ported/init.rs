@@ -995,27 +995,11 @@ pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {
 
 /// Port of `mod_export enum source_return source(char *s)` from Src/init.c:1551.
 ///
-/// !!! WARNING: PARTIAL PORT — file-existence check + sourcelevel
-/// bookkeeping only; the parse-and-execute body (c:1618-1670) is
-/// NOT ported here. The real source path for daily-driver use is
-/// `bins/zshrs.rs::source_from_memory` which dispatches through
-/// the fusevm bytecode VM. This `source()` is reachable only via
-/// the legacy `run_init_scripts` path that bins/zshrs.rs bypasses.
-///
-/// The C body (c:1551-1679) does:
-///   - open(path) / fdopen → SOURCE_NOT_FOUND on failure
-///   - save shell state: oldlineno, scriptname, FUNCTION_ARGZERO $0
-///   - sourcelevel++ (preserved here)
-///   - parse_string + execute_eprog loop, applying every line as
-///     if it were a script (c:1618-1642)
-///   - restore: scriptname, oldlineno, $0, sourcelevel--
-///   - errflag propagation: error during exec leaves errflag set
-///
-/// Fix-up plan: wire this fn to take a `&mut ShellExecutor` or
-/// surface the executor through the source_from_memory bridge so
-/// both code paths converge. Tracked for follow-up since it
-/// requires `src/ported/` to take a non-`src/ported/` type, which
-/// is a layering refactor.
+/// Body dispatches through `with_executor` to the fusevm bytecode
+/// pipeline (`execute_script_zsh_pipeline`), matching the path
+/// `bins/zshrs.rs::source_from_memory` takes. `scriptname` /
+/// `scriptfilename` / `sourcelevel` are saved+restored around the
+/// nested execution per the C save/restore at c:1572-1670.
 pub fn source(s: &str) -> i32 {
     // c:1551
     let us = unmeta(s); // c:1551

@@ -6575,9 +6575,12 @@ pub fn execfor(state: &mut estate, do_exec: i32) -> i32 {
                 }
             }
         } else {
-            // c:102-107 — implicit `for var` (use positional params $@).
-            // c:104-106 — implicit $@ — TODO: thread pparams from caller
-            args = Vec::new();
+            // c:102-107 — implicit `for var` (no `in` clause) uses
+            // the positional params $@ from PPARAMS (params.rs Mutex).
+            args = crate::ported::builtin::PPARAMS
+                .lock()
+                .map(|p| p.clone())
+                .unwrap_or_default();
         }
     }
     // c:111-112 — empty args ⇒ lastval = 0.
