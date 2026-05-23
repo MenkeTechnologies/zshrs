@@ -4755,6 +4755,8 @@ pub fn paramsubst(
                     .unwrap_or(false);
                 // Strip-one helper. op: 0=#, 1=##, 2=%, 3=%%.
                 // Direct port of subst.c:3540 patmatch dispatch.
+                // (M) handling per c:3176 — keep matched portion, discard rest.
+                let match_only = (sub_flags_get() & SUB_MATCH) != 0;
                 let strip_one = |val: &str, op: u8| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
@@ -4764,6 +4766,9 @@ pub fn paramsubst(
                             loop {
                                 let prefix: String = cv[..k].iter().collect();
                                 if patmatch(&p, &prefix) {
+                                    if match_only {
+                                        return prefix;
+                                    }
                                     return cv[k..].iter().collect();
                                 }
                                 if k == 0 {
@@ -4771,7 +4776,11 @@ pub fn paramsubst(
                                 }
                                 k -= 1;
                             }
-                            val.to_string()
+                            if match_only {
+                                String::new()
+                            } else {
+                                val.to_string()
+                            }
                         }
                         _ => val.to_string(),
                     }
@@ -4793,16 +4802,37 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
+                // c:Src/subst.c:3176 — SUB_MATCH inverts strip semantics:
+                // default returns the rest (after the match); with (M)
+                // returns the matched prefix and discards the rest.
+                let match_only = (sub_flags_get() & SUB_MATCH) != 0;
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
                     for k in 0..=total {
                         let prefix: String = cv[..k].iter().collect();
                         if patmatch(&p, &prefix) {
+                            if match_only {
+                                return prefix;
+                            }
                             return cv[k..].iter().collect();
                         }
                     }
-                    val.to_string()
+                    if match_only {
+                        // No match under SUB_MATCH: empty result.
+                        // c:glob.c:2895 — getmatch SUB_MATCH no-match
+                        // arm clears *sp to "". Note: C's getmatcharr
+                        // additionally FILTERS out such empties from
+                        // arrays (c:2735-2738 while-igetmatch loop) —
+                        // not yet ported because doing so breaks `(@M)`
+                        // subscript shape parity (zsh keeps 3 elements
+                        // for `("${(@M)arr[@]#foo}")`, drops to 2 for
+                        // `(${(M)arr#foo})`). Both need distinct
+                        // codepaths to differentiate.
+                        String::new()
+                    } else {
+                        val.to_string()
+                    }
                 };
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
@@ -4821,6 +4851,8 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
+                // c:Src/subst.c:3176 — SUB_MATCH for `%%` (longest suffix).
+                let match_only = (sub_flags_get() & SUB_MATCH) != 0;
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
@@ -4828,6 +4860,9 @@ pub fn paramsubst(
                     loop {
                         let suffix: String = cv[total - k..].iter().collect();
                         if patmatch(&p, &suffix) {
+                            if match_only {
+                                return suffix;
+                            }
                             return cv[..total - k].iter().collect();
                         }
                         if k == 0 {
@@ -4835,7 +4870,11 @@ pub fn paramsubst(
                         }
                         k -= 1;
                     }
-                    val.to_string()
+                    if match_only {
+                        String::new()
+                    } else {
+                        val.to_string()
+                    }
                 };
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
@@ -4854,16 +4893,25 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
+                // c:Src/subst.c:3176 — SUB_MATCH for `%` (shortest suffix).
+                let match_only = (sub_flags_get() & SUB_MATCH) != 0;
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
                     for k in 0..=total {
                         let suffix: String = cv[total - k..].iter().collect();
                         if patmatch(&p, &suffix) {
+                            if match_only {
+                                return suffix;
+                            }
                             return cv[..total - k].iter().collect();
                         }
                     }
-                    val.to_string()
+                    if match_only {
+                        String::new()
+                    } else {
+                        val.to_string()
+                    }
                 };
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();

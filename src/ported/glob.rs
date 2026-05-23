@@ -1968,10 +1968,25 @@ pub fn igetmatch(
         return if found { 0 } else { 1 };
     }
 
+    // c:Src/glob.c:2900+ — SUB_MATCH inverts the disposition of the
+    // anchored-strip operators. Default (no SUB_MATCH): the matched
+    // portion is REMOVED and the rest is returned (`${var#pat}` →
+    // tail after the matched prefix). With SUB_MATCH: the matched
+    // portion is KEPT and the rest is removed (`${(M)var#pat}` → the
+    // matched prefix only). Previously honoured only in the SUB_ALL
+    // arm at c:2895; the anchored-prefix / anchored-suffix / substr
+    // arms below always returned prefix+suffix, so `(M)` was a no-op
+    // for `#pat` / `%pat`. Mirror the C SUB_MATCH branch by emitting
+    // just the matched slice.
+    let match_only = (fl & SUB_MATCH) != 0;
     let (match_start, match_end) = if anchored_start && anchored_end {
         if matchpat(p, sp, true, true) {
             (0, len)
         } else {
+            if match_only {
+                *sp = String::new();
+                return 0;
+            }
             return 1;
         }
     } else if anchored_start {
@@ -1980,9 +1995,13 @@ pub fn igetmatch(
             let substr: String = chars[..end].iter().collect();
             if matchpat(p, &substr, true, true) {
                 if shortest {
-                    *sp = match replstr {
-                        Some(r) => format!("{}{}", r, chars[end..].iter().collect::<String>()),
-                        None => chars[end..].iter().collect(),
+                    *sp = if match_only {
+                        chars[..end].iter().collect()
+                    } else {
+                        match replstr {
+                            Some(r) => format!("{}{}", r, chars[end..].iter().collect::<String>()),
+                            None => chars[end..].iter().collect(),
+                        }
                     };
                     return 0;
                 }
@@ -1992,6 +2011,10 @@ pub fn igetmatch(
         if best_end > 0 {
             (0, best_end)
         } else {
+            if match_only {
+                *sp = String::new();
+                return 0;
+            }
             return 1;
         }
     } else if anchored_end {
@@ -2000,9 +2023,13 @@ pub fn igetmatch(
             let substr: String = chars[start..].iter().collect();
             if matchpat(p, &substr, true, true) {
                 if shortest {
-                    *sp = match replstr {
-                        Some(r) => format!("{}{}", chars[..start].iter().collect::<String>(), r),
-                        None => chars[..start].iter().collect(),
+                    *sp = if match_only {
+                        chars[start..].iter().collect()
+                    } else {
+                        match replstr {
+                            Some(r) => format!("{}{}", chars[..start].iter().collect::<String>(), r),
+                            None => chars[..start].iter().collect(),
+                        }
                     };
                     return 0;
                 }
@@ -2012,6 +2039,10 @@ pub fn igetmatch(
         if best_start < len {
             (best_start, len)
         } else {
+            if match_only {
+                *sp = String::new();
+                return 0;
+            }
             return 1;
         }
     } else {
@@ -2019,6 +2050,10 @@ pub fn igetmatch(
             for end in (start + 1)..=len {
                 let substr: String = chars[start..end].iter().collect();
                 if matchpat(p, &substr, true, true) {
+                    if match_only {
+                        *sp = chars[start..end].iter().collect();
+                        return 0;
+                    }
                     let prefix: String = chars[..start].iter().collect();
                     let suffix: String = chars[end..].iter().collect();
                     *sp = match replstr {
@@ -2029,13 +2064,21 @@ pub fn igetmatch(
                 }
             }
         }
+        if match_only {
+            *sp = String::new();
+            return 0;
+        }
         return 1;
     };
-    let prefix: String = chars[..match_start].iter().collect();
-    let suffix: String = chars[match_end..].iter().collect();
-    *sp = match replstr {
-        Some(r) => format!("{}{}{}", prefix, r, suffix),
-        None => format!("{}{}", prefix, suffix),
+    *sp = if match_only {
+        chars[match_start..match_end].iter().collect()
+    } else {
+        let prefix: String = chars[..match_start].iter().collect();
+        let suffix: String = chars[match_end..].iter().collect();
+        match replstr {
+            Some(r) => format!("{}{}{}", prefix, r, suffix),
+            None => format!("{}{}", prefix, suffix),
+        }
     };
     0
 }
