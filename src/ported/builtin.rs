@@ -7798,6 +7798,23 @@ pub fn bin_read(
         return 1;
     }
 
+    // c:Src/builtin.c:6457-6477 — `read -k`/`-q` requires a
+    // controlling tty (unless `-u FD` or `-p` redirects input).
+    // If neither stdin nor stderr is a tty, zsh emits the canonical
+    // error and returns 1. Mirror here (the SHTTY substrate isn't
+    // ported yet; the libc::isatty check approximates).
+    if (OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'q'))
+        && !OPT_HASARG(ops, b'u')
+        && !OPT_ISSET(ops, b'p')
+    {
+        let stdin_tty = unsafe { libc::isatty(0) } != 0;
+        let stderr_tty = unsafe { libc::isatty(2) } != 0;
+        if !stdin_tty && !stderr_tty {
+            eprintln!("not interactive and can't open terminal");
+            return 1;
+        }
+    }
+
     // c:6453-6455 — `return compctlreadptr(name, args, ops, reply)`.
     // The compctlreadptr function pointer is set by the zsh/compctl
     // module's load hook; Rust dispatches to the static
