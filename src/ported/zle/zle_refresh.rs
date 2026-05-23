@@ -669,10 +669,16 @@ pub fn zrefresh() {
 
     let prompt_width = countprompt(&prompt);
     let rprompt_width = countprompt(&rprompt);
-    let buffer_before_cursor: String = ZLELINE.lock().unwrap()
-        [..cursor.min(ZLELINE.lock().unwrap().len())]
-        .iter()
-        .collect();
+    // ZLELINE was locked TWICE in this expression — std::sync::Mutex
+    // isn't reentrant, so the second `.lock()` deadlocks forever
+    // waiting for the first guard to drop. Take a single lock, derive
+    // both the slice end AND the slice itself from the guard, then
+    // collect into String so the guard drops at end of stmt.
+    let buffer_before_cursor: String = {
+        let guard = ZLELINE.lock().unwrap();
+        let end = cursor.min(guard.len());
+        guard[..end].iter().collect()
+    };
     let cursor_col = prompt_width + countprompt(&buffer_before_cursor);
 
     // Horizontal scroll if the cursor approaches the right edge.
