@@ -4587,7 +4587,14 @@ fn is_distribute_expansion(s: &str) -> bool {
                 let flags = &rest[..close];
                 for c in flags.chars() {
                     match c {
-                        'f' | 'z' | 'w' | 'A' | 'a' | 'P' | '@' | 's' => return true,
+                        // c:2275-2299 — flags that split / produce
+                        // arrays from a scalar. (0) sets spsep=NUL
+                        // (c:2293), same array-producing shape as (f)
+                        // / (s) / (z). Without (0) here, the
+                        // multsub-returned Value::Array got joined by
+                        // BUILTIN_CONCAT_DISTRIBUTE's default-join
+                        // path.
+                        'f' | 'z' | 'w' | 'A' | 'a' | 'P' | '@' | 's' | '0' => return true,
                         _ => {}
                     }
                 }
