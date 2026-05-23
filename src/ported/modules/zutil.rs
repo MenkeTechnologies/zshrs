@@ -2028,13 +2028,9 @@ pub fn bin_zregexparse(
     }
 
     if ret == 0 {
-        // c:1510
-        // c:1511 — `rmatch(&result, subj, var1, var2, OPT_ISSET(ops,'c'))`
-        // — match the parsed regex tree against subj, capturing into
-        // var1/var2. The rmatch port is open work; placeholder fall-
-        // through to ret=0 (no match).
-        let _ = OPT_ISSET(ops, b'c');
-        let _ = (var1, var2, subj);
+        // c:1510-1512 — `ret = rmatch(&result, subj, var1, var2, OPT_ISSET(ops,'c'));`
+        let comp_flag = if OPT_ISSET(ops, b'c') { 1 } else { 0 };
+        ret = rmatch(&result, subj, var1, var2, comp_flag);
     }
 
     popheap(); // c:1513
