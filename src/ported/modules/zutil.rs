@@ -1660,26 +1660,283 @@ pub fn rparsealt(result: &mut RParseResult) -> i32 {
     0 // c:1362
 }
 
-/// Port of `rmatch(RParseResult *sm, char *subj, char *var1, char *var2, int comp)` from Src/Modules/zutil.c:1366.
+/// Direct port of `static int rmatch(RParseResult *sm, char *subj,
+/// char *var1, char *var2, int comp)` from `Src/Modules/zutil.c:1366-
+/// 1474`. Executes the zregexparse state machine against `subj`:
+/// drives transitions through the branch graph compiled by
+/// `rparsealt`/`rparsestate`, runs guard predicates + action
+/// strings via `execstring`, and binds the parse cursor to
+/// `$var1`/`$var2`.
 ///
-/// Part of the `zregexparse` builtin's recursive-descent
-/// parser family (zutil.c:1140-1250 + helpers). zshrs's
-/// zregexparse port is pending — the regex-language eval
-/// path isn't wired up because no zshrs caller uses it.
-/// Structural pass-through; pending port.
-/// C: `static int rmatch(RParseResult *sm, char *subj, char *var1,
-///     char *var2, int comp)` — match subj against sm; bind var1/var2.
-#[allow(non_snake_case)]
-/// WARNING: param names don't match C — Rust=(_sm, _subj, _var1, _var2) vs C=(sm, subj, var1, var2, comp)
-pub fn rmatch(
-    _sm: &RParseResult,
-    _subj: &str,
-    _var1: &str,
-    _var2: &str, // c:1366
-    _comp: i32,
-) -> i32 {
-    // c:1369-1517 — full state machine for zregexparse matching.
-    0
+/// Returns:
+///   - 0 if a complete parse path matches subj end-to-end (or in
+///     completion mode + no out-edges constraint)
+///   - 1 if no next-state candidates after exhausting subj (the
+///     nextslist has at least one set of pending branches)
+///   - 2 if there were no next-state candidates at all (nexts empty)
+///   - 3 if a pattern fails to compile
+pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) -> i32 {
+    // c:1368-1373 — `LinkNode ln, lnn; LinkList nexts; LinkList nextslist;
+    //                RParseBranch *br; RParseState *st = NULL; int point1=0, point2=0;`
+    let mut st: Option<std::rc::Rc<std::cell::RefCell<RParseState>>> = None;
+    let mut point1: i64 = 0; // c:1373
+    let mut point2: i64 = 0; // c:1373
+
+    // c:1375-1376 — `setiparam(var1, point1); setiparam(var2, point2);`
+    crate::ported::params::setiparam(var1, point1);
+    crate::ported::params::setiparam(var2, point2);
+
+    // c:1378 — `if (!comp && !*subj && sm->nullacts)` — empty subj
+    // matches nullacts directly when not in completion mode.
+    if comp == 0 && subj.is_empty() {
+        if let Some(nullacts) = sm.nullacts.as_ref() {
+            // c:1379-1384 — `for (ln = firstnode(sm->nullacts); ...)
+            //                    execstring(action, 1, 0, "zregexparse-action");`
+            for action in nullacts {
+                // c:1379
+                if !action.is_empty() {
+                    // c:1382
+                    crate::ported::exec::execstring(action, 1, 0, "zregexparse-action"); // c:1383
+                }
+            }
+            return 0; // c:1385
+        }
+    }
+
+    // c:1388 — `nextslist = newlinklist();`
+    let mut nextslist: Vec<Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>> = Vec::new();
+    // c:1389-1390 — `nexts = sm->in; addlinknode(nextslist, nexts);`
+    let mut nexts: Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>> = sm.in_.clone();
+    nextslist.push(nexts.clone()); // c:1390
+
+    // `subj` is C's mutable char* cursor advancing through the input.
+    // Mirror with a byte-index into the input.
+    let subj_bytes = subj.as_bytes();
+    let mut subj_pos: usize = 0; // c:1366 — initial cursor position.
+
+    // c:1391-1449 — `do { ... } while (ln);` — the outer loop continues
+    // as long as the inner for-loop FOUND a match (C's `ln` non-NULL
+    // after `break`). In Rust we use an explicit `matched` flag.
+    loop {
+        // c:1392-1394 — `MatchData match1, match2; savematch(&match1);`
+        let mut match1 = MatchData {
+            r#match: None,
+            mbegin: None,
+            mend: None,
+        };
+        savematch(&mut match1);
+
+        let mut matched = false; // mirror of C's `ln` truthiness after break.
+        // c:1396 — `for (ln = firstnode(nexts); ln; ln = nextnode(ln))`
+        for br_rc in &nexts.clone() {
+            // c:1400 — `br = getdata(ln); next = br->state;`
+            let br = br_rc.borrow();
+            let next_rc = br.state.clone();
+            drop(br); // release the immutable borrow before patprog mutation
+
+            // c:1402-1406 — pattern compile on first match.
+            //   `if (next->pattern && !next->patprog) {
+            //        tokenize(next->pattern);
+            //        if (!(next->patprog = patcompile(...))) return 3;`
+            let (has_pattern, need_compile) = {
+                let n = next_rc.borrow();
+                (n.pattern.is_some(), n.pattern.is_some() && n.patprog.is_none())
+            };
+            if need_compile {
+                let mut pat_str = {
+                    let n = next_rc.borrow();
+                    n.pattern.clone().unwrap_or_default()
+                };
+                crate::ported::glob::tokenize(&mut pat_str); // c:1403
+                let prog = patcompile(&pat_str, 0, None); // c:1404
+                let mut n = next_rc.borrow_mut();
+                n.pattern = Some(pat_str);
+                match prog {
+                    Some(p) => n.patprog = Some(p), // c:1404
+                    None => return 3, // c:1405 — patcompile failure.
+                }
+            }
+            if !has_pattern {
+                continue; // c:1407 — `if (next->pattern && pattry(...))`
+            }
+
+            // c:1407 — `pattry(next->patprog, subj)`.
+            let subj_remaining = &subj[subj_pos..];
+            let pattry_ok = {
+                let n = next_rc.borrow();
+                if let Some(prog) = n.patprog.as_ref() {
+                    pattry(prog, subj_remaining)
+                } else {
+                    false
+                }
+            };
+            if !pattry_ok {
+                continue;
+            }
+
+            // c:1407-1409 — `(!next->guard || (execstring(next->guard,
+            //                  1, 0, "zregexparse-guard"), !lastval))`
+            let guard_ok = {
+                let n = next_rc.borrow();
+                match n.guard.as_ref() {
+                    None => true, // no guard — always OK
+                    Some(g) => {
+                        let g_cloned = g.clone();
+                        drop(n);
+                        crate::ported::exec::execstring(
+                            &g_cloned,
+                            1,
+                            0,
+                            "zregexparse-guard",
+                        ); // c:1408
+                        crate::ported::builtin::LASTVAL
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                            == 0
+                    }
+                }
+            };
+            if !guard_ok {
+                continue; // c:1409 — `!lastval` failed.
+            }
+
+            // c:1413-1417 — `if ((mend = getaparam("mend"))) len = atoi(mend[0]);`
+            let mut len: i32 = 0;
+            crate::ported::signals::queue_signals(); // c:1414
+            if let Some(mend_vec) = crate::ported::params::getaparam("mend") {
+                if let Some(first) = mend_vec.first() {
+                    len = first.trim().parse().unwrap_or(0); // c:1416
+                }
+            }
+            crate::ported::signals::unqueue_signals(); // c:1417
+
+            // c:1419-1421 — `for (i = len; i; i--) if (*subj++ == Meta) subj++;`
+            // Advance the cursor past `len` "characters", each
+            // optionally preceded by a Meta byte (zsh metafication).
+            let mut i = len;
+            while i > 0 && subj_pos < subj_bytes.len() {
+                if subj_bytes[subj_pos] == crate::ported::zsh_h::Meta {
+                    subj_pos += 1; // c:1421 — skip the Meta byte.
+                    if subj_pos < subj_bytes.len() {
+                        subj_pos += 1; // c:1421 — and the following byte.
+                    }
+                } else {
+                    subj_pos += 1; // c:1420 — plain ASCII advance.
+                }
+                i -= 1;
+            }
+
+            // c:1423 — `savematch(&match2);`
+            let mut match2 = MatchData {
+                r#match: None,
+                mbegin: None,
+                mend: None,
+            };
+            savematch(&mut match2);
+            restorematch(&match1); // c:1424
+
+            // c:1426-1431 — run all br->actions.
+            let actions = {
+                let br = br_rc.borrow();
+                br.actions.clone()
+            };
+            for action in &actions {
+                // c:1426 — `for (aln = firstnode(br->actions); ...)`
+                if !action.is_empty() {
+                    // c:1429
+                    crate::ported::exec::execstring(action, 1, 0, "zregexparse-action"); // c:1430
+                }
+            }
+            restorematch(&match2); // c:1432
+
+            // c:1434-1435 — `point2 += len; setiparam(var2, point2);`
+            point2 += len as i64;
+            crate::ported::params::setiparam(var2, point2);
+            // c:1436-1437 — `st = br->state; nexts = st->branches;`
+            st = Some(next_rc.clone());
+            nexts = {
+                let n = next_rc.borrow();
+                n.branches.clone()
+            };
+            // c:1438-1442 — cutoff handling: `-` (hard) or `/` with non-
+            // zero match length resets the nextslist + point1 to point2.
+            let cutoff = {
+                let n = next_rc.borrow();
+                n.cutoff
+            };
+            if cutoff == b'-' as i32 || (cutoff == b'/' as i32 && len != 0) {
+                // c:1438
+                nextslist = Vec::new(); // c:1439
+                point1 = point2; // c:1440
+                crate::ported::params::setiparam(var1, point1); // c:1441
+            }
+            nextslist.push(nexts.clone()); // c:1443
+            matched = true; // mirror C's `ln` non-NULL after break.
+            break; // c:1444
+        }
+        // c:1447-1448 — `if (!ln) freematch(&match1);`
+        if !matched {
+            freematch(&mut match1);
+        }
+        // c:1449 — `} while (ln);`
+        if !matched {
+            break;
+        }
+    }
+
+    // c:1451-1463 — `if (!comp && !*subj)` post-loop out-edge check.
+    if comp == 0 && subj_pos == subj_bytes.len() {
+        for br_rc in &sm.out {
+            // c:1452
+            let br = br_rc.borrow();
+            // c:1454 — `if (br->state == st)` — pointer equality.
+            let is_match = st
+                .as_ref()
+                .map(|s| std::rc::Rc::ptr_eq(s, &br.state))
+                .unwrap_or(false);
+            if is_match {
+                for action in &br.actions {
+                    // c:1455
+                    if !action.is_empty() {
+                        // c:1458
+                        crate::ported::exec::execstring(
+                            action,
+                            1,
+                            0,
+                            "zregexparse-action",
+                        ); // c:1459
+                    }
+                }
+                return 0; // c:1461
+            }
+        }
+    }
+
+    // c:1465-1472 — fallback: walk every accumulated nexts list and
+    // execute any state-level action attached to its branches.
+    let nextslist_for_fallback = nextslist.clone();
+    for fallback_nexts in &nextslist_for_fallback {
+        // c:1465
+        for br_rc in fallback_nexts {
+            // c:1467
+            let br = br_rc.borrow();
+            let action = {
+                let n = br.state.borrow();
+                n.action.clone()
+            };
+            if let Some(a) = action {
+                // c:1469
+                if !a.is_empty() {
+                    crate::ported::exec::execstring(&a, 1, 0, "zregexparse-action"); // c:1470
+                }
+            }
+        }
+    }
+    // c:1473 — `return empty(nexts) ? 2 : 1;`
+    if nexts.is_empty() {
+        2
+    } else {
+        1
+    }
 }
 
 // ===========================================================
@@ -2612,7 +2869,13 @@ pub struct zstyle_entry {
 pub struct RParseState {
     pub cutoff: i32,                                                  // c:1094
     pub pattern: Option<String>,                                      // c:1095
-    pub patprog: Option<Patprog>, // c:1096 compiled on first match
+    // c:1096 — `Patprog patprog;` compiled on first match. The
+    // zsh_h::Patprog alias (`Box<patprog>`) doesn't carry the
+    // post-tokenisation buffer that pattern.rs::patcompile bundles
+    // (Box<(patprog, Vec<u8>)>) — the byte buffer holds the compiled
+    // pattern image referenced by `patprog::p`. Use the canonical
+    // pattern::Patprog so pattry() reads the right shape end-to-end.
+    pub patprog: Option<crate::ported::pattern::Patprog>,
     pub guard: Option<String>,                          // c:1097
     pub action: Option<String>,                         // c:1098
     pub branches: Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>, // c:1099
