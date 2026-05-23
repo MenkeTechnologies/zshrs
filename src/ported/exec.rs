@@ -5017,13 +5017,32 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     // c:5559-5570 XTRACE arg trace: omit until full execshfunc port.
     // c:5572-5578 cmdstack/sfcontext setup: omit (no cmdstack in
     // zshrs yet — replaced by tracing).
-    // c:5580 — `doshfunc(shf, args, 0);`
+    // c:5580 — `doshfunc(shf, args, 0);` — doshfunc swaps PPARAMS
+    // ($1, $2, …) to the function's args, runs the body via
+    // runshfunc, then restores. doshfunc itself isn't ported yet
+    // so we do the swap-and-restore inline here.
     if let Some(prog) = shf.funcdef.as_deref() {
-        // Wire argv-as-positional via the canonical
-        // positional-param swap that runshfunc already does at
-        // c:6166-...; the wrapper chain is None (no FuncWrap).
-        let _ = args;
+        // Save old PPARAMS.
+        let old_pparams: Vec<String> = crate::ported::builtin::PPARAMS
+            .lock()
+            .map(|p| p.clone())
+            .unwrap_or_default();
+        // args[0] is the function name (matching C's `argv[0]` →
+        // FUNCTION_ARGZERO); strip it so $1..$N are the real call
+        // args. C's `pparams = args + 1`.
+        let positionals: Vec<String> = if args.len() > 1 {
+            args[1..].to_vec()
+        } else {
+            Vec::new()
+        };
+        if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+            *pp = positionals;
+        }
         runshfunc(prog, None, &shf.node.nam);
+        // Restore.
+        if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+            *pp = old_pparams;
+        }
     }
     // c:5582-5589 cmdstack restore/free: omit (no cmdstack).
 }
