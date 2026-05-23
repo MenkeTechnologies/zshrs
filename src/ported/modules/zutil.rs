@@ -2336,6 +2336,7 @@ pub fn bin_zparseopts(
 
     // Phase 1: parse zparseopts flags (c:1751-1873).
     let mut i = 0usize;
+    let mut dashdash_seen = false; // c:1865-1867 `if (!o) { o = ""; break; }`
     while i < args.len() {
         let o = &args[i];
         if !o.starts_with('-') {
@@ -2347,6 +2348,12 @@ pub fn bin_zparseopts(
         let bytes = o.as_bytes();
         match bytes[1] {
             b'-' if bytes.len() == 2 => {
+                // c:1757-1762/1865 — bare `--` exits the flag-parse
+                // loop AND clears the missing-descriptions check
+                // (C sets `o = ""` so the post-loop `if (!o)` is
+                // false). zsh accepts `zparseopts -a foo --` with
+                // zero descriptions silently.
+                dashdash_seen = true;
                 i += 1;
                 break;
             } // "--"
@@ -2431,8 +2438,10 @@ pub fn bin_zparseopts(
             _ => break, // option-desc
         }
     }
-    if i >= args.len() {
-        // c:1874
+    if i >= args.len() && !dashdash_seen {
+        // c:1874 — fires only when we ran out of args WITHOUT
+        // ever seeing the `--` terminator. With `--`, C sets
+        // `o = ""` so the post-loop check passes; mirror that.
         zwarnnam(nam, "missing option descriptions");
         return 1;
     }
