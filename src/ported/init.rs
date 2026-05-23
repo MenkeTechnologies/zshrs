@@ -1271,10 +1271,10 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
 pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
     // c:113
 
-    // c:exec.c: `int subsh` — not yet ported. Local stub: never in
-    // a subshell from within the REPL loop (zshrs spawns subshells
-    // via fork+exec at the binary level, not by recursing into loop()).
-    let subsh: i32 = 0;
+    // c:114 — `int subsh = subsh;` — read the global at exec.rs:160
+    // (port of `int subsh;` from Src/exec.c). Non-zero when current
+    // shell is a forked subshell (set by entersubsh c:1083).
+    let subsh: i32 = crate::ported::exec::subsh.load(Ordering::Relaxed);
 
     let mut prog: Option<crate::ported::parse::ZshProgram>; // c:115
     let err: i32; // c:116

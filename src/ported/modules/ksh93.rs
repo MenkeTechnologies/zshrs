@@ -240,12 +240,13 @@ pub fn ksh93_wrapper(prog: *const eprog, w: *const funcwrap, name: *mut libc::c_
 
     if num == 0 {
         // c:152
-        // c:153 — for (f = funcstack; f; f = f->prev, num++);
-        f = (*funcstack.lock().unwrap()) as *const funcstack;
-        while !f.is_null() {
-            // f = f->prev — stub: no real chain, exit immediately.
-            f = std::ptr::null_mut();
-            num += 1;
+        // c:153 — `for (f = funcstack; f; f = f->prev, num++);` — count
+        // function-call-stack depth. Route through the canonical
+        // FUNCSTACK Vec<funcstack> in modules::parameter (each push is
+        // a nested call). `len()` gives the depth directly.
+        let _ = f; // C iterates a linked list; Rust uses Vec depth.
+        if let Ok(stack) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+            num = stack.len() as i64;
         }
     } else {
         // c:154
