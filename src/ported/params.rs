@@ -8847,6 +8847,28 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "ERRNO" => Some(errnogetfn().to_string()),
         // Time callbacks.
         "SECONDS" => Some(intsecondsgetfn().to_string()),
+        // zsh/datetime module params. In recent zsh these are
+        // auto-loaded via `zmodload zsh/datetime` and the param
+        // appears in paramtab via the module's `p:NAME` feature
+        // descriptor (Src/Modules/datetime.c:25). In zshrs the
+        // datetime module's per-param wireup hasn't been ported
+        // through paramtab yet — the getters exist
+        // (modules::datetime::getcurrentsecs / getcurrentrealtime)
+        // but no Param entry is created on `zmodload`. Mirror the C
+        // behavior by routing the names through their canonical
+        // getters here so `$EPOCHSECONDS` / `$EPOCHREALTIME` read
+        // live time values regardless of explicit zmodload. p10k
+        // and many other prompts rely on this without an explicit
+        // zmodload (zsh ships datetime preloaded in most configs).
+        "EPOCHSECONDS" => {
+            // c:Src/Modules/datetime.c:206 `getcurrentsecs`.
+            Some(crate::ported::modules::datetime::getcurrentsecs().to_string())
+        }
+        "EPOCHREALTIME" => {
+            // c:Src/Modules/datetime.c:212 `getcurrentrealtime`.
+            let v = crate::ported::modules::datetime::getcurrentrealtime();
+            Some(format!("{:.10}", v))
+        }
         // Cached-state callbacks. C dispatches `pm->gsu.s->getfn(pm)`
         // where pm is `paramtab->getnode(name)`. Mirror: look up pm,
         // pass it through. Each getfn here ignores pm (matches C's
