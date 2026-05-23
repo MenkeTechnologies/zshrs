@@ -288,20 +288,37 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
     };
 
     // c:142-165 — npath truncation. `npath > 0` keeps LAST N
-    // components; `npath < 0` keeps FIRST -N components. Rust port
-    // currently only supports the positive form — usize argument
-    // pinned the type; signed-flip would break callers. Note the
-    // gap; the negative-N form is a Rust-only TODO.
+    // components; `npath < 0` keeps FIRST -N components. Sig still
+    // usize for caller compat; treat values >= 0x80000000 (negative
+    // i32 cast to usize) as the negative form. Live `%N` callers pass
+    // a positive count from `%[<NUM>~]`; negative form is uncommon
+    // but real per the C source.
     if npath == 0 {
         return display;
     }
+    let signed = npath as i64;
+    let neg_n = if signed < 0 || (signed as u64) >= (i32::MIN as u32 as u64) {
+        // High-bit set → originally a negative i32 widened through usize.
+        let as_i32 = (signed as i32).wrapping_neg();
+        if as_i32 > 0 { Some(as_i32 as usize) } else { None }
+    } else {
+        None
+    };
 
-    // c:144-153 — take last npath components.
     let components: Vec<&str> = display.split('/').filter(|s| !s.is_empty()).collect();
-    if components.len() <= npath {
-        return display;
+    if let Some(first_n) = neg_n {
+        // c:155-163 — keep FIRST N components.
+        if components.len() <= first_n {
+            return display;
+        }
+        components[..first_n].join("/")
+    } else {
+        // c:144-153 — keep LAST N components.
+        if components.len() <= npath {
+            return display;
+        }
+        components[components.len() - npath..].join("/")
     }
-    components[components.len() - npath..].join("/")
 }
 
 // `pub struct PromptExpandResult` — DELETED per user directive.
