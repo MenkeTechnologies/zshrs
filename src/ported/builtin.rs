@@ -962,13 +962,24 @@ pub fn bin_set(
                 };
                 let optno = optlookup(&optname); // c:642
                 if optno == 0 {
-                    // c:642
-                    zerr(&format!("no such option: {}", optname)); // c:642
+                    // c:642 — C: `zerrnam(nam, "no such option: %s", *args)`.
+                    // zwarnnam emits `zsh:<nam>:<lineno>:` prefix
+                    // (vs zerr's bare `zsh:<lineno>:`); use the
+                    // canonical form so `set +o BAD` matches zsh's
+                    // diagnostic format. Return 1 so $? reflects the
+                    // failed lookup (C's execbuiltin checks errflag
+                    // after the call; zshrs's bridge bases on the
+                    // return value).
+                    zerrnam(nam, &format!("no such option: {}", optname));
+                    unqueue_signals();
+                    return 1;
                 } else if dosetopt(optno, if action { 1 } else { 0 }, 0)
                     != 0
                 // c:644
                 {
-                    zerr(&format!("can't change option: {}", optname)); // c:644
+                    zerrnam(nam, &format!("can't change option: {}", optname));
+                    unqueue_signals();
+                    return 1;
                 }
                 break;
             }

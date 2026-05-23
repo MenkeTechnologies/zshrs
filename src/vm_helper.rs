@@ -943,18 +943,16 @@ impl ShellExecutor {
         variables.insert("MAILCHECK".to_string(), "60".to_string()); // c:858
         variables.insert("KEYTIMEOUT".to_string(), "40".to_string()); // c:859
         variables.insert("LISTMAX".to_string(), "100".to_string()); // c:860
-                                                                    // `$WATCHFMT` — `Src/Modules/watch.c:137 DEFAULT_WATCHFMT`.
-                                                                    // zsh's watch boot_ seeds WATCHFMT to the default when the
-                                                                    // module loads. zshrs's modules are statically linked but
-                                                                    // boot_ isn't wired into require_module yet, so seed the
-                                                                    // default here. `print "$WATCHFMT"` prints the default
-                                                                    // (diverges from `/bin/zsh -fc` which leaves it unset until
-                                                                    // an explicit `zmodload zsh/watch`, but matches the
-                                                                    // post-zmodload state that most plugin code expects).
-        variables.insert(
-            "WATCHFMT".to_string(),
-            crate::ported::modules::watch::DEFAULT_WATCHFMT.to_string(),
-        );
+        // `$WATCHFMT` — `Src/Modules/watch.c:137 DEFAULT_WATCHFMT`.
+        // zsh's watch boot_ seeds WATCHFMT to the default when the
+        // zsh/watch module loads via `zmodload zsh/watch`. Before
+        // that, `$WATCHFMT` reads empty. zshrs used to pre-seed the
+        // default unconditionally — matched the post-zmodload state
+        // most plugin code expects but diverged from `/bin/zsh -fc`.
+        // Match zsh exactly now: don't seed; let zmodload-equivalent
+        // fire it. The watch module's own port at modules/watch.rs:32
+        // still uses DEFAULT_WATCHFMT as the runtime fallback when
+        // `\$WATCHFMT` is unset (printprompt path at watch.rs:517).
 
         // `$FUNCNEST` default. Real zsh defaults to 500 (compile-time
         // MAX_FUNCTION_DEPTH at configure.ac:400 / config.h:1004
