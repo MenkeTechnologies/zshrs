@@ -7901,6 +7901,32 @@ pub fn bin_read(
             }
         }
         buf = String::from_utf8_lossy(&got[..bytes_read]).into_owned();
+    } else if OPT_HASARG(ops, b'd') {
+        // c:Src/builtin.c:6418 — `-d DELIM`: read until first byte of
+        // DELIM (zsh uses only first char of arg). EOF mid-record
+        // returns what was read so far, exit 1 like the default path.
+        let arg = OPT_ARG(ops, b'd').unwrap_or("");
+        let delim = arg.as_bytes().first().copied().unwrap_or(b'\n');
+        let mut buf_bytes = Vec::<u8>::new();
+        let mut got_any = false;
+        loop {
+            let mut b = [0u8; 1];
+            match io::stdin().lock().read(&mut b) {
+                Ok(1) => {
+                    got_any = true;
+                    if b[0] == delim {
+                        break;
+                    }
+                    buf_bytes.push(b[0]);
+                }
+                Ok(0) => break,
+                _ => return 2,
+            }
+        }
+        buf = String::from_utf8_lossy(&buf_bytes).into_owned();
+        if !got_any {
+            return 1; // EOF without any input
+        }
     } else {
         // Read a line (default behaviour).
         match io::stdin().read_line(&mut buf) {
