@@ -229,10 +229,15 @@ fn dump_via_zshrs(src: &str) -> String {
         let raw_owned = zsh::lex::tokstr().unwrap_or_default();
         let raw = raw_owned.as_str();
         // C zsh's `untokenize` (exec.c:2077-2099) maps SNULL → `'`, DNULL →
-        // `"`, BNULL → `\` via the `ztokens` table (lex.c:38). zshrs's
-        // plain `untokenize` strips them; `untokenize_preserve_quotes`
-        // matches C behavior. Use the latter for parity.
-        let plain = zsh::lex::untokenize_preserve_quotes(raw);
+        // `"`, BNULL → `\`, and Qstring → `$` via the `ztokens` table
+        // (lex.c:38). zshrs's `untokenize_preserve_quotes` matches C for
+        // SNULL/DNULL/BNULL but PRESERVES Qstring (`\u{8c}`) so the
+        // downstream `stringsubst` qt detection at Src/subst.c:283 fires
+        // for DQ-context `$`. The parity test diffs against C zsh's
+        // dumptokens (which runs untokenize), so decode Qstring → `$`
+        // here in the test to match C exactly without losing the
+        // Qstring marker for the in-pipeline subst path.
+        let plain = zsh::lex::untokenize_preserve_quotes(raw).replace('\u{8c}', "$");
         out.push_str(tok_name(tok));
         out.push('\t');
         out.push_str(&plain);
