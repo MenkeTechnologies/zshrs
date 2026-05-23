@@ -898,13 +898,14 @@ impl ZshCompiler {
             return;
         }
 
-        // Run the ported head section of `execcmd_exec`
-        // (`src/ported/exec.rs`, c:2900) to get the precommand-modifier
-        // strip count + dispatch decision. The C function performs
-        // dispatch directly; zshrs splits it: this head-walk runs at
-        // compile time, the actual invocation is the bytecode emitted
-        // below. See the WARNING block in `execcmd_exec` for the
-        // divergence rationale.
+        // Run `execcmd_compile_head` — the fusevm-bytecode-time head
+        // resolver in `src/ported/exec.rs` mirroring the head section
+        // of C's `execcmd_exec` (`Src/exec.c:c:2904-3275`) — to get
+        // the precommand-modifier strip count + dispatch decision.
+        // The C function performs dispatch directly; zshrs splits it:
+        // this head-walk runs at compile time, the actual invocation
+        // is the bytecode emitted below. See the WARNING block in
+        // `execcmd_compile_head` for the divergence rationale.
         //
         // `WC_SIMPLE` (vs `WC_TYPESET`) is fine for both `typeset` and
         // ordinary cmds in this context — the walk doesn't depend on
@@ -945,14 +946,14 @@ impl ZshCompiler {
         }
 
         let dispatch =
-            crate::ported::exec::execcmd_exec(&simple.words, crate::ported::zsh_h::WC_SIMPLE);
+            crate::ported::exec::execcmd_compile_head(&simple.words, crate::ported::zsh_h::WC_SIMPLE);
         let precmd_skip = dispatch.precmd_skip;
 
         // c:Src/exec.c:3372-3406 "Empty command" no-redir arm — bare
         // `exec` / `noglob` / `command` / `nocorrect` (the precmd
         // walk stripped everything). C sets `lastval = cmdoutval` (0
         // when no $(cmd) ran) and returns without dispatching.
-        // Surfaced by execcmd_exec via `is_empty_command`.
+        // Surfaced by execcmd_compile_head via `is_empty_command`.
         if dispatch.is_empty_command {
             self.builder.emit(Op::LoadInt(0), 0); // c:3399 lastval = cmdoutval
             self.builder.emit(Op::SetStatus, 0); // c:3399

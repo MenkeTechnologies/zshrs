@@ -22,11 +22,14 @@
 //!   `bin_autoload` / `bin_functions -c` in `src/ported/builtin.rs`.
 //! - **`resolvebuiltin`** (`Src/exec.c:2703`) — module-autoload guard
 //!   used by the dispatch walk in `execcmd_exec`.
-//! - **`execcmd_exec`** (`Src/exec.c:2900`) — head section only
-//!   (locals + precommand-modifier walk through `c:3091`). The rest
-//!   of the C function drives the wordcode-walker dispatch and is
-//!   replaced by fusevm bytecode in `src/extensions/compile_zsh.rs`;
-//!   see the WARNING block inside the function body.
+//! - **`execcmd_compile_head`** — fusevm-bytecode-time head resolver
+//!   mirroring the head section (`c:2904-3275`) of C's `execcmd_exec`.
+//!   NOT a faithful port; the canonical 7-arg `execcmd_exec` port lives
+//!   alongside it.
+//! - **`execcmd_exec`** (`Src/exec.c:2900`) — canonical 7-arg port of
+//!   the C function (locals + dispatch walk through builtin/shfunc/external
+//!   invocation). Used by future tree-walker callers; the fusevm
+//!   bytecode flow goes through `execcmd_compile_head` instead.
 
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
@@ -713,12 +716,13 @@ pub fn resolvebuiltin<'a>(
     Some(hn) // c:2723
 }
 
-/// Dispatch decision returned by `execcmd_exec`'s head-walk port.
-/// Encodes the local-variable state that the C function carries
-/// through `c:2913-2916` (`is_builtin`, `is_shfunc`, `cflags`,
-/// `use_defpath`) plus the precmd-modifier strip count. The fusevm
-/// bytecode compiler reads this to emit the correct dispatch opcode
-/// in `src/extensions/compile_zsh.rs::compile_simple`.
+/// Dispatch decision returned by `execcmd_compile_head` — the
+/// fusevm-bytecode-time head resolver that mirrors the local-variable
+/// state the C `execcmd_exec` function carries through `c:2913-2916`
+/// (`is_builtin`, `is_shfunc`, `cflags`, `use_defpath`) plus the
+/// precmd-modifier strip count. The fusevm bytecode compiler reads
+/// this to emit the correct dispatch opcode in
+/// `src/extensions/compile_zsh.rs::compile_simple`.
 ///
 /// Not a C struct — invented to bridge the divergence between the
 /// C wordcode-walker (which mutates locals + falls through to
@@ -763,47 +767,41 @@ pub struct execcmd_dispatch {
     pub is_empty_command: bool,
 }
 
-/// Port of the head section of `execcmd_exec(Estate state,
-/// Execcmd_params eparams, int input, int output, int how, int
-/// last1, int close_if_forked)` from `Src/exec.c:2900`. Body
-/// translated line-for-line from `c:2904-3091` covering local
-/// initialisation, %job-table head detection, and the
-/// precommand-modifier walk that strips `BINF_PREFIX` builtins
-/// (`-`, `builtin`, `command`, `exec`, `noglob`) before dispatch.
+/// !!! NOT A PORT OF C `execcmd_exec` !!!
+///
+/// This is a fusevm-bytecode-time head resolver invoked by
+/// `src/extensions/compile_zsh.rs::compile_simple` and the
+/// `command` builtin shim in `src/fusevm_bridge.rs`. The canonical
+/// 7-arg port of `Src/exec.c:execcmd_exec` lives elsewhere in this
+/// file under the C-faithful name `execcmd_exec`.
+///
+/// This helper mirrors the head section (`c:2904-3275`) of the C
+/// function — local initialisation, the precommand-modifier walk
+/// that strips `BINF_PREFIX` builtins (`-`, `builtin`, `command`,
+/// `exec`, `noglob`), and the `BINF_COMMAND`/`BINF_EXEC`
+/// sub-option parsers — and returns the resulting dispatch
+/// decision via `execcmd_dispatch`. The fusevm compiler reads
+/// that struct to decide which `Op::CallBuiltin` /
+/// `Op::CallFunction` / `Op::Exec` to emit, and to compute the
+/// correct post-strip `argc`.
 ///
 /// =================== WARNING — DIVERGENCE ====================
 ///
 /// The C function runs ~1500 lines and PERFORMS dispatch: it sets up
 /// `multio` redirections, evaluates `varspc` assignments, then calls
-/// `execbuiltin` / `runshfunc` / `execute` directly. zshrs DOES NOT
-/// port that tail because the fusevm bytecode VM
-/// (`src/extensions/compile_zsh.rs::compile_simple` +
-/// `src/fusevm_bridge.rs::register_builtins`) emits dispatch opcodes
-/// at compile time and the VM drives them at runtime.
-///
-/// This Rust port stops at `c:3091` — immediately after the
-/// precmd-modifier walk — and returns the dispatch decision via
-/// `execcmd_dispatch`. The fusevm compiler reads that struct to
-/// decide which `Op::CallBuiltin` / `Op::CallFunction` / `Op::Exec`
-/// to emit, and to compute the correct post-strip `argc`.
-///
-/// Code below this function's return point that lives in C
-/// (`Src/exec.c:3092-4404`) is intentionally NOT ported. The
-/// `BINF_COMMAND` / `BINF_EXEC` sub-modifier option-parsing block
-/// (`c:3092-3275`) is a TODO — today `command -p`, `command -v/-V`,
-/// `exec -a`, `exec -l`, `exec -c` are partially handled in
-/// `compile_zsh.rs` / `src/ported/builtin.rs::bin_command` /
-/// `bin_exec` rather than here. When those land canonically, they
-/// extend this function past `c:3091`.
-///
-/// =============================================================
+/// `execbuiltin` / `runshfunc` / `execute` directly. This helper
+/// stops after the precmd-modifier walk and only returns the head
+/// decision; runtime dispatch is driven by the bytecode the fusevm
+/// compiler emits.
 ///
 /// Signature adaptation: the C `Estate`/`Execcmd_params` carry the
-/// wordcode iterator state — zshrs doesn't traverse wordcode, so
-/// the args list arrives already-expanded as a `&[String]` (analog
-/// of `preargs` after `execcmd_getargs` at `c:3028`). `type_`
-/// mirrors `eparams->type` (`WC_SIMPLE` vs `WC_TYPESET`).
-pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
+/// wordcode iterator state — zshrs doesn't traverse wordcode here,
+/// so the args list arrives already-expanded as a `&[String]`
+/// (analog of `preargs` after `execcmd_getargs` at `c:3028`).
+/// `type_` mirrors `eparams->type` (`WC_SIMPLE` vs `WC_TYPESET`).
+///
+/// =============================================================
+pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
     // c:2900 (Src/exec.c)
 
     // c:2904-2916 — locals.
@@ -1128,8 +1126,8 @@ pub fn execcmd_exec(args: &[String], type_: u32) -> execcmd_dispatch {
     // - NO redir + BINF_PREFIX+COMMAND → lastval=0, return (c:3365-3371)
     // - NO redir + default            → lastval=cmdoutval, return (c:3372-3406)
     //
-    // zshrs's `execcmd_exec` doesn't receive `redir` (it takes `args`
-    // only). The cases that DEPEND on redirs are handled by
+    // zshrs's `execcmd_compile_head` doesn't receive `redir` (it
+    // takes `args` only). The cases that DEPEND on redirs are handled by
     // `compile_zsh.rs::compile_redir` before this dispatch fires; the
     // remaining cases collapse into the single `is_empty_command`
     // flag below. Both NO-redir sub-cases produce the same observable

@@ -1570,3 +1570,11 @@ split_qualifier
 strip_tokens
 transient_prompt
 walk_namespace
+
+# exec.rs — `execcmd_compile_head` is the fusevm-bytecode-time head
+# resolver mirroring `Src/exec.c::execcmd_exec`'s precommand-modifier
+# walk (c:2904-3275). NOT a port of `execcmd_exec` itself — that
+# port lives alongside it under the C-faithful name. The compile-time
+# head resolver has no direct C counterpart; the C source dispatches
+# inline rather than splitting compile/run.
+execcmd_compile_head

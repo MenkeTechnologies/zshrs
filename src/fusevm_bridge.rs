@@ -528,17 +528,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // spawn via execute_external since zshrs is non-forking).
     // BUILTIN_COMMAND — `command [-p] [-v|-V] cmd args…` BIN_PREFIX
     // (Src/builtin.c:45). PURE PASSTHRU: prepend "command" and hand
-    // to `exec::execcmd_exec` (C port of `Src/exec.c::execcmd_exec`
-    // precommand-modifier walk at c:3104-3187). That port already
-    // does the -p / -v / -V option parsing, surfaces
-    // `has_command_vv` for the whence redirect, and reports the
-    // dispatch shape (is_builtin vs external).
+    // to `exec::execcmd_compile_head` (the fusevm-bytecode-time head
+    // resolver mirroring `Src/exec.c::execcmd_exec` precommand-modifier
+    // walk at c:3104-3187). That helper already does the -p / -v / -V
+    // option parsing, surfaces `has_command_vv` for the whence
+    // redirect, and reports the dispatch shape (is_builtin vs external).
     vm.register_builtin(BUILTIN_COMMAND, |vm, argc| {
         let args = pop_args(vm, argc);
         let mut full = Vec::with_capacity(args.len() + 1);
         full.push("command".to_string());
         full.extend(args.clone());
-        let dispatch = crate::ported::exec::execcmd_exec(
+        let dispatch = crate::ported::exec::execcmd_compile_head(
             &full,
             crate::ported::zsh_h::WC_SIMPLE,
         );
