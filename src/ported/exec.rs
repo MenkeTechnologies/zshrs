@@ -3868,7 +3868,28 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
                 }
             }
         }
-        // c:5088-5091 — addproc skipped (WARNING b)
+        // c:5088-5091 — `if (!out) addproc(pid, NULL, 1, &bgtime, -1, -1);` —
+        // record the proc-subst writer-side child in the job's
+        // auxprocs (aux=true). For `<(cmd)` (out==1 = reader-side
+        // child), C omits the addproc — symmetric here.
+        if out == 0 {
+            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                let mut guard = jt.lock().unwrap();
+                let tj = crate::ported::jobs::THISJOB
+                    .get()
+                    .map(|m| *m.lock().unwrap())
+                    .unwrap_or(-1);
+                if tj >= 0 {
+                    if let Some(j) = guard.get_mut(tj as usize) {
+                        crate::ported::jobs::addproc(
+                            j, pid, "", true,
+                            Some(std::time::Instant::now()),
+                            -1, -1,
+                        );
+                    }
+                }
+            }
+        }
         procsubstpid.store(pid, Ordering::Relaxed); // c:5092
         return Some(pnam); // c:5093
     }
