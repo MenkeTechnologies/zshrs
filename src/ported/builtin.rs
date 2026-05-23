@@ -2010,6 +2010,7 @@ pub fn bin_fc(
 
     // c:1494-1500 — `-m` pattern filter (compile first arg).
     let mut pprog: Option<crate::ported::pattern::PatProg> = None;
+    let mut pprog_src: Option<String> = None;
     if !argv.is_empty() && OPT_ISSET(ops, b'm') {
         // c:1494
         let pat = argv.remove(0);
@@ -2019,7 +2020,10 @@ pub fn bin_fc(
             PAT_HEAPDUP,
             None,
         ) {
-            Some(p) => pprog = Some(p),
+            Some(p) => {
+                pprog = Some(p);
+                pprog_src = Some(pat); // retain source string for fclist
+            }
             None => {
                 zwarnnam(nam, "invalid match pattern"); // c:1497
                 return 1; // c:1498
@@ -2172,7 +2176,15 @@ pub fn bin_fc(
     if OPT_ISSET(ops, b'l') {
         // c:1606
         // c:1608 — `fclist(stdout, ops, first, last, asgf, pprog, 0);`
-        retval = fclist(&mut io::stdout(), ops, first, last, &asgf, None, 0);
+        retval = fclist(
+            &mut io::stdout(),
+            ops,
+            first,
+            last,
+            &asgf,
+            pprog_src.as_deref(),
+            0,
+        );
         unqueue_signals();
     } else {
         // c:1611-1668 — edit history range to a temp file, fcedit it,
@@ -2264,7 +2276,7 @@ pub fn bin_fc(
             }
         }
     }
-    let _ = pprog;
+    let _ = pprog; // compiled form kept for parity; source threads through fclist.
     retval // c:1675
 }
 
