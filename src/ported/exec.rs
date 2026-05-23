@@ -1699,7 +1699,6 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
 /// unqueue_signals();
 /// ```
 ///
-/// =================== WARNING — DIVERGENCE ====================
 /// (a) `wrap->module->wrapper++/--` (c:6178/6180) — Rust Module
 ///     doesn't have a `wrapper` refcount field; we skip the bump,
 ///     which means a wrapper handler that recursively unloads its
@@ -1710,16 +1709,13 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
 ///     ref; we'd need the wrapper to carry the module name to
 ///     route correctly. Skipped for now (no shipping wrapper
 ///     modules use this path).
-/// (c) `execode(prog, 1, 0, "shfunc")` (c:6195) — no execode port;
-///     re-routes through the fusevm pipeline by re-parsing the
-///     Eprog's source. When `prog.strs` carries the original
-///     source (autoloaded fns) we use that; otherwise we walk the
-///     fusevm executor on the prog's name lookup. Re-port execode
-///     when execlist lands.
+/// (c) `execode(prog, 1, 0, "shfunc")` (c:6195) — IS now ported
+///     (exec.rs:6047). Body uses execode for the no-source
+///     (compiled-wordcode) branch and fusevm for the
+///     source-preserving (autoloaded) branch per cache coherence.
 /// (d) `startparamscope/endparamscope` Rust signatures take
 ///     `&mut HashTable` (params.rs:7425/7435). We pass the global
 ///     paramtab handle via the params crate.
-/// =============================================================
 pub fn runshfunc(
     prog: &eprog,
     mut wrap: Option<&funcwrap>,
