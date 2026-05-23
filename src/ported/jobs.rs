@@ -25,7 +25,7 @@ use crate::DPUTS;
 use crate::exec_jobs::JobTable;
 use crate::ported::builtin::{SHELL_EXITING, STOPMSG};
 use crate::ported::builtins::sched::zleactive;
-use crate::ported::hashtable_h::{BIN_BG, BIN_DISOWN, BIN_FG, BIN_JOBS};
+use crate::ported::hashtable_h::{BIN_BG, BIN_DISOWN, BIN_FG, BIN_JOBS, BIN_WAIT};
 use crate::ported::options::opt_state_set;
 use crate::ported::params::{getsparam, setsparam, unsetparam};
 use crate::ported::signals::{killjb, queue_signals, signal_block, signal_setmask, unqueue_signals, wait_for_processes};
@@ -2753,6 +2753,30 @@ pub fn bin_fg(
                     &format!("{}: kill failed: {}", arg, std::io::Error::last_os_error()),
                 );
                 returnval = 1;
+            }
+        } else if func == BIN_WAIT {
+            // c:Src/jobs.c — `wait PID` waits for an arbitrary PID via
+            // waitpid(); if not a child of this shell, kernel returns
+            // ECHILD and wait exits 127 (per POSIX). The numeric arg
+            // is treated as a raw PID, not a job index.
+            if !arg.starts_with('%') {
+                if let Ok(pid) = arg.parse::<i32>() {
+                    let mut status: libc::c_int = 0;
+                    let r = unsafe { libc::waitpid(pid, &mut status, 0) };
+                    if r == -1 {
+                        let err = std::io::Error::last_os_error();
+                        if err.raw_os_error() == Some(libc::ECHILD) {
+                            zwarnnam(name, &format!("pid {} is not a child of this shell", pid));
+                            returnval = 127;
+                        } else {
+                            returnval = 1;
+                        }
+                    } else if libc::WIFEXITED(status) {
+                        returnval = libc::WEXITSTATUS(status);
+                    } else if libc::WIFSIGNALED(status) {
+                        returnval = 128 + libc::WTERMSIG(status);
+                    }
+                }
             }
         } else if func == BIN_JOBS {
             let t = table.lock().expect("jobtab poisoned");
