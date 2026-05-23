@@ -2273,8 +2273,9 @@ pub fn bin_fc(
                     .open(&fil)
                     .ok();
                 let listed = if let Some(mut f) = out {
-                    // c:1645
-                    fclist(&mut f, ops, first, last, &asgf, None, 1)
+                    // c:1645 — thread pprog filter so `fc -m PAT` only
+                    // edits matching lines in this temp-file edit path.
+                    fclist(&mut f, ops, first, last, &asgf, pprog_src.as_deref(), 1)
                 } else {
                     1
                 };
