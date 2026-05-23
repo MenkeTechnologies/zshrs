@@ -3669,7 +3669,19 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {
             None => return,
         },
     };
-    let _ = lockhistfile(Some(&path), 1);
+    // c:2937 — `if ((ret = lockhistfile(fn, 1)))`. Hard lock failure
+    // (ret != 2) must bail before truncating — otherwise we'd race
+    // another zsh that holds the write lock and we'd both blow the
+    // file away. ret=2 means "couldn't lock but proceed anyway".
+    let lock_ret = lockhistfile(Some(&path), 1);
+    if lock_ret != 0 && lock_ret != 2 {
+        crate::ported::utils::zerr(&format!(
+            "locking failed for {}: {}",
+            path,
+            std::io::Error::last_os_error()
+        ));
+        return;
+    }
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
