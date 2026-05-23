@@ -1530,29 +1530,33 @@ pub fn deltimedfn(func: fn()) {
 /// non-null, `*retval` is set to the most recent `doshfunc`-returned
 /// status, mirroring the C body's `*retval = ret` semantics.
 pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: *mut i32) -> i32 {
-    let _ = lnklst; // args plumbing TODO — current dispatch reaches
-                    // doshfunc indirectly via the executor singleton.
     let mut stat: i32 = 1; // c:1475
     let mut ret: i32 = 0; // c:1475
 
+    // Build the args vec mirroring C's doshfunc input — argv[0] is the
+    // function name, $1..$N are the carried args.
+    let mk_args = |fname: &str| -> Vec<String> {
+        let mut v: Vec<String> = vec![fname.to_string()];
+        if let Some(extra) = lnklst {
+            v.extend_from_slice(extra);
+        }
+        v
+    };
+
     // c:1495 — `if ((shfunc = getshfunc(name))) { doshfunc(...); stat = 0; }`
-    let shf_exists = shfunctab_lock()
+    let shf_clone: Option<crate::ported::zsh_h::shfunc> = shfunctab_lock()
         .read()
-        .map(|t| t.get(name).is_some())
-        .unwrap_or(false);
-    if shf_exists {
-        // c:1495
-        // c:1503 — `ret = doshfunc(shfunc, lnklst, 1);` — Rust port
-        // does not yet thread the doshfunc result back; track 0 as a
-        // best-effort fallthrough.
+        .ok()
+        .and_then(|t| t.get(name).cloned());
+    if let Some(mut shf) = shf_clone {
+        let mut args = mk_args(name);
+        crate::ported::exec::execshfunc(&mut shf, &mut args); // c:1503 doshfunc
+        ret = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
         stat = 0; // c:1504
     }
 
     if arrayp != 0 {
-        // c:1507
-        // c:1508-1525 — `VARARR(...) ; sprintf(arrnam, "%s_functions",
-        // name); arr = getaparam(arrnam); if (arr) for ((); *arr; arr++)
-        // if ((shfunc = ...)) { ret = doshfunc(...); stat = 0; }`
+        // c:1507-1525 — fire every `${name}_functions` hook in order.
         let arr_name = format!("{}_functions", name); // c:1511
         let arr = crate::ported::params::paramtab()
             .read()
@@ -1560,13 +1564,16 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
             .and_then(|t| t.get(&arr_name).and_then(|p| p.u_arr.clone()))
             .unwrap_or_default(); // c:1512 getaparam
         for fn_name in arr {
-            // c:1514 ; *arr ;
-            let exists = shfunctab_lock()
+            // c:1514
+            let shf_clone: Option<crate::ported::zsh_h::shfunc> = shfunctab_lock()
                 .read()
-                .map(|t| t.get(&fn_name).is_some())
-                .unwrap_or(false);
-            if exists {
-                // c:1518 if ((shfunc = ...))
+                .ok()
+                .and_then(|t| t.get(&fn_name).cloned());
+            if let Some(mut shf) = shf_clone {
+                // c:1518
+                let mut args = mk_args(&fn_name);
+                crate::ported::exec::execshfunc(&mut shf, &mut args); // c:1519
+                ret = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
                 stat = 0; // c:1520
             }
         }
