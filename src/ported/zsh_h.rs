@@ -3112,6 +3112,7 @@ pub fn islogin() -> bool {
 /// Helper: convert option constant to its name for lookup.
 pub fn opt_name(opt: i32) -> &'static str {
     match opt {
+        x if x == ALIASFUNCDEF => "aliasfuncdef",
         x if x == ALLEXPORT => "allexport",
         x if x == ALWAYSLASTPROMPT => "alwayslastprompt",
         x if x == ALWAYSTOEND => "alwaystoend",
@@ -3137,6 +3138,7 @@ pub fn opt_name(opt: i32) -> &'static str {
         x if x == BSDECHO => "bsdecho",
         x if x == CASEGLOB => "caseglob",
         x if x == CASEMATCH => "casematch",
+        x if x == CASEPATHS => "casepaths",
         x if x == CBASES => "cbases",
         x if x == CDABLEVARS => "cdablevars",
         x if x == CDSILENT => "cdsilent",
@@ -3145,6 +3147,8 @@ pub fn opt_name(opt: i32) -> &'static str {
         x if x == CHECKJOBS => "checkjobs",
         x if x == CHECKRUNNINGJOBS => "checkrunningjobs",
         x if x == CLOBBER => "clobber",
+        x if x == CLOBBEREMPTY => "clobberempty",
+        x if x == APPENDCREATE => "appendcreate",
         x if x == COMBININGCHARS => "combiningchars",
         x if x == COMPLETEALIASES => "completealiases",
         x if x == COMPLETEINWORD => "completeinword",
