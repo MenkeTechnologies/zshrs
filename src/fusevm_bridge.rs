@@ -208,6 +208,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(s);
         }
         let status = dispatch_builtin("cd", args);
+        // c:Src/builtin.c:1254-1261 — after cd succeeds, fire the
+        // chpwd hooks: the `chpwd` shfunc itself and every entry in
+        // the `chpwd_functions` array. C calls
+        // `callhookfunc("chpwd", NULL, 1, NULL)` (utils.c:1469).
+        // The port of callhookfunc in utils.rs only detects whether
+        // a fn exists — actual invocation has to go through the
+        // executor's compiled-function dispatch which lives in
+        // vm_helper.rs (outside src/ported/). Inline the C
+        // semantics here at the bridge layer.
+        if status == 0 {
+            run_chpwd_hooks();
+        }
         Value::Status(status)
     });
 
@@ -4059,6 +4071,41 @@ impl ZshrsHost {
     fn is_zsh_flag_delim(c: char) -> bool {
         !c.is_ascii_alphanumeric() && c != '_'
     }
+}
+
+/// Fire `chpwd` hook — calls the `chpwd` shfunc (if defined) and
+/// every fn in the `chpwd_functions` array. Direct port of C's
+/// `callhookfunc("chpwd", NULL, 1, NULL)` at Src/utils.c:1469-1524,
+/// invoked from cd at Src/builtin.c:1258. Routes function calls
+/// through the executor's `dispatch_function_call` since that's
+/// the only path that runs compiled function bodies in zshrs's VM.
+fn run_chpwd_hooks() {
+    let has_chpwd = crate::ported::hashtable::shfunctab_lock()
+        .read()
+        .map(|t| t.get("chpwd").is_some())
+        .unwrap_or(false); // c:1482
+    let arr = crate::ported::params::paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get("chpwd_functions").and_then(|p| p.u_arr.clone()))
+        .unwrap_or_default(); // c:1498 getaparam
+    with_executor(|exec| {
+        if has_chpwd {
+            // c:1487 doshfunc(shfunc, lnklst, 1)
+            let _ = exec.dispatch_function_call("chpwd", &[]);
+        }
+        for fn_name in &arr {
+            // c:1502 if ((shfunc = getshfunc(*arrptr)))
+            let exists = crate::ported::hashtable::shfunctab_lock()
+                .read()
+                .map(|t| t.get(fn_name).is_some())
+                .unwrap_or(false);
+            if exists {
+                // c:1508 doshfunc(...)
+                let _ = exec.dispatch_function_call(fn_name, &[]);
+            }
+        }
+    });
 }
 
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
