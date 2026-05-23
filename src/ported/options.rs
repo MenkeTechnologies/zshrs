@@ -1560,7 +1560,11 @@ fn optns_flags(name: &str) -> u16 {
         "shnullcmd" => OPT_EMULATE | (OPT_BOURNE as u16), // c:241
         "shoptionletters" => OPT_EMULATE | (OPT_BOURNE as u16), // c:242
         "shortloops" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:243
-        "shortrepeat" => OPT_EMULATE | (OPT_ZSH as u16), // c:244
+        // c:Src/options.c:252 — `shortrepeat` is OPT_EMULATE only
+        // (no OPT_ZSH). It defaults OFF in zsh emulation and only
+        // turns on under non-zsh emulations. The previous Rust port
+        // had OPT_EMULATE|OPT_ZSH which left it on in zsh.
+        "shortrepeat" => OPT_EMULATE,                // c:252
         "shwordsplit" => OPT_EMULATE | (OPT_BOURNE as u16), // c:245
         "singlecommand" => OPT_SPECIAL as u16,       // c:246
         "singlelinezle" => 0,                        // c:247
