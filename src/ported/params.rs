@@ -7949,11 +7949,10 @@ pub fn endparamscope() {
 ///         unsetparam_pm(pm, 0, 0);
 /// }
 /// ```
-/// Rust port mirrors the structure 1:1. `locallevel` is a global
-/// in C (Src/init.c) — we accept it as a parameter since the
-/// global isn't yet ported. `setsecondstype`/`setrawseconds`/
-/// `delenv` are not yet in zshrs and route through best-effort
-/// no-ops for now (C macros / Src/params.c:5900 / Src/params.c:5900).
+/// Rust port mirrors the structure 1:1. `locallevel` is read via
+/// the ported global `crate::ported::params::locallevel` (atomic).
+/// `setsecondstype` (params.rs:6183), `setrawseconds` (params.rs:6169),
+/// and `delenv` (params.rs:7591) are all ported.
 pub fn scanendscope(pm: &mut param, _flags: i32) {
     // c:5900
     let cur_local = locallevel.load(Ordering::Relaxed);
