@@ -5575,6 +5575,129 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
 // 1625`, the C source likewise inlines it — there's no `execsublist`
 // function in zsh C).
 
+/// Port of `execcmd_analyse(Estate state, Execcmd_params eparams)`
+/// from `Src/exec.c:2733-2785`. Pre-execcmd_exec analysis pass:
+/// walks the wordcode at `state->pc`, splits out redirs/varspc/args
+/// without expanding (no prefork, no globbing), and fills `eparams`
+/// so the caller (execcmd_exec at c:2901 or execpline2 at c:2013)
+/// can branch on the command type before the real work.
+pub fn execcmd_analyse(
+    state: &mut estate,
+    eparams: &mut crate::ported::zsh_h::execcmd_params,
+) {
+    use crate::ported::zsh_h::{
+        WC_ASSIGN as ZWC_ASSIGN, WC_REDIR as ZWC_REDIR, WC_SIMPLE as ZWC_SIMPLE,
+        WC_SIMPLE_ARGC as ZWC_SIMPLE_ARGC, WC_TYPESET as ZWC_TYPESET,
+        WC_TYPESET_ARGC as ZWC_TYPESET_ARGC,
+    };
+    // c:2733
+    let mut code: wordcode; // c:2735
+    let mut i: i32; // c:2736
+    let _ = i;
+
+    // c:2738 — `eparams->beg = state->pc;`
+    eparams.beg = state.pc;
+    // c:2739-2740 — `eparams->redir = (wc_code(*state->pc) == WC_REDIR ? ecgetredirs(state) : NULL);`
+    eparams.redir = if state.pc < state.prog.prog.len()
+        && wc_code(state.prog.prog[state.pc]) == ZWC_REDIR
+    {
+        Some(crate::ported::parse::ecgetredirs(state))
+    } else {
+        None
+    };
+    // c:2741-2748 — varspc walk (WC_ASSIGN chain).
+    if state.pc < state.prog.prog.len() && wc_code(state.prog.prog[state.pc]) == ZWC_ASSIGN {
+        cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed); // c:2742
+        eparams.varspc = Some(state.pc); // c:2743
+        // c:2744-2746 — `while (wc_code((code = *state->pc)) == WC_ASSIGN) state->pc += ...`
+        loop {
+            if state.pc >= state.prog.prog.len() {
+                break;
+            }
+            code = state.prog.prog[state.pc];
+            if wc_code(code) != ZWC_ASSIGN {
+                break;
+            }
+            state.pc += if crate::ported::zsh_h::WC_ASSIGN_TYPE(code)
+                == crate::ported::zsh_h::WC_ASSIGN_SCALAR
+            {
+                3 // c:2745
+            } else {
+                (crate::ported::zsh_h::WC_ASSIGN_NUM(code) + 2) as usize // c:2746
+            };
+        }
+    } else {
+        eparams.varspc = None; // c:2748
+    }
+
+    // c:2750 — `code = *state->pc++;`
+    if state.pc >= state.prog.prog.len() {
+        eparams.args = None;
+        eparams.assignspc = None;
+        eparams.typ = 0;
+        eparams.postassigns = 0;
+        eparams.htok = 0;
+        return;
+    }
+    code = state.prog.prog[state.pc];
+    state.pc += 1;
+
+    // c:2752 — `eparams->type = wc_code(code);`
+    eparams.typ = wc_code(code) as i32;
+    // c:2753 — `eparams->postassigns = 0;`
+    eparams.postassigns = 0;
+
+    // c:2755-2783 — switch on type. EC_DUP is used (not EC_DUPTOK)
+    // per the comment at c:2755-2757.
+    match eparams.typ as wordcode {
+        x if x == ZWC_SIMPLE => {
+            // c:2759-2763
+            let mut htok = 0;
+            let argc = ZWC_SIMPLE_ARGC(code) as usize;
+            eparams.args = Some(ecgetlist(state, argc, EC_DUP, Some(&mut htok)));
+            eparams.htok = htok;
+            eparams.assignspc = None;
+        }
+        x if x == ZWC_TYPESET => {
+            // c:2765-2777
+            let mut htok = 0;
+            let argc = ZWC_TYPESET_ARGC(code) as usize;
+            eparams.args = Some(ecgetlist(state, argc, EC_DUP, Some(&mut htok)));
+            eparams.htok = htok;
+            // c:2768 — `eparams->postassigns = *state->pc++;`
+            if state.pc < state.prog.prog.len() {
+                eparams.postassigns = state.prog.prog[state.pc] as i32;
+                state.pc += 1;
+            }
+            // c:2769 — `eparams->assignspc = state->pc;`
+            eparams.assignspc = Some(state.pc);
+            // c:2770-2776 — walk past the postassigns.
+            let mut k = 0i32;
+            while k < eparams.postassigns {
+                if state.pc >= state.prog.prog.len() {
+                    break;
+                }
+                code = state.prog.prog[state.pc];
+                // c:2772-2773 DPUTS — assert wc_code == WC_ASSIGN; skipped.
+                state.pc += if crate::ported::zsh_h::WC_ASSIGN_TYPE(code)
+                    == crate::ported::zsh_h::WC_ASSIGN_SCALAR
+                {
+                    3 // c:2774
+                } else {
+                    (crate::ported::zsh_h::WC_ASSIGN_NUM(code) + 2) as usize // c:2775
+                };
+                k += 1;
+            }
+        }
+        _ => {
+            // c:2779-2783 default.
+            eparams.args = None;
+            eparams.assignspc = None;
+            eparams.htok = 0;
+        }
+    }
+}
+
 /// Port of `execpline(Estate state, wordcode slcode, int how, int last1)`
 /// from `Src/exec.c:1668-1942`. Walks the WC_PIPE chain, sets up
 /// pipes/fork between stages, handles Z_TIMED / Z_ASYNC.
