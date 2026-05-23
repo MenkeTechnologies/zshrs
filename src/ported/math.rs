@@ -1877,9 +1877,20 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
                 let inherited_vars = saved.variables.clone();
                 new(arg.trim());
                 m_variables_set(inherited_vars);
-                let result = mathevall().ok();
+                let result = mathevall();
                 restore_state(saved);
-                result
+                // c:math.c::callmathfunc — when a function-arg subeval
+                // fails, the C body's mathevall has already zerr'd the
+                // parse error. Rust's mathevall captures the message
+                // in Err; the previous .ok() discarded it silently,
+                // so `$(( abs(1 2) ))` returned 0 instead of erroring.
+                match result {
+                    Ok(n) => Some(n),
+                    Err(msg) => {
+                        crate::ported::utils::zerr(&msg);
+                        None
+                    }
+                }
             })
             .collect()
     };
