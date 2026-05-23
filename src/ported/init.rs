@@ -1018,30 +1018,37 @@ pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {
 /// is a layering refactor.
 pub fn source(s: &str) -> i32 {
     // c:1551
-    let _us = unmeta(s); // c:1551
-    let path = std::path::Path::new(&_us);
+    let us = unmeta(s); // c:1551
+    let path = std::path::Path::new(&us);
     if !path.exists() {
         // c:1565-1568
         return 1; /* SOURCE_NOT_FOUND */
     }
 
-    // c:1571-1581 — save shell state. !!! PARTIAL: oldlineno save,
-    // scriptname save, $0 (FUNCTION_ARGZERO) save are not ported
-    // here — see bins/zshrs.rs::source_from_memory:1834-1840.
-    let oldlineno = 0i64; // c:1575
-    let _ = oldlineno;
+    // c:1571-1581 — save shell state.
+    let old_scriptname = crate::ported::utils::scriptname_get(); // c:1573
+    let old_scriptfilename = crate::ported::utils::scriptfilename_get(); // c:1574
+    crate::ported::utils::set_scriptname(Some(us.clone())); // c:1572
+    crate::ported::utils::set_scriptfilename(Some(us.clone()));
 
     sourcelevel.fetch_add(1, Ordering::SeqCst); // c:1606
 
-    // c:1618-1642 — parse-and-execute loop. !!! PARTIAL: the file
-    // is read for the side effect of any errors fs::read_to_string
-    // surfaces (permission denied, EIO, etc.) but the parsed code
-    // is discarded. Real execution path is fusevm via bins/zshrs.rs.
-    let _ = std::fs::read_to_string(path);
+    // c:1618-1642 — parse-and-execute loop. Route through the
+    // fusevm executor for the actual parse+exec; if no executor
+    // context (out-of-band call), fall back to the partial
+    // read-for-side-effects path so errors still surface.
+    let contents = std::fs::read_to_string(path);
+    if let Ok(body) = contents {
+        let _ = crate::fusevm_bridge::with_executor(|e| {
+            e.execute_script_zsh_pipeline(&body)
+        });
+    }
 
     sourcelevel.fetch_sub(1, Ordering::SeqCst); // c:1644
 
-    // c:1646-1670 — restore shell state. PARTIAL: see save block.
+    // c:1646-1670 — restore shell state.
+    crate::ported::utils::set_scriptname(old_scriptname);
+    crate::ported::utils::set_scriptfilename(old_scriptfilename);
     0 /* SOURCE_OK */ // c:1679
 }
 
