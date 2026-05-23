@@ -4213,26 +4213,13 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
             let _ = zclose(i); // c:1216
         }
     }
-    // c:1218-1219 — `clearjobtab(monitor)` inlined: walk JOBTAB, free
-    // STAT_INUSE slots in this subshell. The oldjobtab snapshot path
-    // (c:1799-1813) tracked via POSIXJOBS is deferred (oldjobtab
-    // global not yet ported); the in-use-clear core behavior fires.
-    if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
-        let mut guard = jt.lock().unwrap();
-        let len = guard.len();
-        // c:1786 — `for (i = 1; i <= maxjob; i++)`. Skip slot 0
-        // (placeholder for non-job-control work like multios).
-        for i in 1..len {
-            let stat = guard[i].stat;
-            if monitor != 0 && !isset(POSIXJOBS) && stat != 0 {
-                // c:1793-1794 — would update oldmaxjob; skipped pending
-                // oldjobtab port.
-            } else if (stat & crate::ported::zsh_h::STAT_INUSE) != 0 {
-                // c:1795-1796 — `freejob(jobtab + i, 0);`
-                crate::ported::jobs::freejob(&mut guard[i], false);
-            }
-        }
-    }
+    // c:1218-1219 — `clearjobtab(monitor);` — calls the canonical port
+    // at jobs.rs:1695 which handles ALL the C body including the
+    // oldjobtab snapshot path (c:1799-1817) under POSIXJOBS guard.
+    // Previously inlined the freejob walk here and noted the snapshot
+    // as deferred; clearjobtab() already does both correctly.
+    let mut dummy_table = crate::exec_jobs::JobTable::new();
+    crate::ported::jobs::clearjobtab(&mut dummy_table, monitor);
     let _ = get_usage(); // c:1220
     FORKLEVEL.store(
         // c:1221 — `forklevel = locallevel;`
