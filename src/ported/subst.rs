@@ -5613,6 +5613,66 @@ pub fn paramsubst(
                     p += 1;
                     continue; // c:2439
                 } // c:2439
+                // `((` at the start of a token: zsh's lexer treats
+                // `(( … ))` as a single DINPAR token (arith command
+                // start) and bufferwords returns the entire `((…))`
+                // as ONE word per Src/lex.c gettokstr's DINPAR arm.
+                // Walk chars consuming until matching `))`, tracking
+                // nested `(` for safety. Single token result.
+                if cur.is_empty()
+                    && ch == '('
+                    && p + 1 < chars_v.len()
+                    && chars_v[p + 1] == '('
+                {
+                    let start = p;
+                    let mut depth = 2_i32;
+                    // Push the opening `((`.
+                    p += 2;
+                    while p < chars_v.len() && depth > 0 {
+                        let pch = chars_v[p];
+                        if pch == '\\' && p + 1 < chars_v.len() {
+                            p += 2;
+                            continue;
+                        }
+                        if pch == '\'' {
+                            // skip SQ body
+                            p += 1;
+                            while p < chars_v.len() && chars_v[p] != '\'' {
+                                p += 1;
+                            }
+                            if p < chars_v.len() {
+                                p += 1;
+                            }
+                            continue;
+                        }
+                        if pch == '"' {
+                            p += 1;
+                            while p < chars_v.len() && chars_v[p] != '"' {
+                                if chars_v[p] == '\\' && p + 1 < chars_v.len() {
+                                    p += 2;
+                                } else {
+                                    p += 1;
+                                }
+                            }
+                            if p < chars_v.len() {
+                                p += 1;
+                            }
+                            continue;
+                        }
+                        if pch == '(' {
+                            depth += 1;
+                        } else if pch == ')' {
+                            depth -= 1;
+                        }
+                        p += 1;
+                    }
+                    // We've consumed up to (and including) the final `)`
+                    // of the matching `))`. Emit the whole slice as a
+                    // single token.
+                    let token: String = chars_v[start..p].iter().collect();
+                    words.push(token);
+                    continue;
+                }
                 match ch {
                     // c:2439
                     '\\' if p + 1 < chars_v.len() => {
