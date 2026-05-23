@@ -5032,7 +5032,21 @@ pub fn paramsubst(
                     }
                 } else {
                     let parts: Vec<&str> = slice.splitn(2, ':').collect();
-                    let off = singsub(parts[0]).parse::<i64>().unwrap_or(0);
+                    // c:Src/subst.c:3825 — `${str:offset:length}` arms
+                    // both go through `mathevali` (Src/math.c:1240),
+                    // not literal strtol. Allows parentheses, leading
+                    // whitespace, and arithmetic expressions in either
+                    // slot:
+                    //   ${str: -5}     — space + negative (the canonical
+                    //                    zsh form that disambiguates
+                    //                    from `:-` default operator)
+                    //   ${str:(-5)}    — parens for the same effect
+                    //   ${str:N+1:K-1} — arithmetic expressions
+                    // Previously used `.parse::<i64>()` which fell back
+                    // to 0 on any non-digit input (parens, spaces), so
+                    // `${str: -5}` silently returned the entire string
+                    // (offset clamped to 0).
+                    let off = crate::ported::math::mathevali(&singsub(parts[0])).unwrap_or(0);
                     // Array context: ${arr:offset:length} slices the
                     // ARRAY (1-based, like Bash's offset), not the joined
                     // value. Direct port of subst.c's array-shape branch
@@ -5063,7 +5077,7 @@ pub fn paramsubst(
                         } as usize; // c:715
                         let len = parts
                             .get(1) // c:715
-                            .map(|s| singsub(s).parse::<i64>().unwrap_or(0)); // c:715
+                            .map(|s| crate::ported::math::mathevali(&singsub(s)).unwrap_or(0)); // c:715
                         let kept: Vec<String> = match len {
                             // c:715
                             Some(l) if l >= 0 => {
@@ -5086,7 +5100,7 @@ pub fn paramsubst(
                         } else {
                             off.min(total)
                         } as usize;
-                        let len = parts.get(1).map(|s| singsub(s).parse::<i64>().unwrap_or(0));
+                        let len = parts.get(1).map(|s| crate::ported::math::mathevali(&singsub(s)).unwrap_or(0));
                         value = match len {
                             Some(l) if l >= 0 => {
                                 raw_value.chars().skip(start).take(l as usize).collect()
