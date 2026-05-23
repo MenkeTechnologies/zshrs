@@ -905,6 +905,25 @@ pub fn zshrs_main() {
             no_rcs_flag,
             &option_settings,
         );
+        // c:Src/init.c:1340 — `if (cmd)
+        //                       setsparam("ZSH_EXECUTION_STRING",
+        //                                 ztrdup_metafy(cmd));`
+        // ZSH_EXECUTION_STRING carries the -c argument so user scripts
+        // can introspect what they're running. p10k probes this for the
+        // initial prompt-deferral decision; pre-c-mode-aware tooling
+        // reads it to log invocations. Previously only setupvals() in
+        // ported/init.rs set the env var, but setupvals isn't wired
+        // into the bin entry path so the value was always empty.
+        zsh::ported::params::setsparam("ZSH_EXECUTION_STRING", code);
+        // c:Src/init.c:1535 — `execstring(cmd, 0, 1, "cmdarg")` pushes
+        // "cmdarg" onto the zsh_eval_context stack BEFORE running the
+        // -c command. ZSH_EVAL_CONTEXT is the `:`-joined view of that
+        // stack tied to the `zsh_eval_context` array. For a non-nested
+        // -c invocation the stack is just ["cmdarg"], so the readable
+        // form is the literal string "cmdarg". Plugins (zinit's
+        // `[[ $ZSH_EVAL_CONTEXT == *cmdarg* ]]` predicate, p10k's
+        // turbo-mode hooks) gate on this.
+        zsh::ported::params::setsparam("ZSH_EVAL_CONTEXT", "cmdarg");
         // POSIX `sh -c script [name [args...]]` semantics
         // (Src/init.c:271 + 479): the next non-option arg AFTER the
         // command string becomes $0; remaining args become $1, $2, …
