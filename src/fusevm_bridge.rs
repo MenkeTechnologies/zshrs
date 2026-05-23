@@ -332,7 +332,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.pending_underscore = Some("true".to_string());
             });
         }
-        Value::Status(0)
+        // Route through canonical execbuiltin so PS4 xtrace fires
+        // via the c:442 printprompt4 path. Without this, the fast-
+        // path Value::Status(0) return bypassed xtrace and the
+        // BUILTIN_XTRACE_ARGS-skip logic had to special-case "true"
+        // in a hardcoded list — fakery removed by deferring to
+        // dispatch_builtin like every other builtin.
+        let status = dispatch_builtin("true", args);
+        Value::Status(status)
     });
     vm.register_builtin(BUILTIN_FALSE, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -344,7 +351,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.pending_underscore = Some("false".to_string());
             });
         }
-        Value::Status(1)
+        // Route through canonical execbuiltin — see BUILTIN_TRUE
+        // above for the same rationale (xtrace + fast-path removal).
+        let status = dispatch_builtin("false", args);
+        Value::Status(status)
     });
     vm.register_builtin(BUILTIN_COLON, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -353,7 +363,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.pending_underscore = Some(":".to_string());
             });
         }
-        Value::Status(0)
+        let status = dispatch_builtin(":", args);
+        Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_TEST, |vm, argc| {
@@ -3353,36 +3364,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Vec::new()
             };
             // Builtins dispatch through `execbuiltin` (Src/builtin.c:442)
-            // which emits its own PS4 + name + args xtrace. zshrs's
-            // bridge has fast-path register_builtin handlers for some
-            // builtins (BUILTIN_TRUE / BUILTIN_FALSE / BUILTIN_ECHO /
-            // BUILTIN_PRINT etc.) that return Value::Status directly
-            // WITHOUT dispatching through execbuiltin. For those,
-            // BUILTIN_XTRACE_ARGS is the only xtrace emit site.
-            //
-            // The previous "goes_through_execbuiltin" check used the
-            // BUILTINS table to skip emission — but that's wrong for
-            // fast-path-handled names (`true` IS in BUILTINS but
-            // doesn't go through execbuiltin). Only skip when the
-            // command is dispatched via `dispatch_builtin`. The
-            // fast-path bridge handlers carry no such dispatch
-            // (they're the dispatch); enumerate them so we can
-            // skip the bridge XTRACE_ARGS for execbuiltin-bound
-            // builtins only.
-            //
-            // Names below have a fast-path bridge that bypasses
-            // execbuiltin. For these, emit xtrace HERE — execbuiltin
-            // never fires for them. Other builtins (echo/print/cd/etc.)
-            // call dispatch_builtin → execbuiltin which emits xtrace
-            // itself, so we MUST skip our emission for them.
-            const FAST_PATH_NAMES: &[&str] = &[
-                "true", "false", ":",
-            ];
-            let is_fast_path = FAST_PATH_NAMES.iter().any(|n| *n == prefix);
-            let goes_through_execbuiltin = !is_fast_path
-                && crate::ported::builtin::BUILTINS
-                    .iter()
-                    .any(|b| b.node.nam == prefix && b.handlerfunc.is_some());
+            // which emits its own PS4 + name + args xtrace. To avoid
+            // double-emission, skip our emission here when the first
+            // arg is a known builtin with a registered HandlerFunc —
+            // those go through execbuiltin and will trace themselves.
+            // Externals + builtins-not-yet-routed-through-execbuiltin
+            // keep our emission as a stand-in.
+            let goes_through_execbuiltin = crate::ported::builtin::BUILTINS
+                .iter()
+                .any(|b| b.node.nam == prefix && b.handlerfunc.is_some());
             if !goes_through_execbuiltin {
                 let line = if arg_strs.is_empty() {
                     prefix

@@ -8854,45 +8854,8 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // is acceptable when the table isn't populated yet.
         "USERNAME" | "HOME" | "TERM" | "WORDCHARS" | "IFS" | "TERMINFO"
         | "TERMINFO_DIRS" | "KEYBOARD_HACK" | "histchars" | "HISTCHARS" => {
-            // c:Src/params.c:4655 usernamegetfn (and homegetfn, etc.)
-            // take `UNUSED(Param pm)` — they don't actually read
-            // anything from the Param. Use a default-constructed
-            // Param when the table isn't populated yet. createparamtable
-            // populates these via setsparam at init in C, but zshrs's
-            // bin entry doesn't yet call createparamtable, so reads
-            // hit the table miss and previously returned None →
-            // empty $USERNAME.
             let tab = paramtab().read().ok()?;
-            let default_pm;
-            let pm = if let Some(p) = tab.get(name) {
-                p
-            } else {
-                default_pm = Box::new(param {
-                    node: hashnode {
-                        next: None,
-                        nam: name.to_string(),
-                        flags: PM_SCALAR as i32 | PM_SPECIAL as i32,
-                    },
-                    u_data: 0,
-                    u_arr: None,
-                    u_str: None,
-                    u_val: 0,
-                    u_dval: 0.0,
-                    u_hash: None,
-                    gsu_s: None,
-                    gsu_i: None,
-                    gsu_f: None,
-                    gsu_a: None,
-                    gsu_h: None,
-                    base: 0,
-                    width: 0,
-                    env: None,
-                    ename: None,
-                    old: None,
-                    level: 0,
-                });
-                &default_pm
-            };
+            let pm = tab.get(name)?;
             Some(match name {
                 "USERNAME" => usernamegetfn(pm),
                 "HOME" => homegetfn(pm),

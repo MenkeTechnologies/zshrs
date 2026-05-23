@@ -1196,6 +1196,27 @@ impl ShellExecutor {
         // overrides scriptname per c:5903; scriptfilename stays.
         crate::ported::utils::set_scriptname(Some("zsh".to_string()));
         crate::ported::utils::set_scriptfilename(Some("zsh".to_string()));
+
+        // c:Src/params.c:878-882 — `setsparam("LOGNAME", getlogin() ?:
+        // cached_username);`. C's createparamtable also assigns
+        // USERNAME from the same source (cached_username) via the
+        // special_paramdefs table. Here mirror the LOGNAME +
+        // USERNAME seeding so the canonical paramtab entries exist
+        // (usernamegetfn at c:4655 reads through Param.u_str).
+        // Same one-shot init pattern as the HOST gethostname call
+        // above — full createparamtable() port is pending.
+        let logname = unsafe {
+            let p = libc::getlogin();
+            if p.is_null() {
+                None
+            } else {
+                Some(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+            }
+        }; // c:880
+        if let Some(name) = logname {
+            crate::ported::params::setsparam("LOGNAME", &name); // c:881
+            crate::ported::params::setsparam("USERNAME", &name); // c:special_paramdefs
+        }
         exec
     }
 
