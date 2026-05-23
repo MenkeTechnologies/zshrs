@@ -4048,6 +4048,12 @@ pub fn paramsubst(
                         })
                     })
                     .unwrap_or(false)
+                // c:Src/Modules/parameter.c — magic-assoc tables
+                // (`builtins`, `commands`, `functions`, `aliases`, etc.)
+                // dispatch through PARTAB. Without this fallback,
+                // `${builtins[echo]:-X}` fired the `:-X` default because
+                // is_set was false even though the value is set.
+                || crate::vm_helper::partab_get(&var_name, sub).is_some_and(|v| !v.is_empty())
         } else {
             used_subexp
                 || vars_contains(&var_name)
