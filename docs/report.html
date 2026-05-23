@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="zshrs port/coverage dashboard. Indexer: 6,022 unique C symbols; 57 C-only, 12 misplaced, 2,140 with a Rust counterpart. 877 symbols in the 14-file core slice (table below). Regenerate: python3 scripts/gen_port_report.py. Updated 2026-05-20.">
+  <meta name="description" content="zshrs port/coverage dashboard. Indexer: 6,032 unique C symbols; 4 C-only, 12 misplaced, 2,233 with a Rust counterpart. 877 symbols in the 14-file core slice (table below). Regenerate: python3 scripts/gen_port_report.py. Updated 2026-05-23.">
   <title>zshrs — Port Coverage Report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -84,7 +84,7 @@
             <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           </nav>
           <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.75;">
-            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 94 C files (33 core + 24 ZLE + 35 modules + 2 Builtins) &middot; 147,656 C lines &middot; 384,024 Rust lines (all <code>.rs</code> incl. tests + <code>build.rs</code>; <code>git ls-files '*.rs' | xargs wc -l</code>) &middot; 412 <code>.rs</code> files &middot; 4,883 <code>#[test]</code> hooks (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
+            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 91 C files (32 core + 24 ZLE + 33 modules + 2 Builtins) &middot; 147,233 C lines &middot; 464,124 Rust lines (all <code>.rs</code> incl. tests + <code>build.rs</code>; <code>git ls-files '*.rs' | xargs wc -l</code>) &middot; 422 <code>.rs</code> files &middot; 6,256 <code>#[test]</code> hooks (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
           </p>
         </div>
         <div class="tutorial-toolbar">
@@ -105,8 +105,8 @@
 
       <p class="tutorial-subtitle" style="margin-top:0.5rem;color:var(--accent-light);">
         <strong style="color:var(--accent);">Codebase split (NEW):</strong> the runtime crate now physically isolates ported code from non-port code so drift is mechanically detectable.
-        <code>src/ported/</code> (66 files) is the <strong>strict-port directory</strong> &mdash; every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file, every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment, and the file set is <strong>FROZEN</strong> (no new files; PORT.md §"ABSOLUTE FREEZE").
-        <code>src/extensions/</code> (32 files) is the <strong>non-port directory</strong> &mdash; features zsh C does not have (AOT, daemon coordination, plugin/script/autoload caches, fish-style autosuggest/abbrev/highlight, persistent worker pools, ZWC byte-code helpers).
+        <code>src/ported/</code> (106 files) is the <strong>strict-port directory</strong> &mdash; every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file, every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment, and the file set is <strong>FROZEN</strong> (no new files; PORT.md §"ABSOLUTE FREEZE").
+        <code>src/extensions/</code> (34 files) is the <strong>non-port directory</strong> &mdash; features zsh C does not have (AOT, daemon coordination, plugin/script/autoload caches, fish-style autosuggest/abbrev/highlight, persistent worker pools, ZWC byte-code helpers).
         <code>src/recorder/</code> (1 file) is feature-gated; deleted by rustc in the default build.
         Both invariants are enforced by <code>tests/port_purity.rs</code> &mdash; a regression of either rule fails CI.
       </p>
@@ -122,20 +122,20 @@
       </p>
 
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-val green">4,883</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
-        <div class="stat-card"><div class="stat-val">94</div><div class="stat-label">C Files Ported</div></div>
-        <div class="stat-card"><div class="stat-val accent">5,549</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
-        <div class="stat-card"><div class="stat-val">412</div><div class="stat-label">Rust Source Files</div></div>
-        <div class="stat-card"><div class="stat-val cyan">66 / 32 / 1</div><div class="stat-label">ported / extensions / recorder</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:var(--yellow,#ffb800);text-shadow:0 0 20px rgba(255,184,0,.3);">147,656</div><div class="stat-label">C Lines Covered</div></div>
-        <div class="stat-card"><div class="stat-val yellow">57</div><div class="stat-label">C-only symbols (index)</div></div>
+        <div class="stat-card"><div class="stat-val green">6,256</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val">91</div><div class="stat-label">C Files Ported</div></div>
+        <div class="stat-card"><div class="stat-val accent">5,657</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
+        <div class="stat-card"><div class="stat-val">422</div><div class="stat-label">Rust Source Files</div></div>
+        <div class="stat-card"><div class="stat-val cyan">106 / 34 / 1</div><div class="stat-label">ported / extensions / recorder</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:var(--yellow,#ffb800);text-shadow:0 0 20px rgba(255,184,0,.3);">147,233</div><div class="stat-label">C Lines Covered</div></div>
+        <div class="stat-card"><div class="stat-val yellow">4</div><div class="stat-label">C-only symbols (index)</div></div>
       </div>
 
       <div style="margin:1.2rem 0;">
         <p style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;font-family:'Orbitron',sans-serif;font-weight:700;">Overall Line Coverage</p>
         <div class="bar-wrap" style="height:26px;">
           <div class="bar-fill cyan" style="width:100%;"></div>
-          <span class="bar-pct" style="font-size:12px;">384,024 Rust / 147,656 C &mdash; raw line ratio (not semantic completeness)</span>
+          <span class="bar-pct" style="font-size:12px;">464,124 Rust / 147,233 C &mdash; raw line ratio (not semantic completeness)</span>
         </div>
         <p style="font-size:10px;color:var(--text-muted);margin-top:4px;">Rust line count covers the entire 3-crate workspace (<code>zshrs</code> runtime, <code>compsys</code>, <code>zshrs-daemon</code>) plus <code>fish/</code>, <code>tests/</code>, <code>bins/</code>, and root <code>build.rs</code>. C-line ratio is ~258% Rust : C by raw lines, but most files are <em>more concise</em> than their C source &mdash; the inflation comes from the non-port surface (extensions, daemon, fish, compsys) that has no C ancestor. <code>exec.rs</code> alone is 353% of <code>exec.c</code> because it includes 180+ builtins (23 coreutils anti-fork) that C splits across <code>builtin.c</code>.</p>
       </div>
@@ -152,22 +152,22 @@
         <thead><tr><th>C Source</th><th>Rust Target</th><th class="num">C Lines</th><th class="num">Rust Lines</th><th class="num">Ratio</th><th class="num">C Fns</th><th class="num">Same-name Rust <code>fn</code></th><th class="num">Other rows</th><th style="min-width:120px;">Port-index %</th><th class="status">&nbsp;</th></tr></thead>
         <!-- PORT_REPORT:BEGIN:CORETABLE -->
         <tbody>
-        <tr><td>lex.c</td><td>ported/lex.rs</td><td class="num">2,294</td><td class="num">4,720</td><td class="num">205.8%</td><td class="num">25</td><td class="num">25</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:96.0%"></div><span class="bar-pct">96.0%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>parse.c</td><td>ported/parse.rs</td><td class="num">4,066</td><td class="num">8,866</td><td class="num">218.1%</td><td class="num">75</td><td class="num">75</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:93.3%"></div><span class="bar-pct">93.3%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>subst.c</td><td>src/ported/subst.rs</td><td class="num">4,922</td><td class="num">8,681</td><td class="num">176.4%</td><td class="num">24</td><td class="num">24</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100.0%"></div><span class="bar-pct">100.0%</span></div></td><td class="status">&#x2705;</td></tr>
-        <tr><td>math.c</td><td>src/ported/math.rs</td><td class="num">1,677</td><td class="num">4,374</td><td class="num">260.8%</td><td class="num">20</td><td class="num">20</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100.0%"></div><span class="bar-pct">100.0%</span></div></td><td class="status">&#x2705;</td></tr>
-        <tr><td>exec.c</td><td>src/exec.rs <span style="opacity:.6;">(re-exported as <code>crate::ported::exec</code>)</span></td><td class="num">6,503</td><td class="num">0</td><td class="num">0.0%</td><td class="num">74</td><td class="num">11</td><td class="num">63</td><td><div class="bar-wrap"><div class="bar-fill magenta" style="width:12.2%"></div><span class="bar-pct">12.2%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>params.c</td><td>src/ported/params.rs</td><td class="num">6,511</td><td class="num">11,403</td><td class="num">175.1%</td><td class="num">180</td><td class="num">180</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:99.4%"></div><span class="bar-pct">99.4%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>pattern.c</td><td>src/ported/pattern.rs</td><td class="num">4,375</td><td class="num">3,453</td><td class="num">78.9%</td><td class="num">40</td><td class="num">40</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:75.0%"></div><span class="bar-pct">75.0%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>glob.c</td><td>src/ported/glob.rs</td><td class="num">3,973</td><td class="num">5,612</td><td class="num">141.3%</td><td class="num">52</td><td class="num">52</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:90.4%"></div><span class="bar-pct">90.4%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>jobs.c</td><td>src/ported/jobs.rs</td><td class="num">3,293</td><td class="num">4,830</td><td class="num">146.7%</td><td class="num">57</td><td class="num">57</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:96.5%"></div><span class="bar-pct">96.5%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>hist.c</td><td>src/ported/hist.rs</td><td class="num">3,965</td><td class="num">6,452</td><td class="num">162.7%</td><td class="num">76</td><td class="num">76</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:97.4%"></div><span class="bar-pct">97.4%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>utils.c</td><td>src/ported/utils.rs</td><td class="num">7,791</td><td class="num">10,566</td><td class="num">135.6%</td><td class="num">172</td><td class="num">172</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:84.9%"></div><span class="bar-pct">84.9%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>prompt.c</td><td>src/ported/prompt.rs</td><td class="num">2,562</td><td class="num">3,498</td><td class="num">136.5%</td><td class="num">32</td><td class="num">32</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:75.0%"></div><span class="bar-pct">75.0%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>init.c</td><td>src/ported/init.rs</td><td class="num">1,965</td><td class="num">1,710</td><td class="num">87.0%</td><td class="num">23</td><td class="num">22</td><td class="num">1</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:78.3%"></div><span class="bar-pct">78.3%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
-        <tr><td>signals.c</td><td>src/ported/signals.rs</td><td class="num">1,339</td><td class="num">2,256</td><td class="num">168.5%</td><td class="num">27</td><td class="num">27</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:92.6%"></div><span class="bar-pct">92.6%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>lex.c</td><td>ported/lex.rs</td><td class="num">2,294</td><td class="num">4,741</td><td class="num">206.7%</td><td class="num">25</td><td class="num">25</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100.0%"></div><span class="bar-pct">100.0%</span></div></td><td class="status">&#x2705;</td></tr>
+        <tr><td>parse.c</td><td>ported/parse.rs</td><td class="num">4,066</td><td class="num">8,897</td><td class="num">218.8%</td><td class="num">75</td><td class="num">75</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:93.3%"></div><span class="bar-pct">93.3%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>subst.c</td><td>src/ported/subst.rs</td><td class="num">4,922</td><td class="num">9,382</td><td class="num">190.6%</td><td class="num">24</td><td class="num">24</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100.0%"></div><span class="bar-pct">100.0%</span></div></td><td class="status">&#x2705;</td></tr>
+        <tr><td>math.c</td><td>src/ported/math.rs</td><td class="num">1,677</td><td class="num">4,521</td><td class="num">269.6%</td><td class="num">20</td><td class="num">20</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:100.0%"></div><span class="bar-pct">100.0%</span></div></td><td class="status">&#x2705;</td></tr>
+        <tr><td>exec.c</td><td>src/exec.rs <span style="opacity:.6;">(re-exported as <code>crate::ported::exec</code>)</span></td><td class="num">6,503</td><td class="num">0</td><td class="num">0.0%</td><td class="num">74</td><td class="num">70</td><td class="num">4</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:91.9%"></div><span class="bar-pct">91.9%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>params.c</td><td>src/ported/params.rs</td><td class="num">6,511</td><td class="num">12,066</td><td class="num">185.3%</td><td class="num">180</td><td class="num">180</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:99.4%"></div><span class="bar-pct">99.4%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>pattern.c</td><td>src/ported/pattern.rs</td><td class="num">4,375</td><td class="num">3,722</td><td class="num">85.1%</td><td class="num">40</td><td class="num">40</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:72.5%"></div><span class="bar-pct">72.5%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>glob.c</td><td>src/ported/glob.rs</td><td class="num">3,973</td><td class="num">5,582</td><td class="num">140.5%</td><td class="num">52</td><td class="num">52</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:94.2%"></div><span class="bar-pct">94.2%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>jobs.c</td><td>src/ported/jobs.rs</td><td class="num">3,293</td><td class="num">5,026</td><td class="num">152.6%</td><td class="num">57</td><td class="num">57</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:98.2%"></div><span class="bar-pct">98.2%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>hist.c</td><td>src/ported/hist.rs</td><td class="num">3,965</td><td class="num">6,484</td><td class="num">163.5%</td><td class="num">76</td><td class="num">76</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:97.4%"></div><span class="bar-pct">97.4%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>utils.c</td><td>src/ported/utils.rs</td><td class="num">7,791</td><td class="num">12,149</td><td class="num">155.9%</td><td class="num">172</td><td class="num">172</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:89.5%"></div><span class="bar-pct">89.5%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>prompt.c</td><td>src/ported/prompt.rs</td><td class="num">2,562</td><td class="num">3,564</td><td class="num">139.1%</td><td class="num">32</td><td class="num">32</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:75.0%"></div><span class="bar-pct">75.0%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>init.c</td><td>src/ported/init.rs</td><td class="num">1,965</td><td class="num">1,722</td><td class="num">87.6%</td><td class="num">23</td><td class="num">22</td><td class="num">1</td><td><div class="bar-wrap"><div class="bar-fill yellow" style="width:78.3%"></div><span class="bar-pct">78.3%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
+        <tr><td>signals.c</td><td>src/ported/signals.rs</td><td class="num">1,339</td><td class="num">2,461</td><td class="num">183.8%</td><td class="num">27</td><td class="num">27</td><td class="num">0</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:96.3%"></div><span class="bar-pct">96.3%</span></div></td><td class="status">&#x26A0;&#xFE0F;</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL (core)</td><td class="num">55,236</td><td class="num">76,421</td><td class="num">138.4%</td><td class="num">877</td><td class="num">813</td><td class="num">64</td><td><div class="bar-wrap"><div class="bar-fill cyan" style="width:84.9%"></div><span class="bar-pct">84.9%</span></div></td><td class="status" style="font-size:18px;">&#x2139;&#xFE0F;</td></tr></tfoot>
+        <tfoot><tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL (core)</td><td class="num">55,236</td><td class="num">80,317</td><td class="num">145.4%</td><td class="num">877</td><td class="num">872</td><td class="num">5</td><td><div class="bar-wrap"><div class="bar-fill cyan" style="width:93.0%"></div><span class="bar-pct">93.0%</span></div></td><td class="status" style="font-size:18px;">&#x2139;&#xFE0F;</td></tr></tfoot>
         <!-- PORT_REPORT:END:CORETABLE -->
       </table>
 
@@ -247,16 +247,16 @@
       <!-- SECTION 8: ENGINEERING OVERVIEW         -->
       <!-- ═══════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">%</span>ENGINEERING OVERVIEW</h2>
-      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (three packages: <code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Counts below are from <code>wc</code> / <code>rg</code> on 2026-05-14; per-subsystem module tables follow unchanged.</p>
+      <p class="tutorial-subtitle">Workspace-wide cargo workspace metrics (three packages: <code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Counts below are from <code>wc</code> / <code>rg</code> on 2026-05-23; per-subsystem module tables follow unchanged.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card"><div class="stat-val">384,024</div><div class="stat-label">Total Rust Lines</div></div>
-        <div class="stat-card"><div class="stat-val accent">412</div><div class="stat-label"><code>.rs</code> Files</div></div>
-        <div class="stat-card"><div class="stat-val green">4,883</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
-        <div class="stat-card"><div class="stat-val">5,549</div><div class="stat-label"><code>pub fn</code> (tracked <code>.rs</code>)</div></div>
-        <div class="stat-card"><div class="stat-val">623</div><div class="stat-label"><code>pub struct</code></div></div>
-        <div class="stat-card"><div class="stat-val">138</div><div class="stat-label"><code>pub enum</code></div></div>
-        <div class="stat-card"><div class="stat-val accent">2,300</div><div class="stat-label">Git Commits</div></div>
+        <div class="stat-card"><div class="stat-val">464,124</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val accent">422</div><div class="stat-label"><code>.rs</code> Files</div></div>
+        <div class="stat-card"><div class="stat-val green">6,256</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val">5,657</div><div class="stat-label"><code>pub fn</code> (tracked <code>.rs</code>)</div></div>
+        <div class="stat-card"><div class="stat-val">635</div><div class="stat-label"><code>pub struct</code></div></div>
+        <div class="stat-card"><div class="stat-val">139</div><div class="stat-label"><code>pub enum</code></div></div>
+        <div class="stat-card"><div class="stat-val accent">3,166</div><div class="stat-label">Git Commits</div></div>
       </div>
 
       <hr class="section-rule">
@@ -474,10 +474,10 @@
       <!-- SECTION: COMPSYS — COMPLETION SYSTEM             -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title" style="color:var(--magenta);"><span class="step-hash" style="color:var(--magenta);">&#x25C6;</span>COMPSYS &mdash; ZSH COMPLETION SYSTEM IN RUST</h2>
-      <p class="tutorial-subtitle">A standalone Rust crate reimplementing zsh&rsquo;s <code>compsys</code> &mdash; the programmable completion system. 27 modules, 23,328 lines, 154 public functions. Replaces 24,000+ lines of zsh shell functions with compiled Rust backed by Rkyv caching.</p>
+      <p class="tutorial-subtitle">A standalone Rust crate reimplementing zsh&rsquo;s <code>compsys</code> &mdash; the programmable completion system. 27 modules, 23,319 lines, 154 public functions. Replaces 24,000+ lines of zsh shell functions with compiled Rust backed by Rkyv caching.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">23,328</div><div class="stat-label">Rust Lines</div></div>
+        <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">23,319</div><div class="stat-label">Rust Lines</div></div>
         <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">27</div><div class="stat-label">Modules</div></div>
         <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">154</div><div class="stat-label">Public Functions</div></div>
         <div class="stat-card" style="border-top-color:var(--magenta);"><div class="stat-val" style="color:var(--magenta);">74</div><div class="stat-label">Structs</div></div>
@@ -489,33 +489,33 @@
       <table class="file-table">
         <thead><tr><th>Module</th><th class="num">Lines</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td>menu.rs</td><td class="num">3,445</td><td>Menu completion: selection UI, scrolling, columns, groups, colors, accept/reject</td></tr>
-          <tr><td>cache.rs</td><td class="num">1,662</td><td>SQLite-backed completion cache: autoload paths, compiled function index, invalidation</td></tr>
-          <tr><td>functions.rs</td><td class="num">1,236</td><td>Completion function loading, autoload, function resolution from fpath</td></tr>
-          <tr><td>base.rs</td><td class="num">1,163</td><td>Core completion types, match data, completion context, prefix/suffix handling</td></tr>
-          <tr><td>main.rs</td><td class="num">1,049</td><td>Entry point, CLI, completion request dispatching</td></tr>
-          <tr><td>zstyle.rs</td><td class="num">881</td><td><code>zstyle</code> pattern-based configuration: <code>:completion:*</code> contexts, lookup, inheritance</td></tr>
-          <tr><td>generate.rs</td><td class="num">827</td><td>Completion spec generation from command help output, man pages, --help parsing</td></tr>
-          <tr><td>compinit.rs</td><td class="num">805</td><td>Completion system initialization: dump/load, fpath scan, function registration</td></tr>
-          <tr><td>arguments.rs</td><td class="num">770</td><td><code>_arguments</code> implementation: option specs, argument actions, exclusive groups</td></tr>
-          <tr><td>zpwr_colors.rs</td><td class="num">768</td><td>ZPWR color integration: colored completions, syntax highlighting in menu</td></tr>
-          <tr><td>zle.rs</td><td class="num">675</td><td>ZLE integration: widget binding, cursor positioning, buffer manipulation</td></tr>
-          <tr><td>computil.rs</td><td class="num">674</td><td>Completion utilities: <code>_describe</code>, <code>_values</code>, <code>_alternative</code>, <code>_combination</code></td></tr>
-          <tr><td>compcore.rs</td><td class="num">644</td><td>Core completion engine: matching, prefix analysis, suffix insertion</td></tr>
-          <tr><td>completion.rs</td><td class="num">629</td><td>Completion result types, display formatting, grouping</td></tr>
+          <tr><td>menu.rs</td><td class="num">3,567</td><td>Menu completion: selection UI, scrolling, columns, groups, colors, accept/reject</td></tr>
+          <tr><td>cache.rs</td><td class="num">1,859</td><td>SQLite-backed completion cache: autoload paths, compiled function index, invalidation</td></tr>
+          <tr><td>functions.rs</td><td class="num">1,244</td><td>Completion function loading, autoload, function resolution from fpath</td></tr>
+          <tr><td>base.rs</td><td class="num">1,177</td><td>Core completion types, match data, completion context, prefix/suffix handling</td></tr>
+          <tr><td>main.rs</td><td class="num">1,077</td><td>Entry point, CLI, completion request dispatching</td></tr>
+          <tr><td>generate.rs</td><td class="num">1,009</td><td>Completion spec generation from command help output, man pages, --help parsing</td></tr>
+          <tr><td>zstyle.rs</td><td class="num">970</td><td><code>zstyle</code> pattern-based configuration: <code>:completion:*</code> contexts, lookup, inheritance</td></tr>
+          <tr><td>compinit.rs</td><td class="num">831</td><td>Completion system initialization: dump/load, fpath scan, function registration</td></tr>
+          <tr><td>zpwr_colors.rs</td><td class="num">793</td><td>ZPWR color integration: colored completions, syntax highlighting in menu</td></tr>
+          <tr><td>arguments.rs</td><td class="num">767</td><td><code>_arguments</code> implementation: option specs, argument actions, exclusive groups</td></tr>
+          <tr><td>computil.rs</td><td class="num">675</td><td>Completion utilities: <code>_describe</code>, <code>_values</code>, <code>_alternative</code>, <code>_combination</code></td></tr>
+          <tr><td>zle.rs</td><td class="num">673</td><td>ZLE integration: widget binding, cursor positioning, buffer manipulation</td></tr>
+          <tr><td>compcore.rs</td><td class="num">640</td><td>Core completion engine: matching, prefix analysis, suffix insertion</td></tr>
+          <tr><td>completion.rs</td><td class="num">635</td><td>Completion result types, display formatting, grouping</td></tr>
           <tr><td>library.rs</td><td class="num">626</td><td>Completion library management: function registry, lazy loading, caching</td></tr>
-          <tr><td>compset.rs</td><td class="num">619</td><td><code>compset</code> command: prefix/suffix matching, cursor word extraction</td></tr>
-          <tr><td>state.rs</td><td class="num">494</td><td>Completion state machine: current word, context stack, match state</td></tr>
+          <tr><td>compset.rs</td><td class="num">616</td><td><code>compset</code> command: prefix/suffix matching, cursor word extraction</td></tr>
+          <tr><td>state.rs</td><td class="num">495</td><td>Completion state machine: current word, context stack, match state</td></tr>
           <tr><td>system.rs</td><td class="num">492</td><td>System completions: users, groups, hosts, pids, signals, file types</td></tr>
-          <tr><td>compadd.rs</td><td class="num">461</td><td><code>compadd</code> builtin: add matches with prefix, suffix, display, description</td></tr>
+          <tr><td>compadd.rs</td><td class="num">458</td><td><code>compadd</code> builtin: add matches with prefix, suffix, display, description</td></tr>
           <tr><td>matching.rs</td><td class="num">458</td><td>Match control: case insensitivity, partial matching, anchored/unanchored</td></tr>
           <tr><td>shell_runner.rs</td><td class="num">399</td><td>Shell function runner: eval completion functions in isolated environment</td></tr>
-          <tr><td>compdef.rs</td><td class="num">309</td><td><code>compdef</code> command: register completion functions for commands</td></tr>
-          <tr><td>files.rs</td><td class="num">302</td><td>File completion: <code>_path_files</code>, <code>_files</code>, <code>_directories</code>, glob patterns</td></tr>
-          <tr><td>describe.rs</td><td class="num">286</td><td><code>_describe</code>: completion with descriptions, columnar display</td></tr>
-          <tr><td>lib.rs</td><td class="num">148</td><td>Crate root: public API, re-exports</td></tr>
+          <tr><td>compdef.rs</td><td class="num">305</td><td><code>compdef</code> command: register completion functions for commands</td></tr>
+          <tr><td>files.rs</td><td class="num">303</td><td>File completion: <code>_path_files</code>, <code>_files</code>, <code>_directories</code>, glob patterns</td></tr>
+          <tr><td>describe.rs</td><td class="num">272</td><td><code>_describe</code>: completion with descriptions, columnar display</td></tr>
+          <tr><td>lib.rs</td><td class="num">145</td><td>Crate root: public API, re-exports</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL COMPSYS</td><td class="num">23,328</td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL COMPSYS</td><td class="num">20,486</td><td>(25 modules in table; <code>bins/menu_demo.rs</code> + <code>bins/bench_autoload.rs</code> add 2,833 for crate total 23,319)</td></tr></tfoot>
       </table>
 
       <h3 style="font-family:'Orbitron',sans-serif;font-size:11px;color:var(--magenta);letter-spacing:1.5px;margin:1.2rem 0 0.5rem;">// 70 COMPLETION FUNCTIONS</h3>
@@ -578,16 +578,16 @@
         <tbody>
           <tr>
             <td style="color:var(--cyan);"><code>src/extensions/</code></td>
-            <td class="num">37</td>
-            <td class="num">35,737</td>
-            <td class="num">294</td>
-            <td class="num">173</td>
+            <td class="num">34</td>
+            <td class="num">33,474</td>
+            <td class="num">229</td>
+            <td class="num">219</td>
             <td>The non-port directory. Features zsh C demonstrably does <em>not</em> have: AOT compile (<code>aot.rs</code>, <code>compile_zsh.rs</code>), autoload / plugin / script caches (<code>autoload_cache.rs</code>, <code>plugin_cache.rs</code>, <code>script_cache.rs</code>), fish-style features (<code>fish_features.rs</code>), persistent worker pool (<code>worker.rs</code>), arith JIT compiler (<code>arith_compiler.rs</code>), AST s-exp dump (<code>ast_sexp.rs</code>), ZWC byte-code helpers (<code>zwc.rs</code>, <code>zwc_decode.rs</code>), recorder hooks (<code>recorder.rs</code>), daemon presence (<code>daemon_presence.rs</code>), structured logging (<code>log.rs</code>), keymaps / widgets (<code>zle/keymaps.rs</code>, <code>zle/widgets.rs</code>, <code>zle/widget.rs</code>), ext builtins (<code>ext_builtins.rs</code>), regex module (<code>regex_mod.rs</code>), config (<code>config.rs</code>), overlay snapshot + canonical apply (<code>overlay_snapshot.rs</code>, <code>canonical_apply.rs</code>), subscript / fds / hist (<code>subscript.rs</code>, <code>fds.rs</code>, <code>history.rs</code>), stringsort, completion shim. Re-exported at crate root via <code>pub use crate::*</code> aliases so call sites still resolve to <code>crate::aot::*</code>, etc.</td>
           </tr>
           <tr>
             <td style="color:var(--cyan);"><code>daemon/</code></td>
             <td class="num">41</td>
-            <td class="num">23,885</td>
+            <td class="num">23,979</td>
             <td class="num">202</td>
             <td class="num">91</td>
             <td>Singleton daemon: IPC server, HTTP listener (auto-derived OpenAPI 3.1), canonical-state engine, fsnotify, schedule, supervisor (jobs + bidirectional ptmx attach), pub/sub bus, named locks, ask-inbox, snapshots, artifacts, cache. Hosts every <code>z*</code> builtin.</td>
@@ -595,7 +595,7 @@
           <tr>
             <td style="color:var(--cyan);"><code>src/recorder/</code> (feature-gated)</td>
             <td class="num">1</td>
-            <td class="num">1,133</td>
+            <td class="num">1,126</td>
             <td class="num">46</td>
             <td class="num">0</td>
             <td>AOP intercept: every state-mutating dispatcher fires a record event with <code>(kind, name, value, file, line, fn_chain)</code>. <code>#[cfg(feature = "recorder")]</code>-gated &mdash; deleted by rustc in the default <code>zshrs</code> build, compiled into the separate <code>zshrs-recorder</code> binary. Replaces the static-walker approach every other shell uses for completion/fpath scanning.</td>
@@ -611,15 +611,15 @@
           <tr>
             <td style="color:var(--cyan);"><code>compsys/</code></td>
             <td class="num">27</td>
-            <td class="num">23,328</td>
+            <td class="num">23,319</td>
             <td class="num">480</td>
             <td class="num">222</td>
             <td>Completion-system rkyv mmap, read-only SQL mirror, zstyle. Workspace crate; no C ancestor (zsh's compsys is shell-script, not C).</td>
           </tr>
         </tbody>
         <tfoot>
-          <tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">NEW INFRASTRUCTURE (rows above)</td><td class="num">263</td><td class="num">170,996</td><td class="num">2,266</td><td class="num">661</td></tr>
-          <tr><td colspan="6" style="font-size:11px;color:var(--text-muted);padding-top:0.35rem;">Sums cover the five layers in this table only. Workspace-wide Rust LOC (384,024) additionally includes <code>src/ported/</code>, remaining <code>src/</code> glue, <code>tests/</code>, <code>bins/</code>, and <code>build.rs</code>.</td></tr>
+          <tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">NEW INFRASTRUCTURE (rows above)</td><td class="num">260</td><td class="num">168,815</td><td class="num">2,201</td><td class="num">707</td></tr>
+          <tr><td colspan="6" style="font-size:11px;color:var(--text-muted);padding-top:0.35rem;">Sums cover the five layers in this table only. Workspace-wide Rust LOC (464,124) additionally includes <code>src/ported/</code>, remaining <code>src/</code> glue, <code>tests/</code>, <code>bins/</code>, and <code>build.rs</code>.</td></tr>
         </tfoot>
       </table>
 
@@ -644,12 +644,12 @@
       <!-- SECTION: GRAND TOTAL — WORKSPACE CRATES       -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&#x2261;</span>GRAND TOTAL &mdash; FULL WORKSPACE</h2>
-      <p class="tutorial-subtitle">Three Rust packages in one Cargo workspace (<code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Combined: 384,024 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 5,549 <code>pub fn</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*pub fn '</code>), 623 <code>pub struct</code>, 138 <code>pub enum</code>, 4,883 <code>#[test]</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) — each <code>rg</code> over the same tracked <code>.rs</code> set as <code>wc</code>, 2026-05-14.</p>
+      <p class="tutorial-subtitle">Three Rust packages in one Cargo workspace (<code>zshrs</code>, <code>compsys</code>, <code>zshrs-daemon</code>). Combined: 464,124 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 5,657 <code>pub fn</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*pub fn '</code>), 635 <code>pub struct</code>, 139 <code>pub enum</code>, 6,256 <code>#[test]</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) — each <code>rg</code> over the same tracked <code>.rs</code> set as <code>wc</code>, 2026-05-23.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">384,024</div><div class="stat-label">Total Rust Lines</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">5,549</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
-        <div class="stat-card"><div class="stat-val green">4,883</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">464,124</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">5,657</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
+        <div class="stat-card"><div class="stat-val green">6,256</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
         <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">3</div><div class="stat-label">Workspace Crates</div></div>
       </div>
 
@@ -657,28 +657,28 @@
         <thead><tr><th>Crate</th><th class="num">Lines</th><th class="num">Files</th><th class="num">Pub Fns</th><th class="num">Structs</th><th class="num">Enums</th><th class="num">Tests</th><th style="min-width:120px;">Share</th><th>Description</th></tr></thead>
         <tbody>
           <tr>
-            <td style="color:var(--cyan);"><code>zshrs</code> (root, lib <code>zsh</code>)</td><td class="num">333,314</td><td class="num">343</td><td class="num">4,867</td><td class="num">509</td><td class="num">115</td><td class="num">4,567</td>
-            <td><div class="bar-wrap"><div class="bar-fill cyan" style="width:87.6%"></div><span class="bar-pct">87.6%</span></div></td>
+            <td style="color:var(--cyan);"><code>zshrs</code> (root, lib <code>zsh</code>)</td><td class="num">416,826</td><td class="num">354</td><td class="num">4,975</td><td class="num">522</td><td class="num">116</td><td class="num">5,943</td>
+            <td><div class="bar-wrap"><div class="bar-fill cyan" style="width:89.8%"></div><span class="bar-pct">89.8%</span></div></td>
             <td>Runtime: <code>src/</code> (ported + extensions + exec bridge), <code>fish/</code>, <code>bins/</code>, <code>tests/</code>, <code>build.rs</code>. Lines/tests include integration suites.</td>
           </tr>
           <tr>
-            <td style="color:var(--magenta);"><code>compsys</code></td><td class="num">23,328</td><td class="num">27</td><td class="num">480</td><td class="num">75</td><td class="num">17</td><td class="num">222</td>
-            <td><div class="bar-wrap"><div class="bar-fill yellow" style="width:6.1%"></div><span class="bar-pct">6.1%</span></div></td>
+            <td style="color:var(--magenta);"><code>compsys</code></td><td class="num">23,319</td><td class="num">27</td><td class="num">480</td><td class="num">75</td><td class="num">17</td><td class="num">222</td>
+            <td><div class="bar-wrap"><div class="bar-fill yellow" style="width:5.0%"></div><span class="bar-pct">5.0%</span></div></td>
             <td>Programmable completion: zstyle, compadd, menu selection, SQLite-backed cache.</td>
           </tr>
           <tr>
-            <td style="color:var(--accent);"><code>zshrs-daemon</code></td><td class="num">23,885</td><td class="num">41</td><td class="num">202</td><td class="num">38</td><td class="num">6</td><td class="num">91</td>
-            <td><div class="bar-wrap"><div class="bar-fill magenta" style="width:6.3%"></div><span class="bar-pct">6.3%</span></div></td>
+            <td style="color:var(--accent);"><code>zshrs-daemon</code></td><td class="num">23,979</td><td class="num">41</td><td class="num">202</td><td class="num">38</td><td class="num">6</td><td class="num">91</td>
+            <td><div class="bar-wrap"><div class="bar-fill magenta" style="width:5.2%"></div><span class="bar-pct">5.2%</span></div></td>
             <td>Singleton daemon: IPC + HTTP/OpenAPI, canonical shards, jobs, fsnotify, pub/sub.</td>
           </tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">384,024</td><td class="num">412</td><td class="num">5,549</td><td class="num">623</td><td class="num">138</td><td class="num">4,883</td><td></td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">464,124</td><td class="num">422</td><td class="num">5,657</td><td class="num">635</td><td class="num">139</td><td class="num">6,256</td><td></td><td></td></tr></tfoot>
       </table>
 
     </main>
 
     <footer style="text-align:center;padding:2rem;font-size:10px;color:var(--text-muted);font-family:'Orbitron',sans-serif;letter-spacing:2px;">
-      ZSHRS PORT-COVERAGE REPORT &middot; NON-PORT INFRASTRUCTURE LAYER &middot; UPDATED 2026-05-14 &middot; MENKETECHNOLOGIES
+      ZSHRS PORT-COVERAGE REPORT &middot; NON-PORT INFRASTRUCTURE LAYER &middot; UPDATED 2026-05-23 &middot; MENKETECHNOLOGIES
     </footer>
   </div>
 
