@@ -1556,11 +1556,15 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     RETFLAG.store(0, Ordering::SeqCst); // c:1129 retflag = 0
     traplocallevel.store(crate::ported::params::locallevel.load(Ordering::SeqCst), Ordering::SeqCst); // c:1130
 
-    // c:1131 — `runhookdef(BEFORETRAPHOOK, NULL);`
-    // module.rs runhookdef is on the ModuleHandlers struct; no public
-    // dispatcher fn exposed yet, so the hook chain wire-up is deferred
-    // until the ModuleHandlers singleton accessor lands.
-    let _ = BEFORETRAPHOOK; // c:1131
+    // c:1131 — `runhookdef(BEFORETRAPHOOK, NULL);` — fire any
+    // registered "before-trap" module hooks. Looked up by name
+    // through gethookdef so the module dispatcher picks up
+    // installed handlers (zsh/zle's zlebeforetrap etc.).
+    let hd = crate::ported::module::gethookdef("BEFORETRAPHOOK");
+    if !hd.is_null() {
+        let _ = crate::ported::module::runhookdef(hd, std::ptr::null_mut());
+    }
+    let _ = BEFORETRAPHOOK; // c:1131 — const retained for source-cite parity
 
     if (*sigtr & ZSIG_FUNC) != 0 {
         // c:1132
@@ -1630,10 +1634,13 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         }
     }
 
-    // c:1172 — `runhookdef(AFTERTRAPHOOK, NULL);`. Same singleton-
-    // accessor gap as BEFORETRAPHOOK above; no-op until module
-    // dispatcher is wired.
-    let _ = AFTERTRAPHOOK; // c:1172
+    // c:1172 — `runhookdef(AFTERTRAPHOOK, NULL);` — fire any registered
+    // "after-trap" module hooks. Same shape as BEFORETRAPHOOK above.
+    let hd = crate::ported::module::gethookdef("AFTERTRAPHOOK");
+    if !hd.is_null() {
+        let _ = crate::ported::module::runhookdef(hd, std::ptr::null_mut());
+    }
+    let _ = AFTERTRAPHOOK; // c:1172 — const retained for source-cite parity
 
     traperr = errflag.load(Ordering::SeqCst); // c:1174
 
