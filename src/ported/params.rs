@@ -9103,6 +9103,43 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
                 .load(Ordering::Relaxed)
                 .to_string(),
         ),
+        // c:Src/loop.c:719 — `try_errflag = -1` reset before
+        // each `{ try } always { catch }` block; reads `-1` when
+        // outside a try block. Read from paramtab; if entry is
+        // missing/PM_UNSET/default (u_val=0), fall back to -1.
+        // Since try/always isn't fully wired in the Rust port,
+        // and no other code path writes TRY_BLOCK_ERROR yet,
+        // `$TRY_BLOCK_ERROR` always reads -1 here.
+        "TRY_BLOCK_ERROR" => {
+            let v = paramtab().read().ok().and_then(|t| {
+                t.get("TRY_BLOCK_ERROR").and_then(|pm| {
+                    if (pm.node.flags as u32 & PM_UNSET) != 0 {
+                        None
+                    } else if pm.u_val != 0 {
+                        Some(pm.u_val)
+                    } else {
+                        None
+                    }
+                })
+            });
+            Some(v.unwrap_or(-1).to_string())
+        }
+        // c:Src/loop.c — `try_interrupt = -1` similar default for
+        // `$TRY_BLOCK_INTERRUPT`.
+        "TRY_BLOCK_INTERRUPT" => {
+            let v = paramtab().read().ok().and_then(|t| {
+                t.get("TRY_BLOCK_INTERRUPT").and_then(|pm| {
+                    if (pm.node.flags as u32 & PM_UNSET) != 0 {
+                        None
+                    } else if pm.u_val != 0 {
+                        Some(pm.u_val)
+                    } else {
+                        None
+                    }
+                })
+            });
+            Some(v.unwrap_or(-1).to_string())
+        }
         "$" => Some(std::process::id().to_string()),
         "!" => {
             // Last-backgrounded job PID. Stored in paramtab `!` slot;
