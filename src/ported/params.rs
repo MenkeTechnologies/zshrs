@@ -5654,15 +5654,54 @@ pub fn arrvargetfn(pm: &param) -> Vec<String> {
     pm.u_arr.clone().unwrap_or_default()
 }
 
-/// Port of `arrvarsetfn(Param pm, char **x)` from `Src/params.c:4294`. C body
-/// frees old, applies PM_UNIQUE, handles PM_SPECIAL+NULL → mkarray.
-pub fn arrvarsetfn(pm: &mut param, x: Vec<String>) {
-    let val = if (pm.node.flags as u32 & PM_UNIQUE) != 0 {
-        simple_arrayuniq(x)
-    } else {
-        x
+/// Direct port of `mod_export void arrvarsetfn(Param pm, char **x)`
+/// from `Src/params.c:4292-4317`. The previous body skipped three of
+/// the four canonical C arms:
+///   1. PM_UNIQUE → uniqarray (was ported via simple_arrayuniq).
+///   2. PM_SPECIAL + null x → `*dptr = mkarray(NULL)` so a tied
+///      array set to NULL becomes a writable empty array, not a
+///      dangling null (was missing).
+///   3. `pm->ename` set → `arrfixenv(ename, x)` syncs the colon-
+///      joined env var partner (was missing — breaks PATH/path,
+///      FPATH/fpath, etc. when set via the array form).
+///   4. `pm->ename` set + null x + `*dptr == path` → invalidate
+///      pathchecked so the next path resolution re-walks (was
+///      missing).
+/// WARNING: param names don't match C — Rust=(pm, x) vs C=(pm, x)
+pub fn arrvarsetfn(pm: &mut param, x: Option<Vec<String>>) {
+    // c:4296 `char ***dptr = (char ***)pm->u.data;`
+    // c:4298-4299 — `if (*dptr != x) freearray(*dptr);` Rust Vec drop
+    // on reassignment handles freeing automatically.
+    // c:4300-4301 — `if (pm->node.flags & PM_UNIQUE) uniqarray(x);`
+    let uniq_applied: Option<Vec<String>> = match x {
+        Some(v) if (pm.node.flags as u32 & PM_UNIQUE) != 0 => Some(simple_arrayuniq(v)),
+        other => other,
     };
-    pm.u_arr = Some(val);
+    // c:4302-4310 — PM_SPECIAL + NULL → mkarray(NULL); else assign.
+    let final_val: Vec<String> = match uniq_applied {
+        Some(v) => v, // c:4310 `*dptr = x;`
+        None => {
+            if (pm.node.flags as u32 & PM_SPECIAL) != 0 {
+                crate::ported::utils::mkarray(None) // c:4308 `mkarray(NULL)`
+            } else {
+                Vec::new() // c:4310 — null case for non-special: empty.
+            }
+        }
+    };
+    // c:4311-4316 — ename sync.
+    if let Some(ename) = pm.ename.clone() {
+        // c:4311 `if (pm->ename)`
+        if !final_val.is_empty() || pm.u_arr.is_some() {
+            // c:4312-4313 — `if (x) arrfixenv(pm->ename, x);`
+            arrfixenv(&ename, Some(&final_val));
+        } else if pm.node.nam == "path" {
+            // c:4314-4315 — `else if (*dptr == path) pathchecked = path;`
+            // — invalidate the path-resolver cache. Rust port uses an
+            // AtomicUsize sentinel; storing 0 marks "must re-walk".
+            crate::ported::hashtable::pathchecked.store(0, Ordering::SeqCst);
+        }
+    }
+    pm.u_arr = Some(final_val);
 }
 
 /// Array to colon-separated path — inverse of `colonsplit`.
@@ -5678,10 +5717,10 @@ pub fn colonarrgetfn(arr: &[String]) -> String {
 /// generic arrvarsetfn.
 pub fn colonarrsetfn(pm: &mut param, x: Option<String>) {
     let uniq = (pm.node.flags as u32 & PM_UNIQUE) != 0; // c:4339
-    let arr = match x {
-        Some(s) => colonsplit(&s, uniq), // c:4339
-        None => Vec::new(),
-    };
+    // c:4339-4341 — `arrvarsetfn(pm, x ? colonsplit(...) : NULL);`
+    // The None branch must pass `None` (not `Some(Vec::new())`) so the
+    // PM_SPECIAL + NULL → mkarray(NULL) arm in arrvarsetfn fires.
+    let arr = x.map(|s| colonsplit(&s, uniq)); // c:4339
     arrvarsetfn(pm, arr);
 }
 
