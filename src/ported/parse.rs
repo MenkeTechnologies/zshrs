@@ -1791,7 +1791,20 @@ fn par_funcdef() -> Option<ZshCommand> {
             pos()
         };
         let body_source = input_slice(body_start, body_end)
-            .map(|s| s.trim().to_string())
+            .map(|s| {
+                // Lexer's pos() may have advanced past `}` AND skipped
+                // trailing whitespace/newlines before returning the
+                // OUTBRACE_TOK to us, so the slice up to `pos - 1`
+                // includes the `}` and any preceding whitespace.
+                // Strip the trailing `}` and any preceding structural
+                // separator (`;`, `\n`) — C zsh's getpermtext walks
+                // the wordcode list and emits each command WITHOUT
+                // the trailing `;`/`\n` that lives in the input.
+                let t = s.trim();
+                let t = t.strip_suffix('}').unwrap_or(t).trim_end();
+                let t = t.trim_end_matches(|c: char| c == ';' || c == '\n').trim_end();
+                t.to_string()
+            })
             .filter(|s| !s.is_empty());
         if tok() == OUTBRACE_TOK {
             zshlex();
@@ -7767,7 +7780,20 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
             pos()
         };
         let body_source = input_slice(body_start, body_end)
-            .map(|s| s.trim().to_string())
+            .map(|s| {
+                // Lexer's pos() may have advanced past `}` AND skipped
+                // trailing whitespace/newlines before returning the
+                // OUTBRACE_TOK to us, so the slice up to `pos - 1`
+                // includes the `}` and any preceding whitespace.
+                // Strip the trailing `}` and any preceding structural
+                // separator (`;`, `\n`) — C zsh's getpermtext walks
+                // the wordcode list and emits each command WITHOUT
+                // the trailing `;`/`\n` that lives in the input.
+                let t = s.trim();
+                let t = t.strip_suffix('}').unwrap_or(t).trim_end();
+                let t = t.trim_end_matches(|c: char| c == ';' || c == '\n').trim_end();
+                t.to_string()
+            })
             .filter(|s| !s.is_empty());
         if tok() == OUTBRACE_TOK {
             zshlex();
