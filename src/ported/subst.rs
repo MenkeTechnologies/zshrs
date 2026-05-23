@@ -3933,6 +3933,51 @@ pub fn paramsubst(
             // c:3845
             let _ = post_flags_start;
             let getlen = 1 + whichlen; // c:2588
+            // c:Src/subst.c:3193 — `:-default` modifier on `${#NAME:-X}`
+            // shape. When var_name resolves empty (unset, empty
+            // positional, or empty literal name `${#:-X}`), apply the
+            // default BEFORE computing length so `${#:-foo}` returns 3.
+            // C's flow handles this naturally because modifiers run
+            // first and length runs at the end of paramsubst at c:3845;
+            // the Rust port computes length early and returns, so we
+            // need an inline modifier pre-pass for the empty-or-unset
+            // case.
+            let raw_value_for_len = {
+                let r = rest.as_str();
+                if let Some(default) = r.strip_prefix(":-") {
+                    if raw_value.is_empty() {
+                        singsub(default)
+                    } else {
+                        raw_value.clone()
+                    }
+                } else if let Some(default) = r.strip_prefix('-') {
+                    if !vars_contains(&var_name)
+                        && !arrays_contains(&var_name)
+                        && !assoc_contains(&var_name)
+                    {
+                        singsub(default)
+                    } else {
+                        raw_value.clone()
+                    }
+                } else if let Some(alt) = r.strip_prefix(":+") {
+                    if !raw_value.is_empty() {
+                        singsub(alt)
+                    } else {
+                        String::new()
+                    }
+                } else if let Some(alt) = r.strip_prefix('+') {
+                    if vars_contains(&var_name)
+                        || arrays_contains(&var_name)
+                        || assoc_contains(&var_name)
+                    {
+                        singsub(alt)
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    raw_value.clone()
+                }
+            };
             // c:Src/Modules/parameter.c — magic-assoc names (`builtins`,
             // `commands`, `functions`, `aliases`, `parameters`, `options`,
             // `modules`, `reswords`, `nameddirs`, `userdirs`, `jobtexts`,
@@ -4011,15 +4056,17 @@ pub fn paramsubst(
                     total.max(0) as usize
                 }
             } else {
-                // c:3866 (scalar)
+                // c:3866 (scalar) — uses post-modifier value so
+                // `${#:-foo}` returns 3 (length of "foo"), not 0
+                // (length of empty pre-modifier raw_value).
                 if getlen < 3 {
                     // c:3867 char count
-                    raw_value.chars().count()
+                    raw_value_for_len.chars().count()
                 } else {
                     // c:3869 word count
                     let multi = if getlen > 3 { 1 } else { 0 };
                     crate::ported::utils::wordcount(
-                        &raw_value,
+                        &raw_value_for_len,
                         spsep.as_deref(),
                         multi,
                     )
