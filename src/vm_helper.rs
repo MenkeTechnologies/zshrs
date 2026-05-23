@@ -1221,13 +1221,21 @@ impl ShellExecutor {
                     let _ = PM_DONTIMPORT;
                     if let Some(pm) = tab.get_mut(entry.name) {
                         pm.node.flags |= bits as i32;
-                    } else if entry.pm_type == PM_SCALAR {
+                    } else {
                         // Param hasn't been created yet (e.g. PATH gets
                         // imported lazily via the env fallback in
-                        // getsparam at params.rs:4104). Seed an empty
-                        // PM_SCALAR placeholder carrying the canonical
-                        // flag set so subsequent setsparam / `(t)PATH`
-                        // observers see the IPDEF8 attribute bits.
+                        // getsparam at params.rs:4104; array specials
+                        // like `pipestatus` / `funcstack` / `dirstack`
+                        // / `zsh_scheduled_events` aren't pre-populated).
+                        // Seed an empty placeholder carrying the
+                        // canonical flag set so subsequent setsparam /
+                        // `(t)X` / `${+X}` observers see the IPDEF
+                        // attribute bits AND `${+X}` returns 1.
+                        let u_arr = if entry.pm_type == PM_ARRAY {
+                            Some(Vec::new())
+                        } else {
+                            None
+                        };
                         let pm: crate::ported::zsh_h::Param = Box::new(param {
                             node: hashnode {
                                 next: None,
@@ -1235,7 +1243,7 @@ impl ShellExecutor {
                                 flags: (entry.pm_type as i32) | bits as i32,
                             },
                             u_data: 0,
-                            u_arr: None,
+                            u_arr,
                             u_str: None,
                             u_val: 0,
                             u_dval: 0.0,
