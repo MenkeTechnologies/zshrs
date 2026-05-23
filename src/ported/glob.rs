@@ -2854,12 +2854,18 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
             .as_ref()
             .map(|q| q.mark_dirs)
             .unwrap_or(false);
-    let list_types = glob_isset(LISTTYPES)
-        || state
-            .qualifiers
-            .as_ref()
-            .map(|q| q.list_types)
-            .unwrap_or(false);
+    // c:1562-1566 — `gf_listtypes` is set ONLY by the `T` glob
+    // qualifier (`*(T)`), NOT by the global LISTTYPES option.
+    // LISTTYPES is the completion-listing option (see man zshoptions
+    // "LIST_TYPES") and doesn't affect glob output. Including the
+    // option here mis-decorated every executable-file glob with a
+    // trailing `*` and every directory with `/` for users with the
+    // default `setopt listtypes` ON.
+    let list_types = state
+        .qualifiers
+        .as_ref()
+        .map(|q| q.list_types)
+        .unwrap_or(false);
     let colon_mods = state.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
     let mut results: Vec<String> = state
         .matches
