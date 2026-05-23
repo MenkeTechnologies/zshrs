@@ -3183,12 +3183,11 @@ pub fn makecline(list: &[String]) -> Vec<String> {
 /// (127 not-found / 126 noperm).
 ///
 /// =================== WARNING — DIVERGENCE ====================
-/// (a) `cmdnamtab->getnode(cmdnamtab, arg0)` (c:824) — Rust
-///     cmdnamtab access pattern differs (hashtable.rs lookup
-///     surface). We skip the cmdnam-hashed fast path and fall
-///     straight to the $PATH scan; identical observable behavior
-///     when the hash is empty/cold (first call), slower-by-one-stat
-///     when hashed. Re-wire via cmdnamtab accessor to close.
+/// (a) `cmdnamtab->getnode(cmdnamtab, arg0)` (c:824) — HASHED
+///     fast-path now wired via cmdnamtab_lock(); jumps direct to
+///     `cn.cmd` absolute path before the $PATH scan. Unhashed
+///     cursor-walk (c:830-846) still falls to the full $PATH scan;
+///     observable behavior matches C when the hash hit is HASHED.
 /// (b) `commandnotfound(arg0, args)` (c:809, 873) calls into the
 ///     not-yet-ported `doshfunc` for the `command_not_found_handler`
 ///     shell function. Already routes through executor dispatch
@@ -3301,8 +3300,40 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
             eno = ee;
         }
     } else {
-        // c:822 — normal $PATH scan.
-        // WARNING (a) — cmdnamtab fast-path skipped.
+        // c:822 — cmdnamtab fast-path: if `arg0` is a hashed cmdnam,
+        // jump straight to the absolute path stored in `cn.cmd`,
+        // skipping the full $PATH scan (one exec attempt vs N).
+        // c:824 — `if ((cn = cmdnamtab->getnode(cmdnamtab, arg0)))`.
+        let hashed_path: Option<String> = {
+            let tab = crate::ported::hashtable::cmdnamtab_lock().read().ok();
+            tab.and_then(|t| {
+                t.get(&arg0).and_then(|cn| {
+                    if (cn.node.flags & crate::ported::zsh_h::HASHED) != 0 {
+                        // c:827-828 — `strcpy(nn, cn->u.cmd);`
+                        cn.cmd.clone()
+                    } else {
+                        None
+                    }
+                })
+            })
+        };
+        if let Some(nn) = hashed_path {
+            // c:848 — `ee = zexecve(nn, argv, newenvp);`
+            ee = zexecve(&nn, &argv, newenvp);
+            let dir = nn.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+            if isgooderr(ee, if dir.is_empty() { "/" } else { dir }) {
+                eno = ee;
+            }
+            // If the hashed entry's exec failed without a "good" error,
+            // we still need the $PATH fallback — fall through.
+            if eno == 0 && ee != 0 {
+                // Reset for the $PATH scan below.
+                ee = 0;
+            }
+        }
+        // c:822 — normal $PATH scan (always runs; cmdnam fast-path was an
+        // optimization but C also walks the rest of `path` if the hashed
+        // exec failed with a non-"good" error).
         let path_str = getsparam("PATH").unwrap_or_default();
         for pp in path_str.split(':') {
             if pp.is_empty() || pp == "." {
