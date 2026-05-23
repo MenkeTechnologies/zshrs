@@ -1592,12 +1592,19 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         SFCONTEXT.store(SFC_SIGNAL, Ordering::SeqCst); // c:1158
                                                        // c:1159 — `incompfunc = 0;` — module-private; stub kept as comment.
         let _ = old_incompfunc;
-        // c:1160 — `doshfunc((Shfunc)sigfn, args, 1);`
+        // c:1160 — `doshfunc((Shfunc)sigfn, args, 1);` — dispatch
+        // through execshfunc (exec.rs:5009) for PPARAMS save/swap/
+        // restore. doshfunc itself isn't ported; execshfunc routes
+        // through runshfunc with the trap-args list (args[0]=name,
+        // args[1..]=signum etc.) per C convention.
         let fn_name = sigfn.unwrap_or("");
-        let _ = crate::fusevm_bridge::with_executor(|exec| {
-            exec.dispatch_function_call(fn_name, &args[1..])
-                .unwrap_or(0)
-        });
+        let shf_clone: Option<crate::ported::zsh_h::shfunc> = {
+            let tab = crate::ported::hashtable::shfunctab_lock().read();
+            tab.ok().and_then(|t| t.get(fn_name).cloned())
+        };
+        if let Some(mut shf) = shf_clone {
+            crate::ported::exec::execshfunc(&mut shf, &mut args);
+        }
         SFCONTEXT.store(osc, Ordering::SeqCst); // c:1161
                                                 // c:1162 — restore incompfunc (no-op until ported).
         let _ = args; // c:1163 freelinklist(args)
