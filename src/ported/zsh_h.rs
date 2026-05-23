@@ -1399,7 +1399,11 @@ pub struct multio {
     pub ct: i32,
     pub rflag: i32,
     pub pipe: i32,
-    pub fds: [i32; MULTIOUNIT],
+    /// C `int fds[1]` with `VARLENARRAY` trailing-element realloc via
+    /// `hrealloc(mn, sizeof + ct*sizeof(int))`. Rust uses a growable
+    /// `Vec<i32>` so multi-output redirs past MULTIOUNIT (8) no longer
+    /// cap-bail. Initial slot stamped on construction (c:2449).
+    pub fds: Vec<i32>,
 }
 
 // =============================================================================
