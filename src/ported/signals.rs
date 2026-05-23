@@ -1608,11 +1608,19 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         TRAP_STATE.store(TRAP_STATE_PRIMED, Ordering::SeqCst); // c:1167
         trapisfunc.store(0, Ordering::SeqCst); // c:1168
         isfunc = 0;
-        // c:1170 — `execode((Eprog)sigfn, 1, 0, "trap");`
-        // Eprog dispatch via fusevm bridge isn't wired for raw eprog yet;
-        // mirror the call so the structure is auditable. When the
-        // executor exposes an `execode_eprog` entry, swap in here.
-        let _ = sigfn;
+        // c:1170 — `execode((Eprog)sigfn, 1, 0, "trap");` — execute
+        // the trap's compiled Eprog body. zshrs models the non-
+        // ZSIG_FUNC trap action as source TEXT (sigfn: Option<&str>)
+        // rather than a pre-compiled Eprog; re-parse + execute via
+        // the fusevm pipeline so the trap action actually fires.
+        // When sigfns[] is re-shaped to carry compiled Eprogs (matching
+        // C's `void *sigfns[sig]` cast at c:1170), swap in
+        // `crate::ported::exec::execode(eprog, 1, 0, "trap")` directly.
+        if let Some(src) = sigfn {
+            let _ = crate::fusevm_bridge::with_executor(|e| {
+                e.execute_script_zsh_pipeline(src)
+            });
+        }
     }
 
     // c:1172 — `runhookdef(AFTERTRAPHOOK, NULL);`. Same singleton-
