@@ -1305,6 +1305,41 @@ impl ShellExecutor {
         crate::ported::utils::set_scriptname(Some("zsh".to_string()));
         crate::ported::utils::set_scriptfilename(Some("zsh".to_string()));
 
+        // c:Src/params.c:961-970 — uname-derived host/arch
+        // identification params: MACHTYPE / CPUTYPE / OSTYPE /
+        // VENDOR. C zsh reads from compile-time `#define`s (set by
+        // ./configure) for MACHTYPE / OSTYPE / VENDOR, and from
+        // uname().machine at runtime for CPUTYPE.
+        //
+        // Rust port: probe uname() at startup for CPUTYPE, and use
+        // const strings parameterized by build-target for the
+        // others. Match homebrew zsh's values where possible.
+        let mut uname_buf: libc::utsname = unsafe { std::mem::zeroed() };
+        let _ = unsafe { libc::uname(&mut uname_buf) };
+        let to_str = |b: &[libc::c_char]| -> String {
+            // c-string → owned String, truncated at first NUL.
+            let bytes: Vec<u8> = b.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        let cputype = to_str(&uname_buf.machine);
+        crate::ported::params::setsparam("CPUTYPE", &cputype); // c:961
+        let sysname = to_str(&uname_buf.sysname).to_lowercase();
+        let release = to_str(&uname_buf.release);
+        let ostype = format!("{}{}", sysname, release); // c:968 (OSTYPE)
+        crate::ported::params::setsparam("OSTYPE", &ostype);
+        // MACHTYPE / VENDOR: hardcoded per platform. macOS uses
+        // "arm" or "arm64" or "x86_64" for arm-derived MACHTYPE.
+        // Approximate the canonical homebrew value: short-form of
+        // the cputype.
+        let machtype = if cputype.starts_with("arm") {
+            "arm".to_string()
+        } else {
+            cputype.clone()
+        };
+        crate::ported::params::setsparam("MACHTYPE", &machtype); // c:967
+        let vendor = if sysname == "darwin" { "apple" } else { "unknown" };
+        crate::ported::params::setsparam("VENDOR", vendor); // c:970
+
         // c:Src/params.c:878-882 — `setsparam("LOGNAME", getlogin() ?:
         // cached_username);`. C's createparamtable also assigns
         // USERNAME from the same source (cached_username) via the
