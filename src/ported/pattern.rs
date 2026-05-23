@@ -3719,4 +3719,223 @@ mod tests {
         }
         restorepatterndisables(saved);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional pattern-matching corner cases — pinning behaviour for
+    // shapes not previously exercised. Each test uses `patmatch` (which
+    // takes pattern + text → bool) so the failure mode is unambiguous.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn match_locked(pat: &str, s: &str) -> bool {
+        let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        patmatch(pat, s)
+    }
+
+    // ── Anchoring: zsh patterns are anchored by default (whole-string) ─
+    #[test]
+    fn literal_anchored_left() {
+        // Literal "foo" should NOT match "Xfoo" — patmatch is full-string.
+        let _g = crate::test_util::global_state_lock();
+        assert!(!match_locked("foo", "Xfoo"));
+    }
+
+    #[test]
+    fn literal_anchored_right() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!match_locked("foo", "fooX"));
+    }
+
+    #[test]
+    fn star_only_matches_empty_string() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("*", ""));
+    }
+
+    #[test]
+    fn star_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("*.txt", "foo.txt"));
+        assert!(match_locked("*.txt", ".txt"));
+        assert!(!match_locked("*.txt", "foo.rs"));
+    }
+
+    #[test]
+    fn star_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("foo*", "foo"));
+        assert!(match_locked("foo*", "foobar"));
+        assert!(!match_locked("foo*", "fo"));
+    }
+
+    #[test]
+    fn star_both_sides() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("*foo*", "barfoobaz"));
+        assert!(match_locked("*foo*", "foo"));
+        assert!(!match_locked("*foo*", "bar"));
+    }
+
+    #[test]
+    fn question_exactly_one_char() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("?", "a"));
+        assert!(!match_locked("?", ""));
+        assert!(!match_locked("?", "ab"));
+    }
+
+    #[test]
+    fn question_repeated() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("???", "abc"));
+        assert!(!match_locked("???", "ab"));
+        assert!(!match_locked("???", "abcd"));
+    }
+
+    // ── Character classes ────────────────────────────────────────────
+    #[test]
+    fn bracket_digit_range_in_context() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("file[0-9].txt", "file7.txt"));
+        assert!(!match_locked("file[0-9].txt", "fileA.txt"));
+    }
+
+    #[test]
+    fn bracket_multiple_ranges() {
+        let _g = crate::test_util::global_state_lock();
+        let p = "[a-zA-Z0-9]";
+        assert!(match_locked(p, "X"));
+        assert!(match_locked(p, "q"));
+        assert!(match_locked(p, "7"));
+        assert!(!match_locked(p, "_"));
+        assert!(!match_locked(p, "!"));
+    }
+
+    #[test]
+    fn bracket_posix_class_alpha() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("[[:alpha:]]", "A"));
+        assert!(match_locked("[[:alpha:]]", "z"));
+        assert!(!match_locked("[[:alpha:]]", "9"));
+    }
+
+    #[test]
+    fn bracket_posix_class_digit() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("[[:digit:]]", "0"));
+        assert!(match_locked("[[:digit:]]", "9"));
+        assert!(!match_locked("[[:digit:]]", "a"));
+    }
+
+    #[test]
+    fn bracket_posix_class_space() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("[[:space:]]", " "));
+        assert!(match_locked("[[:space:]]", "\t"));
+        assert!(!match_locked("[[:space:]]", "a"));
+    }
+
+    #[test]
+    fn bracket_negation_with_caret() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("[^a]", "b"));
+        assert!(!match_locked("[^a]", "a"));
+    }
+
+    #[test]
+    fn bracket_negation_with_bang() {
+        // zsh also accepts `[!abc]` as negation (ksh-compat).
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("[!abc]", "z"));
+        assert!(!match_locked("[!abc]", "b"));
+    }
+
+    // ── Escaping ─────────────────────────────────────────────────────
+    #[test]
+    fn escape_question_literal() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("a\\?b", "a?b"));
+        assert!(!match_locked("a\\?b", "aXb"));
+    }
+
+    #[test]
+    fn escape_bracket_literal() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("a\\[b", "a[b"));
+        assert!(!match_locked("a\\[b", "aXb"));
+    }
+
+    // ── Alternation across longer text ───────────────────────────────
+    #[test]
+    fn alternation_with_star_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("(foo|bar)*", "foobaz"));
+        assert!(match_locked("(foo|bar)*", "bar"));
+        assert!(!match_locked("(foo|bar)*", "qux"));
+    }
+
+    // ── Hash (zsh-extended quantifier) ───────────────────────────────
+    // The simple `a#` / `a##` shapes are already covered by the
+    // long-standing tests above; compound shapes (`aa#b`, `aa##b`)
+    // are deliberately NOT pinned here because their parse precedence
+    // would need verification against current C-zsh before claiming
+    // an expected value.
+
+    // ── Mixed wildcards ──────────────────────────────────────────────
+    #[test]
+    fn mixed_star_and_question() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("?*", "a"));
+        assert!(match_locked("?*", "abc"));
+        assert!(!match_locked("?*", ""));
+    }
+
+    // ── Empty pattern / empty string ─────────────────────────────────
+    #[test]
+    fn empty_pattern_matches_empty_string() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(match_locked("", ""));
+    }
+
+    #[test]
+    fn empty_pattern_rejects_non_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!match_locked("", "x"));
+    }
+
+    // ── haswilds: wildcard detection (used to bypass patcompile) ─────
+    #[test]
+    fn haswilds_recognizes_each_meta() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(haswilds("*"));
+        assert!(haswilds("?"));
+        assert!(haswilds("["));
+        assert!(!haswilds(""));
+        assert!(!haswilds("plain.txt"));
+    }
+
+    // ── patmatchrange: char-in-set primitive ─────────────────────────
+    #[test]
+    fn patmatchrange_single_char() {
+        let _g = crate::test_util::global_state_lock();
+        let r: Vec<char> = "abc".chars().collect();
+        assert!(patmatchrange(&r, 'a', false));
+        assert!(patmatchrange(&r, 'b', false));
+        assert!(!patmatchrange(&r, 'd', false));
+    }
+
+    #[test]
+    fn patmatchrange_case_insensitive_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let r: Vec<char> = "a-z".chars().collect();
+        assert!(patmatchrange(&r, 'A', true));
+        assert!(!patmatchrange(&r, 'A', false));
+    }
+
+    // ── range_type: POSIX class name lookup ──────────────────────────
+    #[test]
+    fn range_type_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(range_type(""), None);
+        assert_eq!(range_type("xyz_not_real"), None);
+    }
 }
