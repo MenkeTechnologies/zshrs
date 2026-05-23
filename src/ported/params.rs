@@ -5952,15 +5952,25 @@ pub fn randomsetfn(v: i64) {
 /// `return (zlong)(now.tv_sec - shtimer.tv_sec - …);`
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn intsecondsgetfn() -> i64 {
+    // c:4563 — `shtimer` is initialized at shell startup (zsh.h
+    // mod_export). Force shtimer init BEFORE reading `now` so the
+    // lazy-init race doesn't make `now < shtimer` on first call
+    // (which produced -1 from the nsec borrow-from-sec adjustment).
+    let timer = *shtimer_lock().lock().expect("shtimer poisoned");
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    let timer = *shtimer_lock().lock().expect("shtimer poisoned");
     let now_sec = now.as_secs() as i64;
     let timer_sec = timer.as_secs() as i64;
     let now_nsec = now.subsec_nanos() as i64;
     let timer_nsec = timer.subsec_nanos() as i64;
-    now_sec - timer_sec - i64::from(now_nsec < timer_nsec)
+    let diff = now_sec - timer_sec - i64::from(now_nsec < timer_nsec);
+    // c:4565 — clamp negative-diff (lazy-init or clock skew) to 0
+    // so \$SECONDS reads as a non-negative count of elapsed seconds
+    // from shell start. zsh's shtimer is set in main() before any
+    // user code runs, guaranteeing now >= shtimer; the Rust lazy
+    // init makes this stricter via .max(0).
+    diff.max(0)
 }
 
 /// Port of `intsecondssetfn(UNUSED(Param pm), zlong x)` from `Src/params.c:4575`. C body:
@@ -8901,6 +8911,14 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         "GID" => Some(gidgetfn().to_string()),
         "EUID" => Some(euidgetfn().to_string()),
         "EGID" => Some(egidgetfn().to_string()),
+        // c:Src/params.c:350 `IPDEF4("PPID", &ppid)` — ppid is the
+        // file-static set at shell startup from getppid(). zshrs's
+        // ported special_paramdef list registers PPID but nothing
+        // populates the paramtab slot from getppid(2), so $PPID
+        // always read 0. Route through the libc syscall directly.
+        "PPID" => Some(
+            (unsafe { libc::getppid() } as i64).to_string(),
+        ),
         // libc syscall callbacks.
         "RANDOM" => Some(randomgetfn().to_string()),
         "TTYIDLE" => Some(ttyidlegetfn().to_string()),
