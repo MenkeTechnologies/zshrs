@@ -3178,16 +3178,27 @@ pub fn paramsubst(
                     's' | 'j' => {
                         // c:2299/2302
                         // Consume `:STR:` arg.
+                        // c:Src/subst.c:2299-2313 — get_strarg(++s) /
+                        // `if (*t) ... else flagerr`. If next char is
+                        // the flag-block close `)` or end-of-body, or
+                        // if no matching close-delim is found, flagerr.
                         let is_split = fc == 's'; // c:2300
                         idx += 1; // c:2303 (++s)
-                        if idx >= body_chars.len() {
-                            break;
+                        if idx >= body_chars.len() || body_chars[idx] == ')' {
+                            zerr("bad substitution"); // c:2316 flagerr
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
                         }
                         let del = body_chars[idx]; // c:2303 (get_strarg del)
                         idx += 1; // c:2303
                         let s_start = idx;
                         while idx < body_chars.len() && body_chars[idx] != del {
                             idx += 1;
+                        }
+                        if idx >= body_chars.len() {
+                            zerr("bad substitution"); // c:2316 flagerr
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
                         }
                         let arg: String = body_chars[s_start..idx].iter().collect(); // c:2308
                         let arg = untok_and_escape(&arg, escapes, tok_arg); // c:2309-2312
