@@ -9493,10 +9493,17 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             "zparseopts",
             0,
             Some(crate::ported::modules::zutil::bin_zparseopts as HandlerFunc),
-            0,
+            1,
             -1,
             0,
-            Some("D-EFK-M-a:"),
+            // c:Src/Modules/zutil.c:2137 — NULL optstring: bin_zparseopts
+            // parses its own flags (-D/-E/-F/-K/-M/-a/-A/-v) inline. The
+            // previous Rust spec ("D-EFK-M-a:") let execbuiltin pre-eat
+            // them via the option-byte parser, leaving bin_zparseopts
+            // with empty argv and `if i >= args.len()` firing
+            // "missing option descriptions" for the canonical
+            // `zparseopts -a foo --` invocation.
+            None,
             None,
         ),
         BUILTIN(
