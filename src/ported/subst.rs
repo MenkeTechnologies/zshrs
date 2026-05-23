@@ -8114,7 +8114,26 @@ fn vars_contains(name: &str) -> bool {
 
 /// Read an array parameter from `paramtab`. Equivalent to C's
 /// `getaparam(name)` (`Src/params.c:3245`).
+///
+/// **Positional-param special-case** (c:Src/params.c:3262 IPDEF9
+/// `pparams`): the names `@`, `*`, `argv` map to the positional
+/// parameter vector. C zsh wires these through the parameter table's
+/// IPDEF9 alias mechanism so getaparam("@") returns &pparams. zshrs's
+/// paramtab doesn't carry the alias; positional params live in
+/// `crate::ported::builtin::PPARAMS`. Map at this entry point so the
+/// paramsubst array-arm (`${@[N]}` / `${@[*]}` / `${*[N,M]}`) sees the
+/// positional vector instead of a None lookup.
+///
+/// **Previous gap:** `${@[@]}` / `print $@[@]` returned the bare `[@]`
+/// suffix because arrays_get("@") returned None and the array-index
+/// arm never fired — `set -- 1 2; print $@[@]` produced "1 2[@]"
+/// instead of zsh's "1 2".
 fn arrays_get(name: &str) -> Option<Vec<String>> {
+    if name == "@" || name == "*" || name == "argv" {
+        // c:Src/params.c:3262 IPDEF9 — pparams via getaparam alias.
+        let pp = crate::ported::builtin::PPARAMS.lock().ok()?;
+        return Some(pp.clone());
+    }
     let tab = paramtab().read().ok()?;
     let pm = tab.get(name)?;
     pm.u_arr.clone()
