@@ -468,12 +468,16 @@ pub fn addbufspc(need: i32) {
     // c:993 — `need *= 2;` for metafication
     let _need_doubled = need.saturating_mul(2);
     // c:994-1010 — realloc dance on `bv->buf` if growth needed.
-    // !!! WARNING: SUBSTRATE GAP — file-static `bv` not ported !!!
-    // The `bv` (prompt-buf state) is a file-static in C
-    // (Src/prompt.c:~50); zshrs models it as a method-receiver
-    // (PromptBuf::addbufspc, line 1325). Free-fn callers would need
-    // a thread-local PromptBuf accessor to dispatch; until then this
-    // shape is a name-parity shim.
+    // Architectural divergence: C's `bv` is a file-static struct
+    // (Src/prompt.c:~50) — implicit global state that every prompt
+    // helper mutates. zshrs models the same state as a `buf_vars`
+    // struct constructed per `promptexpand()` call (line 1286) with
+    // an inherent `addbufspc` method (line 1380) — the real growth
+    // dance. Free-fn callers MUST go through the impl method via the
+    // promptexpand entry, where they have a `&mut buf_vars` in hand.
+    // This free-fn body is intentionally a name-parity no-op (kept so
+    // grep'ping for `addbufspc` finds the C-side counterpart); no
+    // direct invocation path exists or should exist.
 }
 
 /// Append a string to the prompt buffer.

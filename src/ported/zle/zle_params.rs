@@ -577,9 +577,9 @@ pub fn get_isearchmatchactive() -> i64 {
 /// (cursor minus suffix length).
 pub fn get_suffixstart() -> i64 {
     // c:598
-    let suffixlen = SUFFIXLEN.load(Ordering::Relaxed);
+    let sfx_len = SUFFIXLEN.load(Ordering::Relaxed);
     (ZLECS.load(Ordering::SeqCst) as i64)
-        - (suffixlen as i64) // c:600 zlecs - suffixlen
+        - (sfx_len as i64) // c:600 zlecs - suffixlen
 }
 
 /// Port of `get_suffixend(UNUSED(Param pm))` from `Src/Zle/zle_params.c:605`.
