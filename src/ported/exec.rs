@@ -4961,21 +4961,16 @@ pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
     LASTVAL.load(Ordering::Relaxed) // c:5290
 }
 
-/// `execshfunc(Shfunc shf, LinkList args)` — `Src/exec.c:5540`. The
-/// real port goes in `crate::ported::exec` as a top-level fn (it
-/// owns the queue_signals + cmdstack + sfcontext setup before
-/// calling doshfunc). doshfunc itself is unported. Until both land,
-/// route the anon-function body through `runshfunc` (exec.rs:1700),
-/// which carries the wrapper-chain + zunderscore restore. This is
-/// degraded vs C (no cmdstack push, no sfcontext flip, no XTRACE
-/// arg-trace) but the anon-function body actually executes and
-/// `lastval` is updated.
-///
-/// !!! WARNING: RUST-ONLY HELPER — STUB FOR UN-PORTED C FN !!!
-/// Same-file local per [[feedback_no_shortcuts_in_porting]] —
-/// caller (execfuncdef anon-func path c:5439) calls
-/// `execshfunc(shf, args)` and `lastval` is read on return.
-fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
+/// `execshfunc(Shfunc shf, LinkList args)` — `Src/exec.c:5540`.
+/// Promoted to top-level pub fn so execcmd_exec at the shfunc
+/// dispatch site (c:4102-4105) can route through it. The real port
+/// owns queue_signals + cmdstack + sfcontext setup before calling
+/// doshfunc; doshfunc itself is unported, so we route the body
+/// through `runshfunc` (exec.rs:1700), which carries the
+/// wrapper-chain + zunderscore restore. Degraded vs C (no cmdstack
+/// push, no sfcontext flip, no XTRACE arg-trace) but the function
+/// body executes and `lastval` is updated.
+pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     // c:5546-5547 — `if (errflag) return;`
     if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
         return;
@@ -8495,21 +8490,19 @@ pub fn execcmd_exec(
             if is_shfunc != 0 {
                 // c:4102-4105
                 let mut a_vec: Vec<String> = args.clone().unwrap_or_default();
-                // SUBSTRATE GAP: `execshfunc((Shfunc) hn, args);` —
-                // hn is a *mut builtin not Shfunc; the C cast presumes
-                // the shfunctab vs builtintab were resolved separately.
-                // Pull the shfunc by name from shfunctab.
+                // c:4104 — `execshfunc((Shfunc) hn, args);` C casts
+                // HashNode hn to Shfunc; zshrs's hn is *mut builtin so
+                // we re-resolve the shfunc by name from shfunctab and
+                // dispatch through the top-level execshfunc port at
+                // exec.rs:4978 (which routes to runshfunc).
                 let name = args.as_ref().and_then(|v| v.first()).cloned().unwrap_or_default();
-                if let Ok(tab) = shfunctab_lock().read() {
-                    let _entry_present = tab.iter().any(|(k, _)| k == &name);
-                    if _entry_present {
-                        // SUBSTRATE GAP: execshfunc takes &mut shfunc; shfunctab
-                        // RwLock returns read-only. The fusevm path uses
-                        // runshfunc via shfunctab_lock().write() through a
-                        // different API. Skipped here — call execshfunc via
-                        // the runshfunc dispatch in the fusevm bridge.
-                        let _ = (&mut a_vec, &name);
-                    }
+                let mut shf_clone: Option<shfunc> = if let Ok(tab) = shfunctab_lock().read() {
+                    tab.get(&name).cloned()
+                } else {
+                    None
+                };
+                if let Some(ref mut shf) = shf_clone {
+                    crate::ported::exec::execshfunc(shf, &mut a_vec);
                 }
                 // c:4105 — `pipecleanfilelist(filelist, 0);`
                 // SUBSTRATE GAP: filelist mutation — exec.rs has
