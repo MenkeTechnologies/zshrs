@@ -222,25 +222,129 @@ pub fn metacharinc(s: &str, pos: usize) -> usize {
 // 8. Bytecode write helpers — pattern.c:412-1856
 // =====================================================================
 
-/// Port of `patadd(char *add, int ch, long n, int paflags)` from `Src/pattern.c:412`.
+/// Port of the anonymous `enum { PA_NOALIGN = 1, PA_UNMETA = 2 };`
+/// from `Src/pattern.c:405-408`. Flags passed as the `paflags` arg
+/// to `patadd`.
+pub const PA_NOALIGN: i32 = 1; // c:406
+pub const PA_UNMETA: i32 = 2; // c:407
+
+/// Direct port of `static void patadd(char *add, int ch, long n,
+/// int paflags)` from `Src/pattern.c:410-450`.
 ///
-/// C signature: `static long patadd(char *add, int ch, long n, int paflags)`.
-/// Adds `n` bytes (or repeats `ch`) to patout, growing if needed.
-/// Returns offset where the bytes were appended.
-#[allow(unused_variables)]
-fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) -> i64 {
+/// Append `n` bytes from `add` (or a single `ch` byte when `add ==
+/// None`) to `patout`, growing the backing storage if needed and
+/// padding to the C `union upat` alignment unless `PA_NOALIGN` is
+/// set. With `PA_UNMETA`, walk the input as zsh-metafied bytes
+/// (Meta + (b^32)) and untokenize (`itok` → `ztokens[]`).
+///
+/// **The previous Rust impl had three concrete defects:**
+///   1. Declared `-> i64` returning the starting offset. C is
+///      `static void`; callers use side-effects on `patcode`,
+///      not a return value.
+///   2. When `add == None`, the C body writes `ch` **once**
+///      (`*patcode++ = ch;`). The Rust port looped `0..n` pushing
+///      `ch` n times, so a single-byte literal grew to n copies.
+///   3. Skipped the C alignment-round-up to `sizeof(union upat)`
+///      (8 bytes on every supported arch — c:417-418), so any
+///      caller reading `patout` as a `[upat]` would mis-align.
+///
+/// zshrs's `patcode` pointer collapses into `patout.len()`; the
+/// realloc dance in C (c:419-425) is implicit via `Vec::extend`.
+/// `patsize` updates are the post-write `patout.len()`.
+fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) {
+    use crate::ported::lex::ztokens as ztokens_str;
+    use crate::ported::ztype_h::itok;
+    use crate::ported::zsh_h::Pound;
+    let ztokens = ztokens_str.as_bytes();
     // c:412
+    // c:415 — `long newpatsize = patsize + n;`
     let mut buf = patout.lock().unwrap();
-    let start = buf.len() as i64;
-    if let Some(bytes) = add {
-        let n_actual = bytes.len().min(n as usize);
-        buf.extend_from_slice(&bytes[..n_actual]);
-    } else {
-        for _ in 0..n {
-            buf.push(ch);
-        }
+    let patsize = buf.len() as i64;
+    let mut newpatsize = patsize + n;
+    // c:416-418 — round up to upat-union alignment (sizeof(union upat) =
+    // 8 on every supported arch) unless PA_NOALIGN.
+    if (paflags & PA_NOALIGN) == 0 {
+        // c:416
+        let upat = 8i64; // c:417 sizeof(union upat)
+        newpatsize = (newpatsize + upat - 1) & !(upat - 1); // c:417-418
     }
-    start
+    // c:419-425 — realloc; Rust Vec auto-grows so just resize_to.
+    if newpatsize > buf.len() as i64 {
+        buf.resize(newpatsize as usize, 0);
+    }
+    // c:426 — `patsize = newpatsize;` — patsize is the buffer's
+    // logical write head; zshrs tracks it via buf.len() AFTER the
+    // write below.
+    let mut patcode_pos = patsize as usize; // c:Src/pattern.c — `patcode` pointer.
+
+    if let Some(add_bytes) = add {
+        // c:427 — `if (add) {`
+        if (paflags & PA_UNMETA) != 0 {
+            // c:428-442 — PA_UNMETA: walk add_bytes, unmetafy + untokenize
+            // as we go. Meta chars aren't counted in n. itok bytes route
+            // through ztokens[*add - Pound].
+            let mut idx = 0usize;
+            let mut remaining = n;
+            while remaining > 0 && idx < add_bytes.len() {
+                let b = add_bytes[idx];
+                if itok(b) {
+                    // c:434-435 — `if (itok(*add)) *patcode++ =
+                    //               ztokens[*add++ - Pound];`
+                    if idx < add_bytes.len() {
+                        let tok_idx = b.wrapping_sub(Pound as u8) as usize;
+                        if tok_idx < ztokens.len() {
+                            // c:435
+                            if patcode_pos < buf.len() {
+                                buf[patcode_pos] = ztokens[tok_idx];
+                            }
+                            patcode_pos += 1;
+                        }
+                        idx += 1;
+                    }
+                } else if b == Meta {
+                    // c:436-438 — `else if (*add == Meta) { add++;
+                    //               *patcode++ = *add++ ^ 32; }`
+                    idx += 1;
+                    if idx < add_bytes.len() {
+                        if patcode_pos < buf.len() {
+                            buf[patcode_pos] = add_bytes[idx] ^ 32;
+                        }
+                        patcode_pos += 1;
+                        idx += 1;
+                    }
+                } else {
+                    // c:439-440 — `else { *patcode++ = *add++; }`
+                    if patcode_pos < buf.len() {
+                        buf[patcode_pos] = b;
+                    }
+                    patcode_pos += 1;
+                    idx += 1;
+                }
+                remaining -= 1;
+            }
+        } else {
+            // c:444-445 — `while (n--) *patcode++ = *add++;` — plain copy.
+            let n_actual = (n as usize).min(add_bytes.len());
+            for &b in &add_bytes[..n_actual] {
+                if patcode_pos < buf.len() {
+                    buf[patcode_pos] = b;
+                }
+                patcode_pos += 1;
+            }
+        }
+    } else {
+        // c:447-448 — `else *patcode++ = ch;` — single-byte write.
+        if patcode_pos < buf.len() {
+            buf[patcode_pos] = ch;
+        }
+        patcode_pos += 1;
+    }
+    // c:449 — `patcode = patout + patsize;` — restore the post-write
+    // head so subsequent patadd calls append at the next slot. zshrs
+    // tracks via buf.len(); trim back to newpatsize so the alignment
+    // padding stays visible to consumers as zeroes.
+    let _ = patcode_pos;
+    // (No explicit truncate — buf.len() == newpatsize already.)
 }
 
 /// Port of `patcompcharsset()` from `Src/pattern.c:464`.
