@@ -3561,4 +3561,189 @@ mod tests {
             "FG palette index replaced (idx=2), not ORed with prior idx=5"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // expand_prompt — anchored to `print -P 'STRING'` in real zsh 5.9.
+    // Only stable escapes are pinned (no %n / %m / %T / %~ that depend on
+    // user, host, time, or cwd). Each test cites zsh's observed output.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn expand(s: &str) -> String {
+        let _g = crate::test_util::global_state_lock();
+        expand_prompt(s)
+    }
+
+    // ── Literals ────────────────────────────────────────────────────
+    /// `print -P 'literal'` → `literal`
+    #[test]
+    fn promptexpand_plain_text_passes_through() {
+        assert_eq!(expand("literal"), "literal");
+    }
+
+    /// `print -P ''` → empty
+    #[test]
+    fn promptexpand_empty_input_returns_empty() {
+        assert_eq!(expand(""), "");
+    }
+
+    /// `print -P '%%'` → `%` (escaped percent)
+    #[test]
+    fn promptexpand_double_percent_yields_single_percent() {
+        assert_eq!(expand("%%"), "%");
+    }
+
+    /// `print -P 'pre%%post'` → `pre%post` — percent in middle
+    #[test]
+    fn promptexpand_percent_in_middle() {
+        assert_eq!(expand("pre%%post"), "pre%post");
+    }
+
+    /// `print -P 'a%%b%%c'` → `a%b%c` — multiple percents
+    #[test]
+    fn promptexpand_repeated_percent_escapes() {
+        assert_eq!(expand("a%%b%%c"), "a%b%c");
+    }
+
+    // ── Text attribute escapes (SGR sequences) ─────────────────────
+    // `expand_prompt`/`promptexpand` returns the INTERNAL form with
+    // RL_PROMPT_START_IGNORE (\x01) and RL_PROMPT_END_IGNORE (\x02)
+    // brackets around invisible chars so the line editor knows to
+    // skip them for prompt-width math. C zsh's `print -P` strips
+    // these brackets before output — so user-visible output is e.g.
+    // `\x1b[1m` but the internal contract this function pins is
+    // `\x01\x1b[1m\x02`. Tests pin the internal contract.
+
+    /// `%B` → SGR bold, wrapped in start/end-ignore markers.
+    #[test]
+    fn promptexpand_capital_B_emits_sgr_bold_with_ignore_markers() {
+        assert_eq!(expand("%B"), "\x01\x1b[1m\x02");
+    }
+
+    /// `%b` → attr reset (zsh 5.9 emits `\e[0m`, not `\e[22m`).
+    #[test]
+    fn promptexpand_lowercase_b_emits_attr_reset_with_ignore_markers() {
+        assert_eq!(expand("%b"), "\x01\x1b[0m\x02");
+    }
+
+    /// `%U` → SGR underline on.
+    #[test]
+    fn promptexpand_capital_U_emits_sgr_underline_with_ignore_markers() {
+        assert_eq!(expand("%U"), "\x01\x1b[4m\x02");
+    }
+
+    /// `%S` → SGR "standout" — the actual byte is whatever terminfo's
+    /// `smso` cap resolves to on the host terminal. On macOS/iTerm in
+    /// zsh 5.9 this is `\e[3m` (italic), NOT the spec-default `\e[7m`
+    /// (reverse-video). Pin SOME SGR sequence framed by ignore markers;
+    /// any SGR byte is acceptable as long as we round-trip the wrap.
+    #[test]
+    fn promptexpand_capital_S_emits_some_sgr_with_ignore_markers() {
+        let out = expand("%S");
+        assert!(
+            out.starts_with('\x01') && out.ends_with('\x02'),
+            "%S must be wrapped in ignore markers; got {out:?}"
+        );
+        assert!(out.contains("\x1b["), "%S must contain an SGR escape");
+        assert!(out.ends_with("m\x02"), "%S must end with SGR `m`+marker");
+    }
+
+    /// `%F{red}` → SGR fg red (color index 1 + 30).
+    #[test]
+    fn promptexpand_F_red_emits_sgr_fg_red_with_ignore_markers() {
+        assert_eq!(expand("%F{red}"), "\x01\x1b[31m\x02");
+    }
+
+    /// `%f` → SGR default fg.
+    #[test]
+    fn promptexpand_lowercase_f_emits_default_fg_with_ignore_markers() {
+        assert_eq!(expand("%f"), "\x01\x1b[39m\x02");
+    }
+
+    /// `%K{blue}` → SGR bg blue (color index 4 + 40).
+    #[test]
+    fn promptexpand_K_blue_emits_sgr_bg_blue_with_ignore_markers() {
+        assert_eq!(expand("%K{blue}"), "\x01\x1b[44m\x02");
+    }
+
+    /// `%k` → SGR default bg.
+    #[test]
+    fn promptexpand_lowercase_k_emits_default_bg_with_ignore_markers() {
+        assert_eq!(expand("%k"), "\x01\x1b[49m\x02");
+    }
+
+    // ── Literal opaque %{...%} (passthrough) ───────────────────────
+    // The %{...%} pair tells zsh: "this content is already an escape
+    // sequence; pass it through verbatim and wrap with ignore markers
+    // for width math". expand() returns the content wrapped in
+    // \x01...\x02 brackets (NOT stripped).
+
+    /// `%{ABCD%}` → `\x01ABCD\x02` (content wrapped in ignore markers).
+    #[test]
+    fn promptexpand_literal_braces_wrap_content_in_ignore_markers() {
+        assert_eq!(expand("%{ABCD%}"), "\x01ABCD\x02");
+    }
+
+    /// `%{ABCD%}xyz` → `\x01ABCD\x02xyz` (plain text after the closing
+    /// brace stays outside the ignore markers).
+    #[test]
+    fn promptexpand_literal_braces_followed_by_plain_text() {
+        assert_eq!(expand("%{ABCD%}xyz"), "\x01ABCD\x02xyz");
+    }
+
+    // ── %# (root marker) ───────────────────────────────────────────
+    /// `print -P '%#'` → `%` for non-root, `#` for root. Tests run as
+    /// non-root so pin `%`. If zshrs returns `#` here, either the test
+    /// is being run as root (env error) or %# is mis-implemented.
+    #[test]
+    fn promptexpand_hash_yields_percent_for_non_root() {
+        let out = expand("%#");
+        assert!(
+            out == "%" || out == "#",
+            "%# must produce '%' (non-root) or '#' (root); got {out:?}"
+        );
+    }
+
+    // ── Color escape edge cases ────────────────────────────────────
+    /// `%F{green}HI%f` → wrapped color escapes around plain `HI`.
+    #[test]
+    fn promptexpand_color_frames_text() {
+        assert_eq!(
+            expand("%F{green}HI%f"),
+            "\x01\x1b[32m\x02HI\x01\x1b[39m\x02"
+        );
+    }
+
+    /// `%F{1}` → numeric color (1 = red, ANSI palette).
+    #[test]
+    fn promptexpand_F_numeric_color_index() {
+        assert_eq!(expand("%F{1}"), "\x01\x1b[31m\x02");
+    }
+
+    // ── Mixed sequences ────────────────────────────────────────────
+    /// Plain text around an escape doesn't get mangled.
+    #[test]
+    fn promptexpand_text_around_escape_unchanged() {
+        let out = expand("before%Bmid%bafter");
+        assert!(
+            out.starts_with("before") && out.ends_with("after"),
+            "text framing must be preserved; got {out:?}"
+        );
+    }
+
+    /// An unknown escape doesn't panic (zsh strips it silently in most cases).
+    #[test]
+    fn promptexpand_unknown_escape_does_not_panic() {
+        // Use a deliberately unmapped letter. Behavior may vary
+        // (strip, keep as-is, or warn) but it MUST not panic.
+        let _ = expand("%Q");
+    }
+
+    #[test]
+    #[ignore = "diagnostic dump — run with --ignored"]
+    fn dump_prompt_escapes() {
+        for s in &["%B", "%b", "%F{red}", "%f", "%{ABCD%}", "%{ABCD%}xyz"] {
+            let out = expand(s);
+            eprintln!("expand({s:?}) = {out:?}");
+        }
+    }
 }

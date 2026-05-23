@@ -4518,4 +4518,291 @@ mod tests {
             "OP_TYPE must have one slot per math token"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // matheval / mathevali — anchored to `zsh -c 'echo $(( ... ))'`.
+    // Each expected value verified against zsh 5.9. Where zshrs diverges
+    // the test FAILS, exposing the bug. matheval returns mnumber; we
+    // mostly use mathevali for integer comparisons.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn mi(expr: &str) -> i64 {
+        let _g = crate::test_util::global_state_lock();
+        mathevali(expr).unwrap_or_else(|e| panic!("mathevali({expr:?}) → Err({e})"))
+    }
+
+    // ── Literals ────────────────────────────────────────────────────
+    /// `echo $(( 42 ))` → 42
+    #[test]
+    fn matheval_decimal_literal() {
+        assert_eq!(mi("42"), 42);
+    }
+
+    /// `echo $(( -7 ))` → -7
+    #[test]
+    fn matheval_unary_minus_literal() {
+        assert_eq!(mi("-7"), -7);
+    }
+
+    /// `echo $(( 0xff ))` → 255
+    #[test]
+    fn matheval_hex_literal_lowercase() {
+        assert_eq!(mi("0xff"), 255);
+    }
+
+    /// `echo $(( 0XDEAD ))` → 57005
+    #[test]
+    fn matheval_hex_literal_uppercase() {
+        assert_eq!(mi("0XDEAD"), 0xDEAD);
+    }
+
+    /// `echo $(( 16#FF ))` → 255 (zsh base# literal)
+    #[test]
+    fn matheval_base_hash_hex() {
+        assert_eq!(mi("16#FF"), 255);
+    }
+
+    /// `echo $(( 2#1010 ))` → 10
+    #[test]
+    fn matheval_base_hash_binary() {
+        assert_eq!(mi("2#1010"), 10);
+    }
+
+    /// `echo $(( 8#17 ))` → 15
+    #[test]
+    fn matheval_base_hash_octal() {
+        assert_eq!(mi("8#17"), 15);
+    }
+
+    /// `echo $(( 010 ))` → 10 (zsh default: NOT octal unless OCTAL_ZEROES set)
+    #[test]
+    fn matheval_leading_zero_is_decimal_not_octal() {
+        assert_eq!(mi("010"), 10);
+    }
+
+    // ── Binary arithmetic ──────────────────────────────────────────
+    /// `echo $(( 1 + 2 + 3 ))` → 6
+    #[test]
+    fn matheval_addition_chain() {
+        assert_eq!(mi("1 + 2 + 3"), 6);
+    }
+
+    /// `echo $(( 2 * 3 + 4 ))` → 10 (precedence: * over +)
+    #[test]
+    fn matheval_precedence_mul_over_add() {
+        assert_eq!(mi("2 * 3 + 4"), 10);
+    }
+
+    /// `echo $(( 2 * (3 + 4) ))` → 14 (parens override)
+    #[test]
+    fn matheval_parens_override_precedence() {
+        assert_eq!(mi("2 * (3 + 4)"), 14);
+    }
+
+    /// `echo $(( 17 / 5 ))` → 3 (integer division, truncates toward 0)
+    #[test]
+    fn matheval_integer_division_truncates() {
+        assert_eq!(mi("17 / 5"), 3);
+    }
+
+    /// `echo $(( 1 / 4 ))` → 0 (integer division of small numerator)
+    #[test]
+    fn matheval_integer_division_below_one() {
+        assert_eq!(mi("1 / 4"), 0);
+    }
+
+    /// `echo $(( 17 % 5 ))` → 2
+    #[test]
+    fn matheval_modulo() {
+        assert_eq!(mi("17 % 5"), 2);
+    }
+
+    /// `echo $(( 2 ** 10 ))` → 1024
+    #[test]
+    fn matheval_power() {
+        assert_eq!(mi("2 ** 10"), 1024);
+    }
+
+    /// `echo $(( 3 ** 3 ))` → 27
+    #[test]
+    fn matheval_power_small_cubed() {
+        assert_eq!(mi("3 ** 3"), 27);
+    }
+
+    /// `echo $(( -2 ** 2 ))` → 4 (zsh: unary binds tighter than **)
+    #[test]
+    fn matheval_unary_binds_tighter_than_power() {
+        assert_eq!(mi("-2 ** 2"), 4);
+    }
+
+    // ── Bitwise ─────────────────────────────────────────────────────
+    /// `echo $(( 0xff & 0x0f ))` → 15
+    #[test]
+    fn matheval_bitand() {
+        assert_eq!(mi("0xff & 0x0f"), 15);
+    }
+
+    /// `echo $(( 0xff | 0x100 ))` → 511
+    #[test]
+    fn matheval_bitor() {
+        assert_eq!(mi("0xff | 0x100"), 511);
+    }
+
+    /// `echo $(( 0xff ^ 0x0f ))` → 240
+    #[test]
+    fn matheval_bitxor() {
+        assert_eq!(mi("0xff ^ 0x0f"), 240);
+    }
+
+    /// `echo $(( ~0 ))` → -1 (two's-complement bitwise NOT)
+    #[test]
+    fn matheval_bitnot_zero_is_minus_one() {
+        assert_eq!(mi("~0"), -1);
+    }
+
+    /// `echo $(( 1 << 8 ))` → 256
+    #[test]
+    fn matheval_left_shift() {
+        assert_eq!(mi("1 << 8"), 256);
+    }
+
+    /// `echo $(( 256 >> 4 ))` → 16
+    #[test]
+    fn matheval_right_shift() {
+        assert_eq!(mi("256 >> 4"), 16);
+    }
+
+    /// `echo $(( -1 >> 1 ))` → -1 (arithmetic shift, sign-preserving)
+    #[test]
+    fn matheval_arithmetic_right_shift_preserves_sign() {
+        assert_eq!(mi("-1 >> 1"), -1);
+    }
+
+    // ── Comparison & logical ───────────────────────────────────────
+    /// `echo $(( 5 == 5 ))` → 1
+    #[test]
+    fn matheval_eq_true() {
+        assert_eq!(mi("5 == 5"), 1);
+    }
+
+    /// `echo $(( 5 != 6 ))` → 1
+    #[test]
+    fn matheval_ne_true() {
+        assert_eq!(mi("5 != 6"), 1);
+    }
+
+    /// `echo $(( 3 < 5 ))` → 1
+    #[test]
+    fn matheval_lt_true() {
+        assert_eq!(mi("3 < 5"), 1);
+    }
+
+    /// `echo $(( 5 <= 5 ))` → 1
+    #[test]
+    fn matheval_le_true_on_equal() {
+        assert_eq!(mi("5 <= 5"), 1);
+    }
+
+    /// `echo $(( 1 && 1 ))` → 1
+    #[test]
+    fn matheval_logand_both_true() {
+        assert_eq!(mi("1 && 1"), 1);
+    }
+
+    /// `echo $(( 0 || 1 ))` → 1
+    #[test]
+    fn matheval_logor_one_true() {
+        assert_eq!(mi("0 || 1"), 1);
+    }
+
+    /// `echo $(( !0 ))` → 1
+    #[test]
+    fn matheval_lognot_false() {
+        assert_eq!(mi("!0"), 1);
+    }
+
+    /// `echo $(( !5 ))` → 0
+    #[test]
+    fn matheval_lognot_truthy() {
+        assert_eq!(mi("!5"), 0);
+    }
+
+    // ── Ternary ─────────────────────────────────────────────────────
+    /// `echo $(( 1 ? 10 : 20 ))` → 10
+    #[test]
+    fn matheval_ternary_true_branch() {
+        assert_eq!(mi("1 ? 10 : 20"), 10);
+    }
+
+    /// `echo $(( 0 ? 10 : 20 ))` → 20
+    #[test]
+    fn matheval_ternary_false_branch() {
+        assert_eq!(mi("0 ? 10 : 20"), 20);
+    }
+
+    // ── Comma operator ─────────────────────────────────────────────
+    /// `echo $(( (1,2,3) ))` → 3 (comma returns last)
+    #[test]
+    fn matheval_comma_returns_last() {
+        assert_eq!(mi("(1,2,3)"), 3);
+    }
+
+    // ── Floats via matheval (mnumber tag) ──────────────────────────
+    /// `1.0 / 4` returns a float (MN_FLOAT) — pin the type discriminator.
+    #[test]
+    fn matheval_float_div_returns_mn_float_type() {
+        let _g = crate::test_util::global_state_lock();
+        let n = matheval("1.0 / 4").expect("matheval");
+        // MN_FLOAT flag must be set on the result type.
+        assert_ne!(
+            n.type_ & MN_FLOAT,
+            0,
+            "1.0 / 4 must carry MN_FLOAT in type; got type_=0x{:x}",
+            n.type_
+        );
+        // d field holds the float value; should be ~0.25.
+        assert!(
+            (n.d - 0.25).abs() < 1e-9,
+            "1.0 / 4 d-field should be 0.25; got {}",
+            n.d
+        );
+    }
+
+    /// `42` returns an integer (MN_INTEGER, not MN_FLOAT).
+    #[test]
+    fn matheval_integer_literal_returns_mn_integer_type() {
+        let _g = crate::test_util::global_state_lock();
+        let n = matheval("42").expect("matheval");
+        assert_eq!(
+            n.type_ & MN_FLOAT,
+            0,
+            "42 must NOT carry MN_FLOAT; got type_=0x{:x}",
+            n.type_
+        );
+        assert_eq!(n.l, 42);
+    }
+
+    /// matheval on empty string → MN_INTEGER 0 (C c:1491-1495 fast path).
+    #[test]
+    fn matheval_empty_input_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let n = matheval("").expect("matheval(\"\") must succeed");
+        assert_eq!(n.l, 0, "empty input → 0");
+        assert_eq!(
+            n.type_, MN_INTEGER,
+            "empty input → MN_INTEGER (c:1491-1495)"
+        );
+    }
+
+    // ── mathevali (integer-coerce front-end) ───────────────────────
+    /// `mathevali` integer-coerces float results via `(zlong)x.u.d` — pin
+    /// the truncation semantics (away from zero is wrong; C truncates).
+    #[test]
+    fn mathevali_truncates_float_toward_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // 7.9 → truncates to 7 (NOT rounds to 8)
+        assert_eq!(mathevali("7.9").unwrap(), 7);
+        // -7.9 → truncates to -7 (NOT rounds to -8)
+        assert_eq!(mathevali("-7.9").unwrap(), -7);
+    }
 }
