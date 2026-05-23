@@ -7180,10 +7180,12 @@ pub fn execcmd_exec(
         || output != 0
         || (last1 == 2 && input != 0 && {
             // c:2989 — `EMULATION(EMULATE_SH)` — emulation==EMULATE_SH.
-            // SUBSTRATE GAP: EMULATION(EMULATE_SH) — emulation bit check
-            // requires reading the global `emulation` int from init.c.
-            // For the fusevm path last1==2 doesn't occur; skipped.
-            false
+            // EMULATION macro: `(emulation & EMULATE_MASK) == X`. The
+            // ported `emulation` static at options.rs:1044 holds the
+            // current bit; compare against EMULATE_SH (zsh_h:2883).
+            (crate::ported::options::emulation.load(Ordering::Relaxed)
+                & crate::ported::zsh_h::EMULATE_SH)
+                != 0
         })
     {
         // c:2988
@@ -8523,12 +8525,198 @@ pub fn execcmd_exec(
                 }
                 if postassigns != 0 {
                     // c:4112-4230 — typeset post-assignment processing.
-                    // SUBSTRATE GAP: full postassigns walk (assignspc PC
-                    // advance + prefork PREFORK_TYPESET / PREFORK_SINGLE
-                    // / PREFORK_ASSIGN per asgment + globlist).
-                    // ~120 lines of careful state.pc mutation. Mark gap;
-                    // the build won't break since assigns stays empty
-                    // and execbuiltin handles empty assigns gracefully.
+                    use crate::ported::zsh_h::{
+                        ASG_ARRAY, ASG_KEY_VALUE, EC_DUPTOK as ECDUPTOK_LOCAL, PREFORK_ASSIGN,
+                        PREFORK_KEY_VALUE, PREFORK_SINGLE, PREFORK_TYPESET, WC_ASSIGN_INC,
+                        WC_ASSIGN_NUM, WC_ASSIGN_SCALAR, WC_ASSIGN_TYPE, WC_ASSIGN_TYPE2,
+                    };
+                    let opc = state.pc; // c:4113
+                    state.pc = eparams.assignspc.unwrap_or(state.pc); // c:4114
+                    // c:4115 — `assigns = newlinklist();` — already declared above.
+                    let mut pa_remaining = postassigns;
+                    while pa_remaining > 0 {
+                        // c:4116 — `while (postassigns--)`
+                        pa_remaining -= 1;
+                        let mut pa_htok: i32 = 0; // c:4117
+                        if state.pc >= state.prog.prog.len() {
+                            break;
+                        }
+                        let ac = state.prog.prog[state.pc]; // c:4118
+                        state.pc += 1;
+                        let mut name = crate::ported::parse::ecgetstr(
+                            state,
+                            ECDUPTOK_LOCAL,
+                            Some(&mut pa_htok),
+                        ); // c:4119
+                        // c:4123-4124 DPUTS — debug assertion skipped.
+                        if pa_htok != 0 {
+                            // c:4126 — `init_list1(svl, name);`
+                            let mut svl: crate::ported::linklist::LinkList<String> = Default::default();
+                            svl.push_back(name.clone());
+                            // c:4127-4166 — INC-scalar special case (typeset $ass form).
+                            if WC_ASSIGN_TYPE(ac) == WC_ASSIGN_SCALAR
+                                && WC_ASSIGN_TYPE2(ac) == WC_ASSIGN_INC
+                            {
+                                // c:4141 — `(void)ecgetstr(...)` — dummy.
+                                let mut dummy_htok: i32 = 0;
+                                let _ = crate::ported::parse::ecgetstr(
+                                    state,
+                                    ECDUPTOK_LOCAL,
+                                    Some(&mut dummy_htok),
+                                );
+                                let mut rf = 0i32;
+                                crate::ported::subst::prefork(&mut svl, PREFORK_TYPESET, &mut rf); // c:4142
+                                if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+                                    // c:4143
+                                    state.pc = opc; // c:4144
+                                    break;
+                                }
+                                let mut rf2 = 0i32;
+                                crate::ported::subst::globlist(&mut svl, rf2); // c:4147
+                                let _ = &mut rf2;
+                                if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+                                    // c:4148
+                                    state.pc = opc; // c:4149
+                                    break;
+                                }
+                                // c:4152-4165 — drain svl into assigns.
+                                while let Some(data) = svl.pop_front() {
+                                    let (asg_name, asg_val): (String, Option<String>) =
+                                        if let Some(eq_pos) = data.find('=') {
+                                            // c:4156-4159
+                                            (
+                                                data[..eq_pos].to_string(),
+                                                Some(data[eq_pos + 1..].to_string()),
+                                            )
+                                        } else {
+                                            // c:4161-4162
+                                            (data, None)
+                                        };
+                                    assigns.push(crate::ported::zsh_h::asgment {
+                                        node: crate::ported::zsh_h::linknode {
+                                            next: None,
+                                            prev: None,
+                                            dat: 0,
+                                        },
+                                        name: asg_name,
+                                        flags: 0,
+                                        scalar: asg_val,
+                                        array: None,
+                                    });
+                                }
+                                continue; // c:4166
+                            }
+                            // c:4168 — `prefork(&svl, PREFORK_SINGLE, NULL);`
+                            let mut rf = 0i32;
+                            crate::ported::subst::prefork(&mut svl, PREFORK_SINGLE, &mut rf);
+                            // c:4169-4170 — `name = empty(svl) ? "" : firstnode_data;`
+                            name = if svl.is_empty() {
+                                String::new()
+                            } else {
+                                svl.pop_front().unwrap_or_default()
+                            };
+                        }
+                        // c:4172 — `untokenize(name);`
+                        // (untokenize is destructive on bytes; Rust untokenize
+                        // returns a new String — call and rebind.)
+                        name = crate::ported::lex::untokenize(&name);
+                        let mut asg = crate::ported::zsh_h::asgment {
+                            node: crate::ported::zsh_h::linknode {
+                                next: None,
+                                prev: None,
+                                dat: 0,
+                            },
+                            name,
+                            flags: 0,
+                            scalar: None,
+                            array: None,
+                        };
+                        if WC_ASSIGN_TYPE(ac) == WC_ASSIGN_SCALAR {
+                            // c:4175
+                            let mut val_htok: i32 = 0;
+                            let mut val = crate::ported::parse::ecgetstr(
+                                state,
+                                ECDUPTOK_LOCAL,
+                                Some(&mut val_htok),
+                            ); // c:4176
+                            asg.flags = 0; // c:4177
+                            if WC_ASSIGN_TYPE2(ac) == WC_ASSIGN_INC {
+                                // c:4178-4180 — fake assignment, no value.
+                                asg.scalar = None;
+                            } else {
+                                if val_htok != 0 {
+                                    // c:4183
+                                    let mut svl: crate::ported::linklist::LinkList<String> =
+                                        Default::default();
+                                    svl.push_back(val.clone());
+                                    let mut rf = 0i32;
+                                    crate::ported::subst::prefork(
+                                        &mut svl,
+                                        PREFORK_SINGLE | PREFORK_ASSIGN,
+                                        &mut rf,
+                                    ); // c:4184-4186
+                                    if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+                                        // c:4187
+                                        state.pc = opc; // c:4188
+                                        break;
+                                    }
+                                    // c:4195-4196 — `val = empty(svl) ? "" : firstdata;`
+                                    val = if svl.is_empty() {
+                                        String::new()
+                                    } else {
+                                        svl.pop_front().unwrap_or_default()
+                                    };
+                                }
+                                // c:4198 — `untokenize(val);`
+                                asg.scalar = Some(crate::ported::lex::untokenize(&val));
+                            }
+                        } else {
+                            // c:4202 — array assignment.
+                            asg.flags = ASG_ARRAY; // c:4202
+                            let mut arr_htok: i32 = 0;
+                            let arr_words = crate::ported::parse::ecgetlist(
+                                state,
+                                WC_ASSIGN_NUM(ac) as usize,
+                                ECDUPTOK_LOCAL,
+                                Some(&mut arr_htok),
+                            ); // c:4204
+                            let mut arr_list: crate::ported::linklist::LinkList<String> =
+                                Default::default();
+                            for s in arr_words {
+                                arr_list.push_back(s);
+                            }
+                            if !arr_list.is_empty()
+                                && (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0
+                            {
+                                // c:4209 — `int prefork_ret = 0;`
+                                let mut prefork_ret = 0i32;
+                                crate::ported::subst::prefork(
+                                    &mut arr_list,
+                                    PREFORK_ASSIGN,
+                                    &mut prefork_ret,
+                                ); // c:4210-4211
+                                if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+                                    // c:4212
+                                    state.pc = opc; // c:4213
+                                    break;
+                                }
+                                if (prefork_ret & PREFORK_KEY_VALUE) != 0 {
+                                    // c:4216
+                                    asg.flags |= ASG_KEY_VALUE; // c:4217
+                                }
+                                crate::ported::subst::globlist(&mut arr_list, prefork_ret); // c:4218
+                                if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
+                                    // c:4220
+                                    state.pc = opc; // c:4221
+                                    break;
+                                }
+                            }
+                            asg.array = Some(arr_list);
+                        }
+                        // c:4227 — `uaddlinknode(assigns, &asg->node);`
+                        assigns.push(asg);
+                    }
+                    state.pc = opc; // c:4229
                 }
                 if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0 {
                     // c:4232
