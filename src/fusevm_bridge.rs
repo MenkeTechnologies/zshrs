@@ -340,13 +340,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(s) = try_user_fn_override("true", &args) {
             return Value::Status(s);
         }
-        // `$_` for no-arg `true` is the command name itself ("true").
-        // pop_args only updates pending_underscore from args; for
-        // bare command name we backfill here.
+        // c:Src/exec.c:1257 — zsh sets `zunderscore` AT THE END of
+        // each command (the `if (!noerrs)` block runs `zsfree(prev_argv0); …;
+        // zunderscore = …`). For no-arg `true`, $_ becomes the
+        // command name itself. Set DIRECTLY (not via pending_underscore)
+        // so the NEXT command's argv-expansion of `$_` reads "true",
+        // not the stale prior value — pending_underscore is consumed
+        // by pop_args which runs AFTER argv expansion, too late.
+        // c:Src/exec.c:1257 — `zunderscore = …` at end-of-command.
+        // For no-arg `true`, $_ becomes the command name itself.
+        // Write DIRECTLY to the canonical zunderscore static (the
+        // underscoregetfn at params.rs:7003 reads from there); the
+        // paramtab "_" slot is shadowed by lookup_special_var so
+        // set_scalar on it has no effect on `$_` reads.
         if args.is_empty() {
-            with_executor(|exec| {
-                exec.pending_underscore = Some("true".to_string());
-            });
+            crate::ported::params::set_zunderscore(
+                &["true".to_string()],
+            );
         }
         // Route through canonical execbuiltin so PS4 xtrace fires
         // via the c:442 printprompt4 path. Without this, the fast-
@@ -362,10 +372,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(s) = try_user_fn_override("false", &args) {
             return Value::Status(s);
         }
+        // Direct set; see BUILTIN_TRUE above for rationale.
         if args.is_empty() {
-            with_executor(|exec| {
-                exec.pending_underscore = Some("false".to_string());
-            });
+            crate::ported::params::set_zunderscore(
+                &["false".to_string()],
+            );
         }
         // Route through canonical execbuiltin — see BUILTIN_TRUE
         // above for the same rationale (xtrace + fast-path removal).
@@ -374,10 +385,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     vm.register_builtin(BUILTIN_COLON, |vm, argc| {
         let args = pop_args(vm, argc);
+        // Direct set; see BUILTIN_TRUE above for rationale.
         if args.is_empty() {
-            with_executor(|exec| {
-                exec.pending_underscore = Some(":".to_string());
-            });
+            crate::ported::params::set_zunderscore(
+                &[":".to_string()],
+            );
         }
         let status = dispatch_builtin(":", args);
         Value::Status(status)
