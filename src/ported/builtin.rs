@@ -797,13 +797,59 @@ pub fn bin_enable(
     if argv.is_empty() {
         // c:553
         queue_signals(); // c:554
-                         // c:555 — `scanhashtable(ht, 1, flags1, flags2, ht->printnode, 0);`
+        // c:555 — `scanhashtable(ht, 1, flags1, flags2, ht->printnode, 0);`
+        // Filter: print only entries where (flags & flags1) == flags1
+        // && (flags & flags2) == 0. For enable/disable, flags1 and
+        // flags2 are DISABLED-bit selectors that mask the listed set
+        // to ONLY the kind being toggled (enable lists enabled,
+        // disable lists disabled).
+        let is_disabled = |nm: &str| -> bool {
+            match tab {
+                Tab::Alias => aliastab_lock()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get_including_disabled(nm)
+                            .map(|a| (a.node.flags & DISABLED as i32) != 0)
+                    })
+                    .unwrap_or(false),
+                Tab::SufAlias => sufaliastab_lock()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get_including_disabled(nm)
+                            .map(|a| (a.node.flags & DISABLED as i32) != 0)
+                    })
+                    .unwrap_or(false),
+                Tab::Reswd => reswdtab_lock()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get_including_disabled(nm)
+                            .map(|r| (r.node.flags & DISABLED as i32) != 0)
+                    })
+                    .unwrap_or(false),
+                Tab::Shfunc => shfunctab_lock()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get_including_disabled(nm)
+                            .map(|f| (f.node.flags & DISABLED as i32) != 0)
+                    })
+                    .unwrap_or(false),
+                Tab::Builtin => BUILTINS_DISABLED
+                    .lock()
+                    .map(|s| s.contains(nm))
+                    .unwrap_or(false),
+            }
+        };
         for nm in collect_names(&tab) {
-            // print only nodes whose flags satisfy (flags & flags1)==flags1
-            // && (flags & flags2)==0. Best-effort: print all names.
-            println!("{}", nm);
+            let dis = is_disabled(&nm);
+            let entry_flags = if dis { DISABLED as u32 } else { 0 };
+            if (entry_flags & flags1) == flags1 && (entry_flags & flags2) == 0 {
+                println!("{}", nm);
+            }
         }
-        let _ = (flags1, flags2);
         unqueue_signals(); // c:556
         return 0; // c:557
     }
