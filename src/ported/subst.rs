@@ -5642,6 +5642,40 @@ pub fn paramsubst(
                         // c:2461 (n: nl as ws)
                         push_word(&mut cur, &mut words); // c:2461
                     } // c:2461
+                    // c:bufferwords — the (z) flag emits shell-token
+                    // separators (`;`, `&`, `\n`, `|`, `||`, `&&`) as
+                    // their OWN words, not just word boundaries. This
+                    // mirrors what `bufferwords()` (Src/lex.c) does —
+                    // it walks the lexer and yields each token as a
+                    // separate node.
+                    ';' | '&' | '\n' => {
+                        push_word(&mut cur, &mut words);
+                        // Emit the separator as its own word.
+                        // Coalesce `&&` / `||` / `;;` into one token.
+                        // Normalize `\n` → `;` to match bufferwords()
+                        // output (c:bufferwords) — the lexer treats
+                        // newlines as command separators equivalent
+                        // to `;` and yields them as the `;` token.
+                        let canon = if ch == '\n' { ';' } else { ch };
+                        let mut sep_str = String::from(canon);
+                        if (ch == '&' || ch == ';')
+                            && p + 1 < chars_v.len()
+                            && chars_v[p + 1] == ch
+                        {
+                            sep_str.push(ch);
+                            p += 1;
+                        }
+                        words.push(sep_str);
+                    }
+                    '|' => {
+                        push_word(&mut cur, &mut words);
+                        let mut sep_str = String::from(ch);
+                        if p + 1 < chars_v.len() && chars_v[p + 1] == '|' {
+                            sep_str.push('|');
+                            p += 1;
+                        }
+                        words.push(sep_str);
+                    }
                     c if c.is_whitespace() => {
                         // c:2439
                         push_word(&mut cur, &mut words); // c:2439
