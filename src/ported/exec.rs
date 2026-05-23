@@ -5215,7 +5215,19 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
             }
         }
     }
-    // c:5559-5570 XTRACE arg trace: omit until full execshfunc port.
+    // c:5559-5570 — `if (isset(XTRACE)) { printprompt4(); ... \n; }` —
+    // emit PS4 prefix + space-separated quoted args on the trace
+    // stream so `set -x` shows the function invocation line.
+    if isset(XTRACE) {
+        crate::ported::utils::printprompt4();
+        for (i, a) in args.iter().enumerate() {
+            if i > 0 {
+                eprint!(" ");
+            }
+            eprint!("{}", crate::ported::utils::quotedzputs(a));
+        }
+        eprintln!();
+    }
     // c:5572-5578 cmdstack/sfcontext setup: omit (no cmdstack in
     // zshrs yet — replaced by tracing).
     // c:5580 — `doshfunc(shf, args, 0);` — doshfunc swaps PPARAMS
