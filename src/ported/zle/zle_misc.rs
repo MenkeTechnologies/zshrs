@@ -1847,6 +1847,25 @@ pub fn makeparamsuffix(br: i32, n: i32) {
     addsuffix(0, 0, prefix, lenstr, n);
 }
 
+/// Port of `static char *suffixfunc;` from `Src/Zle/zle_misc.c:1545`.
+/// Name of the function to call after auto-suffix is consumed.
+/// Set by `makesuffixstr(f, ...)`; read by `iremovesuffix` to fire
+/// the user hook on auto-removal.
+pub static suffixfunc: std::sync::Mutex<Option<String>> =
+    std::sync::Mutex::new(None);
+
+/// Port of `int suffixnoinsrem;` from `Src/Zle/zle_misc.c:1549`.
+/// "Whether to remove suffix on uninsertable characters" — set by
+/// `makesuffixstr` from the `\-` / `^`-inverted class flag.
+pub static suffixnoinsrem: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `mod_export int suffixlen;` from `Src/Zle/zle_misc.c:1553`.
+/// "Length of the currently active, auto-removable suffix." Consumed
+/// by `iremovesuffix` for the actual delete.
+pub static suffixlen: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
+
 /// Port of `makesuffixstr(char *f, char *s, int n)` from
 /// `Src/Zle/zle_misc.c:1642`. Three-way dispatch:
 ///   - `f` set → register `f` as the post-insert hook (suffixfunc)
@@ -1858,14 +1877,10 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
     if let Some(f_str) = f {                                                 // c:1644
         // c:1645-1647 — `zsfree(suffixfunc); suffixfunc = ztrdup(f);
         //                suffixlen = n;`.
-        // !!! WARNING: SUBSTRATE GAP — suffixfunc/suffixlen globals !!!
-        // C maintains `static char *suffixfunc` and `static int suffixlen`
-        // (zle_misc.c:~50) consumed by `iremovesuffix` on next char insert.
-        // zshrs hasn't ported these statics; the registration is a no-op
-        // — `iremovesuffix` will skip its function-hook branch.
-        // Engine-side fix: add the two statics + wire iremovesuffix.
-        let _ = f_str;                                                       // c:1646 suffixfunc = ...
-        let _ = n;                                                           // c:1647 suffixlen = n
+        if let Ok(mut g) = suffixfunc.lock() {
+            *g = Some(f_str.to_string());                                    // c:1646
+        }
+        suffixlen.store(n, std::sync::atomic::Ordering::Relaxed);            // c:1647
     } else if let Some(s_str) = s {                                          // c:1648
         let mut inv: i32;                                                    // c:1649
         let _i: usize;                                                       // c:1649
@@ -1898,11 +1913,8 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
          * Remove suffix on uninsertable characters if `\-` was given
          * and the character class wasn't negated -- or vice versa.
          */                                                                  // c:1661-1662
-        let _suffixnoinsrem = z ^ inv;                                       // c:1663
-        let _suffixlen = n;                                                  // c:1664
-        // !!! WARNING: SUBSTRATE GAP — suffixnoinsrem/suffixlen globals !!!
-        // Same gap as the suffixfunc branch above; iremovesuffix
-        // doesn't honour the no-insert-removal flag yet.
+        suffixnoinsrem.store(z ^ inv, std::sync::atomic::Ordering::Relaxed); // c:1663
+        suffixlen.store(n, std::sync::atomic::Ordering::Relaxed);            // c:1664
 
         // c:1666-1689 — walk `ws`, peeking for `a-b` range form.
         let mut lasts: usize = 0;                                            // c:1666

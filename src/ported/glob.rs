@@ -1602,16 +1602,14 @@ pub fn matchpat(pattern_in: &str, text_in: &str, extended: bool, case_sensitive:
     let b = pattern_in;
     // c:2514
     crate::ported::signals_h::queue_signals();                               // c:2519
-    // !!! WARNING: SUBSTRATE GAP — pattern engine GF_IGNCASE broken !!!
-    // C `patcompile` reads CASEGLOB and emits GF_IGNCASE when unset; the
-    // matcher then walks case-insensitively. zshrs's pattern engine
-    // emits the flag correctly (pattern.rs:362) but the matcher does NOT
-    // honor it at match time (verified by direct pattern::patmatch
-    // probe). To keep semantically-correct case-insensitive matching
-    // while the engine gap is open, pre-fold both sides when
-    // `case_sensitive == false`. Engine-side fix path: pattern.rs
-    // patmatch_one / patmatchrange must consult GF_IGNCASE.
-    // !!! WARNING: SUBSTRATE GAP — pattern engine GF_IGNCASE broken !!!
+    // GF_IGNCASE handling: zshrs's pattern matcher DOES honor the
+    // flag in `patmatch_internal` (pattern.rs:2245/2312/2333 — P_EXACTLY,
+    // P_ANYOF, P_ANYBUT all check `glob_flags & (GF_IGNCASE|GF_LCMATCHUC)`
+    // and case-fold appropriately). The pre-fold below is a defensive
+    // fast path for the simple case-insensitive `:#`/`:#:` filter — it
+    // bypasses the matcher's per-arm fold and avoids any stale-cache
+    // edge case in the compile→match handoff. Costs one to_lowercase
+    // call per side; correct under all matcher implementations.
     let (a_eff, b_eff) = if case_sensitive {
         (a.to_string(), b.to_string())
     } else {
