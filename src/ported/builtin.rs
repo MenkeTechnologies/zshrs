@@ -6541,7 +6541,53 @@ pub fn bin_print(
             *a = s;
         }
     }
-    let body = processed_args.join(sep);
+    // c:Src/builtin.c:4930-4958 — `-C N` column-grid output. Layout
+    // N args per row (nr = ceil(argc/nc) rows), each cell padded
+    // to widest arg + 2 spaces. Mirrors zsh's column-major fill
+    // (col 1 takes first nr items, col 2 the next nr, etc.).
+    // Without this support `print -C 2 a b c d e` emitted the args
+    // space-separated on one line instead of the column grid.
+    let body = if !_printf_mode && OPT_HASARG(ops, b'C') {
+        let nc: usize = OPT_ARG(ops, b'C')
+            .and_then(|s| s.trim().parse().ok())
+            .filter(|&n: &usize| n > 0)
+            .unwrap_or(1);
+        let argc = processed_args.len();
+        let nr = (argc + nc - 1) / nc;
+        // Maximum width of cells that are NOT in the last column
+        // (the last column gets no trailing padding, per c:4946-4956).
+        let max_w = processed_args
+            .iter()
+            .take(nr * (nc - 1).max(0))
+            .map(|s| s.chars().count())
+            .max()
+            .unwrap_or(0);
+        let sc = max_w + 2;
+        let mut out = String::new();
+        for row in 0..nr {
+            for col in 0..nc {
+                let idx = col * nr + row;
+                if idx >= argc {
+                    break;
+                }
+                let cell = &processed_args[idx];
+                if col == nc - 1 || col * nr + row + nr >= argc {
+                    out.push_str(cell);
+                } else {
+                    out.push_str(cell);
+                    let pad = sc.saturating_sub(cell.chars().count());
+                    out.extend(std::iter::repeat(' ').take(pad));
+                }
+            }
+            out.push('\n');
+        }
+        // Strip trailing newline; the post-loop `if !nonewline` adds
+        // one back.
+        if out.ends_with('\n') { out.pop(); }
+        out
+    } else {
+        processed_args.join(sep)
+    };
     // c:5564-5575 — destination dispatch order:
     //   -z   → zpushnode(bufstack, stringval)
     //   -v   → setsparam(VAR, stringval)
