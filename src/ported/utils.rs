@@ -7797,9 +7797,19 @@ pub const GETKEY_CTRL: u32 = 1 << 2; // c:zsh.h:3152
 pub const GETKEY_BACKSLASH_C: u32 = 1 << 3; // c:zsh.h:3154
 
 /// `GETKEYS_PRINT = GETKEY_OCTAL_ESC | GETKEY_BACKSLASH_C |
-/// GETKEY_EMACS` per Src/zsh.h:3185 — the flag set `bin_print` /
-/// `bin_echo` use when interpreting escapes.
+/// GETKEY_EMACS` per Src/zsh.h:3185 — the flag set `bin_print` uses
+/// when interpreting escapes (with EMACS: unknown `\<c>` → `<c>`).
 pub const GETKEYS_PRINT: u32 = GETKEY_OCTAL_ESC | GETKEY_EMACS | GETKEY_BACKSLASH_C; // c:zsh.h:3185
+
+/// `GETKEYS_ECHO = GETKEY_BACKSLASH_C` per Src/zsh.h:3178 — the flag
+/// set `echo` uses (and `print -e`). NOT GETKEY_EMACS: unknown
+/// `\<c>` is preserved as literal `\<c>`. NOT GETKEY_OCTAL_ESC:
+/// `\NNN` is NOT interpreted as octal. Only `\a \b \e \E \f \n \r
+/// \t \v \\` (plus `\c` truncation) are handled.
+///
+/// Per builtin.c:4754-4760 — `bin_print` selects this for BIN_ECHO
+/// or when `-e` is set; otherwise GETKEYS_PRINT.
+pub const GETKEYS_ECHO: u32 = GETKEY_BACKSLASH_C; // c:zsh.h:3178
 
 /// Static `int ep` from Src/utils.c:4775 — sticky flag suppressing the
 /// `can't set tty pgrp` warning after the first failure.
@@ -8272,16 +8282,24 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
                 result.push('\x0b');
                 consumed += 1;
             }
+            // c:utils.c:7140-7152 — `\\` (and `\'` under
+            // GETKEY_DOLLAR_QUOTE) explicitly emit the trailing byte
+            // bare. Outside DOLLAR_QUOTE, `\'` FALLTHROUGHs to default.
+            // `\\` stays special because the default arm (c:7180-7184)
+            // skips the leading-backslash emission iff `*s == '\\'`,
+            // so `\\` reduces to `\` regardless of GETKEY_EMACS.
+            //
+            // Previous Rust port also had `Some('\'')` and `Some('"')`
+            // arms that unconditionally dropped the backslash. That
+            // contradicted C: under GETKEYS_ECHO (no GETKEY_EMACS),
+            // `\'` must remain `\'` because echo doesn't strip
+            // unknown escapes. Removed those arms — `\'` and `\"`
+            // now flow through the default arm and honour GETKEY_EMACS.
+            //
+            // Root cause of `echo "${(qq)s}"` for `s="a'b"` emitting
+            // `'a'''b'` instead of zsh's `'a'\''b'`.
             Some('\\') => {
                 result.push('\\');
-                consumed += 1;
-            }
-            Some('\'') => {
-                result.push('\'');
-                consumed += 1;
-            }
-            Some('"') => {
-                result.push('"');
                 consumed += 1;
             }
             Some('x') => {
