@@ -5579,4 +5579,191 @@ mod tests {
         );
         errflag.store(saved, Ordering::Relaxed);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional unit coverage — pure pattern/brace/glob behaviour that
+    // doesn't need a real filesystem. Uses `matchpat` for high-level
+    // pattern checks (extended=false, case_sensitive=true is the most
+    // common path) and `xpandbraces` for brace expansion.
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── matchpat: full-string pattern matching ───────────────────────
+    #[test]
+    fn matchpat_literal_no_wildcards() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(matchpat("foo", "foo", false, true));
+        assert!(!matchpat("foo", "bar", false, true));
+        assert!(!matchpat("foo", "foobar", false, true));
+    }
+
+    #[test]
+    fn matchpat_star_consumes_substring() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(matchpat("a*b", "ab", false, true));
+        assert!(matchpat("a*b", "ahellob", false, true));
+        assert!(!matchpat("a*b", "abc", false, true));
+    }
+
+    #[test]
+    fn matchpat_question_is_single_char() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(matchpat("a?c", "abc", false, true));
+        assert!(matchpat("a?c", "axc", false, true));
+        assert!(!matchpat("a?c", "ac", false, true));
+        assert!(!matchpat("a?c", "abbc", false, true));
+    }
+
+    #[test]
+    fn matchpat_bracket_class_inline() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(matchpat("file[abc].txt", "filea.txt", false, true));
+        assert!(matchpat("file[abc].txt", "fileb.txt", false, true));
+        assert!(!matchpat("file[abc].txt", "filed.txt", false, true));
+    }
+
+    #[test]
+    fn matchpat_case_sensitive_strict() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(matchpat("Foo", "Foo", false, true));
+        assert!(!matchpat("Foo", "foo", false, true));
+        assert!(!matchpat("Foo", "FOO", false, true));
+    }
+
+    #[test]
+    fn matchpat_empty_pattern_matches_only_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(matchpat("", "", false, true));
+        assert!(!matchpat("", "x", false, true));
+    }
+
+    #[test]
+    fn matchpat_star_alone_matches_anything() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(matchpat("*", "", false, true));
+        assert!(matchpat("*", "a", false, true));
+        assert!(matchpat("*", "abcdef", false, true));
+    }
+
+    #[test]
+    fn matchpat_question_alone_one_char() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!matchpat("?", "", false, true));
+        assert!(matchpat("?", "a", false, true));
+        assert!(!matchpat("?", "ab", false, true));
+    }
+
+    // ── haswilds: meta-char detection ───────────────────────────────
+    #[test]
+    fn haswilds_each_glob_meta() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(haswilds("*"));
+        assert!(haswilds("?"));
+        assert!(haswilds("[abc]"));
+        assert!(haswilds("a*b"));
+        assert!(haswilds("a?b"));
+    }
+
+    #[test]
+    fn haswilds_plain_strings_have_no_wildcards() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!haswilds(""));
+        assert!(!haswilds("plain.txt"));
+        assert!(!haswilds("/abs/path/file.rs"));
+        assert!(!haswilds("./rel/file"));
+    }
+
+    // ── xpandbraces: brace expansion (zsh extension, not POSIX) ─────
+    #[test]
+    fn xpandbraces_three_alternatives() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(xpandbraces("{a,b,c}", false), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn xpandbraces_with_prefix_and_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("pre{x,y,z}post", false),
+            vec!["prexpost", "preypost", "prezpost"]
+        );
+    }
+
+    #[test]
+    fn xpandbraces_numeric_range_ascending() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(xpandbraces("{1..5}", false), vec!["1", "2", "3", "4", "5"]);
+    }
+
+    #[test]
+    fn xpandbraces_alpha_range_ascending() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{a..e}", false),
+            vec!["a", "b", "c", "d", "e"]
+        );
+    }
+
+    #[test]
+    fn xpandbraces_single_alternative_passes_through_literal() {
+        // Real zsh 5.9 (`print -l {a}`) outputs `{a}` verbatim — no
+        // expansion because there is no comma or range inside the
+        // braces. Pin the literal pass-through; if zshrs strips the
+        // braces, this fails and surfaces the divergence.
+        let _g = crate::test_util::global_state_lock();
+        let out = xpandbraces("{a}", false);
+        assert_eq!(out, vec!["{a}"], "zsh 5.9 returns the input verbatim");
+    }
+
+    #[test]
+    fn xpandbraces_no_braces_returns_input() {
+        let _g = crate::test_util::global_state_lock();
+        // Pure literal has nothing to expand — should yield the input
+        // as a single element (or empty for empty input).
+        let out = xpandbraces("plain", false);
+        assert_eq!(out, vec!["plain"]);
+    }
+
+    // ── file_type: mode → marker char (used by `ls -F`-style output) ─
+    #[test]
+    fn file_type_dir_marker_is_slash() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(file_type(libc::S_IFDIR as u32), '/');
+    }
+
+    #[test]
+    fn file_type_regular_plain_is_space() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(file_type(libc::S_IFREG as u32), ' ');
+    }
+
+    #[test]
+    fn file_type_regular_executable_is_star() {
+        let _g = crate::test_util::global_state_lock();
+        // Any of the three executable bits should switch the marker.
+        for x in [0o100, 0o010, 0o001] {
+            assert_eq!(
+                file_type(libc::S_IFREG as u32 | x),
+                '*',
+                "exec bit 0o{x:o} should produce '*'"
+            );
+        }
+    }
+
+    #[test]
+    fn file_type_symlink_is_at() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(file_type(libc::S_IFLNK as u32), '@');
+    }
+
+    #[test]
+    fn file_type_fifo_is_pipe() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(file_type(libc::S_IFIFO as u32), '|');
+    }
+
+    #[test]
+    fn file_type_socket_is_equal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(file_type(libc::S_IFSOCK as u32), '=');
+    }
 }
