@@ -1569,9 +1569,11 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     if (*sigtr & ZSIG_FUNC) != 0 {
         // c:1132
         let osc = SFCONTEXT.load(Ordering::SeqCst); // c:1133 osc
-                                                    // c:1133 incompfunc snapshot — not yet a public global; preserved
-                                                    // here as a local to mirror the C save/restore.
-        let old_incompfunc: i32 = 0;
+        // c:1133 — `int old_incompfunc = incompfunc;` — snapshot the
+        // completion-function-active flag so the trap dispatch can
+        // run code outside the comp-fn scope and restore on return.
+        let old_incompfunc: i32 =
+            crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed);
         let hn = gettrapnode(sig, false); // c:1134
 
         let mut args: Vec<String> = Vec::new(); // c:1136 znewlinklist
@@ -1594,8 +1596,11 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         isfunc = 1;
 
         SFCONTEXT.store(SFC_SIGNAL, Ordering::SeqCst); // c:1158
-                                                       // c:1159 — `incompfunc = 0;` — module-private; stub kept as comment.
-        let _ = old_incompfunc;
+        // c:1159 — `incompfunc = 0;` — clear the active-compfn flag
+        // so user-level trap handlers can run normal `complete` /
+        // `compadd` etc. without being mis-detected as inside a
+        // completion widget.
+        crate::ported::zle::complete::INCOMPFUNC.store(0, Ordering::Relaxed);
         // c:1160 — `doshfunc((Shfunc)sigfn, args, 1);` — dispatch
         // through execshfunc (exec.rs:5009) for PPARAMS save/swap/
         // restore. doshfunc itself isn't ported; execshfunc routes
@@ -1610,7 +1615,9 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
             crate::ported::exec::execshfunc(&mut shf, &mut args);
         }
         SFCONTEXT.store(osc, Ordering::SeqCst); // c:1161
-                                                // c:1162 — restore incompfunc (no-op until ported).
+        // c:1162 — `incompfunc = old_incompfunc;` — restore the
+        // completion-function-active flag we snapshotted at c:1133.
+        crate::ported::zle::complete::INCOMPFUNC.store(old_incompfunc, Ordering::Relaxed);
         let _ = args; // c:1163 freelinklist(args)
         zsfree(name); // c:1164 zsfree(name)
     } else {
