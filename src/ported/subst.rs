@@ -6411,9 +6411,14 @@ pub fn paramsubst(
 
         // (c)/(w)/(W) length variants — char count, word count
         // (whitespace-split), word count (W = WS_NULL). Single
-        // tri-state `whichlen` int per c:1679. Switch arms below
-        // mirror C's whichlen == 1/2/3 dispatch in ${#pm}'s body.
-        if whichlen == 1 {
+        // tri-state `whichlen` int per c:1679. C only fires the
+        // length dispatch when `getlen = 1 + whichlen` AND `getlen`
+        // is consumed by the `#`-prefix length arm (Src/subst.c:3845
+        // `if (getlen) { ... }`). Without `${#var}` the flag is
+        // recorded but inert — `${(W)var}` returns the value as-is.
+        // Rust port previously dispatched here unconditionally so
+        // `${(W)str}` returned word-count instead of the value.
+        if length_op && whichlen == 1 {
             // c:2276 whichlen == 1 (c)
             // (m) flag, when set, counts cells via wcpadwidth (so
             // wide chars count 2). Without (m): plain chars.count().
@@ -6428,10 +6433,10 @@ pub fn paramsubst(
                 // c:2276
                 value.chars().count().to_string() // c:2276
             }; // c:2276
-        } else if whichlen == 2 {
+        } else if length_op && whichlen == 2 {
             // c:2279 whichlen == 2 (w)
             value = value.split_whitespace().count().to_string(); // c:2279
-        } else if whichlen == 3 {
+        } else if length_op && whichlen == 3 {
             // c:2282 whichlen == 3 (W)
             // (W) — count words including empty fields.
             let parts: Vec<&str> = value.split(|c: char| c.is_whitespace()).collect(); // c:2282
