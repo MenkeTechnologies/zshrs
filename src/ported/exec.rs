@@ -2416,16 +2416,10 @@ pub fn addfd(
 /// the original fd and the per-output fds. Single-output multios
 /// (ct=1) skip the fork entirely and just clear the slot.
 ///
-/// =================== WARNING — DIVERGENCE ====================
-/// The `addproc(pid, NULL, 1, &bgtime, -1, -1)` call at c:2299 uses
-/// the 6-arg C signature; zshrs's Rust `addproc` (jobs.rs:1516) is
-/// drift'd to 4 args `(&mut job, pid, text, aux)` and doesn't yet
-/// thread bgtime/fg/bg. The fork + child loop are ported faithfully;
-/// the parent-side addproc call is skipped with a flagged comment —
-/// the tee/cat child still runs and the multio gets properly drained,
-/// just without the parent recording a job-table entry for the child.
-/// Re-enable when addproc lands the canonical signature.
-/// =============================================================
+/// addproc was previously skipped here pending the canonical
+/// signature port; now wired (c:2299 — `addproc(pid, NULL, 1,
+/// &bgtime, -1, -1)`) so the parent records the tee/cat child in
+/// the current job's auxprocs.
 pub fn closemn(
     mfds: &mut [Option<Box<multio>>; 10],
     fd: i32,
@@ -2470,11 +2464,25 @@ pub fn closemn(
             mn_back.ct = 1; // c:2297
             mn_back.fds[0] = fd; // c:2298
             mfds[fd as usize] = Some(mn_back);
-            // c:2299 — `addproc(pid, NULL, 1, &bgtime, -1, -1);`
-            // WARNING DIVERGENCE: addproc Rust sig is 4-arg + needs &mut job.
-            // Skipped: parent doesn't record the tee/cat child in the job
-            // table. The child still drains the pipe correctly.
-            let _ = (pid, bgtime);
+            // c:2299 — `addproc(pid, NULL, 1, &bgtime, -1, -1);` — record
+            // the tee/cat child in the current job's auxprocs (aux=true).
+            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                let mut guard = jt.lock().unwrap();
+                let tj = crate::ported::jobs::THISJOB
+                    .get()
+                    .map(|m| *m.lock().unwrap())
+                    .unwrap_or(-1);
+                if tj >= 0 {
+                    if let Some(j) = guard.get_mut(tj as usize) {
+                        crate::ported::jobs::addproc(
+                            j, pid, "", true,
+                            Some(std::time::Instant::now()),
+                            -1, -1,
+                        );
+                    }
+                }
+            }
+            let _ = bgtime;
             child_unblock(); // c:2300
             return; // c:2301
         }
