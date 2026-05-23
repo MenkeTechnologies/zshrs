@@ -2238,7 +2238,11 @@ pub fn addfd(
                 ct: 0,
                 rflag: 0,
                 pipe: -1,
-                fds: [-1; MULTIOUNIT],
+                // c:2420 — C allocates VARLENARRAY trailing `int fds[1]`;
+                // grow on demand via push() below. Pre-fill MULTIOUNIT
+                // slots with -1 so existing indexed writes (fds[0], fds[1])
+                // still work without explicit resize().
+                fds: vec![-1; MULTIOUNIT],
             }));
             // c:2421 — `if (!forked && save[fd1] == -2)`
             if forked == 0 && save[fd1u] == -2 {
@@ -2355,18 +2359,14 @@ pub fn addfd(
             }
         } else {
             // c:2480 — extend already-split stream.
-            // c:2482-2486 — hrealloc past MULTIOUNIT boundary.
-            // WARNING DIVERGENCE: Rust `multio.fds` is fixed-size
-            // `[i32; MULTIOUNIT]` (zsh_h.rs:1395); the C realloc grows
-            // the trailing array, but Rust can't. Bail with zerr when
-            // we'd exceed the bound. Re-port multio as Vec<i32> to fix.
-            if cur_ct as usize >= MULTIOUNIT {
-                zerr(&format!(
-                    "multio failed for fd {}: too many outputs (MULTIOUNIT limit, Rust port cap)",
-                    fd1
-                ));
-                closemnodes(mfds);
-                return;
+            // c:2482-2486 — `mn = hrealloc(mn, sizeof + (ct-1)*sizeof(int),
+            //                              sizeof + ct*sizeof(int));`
+            // Rust's `Vec<i32>` grows on demand; ensure capacity for the
+            // new slot before the indexed write below.
+            if let Some(mn) = mfds[fd1u].as_mut() {
+                while mn.fds.len() <= cur_ct as usize {
+                    mn.fds.push(-1);
+                }
             }
             // c:2487 — `if ((fdN = movefd(fd2)) < 0)`
             let fd_n = movefd(fd2);
