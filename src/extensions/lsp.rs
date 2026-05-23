@@ -751,16 +751,17 @@ fn hover(state: &State, params: &Value) -> Value {
         tracing::trace!(target: "zshrs::lsp::hover", line = line_no, col, "empty_word");
         return Value::Null;
     }
-    // Gate: when the cursor sits inside a `#` comment or `#!` shebang,
-    // don't return the builtin/keyword doc card — zsh treats everything
-    // after a bare `#` as comment text. Matches what the stryke LSP does
-    // for the `env` builtin on `#!/usr/bin/env zsh`.
     let line_text = text.lines().nth(line_no).unwrap_or("");
-    if line_starts_comment_before(line_text, col) {
+    // Use the same identifier-span rule as `word_at` so the gate sees
+    // exactly the same byte range the doc card would render — keeps the
+    // gate honest when the cursor lands on the trailing edge of a word.
+    let (word_start, word_end) = word_span_at(line_text, col).unwrap_or((col, col));
+    let gate = classify_hover_position(line_text, word_start, word_end);
+    if gate != HoverGate::Code {
         tracing::debug!(
             target: "zshrs::lsp::hover",
             line = line_no, col, %word,
-            gated = "comment",
+            gated = ?gate,
             "suppressed",
         );
         return Value::Null;
@@ -777,6 +778,162 @@ fn hover(state: &State, params: &Value) -> Value {
             "value": doc,
         }
     })
+}
+
+/// Why hover was suppressed at a given cursor position. Returned by
+/// [`classify_hover_position`] so the hover handler can log the exact
+/// reason — turns "why didn't the doc card pop?" into a one-line tail
+/// of `zshrs.log` instead of an LSP-protocol re-derivation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HoverGate {
+    /// Normal code position — let the builtin / keyword / option lookup run.
+    Code,
+    /// Inside a `#` line comment or `#!` shebang.
+    Comment,
+    /// Inside a string literal (`"..."`, `'...'`, or backtick). Cursor
+    /// on a word that happens to spell a builtin must NOT pop the
+    /// builtin doc — `"cd to dir"` in a string is the literal text, not
+    /// the `cd` builtin. Note: zsh `"${var}"` interpolation IS code,
+    /// and `${cd}` should still hover on `cd` — see
+    /// [`position_inside_string_literal`] for the interpolation logic.
+    StringLiteral,
+}
+
+/// True when the identifier at `[start, end)` falls inside a single-
+/// line string literal (`"..."`, `'...'`, or backtick) AND outside any
+/// `${EXPR}` parameter expansion. Walks the line from byte 0 tracking
+/// string-quote state and interpolation depth so the interior of
+/// `"path = ${HOME}/x"` is treated as Code (hover should fire on HOME),
+/// while bare `"cd"` keeps the StringLiteral classification (hover
+/// should NOT fire on the literal text).
+///
+/// zsh-specific notes vs the stryke port:
+///   - The interpolation opener is `${...}` (parameter expansion), not
+///     stryke's `#{...}`. We track `$` immediately followed by `{` to
+///     enter interpolation; nested `{`/`}` adjusts depth.
+///   - zsh single-quoted strings don't expand at all, so the `${`
+///     opener is only honored inside `"..."` and `` `...` ``.
+///   - Backslash escapes are honored inside `"..."` and backticks; not
+///     in `'...'` (where `\` is literal).
+fn position_inside_string_literal(line_text: &str, start: usize, end: usize) -> bool {
+    let bytes = line_text.as_bytes();
+    let limit = start.min(bytes.len());
+    let mut i = 0;
+    let mut in_str: Option<u8> = None;
+    let mut interp_depth: i32 = 0;
+    while i < limit {
+        let c = bytes[i];
+        // Inside `${...}` interpolation — track nested braces and exit
+        // when depth returns to 0.
+        if interp_depth > 0 {
+            match c {
+                b'{' => interp_depth += 1,
+                b'}' => interp_depth -= 1,
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(q) = in_str {
+            if (q == b'"' || q == b'`') && c == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            // `${` opens a code-context interpolation inside `"..."`
+            // and `` `...` ``. Single-quoted strings don't expand.
+            if (q == b'"' || q == b'`')
+                && c == b'$'
+                && i + 1 < bytes.len()
+                && bytes[i + 1] == b'{'
+            {
+                interp_depth = 1;
+                i += 2;
+                continue;
+            }
+            if c == q {
+                in_str = None;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'#' => return false,
+            b'"' | b'\'' | b'`' => in_str = Some(c),
+            _ => {}
+        }
+        i += 1;
+    }
+    // Cursor inside `${...}` — that's real code, not string text.
+    if interp_depth > 0 {
+        return false;
+    }
+    if in_str.is_none() {
+        return false;
+    }
+    // Inside an open quote at `start`. The identifier is in-string
+    // unless the closing quote sits BEFORE `end` AND we walk back to
+    // out-of-string before `end`. Cheap approximation: the identifier
+    // is fully inside the string when the same quote doesn't reappear
+    // in `[start, end)`.
+    let q = in_str.unwrap();
+    let mut j = start;
+    while j < end.min(bytes.len()) {
+        if (q == b'"' || q == b'`') && bytes[j] == b'\\' && j + 1 < bytes.len() {
+            j += 2;
+            continue;
+        }
+        if bytes[j] == q {
+            return false;
+        }
+        j += 1;
+    }
+    true
+}
+
+/// Classify the identifier at `[start, end)` of `line_text` for hover
+/// suppression. Exposed so [`hover`] can log the decision and tests can
+/// pin every case without faking up a whole document.
+pub(crate) fn classify_hover_position(line_text: &str, start: usize, end: usize) -> HoverGate {
+    if line_starts_comment_before(line_text, start) {
+        return HoverGate::Comment;
+    }
+    if position_inside_string_literal(line_text, start, end) {
+        return HoverGate::StringLiteral;
+    }
+    HoverGate::Code
+}
+
+/// Return the byte span `[start, end)` of the identifier touching `col`
+/// on `line_text`. Mirrors the walk in [`word_at`] but returns the span
+/// instead of the slice — needed by [`classify_hover_position`] so the
+/// gate sees the same range the doc card would render.
+fn word_span_at(line_text: &str, col: usize) -> Option<(usize, usize)> {
+    let bytes = line_text.as_bytes();
+    if col > bytes.len() {
+        return None;
+    }
+    let mut start = col;
+    while start > 0 {
+        let c = bytes[start - 1] as char;
+        if c == '_' || c.is_alphanumeric() || c == '$' {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    let mut end = col;
+    while end < bytes.len() {
+        let c = bytes[end] as char;
+        if c == '_' || c.is_alphanumeric() {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    if start == end {
+        return None;
+    }
+    Some((start, end))
 }
 
 /// True if a bare `#` (comment opener) appears in `line[..end]` outside
@@ -1259,11 +1416,37 @@ fn prepare_rename(state: &State, params: &Value) -> Value {
 }
 
 fn rename(state: &State, params: &Value) -> Value {
-    let new_name = params["newName"].as_str().unwrap_or("").to_string();
-    if new_name.is_empty() {
+    let new_name_raw = params["newName"].as_str().unwrap_or("").to_string();
+    if new_name_raw.is_empty() {
         tracing::warn!(target: "zshrs::lsp::rename", "rejecting empty new_name");
         return Value::Null;
     }
+    // Defensive: strip any `::`-qualifier the client may have included in
+    // newName. Earlier versions of the IntelliJ plugin (and other LSP
+    // frontends — Helix, neovim, etc.) prefilled the Rename dialog with
+    // a qualified form like `Demo::handle`; the user edited just the
+    // suffix to `handle2`, but the dialog returned the WHOLE prefilled
+    // string with the new suffix (`Demo::handle2`), and the server then
+    // spliced that into every match site as the bare replacement —
+    // producing nonsense like `Demo::Demo::handle2`. The rename target
+    // is resolved from the cursor POSITION, not the dialog text; the new
+    // name only needs to carry the new bare segment. Stripping here is
+    // safe defense-in-depth across clients, and a no-op for callers who
+    // already send bare. Note: zsh doesn't natively use `::` in function
+    // names but compsys/autoload code and perl-style user conventions
+    // do, so the same prefill bug surfaces in zsh codebases too.
+    let new_name = match new_name_raw.rfind("::") {
+        Some(idx) => {
+            let bare = new_name_raw[idx + 2..].to_string();
+            tracing::warn!(
+                target: "zshrs::lsp::rename",
+                %new_name_raw, %bare,
+                "stripping `::` qualifier from new_name",
+            );
+            bare
+        }
+        None => new_name_raw,
+    };
     // Bucket edits per-URI so cross-file rename produces one entry per
     // file in the `changes` map. The textual scan in `references`
     // already produced absolute-URI ranges; we just group them.
@@ -2710,6 +2893,162 @@ mod tests {
         });
         let h = hover(&state, &params);
         assert!(!h.is_null(), "real builtin must still hover");
+    }
+
+    // ── String-literal hover gate ───────────────────────────────────────
+
+    /// Cursor on `cd` inside `"cd to dir"` — `position_inside_string_literal`
+    /// must return true so the gate suppresses the doc card.
+    #[test]
+    fn position_inside_double_quoted_string_detected() {
+        // 0         1
+        // 01234567890123456
+        // echo "cd to dir"
+        let line = "echo \"cd to dir\"";
+        let cd_start = line.find("cd").unwrap();
+        let cd_end = cd_start + 2;
+        assert!(position_inside_string_literal(line, cd_start, cd_end));
+    }
+
+    /// Same word but inside `'...'` — single quotes still suppress (no
+    /// `${...}` expansion in zsh single-quoted strings, so the gate is
+    /// even simpler).
+    #[test]
+    fn position_inside_single_quoted_string_detected() {
+        let line = "echo 'cd to dir'";
+        let cd_start = line.find("cd").unwrap();
+        let cd_end = cd_start + 2;
+        assert!(position_inside_string_literal(line, cd_start, cd_end));
+    }
+
+    /// Inside backticks (`` `cmd subst` ``) — also treated as a string
+    /// boundary for hover purposes. The interior is technically code,
+    /// but we keep the conservative behavior matching stryke until a
+    /// real need surfaces.
+    #[test]
+    fn position_inside_backtick_string_detected() {
+        let line = "echo `cd to dir`";
+        let cd_start = line.find("cd").unwrap();
+        let cd_end = cd_start + 2;
+        assert!(position_inside_string_literal(line, cd_start, cd_end));
+    }
+
+    /// `"${HOME}"` — cursor on `HOME` is INSIDE the string syntactically
+    /// but inside a `${...}` parameter expansion, which is code. The
+    /// gate must allow hover.
+    #[test]
+    fn position_inside_parameter_expansion_is_code() {
+        // echo "${HOME}/x"
+        let line = "echo \"${HOME}/x\"";
+        let home_start = line.find("HOME").unwrap();
+        let home_end = home_start + 4;
+        assert!(
+            !position_inside_string_literal(line, home_start, home_end),
+            "`${{HOME}}` inside double-quotes is code, not string text"
+        );
+    }
+
+    /// Outside any string — bare code, no suppression.
+    #[test]
+    fn position_outside_string_is_code() {
+        let line = "cd /tmp";
+        assert!(!position_inside_string_literal(line, 0, 2));
+    }
+
+    /// Closing quote before cursor — outside the string again.
+    #[test]
+    fn position_after_closing_quote_is_code() {
+        // echo "foo" cd
+        let line = "echo \"foo\" cd";
+        let cd_start = line.find(" cd").unwrap() + 1;
+        let cd_end = cd_start + 2;
+        assert!(!position_inside_string_literal(line, cd_start, cd_end));
+    }
+
+    /// Full `classify_hover_position` integration: comment beats string.
+    #[test]
+    fn classify_comment_outranks_string() {
+        // `# echo "cd"` — `cd` is inside a quote, but the whole line
+        // is comment-text. The Comment gate fires first.
+        let line = "# echo \"cd\"";
+        let cd_start = line.find("cd").unwrap();
+        let cd_end = cd_start + 2;
+        assert_eq!(
+            classify_hover_position(line, cd_start, cd_end),
+            HoverGate::Comment
+        );
+    }
+
+    /// Plain string-literal classification.
+    #[test]
+    fn classify_string_literal() {
+        let line = "echo \"cd to dir\"";
+        let cd_start = line.find("cd").unwrap();
+        let cd_end = cd_start + 2;
+        assert_eq!(
+            classify_hover_position(line, cd_start, cd_end),
+            HoverGate::StringLiteral
+        );
+    }
+
+    /// Plain code-position classification.
+    #[test]
+    fn classify_bare_code() {
+        let line = "cd /tmp";
+        assert_eq!(classify_hover_position(line, 0, 2), HoverGate::Code);
+    }
+
+    // ── Rename: `::` qualifier strip ────────────────────────────────────
+
+    /// Regression: client prefilled `Demo::handle`; user edited suffix
+    /// to `handle2`; dialog returned `"Demo::handle2"`. The rename
+    /// handler must strip the qualifier and emit BARE `handle2` at
+    /// every call site — never `Demo::Demo::handle2`.
+    #[test]
+    fn rename_strips_colon_colon_qualifier() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "function handle { echo hi }\nhandle\nhandle x\n".into(),
+        );
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 9 }, // on `handle`
+            "newName": "Demo::handle2",
+        });
+        let r = rename(&state, &params);
+        let changes = r["changes"].as_object().expect("changes");
+        let edits = changes["file:///t.zsh"].as_array().expect("edits");
+        assert!(!edits.is_empty(), "expected at least 1 edit, got: {edits:?}");
+        for e in edits {
+            assert_eq!(
+                e["newText"], json!("handle2"),
+                "qualifier must be stripped; got: {e:?}"
+            );
+        }
+    }
+
+    /// Bare new_name without `::` — pass through unchanged (no-op for
+    /// callers who already send the right form).
+    #[test]
+    fn rename_passes_through_bare_new_name() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "function handle { echo hi }\nhandle\n".into(),
+        );
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 9 },
+            "newName": "handle2",
+        });
+        let r = rename(&state, &params);
+        let edits = r["changes"]["file:///t.zsh"].as_array().expect("edits");
+        for e in edits {
+            assert_eq!(e["newText"], json!("handle2"));
+        }
     }
 
     // ── Cross-file rename via references ────────────────────────────────────

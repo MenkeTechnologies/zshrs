@@ -125,6 +125,27 @@ class ZshrsRenameHandler : RenameHandler {
 
     override fun invoke(project: Project, elements: Array<PsiElement>, dataContext: DataContext?) {}
 
+    /**
+     * Bare identifier span at `offset` — DOES NOT walk through `::`
+     * package / module separators. Cursor on `handle` inside
+     * `Demo::handle` returns just `"handle"`, not the qualified form.
+     *
+     * Why this matters: if `identifierAt` consumed `::` to produce
+     * qualified prefills like `"Demo::handle"`, the user would edit
+     * the suffix in the dialog (e.g. type `handle2`), the dialog
+     * returns the WHOLE prefilled string with the new suffix
+     * (`"Demo::handle2"`), and the LSP server uses that whole string
+     * as the bare replacement — splicing the qualifier in at every
+     * match site and producing nonsense like `Demo::Demo::handle2`.
+     * The LSP server resolves the target symbol from the cursor
+     * POSITION, not the dialog prefill, so the bare segment is always
+     * sufficient. The LSP also defensively strips any trailing
+     * `::`-qualifier from `newName` as a second line of defense, but
+     * the right fix is here at the source.
+     *
+     * zsh function names don't natively use `::`, but compsys and
+     * perl-style user codebases (`Module::sub_name`) do — same trap.
+     */
     private fun identifierAt(chars: CharSequence, offset: Int): String {
         if (offset < 0 || offset > chars.length) return ""
         var s = offset
