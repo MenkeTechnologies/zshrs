@@ -4636,7 +4636,22 @@ fn is_distribute_expansion(s: &str) -> bool {
 }
 
 fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
+    // `$+NAME` chkset form: the no-brace bare form of `${+NAME}`. The
+    // segment splitter doesn't model `+` as a paramsubst-body prefix
+    // (the find_expansion_end arms cover `$@`, `$*`, `$#`, `$?`, `$!`,
+    // `$-`, `$$`, digits, identifiers — NOT `$+NAME`). Bail to the
+    // whole-string EXPAND_TEXT fall-through (compile_zsh.rs:2900-2922)
+    // so paramsubst sees the full input and its `$+NAME` arm
+    // (subst.rs:2477+) handles it canonically. Mirrors C zsh's prefork
+    // which never pre-splits DQ content — multsub/stringsubst/paramsubst
+    // process the whole string inline.
     let chars: Vec<char> = s.chars().collect();
+    for w in chars.windows(2) {
+        let dollar = w[0] == '$' || w[0] == '\u{85}' || w[0] == '\u{8c}';
+        if dollar && w[1] == '+' {
+            return None;
+        }
+    }
     let n = chars.len();
     let mut segs: Vec<WordSegment> = Vec::new();
     let mut lit_start = 0;
