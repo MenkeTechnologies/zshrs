@@ -1504,7 +1504,11 @@ fn optns_flags(name: &str) -> u16 {
         "markdirs" => 0,                             // c:194
         "menucomplete" => 0,                         // c:195
         "monitor" => OPT_SPECIAL as u16,             // c:196
-        "multibyte" => 0,                            // c:197
+        // c:197 — `multibyte` defaults to OPT_ALL when
+        // MULTIBYTE_SUPPORT is compiled in (always true for zshrs
+        // since Rust strings are UTF-8). Previous Rust port had `0`
+        // which left multibyte off in all emulations.
+        "multibyte" => OPT_ALL as u16,               // c:197
         "multifuncdef" => OPT_EMULATE | (OPT_ZSH as u16), // c:198
         "multios" => OPT_EMULATE | (OPT_ZSH as u16), // c:199
         "nomatch" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:200
