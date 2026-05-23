@@ -245,29 +245,58 @@ pub struct buf_vars {
 // Remaining missing functions from prompt.c
 // ---------------------------------------------------------------------------
 
-/// Get a prompt-friendly path with optional tilde substitution.
-/// Port of `promptpath(char *p, int npath, int tilde)` from Src/prompt.c:134 — used for `%~`,
-/// `%/`, `%c`, etc. The `npath` argument trims to the last N
-/// components.
-/// WARNING: param names don't match C — Rust=(path, npath, tilde, home) vs C=(p, npath, tilde)
+/// Direct port of `static void promptpath(char *p, int npath, int
+/// tilde)` from `Src/prompt.c:133-169`. Format a path for `%~`,
+/// `%/`, `%c` — optional tilde substitution + last-N-components
+/// truncation.
+///
+/// **Previous gap:** the Rust port only checked the explicit `home`
+/// arg via `path.starts_with(home)`. C uses `finddir(p)` which
+/// covers BOTH `$HOME` AND `hash -d` named-dir matches (e.g.
+/// `~tmp/file` when `hash -d tmp=/tmp` is set). Without the
+/// finddir branch, `%~` rendered `/tmp/foo` literally instead of
+/// `~tmp/foo` even with the named-dir registered. Restored.
+///
+/// WARNING: signature kept as `(path, npath, tilde, home)` to
+/// preserve existing zshrs callers (3000+ tests). The `home` arg
+/// is the explicit-HOME override used for unit tests; live callers
+/// pass an empty string to delegate to finddir's HOME read.
 pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
     // c:134
-    let display = if tilde && !home.is_empty() && path.starts_with(home) {
-        let rest = &path[home.len()..];
-        if rest.is_empty() || rest.starts_with('/') {
-            format!("~{}", rest)
+    // c:139-141 — `if (tilde && (nd = finddir(p))) modp = tricat("~",
+    //              nd->node.nam, p + strlen(nd->dir));`
+    let display = if tilde {
+        // Try the explicit-home arg first (test-driven path; empty
+        // string in live callers means "use finddir below").
+        if !home.is_empty() && path.starts_with(home) {
+            let rest = &path[home.len()..];
+            if rest.is_empty() || rest.starts_with('/') {
+                format!("~{}", rest)
+            } else {
+                // Home prefix matches but path continues with non-/
+                // (e.g. /homex when home=/home). Fall through to
+                // finddir which checks bounds correctly.
+                crate::ported::utils::finddir(path).unwrap_or_else(|| path.to_string())
+            }
         } else {
-            path.to_string()
+            // c:139 — finddir covers $HOME + every `hash -d` named-dir.
+            crate::ported::utils::finddir(path).unwrap_or_else(|| path.to_string())
         }
     } else {
+        // c:165 — `else stradd(modp);` — no tilde transform.
         path.to_string()
     };
 
+    // c:142-165 — npath truncation. `npath > 0` keeps LAST N
+    // components; `npath < 0` keeps FIRST -N components. Rust port
+    // currently only supports the positive form — usize argument
+    // pinned the type; signed-flip would break callers. Note the
+    // gap; the negative-N form is a Rust-only TODO.
     if npath == 0 {
         return display;
     }
 
-    // Take last npath components
+    // c:144-153 — take last npath components.
     let components: Vec<&str> = display.split('/').filter(|s| !s.is_empty()).collect();
     if components.len() <= npath {
         return display;
