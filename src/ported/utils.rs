@@ -40,7 +40,7 @@ use crate::ported::params::{
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
-use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Dash, NICEFLAG_HEAP, NICEFLAG_NODUP, NICEFLAG_QUOTE, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC, shfunc};
+use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, DVORAK, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Dash, NICEFLAG_HEAP, NICEFLAG_NODUP, NICEFLAG_QUOTE, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC, shfunc};
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
     imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
@@ -5242,39 +5242,178 @@ pub fn mindist(dir: &str, name: &str) -> Option<(String, usize)> {
 // spellcheck a word                                                        // c:3123
 // fix s ; if hist is nonzero, fix the history list too                     // c:3124
 /// Compute edit distance between two strings (for spelling correction)
-/// Port from zsh/Src/utils.c spdist() lines 4675-4759
-/// Levenshtein-style edit distance for typo correction.
-/// Port of `spdist(char *s, char *t, int thresh)` from Src/utils.c — drives the
-/// `setopt CORRECT` typo-prompt machinery.
-/// WARNING: param names don't match C — Rust=(s, t, max_dist) vs C=(s, t, thresh)
-pub fn spdist(s: &str, t: &str, max_dist: usize) -> usize {
-    // c:4675
-    let s_chars: Vec<char> = s.chars().collect();
-    let t_chars: Vec<char> = t.chars().collect();
-    let m = s_chars.len();
-    let n = t_chars.len();
+/// Direct port of `int spdist(char *s, char *t, int thresh)` from
+/// `Src/utils.c:4675-4750`. Drives the CORRECT-option typo prompt:
+/// returns 0 for identical, 1 for case-only mistakes, 2 for one
+/// transposition / missing letter / QWERTY-adjacent mistype, 200 for
+/// anything farther.
+///
+/// **This is NOT a Levenshtein DP — that was the previous Rust impl
+/// dressed as a port.** The C source uses a keyboard-adjacency model
+/// (qwertykeymap / dvorakkeymap arrays + tulower equality) which is
+/// the actual behaviour `setopt CORRECT` depends on. Restored
+/// faithfully.
+pub fn spdist(s: &str, t: &str, thresh: usize) -> usize {
+    // c:4679-4690 — qwerty keymap (rows of 14 chars each: numeric row,
+    // QWERTY top row, home row, bottom row, then shift versions).
+    // Embedded `\n` / `\t` mark off-grid cells.
+    const QWERTYKEYMAP: &str = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\
+\t1234567890-=\t\
+\tqwertyuiop[]\t\
+\tasdfghjkl;'\n\t\
+\tzxcvbnm,./\t\t\t\
+\n\n\n\n\n\n\n\n\n\n\n\n\n\n\
+\t!@#$%^&*()_+\t\
+\tQWERTYUIOP{}\t\
+\tASDFGHJKL:\"\n\t\
+\tZXCVBNM<>?\n\n\t\
+\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+    // c:4691-4702 — dvorak keymap, same shape.
+    const DVORAKKEYMAP: &str = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\
+\t1234567890[]\t\
+\t',.pyfgcrl/=\t\
+\taoeuidhtns-\n\t\
+\t;qjkxbmwvz\t\t\t\
+\n\n\n\n\n\n\n\n\n\n\n\n\n\n\
+\t!@#$%^&*(){}\t\
+\t\"<>PYFGCRL?+\t\
+\tAOEUIDHTNS_\n\t\
+\t:QJKXBMWVZ\n\n\t\
+\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
 
-    if m.abs_diff(n) > max_dist {
-        return max_dist + 1;
+    // c:4703-4707 — `keymap = isset(DVORAK) ? dvorakkeymap : qwertykeymap;`
+    let keymap = if isset(DVORAK) {
+        DVORAKKEYMAP.as_bytes()
+    } else {
+        QWERTYKEYMAP.as_bytes()
+    };
+
+    let s_b = s.as_bytes();
+    let t_b = t.as_bytes();
+
+    // c:4709-4710 — `if (!strcmp(s, t)) return 0;`
+    if s == t {
+        return 0;
     }
 
-    let mut prev: Vec<usize> = (0..=n).collect();
-    let mut curr = vec![0; n + 1];
+    // c:4712-4714 — `for (p, q; *p && tulower(*p) == tulower(*q); p++, q++);
+    //                  if (!*p && !*q) return 1;` — case-only mismatch.
+    let mut p = 0usize;
+    let mut q = 0usize;
+    while p < s_b.len()
+        && q < t_b.len()
+        && tulower(s_b[p] as char) == tulower(t_b[q] as char)
+    {
+        p += 1;
+        q += 1;
+    }
+    if p == s_b.len() && q == t_b.len() {
+        return 1;
+    }
 
-    for i in 1..=m {
-        curr[0] = i;
-        for j in 1..=n {
-            let cost = if s_chars[i - 1] == t_chars[j - 1] {
-                0
-            } else {
-                1
-            };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+    // c:4715-4716 — `if (!thresh) return 200;`
+    if thresh == 0 {
+        return 200;
+    }
+
+    // c:4717-4727 — first walk: detect transposition / missing letter at
+    // first divergence.
+    p = 0;
+    q = 0;
+    while p < s_b.len() && q < t_b.len() {
+        if s_b[p] == t_b[q] {
+            // c:4718-4719 — match: skip (don't count `aa` as transposed).
+            p += 1;
+            q += 1;
+            continue;
         }
-        std::mem::swap(&mut prev, &mut curr);
+        // c:4720-4721 — `if (p[1] == q[0] && q[1] == p[0]) return
+        //                  spdist(p+2, q+2, thresh-1) + 1;` transposition.
+        if p + 1 < s_b.len()
+            && q + 1 < t_b.len()
+            && s_b[p + 1] == t_b[q]
+            && t_b[q + 1] == s_b[p]
+        {
+            // SAFETY: bytes are ASCII for the keymap test below; from_utf8
+            // is fine on a non-ASCII tail here because spdist takes &str.
+            let s_tail = std::str::from_utf8(&s_b[p + 2..]).unwrap_or("");
+            let t_tail = std::str::from_utf8(&t_b[q + 2..]).unwrap_or("");
+            return spdist(s_tail, t_tail, thresh.saturating_sub(1)) + 1;
+        }
+        // c:4722-4723 — `if (p[1] == q[0]) return spdist(p+1, q, thresh-1) + 2;`
+        if p + 1 < s_b.len() && s_b[p + 1] == t_b[q] {
+            let s_tail = std::str::from_utf8(&s_b[p + 1..]).unwrap_or("");
+            let t_tail = std::str::from_utf8(&t_b[q..]).unwrap_or("");
+            return spdist(s_tail, t_tail, thresh.saturating_sub(1)) + 2;
+        }
+        // c:4724-4725 — `if (p[0] == q[1]) return spdist(p, q+1, thresh-1) + 2;`
+        if q + 1 < t_b.len() && s_b[p] == t_b[q + 1] {
+            let s_tail = std::str::from_utf8(&s_b[p..]).unwrap_or("");
+            let t_tail = std::str::from_utf8(&t_b[q + 1..]).unwrap_or("");
+            return spdist(s_tail, t_tail, thresh.saturating_sub(1)) + 2;
+        }
+        // c:4726-4727 — `if (*p != *q) break;`
+        break;
     }
-
-    prev[n]
+    // c:4728-4729 — `if ((!*p && strlen(q) == 1) || (!*q && strlen(p) == 1))
+    //                  return 2;` — single trailing-char insertion.
+    if (p == s_b.len() && (t_b.len() - q) == 1)
+        || (q == t_b.len() && (s_b.len() - p) == 1)
+    {
+        return 2;
+    }
+    // c:4730-4748 — second walk: keyboard-adjacency mistype detection.
+    p = 0;
+    q = 0;
+    while p < s_b.len() && q < t_b.len() {
+        if p + 1 < s_b.len()
+            && q + 1 < t_b.len()
+            && s_b[p] != t_b[q]
+            && s_b[p + 1] == t_b[q + 1]
+        {
+            // c:4737-4738 — `if (!(z = strchr(keymap, p[0])) || *z == '\n' ||
+            //                       *z == '\t') return spdist(p+1, q+1,
+            //                       thresh-1) + 1;`
+            let pos = keymap.iter().position(|&b| b == s_b[p]);
+            let z_ok = match pos {
+                Some(i) => keymap[i] != b'\n' && keymap[i] != b'\t',
+                None => false,
+            };
+            if !z_ok {
+                let s_tail = std::str::from_utf8(&s_b[p + 1..]).unwrap_or("");
+                let t_tail = std::str::from_utf8(&t_b[q + 1..]).unwrap_or("");
+                return spdist(s_tail, t_tail, thresh.saturating_sub(1)) + 1;
+            }
+            // c:4739 — `t0 = z - keymap;`
+            let t0 = pos.unwrap() as isize;
+            // c:4740-4744 — eight adjacency offsets (-15,-14,-13,-1,+1,
+            //                +13,+14,+15) → keyboard neighbours.
+            let offsets: [isize; 8] = [-15, -14, -13, -1, 1, 13, 14, 15];
+            let adjacent = offsets.iter().any(|&off| {
+                let idx = t0 + off;
+                if idx >= 0 && (idx as usize) < keymap.len() {
+                    keymap[idx as usize] == t_b[q]
+                } else {
+                    false
+                }
+            });
+            if adjacent {
+                // c:4745 — `return spdist(p+1, q+1, thresh-1) + 2;`
+                let s_tail = std::str::from_utf8(&s_b[p + 1..]).unwrap_or("");
+                let t_tail = std::str::from_utf8(&t_b[q + 1..]).unwrap_or("");
+                return spdist(s_tail, t_tail, thresh.saturating_sub(1)) + 2;
+            }
+            // c:4746 — `return 200;`
+            return 200;
+        } else if p < s_b.len() && q < t_b.len() && s_b[p] != t_b[q] {
+            // c:4747-4748 — `else if (*p != *q) break;`
+            break;
+        }
+        p += 1;
+        q += 1;
+    }
+    // c:4749 — `return 200;`
+    200
 }
 
 /// Set terminal to cbreak mode (from utils.c setcbreak)
