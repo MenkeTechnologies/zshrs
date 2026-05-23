@@ -348,7 +348,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // not the stale prior value — pending_underscore is consumed
         // by pop_args which runs AFTER argv expansion, too late.
         // c:Src/exec.c:1257 — `zunderscore = …` at end-of-command.
-        // For no-arg `true`, $_ becomes the command name itself.
+        // With args, $_ = args.last(). Without args, $_ = command name.
         // Write DIRECTLY to the canonical zunderscore static (the
         // underscoregetfn at params.rs:7003 reads from there); the
         // paramtab "_" slot is shadowed by lookup_special_var so
@@ -357,6 +357,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::params::set_zunderscore(
                 &["true".to_string()],
             );
+        } else {
+            crate::ported::params::set_zunderscore(&args);
         }
         // Route through canonical execbuiltin so PS4 xtrace fires
         // via the c:442 printprompt4 path. Without this, the fast-
@@ -377,6 +379,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::params::set_zunderscore(
                 &["false".to_string()],
             );
+        } else {
+            crate::ported::params::set_zunderscore(&args);
         }
         // Route through canonical execbuiltin — see BUILTIN_TRUE
         // above for the same rationale (xtrace + fast-path removal).
@@ -390,6 +394,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::params::set_zunderscore(
                 &[":".to_string()],
             );
+        } else {
+            crate::ported::params::set_zunderscore(&args);
         }
         let status = dispatch_builtin(":", args);
         Value::Status(status)
