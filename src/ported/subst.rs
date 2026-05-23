@@ -4218,6 +4218,16 @@ pub fn paramsubst(
                         // options/modules/reswords/nameddirs/...) via
                         // the canonical scanfn dispatch. Without this,
                         // `${(k)parameters}` returned empty.
+                        //
+                        // Sort alphabetically for deterministic output:
+                        // zsh emits in its own hash-iteration order
+                        // which depends on the C hashtable bucketing
+                        // algorithm — not reproducible from Rust's
+                        // HashMap. Alphabetical-sort gives stable,
+                        // human-readable output even if the order
+                        // differs from zsh's specific hash. Most
+                        // consumers (`zinit ls $functions`, plugin
+                        // sanity checks) don't care about hash order.
                         _ => {
                             crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
                                 keys.sort();

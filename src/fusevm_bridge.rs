@@ -5000,6 +5000,51 @@ impl fusevm::ShellHost for ZshrsHost {
         with_executor(|exec| exec.host_redirect_scope_begin(count));
     }
 
+    fn regex_match(&mut self, s: &str, regex: &str) -> bool {
+        // c:Src/Modules/regex.c:60-210 `cond_regex_match` — POSIX
+        // ERE matching with optional MULTIBYTE-aware case folding.
+        // Default fusevm host returns `false` for everything; route
+        // through the Rust `regex` crate (RE2 engine — sub-features of
+        // POSIX ERE) so `[[ str =~ pat ]]` works. Also populates
+        // `\$MATCH`, `\$MBEGIN`, `\$MEND`, `\$match[]`, `\$mbegin[]`,
+        // `\$mend[]` per the C populate-magic-vars contract at
+        // regex.c:185-209.
+        let case_match = crate::ported::zsh_h::isset(crate::ported::zsh_h::CASEMATCH);
+        let mut builder = regex::RegexBuilder::new(regex);
+        let re = match builder.case_insensitive(!case_match).build() {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        if let Some(m) = re.find(s) {
+            let matched = m.as_str().to_string();
+            let beg = m.start() + 1; // c:189 MBEGIN is 1-based
+            let end = m.end(); // c:190 MEND is 1-based-inclusive
+            // Populate magic vars; ignore errors (e.g. read-only).
+            crate::ported::params::setsparam("MATCH", &matched);
+            crate::ported::params::setsparam("MBEGIN", &beg.to_string());
+            crate::ported::params::setsparam("MEND", &end.to_string());
+            // c:194-209 — `match[]` / `mbegin[]` / `mend[]` arrays
+            // for capture groups. Best-effort: walk re.captures.
+            if let Some(caps) = re.captures(s) {
+                let mut match_arr: Vec<String> = Vec::new();
+                let mut mbegin_arr: Vec<String> = Vec::new();
+                let mut mend_arr: Vec<String> = Vec::new();
+                for i in 1..caps.len() {
+                    if let Some(c) = caps.get(i) {
+                        match_arr.push(c.as_str().to_string());
+                        mbegin_arr.push((c.start() + 1).to_string());
+                        mend_arr.push(c.end().to_string());
+                    }
+                }
+                crate::ported::params::setaparam("match", match_arr);
+                crate::ported::params::setaparam("mbegin", mbegin_arr);
+                crate::ported::params::setaparam("mend", mend_arr);
+            }
+            return true;
+        }
+        false
+    }
+
     fn with_redirects_end(&mut self) {
         with_executor(|exec| exec.host_redirect_scope_end());
         // c:Src/exec.c:5172 — if any redirect in this scope failed
