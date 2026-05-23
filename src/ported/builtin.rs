@@ -8332,11 +8332,18 @@ pub fn bin_let(
        // on first failure, leaving later args unevaluated.
     for expr in argv {
         // c:7474
-        if let Ok(v) = matheval(expr) {
-            // c:7475
-            val = v;
+        match matheval(expr) {
+            Ok(v) => val = v, // c:7475
+            Err(msg) => {
+                // c:Src/math.c:checkunary zerr side-effect — the C
+                // path writes the parse-error string to stderr via
+                // mathevali → checkunary → zerr. Rust's matheval
+                // captures the message in Err and bin_let was
+                // discarding it via `if let Ok(...)`. Surface it.
+                crate::ported::utils::zerr(&msg);
+                // Continue loop; errflag set below resets to local 2.
+            }
         }
-        // Failed matheval → continue loop; errflag will be checked below.
     }
     // c:7476-7480 — math errors are non-fatal in let; CLEAR ERRFLAG_ERROR
     // and return 2. The previous Rust port used a local `had_error` flag
