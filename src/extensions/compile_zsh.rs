@@ -4854,6 +4854,31 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             i + 2
         }
+        // `$+NAME` chkset form — the `+` flag indicates "1 if NAME
+        // is set, 0 otherwise". Parsed at paramsubst.rs:3267-3286 as
+        // the bare-form equivalent of `${+NAME}`. Without this arm,
+        // find_expansion_end would consume only the `$` and leave
+        // `+NAME` as literal text in the trailing segment, so
+        // `print -r "$+PS1"` emitted "+PS1" instead of "1".
+        //
+        // c:Src/subst.c:2199-2207 paramsubst's `+` flag handling.
+        Some('+') => {
+            let mut j = i + 2; // past `$+`
+            // Walk identifier or special-single-char name.
+            if j < chars.len() {
+                let nx = chars[j];
+                if nx.is_ascii_alphanumeric() || nx == '_' {
+                    while j < chars.len()
+                        && (chars[j].is_ascii_alphanumeric() || chars[j] == '_')
+                    {
+                        j += 1;
+                    }
+                } else if matches!(nx, '@' | '*' | '#' | '?' | '!' | '-' | '$') {
+                    j += 1;
+                }
+            }
+            j
+        }
         // All-digit positional: $0..$N
         Some(ch) if ch.is_ascii_digit() => {
             let mut j = i + 1;
