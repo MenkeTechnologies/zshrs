@@ -2101,9 +2101,12 @@ pub struct menustack {
     // c:2159
     /// Saved zleline contents.
     pub line: String, // c:2161
-    /// Brace-info head + tail.
-    pub brbeg: Vec<u8>, // c:2162 (Brinfo)
-    pub brend: Vec<u8>, // c:2163
+    /// Brace-info head + tail. C uses `Brinfo` (linked-list head).
+    /// Rust port snapshots the BRBEG/BREND globals (in compcore.rs)
+    /// by cloning the full Brinfo struct out so the menustack pop
+    /// can restore them. None when the brinfo list was empty.
+    pub brbeg: Option<Box<crate::ported::zle::comp_h::Brinfo>>, // c:2162
+    pub brend: Option<Box<crate::ported::zle::comp_h::Brinfo>>, // c:2163
     /// Brace-info counts.
     pub nbrbeg: i32, // c:2164
     pub nbrend: i32,    // c:2164
