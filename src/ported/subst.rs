@@ -3257,7 +3257,13 @@ pub fn paramsubst(
                 errflag_set_error();
                 return (String::new(), new_pos, vec![]);
             }
-            if matches!(c, Snull | Dnull | STRING | Qstring) {
+            // Skip leftover quote markers (Snull/Dnull from `'...'`/`"..."`
+            // boundaries). Do NOT skip Stringg/Qstring — those are the
+            // `$`-tokenized chars that the subexp arm at c:2649
+            // (`isstring(*s)`) needs to see in order to detect nested
+            // `${${...}}` / `${$(...)}` shapes. Previously this loop
+            // ate Qstring as preamble, masking the subexp detection.
+            if matches!(c, Snull | Dnull) {
                 idx += 1;
                 continue;
             }
@@ -3316,7 +3322,12 @@ pub fn paramsubst(
                 p += 1; // c:2649
             } // c:2649
         } // c:2649
-        let mut subexp_value: Option<String> = if idx < body_chars.len() && body_chars[idx] == '$'
+        // c:2649 — `isstring(*s)` matches both `$` (`Stringg`) and the
+        // DQ-context `\u{8c}` (`Qstring`) per Src/zsh.h:167. Mirror
+        // here so nested ${${x}} inside DQ — where the inner `$` is
+        // Qstring-tokenized — still detects the subexp.
+        let mut subexp_value: Option<String> = if idx < body_chars.len()
+            && (body_chars[idx] == '$' || body_chars[idx] == Qstring)
         // c:2649
         {
             // Walk just the nested $-form (depth-tracked over its
