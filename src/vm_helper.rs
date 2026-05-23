@@ -1166,6 +1166,25 @@ impl ShellExecutor {
         // chain does at startup. Makes `${+aliases}` / `${(t)commands}`
         // / `typeset -p modules` etc. see the special entries.
         init_partab_params(); // c:Src/Modules/parameter.c:2341 boot_/enables_ chain
+
+        // c:Src/params.c:873-876 — `gethostname(hostnam,256);
+        //                            setsparam("HOST", ztrdup_metafy(hostnam));`
+        // Plain port of the createparamtable HOST init. Direct
+        // libc::gethostname call; result written via canonical
+        // setsparam. createparamtable() itself isn't called from the
+        // bin entry yet (full init port pending); this is the minimum
+        // for `$HOST` to read non-empty.
+        let mut host_buf = [0u8; 256];
+        let host_rc = unsafe {
+            libc::gethostname(host_buf.as_mut_ptr() as *mut libc::c_char, 256)
+        }; // c:874
+        if host_rc == 0 {
+            if let Ok(c) = std::ffi::CStr::from_bytes_until_nul(&host_buf) {
+                if let Ok(name) = c.to_str() {
+                    crate::ported::params::setsparam("HOST", name); // c:875
+                }
+            }
+        }
         exec
     }
 
