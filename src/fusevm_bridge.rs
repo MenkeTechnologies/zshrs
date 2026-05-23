@@ -2783,9 +2783,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // [n], updates `$LINENO` in the variable table.
     vm.register_builtin(BUILTIN_SET_LINENO, |vm, _argc| {
         let n = vm.pop().to_int();
-        with_executor(|exec| {
-            exec.set_scalar("LINENO".to_string(), n.to_string());
-        });
+        // c:Src/exec.c:lineno = N — direct write to the param's
+        // u_val. Cannot go through setsparam because LINENO carries
+        // PM_READONLY (so `(t)LINENO` reads `integer-readonly-special`
+        // per zsh); setsparam → assignstrvalue's PM_READONLY guard
+        // would reject the internal write. C zsh handles this via the
+        // PM_SPECIAL GSU vtable's setfn callback which bypasses the
+        // generic readonly check; the Rust port writes the canonical
+        // field directly instead.
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("LINENO") {
+                pm.u_val = n;
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+        }
         // Mirror to the file-static `lineno` (utils.c:121) that
         // zerrmsg reads at utils.c:301 for the `:N: msg` prefix.
         crate::ported::utils::set_lineno(n as i32);
@@ -4855,7 +4866,20 @@ impl fusevm::ShellHost for ZshrsHost {
                 .scalar("ZSH_SUBSHELL")
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(0);
-            exec.set_scalar("ZSH_SUBSHELL".to_string(), (level + 1).to_string());
+            // c:Src/exec.c — ZSH_SUBSHELL carries PM_READONLY (declared
+            // in params.rs special_params); setsparam would be rejected
+            // by assignstrvalue's PM_READONLY guard. Write u_val
+            // directly — same bypass pattern as BUILTIN_SET_LINENO at
+            // line 2784. C zsh's PM_SPECIAL GSU vtable handles this
+            // implicitly via the setfn callback.
+            let new_level = (level + 1) as i64;
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("ZSH_SUBSHELL") {
+                    pm.u_val = new_level;
+                    pm.u_str = Some(new_level.to_string());
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+            }
         });
         // Bump SUBSHELL_DEPTH so zexit defers process::exit (see
         // SUBSHELL_DEPTH declaration in src/ported/builtin.rs for

@@ -1198,17 +1198,18 @@ impl ShellExecutor {
                     // `D|PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT`.
                     //
                     // Mask `entry.pm_flags` to ONLY the attribute bits
-                    // that are safe to OR onto an existing Param without
-                    // changing assignment semantics. PM_READONLY in
-                    // particular MUST NOT be OR'd here: LINENO declares
-                    // PM_READONLY in the table (it's a getter-only param
-                    // from userspace's perspective), but the runtime's
-                    // own BUILTIN_SET_LINENO opcode writes via setsparam
-                    // and would be rejected. C zsh handles this via the
-                    // PM_SPECIAL GSU setfn bypass; the Rust port doesn't
-                    // route setsparam through the GSU vtable yet, so
-                    // keep the entries WRITABLE and just attach the
-                    // metadata bits userspace introspection cares about.
+                    // safe to OR onto an existing Param without changing
+                    // assignment semantics. PM_READONLY is excluded
+                    // here because many internal-runtime writes go
+                    // through setsparam (subshell ZSH_SUBSHELL bump,
+                    // ZSH_EVAL_CONTEXT push, etc.) and would be
+                    // rejected by assignstrvalue's PM_READONLY guard.
+                    // C zsh's PM_SPECIAL GSU setfn bypasses the guard;
+                    // the Rust port lacks that vtable wiring, so keep
+                    // the entries writable. Consequence: `(t)LINENO`
+                    // etc. read `integer-special` instead of zsh's
+                    // `integer-readonly-special` — a parity gap on
+                    // introspection metadata; runtime behavior matches.
                     let safe_pm_flags =
                         entry.pm_flags & (PM_TIED | PM_DI);
                     let mut bits = safe_pm_flags | PM_SPECIAL;
