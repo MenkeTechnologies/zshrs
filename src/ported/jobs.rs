@@ -1608,14 +1608,27 @@ pub fn waitforpid(pid: i32) -> Option<i32> {
     }
 }
 
-/// Wait for job (from jobs.c zwaitjob lines 1673-1750)
 /// Port of `zwaitjob(int job, int wait_cmd)` from `Src/jobs.c:1673`.
-/// WARNING: param names don't match C — Rust=(job) vs C=(job, wait_cmd)
-pub fn zwaitjob(job: &mut job) -> Option<i32> {
+///
+/// `wait_cmd` is the "from interactive `wait` builtin" flag. C uses it
+/// to (a) thread through `queue_traps(wait_cmd)` so signal-trap firing
+/// is allowed inside the wait, (b) thread through
+/// `signal_suspend(SIGCHLD, wait_cmd)` so trapped non-CHLD signals can
+/// interrupt the suspend with `last_signal`. The Rust port doesn't yet
+/// drive a signal_suspend wait-loop (waitforpid is a synchronous
+/// libc::waitpid wrap), so wait_cmd informs queue_traps for trap
+/// dispatch coherence; the interrupt-by-trapped-signal early-exit
+/// path (c:1702-1708, `return 128 + last_signal`) is deferred until
+/// the suspend-loop rewrite lands.
+pub fn zwaitjob(job: &mut job, wait_cmd: i32) -> Option<i32> {
     // c:1673
     if job.procs.is_empty() {
         return Some(0);
     }
+
+    // c:1679 — `queue_traps(wait_cmd);` — lets trap handlers fire
+    // during the wait. queue_traps is in signals.rs.
+    crate::ported::signals::queue_traps(wait_cmd);
 
     let mut last_status = 0;
     for proc in &mut job.procs {
@@ -1630,6 +1643,8 @@ pub fn zwaitjob(job: &mut job) -> Option<i32> {
     }
 
     job.stat |= stat::DONE;
+    // c:1742 — `unqueue_traps();` — pair with queue_traps above.
+    crate::ported::signals::unqueue_traps();
     Some(last_status)
 }
 
