@@ -2209,26 +2209,26 @@ impl ZshCompiler {
         // Fast path: `${NAME[KEY]}` — assoc/indexed element access. Emits
         // BUILTIN_ARRAY_INDEX which routes through assoc_arrays first then
         // falls back to indexed arrays.
+        //
+        // Skip in DQ context. The fast-path calls paramsubst with
+        // qt=false hardcoded, bypassing the lexer → prefork →
+        // stringsubst → paramsubst chain where C zsh's
+        // `qt = c == Qstring` (Src/subst.c:283) would have set DQ.
+        // Falling through to BUILTIN_EXPAND_TEXT mode 1 routes
+        // through multsub which propagates qt via Qstring tokens.
         if !has_bnull {
-            if let Some((base, key)) = braced_subscript_ref(&untoked) {
-                let name_const = self.builder.add_constant(Value::str(base));
-                // DQ-context flag: `\u{02}` prefix on idx tells
-                // BUILTIN_ARRAY_INDEX to JOIN range slices with IFS
-                // first char rather than return Value::Array. Direct
-                // port of zsh's nojoin gating in Src/subst.c paramsubst.
-                let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
-                let dq = raw_dq || self.dq_context_depth > 0;
-                let key_str = if dq {
-                    format!("\u{02}{}", key)
-                } else {
-                    key.to_string()
-                };
-                let key_const = self.builder.add_constant(Value::str(key_str.as_str()));
-                self.builder.emit(Op::LoadConst(name_const), 0);
-                self.builder.emit(Op::LoadConst(key_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
-                return;
+            let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+            let dq = raw_dq || self.dq_context_depth > 0;
+            if !dq {
+                if let Some((base, key)) = braced_subscript_ref(&untoked) {
+                    let name_const = self.builder.add_constant(Value::str(base));
+                    let key_const = self.builder.add_constant(Value::str(key));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
+                    return;
+                }
             }
         }
 
@@ -2658,7 +2658,15 @@ impl ZshCompiler {
             parsed_mod.as_ref().map(|m| &m.kind),
             Some(crate::compile_zsh::ParamModifierKind::Replace { had_at: true, .. })
         );
-        if !has_bnull || modifier_safe_with_bnull {
+        // Skip the param-modifier fast-paths in DQ context — same
+        // rationale as the ${(flags)} and ${NAME[KEY]} fast-paths
+        // above: each one hardcodes qt=false in its paramsubst call,
+        // breaking DQ semantics. Fall through to the default
+        // text-expansion path which routes through multsub →
+        // paramsubst with qt propagated via Qstring tokens.
+        let raw_dq_word = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+        let in_dq = raw_dq_word || self.dq_context_depth > 0;
+        if (!has_bnull || modifier_safe_with_bnull) && !in_dq {
             if let Some(modifier) = parsed_mod {
                 // The whole-word Dnull wrapping (`"${...}"`) gets
                 // stripped from `untoked` before parse_param_modifier
