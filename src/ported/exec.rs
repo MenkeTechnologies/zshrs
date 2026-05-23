@@ -3911,20 +3911,15 @@ pub struct entersubsh_ret {
 /// re-defaulted, pgrp + tty handed off, saved fds closed, jobtab
 /// cleared, ZSH_SUBSHELL bumped, forklevel = locallevel.
 ///
-/// =================== WARNING — DIVERGENCE ====================
 /// (a) `jobtab[list_pipe_job]` / `jobtab[thisjob]` pgrp ops (c:1110-
-///     1151) are SKIPPED — the Rust jobs module (jobs.rs) hides the
-///     jobtab behind a JobTable handle and doesn't expose direct
-///     index access in this call shape. The ESUB_PGRP+sync path
-///     therefore won't establish pipeline group-leadership in the
-///     child until a jobtab accessor is added. `setpgrp(0, 0)` is
-///     used as the fallback so the child at least leaves the parent's
-///     process group.
+///     1151) are now ported via JOBTAB[thisjob].gleader access; the
+///     ESUB_PGRP+sync path establishes pipeline group-leadership
+///     (list_pipe_job inherit or thisjob-as-leader), filling
+///     entersubsh_ret with the chosen gleader + list_pipe_job index.
 /// (b) `clearjobtab(monitor)` (c:1219) — Rust signature is
 ///     `clearjobtab(&mut JobTable, monitor)`; we get the global table
 ///     via a TABLE handle similar to other jobs.rs entries.
-/// (c) `attachtty(...)` (c:1119, 1144) — only invoked from the pgrp
-///     branch which is skipped per (a).
+/// (c) `attachtty(...)` (c:1119, 1144) — wired via libc::tcsetpgrp(2, gleader).
 /// (d) `release_pgrp()` called for ESUB_REVERTPGRP when `getpid() ==
 ///     mypgrp` — direct C parity (jobs.rs:3406 provides the call).
 /// (e) `opts[USEZLE] = 0; zleactive = 0` — Rust opts table lookup
@@ -3995,16 +3990,97 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
                 }
             }
         }
-    } else {
+    } else if (flags & esub::PGRP) != 0 {
         // c:1110 — `else if (thisjob != -1 && (flags & ESUB_PGRP))`.
-        // WARNING (a) — pgrp/jobtab handling skipped; basic fallback only.
-        if (flags & esub::PGRP) != 0 {
-            unsafe {
-                libc::setpgid(0, 0);
+        let thisjob = crate::ported::jobs::THISJOB
+            .get()
+            .map(|m| *m.lock().unwrap())
+            .unwrap_or(-1);
+        if thisjob != -1 {
+            let lpj = list_pipe_job.load(Ordering::Relaxed);
+            let lp = list_pipe.load(Ordering::Relaxed);
+            let lpc = list_pipe_child.load(Ordering::Relaxed);
+            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                let mut guard = jt.lock().unwrap();
+                let lpj_gleader = guard
+                    .get(lpj as usize)
+                    .map(|j| j.gleader)
+                    .unwrap_or(0);
+                if lpj_gleader != 0 && (lp != 0 || lpc != 0) {
+                    // c:1111-1124 — inherit list_pipe_job's group leader.
+                    let pgid = if unsafe { libc::setpgid(0, lpj_gleader) } == -1
+                        || (unsafe { libc::killpg(lpj_gleader, 0) } == -1
+                            && std::io::Error::last_os_error().raw_os_error()
+                                == Some(libc::ESRCH))
+                    {
+                        // c:1115-1117 — primary group leader gone; this child becomes leader.
+                        let new_gl = if lpc != 0 {
+                            mypgrp.load(Ordering::Relaxed)
+                        } else {
+                            unsafe { libc::getpid() }
+                        };
+                        if let Some(j) = guard.get_mut(lpj as usize) {
+                            j.gleader = new_gl;
+                        }
+                        if let Some(j) = guard.get_mut(thisjob as usize) {
+                            j.gleader = new_gl;
+                        }
+                        unsafe { libc::setpgid(0, new_gl) };
+                        if (flags & esub::ASYNC) == 0 {
+                            unsafe { libc::tcsetpgrp(2, new_gl) }; // c:1119 attachtty
+                        }
+                        new_gl
+                    } else {
+                        lpj_gleader
+                    };
+                    if let Some(r) = retp {
+                        if (flags & esub::ASYNC) == 0 {
+                            r.gleader = pgid; // c:1122
+                            r.list_pipe_job = lpj; // c:1123
+                        }
+                    }
+                } else {
+                    // c:1126-1151 — standard group-leader-takeover path.
+                    let thisjob_gleader = guard
+                        .get(thisjob as usize)
+                        .map(|j| j.gleader)
+                        .unwrap_or(0);
+                    if thisjob_gleader == 0
+                        || unsafe { libc::setpgid(0, thisjob_gleader) } == -1
+                    {
+                        let new_gl = unsafe { libc::getpid() };
+                        if let Some(j) = guard.get_mut(thisjob as usize) {
+                            j.gleader = new_gl; // c:1138
+                        }
+                        if lpj != thisjob {
+                            let lpj_was_unset = guard
+                                .get(lpj as usize)
+                                .map(|j| j.gleader == 0)
+                                .unwrap_or(true);
+                            if lpj_was_unset {
+                                if let Some(j) = guard.get_mut(lpj as usize) {
+                                    j.gleader = new_gl; // c:1140-1141
+                                }
+                            }
+                        }
+                        unsafe { libc::setpgid(0, new_gl) }; // c:1142
+                        if (flags & esub::ASYNC) == 0 {
+                            unsafe { libc::tcsetpgrp(2, new_gl) }; // c:1144 attachtty
+                            if let Some(r) = retp {
+                                r.gleader = new_gl; // c:1146
+                                if lpj != thisjob {
+                                    r.list_pipe_job = lpj; // c:1148
+                                }
+                            }
+                        }
+                    }
+                }
             }
+        } else {
+            // No real job slot; basic setpgid fallback.
+            unsafe { libc::setpgid(0, 0) };
         }
     }
-    let _ = retp; // WARNING (a) — out-arg unfilled when pgrp branch skipped.
     if (flags & esub::FAKE) == 0 {
         // c:1153
         subsh.store(1, Ordering::Relaxed); // c:1154
