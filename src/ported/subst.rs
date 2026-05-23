@@ -6581,6 +6581,52 @@ pub fn paramsubst(
         return (full.clone(), new_pos_in_full, vec![full]);
     } // c:1885
 
+    // c:Src/subst.c:1939+ — `$+name` (no braces) is the brace-free
+    // form of `${+name}` (chkset: emit "1" if NAME is set, "0"
+    // otherwise). zsh's lexer normalizes both forms through the same
+    // paramsubst codepath because paramsubst's `+` flag arm at
+    // c:2199-2207 accepts the bare-form when there's no leading
+    // brace. zshrs's paramsubst only recognized `+` inside `${...}`.
+    //
+    // Symptom: `print -r "$+parameters"` emitted `+parameters` literal
+    // (the `$` got dropped, `+parameters` survived as raw text).
+    //
+    // Rewrite `$+NAME` → `${+NAME}` in-place and recurse so the
+    // brace-form arm (lines 2487+) handles the full flag logic.
+    if c == '+' {
+        // Walk the identifier after `+`. Same allowed-char set as
+        // the bare-name walk below: alnum + _ + the single-char
+        // specials `@ * # ?`.
+        let name_start = pos + 1;
+        let mut name_end = name_start;
+        if name_end < chars.len() {
+            let first = chars[name_end];
+            if first.is_ascii_alphanumeric() || first == '_' {
+                while name_end < chars.len()
+                    && (chars[name_end].is_ascii_alphanumeric() || chars[name_end] == '_')
+                {
+                    name_end += 1;
+                }
+            } else if matches!(first, '@' | '*' | '#' | '?') {
+                name_end += 1;
+            }
+        }
+        if name_end > name_start {
+            // Synthesize `${+NAME}` and recurse.
+            let name: String = chars[name_start..name_end].iter().collect();
+            let prefix: String = chars[..start_pos].iter().collect();
+            let suffix: String = chars[name_end..].iter().collect();
+            let rewritten = format!("{}${{+{}}}{}", prefix, name, suffix);
+            return paramsubst(
+                &rewritten,
+                prefix.chars().count(),
+                qt,
+                pf_flags,
+                ret_flags,
+            );
+        }
+    }
+
     // Simple $var (or $arr[idx] for array-element access — per
     // Src/lex.c::gettokstr, zsh accepts `$name[subscript]` as a
     // first-class array-element expansion. Without parsing the
