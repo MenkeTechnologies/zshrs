@@ -3457,6 +3457,22 @@ pub fn bin_typeset(
             if let Ok(mut tab) = paramtab().write() {
                 if let Some(pm) = tab.get_mut(arg_name) {
                     pm.level = cur_locallevel;                               // c:2575
+                    // c:2691 + c:4087 arrsetfn — flags that affect the
+                    // VALUE store (PM_UNIQUE dedup, PM_LEFT/RIGHT_B/Z
+                    // padding width) must land on pm.flags BEFORE
+                    // assignaparam → arrsetfn runs, else those
+                    // setfns see the un-flagged pm. C zsh applies
+                    // these as part of the pre-assignment stamp at
+                    // typeset_single c:2476-2479. Mirror by
+                    // pre-stamping the value-affecting subset of
+                    // `on`. The full attribute mask (PM_READONLY,
+                    // PM_EXPORTED, etc.) still lands in the
+                    // post-assign block below since those don't
+                    // change the value at write time.
+                    let pre_assign_mask: u32 = PM_UNIQUE | PM_LEFT | PM_RIGHT_B
+                        | PM_RIGHT_Z | PM_LOWER | PM_UPPER;
+                    pm.node.flags |= (on as u32 & pre_assign_mask) as i32;
+                    pm.node.flags &= !((off as u32 & pre_assign_mask) as i32);
                 }
             }
         }
