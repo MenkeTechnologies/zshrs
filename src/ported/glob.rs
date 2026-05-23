@@ -2721,6 +2721,11 @@ pub struct qualifier_set {
     /// `(T)` qualifier — append type-char (ls -F style) to every entry.
     /// Direct port of zsh/Src/glob.c:1562-1566 (`case 'T'`).
     pub list_types: bool,
+    /// `(N)` qualifier — per-glob nullglob: empty result on no-match,
+    /// no error. Direct port of zsh/Src/glob.c:1567-1569 (`case 'N'`):
+    ///   `gf_nullglob = !(sense & 1)` — set when `(N)` appears without
+    ///   the `^` toggle.
+    pub nullglob: bool,
 }
 
 /// Pattern component
@@ -2894,8 +2899,17 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         })
         .collect();
 
-    // Handle no matches
-    if results.is_empty() && !glob_isset(NULLGLOB) {
+    // Handle no matches — honor per-glob `(N)` nullglob qualifier too,
+    // not just the global NULLGLOB option. Direct port of zsh's
+    // c:1567-1569 `gf_nullglob` carrier: when the qualifier set
+    // includes `(N)`, the no-match path returns an empty result like
+    // `setopt nullglob` does globally.
+    let nullglob_per_qual = state
+        .qualifiers
+        .as_ref()
+        .map(|q| q.nullglob)
+        .unwrap_or(false);
+    if results.is_empty() && !glob_isset(NULLGLOB) && !nullglob_per_qual {
         results.push(pattern.to_string());
     }
 
@@ -3277,7 +3291,9 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 }
             }
             // Flags
-            'N' => { /* nullglob handled elsewhere */ }
+            // c:1567-1569 — `case 'N': gf_nullglob = !(sense & 1);`.
+            // Per-glob nullglob: empty result on no-match, no error.
+            'N' => qs.nullglob = !negated,
             'D' => { /* dotglob handled elsewhere */ }
             'n' => { /* numsort handled elsewhere */ }
             // (M) / (T) — set per-qualifier-set flags. glob.c:1557-1566:
