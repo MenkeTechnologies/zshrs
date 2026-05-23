@@ -3933,7 +3933,24 @@ pub fn paramsubst(
             // c:3845
             let _ = post_flags_start;
             let getlen = 1 + whichlen; // c:2588
-            let is_array_source = arrays_contains(&var_name) || assoc_contains(&var_name);
+            // c:Src/Modules/parameter.c — magic-assoc names (`builtins`,
+            // `commands`, `functions`, `aliases`, `parameters`, `options`,
+            // `modules`, `reswords`, `nameddirs`, `userdirs`, `jobtexts`,
+            // `jobdirs`, `jobstates`, `dirstack`, `errnos`, `sysparams`,
+            // `mapfile` + their `dis_*` siblings) live behind PARTAB
+            // scanfn dispatch, not in arrays/assocs storage. Treat as
+            // an array source for length computation so `${#builtins}`
+            // returns 103 (key count) instead of 0 (char count of empty
+            // scalar fallback).
+            let magic_keys: Option<Vec<String>> =
+                if !arrays_contains(&var_name) && !assoc_contains(&var_name) {
+                    crate::vm_helper::partab_scan_keys(&var_name)
+                } else {
+                    None
+                };
+            let is_array_source = arrays_contains(&var_name)
+                || assoc_contains(&var_name)
+                || magic_keys.is_some();
             let n: usize = if is_array_source {
                 // c:3849 if (isarr)
                 if getlen == 1 {
@@ -3942,6 +3959,9 @@ pub fn paramsubst(
                         arr.len() // c:3854
                     } else if let Some(map) = assoc_get(&var_name) {
                         map.len() // c:3854 (assoc len)
+                    } else if let Some(ref keys) = magic_keys {
+                        // PARTAB magic-assoc count.
+                        keys.len()
                     } else {
                         0
                     }
