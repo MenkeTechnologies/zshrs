@@ -25,7 +25,7 @@ use crate::DPUTS;
 use crate::exec_jobs::JobTable;
 use crate::ported::builtin::{SHELL_EXITING, STOPMSG};
 use crate::ported::builtins::sched::zleactive;
-use crate::ported::hashtable_h::{BIN_BG, BIN_FG, BIN_JOBS};
+use crate::ported::hashtable_h::{BIN_BG, BIN_DISOWN, BIN_FG, BIN_JOBS};
 use crate::ported::options::opt_state_set;
 use crate::ported::params::{getsparam, setsparam, unsetparam};
 use crate::ported::signals::{killjb, queue_signals, signal_block, signal_setmask, unqueue_signals, wait_for_processes};
@@ -2698,13 +2698,20 @@ pub fn bin_fg(
             unqueue_signals(); // c:2522
             return 0; // c:2523
         }
-        if func == BIN_FG || func == BIN_BG {
-            // c:2491-2499 — "no current job" gate.
+        if func == BIN_FG || func == BIN_BG || func == BIN_DISOWN {
+            // c:2491-2499 — "no current job" gate. C body covers BIN_FG/
+            // BIN_BG/BIN_DISOWN equivalently — disown with no args
+            // defaults to the current job, which must exist or the
+            // builtin errors out (exit 1).
             let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
             if curjob < 0 {
                 zwarnnam(name, "no current job"); // c:2495
                 unqueue_signals();
                 return 1; // c:2497
+            }
+            if func == BIN_DISOWN {
+                unqueue_signals();
+                return 0;
             }
             // Continue current job by sending SIGCONT via killjb(Job, sig).
             if curjob >= 0 {
