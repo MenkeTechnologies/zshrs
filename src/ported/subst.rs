@@ -3651,7 +3651,19 @@ pub fn paramsubst(
                 } else if let Ok(idx_n) = sub.parse::<i64>() {
                     // c:2926 (numeric index)
                     let len = arr.len() as i64;
-                    let i = if idx_n < 0 { len + idx_n } else { idx_n - 1 };
+                    // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
+                    // non-strict mode: `a[0]` → first element.
+                    let i = if idx_n == 0 {
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                            0 // c:2140
+                        } else {
+                            -1 // c:2148
+                        }
+                    } else if idx_n < 0 {
+                        len + idx_n
+                    } else {
+                        idx_n - 1
+                    };
                     if i >= 0 && (i as usize) < arr.len() {
                         arr[i as usize].clone()
                     } else {
@@ -3835,7 +3847,19 @@ pub fn paramsubst(
                     }
                 } else if let Ok(idx_n) = sub.parse::<i64>() {
                     let len = s_chars.len() as i64;
-                    let i = if idx_n < 0 { len + idx_n } else { idx_n - 1 };
+                    // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
+                    // non-strict mode: `s[0]` → first char.
+                    let i = if idx_n == 0 {
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                            0 // c:2140
+                        } else {
+                            -1 // c:2148
+                        }
+                    } else if idx_n < 0 {
+                        len + idx_n
+                    } else {
+                        idx_n - 1
+                    };
                     if i >= 0 && (i as usize) < s_chars.len() {
                         s_chars[i as usize].to_string()
                     } else {
@@ -6787,7 +6811,22 @@ pub fn paramsubst(
                 } else if let Ok(idx) = sub.parse::<i32>() {
                     // c:1625
                     let n = arr.len() as i32; // c:1625
-                    let i = if idx < 0 { n + idx } else { idx - 1 }; // c:1625
+                    // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
+                    // non-strict mode: `a[0]` aliases to `a[1]` (first
+                    // element). Strict mode (default) returns empty.
+                    // Without this, `setopt kshzerosubscript; a=(q);
+                    // print $a[0]` returned "" instead of "q".
+                    let i = if idx == 0 {
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                            0 // c:2140 — `end = startnextlen` (first elem)
+                        } else {
+                            -1 // c:2148 — sentinel, returns empty
+                        }
+                    } else if idx < 0 {
+                        n + idx
+                    } else {
+                        idx - 1
+                    }; // c:1625
                     if i >= 0 && (i as usize) < arr.len() {
                         // c:1625
                         arr[i as usize].clone() // c:1625
@@ -6842,7 +6881,19 @@ pub fn paramsubst(
                 } else if let Ok(idx) = sub.parse::<i32>() {
                     // c:1625
                     let n = chars_v.len() as i32; // c:1625
-                    let i = if idx < 0 { n + idx } else { idx - 1 }; // c:1625
+                    // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
+                    // non-strict mode on scalar char-index.
+                    let i = if idx == 0 {
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+                            0 // c:2140
+                        } else {
+                            -1 // c:2148
+                        }
+                    } else if idx < 0 {
+                        n + idx
+                    } else {
+                        idx - 1
+                    }; // c:1625
                     if i >= 0 && (i as usize) < chars_v.len() {
                         // c:1625
                         chars_v[i as usize].to_string() // c:1625

@@ -2841,7 +2841,7 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
             return 0;
         }
     };
-    let end: i64 = match end_str {
+    let mut end: i64 = match end_str {
         Some(s) => match s.parse() {
             Ok(n) => n,
             Err(_) => {
@@ -2859,9 +2859,16 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
 
     if start == 0 && end == 0 {
         // c:2126
-        // c:2147-2148 — KSHZEROSUBSCRIPT strict mode.
-        v.valflags |= VALFLAG_EMPTY;
-        start = -1;
+        // c:2134 — `if (isset(KSHZEROSUBSCRIPT))` non-strict mode.
+        // Treats `a[0]` as the first element (end = startnextlen,
+        // which is 1 for ASCII). c:2141-2150 strict mode keeps the
+        // VALFLAG_EMPTY + start=-1 sentinel for empty access.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+            end = 1; // c:2140 — `end = startnextlen` (1 for ASCII)
+        } else {
+            v.valflags |= VALFLAG_EMPTY; // c:2147
+            start = -1; // c:2148
+        }
     }
     // c:2156-2158 — clear scanflags for non-comma simple subscript
     // when match flags absent.
