@@ -4874,6 +4874,17 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     pm.u_hash = None;
     let cloned = pm.clone();
     drop(tab);
+    // c:Src/params.c:3262 IPDEF9 — \`argv\`/\`@\`/\`*\` are aliases for
+    // the C global \`pparams\` (the positional parameter vector).
+    // assignaparam("argv", [...]) in C writes through the array's
+    // setfn which mutates \`pparams\` directly. zshrs's pparams lives
+    // in builtin::PPARAMS; mirror the write so \`argv=(...)\` updates
+    // \$1/\$2/.../\$# correctly.
+    if name == "argv" || name == "@" || name == "*" {
+        if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+            *pp = val_final.clone();
+        }
+    }
     let _ = val_final;
     Some(cloned)
 }
