@@ -1578,3 +1578,24 @@ walk_namespace
 # head resolver has no direct C counterpart; the C source dispatches
 # inline rather than splitting compile/run.
 execcmd_compile_head
+
+# exec.rs — `execcmd_exec_done_path` / `execcmd_exec_err_path` model
+# the `done:` / `err:` GOTO LABELS at Src/exec.c:4330 / c:4366. C uses
+# `goto done` from ~12 sites inside execcmd_exec (`Src/exec.c:2900-4404`);
+# Rust has no goto, so each goto becomes a call to the corresponding
+# label-fn. The bodies are the tail-cleanup blocks (POSIX special-
+# builtin error escalation, AUTOCONTINUE restore, STTYval clear,
+# shelltime stop, newxtrerr close) — inlining at 12+ sites would
+# duplicate ~80 lines each. Same pattern as zsh's `goto fatal;` in
+# the C source: a label, not a separate function.
+execcmd_exec_done_path
+execcmd_exec_err_path
+
+# exec.rs — `dispatch_execfuncs` stands in for the C `execfuncs[]`
+# table at Src/exec.c:170-180 which dispatches by WC_CURSH..=WC_TIMED
+# to execfor / execselect / execcase / execif / execwhile / execrepeat
+# / execfuncdef / execcursh / execcond / execarith / exectry / exectime.
+# C declares `static int (*const execfuncs[])(Estate, int) = {...};` —
+# a table of function pointers, not a fn defn (hence not in
+# zsh_c_fn_names.txt).
+dispatch_execfuncs
