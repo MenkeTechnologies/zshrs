@@ -262,9 +262,16 @@ pub fn scanpmparameters(
        // re-enter paramtab without deadlock — C is single-threaded so
        // walks the live table directly.
     let entries: Vec<(String, u32, String)> = {
-        let tab = realparamtab()
+        // c:135 — C `realparamtab` walk. Rust port keeps a separate
+        // `realparamtab` static that's never been wired to the live
+        // shell param storage; the actual shell paramtab is the
+        // canonical source. Walk that instead so
+        // `${(k)parameters}` / `${parameters[(i)PAT]}` see the
+        // shell's actual params (PATH, USER, IFS, etc.). Without
+        // this redirect, every scanpmparameters call returned empty.
+        let tab = crate::ported::params::paramtab()
             .read()
-            .expect("realparamtab poisoned"); // c:135 realparamtab walk
+            .expect("paramtab poisoned");
         tab.iter()
             .filter(|(_, p)| (p.node.flags as u32 & PM_UNSET) == 0) // c:138 PM_UNSET skip
             .map(|(name, p)| {
@@ -512,8 +519,20 @@ pub fn scanpmcommands(
     // c:253 — `if (isset(HASHLISTALL)) cmdnamtab->filltable(...)`. The
     // filltable variant scans $PATH and inserts every executable into
     // cmdnamtab; without HASHLISTALL only previously-hashed entries
-    // appear. Static-link path defers the filltable side-effect until
-    // the option-state plumbing lands.
+    // appear.
+    //
+    // Mirror the C HASHLISTALL gate: when set (default in interactive
+    // and -fc modes), fill cmdnamtab from $PATH before walking it.
+    // Same fix the bin_hash -m branch already does (builtin.rs:5180+).
+    // Without this, `${commands[(i)pat]}` and `${(k)commands}` return
+    // empty for any binary the shell hasn't already `hash`'d.
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHLISTALL) {
+        if let Some(path) = getsparam("PATH") {
+            let path_arr: Vec<String> =
+                path.split(':').map(|s| s.to_string()).collect();
+            crate::ported::hashtable::fillcmdnamtable(&path_arr); // c:253
+        }
+    }
     let cmds: Vec<(String, bool, String)> = {
         let g = cmdnamtab_lock().read().unwrap();
         g.iter()
