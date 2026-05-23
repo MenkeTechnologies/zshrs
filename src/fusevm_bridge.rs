@@ -3353,20 +3353,36 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Vec::new()
             };
             // Builtins dispatch through `execbuiltin` (Src/builtin.c:442)
-            // which emits its own PS4 + name + args xtrace. To avoid
-            // double-emission, skip our emission here when the first
-            // arg is a known builtin with a registered HandlerFunc —
-            // those go through execbuiltin and will trace themselves.
+            // which emits its own PS4 + name + args xtrace. zshrs's
+            // bridge has fast-path register_builtin handlers for some
+            // builtins (BUILTIN_TRUE / BUILTIN_FALSE / BUILTIN_ECHO /
+            // BUILTIN_PRINT etc.) that return Value::Status directly
+            // WITHOUT dispatching through execbuiltin. For those,
+            // BUILTIN_XTRACE_ARGS is the only xtrace emit site.
             //
-            // Externals + builtins without HandlerFunc (still pending
-            // canonical port) keep our emission as a stand-in until
-            // they migrate over.
-            // The `prefix` IS the command name (first whitespace-token
-            // of the original cmd text). If a BUILTIN entry with a
-            // HandlerFunc matches, execbuiltin will emit xtrace there.
-            let goes_through_execbuiltin = crate::ported::builtin::BUILTINS
-                .iter()
-                .any(|b| b.node.nam == prefix && b.handlerfunc.is_some());
+            // The previous "goes_through_execbuiltin" check used the
+            // BUILTINS table to skip emission — but that's wrong for
+            // fast-path-handled names (`true` IS in BUILTINS but
+            // doesn't go through execbuiltin). Only skip when the
+            // command is dispatched via `dispatch_builtin`. The
+            // fast-path bridge handlers carry no such dispatch
+            // (they're the dispatch); enumerate them so we can
+            // skip the bridge XTRACE_ARGS for execbuiltin-bound
+            // builtins only.
+            //
+            // Names below have a fast-path bridge that bypasses
+            // execbuiltin. For these, emit xtrace HERE — execbuiltin
+            // never fires for them. Other builtins (echo/print/cd/etc.)
+            // call dispatch_builtin → execbuiltin which emits xtrace
+            // itself, so we MUST skip our emission for them.
+            const FAST_PATH_NAMES: &[&str] = &[
+                "true", "false", ":",
+            ];
+            let is_fast_path = FAST_PATH_NAMES.iter().any(|n| *n == prefix);
+            let goes_through_execbuiltin = !is_fast_path
+                && crate::ported::builtin::BUILTINS
+                    .iter()
+                    .any(|b| b.node.nam == prefix && b.handlerfunc.is_some());
             if !goes_through_execbuiltin {
                 let line = if arg_strs.is_empty() {
                     prefix
@@ -3377,10 +3393,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 //   if (!doneps4) printprompt4();
                 //   ... emit args + spaces ...
                 //   fputc('\n', xtrerr); fflush(xtrerr);
-                // We honor doneps4 via XTRACE_DONE_PS4 — if a prior
-                // XTRACE_ASSIGN this line already emitted PS4, skip
-                // it. Then reset the flag after the trailing newline
-                // so the next command starts fresh.
                 let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
                 if !already_ps4 {
                     printprompt4();
@@ -5237,8 +5249,13 @@ impl fusevm::ShellHost for ZshrsHost {
                 // `scriptname = dupstring(name)` at Src/exec.c:5903 so
                 // `%N` shows the function name. Save the outer
                 // scriptname before overwrite; restored on return.
+                // Also update the canonical `scriptname_lock()` static
+                // (port of Src/utils.c:36 file-static `scriptname`)
+                // since the prompt expander reads from there, not
+                // from exec.scriptname.
                 let prev_scriptname =
                     std::mem::replace(&mut exec.scriptname, Some(display_name.clone()));
+                crate::ported::utils::set_scriptname(Some(display_name.clone()));
                 // funcstack: prepend the function name; outermost call
                 // is at the END of the stack per zsh.
                 let prev_stack = exec.array("funcstack");
@@ -5352,7 +5369,10 @@ impl fusevm::ShellHost for ZshrsHost {
             if let Some(prev) = saved_argzero_global {
                 crate::ported::utils::set_argzero(prev);
             }
-            exec.scriptname = saved_scriptname;
+            exec.scriptname = saved_scriptname.clone();
+            // Mirror restore to canonical scriptname_lock() static
+            // (c:6064 in Src/exec.c — `scriptname = funcsave->scriptname`).
+            crate::ported::utils::set_scriptname(saved_scriptname);
             exec.prompt_funcstack.pop();
             match saved_funcstack {
                 Some(s) => {

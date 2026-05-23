@@ -487,6 +487,14 @@ lineno_lock
 shinstdin_lock
 set_scriptname
 scriptname_get
+# scriptfilename canonical Mutex<Option<String>> mirror of C's
+# `scriptfilename` global (declared in Src/init.c, listed in
+# zsh.export:356). Set at init.c:479, c:1367, c:1592, c:1667;
+# read by PS4's %x at prompt.c:932. Same accessor-pair pattern as
+# scriptname_lock — both wrap C globals with no corresponding C fn.
+scriptfilename_lock
+set_scriptfilename
+scriptfilename_get
 set_argzero
 set_noerrs
 set_locallevel

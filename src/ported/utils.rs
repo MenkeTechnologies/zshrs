@@ -7707,6 +7707,20 @@ static SCRIPTNAME: std::sync::OnceLock<Mutex<Option<String>>> =
 /// prefix when scriptname is unset.
 static ARGZERO: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
 
+/// Port of `char *scriptfilename` from `Src/init.c` (listed in
+/// `zsh.export:356`). The FILE that the current code was PARSED
+/// from. Distinct from `scriptname` (which doshfunc overrides on
+/// function entry at c:5903). `scriptfilename` stays at the outer
+/// file across function calls; PS4's `%x` reads it at
+/// `Src/prompt.c:937`.
+///
+/// Set at init.c:479 (`-c` mode → `scriptname = scriptfilename
+/// = "zsh"`), init.c:1367 (`source` enters the named file),
+/// init.c:1558+1592+1667 (save/install/restore around `.` /
+/// `source` bin_dot dispatch).
+static SCRIPTFILENAME: std::sync::OnceLock<Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
 /// Port of `char *posixzero` from `Src/params.c:76`. The original
 /// argv[0] preserved unchanged by later mutations. Used by
 /// `argzerogetfn` for `$0` under `isset(POSIXARGZERO)`.
@@ -7844,6 +7858,20 @@ pub fn set_scriptname(name: Option<String>) {
 /// prompt expander (`%N`), `bin_dot`, and ZLE source tracking.
 pub fn scriptname_get() -> Option<String> {
     scriptname_lock().lock().unwrap().clone()
+}
+
+/// Setter for `scriptfilename` — direct mirror of the C
+/// `scriptfilename` global at `Src/init.c` (zsh.export:356).
+/// Called from `bin_dot` at init.c:1592, restored at c:1667.
+pub fn set_scriptfilename(name: Option<String>) {
+    *scriptfilename_lock().lock().unwrap() = name;
+}
+
+/// Read `scriptfilename` — direct mirror of the C global.
+/// Used by PS4's `%x` (`Src/prompt.c:937`) and the function-call
+/// frame at `Src/exec.c:1613` (`fstack.filename = scriptfilename`).
+pub fn scriptfilename_get() -> Option<String> {
+    scriptfilename_lock().lock().unwrap().clone()
 }
 
 /// Read `locallevel` — function nesting depth. Routes through the
@@ -8496,6 +8524,11 @@ fn scriptname_lock() -> &'static Mutex<Option<String>> {
 // WARNING: NOT IN UTILS.C — see scriptname_lock above.
 fn argzero_lock() -> &'static Mutex<Option<String>> {
     ARGZERO.get_or_init(|| Mutex::new(None))
+}
+
+// WARNING: NOT IN UTILS.C — see scriptname_lock above.
+fn scriptfilename_lock() -> &'static Mutex<Option<String>> {
+    SCRIPTFILENAME.get_or_init(|| Mutex::new(None))
 }
 
 // WARNING: NOT IN UTILS.C — Rust-only OnceLock accessor for `posixzero`.

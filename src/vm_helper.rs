@@ -999,8 +999,12 @@ impl ShellExecutor {
             }
         }
         let mut exec = Self {
-            scriptname: None,
-            scriptfilename: None,
+            // c:Src/init.c:479 — `-c` mode: scriptname = scriptfilename
+            // = ztrdup("zsh"). Both start at the literal "zsh".
+            // dispatch_function_call overrides scriptname per c:5903;
+            // scriptfilename stays at the outer file.
+            scriptname: Some("zsh".to_string()),
+            scriptfilename: Some("zsh".to_string()),
             subshell_snapshots: Vec::new(),
             inline_env_stack: Vec::new(),
             current_command_glob_failed: std::cell::Cell::new(false),
@@ -1185,6 +1189,13 @@ impl ShellExecutor {
                 }
             }
         }
+        // c:Src/init.c:479 — `-c` mode: scriptname = scriptfilename
+        // = ztrdup("zsh"). Both globals start as the literal "zsh"
+        // (not the binary path) so PS4's %x / %N print "zsh" not
+        // "/path/to/zshrs" at the top level. Function dispatch
+        // overrides scriptname per c:5903; scriptfilename stays.
+        crate::ported::utils::set_scriptname(Some("zsh".to_string()));
+        crate::ported::utils::set_scriptfilename(Some("zsh".to_string()));
         exec
     }
 
