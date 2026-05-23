@@ -2471,6 +2471,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if val.is_empty() && !in_dq {
             return Value::Array(Vec::new());
         }
+        // c:Src/subst.c:1759 SH_WORD_SPLIT — when shwordsplit is set and
+        // we're in unquoted command-arg position (not DQ), split scalar
+        // value on IFS into multiple words. Matches BUILTIN_ARRAY_ALL's
+        // shwordsplit arm (fusevm_bridge.rs:2200). Without this, bare
+        // `$s` in `print $s` stayed a single arg even with the option
+        // set, breaking POSIX-style scalar word-splitting.
+        if !in_dq && opt_state_get("shwordsplit").unwrap_or(false) {
+            let ifs = with_executor(|exec| {
+                exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string())
+            });
+            let parts: Vec<Value> = val
+                .split(|c: char| ifs.contains(c))
+                .filter(|s| !s.is_empty())
+                .map(|s| Value::str(s.to_string()))
+                .collect();
+            if parts.is_empty() {
+                return Value::Array(Vec::new());
+            } else if parts.len() == 1 {
+                return parts.into_iter().next().unwrap();
+            } else {
+                return Value::Array(parts);
+            }
+        }
         Value::str(val)
     });
 
