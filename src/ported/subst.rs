@@ -3054,36 +3054,53 @@ pub fn paramsubst(
                         //   n: treat newlines as whitespace (LEXFLAGS_NEWLINE)
                         // Direct port of subst.c:2443-2473 — bare (Z) sets
                         // ACTIVE; sub-letters OR additional bits.
+                        // c:2444-2473 — get_strarg(++s) requires a
+                        // delimiter; `if (*t)` else `goto flagerr`. Bare
+                        // `(Z)` (no `(Z:xxx:)`-form arg) and `(Z+)` etc.
+                        // land on `)` immediately and must flagerr.
                         shsplit = LEXFLAGS_ACTIVE; // c:2443 (implicit from Z arm)
                         idx += 1; // c:2444 ++s
-                        if idx < body_chars.len() {
-                            // c:2445 if (*t)
-                            let del = body_chars[idx]; // c:2446 sav = *t
-                            idx += 1; // c:2448 while (*++s)
-                            while idx < body_chars.len()                     // c:2448
-                                && body_chars[idx] != del
-                            {
-                                // c:2448
-                                let ch = body_chars[idx]; // c:2449 switch (*s)
-                                if ch == 'c' {
-                                    // c:2450
-                                    shsplit |= LEXFLAGS_COMMENTS_KEEP;
-                                // c:2452
-                                } else if ch == 'C' {
-                                    // c:2455
-                                    shsplit |= LEXFLAGS_COMMENTS_STRIP;
-                                // c:2457
-                                } else if ch == 'n' {
-                                    // c:2460
-                                    shsplit |= LEXFLAGS_NEWLINE;
-                                    // c:2462
-                                } // c:2463
-                                idx += 1; // c:2448
-                            } // c:2469
-                            if idx < body_chars.len() {
-                                idx += 1;
-                            } // c:2444
-                        } // c:2444
+                        // c:2445 `if (*t)` else flagerr (`*t == 0`).
+                        // get_strarg returns end-of-string when no
+                        // matching delim found; the C path then takes
+                        // the else branch. In Rust: if next char is the
+                        // flag-block close `)` (or end of body), flagerr.
+                        if idx >= body_chars.len() || body_chars[idx] == ')' {
+                            zerr("bad substitution"); // c:2473 flagerr
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
+                        }
+                        let del = body_chars[idx]; // c:2446 sav = *t
+                        idx += 1; // c:2448 while (*++s)
+                        let mut found_close = false;
+                        while idx < body_chars.len()                     // c:2448
+                            && body_chars[idx] != del
+                        {
+                            // c:2448
+                            let ch = body_chars[idx]; // c:2449 switch (*s)
+                            if ch == 'c' {
+                                shsplit |= LEXFLAGS_COMMENTS_KEEP; // c:2452
+                            } else if ch == 'C' {
+                                shsplit |= LEXFLAGS_COMMENTS_STRIP; // c:2457
+                            } else if ch == 'n' {
+                                shsplit |= LEXFLAGS_NEWLINE; // c:2462
+                            } else {
+                                // c:2465-2467 default: flagerr.
+                                zerr("bad substitution");
+                                errflag_set_error();
+                                return (String::new(), new_pos, vec![]);
+                            }
+                            idx += 1; // c:2448
+                        }
+                        if idx < body_chars.len() && body_chars[idx] == del {
+                            found_close = true;
+                            idx += 1; // c:2444 past close delim
+                        }
+                        if !found_close {
+                            zerr("bad substitution"); // c:2473 flagerr
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
+                        }
                         continue; // c:2473
                     } // c:2473
                     'g' => {
