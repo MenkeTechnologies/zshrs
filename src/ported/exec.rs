@@ -8066,11 +8066,13 @@ pub fn execcmd_exec(
         );
     }
 
-    // c:3711-3718 — XTRACE prep.
-    // SUBSTRATE GAP: newxtrerr dup of stderr for xtrace — Rust port
-    // doesn't yet wire `fdtable[fileno(xtrerr)] = FDT_XTRACE` (xtrerr
-    // is `eprintln!()` through tracing). Skipped per existing port
-    // pattern.
+    // c:3711-3718 — XTRACE prep (newxtrerr stderr dup).
+    // Architectural divergence: C duplicates stderr to a new FD and
+    // marks it `FDT_XTRACE` in the fdtable so the redir loop skips it.
+    // zshrs routes xtrace output through `eprintln!()` / `tracing`
+    // instead of a duplicated fd, so the FDT_XTRACE bookkeeping has
+    // no counterpart. Not a port gap — `xtrerr is FILE*` is a C-ism
+    // intentionally replaced.
 
     // c:3720-3724 — pipeline input/output to mfds.
     if input != 0 {
