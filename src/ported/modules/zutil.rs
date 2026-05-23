@@ -417,17 +417,30 @@ pub fn printstylenode(hn: HashNode, printflags: i32) {
         return;
     }
     // c:195-211 — `zstyle -L` form: emit one line per (pat, vals) tuple.
+    //
+    // C uses quotedzputs (Src/utils.c:6464) for each of pat / style / each
+    // value. quotedzputs wraps strings in single quotes when they contain
+    // shell-special chars (e.g. `:`, `*`, space) and emits bare-quoted
+    // form (`':completion:*'`) so the output round-trips back through
+    // zsh as a literal zstyle invocation.
+    //
+    // Previous Rust port emitted `{} ` bare which produced
+    // `:completion:* menu select` — not zsh-syntax-legal and not
+    // re-feedable through eval. The canonical form is
+    // `zstyle ':completion:*' menu select`.
+    use crate::ported::utils::quotedzputs;
     if let Ok(t) = zstyletab.lock() {
         for (pat, style, vals) in t.list(None) {
             // c:196-208
             if style != nam {
                 continue;
             }
-            let _ = write!(stdout, "zstyle ");
-            let _ = write!(stdout, "{} ", pat); // c:201
-            let _ = write!(stdout, "{}", style); // c:201
+            let _ = write!(stdout, "zstyle "); // c:201
+            let _ = write!(stdout, "{}", quotedzputs(&pat)); // c:202
+            let _ = write!(stdout, " "); // c:203
+            let _ = write!(stdout, "{}", quotedzputs(&style)); // c:204
             for v in &vals {
-                let _ = write!(stdout, " {}", v); // c:206-209
+                let _ = write!(stdout, " {}", quotedzputs(v)); // c:206-209
             }
             let _ = writeln!(stdout); // c:210
         }
@@ -819,7 +832,14 @@ pub fn bin_zstyle(
     _func: i32,
 ) -> i32 {
     // c:495-540 — flag dispatch backed by the global zstyletab.
-    if args.is_empty() {
+    // c:495-498 — `args.empty()` means "no positional args"; the
+    // canonical bare-`zstyle` list form. zsh's C body checks
+    // listflags / `-L`/`-l` BEFORE this so the -L/-l output can
+    // still flow through with no positional args (the form
+    // `zstyle -L`). Mirror by gating this bare-list arm on flags
+    // being clear of -L/-l; otherwise fall through to the
+    // OPT_ISSET(L|l) arm below.
+    if args.is_empty() && !OPT_ISSET(ops, b'L') && !OPT_ISSET(ops, b'l') {
         // c:495
         // c:496 — list mode: walk zstyletab printing each entry.
         let t = match zstyletab.lock() {
@@ -839,7 +859,14 @@ pub fn bin_zstyle(
     }
     if OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'l') {
         // c:511
-        // -L: emit as replayable `zstyle` commands.
+        // -L: emit as replayable `zstyle` commands. C uses quotedzputs
+        // (Src/Modules/zutil.c:201-209) for the pattern, style name, and
+        // each value so the result round-trips through eval as a literal
+        // zstyle invocation. Previous Rust port emitted bare strings:
+        //
+        //   zshrs (before): :completion:* menu select
+        //   zsh:            zstyle ':completion:*' menu select
+        use crate::ported::utils::quotedzputs;
         let t = match zstyletab.lock() {
             Ok(g) => g,
             Err(_) => return 1,
@@ -847,11 +874,11 @@ pub fn bin_zstyle(
         let mut out = std::io::stdout().lock();
         for (pat, style, vals) in t.list(None) {
             // c:511
-            let _ = write!(out, "zstyle {} {}", pat, style);
+            let _ = write!(out, "zstyle {} {}", quotedzputs(&pat), quotedzputs(&style)); // c:201-204
             for v in &vals {
-                let _ = write!(out, " {}", v);
+                let _ = write!(out, " {}", quotedzputs(v)); // c:206-209
             }
-            let _ = writeln!(out);
+            let _ = writeln!(out); // c:210
         }
         return 0; // c:514
     }
