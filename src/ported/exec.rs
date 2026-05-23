@@ -4119,8 +4119,25 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
             let _ = zclose(pipes[(1 - out) as usize]); // c:5138
             return -1; // c:5139
         }
-        // c:5141-5142 — `if (!nullexec) addproc(pid, ...)` — see WARNING (a).
-        let _ = nullexec; // not yet routed through addproc (sig drift)
+        // c:5141-5142 — `if (!nullexec) addproc(pid, NULL, 1, &bgtime, -1, -1);`
+        if nullexec == 0 {
+            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                let mut guard = jt.lock().unwrap();
+                let tj = crate::ported::jobs::THISJOB
+                    .get()
+                    .map(|m| *m.lock().unwrap())
+                    .unwrap_or(-1);
+                if tj >= 0 {
+                    if let Some(j) = guard.get_mut(tj as usize) {
+                        crate::ported::jobs::addproc(
+                            j, pid, "", true, // aux=1 for proc subst
+                            Some(std::time::Instant::now()),
+                            -1, -1,
+                        );
+                    }
+                }
+            }
+        }
         procsubstpid.store(pid, Ordering::Relaxed); // c:5143
         return pipes[(1 - out) as usize]; // c:5144
     }
@@ -6467,8 +6484,12 @@ pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> 
         }
         state.pc += 1;
         code = next_code;
-        // TODO faithful: pipe() between stages + fork() per cmd —
-        // multi-stage pipeline isolation pending.
+        // Multi-stage pipe() + fork() per cmd is now ported via
+        // `execpline2` (c:1991-2040). Callers wanting full pipeline
+        // isolation route through that path; this inline dispatch
+        // serves the single-process simple-command tree-walker used
+        // by the fusevm bytecode shim, which does its own
+        // pipe/fork via `OpPipeCreate`/`OpFork` ops.
     }
     LASTVAL.store(last_status, Ordering::Relaxed);
     last_status
