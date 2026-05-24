@@ -1,6 +1,16 @@
-//! Port of `_options_unset` — complete currently unset options. Moved
-//! from `compsys/library.rs`. Renamed from `options_unset` to mirror
-//! zsh shell function name `_options_unset`.
+//! Port of `_options_unset` — complete currently unset options.
+//!
+//! Local shell reference: `compsys/functions/Zsh/Type/_options_unset`
+//! (system copy `/opt/homebrew/share/zsh/functions/_options_unset`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  5  list=( ${(@k)options[(R)off]} )
+//!  7  _wanted options expl 'unset option' compadd "$@" -a list
+//! ```
+//!
+//! Faithful Rust port: mirrors `_options_set` but inverts the
+//! filter (`!is_set` instead of `is_set`).
 
 use crate::compcore::CompletionState;
 

@@ -1,6 +1,29 @@
-//! Port of `_tilde_files` — complete files with tilde expansion. Moved
-//! from `compsys/library.rs`. Renamed from `tilde_files` to mirror zsh
-//! shell function name `_tilde_files`.
+//! Port of `_tilde_files` — complete files with tilde expansion.
+//!
+//! Local shell reference: `compsys/functions/Unix/Type/_tilde_files`
+//! (system copy `/opt/homebrew/share/zsh/functions/_tilde_files`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  5  if [[ ( -o magicequalsubst && "$IPREFIX" = *\= ) || $argv[(I)-W*] -ne 0 ]]; then
+//!  6    _files "$@"
+//!  7    return
+//!  8  fi
+//! 10  case "$PREFIX" in
+//! 11  \~/*)
+//! 12    IPREFIX="${IPREFIX}${HOME}/"
+//! 13    PREFIX="${PREFIX[3,-1]}"
+//! 14    _files "$@" -W "${HOME}"
+//! ```
+//!
+//! Upstream handles three tilde shapes: `~/PATH` (your home),
+//! `~user/PATH` (user's home via passwd), and `~` (just expand to
+//! $HOME).
+//!
+//! Simplified Rust port: handles `~/` via $HOME env. Other shapes
+//! (`~user/`, named-directories) fall through. Pinned by the
+//! `iprefix_cleared_after_call` test which checks the save/restore
+//! semantic for state.params.iprefix.
 
 use crate::compcore::CompletionState;
 

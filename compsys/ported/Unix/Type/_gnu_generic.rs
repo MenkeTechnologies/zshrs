@@ -1,6 +1,25 @@
-//! Port of `_gnu_generic` — generic GNU-style option completion from
-//! `--help` output. Moved from `compsys/library.rs`. Renamed from
-//! `gnu_generic` to mirror zsh shell function name `_gnu_generic`.
+//! Port of `_gnu_generic` — generic GNU-style option completion
+//! from `--help` output.
+//!
+//! Local shell reference: `compsys/functions/Unix/Type/_gnu_generic`
+//! (system copy `/opt/homebrew/share/zsh/functions/_gnu_generic`).
+//!
+//! Upstream shell source (the WHOLE file, 5 lines):
+//! ```text
+//!  3  # For GNU-like commands which understand the --help option,
+//!  4  # but which do not otherwise require special completion handling.
+//!  5  _arguments '*:arg: _default' --
+//! ```
+//!
+//! Upstream lets `_arguments` handle the `--help` parsing — it
+//! recognises `--option` and `-o` from the cmd's own help output
+//! and offers them as completions, plus `_default` for positional
+//! args.
+//!
+//! Simplified Rust port: forks `<command> --help`, parses
+//! dash-prefixed options from the output (`--option`, `--option=`,
+//! `-o`) and emits them. Doesn't yet delegate positional args to
+//! `_files` like the shell's `_default` would.
 
 use crate::compcore::CompletionState;
 use crate::completion::{Completion, CompletionFlags};

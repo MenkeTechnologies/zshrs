@@ -1,6 +1,28 @@
-//! Port of `_options` — complete shell options. Moved from
-//! `compsys/library.rs`. Renamed from `options` to mirror zsh shell
-//! function name `_options`.
+//! Port of `_options` — complete shell options.
+//!
+//! Local shell reference: `compsys/functions/Zsh/Type/_options`
+//! (system copy `/opt/homebrew/share/zsh/functions/_options`).
+//!
+//! Upstream shell source (the WHOLE file, 7 lines):
+//! ```text
+//!  3  # This should be used to complete all option names.
+//!  5  local expl
+//!  7  _wanted zsh-options expl 'zsh option' \
+//!  8      compadd "$@" -M 'B:[nN][oO]= M:_= M:{A-Z}={a-z}' -k - options
+//! ```
+//!
+//! Upstream uses a clever matchspec:
+//!   `B:[nN][oO]=`    — `no` prefix treated as absent (so
+//!                      EXTENDED_GLOB matches noEXTENDED_GLOB)
+//!   `M:_=`           — underscores match any char
+//!   `M:{A-Z}={a-z}`  — case-fold
+//!
+//! Then `compadd -k options` pulls names from `$options` (zsh
+//! built-in associative array).
+//!
+//! Simplified Rust port: takes a `&[(name, is_set)]` slice (caller
+//! pulls from runtime), emits each with `name (set)` / `name (unset)`
+//! disp. Matchspec handling deferred to the compadd matching layer.
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;

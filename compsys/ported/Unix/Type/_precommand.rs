@@ -1,6 +1,26 @@
-//! Port of `_precommand` — complete after a precommand (sudo, nohup,
-//! etc.). Moved from `compsys/library.rs`. Renamed from `precommand` to
-//! mirror zsh shell function name `_precommand`.
+//! Port of `_precommand` — complete after a precommand (sudo,
+//! nohup, time, …).
+//!
+//! Local shell reference: `compsys/functions/Unix/Type/_precommand`
+//! (system copy `/opt/homebrew/share/zsh/functions/_precommand`).
+//!
+//! Upstream shell source (the WHOLE file, 5 lines):
+//! ```text
+//!  1  #compdef - nohup eval time rusage noglob nocorrect catchsegv aoss hilite eatmydata
+//!  3  shift words
+//!  4  (( CURRENT-- ))
+//!  5  _normal -p $service
+//! ```
+//!
+//! Upstream pops the precommand off `$words`, decrements CURRENT
+//! (since we're now one word back), and runs `_normal -p $service`
+//! (`-p` tells _normal "this is precommand dispatch").
+//!
+//! Simplified Rust port: gates on `current > 1` (already past the
+//! precommand position) and dispatches to `_normal`. The `_normal`
+//! port currently returns NoMatch until the comps table is wired
+//! through — pinned by the
+//! `current_gt_1_delegates_to_normal` test.
 
 use crate::base::{_normal, CompleterResult, MainCompleteState};
 
