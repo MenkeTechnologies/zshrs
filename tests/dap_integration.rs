@@ -116,24 +116,6 @@ impl DapHandle {
         None
     }
 
-    /// Drain messages until an `output` event whose text contains `needle`
-    /// arrives, or timeout expires.
-    fn wait_output_containing(&mut self, needle: &str, timeout: Duration) -> Option<String> {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            let v = self.recv_one()?;
-            let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
-            let ev = v.get("event").and_then(|x| x.as_str()).unwrap_or("");
-            if ty == "event" && ev == "output" {
-                let txt = v["body"]["output"].as_str().unwrap_or("");
-                if txt.contains(needle) {
-                    return Some(txt.to_string());
-                }
-            }
-        }
-        None
-    }
-
     fn recv_one(&mut self) -> Option<Value> {
         let mut content_length: Option<usize> = None;
         loop {
@@ -224,6 +206,11 @@ fn stacktrace_returns_one_frame_with_program_path() {
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     let path = tmp.path().to_path_buf();
     std::fs::write(&path, "echo hello\n").expect("write program");
+    // The new in-process DAP canonicalizes the program path on
+    // launch (so setBreakpoints lookups hit regardless of relative
+    // vs absolute path); the test's source path is already
+    // canonical via NamedTempFile so this is a no-op match.
+    let canon = std::fs::canonicalize(&path).expect("canonicalize");
     let _ = dap.request(
         "launch",
         json!({
@@ -240,7 +227,7 @@ fn stacktrace_returns_one_frame_with_program_path() {
     );
     let frames = body["stackFrames"].as_array().expect("frames");
     assert_eq!(frames.len(), 1, "expected 1 frame, got: {:?}", frames);
-    assert_eq!(frames[0]["source"]["path"], json!(path.to_string_lossy()));
+    assert_eq!(frames[0]["source"]["path"], json!(canon.to_string_lossy()));
     dap.shutdown();
 }
 
@@ -296,15 +283,19 @@ fn evaluate_runs_inline_zshrs_command() {
 }
 
 #[test]
-fn launch_streams_program_stdout_as_output_events_and_terminates() {
+fn launch_emits_terminated_event_after_program_finishes() {
+    // New in-process DAP runs the script directly via ShellExecutor,
+    // not as a subprocess. Stdout / stderr go to the DAP process's own
+    // stdio (which IntelliJ's OSProcessHandler captures in the IDE
+    // Console) — NOT through DAP `output` events. We just check that
+    // a `terminated` event fires after the script finishes.
     let mut dap = DapHandle::spawn();
     let _ = dap.request("initialize", json!({}));
     let _ = dap.wait_event("initialized", Duration::from_secs(2));
 
-    // Create a script that prints a unique marker so we can match it.
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     let path = tmp.path().to_path_buf();
-    std::fs::write(&path, "print -r -- ZSHRS_DAP_MARKER_42\n").expect("write program");
+    std::fs::write(&path, "true\n").expect("write program");
 
     let _ = dap.request(
         "launch",
@@ -315,24 +306,79 @@ fn launch_streams_program_stdout_as_output_events_and_terminates() {
         }),
     );
 
-    let got = dap.wait_output_containing("ZSHRS_DAP_MARKER_42", Duration::from_secs(8));
-    assert!(got.is_some(), "no output event with marker text");
-
     let term = dap.wait_event("terminated", Duration::from_secs(8));
-    assert!(term.is_some(), "no `terminated` event after child exit");
+    assert!(term.is_some(), "no `terminated` event after script finish");
     dap.shutdown();
 }
 
 #[test]
-fn pause_emits_stopped_event() {
+fn breakpoint_actually_pauses_and_continue_resumes() {
+    // The REAL test of the new DAP architecture. Register a
+    // breakpoint at line 2, launch, expect `stopped` reason=breakpoint
+    // at that exact line, send `continue`, expect `terminated`.
     let mut dap = DapHandle::spawn();
     let _ = dap.request("initialize", json!({}));
     let _ = dap.wait_event("initialized", Duration::from_secs(2));
-    let _ = dap.request("pause", json!({ "threadId": 1 }));
-    let body = dap.wait_event("stopped", Duration::from_secs(2));
-    let body = body.expect("no stopped event");
-    assert_eq!(body["reason"], json!("pause"));
-    assert_eq!(body["threadId"], json!(1));
+
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    let path = tmp.path().to_path_buf();
+    let canon = std::fs::canonicalize(&path).expect("canonicalize");
+    std::fs::write(
+        &path,
+        "echo line1\necho line2\necho line3\necho line4\n",
+    )
+    .expect("write program");
+
+    let _ = dap.request(
+        "setBreakpoints",
+        json!({
+            "source": { "path": canon.to_string_lossy() },
+            "breakpoints": [{ "line": 2 }],
+        }),
+    );
+    let _ = dap.request("configurationDone", json!({}));
+    let _ = dap.request(
+        "launch",
+        json!({
+            "program": canon.to_string_lossy(),
+            "args": [],
+            "cwd": std::env::temp_dir().to_string_lossy(),
+        }),
+    );
+
+    let body = dap
+        .wait_event("stopped", Duration::from_secs(8))
+        .expect("breakpoint never fired — DAP `stopped` event not received");
+    assert_eq!(
+        body["reason"],
+        json!("breakpoint"),
+        "wrong stop reason: {:?}",
+        body,
+    );
+    let text = body["text"].as_str().unwrap_or("");
+    assert!(
+        text.ends_with(":2"),
+        "stopped at wrong line: text={:?}",
+        text,
+    );
+
+    let _ = dap.request("continue", json!({ "threadId": 1 }));
+    let term = dap.wait_event("terminated", Duration::from_secs(8));
+    assert!(term.is_some(), "no `terminated` after continue");
+    dap.shutdown();
+}
+
+#[test]
+fn pause_request_succeeds_without_running_program() {
+    // Before launch, `pause` just sets the pause-request flag — no
+    // `stopped` event fires until the executor reaches `check_line`.
+    // The response must still succeed though.
+    let mut dap = DapHandle::spawn();
+    let _ = dap.request("initialize", json!({}));
+    let _ = dap.wait_event("initialized", Duration::from_secs(2));
+    let body = dap.request("pause", json!({ "threadId": 1 }));
+    // pause response body is empty json — success is what matters.
+    assert!(body.is_object());
     dap.shutdown();
 }
 
