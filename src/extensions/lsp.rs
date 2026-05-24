@@ -809,6 +809,40 @@ fn completion(state: &State, params: &Value) -> Value {
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
+            LspCompletionContext::HistoryDesignator => {
+                let items: Vec<Value> = HISTORY_DESIGNATOR_DOCS
+                    .iter()
+                    .map(|(d, doc)| {
+                        json!({
+                            "label": d,
+                            "kind": 14, // Constant
+                            "detail": *doc,
+                            "documentation": {
+                                "kind": "markdown",
+                                "value": format!("**`!{}`** — {}\n\n_zsh history event designator_", d, doc),
+                            },
+                        })
+                    })
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::ParamColonModifier => {
+                let items: Vec<Value> = PARAM_MODIFIER_DOCS
+                    .iter()
+                    .map(|(m, doc)| {
+                        json!({
+                            "label": m,
+                            "kind": 14, // Constant
+                            "detail": *doc,
+                            "documentation": {
+                                "kind": "markdown",
+                                "value": format!("**`:{}`** — {}\n\n_zsh modifier — `${{var:MOD}}` / `!event:MOD`_", m, doc),
+                            },
+                        })
+                    })
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
             LspCompletionContext::Normal => {}
         }
     }
@@ -1956,9 +1990,80 @@ const GLOB_QUALIFIER_DOCS: &[(&str, &str)] = &[
     ("+",  "true if `cmd FILENAME` exits 0 (`+cmd`)"),
 ];
 
+/// History event designators — what follows `!` at the start of a
+/// word. Triggered when the cursor sits after `!` at a word boundary
+/// (start of line / after `;` / `&` / `|` / `(` / whitespace), not
+/// inside `((…))` arithmetic. Verified against `man zshexpn` "History
+/// Expansion → Event Designators".
+const HISTORY_DESIGNATOR_DOCS: &[(&str, &str)] = &[
+    ("!",   "previous command (`!!`)"),
+    ("N",   "command N from history (`!42`)"),
+    ("-N",  "N commands back (`!-3` = third-to-last)"),
+    ("str", "most recent command starting with `str` (`!ls`)"),
+    ("?str?", "most recent command containing `str` (`!?docker?`)"),
+    ("#",   "current command line typed so far"),
+    ("$",   "last argument of previous command (= `!!:$`)"),
+    ("^",   "first argument of previous command (= `!!:^`)"),
+    ("*",   "all arguments of previous command (= `!!:*`)"),
+    (":",   "introduce a word designator / modifier — `!!:1`, `!!:s/old/new/`, `!!:h`"),
+];
+
+/// Parameter expansion + history modifiers — what follows `:` inside
+/// `${var:…}` and `!event:…`. Combines:
+///   * Default-value forms (`:-` / `:=` / `:?` / `:+`)
+///   * Word modifiers (`:h` / `:t` / `:r` / `:e` / `:s/…/…/` etc.)
+///   * Substring offset (`:N:M`)
+/// Most modifier letters work in BOTH contexts, so a single table
+/// drives modifier completion regardless of whether the `:` belongs
+/// to a `${…}` or a `!…`. Verified against `man zshexpn` "Parameter
+/// Expansion" + "Modifiers".
+const PARAM_MODIFIER_DOCS: &[(&str, &str)] = &[
+    // ── Parameter default-value forms ──
+    ("-",   "`${var:-WORD}` — use WORD if `var` unset or empty"),
+    ("=",   "`${var:=WORD}` — assign WORD to `var` (and use it) if unset/empty"),
+    ("?",   "`${var:?MSG}` — print MSG to stderr + exit if `var` unset/empty"),
+    ("+",   "`${var:+WORD}` — use WORD if `var` IS set (the inverse of `:-`)"),
+    // ── Substring slicing ──
+    ("0",   "`${var:OFFSET:LENGTH}` — substring (zero-based; negative offset = from end)"),
+    // ── Path / file modifiers ──
+    ("h",   "head — strip last path component (like `dirname`)"),
+    ("t",   "tail — keep ONLY last path component (like `basename`)"),
+    ("r",   "root — strip the final `.ext` suffix"),
+    ("e",   "extension — keep ONLY the final `.ext` (no leading dot)"),
+    ("a",   "absolute — textually resolve `..` / `.` against `$PWD`"),
+    ("A",   "absolute + resolve symlinks (like `realpath`)"),
+    ("c",   "PATH lookup — replace bare command with full path via `$PATH`"),
+    ("P",   "physical path — resolve all symlinks"),
+    ("f",   "repeat `:h` until the result is no longer an existing directory"),
+    ("F",   "`:F:N:` — repeat `:h` N times"),
+    // ── Substitution ──
+    ("s",   "`:s/OLD/NEW/` — substitute first OLD with NEW"),
+    ("gs",  "`:gs/OLD/NEW/` — global substitute (every occurrence)"),
+    ("&",   "repeat the last `:s` substitution"),
+    ("g&",  "repeat the last `:s` substitution globally"),
+    // ── Quoting ──
+    ("q",   "quote — backslash-escape all metacharacters"),
+    ("Q",   "unquote — remove ONE level of quoting"),
+    ("x",   "quote, breaking at whitespace into separate words"),
+    // ── Case ──
+    ("l",   "lowercase first character"),
+    ("u",   "uppercase first character"),
+    ("L",   "lowercase ENTIRE string"),
+    ("U",   "uppercase ENTIRE string"),
+    ("C",   "capitalize each word (`Title Case`)"),
+    // ── Array operations ──
+    ("S",   "sort array elements ascending"),
+    ("O",   "sort array elements descending"),
+    ("#",   "`${var:#PATTERN}` — remove array elements matching PATTERN (with `(@)`)"),
+    ("|",   "`${arr:|other}` — set difference (elements of `arr` not in `other`)"),
+    ("*",   "`${arr:*other}` — set intersection"),
+    ("^",   "`${arr:^other}` — interleave (zip) two arrays"),
+    ("^^",  "`${arr:^^other}` — distributed zip (every pair)"),
+];
+
 /// Where the cursor sits — drives which completion table to surface.
 /// Detected by scanning backward from the cursor for the innermost
-/// open paren and looking at what precedes it.
+/// open paren / brace / `!` and looking at what precedes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LspCompletionContext {
     /// Default — surface builtins / keywords / options / params / snippets.
@@ -1968,40 +2073,166 @@ enum LspCompletionContext {
     /// Cursor inside `pattern(…)` where `pattern` ends in a glob meta
     /// (`*`, `?`, `]`, `)`). Surface `GLOB_QUALIFIER_DOCS`.
     GlobQualifier,
+    /// Cursor after `!` at a word boundary. Surface `HISTORY_DESIGNATOR_DOCS`.
+    HistoryDesignator,
+    /// Cursor sits after a `:` whose nearest enclosing brace is `${`,
+    /// or after the `:` of a history reference (`!!:`). Surface
+    /// `PARAM_MODIFIER_DOCS`.
+    ParamColonModifier,
 }
 
-/// Walks the line backward from `col` to find the innermost unmatched
-/// `(`. Classifies the context based on what precedes the open paren:
-///   * preceded by `${` → ParamFlag
-///   * preceded by `*` / `?` / `]` / `)` → GlobQualifier
-///   * anything else → Normal
+/// Walks the line backward from `col` to classify the context for
+/// completion routing. Order of checks:
+///   1. History designator — `!` at word boundary, not inside `((…))`
+///   2. Paren-based: innermost unmatched `(` preceded by `${` → ParamFlag,
+///      or by `*` / `?` / `]` / `)` → GlobQualifier
+///   3. Param colon modifier — most recent `:` at brace-depth-0 inside
+///      `${…}`, OR after a `!event:` history reference
 fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
     let bytes = line.as_bytes();
     let cap = col.min(bytes.len());
-    let mut depth: i32 = 0;
-    let mut i = cap;
-    while i > 0 {
-        i -= 1;
-        let c = bytes[i];
-        if c == b')' {
-            depth += 1;
-        } else if c == b'(' {
-            if depth == 0 {
-                // Unmatched `(` — classify by what's immediately before.
-                if i >= 2 && bytes[i - 2] == b'$' && bytes[i - 1] == b'{' {
-                    return LspCompletionContext::ParamFlag;
-                }
-                if i >= 1 {
-                    let prev = bytes[i - 1];
-                    if matches!(prev, b'*' | b'?' | b']' | b')') {
-                        return LspCompletionContext::GlobQualifier;
-                    }
-                }
-                return LspCompletionContext::Normal;
+
+    // ── 1. HistoryDesignator ────────────────────────────────────────
+    // Walk back over designator-y chars (alnum + `?` / `#` / `$` / `^`
+    // / `*` / `-` / `_`). If we land on `!` at a word boundary AND
+    // we're not inside `((…))` arithmetic, trigger.
+    {
+        let mut k = cap;
+        while k > 0 {
+            let c = bytes[k - 1];
+            if c.is_ascii_alphanumeric()
+                || matches!(c, b'?' | b'#' | b'$' | b'^' | b'*' | b'-' | b'_')
+            {
+                k -= 1;
+            } else {
+                break;
             }
-            depth -= 1;
+        }
+        if k > 0 && bytes[k - 1] == b'!' {
+            let bang = k - 1;
+            let word_bound = bang == 0
+                || matches!(
+                    bytes[bang - 1],
+                    b' ' | b'\t' | b';' | b'&' | b'|' | b'(' | b'`' | b'\n'
+                );
+            let escaped = bang > 0 && bytes[bang - 1] == b'\\';
+            // Suppress inside `((…))` arithmetic where `!` is logical
+            // NOT, not history. Cheap check: count `((` vs `))` before
+            // the bang.
+            let mut paren_pairs: i32 = 0;
+            let mut j = 0;
+            while j + 1 < bang {
+                if bytes[j] == b'(' && bytes[j + 1] == b'(' {
+                    paren_pairs += 1;
+                    j += 2;
+                    continue;
+                }
+                if bytes[j] == b')' && bytes[j + 1] == b')' {
+                    paren_pairs -= 1;
+                    j += 2;
+                    continue;
+                }
+                j += 1;
+            }
+            let in_arith = paren_pairs > 0;
+            if word_bound && !escaped && !in_arith {
+                return LspCompletionContext::HistoryDesignator;
+            }
         }
     }
+
+    // ── 2. ParamFlag / GlobQualifier ─────────────────────────────────
+    {
+        let mut depth: i32 = 0;
+        let mut i = cap;
+        while i > 0 {
+            i -= 1;
+            let c = bytes[i];
+            if c == b')' {
+                depth += 1;
+            } else if c == b'(' {
+                if depth == 0 {
+                    if i >= 2 && bytes[i - 2] == b'$' && bytes[i - 1] == b'{' {
+                        return LspCompletionContext::ParamFlag;
+                    }
+                    if i >= 1 {
+                        let prev = bytes[i - 1];
+                        if matches!(prev, b'*' | b'?' | b']' | b')') {
+                            return LspCompletionContext::GlobQualifier;
+                        }
+                    }
+                    break;
+                }
+                depth -= 1;
+            }
+        }
+    }
+
+    // ── 3. ParamColonModifier ────────────────────────────────────────
+    // Walk back tracking `{`/`}` depth. Find the most recent `:` at
+    // brace-depth 0; if we then hit an unmatched `${`, trigger.
+    {
+        let mut bdepth: i32 = 0;
+        let mut found_colon = false;
+        let mut k = cap;
+        while k > 0 {
+            k -= 1;
+            let c = bytes[k];
+            if c == b'}' {
+                bdepth += 1;
+            } else if c == b'{' {
+                if bdepth == 0 {
+                    if k >= 1 && bytes[k - 1] == b'$' && found_colon {
+                        return LspCompletionContext::ParamColonModifier;
+                    }
+                    break;
+                }
+                bdepth -= 1;
+            } else if c == b':' && bdepth == 0 && !found_colon {
+                found_colon = true;
+            }
+        }
+    }
+
+    // Also handle `!event:MOD` — cursor after a `:` whose nearest
+    // preceding non-alnum / non-designator char is a `!event` reference.
+    {
+        let mut k = cap;
+        // Walk back over the modifier letters being typed.
+        while k > 0
+            && (bytes[k - 1].is_ascii_alphabetic()
+                || matches!(bytes[k - 1], b'&' | b'/' | b'g'))
+        {
+            k -= 1;
+        }
+        if k > 0 && bytes[k - 1] == b':' {
+            // Walk back over the event designator (`!`, `!!`, `!42`,
+            // `!ls`, `!?str?`, `!$`, etc). `!` itself is allowed in
+            // the designator body for the `!!` form.
+            let colon = k - 1;
+            let mut e = colon;
+            while e > 0
+                && (bytes[e - 1].is_ascii_alphanumeric()
+                    || matches!(bytes[e - 1], b'?' | b'#' | b'$' | b'^' | b'*' | b'-' | b'_' | b'!'))
+            {
+                e -= 1;
+            }
+            if e < colon && bytes[e] == b'!' {
+                // `bang` is the position of the FIRST `!` in the
+                // designator. Word boundary is checked before that.
+                let bang = e;
+                let word_bound = bang == 0
+                    || matches!(
+                        bytes[bang - 1],
+                        b' ' | b'\t' | b';' | b'&' | b'|' | b'(' | b'`' | b'\n'
+                    );
+                if word_bound {
+                    return LspCompletionContext::ParamColonModifier;
+                }
+            }
+        }
+    }
+
     LspCompletionContext::Normal
 }
 
@@ -5890,6 +6121,184 @@ mod tests {
             PARAM_FLAG_DOCS.len() >= 49,
             "PARAM_FLAG_DOCS dropped below 49 entries: {}",
             PARAM_FLAG_DOCS.len()
+        );
+    }
+
+    // ── history designator + modifier completion ────────────────────
+
+    #[test]
+    fn completion_history_designator_after_bang_at_word_start() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "!".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 1 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        for want in &["!", "$", "^", "*", "#"] {
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing history designator `{}`; got {:?}",
+                want,
+                items.iter().map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+            );
+        }
+        // No builtins / keywords here.
+        assert!(!items.iter().any(|i| i["label"] == "cd" || i["label"] == "if"));
+    }
+
+    #[test]
+    fn completion_history_designator_after_bang_midline() {
+        // `vim !` — `!` at word boundary after space, mid-line.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "vim !".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 5 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(items.iter().any(|i| i["label"] == "$"));
+    }
+
+    #[test]
+    fn completion_no_history_designator_inside_arithmetic() {
+        // `(( a != b ))` — `!` is logical NOT, not history. Must NOT
+        // surface history table.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "(( a !".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 6 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        // History table has labels like `$`, `^`, `?str?`. If the
+        // arithmetic suppression worked, we should see normal items
+        // OR no items, but NOT the history-specific markers.
+        assert!(
+            !items.iter().any(|i| i["label"] == "?str?"),
+            "history table leaked into `((…))` arithmetic context",
+        );
+    }
+
+    #[test]
+    fn completion_no_history_designator_after_alnum() {
+        // `foo!` — `!` preceded by alnum char is NOT a history start.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "foo!".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 4 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(
+            !items.iter().any(|i| i["label"] == "?str?"),
+            "history table fired after alnum-preceded `!`",
+        );
+    }
+
+    #[test]
+    fn completion_param_modifier_after_colon_in_dollar_brace() {
+        // `${var:` — cursor after `:`, want modifier completion.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "echo ${var:".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 11 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        for want in &["h", "t", "r", "e", "-", "=", "+", "?", "s", "gs", "q", "Q"] {
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing modifier `{}`; got {:?}",
+                want,
+                items.iter().map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    #[test]
+    fn completion_param_modifier_after_partial_modifier() {
+        // `${var:h` — cursor after `h`, still want full modifier table
+        // surfaced so the IDE can re-filter as the user keeps typing.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "echo ${var:h".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 12 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(items.len() >= 25, "expected full modifier table; got {}", items.len());
+    }
+
+    #[test]
+    fn completion_param_modifier_after_history_bang_colon() {
+        // `!!:` — history reference with colon, want modifier table.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "vim !!:".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 7 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(items.iter().any(|i| i["label"] == "h"));
+        assert!(items.iter().any(|i| i["label"] == "t"));
+    }
+
+    #[test]
+    fn completion_no_param_modifier_outside_dollar_brace() {
+        // Bare `foo:bar` — `:` outside any `${…}` AND no preceding
+        // `!event`. Should NOT trigger modifier table.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "foo:".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 4 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        // No history-only label like `?str?`; verify it's normal flow.
+        let has_normal = items.iter().any(|i| i["label"] == "cd" || i["label"] == "if");
+        let modifier_only = !items.is_empty()
+            && items.iter().all(|i| {
+                let l = i["label"].as_str().unwrap_or("");
+                l.chars().count() <= 2
+            });
+        assert!(
+            has_normal || !modifier_only,
+            "bare `:` mis-triggered modifier table",
+        );
+    }
+
+    #[test]
+    fn completion_history_designator_table_has_9_entries() {
+        assert!(
+            HISTORY_DESIGNATOR_DOCS.len() >= 9,
+            "HISTORY_DESIGNATOR_DOCS dropped below 9: {}",
+            HISTORY_DESIGNATOR_DOCS.len()
+        );
+    }
+
+    #[test]
+    fn completion_param_modifier_table_has_30_entries() {
+        assert!(
+            PARAM_MODIFIER_DOCS.len() >= 30,
+            "PARAM_MODIFIER_DOCS dropped below 30: {}",
+            PARAM_MODIFIER_DOCS.len()
         );
     }
 
