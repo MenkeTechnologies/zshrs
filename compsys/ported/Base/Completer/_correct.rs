@@ -1,6 +1,24 @@
-//! Port of `_correct` — spelling correction. Moved from
-//! `compsys/functions.rs`. Renamed from `correct` to mirror zsh shell
-//! function name `_correct`.
+//! Port of `_correct` — spelling correction.
+//!
+//! Local shell reference: `compsys/functions/Base/Completer/_correct`
+//! (system copy `/opt/homebrew/share/zsh/functions/_correct`).
+//!
+//! Upstream shell source (the whole 19-line wrapper):
+//! ```text
+//!  3  # This is mainly a wrapper around the more general `_approximate'.
+//!  4  # By setting `compstate[pattern_match]' to something unequal to `*'
+//!  5  # and then calling `_approximate', we get only corrections.
+//! 11  local ret=1 opm="$compstate[pattern_match]"
+//! 13  compstate[pattern_match]='-'
+//! 15  _approximate && ret=0
+//! 17  compstate[pattern_match]="$opm"
+//! 19  return ret
+//! ```
+//!
+//! Faithful Rust port: `_approximate(state, 1)` — pinning max_errors
+//! to 1 mirrors shell's "only corrections" semantic (the compstate
+//! [pattern_match]='-' trick prevents pattern-match acceptance,
+//! leaving only Levenshtein-1 matches).
 
 use crate::base::{CompleterResult, MainCompleteState};
 

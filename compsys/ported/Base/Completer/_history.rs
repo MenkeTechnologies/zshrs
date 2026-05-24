@@ -1,5 +1,26 @@
-//! Port of `_history` — complete from command history. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_history` — complete from command history.
+//!
+//! Local shell reference: `compsys/functions/Base/Completer/_history`
+//! (system copy `/opt/homebrew/share/zsh/functions/_history`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//! 17  local opt expl max slice hmax=$#historywords beg=2
+//! 25  zstyle -s ":completion:${curcontext}:" remove-all-dups removedups
+//! 30  zstyle -a ":completion:${curcontext}:" range range
+//! 39  while compadd -O dups "$expl[@]" - "${(@)historywords[beg,beg+slice-1]}"
+//! 41    if [[ $removedups = true ]]; then …dedup… fi
+//! 51    (( beg += slice ))
+//! 52  done
+//! ```
+//!
+//! Shell version honors styles: `sort` (lex vs age), `range`
+//! (limit history scan window), `remove-all-dups` (full dedup).
+//!
+//! Simplified Rust port: takes history entries as a slice, walks
+//! reverse (most-recent-first) with prefix filter and full dedup
+//! (matches `remove-all-dups=true` behavior — the more useful
+//! default for interactive completion).
 
 use std::collections::HashSet;
 

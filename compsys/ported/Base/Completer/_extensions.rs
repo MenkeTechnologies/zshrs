@@ -1,5 +1,26 @@
-//! Port of `_extensions` — complete by file extension. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_extensions` — complete by file extension.
+//!
+//! Local shell reference: `compsys/functions/Base/Completer/_extensions`
+//! (system copy `/opt/homebrew/share/zsh/functions/_extensions`).
+//!
+//! Upstream shell source:
+//! ```text
+//!  8  compset -P '(#b)([~$][^/]#/|)(*/|)(\^|)\*.' || return 1
+//! 10  local -aU files
+//! 13  files=( ${(e)~match[1]}${match[2]}*.* ) || return 1
+//! 14  eval set -A files '${(MSI:'{1..${#${(O)files//[^.]/}[1]}}':)files%%.[^/]##}'
+//! 16  if zstyle -t ":completion:${curcontext}:extensions" prefix-hidden; then
+//! 17    files=( ${files#.} )
+//! ```
+//!
+//! Shell version is triggered by a typed `*.` (or `^*.`) prefix and
+//! computes the set of distinct extensions present in the target
+//! directory.
+//!
+//! Simplified Rust port: takes the extension whitelist explicitly
+//! from the caller and matches against directory entries. Subdirs
+//! always pass the filter so the user can keep walking. No
+//! `prefix-hidden` zstyle honoring at this layer.
 
 use std::fs;
 

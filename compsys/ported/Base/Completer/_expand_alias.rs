@@ -1,5 +1,24 @@
-//! Port of `_expand_alias` — expand aliases. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_expand_alias` — expand aliases.
+//!
+//! Local shell reference: `compsys/functions/Base/Completer/_expand_alias`
+//! (system copy `/opt/homebrew/share/zsh/functions/_expand_alias`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  9  if [[ "$funcstack[2]" = _prefix ]]; then
+//! 10    word="$IPREFIX$PREFIX$SUFFIX"
+//! 12    word="$IPREFIX$PREFIX$SUFFIX$ISUFFIX"
+//! 22  zstyle -s ":completion:${curcontext}:${what}" regular sel
+//! 32  zstyle -s ":completion:${curcontext}:${what}" global sel
+//! 41  if [[ -n "$pre" ]]; then  …emit replacement…
+//! ```
+//!
+//! Shell honors `regular` / `global` zstyles + the `_prefix`
+//! funcstack detection. Simplified Rust port: takes alias map
+//! directly (caller pulled from `aliastab_lock()`), uses
+//! `current_word()` (= PREFIX+SUFFIX, matching shell:10
+//! `_prefix`-parent case), and emits the expansion with NOSPACE
+//! flag so the inserted text isn't re-split into words.
 
 use std::collections::HashMap;
 

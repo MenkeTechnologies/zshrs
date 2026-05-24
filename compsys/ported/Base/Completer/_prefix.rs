@@ -1,5 +1,27 @@
-//! Port of `_prefix` — complete with prefix handling. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_prefix` — complete with prefix handling.
+//!
+//! Local shell reference: `compsys/functions/Base/Completer/_prefix`
+//! (system copy `/opt/homebrew/share/zsh/functions/_prefix`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  3  [[ _matcher_num -gt 1 || -z "$SUFFIX" ]] && return 1
+//!  5  local comp curcontext="$curcontext" tmp suf="$SUFFIX"
+//! 16  if zstyle -t ":completion:${curcontext}:" add-space; then
+//! 17    ISUFFIX=" $SUFFIX"
+//! 18  else
+//! 19    ISUFFIX="$SUFFIX"
+//! 20  fi
+//! 22  SUFFIX=
+//! ```
+//!
+//! The shell version moves SUFFIX into ISUFFIX (the "ignored suffix",
+//! preserved on the line but excluded from completion matching),
+//! then runs the rest of the completer pipeline against bare PREFIX.
+//!
+//! Faithful Rust port: takes an action closure and runs it with
+//! SUFFIX cleared. Restores SUFFIX afterward — pinned by the
+//! `suffix_cleared_during_action_and_restored_after` test.
 
 use crate::compcore::CompletionState;
 

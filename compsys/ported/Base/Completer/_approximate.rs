@@ -1,5 +1,27 @@
-//! Port of `_approximate` — approximate/fuzzy matching. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_approximate` — approximate/fuzzy matching.
+//!
+//! Local shell reference: `compsys/functions/Base/Completer/_approximate`
+//! (system copy `/opt/homebrew/share/zsh/functions/_approximate`).
+//!
+//! Upstream shell source (key lines from the ~80-line impl):
+//! ```text
+//! 10  [[ _matcher_num -gt 1 || "${#:-$PREFIX$SUFFIX}" -le 1 ]] && return 1
+//! 12  local _comp_correct _correct_expl _correct_group comax cfgacc
+//! 17  if [[ "$1" = -a* ]]; then cfgacc="${1[3,-1]}"; …
+//! 35  zstyle -s ":completion:${oldcontext}:" max-errors comax
+//! 40  for (( ; comax > 0 ; comax-- )); do
+//! 42    _comp_correct=$comax _complete
+//! 50  done
+//! ```
+//!
+//! The shell version: gates on PREFIX≥2 chars, reads `max-errors`
+//! zstyle, then loops decreasing the error budget and re-runs the
+//! normal completer at each level, accumulating matches.
+//!
+//! Simplified Rust port: takes `max_errors` directly (caller's
+//! responsibility to honor the zstyle), iterates the candidates
+//! already present in CompletionState, and keeps those within
+//! Levenshtein-≤-max_errors of the prefix.
 
 use crate::base::{CompleterResult, MainCompleteState};
 use crate::completion::Completion;

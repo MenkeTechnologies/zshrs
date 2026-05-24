@@ -1,5 +1,27 @@
-//! Port of `_external_pwds` — complete from other shells' PWDs. Moved
-//! from `compsys/functions.rs`.
+//! Port of `_external_pwds` — complete from other shells' PWDs.
+//!
+//! Local shell reference:
+//! `compsys/functions/Base/Completer/_external_pwds`
+//! (system copy `/opt/homebrew/share/zsh/functions/_external_pwds`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//! 16  case $OSTYPE in
+//! 17    solaris*) dirs=( /proc/*(N:A) /proc/*/path/cwd(N:A) ) ;;
+//! 18    linux*)   dirs=( /proc/[0-9]*/cwd(N:A) ) ;;
+//! 19    *)        dirs=( ) ;;
+//! 20  esac
+//! 22  compadd -V cwd -a dirs
+//! ```
+//!
+//! Upstream walks `/proc/*/cwd` (or Solaris-equivalent) to discover
+//! directories that OTHER shell processes are currently in, so the
+//! user can `cd` directly to peer shells' PWDs.
+//!
+//! Simplified Rust port: emits only the CURRENT process's cwd as a
+//! candidate. Walking `/proc/*/cwd` requires permission to read
+//! other-uid procfs entries which is restricted on hardened Linux
+//! and unavailable on macOS — left as a runtime-side feature.
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;
