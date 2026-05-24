@@ -24,6 +24,8 @@ pub mod _dir_list;
 #[allow(non_snake_case, non_camel_case_types)]
 pub mod _email_addresses;
 #[allow(non_snake_case, non_camel_case_types)]
+pub mod _multi_parts;
+#[allow(non_snake_case, non_camel_case_types)]
 pub mod _numbers;
 #[allow(non_snake_case, non_camel_case_types)]
 pub mod _pick_variant;
@@ -45,6 +47,7 @@ pub use _command_names::{ShellInventory, _command_names, _command_names_with_ctx
 pub use _completers::{_completers, CANONICAL_COMPLETER_NAMES};
 pub use _dir_list::{DirListOpts, _dir_list};
 pub use _email_addresses::{EmailAddressesOpts, _email_addresses};
+pub use _multi_parts::{MultiPartsOpts, _multi_parts};
 pub use _numbers::{NumbersOpts, _numbers};
 pub use _pick_variant::{PickVariantOpts, PickVariantResult, _pick_variant};
 pub use _sequence::{SequenceOpts, _sequence};
