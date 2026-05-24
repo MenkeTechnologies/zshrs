@@ -357,14 +357,6 @@ fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) {
 ///   2. `!isset(KSHGLOB)`      → KSH_QUEST/STAR/PLUS/BANG/BANG2/AT disabled.
 ///   3. `isset(SHGLOB)`        → Inpar/Inang disabled.
 ///
-/// The previous Rust port omitted ALL THREE option-mask passes AND
-/// the KSH_* slot initialisations entirely, leaving `[*+?@!](pattern)`
-/// silently unparsed when `setopt kshglob` was on, and rendering
-/// `setopt noextendedglob` / `setopt shglob` no-ops.
-///
-/// `disables` (from `disable -p`) is not yet modeled in zshrs — the C
-/// `for (i=0; i<ZPC_COUNT; ...) if (*disp) *spp = Marker;` pass is
-/// skipped pending the disable-table port.
 pub fn patcompcharsset() {
     // c:464
     let mut sp = zpc_special.lock().unwrap();
