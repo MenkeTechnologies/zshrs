@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:03:53.271989+00:00
+Generated: 2026-05-24T22:06:26.690112+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 162 stubs across 47 files
+## Summary: 161 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -28,11 +28,11 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/zle_refresh.rs` | 8 | `addmultiword` (1 / 14) |
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (19 / 746) |
-| `src/ported/zle/zle_keymap.rs` | 6 | `getrestchar_keybuf` (2 / 39) |
 | `src/ported/zle/zle_main.rs` | 6 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
 | `src/ported/module.rs` | 5 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 5 | `map_opt_desc` (1 / 16) |
+| `src/ported/zle/zle_keymap.rs` | 5 | `newkeytab` (1 / 15) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
 | `src/ported/glob.rs` | 3 | `get_match_ret` (5 / 71) |
@@ -185,17 +185,6 @@ python3 scripts/gen_port_stubs.py
 | 2280 | `makecomplistext` | 43 | 150 | 28% |
 | 242 | `freecompcond` | 11 | 37 | 29% |
 
-### `src/ported/zle/zle_keymap.rs` — 6 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1602 | `getrestchar_keybuf` | 2 | 39 | 5% |
-| 264 | `newkeytab` | 1 | 15 | 6% |
-| 153 | `emptykeymapnamtab` | 1 | 14 | 7% |
-| 111 | `createkeymapnamtab` | 1 | 13 | 7% |
-| 567 | `scankeys` | 1 | 13 | 7% |
-| 1566 | `default_bindings` | 24 | 121 | 19% |
-
 ### `src/ported/zle/zle_main.rs` — 6 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -237,6 +226,16 @@ python3 scripts/gen_port_stubs.py
 | 2136 | `lookup_opt` | 1 | 13 | 7% |
 | 694 | `setstypat` | 6 | 58 | 10% |
 | 148 | `freestylenode` | 2 | 10 | 20% |
+
+### `src/ported/zle/zle_keymap.rs` — 5 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 264 | `newkeytab` | 1 | 15 | 6% |
+| 153 | `emptykeymapnamtab` | 1 | 14 | 7% |
+| 111 | `createkeymapnamtab` | 1 | 13 | 7% |
+| 567 | `scankeys` | 1 | 13 | 7% |
+| 1566 | `default_bindings` | 24 | 121 | 19% |
 
 ### `src/ported/parse.rs` — 4 stubs
 

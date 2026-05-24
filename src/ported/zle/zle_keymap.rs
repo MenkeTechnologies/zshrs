@@ -1597,13 +1597,86 @@ pub fn default_bindings() {
     *curkeymapname() = "main".to_string(); // c:513
 }
 
-/// Port of `getrestchar_keybuf()` from Src/Zle/zle_keymap.c:1504.
-/// WARNING: param names don't match C — Rust=(zle) vs C=()
+/// Direct port of `ZLE_INT_T getrestchar_keybuf(void)` from
+/// `Src/Zle/zle_keymap.c:1504`.
+///
+/// Walks the pending `keybuf` Meta-byte pairs first (c:1525-1530),
+/// then falls through to [`getbyte`] for any remaining UTF-8
+/// continuation bytes — same shape as [`getrestchar`] but reads
+/// from `keybuf` until exhausted before going to the input loop.
+/// Used by the keymap dispatcher when it needs to assemble a wide
+/// char that crossed a key-binding boundary.
 pub fn getrestchar_keybuf() -> i32 {
-    // c:1504
-    // C body (c:1675): `return getrestchar(getkeybuf(0), NULL, NULL)`.
-    let c = getkeybuf(0);
-    getrestchar(c)
+    use crate::ported::zle::zle_main::{getbyte, ungetbyte, LASTCHAR_WIDE, LASTCHAR_WIDE_VALID};
+    use std::sync::atomic::Ordering;
+
+    // c:1519 — `lastchar_wide_valid = 1; memset(&mbs, 0, sizeof mbs);`
+    LASTCHAR_WIDE_VALID.store(1, Ordering::SeqCst);
+
+    let keybuf_v = keybuf.lock().unwrap().clone();
+    let buflen = (keybuflen.load(Ordering::SeqCst) as usize).min(keybuf_v.len());
+    let mut bufind = 0usize;
+    let mut bytes: Vec<u8> = Vec::new();
+
+    // First-byte read (c:1525-1545): either pop from keybuf or call
+    // getbyte; subsequent bytes follow the same path until we have a
+    // valid UTF-8 sequence.
+    loop {
+        let cur = if bufind < buflen {
+            // c:1525-1530 — keybuf path with Meta-pair decode.
+            let mut c = keybuf_v[bufind];
+            bufind += 1;
+            if c == 0x83 && bufind < buflen {
+                c = keybuf_v[bufind] ^ 32;
+                bufind += 1;
+            }
+            c
+        } else {
+            // c:1546 — `inchar = getbyte(1L, &timeout, 1);`
+            match getbyte(true) {
+                Some(b) => b,
+                None => {
+                    // c:1550-1553 — EOF in the middle of a sequence.
+                    LASTCHAR_WIDE.store(-1, Ordering::SeqCst);
+                    return -1;
+                }
+            }
+        };
+        bytes.push(cur);
+
+        // Decode the partial UTF-8 buffer — break out when it parses
+        // or when the lead byte tells us we have enough bytes.
+        if let Ok(s) = std::str::from_utf8(&bytes) {
+            if let Some(c) = s.chars().next() {
+                LASTCHAR_WIDE.store(c as i32, Ordering::SeqCst);
+                return c as i32;
+            }
+        }
+        let lead = bytes[0];
+        let need = if lead < 0x80 {
+            1
+        } else if lead < 0xC0 {
+            1
+        } else if lead < 0xE0 {
+            2
+        } else if lead < 0xF0 {
+            3
+        } else {
+            4
+        };
+        if bytes.len() >= need {
+            // c:1535-1538 — invalid byte sequence; reset mbs + WEOF.
+            // Unget the non-continuation byte if we read it from
+            // getbyte (not from keybuf).
+            if let Some(&last) = bytes.last() {
+                if bufind >= buflen && (last & 0xC0) != 0x80 {
+                    ungetbyte(last);
+                }
+            }
+            LASTCHAR_WIDE.store(-1, Ordering::SeqCst);
+            return -1;
+        }
+    }
 }
 
 /// !!! WARNING: PARTIAL PORT — stub. C `getkeymapcmd(Keymap km,
