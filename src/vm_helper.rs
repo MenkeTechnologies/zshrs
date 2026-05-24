@@ -1,5 +1,40 @@
 //! Shell executor state for zshrs.
 //!
+//! ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//! !!! LAST-RESORT FILE — NOT FOR NEW LOGIC !!!
+//!
+//! This file holds the `ShellExecutor` runtime state struct + VM-adjacent
+//! helpers. It is **not** the place to add zsh logic — every line here that
+//! does real shell work is a tax we pay because zshrs uses fusevm bytecode
+//! instead of C zsh's wordcode walker.
+//!
+//! **Before adding code to this file, STOP and ask:**
+//!
+//!   1. Does the C source have a fn that does this? (Check `src/zsh/Src/*.c`)
+//!      → Port it into `src/ported/<file>.rs` with line-by-line citations.
+//!        Then call the canonical fn from here.
+//!
+//!   2. Does `src/ported/` already have a port?
+//!      → Call it directly. Don't reimplement.
+//!
+//!   3. Is this purely a Rust-only state-struct accessor (getter/setter on
+//!      ShellExecutor fields, VM init plumbing, executor-context guards)?
+//!      → OK to put it here. Mark it `WARNING: RUST-ONLY HELPER` per memory
+//!        `feedback_rust_only_helpers_need_warning`.
+//!
+//! **NEVER:** reinvent paramsubst/expansion/glob/typeset/redirect/scope
+//! management here. Every one of those has a canonical port in `src/ported/`.
+//! When a bridge-side fn grows past ~30 lines of shell logic, that's a
+//! signal the work belongs in `src/ported/` — port it, don't inline.
+//!
+//! This file should be SHRINKING over time. Every PR that adds lines here
+//! should justify it; every PR that moves lines OUT to `src/ported/` is
+//! aligned with the project direction.
+//!
+//! See also: memory `feedback_no_shortcuts_in_porting`, `feedback_true_port_pattern`,
+//! `feedback_no_shellexecutor_in_ported` (the inverse direction).
+//! ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//!
 //! **Not a port of Src/exec.c.** C zsh runs compiled programs on the native
 //! **wordcode walker** in `Src/exec.c` (`execlist` / `execpline` / `execcmd`).
 //! zshrs uses fusevm bytecode instead; the bridge lives in `src/fusevm_bridge.rs`.
@@ -7,7 +42,6 @@
 //! - `ShellExecutor` — the runtime state struct that the VM and
 //!   every ported builtin/utility threads through
 //! - VM-adjacent helpers that read/write that state
-//! - drift extension scaffolding still being moved out
 //!
 //! Path-wise this file lives at the crate root (`src/vm_helper`) rather
 //! than in `src/ported/` because nothing here corresponds 1:1 to a
@@ -15,42 +49,16 @@
 //! re-export alias so existing call-sites continue to compile.
 
 use crate::history::HistoryEngine;
-// MathState is private to math.rs (per math.c — no public state struct);
-// math API surface is matheval/mathevali/mnumber.
 use crate::options::ZSH_OPTIONS_SET;
-// TcpSessions struct deleted — see modules/tcp.rs ZTCP_SESSIONS thread_local.
-// `Profiler`/`ProfileEntry` deleted in the zprof.rs strict-rules
-// rewrite — zprof state now lives in module-level statics
-// (`CALLS`/`NCALLS`/`ARCS`/`NARCS`/`STACK`/`ZPROF_MODULE`) matching
-// the C file-statics at zprof.c:66-71.
-use crate::ported::builtin::RETFLAG;
-use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS};
+use crate::ported::builtin::{BREAKS, CONTFLAG};
 use crate::ported::math::mathevali;
 use crate::ported::modules::parameter::*;
-use crate::ported::parse::ecgetstr_wordcode;
-use crate::ported::parse::ecgetstr_wordcode as ecgetstr;
-use crate::ported::parse::ECBUF;
 use crate::ported::subst::singsub;
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
-use crate::ported::zle::zle_thingy::{getwidgettarget, listwidgets};
 use crate::ported::zsh_h::PM_UNDEFINED;
-use crate::ported::zsh_h::WC_PIPE;
-use crate::ported::zsh_h::WC_REPEAT_SKIP;
-use crate::ported::zsh_h::WC_SUBLIST;
 use crate::ported::zsh_h::{options, MAX_OPS};
-use crate::ported::zsh_h::{wc_code, wc_data, WC_END, WC_LIST};
-use crate::ported::zsh_h::{
-    PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_LEFT, PM_LOWER,
-    PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_UPPER,
-};
-use crate::ported::zsh_h::{
-    WC_ARITH, WC_CASE, WC_COND, WC_CURSH, WC_FOR, WC_FUNCDEF, WC_IF, WC_REPEAT, WC_SELECT,
-    WC_SIMPLE, WC_SUBSH, WC_TIMED, WC_TRY, WC_WHILE,
-};
-use crate::ported::zsh_h::{WC_CASE_SKIP, WC_CASE_TYPE};
-use crate::ported::zsh_h::{WC_FOR_LIST, WC_FOR_SKIP, WC_FOR_TYPE};
-use crate::ported::zsh_h::{WC_IF_SKIP, WC_IF_TYPE};
-use crate::ported::zsh_h::{WC_WHILE_SKIP, WC_WHILE_TYPE};
+use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_INTEGER, PM_READONLY};
+use crate::ported::zsh_h::WC_SIMPLE;
 use compsys::cache::CompsysCache;
 use compsys::CompInitResult;
 use parking_lot::Mutex;
@@ -72,11 +80,7 @@ use walkdir::WalkDir;
 // canonical-C-file Rust modules. Existing call-sites in this file (and
 // elsewhere) still reference these unqualified.
 #[allow(unused_imports)]
-#[allow(unused_imports)]
-// drift imports removed: apply_subst_modifier, slice_scalar, strip_match_op
-#[allow(unused_imports)]
 pub(crate) use crate::func_body_fmt::FuncBodyFmt;
-#[allow(unused_imports)]
 #[allow(unused_imports)]
 pub(crate) use crate::ported::glob::expand_glob_alternation;
 #[allow(unused_imports)]
@@ -109,18 +113,9 @@ pub(crate) use crate::plugin_cache::PluginSnapshot;
 pub(crate) static REGEX_CACHE: LazyLock<Mutex<HashMap<String, Regex>>> =
     LazyLock::new(|| Mutex::new(HashMap::with_capacity(64)));
 
-// `TRAP_STATE`, `TRAP_RETURN`, and `FORKLEVEL` (ports of the `int
-// trap_state;` / `int trap_return;` / `int forklevel;` file-static
-// globals from `Src/exec.c:134 / :155 / :1052`) moved to their
-// canonical port file at `src/ported/exec.rs`. Reference them as
-// `crate::ported::exec::{TRAP_STATE, TRAP_RETURN, FORKLEVEL}` from
-// other modules.
-
-// ───────────────────────────────────────────────────────────────────────────
 // fusevm VM bridge (extension; not a port of Src/exec.c) lives in
-// src/fusevm_bridge.rs. The bridge re-exports the symbols that the
-// rest of the codebase imports as `crate::ported::exec::X`.
-// ───────────────────────────────────────────────────────────────────────────
+// src/fusevm_bridge.rs. Re-exports below let the rest of the codebase
+// reference symbols as `crate::ported::exec::X`.
 pub(crate) use crate::fusevm_bridge::ExecutorContext;
 pub use crate::fusevm_bridge::*;
 
@@ -131,11 +126,6 @@ pub use crate::fusevm_bridge::*;
 pub mod zsh_version {
     include!(concat!(env!("OUT_DIR"), "/zsh_version.rs"));
 }
-
-// `gethere` (port of `Src/exec.c:4573`) and `getoutput` (port of
-// `Src/exec.c:4712`) moved to their canonical port file at
-// `src/ported/exec.rs`. Reference them as
-// `crate::ported::exec::{gethere, getoutput}`.
 
 /// Match an intercept pattern against a command name or full command string.
 /// Supports: exact match, glob ("git *", "_*", "*"), or "all".
@@ -174,7 +164,6 @@ pub(crate) static BUILTIN_NAMES: LazyLock<HashSet<String>> = LazyLock::new(|| {
 
 use crate::exec_jobs::{JobState, JobTable};
 use crate::parse::{Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag};
-use crate::zwc::ZwcFile;
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::env;
@@ -183,25 +172,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-// Drift structs moved to their canonical-C-file modules
-// (src/ported/zle/computil.rs, modules/{zutil,zpty,zprof,socket}.rs,
-// builtins/sched.rs). Re-exported here so existing call-sites that
-// reference `crate::ported::exec::<Name>` keep compiling.
-pub use crate::bash_complete::{CompGroup, CompMatch, CompSpec, CompState};
-pub use crate::ported::modules::zutil::zstyle_entry;
-// `ProfileEntry` re-export deleted — was unused outside
-// `ShellExecutor::profile_data` (which itself is now removed).
-// `ScheduledCommand` (Rust-only) deleted; use `crate::builtins::sched::schedcmd`
-// (port of `struct schedcmd` from Src/Builtins/sched.c:43) for live state.
+// Re-exports for call-sites that reference `crate::ported::exec::<Name>`.
+pub use crate::bash_complete::CompSpec;
 pub use crate::ported::builtin::AutoloadFlags;
-
-// `LoopSignal` enum deleted — it was a zshrs-invented dup of the
-// canonical BREAKS/CONTFLAG file-statics in src/ported/builtin.rs
-// (port of `breaks`/`contflag` from Src/loop.c:46/41). The docstring
-// claim that it "mirrors the LF_* set" was false — no such enum
-// exists in C zsh. Cross-VM break/continue now writes to BREAKS/
-// CONTFLAG directly via BUILTIN_SET_BREAK / BUILTIN_SET_CONTINUE,
-// matching bin_break's writes at Src/builtin.c::bin_break c:5836+.
+pub use crate::ported::modules::zutil::zstyle_entry;
 
 /// Snapshot of subshell-isolated state. Captured at `(` entry, restored at
 /// `)` exit. zsh subshell semantics: assignments inside `(…)` don't leak to
@@ -246,15 +220,10 @@ pub struct SubshellSnapshot {
     pub traps: HashMap<String, String>,
 }
 
-/// Variable attribute record + kind enum — moved to params.rs.
-
-// Pattern helpers moved to src/ported/pattern.rs.
 #[allow(unused_imports)]
 pub(crate) use crate::ported::pattern::{
     extract_numeric_ranges, numeric_range_contains, numeric_ranges_to_star,
 };
-
-// `impl VarAttr` moved to src/ported/params.rs.
 
 /// Top-level shell executor state.
 /// Port of the file-static globals + `Estate` chain Src/exec.c
@@ -286,14 +255,6 @@ pub struct ShellExecutor {
     /// file path, so `%x` inside a function still shows the file
     /// the function was called from.
     pub scriptfilename: Option<String>,
-    // `expanding_aliases` deleted — was a Rust-only HashSet recursion
-    // guard duplicating C's `alias.inuse` field (`Src/zsh.h:1256`).
-    // Callers now bump/clear `inuse` on the canonical alias node in
-    // `aliastab` (`hashtable.rs:1804`), matching C's lexer behavior.
-    // `loop_signal` deleted — was a Rust-only dup of the canonical
-    // BREAKS/CONTFLAG atomics at src/ported/builtin.rs (port of
-    // Src/loop.c:46 `breaks` + :41 `contflag`). Cross-VM break/
-    // continue now writes BREAKS/CONTFLAG directly.
     /// Stack of subshell-state snapshots. Each `(…)` subshell pushes a copy
     /// of variables/arrays/assoc_arrays at entry and pops/restores at exit.
     /// Without this, `(x=inner; …); echo $x` shows `inner` instead of the
@@ -319,43 +280,10 @@ pub struct ShellExecutor {
     pub current_command_glob_failed: std::cell::Cell<bool>,
     pub jobs: JobTable,
     pub fpath: Vec<PathBuf>,
-    pub zwc_cache: HashMap<PathBuf, ZwcFile>,
     pub history: Option<HistoryEngine>,
-    /// Session-relative history line counter. Starts at 0; incremented
-    /// when an interactive command is recorded. Used by `%h`/`%!` in
-    /// prompt expansion (zsh's "current history line number"), distinct
-    /// from the persistent disk history total.
-    pub session_histnum: i64,
     pub(crate) process_sub_counter: u32,
-    // `options` field deleted — dup of canonical `OPTS_LIVE` in
-    // `src/ported/options.rs:1112`. Callers route through
-    // `opt_state_get`/`opt_state_set`/`opt_state_unset`/`opt_state_snapshot`.
     pub completions: HashMap<String, CompSpec>, // command -> completion spec
-    // `dir_stack` field deleted — canonical `DIRSTACK` lives in
-    // `modules/parameter.rs:398` (mirror of C `dirstack` global at
-    // `Src/builtin.c:1456`). Callers go through that Mutex directly.
-    // zsh completion system state
-    pub comp_matches: Vec<CompMatch>, // Current completion matches
-    pub comp_groups: Vec<CompGroup>,  // Completion groups
-    pub comp_state: CompState,        // compstate associative array
-    pub zstyles: Vec<zstyle_entry>,   // zstyle configurations
-    pub comp_words: Vec<String>,      // words on command line
-    pub comp_current: i32,            // current word index (1-based)
-    pub comp_prefix: String,          // PREFIX parameter
-    pub comp_suffix: String,          // SUFFIX parameter
-    pub comp_iprefix: String,         // IPREFIX parameter
-    pub comp_isuffix: String,         // ISUFFIX parameter
-    // `readonly_vars` deleted — was a never-populated HashSet
-    // duplicating the canonical `PM_READONLY` flag check on Param
-    // (`zsh_h::PM_READONLY` bit on `Param.node.flags`). Callers go
-    // through `is_readonly_param(name)`.
-    // `last_subst` deleted — 0 callers. Canonical `hsubl`/`hsubr`
-    // globals live in `Src/hist.c` and are ported on demand when
-    // `:&` history-modifier replay arrives in zshrs.
-    // `sub_flags` deleted — zero real callers; canonical lives in
-    // `SUB_FLAGS` thread_local at `src/ported/subst.rs:498` (`sub_flags`
-    // global in `Src/subst.c:2169`), accessed via `sub_flags_get` /
-    // `sub_flags_set`.
+    pub zstyles: Vec<zstyle_entry>,             // zstyle configurations
     /// Current function scope depth for `local` tracking.
     pub local_scope_depth: usize,
     /// Last arg of the currently-running command, deferred into `$_`
@@ -370,10 +298,6 @@ pub struct ShellExecutor {
     /// (`(o)`/`(O)`/`(n)`/`(i)`/`(M)`/`(u)`) — zsh's behaviour: those
     /// flags only fire in array context.
     pub in_dq_context: u32,
-    // `in_paramsubst_nest` deleted — canonical lives in
-    // `IN_PARAMSUBST_NEST` thread_local at `subst.rs:464` (mirrors
-    // `paramsub_nest` global in `Src/subst.c`). Callers read it
-    // directly via `crate::ported::subst::IN_PARAMSUBST_NEST.with(...)`.
     /// True (>0) while expanding the RHS of a scalar assignment.
     /// Direct port of zsh's `PREFORK_SINGLE` bit set by
     /// Src/exec.c::addvars line 2546 (`prefork(vl, isstr ?
@@ -384,36 +308,6 @@ pub struct ShellExecutor {
     /// original separator (newlines) instead of re-joining with
     /// IFS-first-char (space).
     pub in_scalar_assign: u32,
-    // `cmd_stack` deleted — duplicated the canonical `prompt::CMDSTACK`
-    // thread_local (`Src/prompt.c:56 unsigned char *cmdstack`).
-    // `BUILTIN_CMD_PUSH`/`BUILTIN_CMD_POP` now call `cmdpush`/`cmdpop`
-    // on the canonical TLS only; prompt expansion reads it directly.
-    /// IDs of history entries explicitly added during this session
-    /// via `print -s`. `fc -l` uses this to scope listings to just
-    /// the script-added entries (matches zsh's `-c` semantics where
-    /// session history is the only thing visible to the script).
-    pub session_history_ids: Vec<i64>,
-    // `autoload_pending` deleted — dup of canonical shfunctab entries
-    // with PM_UNDEFINED flag bit (port of C autoload_func stub at
-    // `Src/exec.c:5215`). The -U/-z/-k/-t/-d AutoloadFlags details
-    // were never consumed beyond serialization, dropped along with
-    // the field.
-    // `hook_functions` deleted — Rust-only side-store duplicating zsh's
-    // canonical `<hook>_functions` paramtab arrays (the add-zsh-hook
-    // idiom). `add_hook` / `delete_hook` now mutate those arrays
-    // directly via `setaparam`.
-    // `named_dirs` deleted — canonical `nameddirtab` lives in
-    // `src/ported/hashnameddir.rs:36` (port of C `nameddirtab` in
-    // `Src/hashnameddir.c`). Callers route through that Mutex.
-    // bin_sysopen - file descriptor management
-    pub open_fds: HashMap<i32, File>,
-    pub next_fd: i32,
-    // sched (Src/Builtins/sched.c) — schedcmds list lives in module
-    // statics in the canonical port; nothing to carry on ShellExecutor.
-    // zprof — profiling data lives in `crate::zprof` module statics
-    // (CALLS/NCALLS/ARCS/NARCS/STACK), matching the C file-statics
-    // at zprof.c:66-71. Only the user's "is profiling on?" toggle
-    // stays here, set by the `profile` extension builtin.
     pub profiling_enabled: bool,
     // compsys - completion system cache
     pub compsys_cache: Option<CompsysCache>,
@@ -426,38 +320,8 @@ pub struct ShellExecutor {
     pub plugin_cache: Option<crate::plugin_cache::PluginCache>,
     // cdreplay - deferred compdef calls for zinit turbo mode
     pub deferred_compdefs: Vec<Vec<String>>,
-    // `command_hash` deleted — never-populated dup of canonical
-    // `cmdnamtab` (`hashtable.rs:1780`, port of `Src/exec.c:5260`
-    // findcmd's hash table). Callers route through cmdnamtab.
     // Control flow signals
     pub returning: Option<i32>, // Set by return builtin, cleared after function returns
-    pub breaking: i32,          // break level (0 = not breaking, N = break N levels)
-    pub continuing: i32,        // continue level
-    // New module state — TcpSessions struct dissolved into the
-    // thread_local ZTCP_SESSIONS in modules/tcp.rs (matches C's
-    // file-static `ztcp_sessions` linked list).
-    // `zftp` field deleted — 0 callers. Module-level state lives in
-    // `ZFTP_STATE_INNER` (Src/Modules/zftp.c file-statics analogue).
-    // `profiler: Profiler` deleted — see comment above.
-    // `style_table` field deleted — 0 callers. Canonical `zstyletab`
-    // lives in `src/ported/modules/zutil.rs::zstyletab` (LazyLock
-    // Mutex matching C's `static HashTable zstyletab` at zutil.c:209).
-    // termcap state dissolved per strict-rules audit — no Rust-only
-    // Termcap struct; capability_lookup is stateless on $TERM.
-    // Watch state — dissolved per PORT_PLAN Phase 2. C
-    // (Src/Modules/watch.c:150-156) keeps `wtab`/`lastwatch`/
-    // `lastutmpcheck`/`watch` as file-statics; zshrs mirrors them
-    // as `thread_local!`s in src/ported/modules/watch.rs.
-    // curses (Src/Modules/curses.c) — windows/colour-pairs/init flag
-    // now live in module-static OnceLock<Mutex<…>>'s in
-    // src/ported/modules/curses.rs (matching C's file-statics
-    // `zcurses_windows`, `colorpairs`, `next_pair`).
-    // pty_cmds moved to PTYCMDS global static in src/ported/modules/
-    // zpty.rs (port of C `static struct ptycmd *ptycmds` file-static).
-    // sched: scheduled commands now live in `SCHEDCMDS` static in
-    // `src/ported/builtins/sched.rs` (port of `static struct schedcmd
-    // *schedcmds` from Src/Builtins/sched.c:52). No state on
-    // ShellExecutor.
     /// zsh compatibility mode - use .zcompdump, fpath scanning, etc.
     /// Also serves as the `--zsh` parity-test flag: caches off, daemon
     /// off, plugin_cache replay off so every `source` re-runs the file
@@ -480,8 +344,6 @@ pub struct ShellExecutor {
     pub async_jobs: HashMap<u32, crossbeam_channel::Receiver<(i32, String)>>,
     /// Next async job ID
     pub next_async_id: u32,
-    /// Defer stack: commands to run on scope exit (LIFO).
-    pub defer_stack: Vec<Vec<String>>,
     /// Per-scope saved-fd stacks for `Op::WithRedirectsBegin/End`. Each entry
     /// is a Vec of (fd, saved_dup_fd) pairs taken from `dup(fd)` before the
     /// redirect was applied; `with_redirects_end` `dup2`s them back and closes.
@@ -492,9 +354,6 @@ pub struct ShellExecutor {
     /// status 1 instead of running. Mirrors zsh's "command skip" on
     /// redirect failure.
     pub redirect_failed: bool,
-    /// Stdin content set by `Op::HereDoc(idx)` / `Op::HereString` for the next
-    /// command/builtin in this VM. Consumed (and cleared) by the next command.
-    pub pending_stdin: Option<String>,
     /// Compiled function bodies — name → fusevm::Chunk. Populated by
     /// `BUILTIN_REGISTER_FUNCTION` (from `FunctionDef` lowering) and lazily by
     /// `ZshrsHost::call_function` when only an AST exists in `self.functions`
@@ -517,18 +376,9 @@ pub struct ShellExecutor {
     /// Innermost-last stack of active compiled-call frames for prompt `%I` / `%x`.
     pub prompt_funcstack: Vec<(String, i64, Option<String>)>,
     /// Scalar→(array, sep) tie table set up by `typeset -T VAR var [SEP]`.
-    /// Used by BUILTIN_SET_VAR to split the assigned scalar on `sep` and
-    /// mirror it into `array`.
-    pub tied_scalar_to_array: HashMap<String, (String, String)>,
     /// Array→(scalar, sep) reverse-tie table. Used by BUILTIN_SET_ARRAY to
     /// join the array elements with `sep` and mirror to the scalar side.
     pub tied_array_to_scalar: HashMap<String, (String, String)>,
-    /// ZLE buffer stack — port of `bufstack` (zsh/Src/builtin.c:4567,
-    /// `LinkList bufstack`). `print -z` (builtin.c:5039-5045) pushes
-    /// joined args onto it; `read -z` and `getln` (builtin.c:6769-6770)
-    /// pop the top entry as the input source. zsh treats this as a stack
-    /// shared between the buffer/zle subsystem and the read path.
-    pub buffer_stack: Vec<String>,
 }
 
 impl ShellExecutor {
@@ -555,22 +405,15 @@ impl ShellExecutor {
     }
 
     /// Read PM_* type flags from the paramtab Param entry. Used by
-    /// SET_VAR / `+=` arms (case-fold, integer-add, readonly guard)
-    /// instead of the legacy `exec.var_attrs` HashMap. Returns 0 when
-    /// the name isn't in paramtab. Mirrors the C source's direct
-    /// `pm->node.flags & PM_INTEGER` checks.
+    /// SET_VAR / `+=` arms (case-fold, integer-add, readonly guard).
+    /// Returns 0 when the name isn't in paramtab. Mirrors the C
+    /// source's direct `pm->node.flags & PM_INTEGER` checks.
     pub fn param_flags(&self, name: &str) -> i32 {
         paramtab()
             .read()
             .ok()
             .and_then(|t| t.get(name).map(|p| p.node.flags))
             .unwrap_or(0)
-    }
-
-    /// `typeset -i name` — Param has PM_INTEGER. Reads via
-    /// `param_flags`.
-    pub fn is_integer_param(&self, name: &str) -> bool {
-        (self.param_flags(name) as u32 & PM_INTEGER) != 0
     }
 
     /// `readonly` / `typeset -r` — Param has PM_READONLY.
@@ -616,9 +459,7 @@ impl ShellExecutor {
     }
 
     /// Read an array parameter via canonical `getaparam`
-    /// (`Src/params.c:3101`). Routes through the C-faithful port
-    /// that includes the PM_TYPE check + digit-first-name rejection
-    /// — the inline paramtab.get(...).u_arr read was missing both.
+    /// (`Src/params.c:3101`).
     pub fn array(&self, name: &str) -> Option<Vec<String>> {
         getaparam(name)
     }
@@ -639,12 +480,10 @@ impl ShellExecutor {
         getsparam(name).is_some()
     }
 
-    /// Test whether an array parameter exists in paramtab.
+    /// Test whether an array parameter exists in paramtab. Routes
+    /// through canonical `getaparam` (PM_TYPE check + digit-first-name
+    /// rejection).
     pub fn has_array(&self, name: &str) -> bool {
-        // Canonical: getaparam(name).is_some() — includes PM_TYPE check
-        // + digit-first-name rejection. The inline u_arr.is_some()
-        // shortcut returned true for PM_HASHED Params that had
-        // u_arr=Some, which is structurally wrong.
         getaparam(name).is_some()
     }
 
@@ -685,25 +524,6 @@ impl ShellExecutor {
         } else {
             Some(a.text.clone())
         }
-    }
-
-    /// Read a global alias value (`alias -g`). Reads canonical
-    /// `aliastab` and filters to entries with the ALIAS_GLOBAL flag.
-    pub fn global_alias(&self, name: &str) -> Option<String> {
-        let tab = crate::ported::hashtable::aliastab_lock().read().ok()?;
-        let a = tab.get(name)?;
-        if (a.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL as i32) != 0 {
-            Some(a.text.clone())
-        } else {
-            None
-        }
-    }
-
-    /// Read a suffix alias value (`alias -s`). Reads canonical
-    /// `sufaliastab` (Src/hashtable.c:1187).
-    pub fn suffix_alias(&self, name: &str) -> Option<String> {
-        let tab = crate::ported::hashtable::sufaliastab_lock().read().ok()?;
-        Some(tab.get(name)?.text.clone())
     }
 
     /// Set a regular alias. Writes canonical aliastab with
@@ -793,30 +613,6 @@ impl ShellExecutor {
         unsetparam(name);
     }
 
-    /// Unset a parameter via canonical `unsetparam` (Src/params.c:
-    /// 3819) — PM_NAMEREF skip + PM_READONLY rejection via
-    /// unsetparam_pm + stdunsetfn dispatch + env clear for exported.
-    /// Also clears the zshrs-side `paramtab_hashed_storage` parallel
-    /// IndexMap shadow used for assoc-array value backing (no C
-    /// counterpart — folds into Param.u_hash once that wires up).
-    pub(crate) fn unset_var(&mut self, name: &str) {
-        unsetparam(name);
-        let _ = paramtab_hashed_storage()
-            .lock()
-            .ok()
-            .as_deref_mut()
-            .map(|m| m.remove(name));
-    }
-
-    /// Single-string substitution via the canonical pipeline. Snapshots
-    /// the executor state into a `SubstState`, runs `singsub` from
-    /// `Src/subst.c:514`, commits any side-effects (assigns inside
-    /// `${var:=default}`, etc.) back to the executor.
-    ///
-    /// Replaces the bot-invented `expand_string` method that was deleted
-    /// in the citation purge (180463e1e7). All call sites that previously
-    /// did `exec.singsub(s)` now do `exec.singsub(s)` and route
-
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
 
@@ -854,75 +650,50 @@ impl ShellExecutor {
 
         let history = HistoryEngine::new().ok();
 
-        // Initialize standard zsh variables.
+        // Seed canonical OPTS_LIVE with defaults BEFORE any setsparam
+        // call. assignstrvalue early-returns when `unset(EXECOPT)`
+        // (c:2701 guard); without the option table populated, EXECOPT
+        // reads false and every paramtab write below is a silent no-op.
+        if opt_state_len() == 0 {
+            for (k, v) in Self::default_options() {
+                opt_state_set(&k, v);
+            }
+        }
+
+        // Standard zsh scalar param defaults — direct port of
+        // `createparamtable` (Src/params.c:817-988) + the `setupvals`
+        // tail. Writes through canonical `setsparam` (Src/params.c:3350).
         //
-        // `ZSH_VERSION` / `ZSH_PATCHLEVEL` come from the vendored zsh
-        // source — build.rs parses `src/zsh/Config/version.mk` and
-        // emits the constants below. Previously hardcoded `"5.9"` /
-        // `"zsh-5.9-0-g73d3173"`; the latter was an invented git-hash
-        // literal that didn't correspond to any real commit. The C
-        // source sets these at `Src/params.c:972-973` via
-        // `setsparam("ZSH_VERSION", ztrdup_metafy(ZSH_VERSION))`.
-        let mut variables = HashMap::new();
-        variables.insert(
-            "ZSH_VERSION".to_string(),
-            zsh_version::ZSH_VERSION.to_string(),
-        ); // c:params.c:972
-        variables.insert(
-            "ZSH_PATCHLEVEL".to_string(),
-            zsh_version::ZSH_PATCHLEVEL.to_string(),
-        ); // c:params.c:973
-        variables.insert("ZSH_NAME".to_string(), "zsh".to_string());
-        // $ZSH_ARGZERO mirrors `posixzero` from Src/init.c:271
-        // (`argv0 = argzero = posixzero = *argv++`). Src/params.c:971
-        // does the actual `setsparam("ZSH_ARGZERO", ztrdup(posixzero))`
-        // at the same setup phase Rust handles here. For -c / runscript
-        // invocations the bin entrypoint overrides this with the
-        // script path (Src/init.c:297).
-        variables.insert(
-            "ZSH_ARGZERO".to_string(),
-            env::args().next().unwrap_or_else(|| "zsh".to_string()),
+        // c:params.c:972-973 — ZSH_VERSION / ZSH_PATCHLEVEL from the
+        // vendored zsh source. build.rs parses Config/version.mk and
+        // emits the constants in `zsh_version`.
+        setsparam("ZSH_VERSION", zsh_version::ZSH_VERSION);
+        setsparam("ZSH_PATCHLEVEL", zsh_version::ZSH_PATCHLEVEL);
+        setsparam("ZSH_NAME", "zsh");
+        // c:params.c:971 — ZSH_ARGZERO from `posixzero` (Src/init.c:271).
+        // The bin entrypoint overrides this with the script path for
+        // -c / runscript invocations.
+        setsparam(
+            "ZSH_ARGZERO",
+            &env::args().next().unwrap_or_else(|| "zsh".to_string()),
         );
-        // ZLE word boundary chars — matches mainline zsh's default.
-        variables.insert(
-            "WORDCHARS".to_string(),
-            "*?_-.[]~=/&;!#$%^(){}<>".to_string(),
-        );
-        variables.insert(
-            "SHLVL".to_string(),
-            env::var("SHLVL")
-                .map(|v| {
-                    v.parse::<i32>()
-                        .map(|n| (n + 1).to_string())
-                        .unwrap_or_else(|_| "1".to_string())
-                })
-                .unwrap_or_else(|_| "1".to_string()),
-        );
-        // POSIX/zsh default IFS is space, tab, newline, NUL. Splitters
-        // throughout the codebase fall back to ` \t\n` when IFS is
-        // missing; expose the actual default value so user code that
-        // inspects $IFS sees what zsh exposes.
-        variables.insert("IFS".to_string(), " \t\n\0".to_string());
-
-        // POSIX `getopts` initial state: OPTIND starts at 1, OPTERR
-        // at 1 (errors enabled). Without these, scripts that read
-        // `$OPTIND` before the first `getopts` call see empty strings
-        // (zsh: `1`).
-        variables.insert("OPTIND".to_string(), "1".to_string());
-        variables.insert("OPTERR".to_string(), "1".to_string());
-
-        // zsh starts with `$_` empty (unlike bash which inherits the
-        // OS-env value). The parent process sets `_=/path/to/binary`
-        // before exec; zsh wipes that. Initialize to empty so script
-        // reads of `$_` before any command runs return empty.
-        variables.insert("_".to_string(), String::new());
-        // `$histchars` — `Src/params.c:5064 histcharsgetfn` composes
-        // bangchar+hatchar+hashchar (defaults `!`, `^`, `#` per
-        // `Src/init.c:1100-1102`). Route through the C-port `histcharsgetfn`
-        // so the value follows any runtime updates to the trio.
-        // c:5064 — `pm->gsu.s->getfn(pm)` dispatches to histcharsgetfn.
-        // Mirror via paramtab lookup; at this init point the special
-        // entry may not exist yet, so fall back to default `!^#`.
+        setsparam("WORDCHARS", "*?_-.[]~=/&;!#$%^(){}<>");
+        let shlvl = env::var("SHLVL")
+            .ok()
+            .and_then(|v| v.parse::<i32>().ok())
+            .map(|n| (n + 1).to_string())
+            .unwrap_or_else(|| "1".to_string());
+        setsparam("SHLVL", &shlvl);
+        // POSIX/zsh default IFS: space + tab + newline + NUL.
+        setsparam("IFS", " \t\n\0");
+        // POSIX getopts: OPTIND starts at 1, errors enabled.
+        setsparam("OPTIND", "1");
+        setsparam("OPTERR", "1");
+        // zsh wipes inherited `$_` (unlike bash).
+        setsparam("_", "");
+        // c:params.c:5064 — histchars derives from bangchar+hatchar+
+        // hashchar (defaults `!`, `^`, `#`). At init the special
+        // entry may not exist yet — fall back to the literal default.
         let histchars_val = paramtab()
             .read()
             .ok()
@@ -932,39 +703,14 @@ impl ShellExecutor {
                     .map(|pm| histcharsgetfn(pm))
             })
             .unwrap_or_else(|| "!^#".to_string());
-        variables.insert("histchars".to_string(), histchars_val); // c:params.c:5064
-
-        // c:Src/params.c:858-860 standard non-special param defaults.
-        // The full createparamtable() body installs special_paramdef
-        // entries (LINENO/PPID/EUID/etc) as PM_READONLY which would
-        // block subsequent BUILTIN_SET_LINENO writes; the readonly-
-        // special bypass at setsparam isn't ported yet. Inline these
-        // three setiparam-equivalent values in the meantime.
-        variables.insert("MAILCHECK".to_string(), "60".to_string()); // c:858
-        variables.insert("KEYTIMEOUT".to_string(), "40".to_string()); // c:859
-        variables.insert("LISTMAX".to_string(), "100".to_string()); // c:860
-        // `$WATCHFMT` — `Src/Modules/watch.c:137 DEFAULT_WATCHFMT`.
-        // zsh's watch boot_ seeds WATCHFMT to the default when the
-        // zsh/watch module loads via `zmodload zsh/watch`. Before
-        // that, `$WATCHFMT` reads empty. zshrs used to pre-seed the
-        // default unconditionally — matched the post-zmodload state
-        // most plugin code expects but diverged from `/bin/zsh -fc`.
-        // Match zsh exactly now: don't seed; let zmodload-equivalent
-        // fire it. The watch module's own port at modules/watch.rs:32
-        // still uses DEFAULT_WATCHFMT as the runtime fallback when
-        // `\$WATCHFMT` is unset (printprompt path at watch.rs:517).
-
-        // `$FUNCNEST` default. Real zsh defaults to 500 (compile-time
-        // MAX_FUNCTION_DEPTH at configure.ac:400 / config.h:1004
-        // `#define MAX_FUNCTION_DEPTH 500`, used at Src/params.c:113
-        // to initialize `zsh_funcnest`). Match the canonical value so
-        // `$FUNCNEST` reads identically to zsh; the cap is advisory
-        // (call_function enforces against this) so users with stack
-        // pressure can lower it. Bumped from 100 (zshrs-only override
-        // for the Rust 8MB stack) — was a parity gap because every
-        // plugin probe that reads `${FUNCNEST:-N}` saw 100 instead
-        // of 500.
-        variables.insert("FUNCNEST".to_string(), "500".to_string());
+        setsparam("histchars", &histchars_val);
+        // c:params.c:858-860 — standard non-special param defaults.
+        setsparam("MAILCHECK", "60");
+        setsparam("KEYTIMEOUT", "40");
+        setsparam("LISTMAX", "100");
+        // c:config.h:1004 — MAX_FUNCTION_DEPTH=500. Advisory cap;
+        // dispatch_function_call enforces against this.
+        setsparam("FUNCNEST", "500");
 
         // Run setlocale(LC_ALL, "") so nl_langinfo() (used by the
         // `langinfo` module) returns the host's actual locale instead
@@ -990,14 +736,6 @@ impl ShellExecutor {
             .map(|s| s.to_string())
             .collect();
         arrays.insert("path".to_string(), path_dirs);
-        // Seed canonical OPTS_LIVE with defaults if not already
-        // populated. `default_options` builds the same name→bool map
-        // we previously cloned into `exec.options`.
-        if opt_state_len() == 0 {
-            for (k, v) in Self::default_options() {
-                opt_state_set(&k, v);
-            }
-        }
         let mut exec = Self {
             // c:Src/init.c:479 — `-c` mode: scriptname = scriptfilename
             // = ztrdup("zsh"). Both start at the literal "zsh".
@@ -1010,29 +748,14 @@ impl ShellExecutor {
             current_command_glob_failed: std::cell::Cell::new(false),
             jobs: JobTable::new(),
             fpath,
-            zwc_cache: HashMap::new(),
             history,
-            session_histnum: 0,
             completions: HashMap::new(),
             process_sub_counter: 0,
-            // zsh completion system
-            comp_matches: Vec::new(),
-            comp_groups: Vec::new(),
-            comp_state: CompState::default(),
             zstyles: Vec::new(),
-            comp_words: Vec::new(),
-            comp_current: 0,
-            comp_prefix: String::new(),
-            comp_suffix: String::new(),
-            comp_iprefix: String::new(),
-            comp_isuffix: String::new(),
             local_scope_depth: 0,
             pending_underscore: None,
             in_dq_context: 0,
             in_scalar_assign: 0,
-            session_history_ids: Vec::new(),
-            open_fds: HashMap::new(),
-            next_fd: 10,
             profiling_enabled: false,
             compsys_cache: {
                 let cache_path = compsys::cache::default_cache_path();
@@ -1082,8 +805,6 @@ impl ShellExecutor {
             },
             deferred_compdefs: Vec::new(),
             returning: None,
-            breaking: 0,
-            continuing: 0,
             zsh_compat: false,
             bash_compat: false,
             posix_mode: false,
@@ -1095,18 +816,14 @@ impl ShellExecutor {
             intercepts: Vec::new(),
             async_jobs: HashMap::new(),
             next_async_id: 1,
-            defer_stack: Vec::new(),
             redirect_scope_stack: Vec::new(),
             redirect_failed: false,
-            pending_stdin: None,
             functions_compiled: HashMap::new(),
             function_source: HashMap::new(),
             function_line_base: HashMap::new(),
             function_def_file: HashMap::new(),
             prompt_funcstack: Vec::new(),
-            tied_scalar_to_array: HashMap::new(),
             tied_array_to_scalar: HashMap::new(),
-            buffer_stack: Vec::new(),
         };
         // Mirror env-derived path arrays into the `arrays` table so
         // user-level `fpath` / `path` array reads see the inherited
@@ -1145,21 +862,11 @@ impl ShellExecutor {
         ] {
             exec.tied_array_to_scalar
                 .insert(arr.to_string(), (scalar.to_string(), ":".to_string()));
-            exec.tied_scalar_to_array
-                .insert(scalar.to_string(), (arr.to_string(), ":".to_string()));
         }
 
-        // Mirror every constructor-time `variables` / `arrays` /
-        // `assoc_arrays` seed into paramtab so the C-port readers see
-        // the same initial state. C does this implicitly because its
-        // single `paramtab` is populated by `setupvals()` /
-        // `createparam()` calls at init (Src/init.c:1014-1300). The
-        // Rust port builds local HashMaps first and then constructs
-        // self; this loop fans the contents out to paramtab in one
-        // pass at the end of new().
-        for (k, v) in &variables {
-            setsparam(k, v); // c:params.c:3350
-        }
+        // Pour `path` (from env PATH split) into paramtab before the
+        // special_paramdef stamping loop below so the canonical tied
+        // entry exists when PM_SPECIAL bits are applied.
         for (k, v) in &arrays {
             setaparam(k, v.clone()); // c:params.c:3595
         }
@@ -1383,13 +1090,6 @@ impl ShellExecutor {
         exec
     }
 
-    // enter_posix_mode / enter_ksh_mode moved to src/ported/options.rs
-    // (canonical C source: Src/options.c:533 emulate()).
-
-    // host_apply_redirect / host_redirect_scope_begin / host_redirect_scope_end /
-    // host_set_pending_stdin / host_exec_external moved to src/fusevm_bridge.rs
-    // (extension; not a port of Src/exec.c).
-
     /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
     /// Bytecode is stored in rkyv keyed by (path, mtime).
     pub fn execute_script_file(&mut self, file_path: &str) -> Result<i32, String> {
@@ -1549,15 +1249,6 @@ impl ShellExecutor {
             .unwrap_or(false)
     }
 
-    /// Canonical source text for a function. Returns from `function_source`
-    /// (populated by autoload paths and runtime FuncDef registration via
-    /// BUILTIN_REGISTER_COMPILED_FN with body_source). Returns `None` if
-    /// no canonical source is on file.
-    pub fn function_definition_text(&self, name: &str) -> Option<String> {
-        self.function_source.get(name).cloned()
-    }
-
-
     /// Sorted list of every known function name (union of compiled + source).
     pub fn function_names(&self) -> Vec<String> {
         let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -1714,11 +1405,8 @@ impl ShellExecutor {
         let mut command = Command::new(cmd);
         command.args(args);
 
-        // Redirect handling moved entirely to fusevm's WithRedirectsBegin/End
-        // ops at compile time; the `_redirects` slice arrives empty in every
-        // production code path. The legacy `for redir in redirects { ... }`
-        // block (~120 LOC of file/pipe/heredoc/herestring/fd_var handling)
-        // is gone.
+        // Redirect handling lives in fusevm's WithRedirectsBegin/End
+        // ops at compile time; `_redirects` arrives empty here.
 
         if background {
             match command.spawn() {
@@ -1763,11 +1451,8 @@ impl ShellExecutor {
                         Ok(127)
                     } else if e.kind() == io::ErrorKind::PermissionDenied {
                         // zsh: non-executable file → "permission denied"
-                        // on stderr and exit 126 (POSIX convention for
-                        // "command found but not executable"). zshrs
-                        // previously bubbled the IO error up via Err
-                        // and the surrounding code converted to 127
-                        // with no diagnostic.
+                        // on stderr and exit 126 (POSIX "command found
+                        // but not executable").
                         eprintln!("zshrs:1: permission denied: {}", cmd);
                         Ok(126)
                     } else {
@@ -1777,72 +1462,6 @@ impl ShellExecutor {
             }
         }
     }
-
-    pub(crate) fn collect_until_paren(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
-        let mut result = String::new();
-        let mut depth = 1;
-
-        for c in chars.by_ref() {
-            if c == '(' {
-                depth += 1;
-                result.push(c);
-            } else if c == ')' {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-                result.push(c);
-            } else {
-                result.push(c);
-            }
-        }
-
-        result
-    }
-
-    pub(crate) fn collect_until_double_paren(
-        chars: &mut std::iter::Peekable<std::str::Chars>,
-    ) -> String {
-        let mut result = String::new();
-        let mut arith_depth = 1; // Tracks $(( ... )) nesting
-        let mut paren_depth = 0; // Tracks ( ... ) nesting within expression
-
-        while let Some(c) = chars.next() {
-            if c == '(' {
-                if paren_depth == 0 && chars.peek() == Some(&'(') {
-                    // Nested $(( - but we need to see if it's really another arithmetic
-                    // For simplicity, track inner parens
-                    paren_depth += 1;
-                    result.push(c);
-                } else {
-                    paren_depth += 1;
-                    result.push(c);
-                }
-            } else if c == ')' {
-                if paren_depth > 0 {
-                    // Inside nested parens, just close one level
-                    paren_depth -= 1;
-                    result.push(c);
-                } else if chars.peek() == Some(&')') {
-                    // At top level and seeing )) - this closes our arithmetic
-                    chars.next();
-                    arith_depth -= 1;
-                    if arith_depth == 0 {
-                        break;
-                    }
-                    result.push_str("))");
-                } else {
-                    // Single ) at top level - shouldn't happen in valid expression
-                    result.push(c);
-                }
-            } else {
-                result.push(c);
-            }
-        }
-
-        result
-    }
-
     /// Parse `cmd_str` via parse_init+parse and pull out the first Simple
     /// command's words, untokenized + variable-expanded, ready to spawn
     /// as argv. Used by process-substitution where we need raw argv to
@@ -1884,84 +1503,6 @@ impl ShellExecutor {
         }
     }
 
-    pub(crate) fn run_process_sub_in(&mut self, cmd_str: &str) -> String {
-        // Phase 2: parse via parse_init+parse. Extract the first Simple cmd's
-        // words (untokenized), pre-expand to argv strings, spawn.
-        let words = self.simple_cmd_words(cmd_str);
-
-        // Create a unique FIFO in temp directory
-        let fifo_path = format!("/tmp/zshrs_psub_{}", std::process::id());
-        let fifo_counter = self.process_sub_counter;
-        self.process_sub_counter += 1;
-        let fifo_path = format!("{}_{}", fifo_path, fifo_counter);
-
-        // Remove if exists, then create FIFO
-        let _ = fs::remove_file(&fifo_path);
-        if nix::unistd::mkfifo(fifo_path.as_str(), nix::sys::stat::Mode::S_IRWXU).is_err() {
-            return String::new();
-        }
-
-        // Spawn command that writes to the FIFO
-        let fifo_clone = fifo_path.clone();
-        if !words.is_empty() {
-            let cmd_name = words[0].clone();
-            let args: Vec<String> = words[1..].to_vec();
-
-            self.worker_pool.submit(move || {
-                // Open FIFO for writing (will block until reader connects)
-                if let Ok(fifo) = OpenOptions::new().write(true).open(&fifo_clone) {
-                    let _ = Command::new(&cmd_name)
-                        .args(&args)
-                        .stdout(fifo)
-                        .stderr(Stdio::inherit())
-                        .status();
-                }
-                // Clean up FIFO after command completes
-                let _ = fs::remove_file(&fifo_clone);
-            });
-        }
-
-        fifo_path
-    }
-
-    pub(crate) fn run_process_sub_out(&mut self, cmd_str: &str) -> String {
-        let words = self.simple_cmd_words(cmd_str);
-
-        // Create a unique FIFO in temp directory
-        let fifo_path = format!("/tmp/zshrs_psub_{}", std::process::id());
-        let fifo_counter = self.process_sub_counter;
-        self.process_sub_counter += 1;
-        let fifo_path = format!("{}_{}", fifo_path, fifo_counter);
-
-        // Remove if exists, then create FIFO
-        let _ = fs::remove_file(&fifo_path);
-        if nix::unistd::mkfifo(fifo_path.as_str(), nix::sys::stat::Mode::S_IRWXU).is_err() {
-            return String::new();
-        }
-
-        // Spawn command that reads from the FIFO
-        let fifo_clone = fifo_path.clone();
-        if !words.is_empty() {
-            let cmd_name = words[0].clone();
-            let args: Vec<String> = words[1..].to_vec();
-
-            self.worker_pool.submit(move || {
-                // Open FIFO for reading (will block until writer connects)
-                if let Ok(fifo) = File::open(&fifo_clone) {
-                    let _ = Command::new(&cmd_name)
-                        .args(&args)
-                        .stdin(fifo)
-                        .stdout(Stdio::inherit())
-                        .stderr(Stdio::inherit())
-                        .status();
-                }
-                // Clean up FIFO after command completes
-                let _ = fs::remove_file(&fifo_clone);
-            });
-        }
-
-        fifo_path
-    }
 
     pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
         // `$(< FILE)` — zsh shorthand for "read FILE contents". Faster
@@ -1997,11 +1538,9 @@ impl ShellExecutor {
         // Port of getoutput(char *cmd, int qt) from Src/exec.c. Parse and compile via
         // the lex+parse free fns + ZshCompiler pipeline, run on a
         // sub-VM with the host wired up. Stdout is captured through
-        // an in-process pipe via dup2 — no fork.
-        //
-        // This single path replaces the prior "internal vs external"
-        // fast-path split: the sub-VM emits Op::Exec for unknown
-        // command names, which forks/execs through the host.
+        // an in-process pipe via dup2 — no fork. The sub-VM emits
+        // Op::Exec for unknown command names, which forks/execs
+        // through the host.
 
         // Set up the stdout-capture pipe. We dup the original stdout
         // so post-run we can restore it; the write end is dup2'd onto
@@ -2124,14 +1663,6 @@ impl ShellExecutor {
             output.pop();
         }
         output
-    }
-
-    // ksh_autoload_body moved to src/ported/builtin.rs
-}
-
-impl Default for ShellExecutor {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -2278,59 +1809,6 @@ pub(crate) fn emit_path_or_assign(
     }
 }
 
-// Empty `impl ShellExecutor` blocks (recorder-feature placeholders +
-// AOP/concurrent-primitives comment markers) deleted. Their bodies
-// migrated out long ago (`add_hook` → src/extensions/hooks.rs;
-// recorder methods → src/recorder/*). The leftover empty braces
-// added line count without behaviour.
-
-impl ShellExecutor {
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Additional zsh builtins
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// Helper to check if name is a builtin. Consults the canonical
-    /// `BUILTINS` table (`src/ported/builtin.rs:122`, the 1:1 port of
-    /// `static struct builtin builtins[]` at `Src/builtin.c:40-137`).
-    /// Earlier implementation hardcoded a separate `BUILTIN_SET`
-    /// HashSet of 130+ names — duplicated state that drifts when new
-    /// builtins land in the canonical table. The cached lookup set
-    /// below is built once from `BUILTINS` so the O(1) cost stays
-    /// without a separate authoritative list.
-    pub(crate) fn is_builtin(&self, name: &str) -> bool {
-        BUILTIN_NAMES.contains(name) || name.starts_with('_')
-    }
-
-    /// Helper to find command in PATH. The fast path consults the
-    /// `command_hash` table (rebuilt by `rehash` per `Src/Modules/
-    /// hashed.c`); the slow path delegates to the canonical port of
-    /// `findcmd()` (`Src/exec.c:5260`, ported at
-    /// `src/ported/builtin.rs:4047`). Earlier inline PATH walk
-    /// duplicated findcmd's logic without honoring `name.contains('/')`
-    /// (the C source returns the literal path for slashed names
-    /// without walking $PATH).
-    pub(crate) fn find_in_path(&self, name: &str) -> Option<String> {
-        // Canonical command-hash lives in `cmdnamtab`. `get_full_path`
-        // returns the resolved path for HASHED entries.
-        if let Some(p) = crate::ported::hashtable::cmdnamtab_lock()
-            .read()
-            .ok()
-            .and_then(|t| t.get_full_path(name))
-        {
-            return Some(p.display().to_string());
-        }
-        crate::ported::builtin::findcmd(name, 0, 0) // c:exec.c:5260
-    }
-
-
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Coreutils builtins (anti-fork) — only active when !posix_mode
-    // ═══════════════════════════════════════════════════════════════════════
-
-    // nproc-equivalent already exists via builtin_nproc.
-}
-
 use std::os::unix::fs::MetadataExt;
 
 bitflags::bitflags! {
@@ -2382,22 +1860,6 @@ pub enum BuiltinType {
     Disabled,
 }
 
-// =====================================================================
-// Builtin dispatch stubs.
-//
-// These methods used to live in `src/ported/builtin.rs` inside
-// `impl ShellExecutor` blocks. Per user feedback ("each of those
-// bin_* is fake anyways"), the impl blocks were deleted from the
-// port tree. The methods are recreated here as stubs so existing
-// callers (fusevm_bridge, ext_builtins, vm_helper's own dispatch loop)
-// keep compiling. Each stub delegates to the canonical free-fn port
-// at `crate::ported::builtin::bin_X` when one exists, or returns 0.
-//
-// The recorder hooks the original methods carried are preserved as
-// commented snippets at the bottom of `src/ported/builtin.rs` —
-// they will be re-wired here once the canonical bin_* ports are
-// true to C.
-// =====================================================================
 use crate::fusevm_bridge::with_executor;
 use crate::ported::glob::*;
 use crate::ported::hist::*;
@@ -2405,8 +1867,6 @@ use crate::ported::jobs::*;
 use crate::ported::math::*;
 use crate::ported::module::*;
 use crate::ported::modules::cap::*;
-// bin_ztcp / bin_echotc imports deleted — zero callers since
-// `ztcp` / `echotc` route through dispatch_builtin in the bridge.
 use crate::ported::modules::terminfo::*;
 use crate::ported::options::*;
 use crate::ported::params::*;
@@ -2417,27 +1877,15 @@ use crate::ported::subst::*;
 use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
 use ::regex::{Error as RegexError, Regex, RegexBuilder};
 
-
-// =====================================================================
-// MOVED FROM: src/ported/options.rs
-// =====================================================================
-
 impl ShellExecutor {
-    /// Returns every option name in `ZSH_OPTIONS_SET` (canonical port
-    /// of `optns[]` at `Src/options.c:79+`). Replaces a 200-line
-    /// hardcoded `&[...]` duplicate that drifted from upstream.
+    /// Every option name in `ZSH_OPTIONS_SET` (port of `optns[]` at
+    /// `Src/options.c:79+`).
     pub(crate) fn all_zsh_options() -> Vec<&'static str> {
-        ZSH_OPTIONS_SET
-            .iter()
-            .copied()
-            .collect()
+        ZSH_OPTIONS_SET.iter().copied().collect()
     }
-    /// Build the `name → bool` default-option map. Routes through
-    /// canonical `options::default_on_options` (data-driven from
-    /// `ZSH_OPTIONS_SET` + `optns_flags` — port of `defset()` macro
-    /// at `Src/options.c:73`). Replaces a 60-line hardcoded
-    /// `defaults_on` array that drifted from upstream every time a
-    /// new option landed in optns[].
+
+    /// `name → default-on` map via canonical `default_on_options`
+    /// (port of `defset()` macro at `Src/options.c:73`).
     pub(crate) fn default_options() -> HashMap<String, bool> {
         let on = default_on_options();
         Self::all_zsh_options()
@@ -2447,11 +1895,6 @@ impl ShellExecutor {
     }
 
 }
-
-// =====================================================================
-// MOVED FROM: src/ported/params.rs
-// =====================================================================
-
 impl ShellExecutor {
     /// PURE PASSTHRU to the canonical `params::getsparam` (C port of
     /// `Src/params.c::getsparam`). Every special-name case the old
@@ -2485,18 +1928,7 @@ impl ShellExecutor {
     }
 }
 
-// =====================================================================
-// MOVED FROM: src/ported/prompt.rs
-// =====================================================================
-
 impl ShellExecutor {
-    /// Expand prompt escape sequences using the full prompt module.
-    /// `expand_prompt` itself now reads C globals (paramtab / LASTVAL /
-    /// curhist / JOBTAB / scriptname) so no per-executor sync is
-    /// needed — the executor's state already mirrors those globals.
-    pub(crate) fn expand_prompt_string(&self, s: &str) -> String {
-        expand_prompt(s)
-    }
     pub(crate) fn apply_prompt_theme(&mut self, theme: &str, preview: bool) {
         let (ps1, rps1) = match theme {
             "minimal" => ("%# ", ""),
@@ -2518,31 +1950,11 @@ impl ShellExecutor {
         }
     }
 }
-
-// =====================================================================
-// MOVED FROM: src/ported/glob.rs
-// =====================================================================
-
 impl ShellExecutor {
-    /// Expand glob pattern to matching files
-    // expand_glob — thin wrapper around the canonical `glob::glob_path`
-    // (C port of `Src/glob.c::zglob`). glob_path handles every glob
-    // feature: brace alternation, extendedglob `^pat` / `~` exclusion,
-    // `(#i)`/`(#l)`/`(#aN)` inline flags, numeric ranges, char classes,
-    // ksh `!()` negation, recursive `**`, qualifiers `(.)` `(/)` `(@)`
-    // `(o…)` `(O…)` `(M)` `(T)`, NULLGLOB / GLOBDOTS / CASEGLOB option
-    // gating — every one of those was duplicated in the 411-line
-    // hand-roll that previously lived here.
-    //
-    // Executor-side state that the canonical port can't touch:
-    //   - `current_command_glob_failed` cell: lets the dispatch layer
-    //     (fusevm_bridge::pop_args / host_exec_external) skip the
-    //     current command without exiting the shell when NOMATCH +
-    //     looks_like_glob fires.
-    //   - The diagnostic emission + per-list errflag-clear that
-    //     C zsh's execlist interleaves between failed lists (zshrs's
-    //     fusevm doesn't have an equivalent loop, so drop the bit
-    //     here after zerr).
+    /// Expand glob pattern via canonical `glob_path` (port of
+    /// `Src/glob.c::zglob`). Adds executor-side `current_command_glob_failed`
+    /// cell so the dispatch layer skips the current command on NOMATCH +
+    /// looks_like_glob instead of exiting the shell.
     pub fn expand_glob(&self, pattern: &str) -> Vec<String> {
         let expanded = glob_path(pattern);
         if !expanded.is_empty() {
@@ -2633,11 +2045,6 @@ impl ShellExecutor {
     }
 }
 
-
-// =====================================================================
-// MOVED FROM: src/ported/utils.rs
-// =====================================================================
-
 impl ShellExecutor {
     pub(crate) fn copy_dir_recursive(
         src: &Path,
@@ -2663,21 +2070,11 @@ impl ShellExecutor {
 }
 
 
-// =====================================================================
-// Magic-assoc key dispatch — fusevm-bridge aggregator that fans a
-// magic-assoc table NAME out into the right scanpm* port from
-// src/ported/modules/parameter.rs.
-// =====================================================================
-//
-// The C source (Src/Modules/parameter.c) doesn't have a single
-// "scan-by-name" function — each magic-assoc registers its own
-// per-table getfn/scanfn pointer in the paramdef[] table at
-// c:825-..., and zsh's paramtab dispatch reaches them through that
-// table. fusevm_bridge's magic_assoc_lookup needs name → keys
-// lookup at the call site; that aggregator is THIS Rust-only
-// convenience, parked outside src/ported/ per the rule that
-// src/ported/ holds direct C ports only.
-
+// Magic-assoc scan-by-name aggregator. C's per-table getfn/scanfn
+// pointers in paramdef[] (Src/Modules/parameter.c:825+) handle this
+// indirectly via paramtab dispatch; this Rust-only helper exposes a
+// single `partab_get` / `partab_scan_keys` entry that the bridge
+// uses for name → keys lookup.
 use std::cell::RefCell;
 thread_local! {
     static SCAN_KEYS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -2722,15 +2119,7 @@ pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
         }
     }
     None
-}
-
-// `scan_magic_assoc_keys` deleted — its 36-line per-name match
-// dispatching to canonical scanpmX is the same routing PARTAB +
-// `partab_scan_keys` (above) and PARTAB_ARRAY + `partab_array_get`
-// now provide directly. Zero callers after the bridge magic-assoc
-// fallback was cut over to PARTAB-only dispatch in b092a5dc19.
-
-/// Populate paramtab with PM_SPECIAL placeholder Params for every
+}/// Populate paramtab with PM_SPECIAL placeholder Params for every
 /// PARTAB / PARTAB_ARRAY entry — Rust-only init helper, no direct
 /// C counterpart (closest is `handlefeatures` walking `partab[]`
 /// in `Src/Modules/parameter.c:2341` boot/enables chain).
@@ -2797,21 +2186,6 @@ pub fn init_partab_params() {
         tab.insert(entry.name.to_string(), mk_pm(entry.name, entry.flags));
     }
 }
-
-// =====================================================================
-// SubstState bridge — DELETED per user directive ("delete SubstState").
-//
-// `subst_state_from_executor` and `subst_state_commit_to_executor`
-// were Rust-only plumbing that snapshotted executor state into a
-// `SubstState` struct, then mutated it back out. Both the struct
-// and the bridge are gone. subst.rs now reads/writes canonical
-// globals (`utils::errflag`, `hist::hsubl/hsubr/hsubpatopt`,
-// `options::opt_state_get/set`) and executor state directly via
-// `fusevm_bridge::try_with_executor`. The single piece of state
-// the bridge guarded — bumping `exec.last_status` on errflag — now
-// lives at the per-call site in fusevm_bridge.rs subst_port arms.
-// =====================================================================
-
 impl ShellExecutor {
     pub fn enter_posix_mode(&mut self) {
         self.posix_mode = true;
@@ -2819,44 +2193,26 @@ impl ShellExecutor {
         self.compsys_cache = None;
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
-        // Route through canonical dispatch_builtin → BUILTINS["emulate"]
-        // (Src/builtin.c bin_emulate entry). execbuiltin parses the
-        // `-R` flag from the "LR" optstr automatically.
-        dispatch_builtin(
-            "emulate",
-            vec!["sh".to_string(), "-R".to_string()],
-        );
+        // Direct call to the canonical `emulate()` port
+        // (Src/options.c:533) — `-R` semantics = fully=true.
+        // bin_emulate goes through dispatch_builtin which needs an
+        // ExecutorContext that isn't set up yet at apply_cli_flags
+        // time; the underlying emulate() doesn't need one.
+        crate::ported::options::emulate("sh", true);
     }
     pub fn enter_ksh_mode(&mut self) {
         self.plugin_cache = None;
         self.compsys_cache = None;
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
-        dispatch_builtin(
-            "emulate",
-            vec!["ksh".to_string(), "-R".to_string()],
-        );
+        crate::ported::options::emulate("ksh", true);
     }
 }
 
-// ─────────────────────────────────────────────────────────
-// Static glob match — module-level free fn (no executor state).
-// PURE PASSTHRU to `pattern::patmatch` (C port of
-// `Src/pattern.c::patmatch`). The 535-line hand-rolled regex
-// translator that previously lived here re-implemented every
-// glob feature patcompile already handles — extendedglob `^pat`
-// negation, `~` exclusion, `!()` kshglob negation, inline `(#i)`
-// `(#I)` `(#l)` `(#aN)` flags, numeric ranges `<a-b>`, alternation
-// `(a|b)`, char classes `[...]`. Route through patmatch instead.
-// ─────────────────────────────────────────────────────────
+/// Thin (text, pattern) → bool wrapper over canonical
+/// `patmatch(pattern, text)` (port of `Src/pattern.c::patmatch`).
+/// Argument order flipped so callers read naturally.
 pub fn glob_match_static(s: &str, pattern: &str) -> bool {
-    // Argument order is reversed vs patmatch(pattern, text) — keep
-    // the public (text, pattern) order so callers don't have to
-    // change.
     patmatch(pattern, s)
 }
 
-// `loadautofn` (port of `Src/exec.c:5682`) and `getfpfunc` (port of
-// `Src/exec.c:5260`) moved to their canonical port file at
-// `src/ported/exec.rs`. Reference them as
-// `crate::ported::exec::{loadautofn, getfpfunc}`.
