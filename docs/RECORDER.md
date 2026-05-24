@@ -1031,7 +1031,7 @@ Typical zsh user with a real plugin setup:
 | `~/.zshrc` | 100-2,000 lines |
 | oh-my-zsh (if installed) | ~200 plugin dirs, ~50k LOC |
 | zinit + plugins | 5-50 plugins, 10k-200k LOC |
-| zsh-more-completions / completion plugins | 700 to 16,806 files |
+| zsh-more-completions / completion plugins | 700 to 27,387 files |
 | Custom `~/.zsh_*` files | varies widely |
 | Framework-specific env files (zpwr, prezto, etc.) | 10k-200k LOC |
 | **Combined search surface** | **typically 50k-300k+ LOC of zsh code** |

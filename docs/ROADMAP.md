@@ -16,7 +16,7 @@ These are the design constraints. Violations are bugs.
 
 3. **Every PR ships behavioral tests.** Pin exact stdout + exit. The 96 tests from Phase F are the floor; this plan adds 400+. No invariant, no merge.
 
-4. **Compat with the maintainer's existing world is sacred.** zpwr (172k LOC), zsh-more-completions (16,806 files), the .zshrc, all zinit plugins — these continue working as zshrs evolves. Compat-floor regressions are catastrophic; ship none.
+4. **Compat with the maintainer's existing world is sacred.** zpwr (172k LOC), zsh-more-completions (27,387 files), the .zshrc, all zinit plugins — these continue working as zshrs evolves. Compat-floor regressions are catastrophic; ship none.
 
 5. **Plan in decades.** This is the endgame shell for a 30+ year horizon. Every architectural decision must survive that. Bytecode formats versioned. SQLite schemas migration-safe. Dependencies vendorable. MSRV pinned. No fashionable churn.
 
@@ -202,7 +202,7 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
 - Bonus tests for the 50 most-used subcommands (from zsh history frequency): verify their actual functionality.
 - **Effort:** 3 days.
 
-### H3 — 16,806 completion smoke test
+### H3 — 27,387 completion smoke test
 - Iterate every `_*` completion file; ensure it loads (autoload + bytecode compile) without errors.
 - For 100 most-common commands, verify `compdef` registered the handler.
 - **Effort:** 1 day.
