@@ -1358,7 +1358,20 @@ impl ShellExecutor {
         }; // c:880
         if let Some(name) = logname {
             crate::ported::params::setsparam("LOGNAME", &name); // c:881
-            crate::ported::params::setsparam("USERNAME", &name); // c:special_paramdefs
+            // DO NOT setsparam("USERNAME", ...) here. `$USERNAME` is
+            // a special parameter whose SETTER (`usernamesetfn` in
+            // params.rs) performs setgid(2) + setuid(2) to actually
+            // change the effective user — that's a deliberate upstream
+            // zsh feature for `USERNAME=other-user cmd`. Calling it at
+            // init seeds the value AND tries to change uid/gid; when
+            // the resolved pwd's pw_uid differs from `getuid()` (sudo
+            // launches, macOS Keychain-helper inherited env, container
+            // entry points, etc.) the setgid call fails with EPERM and
+            // emits `zsh:1: failed to change group ID: Operation not
+            // permitted`. Upstream seeds `$USERNAME` via the GETTER
+            // path (`usernamegetfn` reads through `cached_username`
+            // populated by `inittyptab` → `get_username`), no setter
+            // call needed.
         }
         exec
     }
