@@ -41,3 +41,34 @@ pub fn _correct_filename(state: &mut CompletionState) -> bool {
 
     matched
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typoed_cargo_toml_matched() {
+        // `Carg.tom` is 2 edits away from `Cargo.toml`.
+        let mut state = CompletionState::new();
+        state.params.prefix = "Carg.tom".into();
+        // Test runs from compsys/ (cargo test -p compsys cwd).
+        assert!(_correct_filename(&mut state));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "Cargo.toml"),
+            "Cargo.toml should be corrected from `Carg.tom`; got {names:?}"
+        );
+    }
+
+    #[test]
+    fn nonexistent_dir_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "/no/such/dir/prefix".into();
+        assert!(!_correct_filename(&mut state));
+    }
+}

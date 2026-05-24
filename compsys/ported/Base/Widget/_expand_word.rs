@@ -9,3 +9,23 @@ use super::_expand::_expand;
 pub fn _expand_word(state: &mut CompletionState) -> bool {
     _expand(state)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delegates_to_expand_for_tilde() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "~/foo".into();
+        // _expand_word IS _expand; both must succeed on tilde.
+        assert!(_expand_word(&mut state));
+    }
+
+    #[test]
+    fn delegates_for_no_expansion_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "plain".into();
+        assert!(!_expand_word(&mut state));
+    }
+}
