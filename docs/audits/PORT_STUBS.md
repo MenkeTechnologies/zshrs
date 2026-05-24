@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T21:31:24.784183+00:00
+Generated: 2026-05-24T21:34:03.634440+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 175 stubs across 48 files
+## Summary: 173 stubs across 48 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -37,7 +37,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/init.rs` | 4 | `init_term` (9 / 91) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
-| `src/ported/zle/zle_hist.rs` | 4 | `doisearch` (19 / 462) |
 | `src/ported/zle/zle_move.rs` | 4 | `backwardmetafiedchar` (3 / 75) |
 | `src/ported/glob.rs` | 3 | `get_match_ret` (5 / 71) |
 | `src/ported/modules/db_gdbm.rs` | 3 | `gdbmhashsetfn` (7 / 47) |
@@ -50,6 +49,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/modules/zftp.rs` | 2 | `newsession` (1 / 18) |
 | `src/ported/modules/zpty.rs` | 2 | `newptycmd` (20 / 147) |
 | `src/ported/zle/compcore.rs` | 2 | `set_comp_sep` (9 / 321) |
+| `src/ported/zle/zle_hist.rs` | 2 | `doisearch` (19 / 462) |
 | `src/ported/builtins/rlimits.rs` | 1 | `printrlim` (1 / 13) |
 | `src/ported/hashnameddir.rs` | 1 | `createnameddirtable` (2 / 15) |
 | `src/ported/input.rs` | 1 | `inputline` (5 / 88) |
@@ -280,15 +280,6 @@ python3 scripts/gen_port_stubs.py
 | 438 | `parsecolorchar` | 3 | 24 | 12% |
 | 2511 | `match_highlight` | 10 | 75 | 13% |
 
-### `src/ported/zle/zle_hist.rs` — 4 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1292 | `doisearch` | 19 | 462 | 4% |
-| 1403 | `getvisrchstr` | 6 | 118 | 5% |
-| 612 | `historysearchbackward` | 10 | 49 | 20% |
-| 632 | `historysearchforward` | 10 | 49 | 20% |
-
 ### `src/ported/zle/zle_move.rs` — 4 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -377,6 +368,13 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 1457 | `set_comp_sep` | 9 | 321 | 2% |
 | 607 | `callcompfunc` | 63 | 345 | 18% |
+
+### `src/ported/zle/zle_hist.rs` — 2 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1452 | `doisearch` | 19 | 462 | 4% |
+| 1563 | `getvisrchstr` | 6 | 118 | 5% |
 
 ### `src/ported/builtins/rlimits.rs` — 1 stubs
 
