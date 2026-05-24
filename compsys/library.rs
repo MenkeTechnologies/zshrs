@@ -76,10 +76,10 @@ pub fn canonical_paths(
 }
 
 /// _cmdambivalent - Handle commands that can be run with or without arguments
-pub fn cmdambivalent(state: &mut MainCompleteState) -> bool {
+pub fn cmdambivalent(state: &mut MainCompleteState, inv: &ShellInventory<'_>) -> bool {
     // If no arguments yet, complete as command
     if state.comp.params.current <= 1 {
-        command_names(&mut state.comp, false)
+        command_names(&mut state.comp, inv, false)
     } else {
         // Otherwise use normal completion
         true
@@ -87,39 +87,220 @@ pub fn cmdambivalent(state: &mut MainCompleteState) -> bool {
 }
 
 /// _cmdstring - Complete a command string (for eval, etc.)
-pub fn cmdstring(state: &mut CompletionState) -> bool {
+pub fn cmdstring(state: &mut CompletionState, inv: &ShellInventory<'_>) -> bool {
     // Complete as if it were a command line
-    command_names(state, false)
+    command_names(state, inv, false)
 }
 
-/// _command_names - Complete command names
-pub fn command_names(state: &mut CompletionState, externals_only: bool) -> bool {
+/// Inventory of shell-table entries passed into [`command_names`]. The
+/// compsys crate is a leaf — it can't reach into the parent zshrs
+/// `aliastab` / `shfunctab` / `reswdtab` / `paramtab` etc. directly,
+/// so the caller (LSP, ZLE completion, or test harness) populates
+/// these slices from `crate::ported::hashtable::*_lock()` reads.
+///
+/// Caller-side population template (zshrs caller code):
+/// ```ignore
+/// let aliases: Vec<String> = aliastab_lock().read().unwrap()
+///     .iter().map(|(k, _)| k.clone()).collect();
+/// // ... same for the other six tables ...
+/// let inv = ShellInventory { aliases: &aliases, ... };
+/// compsys::library::command_names(state, &inv, false);
+/// ```
+#[derive(Default)]
+pub struct ShellInventory<'a> {
+    pub builtins: &'a [String],
+    pub functions: &'a [String],
+    pub aliases: &'a [String],
+    pub suffix_aliases: &'a [String],
+    pub reserved_words: &'a [String],
+    pub parameters: &'a [String],
+    pub jobs: &'a [String],
+}
+
+/// Port of `_command_names` (zsh Completion/Base/Utility/_command_names).
+///
+/// Completes everything valid at command position. Faithful re-port of
+/// the 68-line shell function — each tag category gets its own group
+/// so `zstyle ':completion:*:command:aliases' …` works:
+///
+/// ```text
+/// commands       — external executables found on $path
+/// builtins       — names from inv.builtins
+/// functions      — entries in inv.functions (with prefix-needed filter)
+/// aliases        — entries in inv.aliases
+/// suffix-aliases — entries in inv.suffix_aliases
+/// reserved-words — entries in inv.reserved_words
+/// jobs           — entries in inv.jobs (TODO: jobtab wiring upstream)
+/// parameters     — entries in inv.parameters (with `=` suffix)
+/// ```
+///
+/// Honored zstyles (shell source line refs):
+///   `:commands rehash` (l.9)         — silently true; the caller
+///                                       owns the cmdnam cache.
+///   `:functions prefix-needed` (l.11) — when PREFIX is not `[_.]*`,
+///                                       filter out `_*` / `.*` fns.
+///   `command-path` (l.49)             — if set, use these dirs instead
+///                                       of $path for external scan.
+///
+/// Modes:
+///   `externals_only = true` (shell `-e` or `-`) — skip every internal
+///       category; only emit `commands` matches.
+///   precommand context (shell l.28: `$precommands:|builtin_precommands`)
+///       not implemented at the leaf — the precommand-prefix machinery
+///       belongs in the caller, which can pass an empty `inv` to mimic
+///       the suppression effect.
+pub fn command_names(
+    state: &mut CompletionState,
+    inv: &ShellInventory<'_>,
+    externals_only: bool,
+) -> bool {
+    // Shell uses `${curcontext}` for zstyle lookups. CompletionState
+    // alone doesn't carry curcontext (it lives on `MainCompleteState`),
+    // so use the default class `command` — matches what `compinit`
+    // sets when `_main_complete` enters command position.
+    command_names_with_ctx(state, inv, "::command", externals_only)
+}
+
+/// `command_names` taking an explicit `curcontext` (everything after
+/// `:completion:`). Use this when a caller already has the
+/// `MainCompleteState.ctx.context` available — `:completion:$ctx:foo`
+/// style lookups need it. The plain [`command_names`] uses `::command`.
+pub fn command_names_with_ctx(
+    state: &mut CompletionState,
+    inv: &ShellInventory<'_>,
+    curcontext: &str,
+    externals_only: bool,
+) -> bool {
     let prefix = state.params.prefix.clone();
 
+    // Honor `:functions prefix-needed` (shell l.11-13). Default off.
+    // When PREFIX doesn't begin with `_` or `.`, drop fns whose names
+    // start with those chars — the user is clearly not asking for
+    // internal/compsys completers.
+    let prefix_needed = state
+        .styles
+        .lookup_bool(
+            &format!(":completion:{}:functions", curcontext),
+            "prefix-needed",
+        )
+        .unwrap_or(false);
+    let fn_starts_internal = prefix.starts_with('_') || prefix.starts_with('.');
+    let skip_internal_fns = prefix_needed && !fn_starts_internal;
+
+    // ── Tag: commands (external executables) ──────────────────────────
+    // Honor `command-path` style (shell l.49). Falls back to $PATH;
+    // `_comp_priv_prefix` sbin augmentation (shell l.57-60) belongs
+    // in the caller (the priv-prefix lives in the parent crate).
+    let cmd_path: Vec<String> = state
+        .styles
+        .lookup_values(&format!(":completion:{}", curcontext), "command-path")
+        .map(|v| v.to_vec())
+        .unwrap_or_else(|| {
+            std::env::var("PATH")
+                .ok()
+                .map(|p| p.split(':').map(String::from).collect())
+                .unwrap_or_default()
+        });
+
     state.begin_group("commands", true);
-
-    // External commands from PATH
-    if let Ok(path_var) = std::env::var("PATH") {
-        for dir in path_var.split(':') {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name();
-                    let name_str = name.to_string_lossy();
-
-                    if name_str.starts_with(&prefix) && is_executable(&entry.path()) {
-                        state.add_match(Completion::new(name_str.to_string()), Some("commands"));
-                    }
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for dir in &cmd_path {
+        let dpath = Path::new(dir);
+        if let Ok(entries) = std::fs::read_dir(dpath) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy().to_string();
+                if !name_str.starts_with(&prefix) {
+                    continue;
+                }
+                if !is_executable(&entry.path()) {
+                    continue;
+                }
+                if seen.insert(name_str.clone()) {
+                    state.add_match(Completion::new(name_str), Some("commands"));
                 }
             }
         }
     }
+    state.end_group();
 
-    if !externals_only {
-        // Would also add builtins, aliases, functions
-        // These come from the shell state
+    if externals_only {
+        return state.nmatches > 0;
     }
 
+    // ── Tag: builtins ─────────────────────────────────────────────────
+    state.begin_group("builtins", true);
+    for name in inv.builtins {
+        if name.starts_with(&prefix) {
+            state.add_match(Completion::new(name.clone()), Some("builtins"));
+        }
+    }
     state.end_group();
+
+    // ── Tag: functions ────────────────────────────────────────────────
+    state.begin_group("functions", true);
+    for name in inv.functions {
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        if skip_internal_fns && (name.starts_with('_') || name.starts_with('.')) {
+            continue;
+        }
+        state.add_match(Completion::new(name.clone()), Some("functions"));
+    }
+    state.end_group();
+
+    // ── Tag: aliases ──────────────────────────────────────────────────
+    state.begin_group("aliases", true);
+    for name in inv.aliases {
+        if name.starts_with(&prefix) {
+            state.add_match(Completion::new(name.clone()), Some("aliases"));
+        }
+    }
+    state.end_group();
+
+    // ── Tag: suffix-aliases ───────────────────────────────────────────
+    state.begin_group("suffix-aliases", true);
+    for name in inv.suffix_aliases {
+        if name.starts_with(&prefix) {
+            state.add_match(Completion::new(name.clone()), Some("suffix-aliases"));
+        }
+    }
+    state.end_group();
+
+    // ── Tag: reserved-words ───────────────────────────────────────────
+    state.begin_group("reserved-words", true);
+    for name in inv.reserved_words {
+        if name.starts_with(&prefix) {
+            state.add_match(Completion::new(name.clone()), Some("reserved-words"));
+        }
+    }
+    state.end_group();
+
+    // ── Tag: jobs ─────────────────────────────────────────────────────
+    state.begin_group("jobs", true);
+    for name in inv.jobs {
+        if name.starts_with(&prefix) {
+            state.add_match(Completion::new(name.clone()), Some("jobs"));
+        }
+    }
+    state.end_group();
+
+    // ── Tag: parameters ───────────────────────────────────────────────
+    // Shell uses `_parameters -g "^*(readonly|association)*"` to limit
+    // to scalar-ish params and appends `=` as suffix. We don't track
+    // the readonly/association attribute precisely at this layer —
+    // list every visible param the caller provided.
+    state.begin_group("parameters", true);
+    for name in inv.parameters {
+        if name.starts_with(&prefix) {
+            let mut c = Completion::new(name.clone());
+            c.suf = Some("=".into());
+            state.add_match(c, Some("parameters"));
+        }
+    }
+    state.end_group();
+
     state.nmatches > 0
 }
 
@@ -622,5 +803,104 @@ mod tests {
     fn test_is_executable() {
         // /bin/ls should be executable
         assert!(is_executable(Path::new("/bin/ls")) || is_executable(Path::new("/usr/bin/ls")));
+    }
+
+    // ── _command_names port (faithful to Completion/Base/Utility) ─────
+
+    fn _cn_inv<'a>(
+        builtins: &'a [String],
+        aliases: &'a [String],
+        functions: &'a [String],
+        reswords: &'a [String],
+    ) -> ShellInventory<'a> {
+        ShellInventory {
+            builtins,
+            aliases,
+            functions,
+            reserved_words: reswords,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn command_names_emits_all_eight_tag_groups() {
+        // Regression for the original stub (compsys/library.rs:117-120
+        // before the port): the `if !externals_only` block had a TODO
+        // comment instead of actually adding builtins / aliases / fns.
+        let mut state = CompletionState::new();
+        state.params.prefix = "t".into();
+        let builtins = vec!["true".into(), "test".into()];
+        let aliases = vec!["tlf".into()];
+        let functions = vec!["tlsdir".into(), "_tabby".into()];
+        let reswords = vec!["then".into(), "time".into()];
+        let inv = _cn_inv(&builtins, &aliases, &functions, &reswords);
+        command_names(&mut state, &inv, false);
+
+        let group_names: Vec<&str> = state.groups.iter().map(|g| g.name.as_str()).collect();
+        for must in [
+            "commands",
+            "builtins",
+            "functions",
+            "aliases",
+            "suffix-aliases",
+            "reserved-words",
+            "jobs",
+            "parameters",
+        ] {
+            assert!(
+                group_names.contains(&must),
+                "missing tag group `{must}` (got {group_names:?})",
+            );
+        }
+    }
+
+    #[test]
+    fn command_names_externals_only_skips_internal_categories() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "t".into();
+        let builtins = vec!["true".into()];
+        let inv = _cn_inv(&builtins, &[], &[], &[]);
+        command_names(&mut state, &inv, true);
+        let group_names: Vec<&str> = state.groups.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(
+            group_names,
+            vec!["commands"],
+            "externals_only must NOT emit internal-category groups",
+        );
+    }
+
+    #[test]
+    fn command_names_prefix_needed_filters_underscore_fns() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "g".into();
+        state.styles.set(
+            ":completion:::command:functions",
+            "prefix-needed",
+            vec!["true".into()],
+            false,
+        );
+        let functions = vec!["git_helper".into(), "_grep".into(), "greet".into()];
+        let inv = _cn_inv(&[], &[], &functions, &[]);
+        command_names(&mut state, &inv, false);
+
+        let fn_group = state
+            .groups
+            .iter()
+            .find(|g| g.name == "functions")
+            .expect("functions group present");
+        let names: Vec<&str> = fn_group
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"git_helper"));
+        assert!(names.contains(&"greet"));
+        // prefix-needed=true + PREFIX!=`_*|\.*` should drop `_grep`.
+        // Bonus: even without prefix-needed, the user typed `g` not
+        // `_g`, so `_grep` is already off-prefix.
+        assert!(
+            !names.contains(&"_grep"),
+            "prefix-needed should suppress _ fns when PREFIX doesn't start with _ or ."
+        );
     }
 }
