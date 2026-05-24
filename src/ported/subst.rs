@@ -10116,6 +10116,260 @@ mod tests {
             "zsh: ${{(q+)\"hi there\"}} → 'hi there' (shortest valid quoting)"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Modifier chains — ${name:h:t}, ${name:r:e}, ${name:s/x/y/:r}.
+    // Anchored to `print -r --` in real zsh 5.9. Modifier chains often
+    // have ordering or accumulation bugs.
+    // ═══════════════════════════════════════════════════════════════════
+
+    const PATH_FIXTURE: &str = "/path/to/file.txt.bak";
+
+    /// `${P:h:t}` — dirname → tail of dirname → "to"
+    #[test]
+    fn paramsubst_mod_chain_h_t_returns_last_dir_component() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC1", PATH_FIXTURE, "${PMC1:h:t}"),
+            "to"
+        );
+    }
+
+    /// `${P:t:r}` — basename then strip last extension → "file.txt"
+    #[test]
+    fn paramsubst_mod_chain_t_r_basename_strip_last_ext() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC2", PATH_FIXTURE, "${PMC2:t:r}"),
+            "file.txt"
+        );
+    }
+
+    /// `${P:r:t}` — strip ext then basename → "file.txt"
+    #[test]
+    fn paramsubst_mod_chain_r_t_strip_then_basename() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC3", PATH_FIXTURE, "${PMC3:r:t}"),
+            "file.txt"
+        );
+    }
+
+    /// `${P:r:e}` — strip last ext (.bak), then ext of result (.txt) → "txt"
+    #[test]
+    fn paramsubst_mod_chain_r_e_returns_inner_extension() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC4", PATH_FIXTURE, "${PMC4:r:e}"),
+            "txt"
+        );
+    }
+
+    /// `${P:r:r}` — strip two extensions → "/path/to/file"
+    #[test]
+    fn paramsubst_mod_chain_r_r_strips_two_extensions() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC5", PATH_FIXTURE, "${PMC5:r:r}"),
+            "/path/to/file"
+        );
+    }
+
+    /// `${P:t:e}` — basename then ext → "bak"
+    #[test]
+    fn paramsubst_mod_chain_t_e_basename_then_extension() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC6", PATH_FIXTURE, "${PMC6:t:e}"),
+            "bak"
+        );
+    }
+
+    /// `${P:s/file/X/}` — single substitution.
+    /// zsh: /path/to/X.txt.bak
+    #[test]
+    fn paramsubst_mod_chain_s_single_substitution() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC7", PATH_FIXTURE, "${PMC7:s/file/X/}"),
+            "/path/to/X.txt.bak"
+        );
+    }
+
+    /// `${P:gs/t/Z/}` — global substitution.
+    /// zsh: /paZh/Zo/file.ZxZ.bak
+    #[test]
+    fn paramsubst_mod_chain_gs_global_substitution() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC8", PATH_FIXTURE, "${PMC8:gs/t/Z/}"),
+            "/paZh/Zo/file.ZxZ.bak"
+        );
+    }
+
+    /// `${P:s/file/X/:r}` — subst then strip ext.
+    /// zsh: /path/to/X.txt
+    #[test]
+    fn paramsubst_mod_chain_s_then_r_subst_then_strip() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC9", PATH_FIXTURE, "${PMC9:s/file/X/:r}"),
+            "/path/to/X.txt"
+        );
+    }
+
+    /// `${P:r:s/file/X/}` — strip then subst.
+    /// zsh: /path/to/X.txt
+    #[test]
+    fn paramsubst_mod_chain_r_then_s_strip_then_subst() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC10", PATH_FIXTURE, "${PMC10:r:s/file/X/}"),
+            "/path/to/X.txt"
+        );
+    }
+
+    /// `${P:t:gs/./_/}` — basename then gsub `.` → `_`.
+    /// zsh: file_txt_bak
+    #[test]
+    fn paramsubst_mod_chain_t_then_gs_basename_then_gsub() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC11", PATH_FIXTURE, "${PMC11:t:gs/./_/}"),
+            "file_txt_bak"
+        );
+    }
+
+    /// `${S:q}` — single-modifier quote (vs the (q) flag form).
+    /// zsh: hi\ there for S="hi there".
+    #[test]
+    fn paramsubst_mod_q_quotes_backslash_escape() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PMC12", "hi there", "${PMC12:q}"),
+            r"hi\ there"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Hash / associative-array expansion forms.
+    // Anchored to `typeset -A h; h[k]=v; print -r -- "${h[k]}"` in zsh.
+    // Hash iteration order is unspecified in zsh; tests for keys/values
+    // sort before comparing.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Build a small hash {k1: v1, k2: v2, k3: v3} via sethparam.
+    fn build_test_hash(name: &str) {
+        errflag.store(0, Ordering::Relaxed);
+        crate::ported::params::unsetparam(name);
+        let _ = crate::ported::params::sethparam(
+            name,
+            vec![
+                "k1".into(), "v1".into(),
+                "k2".into(), "v2".into(),
+                "k3".into(), "v3".into(),
+            ],
+        );
+    }
+
+    /// `${h[k1]}` returns the value `v1`.
+    #[test]
+    fn paramsubst_hash_indexed_returns_value() {
+        let _g = crate::test_util::global_state_lock();
+        build_test_hash("PSH1");
+        let (out, _, _) = paramsubst("${PSH1[k1]}", 0, false, 0, &mut 0);
+        assert_eq!(out, "v1");
+        crate::ported::params::unsetparam("PSH1");
+    }
+
+    /// `${h[k2]}` returns `v2`.
+    #[test]
+    fn paramsubst_hash_indexed_second_key() {
+        let _g = crate::test_util::global_state_lock();
+        build_test_hash("PSH2");
+        let (out, _, _) = paramsubst("${PSH2[k2]}", 0, false, 0, &mut 0);
+        assert_eq!(out, "v2");
+        crate::ported::params::unsetparam("PSH2");
+    }
+
+    /// `${h[missing]}` returns empty string when key absent.
+    #[test]
+    fn paramsubst_hash_missing_key_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        build_test_hash("PSH3");
+        let (out, _, _) =
+            paramsubst("${PSH3[missing]}", 0, false, 0, &mut 0);
+        assert_eq!(out, "");
+        crate::ported::params::unsetparam("PSH3");
+    }
+
+    /// `${#h}` returns the element count.
+    #[test]
+    fn paramsubst_hash_length_returns_element_count() {
+        let _g = crate::test_util::global_state_lock();
+        build_test_hash("PSH4");
+        let (out, _, _) = paramsubst("${#PSH4}", 0, false, 0, &mut 0);
+        assert_eq!(out, "3", "3 key-value pairs → length 3");
+        crate::ported::params::unsetparam("PSH4");
+    }
+
+    /// `${(k)h}` returns keys (order unspecified; sort to compare).
+    #[test]
+    fn paramsubst_hash_k_flag_returns_keys() {
+        let _g = crate::test_util::global_state_lock();
+        build_test_hash("PSH5");
+        let (out, _, multi) =
+            paramsubst("${(k)PSH5}", 0, false, 0, &mut 0);
+        // Collect into a Vec, sort, compare.
+        let mut keys: Vec<String> = if !multi.is_empty() {
+            multi
+        } else {
+            out.split_whitespace().map(|s| s.to_string()).collect()
+        };
+        keys.sort();
+        assert_eq!(keys, vec!["k1", "k2", "k3"]);
+        crate::ported::params::unsetparam("PSH5");
+    }
+
+    /// `${(v)h}` returns values (order unspecified; sort to compare).
+    #[test]
+    fn paramsubst_hash_v_flag_returns_values() {
+        let _g = crate::test_util::global_state_lock();
+        build_test_hash("PSH6");
+        let (out, _, multi) =
+            paramsubst("${(v)PSH6}", 0, false, 0, &mut 0);
+        let mut vals: Vec<String> = if !multi.is_empty() {
+            multi
+        } else {
+            out.split_whitespace().map(|s| s.to_string()).collect()
+        };
+        vals.sort();
+        assert_eq!(vals, vec!["v1", "v2", "v3"]);
+        crate::ported::params::unsetparam("PSH6");
+    }
+
+    /// `${(kv)h}` returns alternating keys and values.
+    /// zsh produces 2*N entries (key, value, key, value, ...) in some
+    /// order. Sort the whole list and check membership.
+    #[test]
+    fn paramsubst_hash_kv_flag_returns_alternating_pairs() {
+        let _g = crate::test_util::global_state_lock();
+        build_test_hash("PSH7");
+        let (out, _, multi) =
+            paramsubst("${(kv)PSH7}", 0, false, 0, &mut 0);
+        let mut all: Vec<String> = if !multi.is_empty() {
+            multi
+        } else {
+            out.split_whitespace().map(|s| s.to_string()).collect()
+        };
+        all.sort();
+        assert_eq!(
+            all,
+            vec!["k1", "k2", "k3", "v1", "v2", "v3"],
+            "kv must produce all keys + all values (6 entries total)"
+        );
+        crate::ported::params::unsetparam("PSH7");
+    }
 } // c:3193
 
 // ============================================================================
