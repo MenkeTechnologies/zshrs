@@ -244,18 +244,38 @@ pub fn shiftchars(to: i32, cnt: i32) {
         MARK.store(to.max(0) as usize, Ordering::SeqCst); // c:854
     }
 
-    // !!! WARNING: PARTIAL PORT — region_highlights adjustment unported.
-    // C lines c:856-909 walk `region_highlights[N_SPECIAL_HIGHLIGHTS..
-    // n_region_highlights]` and adjust each entry's `start`/`end`
-    // (and `start_meta`/`end_meta` on the metaline branch) by the
-    // same rule as `mark`: shift past the cut, or clamp to `to`.
-    // The Rust REGION_HIGHLIGHTS table (zle_refresh.rs:2604) uses a
-    // simplified struct without `flags`/`start_meta`/`end_meta`, so
-    // the ZRH_PREDISPLAY-subtraction logic (c:862-865/892-895) can't
-    // be expressed yet. Faithful port needs migration to the
-    // canonical `region_highlight` struct at zle_h.rs:847. Tracked
-    // for follow-up. Skipping leaves overlapping highlights stale
-    // after a shift, not corruption.
+    // c:892-908 (!meta branch) — walk
+    // region_highlights[N_SPECIAL_HIGHLIGHTS..n_region_highlights]
+    // and adjust each entry's `start`/`end` by the same rule as
+    // mark: shift past the cut, or clamp to `to`. ZRH_PREDISPLAY-
+    // subtraction (`sub = predisplaylen`) is omitted — the Rust
+    // RegionHighlight struct doesn't carry the flag bit yet.
+    use crate::ported::zle::zle_h::N_SPECIAL_HIGHLIGHTS;
+    use crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS;
+    let n_special = N_SPECIAL_HIGHLIGHTS as usize;
+    if let Ok(mut rh) = REGION_HIGHLIGHTS.lock() {
+        let total = rh.len();
+        let upper = total;
+        for idx in n_special..upper {
+            let entry = &mut rh[idx];
+            // c:892 — `if (rhp->start - sub > to)` with sub=0.
+            if (entry.start as i32) > to {
+                if (entry.start as i32) > to + cnt {
+                    entry.start = entry.start.saturating_sub(cnt as usize); // c:894
+                } else {
+                    entry.start = to.max(0) as usize; // c:896
+                }
+            }
+            // c:898 — `if (rhp->end - sub > to)` with sub=0.
+            if (entry.end as i32) > to {
+                if (entry.end as i32) > to + cnt {
+                    entry.end = entry.end.saturating_sub(cnt as usize); // c:900
+                } else {
+                    entry.end = to.max(0) as usize; // c:902
+                }
+            }
+        }
+    }
 
     // c:856-885 — metaline branch (zlemetaline != NULL). Rust stores
     // ZLELINE as UTF-8 directly without a separate metafied buffer,

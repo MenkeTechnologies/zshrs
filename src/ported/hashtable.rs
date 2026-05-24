@@ -1955,12 +1955,16 @@ pub fn histhasher(s: &str) -> u32 {
 /// emptyhashtable(ht);
 /// if (hist_ring) histremovedups();
 /// ```
-///
-/// Clears the lookup table; the dup-removal pass on `hist_ring`
-/// is a separate hist.c entry point pending its port.
 /// WARNING: param names don't match C — Rust=() vs C=(ht)
 pub fn emptyhisttable() {
+    // c:1385 — `emptyhashtable(ht)` — clear the lookup table.
     histtab_lock().write().expect("histtab poisoned").clear();
+    // c:1386 — `if (hist_ring) histremovedups();` — prune dup-flagged
+    // entries from the history ring.
+    let has_ring = !crate::ported::hist::hist_ring.lock().unwrap().is_empty();
+    if has_ring {
+        crate::ported::hist::histremovedups(); // c:1386
+    }
 }
 
 /// Compare strings with normalized whitespace (for history).

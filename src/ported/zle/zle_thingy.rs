@@ -735,7 +735,10 @@ pub fn bin_zle_list(_name: &str, args: &[String], _ops: &options, _func: i32) ->
     // Simplified: ignore the OPT_ISSET dispatch (-a / -L) for now.
     if args.is_empty() {
         // c:396-397 — walk thingytab, call scanlistwidgets per node.
-        let _ = scanlistwidgets();
+        // C dispatches with `list = OPT_ISSET(ops, 'L') ? 0 : 1`. The
+        // Rust port ignores the OPT_ISSET dispatch and uses
+        // abbreviated-listing mode (`list=1`) per the doc comment.
+        let _ = scanlistwidgets(1);
         return 0;
     }
     let mut ret = 0;
@@ -915,37 +918,59 @@ pub fn bin_zle_keymap(_name: &str, args: &[String], _ops: &options, _func: i32) 
     0 // c:494
 }
 
-/// Port of `scanlistwidgets(HashNode hn, int list)` from `Src/Zle/zle_thingy.c:505`.
-/// WARNING: param names don't match C — Rust=() vs C=(hn, list)
-pub fn scanlistwidgets() -> i32 {
+/// Direct port of `static void scanlistwidgets(HashNode hn, int list)`
+/// from `Src/Zle/zle_thingy.c:505`. Pretty-prints one Thingy: skips
+/// internal (WIDGET_INT) widgets, then either:
+///   - `list == 0`: emits `zle -N name [fn]` (re-definable shell form);
+///   - `list != 0`: emits `name (fn)` when fn != name, else just `name`.
+/// Output goes to stdout (C uses `putc('\n', stdout)`).
+/// WARNING: param names don't match C — Rust=(list) vs C=(hn, list).
+pub fn scanlistwidgets(list: i32) -> i32 {
     // c:505
-    // c:505-543 — pretty-print one Thingy: WIDGET_INT skipped (built-in,
-    // not user-visible). User widgets print as either `zle -N name [fn]`
-    // or just `name (fn)` depending on `list` arg. Returns the
-    // formatted string instead of writing to stdout.
+    use std::io::Write;
     let tab = thingytab().lock().unwrap();
-    let lines: Vec<String> = tab
-        .iter()
-        .filter_map(|(name, t)| {
-            let w = t.widget.as_ref()?;
-            // c:514-515 — skip internal widgets.
-            if (w.flags & WIDGET_INT) != 0 {
-                return None;
-            }
-            // c:530-541 — abbreviated format: name (fn) when fn != name.
-            let fn_name = match &w.u {
-                WidgetImpl::UserFunc(s) => s.clone(),
-                WidgetImpl::Internal(_) => return None,
-                _ => return None,
-            };
-            if fn_name == *name {
-                Some(name.clone())
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for (name, t) in tab.iter() {
+        let w = match t.widget.as_ref() {
+            Some(w) => w,
+            None => continue,
+        };
+        // c:514-515 — skip internal widgets.
+        if (w.flags & WIDGET_INT) != 0 {
+            continue;
+        }
+        let fn_name = match &w.u {
+            WidgetImpl::UserFunc(s) => s.clone(),
+            // c:516-517 — non-user widgets (`zle -C`/`zle -A` linked)
+            // print with the same `zle -N name [body]` shape; treat
+            // internal-impl variants as bare-name entries.
+            _ => name.clone(),
+        };
+        entries.push((name.clone(), fn_name));
+    }
+    drop(tab);
+    // c:533-541 — emit. Sort by name for stable output (C iterates the
+    // hash table in addnode order; Rust HashMap has no order).
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    for (name, fn_name) in &entries {
+        if list != 0 {
+            // c:539 — abbreviated `name (fn)` when distinct.
+            if &fn_name != &name {
+                let _ = writeln!(handle, "{} ({})", name, fn_name);
             } else {
-                Some(format!("{} ({})", name, fn_name))
+                let _ = writeln!(handle, "{}", name);
             }
-        })
-        .collect();
-    let _ = lines;
+        } else {
+            // c:534 — re-definable `zle -N name [fn]` form.
+            if &fn_name != &name {
+                let _ = writeln!(handle, "zle -N {} {}", name, fn_name);
+            } else {
+                let _ = writeln!(handle, "zle -N {}", name);
+            }
+        }
+    }
     0
 }
 

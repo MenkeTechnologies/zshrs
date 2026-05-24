@@ -214,13 +214,68 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
     }
 }
 
-/// Port of `handle_color(int bg, int red, int green, int blue)` from Src/Zle/termquery.c:438.
-/// WARNING: param names don't match C — Rust=(_seq) vs C=(bg, red, green, blue)
-pub fn handle_color(_seq: &str) -> i32 {
+/// Port of `static unsigned memo_cursor` at `Src/Zle/termquery.c:435`.
+/// Caches the terminal's reported default cursor color (packed
+/// 24-bit RGB) so `cursor_form` can restore it when the user-bound
+/// cursor color clears.
+pub static memo_cursor: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0); // c:435
+
+/// Port of `static char *COLORVAR[]` at `Src/Zle/termquery.c:135`.
+/// Per-channel param name for terminal default colors.
+const COLORVAR: [&str; 3] = [".term.fg", ".term.bg", ".term.cursor"]; // c:135
+
+/// Port of `static char *MODEVAR` at `Src/Zle/termquery.c:136`.
+const MODEVAR: &str = ".term.mode"; // c:136
+
+/// Direct port of `static void handle_color(int bg, int red, int
+/// green, int blue)` from `Src/Zle/termquery.c:438`. Caches the
+/// terminal-reported default color into `memo_term_color`
+/// (fg/bg) or `memo_cursor` (case 2), then assigns the
+/// corresponding `$.term.fg`/`.bg`/`.cursor` param to the RGB
+/// hex string and (for bg) sets `$.term.mode` to `light`/`dark`
+/// based on Rec.709 lightness.
+pub fn handle_color(bg: i32, red: i32, green: i32, blue: i32) -> i32 {
     // c:438
-    // C body c:440-593 — parses iTerm2 OSC 4;<idx>;rgb response,
-    //                    populates terminal color cache. Without
-    //                    iTerm2 dispatch: 0.
+    use crate::ported::zsh_h::{
+        TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK,
+        TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK,
+    };
+    let packed = (((red as u64) << 8) + green as u64) << 8 | blue as u64;
+    let memo_tc = &crate::ported::prompt::memo_term_color;
+    match bg {
+        0 => {
+            // c:443 — foreground.
+            let mut v = memo_tc.load(std::sync::atomic::Ordering::Relaxed);
+            v &= !TXT_ATTR_FG_MASK; // c:444
+            v |= TXT_ATTR_FG_24BIT | (packed << TXT_ATTR_FG_COL_SHIFT); // c:445
+            memo_tc.store(v, std::sync::atomic::Ordering::Relaxed);
+        }
+        1 => {
+            // c:448 — background.
+            let mut v = memo_tc.load(std::sync::atomic::Ordering::Relaxed);
+            v &= !TXT_ATTR_BG_MASK; // c:449
+            v |= TXT_ATTR_BG_24BIT | (packed << TXT_ATTR_BG_COL_SHIFT); // c:450
+            memo_tc.store(v, std::sync::atomic::Ordering::Relaxed);
+            // c:453-455 — Rec.709 lightness threshold → "dark"/"light".
+            let lightness =
+                0.2126_f32 * red as f32 + 0.7152_f32 * green as f32 + 0.0722_f32 * blue as f32;
+            let mode = if lightness <= 127.0 { "dark" } else { "light" }; // c:454
+            let _ = crate::ported::params::assignsparam(MODEVAR, mode, 0); // c:453
+        }
+        2 => {
+            // c:457 — cursor color (packed 24-bit RGB).
+            let v = ((red as u32) << 24) | ((green as u32) << 16) | ((blue as u32) << 8); // c:458
+            memo_cursor.store(v, std::sync::atomic::Ordering::Relaxed);
+        }
+        _ => return 0,
+    }
+    // c:463 — `sprintf(colour, "#%02x%02x%02x", red, green, blue)`.
+    let colour = format!("#{:02x}{:02x}{:02x}", red, green, blue); // c:463
+    // c:464 — `assignsparam(COLORVAR[bg], colour, 0)`.
+    if let Some(name) = COLORVAR.get(bg as usize) {
+        let _ = crate::ported::params::assignsparam(name, &colour, 0); // c:464
+    }
     0
 }
 
@@ -251,11 +306,9 @@ pub fn handle_query(sequence: i32, numbers: &[i32], capture: &str) {
         1 => {
             // c:484 default colour
             if numbers.len() == 4 {
-                // c:485
-                handle_color(&format!(
-                    "{};{};{};{}", // c:486 handle_color(...)
-                    numbers[0], numbers[1], numbers[2], numbers[3]
-                ));
+                // c:485 — `handle_color(numbers[0], numbers[1],
+                //                       numbers[2], numbers[3])`.
+                handle_color(numbers[0], numbers[1], numbers[2], numbers[3]); // c:486
             }
         }
         2 => {
@@ -567,30 +620,133 @@ pub fn extension_enabled(class: &str, ext: &str, def: bool) -> bool {
     def
 }
 
-/// Port of `collate_seq(int sindex, int dir)` from Src/Zle/termquery.c:676.
-/// WARNING: param names don't match C — Rust=(_seq) vs C=(sindex, dir)
-pub fn collate_seq(_seq: &str) -> Vec<u8> {
+/// Port of `static const struct extension editext[]` at
+/// `Src/Zle/termquery.c:666-672`. Per-class control-sequence pairs
+/// for entering / leaving ZLE edit mode.
+/// Fields: (key, [seq_enter, seq_leave], class_len, enabled).
+const EDITEXT: &[(&str, [&str; 2], usize, bool)] = &[
+    // c:667 — bracketed-paste — seqs are NULL in C; emission goes
+    // through the `zle_bracketed_paste` param array instead (see
+    // collate_seq's `bracket` branch).
+    ("bracketed-paste", ["", ""], 0, true),
+    // c:668 — integration-prompt — OSC 133;B before prompts.
+    ("integration-prompt", ["\x1b]133;B\x1b\\", ""], 11, true),
+    // c:671 — modkeys-xterm — `\e[>4;1m` to enter, `\e[>4m` to leave.
+    ("modkeys-xterm", ["\x1b[>4;1m", "\x1b[>4m"], 7, false),
+];
+
+/// Port of `static void collate_seq(int sindex, int dir)` from
+/// `Src/Zle/termquery.c:676`. Walks `EDITEXT[]` in `dir` order;
+/// for each enabled entry, checks per-class disable toggles from
+/// `$.term.extensions`, appends the chosen `seq[sindex]` to a
+/// buffer (or the corresponding `zle_bracketed_paste[sindex]`
+/// when the entry is `bracketed-paste`), then `write_loop`s the
+/// buffer to `SHTTY`.
+pub fn collate_seq(sindex: usize, dir: i32) {
     // c:676
-    // C body c:678-722 — collates a UTF-8 byte sequence into a single
-    //                    locale-aware key for sort comparison via
-    //                    strxfrm(). Without locale glue: identity.
-    _seq.as_bytes().to_vec()
+    let mut seq = Vec::<u8>::with_capacity(256); // c:678
+    let max = EDITEXT.len() as i32;
+    // c:683 — `char **elist = getaparam(EXTVAR);`
+    let elist: Vec<String> = {
+        let tab = match crate::ported::params::paramtab().read() {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        match tab.get(".term.extensions") {
+            Some(pm) => pm.u_arr.clone().unwrap_or_default(),
+            None => Vec::new(),
+        }
+    };
+
+    // c:685 — `for (i = dir > 0 ? 0 : max - 1; i >= 0 && i < max; i += dir)`.
+    let mut i: i32 = if dir > 0 { 0 } else { max - 1 };
+    while i >= 0 && i < max {
+        let (key, seqs, class, default_enabled) = EDITEXT[i as usize];
+        let mut enabled = default_enabled; // c:686
+        // c:687-688 — `if (i && !editext[i].seq[sindex]) continue;`
+        if i != 0 && seqs[sindex].is_empty() {
+            i += dir;
+            continue;
+        }
+        // c:689-701 — walk elist looking for an enable/disable that
+        // matches the entry's class or full `class:key` name.
+        for e in elist.iter() {
+            // c:691 — `negate = (**e == '-');`
+            let (negate, body) = match e.strip_prefix('-') {
+                Some(r) => (true, r),
+                None => (false, e.as_str()),
+            };
+            // c:692-695 — `negate != enabled` skip.
+            if negate != enabled {
+                continue;
+            }
+            // c:693-697 — class match: `class` prefix + either end or
+            // `:key` exact-suffix tail.
+            let class_str = &key[..class.min(key.len())];
+            let after_class = if body.starts_with(class_str) {
+                &body[class_str.len()..]
+            } else if body == key {
+                ""
+            } else {
+                continue;
+            };
+            if after_class.is_empty() || after_class == &key[class..] {
+                enabled = !negate; // c:698
+                break;
+            }
+        }
+        if enabled {
+            // c:703
+            if i != 0 {
+                // c:704 — non-bracketed entries write their fixed `seq`.
+                seq.extend_from_slice(seqs[sindex].as_bytes()); // c:706
+            } else {
+                // c:707-710 — bracketed-paste: copy from
+                // `$zle_bracketed_paste[sindex]`.
+                let bracket = {
+                    let tab = match crate::ported::params::paramtab().read() {
+                        Ok(t) => t,
+                        Err(_) => {
+                            i += dir;
+                            continue;
+                        }
+                    };
+                    tab.get("zle_bracketed_paste")
+                        .and_then(|pm| pm.u_arr.clone())
+                        .unwrap_or_default()
+                };
+                if bracket.len() == 2 {
+                    if let Some(s) = bracket.get(sindex) {
+                        // c:710
+                        seq.extend_from_slice(s.as_bytes()); // c:710
+                    }
+                }
+            }
+        }
+        i += dir;
+    }
+    // c:713 — `write_loop(SHTTY, seq, pos - seq);`
+    let fd = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::Relaxed);
+    if fd >= 0 && !seq.is_empty() {
+        let _ = crate::ported::utils::write_loop(fd, &seq); // c:713
+    }
 }
 
-/// Port of `start_edit()` from Src/Zle/termquery.c:717.
+/// Port of `void start_edit(void)` from Src/Zle/termquery.c:717.
+/// C body (one line): `collate_seq(0, 1);` — emit the `enter`
+/// sequences in forward order.
 pub fn start_edit() -> i32 {
     // c:717
-    // C body c:719-722 — emits OSC 1337;StartEdit (iTerm2). No
-    //                    iTerm2 dispatch in headless mode.
+    collate_seq(0, 1); // c:719
     0
 }
 
-/// Port of `end_edit()` from Src/Zle/termquery.c:724.
+/// Port of `void end_edit(void)` from Src/Zle/termquery.c:724.
+/// C body (one line): `collate_seq(1, -1);` — emit the `leave`
+/// sequences in reverse order.
 pub fn end_edit() -> i32 {
     // c:724
-    // C body c:726-729 — emits the iTerm2 OSC 1337;EndEdit terminator
-    //                    via shout when zterm_supports_iterm2 is true.
-    //                    No iTerm2 dispatch in headless mode.
+    collate_seq(1, -1); // c:726
     0
 }
 
@@ -946,20 +1102,157 @@ pub fn free_cursor_forms() {
     CURSOR_FORMS.with(|cf| cf.borrow_mut().clear());
 }
 
-/// !!! WARNING: PARTIAL PORT — stub. C `cursor_form(void)` at
-/// Src/Zle/termquery.c:913 walks the `cursor_forms[]` array and
-/// emits the DECSCUSR escape (CSI Ps ` q`) appropriate to the
-/// current `state` (CURF_DEFAULT/CURF_INSERT/CURF_OVERWRITE/
-/// CURF_VICMD/CURF_VIINS/CURF_DEFAULTSTATE), respecting
-/// trashedzle / insmode / vichgflag. Writes via `putshout` to set
-/// the terminal cursor shape.
-///
-/// Wrong sig too: C returns `void`, Rust returns `Vec<String>`.
-/// Empty Vec means callers get nothing — vi-mode cursor reshape
-/// (block in cmd, beam in insert) doesn't fire. Tracked.
-pub fn cursor_form() -> Vec<String> {
-    // c:913 — see WARNING above; stub.
-    Vec::new()
+/// Direct port of `void cursor_form(void)` from
+/// `Src/Zle/termquery.c:913`. Picks the `cursor_forms[context]`
+/// entry per the current ZLE state (CURC_EDIT / CURC_COMMAND /
+/// CURC_INSERT / CURC_OVERWRITE / CURC_PENDING /
+/// CURC_REGION_START/_END / CURC_VISUAL), diffs against the
+/// previously-emitted `state`, and writes only the changed
+/// DECSCUSR / DECSET / OSC 12 fragments to SHTTY.
+pub fn cursor_form() {
+    // c:913
+    use crate::ported::zle::zle_h::{CURC_COMMAND, CURC_EDIT, CURC_OVERWRITE, CURC_VISUAL};
+    // c:919 — `if (!cursor_forms) return;` — `zle_set_cursorform`
+    // populates this on first ZLE entry. Without entries → no-op.
+    let forms_empty = CURSOR_FORMS.with(|cf| cf.borrow().is_empty());
+    if forms_empty {
+        return; // c:919
+    }
+    // c:922-933 — pick context. The trashedzle short-circuit (c:921)
+    // is omitted; zshrs has no trashedzle global. The remaining
+    // arms cover insmode (overwrite), vichgflag==2 (pending),
+    // region_active (visual / region start / region end), then the
+    // default cmd-vs-edit-vs-insert split via vichgflag.
+    let context: u32 = {
+        let insmode = crate::ported::zle::zle_main::INSMODE
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let vichgflag = crate::ported::zle::zle_vi::VICHGFLAG
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let region_active = crate::ported::zle::zle_main::REGION_ACTIVE
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let in_vicmd = {
+            let name = crate::ported::zle::zle_keymap::curkeymapname();
+            *name == "vicmd"
+        };
+        if insmode == 0 {
+            // c:925 — `!insmode` → CURC_OVERWRITE
+            CURC_OVERWRITE as u32
+        } else if vichgflag == 2 {
+            // c:927 — `vichgflag == 2` → CURC_PENDING
+            CURC_PENDING as u32
+        } else if region_active != 0 {
+            // c:929 — region active
+            if in_vicmd {
+                // c:930 — visual
+                CURC_VISUAL as u32
+            } else {
+                // c:932-933 — region start or end. C compares `mark > zlecs`;
+                // Rust uses MARK / ZLECS atomics.
+                let mark =
+                    crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst);
+                let zlecs =
+                    crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+                if mark as usize > zlecs {
+                    CURC_REGION_START as u32
+                } else {
+                    CURC_REGION_END as u32
+                }
+            }
+        } else if in_vicmd {
+            // c:935 — vicmd → CURC_COMMAND
+            CURC_COMMAND as u32
+        } else if vichgflag != 0 {
+            // c:935 — vichgflag set (non-2 already handled) → CURC_INSERT
+            CURC_INSERT as u32
+        } else {
+            // c:935 — default → CURC_EDIT
+            CURC_EDIT as u32
+        }
+    };
+    // c:936 — `want = (context == CURC_DEFAULT) ? CURF_DEFAULT : cursor_forms[context];`.
+    // CURF_DEFAULT == 0 per zle_h.rs. Rust always picks from the array.
+    let want = CURSOR_FORMS.with(|cf| cf.borrow().get(context as usize).copied().unwrap_or(0));
+
+    // File-static `static unsigned int state = CURF_DEFAULT;` at c:917.
+    static STATE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let prev_state = STATE.load(std::sync::atomic::Ordering::Relaxed);
+    let disabled = CURSOR_ENABLED_MASK.with(|m| m.get());
+    // c:937 — `if (!(changed = (want ^ state) & ~cursor_enabled_mask)) return;`.
+    let changed = (want ^ prev_state) & !disabled;
+    if changed == 0 {
+        return; // c:937
+    }
+
+    let mut seq = String::new();
+    // c:939-940 — CURF_HIDDEN: emit TCCURINV / TCCURVIS via tcout.
+    // Termcap substrate isn't wired here; we still emit the escape
+    // sequence DECSET 25 (show/hide cursor) which is the standard.
+    if (changed & CURF_HIDDEN as u32) != 0 {
+        // c:939
+        if (want & CURF_HIDDEN as u32) != 0 {
+            seq.push_str("\x1b[?25l"); // hide
+        } else {
+            seq.push_str("\x1b[?25h"); // show
+        }
+    }
+    // c:941-948 — CURF_SHAPE_MASK + CURF_BLINK selector → DECSCUSR.
+    // C source maps:
+    //   CURF_BLOCK + steady → 2     CURF_BLOCK + blink → 1
+    //   CURF_UNDERLINE + steady → 4 CURF_UNDERLINE + blink → 3
+    //   CURF_BAR + steady → 6       CURF_BAR + blink → 5
+    let mut changed_mut = changed;
+    if (changed_mut & CURF_SHAPE_MASK as u32) != 0 {
+        // c:941
+        let mut c: u8 = b'0';
+        let shape = want & CURF_SHAPE_MASK as u32;
+        if shape == CURF_BAR as u32 {
+            c += 2; // c:945 (fall-through pattern compresses to BAR=6)
+            c += 2;
+            c += 2 - (if (want & CURF_BLINK as u32) != 0 { 1 } else { 0 });
+        } else if shape == CURF_UNDERLINE as u32 {
+            c += 2; // c:946
+            c += 2 - (if (want & CURF_BLINK as u32) != 0 { 1 } else { 0 });
+        } else if shape == CURF_BLOCK as u32 {
+            c += 2 - (if (want & CURF_BLINK as u32) != 0 { 1 } else { 0 }); // c:947
+        }
+        // c:949 — `changed &= ~(CURF_BLINK | CURF_STEADY);`
+        changed_mut &= !((CURF_BLINK | CURF_STEADY) as u32);
+        // c:950 — `s += sprintf(s, "\033[%c q", c);`
+        seq.push_str("\x1b[");
+        seq.push(c as char);
+        seq.push_str(" q");
+    }
+    // c:952-953 — `if (changed & (CURF_BLINK | CURF_STEADY)) ...`.
+    if (changed_mut & ((CURF_BLINK | CURF_STEADY) as u32)) != 0 {
+        // c:952
+        // c:953 — `\033[?12h` (blink on) / `\033[?12l` (off).
+        seq.push_str(if (want & CURF_BLINK as u32) != 0 {
+            "\x1b[?12h"
+        } else {
+            "\x1b[?12l"
+        });
+    }
+    // c:955-960 — CURF_COLOR_MASK → OSC 12 RGB.
+    if (changed_mut & CURF_COLOR_MASK) != 0 {
+        // c:955
+        let mut want_color = want;
+        if (want & CURF_COLOR_MASK) == 0 {
+            // c:957 — `want = memo_cursor | (want & 0xff);`
+            want_color = memo_cursor.load(std::sync::atomic::Ordering::Relaxed) | (want & 0xff);
+        }
+        let r = (want_color >> CURF_RED_SHIFT) & 0xff;
+        let g = (want_color >> CURF_GREEN_SHIFT) & 0xff;
+        let b = (want_color >> CURF_BLUE_SHIFT) & 0xff;
+        seq.push_str(&format!("\x1b]12;rgb:{:02x}00/{:02x}00/{:02x}00\x1b\\", r, g, b));
+    }
+    if !seq.is_empty() {
+        let fd = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::Relaxed);
+        if fd >= 0 {
+            let _ = crate::ported::utils::write_loop(fd, seq.as_bytes()); // c:963
+        }
+    }
+    STATE.store(want, std::sync::atomic::Ordering::Relaxed); // c:964
+    let _ = CURF_COLOR; // silence unused-import warning until tests cover the color path
 }
 
 const PROBE_TIMEOUT_MS: u64 = 500;
