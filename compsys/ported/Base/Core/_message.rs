@@ -24,3 +24,30 @@ pub fn _message(
         state.end_group();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emits_explanation_into_named_tag_group() {
+        let mut state = CompletionState::new();
+        let styles = ZStyleStore::new();
+        _message(&mut state, &styles, ":complete::test:", "messages", "no values to complete");
+        let grp = state
+            .groups
+            .iter()
+            .find(|g| g.name == "messages")
+            .expect("messages group present");
+        assert!(!grp.explanations.is_empty(), "message must appear as an explanation");
+    }
+
+    #[test]
+    fn nmessages_counter_incremented() {
+        let mut state = CompletionState::new();
+        let styles = ZStyleStore::new();
+        assert_eq!(state.nmessages, 0);
+        _message(&mut state, &styles, ":complete::test:", "messages", "hello");
+        assert_eq!(state.nmessages, 1, "_message must bump nmessages");
+    }
+}

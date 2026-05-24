@@ -36,3 +36,31 @@ pub fn _normal(state: &mut MainCompleteState) -> CompleterResult {
     let _ = cmd;
     CompleterResult::NoMatch
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_position_returns_no_match_pending_dispatch() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 1;
+        assert!(matches!(_normal(&mut state), CompleterResult::NoMatch));
+    }
+
+    #[test]
+    fn argument_position_with_empty_words_returns_no_match() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 2;
+        state.comp.params.words.clear();
+        assert!(matches!(_normal(&mut state), CompleterResult::NoMatch));
+    }
+
+    #[test]
+    fn argument_position_with_cmd_returns_no_match_pending_dispatch() {
+        let mut state = MainCompleteState::new("git status", 10);
+        state.comp.params.current = 2;
+        state.comp.params.words = vec!["git".into(), "status".into()];
+        assert!(matches!(_normal(&mut state), CompleterResult::NoMatch));
+    }
+}

@@ -13,3 +13,21 @@ pub fn _complete(state: &mut MainCompleteState) -> CompleterResult {
     // This is the default completer that handles normal completion
     _normal(state)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delegates_to_normal() {
+        // _complete is a thin wrapper around _normal — both should
+        // return the same CompleterResult for the same input state.
+        let mut s1 = MainCompleteState::new("ls ", 3);
+        let mut s2 = MainCompleteState::new("ls ", 3);
+        assert_eq!(
+            std::mem::discriminant(&_complete(&mut s1)),
+            std::mem::discriminant(&_normal(&mut s2)),
+            "_complete must delegate verbatim to _normal"
+        );
+    }
+}
