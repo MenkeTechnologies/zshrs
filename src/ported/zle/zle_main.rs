@@ -1108,21 +1108,20 @@ pub fn whereis(widget_name: &str) -> Vec<String> {
     bindings
 }
 
-/// Port of `recursiveedit(UNUSED(char **args))` from Src/Zle/zle_main.c:1974.
+/// Port of `int recursiveedit(UNUSED(char **args))` from
+/// `Src/Zle/zle_main.c:1974`. Drive a nested ZLE edit session —
+/// bump zle_recursive, redraw the line, run the editor mainloop,
+/// then restore.
 pub fn recursiveedit() -> i32 {
     // c:1974
-    // C body (c:1976-1995): `++zle_recursive; redrawhook(); zrefresh();
-    //                       zlecore(); --zle_recursive;
-    //                       locerror = errflag ? 1 : 0;
-    //                       errflag = done = eofsent = 0; return locerror`.
-    // zlecore needs the editor mainloop substrate; we faithfully
-    // bump/decrement zle_recursive and reset errflag/done.
-    ZLE_RECURSIVE.fetch_add(1, SeqCst);
-    // c:1984-1986 — `redrawhook(); zrefresh(); zlecore()`. Deferred.
-    ZLE_RECURSIVE.fetch_sub(1, SeqCst);
+    ZLE_RECURSIVE.fetch_add(1, SeqCst); // c:1976
+    redrawhook(); // c:1984
+    crate::ported::zle::zle_refresh::zrefresh(); // c:1985
+    zlecore(); // c:1986
+    ZLE_RECURSIVE.fetch_sub(1, SeqCst); // c:1988
     let cur_errflag = errflag.load(Ordering::Relaxed);
-    let locerror = if cur_errflag != 0 { 1 } else { 0 };
-    errflag.store(0, Ordering::Relaxed);
+    let locerror = if cur_errflag != 0 { 1 } else { 0 }; // c:1990
+    errflag.store(0, Ordering::Relaxed); // c:1992
     DONE.store(0, SeqCst); // c:1993
     locerror // c:1995
 }
