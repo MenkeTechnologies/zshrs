@@ -37,4 +37,24 @@ mod tests {
         assert_eq!(state.nmatches, 0, "_nothing must NOT add matches");
         assert!(state.groups.is_empty(), "_nothing must NOT create groups");
     }
+
+    #[test]
+    fn does_not_touch_compstate() {
+        let mut state = CompletionState::new();
+        state.params.compstate.insert = "menu".into();
+        state.params.compstate.list = "list packed".into();
+        _nothing(&mut state);
+        assert_eq!(state.params.compstate.insert, "menu");
+        assert_eq!(state.params.compstate.list, "list packed");
+    }
+
+    #[test]
+    fn does_not_touch_params() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "git".into();
+        state.params.suffix = "@HEAD".into();
+        _nothing(&mut state);
+        assert_eq!(state.params.prefix, "git");
+        assert_eq!(state.params.suffix, "@HEAD");
+    }
 }

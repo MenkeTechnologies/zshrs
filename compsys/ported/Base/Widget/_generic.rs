@@ -57,4 +57,34 @@ mod tests {
             CompleterResult::Skip
         ));
     }
+
+    #[test]
+    fn action_observes_provided_state() {
+        let mut state = MainCompleteState::new("hello", 5);
+        state.ctx.context = ":complete::test:".into();
+        let seen_ctx = std::cell::Cell::new(String::new());
+        _generic(&mut state, |s| {
+            seen_ctx.set(s.ctx.context.clone());
+            CompleterResult::Matched
+        });
+        assert_eq!(seen_ctx.into_inner(), ":complete::test:");
+    }
+
+    #[test]
+    fn action_can_mutate_state() {
+        use crate::completion::Completion;
+        let mut state = MainCompleteState::new("", 0);
+        _generic(&mut state, |s| {
+            s.comp.add_match(Completion::new("via-generic"), None);
+            CompleterResult::Matched
+        });
+        let names: Vec<String> = state
+            .comp
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"via-generic".to_string()));
+    }
 }

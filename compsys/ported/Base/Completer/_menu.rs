@@ -43,4 +43,28 @@ mod tests {
         assert!(_menu(&mut state));
         assert_eq!(state.params.compstate.insert, "menu");
     }
+
+    #[test]
+    fn returns_true_unconditionally() {
+        // shell:23 `return 1` — false return propagates as "no
+        // matches added"; we encode that as Ok-true at the Rust
+        // layer.
+        let mut state = CompletionState::new();
+        assert!(_menu(&mut state));
+    }
+
+    #[test]
+    fn does_not_add_matches() {
+        let mut state = CompletionState::new();
+        _menu(&mut state);
+        assert_eq!(state.nmatches, 0);
+    }
+
+    #[test]
+    fn overwrites_existing_insert_value() {
+        let mut state = CompletionState::new();
+        state.params.compstate.insert = "all".into();
+        _menu(&mut state);
+        assert_eq!(state.params.compstate.insert, "menu");
+    }
 }

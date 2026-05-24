@@ -36,11 +36,30 @@ mod tests {
     #[test]
     fn delegates_to_files_execute_default() {
         // Pin: _default IS files_execute(FilesOpts::default()).
-        // Whether matches return depends on test cwd contents —
-        // we only assert the call doesn't panic and exercises the
-        // delegation path.
         let mut state = CompletionState::new();
         state.params.prefix = "Carg".into();
         let _ = _default(&mut state);
+    }
+
+    #[test]
+    fn off_prefix_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "definitely-no-such-file-xyz-123".into();
+        let ok = _default(&mut state);
+        assert!(!ok);
+    }
+
+    #[test]
+    fn delegates_to_files_with_default_opts() {
+        // Verify _default IS files_execute(default()) — both calls
+        // produce the same result for the same state.
+        use crate::ported::_files::{files_execute, FilesOpts};
+        let mut s1 = CompletionState::new();
+        let mut s2 = CompletionState::new();
+        s1.params.prefix = "definitely-no-such-file-xyz".into();
+        s2.params.prefix = "definitely-no-such-file-xyz".into();
+        let r1 = _default(&mut s1);
+        let r2 = files_execute(&mut s2, &FilesOpts::default());
+        assert_eq!(r1, r2, "_default must agree with files_execute(default())");
     }
 }

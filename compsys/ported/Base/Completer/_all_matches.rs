@@ -57,4 +57,26 @@ mod tests {
         assert!(_all_matches(&mut state));
         assert_eq!(state.params.compstate.insert, "all");
     }
+
+    #[test]
+    fn does_not_add_matches() {
+        let mut state = CompletionState::new();
+        _all_matches(&mut state);
+        assert_eq!(state.nmatches, 0);
+    }
+
+    #[test]
+    fn returns_true() {
+        let mut state = CompletionState::new();
+        assert!(_all_matches(&mut state));
+    }
+
+    #[test]
+    fn leaves_list_compstate_untouched() {
+        let mut state = CompletionState::new();
+        state.params.compstate.list = "packed".into();
+        _all_matches(&mut state);
+        // Only insert= changes; list= is untouched.
+        assert_eq!(state.params.compstate.list, "packed");
+    }
 }
