@@ -1,5 +1,17 @@
-//! Port of `_shadow` — shadow existing completions. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_shadow` — shadow existing completions.
+//!
+//! Local shell reference: NO standalone shell file `_shadow`
+//! exists upstream. The shell-side `_shadow` is a per-call utility
+//! invoked by `_complete_help` to TEMPORARILY redefine
+//! `compadd`/`compcall`/`zstyle` so it can RECORD what zstyle
+//! lookups + compadd invocations a completer would make, without
+//! actually emitting matches.
+//!
+//! Simplified Rust port: takes an action closure and runs it
+//! verbatim. The "shadowing" behavior (intercepting compadd to
+//! record instead of emit) would require trait-object-based
+//! receiver swap-out — left to the caller that wires up the
+//! recorder.
 
 use crate::compcore::CompletionState;
 

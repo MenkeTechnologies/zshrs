@@ -1,5 +1,22 @@
-//! Port of `_nothing` — add no completions (but don't fail). Moved
-//! from `compsys/functions.rs`.
+//! Port of `_nothing` — add no completions (but don't fail).
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_nothing`
+//! (system copy `/opt/homebrew/share/zsh/functions/_nothing`).
+//!
+//! Upstream shell source (the WHOLE file, 3 lines):
+//! ```text
+//!  1  #compdef true false log times clear logname whoami sync
+//!  3  _message 'no argument or option'
+//! ```
+//!
+//! Upstream is bound as the completion for commands that genuinely
+//! take no args (`true`, `false`, `whoami`, etc.) — it emits a
+//! single "no argument or option" message via `_message`.
+//!
+//! Simplified Rust port: returns true without adding matches or
+//! a message. (The message would need a CompletionState writer to
+//! emit — the Rust impl signals "completion happened, just no
+//! results" by returning true.)
 
 use crate::compcore::CompletionState;
 

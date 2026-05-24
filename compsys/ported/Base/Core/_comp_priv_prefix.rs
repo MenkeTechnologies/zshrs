@@ -1,6 +1,13 @@
 //! Port of `_comp_priv_prefix` — prefix for privilege escalation
 //! (sudo, doas, etc.).
 //!
+//! Local shell reference: there is NO standalone shell file —
+//! `_comp_priv_prefix` is a shell ARRAY parameter (not a function).
+//! Set by precommand-aware completers like `_sudo`, `_doas`, `_su`
+//! before they dispatch the underlying command's completer; consumed
+//! by `_call_program -p` to decide whether to re-prefix the probe
+//! command.
+//!
 //! Upstream `_comp_priv_prefix` is a shell ARRAY parameter (not a
 //! function file) holding the precommand stack — e.g. `( sudo )` or
 //! `( doas -u root )`. Set by precommand-aware completers like

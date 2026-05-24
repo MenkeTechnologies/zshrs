@@ -1,6 +1,15 @@
-//! Port of `_as_if` — complete as if in different context. Moved from
-//! `compsys/functions.rs`. Renamed from `as_if` to mirror zsh shell
-//! function name `_as_if`.
+//! Port of `_as_if` — complete as if in different context.
+//!
+//! Local shell reference: NO standalone `_as_if` shell file exists
+//! upstream. The name `_as_if_command` IS a shell helper used by
+//! the `_precommand` family — they temporarily push a different
+//! `curcontext` then run the wrapped completer.
+//!
+//! Rust port: takes the override context + action closure and
+//! swaps `state.ctx.context` for the duration of the call,
+//! restoring afterward. Same shape as the shell helper, just
+//! exposed as a generic closure-runner rather than a
+//! one-shot-per-precommand helper.
 
 use crate::base::MainCompleteState;
 

@@ -1,5 +1,27 @@
-//! Port of `_store_cache` — store completion data to cache. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_store_cache` — store completion data to cache.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_store_cache`
+//! (system copy `/opt/homebrew/share/zsh/functions/_store_cache`).
+//!
+//! Upstream shell source (key lines from the 64-line fn):
+//! ```text
+//! 10  zstyle -t ":completion:${curcontext}:" use-cache
+//! 14  zstyle -s ":completion:${curcontext}:" cache-path _cache_dir
+//! 22  if [[ ! -d "$_cache_dir" ]]; then
+//! 23    mkdir -p "$_cache_dir"
+//! 28  _cache_path="$_cache_dir/$_cache_ident"
+//! 40  print -r -- "${(P)_cache_field[1]}"=\""${(P)_cache_field[1]}"\" \
+//!         > "$_cache_path"
+//! ```
+//!
+//! Upstream writes shell-eval-safe `name=("v1" "v2" …)` assignments
+//! into the cache so `_retrieve_cache`'s `builtin .` re-sources
+//! them into the calling shell.
+//!
+//! Simplified Rust port: writes the data slice joined by newlines
+//! (one entry per line). Pairs with `_retrieve_cache`'s
+//! line-by-line read for round-trip — pinned by the
+//! `store_then_retrieve_round_trips` test.
 
 use std::path::Path;
 

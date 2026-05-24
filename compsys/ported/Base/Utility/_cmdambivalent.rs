@@ -1,5 +1,31 @@
-//! Port of `_cmdambivalent` — handle commands that can be run with or
-//! without arguments. Moved from `compsys/library.rs`.
+//! Port of `_cmdambivalent` — for cmds that may be run with or
+//! without arguments (`system()`-style vs `execl()`-style).
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_cmdambivalent`
+//! (system copy `/opt/homebrew/share/zsh/functions/_cmdambivalent`).
+//!
+//! Upstream shell source (full 17-line fn):
+//! ```text
+//!  3  if (( CURRENT == 1 && ${#words} == 1 )); then
+//!  5    local space=' '
+//!  6    if (( ${${words[CURRENT]}[(I)$space]} )); then
+//!  7      _cmdstring                    # has spaces → quoted cmdline
+//!  8    elif [[ ${${compstate[all_quotes]}[1]} == (\'|\") ]]; then
+//!  9      _cmdstring                    # quoted → quoted cmdline
+//! 10    else
+//! 11      _command_names -e             # bare → external cmd
+//! 12    fi
+//! 13  elif (( CURRENT == 1 )); then
+//! 14    _command_names -e
+//! 15  else
+//! 16    _normal
+//! 17  fi
+//! ```
+//!
+//! Simplified Rust port: drops the space/quote heuristic
+//! (caller-level concern) and just `current <= 1 → _command_names`
+//! / `else → fall through`. Pinned by the
+//! `argument_position_skips_command_names` test.
 
 use crate::base::MainCompleteState;
 

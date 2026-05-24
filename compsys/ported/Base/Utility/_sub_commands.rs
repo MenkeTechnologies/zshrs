@@ -1,5 +1,25 @@
-//! Port of `_sub_commands` — complete subcommands. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_sub_commands` — complete subcommands.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_sub_commands`
+//! (system copy `/opt/homebrew/share/zsh/functions/_sub_commands`).
+//!
+//! Upstream shell source (the whole 9-line fn):
+//! ```text
+//!  3  local expl
+//!  5  if [[ CURRENT -eq 2 ]]; then
+//!  6    _wanted commands expl command compadd "$@"
+//!  7  else
+//!  8    _message 'no more arguments'
+//!  9  fi
+//! ```
+//!
+//! Upstream emits the supplied commands when at position 2 (right
+//! after the main command name), or "no more arguments" otherwise.
+//!
+//! Simplified Rust port: takes a `(name, description)` slice and
+//! emits each with the standard `name -- desc` disp format,
+//! prefix-filtered. Drops the position-2 gate (caller-side
+//! responsibility) and the "no more arguments" message.
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;
