@@ -1518,13 +1518,44 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
 }
 
 /// Port of `static void parseopts_setemulate(...)` from Src/init.c:348.
-fn parseopts_setemulate(_nam: &str, _flags: i32) { // c:348
-                                                   // emulate(nam, 1, &emulation, opts);                                    // c:348
-                                                   // opts[LOGINSHELL] = ((flags & PARSEARGS_LOGIN) != 0);                  // c:351
-                                                   // opts[PRIVILEGED] = (getuid() != geteuid() || getgid() != getegid()); // c:352
-                                                   // opts[INTERACTIVE] = isatty(0) ? 2 : 0;                                // c:361
-                                                   // opts[MONITOR] = 2; opts[HASHDIRS] = 2; opts[USEZLE] = 1;              // c:366-368
-                                                   // opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;                         // c:369-370
+fn parseopts_setemulate(nam: &str, flags: i32) {
+    // c:350 — `emulate(nam, 1, &emulation, opts);` initialises most
+    // options. Strip leading `-` (login-shell marker) and any path
+    // components so the name passed to `emulate` is just the basename
+    // (`ksh` / `sh` / `csh` / `zsh`).
+    let bare = nam.trim_start_matches('-');
+    let basename = std::path::Path::new(bare)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(bare);
+    crate::ported::options::emulate(basename, true); // c:350
+
+    // c:351 — `opts[LOGINSHELL] = ((flags & PARSEARGS_LOGIN) != 0);`
+    const PARSEARGS_LOGIN: i32 = 2;
+    crate::ported::options::opt_state_set(
+        "loginshell",
+        (flags & PARSEARGS_LOGIN) != 0,
+    );
+
+    // c:352 — `opts[PRIVILEGED] = (getuid() != geteuid() || …);`
+    let priv_on = unsafe { libc::getuid() != libc::geteuid() || libc::getgid() != libc::getegid() };
+    crate::ported::options::opt_state_set("privileged", priv_on);
+
+    // c:361 — `opts[INTERACTIVE] = isatty(0) ? 2 : 0;`. The "2"
+    // sentinel means "default-on, may be downgraded by SHINSTDIN
+    // handling below". Rust port stores as bool — we only retain
+    // the on/off distinction; the downgrade logic at c:end-of-fn
+    // is a no-op once we collapse to bool.
+    let interactive_default = unsafe { libc::isatty(0) != 0 };
+    crate::ported::options::opt_state_set("interactive", interactive_default);
+
+    // c:366-368 — `opts[MONITOR] = 2; opts[HASHDIRS] = 2; opts[USEZLE] = 1;`
+    crate::ported::options::opt_state_set("monitor", true);
+    crate::ported::options::opt_state_set("hashdirs", true);
+    crate::ported::options::opt_state_set("usezle", true);
+    // c:369-370 — `opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;`
+    crate::ported::options::opt_state_set("shinstdin", false);
+    crate::ported::options::opt_state_set("singlecommand", false);
 }
 
 #[cfg(test)]
