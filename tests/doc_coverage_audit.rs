@@ -127,3 +127,29 @@ fn every_canonical_builtin_has_real_doc() {
     for n in &missing { eprintln!("           - {}", n); }
     assert!(missing.is_empty(), "{} builtins have placeholder docs: {:?}", missing.len(), missing);
 }
+
+#[test]
+fn every_canonical_extension_has_real_doc() {
+    // Union of in-process ext builtins and daemon-backed `z*` builtins
+    // — same source the IntelliJ Extensions tab inventories.
+    let mut names: Vec<&'static str> = zsh::ext_builtins::EXT_BUILTIN_NAMES
+        .iter()
+        .copied()
+        .chain(zsh::daemon::builtins::ZSHRS_BUILTIN_NAMES.iter().copied())
+        .collect();
+    names.sort();
+    names.dedup();
+    let m = audit("extensions", &names);
+    assert!(m.is_empty(), "{} extension builtins have placeholder docs: {:?}", m.len(), m);
+}
+
+#[test]
+fn every_compsys_fn_has_real_doc() {
+    // Rust-native compsys functions (`compsys::COMPSYS_FN_NAMES`).
+    // Most resolve via the yodl-derived BUILTIN_DOCS table (compsys.yo
+    // / compwid.yo) — anything missing needs a hand fallback.
+    let mut names: Vec<&'static str> = compsys::COMPSYS_FN_NAMES.iter().copied().collect();
+    names.sort();
+    let m = audit("compsys", &names);
+    assert!(m.is_empty(), "{} compsys fns have placeholder docs: {:?}", m.len(), m);
+}

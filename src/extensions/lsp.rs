@@ -1293,8 +1293,74 @@ pub fn lookup_doc(name: &str) -> String {
     if let Some(d) = EXT_BUILTIN_DOCS.iter().find(|(k, _)| *k == name) {
         return format!("**{}** — _zshrs extension builtin_\n\n{}", d.0, d.1);
     }
+    if let Some(d) = COMPSYS_FN_DOCS.iter().find(|(k, _)| *k == name) {
+        return format!("**{}** — _compsys function_\n\n{}", d.0, d.1);
+    }
     String::new()
 }
+
+/// Hand docs for compsys functions whose names don't have a per-name
+/// `item(tt(_X))` block in `compsys.yo` / `compwid.yo`. Per-command
+/// completers (`_git`, `_docker`, …) and a couple of core dispatch
+/// internals fall here.
+const COMPSYS_FN_DOCS: &[(&str, &str)] = &[
+    (
+        "_main_complete",
+        "Top-level entry the compsys dispatcher calls for every completion attempt. Walks the configured completer list (`_complete` / `_approximate` / `_match` / …), invoking each until one returns matches. Sets `$compstate[insert]` based on the result. Rust impl in `compsys::base::main_complete`.",
+    ),
+    (
+        "_directories",
+        "Complete directory names only. Equivalent to `_files -/`. Honors `path-files` zstyle and respects `GLOB_DOTS`. Rust impl in `compsys::files::directories_execute`.",
+    ),
+    (
+        "_cargo",
+        "Completion for the Rust `cargo` command — subcommands, flags, target names, feature names, profile names. Synthesizes from `cargo --list` and the manifest. Rust-native; no shell-script fallback.",
+    ),
+    (
+        "_docker",
+        "Completion for the `docker` CLI — subcommands, image names, container names/IDs, network names, volume names. Queries the local daemon socket via the `docker` binary; falls back to static-only when the daemon is unavailable.",
+    ),
+    (
+        "_git",
+        "Completion for `git` — subcommands, branches, tags, refs, remotes, file paths sensitive to `git status`. The most heavily-used compsys function in practice; Rust-native rewrite is several hundred times faster than the upstream shell implementation.",
+    ),
+    (
+        "_kubectl",
+        "Completion for `kubectl` — subcommands, resource kinds, resource names (queried via `kubectl get`), context/namespace names from kubeconfig.",
+    ),
+    (
+        "_terraform",
+        "Completion for `terraform` — subcommands, workspace names, state-file paths, providers, modules, variable names from the loaded HCL.",
+    ),
+    (
+        "_ls",
+        "Completion for `ls` — flags + file paths. Baseline stub that delegates path completion to `_files` and option completion to a static spec.",
+    ),
+    (
+        "_cd",
+        "Completion for `cd` — directory paths from `$PWD`, `$cdpath`, and the `dirs` stack. Honors `AUTO_CD` and `CDABLE_VARS`.",
+    ),
+    (
+        "_cp",
+        "Completion for `cp` — flags + file paths. Source paths exclude the destination; destination directory is offered as the final candidate.",
+    ),
+    (
+        "_mv",
+        "Completion for `mv` — flags + file/directory paths. Source/destination split identical to `_cp`.",
+    ),
+    (
+        "_rm",
+        "Completion for `rm` — flags + file paths. `-r` enables directory completion; without it, directories are filtered out.",
+    ),
+    (
+        "_cat",
+        "Completion for `cat` — file paths only. No subcommands; flags pass through to `_files`.",
+    ),
+    (
+        "_grep",
+        "Completion for `grep` (GNU/BSD-flavor-aware) — flags then file paths. First positional argument is the pattern (no completion offered for free-text patterns).",
+    ),
+];
 
 /// Hand-curated docs for the zshrs extension builtins (`coreutils`
 /// drop-ins, async/await primitives, doctor, intercept, etc.). The
@@ -3804,6 +3870,55 @@ pub fn dump_reference_html() -> String {
         ),
         &specials,
         "special",
+    );
+
+    // ── compsys functions (`compsys::COMPSYS_FN_NAMES`) ──────────────
+    let mut compsys_names: Vec<String> =
+        compsys::COMPSYS_FN_NAMES.iter().map(|s| s.to_string()).collect();
+    compsys_names.sort();
+    write_chapter(
+        &mut out,
+        "ch-lsp-compsys",
+        "Compsys Function Index",
+        &format!(
+            "{} entries · the <code>_arguments</code> / <code>_files</code> / \
+             <code>_describe</code> family of completion functions. Native Rust \
+             implementations in the <code>compsys</code> crate replace the \
+             upstream zsh shell-function versions for performance.",
+            compsys_names.len()
+        ),
+        &compsys_names,
+        "compsys",
+    );
+
+    // ── extension builtins (ext + daemon z* builtins) ────────────────
+    let mut ext_names: Vec<String> = crate::ext_builtins::EXT_BUILTIN_NAMES
+        .iter()
+        .map(|s| s.to_string())
+        .chain(
+            crate::daemon::builtins::ZSHRS_BUILTIN_NAMES
+                .iter()
+                .map(|s| s.to_string()),
+        )
+        .collect();
+    ext_names.sort();
+    ext_names.dedup();
+    write_chapter(
+        &mut out,
+        "ch-lsp-extensions",
+        "Extension Builtin Index",
+        &format!(
+            "{} entries · zshrs-only builtins with NO upstream zsh counterpart. \
+             Split across in-process builtins (coreutils drop-ins, <code>async</code>/\
+             <code>await</code>/<code>barrier</code>, <code>doctor</code>, \
+             <code>intercept</code>, contrib autoloads) and daemon-backed <code>z*</code> \
+             builtins (<code>zd</code>, <code>zcache</code>, <code>zls</code>, \
+             <code>zlock</code>, <code>zpublish</code>, …) that proxy to the local \
+             <code>zshrs-daemon</code> for cross-shell state.",
+            ext_names.len()
+        ),
+        &ext_names,
+        "extension",
     );
 
     out
