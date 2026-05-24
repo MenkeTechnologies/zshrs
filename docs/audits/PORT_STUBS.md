@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T21:22:33.013247+00:00
+Generated: 2026-05-24T21:29:21.179251+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 178 stubs across 48 files
+## Summary: 177 stubs across 48 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -28,8 +28,8 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 182) |
 | `src/ported/zle/zle_keymap.rs` | 8 | `getrestchar_keybuf` (2 / 39) |
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
-| `src/ported/zle/zle_hist.rs` | 7 | `doisearch` (19 / 462) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (19 / 746) |
+| `src/ported/zle/zle_hist.rs` | 6 | `doisearch` (19 / 462) |
 | `src/ported/zle/zle_main.rs` | 6 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
 | `src/ported/module.rs` | 5 | `load_and_bind` (1 / 20) |
@@ -190,18 +190,6 @@ python3 scripts/gen_port_stubs.py
 | 210 | `spaceinline` | 14 | 54 | 25% |
 | 47 | `sizeline` | 5 | 18 | 27% |
 
-### `src/ported/zle/zle_hist.rs` — 7 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1142 | `doisearch` | 19 | 462 | 4% |
-| 1253 | `getvisrchstr` | 6 | 118 | 5% |
-| 612 | `historysearchbackward` | 10 | 49 | 20% |
-| 632 | `historysearchforward` | 10 | 49 | 20% |
-| 723 | `insertlastword` | 21 | 97 | 21% |
-| 1366 | `historybeginningsearchbackward` | 10 | 36 | 27% |
-| 1386 | `historybeginningsearchforward` | 10 | 36 | 27% |
-
 ### `src/ported/zle/compctl.rs` — 6 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -212,6 +200,17 @@ python3 scripts/gen_port_stubs.py
 | 92 | `createcompctltable` | 4 | 14 | 28% |
 | 2280 | `makecomplistext` | 43 | 150 | 28% |
 | 242 | `freecompcond` | 11 | 37 | 29% |
+
+### `src/ported/zle/zle_hist.rs` — 6 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1292 | `doisearch` | 19 | 462 | 4% |
+| 1403 | `getvisrchstr` | 6 | 118 | 5% |
+| 612 | `historysearchbackward` | 10 | 49 | 20% |
+| 632 | `historysearchforward` | 10 | 49 | 20% |
+| 1516 | `historybeginningsearchbackward` | 10 | 36 | 27% |
+| 1536 | `historybeginningsearchforward` | 10 | 36 | 27% |
 
 ### `src/ported/zle/zle_main.rs` — 6 stubs
 
