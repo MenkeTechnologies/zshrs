@@ -54,4 +54,25 @@ mod tests {
         assert!(_as_if(&mut state, "x", |_| true));
         assert!(!_as_if(&mut state, "x", |_| false));
     }
+
+    #[test]
+    fn restore_runs_even_on_action_returning_false() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":orig:".into();
+        _as_if(&mut state, ":new:", |_| false);
+        assert_eq!(state.ctx.context, ":orig:", "context restored even on false");
+    }
+
+    #[test]
+    fn empty_context_override_replaces_to_empty_then_restores() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":orig:".into();
+        let saw = std::cell::Cell::new(String::new());
+        _as_if(&mut state, "", |s| {
+            saw.set(s.ctx.context.clone());
+            true
+        });
+        assert_eq!(saw.into_inner(), "");
+        assert_eq!(state.ctx.context, ":orig:");
+    }
 }

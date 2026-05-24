@@ -52,4 +52,29 @@ mod tests {
         _set_command(&mut state);
         assert!(state.lastcomp.get("command").is_none());
     }
+
+    #[test]
+    fn repeated_call_overwrites_previous_command() {
+        let mut state = MainCompleteState::new("git status", 10);
+        state.comp.params.words = vec!["git".into(), "status".into()];
+        _set_command(&mut state);
+        assert_eq!(state.lastcomp.get("command").map(String::as_str), Some("git"));
+        // Now change words and re-run.
+        state.comp.params.words = vec!["docker".into(), "ps".into()];
+        _set_command(&mut state);
+        assert_eq!(
+            state.lastcomp.get("command").map(String::as_str),
+            Some("docker")
+        );
+    }
+
+    #[test]
+    fn does_not_alter_other_lastcomp_entries() {
+        let mut state = MainCompleteState::new("git", 3);
+        state.comp.params.words = vec!["git".into()];
+        state.lastcomp.insert("prefix".to_string(), "g".into());
+        _set_command(&mut state);
+        assert_eq!(state.lastcomp.get("prefix").map(String::as_str), Some("g"));
+        assert_eq!(state.lastcomp.get("command").map(String::as_str), Some("git"));
+    }
 }

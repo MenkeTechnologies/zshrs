@@ -35,4 +35,41 @@ mod tests {
         assert!(_shadow(&mut state, "x", |_| true));
         assert!(!_shadow(&mut state, "x", |_| false));
     }
+
+    #[test]
+    fn action_can_mutate_state() {
+        use crate::completion::Completion;
+        let mut state = CompletionState::new();
+        _shadow(&mut state, "shadow1", |s| {
+            s.add_match(Completion::new("via-shadow"), None);
+            true
+        });
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"via-shadow".to_string()));
+    }
+
+    #[test]
+    fn shadow_name_is_passed_but_currently_ignored() {
+        // Pin that the shadow_name arg is accepted (signature stability)
+        // but doesn't gate execution.
+        let mut state = CompletionState::new();
+        assert!(_shadow(&mut state, "any-arbitrary-name", |_| true));
+    }
+
+    #[test]
+    fn action_observes_provided_state() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "x".into();
+        let seen = std::cell::Cell::new(String::new());
+        _shadow(&mut state, "s", |s| {
+            seen.set(s.params.prefix.clone());
+            true
+        });
+        assert_eq!(seen.into_inner(), "x");
+    }
 }
