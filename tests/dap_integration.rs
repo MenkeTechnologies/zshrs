@@ -264,6 +264,75 @@ fn variables_returns_env_snapshot() {
 }
 
 #[test]
+fn variables_order_user_vars_first_then_specials_then_env() {
+    // Pin the strykelang-style ordering: when paused at a breakpoint,
+    // the Variables panel should show user-defined vars at the top
+    // (the ones the user is debugging), then zsh specials, then env
+    // vars at the bottom. Without this, the panel reads as "300 env
+    // vars and you have to scroll" — useless during debugging.
+    let mut dap = DapHandle::spawn();
+    let _ = dap.request("initialize", json!({}));
+    let _ = dap.wait_event("initialized", Duration::from_secs(2));
+
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    let path = tmp.path().to_path_buf();
+    let canon = std::fs::canonicalize(&path).expect("canonicalize");
+    // Declare a user var, then sit on a breakpoint after it.
+    std::fs::write(
+        &path,
+        "my_user_var=42\nanother_user_var=hello\necho done\n",
+    )
+    .expect("write program");
+    let _ = dap.request(
+        "setBreakpoints",
+        json!({
+            "source": { "path": canon.to_string_lossy() },
+            "breakpoints": [{ "line": 3 }],
+        }),
+    );
+    let _ = dap.request("configurationDone", json!({}));
+    let _ = dap.request(
+        "launch",
+        json!({
+            "program": canon.to_string_lossy(),
+            "args": [],
+            "cwd": std::env::temp_dir().to_string_lossy(),
+        }),
+    );
+    let _ = dap
+        .wait_event("stopped", Duration::from_secs(8))
+        .expect("breakpoint never fired");
+
+    let body = dap.request("variables", json!({ "variablesReference": 1 }));
+    let arr = body["variables"].as_array().expect("variables");
+    let names: Vec<&str> = arr
+        .iter()
+        .map(|v| v["name"].as_str().unwrap_or(""))
+        .collect();
+    // Find positions of: user var, special, env var.
+    let pos = |target: &str| names.iter().position(|n| *n == target);
+    let user_pos = pos("my_user_var").or_else(|| pos("another_user_var"));
+    let env_pos = pos("PATH").or_else(|| pos("HOME"));
+    assert!(
+        user_pos.is_some(),
+        "no user var in snapshot — got: {:?}",
+        names.iter().take(20).collect::<Vec<_>>(),
+    );
+    assert!(env_pos.is_some(), "no env var in snapshot");
+    assert!(
+        user_pos.unwrap() < env_pos.unwrap(),
+        "user var at pos {} should appear BEFORE env var at pos {} — got order: {:?}",
+        user_pos.unwrap(),
+        env_pos.unwrap(),
+        names.iter().take(20).collect::<Vec<_>>(),
+    );
+
+    let _ = dap.request("continue", json!({ "threadId": 1 }));
+    let _ = dap.wait_event("terminated", Duration::from_secs(4));
+    dap.shutdown();
+}
+
+#[test]
 fn evaluate_runs_inline_zshrs_command() {
     let mut dap = DapHandle::spawn();
     let _ = dap.request("initialize", json!({}));

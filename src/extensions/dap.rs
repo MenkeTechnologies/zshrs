@@ -663,48 +663,91 @@ fn current_lineno() -> u32 {
 /// populated with the script's locals + env. Before launch (and as a
 /// fallback when paramtab is empty), surface raw process env so the
 /// panel is never empty for the IDE to display.
+///
+/// Ordering (matches strykelang's Variables panel UX):
+///   1. **User vars** — script-defined names sorted alpha. These are
+///      what the user is actually debugging; they go on top so the
+///      panel reads as "MY VARIABLES first" without scrolling past
+///      300 env vars.
+///   2. **Specials** — zsh `PM_SPECIAL` params (`$?`, `$$`, `$#`,
+///      `$IFS`, `$PS1`, `$LINENO`, `$RANDOM`, etc). Useful but
+///      tier-2; sorted alpha below user vars.
+///   3. **Env vars** — all-caps env names imported at startup
+///      (`$PATH`, `$HOME`, `$USER`, `$SHELL`, …). Tier-3; alpha at
+///      the bottom.
 fn snapshot_variables() -> Vec<Value> {
-    let mut out = Vec::new();
+    let mut user: Vec<(String, String)> = Vec::new();
+    let mut specials: Vec<(String, String)> = Vec::new();
+    let mut env: Vec<(String, String)> = Vec::new();
+
     if let Ok(tab) = crate::ported::params::paramtab().read() {
         for (name, pm) in tab.iter() {
-            // Skip the noisy specials so the panel isn't flooded.
+            // Skip the noisiest specials so the panel isn't flooded.
             if matches!(
                 name.as_str(),
                 "_" | "PIPESTATUS" | "pipestatus" | "ZSH_ARGZERO"
             ) {
                 continue;
             }
-            let value = if pm.u_val != 0 && (pm.node.flags & crate::ported::zsh_h::PM_INTEGER as i32) != 0 {
+            let value = if pm.u_val != 0
+                && (pm.node.flags & crate::ported::zsh_h::PM_INTEGER as i32) != 0
+            {
                 pm.u_val.to_string()
             } else if let Some(s) = pm.u_str.as_ref() {
                 s.clone()
             } else {
                 String::new()
             };
-            out.push(json!({
-                "name": name,
-                "value": value,
-                "type": "scalar",
-                "variablesReference": 0,
-            }));
-            if out.len() >= 500 {
-                break;
+            let is_special =
+                (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0;
+            let is_env_capsname =
+                !is_special && name.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+                    && std::env::var(name).is_ok();
+            if is_special {
+                specials.push((name.clone(), value));
+            } else if is_env_capsname {
+                env.push((name.clone(), value));
+            } else {
+                user.push((name.clone(), value));
             }
         }
     }
-    // Fallback / supplement with process env so things like PATH /
-    // HOME / USER are visible even before the executor has run.
-    if out.is_empty() {
+    // Fallback / supplement with process env when paramtab is empty
+    // (e.g. before the executor has started).
+    if user.is_empty() && specials.is_empty() && env.is_empty() {
         for (k, v) in std::env::vars() {
-            out.push(json!({
-                "name": k,
-                "value": v,
-                "type": "scalar",
-                "variablesReference": 0,
-            }));
-            if out.len() >= 500 {
-                break;
-            }
+            env.push((k, v));
+        }
+    }
+    user.sort_by(|a, b| a.0.cmp(&b.0));
+    specials.sort_by(|a, b| a.0.cmp(&b.0));
+    env.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut out = Vec::with_capacity(user.len() + specials.len() + env.len());
+    let push = |out: &mut Vec<Value>, name: &str, value: &str| {
+        out.push(json!({
+            "name": name,
+            "value": value,
+            "type": "scalar",
+            "variablesReference": 0,
+        }));
+    };
+    for (n, v) in &user {
+        push(&mut out, n, v);
+        if out.len() >= 500 {
+            return out;
+        }
+    }
+    for (n, v) in &specials {
+        push(&mut out, n, v);
+        if out.len() >= 500 {
+            return out;
+        }
+    }
+    for (n, v) in &env {
+        push(&mut out, n, v);
+        if out.len() >= 500 {
+            return out;
         }
     }
     out
