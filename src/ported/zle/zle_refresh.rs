@@ -1430,20 +1430,87 @@ pub fn tc_downcurs(count: usize) {
 }
 
 /// Direct port of `int tcout_via_func(int cap, int arg, int (*outc)(int))`
-/// from `Src/Zle/zle_refresh.c:2291`. Looks up the user's `tcout` shell
-/// function via `getshfunc` and dispatches when defined; returns 0 if
-/// the function was found and called (caller skips the termcap output),
-/// 1 otherwise (caller emits the raw termcap escape).
-pub fn tcout_via_func(_cap: i32, _arg: i32) -> i32 {
-    // c:tcout_via_func
-    if crate::ported::utils::getshfunc("tcout").is_some() {
-        // Function found; cap/arg would be passed via `$1`/`$2` in a
-        // full port — here we just dispatch and let the user fn read
-        // the args from the environment / its widget context.
-        let _ = crate::ported::zle::compcore::shfunc_call("tcout");
-        return 0;
+/// from `Src/Zle/zle_refresh.c:2291`.
+///
+/// Faithful line-by-line translation of the C body (c:2293-2342).
+/// Saves the SFC/STOPMSG/INCOMPFUNC context, looks up the user's
+/// `$TCOUT_FUNC_NAME` (default `"tcout"`) via [`getshfunc`], builds the
+/// `[tcout_func_name, cap_name, arg?]` arg list, dispatches through
+/// [`callhookfunc`] (the SFC_SUBST static-link path of `doshfunc`),
+/// then reads `$REPLY` and writes each byte to the shell-output fd
+/// (decoding Meta-byte pairs). Returns 0 when the function ran (caller
+/// suppresses the raw termcap escape), 1 otherwise (caller emits raw).
+pub fn tcout_via_func(cap: i32, arg: i32) -> i32 {
+    use crate::ported::builtin::STOPMSG;
+    use crate::ported::exec::sfcontext;
+    use crate::ported::init::tccap_get_name;
+    use crate::ported::params::getsparam;
+    use crate::ported::utils::{callhookfunc, getshfunc, write_loop, INCOMPFUNC};
+    use crate::ported::zsh_h::SFC_SUBST;
+
+    // c:2295-2297 — save sfcontext / stopmsg / incompfunc.
+    let osc = sfcontext.load(Ordering::Relaxed);
+    let osm = STOPMSG.load(Ordering::Relaxed);
+    let old_incompfunc = INCOMPFUNC.load(Ordering::Relaxed);
+    // c:2299-2300 — sfcontext = SFC_SUBST; incompfunc = 0.
+    sfcontext.store(SFC_SUBST, Ordering::Relaxed);
+    INCOMPFUNC.store(0, Ordering::Relaxed);
+
+    // c:2302 — Shfunc tcout_func; if ((tcout_func = getshfunc(tcout_func_name)))
+    let func_name = TCOUT_FUNC_NAME
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| "tcout".to_string());
+
+    let dispatched = if getshfunc(&func_name).is_some() {
+        // c:2305-2309 — build linklist: [func_name, cap_name, arg?].
+        let mut argv: Vec<String> = Vec::with_capacity(3);
+        argv.push(func_name.clone()); // c:2306
+        argv.push(tccap_get_name(cap as usize).to_string()); // c:2307
+        if arg != -1 {
+            // c:2310-2313 — `if (arg != -1) sprintf(buf, "%d", arg);
+            //                                addlinknode(l, buf);`
+            argv.push(arg.to_string());
+        }
+        // c:2316 — `doshfunc(tcout_func, l, 1)`. callhookfunc routes
+        //          through the same path under SFC_SUBST.
+        let _ = callhookfunc(&func_name, Some(&argv), 0, std::ptr::null_mut());
+
+        // c:2318-2331 — pull $REPLY and emit each byte (Meta-decoded)
+        //               via outc().
+        if let Some(reply) = getsparam("REPLY") {
+            let bytes = reply.as_bytes();
+            let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == 0x83 && i + 1 < bytes.len() {
+                    out.push(bytes[i + 1] ^ 32); // c:2324
+                    i += 2;
+                } else {
+                    out.push(bytes[i]); // c:2327
+                    i += 1;
+                }
+            }
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out_fd, &out);
+        }
+        true
+    } else {
+        false
+    };
+
+    // c:2338-2340 — restore sfcontext / stopmsg / incompfunc.
+    sfcontext.store(osc, Ordering::Relaxed);
+    STOPMSG.store(osm, Ordering::Relaxed);
+    INCOMPFUNC.store(old_incompfunc, Ordering::Relaxed);
+
+    if dispatched {
+        0
+    } else {
+        1
     }
-    1
 }
 
 /// Port of `void tcout(int cap)` from `Src/Zle/zle_refresh.c:2339`.
