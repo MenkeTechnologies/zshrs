@@ -1417,7 +1417,19 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len();
 
-    for i in 0..len {
+    let mut i = 0;
+    while i < len {
+        // c:Src/lex.c:3587-3600 — backslash escape converts the next
+        // char into a tokenized literal (Bnull/Bnullkeep). xpandbraces
+        // sees the tokenized form so `\{` never enters the brace
+        // walk. The Rust helper accepts raw backslash-escaped input
+        // (no prior tokenization step in tests / direct callers), so
+        // mirror C's tokenizer by skipping the escaped char here:
+        // `\{` and `\}` MUST NOT count as brace delimiters.
+        if chars[i] == '\\' && i + 1 < len {
+            i += 2; // c:3591 — skip Bnull/Bnullkeep + escaped char
+            continue;
+        }
         match chars[i] {
             '{' => {
                 if depth == 0 {
@@ -1431,11 +1443,6 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
                     if has_comma || has_dotdot {
                         return true;
                     }
-                    // BRACE_CCL: any non-empty `{…}` body without a
-                    // comma/dotdot becomes a character-class set.
-                    // Direct port of Src/lex.c::xpandbraces that
-                    // routes the body through expand_ccl when
-                    // BRACE_CCL is set, regardless of body length.
                     if brace_ccl {
                         if let Some(open) = brace_open {
                             if i > open + 1 {
@@ -1452,6 +1459,7 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
             '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' => has_dotdot = true,
             _ => {}
         }
+        i += 1;
     }
 
     false
@@ -4322,7 +4330,11 @@ fn expand_range(
     }
 
     // Try character range
-    if left.len() == 1 && right.len() == 1 {
+    // c:Src/lex.c::dobrace alpha-range path — only handles bare a..z,
+    // not a..z..N. zsh emits literal `{a..z..3}` because the step
+    // form is numeric-only. Detect step_text presence on the char-
+    // range arm and refuse to expand so the literal survives.
+    if left.len() == 1 && right.len() == 1 && step_text.is_empty() {
         let start = left.chars().next()?;
         let end = right.chars().next()?;
         let (start, end, reverse) = if start <= end {
@@ -5825,16 +5837,21 @@ mod tests {
         );
     }
 
-    /// `\{a,b,c\}` → `{a,b,c}` literal (escaped braces don't expand).
-    /// zsh emits the input as a single literal.
+    /// `\{a,b,c\}` → no expansion (escaped braces aren't brace
+    /// delimiters). xpandbraces returns input unchanged; the lexer
+    /// upstream strips the backslashes before this layer sees them.
+    /// Anchored test: zsh `print -r -- \{a,b,c\}` → `{a,b,c}` because
+    /// the lexer tokenizes `\{`/`\}` to `Bnull{`/`Bnull}` before
+    /// xpandbraces runs, then untokenize drops the Bnulls. At the
+    /// xpandbraces-unit level (raw backslashes), the only invariant
+    /// to verify is "no expansion fires" — the brace literal survives.
     #[test]
-    #[ignore = "ANCHOR: zsh `\\{a,b,c\\}` returns literal `{a,b,c}`; verify zshrs"]
     fn xpandbraces_escaped_braces_remain_literal_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
             xpandbraces("\\{a,b,c\\}", false),
-            vec!["{a,b,c}"],
-            "zsh: escaped braces don't expand"
+            vec!["\\{a,b,c\\}"],
+            "xpandbraces unit: escaped braces survive without expansion (no per-element splat)"
         );
     }
 
@@ -5879,7 +5896,6 @@ mod tests {
     /// `{a..z..3}` → `{a..z..3}` literal (alpha range with step NOT expanded
     /// by zsh — surprising but verified).
     #[test]
-    #[ignore = "ANCHOR: zsh emits literal {a..z..3}; alpha step unsupported"]
     fn xpandbraces_alpha_step_unsupported_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
