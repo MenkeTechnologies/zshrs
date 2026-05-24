@@ -61,14 +61,26 @@ pub fn _path_files(state: &mut CompletionState, opts: &PathFilesOpts) -> bool {
         (".".to_string(), prefix.as_str())
     };
 
-    // Handle -W (search in specific directories) and cdpath
-    // integration (when no path-sep in prefix AND use_cdpath).
-    let search_dirs: Vec<String> = if let Some(ref dirs) = opts.search_dirs {
-        dirs.clone()
+    // Resolve the list of actual directories to walk.
+    //   -W base...   → prepend each base to the subdir implied by
+    //                  PREFIX (the relative `dir` we computed above).
+    //   cdpath       → walk `dir` AND each cdpath entry (no `/` in
+    //                  PREFIX means bareword — look in $cdpath too).
+    //   neither      → just walk `dir` directly.
+    let dirs_to_walk: Vec<String> = if let Some(ref bases) = opts.search_dirs {
+        bases
+            .iter()
+            .map(|b| {
+                let rel = dir.trim_start_matches("./");
+                if b.ends_with('/') {
+                    format!("{}{}", b, rel)
+                } else {
+                    format!("{}/{}", b, rel)
+                }
+            })
+            .collect()
     } else if opts.use_cdpath && !prefix.contains('/') {
         let mut dirs = vec![dir.clone()];
-        // Append each cdpath entry so the user can `cd <Tab>` and
-        // find dirs reachable via $cdpath.
         for d in &opts.cdpath {
             if !dirs.contains(d) {
                 dirs.push(d.clone());
@@ -81,14 +93,8 @@ pub fn _path_files(state: &mut CompletionState, opts: &PathFilesOpts) -> bool {
 
     state.begin_group(opts.tag.as_deref().unwrap_or("files"), true);
 
-    for search_dir in &search_dirs {
-        let full_dir = if search_dir.ends_with('/') {
-            format!("{}{}", search_dir, dir.trim_start_matches("./"))
-        } else {
-            search_dir.clone()
-        };
-
-        if let Ok(entries) = std::fs::read_dir(&full_dir) {
+    for full_dir in &dirs_to_walk {
+        if let Ok(entries) = std::fs::read_dir(full_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();

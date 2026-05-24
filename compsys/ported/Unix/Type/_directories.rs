@@ -159,4 +159,26 @@ mod tests {
             "untagged call must not create groups"
         );
     }
+
+    #[test]
+    fn tag_set_with_only_other_tags_skips() {
+        // Try-set has `users` only — directories is NOT in the set.
+        let mut state = CompletionState::new();
+        let mut tm = TagManager::new();
+        tm.init(&["users".to_string()]);
+        tm.add_try(&["users".to_string()]);
+        assert!(tm.start());
+        assert!(!_directories(&mut state, &mut tm, &[]));
+    }
+
+    #[test]
+    fn requested_predicate_unchanged_by_negative_outcome() {
+        // Even when the call returns false (no entries), `tags.wanted`
+        // should still report `directories` is wanted.
+        let mut state = CompletionState::new();
+        state.params.prefix = "/no/such/dir/".into();
+        let mut tm = tagman();
+        let _ = _directories(&mut state, &mut tm, &[]);
+        assert!(tm.wanted("directories"));
+    }
 }

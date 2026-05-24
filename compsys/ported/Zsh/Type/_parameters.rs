@@ -33,9 +33,42 @@ use crate::completion::Completion;
 
 /// Glob match for type filter (supports `*` and `?`).
 fn type_matches(pattern: &str, type_str: &str) -> bool {
+    // Shell `^pat` — negation.
+    if let Some(rest) = pattern.strip_prefix('^') {
+        return !type_matches(rest, type_str);
+    }
+    // Shell `(a|b|c)...` — alternation: split at the top-level `|`
+    // chars inside the leading `(...)`, try each alternative.
+    if let Some(rest) = pattern.strip_prefix('(') {
+        if let Some(close) = find_close_paren(rest) {
+            let group = &rest[..close];
+            let after = &rest[close + 1..];
+            return group.split('|').any(|alt| {
+                let combined = format!("{}{}", alt, after);
+                type_matches(&combined, type_str)
+            });
+        }
+    }
     let pat: Vec<char> = pattern.chars().collect();
     let txt: Vec<char> = type_str.chars().collect();
     glob_helper(&pat, &txt)
+}
+
+fn find_close_paren(s: &str) -> Option<usize> {
+    let mut depth: i32 = 1;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn glob_helper(pat: &[char], txt: &[char]) -> bool {
@@ -49,37 +82,96 @@ fn glob_helper(pat: &[char], txt: &[char]) -> bool {
     }
 }
 
-/// _parameters - Complete parameter (variable) names with optional
-/// type filter (shell `-g pattern`).
-pub fn _parameters_with_filter(
+/// Options for `_parameters` — mirrors the shell-side flag set.
+///
+/// Upstream `zparseopts -D -K -E g:=pattern` parses ONLY `-g`;
+/// every other flag is forwarded to `compadd "$@"` as a
+/// passthrough. We model the compadd-flag passthroughs that real
+/// shell callers actually set (`-S`, `-q`) as struct fields so
+/// wrappers can specify them by name.
+///
+/// Field-for-field correspondence with upstream:
+///   `pattern`     ↔ shell `-g pattern` (default `*`)
+///   `auto_suffix` ↔ shell `-S '…'`     compadd passthrough
+///   `nospace`     ↔ shell `-q`         compadd passthrough
+///                   (quote-aware NOSPACE arming)
+#[derive(Default)]
+pub struct ParametersOpts<'a> {
+    /// `-g pattern` — restrict emitted params to those whose
+    /// type-string matches. Supports `*`/`?`, leading `^` for
+    /// negation, and `(a|b|c)` alternation.
+    pub pattern: Option<&'a str>,
+    /// `-S suffix` — auto-suffix appended to every emitted match.
+    pub auto_suffix: Option<&'a str>,
+    /// True when the auto-suffix should arm NOSPACE (so the suffix
+    /// sticks to the cursor).
+    pub nospace: bool,
+}
+
+/// `_parameters` (faithful) — emit parameter names with the same
+/// flag-set the upstream shell function accepts. Wrappers should
+/// build a `ParametersOpts` matching the shell call's flags 1:1.
+///
+/// shell:10-13 `compset -P '*:'` history-modifier short-circuit
+/// is the caller's responsibility (we don't see history modifiers
+/// here at the leaf).
+pub fn _parameters_with_opts(
     state: &mut CompletionState,
     params: &HashMap<String, String>,
-    type_filter: Option<&str>,
+    opts: &ParametersOpts<'_>,
 ) -> bool {
     let prefix = state.params.prefix.clone();
-
     state.begin_group("parameters", true);
 
     for (name, type_str) in params {
         if !name.starts_with(&prefix) {
             continue;
         }
-        // shell:22 `-g pattern` — filter by type.
-        if let Some(pat) = type_filter {
+        // shell:22 `-g pattern` — type-string filter.
+        if let Some(pat) = opts.pattern {
             if !type_matches(pat, type_str) {
                 continue;
             }
         }
-        state.add_match(Completion::new(name.clone()), Some("parameters"));
+        let mut comp = Completion::new(name.clone());
+        if let Some(suf) = opts.auto_suffix {
+            comp.suf = Some(suf.to_string());
+        }
+        if opts.nospace {
+            comp.flags |= crate::completion::CompletionFlags::NOSPACE;
+        }
+        state.add_match(comp, Some("parameters"));
     }
 
     state.end_group();
     state.nmatches > 0
 }
 
-/// _parameters - Complete parameter names (no type filter).
+/// _parameters - Complete parameter (variable) names with optional
+/// type filter (shell `-g pattern`).
+///
+/// Convenience wrapper kept for backward compatibility. Equivalent
+/// to `_parameters_with_opts(state, params, &ParametersOpts {
+/// pattern: type_filter, ..Default::default() })`.
+pub fn _parameters_with_filter(
+    state: &mut CompletionState,
+    params: &HashMap<String, String>,
+    type_filter: Option<&str>,
+) -> bool {
+    _parameters_with_opts(
+        state,
+        params,
+        &ParametersOpts {
+            pattern: type_filter,
+            ..Default::default()
+        },
+    )
+}
+
+/// _parameters - Complete parameter names (shell `_parameters`
+/// no args). Equivalent to `_parameters_with_opts(.., default opts)`.
 pub fn _parameters(state: &mut CompletionState, params: &HashMap<String, String>) -> bool {
-    _parameters_with_filter(state, params, None)
+    _parameters_with_opts(state, params, &ParametersOpts::default())
 }
 
 #[cfg(test)]

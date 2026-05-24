@@ -106,4 +106,34 @@ mod tests {
         state.ignored = 999_999;
         assert!(_ignored(&mut state, 1, &[]));
     }
+
+    #[test]
+    fn zero_ignored_with_zero_matcher_still_false() {
+        // Both gates together — both 0 → still bails (the ignored=0
+        // gate).
+        let mut state = CompletionState::new();
+        assert!(!_ignored(&mut state, 0, &[]));
+    }
+
+    #[test]
+    fn matcher_exactly_1_does_not_trip_gt_1_gate() {
+        // The shell condition is `_matcher_num -gt 1` — strict >, so
+        // matcher_num==1 should NOT trigger the bail.
+        let mut state = CompletionState::new();
+        state.ignored = 5;
+        assert!(_ignored(&mut state, 1, &[]));
+    }
+
+    #[test]
+    fn does_not_mutate_state_or_emit() {
+        let mut state = CompletionState::new();
+        state.ignored = 3;
+        let before_groups = state.groups.len();
+        let before_n = state.nmatches;
+        _ignored(&mut state, 1, &["pat".into()]);
+        assert_eq!(state.groups.len(), before_groups);
+        assert_eq!(state.nmatches, before_n);
+        // ignored count should stay the same — _ignored is a gate.
+        assert_eq!(state.ignored, 3);
+    }
 }

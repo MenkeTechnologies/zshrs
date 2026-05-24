@@ -226,4 +226,64 @@ mod tests {
         assert!(names.iter().any(|n| n.ends_with("/.keepdot.toml")));
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn multiple_extensions_all_matched() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_ext_multi_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("file.rs"), b"").unwrap();
+        std::fs::write(tmp.join("file.toml"), b"").unwrap();
+        std::fs::write(tmp.join("file.json"), b"").unwrap();
+        std::fs::write(tmp.join("ignore.txt"), b"").unwrap();
+        let mut state = CompletionState::new();
+        state.params.prefix = format!("{}/", tmp.to_string_lossy());
+        let _ = extensions_impl(&mut state, &["rs", "toml", "json"], false);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.iter().any(|n| n.ends_with("/file.rs")));
+        assert!(names.iter().any(|n| n.ends_with("/file.toml")));
+        assert!(names.iter().any(|n| n.ends_with("/file.json")));
+        assert!(!names.iter().any(|n| n.ends_with("/ignore.txt")));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn empty_extensions_list_only_matches_directories() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_ext_empty_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::create_dir(tmp.join("subdir")).unwrap();
+        std::fs::write(tmp.join("file.rs"), b"").unwrap();
+        let mut state = CompletionState::new();
+        state.params.prefix = format!("{}/", tmp.to_string_lossy());
+        let _ = extensions_impl(&mut state, &[], false);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        // Empty extension list → only the subdir passes (files don't
+        // match the always-false ext filter; subdirs always pass).
+        assert!(names.iter().any(|n| n.contains("subdir")));
+        assert!(!names.iter().any(|n| n.ends_with("/file.rs")));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

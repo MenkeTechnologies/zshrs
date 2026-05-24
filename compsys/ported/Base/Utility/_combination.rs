@@ -414,4 +414,133 @@ mod tests {
             .count();
         assert_eq!(repeat_count, 1, "repeated target value must dedupe");
     }
+
+    #[test]
+    fn prefix_filter_narrows_emissions() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "h1".into();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::svc:accounts",
+            "users-hosts-ports",
+            vec![
+                "u1:h1:22".into(),
+                "u2:h10:80".into(),
+                "u3:other:443".into(),
+            ],
+            false,
+        );
+        let opts = CombinationOpts {
+            separator: ":",
+            tag: "accounts",
+            style: "users-hosts-ports",
+            fixed: &[],
+            target_key: "hosts",
+            target_num: 1,
+        };
+        let _ = _combination(&mut state, &styles, ":svc", &opts, never_fallback);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"h1"));
+        assert!(names.contains(&"h10"), "h10 should also match prefix h1");
+        assert!(!names.contains(&"other"));
+    }
+
+    #[test]
+    fn target_at_last_axis_position() {
+        // Style `users-hosts-ports` with target_key="ports"
+        // (position 2 — the last axis).
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::svc:accounts",
+            "users-hosts-ports",
+            vec!["u1:h1:22".into(), "u1:h2:80".into(), "u1:h3:443".into()],
+            false,
+        );
+        let opts = CombinationOpts {
+            separator: ":",
+            tag: "accounts",
+            style: "users-hosts-ports",
+            fixed: &[],
+            target_key: "ports",
+            target_num: 1,
+        };
+        let _ = _combination(&mut state, &styles, ":svc", &opts, never_fallback);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"22"));
+        assert!(names.contains(&"80"));
+        assert!(names.contains(&"443"));
+    }
+
+    #[test]
+    fn target_at_first_axis_no_axis_strip() {
+        // target_key="users" (position 0) — target_pos=0, no segment
+        // stripping needed.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::svc:accounts",
+            "users-hosts-ports",
+            vec!["alice:h1:22".into(), "bob:h2:80".into()],
+            false,
+        );
+        let opts = CombinationOpts {
+            separator: ":",
+            tag: "accounts",
+            style: "users-hosts-ports",
+            fixed: &[],
+            target_key: "users",
+            target_num: 1,
+        };
+        let _ = _combination(&mut state, &styles, ":svc", &opts, never_fallback);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"alice"));
+        assert!(names.contains(&"bob"));
+    }
+
+    #[test]
+    fn glob_in_fixed_pattern_matches_multiple_tuples() {
+        // Fixed `users=u*` should match u1, u2, u3 — all rows pass.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::svc:accounts",
+            "users-hosts-ports",
+            vec![
+                "u1:h1:22".into(),
+                "u2:h2:80".into(),
+                "admin:h3:443".into(),
+            ],
+            false,
+        );
+        let opts = CombinationOpts {
+            separator: ":",
+            tag: "accounts",
+            style: "users-hosts-ports",
+            fixed: &[("users".into(), 1, "u*".into())],
+            target_key: "hosts",
+            target_num: 1,
+        };
+        let _ = _combination(&mut state, &styles, ":svc", &opts, never_fallback);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"h1"));
+        assert!(names.contains(&"h2"));
+        assert!(!names.contains(&"h3"));
+    }
 }

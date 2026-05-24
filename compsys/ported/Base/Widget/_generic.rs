@@ -163,4 +163,36 @@ mod tests {
             .collect();
         assert!(names.contains(&"via-generic".to_string()));
     }
+
+    #[test]
+    fn trace_widget_unregistered_still_returns_no_match() {
+        // When ZSH_TRACE_GENERIC_WIDGET is set but the widget isn't
+        // registered, the trace branch still fires (silently) and
+        // returns NoMatch.
+        let mut state = MainCompleteState::new("", 0);
+        let r = _generic(&mut state, "complete-word", "not-a-registered-fn", |_| {
+            panic!("action MUST NOT run when trace_widget is set");
+        });
+        assert!(matches!(r, CompleterResult::NoMatch));
+    }
+
+    #[test]
+    fn curcontext_rewrite_preserves_double_colon_segments() {
+        // `:foo:bar::baz:` — splitn(2, ':') gives prefix="" and
+        // suffix="foo:bar::baz:". After rewrite: "w:foo:bar::baz:"
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":foo:bar::baz:".into();
+        let _ = _generic(&mut state, "w", "", |_| CompleterResult::NoMatch);
+        assert_eq!(state.ctx.context, "w:foo:bar::baz:");
+    }
+
+    #[test]
+    fn curcontext_no_colon_in_input_still_works() {
+        // Context with no `:` — splitn(2, ':').nth(1) is None,
+        // suffix = "". Result: "w:"
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = "nocolon".into();
+        let _ = _generic(&mut state, "w", "", |_| CompleterResult::NoMatch);
+        assert_eq!(state.ctx.context, "w:");
+    }
 }

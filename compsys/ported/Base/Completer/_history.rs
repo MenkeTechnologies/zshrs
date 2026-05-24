@@ -240,4 +240,69 @@ mod tests {
             "max_matches must cap output to exactly 5"
         );
     }
+
+    #[test]
+    fn empty_prefix_returns_all_dedup_entries() {
+        let mut state = CompletionState::new();
+        let history = vec!["a".into(), "b".into(), "a".into(), "c".into()];
+        let _ = _history(&mut state, &history);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        // Dedup keeps 3 unique entries.
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn range_out_of_bounds_uses_full_history() {
+        // a > history.len() means range is ignored (no slice).
+        let mut state = CompletionState::new();
+        let history = vec!["x".into(), "y".into()];
+        let opts = HistoryOpts {
+            range: Some((100, 200)),
+            ..Default::default()
+        };
+        let _ = _history_with_opts(&mut state, &history, &opts);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        // Range invalid → falls back to full history.
+        assert!(names.contains(&"x"));
+        assert!(names.contains(&"y"));
+    }
+
+    #[test]
+    fn range_inverted_uses_full_history() {
+        let mut state = CompletionState::new();
+        let history = vec!["x".into(), "y".into(), "z".into()];
+        let opts = HistoryOpts {
+            range: Some((3, 1)), // inverted → invalid
+            ..Default::default()
+        };
+        let _ = _history_with_opts(&mut state, &history, &opts);
+        let total: usize = state.groups.iter().map(|g| g.matches.len()).sum();
+        assert_eq!(total, 3, "inverted range → fall back to full");
+    }
+
+    #[test]
+    fn lexical_sort_marks_group_sorted() {
+        let mut state = CompletionState::new();
+        let history = vec!["zeta".into(), "alpha".into(), "mu".into()];
+        let opts = HistoryOpts {
+            sort: HistorySort::Lexical,
+            ..Default::default()
+        };
+        let _ = _history_with_opts(&mut state, &history, &opts);
+        // Group's `sorted` flag should be set.
+        let grp = state
+            .groups
+            .iter()
+            .find(|g| g.name == "history")
+            .expect("history group");
+        assert!(grp.sorted, "Lexical sort → group.sorted = true");
+    }
 }

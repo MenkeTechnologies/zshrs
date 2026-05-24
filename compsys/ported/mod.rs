@@ -101,6 +101,7 @@
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_email_addresses.rs"] pub mod _email_addresses;
 #[path = "Unix/Type/_files.rs"] pub mod _files;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_gnu_generic.rs"] pub mod _gnu_generic;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_path_commands.rs"] pub mod _path_commands;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_path_files.rs"] pub mod _path_files;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_precommand.rs"] pub mod _precommand;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_tilde_files.rs"] pub mod _tilde_files;
@@ -108,11 +109,37 @@
 // ── Zsh/Command/ ──────────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Command/_command.rs"] pub mod _command;
 
+// ── Zsh/Context/ ──────────────────────────────────────────────────────
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_assign.rs"] pub mod _assign;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_equal.rs"] pub mod _equal;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_parameter.rs"] pub mod _parameter;
+
 // ── Zsh/Type/ ─────────────────────────────────────────────────────────
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_aliases.rs"] pub mod _aliases;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_arrays.rs"] pub mod _arrays;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_delimiters.rs"] pub mod _delimiters;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_directory_stack.rs"] pub mod _directory_stack;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_file_descriptors.rs"] pub mod _file_descriptors;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_functions.rs"] pub mod _functions;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_globflags.rs"] pub mod _globflags;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_globqual_delims.rs"] pub mod _globqual_delims;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_globquals.rs"] pub mod _globquals;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_history_modifiers.rs"] pub mod _history_modifiers;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_jobs.rs"] pub mod _jobs;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_jobs_bg.rs"] pub mod _jobs_bg;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_jobs_fg.rs"] pub mod _jobs_fg;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_limits.rs"] pub mod _limits;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_math_params.rs"] pub mod _math_params;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_module_math_func.rs"] pub mod _module_math_func;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_options.rs"] pub mod _options;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_options_set.rs"] pub mod _options_set;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_options_unset.rs"] pub mod _options_unset;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_parameters.rs"] pub mod _parameters;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_ps1234.rs"] pub mod _ps1234;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_suffix_alias_files.rs"] pub mod _suffix_alias_files;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_user_math_func.rs"] pub mod _user_math_func;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_vars.rs"] pub mod _vars;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_vcs_info_hooks.rs"] pub mod _vcs_info_hooks;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_widgets.rs"] pub mod _widgets;
 
 pub mod shared;
@@ -138,7 +165,40 @@ pub use _path_files::{PathFilesOpts, _path_files};
 pub use _pick_variant::{PickVariantOpts, PickVariantResult, _pick_variant};
 pub use _sequence::{SequenceOpts, _sequence};
 pub use _tags::{TagSortHook, TagsOpts, _tags, _tags_mcs, _tags_next};
+pub use _aliases::{AliasTables as _AliasTables_Zsh, _aliases};
+pub use _arrays::_arrays;
+pub use _delimiters::_delimiters;
+pub use _directory_stack::_directory_stack;
+pub use _file_descriptors::_file_descriptors;
+pub use _functions::_functions;
+pub use _globflags::_globflags;
+pub use _globqual_delims::{GlobQualDelimsResult, _globqual_delims};
+pub use _globquals::_globquals;
+pub use _history_modifiers::{ModifierContext, _history_modifiers};
+pub use _jobs::{JobEntry, JobState, JobsFilter, _jobs};
+pub use _jobs_bg::_jobs_bg;
+pub use _jobs_fg::_jobs_fg;
+pub use _limits::_limits;
+pub use _math_params::_math_params;
+pub use _module_math_func::_module_math_func;
+pub use _ps1234::_ps1234;
+pub use _suffix_alias_files::_suffix_alias_files;
+pub use _user_math_func::_user_math_func;
+pub use _vars::_vars;
+pub use _vcs_info_hooks::_vcs_info_hooks;
 pub use _widgets::_widgets;
+
+// Zsh/Context
+pub use _assign::_assign;
+pub use _equal::_equal;
+pub use _parameter::_parameter;
+
+// Unix/Type — newly-added
+pub use _path_commands::_path_commands;
+
+// Parameters opts (re-export so wrappers in other crates can build
+// the same flag-set the shell `_parameters` accepts).
+pub use _parameters::{ParametersOpts, _parameters_with_opts};
 
 // Simple one-symbol-per-module re-exports.
 pub use _absolute_command_paths::_absolute_command_paths;

@@ -92,4 +92,30 @@ mod tests {
         let _ = _default(&mut state);
         assert_eq!(state.params.compstate.insert, original);
     }
+
+    #[test]
+    fn behavior_invariant_across_repeated_calls() {
+        // Calling _default twice with same state should produce
+        // identical outcomes.
+        let mut s1 = CompletionState::new();
+        let mut s2 = CompletionState::new();
+        s1.params.prefix = "Cargo.t".into();
+        s2.params.prefix = "Cargo.t".into();
+        let r1 = _default(&mut s1);
+        let r2 = _default(&mut s2);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn off_prefix_does_not_create_orphan_groups() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "definitely-no-such-prefix-anywhere-xyz".into();
+        let before = state.groups.len();
+        let _ = _default(&mut state);
+        // The internal files_execute may begin/end a group; pin no
+        // permanent leak.
+        let after_files = state.groups.iter().filter(|g| !g.matches.is_empty()).count();
+        assert_eq!(after_files, 0, "no NON-EMPTY group survives off-prefix call");
+        let _ = before;
+    }
 }

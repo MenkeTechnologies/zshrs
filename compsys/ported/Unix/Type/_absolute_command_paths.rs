@@ -137,4 +137,36 @@ mod tests {
             assert!(m.str_.starts_with('/'));
         }
     }
+
+    #[test]
+    fn idempotent_across_repeated_calls() {
+        // Two back-to-back calls on the same state produce the same
+        // number of matches.
+        let mut s1 = CompletionState::new();
+        let mut s2 = CompletionState::new();
+        s1.params.prefix = "ls".into();
+        s2.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut s1);
+        let _ = _absolute_command_paths(&mut s2);
+        let n1: usize = s1.groups.iter().map(|g| g.matches.len()).sum();
+        let n2: usize = s2.groups.iter().map(|g| g.matches.len()).sum();
+        assert_eq!(n1, n2, "deterministic emissions across runs");
+    }
+
+    #[test]
+    fn no_relative_paths_emitted() {
+        // We've already pinned starts_with('/'); also check no
+        // emitted path contains `..` (which would suggest a
+        // relative-path leak).
+        let mut state = CompletionState::new();
+        state.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut state);
+        for m in state.groups.iter().flat_map(|g| g.matches.iter()) {
+            assert!(
+                !m.str_.contains("/.."),
+                "emitted path contains `/..` (relative leak): `{}`",
+                m.str_
+            );
+        }
+    }
 }

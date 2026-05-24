@@ -180,4 +180,47 @@ mod tests {
         assert!(_options(&mut state, &opts));
         assert_eq!(state.nmatches, 3);
     }
+
+    #[test]
+    fn normalise_helper_drops_no_prefix_case_insensitive() {
+        assert_eq!(normalise("EXTENDED_GLOB"), "extended_glob");
+        assert_eq!(normalise("noEXTENDED_GLOB"), "extended_glob");
+        assert_eq!(normalise("NOEXTENDED_GLOB"), "extended_glob");
+        assert_eq!(normalise("nOExtended"), "extended");
+        // `no` alone (≤2 chars) is NOT stripped.
+        assert_eq!(normalise("no"), "no");
+        assert_eq!(normalise(""), "");
+    }
+
+    #[test]
+    fn matchspec_starts_with_treats_underscore_as_wildcard() {
+        assert!(matchspec_starts_with("hello", "h_l"));
+        assert!(matchspec_starts_with("anything", "____"));
+        assert!(!matchspec_starts_with("abc", "abcd"));
+        assert!(matchspec_starts_with("anything", ""));
+    }
+
+    #[test]
+    fn matchspec_case_folds_AND_no_strip_together() {
+        // User types `extended` (lower) → should match `noEXTENDED_GLOB`
+        // via case-fold + no-strip combined.
+        let mut state = CompletionState::new();
+        state.params.prefix = "extended".into();
+        let opts: Vec<(&str, bool)> = vec![("noEXTENDED_GLOB", true)];
+        assert!(_options(&mut state, &opts));
+    }
+
+    #[test]
+    fn empty_options_list_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_options(&mut state, &[]));
+    }
+
+    #[test]
+    fn off_prefix_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "ZZZZ_NEVER_AN_OPTION".into();
+        let opts: Vec<(&str, bool)> = vec![("EXTENDED_GLOB", true)];
+        assert!(!_options(&mut state, &opts));
+    }
 }

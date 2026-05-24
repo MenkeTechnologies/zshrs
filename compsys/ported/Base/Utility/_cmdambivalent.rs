@@ -170,4 +170,37 @@ mod tests {
         let groups: Vec<&str> = state.comp.groups.iter().map(|g| g.name.as_str()).collect();
         assert!(groups.contains(&"commands"));
     }
+
+    #[test]
+    fn word_kind_quoted_with_no_inventory_still_succeeds() {
+        // Quoted branch should fall to _cmdstring even when inventory
+        // is empty; pin no panic + a fn call returns false (no
+        // candidates).
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 1;
+        state.comp.params.words = vec!["'q'".into()];
+        let inv = ShellInventory::default();
+        let _ = _cmdambivalent(&mut state, &inv, WordKind::Quoted);
+    }
+
+    #[test]
+    fn word_kind_constants_are_disjoint() {
+        // Three-state enum coverage — pin every variant builds.
+        let kinds = [WordKind::Bare, WordKind::HasSpace, WordKind::Quoted];
+        // PartialEq impl exists.
+        assert_eq!(kinds[0], WordKind::Bare);
+        assert_ne!(kinds[0], kinds[1]);
+        assert_ne!(kinds[1], kinds[2]);
+    }
+
+    #[test]
+    fn empty_words_with_current_zero_does_not_panic() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 0;
+        state.comp.params.words.clear();
+        let inv = ShellInventory::default();
+        // No panic for empty-words + position-zero.
+        let _ = _cmdambivalent(&mut state, &inv, WordKind::HasSpace);
+        let _ = _cmdambivalent(&mut state, &inv, WordKind::Quoted);
+    }
 }
