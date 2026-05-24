@@ -130,6 +130,25 @@ definition file.**
 | `Src/Zle/comp.h`          | `src/ported/zle/comp_h.rs`            |
 | `Src/Zle/compctl.h`       | `src/ported/zle/compctl_h.rs`         |
 
+**Same layout rule for the compsys shell-function ports** (the second
+strict-port directory):
+
+| Shell source                              | Rust port goes in...                       |
+|-------------------------------------------|--------------------------------------------|
+| `Completion/Base/Completer/_<NAME>`       | `compsys/ported/Base/Completer/_<NAME>.rs` |
+| `Completion/Base/Core/_<NAME>`            | `compsys/ported/Base/Core/_<NAME>.rs`      |
+| `Completion/Base/Utility/_<NAME>`         | `compsys/ported/Base/Utility/_<NAME>.rs`   |
+| `Completion/Base/Widget/_<NAME>`          | `compsys/ported/Base/Widget/_<NAME>.rs`    |
+| `Completion/Unix/Type/_<NAME>`            | `compsys/ported/Unix/Type/_<NAME>.rs`      |
+| `Completion/Zsh/Type/_<NAME>`             | `compsys/ported/Zsh/Type/_<NAME>.rs`       |
+
+`compsys/ported/` is governed by the same four rules as `src/ported/`:
+no invented helpers, no bag-of-globals aggregators, one file per
+upstream shell function, header doc-comment cites the upstream source
+(`//! Port of _<NAME>` + path), faithful flag/zstyle/algorithm match.
+Stub bodies fail the per-fn unit tests under
+`cargo test -p compsys --lib 'ported::'`.
+
 A struct declared in `Src/zsh.h` does not belong in
 `src/ported/modules/parameter.rs` just because parameter.c uses it.
 Same for fns: `Src/utils.c` fns → `src/ported/utils.rs`, never

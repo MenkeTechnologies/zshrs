@@ -123,20 +123,73 @@ Daemon-hydrated **read-only** views for SQL and `dbview`. They duplicate metadat
 
 ## [0x05] COMPLETION FUNCTIONS
 
-compsys ships with ported zsh completion functions organized by category:
+compsys ships with Rust ports of every zsh `Completion/` shell function,
+organised in the same upstream directory layout. Two parallel trees:
 
 ```
-compsys/functions/
+compsys/functions/             ← VENDORED shell source (reference)
+├── Base/{Completer,Core,Utility,Widget}/
+├── Unix/Type/
+└── Zsh/Command/
+
+compsys/ported/                ← RUST PORTS (canonical impl)
 ├── Base/
-│   ├── Completer/    _complete, _approximate, _expand, _history, ...
-│   ├── Core/         _main_complete, _description, _tags, _wanted, ...
-│   ├── Utility/      _arguments, _describe, _values, _multi_parts, ...
-│   └── Widget/       _complete_help, _correct_word, _generic, ...
-├── Unix/
-│   └── Type/         _files, _directories, _path_files
-└── Zsh/
-    └── Command/      _command
+│   ├── Completer/   _all_matches / _approximate / _complete / _correct /
+│   │                _expand / _expand_alias / _extensions / _external_pwds /
+│   │                _history / _ignored / _list / _match / _menu /
+│   │                _oldlist / _prefix / _user_expand
+│   ├── Core/        _all_labels / _comp_caller_options / _comp_priv_prefix /
+│   │                _description / _dispatch / _main_complete / _message /
+│   │                _next_label / _normal / _setup / _tags / _wanted
+│   ├── Utility/     _alternative / _arg_compile / _arguments / _as_if /
+│   │                _cache_invalid / _call_function / _call_program /
+│   │                _cmdambivalent / _cmdstring / _combination / _comp_locale /
+│   │                _complete_help_generic / _completers / _default /
+│   │                _describe / _guard / _multi_parts / _nothing / _numbers /
+│   │                _pick_variant / _regex_arguments / _regex_words /
+│   │                _retrieve_cache / _sep_parts / _sequence / _set_command /
+│   │                _shadow / _store_cache / _sub_commands / _values
+│   └── Widget/      _bash_completions / _complete_debug / _complete_help /
+│                    _complete_tag / _correct_filename / _correct_word /
+│                    _expand_word / _generic / _history_complete_word /
+│                    _most_recent_file / _next_tags / _read_comp
+├── Unix/Type/       _absolute_command_paths / _canonical_paths /
+│                    _command_names / _dir_list / _email_addresses / _files /
+│                    _gnu_generic / _path_files / _precommand / _tilde_files
+└── Zsh/Type/        _options / _options_set / _options_unset / _parameters /
+                     _widgets
 ```
+
+### `compsys/ported/` is canonical-port code — same rule as `src/ported/`
+
+Every `.rs` file under `compsys/ported/` is the **Rust shadow of exactly
+one upstream zsh shell function**. The rules:
+
+- **Strict 1:1 mapping.** File name `_<NAME>.rs` matches the upstream
+  shell-fn name. Module name `_<NAME>`. Public fn `_<NAME>`. No invented
+  helper modules.
+- **Faithful semantics.** Every flag the shell function accepts must be
+  honored (or explicitly documented as deferred). No "returns true to
+  make the test pass" stubs — those failed an internal audit
+  ([`docs/audits/PORT_STUBS.md`](../docs/audits/PORT_STUBS.md)) and were
+  replaced with full ports.
+- **Shell-source citations.** Each `.rs` file has a module-level
+  `//! Port of _<NAME>` header naming the upstream
+  `Completion/<Category>/<Subdir>/_<NAME>` source file. Per-line comments
+  reference shell-source line numbers where the algorithm is non-obvious.
+- **Tests prove non-fake.** Every port has unit tests in a `#[cfg(test)]
+  mod tests` block that fail if the body is replaced with `return true`.
+  Run `cargo test -p compsys --lib 'ported::'` to verify.
+- **Layout mirrors zsh.** `Base/{Completer,Core,Utility,Widget}/` and
+  `Unix/Type/` / `Zsh/Type/` exactly match the upstream `Completion/`
+  source tree. Module names stay flat (`compsys::ported::_command_names`)
+  via `#[path = "Base/Utility/_command_names.rs"]` attributes.
+
+This is the same standard as `src/ported/` in the parent zshrs crate
+(per the project README's STRICT PORT DIRECTORY table). Both directories
+share the same rule: every file is a port, never an ad-hoc Rust-native
+invention. Inventions live under `src/extensions/` (zshrs runtime) or
+elsewhere in `compsys/` (e.g. `compsys/cache.rs`, `compsys/menu.rs`).
 
 ---
 
