@@ -8303,8 +8303,31 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
                 print!(" ");
             }
         }
-        // scanhashtable + ht->printnode — backend not yet wired.
+        // c:6172-6176 — `scanhashtable + ht->printnode` walks every
+        // entry emitting `key value` pairs. Rust uses paramtab_hashed_
+        // storage (HashMap<name, IndexMap<key, val>>) — read by name.
+        if let Ok(stor) = paramtab_hashed_storage().lock() {
+            if let Some(map) = stor.get(&p.node.nam) {
+                let mut first = true;
+                for (k, v) in map {
+                    if first {
+                        first = false;
+                    } else if (printflags & PRINT_LINE) != 0 {
+                        print!("\n  ");
+                    } else {
+                        print!(" ");
+                    }
+                    // C: `quotedzputs(key); putc(' '); quotedzputs(val);`
+                    // Static-link path: emit name + value verbatim
+                    // (the typeset-listing caller controls quoting).
+                    print!("{} {}", k, v);
+                }
+            }
+        }
         if (printflags & PRINT_KV_PAIR) == 0 {
+            if (printflags & PRINT_LINE) == 0 {
+                print!(" ");
+            }
             print!(")");
         }
     }
