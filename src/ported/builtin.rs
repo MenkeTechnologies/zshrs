@@ -7710,8 +7710,16 @@ pub fn eval(argv: &[String]) -> i32 {
         } else {
             // c:6209 — `execode(prog, 1, 0, "eval");`. Routes through
             // the executor; in-process equivalent.
+            //
+            // PREVIOUSLY called run_command_substitution which captures
+            // stdout into a String and returns it — bin_eval threw the
+            // capture away, so `eval 'echo hi'` produced no output.
+            // execute_script_zsh_pipeline runs the script with stdout
+            // flowing to the caller (no capture) which is what eval
+            // wants. Same routing the eval-via-execstring path uses
+            // (vm_helper.rs:1518 EXIT-trap fire).
             let _ = crate::fusevm_bridge::with_executor(|exec| {
-                exec.run_command_substitution(&joined)
+                exec.execute_script_zsh_pipeline(&joined)
             });
             // c:6211-6212 — `if (errflag && !lastval) lastval = errflag;`
             let ef = errflag.load(Relaxed);
