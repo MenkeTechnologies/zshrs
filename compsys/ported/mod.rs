@@ -41,6 +41,7 @@
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_message.rs"] pub mod _message;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_next_label.rs"] pub mod _next_label;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_normal.rs"] pub mod _normal;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_requested.rs"] pub mod _requested;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_setup.rs"] pub mod _setup;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_tags.rs"] pub mod _tags;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_wanted.rs"] pub mod _wanted;
@@ -96,12 +97,16 @@
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_canonical_paths.rs"] pub mod _canonical_paths;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_command_names.rs"] pub mod _command_names;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_dir_list.rs"] pub mod _dir_list;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_directories.rs"] pub mod _directories;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_email_addresses.rs"] pub mod _email_addresses;
 #[path = "Unix/Type/_files.rs"] pub mod _files;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_gnu_generic.rs"] pub mod _gnu_generic;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_path_files.rs"] pub mod _path_files;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_precommand.rs"] pub mod _precommand;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_tilde_files.rs"] pub mod _tilde_files;
+
+// ── Zsh/Command/ ──────────────────────────────────────────────────────
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Command/_command.rs"] pub mod _command;
 
 // ── Zsh/Type/ ─────────────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_options.rs"] pub mod _options;
@@ -147,6 +152,7 @@ pub use _cache_invalid::_cache_invalid;
 pub use _call_function::_call_function;
 pub use _cmdambivalent::_cmdambivalent;
 pub use _cmdstring::_cmdstring;
+pub use _command::{CommandStage, _command};
 pub use _comp_caller_options::_comp_caller_options;
 pub use _comp_locale::_comp_locale;
 pub use _comp_priv_prefix::_comp_priv_prefix;
@@ -160,6 +166,7 @@ pub use _correct_filename::_correct_filename;
 pub use _correct_word::_correct_word;
 pub use _default::_default;
 pub use _description::_description;
+pub use _directories::_directories;
 pub use _dispatch::_dispatch;
 pub use _expand::_expand;
 pub use _expand_alias::_expand_alias;
@@ -192,6 +199,7 @@ pub use _prefix::_prefix;
 pub use _read_comp::_read_comp;
 pub use _regex_arguments::_regex_arguments;
 pub use _regex_words::_regex_words;
+pub use _requested::{RequestedAction, RequestedFlags, _requested};
 pub use _retrieve_cache::_retrieve_cache;
 pub use _sep_parts::_sep_parts;
 pub use _set_command::_set_command;
