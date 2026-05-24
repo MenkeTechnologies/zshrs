@@ -53,15 +53,28 @@ class ZshrsLexer : LexerBase() {
             tokenEnd = pos
             return
         }
+        // State-driven re-entry for interpolating strings. Set by
+        // `consumeInterpolatingString` when it hits a `$var` / `${...}`
+        // / `$(...)` boundary inside `"..."` or `` `...` ``: emit the
+        // literal-prefix segment, return, then handle the interpolation
+        // on the NEXT advance(). After the interpolation, swap to a
+        // RESUME state so the following advance() picks up scanning the
+        // tail of the string (without re-consuming an opening quote).
+        when (state) {
+            STATE_DQ_INTERP -> { consumeStringInterpolation('"'); return }
+            STATE_DQ_RESUME -> { state = STATE_NORMAL; consumeStringContent('"', ZshrsTokenTypes.STRING_DQ); return }
+            STATE_BT_INTERP -> { consumeStringInterpolation('`'); return }
+            STATE_BT_RESUME -> { state = STATE_NORMAL; consumeStringContent('`', ZshrsTokenTypes.BACKTICK); return }
+        }
         val c = buf[pos]
         when {
             // Shebang first line takes priority over plain comment
             c == '#' && pos == 0 && peek(1) == '!' -> consumeShebang()
             c == '#' -> consumeLineComment()
             c == '\n' || c == '\r' || c == ' ' || c == '\t' -> consumeWhitespace()
-            c == '"' -> consumeString('"', ZshrsTokenTypes.STRING_DQ)
+            c == '"' -> consumeInterpolatingString('"', ZshrsTokenTypes.STRING_DQ)
             c == '\'' -> consumeString('\'', ZshrsTokenTypes.STRING_SQ)
-            c == '`' -> consumeString('`', ZshrsTokenTypes.BACKTICK)
+            c == '`' -> consumeInterpolatingString('`', ZshrsTokenTypes.BACKTICK)
             c == '$' && peek(1) == '\'' -> { pos++; consumeString('\'', ZshrsTokenTypes.STRING_DOLLAR) }
             c == '<' && peek(1) == '<' && peek(2) != '<' && isHeredocStart(2) -> consumeHeredoc()
             c == '<' && peek(1) == '<' && peek(2) == '<' -> emit(3, ZshrsTokenTypes.REDIRECT) // here-string
@@ -133,6 +146,80 @@ class ZshrsLexer : LexerBase() {
         while (p < endOffset && (buf[p] == ' ' || buf[p] == '\t' || buf[p] == '\n' || buf[p] == '\r')) p++
         tokenEnd = p; pos = p
         tokenType = TokenType.WHITE_SPACE
+    }
+
+    /// Open + consume a `"..."` or `` `...` `` string with `$var` /
+    /// `${...}` / `$(...)` interpolation splitting. Emits the run of
+    /// literal characters up to the first `$`-interpolation (or the
+    /// closing quote) as a single string token. The interpolation, if
+    /// any, is handled on the next `advance()` via the `STATE_*_INTERP`
+    /// branch — splitting the string into [STRING] [VARIABLE] [STRING]
+    /// segments is what lets the IDE offer completion + recognize the
+    /// var as a variable inside the string (a single string token would
+    /// trip `ZshrsQuoteHandler.isInsideLiteral` and suppress both).
+    private fun consumeInterpolatingString(quote: Char, tt: IElementType) {
+        // Consume the opening quote first; the prefix-or-rest scan is
+        // shared with the RESUME path that picks up after an
+        // interpolation closes.
+        pos++
+        consumeStringContent(quote, tt)
+    }
+
+    /// Scan the body of a `"..."` / `` `...` `` string starting at the
+    /// CURRENT pos (no leading quote to skip). Emits one of:
+    ///   * The entire run up to the closing quote, INCLUDING the close,
+    ///     and clears state.
+    ///   * The literal prefix up to (but not including) a `$`-interp
+    ///     marker, sets `STATE_*_INTERP` so the next advance() handles
+    ///     the interpolation.
+    private fun consumeStringContent(quote: Char, tt: IElementType) {
+        var p = pos
+        while (p < endOffset) {
+            val c = buf[p]
+            if (c == '\\' && p + 1 < endOffset) { p += 2; continue }
+            if (c == quote) {
+                p++  // include the closing quote in the literal token
+                tokenEnd = p; pos = p
+                state = STATE_NORMAL
+                tokenType = tt
+                return
+            }
+            if (c == '$' && p + 1 < endOffset && isInterpStart(buf, p + 1)) {
+                if (p > pos) {
+                    // Emit the literal prefix; next advance() steps into
+                    // interpolation mode at the `$`.
+                    tokenEnd = p; pos = p
+                    state = if (quote == '"') STATE_DQ_INTERP else STATE_BT_INTERP
+                    tokenType = tt
+                    return
+                }
+                // Already at the `$` (empty prefix — interpolation runs
+                // back-to-back with the opening quote or with a prior
+                // interpolation). Handle directly without re-entry.
+                consumeStringInterpolation(quote)
+                return
+            }
+            p++
+        }
+        // Unterminated string — emit whatever's left as the literal,
+        // clear state so the outer lexer recovers cleanly.
+        tokenEnd = p; pos = p
+        state = STATE_NORMAL
+        tokenType = tt
+    }
+
+    /// Handle one `$`-interpolation inside an open `"..."` / `` `...` ``
+    /// string. Emits the var / param-expansion / cmd-subst as its own
+    /// token (VARIABLE, PARAM_EXPANSION, etc. — same token types the
+    /// top-level lexer uses), then sets the RESUME state so the next
+    /// advance() picks up scanning the rest of the string.
+    private fun consumeStringInterpolation(quote: Char) {
+        val resume = if (quote == '"') STATE_DQ_RESUME else STATE_BT_RESUME
+        // pos at the `$` — delegate to the existing top-level $-handler
+        // for the actual span calc + classification, then override the
+        // state it leaves so the next advance() resumes string content.
+        consumeDollar()
+        state = resume
     }
 
     private fun consumeString(quote: Char, tt: IElementType) {
@@ -302,7 +389,26 @@ class ZshrsLexer : LexerBase() {
 
     private fun consumeWord() {
         var p = pos
-        while (p < endOffset && (buf[p] == '_' || buf[p].isLetterOrDigit())) p++
+        while (p < endOffset) {
+            val c = buf[p]
+            if (c == '_' || c.isLetterOrDigit()) {
+                p++
+                continue
+            }
+            // Hyphens are valid INSIDE a zsh identifier — function names
+            // like `daemon-lock-do` / `daemon-export-pdf` are one symbol,
+            // not five. Only swallow the hyphen when followed by another
+            // word character; a trailing `-` (e.g. `cmd -` for a flag
+            // separator) stays a separate token.
+            if (c == '-' && p + 1 < endOffset) {
+                val nxt = buf[p + 1]
+                if (nxt == '_' || nxt.isLetterOrDigit()) {
+                    p++
+                    continue
+                }
+            }
+            break
+        }
         val word = buf.subSequence(pos, p).toString()
         tokenEnd = p; pos = p
         tokenType = classifyWord(word)
@@ -328,6 +434,29 @@ class ZshrsLexer : LexerBase() {
     private fun isOperatorChar(c: Char): Boolean = c in "+-*/%!~^:.@"
 
     companion object {
+        // Lexer states for the interpolating-string state machine.
+        // STATE_NORMAL is the default; the *_INTERP / *_RESUME pairs
+        // bracket each `$var` / `${...}` / `$(...)` interpolation inside
+        // a `"..."` or `` `...` `` string, breaking the string into
+        // [STRING] [VAR] [STRING] segments so the IDE can offer
+        // completion + variable-coloring on the embedded `$var`.
+        const val STATE_NORMAL = 0
+        const val STATE_DQ_INTERP = 1     // about to lex `$…` inside "..."
+        const val STATE_DQ_RESUME = 2     // just lexed `$…`; resume "..." content
+        const val STATE_BT_INTERP = 3     // about to lex `$…` inside `...`
+        const val STATE_BT_RESUME = 4     // just lexed `$…`; resume `...` content
+
+        /// True if the char after a `$` would START a real interpolation
+        /// (rather than being a literal `$`). Letter / underscore for
+        /// `$foo`, `{` for `${…}`, `(` for `$(…)`, digit / `?!$#*@-_`
+        /// for the single-char special parameters.
+        fun isInterpStart(buf: CharSequence, idx: Int): Boolean {
+            if (idx >= buf.length) return false
+            val c = buf[idx]
+            return c == '_' || c.isLetter() || c == '{' || c == '(' ||
+                c.isDigit() || c in "?!$#*@-_"
+        }
+
         private val CONTROL_KEYWORDS = setOf(
             "if", "then", "else", "elif", "fi",
             "for", "foreach", "while", "until", "do", "done",

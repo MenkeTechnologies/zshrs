@@ -38,6 +38,235 @@ use compsys::{
 use zsh::{highlight_shell, validate_command, HighlightRole, ValidationStatus};
 
 /// Print help message identical to zsh --help
+/// Render an LSP hover card (`**name** — _kind_\n\n<body>`) as a
+/// colored terminal page. Matches the `stryke docs NAME` shape:
+///
+///     CYAN  name             NORMAL
+///     DIM   ───────────────  NORMAL
+///     DIM   zsh keyword      NORMAL    (or whatever kind)
+///
+///     body paragraph 1, wrapped to ~term width…
+///
+///         GREEN indented code block GREEN  (code-fence or 4-sp indent)
+///
+/// Inline backticks → cyan; `**bold**` → ANSI bold (kept readable when
+/// `color=false`, which strips all escapes and leaves plain markdown).
+///
+/// Called only from `--docs NAME`. The IntelliJ tool window passes
+/// `--color never` (or just consumes the raw `lsp::lookup_doc` output
+/// directly via Bash's `output.stdout`), so the popup keeps its native
+/// rendering — coloring is exclusively for terminal users.
+fn render_doc_card(name: &str, card: &str, color: bool) -> String {
+    let (cyan, green, dim, bold, reset) = if color {
+        ("\x1b[36m", "\x1b[32m", "\x1b[2m", "\x1b[1m", "\x1b[0m")
+    } else {
+        ("", "", "", "", "")
+    };
+
+    // Split heading from body. `lookup_doc` always emits
+    // `**name** — _kind_\n\n<body>` (or just the heading with no body
+    // for the bare-stub fallback path). The kind label sits between
+    // `_..._` markers on the first line.
+    let (heading, body) = card.split_once("\n\n").unwrap_or((card, ""));
+    // Heading shape: `**NAME** — _kind_`. Split on the em-dash
+    // separator so an underscore inside NAME (e.g. `AUTO_CD`) doesn't
+    // get picked up as the kind boundary.
+    let kind = heading
+        .rsplit_once(" — ")
+        .map(|(_, k)| k.trim().trim_matches('_').to_string())
+        .unwrap_or_default();
+
+    let width = term_width().saturating_sub(4).max(40);
+    let sep_len = name.chars().count().max(20).min(width);
+
+    let mut out = String::with_capacity(card.len() + 256);
+    out.push_str(&format!("  {cyan}{name}{reset}\n"));
+    out.push_str(&format!("  {dim}{}{reset}\n", "─".repeat(sep_len)));
+    if !kind.is_empty() {
+        out.push_str(&format!("  {dim}{kind}{reset}\n"));
+    }
+    out.push('\n');
+
+    let mut in_fence = false;
+    for line in body.split('\n') {
+        // Fenced code block (``` … ```)
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            out.push_str(&format!("  {green}  {line}{reset}\n"));
+            continue;
+        }
+        // 4+-space indent → markdown code block.
+        if line.starts_with("    ") {
+            out.push_str(&format!("  {green}{line}{reset}\n"));
+            continue;
+        }
+        if line.trim().is_empty() {
+            out.push('\n');
+            continue;
+        }
+        // Prose — colorize inline backtick spans, render `**bold**`,
+        // drop `_underscores_` quietly (no good ANSI italic on every
+        // terminal). Word-wrap to the visible width.
+        let rendered = render_inline_md(line, cyan, bold, reset);
+        for wrapped in word_wrap(&rendered, width) {
+            out.push_str(&format!("  {wrapped}\n"));
+        }
+    }
+    out
+}
+
+/// Replace markdown-ish inline markup with terminal styling.
+fn render_inline_md(line: &str, cyan: &str, bold: &str, reset: &str) -> String {
+    let mut out = String::with_capacity(line.len() + 32);
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    let mut in_tick = false;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c == '`' {
+            if in_tick {
+                out.push_str(reset);
+            } else {
+                out.push_str(cyan);
+            }
+            in_tick = !in_tick;
+            i += 1;
+            continue;
+        }
+        // **bold** — only when matched closer exists on the same line.
+        if c == '*' && i + 1 < bytes.len() && bytes[i + 1] as char == '*' {
+            if let Some(end) = find_bytes(&bytes[i + 2..], b"**") {
+                let inner =
+                    std::str::from_utf8(&bytes[i + 2..i + 2 + end]).unwrap_or("");
+                out.push_str(bold);
+                out.push_str(inner);
+                out.push_str(reset);
+                i += 2 + end + 2;
+                continue;
+            }
+        }
+        // `_emph_` — strip the underscores in colored mode (no portable
+        // italic); leave them in plain mode so the markdown stays valid.
+        if c == '_'
+            && !cyan.is_empty()
+            && (i == 0 || !(bytes[i - 1] as char).is_alphanumeric())
+        {
+            // Look ahead for a matching `_` not bounded by alphanum on
+            // its right side.
+            if let Some(rel) = find_word_close_underscore(&bytes[i + 1..]) {
+                let inner =
+                    std::str::from_utf8(&bytes[i + 1..i + 1 + rel]).unwrap_or("");
+                // Underline if supported; cheap unicode-clean fallback:
+                // just emit dim text.
+                out.push_str("\x1b[3m");
+                out.push_str(inner);
+                out.push_str(reset);
+                i += 1 + rel + 1;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
+}
+
+fn find_word_close_underscore(rest: &[u8]) -> Option<usize> {
+    // Find the next `_` whose right side is non-alphanumeric (so
+    // `name_with_underscores` doesn't get falsely emphasized).
+    for (i, b) in rest.iter().enumerate() {
+        if *b == b'_' {
+            let after = rest.get(i + 1).map(|c| *c as char);
+            if after.map(|c| !c.is_alphanumeric()).unwrap_or(true) {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Greedy word-wrap that respects ANSI escapes. Counts visible width
+/// (chars outside `\x1b[…m` runs) so colored spans don't blow up the
+/// budget.
+fn word_wrap(line: &str, max: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_vis = 0usize;
+    for word in line.split_inclusive(char::is_whitespace) {
+        let vis = visible_width(word);
+        if cur_vis + vis > max && !cur.trim().is_empty() {
+            out.push(std::mem::take(&mut cur).trim_end().to_string());
+            cur_vis = 0;
+        }
+        cur.push_str(word);
+        cur_vis += vis;
+    }
+    if !cur.is_empty() {
+        out.push(cur.trim_end().to_string());
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+/// Char count, ignoring ANSI `\x1b[…m` escape sequences.
+fn visible_width(s: &str) -> usize {
+    let mut n = 0usize;
+    let mut in_esc = false;
+    for c in s.chars() {
+        if in_esc {
+            if c == 'm' {
+                in_esc = false;
+            }
+            continue;
+        }
+        if c == '\x1b' {
+            in_esc = true;
+            continue;
+        }
+        n += 1;
+    }
+    n
+}
+
+/// Terminal width via `stty size`; falls back to 80 columns. Cheap
+/// enough for one-shot `--docs` invocations.
+fn term_width() -> usize {
+    if let Ok((_, cols)) = terminal_size() {
+        if cols > 0 {
+            return cols as usize;
+        }
+    }
+    80
+}
+
+fn terminal_size() -> Result<(u16, u16), std::io::Error> {
+    use std::process::Command;
+    let out = Command::new("stty").arg("size").output()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    let mut parts = s.trim().split_whitespace();
+    let rows: u16 = parts
+        .next()
+        .and_then(|x| x.parse().ok())
+        .ok_or_else(|| std::io::Error::other("no rows from stty"))?;
+    let cols: u16 = parts
+        .next()
+        .and_then(|x| x.parse().ok())
+        .ok_or_else(|| std::io::Error::other("no cols from stty"))?;
+    Ok((rows, cols))
+}
+
 fn print_help() {
     println!(
         r#"Usage: zsh [<options>] [<argument> ...]
@@ -755,8 +984,11 @@ pub fn zshrs_main() {
     }
 
     // --docs NAME: render the same hover card the LSP would return for
-    // NAME. Used by the IntelliJ tool window's docs popup and by shell
-    // tab-completion (`zshrs --docs <TAB>` via completions/_zshrs).
+    // NAME. Used by the IntelliJ tool window's docs popup, by shell
+    // tab-completion (`zshrs --docs <TAB>` via completions/_zshrs),
+    // and as a terminal-side cheatsheet (matches `stryke docs NAME`
+    // shape — cyan header, dim separator, cyan inline-code, green
+    // indented code blocks).
     if let Some(i) = args.iter().position(|a| a == "--docs") {
         if let Some(name) = args.get(i + 1) {
             let card = zsh::lsp::lookup_doc(name);
@@ -767,7 +999,21 @@ pub fn zshrs_main() {
                 }
                 std::process::exit(1);
             }
-            println!("{}", card);
+            // Colorize only when stdout is a real TTY — keep machine
+            // pipelines (IntelliJ tool window's docs popup, scripts,
+            // `zshrs --docs X | jq`) on the raw markdown. Toggle with
+            // `--color always` / `--color never` if needed.
+            use std::io::IsTerminal;
+            let color_flag = args
+                .iter()
+                .position(|a| a == "--color")
+                .and_then(|j| args.get(j + 1).map(String::as_str));
+            let want_color = match color_flag {
+                Some("always") => true,
+                Some("never") => false,
+                _ => std::io::stdout().is_terminal(),
+            };
+            print!("{}", render_doc_card(name, &card, want_color));
             return;
         }
     }

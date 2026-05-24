@@ -89,10 +89,111 @@ class ZshrsLexerTest {
         assertEquals("\${HOME:-/tmp}", toks[0].second)
     }
 
+    @Test fun `hyphenated identifiers stay one token`() {
+        // Regression: `daemon-lock-do` was lexing as IDENTIFIER, OPERATOR,
+        // IDENTIFIER, OPERATOR, CONTROL_KEYWORD (`do`) — the IDE then
+        // highlighted `-` and `do` differently and treated them as
+        // separate symbols. zsh allows hyphens inside function / command
+        // names, so the whole thing must be ONE token.
+        val toks = nonWs("daemon-lock-do() { :; }")
+        assertEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
+        assertEquals("daemon-lock-do", toks[0].second)
+    }
+
+    @Test fun `hyphenated identifier with builtin-name segment is not a builtin`() {
+        // Regression: `daemon-export-pdf` got mis-classified because the
+        // lexer split at `-` and `export` matched the BUILTIN/DECL set.
+        // Once hyphens are part of the identifier the whole token is
+        // looked up against the keyword sets — `daemon-export-pdf` isn't
+        // there, so it stays a plain IDENTIFIER.
+        val toks = nonWs("daemon-export-pdf alias docs.pdf")
+        assertEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
+        assertEquals("daemon-export-pdf", toks[0].second)
+    }
+
+    @Test fun `trailing hyphen is not absorbed into the identifier`() {
+        // `cmd -x` — the `-` starts a separate operator/flag token.
+        // The hyphen-extension only kicks in when followed by a word char.
+        val toks = nonWs("cmd -x")
+        assertEquals("cmd", toks[0].second)
+        // Whatever the second token type is (OPERATOR + IDENTIFIER, etc.),
+        // it must NOT be `cmd-x`.
+        assertNotEquals("cmd-x", toks[0].second)
+    }
+
     @Test fun `double-quoted string`() {
         val toks = nonWs("echo \"hello world\"")
         assertEquals(ZshrsTokenTypes.STRING_DQ, toks[1].first)
         assertEquals("\"hello world\"", toks[1].second)
+    }
+
+    @Test fun `double-quoted string with dollar var splits into segments`() {
+        // Regression: `"hello $foo world"` used to lex as a single
+        // STRING_DQ token, which made `ZshrsQuoteHandler.isInsideLiteral`
+        // return true at every cursor position inside the string and
+        // suppressed completion / variable-coloring on `$foo`.
+        val toks = nonWs("echo \"hello \$foo world\"")
+        // toks[0] = `echo`, toks[1..N] = the string segments
+        val stringSegments = toks.drop(1)
+        val labels = stringSegments.map { it.first to it.second }
+        // Must contain at least one VARIABLE / ENV_VAR token for $foo.
+        assertTrue(
+            "expected VARIABLE / ENV_VAR token for `\$foo` inside string: $labels",
+            labels.any { (t, s) ->
+                (t == ZshrsTokenTypes.VARIABLE || t == ZshrsTokenTypes.ENV_VAR) && s == "\$foo"
+            },
+        )
+        // The literal segments around the var must also be present.
+        assertTrue(
+            "missing leading string segment: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.STRING_DQ && s.contains("hello ") },
+        )
+        assertTrue(
+            "missing trailing string segment: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.STRING_DQ && s.contains(" world") },
+        )
+    }
+
+    @Test fun `double-quoted string with brace expansion splits into segments`() {
+        // `"x=${HOME:-/tmp}y"` — must yield STRING_DQ, PARAM_EXPANSION,
+        // STRING_DQ so the brace-expansion gets its own color slot and
+        // completion fires inside `${…}`.
+        val toks = nonWs("echo \"x=\${HOME:-/tmp}y\"")
+        val labels = toks.drop(1).map { it.first to it.second }
+        assertTrue(
+            "expected PARAM_EXPANSION for `\${HOME:-/tmp}` inside string: $labels",
+            labels.any { (t, s) ->
+                t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${HOME:-/tmp}"
+            },
+        )
+    }
+
+    @Test fun `backtick string with dollar var splits into segments`() {
+        // Backticks are the historical command-substitution form. Same
+        // interpolation rule as `"..."` — `$var` inside should split out.
+        val toks = nonWs("echo `echo \$user`")
+        val labels = toks.drop(1).map { it.first to it.second }
+        assertTrue(
+            "expected VARIABLE / ENV_VAR for `\$user` inside backticks: $labels",
+            labels.any { (t, s) ->
+                (t == ZshrsTokenTypes.VARIABLE || t == ZshrsTokenTypes.ENV_VAR) && s == "\$user"
+            },
+        )
+    }
+
+    @Test fun `double-quoted string without interpolation stays one token`() {
+        // Sanity: when there's no `$`, we don't accidentally split.
+        val toks = nonWs("echo \"plain literal\"")
+        val strings = toks.filter { it.first == ZshrsTokenTypes.STRING_DQ }
+        assertEquals("split occurred without interpolation: $toks", 1, strings.size)
+    }
+
+    @Test fun `escaped dollar inside string does not start interpolation`() {
+        // `"cost: \$5"` — the `\$` is an escape, not a var marker. The
+        // string should stay one token.
+        val toks = nonWs("echo \"cost: \\\$5\"")
+        val strings = toks.filter { it.first == ZshrsTokenTypes.STRING_DQ }
+        assertEquals("escaped `\\\$` split the string: $toks", 1, strings.size)
     }
 
     @Test fun `single-quoted string consumes literally`() {

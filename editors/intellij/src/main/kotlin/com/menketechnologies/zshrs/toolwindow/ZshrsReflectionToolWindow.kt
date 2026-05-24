@@ -133,6 +133,7 @@ private class ZshrsReflectionPanel(private val project: Project) : SimpleToolWin
         "aliases"      -> "Aliases"
         "compsys"      -> "Compsys"
         "extensions"   -> "Extensions"
+        "operators"    -> "Operators"
         else -> name.replaceFirstChar { it.titlecase() }
     }
 
