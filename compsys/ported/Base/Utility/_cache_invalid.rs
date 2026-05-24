@@ -34,3 +34,40 @@ pub fn _cache_invalid(state: &MainCompleteState, cache_name: &str) -> bool {
 
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn use_cache_no_returns_invalid() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "use-cache",
+            vec!["no".into()],
+            false,
+        );
+        assert!(_cache_invalid(&state, "any-name"));
+    }
+
+    #[test]
+    fn no_cache_path_returns_invalid_by_default() {
+        let state = MainCompleteState::new("", 0);
+        assert!(_cache_invalid(&state, "x"));
+    }
+
+    #[test]
+    fn nonexistent_cache_file_returns_invalid() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec!["/tmp/zshrs-nonexistent-cache-dir".into()],
+            false,
+        );
+        assert!(_cache_invalid(&state, "nope.cache"));
+    }
+}
