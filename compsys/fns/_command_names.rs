@@ -43,7 +43,7 @@ use super::shared::is_executable;
 ///     .iter().map(|(k, _)| k.clone()).collect();
 /// // ... same for the other six tables ...
 /// let inv = ShellInventory { aliases: &aliases, ..Default::default() };
-/// compsys::fns::command_names(state, &inv, false);
+/// compsys::fns::_command_names(state, &inv, false);
 /// ```
 #[derive(Default)]
 pub struct ShellInventory<'a> {
@@ -57,19 +57,19 @@ pub struct ShellInventory<'a> {
 }
 
 /// Entry point — uses the default `::command` curcontext class.
-pub fn command_names(
+pub fn _command_names(
     state: &mut CompletionState,
     inv: &ShellInventory<'_>,
     externals_only: bool,
 ) -> bool {
-    command_names_with_ctx(state, inv, "::command", externals_only)
+    _command_names_with_ctx(state, inv, "::command", externals_only)
 }
 
 /// `command_names` taking an explicit `curcontext` (everything after
 /// `:completion:`). Use this when a caller already has the
 /// `MainCompleteState.ctx.context` available — `:completion:$ctx:foo`
 /// style lookups need it.
-pub fn command_names_with_ctx(
+pub fn _command_names_with_ctx(
     state: &mut CompletionState,
     inv: &ShellInventory<'_>,
     curcontext: &str,
@@ -226,7 +226,7 @@ mod tests {
         let functions = vec!["tlsdir".into(), "_tabby".into()];
         let reswords = vec!["then".into(), "time".into()];
         let inv = _inv(&builtins, &aliases, &functions, &reswords);
-        command_names(&mut state, &inv, false);
+        _command_names(&mut state, &inv, false);
 
         let group_names: Vec<&str> = state.groups.iter().map(|g| g.name.as_str()).collect();
         for must in [
@@ -252,7 +252,7 @@ mod tests {
         state.params.prefix = "t".into();
         let builtins = vec!["true".into()];
         let inv = _inv(&builtins, &[], &[], &[]);
-        command_names(&mut state, &inv, true);
+        _command_names(&mut state, &inv, true);
         let group_names: Vec<&str> = state.groups.iter().map(|g| g.name.as_str()).collect();
         assert_eq!(group_names, vec!["commands"]);
     }
@@ -269,7 +269,7 @@ mod tests {
         );
         let functions = vec!["git_helper".into(), "_grep".into(), "greet".into()];
         let inv = _inv(&[], &[], &functions, &[]);
-        command_names(&mut state, &inv, false);
+        _command_names(&mut state, &inv, false);
 
         let fn_group = state
             .groups

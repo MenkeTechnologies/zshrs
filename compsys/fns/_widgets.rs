@@ -19,7 +19,7 @@ use crate::completion::Completion;
 
 use super::shared::glob_matches;
 
-pub fn widgets(
+pub fn _widgets(
     state: &mut CompletionState,
     widgets: &[(String, String)],
     kind_pattern: Option<&str>,
@@ -60,7 +60,7 @@ mod tests {
             ("_complete_help".into(), "completion".into()),
             ("my-widget".into(), "user:my_widget".into()),
         ];
-        widgets(&mut state, &ws, Some("user:*"));
+        _widgets(&mut state, &ws, Some("user:*"));
         let names: Vec<&str> = state.groups[0]
             .matches
             .iter()
@@ -77,7 +77,7 @@ mod tests {
             ("backward-skip-line".into(), "builtin".into()),
             ("forward-word".into(), "builtin".into()),
         ];
-        widgets(&mut state, &ws, None);
+        _widgets(&mut state, &ws, None);
         let names: Vec<&str> = state.groups[0]
             .matches
             .iter()

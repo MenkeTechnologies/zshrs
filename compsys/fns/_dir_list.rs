@@ -65,7 +65,7 @@ impl<'a> Default for DirListOpts<'a> {
     }
 }
 
-pub fn dir_list(state: &mut CompletionState, opts: &DirListOpts<'_>) -> bool {
+pub fn _dir_list(state: &mut CompletionState, opts: &DirListOpts<'_>) -> bool {
     let sep = opts.separator;
 
     // shell:20 `compset -P "*${sep}"` — chew off everything in PREFIX
@@ -128,7 +128,7 @@ mod tests {
         };
         // We don't care about the matches — only check the chew
         // happened.
-        let _ = dir_list(&mut state, &opts);
+        let _ = _dir_list(&mut state, &opts);
         assert_eq!(state.params.iprefix, "/a:/b:");
         assert_eq!(state.params.prefix, "/c");
     }
@@ -138,7 +138,7 @@ mod tests {
         let mut state = CompletionState::new();
         state.params.prefix = "/tmp".into();
         let opts = DirListOpts::default();
-        let _ = dir_list(&mut state, &opts);
+        let _ = _dir_list(&mut state, &opts);
         assert_eq!(state.params.iprefix, "");
         assert_eq!(state.params.prefix, "/tmp");
     }
@@ -151,7 +151,7 @@ mod tests {
             separator: ",",
             use_sep_as_suffix: true,
         };
-        let _ = dir_list(&mut state, &opts);
+        let _ = _dir_list(&mut state, &opts);
         assert_eq!(state.params.iprefix, "a,b,c,");
         assert_eq!(state.params.prefix, "d");
     }
