@@ -1868,7 +1868,7 @@ pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {
 /// `None` when SHTTY is closed or the call fails (matching C's
 /// silent return when SHTTY == -1).
 /// C body (single statement): `fdgettyinfo(SHTTY, ti);`
-/// Rust returns `Option<termios>` (caller no longer takes an out-ptr);
+/// Rust returns `Option<termios>` instead of taking an out-ptr;
 /// the SHTTY=-1 case naturally returns Err from fdgettyinfo → None.
 #[cfg(unix)]
 pub fn gettyinfo() -> Option<libc::termios> {
@@ -1907,8 +1907,7 @@ pub fn fdgettyinfo(_fd: i32) -> std::io::Result<()> {
 /// Restores the termios state on the global `SHTTY` with EINTR
 /// retry; no-op when SHTTY is closed.
 /// C body (single statement): `fdsettyinfo(SHTTY, ti);`
-/// Rust returns bool (caller no longer ignores int retval); SHTTY=-1
-/// naturally yields Err → false from fdsettyinfo.
+/// Rust returns bool; SHTTY=-1 yields Err → false from fdsettyinfo.
 #[cfg(unix)]
 pub fn settyinfo(ti: &libc::termios) -> bool {
     // c:1778
@@ -2922,8 +2921,7 @@ pub fn setblock_fd(turnonblocking: bool, fd: i32) -> (bool, libc::c_long) {
 /// return setblock_fd(1, 0, &mode);
 /// ```
 /// `turnonblocking=1, fd=0` — turn ON blocking on stdin (clear
-/// O_NONBLOCK). The Rust signature now matches C exactly so this
-/// is a direct 1:1 port.
+/// O_NONBLOCK).
 pub fn setblock_stdin() -> i32 {
     // c:2624 — `return setblock_fd(1, 0, &mode);`.
     let (changed, _mode) = setblock_fd(true, 0); // c:2624
@@ -4653,11 +4651,8 @@ pub fn subst_string_by_func(
     INCOMPFUNC.store(0, Ordering::Relaxed); // c:4028
 
     let rc = callhookfunc(func_name, Some(&args), 0, std::ptr::null_mut()); // c:4030
-                                                                            // c:4033 — `ret = getaparam("reply")`. The previous Rust port read
-                                                                            // `env::var("reply")` and split on NUL — but the `reply` array is
-                                                                            // a shell-local PM_ARRAY paramtab entry, never exported to env.
-                                                                            // The C body calls `getaparam("reply")` against the canonical
-                                                                            // paramtab which is now wired.
+                                                                            // c:4033 — `ret = getaparam("reply")` against paramtab. `reply`
+                                                                            // is a shell-local PM_ARRAY entry, never exported to env.
     let ret: Option<Vec<String>> = if rc != 0 {
         None // c:4031
     } else {

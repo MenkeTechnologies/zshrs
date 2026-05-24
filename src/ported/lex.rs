@@ -509,9 +509,7 @@ fn cmd_or_math() -> i32 {
     // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
     // which fills lexbuf with ONLY the inner expression, then checks
     // for the closing `)`. The surrounding `((` / `))` are NOT added
-    // to lexbuf. zshrs previously added Inpar + '(' before dquote and
-    // ')' after, polluting DINPAR's tokstr with the literal parens.
-    // Removed to match C exactly.
+    // to lexbuf.
     if dquote_parse(')', false).is_err() {
         // c:506 — `cmdpop();` before rewind to command-parse path.
         cmdpop();
@@ -1789,10 +1787,7 @@ fn gettokstr(c: char, sub: bool) -> lextok {
             // (lex.c:964) to the `Inbrace` marker (lex.c:429:
             // `lextok2['{'] = Inbrace`). The Rust port doesn't have the
             // pre-switch `c = lextok2[c]` rewrite OR the post-switch
-            // `add(c)` — both arms must be inlined per LX2 case. The
-            // earlier comment claimed C "silently swallows" `{` here;
-            // that was wrong (verified at lex.c:1420 in the parent
-            // gettokstr loop).
+            // `add(c)` — both arms must be inlined per LX2 case.
             LX2_INBRACE => {
                 if (isset(IGNOREBRACES) && !cmdsubst) || sub {
                     add('{');
@@ -3046,7 +3041,7 @@ pub fn exalias() -> bool {
     {
         // c:1962 — `spckword(&tokstr, 1, incmdpos, 1);`. The canonical
         // port at utils.rs::spckword scans the right hashtables
-        // internally (was inline-built here before the port matched C).
+        // internally.
         if let Some(word) = tokstr() {
             let mut buf = if has_token(&word) {
                 untokenize(&word)
@@ -4775,7 +4770,7 @@ mod tests {
         let nul = Nularg.to_string();
         assert!(
             parse_subst_string(&nul).is_ok(),
-            "c:1802 — nulstring sentinel → Ok (was Err on previous port)"
+            "c:1802 — nulstring sentinel → Ok"
         );
     }
 

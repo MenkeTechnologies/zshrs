@@ -712,8 +712,6 @@ mod tests {
     /// `Src/Modules/zutil.c:1324`):
     ///     `insertlinklist(sub.in, lastnode(result->in), result->in);`
     /// which appends every node from `sub.in` to the end of `result->in`.
-    /// The Rust port previously had the param roles inverted (l mutated
-    /// = treated as DEST), silently inserting in the wrong direction.
     /// Pin C semantics: source unchanged, dest grows by source's length,
     /// inserted in the right span and in source order.
     #[test]

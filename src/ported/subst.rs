@@ -4681,8 +4681,8 @@ pub fn paramsubst(
                     value = kept.join(" "); // c:3540
                                             // Stash filtered parts so the auto-splat block
                                             // below uses these, not the unfiltered backing
-                                            // array. \${(@)arr:#pat} now correctly splats
-                                            // only the kept elements.
+                                            // array — ${(@)arr:#pat} splats only the kept
+                                            // elements.
                     split_parts = Some(kept); // c:3540
                 } else {
                     // c:3540
@@ -6619,8 +6619,6 @@ pub fn paramsubst(
         // is consumed by the `#`-prefix length arm (Src/subst.c:3845
         // `if (getlen) { ... }`). Without `${#var}` the flag is
         // recorded but inert — `${(W)var}` returns the value as-is.
-        // Rust port previously dispatched here unconditionally so
-        // `${(W)str}` returned word-count instead of the value.
         if length_op && whichlen == 1 {
             // c:2276 whichlen == 1 (c)
             // (m) flag, when set, counts cells via wcpadwidth (so
@@ -9948,13 +9946,11 @@ mod tests {
     }
 
     // ── Join flag ───────────────────────────────────────────────────
-    // FIXED 2026-05-23 (subst.rs:5924/6788): the (j/x/), (j::), and (F)
-    // join flags on array parameters now correctly join all elements.
-    // Root cause: after `sep` was applied (c:3906 sepjoin), the port
-    // left `isarr` at 1 and the auto_splat block (c:4245) re-fetched
-    // the unjoined array from paramtab, splatting element-by-element
-    // and returning only arr[0]. Fix mirrors C's `isarr = 0` at c:3907
-    // and gates the auto_splat fallback on `sep.is_none()`.
+    // (j/x/), (j::), and (F) join flags on array parameters: after
+    // `sep` is applied (c:3906 sepjoin), C clears `isarr` at c:3907 so
+    // the auto_splat fallback (c:4245) is bypassed and the joined
+    // scalar is returned. The auto_splat fallback gates on
+    // `sep.is_none()` to honor this.
 
     /// `${(j/_/)arr}` → `alpha_beta_gamma_delta` (explicit underscore join)
     #[test]

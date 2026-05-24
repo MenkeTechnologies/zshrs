@@ -400,10 +400,7 @@ pub fn patcompcharsset() {
     // c:471-478 — `for (...; i < ZPC_COUNT; ...) if (*disp) *spp = Marker;`
     // Apply user disables from `disable -p` BEFORE the option-driven
     // masks (so EXTENDEDGLOB / KSHGLOB / SHGLOB layer over the per-
-    // pattern disables). The previous Rust port skipped this pass
-    // entirely — `disable -p '#'` would have no effect on subsequent
-    // pattern compiles, defeating the entire `disable -p` builtin
-    // for pattern-token granularity.
+    // pattern disables).
     {
         let disp = zpc_disables.lock().unwrap();
         for i in 0..(ZPC_COUNT as usize) {
@@ -3572,9 +3569,7 @@ mod tests {
 
     /// Pin: `(#I)` per `Src/pattern.c:1080-1081` clears BOTH
     /// `GF_LCMATCHUC` AND `GF_IGNCASE`: `patglobflags &=
-    /// ~(GF_LCMATCHUC|GF_IGNCASE)`. The previous Rust port only
-    /// cleared GF_IGNCASE, so `(#l)(#I)` would keep GF_LCMATCHUC
-    /// stuck on, defeating the "restore case sensitivity" intent.
+    /// ~(GF_LCMATCHUC|GF_IGNCASE)`.
     #[test]
     fn patgetglobflags_capital_i_clears_both_case_flags() {
         let _g = crate::test_util::global_state_lock();

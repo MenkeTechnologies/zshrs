@@ -2820,12 +2820,8 @@ pub fn mathevali(s: &str) -> Result<i64, String> {
 ///   2. Uses `MPREC_ARG` precedence so the parser stops at the
 ///      end-of-arg boundary (comma, close-paren) rather than
 ///      consuming everything as one top-level expression.
-///
-/// The previous Rust port collapsed to `matheval(expr).unwrap_or(0)`
-/// — silently returning 0 on empty input AND defeating the
-/// `MPREC_ARG` vs `MPREC_TOP` distinction. (The MPREC distinction
-/// is structural — Rust mathevall doesn't yet thread the prec_tp
-/// arg; flagged for follow-up.)
+///      (Rust mathevall doesn't yet thread the prec_tp arg;
+///      flagged for follow-up.)
 pub(crate) fn mathevalarg(expr: &str) -> i64 {
     // c:1514
     // c:1517 — `int xmtok = mtok;` save.
@@ -4244,9 +4240,7 @@ mod tests {
         assert!(matheval("1 +").is_err());
         // Empty arith expression is a parse error in zsh:
         //   $ zsh -c '(( ))'; echo $?   →   1
-        // The previous comment claimed "Empty parens are valid" — that
-        // was wrong. Real zsh aborts with `bad math expression: empty
-        // parentheses`; our matheval matches.
+        // zsh aborts with `bad math expression: empty parentheses`.
         assert!(matheval("()").is_err());
     }
 

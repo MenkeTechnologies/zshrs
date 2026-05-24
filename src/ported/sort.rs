@@ -42,10 +42,6 @@ use std::ffi::CString;
 
 
 
-// SortElt struct + impl deleted — the canonical sort-element type is
-// `crate::ported::zsh_h::sortelt` (port of `struct sortelt` at
-// `Src/zsh.h:3013-3028`); this file no longer carries a duplicate.
-
 /// Port of `eltpcmp(const void *a, const void *b)` from `Src/sort.c:44`.
 ///
 /// The qsort callback. C's signature is
@@ -477,7 +473,7 @@ mod tests {
     fn test_strmetasort_lowercases_via_ignoring_case() {
         let _g = crate::test_util::global_state_lock();
         // Coverage for the case-fold transform inside `strmetasort`'s
-        // build-elts pass (formerly `SortElt::with_transforms`).
+        // build-elts pass.
         let mut arr = vec!["BANANA".to_string(), "apple".to_string()];
         strmetasort(&mut arr, SORTIT_IGNORING_CASE as u32, None);
         assert_eq!(arr, vec!["apple", "BANANA"]);

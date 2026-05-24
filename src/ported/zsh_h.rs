@@ -509,11 +509,6 @@ pub struct timedfn {
     pub when: i64, // time_t
 }
 
-// `enum CaseMod` deleted — C uses an anonymous enum at
-// `Src/zsh.h:3122-3127` with bare values 0..3. Canonical `CASMOD_*`
-// `pub const`s are below at the "42. Case modify" section, matching
-// C's structural placement.
-
 /// Port of `typedef int (*CondHandler)(...)` from `Src/zsh.h:681`.
 pub type CondHandler = fn(args: &[String], id: i32) -> i32;
 
@@ -1401,8 +1396,8 @@ pub struct multio {
     pub pipe: i32,
     /// C `int fds[1]` with `VARLENARRAY` trailing-element realloc via
     /// `hrealloc(mn, sizeof + ct*sizeof(int))`. Rust uses a growable
-    /// `Vec<i32>` so multi-output redirs past MULTIOUNIT (8) no longer
-    /// cap-bail. Initial slot stamped on construction (c:2449).
+    /// `Vec<i32>` (no MULTIOUNIT cap). Initial slot stamped on
+    /// construction (c:2449).
     pub fds: Vec<i32>,
 }
 

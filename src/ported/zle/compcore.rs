@@ -3745,21 +3745,6 @@ fn metafy_line() {
     ZLEMETACS.store(cs.min(new_len), Ordering::Relaxed);
 }
 
-// `selfinsert` duplicate deleted — was a private 28-line fake inline
-// implementation. Canonical port lives at zle_misc.rs:180 (matching
-// C's `int selfinsert(char **args)` from zle_misc.c:113) and delegates
-// to `self_insert(c)`. Zero callers used this private compcore copy.
-
-// `set_minfo_cur` deleted — Rust-only wrapper for the C inline
-// write `minfo.cur = &m;`. Callers should inline the
-// `MINFO.lock().cur = Some(Box::new(m))` write directly.
-// do_ambig_menu_stub deleted — inlined as
-// `{ let _ = do_ambig_menu(); }`
-// at the single call site (c:367).
-// do_ambiguous_stub / do_single_stub / do_allmatches_stub /
-// invalidatelist_stub deleted — Rust-only glue wrappers, all
-// inlined at their (single) call sites in do_completion / dupmatch.
-// The real C names live as `pub fn` in compresult.rs / zle_h.rs.
 fn opt_isset(name: &str) -> i32 {
     // options.c
     if crate::ported::options::opt_state_get(name).unwrap_or(false) {
@@ -3825,9 +3810,6 @@ pub static OFFS: AtomicI32 = AtomicI32::new(0); // zle_tricky.c:88
 /// freelist of available Compctl slots for the current completion call.
 pub static freecl: OnceLock<Mutex<Option<i32>>> = OnceLock::new(); // c:255
 
-// lastval_stub / incompfunc_stub / sfcontext_stub deleted — inlined
-// at all call sites: LASTVAL.load / INCOMPFUNC.load / SFCONTEXT.load
-// respectively, matching C's inline global reads.
 /// Real call into `doshfunc` — `Src/exec.c`. Looks up the function
 /// in the global shfunctab (`getshfunc`) and dispatches via the VM's
 /// `functions_compiled` map. Returns the function's exit status
