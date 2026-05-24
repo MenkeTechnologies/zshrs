@@ -5,7 +5,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::SeqCst;
 
-use super::zle_h::{MOD_MULT, MOD_TMULT, MOD_VIAPP, MOD_VIBUF};
+use super::zle_h::{modifier, vichange, MOD_MULT, MOD_TMULT, MOD_VIAPP, MOD_VIBUF};
 use super::zle_keymap::selectkeymap;
 use super::zle_misc::{TAILADD, VFINDCHAR, VFINDDIR};
 
@@ -54,25 +54,74 @@ pub fn vichange() -> i32 {
 
 /// Direct port of `void startvichange(int im)` from
 /// `Src/Zle/zle_vi.c:90`.
-/// ```c
-/// if (im > -1) insmode = im;
-/// if (viinrepeat && im != -2) { zmod = lastvichg.mod; vichgflag = 0; }
-/// else if (!vichgflag) { curvichg.buf = ...; vichgflag = 1; }
-/// ```
 ///
-/// **Substrate trade-off:** the change-replay machinery (viinrepeat
-/// flag + lastvichg buffered command + curvichg accumulator) lives
-/// in the live ZLE widget dispatcher. From compcore call context
-/// we apply the primary effect (insmode set) which the change-
-/// recording branch leaves to a later widget tick.
+/// Line-by-line port. Three branches:
+///   1. `viinrepeat && im != -2` — we're replaying `.`: restore zmod
+///      from `lastvichg.mod` and zero `vichgflag` so the replay
+///      itself isn't re-recorded (c:94-96).
+///   2. `!vichgflag` — fresh change: snapshot zmod into curvichg, reset
+///      `curvichg.buf`. With `im == -2` (vi-yank/change/delete) seed
+///      the buf with the operator character (`i`/`a`/`R`/`o`) and set
+///      `vichgflag = 1`. Otherwise (every other vi command) copy
+///      `keybuf` verbatim and set `vichgflag = 2` (c:97-115).
+///   3. `vichgflag != 0` and not in replay — already recording, no-op.
 pub fn startvichange(im: i32) {
-    // c:90
+    use crate::ported::utils::unmetafy;
+    use crate::ported::zle::zle_keymap::{keybuf, keybuflen};
+    use crate::ported::zle::zle_main::{ZLECS, ZLELL};
+
+    // c:91 — `if (im > -1) insmode = im;`
     if im > -1 {
-        // c:90
-        INSMODE.store(
-            if im != 0 { 1 } else { 0 },
-            SeqCst,
-        ); // c:91
+        INSMODE.store(if im != 0 { 1 } else { 0 }, SeqCst);
+    }
+
+    let in_repeat = VIINREPEAT.load(SeqCst) != 0;
+    if in_repeat && im != -2 {
+        // c:94-96 — `zmod = lastvichg.mod; vichgflag = 0;`
+        let saved_mod = LASTVICHG.lock().unwrap().mod_.clone();
+        *ZMOD.lock().unwrap() = saved_mod;
+        VICHGFLAG.store(0, SeqCst);
+    } else if VICHGFLAG.load(SeqCst) == 0 {
+        // c:97-115 — start recording.
+        let mut cur = CURVICHG.lock().unwrap();
+        // c:98 — `curvichg.mod = zmod;`
+        cur.mod_ = ZMOD.lock().unwrap().clone();
+        // c:99-101 — `free(curvichg.buf); curvichg.buf = zalloc(16 + keybuflen);`
+        let kblen = keybuflen.load(SeqCst).max(0) as usize;
+        cur.buf.clear();
+        cur.bufsz = (16 + kblen) as i32;
+        cur.bufptr = 0;
+
+        if im == -2 {
+            // c:103-107 — seed buf with the operator character.
+            VICHGFLAG.store(1, SeqCst);
+            let zlell_v = ZLELL.load(SeqCst);
+            let zlecs_v = ZLECS.load(SeqCst);
+            let insmode_v = INSMODE.load(SeqCst) != 0;
+            let op = if zlell_v != 0 {
+                if insmode_v {
+                    if zlecs_v < zlell_v {
+                        b'i'
+                    } else {
+                        b'a'
+                    }
+                } else {
+                    b'R'
+                }
+            } else {
+                b'o'
+            };
+            cur.buf.push(op);
+            cur.bufptr = 1;
+        } else {
+            // c:109-115 — `vichgflag = 2; strcpy(curvichg.buf, keybuf);
+            //              unmetafy(curvichg.buf, &curvichg.bufptr);`
+            VICHGFLAG.store(2, SeqCst);
+            let kb = keybuf.lock().unwrap().clone();
+            let truncated_len = kb.iter().position(|&b| b == 0).unwrap_or(kb.len());
+            cur.buf = kb[..truncated_len].to_vec();
+            cur.bufptr = unmetafy(&mut cur.buf) as i32;
+        }
     }
 }
 
@@ -602,18 +651,44 @@ pub fn vireplacechars() -> i32 {
 }
 
 /// Port of `vicmdmode(UNUSED(char **args))` from Src/Zle/zle_vi.c:677.
+///
+/// ESC handler that switches from `viins`/`viopp` into the `vicmd`
+/// keymap. Line-by-line port of c:677-695, with the load-bearing
+/// `lastvichg = curvichg` promotion at c:687 — completes the
+/// vi-change-recording cycle so `vi-repeat-change` (`.`) has a
+/// command to replay.
 pub fn vicmdmode() -> i32 {
-    // c:677
-    // C body (c:678-694): `if (invicmdmode() || selectkeymap("vicmd",
-    //                     0)) return 1; mergeundo(); insmode = unset(
-    //                     OVERSTRIKE); ...; if (zlecs != findbol())
-    //                     DECCS()`.
+    // c:679 — `if (invicmdmode() || selectkeymap("vicmd", 0)) return 1;`
     if *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
         return 1;
     }
     if selectkeymap("vicmd", 0) != 0 {
         return 1;
     }
+    // c:681 — `mergeundo();` (undo-coalescing not yet wired — TODO)
+    // c:682 — `insmode = unset(OVERSTRIKE);`
+    let overstrike_set = crate::ported::zsh_h::isset(crate::ported::zsh_h::OVERSTRIKE);
+    INSMODE.store(if overstrike_set { 0 } else { 1 }, SeqCst);
+
+    // c:683-689 — promote curvichg → lastvichg when we were recording.
+    if VICHGFLAG.load(SeqCst) == 1 {
+        VICHGFLAG.store(0, SeqCst); // c:684
+        let mut last = LASTVICHG.lock().unwrap();
+        let mut cur = CURVICHG.lock().unwrap();
+        last.mod_ = cur.mod_.clone();
+        last.buf = std::mem::take(&mut cur.buf);
+        last.bufsz = cur.bufsz;
+        last.bufptr = cur.bufptr;
+        cur.bufsz = 0;
+        cur.bufptr = 0;
+    }
+
+    // c:690-691 — `if (viinrepeat == 1) viinrepeat = 0;`
+    if VIINREPEAT.load(SeqCst) == 1 {
+        VIINREPEAT.store(0, SeqCst);
+    }
+
+    // c:692-693 — `if (zlecs != findbol()) DECCS();`
     let bol = findbol();
     if ZLECS.load(SeqCst) != bol {
         deccs();
@@ -741,10 +816,65 @@ pub fn vidowncase() -> i32 {
 /// widget tick has its own copy of this fn that touches the
 /// active state.
 /// Port of `virepeatchange(UNUSED(char **args))` from `Src/Zle/zle_vi.c:795`.
-/// WARNING: param names don't match C — Rust=() vs C=(args)
+///
+/// Line-by-line port of c:795-815. Refuses to replay if there's no
+/// stored change (`lastvichg.buf` empty), if we're already recording
+/// one (`vichgflag != 0`), or if a vi range is in flight
+/// (`virangeflag != 0`) — c:797. Otherwise updates the saved zmod
+/// with the explicit MULT/VIBUF prefixes from the current zmod
+/// (c:801-810), arms `viinrepeat = 3`, and feeds the recorded bytes
+/// back through [`ungetbytes`] for the input loop to consume.
 pub fn virepeatchange() -> i32 {
-    // c:795
-    1 // c:795 no change to repeat
+    use crate::ported::zle::zle_main::ungetbytes;
+
+    // c:797-798 — `if (!lastvichg.buf || vichgflag || virangeflag) return 1;`
+    let last = LASTVICHG.lock().unwrap();
+    if last.buf.is_empty()
+        || VICHGFLAG.load(SeqCst) != 0
+        || VIRANGEFLAG.load(SeqCst) != 0
+    {
+        return 1;
+    }
+    drop(last);
+
+    // c:800-810 — restore or update saved count + cut buffer.
+    let zmod_flags = ZMOD.lock().unwrap().flags;
+    let zmod_mult = ZMOD.lock().unwrap().mult;
+    let zmod_vibuf = ZMOD.lock().unwrap().vibuf;
+    let zmod_viapp = zmod_flags & MOD_VIAPP;
+
+    {
+        let mut lvc = LASTVICHG.lock().unwrap();
+        if zmod_flags & MOD_MULT != 0 {
+            // c:801-803
+            lvc.mod_.mult = zmod_mult;
+            lvc.mod_.flags |= MOD_MULT;
+        }
+        if zmod_flags & MOD_VIBUF != 0 {
+            // c:805-808
+            lvc.mod_.vibuf = zmod_vibuf;
+            lvc.mod_.flags = (lvc.mod_.flags & !MOD_VIAPP) | MOD_VIBUF | zmod_viapp;
+        } else if lvc.mod_.flags & MOD_VIBUF != 0
+            && lvc.mod_.vibuf >= 27
+            && lvc.mod_.vibuf <= 34
+        {
+            // c:809-811 — "1.."8 → advance to next numbered buffer
+            lvc.mod_.vibuf += 1;
+        }
+    }
+
+    // c:813 — `viinrepeat = 3;`
+    VIINREPEAT.store(3, SeqCst);
+
+    // c:814 — `ungetbytes(lastvichg.buf, lastvichg.bufptr);`
+    let (bytes, ptr) = {
+        let l = LASTVICHG.lock().unwrap();
+        (l.buf.clone(), l.bufptr as usize)
+    };
+    let lo = ptr.min(bytes.len());
+    ungetbytes(&bytes[..lo]);
+
+    0 // c:815
 }
 
 /// Port of `viindent(UNUSED(char **args))` from Src/Zle/zle_vi.c:820.
@@ -1123,6 +1253,39 @@ pub static VICHGFLAG: std::sync::atomic::AtomicI32 = // c:65
 /// `.` replay so the recorder doesn't re-record.
 pub static VIINREPEAT: std::sync::atomic::AtomicI32 = // c:73
     std::sync::atomic::AtomicI32::new(0);
+
+/// Port of `struct vichange lastvichg` from `Src/Zle/zle_vi.c:54`.
+/// Last completed vi change — replayed by `vi-repeat-change` (`.`).
+pub static LASTVICHG: std::sync::Mutex<vichange> = // c:54
+    std::sync::Mutex::new(vichange {
+        mod_: modifier {
+            flags: 0,
+            mult: 1,
+            tmult: 1,
+            vibuf: 0,
+            base: 10,
+        },
+        buf: Vec::new(),
+        bufsz: 0,
+        bufptr: 0,
+    });
+
+/// Port of `struct vichange curvichg` from `Src/Zle/zle_vi.c:54`.
+/// In-flight vi change being recorded — promoted to [`LASTVICHG`] by
+/// `endvichange` once the change widget completes.
+pub static CURVICHG: std::sync::Mutex<vichange> = // c:54
+    std::sync::Mutex::new(vichange {
+        mod_: modifier {
+            flags: 0,
+            mult: 1,
+            tmult: 1,
+            vibuf: 0,
+            base: 10,
+        },
+        buf: Vec::new(),
+        bufsz: 0,
+        bufptr: 0,
+    });
 
 /// Read the active numeric multiplier.
 /// Port of `zmult` macro at Src/Zle/zle.h:267 (`#define zmult
