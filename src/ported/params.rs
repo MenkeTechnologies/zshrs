@@ -4275,10 +4275,12 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
 /// NOTE: zshrs's paramtab stores hash-params via `pm->u_hash` (a
 /// `HashTable` struct that's a generic bucket-array container). The
 /// canonical C path threads through `gsu.h->getfn(pm)` → `paramvalarr`
-/// which extracts the value side of each key-value pair. Until that
-/// extraction backend lands, we return an empty Vec for PM_HASHED
-/// (which matches C's "no entries" return shape, not the broken
-/// "wrong-signature" stub).
+/// which extracts the value side of each key-value pair. zshrs's
+/// canonical assoc backing lives in `paramtab_hashed_storage` (an
+/// IndexMap<String, String> keyed by param name); read the values
+/// directly from there as the C macro's
+/// `paramvalarr(hashgetfn(pm), SCANPM_WANTVALS)` resolves to a
+/// values walk over the same backing.
 pub fn gethparam(name: &str) -> Option<Vec<String>> {
     // c:3117
     if name.starts_with(|c: char| c.is_ascii_digit()) {
@@ -4290,9 +4292,19 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
             if PM_TYPE(pm.node.flags as u32) == PM_HASHED {
                 // c:3123
                 // c:3124 — `paramvalarr(hashgetfn(pm), SCANPM_WANTVALS)`.
-                // Backend not yet ported; return empty vec to mirror the
-                // "param exists but has no entries" shape.
-                return Some(Vec::new()); // c:3124
+                // Read values directly from the canonical hashed-storage
+                // backing — IndexMap iteration matches C's hashtable
+                // walk order (insertion-stable). When the storage hasn't
+                // been populated (empty hash, fresh declaration), return
+                // an empty Vec so the C "param exists, no entries" shape
+                // is preserved (vs returning None which means "param
+                // doesn't exist").
+                let store = paramtab_hashed_storage().lock().ok()?;
+                let vals = store
+                    .get(name)
+                    .map(|m| m.values().cloned().collect())
+                    .unwrap_or_default();
+                return Some(vals); // c:3124
             }
         }
     }
@@ -4312,8 +4324,15 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
             if PM_TYPE(pm.node.flags as u32) == PM_HASHED {
                 // c:3137
                 // c:3138 — `paramvalarr(hashgetfn(pm), SCANPM_WANTKEYS)`.
-                // Same backend gap as gethparam; return empty Vec.
-                return Some(Vec::new()); // c:3138
+                // Same backing as gethparam — return keys instead of values.
+                // Empty-storage fallback identical: Some(empty Vec) for
+                // "exists, no entries" shape.
+                let store = paramtab_hashed_storage().lock().ok()?;
+                let keys = store
+                    .get(name)
+                    .map(|m| m.keys().cloned().collect())
+                    .unwrap_or_default();
+                return Some(keys); // c:3138
             }
         }
     }
@@ -12002,12 +12021,33 @@ mod tests {
         assert_eq!(
             gethparam("zshrs_test_gethp_hash"),
             Some(Vec::new()),
-            "c:3123-3124 — PM_HASHED returns Some(vec) (empty until backend wired)"
+            "c:3123-3124 — PM_HASHED empty-storage returns Some(empty vec)"
         );
         assert_eq!(
             gethkparam("zshrs_test_gethp_hash"),
             Some(Vec::new()),
-            "c:3137-3138 — PM_HASHED returns Some(vec) for keys"
+            "c:3137-3138 — PM_HASHED empty-storage returns Some(empty vec)"
+        );
+
+        // Populate paramtab_hashed_storage and verify gethparam/gethkparam
+        // return the actual values/keys per c:3124 (SCANPM_WANTVALS) and
+        // c:3138 (SCANPM_WANTKEYS). IndexMap preserves insertion order.
+        {
+            let mut store = paramtab_hashed_storage().lock().unwrap();
+            let mut map: IndexMap<String, String> = IndexMap::new();
+            map.insert("k1".to_string(), "v1".to_string());
+            map.insert("k2".to_string(), "v2".to_string());
+            store.insert("zshrs_test_gethp_hash".to_string(), map);
+        }
+        assert_eq!(
+            gethparam("zshrs_test_gethp_hash"),
+            Some(vec!["v1".to_string(), "v2".to_string()]),
+            "c:3124 — paramvalarr(SCANPM_WANTVALS) returns values from hashed-storage"
+        );
+        assert_eq!(
+            gethkparam("zshrs_test_gethp_hash"),
+            Some(vec!["k1".to_string(), "k2".to_string()]),
+            "c:3138 — paramvalarr(SCANPM_WANTKEYS) returns keys from hashed-storage"
         );
 
         // Clean up.
@@ -12016,6 +12056,10 @@ mod tests {
             tab.remove("zshrs_test_gethp_scalar");
             tab.remove("zshrs_test_gethp_hash");
         }
+        paramtab_hashed_storage()
+            .lock()
+            .unwrap()
+            .remove("zshrs_test_gethp_hash");
     }
 
     /// Pin `getaparam` to its canonical C body at `Src/params.c:3101-3110`.
