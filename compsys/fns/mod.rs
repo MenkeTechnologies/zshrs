@@ -16,6 +16,7 @@
 // ── Base/Completer/ ───────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Completer/_all_matches.rs"] pub mod _all_matches;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Completer/_approximate.rs"] pub mod _approximate;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Completer/_complete.rs"] pub mod _complete;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Completer/_correct.rs"] pub mod _correct;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Completer/_expand.rs"] pub mod _expand;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Completer/_expand_alias.rs"] pub mod _expand_alias;
@@ -31,14 +32,21 @@
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Completer/_user_expand.rs"] pub mod _user_expand;
 
 // ── Base/Core/ ────────────────────────────────────────────────────────
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_all_labels.rs"] pub mod _all_labels;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_comp_caller_options.rs"] pub mod _comp_caller_options;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_comp_priv_prefix.rs"] pub mod _comp_priv_prefix;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_description.rs"] pub mod _description;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_dispatch.rs"] pub mod _dispatch;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_main_complete.rs"] pub mod _main_complete;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_message.rs"] pub mod _message;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_next_label.rs"] pub mod _next_label;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_normal.rs"] pub mod _normal;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_setup.rs"] pub mod _setup;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_tags.rs"] pub mod _tags;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_wanted.rs"] pub mod _wanted;
 
 // ── Base/Utility/ ─────────────────────────────────────────────────────
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_alternative.rs"] pub mod _alternative;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_arg_compile.rs"] pub mod _arg_compile;
 #[path = "Base/Utility/_arguments.rs"] pub mod _arguments;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_as_if.rs"] pub mod _as_if;
@@ -61,11 +69,13 @@
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_regex_arguments.rs"] pub mod _regex_arguments;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_regex_words.rs"] pub mod _regex_words;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_retrieve_cache.rs"] pub mod _retrieve_cache;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_sep_parts.rs"] pub mod _sep_parts;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_sequence.rs"] pub mod _sequence;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_set_command.rs"] pub mod _set_command;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_shadow.rs"] pub mod _shadow;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_store_cache.rs"] pub mod _store_cache;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_sub_commands.rs"] pub mod _sub_commands;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_values.rs"] pub mod _values;
 
 // ── Base/Widget/ ──────────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Widget/_bash_completions.rs"] pub mod _bash_completions;
@@ -127,7 +137,9 @@ pub use _widgets::_widgets;
 
 // Simple one-symbol-per-module re-exports.
 pub use _absolute_command_paths::_absolute_command_paths;
+pub use _all_labels::_all_labels;
 pub use _all_matches::_all_matches;
+pub use _alternative::_alternative;
 pub use _approximate::_approximate;
 pub use _as_if::_as_if;
 pub use _bash_completions::_bash_completions;
@@ -138,6 +150,7 @@ pub use _cmdstring::_cmdstring;
 pub use _comp_caller_options::_comp_caller_options;
 pub use _comp_locale::_comp_locale;
 pub use _comp_priv_prefix::_comp_priv_prefix;
+pub use _complete::_complete;
 pub use _complete_debug::_complete_debug;
 pub use _complete_help::_complete_help;
 pub use _complete_help_generic::_complete_help_generic;
@@ -146,6 +159,7 @@ pub use _correct::_correct;
 pub use _correct_filename::_correct_filename;
 pub use _correct_word::_correct_word;
 pub use _default::_default;
+pub use _description::_description;
 pub use _dispatch::_dispatch;
 pub use _expand::_expand;
 pub use _expand_alias::_expand_alias;
@@ -159,10 +173,14 @@ pub use _history::_history;
 pub use _history_complete_word::_history_complete_word;
 pub use _ignored::_ignored;
 pub use _list::_list;
+pub use _main_complete::_main_complete;
 pub use _match::_match;
 pub use _menu::_menu;
+pub use _message::_message;
 pub use _most_recent_file::_most_recent_file;
+pub use _next_label::_next_label;
 pub use _next_tags::_next_tags;
+pub use _normal::_normal;
 pub use _nothing::_nothing;
 pub use _oldlist::_oldlist;
 pub use _options::_options;
@@ -175,6 +193,7 @@ pub use _read_comp::_read_comp;
 pub use _regex_arguments::_regex_arguments;
 pub use _regex_words::_regex_words;
 pub use _retrieve_cache::_retrieve_cache;
+pub use _sep_parts::_sep_parts;
 pub use _set_command::_set_command;
 pub use _setup::_setup;
 pub use _shadow::_shadow;
@@ -182,4 +201,6 @@ pub use _store_cache::_store_cache;
 pub use _sub_commands::_sub_commands;
 pub use _tilde_files::_tilde_files;
 pub use _user_expand::_user_expand;
+pub use _values::_values;
 pub use _wanted::_wanted;
+pub use shared::{get_ignored_patterns, is_ignored};
