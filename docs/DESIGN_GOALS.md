@@ -8,7 +8,7 @@ Companion docs: [`ROADMAP.md`](./ROADMAP.md) for phase-by-phase execution plan; 
 
 ## [0x00] Mission
 
-zshrs is the **endgame shell for its maintainer's lifetime** — the substrate that hosts the most powerful single-author CLI environment ever assembled (zpwr at 172k LOC + 506+ subcommands, zsh-more-completions at 16,806 files, custom .zshrc spanning decades). It exists because zsh's 1970-era architecture cannot be patched into handling that scale, no matter how many userspace optimization layers (zinit turbo, p10k instant prompt, zwc, zcompile, BG_NICE) are stacked on it.
+zshrs is the **endgame shell for its maintainer's lifetime** — the substrate that hosts the most powerful single-author CLI environment ever assembled (zpwr at 172k LOC + 506+ subcommands, zsh-more-completions at 27,387 files, custom .zshrc spanning decades). It exists because zsh's 1970-era architecture cannot be patched into handling that scale, no matter how many userspace optimization layers (zinit turbo, p10k instant prompt, zwc, zcompile, BG_NICE) are stacked on it.
 
 **zshrs is not "Rust zsh."** It's the first compiled Unix shell — bytecode VM + Cranelift JIT + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only shell cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 23 in-process coreutils builtins. These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload.
 
@@ -50,7 +50,7 @@ These are load-bearing numerical commitments, not aspirations.
 | Builtin dispatch | <1µs | — |
 | Multicore utilization (runtime) | All cores active during parallel work | — |
 
-"Fully featured" means: 16,806+ completions registered, full .zshrc loaded, full zpwr loaded (506+ subcommands), all hooks installed, prompt rendered. **NEVER instant-prompt fakery.** First paint = full functionality, period.
+"Fully featured" means: 27,387+ completions registered, full .zshrc loaded, full zpwr loaded (506+ subcommands), all hooks installed, prompt rendered. **NEVER instant-prompt fakery.** First paint = full functionality, period.
 
 **Comparison to existing shells (M-series Apple Silicon, full config):**
 

@@ -466,7 +466,7 @@ Both flags produce additional `.note.zshrs-{aop,profile}` ELF sections so `zshrs
 
 **Scope:** Sections §0x00–§0x12 cover script-AOT — `zshrs build script.zsh -o script` producing a static deployment binary. That capability stands. This section addresses a **different** question: how the daily-driver shell stores plugin / compsys / autoload bytecode for fast lookup at every prompt.
 
-The earlier "binary IS the database" framing — bake every plugin and every completion into the daily-driver binary's `.text` segment — was wrong on memory. At zpwr-scale (172k LOC + 16,806 zsh-more-completions + 100-200 zinit plugins ≈ 200-400 MB of bytecode), `.text` pre-faulting puts 50-100 MB resident on every shell launch and the kernel cannot evict `PROT_EXEC` pages. The working set must scale with **what's actually called**, not **what's installed**.
+The earlier "binary IS the database" framing — bake every plugin and every completion into the daily-driver binary's `.text` segment — was wrong on memory. At zpwr-scale (172k LOC + 27,387 zsh-more-completions + 100-200 zinit plugins ≈ 200-400 MB of bytecode), `.text` pre-faulting puts 50-100 MB resident on every shell launch and the kernel cannot evict `PROT_EXEC` pages. The working set must scale with **what's actually called**, not **what's installed**.
 
 ### Decision
 
@@ -565,7 +565,7 @@ Cache: ~/.zshrs/                           total: 612 MB
   index.rkyv                  1.2 MB    50,234 entries  (mmap: hot)
   images/                   247.0 MB       143 shards
     system.rkyv              12.0 MB     2,341 entries
-    completions-corpus.rkyv  82.0 MB    16,806 entries
+    completions-corpus.rkyv  82.0 MB    27,387 entries
     zpwr.rkyv                45.0 MB       506 entries  (mtime 2m ago)
     plugin-zsh-syntax-h…      1.2 MB        18 entries
     plugin-…                   …
