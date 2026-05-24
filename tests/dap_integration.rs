@@ -232,44 +232,52 @@ fn stacktrace_returns_one_frame_with_program_path() {
 }
 
 #[test]
-fn scopes_returns_locals_with_ref_one() {
+fn scopes_returns_locals_specials_environment_in_order() {
+    // Three separate scopes keep user vars on top regardless of the
+    // IDE's per-scope Sort Alphabetically toggle. Order is the
+    // load-bearing contract here.
     let mut dap = DapHandle::spawn();
     let _ = dap.request("initialize", json!({}));
     let _ = dap.wait_event("initialized", Duration::from_secs(2));
     let body = dap.request("scopes", json!({ "frameId": 1 }));
     let arr = body["scopes"].as_array().expect("scopes");
-    assert_eq!(arr.len(), 1);
+    assert_eq!(arr.len(), 3, "expected 3 scopes, got: {:?}", arr);
     assert_eq!(arr[0]["name"], json!("Locals"));
     assert_eq!(arr[0]["variablesReference"], json!(1));
+    assert_eq!(arr[1]["name"], json!("Specials"));
+    assert_eq!(arr[1]["variablesReference"], json!(2));
+    assert_eq!(arr[2]["name"], json!("Environment"));
+    assert_eq!(arr[2]["variablesReference"], json!(3));
     dap.shutdown();
 }
 
 #[test]
-fn variables_returns_env_snapshot() {
+fn variables_environment_scope_returns_env_snapshot() {
+    // The Environment scope (ref=3) is the new location for process
+    // env vars. Locals/Specials don't contain PATH/HOME.
     let mut dap = DapHandle::spawn();
     let _ = dap.request("initialize", json!({}));
     let _ = dap.wait_event("initialized", Duration::from_secs(2));
-    let body = dap.request("variables", json!({ "variablesReference": 1 }));
+    let body = dap.request("variables", json!({ "variablesReference": 3 }));
     let arr = body["variables"].as_array().expect("variables");
-    // PATH or HOME should exist on any reasonable test env
     assert!(
         arr.iter().any(|v| {
             let n = v["name"].as_str().unwrap_or("");
             n == "PATH" || n == "HOME" || n == "USER" || n == "USERPROFILE"
         }),
-        "no recognizable env var in scope: {:?}",
+        "no recognizable env var in Environment scope: {:?}",
         arr.iter().take(5).collect::<Vec<_>>(),
     );
     dap.shutdown();
 }
 
 #[test]
-fn variables_order_user_vars_first_then_specials_then_env() {
-    // Pin the strykelang-style ordering: when paused at a breakpoint,
-    // the Variables panel should show user-defined vars at the top
-    // (the ones the user is debugging), then zsh specials, then env
-    // vars at the bottom. Without this, the panel reads as "300 env
-    // vars and you have to scroll" — useless during debugging.
+fn variables_locals_scope_contains_user_vars_only() {
+    // Variables panel UX: scope 1 (Locals) returns ONLY the script's
+    // user-defined vars — not the 300 zsh specials and caps env vars
+    // the IDE would otherwise interleave alphabetically. Scope 2
+    // (Specials) and scope 3 (Environment) get the rest. Pin both so
+    // the bucket boundaries don't drift.
     let mut dap = DapHandle::spawn();
     let _ = dap.request("initialize", json!({}));
     let _ = dap.wait_event("initialized", Duration::from_secs(2));
@@ -277,7 +285,6 @@ fn variables_order_user_vars_first_then_specials_then_env() {
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     let path = tmp.path().to_path_buf();
     let canon = std::fs::canonicalize(&path).expect("canonicalize");
-    // Declare a user var, then sit on a breakpoint after it.
     std::fs::write(
         &path,
         "my_user_var=42\nanother_user_var=hello\necho done\n",
@@ -303,28 +310,42 @@ fn variables_order_user_vars_first_then_specials_then_env() {
         .wait_event("stopped", Duration::from_secs(8))
         .expect("breakpoint never fired");
 
+    // ── Locals (ref=1) — only user vars ──
     let body = dap.request("variables", json!({ "variablesReference": 1 }));
-    let arr = body["variables"].as_array().expect("variables");
-    let names: Vec<&str> = arr
+    let locals: Vec<&str> = body["variables"]
+        .as_array()
+        .unwrap()
         .iter()
         .map(|v| v["name"].as_str().unwrap_or(""))
         .collect();
-    // Find positions of: user var, special, env var.
-    let pos = |target: &str| names.iter().position(|n| *n == target);
-    let user_pos = pos("my_user_var").or_else(|| pos("another_user_var"));
-    let env_pos = pos("PATH").or_else(|| pos("HOME"));
     assert!(
-        user_pos.is_some(),
-        "no user var in snapshot — got: {:?}",
-        names.iter().take(20).collect::<Vec<_>>(),
+        locals.iter().any(|n| *n == "my_user_var"),
+        "Locals missing my_user_var: {:?}",
+        locals,
     );
-    assert!(env_pos.is_some(), "no env var in snapshot");
     assert!(
-        user_pos.unwrap() < env_pos.unwrap(),
-        "user var at pos {} should appear BEFORE env var at pos {} — got order: {:?}",
-        user_pos.unwrap(),
-        env_pos.unwrap(),
-        names.iter().take(20).collect::<Vec<_>>(),
+        !locals.iter().any(|n| *n == "PATH" || *n == "HOME"),
+        "Locals leaked env var: {:?}",
+        locals,
+    );
+
+    // ── Environment (ref=3) — env vars only ──
+    let body = dap.request("variables", json!({ "variablesReference": 3 }));
+    let env: Vec<&str> = body["variables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        env.iter().any(|n| *n == "PATH" || *n == "HOME"),
+        "Environment scope missing PATH/HOME: {:?}",
+        env.iter().take(10).collect::<Vec<_>>(),
+    );
+    assert!(
+        !env.iter().any(|n| *n == "my_user_var"),
+        "Environment leaked user var: {:?}",
+        env.iter().take(10).collect::<Vec<_>>(),
     );
 
     let _ = dap.request("continue", json!({ "threadId": 1 }));
