@@ -2602,15 +2602,10 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     let dup = dupstring_wlen(&untok, untok.len()); // c:1717
                                                                           // c:1715 `zcontext_save();`
     zcontext_save();
-    // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
-    inpush(&dup, 0, None);
-    // zshrs-only: `hgetc()` (lex.rs:3736) reads directly from
-    // LEX_INPUT/LEX_POS — the inpush call above feeds inbuf for the
-    // input.c side but NOT the lexer's char-source. Swap LEX_INPUT/
-    // LEX_POS to the dup string here so dquote_parse's hgetc calls
-    // observe the right body, then restore the prior values after
-    // dquote_parse returns. zcontext_save / lex_context_save do NOT
-    // currently carry LEX_INPUT/LEX_POS through the saved frame.
+    // Drain LEX_INPUT/LEX_POS so hgetc's two-input bridge prefers the
+    // freshly-pushed inbuf frame (via inpush below) instead of double-
+    // reading our content from both LEX_INPUT and inbuf. Restored
+    // after dquote_parse returns.
     let saved_lex_input = LEX_INPUT.with_borrow(|s| s.clone());
     let saved_lex_pos = LEX_POS.get();
     // Append the '\0' sentinel C's dupstring_wlen carries — dquote_parse
@@ -2618,9 +2613,14 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     // terminator hgetc returns None at EOF and dquote_parse errors.
     let mut input_with_nul = dup.clone();
     input_with_nul.push('\0');
-    LEX_INPUT.with_borrow_mut(|b| *b = input_with_nul);
+    LEX_INPUT.with_borrow_mut(|b| b.clear());
     LEX_POS.set(0);
     LEX_LEXSTOP.set(false);
+    // c:1717 `inpush(dupstring_wlen(*s, l), 0, NULL);`
+    // Push the body AFTER clearing LEX_INPUT so hgetc reads only from
+    // the inbuf frame (avoids double-counting characters that appear in
+    // both LEX_INPUT and inbuf).
+    inpush(&input_with_nul, 0, None);
     // c:1718 `strinbeg(0);`
     strinbeg(0);
     // c:1719-1721 — seed lexbuf with the input string so dquote_parse's
@@ -4193,7 +4193,12 @@ pub fn untokenize(s: &str) -> String {
             // decoding inline here. Result: the entire `$'...'`
             // region is replaced by its decoded content with no
             // `$`/`'`/marker remnants.
-            if c == Qstring && i + 1 < chars.len() && chars[i + 1] == Snull {
+            // c:Src/lex.c top-level `$'...'` lexer emits `Stringg`
+            // (`\u{85}`) before the opening `Snull`, while DQ-context
+            // `$'...'` would emit Qstring (`\u{8c}`). Accept both so
+            // untokenize handles top-level and DQ-context ANSI-C
+            // strings the same way.
+            if (c == Qstring || c == Stringg) && i + 1 < chars.len() && chars[i + 1] == Snull {
                 let (decoded, end) = getkeystring_dollar_quote(&chars, i + 2);
                 result.push_str(&decoded);
                 // `end` points at the closing `Snull` (or end of

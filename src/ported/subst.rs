@@ -5855,6 +5855,13 @@ pub fn paramsubst(
                         String::new()
                     }
                 });
+            // c:2882-2883 — after wantt, C clears `v = NULL; isarr = 0;`
+            // so the array-splat path at c:3950 doesn't fire on the
+            // type string. Without this, ${(t)arr} would splat the
+            // array's elements after value has been replaced with
+            // "array".
+            isarr = 0; // c:2883
+            split_parts = None; // c:2883 aval is implicit-cleared by v=NULL
         }
         // Case mods operate per-element when array-shaped (so
         // \${(@U)arr} uppercases each element, preserving shape).
@@ -6902,7 +6909,12 @@ pub fn paramsubst(
         //     same preservation through c:3032.
         // Bare array reads in DQ get isarr=0 at c:3034 (sepjoin'd),
         // and that's how they end up joined — exactly what we want.
-        let auto_splat = isarr != 0                          // c:4245
+        // c:2883 — wantt clears `isarr = 0` so the (t) typeinfo
+        // result (a scalar string like "array") doesn't get re-
+        // splat from the underlying array storage. Gate auto_splat
+        // off when wantt fired, mirroring C's `if (isarr)` at
+        // c:4245 not firing when wantt cleared isarr to 0.
+        let auto_splat = !wantt && (isarr != 0                  // c:4245
             || force_splat_from_eq                           // c:2566
             || (!(nojoin == 2)                                     // c:3950
             && !qt                                           // c:3950 (only outside DQ)
@@ -6911,7 +6923,7 @@ pub fn paramsubst(
             && !scripted_scalar                              // c:3950 (single-elem pick is scalar)
             && sep.is_none()                                 // c:3906-3907 (j/F flag already sepjoin'd → scalar)
             && (arrays_contains(&var_name)         // c:3950
-                || split_parts.is_some())); // c:3950 ((s::) made an array)
+                || split_parts.is_some()))); // c:3950 ((s::) made an array)
         if (nojoin == 2) || auto_splat {
             // c:3950
             let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
@@ -7054,6 +7066,7 @@ pub fn paramsubst(
             );
         }
     }
+
 
     // Simple $var (or $arr[idx] for array-element access — per
     // Src/lex.c::gettokstr, zsh accepts `$name[subscript]` as a
@@ -7472,14 +7485,54 @@ pub fn paramsubst(
         } // c:1625
         '*' | '@' => {
             // c:1625
-            let values = arrays_get("@").unwrap_or_default(); // c:1625
-                                                              // zsh semantics:
-                                                              //   $* / "$*" — join with IFS first char
-                                                              //   $@        — splat into separate words
-                                                              //   "$@"      — preserve array shape (still splat)
-                                                              // Our port: $@ (qt or unqt) → splat; $* → join.
-                                                              // Direct port of subst.c c:1625 dispatch — only $* with
-                                                              // any quoting joins; $@ always preserves array shape.
+            let mut values = arrays_get("@").unwrap_or_default(); // c:1625
+            // c:Src/lex.c gettokstr — bare `$@[SUB]` / `$*[SUB]` parses
+            // the bracket subscript inline. Walk a depth-tracked `[...]`
+            // after the `@`/`*` and apply via getarrvalue when present.
+            let mut after_pos = pos + 1;
+            if chars.get(after_pos).copied() == Some('[') {
+                let mut depth = 1;
+                let mut q = after_pos + 1;
+                while q < chars.len() && depth > 0 {
+                    match chars[q] {
+                        '[' => depth += 1,
+                        ']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    q += 1;
+                }
+                if depth == 0 && q < chars.len() && chars[q] == ']' {
+                    let sub: String = chars[after_pos + 1..q].iter().collect();
+                    after_pos = q + 1;
+                    if let Some((lo, hi)) = sub.split_once(',') {
+                        let lo: i64 = lo.trim().parse().unwrap_or(1);
+                        let hi: i64 = hi.trim().parse().unwrap_or(0);
+                        values = getarrvalue(&values, lo, hi);
+                    } else if sub == "@" || sub == "*" {
+                        // splat — values unchanged
+                    } else if let Ok(idx) = sub.parse::<i64>() {
+                        let n = values.len() as i64;
+                        let i = if idx == 0 { -1 } else if idx < 0 { n + idx } else { idx - 1 };
+                        values = if i >= 0 && (i as usize) < values.len() {
+                            vec![values[i as usize].clone()]
+                        } else {
+                            Vec::new()
+                        };
+                    }
+                }
+            }
+            // zsh semantics:
+            //   $* / "$*" — join with IFS first char
+            //   $@        — splat into separate words
+            //   "$@"      — preserve array shape (still splat)
+            // Our port: $@ (qt or unqt) → splat; $* → join.
+            // Direct port of subst.c c:1625 dispatch — only $* with
+            // any quoting joins; $@ always preserves array shape.
             let value = if c == '*' {
                 // c:1625
                 let join_sep = vars_get("IFS")
@@ -7494,7 +7547,7 @@ pub fn paramsubst(
                 if pf_flags & PREFORK_SINGLE == 0 {
                     // c:1625
                     let prefix: String = chars[..start_pos].iter().collect(); // c:1625
-                    let suffix: String = chars[pos + 1..].iter().collect(); // c:1625
+                    let suffix: String = chars[after_pos..].iter().collect(); // c:1625
                     for (i, v) in values.iter().enumerate() {
                         // c:1625
                         if i == 0 {
@@ -7517,7 +7570,7 @@ pub fn paramsubst(
                 values.join(" ") // c:1625
             }; // c:1625
             let prefix: String = chars[..start_pos].iter().collect(); // c:1625
-            let suffix: String = chars[pos + 1..].iter().collect(); // c:1625
+            let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
             (result, prefix.len() + value.len(), result_nodes) // c:1625

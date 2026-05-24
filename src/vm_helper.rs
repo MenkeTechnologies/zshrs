@@ -2771,7 +2771,7 @@ pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
 /// the canonical module-bootstrap chain.
 pub fn init_partab_params() {
     use crate::ported::modules::parameter::{PARTAB, PARTAB_ARRAY};
-    use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SPECIAL};
+    use crate::ported::zsh_h::{hashnode, param, Param, PM_HIDE, PM_HIDEVAL, PM_READONLY, PM_SPECIAL};
     let mut tab = match paramtab().write() {
         Ok(t) => t,
         Err(_) => return,
@@ -2782,12 +2782,19 @@ pub fn init_partab_params() {
     // route via PARTAB getfn callbacks, not these stub Params, so
     // the readonly flag's purpose (block userspace assignment) is
     // moot for the stub anyway.
+    //
+    // c:Src/zsh.h SPECIALPMDEF macro: `flags | PM_SPECIAL | PM_HIDE |
+    // PM_HIDEVAL`. All magic-assoc/array params get HIDE+HIDEVAL added
+    // by the macro itself.
     let mk_pm = |name: &str, flags: i32| -> Param {
         Box::new(param {
             node: hashnode {
                 next: None,
                 nam: name.to_string(),
-                flags: (flags & !(PM_READONLY as i32)) | PM_SPECIAL as i32,
+                flags: (flags & !(PM_READONLY as i32))
+                    | PM_SPECIAL as i32
+                    | PM_HIDE as i32
+                    | PM_HIDEVAL as i32,
             },
             u_data: 0,
             u_arr: None,

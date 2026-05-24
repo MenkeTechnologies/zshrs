@@ -947,6 +947,66 @@ pub const special_params: &[special_paramdef] = &[
         pm_flags: 0,
         tied_name: None,
     },
+    // c:Src/params.c:425-434 — IPDEF9 lowercase array tied counterparts
+    // of the uppercase scalar specials. Each is a PM_ARRAY|PM_TIED|
+    // PM_SPECIAL entry that points back to its colon-scalar partner
+    // via tied_name. Without these in special_params, `${(t)path}` /
+    // `${(t)cdpath}` / `${(t)fpath}` etc. miss the `-tied-special`
+    // suffix when the paramtab.get(name) lookup runs in subst.rs:5605.
+    special_paramdef {
+        name: "fignore",
+        pm_type: PM_ARRAY,
+        pm_flags: PM_TIED,
+        tied_name: Some("FIGNORE"),
+    },
+    special_paramdef {
+        name: "cdpath",
+        pm_type: PM_ARRAY,
+        pm_flags: PM_TIED,
+        tied_name: Some("CDPATH"),
+    },
+    special_paramdef {
+        name: "fpath",
+        pm_type: PM_ARRAY,
+        pm_flags: PM_TIED,
+        tied_name: Some("FPATH"),
+    },
+    special_paramdef {
+        name: "mailpath",
+        pm_type: PM_ARRAY,
+        pm_flags: PM_TIED,
+        tied_name: Some("MAILPATH"),
+    },
+    special_paramdef {
+        name: "manpath",
+        pm_type: PM_ARRAY,
+        pm_flags: PM_TIED,
+        tied_name: Some("MANPATH"),
+    },
+    special_paramdef {
+        name: "psvar",
+        pm_type: PM_ARRAY,
+        pm_flags: PM_TIED,
+        tied_name: Some("PSVAR"),
+    },
+    special_paramdef {
+        name: "zsh_eval_context",
+        pm_type: PM_ARRAY,
+        pm_flags: PM_TIED | PM_READONLY,
+        tied_name: Some("ZSH_EVAL_CONTEXT"),
+    },
+    special_paramdef {
+        name: "module_path",
+        pm_type: PM_ARRAY,
+        pm_flags: PM_TIED,
+        tied_name: Some("MODULE_PATH"),
+    },
+    special_paramdef {
+        name: "path",
+        pm_type: PM_ARRAY,
+        pm_flags: PM_TIED,
+        tied_name: Some("PATH"),
+    },
     // pipestatus array
     special_paramdef {
         name: "pipestatus",
