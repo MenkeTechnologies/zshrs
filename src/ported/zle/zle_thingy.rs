@@ -906,16 +906,21 @@ pub fn bin_zle_unget(_name: &str, args: &[String], _ops: &options, _func: i32) -
 /// `zle -K keymap` — switch the current keymap (only valid from
 /// inside a widget callback).
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
-pub fn bin_zle_keymap(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
+pub fn bin_zle_keymap(name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:488
-    // c:488-494 — `if (!zleactive) return 1 with warning;
-    //               return selectkeymap(*args, 0)`.
+    // c:489-491 — `if (!zleactive)` reject from outside ZLE.
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
-        return 1; // c:492
+        crate::ported::utils::zwarnnam(
+            name,
+            "can only be called from widget function",
+        );
+        return 1; // c:491
     }
-    // c:494 — `selectkeymap()` returns 0 on success (C body falls
-    // through to `return 0` after the zleactive check).
-    0 // c:494
+    // c:493 — `return selectkeymap(*args, 0)`.
+    if args.is_empty() {
+        return 1;
+    }
+    crate::ported::zle::zle_keymap::selectkeymap(&args[0], 0) // c:493
 }
 
 /// Direct port of `static void scanlistwidgets(HashNode hn, int list)`
