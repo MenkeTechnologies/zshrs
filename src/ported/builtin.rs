@@ -9435,6 +9435,27 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("AE:%F:%HL:%R:%TUZ:%afghi:%klp:%rtuxmnz"),
             None,
         ),
+        // `nameref` — zsh/ksh93 module's named-reference declaration
+        // builtin. Same handler as `typeset` with a tighter opt-string
+        // (`-g`/`-p`/`-r`/`-u`) and the assign-style invocation. The
+        // canonical Src/Modules/ksh93.c:bintab entry:
+        //   BUILTIN("nameref", BINF_ASSIGN, bin_typeset, 0, -1, 0,
+        //           "gpru", "n")
+        // The 9th arg ("n") is the default-flag — typeset_flags inherits
+        // PM_NAMEREF when the builtin is invoked under this name. zshrs's
+        // bin_typeset wrapper doesn't read the 9th field yet, but the
+        // registration still surfaces `nameref` in the tool window /
+        // completion / hover docs.
+        BUILTIN(
+            "nameref",
+            BINF_ASSIGN,
+            Some(bin_typeset as HandlerFunc),
+            0,
+            -1,
+            0,
+            Some("gpru"),
+            Some("n"),
+        ),
         BUILTIN(
             "umask",
             0,
@@ -10191,6 +10212,18 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             -1,
             0,
             Some("dfins"),
+            None,
+        ),
+        // `mv` — zsh/files. Same handler as `ln` with BIN_MV dispatch.
+        // c:Src/Modules/files.c — `BUILTIN("mv", 0, bin_ln, 2, -1, BIN_MV, "fi", NULL)`.
+        BUILTIN(
+            "mv",
+            0,
+            Some(crate::ported::modules::files::bin_ln as HandlerFunc),
+            2,
+            -1,
+            crate::ported::modules::files::BIN_MV,
+            Some("fi"),
             None,
         ),
         BUILTIN(
