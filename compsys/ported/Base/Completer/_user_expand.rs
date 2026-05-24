@@ -1,5 +1,25 @@
-//! Port of `_user_expand` — user-defined expansions. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_user_expand` — user-defined expansions.
+//!
+//! Local shell reference: `compsys/functions/Base/Completer/_user_expand`
+//! (system copy `/opt/homebrew/share/zsh/functions/_user_expand`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//! 13  [[ _matcher_num -gt 1 ]] && return 1
+//! 18  if [[ "$funcstack[2]" = _prefix ]]; then
+//! 19    word="$IPREFIX$PREFIX$SUFFIX"
+//! 20  else
+//! 21    word="$IPREFIX$PREFIX$SUFFIX$ISUFFIX"
+//! 22  fi
+//! 30  zstyle -a ":completion:${curcontext}:" user-expand specs || return 1
+//! ```
+//!
+//! Simplified Rust port: takes the user-expand pattern→expansion
+//! map directly instead of looking it up via zstyle (upstream's
+//! `user-expand` style holds shell-fn names that get eval'd; our
+//! HashMap is the ready-to-use form). For each pattern that is a
+//! prefix of PREFIX, emit the rewritten string via
+//! `replacen(pattern, expansion, 1)`.
 
 use std::collections::HashMap;
 
