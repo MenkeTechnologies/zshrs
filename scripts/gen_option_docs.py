@@ -110,6 +110,21 @@ YODL_INLINE = [
     (re.compile(r"LPAR\(\)"), "("),
     (re.compile(r"RPAR\(\)"), ")"),
     (re.compile(r"PLUS\(\)"), "+"),
+    # `tt(X()_..._``)` — yodl shorthand for ksh-glob grouping forms
+    # rendered in tt font. The literal source has unbalanced parens
+    # inside the `tt(...)` macro that no generic rule can match. The
+    # five ksh-glob trigger chars are `?`, `*`, `+`, `!`, `@`.
+    (re.compile(r"\btt\(([?*+!@])\(\)_\.\.\._``\)"), r"`\1(...)`"),
+    # `tt('X')` — single-quote-protected literal containing parens
+    # (e.g. `tt('?(')` for the KSH_GLOB grouping operator name).
+    # Must run BEFORE the generic `tt(X)` rule below.
+    (re.compile(r"\btt\('([^']*)'\)"), r"`\1`"),
+    # `tt(LSQUARE())` / `tt(RSQUARE())` — yodl literal-bracket
+    # producers wrapped in tt. Strip the placeholder first.
+    (re.compile(r"\btt\(LSQUARE\(\)\)"), "`[`"),
+    (re.compile(r"\btt\(RSQUARE\(\)\)"), "`]`"),
+    (re.compile(r"LSQUARE\(\)"), "["),
+    (re.compile(r"RSQUARE\(\)"), "]"),
     # `sitem(KEY)(VALUE)` — yodl short-item list entry. Two paren
     # groups. Rendered as a markdown list bullet so the `KEY → VALUE`
     # pairing survives. MUST appear before the unanchored `em(...)`
@@ -163,8 +178,185 @@ YODL_INLINE = [
 ]
 
 
+def _extract_paren_balanced(text: str, start: int) -> tuple[str, int] | tuple[None, None]:
+    """Starting at `start` (which must point at `(`), return the body
+    between matched parens + the index AFTER the closing `)`. Returns
+    (None, None) if no balanced match found.
+
+    Skips parens that appear INSIDE single-quote literals (`'?('`) —
+    yodl uses `'...'` as a quote-protect wrapper for content that
+    contains literal `(` / `)` that should NOT count toward paren
+    depth. The KSH_GLOB / SH_GLOB doc entries (`tt('?(')`, `tt('+(')`,
+    …) rely on this — without quote-skipping the paren counter goes
+    unbalanced and the extractor never matches.
+
+    Backticks are NOT treated as quote toggles — yodl's smart-quote
+    convention is `` `text' `` (backtick open + apostrophe close),
+    not paired backticks, so naively flipping on `\\`` produces a
+    state that never closes when the apostrophe appears inside the
+    bticked span (e.g. ``NO_BARE_GLOB_QUAL`'``)."""
+    if start >= len(text) or text[start] != "(":
+        return (None, None)
+    depth = 0
+    i = start
+    in_squote = False
+    while i < len(text):
+        c = text[i]
+        if c == "'":
+            in_squote = not in_squote
+            i += 1
+            continue
+        if in_squote:
+            i += 1
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return (text[start + 1 : i], i + 1)
+        i += 1
+    return (None, None)
+
+
+def _strip_nested_items_with_paren_names(text: str) -> str:
+    r"""Handle nested `item(...)(...)` / `sitem(...)(...)` / `xitem(...)`
+    blocks whose header or body contains parens (e.g. KSH_GLOB
+    grouping operators `?(`, `*(`, `+(`, `!(`, `@(`, `LSQUARE()`, or
+    a `sitem(\`-t\` _fmt_)(... format described in (zshmisc))` body
+    with parenthesized cross-refs).
+
+    The regex-based stripper at `YODL_INLINE` can't touch these
+    because `[^()]*` rejects the embedded parens. This pass walks
+    the text scanning for `(s|x)?item(`, balanced-paren-extracts the
+    header + body, and emits `- **NAME** — BODY` markdown the same
+    way the simple-form rules do."""
+    out = []
+    i = 0
+    n = len(text)
+    item_macro_re = re.compile(r"\b(s?item|xitem)\(")
+    while i < n:
+        m = item_macro_re.search(text, i)
+        if not m:
+            out.append(text[i:])
+            break
+        out.append(text[i : m.start()])
+        macro = m.group(1)  # "item", "sitem", or "xitem"
+        header_open = m.end() - 1  # points at the `(` after `[s|x]?item`
+        header_body, header_end = _extract_paren_balanced(text, header_open)
+        if header_body is None:
+            # Unbalanced — give up, emit raw and advance past the macro.
+            out.append(text[m.start() : m.end()])
+            i = m.end()
+            continue
+        # `xitem(...)` has no body paren — emit as a bare bullet.
+        if macro == "xitem":
+            name = _render_item_header(header_body)
+            out.append(f"\n- **{name}**\n")
+            i = header_end
+            continue
+        # Skip whitespace, then the body must open with `(`.
+        j = header_end
+        while j < n and text[j] in " \t\n":
+            j += 1
+        if j >= n or text[j] != "(":
+            name = _render_item_header(header_body)
+            out.append(f"\n- **{name}**\n")
+            i = j
+            continue
+        body, body_end = _extract_paren_balanced(text, j)
+        if body is None:
+            # Body has unbalanced parens (free-form prose with stray
+            # `(` / `)`). Fall back to the yodl convention: a closing
+            # `)\n` on its own line, OR the next `\nitem(` / `\nsitem(`
+            # / `\nxitem(` boundary, OR end-of-text.
+            body, body_end = _extract_body_heuristic(text, j + 1)
+            if body is None:
+                out.append(text[m.start() : m.end()])
+                i = m.end()
+                continue
+        name = _render_item_header(header_body)
+        body_clean = _strip_nested_items_with_paren_names(body).strip()
+        out.append(f"\n- **{name}** — {body_clean}\n")
+        i = body_end
+    return "".join(out)
+
+
+def _extract_body_heuristic(text: str, start: int) -> tuple[str, int] | tuple[None, None]:
+    """Fallback body extractor for when the parens don't balance —
+    typeset's `-h` body has unbalanced prose parens.  Treat the body
+    as "everything from `start` up to the next `\\nitem(` / `\\nsitem(`
+    / `\\nxitem(` boundary OR a `)\\n` close-on-its-own-line, whichever
+    comes first.  Returns (None, None) only if `start` is past the end
+    of the text.
+    """
+    n = len(text)
+    if start >= n:
+        return (None, None)
+    # Boundary regex — closing `)` followed by `\n` (yodl's convention
+    # for ending an item body) OR next item-family macro at a line start.
+    boundary = re.compile(r"\n\)\n|\n(?:s?item|xitem)\(")
+    m = boundary.search(text, start)
+    if m is None:
+        return (text[start:], n)
+    end_body = m.start()
+    # If the boundary was `\n)\n`, consume the `)\n` as the close.
+    if text[m.start() : m.start() + 3] == "\n)\n":
+        return (text[start:end_body], m.start() + 3)
+    # Otherwise the next item macro starts — don't consume it.
+    return (text[start:end_body], end_body)
+    return "".join(out)
+
+
+def _render_item_header(header: str) -> str:
+    r"""Convert an `item(...)` header body (between the outer parens)
+    into the bullet label. Examples:
+        tt('+(') (`KSH_GLOB`)  →  `+(` (KSH_GLOB)
+        tt(?()  →  `?(`
+        tt(LSQUARE())  →  `[`
+        tt(<LPAR()>)  →  `<(>`
+        tt(RPAR()>)  →  `)>`
+    """
+    s = header.strip()
+    # Yodl literal-paren producers — substitute FIRST so any tt(...)
+    # rule downstream sees `(` / `)` chars instead of LPAR()/RPAR()
+    # placeholders. Otherwise `tt(<LPAR())` becomes `tt(<())` after
+    # the single-pass LPAR substitution, and the no-paren regex
+    # can't match.
+    s = s.replace("LPAR()", "(")
+    s = s.replace("RPAR()", ")")
+    s = s.replace("LSQUARE()", "[")
+    s = s.replace("RSQUARE()", "]")
+    s = s.replace("PLUS()", "+")
+    s = s.replace("RQUOTE()", "'")
+    # `tt('X')` — single-quote-protected literal containing parens.
+    s = re.sub(r"\btt\('([^']*)'\)", r"`\1`", s)
+    # `tt(X)` with balanced parens inside — use the balanced extractor
+    # so `tt(<()>)` becomes `` `<()>` `` instead of being skipped.
+    out_parts = []
+    i = 0
+    while i < len(s):
+        m = re.search(r"\btt\(", s[i:])
+        if not m:
+            out_parts.append(s[i:])
+            break
+        out_parts.append(s[i : i + m.start()])
+        body, end = _extract_paren_balanced(s, i + m.end() - 1)
+        if body is None:
+            out_parts.append(s[i + m.start() : i + m.end()])
+            i = i + m.end()
+            continue
+        out_parts.append(f"`{body}`")
+        i = end
+    s = "".join(out_parts)
+    return s.strip()
+
+
 def strip_yodl(text: str) -> str:
     """Convert yodl markup to markdown / plain text."""
+    # Handle nested `item(tt('X(') (FLAG))( BODY )` blocks first —
+    # the regex pass can't touch them because the NAME has parens.
+    text = _strip_nested_items_with_paren_names(text)
     # Repeat until no inline macros remain (handles nested simple cases).
     for _ in range(8):
         prev = text
