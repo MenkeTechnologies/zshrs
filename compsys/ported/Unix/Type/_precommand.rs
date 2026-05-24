@@ -51,12 +51,31 @@ mod tests {
 
     #[test]
     fn current_gt_1_delegates_to_normal() {
-        // current > 1 → delegate to _normal (currently returns
-        // NoMatch until comps table is wired). Pin the delegation
-        // path is taken.
         let mut state = MainCompleteState::new("sudo ls", 7);
         state.comp.params.current = 2;
         state.comp.params.words = vec!["sudo".into(), "ls".into()];
+        assert!(!_precommand(&mut state));
+    }
+
+    #[test]
+    fn current_eq_0_returns_false() {
+        // current==0 is the precommand-of-precommand edge.
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 0;
+        assert!(!_precommand(&mut state));
+    }
+
+    #[test]
+    fn high_current_with_words_still_delegates() {
+        let mut state = MainCompleteState::new("sudo nohup git status", 21);
+        state.comp.params.current = 4;
+        state.comp.params.words = vec![
+            "sudo".into(),
+            "nohup".into(),
+            "git".into(),
+            "status".into(),
+        ];
+        // _normal returns NoMatch (no comps table wired) → false.
         assert!(!_precommand(&mut state));
     }
 }

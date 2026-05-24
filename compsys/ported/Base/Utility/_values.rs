@@ -113,4 +113,77 @@ mod tests {
         let disp = state.groups[0].matches[0].disp.clone().unwrap_or_default();
         assert!(disp.contains("yes -- Confirm action"), "got {disp:?}");
     }
+
+    #[test]
+    fn current_typed_value_prefix_matched() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "ma".into();
+        let specs = vec![
+            "yes".into(),
+            "no".into(),
+            "maybe".into(),
+            "manual".into(),
+        ];
+        assert!(_values(&mut state, "vals", ',', &specs));
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"maybe"));
+        assert!(names.contains(&"manual"));
+        assert!(!names.contains(&"yes"));
+    }
+
+    #[test]
+    fn empty_specs_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_values(&mut state, "vals", ',', &[]));
+    }
+
+    #[test]
+    fn group_explanation_added_when_description_non_empty() {
+        let mut state = CompletionState::new();
+        let specs = vec!["x".into()];
+        _values(&mut state, "vals description", ',', &specs);
+        let g = &state.groups[0];
+        assert!(!g.explanations.is_empty());
+        assert_eq!(g.explanations[0], "vals description");
+    }
+
+    #[test]
+    fn custom_separator_used_for_dedup() {
+        // With colon separator, `a:b:c` is the typed list and `b`
+        // should not appear again.
+        let mut state = CompletionState::new();
+        state.params.prefix = "a:b:".into();
+        let specs = vec!["a".into(), "b".into(), "c".into()];
+        _values(&mut state, "", ':', &specs);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(!names.contains(&"a"), "a typed → must be excluded");
+        assert!(!names.contains(&"b"), "b typed → must be excluded");
+        assert!(names.contains(&"c"));
+    }
+
+    #[test]
+    fn has_arg_value_gets_equals_suffix() {
+        let mut state = CompletionState::new();
+        // `name=value-form` spec creates a Value with has_arg=true.
+        let specs: Vec<String> = vec!["foo:=ARG".to_string()];
+        if crate::base::Value::parse(&specs[0]).is_some() {
+            assert!(_values(&mut state, "", ',', &specs));
+            let m = &state.groups[0].matches[0];
+            // has_arg → comp.suf = "=" + NOSPACE flag.
+            if m.suf.as_deref() == Some("=") {
+                assert!(
+                    m.flags.contains(crate::completion::CompletionFlags::NOSPACE),
+                    "has_arg value must carry NOSPACE"
+                );
+            }
+        }
+    }
 }

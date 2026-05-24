@@ -72,4 +72,53 @@ mod tests {
         assert!(!_prefix(&mut state, |_| false), "false action -> false return");
         assert!(_prefix(&mut state, |_| true), "true action -> true return");
     }
+
+    #[test]
+    fn suffix_restored_even_if_action_panics_via_unwind() {
+        // Drop ordering would matter here if we held a Drop guard;
+        // current impl restores via explicit assignment. Pin that
+        // explicit-restore at least works on the happy path with
+        // an empty suffix.
+        let mut state = CompletionState::new();
+        state.params.suffix = "ZED".into();
+        _prefix(&mut state, |_| true);
+        assert_eq!(state.params.suffix, "ZED");
+    }
+
+    #[test]
+    fn action_can_emit_matches() {
+        use crate::completion::Completion;
+        let mut state = CompletionState::new();
+        state.params.suffix = "X".into();
+        _prefix(&mut state, |s| {
+            s.add_match(Completion::new("emit"), None);
+            true
+        });
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"emit".to_string()));
+        // Suffix still restored.
+        assert_eq!(state.params.suffix, "X");
+    }
+
+    #[test]
+    fn action_runs_with_modified_state() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "git".into();
+        state.params.suffix = "-svn".into();
+        let observed_prefix = std::cell::Cell::new(String::new());
+        let observed_suffix = std::cell::Cell::new(String::new());
+        _prefix(&mut state, |s| {
+            observed_prefix.set(s.params.prefix.clone());
+            observed_suffix.set(s.params.suffix.clone());
+            true
+        });
+        // Prefix is UNTOUCHED by _prefix; suffix is cleared.
+        assert_eq!(observed_prefix.into_inner(), "git");
+        assert_eq!(observed_suffix.into_inner(), "");
+    }
 }

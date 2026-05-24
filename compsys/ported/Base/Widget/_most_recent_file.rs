@@ -116,4 +116,59 @@ mod tests {
         let mut state = CompletionState::new();
         assert!(!_most_recent_file(&mut state, "/no/such/dir", None));
     }
+
+    #[test]
+    fn empty_dir_returns_false() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_mrf_empty_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut state = CompletionState::new();
+        assert!(!_most_recent_file(&mut state, tmp.to_str().unwrap(), None));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn no_pattern_matches_oldest_or_any_file() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_mrf_nopat_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("one.txt"), b"x").unwrap();
+        let mut state = CompletionState::new();
+        assert!(_most_recent_file(&mut state, tmp.to_str().unwrap(), None));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn pattern_filter_drops_unmatching() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_mrf_pat_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("only.rs"), b"x").unwrap();
+        let mut state = CompletionState::new();
+        // Pattern `*.toml` doesn't match — returns false.
+        assert!(!_most_recent_file(
+            &mut state,
+            tmp.to_str().unwrap(),
+            Some("*.toml")
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

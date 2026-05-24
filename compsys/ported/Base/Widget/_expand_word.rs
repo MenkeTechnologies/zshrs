@@ -47,4 +47,28 @@ mod tests {
         state.params.prefix = "plain".into();
         assert!(!_expand_word(&mut state));
     }
+
+    #[test]
+    fn dollar_var_expansion_succeeds() {
+        std::env::set_var("ZSHRS_TEST_EXP_VAR", "expanded");
+        let mut state = CompletionState::new();
+        state.params.prefix = "$ZSHRS_TEST_EXP_VAR/bin".into();
+        assert!(_expand_word(&mut state));
+        std::env::remove_var("ZSHRS_TEST_EXP_VAR");
+    }
+
+    #[test]
+    fn brace_expansion_succeeds() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "{a,b}{1,2}".into();
+        assert!(_expand_word(&mut state));
+        let names: std::collections::HashSet<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains("a1"));
+        assert!(names.contains("b2"));
+    }
 }

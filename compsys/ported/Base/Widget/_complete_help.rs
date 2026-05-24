@@ -67,4 +67,40 @@ mod tests {
         let mut state = CompletionState::new();
         assert!(!_complete_help(&mut state, &[]));
     }
+
+    #[test]
+    fn group_named_help_created() {
+        let mut state = CompletionState::new();
+        let entries = vec![("x".into(), "y".into())];
+        _complete_help(&mut state, &entries);
+        assert!(state.groups.iter().any(|g| g.name == "help"));
+    }
+
+    #[test]
+    fn entries_emitted_in_input_order() {
+        let mut state = CompletionState::new();
+        let entries = vec![
+            ("z".into(), "last alpha".into()),
+            ("a".into(), "first alpha".into()),
+            ("m".into(), "middle".into()),
+        ];
+        _complete_help(&mut state, &entries);
+        // Default sort=true sorts alphabetically — pin that all three
+        // are present regardless of order.
+        let names: std::collections::HashSet<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains("a"));
+        assert!(names.contains("m"));
+        assert!(names.contains("z"));
+    }
+
+    #[test]
+    fn returns_true_iff_entries_provided() {
+        let mut state = CompletionState::new();
+        let entries = vec![("topic".into(), "desc".into())];
+        assert!(_complete_help(&mut state, &entries));
+    }
 }

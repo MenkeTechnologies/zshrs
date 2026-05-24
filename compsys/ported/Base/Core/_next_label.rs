@@ -52,4 +52,39 @@ mod tests {
         let tags = TagManager::new();
         assert_eq!(_next_label(&tags, "files"), None);
     }
+
+    #[test]
+    fn multiple_wanted_tags_each_returns_own_name() {
+        let mut tags = TagManager::new();
+        tags.init(&["files".into(), "directories".into(), "values".into()]);
+        tags.configure_from_style(&["files directories values".into()]);
+        tags.start();
+        assert_eq!(_next_label(&tags, "files"), Some("files".into()));
+        assert_eq!(_next_label(&tags, "directories"), Some("directories".into()));
+        assert_eq!(_next_label(&tags, "values"), Some("values".into()));
+    }
+
+    #[test]
+    fn tag_outside_offered_set_returns_none() {
+        let mut tags = TagManager::new();
+        tags.init(&["files".into()]);
+        tags.configure_from_style(&["files".into()]);
+        tags.start();
+        assert_eq!(_next_label(&tags, "not-offered"), None);
+    }
+
+    #[test]
+    fn returns_none_after_iteration_exhausted() {
+        let mut tags = TagManager::new();
+        tags.init(&["a".into(), "b".into()]);
+        tags.add_try(&["a".into()]);
+        tags.add_try(&["b".into()]);
+        tags.start();
+        // First set is `a`; advance past both.
+        tags.next();
+        tags.next();
+        // Now no active try-set → wanted returns false.
+        assert_eq!(_next_label(&tags, "a"), None);
+        assert_eq!(_next_label(&tags, "b"), None);
+    }
 }

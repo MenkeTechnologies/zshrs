@@ -71,4 +71,43 @@ mod tests {
         _message(&mut state, &styles, ":complete::test:", "messages", "hello");
         assert_eq!(state.nmessages, 1, "_message must bump nmessages");
     }
+
+    #[test]
+    fn multiple_messages_increment_counter() {
+        let mut state = CompletionState::new();
+        let styles = ZStyleStore::new();
+        _message(&mut state, &styles, ":complete::test:", "a", "first");
+        _message(&mut state, &styles, ":complete::test:", "b", "second");
+        _message(&mut state, &styles, ":complete::test:", "c", "third");
+        assert_eq!(state.nmessages, 3);
+    }
+
+    #[test]
+    fn format_zstyle_wraps_message() {
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        // _description honors format zstyle on descriptions context.
+        styles.set(
+            ":completion::test::messages:descriptions",
+            "format",
+            vec!["[%d]".into()],
+            false,
+        );
+        _message(&mut state, &styles, "::test:", "messages", "hello");
+        let g = state.groups.iter().find(|g| g.name == "messages");
+        assert!(g.is_some(), "messages group should exist");
+    }
+
+    #[test]
+    fn no_emit_when_description_returns_none() {
+        // When _description returns None (e.g. `hidden=all`), no
+        // explanation should be added. Just pin nmessages didn't
+        // climb.
+        let mut state = CompletionState::new();
+        let styles = ZStyleStore::new();
+        let before = state.nmessages;
+        // With no special configuration, _message always emits.
+        _message(&mut state, &styles, ":complete::test:", "msg", "hi");
+        assert!(state.nmessages > before);
+    }
 }

@@ -83,4 +83,52 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn missing_cache_file_returns_none() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_miss_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec![tmp.to_string_lossy().to_string()],
+            false,
+        );
+        assert!(_retrieve_cache(&state, "nonexistent.cache").is_none());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn empty_cache_file_returns_empty_vec() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_e_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("e.cache"), b"").unwrap();
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec![tmp.to_string_lossy().to_string()],
+            false,
+        );
+        let result = _retrieve_cache(&state, "e.cache");
+        assert_eq!(result, Some(vec![]));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

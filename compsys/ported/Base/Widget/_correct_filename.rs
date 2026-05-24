@@ -93,4 +93,25 @@ mod tests {
         state.params.prefix = "/no/such/dir/prefix".into();
         assert!(!_correct_filename(&mut state));
     }
+
+    #[test]
+    fn exact_filename_passes_max_2_filter() {
+        // `Cargo.toml` matched against `Cargo.toml` → distance 0,
+        // within ≤2.
+        let mut state = CompletionState::new();
+        state.params.prefix = "Cargo.toml".into();
+        let ok = _correct_filename(&mut state);
+        assert!(ok, "exact filename should round-trip");
+    }
+
+    #[test]
+    fn within_distance_2_typo_corrected() {
+        // `Cargo.toml` ↔ `Cargo.toml ` differs by trailing space →
+        // distance 1. Or just use a real off-by-1 like `Carog`.
+        let mut state = CompletionState::new();
+        state.params.prefix = "Carog.toml".into();
+        // Carog ↔ Cargo is 1 swap; total distance ≤ 2.
+        let ok = _correct_filename(&mut state);
+        assert!(ok, "1-typo Cargo.toml should be corrected");
+    }
 }
