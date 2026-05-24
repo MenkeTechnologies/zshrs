@@ -17,18 +17,41 @@
 //! computes the set of distinct extensions present in the target
 //! directory.
 //!
-//! Simplified Rust port: takes the extension whitelist explicitly
-//! from the caller and matches against directory entries. Subdirs
-//! always pass the filter so the user can keep walking. No
-//! `prefix-hidden` zstyle honoring at this layer.
+//! Strict Rust port: in addition to the per-call extension
+//! whitelist, honors the `prefix-hidden` zstyle (shell:16-17):
+//! when truthy, strips a leading `.` from each emitted name.
 
 use std::fs;
 
-use crate::compcore::CompletionState;
+use crate::base::MainCompleteState;
 use crate::completion::{Completion, CompletionFlags};
 
-/// _extensions - Complete by file extension
-pub fn _extensions(state: &mut CompletionState, extensions: &[&str]) -> bool {
+/// _extensions - Complete by file extension.
+///
+/// `extensions` — list of extension suffixes (with or without
+/// leading `.`). `state.styles` is consulted for
+/// `:completion:${context}:extensions/prefix-hidden`.
+pub fn _extensions(state: &mut MainCompleteState, extensions: &[&str]) -> bool {
+    // Resolve `prefix-hidden` from the styles store. -t semantics:
+    // explicitly-truthy values only.
+    let ctx = format!(":completion:{}:extensions", state.ctx.context);
+    let prefix_hidden = state
+        .styles
+        .lookup_values(&ctx, "prefix-hidden")
+        .and_then(|v| v.first().cloned())
+        .map(|v| matches!(v.as_str(), "true" | "yes" | "on" | "1"))
+        .unwrap_or(false);
+    extensions_impl(&mut state.comp, extensions, prefix_hidden)
+}
+
+/// Internal core that takes the resolved `prefix_hidden` flag
+/// directly. Split out so test code can call it without building a
+/// full `MainCompleteState` + styles configuration.
+pub fn extensions_impl(
+    state: &mut crate::compcore::CompletionState,
+    extensions: &[&str],
+    prefix_hidden: bool,
+) -> bool {
     let prefix = state.params.prefix.clone();
     let (dir, file_prefix) = if let Some(sep) = prefix.rfind('/') {
         (&prefix[..sep + 1], &prefix[sep + 1..])
@@ -58,10 +81,16 @@ pub fn _extensions(state: &mut CompletionState, extensions: &[&str]) -> bool {
             .any(|ext| name_str.ends_with(ext) || name_str.ends_with(&format!(".{}", ext)));
 
         if has_ext || entry.path().is_dir() {
-            let full = if dir == "." {
-                name_str.to_string()
+            // shell:16-17 — strip leading `.` if prefix-hidden true.
+            let display_name: String = if prefix_hidden {
+                name_str.strip_prefix('.').unwrap_or(&name_str).to_string()
             } else {
-                format!("{}{}", dir, name_str)
+                name_str.to_string()
+            };
+            let full = if dir == "." {
+                display_name.clone()
+            } else {
+                format!("{}{}", dir, display_name)
             };
 
             let mut comp = Completion::new(&full);
@@ -96,6 +125,8 @@ pub fn _extensions(state: &mut CompletionState, extensions: &[&str]) -> bool {
 mod tests {
     use super::*;
 
+    use crate::compcore::CompletionState;
+
     #[test]
     fn matches_files_with_named_extension_in_cwd() {
         // Cargo.toml exists under compsys/ (the test cwd when
@@ -103,7 +134,7 @@ mod tests {
         // back via the prefix `Cargo`.
         let mut state = CompletionState::new();
         state.params.prefix = "Cargo".into();
-        assert!(_extensions(&mut state, &["toml"]));
+        assert!(extensions_impl(&mut state, &["toml"], false));
         let names: Vec<String> = state
             .groups
             .iter()
@@ -118,14 +149,9 @@ mod tests {
 
     #[test]
     fn directories_always_match_regardless_of_extension() {
-        // Subdirs should appear even when their name doesn't end in
-        // the requested extension — Tab into a dir is always wanted
-        // so the user can keep walking. `bins/` exists under compsys/
-        // which is the test cwd (`cargo test -p compsys` runs from
-        // the package dir).
         let mut state = CompletionState::new();
         state.params.prefix = "bi".into();
-        let _ = _extensions(&mut state, &["xyz_unlikely"]);
+        let _ = extensions_impl(&mut state, &["xyz_unlikely"], false);
         let names: Vec<String> = state
             .groups
             .iter()
@@ -142,6 +168,62 @@ mod tests {
     fn nonexistent_directory_returns_false() {
         let mut state = CompletionState::new();
         state.params.prefix = "/no/such/dir/prefix".into();
-        assert!(!_extensions(&mut state, &["txt"]));
+        assert!(!extensions_impl(&mut state, &["txt"], false));
+    }
+
+    #[test]
+    fn prefix_hidden_strips_leading_dot_from_dotfiles() {
+        // Make a tmp dir with a dotfile and test that prefix-hidden
+        // strips the leading dot. We use a clean tmp to avoid noise
+        // from the repo's `.git`, `.gitignore`, etc.
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_ext_ph_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join(".hidden.toml"), b"").unwrap();
+        let mut state = CompletionState::new();
+        state.params.prefix = format!("{}/", tmp.to_string_lossy());
+        assert!(extensions_impl(&mut state, &["toml"], true));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n.ends_with("/hidden.toml")),
+            "leading dot must be stripped when prefix-hidden=true; got {names:?}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn prefix_hidden_false_keeps_leading_dot() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_ext_keep_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join(".keepdot.toml"), b"").unwrap();
+        let mut state = CompletionState::new();
+        state.params.prefix = format!("{}/", tmp.to_string_lossy());
+        let _ = extensions_impl(&mut state, &["toml"], false);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.iter().any(|n| n.ends_with("/.keepdot.toml")));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

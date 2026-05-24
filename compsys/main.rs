@@ -611,7 +611,9 @@ fn test_functions() {
         ("push".to_string(), "Push to remote".to_string()),
         ("pull".to_string(), "Pull from remote".to_string()),
     ];
-    let matched = ported::_sub_commands(&mut state, &commands);
+    let styles = ZStyleStore::new();
+    // CURRENT==2 → command-name position (right after the verb).
+    let matched = ported::_sub_commands(&mut state, &commands, 2, &styles, "");
     assert!(matched);
     assert_eq!(state.nmatches, 3);
     println!("  sub_commands: OK");

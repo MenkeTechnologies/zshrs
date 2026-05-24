@@ -19,23 +19,62 @@
 //! 24  (( $#file )) && compadd -U -i "$IPREFIX" -I "$ISUFFIX" -f -Q -- $file
 //! ```
 //!
-//! Simplified Rust port: takes the directory + glob explicitly
-//! (instead of evaluating `$PREFIX*$SUFFIX` via shell glob) and
-//! sorts by mtime descending. Picks the FIRST entry — equivalent to
-//! shell's `om[1]` (order-by-mtime, oldest-last → newest-first,
-//! take first). The `~` tilde-expansion branch is skipped; callers
-//! pass the resolved dir directly.
+//! Strict Rust port: handles `~/`/`~user/` expansion (shell:12-19),
+//! sorts by mtime descending, and honors `numeric_prefix` (mirrors
+//! `${NUMERIC:-1}` → `om[N]` index, 1-based: 1=newest, 2=second-
+//! newest, …). The pattern arg corresponds to `$PREFIX*$SUFFIX`
+//! shell expansion.
 
 use std::fs;
+use std::path::Path;
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;
 
 use super::shared::glob_match;
 
-/// _most_recent_file - Complete most recently modified file
-pub fn _most_recent_file(state: &mut CompletionState, dir: &str, pattern: Option<&str>) -> bool {
-    let entries = match fs::read_dir(dir) {
+/// Resolve a leading `~` / `~user/` to an absolute path. Returns
+/// None if the user lookup fails.
+fn expand_tilde(p: &str) -> Option<String> {
+    if !p.starts_with('~') {
+        return Some(p.to_string());
+    }
+    let (head, tail) = match p.find('/') {
+        Some(i) => (&p[..i], &p[i..]),
+        None => (p, ""),
+    };
+    if head == "~" {
+        let home = std::env::var("HOME").ok()?;
+        return Some(format!("{home}{tail}"));
+    }
+    let user = &head[1..];
+    let cstr = std::ffi::CString::new(user).ok()?;
+    unsafe {
+        let pw = libc::getpwnam(cstr.as_ptr());
+        if pw.is_null() {
+            return None;
+        }
+        let dir = std::ffi::CStr::from_ptr((*pw).pw_dir).to_string_lossy().to_string();
+        Some(format!("{dir}{tail}"))
+    }
+}
+
+/// _most_recent_file - Complete most recently modified file.
+///
+/// `numeric_prefix` ≥ 1 selects which entry to emit (1 = newest).
+/// 0 is treated as 1 (matches shell's `${NUMERIC:-1}`).
+pub fn _most_recent_file(
+    state: &mut CompletionState,
+    dir: &str,
+    pattern: Option<&str>,
+    numeric_prefix: usize,
+) -> bool {
+    let n = if numeric_prefix == 0 { 1 } else { numeric_prefix };
+    let expanded = match expand_tilde(dir) {
+        Some(e) => e,
+        None => return false,
+    };
+    let entries = match fs::read_dir(&expanded) {
         Ok(e) => e,
         Err(_) => return false,
     };
@@ -56,11 +95,18 @@ pub fn _most_recent_file(state: &mut CompletionState, dir: &str, pattern: Option
         })
         .collect();
 
+    // Sort newest-first.
     files.sort_by_key(|b| std::cmp::Reverse(b.1));
 
-    if let Some((entry, _)) = files.first() {
+    if let Some((entry, _)) = files.get(n - 1) {
         let name = entry.file_name();
-        let full = format!("{}/{}", dir, name.to_string_lossy());
+        // Preserve user's typed `~` form in the output.
+        let display_dir = if dir.starts_with('~') {
+            Path::new(dir).to_string_lossy().into_owned()
+        } else {
+            expanded
+        };
+        let full = format!("{}/{}", display_dir, name.to_string_lossy());
         state.add_match(Completion::new(&full), None);
         true
     } else {
@@ -98,6 +144,7 @@ mod tests {
             &mut state,
             tmp.to_str().unwrap(),
             Some("*.log"),
+            1,
         ));
         let names: Vec<String> = state
             .groups
@@ -114,7 +161,7 @@ mod tests {
     #[test]
     fn nonexistent_dir_returns_false() {
         let mut state = CompletionState::new();
-        assert!(!_most_recent_file(&mut state, "/no/such/dir", None));
+        assert!(!_most_recent_file(&mut state, "/no/such/dir", None, 1));
     }
 
     #[test]
@@ -129,7 +176,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let mut state = CompletionState::new();
-        assert!(!_most_recent_file(&mut state, tmp.to_str().unwrap(), None));
+        assert!(!_most_recent_file(&mut state, tmp.to_str().unwrap(), None, 1));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -146,7 +193,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("one.txt"), b"x").unwrap();
         let mut state = CompletionState::new();
-        assert!(_most_recent_file(&mut state, tmp.to_str().unwrap(), None));
+        assert!(_most_recent_file(&mut state, tmp.to_str().unwrap(), None, 1));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -167,7 +214,85 @@ mod tests {
         assert!(!_most_recent_file(
             &mut state,
             tmp.to_str().unwrap(),
-            Some("*.toml")
+            Some("*.toml"),
+            1,
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn numeric_prefix_2_selects_second_newest() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_mrf_n2_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::File::create(tmp.join("a.log")).unwrap().write_all(b"x").unwrap();
+        std::thread::sleep(Duration::from_millis(30));
+        std::fs::File::create(tmp.join("b.log")).unwrap().write_all(b"x").unwrap();
+        std::thread::sleep(Duration::from_millis(30));
+        std::fs::File::create(tmp.join("c.log")).unwrap().write_all(b"x").unwrap();
+        let mut state = CompletionState::new();
+        assert!(_most_recent_file(
+            &mut state,
+            tmp.to_str().unwrap(),
+            Some("*.log"),
+            2,
+        ));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names[0].ends_with("/b.log"), "n=2 should pick b.log (second-newest); got {:?}", names);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn numeric_prefix_beyond_file_count_returns_false() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_mrf_oob_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("only.log"), b"x").unwrap();
+        let mut state = CompletionState::new();
+        assert!(!_most_recent_file(
+            &mut state,
+            tmp.to_str().unwrap(),
+            None,
+            5,
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn numeric_zero_treated_as_one() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_mrf_zero_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("only.log"), b"x").unwrap();
+        let mut state = CompletionState::new();
+        assert!(_most_recent_file(
+            &mut state,
+            tmp.to_str().unwrap(),
+            None,
+            0,
         ));
         let _ = std::fs::remove_dir_all(&tmp);
     }

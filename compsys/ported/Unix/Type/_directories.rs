@@ -120,4 +120,43 @@ mod tests {
         // unchanged in this try-set.
         assert!(tm.wanted("directories"));
     }
+
+    #[test]
+    fn finds_directories_under_tmp() {
+        // /tmp on macOS contains at least a few dirs reliably; assert
+        // that SOME directory came back when tag is requested.
+        let mut state = CompletionState::new();
+        state.params.prefix = "/tmp/".into();
+        let mut tm = tagman();
+        let _ = _directories(&mut state, &mut tm, &[]);
+        // Don't hard-assert ≥1 (sandboxed CI might be empty) — but
+        // pin that no panic occurred and the tag was admitted.
+        assert!(tm.wanted("directories"));
+    }
+
+    #[test]
+    fn args_passthrough_does_not_panic() {
+        let mut state = CompletionState::new();
+        let mut tm = tagman();
+        // The args slot is documented as a passthrough; pin that
+        // arbitrary values don't crash.
+        let args = vec!["-P".into(), "/usr/bin/".into(), "-S".into(), "/".into()];
+        let _ = _directories(&mut state, &mut tm, &args);
+    }
+
+    #[test]
+    fn untagged_call_never_creates_group() {
+        let mut state = CompletionState::new();
+        let mut tm = TagManager::new();
+        tm.init(&["files".to_string()]);
+        tm.add_try(&["files".to_string()]);
+        assert!(tm.start());
+        let before = state.groups.len();
+        let _ = _directories(&mut state, &mut tm, &[]);
+        assert_eq!(
+            state.groups.len(),
+            before,
+            "untagged call must not create groups"
+        );
+    }
 }

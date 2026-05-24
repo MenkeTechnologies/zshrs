@@ -113,4 +113,76 @@ mod tests {
         let specs = vec!["x:desc:_xxx".into()];
         assert!(!_alternative(&mut state, &specs, |_, _| false));
     }
+
+    #[test]
+    fn description_attached_per_tag_group() {
+        let mut state = MainCompleteState::new("", 0);
+        let specs = vec!["users:Pick a user:_users".into()];
+        let _ = _alternative(&mut state, &specs, |s, _| {
+            s.comp.add_match(Completion::new("alice"), Some("users"));
+            true
+        });
+        let grp = state
+            .comp
+            .groups
+            .iter()
+            .find(|g| g.name == "users")
+            .expect("users group present");
+        assert!(grp.explanations.iter().any(|e| e == "Pick a user"));
+    }
+
+    #[test]
+    fn empty_description_skips_explanation() {
+        let mut state = MainCompleteState::new("", 0);
+        let specs = vec!["t::_act".into()];
+        let _ = _alternative(&mut state, &specs, |s, _| {
+            s.comp.add_match(Completion::new("x"), Some("t"));
+            true
+        });
+        let grp = state.comp.groups.iter().find(|g| g.name == "t").unwrap();
+        assert!(grp.explanations.is_empty());
+    }
+
+    #[test]
+    fn malformed_specs_silently_skipped() {
+        // Specs that don't parse should not crash; valid ones still
+        // dispatch.
+        let mut state = MainCompleteState::new("", 0);
+        let specs = vec![
+            "no-colons-at-all".into(),
+            "users:desc:_users".into(),
+        ];
+        let called_for: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+        let _ = _alternative(&mut state, &specs, |_, a| {
+            called_for.borrow_mut().push(a.into());
+            true
+        });
+        let calls = called_for.into_inner();
+        // Whether `no-colons-at-all` parses depends on
+        // `Alternative::parse`; either way the well-formed
+        // `_users` action should run.
+        assert!(calls.iter().any(|a| a == "_users"));
+    }
+
+    #[test]
+    fn tag_iteration_visits_each_requested_tag_at_least_once() {
+        // With 3 tags ALL requested, the action handler should be
+        // called for each (and possibly more across iteration rounds).
+        let mut state = MainCompleteState::new("", 0);
+        let specs = vec![
+            "a:a-desc:_a".into(),
+            "b:b-desc:_b".into(),
+            "c:c-desc:_c".into(),
+        ];
+        let seen: std::cell::RefCell<std::collections::HashSet<String>> =
+            std::cell::RefCell::new(std::collections::HashSet::new());
+        let _ = _alternative(&mut state, &specs, |_, a| {
+            seen.borrow_mut().insert(a.to_string());
+            true
+        });
+        let unique = seen.into_inner();
+        for tag in ["_a", "_b", "_c"] {
+            assert!(unique.contains(tag), "missing dispatch for `{tag}`");
+        }
+    }
 }

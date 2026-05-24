@@ -307,4 +307,102 @@ mod tests {
         );
         assert_eq!(r2, PickVariantResult::Matched("gnu".into()));
     }
+
+    #[test]
+    fn forced_builtin_bypasses_cache() {
+        _reset_cache_for_tests();
+        let state = mk_state();
+        // Seed cache for `weird-cmd` so we can prove forced_builtin
+        // path takes priority over the cache.
+        cmd_variant_cache()
+            .lock()
+            .unwrap()
+            .insert("weird-cmd".into(), "should-not-win".into());
+        let opts = PickVariantOpts {
+            builtin_label: Some("bin-label"),
+            probe_cmd: Some("weird-cmd"),
+            default_cmd: "weird-cmd",
+            forced_builtin: true,
+            forced_command: false,
+            cmd_is_builtin: false,
+        };
+        let r = _pick_variant(&state, &[("x".into(), "X".into())], &[], &opts);
+        assert_eq!(r, PickVariantResult::Builtin("bin-label".into()));
+    }
+
+    #[test]
+    fn glob_pattern_with_star_in_label_matches() {
+        _reset_cache_for_tests();
+        let state = mk_state();
+        let opts = PickVariantOpts {
+            builtin_label: None,
+            probe_cmd: Some("echo"),
+            default_cmd: "echo",
+            forced_builtin: false,
+            forced_command: false,
+            cmd_is_builtin: false,
+        };
+        // `taskset *version` matches `taskset (util-linux) version`.
+        let r = _pick_variant(
+            &state,
+            &[("util-linux".into(), "taskset *version".into())],
+            &["taskset (util-linux) version 2.39".into()],
+            &opts,
+        );
+        assert_eq!(r, PickVariantResult::Matched("util-linux".into()));
+    }
+
+    #[test]
+    fn first_matching_label_wins_when_multiple_could_match() {
+        _reset_cache_for_tests();
+        let state = mk_state();
+        let opts = PickVariantOpts {
+            builtin_label: None,
+            probe_cmd: Some("echo"),
+            default_cmd: "echo",
+            forced_builtin: false,
+            forced_command: false,
+            cmd_is_builtin: false,
+        };
+        // Both `GNU` and `coreutils` appear in the output; first label
+        // declared wins.
+        let r = _pick_variant(
+            &state,
+            &[
+                ("gnu".into(), "GNU".into()),
+                ("cu".into(), "coreutils".into()),
+            ],
+            &["GNU coreutils 9.0".into()],
+            &opts,
+        );
+        assert_eq!(r, PickVariantResult::Matched("gnu".into()));
+    }
+
+    #[test]
+    fn empty_labels_returns_unmatched_with_empty_fallback() {
+        _reset_cache_for_tests();
+        let state = mk_state();
+        let opts = PickVariantOpts {
+            builtin_label: None,
+            probe_cmd: Some("echo"),
+            default_cmd: "echo",
+            forced_builtin: false,
+            forced_command: false,
+            cmd_is_builtin: false,
+        };
+        let r = _pick_variant(&state, &[], &["nothing".into()], &opts);
+        assert_eq!(r, PickVariantResult::Unmatched("".into()));
+    }
+
+    #[test]
+    fn simple_pattern_contains_no_glob_chars_uses_substring() {
+        assert!(simple_pattern_contains("GNU coreutils 9.0", "coreutils"));
+        assert!(!simple_pattern_contains("BSD ls", "GNU"));
+    }
+
+    #[test]
+    fn simple_pattern_contains_empty_pattern_always_true() {
+        assert!(simple_pattern_contains("anything", ""));
+        assert!(simple_pattern_contains("", ""));
+    }
 }

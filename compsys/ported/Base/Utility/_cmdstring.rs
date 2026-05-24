@@ -13,18 +13,53 @@
 //! quoted shell argument, then dispatches to `_normal` (which
 //! handles command-vs-argument selection).
 //!
-//! Simplified Rust port: skips the `compset -q` quote-stripping
-//! (handled at the ZLE layer) and dispatches to `_command_names`
-//! in full mode — equivalent user behavior for the most common
-//! eval-arg case.
+//! Strict Rust port: applies `compset -q` semantics (strip
+//! surrounding single OR double quotes from `prefix`/`suffix`)
+//! BEFORE dispatching to `_command_names`. The shell `compset -q`
+//! re-tokenizes the current word as a shell argument; for the
+//! common "user typed `eval 'pre|fix'`" case, stripping the outer
+//! quotes is the dominant effect.
 
 use crate::compcore::CompletionState;
 
 use super::_command_names::{_command_names, ShellInventory};
 
-/// _cmdstring - Complete a command string (for eval, etc.)
+/// Apply `compset -q` to a slice — strip a matching open quote at
+/// the start AND a matching close quote at the end. Returns
+/// `(stripped_prefix, stripped_suffix, did_strip)`.
+fn compset_q(prefix: &str, suffix: &str) -> (String, String, bool) {
+    // The quote can be on prefix only, suffix only, or both. We
+    // remove a quote character whenever it appears at the OUTER
+    // boundary (prefix start / suffix end) AND mirrors a quote at
+    // the other boundary OR there's no other quote yet (one-sided
+    // case: user typed `'pref` and is mid-word).
+    let p_first = prefix.chars().next();
+    let s_last = suffix.chars().last();
+    let stripped = match (p_first, s_last) {
+        (Some(p), Some(s)) if (p == '\'' || p == '"') && p == s => {
+            // Symmetric quoting around the word.
+            (prefix[p.len_utf8()..].to_string(), suffix[..suffix.len() - s.len_utf8()].to_string(), true)
+        }
+        (Some(p), _) if (p == '\'' || p == '"') => {
+            (prefix[p.len_utf8()..].to_string(), suffix.to_string(), true)
+        }
+        (_, Some(s)) if (s == '\'' || s == '"') => {
+            (prefix.to_string(), suffix[..suffix.len() - s.len_utf8()].to_string(), true)
+        }
+        _ => (prefix.to_string(), suffix.to_string(), false),
+    };
+    stripped
+}
+
+/// _cmdstring - Complete a command string (for eval, etc.).
 pub fn _cmdstring(state: &mut CompletionState, inv: &ShellInventory<'_>) -> bool {
-    // Complete as if it were a command line
+    // shell:4 — compset -q
+    let (new_p, new_s, _) =
+        compset_q(&state.params.prefix, &state.params.suffix);
+    state.params.prefix = new_p;
+    state.params.suffix = new_s;
+    // shell:5 — _normal. At our layer the leaf gateway is
+    // _command_names (full mode = both builtins/funcs and external).
     _command_names(state, inv, false)
 }
 
@@ -100,5 +135,65 @@ mod tests {
             .map(|c| c.str_.clone())
             .collect();
         assert!(names.contains(&"ll".to_string()));
+    }
+
+    #[test]
+    fn compset_q_strips_symmetric_double_quotes() {
+        let (p, s, did) = compset_q("\"abc", "def\"");
+        assert_eq!(p, "abc");
+        assert_eq!(s, "def");
+        assert!(did);
+    }
+
+    #[test]
+    fn compset_q_strips_symmetric_single_quotes() {
+        let (p, s, did) = compset_q("'abc", "def'");
+        assert_eq!(p, "abc");
+        assert_eq!(s, "def");
+        assert!(did);
+    }
+
+    #[test]
+    fn compset_q_strips_one_sided_open_quote() {
+        let (p, s, did) = compset_q("\"abc", "");
+        assert_eq!(p, "abc");
+        assert_eq!(s, "");
+        assert!(did);
+    }
+
+    #[test]
+    fn compset_q_no_quotes_no_change() {
+        let (p, s, did) = compset_q("abc", "def");
+        assert_eq!(p, "abc");
+        assert_eq!(s, "def");
+        assert!(!did);
+    }
+
+    #[test]
+    fn cmdstring_strips_quotes_before_dispatch() {
+        // User typed `"tr|"` with cursor mid-word; after quote
+        // stripping the inventory lookup should still pick up `trap`
+        // / `true`.
+        let mut state = CompletionState::new();
+        state.params.prefix = "\"tr".into();
+        state.params.suffix = "\"".into();
+        let builtins = vec!["true".into(), "trap".into()];
+        let inv = ShellInventory {
+            builtins: &builtins,
+            ..Default::default()
+        };
+        let _ = _cmdstring(&mut state, &inv);
+        // Prefix should have been stripped of the opening quote so
+        // the builtin lookup matches.
+        assert_eq!(state.params.prefix, "tr");
+        assert_eq!(state.params.suffix, "");
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"true".to_string()));
+        assert!(names.contains(&"trap".to_string()));
     }
 }

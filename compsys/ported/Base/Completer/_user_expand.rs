@@ -85,4 +85,48 @@ mod tests {
         let m = &state.groups[0].matches[0];
         assert_eq!(m.str_, "XX", "first-only replacement, not recursive");
     }
+
+    #[test]
+    fn empty_expansion_map_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "anything".into();
+        let exp: HashMap<String, String> = HashMap::new();
+        assert!(!_user_expand(&mut state, &exp));
+    }
+
+    #[test]
+    fn pattern_equal_to_entire_prefix_replaces_fully() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "HOME".into();
+        let mut exp = HashMap::new();
+        exp.insert("HOME".into(), "/home/wizard".into());
+        let ok = _user_expand(&mut state, &exp);
+        assert!(ok);
+        let m = &state.groups[0].matches[0];
+        assert_eq!(m.str_, "/home/wizard");
+    }
+
+    #[test]
+    fn empty_prefix_with_nonempty_pattern_no_match() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "".into();
+        let mut exp = HashMap::new();
+        exp.insert("X".into(), "expanded".into());
+        assert!(!_user_expand(&mut state, &exp));
+    }
+
+    #[test]
+    fn multiple_matching_patterns_all_emit() {
+        // Two patterns that BOTH prefix-match `WORK/proj` (`W` and
+        // `WORK`) both fire — emits 2 matches with distinct expansions.
+        let mut state = CompletionState::new();
+        state.params.prefix = "WORK/proj".into();
+        let mut exp = HashMap::new();
+        exp.insert("W".into(), "WIDE".into());
+        exp.insert("WORK".into(), "JOB".into());
+        let ok = _user_expand(&mut state, &exp);
+        assert!(ok);
+        let total: usize = state.groups.iter().map(|g| g.matches.len()).sum();
+        assert_eq!(total, 2, "both prefix-matching patterns should fire");
+    }
 }
