@@ -165,11 +165,14 @@ pub struct Config {
     ///
     /// **Default `off`** — old scripts run against the canonical
     /// system coreutils out of the box, no edge-case divergence
-    /// surprises. Opt IN to the speedup with
-    ///   [builtins]
-    ///   coreutils_shadows = "on"
+    /// surprises. Opt IN to the speedup with the following stanza
     /// in `~/.zshrs/zshrs.toml`, or via `ZSHRS_COREUTILS_SHADOWS=1`
-    /// env for one-off testing.
+    /// env for one-off testing:
+    ///
+    /// ```toml
+    /// [builtins]
+    /// coreutils_shadows = "on"
+    /// ```
     pub coreutils_shadows: bool,
 }
 

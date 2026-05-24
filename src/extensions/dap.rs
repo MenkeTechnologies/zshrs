@@ -5,9 +5,9 @@
 //! script IN-PROCESS so per-statement breakpoint checks have a live
 //! interpreter to pause. The compiler emits `BUILTIN_SET_LINENO` at
 //! every top-level statement; that builtin's handler in
-//! `fusevm_bridge.rs` calls [`check_line`] which consults
-//! [`DAP_SHARED`] for matching breakpoints and condvar-waits in
-//! [`DapShared::pause`].
+//! `fusevm_bridge.rs` calls [`check_line`] which consults the
+//! private `DAP_SHARED` static for matching breakpoints and
+//! condvar-waits in [`DapShared::pause`].
 //!
 //! NOT subprocess-based — earlier v1 spawned the script as a child,
 //! which made it impossible to honor breakpoints (no IPC channel to
