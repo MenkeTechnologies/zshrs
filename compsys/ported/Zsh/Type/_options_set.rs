@@ -63,4 +63,42 @@ mod tests {
         let opts: Vec<(&str, bool)> = vec![("A", false), ("B", false)];
         assert!(!_options_set(&mut state, &opts));
     }
+
+    #[test]
+    fn empty_options_list_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_options_set(&mut state, &[]));
+    }
+
+    #[test]
+    fn prefix_filters_combined_with_set_filter() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "EXT".into();
+        let opts: Vec<(&str, bool)> = vec![
+            ("EXTENDED_GLOB", true),
+            ("EXTENDED_HISTORY", false), // unset → excluded
+            ("EXTRA_VERBOSE", true),
+            ("PIPE_FAIL", true), // off-prefix → excluded
+        ];
+        let ok = _options_set(&mut state, &opts);
+        assert!(ok);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"EXTENDED_GLOB"));
+        assert!(names.contains(&"EXTRA_VERBOSE"));
+        assert!(!names.contains(&"EXTENDED_HISTORY"));
+        assert!(!names.contains(&"PIPE_FAIL"));
+    }
+
+    #[test]
+    fn no_typo_in_disp_for_set_options() {
+        let mut state = CompletionState::new();
+        let opts: Vec<(&str, bool)> = vec![("MAGIC", true)];
+        _options_set(&mut state, &opts);
+        let m = &state.groups[0].matches[0];
+        assert_eq!(m.disp.as_deref(), Some("MAGIC (set)"));
+    }
 }

@@ -83,4 +83,61 @@ mod tests {
         let mut state = CompletionState::new();
         assert!(!_read_comp(&mut state, "/no/such/file"));
     }
+
+    #[test]
+    fn empty_file_returns_false() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_empty_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::File::create(&tmp).unwrap();
+        let mut state = CompletionState::new();
+        assert!(!_read_comp(&mut state, tmp.to_str().unwrap()));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn whitespace_trimmed_per_line() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_ws_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&tmp, b"  alpha  \n  beta  \n").unwrap();
+        let mut state = CompletionState::new();
+        assert!(_read_comp(&mut state, tmp.to_str().unwrap()));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"alpha".to_string()));
+        assert!(names.contains(&"beta".to_string()));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn empty_prefix_emits_all_lines() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_all_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&tmp, b"a\nb\nc\n").unwrap();
+        let mut state = CompletionState::new();
+        assert!(_read_comp(&mut state, tmp.to_str().unwrap()));
+        assert_eq!(state.nmatches, 3);
+        let _ = std::fs::remove_file(&tmp);
+    }
 }

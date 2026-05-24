@@ -57,7 +57,52 @@ mod tests {
         state.tags.configure_from_style(&["values".into()]);
         state.tags.start();
         assert!(_complete_tag(&mut state, "values", |_| true));
-        // Group named after the tag was begun.
         assert!(state.comp.groups.iter().any(|g| g.name == "values"));
+    }
+
+    #[test]
+    fn action_can_emit_matches() {
+        use crate::completion::Completion;
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["values".into()]);
+        state.tags.configure_from_style(&["values".into()]);
+        state.tags.start();
+        _complete_tag(&mut state, "values", |s| {
+            s.add_match(Completion::new("via-tag"), None);
+            true
+        });
+        let names: Vec<String> = state
+            .comp
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"via-tag".to_string()));
+    }
+
+    #[test]
+    fn false_action_returns_false() {
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["values".into()]);
+        state.tags.configure_from_style(&["values".into()]);
+        state.tags.start();
+        assert!(!_complete_tag(&mut state, "values", |_| false));
+    }
+
+    #[test]
+    fn tag_not_in_offered_set_returns_false() {
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["foo".into()]);
+        state.tags.configure_from_style(&["foo".into()]);
+        state.tags.start();
+        // `bar` is NOT offered → requested(bar) false → skip action.
+        let invoked = std::cell::Cell::new(false);
+        let r = _complete_tag(&mut state, "bar", |_| {
+            invoked.set(true);
+            true
+        });
+        assert!(!r);
+        assert!(!invoked.get());
     }
 }

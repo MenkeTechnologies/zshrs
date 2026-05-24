@@ -88,4 +88,36 @@ mod tests {
         assert!(ok);
         assert!(invoked.get());
     }
+
+    #[test]
+    fn closure_returning_false_propagates() {
+        let mut state = CompletionState::new();
+        let mut tm = make_tags(&["files"]);
+        let ok = _all_labels(&mut state, &mut tm, "files", "desc", |_, _| false);
+        assert!(!ok);
+    }
+
+    #[test]
+    fn empty_description_skips_explanation_emission() {
+        let mut state = CompletionState::new();
+        let mut tm = make_tags(&["files"]);
+        _all_labels(&mut state, &mut tm, "files", "", |s, _| {
+            // We can't directly observe whether _description was called
+            // with an empty string vs skipped, but pin that no
+            // explanation got attached.
+            assert!(s.nmessages == 0);
+            true
+        });
+    }
+
+    #[test]
+    fn group_named_after_tag_created() {
+        let mut state = CompletionState::new();
+        let mut tm = make_tags(&["my-tag"]);
+        _all_labels(&mut state, &mut tm, "my-tag", "desc", |s, _| {
+            // Group should be named after the tag arg.
+            assert!(s.groups.iter().any(|g| g.name == "my-tag"));
+            true
+        });
+    }
 }

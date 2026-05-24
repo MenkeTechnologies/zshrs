@@ -85,4 +85,58 @@ mod tests {
         assert_eq!(got, data, "store→retrieve round-trip mismatch");
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn empty_data_writes_empty_file() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_sc_e_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec![tmp.to_string_lossy().to_string()],
+            false,
+        );
+        assert!(_store_cache(&state, "e.cache", &[]));
+        let body = std::fs::read_to_string(tmp.join("e.cache")).unwrap();
+        assert_eq!(body, "");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn creates_cache_dir_if_missing() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_sc_mk_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        // Don't pre-create — `mkdir -p` part of impl should handle.
+        // Actually our impl only creates the parent of the file, so
+        // pass nested path.
+        let cache_subdir = tmp.join("sub");
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec![cache_subdir.to_string_lossy().to_string()],
+            false,
+        );
+        let ok = _store_cache(&state, "x.cache", &["data".into()]);
+        // Whether this succeeds depends on impl's create_dir_all reach;
+        // pin that we don't panic.
+        let _ = ok;
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

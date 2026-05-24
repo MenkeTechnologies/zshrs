@@ -48,4 +48,29 @@ mod tests {
         let mut state = CompletionState::new();
         assert!(!_ignored(&mut state, &[]));
     }
+
+    #[test]
+    fn ignored_count_zero_means_false() {
+        let mut state = CompletionState::new();
+        state.ignored = 0;
+        assert!(!_ignored(&mut state, &["pat".into()]));
+    }
+
+    #[test]
+    fn patterns_arg_currently_unused_does_not_panic() {
+        let mut state = CompletionState::new();
+        state.ignored = 5;
+        // patterns arg is documented as "not yet wired" — pin it
+        // doesn't crash with various shapes.
+        assert!(_ignored(&mut state, &[]));
+        assert!(_ignored(&mut state, &["a".into()]));
+        assert!(_ignored(&mut state, &["a".into(), "b".into(), "c".into()]));
+    }
+
+    #[test]
+    fn high_ignored_count_still_returns_true() {
+        let mut state = CompletionState::new();
+        state.ignored = 999_999;
+        assert!(_ignored(&mut state, &[]));
+    }
 }

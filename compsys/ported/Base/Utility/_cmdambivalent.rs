@@ -75,4 +75,44 @@ mod tests {
             "argument position must NOT call _command_names"
         );
     }
+
+    #[test]
+    fn argument_position_returns_true_always() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 5;
+        let inv = ShellInventory::default();
+        assert!(
+            _cmdambivalent(&mut state, &inv),
+            "argument-position fall-through must return true"
+        );
+    }
+
+    #[test]
+    fn current_at_boundary_treated_as_command_position() {
+        // current <= 1 is the command-position branch.
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 1;
+        state.comp.params.prefix = "t".into();
+        let builtins = vec!["true".into()];
+        let inv = ShellInventory {
+            builtins: &builtins,
+            ..Default::default()
+        };
+        let _ = _cmdambivalent(&mut state, &inv);
+        let groups: Vec<&str> = state.comp.groups.iter().map(|g| g.name.as_str()).collect();
+        assert!(groups.contains(&"commands"));
+    }
+
+    #[test]
+    fn current_at_zero_also_treated_as_command_position() {
+        // current=0 (edge case) → also command-position dispatch.
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 0;
+        let inv = ShellInventory::default();
+        let _ = _cmdambivalent(&mut state, &inv);
+        let groups: Vec<&str> = state.comp.groups.iter().map(|g| g.name.as_str()).collect();
+        // _command_names was called → at least the `commands` group
+        // gets created.
+        assert!(groups.contains(&"commands"));
+    }
 }

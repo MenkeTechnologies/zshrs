@@ -50,4 +50,19 @@ mod tests {
         state.comp.add_match(Completion::new("checkout"), None);
         assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
     }
+
+    #[test]
+    fn exact_match_passes_max_errors_1() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "commit".into();
+        state.comp.add_match(Completion::new("commit"), None);
+        assert!(matches!(_correct(&mut state), CompleterResult::Matched));
+    }
+
+    #[test]
+    fn empty_candidates_returns_no_match() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "anything".into();
+        assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
+    }
 }
