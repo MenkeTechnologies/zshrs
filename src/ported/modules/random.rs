@@ -330,7 +330,7 @@ pub static RANDFD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::
 // C inlines the equivalent logic inside `get_bound_random_buffer()`
 // (Src/Modules/random.c:104) and the math-fn wrappers; the Rust
 // port factors them out because callers in this same file (the
-// Fisher-Yates shuffle in `bin_zshuffle`, the math fns
+// Fisher-Yates shuffle in `bin_zshuffle`, the math ported
 // `math_zrand_int`/`math_zrand_real`, the `get_bound_random_buffer`
 // loop) would each inline identical 4-line getrandom-and-decode
 // blocks. Names are Rust-original; renaming to match a C name
@@ -427,23 +427,23 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // WARNING: NOT IN RANDOM.C — Rust-only module-framework shim.

@@ -294,7 +294,7 @@ pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<Metadata> {
         fs::symlink_metadata(&full).ok()
     }
 }
-// END moved-from-exec-rs (free fns)
+// END moved-from-exec-rs (free ported)
 
 // ===========================================================
 // Direct ports of static helpers from Src/glob.c not yet covered
@@ -2715,7 +2715,7 @@ pub struct GlobOptsGuard {
 /// One glob qualifier — Rust-extension sum type. C uses a linked
 /// list of `struct qual` (`Src/zsh.h:140-152`) with function-pointer
 /// `func` per node; each variant here maps to one of C's `q*` test
-/// fns (`qisreg`, `qisdir`, `qowner`, `qtime`, ...) at
+/// ported (`qisreg`, `qisdir`, `qowner`, `qtime`, ...) at
 /// `Src/glob.c:1080-1340`. The full `struct qual` port + per-test fn
 /// dispatch lives in a later phase; this enum keeps the parsed-form
 /// the per-match filter inside `scanner()` (line 500) needs.
@@ -2900,7 +2900,7 @@ pub fn glob_isset(opt: i32) -> bool {
 // ===========================================================
 // `impl globdata` block above kept only for the `new()`
 // constructor (Default-style). All scanner / parser / qualifier
-// fns below are top-level — C glob.c has them as top-level
+// ported below are top-level — C glob.c has them as top-level
 // statics that mutate the file-static `curglobdata`. Each is
 // flagged with `// RUST-ONLY` and a comment naming the closest
 // C equivalent + the proper-port target (typically `scanner`
@@ -4551,9 +4551,9 @@ pub fn apply_modespec(mode: u32, who: u32, op: char, perm: u32) -> u32 {
 // END moved-from-exec-rs
 
 // ===========================================================
-// Free fns moved verbatim from src/ported/vm_helper.
+// Free ported moved verbatim from src/ported/vm_helper.
 // ===========================================================
-// BEGIN moved-from-exec-rs (free fns)
+// BEGIN moved-from-exec-rs (free ported)
 // !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
 // `(a|b|c)` PATH-LEVEL alternation is handled in C by patcompile()
 // (Src/pattern.c:540) compiling the alternation as P_BRANCH nodes,

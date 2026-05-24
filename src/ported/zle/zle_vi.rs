@@ -219,7 +219,7 @@ pub fn vigetkey() -> i32 {
 ///
 /// **Substrate trade-off:** the full driver depends on a live
 /// `getkeycmd` input loop (`virangeflag` global + `execzlefunc`
-/// dispatch). In compcore-call-context fns we don't have a live
+/// dispatch). In compcore-call-context ported we don't have a live
 /// key reader — the Rust port returns the current `ZLECS.load(std::sync::atomic::Ordering::SeqCst)`
 /// which is the C "no-motion fallback" (motion never consumed
 /// anything, range is empty). Live ZLE widget dispatch reads keys

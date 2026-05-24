@@ -3370,7 +3370,7 @@ pub fn getsigname(sig: i32) -> String {
             // unknown signal — losing the RT-signal naming entirely.
             #[cfg(target_os = "linux")]
             {
-                // glibc `SIGRTMIN()`/`SIGRTMAX()` are safe extern fns.
+                // glibc `SIGRTMIN()`/`SIGRTMAX()` are safe extern ported.
                 let sigrtmin = libc::SIGRTMIN();
                 let sigrtmax = libc::SIGRTMAX();
                 if sig >= sigrtmin && sig <= sigrtmax {

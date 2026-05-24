@@ -6,7 +6,7 @@
 //! by `init.c` to populate the `$ZSH_PATCHLEVEL` shell parameter
 //! and by the `zsh --version` startup-banner code.
 //!
-//! C source: 1 `#define`, 0 structs/enums/fns.
+//! C source: 1 `#define`, 0 structs/enums/ported.
 
 /// Port of `#define ZSH_PATCHLEVEL` from `Src/patchlevel.h:1`.
 ///

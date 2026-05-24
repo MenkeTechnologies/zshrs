@@ -2550,23 +2550,23 @@ fn simple_glob_match(pattern: &str, name: &str) -> bool {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Singleton accessor for the `dircache` file-static at
@@ -2966,10 +2966,10 @@ mod tests {
         {
             let mut tab = shfunctab_lock().write().unwrap();
             let mut f = shfunc_with_body("f", "true");
-            f.filename = Some("/tmp/zshrs-fns/f".to_string());
+            f.filename = Some("/tmp/zshrs-ported/f".to_string());
             tab.add(f);
         }
-        assert_eq!(getshfuncfile("f"), Some("/tmp/zshrs-fns/f".to_string()));
+        assert_eq!(getshfuncfile("f"), Some("/tmp/zshrs-ported/f".to_string()));
         assert_eq!(getshfuncfile("nonexistent"), None);
         fresh_shfunctab();
     }

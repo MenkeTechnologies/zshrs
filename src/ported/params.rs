@@ -4506,9 +4506,9 @@ pub fn check_warn_pm(pm: &param, pmtype: &str, created: i32, may_warn_about_nest
 // END moved-from-exec-rs
 
 // ===========================================================
-// Free fns moved verbatim from src/ported/vm_helper.
+// Free ported moved verbatim from src/ported/vm_helper.
 // ===========================================================
-// BEGIN moved-from-exec-rs (free fns)
+// BEGIN moved-from-exec-rs (free ported)
 /// Subscript-argument result.
 ///
 /// `Flags` carries the parsed flag chars and the remaining subscript
@@ -4889,7 +4889,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 // setfn/unsetfn callbacks through `Param.gsu->getfn` etc. zshrs's
 // param storage is per-evaluator HashMaps on `ShellExecutor`, so
 // the C globals are reproduced as `OnceLock<Mutex<…>>` module
-// statics here, with the get/set fns mutating the static.
+// statics here, with the get/set ported mutating the static.
 //
 // Functions that genuinely need a `Param *` (the GSU dispatch
 // callbacks for non-special arr/hash/int/float/str params, the
@@ -9836,34 +9836,34 @@ mod gsu_tests {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn foundparam_lock() -> &'static Mutex<Option<String>> {

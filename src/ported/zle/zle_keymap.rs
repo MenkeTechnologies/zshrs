@@ -63,7 +63,7 @@ pub const KM_IMMUTABLE: i32 = 1 << 1; // c:83
 
 // `BindState` / `BindStateFlags` deleted — the C `struct bindstate`
 // at zle_keymap.c:95 is only used as a local in `printbinding()`/
-// `scanbindings()`/`bin_bindkey -L`; ports of those fns will model
+// `scanbindings()`/`bin_bindkey -L`; ports of those ported will model
 // it as a stack-local struct when they land. The previous Rust
 // declaration had no callers (dead code) and used a fake bitflags
 // wrapper over a single int field.
@@ -1817,7 +1817,7 @@ pub fn curkeymapname() -> std::sync::MutexGuard<'static, String> {
 /// the C globals at `Src/Zle/zle_keymap.c:124-145`.
 ///
 /// The setup_*_keymap methods stay as methods (drift-gate
-/// exempts impl-block fns) because zsh's C `default_bindings()`
+/// exempts impl-block ported) because zsh's C `default_bindings()`
 /// has the equivalent 330+ bindkey calls inline in one function;
 /// the Rust port keeps them factored by keymap for readability.
 // `KeymapManager` unit struct (and its 32-method impl block) deleted —
@@ -1826,7 +1826,7 @@ pub fn curkeymapname() -> std::sync::MutexGuard<'static, String> {
 // lastnamed) with no `struct keymap_manager` in zsh C. 29 of the 32
 // methods were never called; 3 (`setup_emacs_keymap` /
 // `setup_viins_keymap` / `setup_vicmd_keymap`) are factored out below
-// as free fns because zsh's C `default_bindings()` inlines the ~300
+// as free ported because zsh's C `default_bindings()` inlines the ~300
 // equivalent `bindkey` calls in one body (Src/Zle/zle_keymap.c:124).
 // The Rust port keeps them factored by keymap for readability.
 
@@ -1975,23 +1975,23 @@ pub fn setup_vicmd_keymap(km: &mut Keymap) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 pub(crate) fn keymapnamtab() -> &'static Mutex<HashMap<String, KeymapName>> {

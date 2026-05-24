@@ -7,8 +7,8 @@
 //! List of pattern compctls                                                 // c:48
 //! Main entry point for the `compctl' builtin                               // c:1558
 //!
-//! 4076 lines / 47 fns. This file ports the type definitions, constants,
-//! and simpler free fns first; large fns (`makecomplist*`, `bin_compctl`,
+//! 4076 lines / 47 ported. This file ports the type definitions, constants,
+//! and simpler free ported first; large ported (`makecomplist*`, `bin_compctl`,
 //! `printcompctl`) are stubbed with C source-line citations and ported
 //! incrementally.
 //!
@@ -81,7 +81,7 @@ pub const COMP_LISTMATCH: i32 = 1 << 5; // c:58
 pub const COMP_SPECIAL: i32 = COMP_COMMAND | COMP_DEFAULT | COMP_FIRST; // c:60
 
 // =================================================================
-// Free fns — start of compctl.c proper
+// Free ported — start of compctl.c proper
 // =================================================================
 
 /// Initialize the `compctltab` hash table.

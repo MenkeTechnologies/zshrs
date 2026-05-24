@@ -308,7 +308,7 @@ pub fn finish_(m: *const module) -> i32 {
 
 // =====================================================================
 // ShellExecutor bridge — sanctioned PORT.md exception. Wires the
-// internal builtin dispatcher to the canonical free fns above.
+// internal builtin dispatcher to the canonical free ported above.
 // =====================================================================
 
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
@@ -363,23 +363,23 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // WARNING: NOT IN CAP.C — Rust-only module-framework shim.

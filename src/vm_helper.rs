@@ -76,7 +76,7 @@ use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
 
-// Backward-compat re-exports for free fns recently relocated to their
+// Backward-compat re-exports for free ported recently relocated to their
 // canonical-C-file Rust modules. Existing call-sites in this file (and
 // elsewhere) still reference these unqualified.
 #[allow(unused_imports)]
@@ -1181,7 +1181,7 @@ impl ShellExecutor {
         Ok(self.last_status())
     }
 
-    /// Execute via the lex+parse free fns + ZshCompiler pipeline.
+    /// Execute via the lex+parse free ported + ZshCompiler pipeline.
     /// This is the only execution path; `execute_script` delegates here.
     pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
         // Skip history expansion for non-interactive script execution
@@ -1225,7 +1225,7 @@ impl ShellExecutor {
 
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
     pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
-        // lex+parse free fns + ZshCompiler is the only execution path.
+        // lex+parse free ported + ZshCompiler is the only execution path.
         self.execute_script_zsh_pipeline(script)
     }
 
@@ -1536,7 +1536,7 @@ impl ShellExecutor {
         }
 
         // Port of getoutput(char *cmd, int qt) from Src/exec.c. Parse and compile via
-        // the lex+parse free fns + ZshCompiler pipeline, run on a
+        // the lex+parse free ported + ZshCompiler pipeline, run on a
         // sub-VM with the host wired up. Stdout is captured through
         // an in-process pipe via dup2 — no fork. The sub-VM emits
         // Op::Exec for unknown command names, which forks/execs

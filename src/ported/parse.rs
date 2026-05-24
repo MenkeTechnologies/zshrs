@@ -1,6 +1,6 @@
 //! Zsh parser — direct port from zsh/Src/parse.c.
 //!
-//! Pulls tokens via the lex.rs free fns (zshlex/tok/tokstr) and
+//! Pulls tokens via the lex.rs free ported (zshlex/tok/tokstr) and
 //! builds an AST tree (relocated to src/extensions/zsh_ast.rs as a
 //! Rust-only IR) plus emits wordcode into ECBUF via the P9b/P9c
 //! pipeline. Follows the zsh grammar closely; productions match
@@ -2716,7 +2716,7 @@ pub fn freeeprog(p: &mut eprog) {
 // to walk a compiled Eprog without re-running the parser. These are the
 // only `Src/parse.c` functions ported so far in this file; the recursive-
 // descent parser (par_event / par_list / par_cmd / par_*) follows
-// below as free fns at module scope.
+// below as free ported at module scope.
 // =============================================================================
 
 /// Port of `ecgetstr(Estate s, int dup, int *tokflag)` from `Src/parse.c:2855`.

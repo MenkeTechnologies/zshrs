@@ -8052,7 +8052,7 @@ static ATTACHTTY_EP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 // !!! WARNING: RUST-ONLY HELPERS — NO DIRECT C COUNTERPART !!!
 // =====================================================================
 //
-// These three fns (`fdtable_lock`, `fdtable_get`, `fdtable_set`) DO
+// These three ported (`fdtable_lock`, `fdtable_get`, `fdtable_set`) DO
 // NOT EXIST as functions in `Src/utils.c`. The C source declares
 // `fdtable` as a bare `unsigned char *` global (Src/utils.c:~63) and
 // every call site reads/writes it as a direct array index:
@@ -8679,9 +8679,9 @@ pub fn imeta_byte(b: u8) -> bool {
 // END moved-from-exec-rs
 
 // ===========================================================
-// Free fns moved verbatim from src/ported/vm_helper.
+// Free ported moved verbatim from src/ported/vm_helper.
 // ===========================================================
-// BEGIN moved-from-exec-rs (free fns)
+// BEGIN moved-from-exec-rs (free ported)
 pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
     let decode_char = |c: u8| -> Option<u8> {
         match c {
@@ -8715,7 +8715,7 @@ pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
     }
     out
 }
-// END moved-from-exec-rs (free fns)
+// END moved-from-exec-rs (free ported)
 
 // ===========================================================
 // Utility helpers moved from src/ported/vm_helper.
@@ -8725,45 +8725,45 @@ pub(crate) fn base64_decode(s: &str) -> Vec<u8> {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // WARNING: NOT IN UTILS.C — Rust-only OnceLock get-or-init

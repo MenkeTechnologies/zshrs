@@ -370,7 +370,7 @@ pub fn do_single(
 /// callers (the in-file tests) want.
 ///
 /// The C function and this one share a name but have completely
-/// different semantics. Per PORT.md Rule 0 (no invented fns), a
+/// different semantics. Per PORT.md Rule 0 (no invented ported), a
 /// faithful port would need the full minfo/amatches infrastructure
 /// AND the callers would need rewriting. Tracked for follow-up.
 pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {

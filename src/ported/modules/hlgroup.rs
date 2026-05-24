@@ -6,7 +6,7 @@
 //!   - `${.zle.esc[name]}` → full `\033[...m` escape stream
 //!   - `${.zle.sgr[name]}` → bare `;`-joined SGR parameter list
 //!
-//! C source: 13 fns total — `convertattr`, `getgroup`, `scangroup`,
+//! C source: 13 ported total — `convertattr`, `getgroup`, `scangroup`,
 //! `getpmesc`, `scanpmesc`, `getpmsgr`, `scanpmsgr`, `setup_`,
 //! `features_`, `enables_`, `boot_`, `cleanup_`, `finish_`.
 //! Zero structs/enums in hlgroup.c (only `static const struct
@@ -419,23 +419,23 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // WARNING: NOT IN HLGROUP.C — Rust-only module-framework shim.

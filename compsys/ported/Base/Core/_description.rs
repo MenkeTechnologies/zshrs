@@ -45,3 +45,53 @@ pub fn _description(
 
     Some(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_format_returns_raw_description() {
+        let mut state = CompletionState::new();
+        let styles = ZStyleStore::new();
+        let got = _description(&mut state, &styles, ":completion:::", "files", "the files");
+        assert_eq!(got.as_deref(), Some("the files"));
+    }
+
+    #[test]
+    fn hidden_all_returns_none() {
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(":completion:::*:files", "hidden", vec!["all".into()], false);
+        let got = _description(&mut state, &styles, ":completion:::*", "files", "the files");
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn percent_d_substitution_works() {
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion:::*:files",
+            "format",
+            vec!["== %d ==".into()],
+            false,
+        );
+        let got = _description(&mut state, &styles, ":completion:::*", "files", "the files");
+        assert_eq!(got.as_deref(), Some("== the files =="));
+    }
+
+    #[test]
+    fn double_percent_collapses_to_single_percent() {
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion:::*:files",
+            "format",
+            vec!["100%% sure: %d".into()],
+            false,
+        );
+        let got = _description(&mut state, &styles, ":completion:::*", "files", "x");
+        assert_eq!(got.as_deref(), Some("100% sure: x"));
+    }
+}

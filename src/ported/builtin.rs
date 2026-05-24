@@ -734,7 +734,7 @@ pub fn bin_enable(
             }
             // c:541-547 — `enable`/`disable -f` toggles DISABLED on the
             // shfunctab entry; ports to disableshfuncnode/enableshfuncnode
-            // which also unsettrap/settrap TRAP* fns.
+            // which also unsettrap/settrap TRAP* ported.
             Tab::Shfunc => {
                 let exists = shfunctab_lock()
                     .read()
@@ -4463,7 +4463,7 @@ pub fn bin_functions(
         }
         if argv.is_empty() {
             // c:3478
-            // c:3479-3484 — list user math fns.
+            // c:3479-3484 — list user math ported.
             queue_signals(); // c:3480
             if let Ok(table) = MATHFUNCS.lock() {
                 // c:3481
@@ -4479,7 +4479,7 @@ pub fn bin_functions(
             return returnval;
         } else if OPT_ISSET(ops, b'm') {
             // c:3485
-            // c:3486-3515 — list/delete matching math fns by pattern.
+            // c:3486-3515 — list/delete matching math ported by pattern.
             for arg in argv.iter() {
                 queue_signals(); // c:3488
                                  // c:3489 — `tokenize(*argv)`; Rust patcompile handles it.
@@ -4487,7 +4487,7 @@ pub fn bin_functions(
                     // c:3490
                     if OPT_PLUS(ops, b'M') {
                         // c:3497
-                        // Delete matching user fns.
+                        // Delete matching user ported.
                         if let Ok(mut table) = MATHFUNCS.lock() {
                             table.retain(|p| {
                                 !((p.flags & MFF_USERFUNC) != 0 && pattry(&pprog, &p.name))
@@ -10909,23 +10909,23 @@ fn pat_enables(name: &str, argv: &[String], on: bool) -> i32 {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 pub fn traps_table() -> &'static Mutex<HashMap<String, String>> {

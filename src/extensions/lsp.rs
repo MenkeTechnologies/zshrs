@@ -1110,7 +1110,7 @@ fn completion(state: &State, params: &Value) -> Value {
     // `await`, `barrier`, `peach`, `doctor`, `intercept`, etc. The
     // bug the user filed: `zwh<TAB>` didn't offer `zwhere` because
     // the daemon `z*` builtins live in ZSHRS_BUILTIN_NAMES and were
-    // never added to the completion list. Same issue for ext fns
+    // never added to the completion list. Same issue for ext ported
     // generally (74 in-process + 23 daemon = 97 names total).
     for n in crate::ext_builtins::EXT_BUILTIN_NAMES {
         if want(n) {
@@ -2399,7 +2399,7 @@ const SIGNAL_NAMES: &[(&str, &str)] = &[
 ];
 
 /// Loadable zsh modules — `zmodload zsh/MOD`. Canonical list from
-/// `man zshmodules`. Most expose builtins, parameters, or math fns
+/// `man zshmodules`. Most expose builtins, parameters, or math ported
 /// that aren't compiled into the core.
 const ZSH_MODULE_NAMES: &[(&str, &str)] = &[
     ("zsh/attr",         "extended file attribute manipulation"),
@@ -2720,7 +2720,7 @@ const MATH_FUNCTIONS: &[(&str, &str)] = &[
     ("finite",  "**Tests if argument is finite** — returns 1 if `x` is neither NaN nor ±inf, 0 otherwise. Inverse of `(isnan(x) || isinf(x))`. Less standard than `isnan`/`isinf` separately; on Linux this is `__finite` / `isfinite`."),
     // ── conversion ──
     ("int",     "**Convert to integer by truncating toward zero.** `int(3.9) = 3`, `int(-3.9) = -3`. Same as zsh's `(( i = (int) x ))` cast. For round-half-away-from-zero, use `round`. For floor (-inf direction), use `floor`.\n\nUsed inside arithmetic to force integer type: `(( i = int(rand48() * 100) ))` — random int in 0..99."),
-    ("float",   "**Convert to float** — explicit type cast. Mostly redundant since most math fns return float anyway, but useful when you want to force float arithmetic: `(( q = float(a) / b ))` ensures float division even if `a` and `b` are integer parameters."),
+    ("float",   "**Convert to float** — explicit type cast. Mostly redundant since most math ported return float anyway, but useful when you want to force float arithmetic: `(( q = float(a) / b ))` ensures float division even if `a` and `b` are integer parameters."),
     ("rand48",  "**Pseudo-random float in `[0, 1)`** — drand48(3) under the hood. Not cryptographically secure (linear congruential generator). Seed via `srand48()` — not directly exposed in zsh math, but the seed comes from process-startup time by default.\n\nExample: `(( dice = int(rand48() * 6) + 1 ))` — uniform 1..6. For dedicated crypto-grade randomness, read from `/dev/urandom` instead."),
     ("max",     "**Maximum of two or more arguments.** `max(a, b)` for two; `max(a, b, c, …)` works in zsh math context. Float-aware: `max(1, 1.5) = 1.5`.\n\nExample: `(( cap = max(min_size, requested) ))` — clamp lower bound. NOT the same as the GNU coreutils external `/bin/max` (doesn't exist)."),
     ("min",     "**Minimum of two or more arguments.** Mirror of `max`. Used for clamping upper bound or finding the smallest item in a set of computed values.\n\nExample: `(( delay = min(timeout, exponential_backoff) ))`."),
@@ -2746,7 +2746,7 @@ const ZSTYLE_CONTEXTS: &[(&str, &str)] = &[
     (":completion:*:matches",                      "match grouping / formatting"),
     (":completion:*:options",                      "option-name completion"),
     (":completion:*:warnings",                     "no-match warning style"),
-    (":completion:*:messages",                     "info messages from completion fns"),
+    (":completion:*:messages",                     "info messages from completion ported"),
     (":completion:*:corrections",                  "spell-correction style"),
     (":completion:*:*:*:*:processes",              "process-name completion (`kill <TAB>`)"),
     (":completion:*:functions",                    "function-name completion"),
@@ -3339,7 +3339,7 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     }
     // Tier 0 (compsys functions): hand-curated table derived from
     // `man zshcompsys` signatures. Beats the bullet/inline scrapers
-    // for the 26 compsys fns documented there because the yodl
+    // for the 26 compsys ported documented there because the yodl
     // source uses signature-style headers (`item(tt(_foo [ -x ] …))`)
     // not bullet lists, so tier-1 picks up nothing and tier-2 only
     // catches whichever flags happen to be re-cited inline.
@@ -3424,7 +3424,7 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
 /// (`_foo [ -x ] [ -12VJ ] tag name descr …`). The yodl source for
 /// compsys docs uses signature-style headers — not bullet lists — so
 /// the bullet/inline scrapers in `extract_builtin_flags` miss most
-/// flags. This table beats both tiers for the 26 fns documented in
+/// flags. This table beats both tiers for the 26 ported documented in
 /// `zshcompsys.1`.
 ///
 /// Shared conventions (per zsh source):
@@ -4656,7 +4656,7 @@ const SEMANTIC_TOKEN_TYPES: &[&str] = &[
     "variable",      // 6
     "parameter",     // 7
     "type",          // 8
-    "macro",         // 9 — kept for back-compat; also used for compsys fns now
+    "macro",         // 9 — kept for back-compat; also used for compsys ported now
     "property",      // 10
     "regexp",        // 11
     "zshrsExtension",// 12 — zshrs-only ext + daemon `z*` builtins
@@ -6857,7 +6857,7 @@ mod tests {
 
     #[test]
     fn every_compsys_fn_in_man_is_in_inventory() {
-        // The 26 compsys fns documented in `man zshcompsys` all have
+        // The 26 compsys ported documented in `man zshcompsys` all have
         // Rust shadows in `compsys/` (canonical_paths, call_program,
         // widgets, …) — so `COMPSYS_FN_NAMES` is the canonical truth
         // and `is_known_builtin_with_flag_docs` doesn't need a doc-
@@ -7993,7 +7993,7 @@ mod tests {
     #[test]
     fn completion_compdef_surfaces_compsys_fns() {
         let items = complete_at("compdef ", 8);
-        // Should be `_*` style fns only.
+        // Should be `_*` style ported only.
         assert!(items.iter().any(|i| i["label"].as_str().unwrap_or("").starts_with('_')));
     }
 

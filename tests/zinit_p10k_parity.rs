@@ -640,7 +640,7 @@ echo "i=${arr[(I)${key}]}""#,
             r#"autoload -Uz add-zsh-hook
 my_pre() { :; }
 add-zsh-hook precmd my_pre
-echo "fns=${precmd_functions[*]}""#,
+echo "ported=${precmd_functions[*]}""#,
         );
     }
 }

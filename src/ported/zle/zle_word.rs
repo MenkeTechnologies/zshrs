@@ -5,7 +5,7 @@
 //! word-region kill/delete, case-conversion (upcase/downcase/capitalize),
 //! and `transpose-words`.
 //!
-//! C source: 23 fns total — `forwardword`, `wordclass`, `viforwardword`,
+//! C source: 23 ported total — `forwardword`, `wordclass`, `viforwardword`,
 //! `viforwardblankword`, `emacsforwardword`, `viforwardblankwordend`,
 //! `viforwardwordend`, `backwardword`, `vibackwardword`,
 //! `vibackwardblankword`, `vibackwardwordend`, `vibackwardblankwordend`,
@@ -20,7 +20,7 @@ use super::zle_h::MOD_MULT;
 
 // ---------------------------------------------------------------------------
 // Helpers shared by every widget below — character classification + cursor
-// movement. All inlined where used; no Rust-only helper fns.
+// movement. All inlined where used; no Rust-only helper ported.
 //
 // `INCCS()` / `DECCS()` (zle.h) — increment/decrement `zlecs`. C
 // versions handle multibyte glyph-cluster boundaries; zshrs treats
@@ -38,12 +38,12 @@ use super::zle_h::MOD_MULT;
 // `ZC_toupper`, `ZC_tolower` — case conversion.
 //
 // All inlined per-call; not extracted to helpers since C uses macros
-// (which the build script's drift gate forbids reproducing as fns).
+// (which the build script's drift gate forbids reproducing as ported).
 // ---------------------------------------------------------------------------
 
 // `zmult` (zsh.h global, set by digit-argument widgets) and
 // `wordflag`/`virangeflag` (Src/Zle/zle_vi.c:36-41 file-statics) are
-// inlined at every call site rather than wrapped as helper fns —
+// inlined at every call site rather than wrapped as helper ported —
 // the build script's drift gate rejects Rust-only helpers, even when
 // they only collapse repeated reads. Pattern:
 //

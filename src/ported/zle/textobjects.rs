@@ -1,7 +1,7 @@
 //! ZLE text objects — port of `Src/Zle/textobjects.c`.
 //!
 //! Three C functions, zero structs/enums. The Rust port matches:
-//! three free fns over a `&mut Zle`, no Rust-only types.
+//! three free ported over a `&mut Zle`, no Rust-only types.
 
 use std::sync::atomic::Ordering;
 

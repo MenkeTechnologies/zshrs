@@ -1,6 +1,6 @@
 //! String manipulation utilities for zshrs
 //!
-//! Direct port of `Src/string.c` (201 lines, 11 fns).
+//! Direct port of `Src/string.c` (201 lines, 11 ported).
 //!
 //! Duplicate string on heap when length is known                            // c:44
 //! Append a string to an allocated string, reallocating to make room.      // c:182

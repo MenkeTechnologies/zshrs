@@ -486,7 +486,7 @@ long form when the fn is a stub waiting for a real port. They are
 ### Verification command
 
 ```sh
-# List all fns under src/ported/ whose name is NOT in C:
+# List all ported under src/ported/ whose name is NOT in C:
 rg -nE '^\s*(pub\s+)?(pub\(crate\)\s+)?fn\s+(\w+)' src/ported/ \
   | awk -F'fn ' '{print $2}' | awk '{print $1}' | tr -d '(' \
   | sort -u > /tmp/rust_fns.txt

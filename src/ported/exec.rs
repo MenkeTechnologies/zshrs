@@ -1806,7 +1806,7 @@ pub fn runshfunc(
     // c:6195 — `execode(prog, 1, 0, "shfunc");` — run the function
     // body. Prefer the canonical execode (exec.rs:6047) which walks
     // execlist on a fresh estate over the prog. If prog.strs carries
-    // the original source (autoloaded fns that the lazy-compile path
+    // the original source (autoloaded ported that the lazy-compile path
     // populated), route through the fusevm pipeline for cache
     // coherence with execstring.
     if let Some(ref src) = prog.strs {

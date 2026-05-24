@@ -325,7 +325,7 @@ mod tests {
         TYPTAB.lock().unwrap()[b'X' as usize] = saved;
     }
 
-    /// Verifies the predicate fns dispatch through zistype.
+    /// Verifies the predicate ported dispatch through zistype.
     #[test]
     fn idigit_dispatches_through_typtab() {
         let _g = crate::test_util::global_state_lock();
