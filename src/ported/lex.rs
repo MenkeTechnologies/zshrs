@@ -3767,8 +3767,32 @@ pub(crate) fn hgetc() -> Option<char> {
         return Some(c);
     }
 
-    let c = LEX_INPUT.with_borrow(|s| s[LEX_POS.get()..].chars().next())?;
-    LEX_POS.set(LEX_POS.get() + c.len_utf8());
+    // Two-input-system bridge (c:Src/input.c): zshrs's lexer has its
+    // own LEX_INPUT/LEX_POS char-window while input.rs maintains
+    // ingetc's inbuf stack (used by inpush for alias / here-string /
+    // eval content). Prefer the inbuf stack WHEN something has been
+    // pushed onto it (`inbufct > 0` indicates a live push), so
+    // mid-LEX_INPUT inpush calls (e.g. exalias pushing the alias body)
+    // read the pushed bytes first, then unwind to LEX_INPUT for the
+    // remainder. C zsh's single input stack handles this naturally;
+    // zshrs's split needs an explicit priority gate here.
+    let pos = LEX_POS.get();
+    let inbufct = crate::ported::input::inbufct.with(|c| c.get());
+    let from_inbuf = if inbufct > 0 {
+        crate::ported::input::ingetc()
+    } else {
+        None
+    };
+    let c = if let Some(c) = from_inbuf {
+        c
+    } else if let Some(c) = LEX_INPUT.with_borrow(|s| s.get(pos..).and_then(|t| t.chars().next())) {
+        LEX_POS.set(pos + c.len_utf8());
+        c
+    } else {
+        // Last resort: even with inbufct == 0, try ingetc — it may
+        // serve buffered-but-not-yet-counted content.
+        crate::ported::input::ingetc()?
+    };
 
     if c == '\n' {
         LEX_LINENO.set(LEX_LINENO.get() + 1);

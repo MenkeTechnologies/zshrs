@@ -463,6 +463,11 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {
     // eval's inner `hi` token drained the buffer, set lexstop, then
     // exalias inpushed `echo hello` but the next ingetc still saw
     // lexstop=true and returned None → tok=ENDINPUT.
+    //
+    // BOTH lexstop globals must reset: input.rs's local `lexstop` gates
+    // ingetc (line 244); lex.rs's `LEX_LEXSTOP` gates gettok. zshrs
+    // duplicates the C single `lexstop` global across two modules.
+    lexstop.with(|c| c.set(false));
     crate::ported::lex::LEX_LEXSTOP.with(|c| c.set(false));
 }
 
