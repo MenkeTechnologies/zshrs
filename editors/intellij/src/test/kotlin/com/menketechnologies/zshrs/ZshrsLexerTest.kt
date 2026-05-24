@@ -83,10 +83,27 @@ class ZshrsLexerTest {
         }
     }
 
-    @Test fun `parameter expansion brace block is one token`() {
+    @Test fun `parameter expansion brace block is segmented`() {
+        // Pre-2026-05 the whole `${HOME:-/tmp}` lexed as one opaque
+        // PARAM_EXPANSION token. New shape splits it so completion can
+        // fire on the variable name inside: `${` (PARAM_EXPANSION) +
+        // `HOME` (IDENTIFIER / OPTION_NAME) + modifier tokens + `}`
+        // (PARAM_EXPANSION).
         val toks = nonWs("\${HOME:-/tmp}")
-        assertEquals(ZshrsTokenTypes.PARAM_EXPANSION, toks[0].first)
-        assertEquals("\${HOME:-/tmp}", toks[0].second)
+        val labels = toks.map { it.first to it.second }
+        assertTrue(
+            "missing PARAM_EXPANSION `\${`: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" },
+        )
+        assertTrue(
+            "missing PARAM_EXPANSION `}`: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" },
+        )
+        // Name is standalone (any identifier-shaped token kind).
+        assertTrue(
+            "expected `HOME` as its own token: $labels",
+            labels.any { (_, s) -> s == "HOME" },
+        )
     }
 
     @Test fun `leading-dot identifiers stay one token (zinit-style)`() {
@@ -113,6 +130,29 @@ class ZshrsLexerTest {
         val toks = nonWs("@hook-fn arg")
         assertEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
         assertEquals("@hook-fn", toks[0].second)
+    }
+
+    @Test fun `leading-hyphen identifiers stay one token (zsh-syntax-highlighting)`() {
+        // `-hsmw-add-highlight` and `-zui_std_cleanup` are real
+        // function names from `zsh-syntax-highlighting` and the `zui`
+        // framework. Audited against ~/.zinit/plugins/**.
+        val toks = nonWs("-hsmw-add-highlight foo bar")
+        assertEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
+        assertEquals("-hsmw-add-highlight", toks[0].second)
+    }
+
+    @Test fun `dot-inside-identifier stays one token (_dotdrop_sh)`() {
+        // `_dotdrop.sh-compare` — found in zinit plugins.
+        val toks = nonWs("_dotdrop.sh-compare profile")
+        assertEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
+        assertEquals("_dotdrop.sh-compare", toks[0].second)
+    }
+
+    @Test fun `colon-in-identifier-body stays one token (hist precmd)`() {
+        // `:hist:precmd` — async pseudo-namespace pattern.
+        val toks = nonWs(":hist:precmd")
+        assertEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
+        assertEquals(":hist:precmd", toks[0].second)
     }
 
     @Test fun `bare dot still routes through other paths`() {
@@ -157,9 +197,10 @@ class ZshrsLexerTest {
     }
 
     @Test fun `double-quoted string`() {
+        // Segmented now (opener + body) — concatenate to verify.
         val toks = nonWs("echo \"hello world\"")
-        assertEquals(ZshrsTokenTypes.STRING_DQ, toks[1].first)
-        assertEquals("\"hello world\"", toks[1].second)
+        val strings = toks.filter { it.first == ZshrsTokenTypes.STRING_DQ }
+        assertEquals("\"hello world\"", strings.joinToString("") { it.second })
     }
 
     @Test fun `double-quoted string with dollar var splits into segments`() {
@@ -190,16 +231,34 @@ class ZshrsLexerTest {
     }
 
     @Test fun `double-quoted string with brace expansion splits into segments`() {
-        // `"x=${HOME:-/tmp}y"` — must yield STRING_DQ, PARAM_EXPANSION,
-        // STRING_DQ so the brace-expansion gets its own color slot and
-        // completion fires inside `${…}`.
+        // `"x=${HOME:-/tmp}y"` lexes as:
+        //   STRING_DQ "x=  + PARAM_EXPANSION ${  + name+modifier tokens
+        //   + PARAM_EXPANSION }  + STRING_DQ y"
+        // The PARAM_EXPANSION `${` and `}` brackets MUST exist as
+        // standalone tokens so completion fires inside, AND the string
+        // must close cleanly without the modifier text leaking into a
+        // string segment.
         val toks = nonWs("echo \"x=\${HOME:-/tmp}y\"")
-        val labels = toks.drop(1).map { it.first to it.second }
+        val labels = toks.map { it.first to it.second }
         assertTrue(
-            "expected PARAM_EXPANSION for `\${HOME:-/tmp}` inside string: $labels",
-            labels.any { (t, s) ->
-                t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${HOME:-/tmp}"
-            },
+            "missing PARAM_EXPANSION `\${`: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" },
+        )
+        assertTrue(
+            "missing PARAM_EXPANSION `}`: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" },
+        )
+        assertTrue(
+            "expected `HOME` as its own token inside `\${…}`: $labels",
+            labels.any { (_, s) -> s == "HOME" },
+        )
+        // String must close — the LAST emitted STRING_DQ should
+        // contain the trailing `y"`.
+        val lastString = labels.lastOrNull { it.first == ZshrsTokenTypes.STRING_DQ }
+        assertNotNull("no closing STRING_DQ segment: $labels", lastString)
+        assertTrue(
+            "string didn't close cleanly: $lastString",
+            lastString!!.second.endsWith("\""),
         )
     }
 
@@ -216,19 +275,115 @@ class ZshrsLexerTest {
         )
     }
 
-    @Test fun `double-quoted string without interpolation stays one token`() {
-        // Sanity: when there's no `$`, we don't accidentally split.
+    @Test fun `double-quoted string without interpolation reassembles`() {
+        // STRING_DQ segments must concatenate back to the original
+        // string (the opener `"` is its own token per the IntelliJ
+        // continuity contract — gaps in the token stream crash the
+        // searchable-options indexer).
         val toks = nonWs("echo \"plain literal\"")
         val strings = toks.filter { it.first == ZshrsTokenTypes.STRING_DQ }
-        assertEquals("split occurred without interpolation: $toks", 1, strings.size)
+        assertEquals(
+            "STRING_DQ tokens must reassemble to the original",
+            "\"plain literal\"",
+            strings.joinToString("") { it.second },
+        )
+    }
+
+    @Test fun `escaped-brace default value inside string lexes cleanly`() {
+        // Regression: `local body="${1:-{\}}"` from daemon-shell.zsh.
+        // `${1:-{\}}` is a parameter expansion whose default value
+        // is the literal `{}` (the `\}` escapes the inner `}`). The
+        // critical invariant: the LSP must end at a STRING_DQ token
+        // containing the closing `"` — the param expansion must NOT
+        // eat past the string's close quote.
+        val toks = nonWs("local body=\"\${1:-{\\}}\"")
+        val labels = toks.map { it.first to it.second }
+        // The whole `${…}` is now segmented into [`${`, body…, `}`] so
+        // completion can fire on the body. Verify the opener and
+        // closer are both PARAM_EXPANSION.
+        assertTrue(
+            "expected PARAM_EXPANSION `\${` opener: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" },
+        )
+        assertTrue(
+            "expected PARAM_EXPANSION `}` closer: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" },
+        )
+        // The string must close cleanly — the LAST emitted STRING_DQ
+        // segment should end with `"`. Anything past it means the
+        // string color is leaking.
+        val lastString = toks.lastOrNull { it.first == ZshrsTokenTypes.STRING_DQ }
+        assertNotNull("no closing STRING_DQ segment: $labels", lastString)
+        assertTrue(
+            "closing segment doesn't end with quote: $lastString",
+            lastString!!.second.endsWith("\""),
+        )
+    }
+
+    @Test fun `parameter expansion splits so completion fires on the name`() {
+        // Regression: `${HOME}` used to lex as ONE opaque
+        // PARAM_EXPANSION token. The IDE couldn't offer completion on
+        // the name inside because Cmd-Space would have replaced the
+        // entire `${HOME}` with the chosen candidate. Splitting into
+        // [`${`, `HOME`, `}`] gives `HOME` its own identifier-shaped
+        // token so completion can fire and replace just the name.
+        val toks = nonWs("echo \${HOME}")
+        val labels = toks.map { it.first to it.second }
+        // Opener
+        assertTrue(
+            "missing PARAM_EXPANSION `\${`: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" },
+        )
+        // Name as a standalone token (any of IDENTIFIER / ENV_VAR /
+        // BUILTIN / VARIABLE — all are completable from the IDE's
+        // perspective; we don't gate on exact kind, just on
+        // standalone-token-ness).
+        assertTrue(
+            "expected `HOME` as its own token (completable): $labels",
+            labels.any { (_, s) -> s == "HOME" },
+        )
+        // Closer
+        assertTrue(
+            "missing PARAM_EXPANSION `}`: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" },
+        )
+    }
+
+    @Test fun `command-group brace still lexes as RBRACE`() {
+        // After adding `${…}`-close recognition, verify a plain
+        // command-group close (`{ cmds; }`) STILL lexes as the bare
+        // LBRACE / RBRACE pair, not as PARAM_EXPANSION. The
+        // `paramBraceDepth` tracker scopes the special-casing.
+        val toks = nonWs("foo() { :; }")
+        val labels = toks.map { it.first to it.second }
+        assertTrue(
+            "command-group `}` mis-classified as param-close: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.RBRACE && s == "}" },
+        )
+        assertFalse(
+            "command-group `}` leaked into PARAM_EXPANSION: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" },
+        )
     }
 
     @Test fun `escaped dollar inside string does not start interpolation`() {
-        // `"cost: \$5"` — the `\$` is an escape, not a var marker. The
-        // string should stay one token.
+        // `"cost: \$5"` — the `\$` is an escape, not a var marker. No
+        // VARIABLE / ENV_VAR token should appear; STRING_DQ segments
+        // concatenate back to the original.
         val toks = nonWs("echo \"cost: \\\$5\"")
+        val labels = toks.map { it.first to it.second }
+        assertFalse(
+            "escaped `\\\$` mis-classified as interpolation: $labels",
+            labels.any { (t, _) ->
+                t == ZshrsTokenTypes.VARIABLE || t == ZshrsTokenTypes.ENV_VAR
+            },
+        )
         val strings = toks.filter { it.first == ZshrsTokenTypes.STRING_DQ }
-        assertEquals("escaped `\\\$` split the string: $toks", 1, strings.size)
+        assertEquals(
+            "STRING_DQ segments must reassemble to the original",
+            "\"cost: \\\$5\"",
+            strings.joinToString("") { it.second },
+        )
     }
 
     @Test fun `single-quoted string consumes literally`() {
@@ -331,14 +486,188 @@ class ZshrsLexerTest {
         )
     }
 
-    @Test fun `escaped brace inside parameter default does not break param expansion`() {
-        // Pin: `${1:-{\}}` (zsh idiom for defaulting to literal `{}`) must
-        // consume the whole expression as one PARAM_EXPANSION token.
-        // Pre-fix the trailing `\` line-continuations on following lines
-        // showed red because the lexer mis-balanced braces here.
+    @Test fun `hash inside param-length expansion is not a comment`() {
+        // Regression from screenshot: `${#tags[@]}` was getting the `#`
+        // colored as a comment-start. The whole `${…}` is a parameter-
+        // length expansion — `#` inside `${` is the length operator,
+        // not `#`-comment. Verify the entire span lexes as one
+        // PARAM_EXPANSION segmented token (`${` + `#tags[@]` + `}`)
+        // and the `#` is NEVER emitted as COMMENT.
+        val toks = nonWs("if (( \${#tags[@]} > 0 ))")
+        val labels = toks.map { it.first to it.second }
+        assertFalse(
+            "`#` inside `\${#…}` got comment-colored: $labels",
+            labels.any { (t, _) -> t == ZshrsTokenTypes.COMMENT },
+        )
+        // The `${` opener must be present (segmented param-expansion).
+        assertTrue(
+            "missing PARAM_EXPANSION `\${` opener: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" },
+        )
+    }
+
+    @Test fun `daemon-shell two-string concatenation lexes both strings cleanly`() {
+        // Exact line from daemon-shell.zsh that the user flagged:
+        //   local esc="${t//\\/\\\\}"; esc="${esc//\"/\\\"}"
+        // Two `local`-assigned strings, both with `${…}` substitutions
+        // containing escapes. Must lex as: local, esc, =, "..", ;,
+        //                     esc, =, ".." — no merged or split tokens.
+        val src = "local esc=\"\${t//\\\\/\\\\\\\\}\"; esc=\"\${esc//\\\"/\\\\\\\"}\""
+        val toks = nonWs(src)
+        val labels = toks.map { it.first to it.second }
+        // Count PARAM_EXPANSION `${` openers — must be exactly 2.
+        val openers = labels.count { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" }
+        assertEquals("expected 2 `\${` openers (one per substitution): $labels", 2, openers)
+        // Count PARAM_EXPANSION `}` closers — must be exactly 2.
+        val closers = labels.count { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" }
+        assertEquals("expected 2 `}` closers: $labels", 2, closers)
+        // No COMMENT tokens — none of the `#` chars appear here so
+        // this also pins the `${#…}` regression by adjacency.
+        assertFalse(
+            "no `#` in source but lexer emitted COMMENT anyway: $labels",
+            labels.any { (t, _) -> t == ZshrsTokenTypes.COMMENT },
+        )
+    }
+
+    @Test fun `escaped quote inside param expansion does not break string`() {
+        // Regression from screenshot: `esc="${esc//\"/\\\"}"` was
+        // getting lexed wrong — the `\"` inside the `${…}` substitution
+        // was being treated as the closing quote of the outer string.
+        // The `\"` inside `${…}` is part of the substitution pattern,
+        // not a string terminator. Verify: outer string closes on the
+        // FINAL `"`, not a mid-pattern `\"`.
+        val src = "esc=\"\${esc//\\\"/\\\\\\\"}\""
+        val toks = nonWs(src)
+        val labels = toks.map { it.first to it.second }
+        // PARAM_EXPANSION opener + closer must both appear.
+        assertTrue(
+            "missing PARAM_EXPANSION `\${`: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" },
+        )
+        assertTrue(
+            "missing PARAM_EXPANSION `}`: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" },
+        )
+        // The LAST STRING_DQ segment must end at the outermost `"`.
+        val lastString = labels.lastOrNull { it.first == ZshrsTokenTypes.STRING_DQ }
+        assertNotNull("no closing STRING_DQ segment: $labels", lastString)
+        assertTrue(
+            "outer string closed at wrong `\"`: $lastString",
+            lastString!!.second.endsWith("\""),
+        )
+    }
+
+    @Test fun `daemon-shell _daemon_post full function lexes cleanly`() {
+        // Full reported context — the `${1:-{\}}` paramBraceDepth must
+        // RESET to 0 after the `}` so the next line's `\` continuation,
+        // string content, etc. don't bleed under "in-param" handling.
+        // If `paramBraceDepth` leaks, subsequent `}` chars get mis-
+        // emitted as PARAM_EXPANSION closers instead of bare RBRACE,
+        // and the function's own closing `}` gets the wrong color.
+        val src = """
+            # Internal: POST to /op/<name> with JSON body. First arg = op name.
+            # Remaining args interpreted as raw JSON object body (single string).
+            _daemon_post() {
+                local op="${'$'}1"; shift
+                local body="${'$'}{1:-{\}}"
+                _daemon_curl \
+                    -H 'Content-Type: application/json' \
+                    --data-raw "${'$'}body" \
+                    "${'$'}DAEMON_URL/op/${'$'}op"
+            }
+        """.trimIndent() + "\n"
+        val toks = tokens(src)
+            .filter { it.first != com.intellij.psi.TokenType.WHITE_SPACE }
+        val labels = toks.map { it.first to it.second }
+        assertFalse(
+            "BAD_CHARACTER emitted: ${labels.filter { it.first == com.intellij.psi.TokenType.BAD_CHARACTER }}",
+            labels.any { (t, _) -> t == com.intellij.psi.TokenType.BAD_CHARACTER },
+        )
+        // The `${1:-{\}}` block opens + closes once. The function's
+        // outer `{` and `}` are bare braces, NOT param-expansion
+        // closers. Total `${` openers across the whole snippet: 1.
+        val openers = labels.count { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" }
+        assertEquals(
+            "expected exactly 1 `\${` opener (only `\${1:-{\\}}` on line 5): $labels",
+            1, openers,
+        )
+        // PARAM_EXPANSION closers: 1 (matching the one opener above).
+        // The function's outer `}` on the last line is a bare RBRACE,
+        // NOT a param-close — if `paramBraceDepth` leaks the count
+        // jumps to 2 and the function's `}` gets the wrong color.
+        val paramClosers = labels.count { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" }
+        assertEquals(
+            "expected exactly 1 PARAM_EXPANSION `}` (function close must be bare RBRACE): $labels",
+            1, paramClosers,
+        )
+        // The function's outer `{` and `}` are bare braces.
+        val lbraces = labels.count { (t, s) -> t == ZshrsTokenTypes.LBRACE && s == "{" }
+        val rbraces = labels.count { (t, s) -> t == ZshrsTokenTypes.RBRACE && s == "}" }
+        assertEquals("missing bare `{` for function body: $labels", 1, lbraces)
+        assertEquals("missing bare `}` for function close: $labels", 1, rbraces)
+        // No comment leakage past the actual `#` comment lines.
+        // Both `# Internal:` and `# Remaining args` are valid comments;
+        // count them — must be exactly 2.
+        val comments = labels.count { (t, _) -> t == ZshrsTokenTypes.COMMENT }
+        assertEquals("expected exactly 2 comment lines: $labels", 2, comments)
+    }
+
+    @Test fun `daemon-shell local body line dumps cleanly`() {
+        // Dump every token for the exact reported line so any
+        // regression in this input pattern surfaces with a readable
+        // diff. Pinning the assertions on STRING_DQ contiguity (no
+        // mid-line color flips into COMMENT / BAD_CHARACTER / OPERATOR
+        // / etc.) is what the user actually sees as "broken
+        // highlighting".
+        val src = "    local body=\"\${1:-{\\}}\""
+        val toks = tokens(src)
+            .filter { it.first != com.intellij.psi.TokenType.WHITE_SPACE }
+        val labels = toks.map { it.first to it.second }
+        // No bad chars.
+        assertFalse(
+            "BAD_CHARACTER emitted: $labels",
+            labels.any { (t, _) -> t == com.intellij.psi.TokenType.BAD_CHARACTER },
+        )
+        // No spurious COMMENT (the `#` inside `${#…}` regression also
+        // hit `${…}` defaults with braces — pin both).
+        assertFalse(
+            "COMMENT leaked into string: $labels",
+            labels.any { (t, _) -> t == ZshrsTokenTypes.COMMENT },
+        )
+        // Strings reassemble — opening `"` + tail `"` segments cover
+        // the literal text NOT inside the `${…}`.
+        val strings = toks.filter { it.first == ZshrsTokenTypes.STRING_DQ }
+        val reassembled = strings.joinToString("") { it.second }
+        // Both quotes survived (one in opening segment, one in closing
+        // segment — they may be in the same or separate tokens).
+        assertEquals(
+            "string segments must reassemble to `\"\"` (the literal text outside `\${…}`): $labels",
+            "\"\"",
+            reassembled,
+        )
+        // Exactly one PARAM_EXPANSION `${` opener and one `}` closer.
+        val openers = labels.count { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" }
+        assertEquals("opener count wrong: $labels", 1, openers)
+        val closers = labels.count { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" }
+        assertEquals("closer count wrong: $labels", 1, closers)
+    }
+
+    @Test fun `escaped brace inside parameter default closes correctly`() {
+        // Pin: `${1:-{\}}` (zsh idiom for defaulting to literal `{}`)
+        // — outer `${` opens, inner `{` is literal in the default
+        // value, `\}` escapes a literal `}`, and the FIRST plain `}`
+        // closes the param expansion. The whole thing is segmented
+        // into [`${`, body…, `}`] so completion fires on `1`.
         val toks = nonWs("\${1:-{\\}}")
-        assertEquals(ZshrsTokenTypes.PARAM_EXPANSION, toks[0].first)
-        assertEquals("\${1:-{\\}}", toks[0].second)
+        val labels = toks.map { it.first to it.second }
+        assertTrue(
+            "missing PARAM_EXPANSION `\${`: $labels",
+            labels.any { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "\${" },
+        )
+        // Exactly ONE closing `}` — anything more means the brace
+        // counter mis-matched the escape and ate too much.
+        val closers = labels.count { (t, s) -> t == ZshrsTokenTypes.PARAM_EXPANSION && s == "}" }
+        assertEquals("must have exactly one closer: $labels", 1, closers)
     }
 
     @Test fun `multi-line continuation block produces no bad characters`() {

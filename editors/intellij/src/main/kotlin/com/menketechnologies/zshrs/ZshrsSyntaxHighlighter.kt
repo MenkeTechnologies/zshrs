@@ -34,6 +34,8 @@ class ZshrsSyntaxHighlighter : SyntaxHighlighterBase() {
             ZshrsTokenTypes.IO_KEYWORD -> ZshrsColors.IO_KEYWORD
 
             ZshrsTokenTypes.BUILTIN -> ZshrsColors.BUILTIN
+            ZshrsTokenTypes.EXTENSION_BUILTIN -> ZshrsColors.EXTENSION_BUILTIN
+            ZshrsTokenTypes.COMPSYS_FUNCTION -> ZshrsColors.COMPSYS_FUNCTION
             ZshrsTokenTypes.COMMAND -> ZshrsColors.COMMAND
             ZshrsTokenTypes.FUNCTION_DECL -> ZshrsColors.FUNCTION_DECL
             ZshrsTokenTypes.IDENTIFIER -> ZshrsColors.IDENTIFIER

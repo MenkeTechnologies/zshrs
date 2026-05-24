@@ -22,6 +22,12 @@ class ZshrsSettings : PersistentStateComponent<ZshrsSettings.State> {
         var logLspToFile: Boolean = false,
         var lspLogPath: String = "",
         var enableBuiltinHovers: Boolean = true,
+        // Claim `.sh` files for zshrs. Off by default — users who write
+        // POSIX-only shell or bash-isms in `.sh` files don't want zshrs
+        // colorization forced on. Set to `true` if you regularly write
+        // zsh scripts but save them with `.sh` (common when running
+        // them on machines that don't have zshrs / zsh installed yet).
+        var claimShFiles: Boolean = false,
     )
 
     private var stateData = State()
@@ -62,6 +68,9 @@ class ZshrsSettings : PersistentStateComponent<ZshrsSettings.State> {
     var enableBuiltinHovers: Boolean
         get() = stateData.enableBuiltinHovers
         set(value) { stateData.enableBuiltinHovers = value }
+    var claimShFiles: Boolean
+        get() = stateData.claimShFiles
+        set(value) { stateData.claimShFiles = value }
 
     fun supportedExtensions(): List<String> =
         fileExtensions.split(",", " ", ";")

@@ -1,3 +1,4 @@
+#!/usr/bin/env zsh
 # zshrs-daemon shell wrappers
 # ===========================
 # Source this file from any shell (bash/zsh/fish via `bass`/etc.) to

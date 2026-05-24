@@ -267,6 +267,171 @@ fn terminal_size() -> Result<(u16, u16), std::io::Error> {
     Ok((rows, cols))
 }
 
+/// `zshrs --gen-docs [PATH] [--out DIR]` — walk PATH (default `.`),
+/// find every `.zsh` / `.sh` / `.bash` / `.ksh` / dotfile source, and
+/// emit per-file Markdown module docs under `--out DIR` (default
+/// `docs/`). Output layout mirrors source layout: `lib/foo.zsh` →
+/// `docs/lib/foo.md`. Also writes an `index.md` summary.
+///
+/// Mirrors `stryke gen-docs` for the zshrs CLI. Use this to ship
+/// human-readable reference docs alongside your shell scripts —
+/// extracts `##` doc-comments paired with the function decl below.
+fn run_gen_docs_subcommand(args: &[&str]) -> i32 {
+    if args.first().map(|s| *s) == Some("-h") || args.first().map(|s| *s) == Some("--help") {
+        println!("usage: zshrs --gen-docs [PATH] [--out DIR]");
+        println!();
+        println!("Walk PATH (default `.`) for `.zsh` / `.sh` / `.bash` / `.ksh`");
+        println!("/ rc-dotfile sources and emit Markdown module docs for each.");
+        println!("Output goes under --out DIR (default `docs/`), mirroring the");
+        println!("source layout.");
+        println!();
+        println!("Doc-comment convention: contiguous `##` lines IMMEDIATELY above");
+        println!("a `function NAME` / `NAME()` declaration become that function's");
+        println!("documentation. A `##` block at the top of the file becomes the");
+        println!("module header.");
+        return 0;
+    }
+
+    let mut path: Option<String> = None;
+    let mut out_dir: String = "docs".to_string();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i] {
+            "--out" | "-o" => {
+                if i + 1 >= args.len() {
+                    eprintln!("zshrs --gen-docs: --out requires a directory argument");
+                    return 2;
+                }
+                out_dir = args[i + 1].to_string();
+                i += 2;
+            }
+            other if !other.starts_with('-') && path.is_none() => {
+                path = Some(other.to_string());
+                i += 1;
+            }
+            other => {
+                eprintln!("zshrs --gen-docs: unexpected argument: {other}");
+                return 2;
+            }
+        }
+    }
+    let root = std::path::PathBuf::from(path.unwrap_or_else(|| ".".to_string()));
+    if !root.exists() {
+        eprintln!("zshrs --gen-docs: path does not exist: {}", root.display());
+        return 1;
+    }
+    let mut sources: Vec<std::path::PathBuf> = Vec::new();
+    zsh::gen_docs::collect_doc_sources(&root, &mut sources);
+    sources.sort();
+    if sources.is_empty() {
+        eprintln!(
+            "zshrs --gen-docs: no shell sources found under {}",
+            root.display()
+        );
+        return 1;
+    }
+    let out_root = std::path::PathBuf::from(&out_dir);
+    if let Err(e) = std::fs::create_dir_all(&out_root) {
+        eprintln!(
+            "zshrs --gen-docs: cannot create output dir {}: {}",
+            out_root.display(),
+            e
+        );
+        return 1;
+    }
+    let mut index: Vec<(String, String)> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    let mut used_paths: std::collections::HashSet<std::path::PathBuf> = Default::default();
+    for src in &sources {
+        let source = match std::fs::read_to_string(src) {
+            Ok(s) => s,
+            Err(e) => {
+                errors.push(format!("{}: {}", src.display(), e));
+                continue;
+            }
+        };
+        let md = zsh::gen_docs::generate_markdown(&src.to_string_lossy(), &source);
+        let rel = src.strip_prefix(&root).unwrap_or(src);
+        // Output path preserves the SOURCE extension as part of the
+        // stem to dedupe collisions when the source tree has multiple
+        // shells with the same basename (`foo.zsh` vs `foo.sh` vs
+        // `foo.bash`). Without this each one overwrites the next and
+        // the index lists duplicates pointing at the last writer.
+        let stem = rel.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let ext = rel.extension().and_then(|s| s.to_str()).unwrap_or("");
+        let renamed = if ext.is_empty() {
+            format!("{}.md", stem)
+        } else {
+            format!("{}.{}.md", stem, ext)
+        };
+        let mut out_path = match rel.parent() {
+            Some(p) if !p.as_os_str().is_empty() => out_root.join(p).join(renamed),
+            _ => out_root.join(renamed),
+        };
+        // Last-resort uniqueness: append `-N` if two distinct sources
+        // somehow still hash to the same output path.
+        let mut n = 1;
+        while used_paths.contains(&out_path) {
+            n += 1;
+            let stem2 = format!("{}.{}-{}", stem, ext, n);
+            out_path = match rel.parent() {
+                Some(p) if !p.as_os_str().is_empty() => out_root.join(p).join(format!("{}.md", stem2)),
+                _ => out_root.join(format!("{}.md", stem2)),
+            };
+        }
+        used_paths.insert(out_path.clone());
+        // Discard the original `.md` redirect — we already built the
+        // final path above. (Variable retained as type-anchor below.)
+        let _ = ();
+        if let Some(parent) = out_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                errors.push(format!("{}: mkdir failed: {}", parent.display(), e));
+                continue;
+            }
+        }
+        if let Err(e) = std::fs::write(&out_path, &md) {
+            errors.push(format!("{}: write failed: {}", out_path.display(), e));
+            continue;
+        }
+        let title = std::path::Path::new(rel.as_os_str())
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("(unknown)")
+            .to_string();
+        index.push((title, out_path.display().to_string()));
+    }
+    // index.md
+    let mut idx = String::new();
+    idx.push_str("# Module Index\n\n");
+    idx.push_str(&format!("{} module(s) generated.\n\n", index.len()));
+    for (title, path) in &index {
+        idx.push_str(&format!(
+            "- [{}]({})\n",
+            title,
+            std::path::Path::new(path)
+                .strip_prefix(&out_root)
+                .unwrap_or(std::path::Path::new(path))
+                .display()
+        ));
+    }
+    if let Err(e) = std::fs::write(out_root.join("index.md"), &idx) {
+        eprintln!("zshrs --gen-docs: index write failed: {}", e);
+    }
+    eprintln!(
+        "zshrs --gen-docs: wrote {} module(s) under {}",
+        index.len(),
+        out_root.display()
+    );
+    if !errors.is_empty() {
+        eprintln!("zshrs --gen-docs: {} error(s):", errors.len());
+        for e in &errors {
+            eprintln!("  {}", e);
+        }
+        return 1;
+    }
+    0
+}
+
 fn print_help() {
     println!(
         r#"Usage: zsh [<options>] [<argument> ...]
@@ -1016,6 +1181,16 @@ pub fn zshrs_main() {
             print!("{}", render_doc_card(name, &card, want_color));
             return;
         }
+    }
+
+    // --gen-docs [PATH] [--out DIR]: walk a directory, find every
+    // shell-source file, emit per-file Markdown reference docs under
+    // --out (default `docs/`). Mirrors `stryke gen-docs` for the
+    // zshrs CLI. The output is a `.md` per source file with the same
+    // relative path under the output dir.
+    if let Some(i) = args.iter().position(|a| a == "--gen-docs") {
+        let rest: Vec<&str> = args.iter().skip(i + 1).map(String::as_str).collect();
+        std::process::exit(run_gen_docs_subcommand(&rest));
     }
 
     // --names: emit every canonical name across builtins / keywords /

@@ -783,12 +783,58 @@ fn completion(state: &State, params: &Value) -> Value {
             push(&mut items, k, 14, "keyword");
         }
     }
+    // Compat builtins — ported `Src/Builtins/*.c` set. Note this is
+    // the hand `BUILTINS` const used for fast inline classification.
     for b in BUILTINS {
         if want(b) {
             push(&mut items, b, 3, "builtin");
         }
     }
+    // Canonical compat builtins — `ported::builtin::BUILTINS` has 154
+    // entries vs the hand `BUILTINS` subset of ~67. Without this, names
+    // like `vared`, `zformat`, `sched`, `strftime`, etc. don't surface
+    // in completion even though hover docs exist for them. Dedupe via
+    // the `want()` filter — duplicate `cd` from BUILTINS + canonical
+    // BUILTINS won't both fire because the second push is filtered out
+    // by the IDE's own dedup on `label`.
+    for b in crate::ported::builtin::BUILTINS.iter() {
+        if want(&b.node.nam) {
+            push(&mut items, &b.node.nam, 3, "builtin");
+        }
+    }
+    // zshrs extension builtins — `date`, `cat`, `sleep`, `async`,
+    // `await`, `barrier`, `peach`, `doctor`, `intercept`, etc. The
+    // bug the user filed: `zwh<TAB>` didn't offer `zwhere` because
+    // the daemon `z*` builtins live in ZSHRS_BUILTIN_NAMES and were
+    // never added to the completion list. Same issue for ext fns
+    // generally (74 in-process + 23 daemon = 97 names total).
+    for n in crate::ext_builtins::EXT_BUILTIN_NAMES {
+        if want(n) {
+            push(&mut items, n, 3, "extension builtin");
+        }
+    }
+    for n in crate::daemon::builtins::ZSHRS_BUILTIN_NAMES {
+        if want(n) {
+            push(&mut items, n, 3, "extension builtin (daemon)");
+        }
+    }
+    // Compsys functions — `_arguments`, `_files`, `_describe`, the
+    // per-command completers (`_git` / `_docker` / `_cargo` / etc.).
+    // Useful when authoring completion-spec files.
+    for n in compsys::COMPSYS_FN_NAMES {
+        if want(n) {
+            push(&mut items, n, 3, "compsys function");
+        }
+    }
     for o in OPTIONS {
+        if want(o) {
+            push(&mut items, o, 21, "option");
+        }
+    }
+    // Canonical options registry — full ~194 entries vs the small
+    // hand subset above. `setopt <TAB>` should surface every option
+    // the runtime knows, not just the 49 we hand-listed.
+    for o in crate::ported::options::ZSH_OPTIONS_SET.iter() {
         if want(o) {
             push(&mut items, o, 21, "option");
         }
@@ -798,6 +844,24 @@ fn completion(state: &State, params: &Value) -> Value {
             push(&mut items, s, 6, "special variable");
         }
     }
+    // Snippet templates — mirrors strykelang's `SNIPPETS` table. Each
+    // entry expands to a multi-line template with `${1:...}` placeholders
+    // the user tabs through. CompletionItemKind=15 (Snippet),
+    // InsertTextFormat=2 (Snippet — placeholders are honored).
+    for (prefix, body, detail) in SNIPPETS {
+        if !want(prefix) {
+            continue;
+        }
+        items.push(json!({
+            "label": format!("{} …", prefix),
+            "kind": 15u8,
+            "detail": detail,
+            "filterText": prefix,
+            "insertText": body,
+            "insertTextFormat": 2u8,
+        }));
+    }
+
     // Functions and variables from the current document
     if let Some(t) = text {
         for (name, kind, detail) in scan_symbols(t) {
@@ -814,6 +878,115 @@ fn completion(state: &State, params: &Value) -> Value {
 
     json!({ "isIncomplete": false, "items": items })
 }
+
+/// Snippet templates surfaced via `textDocument/completion`. Mirrors
+/// strykelang's `SNIPS` table. Each tuple is
+/// `(prefix, body, short detail line)` — the body uses LSP
+/// snippet placeholders (`${1:label}`, `${2:default}`, ... ending at
+/// `${0}` for the final cursor stop).
+///
+/// Categories covered (60+ entries):
+///   * Control flow: if / ifelse / ifelsif / for / forin / for-arith /
+///     foreach / while / until / case / select / repeat
+///   * Declarations: fn / local / typeset / export / readonly / integer
+///   * Idioms: trap / setopt / autoload / compdef / bindkey / alias /
+///     hashes / arrays
+///   * Hooks: precmd / preexec / chpwd / zshexit (via add-zsh-hook)
+///   * Module setup: shebang / safeshebang / main / usage / strict
+///   * I/O: while-read / cat-pipe / process-subst / heredoc / printf-fmt
+///   * Conditionals: dirtest / filetest / regex-match / not-empty
+///   * Parallel (zshrs ext): async / await / barrier / peach
+///   * ZLE: zle-widget / bindkey-widget
+///   * Compsys: arguments-spec / files-spec / values-spec
+///   * Scaffolds: test / git / curl / json
+const SNIPPETS: &[(&str, &str, &str)] = &[
+    // ── Control flow ────────────────────────────────────────────────
+    ("if",       "if ${1:cmd}; then\n    ${2:body}\nfi${0}", "if/then/fi block (snippet)"),
+    ("ifelse",   "if ${1:cmd}; then\n    ${2:body}\nelse\n    ${3:alt}\nfi${0}", "if/else/fi block (snippet)"),
+    ("ifelsif",  "if ${1:cmd1}; then\n    ${2:body}\nelif ${3:cmd2}; then\n    ${4:alt}\nelse\n    ${5:fallback}\nfi${0}", "if/elif/else chain (snippet)"),
+    ("elsif",    "elif ${1:cmd}; then\n    ${2:body}${0}", "elif branch (snippet)"),
+    ("unless",   "if ! ${1:cmd}; then\n    ${2:body}\nfi${0}", "negated if (snippet)"),
+    ("for",      "for ${1:item} in ${2:list}; do\n    ${3:body}\ndone${0}", "for loop (snippet)"),
+    ("forin",    "for ${1:item} in \"${2:\\${array[@]}}\"; do\n    ${3:body}\ndone${0}", "for over quoted-array expansion (snippet)"),
+    ("forarith", "for ((${1:i}=0; \\$${1:i} < ${2:n}; ${1:i}++)); do\n    ${3:body}\ndone${0}", "C-style arithmetic for (snippet)"),
+    ("foreach",  "foreach ${1:item} (${2:list})\n    ${3:body}\nend${0}", "zsh-alt foreach…end (snippet)"),
+    ("while",    "while ${1:cmd}; do\n    ${2:body}\ndone${0}", "while loop (snippet)"),
+    ("until",    "until ${1:cmd}; do\n    ${2:body}\ndone${0}", "until loop (snippet)"),
+    ("case",     "case ${1:word} in\n    ${2:pattern})\n        ${3:body}\n        ;;\n    *)\n        ${4:default}\n        ;;\nesac${0}", "case/esac (snippet)"),
+    ("select",   "select ${1:choice} in ${2:items}; do\n    ${3:body}\n    break\ndone${0}", "select interactive menu (snippet)"),
+    ("repeat",   "repeat ${1:N}; do\n    ${2:body}\ndone${0}", "repeat N times (snippet)"),
+    ("break",    "break ${1:1}${0}", "break N levels (snippet)"),
+    ("continue", "continue ${1:1}${0}", "continue N levels (snippet)"),
+    ("return",   "return ${1:0}${0}", "return status (snippet)"),
+    // ── Declarations ────────────────────────────────────────────────
+    ("fn",       "${1:name}() {\n    ${2:body}\n}${0}", "function declaration (snippet)"),
+    ("function", "function ${1:name} {\n    ${2:body}\n}${0}", "function keyword form (snippet)"),
+    ("anonfn",   "() {\n    ${1:body}\n} ${2:args}${0}", "anonymous function (snippet)"),
+    ("local",    "local ${1:var}=${2:value}${0}", "local declaration (snippet)"),
+    ("locals",   "local ${1:a}=\"\\$1\" ${2:b}=\"\\$2\" ${3:c}=\"\\$3\"${0}", "local positional-arg unpack (snippet)"),
+    ("typeset",  "typeset -${1:gAi} ${2:name}${3:=value}${0}", "typeset with attributes (snippet)"),
+    ("export",   "export ${1:NAME}=\"${2:value}\"${0}", "export env var (snippet)"),
+    ("readonly", "readonly ${1:NAME}=\"${2:value}\"${0}", "readonly var (snippet)"),
+    ("integer",  "integer ${1:name}=${2:0}${0}", "integer typeset shorthand (snippet)"),
+    ("array",    "${1:name}=(${2:a b c})${0}", "indexed array literal (snippet)"),
+    ("assoc",    "typeset -A ${1:name}\n${1:name}=(\n    [${2:key1}]=${3:val1}\n    [${4:key2}]=${5:val2}\n)${0}", "associative array (snippet)"),
+    // ── Common idioms ───────────────────────────────────────────────
+    ("trap",     "trap '${1:handler}' ${2:INT TERM EXIT}${0}", "signal trap (snippet)"),
+    ("setopt",   "setopt ${1:EXTENDED_GLOB NULL_GLOB PIPE_FAIL}${0}", "setopt one or more options (snippet)"),
+    ("unsetopt", "unsetopt ${1:CASE_GLOB}${0}", "unsetopt options (snippet)"),
+    ("autoload", "autoload -Uz ${1:funcname}${0}", "autoload function with -Uz (snippet)"),
+    ("compdef",  "compdef ${1:_completer} ${2:command}${0}", "register completion (snippet)"),
+    ("bindkey",  "bindkey '${1:^X^E}' ${2:edit-command-line}${0}", "ZLE bindkey (snippet)"),
+    ("alias",    "alias ${1:name}='${2:command}'${0}", "alias (snippet)"),
+    ("galias",   "alias -g ${1:NAME}='${2:expansion}'${0}", "global alias (snippet)"),
+    ("salias",   "alias -s ${1:ext}='${2:opener}'${0}", "suffix alias (snippet)"),
+    // ── Hooks (via add-zsh-hook) ────────────────────────────────────
+    ("precmd",   "autoload -Uz add-zsh-hook\n${1:my_precmd}() {\n    ${2:body}\n}\nadd-zsh-hook precmd ${1:my_precmd}${0}", "precmd hook (snippet)"),
+    ("preexec",  "autoload -Uz add-zsh-hook\n${1:my_preexec}() {\n    ${2:body}  # \\$1 = command line\n}\nadd-zsh-hook preexec ${1:my_preexec}${0}", "preexec hook (snippet)"),
+    ("chpwd",    "autoload -Uz add-zsh-hook\n${1:my_chpwd}() {\n    ${2:body}\n}\nadd-zsh-hook chpwd ${1:my_chpwd}${0}", "chpwd hook (snippet)"),
+    ("periodic", "autoload -Uz add-zsh-hook\nPERIOD=${1:60}\n${2:my_periodic}() {\n    ${3:body}\n}\nadd-zsh-hook periodic ${2:my_periodic}${0}", "periodic hook (snippet)"),
+    ("zshexit",  "autoload -Uz add-zsh-hook\n${1:my_zshexit}() {\n    ${2:cleanup}\n}\nadd-zsh-hook zshexit ${1:my_zshexit}${0}", "zshexit hook (snippet)"),
+    // ── Module setup ────────────────────────────────────────────────
+    ("shebang",     "#!/usr/bin/env zshrs\n${0}", "zshrs shebang (snippet)"),
+    ("safeshebang", "#!/usr/bin/env zsh\nemulate -L zsh\nsetopt err_return no_unset pipe_fail extended_glob\n${0}", "strict-mode shebang (snippet)"),
+    ("main",        "#!/usr/bin/env zshrs\nemulate -L zsh\nsetopt err_return no_unset pipe_fail\n\n${1:main}() {\n    ${2:body}\n}\n\n${1:main} \"\\$@\"${0}", "main() scaffold (snippet)"),
+    ("usage",       "${1:usage}() {\n    cat <<'EOT'\nUsage: ${2:command} [-h] [-v] ARG...\n\n  -h    show this help\n  -v    verbose\nEOT\n}${0}", "usage() helper (snippet)"),
+    ("strict",      "emulate -L zsh\nsetopt err_return no_unset pipe_fail extended_glob${0}", "strict-mode options (snippet)"),
+    // ── I/O ─────────────────────────────────────────────────────────
+    ("while-read", "while IFS= read -r ${1:line}; do\n    ${2:body}\ndone < ${3:file}${0}", "read-loop over file (snippet)"),
+    ("for-each-line", "for ${1:line} in \"\\${(@f)\\$(cat ${2:file})}\"; do\n    ${3:body}\ndone${0}", "for-each-line via process subst (snippet)"),
+    ("cat-pipe",   "${1:cmd} | while read -r ${2:line}; do\n    ${3:body}\ndone${0}", "pipe-to-while (snippet)"),
+    ("heredoc",    "cat <<EOT\n${1:body}\nEOT${0}", "heredoc (snippet)"),
+    ("heredocl",   "cat <<-EOT\n\t${1:body}\nEOT${0}", "tab-stripped heredoc (snippet)"),
+    ("herestring", "${1:cmd} <<< \"${2:input}\"${0}", "here-string (snippet)"),
+    ("psub-in",    "${1:cmd} < <(${2:producer})${0}", "process substitution (input) (snippet)"),
+    ("psub-out",   "${1:cmd} > >(${2:consumer})${0}", "process substitution (output) (snippet)"),
+    ("subshell",   "(\n    ${1:body}\n)${0}", "subshell (snippet)"),
+    ("printfmt",   "printf '%s\\\\n' \"${1:args}\"${0}", "printf line-per-arg (snippet)"),
+    // ── Conditionals ────────────────────────────────────────────────
+    ("dirtest",    "[[ -d \"${1:path}\" ]] && ${2:body}${0}", "directory-test guard (snippet)"),
+    ("filetest",   "[[ -f \"${1:path}\" ]] && ${2:body}${0}", "regular-file guard (snippet)"),
+    ("regexm",     "if [[ \"${1:str}\" =~ ${2:pattern} ]]; then\n    ${3:body}  # \\$match[*] / \\$MATCH\nfi${0}", "regex match into \\$match (snippet)"),
+    ("notempty",   "[[ -n \"${1:var}\" ]] || ${2:return 1}${0}", "non-empty guard (snippet)"),
+    // ── Parallel primitives (zshrs extension) ───────────────────────
+    ("async",      "${1:job}=\\$(async ${2:'expensive_command'})\n${3:# … other work …}\n${4:result}=\\$(await \\$${1:job})${0}", "async + await pair (snippet)"),
+    ("barrier",    "barrier '${1:task1}' ::: '${2:task2}' ::: '${3:task3}'${0}", "barrier (parallel + join) (snippet)"),
+    ("peach",      "peach ${1:array} {\n    ${2:body}  # uses \\$it for each element\n}${0}", "parallel for-each on worker pool (snippet)"),
+    ("intercept",  "intercept ${1:before} ${2:command} {\n    ${3:body}\n}${0}", "AOP intercept (snippet)"),
+    // ── ZLE ─────────────────────────────────────────────────────────
+    ("zle-widget", "${1:my-widget}() {\n    ${2:zle .accept-line}\n}\nzle -N ${1:my-widget}\nbindkey '${3:^X^E}' ${1:my-widget}${0}", "ZLE widget + bindkey (snippet)"),
+    // ── Compsys / completion ────────────────────────────────────────
+    ("argspec",    "_arguments \\\\\n    '(-h --help)'{-h,--help}'[show help]' \\\\\n    '(-v --verbose)'{-v,--verbose}'[verbose]' \\\\\n    ':${1:argname}:${2:_files}'${0}", "_arguments spec (snippet)"),
+    ("filesspec",  "_files -g '${1:*.zsh}'${0}", "_files glob spec (snippet)"),
+    ("valspec",    "_values '${1:tag}' \\\\\n    '${2:one}[${3:desc}]' \\\\\n    '${4:two}[${5:desc}]'${0}", "_values descriptor (snippet)"),
+    ("describe",   "_describe '${1:group}' ${2:choices_array}${0}", "_describe (snippet)"),
+    // ── Scaffolds ───────────────────────────────────────────────────
+    ("test",       "#!/usr/bin/env zshrs\nemulate -L zsh\nsetopt err_return no_unset\n\n${1:test_name}() {\n    [[ \"${2:got}\" == \"${3:want}\" ]] && echo PASS || { echo FAIL; return 1; }\n}\n\n${1:test_name}${0}", "test scaffold (snippet)"),
+    ("gitcommit",  "git add -A && git commit -m \"${1:message}\" && git push${0}", "git add+commit+push (snippet)"),
+    ("curlget",    "curl -fsSL ${1:https://example.com/api} | ${2:jq .}${0}", "curl GET + jq pipe (snippet)"),
+    ("jsonget",    "${1:cmd} | jq -r '${2:.field}'${0}", "extract JSON field via jq (snippet)"),
+    ("zmodload",   "zmodload zsh/${1:datetime}${0}", "load zsh module (snippet)"),
+];
 
 // ── Hover ───────────────────────────────────────────────────────────────
 
@@ -1292,6 +1465,23 @@ pub fn lookup_doc(name: &str) -> String {
         // Reserved word with no hand fallback — emit a minimal stub
         // instead of falling through to a bogus builtin entry.
         return format!("**{}** — _zsh keyword_", name);
+    }
+    // Extension-builtin classification wins over yodl-builtin lookup
+    // when the same name exists as both. `date` is the textbook case:
+    // upstream zsh has it in `zsh/datetime` module (so the yodl
+    // builtin table has an entry), but zshrs ships it as an
+    // always-available extension (no `zmodload` required). Showing
+    // "zshrs builtin" reflects the runtime reality the user sees.
+    // Also covers `sched`, `stat` / `zstat`, `strftime`, etc.
+    let is_extension = crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&name)
+        || crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.contains(&name);
+    if is_extension {
+        if let Some(body) = crate::zsh_ext_builtin_docs::lookup_full(name) {
+            return format!("**{}** — _zshrs extension builtin_\n\n{}", name, body);
+        }
+        if let Some(d) = EXT_BUILTIN_DOCS.iter().find(|(k, _)| *k == name) {
+            return format!("**{}** — _zshrs extension builtin_\n\n{}", d.0, d.1);
+        }
     }
     if let Some((canon, body)) = crate::zsh_builtin_docs::lookup_builtin_doc(name) {
         return format!("**{}** — _zsh builtin_\n\n{}", canon, body);
@@ -2041,72 +2231,33 @@ fn references(state: &State, params: &Value) -> Value {
         Some(w) if !w.is_empty() => w,
         _ => return Value::Array(vec![]),
     };
-    // AST-backed cross-file path. Mirrors strykelang's SymbolTable
-    // approach: parse the active file, resolve cursor → SymbolId,
-    // then walk every workspace file looking for occurrences matching
-    // the symbol's kind. Falls through to the textual scan below on
-    // parse failure (e.g. mid-edit syntax error).
-    if let Some(v) = references_via_ast(state, &active_uri, &active_text, line_no as u32, &word) {
-        return v;
-    }
-    // Scan every document we know about — open buffers AND the
-    // workspace cache populated at `initialize`. Files that exist on
-    // disk but the user hasn't opened still participate in rename, as
-    // long as they were reachable from the workspace root walk.
-    let docs = state.all_docs();
-    let n_open = state.docs.len();
-    let n_workspace = state.workspace_files.len();
-    let mut out = Vec::new();
-    for (doc_uri, text) in &docs {
-        for (i, l) in text.lines().enumerate() {
-            // Skip lines that are entirely a `#` comment (after
-            // whitespace) and don't emit refs inside them. The boundary
-            // check below catches false matches for `# foo` but lines
-            // like `foo  # name` still scan the `name` if it spells the
-            // word — guard with the comment gate. Strings are handled
-            // by the same gate via `line_starts_comment_before`.
-            let mut start = 0;
-            while let Some(p) = l[start..].find(word.as_str()) {
-                let abs = start + p;
-                let before = l[..abs].chars().last();
-                let after = l[abs + word.len()..].chars().next();
-                // Whole-word boundary: chars immediately before/after
-                // the match must NOT be ident chars OR `-`. Excluding
-                // `-` is what stops `daemon-ping` from spuriously
-                // matching inside `daemon-ping-x` after the word-at
-                // logic learned to include `-` in zsh function names.
-                let ok_b = before
-                    .map(|c| !(c.is_alphanumeric() || c == '_' || c == '-'))
-                    .unwrap_or(true);
-                let ok_a = after
-                    .map(|c| !(c.is_alphanumeric() || c == '_' || c == '-'))
-                    .unwrap_or(true);
-                // Skip matches inside string literals OR after a `#`
-                // comment-opener — string content and comment text are
-                // not real code references and would surface as false
-                // positives in Find Usages.
-                if ok_b && ok_a && !line_position_inside_string_or_comment(l, abs) {
-                    out.push(json!({
-                        "uri": doc_uri,
-                        "range": {
-                            "start": { "line": i, "character": abs },
-                            "end":   { "line": i, "character": abs + word.len() },
-                        },
-                    }));
-                }
-                start = abs + word.len();
-            }
+    // AST-backed cross-file path — ONLY. No textual fallback.
+    //
+    // History: an earlier impl fell through to a whole-document
+    // text-grep when the parse failed mid-edit. The fallback turned
+    // Find Usages into a glorified `grep -w` — every comment match,
+    // every string-literal match, every same-name-different-symbol
+    // match got reported as a usage. Users called it FAKE and they
+    // were right. Removed: parse failure now returns empty, which
+    // surfaces as "no usages" in the IDE (with a debug log line
+    // pointing at the failing file). The correctness trade is worth
+    // the loss of coverage on broken-syntax buffers.
+    match references_via_ast(state, &active_uri, &active_text, line_no as u32, &word) {
+        Some(v) => v,
+        None => {
+            tracing::warn!(
+                target: "zshrs::lsp::references",
+                uri = %active_uri,
+                %word,
+                line = line_no,
+                col,
+                "AST-walk returned no resolution \
+                 (parse failure or cursor not on a declared symbol); \
+                 returning empty rather than falling back to text-search",
+            );
+            Value::Array(vec![])
         }
     }
-    tracing::debug!(
-        target: "zshrs::lsp::references",
-        %word,
-        n_results = out.len(),
-        n_open,
-        n_workspace,
-        "scanned",
-    );
-    Value::Array(out)
 }
 
 /// AST-backed cross-file find-references. Returns `None` if any of:
@@ -2219,10 +2370,16 @@ fn references_via_ast(
 
     // Cross-file: only for symbols that cross file boundaries.
     if !matches!(kind, SymbolKind::Local) {
+        // Track every URI already walked so source-chain following
+        // (below) doesn't re-emit duplicate locations.
+        let mut walked: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        walked.insert(active_uri.to_string());
         for (uri, src) in state.all_docs() {
             if uri == active_uri {
                 continue;
             }
+            walked.insert(uri.clone());
             let lines = find_ast_occurrences(&src, &name, kind.clone());
             let src_lines: Vec<&str> = src.lines().collect();
             for line in lines {
@@ -2239,6 +2396,77 @@ fn references_via_ast(
                 }
             }
         }
+
+        // ── Source-chain following ───────────────────────────────────
+        // BFS over `source X` / `. X` / `zsource X` (zshrs daemon
+        // variant) commands found via AST walk. Pulls in files OUTSIDE
+        // the workspace root that the active file depends on. Cycle-
+        // guarded; depth-capped to keep pathological rc chains from
+        // hanging the LSP. Files reached this way are NOT cached —
+        // they're read fresh each call so edits propagate without an
+        // explicit didChangeWatchedFiles event.
+        let mut queue: Vec<String> = vec![active_uri.to_string()];
+        // Seed with every workspace file too — sourced files may live
+        // off any of them, not just the active doc.
+        for (uri, _) in state.all_docs() {
+            queue.push(uri);
+        }
+        const MAX_FILES: usize = 256;
+        while let Some(uri) = queue.pop() {
+            if walked.len() >= MAX_FILES {
+                tracing::warn!(
+                    target: "zshrs::lsp::references_ast",
+                    walked = walked.len(),
+                    "source-chain hit MAX_FILES cap; stopping BFS",
+                );
+                break;
+            }
+            // Find this file's text in the open-doc map or read it
+            // from disk if we have a file:// URI.
+            let parent_text = state
+                .docs
+                .get(&uri)
+                .cloned()
+                .or_else(|| state.workspace_files.get(&uri).cloned())
+                .or_else(|| {
+                    file_uri_to_path(&uri).and_then(|p| std::fs::read_to_string(p).ok())
+                });
+            let Some(parent_text) = parent_text else { continue };
+            let parent_dir = file_uri_to_path(&uri)
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            for sourced_path in crate::lsp_symbols::collect_sourced_paths(&parent_text, &parent_dir) {
+                let sourced_uri = format!("file://{}", sourced_path.display());
+                if walked.contains(&sourced_uri) {
+                    continue;
+                }
+                walked.insert(sourced_uri.clone());
+                let Ok(sourced_text) = std::fs::read_to_string(&sourced_path) else { continue };
+                let lines = find_ast_occurrences(&sourced_text, &name, kind.clone());
+                let src_lines: Vec<&str> = sourced_text.lines().collect();
+                for line in lines {
+                    if let Some(lt) = src_lines.get(line as usize) {
+                        for (s, e) in find_all_word_cols_kinded(lt, &name, is_var) {
+                            out.push(json!({
+                                "uri": sourced_uri,
+                                "range": {
+                                    "start": { "line": line, "character": s },
+                                    "end":   { "line": line, "character": e },
+                                },
+                            }));
+                        }
+                    }
+                }
+                // Push for transitive BFS — sourced file may itself
+                // source more files.
+                queue.push(sourced_uri);
+            }
+        }
+        tracing::debug!(
+            target: "zshrs::lsp::references_ast",
+            files_walked = walked.len(),
+            "source-chain BFS done",
+        );
     }
 
     tracing::debug!(
@@ -2381,18 +2609,20 @@ fn rename(state: &State, params: &Value) -> Value {
 // ── Semantic tokens ─────────────────────────────────────────────────────
 
 const SEMANTIC_TOKEN_TYPES: &[&str] = &[
-    "comment",
-    "string",
-    "number",
-    "keyword",
-    "operator",
-    "function",
-    "variable",
-    "parameter",
-    "type",
-    "macro",
-    "property",
-    "regexp",
+    "comment",       // 0
+    "string",        // 1
+    "number",        // 2
+    "keyword",       // 3
+    "operator",      // 4
+    "function",      // 5 — compat zsh builtins
+    "variable",      // 6
+    "parameter",     // 7
+    "type",          // 8
+    "macro",         // 9 — kept for back-compat; also used for compsys fns now
+    "property",      // 10
+    "regexp",        // 11
+    "zshrsExtension",// 12 — zshrs-only ext + daemon `z*` builtins
+    "zshrsCompsys",  // 13 — `_arguments` / `_files` / `_describe` family
 ];
 
 fn semantic_tokens(state: &State, params: &Value) -> Value {
@@ -2635,6 +2865,42 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                 col += end;
                 continue;
             }
+            // Multi-char operators — emit as OPERATOR (token type 4).
+            // Longest-match-first so `&&` doesn't lex as `&` + `&`.
+            //
+            // The IDE then maps semantic-token type 4 to ZshrsColors.OPERATOR
+            // (which the user can rebind under Settings → Editor → Color
+            // Scheme → zshrs → Operators). Without this branch the hand
+            // lexer's OPERATOR token-type was wired but the LSP overlay
+            // never emitted any, so the user's selected operator color
+            // never applied.
+            const OPERATORS: &[&str] = &[
+                ";;&", "<<<", "<<-",
+                "&&", "||", "|&", "<<", ">>", "&>", ">|", ">!",
+                ">&", "<&", "<>", "==", "!=", "=~", "+=", "-=", ":=", "?=",
+                "[[", "]]", "((", "))", ";;", ";|",
+                "|", "&", ">", "<",
+            ];
+            let mut op_len = 0usize;
+            for op in OPERATORS {
+                if rest.starts_with(op) {
+                    op_len = op.len();
+                    break;
+                }
+            }
+            if op_len > 0 {
+                push_tok(
+                    &mut data,
+                    &mut last_line,
+                    &mut last_col,
+                    ln,
+                    col as u32,
+                    op_len as u32,
+                    4, // operator
+                );
+                col += op_len;
+                continue;
+            }
             // Number
             let c0 = rest.as_bytes()[0] as char;
             if c0.is_ascii_digit() {
@@ -2661,24 +2927,37 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
             // `-` for hyphenated names (`daemon-lock-do`,
             // `daemon-export-pdf`) so they don't lex as multiple tokens
             // with `do` / `export` getting mis-classified.
-            let leading_sigil =
-                matches!(c0, '.' | '+' | '@' | ':' | '^') && rest.as_bytes().get(1).map_or(false, |b| {
-                    let c1 = *b as char;
-                    c1 == '_' || c1.is_alphabetic()
-                });
-            if c0 == '_' || c0.is_alphabetic() || leading_sigil {
+            // Use the C-faithful character-class predicates from
+            // `ported::ztype_h` — same `iuser` / `iident` / `ialnum`
+            // bits the upstream lexer (`Src/lex.c::gettokstr`) checks.
+            // Avoids drift between the hand rule here and the canonical
+            // port. `iuser` is "username char" — letters/digits/`_` +
+            // `-`/`.`/Dash. Add `:` to the body set because zsh
+            // function names may include it (audited against zinit's
+            // `:hist:precmd`); `:` isn't in IUSER but neither is it
+            // an `ispecial` metachar, so command-word lexing accepts it.
+            use crate::ported::ztype_h::{ialnum, iident, iuser};
+            let leading_sigil = iuser(c0 as u8)
+                && !iident(c0 as u8)  // exclude alnum/`_` — those start a plain word
+                && rest.as_bytes().get(1).map_or(false, |b| iident(*b));
+            // `+`/`@`/`:`/`^` aren't in IUSER (only `-` and `.` are
+            // per the C source). Allow them anyway — zinit / p10k /
+            // async hooks use them widely as function-name prefixes
+            // and the C lexer accepts them as command-word content.
+            let extra_sigil = !leading_sigil
+                && matches!(c0, '+' | '@' | ':' | '^')
+                && rest.as_bytes().get(1).map_or(false, |b| iident(*b));
+            let is_sigil = leading_sigil || extra_sigil;
+            if iident(c0 as u8) || is_sigil {
                 let b = rest.as_bytes();
-                let mut end = if leading_sigil { 1 } else { 0 };
+                let mut end = if is_sigil { 1 } else { 0 };
                 while end < b.len() {
-                    let c = b[end] as char;
-                    if c == '_' || c.is_alphanumeric() {
+                    let c = b[end];
+                    if ialnum(c) || c == b'_' {
                         end += 1;
-                    } else if c == '-'
+                    } else if matches!(c, b'-' | b'.' | b':')
                         && end + 1 < b.len()
-                        && {
-                            let nxt = b[end + 1] as char;
-                            nxt == '_' || nxt.is_alphanumeric()
-                        }
+                        && (ialnum(b[end + 1]) || b[end + 1] == b'_')
                     {
                         end += 1;
                     } else {
@@ -2686,8 +2965,23 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                     }
                 }
                 let w = &rest[..end];
+                // Token-type classification — match index in
+                // SEMANTIC_TOKEN_TYPES. Priority:
+                //   * KEYWORDS (3) — reserved words.
+                //   * zshrs extension builtins (12) — distinct color
+                //     so `date` / `cat` / `zd` / etc. don't visually
+                //     merge with compat builtins.
+                //   * Compsys functions (13) — `_arguments` family.
+                //   * BUILTINS (5) — compat zsh builtins.
+                //   * VARIABLE (6) fallback for plain identifiers.
                 let kind = if KEYWORDS.contains(&w) {
                     3u32
+                } else if crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&w)
+                    || crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.contains(&w)
+                {
+                    12
+                } else if compsys::COMPSYS_FN_NAMES.contains(&w) {
+                    13
                 } else if BUILTINS.contains(&w) {
                     5
                 } else {
@@ -3885,10 +4179,15 @@ const SPECIAL_VAR_DOCS: &[(&str, &str)] = &[
 pub fn dump_reflection_json() -> String {
     let mut all = serde_json::Map::new();
 
-    let mut builtins = serde_json::Map::new();
+    // ── Compat builtins: ported zsh-faithful builtins from
+    // `ported::builtin::BUILTINS`. These mirror the upstream zsh C
+    // `Src/Builtins/*.c` tables 1:1. Distinct from `extensions` (the
+    // zshrs-only additions). `builtins` below is the union for tools
+    // that want everything under one key.
+    let mut compat = serde_json::Map::new();
     for b in crate::ported::builtin::BUILTINS.iter() {
-        builtins.insert(b.node.nam.clone(), Value::String("builtin".into()));
-        all.insert(b.node.nam.clone(), Value::String("builtin".into()));
+        compat.insert(b.node.nam.clone(), Value::String("compat".into()));
+        all.insert(b.node.nam.clone(), Value::String("compat".into()));
     }
     // Keywords sourced from the canonical `reswds[]` table at
     // `Src/hashtable.c:1076-1108` (Rust port: `ported::hashtable::RESWDS`).
@@ -3955,9 +4254,18 @@ pub fn dump_reflection_json() -> String {
         operators.insert((*op).to_string(), Value::String("operator".into()));
         all.insert((*op).to_string(), Value::String("operator".into()));
     }
+    // ── Backwards-compat aggregate: every builtin the user can call,
+    // ported + extension. Equals `compat ∪ extensions`. Kept as the
+    // `builtins` key so older tool-window UIs (pre-compat-split) still
+    // see something familiar.
+    let mut builtins = compat.clone();
+    for (k, _) in &extensions {
+        builtins.insert(k.clone(), Value::String("builtin".into()));
+    }
     serde_json::to_string_pretty(&json!({
         "all": all,
         "builtins": builtins,
+        "compat": compat,
         "keywords": keywords,
         "options": options,
         "special_vars": special_vars,
@@ -4071,25 +4379,30 @@ pub fn dump_reference_html() -> String {
 
     let mut out = String::new();
 
-    // ── builtins (canonical from ported::builtin::BUILTINS) ──────────
-    let mut builtins: Vec<String> = crate::ported::builtin::BUILTINS
+    // ── compat builtins (canonical from ported::builtin::BUILTINS) ──
+    // These are the ported zsh-faithful builtins. Distinct from the
+    // Extension chapter (which lists zshrs-only additions). Together
+    // they cover every builtin the user can call.
+    let mut compat: Vec<String> = crate::ported::builtin::BUILTINS
         .iter()
         .map(|b| b.node.nam.clone())
         .collect();
-    builtins.sort();
-    builtins.dedup();
+    compat.sort();
+    compat.dedup();
     write_chapter(
         &mut out,
-        "ch-lsp-builtins",
-        "Builtin Index",
+        "ch-lsp-compat",
+        "Compat Builtin Index",
         &format!(
-            "{} entries · sourced from <code>ported::builtin::BUILTINS</code>. \
-             Each body is the canonical man-zshall yodl text routed through \
-             <code>lsp::lookup_doc</code>.",
-            builtins.len()
+            "{} entries · zsh-faithful ports from <code>ported::builtin::BUILTINS</code>. \
+             Each mirrors an upstream <code>Src/Builtins/*.c</code> entry 1:1, with the \
+             hover body extracted from <code>man zshall</code> yodl. See also: \
+             <a href=\"#ch-lsp-extensions\">Extension Builtin Index</a> for zshrs-only \
+             additions.",
+            compat.len()
         ),
-        &builtins,
-        "builtin",
+        &compat,
+        "compat",
     );
 
     // ── keywords (canonical `reswds[]`) ─────────────────────────────
@@ -4807,6 +5120,105 @@ mod tests {
         );
     }
 
+    #[test]
+    fn completion_offers_daemon_z_star_builtins() {
+        // Regression: user typed `zwh<TAB>` in IntelliJ + plugin and
+        // got nothing. Root cause — the completion handler iterated
+        // the hand `BUILTINS` const but not `ZSHRS_BUILTIN_NAMES`
+        // (which holds `zwhere`, `zd`, `zcache`, etc.). Pin the
+        // canonical-set sourcing so future builtins added there show
+        // up in completion automatically.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "zwh".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 3 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(
+            items.iter().any(|i| i["label"] == "zwhere"),
+            "no `zwhere` in completion items for `zwh` prefix: {:?}",
+            items
+                .iter()
+                .map(|i| i["label"].as_str().unwrap_or("?"))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn completion_offers_ext_builtins_and_compsys_fns() {
+        // Same root cause as the `zwh` regression — verify the OTHER
+        // tables we missed also surface. `date` is an extension
+        // builtin (NOT in the hand subset), `_arguments` is a compsys
+        // function, `vared` is a canonical compat builtin missing from
+        // the hand `BUILTINS` subset.
+        let _g = crate::test_util::global_state_lock();
+        for (input, want) in &[("dat", "date"), ("_argu", "_arguments"), ("vare", "vared")] {
+            let mut state = State::default();
+            state.docs.insert("file:///t.zsh".into(), (*input).into());
+            let params = json!({
+                "textDocument": { "uri": "file:///t.zsh" },
+                "position": { "line": 0, "character": input.len() },
+            });
+            let result = completion(&state, &params);
+            let items = result["items"].as_array().unwrap();
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "no `{}` in completion for `{}` prefix: {:?}",
+                want,
+                input,
+                items
+                    .iter()
+                    .map(|i| i["label"].as_str().unwrap_or("?"))
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    #[test]
+    fn completion_offers_snippet_templates() {
+        // Mirror of strykelang's snippet behavior: typing `if` should
+        // surface the `if …` snippet template (kind=15, insertTextFormat=2)
+        // alongside the bare `if` keyword. Without snippet items, the
+        // user has no fast path to scaffold the full `if cmd; then …; fi`
+        // body — the whole point of porting stryke's pattern.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "if".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 2 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        let snippet = items
+            .iter()
+            .find(|i| i["label"].as_str() == Some("if …"))
+            .unwrap_or_else(|| panic!("no `if …` snippet in items: {:?}", items));
+        assert_eq!(snippet["kind"], 15, "snippet kind must be 15 (Snippet)");
+        assert_eq!(
+            snippet["insertTextFormat"], 2,
+            "snippet insertTextFormat must be 2 (Snippet — placeholders honored)"
+        );
+        let body = snippet["insertText"].as_str().unwrap();
+        assert!(body.contains("then") && body.contains("fi"), "snippet body wrong: {}", body);
+    }
+
+    #[test]
+    fn completion_snippet_table_has_60_plus_entries() {
+        // Pin: stryke's plugin README advertises "60+ snippet templates."
+        // Mirror the bar here — the table is the public surface for
+        // shell-snippet completion. Drift below 60 fails the gate so
+        // anyone removing entries notices.
+        assert!(
+            SNIPPETS.len() >= 60,
+            "snippet table dropped below 60 entries: {}",
+            SNIPPETS.len()
+        );
+    }
+
     // ── folding_ranges ──────────────────────────────────────────────────
 
     #[test]
@@ -4852,6 +5264,56 @@ mod tests {
         let arr = refs.as_array().unwrap();
         // 1 decl + 2 call sites = 3
         assert_eq!(arr.len(), 3, "expected 3 refs, got: {:?}", arr);
+    }
+
+    #[test]
+    fn references_follows_source_chain_outside_workspace() {
+        // Regression: usages in `source ~/...` files weren't picked up.
+        // Active file declares `greet`, sourced file calls it. The
+        // chain should be followed even when the sourced file lives
+        // OUTSIDE the workspace root.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        // Build a temp dir + sourced file + an active doc that points
+        // to the sourced file with an absolute path.
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs-ref-source-chain-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let sourced = tmp.join("helpers.zsh");
+        std::fs::write(&sourced, "greet world\ngreet again\n").unwrap();
+        let active_text = format!(
+            "function greet {{ echo hi }}\nsource {}\n",
+            sourced.display()
+        );
+        state.docs.insert("file:///t.zsh".into(), active_text);
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 9 }, // on "greet" decl
+            "context": { "includeDeclaration": true },
+        });
+        let refs = references(&state, &params);
+        let arr = refs.as_array().unwrap();
+        // 1 decl in active + 2 calls in sourced = 3
+        assert!(
+            arr.len() >= 3,
+            "source-chain following missed refs, got {}: {:?}",
+            arr.len(),
+            arr,
+        );
+        // At least one ref must point at the sourced file URI.
+        let sourced_uri = format!("file://{}", sourced.canonicalize().unwrap().display());
+        assert!(
+            arr.iter().any(|r| r["uri"].as_str() == Some(sourced_uri.as_str())),
+            "no ref pointing at sourced file `{}`: {:?}",
+            sourced_uri,
+            arr,
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     // ── Comment / shebang hover gate ────────────────────────────────────────

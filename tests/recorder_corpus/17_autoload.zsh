@@ -5,4 +5,4 @@
 autoload _git
 autoload -U add-zsh-hook
 autoload -Uz compinit
-autoload first second third
+autoload gggecond third

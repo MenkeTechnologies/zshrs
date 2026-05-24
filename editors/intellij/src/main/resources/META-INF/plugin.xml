@@ -49,8 +49,19 @@
             implementationClass="com.menketechnologies.zshrs.ZshrsFileType"
             fieldName="INSTANCE"
             language="zshrs"
-            extensions="zsh;sh;bash;ksh"
-            fileNames=".zshrc;.zshenv;.zlogin;.zlogout;.zprofile;.zpreztorc;.bashrc;.bash_profile;.bash_login;.bash_logout;.kshrc;.profile"/>
+            extensions="zsh"
+            fileNames=".zshrc;.zshenv;.zlogin;.zlogout;.zprofile;.zpreztorc"/>
+        <!-- `.sh` / `.bash` / `.ksh` / `.profile` etc. are NOT statically
+             claimed here — they're added dynamically at startup based on
+             Settings → zshrs → claimShFiles (and the comma-separated
+             File extensions field for custom extensions). Avoids forcing
+             zshrs colorization on users who write POSIX-only / bash-only
+             scripts in `.sh` files. -->
+
+        <!-- Startup activity that applies the dynamic extension list
+             from ZshrsSettings. Runs once per IDE session; the settings
+             dialog also re-applies on save. -->
+        <postStartupActivity implementation="com.menketechnologies.zshrs.ZshrsExtensionAssociator"/>
 
         <!-- Parser definition (flat — token-stream PSI, no nested AST). Required
              for line-comment toggle, brace match, refactoring keymaps, and LSP
@@ -73,6 +84,9 @@
         <!-- Brace / quote auto-pairing -->
         <lang.braceMatcher language="zshrs" implementationClass="com.menketechnologies.zshrs.ZshrsBraceMatcher"/>
         <lang.quoteHandler language="zshrs" implementationClass="com.menketechnologies.zshrs.ZshrsQuoteHandler"/>
+        <!-- Skip-over `)` `]` `}` when the next char already matches —
+             stops `tomm(){<ENTER>}` from doubling the close brace -->
+        <typedHandler implementation="com.menketechnologies.zshrs.ZshrsTypedHandler"/>
 
         <!-- Refactoring bridge: hooks Cmd-Opt-M / Cmd-Opt-V / Cmd-Opt-C / Ctrl-T
              into LSP code actions; hooks Shift-F6 into LSP rename. -->

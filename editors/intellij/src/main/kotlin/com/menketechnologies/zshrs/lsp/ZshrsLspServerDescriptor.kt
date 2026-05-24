@@ -34,7 +34,7 @@ class ZshrsLspServerDescriptor(project: Project) :
             tokenModifiers: List<String>,
         ): com.intellij.openapi.editor.colors.TextAttributesKey? = when (tokenType) {
             "keyword" -> ZshrsColors.KEYWORD
-            "function" -> ZshrsColors.FUNCTION_DECL
+            "function" -> ZshrsColors.BUILTIN
             "variable" -> ZshrsColors.VARIABLE
             "parameter" -> ZshrsColors.VARIABLE
             "string" -> ZshrsColors.STRING_DQ
@@ -46,6 +46,11 @@ class ZshrsLspServerDescriptor(project: Project) :
             "class" -> ZshrsColors.OPTION_NAME
             "property" -> ZshrsColors.VARIABLE
             "namespace" -> ZshrsColors.OPTION_NAME
+            // zshrs-defined LSP semantic types — see SEMANTIC_TOKEN_TYPES
+            // in src/extensions/lsp.rs. Drive distinct color slots so
+            // ext + compsys names don't visually merge with compat builtins.
+            "zshrsExtension" -> ZshrsColors.EXTENSION_BUILTIN
+            "zshrsCompsys" -> ZshrsColors.COMPSYS_FUNCTION
             else -> null
         }
     }

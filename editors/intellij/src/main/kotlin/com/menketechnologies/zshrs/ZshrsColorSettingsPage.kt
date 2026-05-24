@@ -27,7 +27,9 @@ class ZshrsColorSettingsPage : ColorSettingsPage {
         AttributesDescriptor("Keywords//Modifier (setopt/zstyle/alias/autoload)", ZshrsColors.MODIFIER_KEYWORD),
         AttributesDescriptor("Keywords//I/O (source/eval/exec/echo/print)", ZshrsColors.IO_KEYWORD),
 
-        AttributesDescriptor("Names//Builtin (cd/pwd/hash)", ZshrsColors.BUILTIN),
+        AttributesDescriptor("Names//Builtin — compat (cd/pwd/hash/echo)", ZshrsColors.BUILTIN),
+        AttributesDescriptor("Names//Builtin — zshrs extension (date/cat/zd/async)", ZshrsColors.EXTENSION_BUILTIN),
+        AttributesDescriptor("Names//Compsys function (_arguments/_files/_describe)", ZshrsColors.COMPSYS_FUNCTION),
         AttributesDescriptor("Names//External command call", ZshrsColors.COMMAND),
         AttributesDescriptor("Names//Function declaration", ZshrsColors.FUNCTION_DECL),
         AttributesDescriptor("Names//Identifier", ZshrsColors.IDENTIFIER),
