@@ -1,6 +1,26 @@
 //! Port of `_expand` — expand special characters (`$`, `~`, `{}`).
-//! Moved from `compsys/functions.rs`. Renamed from `expand` to mirror
-//! zsh shell function name `_expand`.
+//!
+//! Local shell reference: `compsys/functions/Base/Completer/_expand`
+//! (system copy `/opt/homebrew/share/zsh/functions/_expand`).
+//!
+//! Upstream shell source (header — full impl ~200 lines):
+//! ```text
+//!  9  setopt localoptions nonomatch
+//! 11  [[ _matcher_num -gt 1 ]] && return 1
+//! 13  local exp word sort expr expl subd pref suf=" " force opt asp tmp
+//! 14  local continue=0
+//! 17  while getopts gsco opt; do force="$force$opt"; done
+//! ```
+//!
+//! Shell's `_expand` is a heavyweight expansion completer that
+//! cooperates with: brace, glob, history (`!`-event), substitute
+//! (`${VAR}` etc.), and tilde expansion. It also coordinates with
+//! `compstate[insert]` and the various `expand` zstyles.
+//!
+//! Simplified Rust port: just `~/` tilde + `$VAR` expansion. Cover
+//! the most common interactive use (`cd ~/<TAB>`, `echo $HOM<TAB>`)
+//! without dragging in zsh's full brace/glob/history-substitution
+//! engine. The full set lives elsewhere in the runtime.
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;

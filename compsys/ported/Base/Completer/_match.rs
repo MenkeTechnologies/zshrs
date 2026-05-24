@@ -1,5 +1,25 @@
-//! Port of `_match` — pattern-based matching. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_match` — pattern-based matching.
+//!
+//! Local shell reference: `compsys/functions/Base/Completer/_match`
+//! (system copy `/opt/homebrew/share/zsh/functions/_match`).
+//!
+//! Upstream shell source (comment-only summary at the top):
+//! ```text
+//!  4  # Intended to be used as a completer function after the normal
+//!  5  # completer as in:
+//!  6  #   zstyle ":completion:::::" completer _complete _match
+//!  9  # Note that this is only really useful if you don't use the
+//! 10  # expand-or-complete function because otherwise the pattern
+//! 11  # will be expanded using globbing.
+//! ```
+//!
+//! Upstream flips `compstate[pattern_match]='*'` and re-runs the
+//! previous completers so they accept glob-pattern input (user types
+//! `*.rs<TAB>` and gets matches the literal-prefix completer
+//! wouldn't produce).
+//!
+//! Simplified Rust port: takes the pattern + candidate list directly
+//! and emits candidates that glob-match. Supports `*` and `?`.
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;
