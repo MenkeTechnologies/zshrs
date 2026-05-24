@@ -39,3 +39,36 @@ pub fn _tilde_files(state: &mut CompletionState) -> bool {
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_tilde_prefix_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "/etc/passwd".into();
+        assert!(!_tilde_files(&mut state));
+    }
+
+    #[test]
+    fn tilde_user_form_returns_false_until_user_lookup_wired() {
+        // `~user/...` requires getpwnam; not yet wired.
+        let mut state = CompletionState::new();
+        state.params.prefix = "~root/some".into();
+        assert!(!_tilde_files(&mut state));
+    }
+
+    #[test]
+    fn iprefix_cleared_after_call() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "~/".into();
+        // Whether matches come back depends on the test machine; we
+        // only verify the save/restore semantic (iprefix wiped).
+        let _ = _tilde_files(&mut state);
+        assert_eq!(
+            state.params.iprefix, "",
+            "iprefix must be cleared after _tilde_files returns"
+        );
+    }
+}

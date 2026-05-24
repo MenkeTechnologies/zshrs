@@ -77,3 +77,35 @@ pub fn _gnu_generic(state: &mut CompletionState, command: &str) -> bool {
     state.end_group();
     state.nmatches > 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nonexistent_command_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_gnu_generic(&mut state, "/no/such/binary/at/all/zshrs"));
+    }
+
+    #[test]
+    fn parses_dash_options_from_help_output() {
+        // Any cmd with --help; we don't know which options it lists
+        // without committing to a specific cmd, so just pin: every
+        // emitted match must START WITH `-` (the parser's contract).
+        let mut state = CompletionState::new();
+        state.params.prefix = "-".into();
+        let _ = _gnu_generic(&mut state, "ls");
+        for c in state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+        {
+            assert!(
+                c.str_.starts_with('-'),
+                "parser must emit dash-prefixed options; got `{}`",
+                c.str_
+            );
+        }
+    }
+}

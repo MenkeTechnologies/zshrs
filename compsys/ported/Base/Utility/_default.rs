@@ -10,3 +10,19 @@ use super::_files::{files_execute, FilesOpts};
 pub fn _default(state: &mut CompletionState) -> bool {
     files_execute(state, &FilesOpts::default())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delegates_to_files_execute_default() {
+        // Pin: _default IS files_execute(FilesOpts::default()).
+        // Whether matches return depends on test cwd contents —
+        // we only assert the call doesn't panic and exercises the
+        // delegation path.
+        let mut state = CompletionState::new();
+        state.params.prefix = "Carg".into();
+        let _ = _default(&mut state);
+    }
+}
