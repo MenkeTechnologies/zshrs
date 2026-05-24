@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T21:34:03.634440+00:00
+Generated: 2026-05-24T21:38:56.404506+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 173 stubs across 48 files
+## Summary: 172 stubs across 48 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -33,11 +33,11 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
 | `src/ported/module.rs` | 5 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 5 | `map_opt_desc` (1 / 16) |
-| `src/ported/zle/zle_vi.rs` | 5 | `getvirange` (4 / 82) |
 | `src/ported/init.rs` | 4 | `init_term` (9 / 91) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
 | `src/ported/zle/zle_move.rs` | 4 | `backwardmetafiedchar` (3 / 75) |
+| `src/ported/zle/zle_vi.rs` | 4 | `getvirange` (4 / 82) |
 | `src/ported/glob.rs` | 3 | `get_match_ret` (5 / 71) |
 | `src/ported/modules/db_gdbm.rs` | 3 | `gdbmhashsetfn` (7 / 47) |
 | `src/ported/pattern.rs` | 3 | `patmatch` (4 / 575) |
@@ -243,16 +243,6 @@ python3 scripts/gen_port_stubs.py
 | 694 | `setstypat` | 6 | 58 | 10% |
 | 148 | `freestylenode` | 2 | 10 | 20% |
 
-### `src/ported/zle/zle_vi.rs` — 5 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 227 | `getvirange` | 4 | 82 | 4% |
-| 745 | `virepeatchange` | 1 | 16 | 6% |
-| 1054 | `viquotedinsert` | 2 | 20 | 10% |
-| 580 | `vireplacechars` | 16 | 62 | 25% |
-| 68 | `startvichange` | 6 | 22 | 27% |
-
 ### `src/ported/init.rs` — 4 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -288,6 +278,15 @@ python3 scripts/gen_port_stubs.py
 | 36 | `alignmultiwordleft` | 1 | 16 | 6% |
 | 47 | `alignmultiwordright` | 1 | 13 | 7% |
 | 238 | `beginningoflinehist` | 7 | 32 | 21% |
+
+### `src/ported/zle/zle_vi.rs` — 4 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 227 | `getvirange` | 4 | 82 | 4% |
+| 745 | `virepeatchange` | 1 | 16 | 6% |
+| 580 | `vireplacechars` | 16 | 62 | 25% |
+| 68 | `startvichange` | 6 | 22 | 27% |
 
 ### `src/ported/glob.rs` — 3 stubs
 
