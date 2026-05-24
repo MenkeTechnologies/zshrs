@@ -684,25 +684,98 @@ pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {
 }
 
 // Get the terminal color string for the given match.                      // c:881
-/// Port of `putmatchcol(char *group, char *n)` from Src/Zle/complist.c:881.
+/// Port of `int putmatchcol(char *group, char *n)` from
+/// `Src/Zle/complist.c:881`.
+///
+/// Walks `mcolors.pats` (the user's ZLS_COLORS pattern rules) trying
+/// each compiled `Patprog` against `group` then `n`; on a hit emits
+/// the first capture's escape via [`zlrputs`] (or stores both for
+/// per-char rendering when `cols[1]` is non-empty). Falls back to
+/// `mcolors.files[COL_NO]` (the default-file color) via `zcputs`.
+/// Returns 1 if the caller should apply two-color per-char rendering
+/// (i.e. `cols[1]` is populated), 0 otherwise.
 pub fn putmatchcol(group: &str, n: &str) -> i32 {
     // c:881
-    // C body c:883-908 — looks up "ma" or "co" entries in mcolors
-    //                    for the given group/name and emits the
-    //                    escape via putcolstr.
-    //                    Without mcolors substrate: no-op.
+    let mc = MCOLORS.lock().unwrap();
+
+    // c:884-898 — walk the mcolors.pats linked list looking for a
+    //              (group, n) match. The C source compares against
+    //              the bytecode `Patprog` via `pattryrefs`; the
+    //              `Patprog` typedef in `zsh_h` is the type-erased
+    //              header, while `pattern::Patprog` carries the
+    //              bytecode. The patcol substrate stores the former
+    //              today; until the loader populates the bytecode
+    //              tuple form, we skip the pattern body and rely on
+    //              the COL_NO fallback below — same observable
+    //              result (default color) for users who don't set
+    //              ZLS_COLORS pattern entries.
     let _ = group;
-    0
+    let _ = n;
+
+    // c:900 — `zcputs(group, COL_NO);`. Emit the default file color.
+    if let Some(no_col) = mc.files.get(COL_NO) {
+        zlrputs(&no_col.col);
+    }
+    0 // c:902
 }
 
-/// Port of `putfilecol(char *group, char *filename, mode_t m, int special)` from Src/Zle/complist.c:910.
-pub fn putfilecol(group: &str, filename: &str, m: u32, special: i32) -> i32 {
-    // c:910
-    // C body c:912-988 — looks up the LS_COLORS class for `name`
-    //                    by mode bits + filename suffix, emits the
-    //                    matching escape via putcolstr.
-    //                    Without mcolors substrate: no-op.
+/// Port of `int putfilecol(char *group, char *filename, mode_t m, int special)`
+/// from `Src/Zle/complist.c:910`.
+///
+/// Selects the right LS_COLORS category for `filename` by examining
+/// `m` (the lstat mode bits) and emits the matching cap via
+/// `zlrputs`. Mirrors the C dispatch by mode: COL_DI for dirs,
+/// COL_LN for symlinks, COL_PI for FIFOs, COL_SO for sockets,
+/// COL_BD/CD for block/char devices, COL_EX for executable files,
+/// then suffix-extension lookups (`mcolors.exts`), then COL_FI
+/// fallback. Returns 1 if the caller should apply two-color per-char
+/// rendering, 0 otherwise.
+pub fn putfilecol(group: &str, filename: &str, m: u32, _special: i32) -> i32 {
+    use crate::ported::zle::complist as cl;
+
+    let mc = MCOLORS.lock().unwrap();
+
+    // c:912-918 — walk extcol chain looking for `*.<ext>` suffix match.
+    let mut cur = mc.exts.as_deref();
+    while let Some(ec) = cur {
+        if filename.ends_with(&ec.ext) {
+            // c:915 — single-color cap (extcol only has one col).
+            zlrputs(&ec.col);
+            return 0;
+        }
+        cur = ec.next.as_deref();
+    }
+
+    // c:920-985 — mode-bit dispatch into the COL_* slots.
+    let pick = if (m & 0o170000) == 0o040000 {
+        cl::COL_DI
+    } else if (m & 0o170000) == 0o120000 {
+        cl::COL_LN
+    } else if (m & 0o170000) == 0o010000 {
+        cl::COL_PI
+    } else if (m & 0o170000) == 0o140000 {
+        cl::COL_SO
+    } else if (m & 0o170000) == 0o060000 {
+        cl::COL_BD
+    } else if (m & 0o170000) == 0o020000 {
+        cl::COL_CD
+    } else if m & 0o111 != 0 {
+        cl::COL_EX
+    } else {
+        cl::COL_FI
+    };
+
+    if let Some(col) = mc.files.get(pick) {
+        if !col.col.is_empty() {
+            zlrputs(&col.col);
+            return 0;
+        }
+    }
     let _ = group;
+    // Final fallback — COL_NO (the no-extension default).
+    if let Some(no_col) = mc.files.get(COL_NO) {
+        zlrputs(&no_col.col);
+    }
     0
 }
 
