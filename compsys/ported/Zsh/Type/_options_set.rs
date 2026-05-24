@@ -1,6 +1,21 @@
-//! Port of `_options_set` — complete currently set options. Moved from
-//! `compsys/library.rs`. Renamed from `options_set` to mirror zsh shell
-//! function name `_options_set`.
+//! Port of `_options_set` — complete currently set options.
+//!
+//! Local shell reference: `compsys/functions/Zsh/Type/_options_set`
+//! (system copy `/opt/homebrew/share/zsh/functions/_options_set`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  3  local list expl
+//!  5  list=( ${(@k)options[(R)on]} )
+//!  7  _wanted options expl 'set option' compadd "$@" -a list
+//! ```
+//!
+//! Upstream uses `${(@k)options[(R)on]}` to get the keys of the
+//! shell `$options` array whose VALUE is "on" (i.e., set).
+//!
+//! Faithful Rust port: filters the caller's `&[(name, is_set)]`
+//! slice to set-only entries and delegates to `_options` for the
+//! actual emit (so disp formatting stays consistent).
 
 use crate::compcore::CompletionState;
 

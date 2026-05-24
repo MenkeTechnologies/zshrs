@@ -1,9 +1,26 @@
-//! Port of `_path_files` — complete files with path handling. Moved
-//! from `compsys/library.rs`. Renamed from `path_files` to mirror zsh
-//! shell function name `_path_files`.
+//! Port of `_path_files` — complete files with path handling.
 //!
-//! Also exposes the `PathFilesOpts` struct that callers build to pass
-//! `-W` / `-g` / `-F` / `-P` / `-S` etc.
+//! Local shell reference: `compsys/functions/Unix/Type/_path_files`
+//! (system copy `/opt/homebrew/share/zsh/functions/_path_files`).
+//!
+//! Upstream is the workhorse file/directory completion — ~600 lines
+//! handling cdpath, glob qualifiers, `-W` (search-dirs), `-F`
+//! (ignore-fignore), `-g` (glob filter), `-/` (dirs-only), `-S`
+//! (suffix). Key entry points:
+//! ```text
+//!  3  local -a match mbegin mend
+//!  6  if zstyle -s ":completion:${curcontext}:" file-split-chars splitchars; then
+//!  7    compset -P "*[${(q)splitchars}]"
+//! 12  # Look for glob qualifiers.  Do this first…
+//! ```
+//!
+//! Simplified Rust port: exposes `PathFilesOpts` for caller-side
+//! flag construction (`-W` → search_dirs, `-g` → glob, `-/` →
+//! dirs_only, `-S` → suffix, `-P` → prefix, etc.) and walks the
+//! directory tree with prefix-match + glob filter + extension/
+//! permission classification (`/` for dir, `@` for symlink, `*`
+//! for executable, NOSPACE on dir entries). Drops the cdpath
+//! integration + glob-qualifier parsing (deferred to caller).
 
 use crate::compcore::CompletionState;
 use crate::completion::{Completion, CompletionFlags};

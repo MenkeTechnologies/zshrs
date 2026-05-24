@@ -1,6 +1,27 @@
-//! Port of `_parameters` — complete parameter (variable) names. Moved
-//! from `compsys/library.rs`. Renamed from `parameters` to mirror zsh
-//! shell function name `_parameters`.
+//! Port of `_parameters` — complete parameter (variable) names.
+//!
+//! Local shell reference: `compsys/functions/Zsh/Type/_parameters`
+//! (system copy `/opt/homebrew/share/zsh/functions/_parameters`).
+//!
+//! Upstream shell source (key lines from ~30-line fn):
+//! ```text
+//!  9  if compset -P '*:'; then
+//! 10    _history_modifiers p
+//! 11    return
+//! 12  fi
+//! 18  zparseopts -E -a opts g:=pfilt
+//! 21  if (( $#pfilt )); then
+//! 22    i=( ${(k)parameters[(R)$pfilt[2]]} )
+//! 26    i=( ${(k)parameters} )
+//! ```
+//!
+//! Upstream pulls names from `${(k)parameters}` (built-in assoc
+//! array mapping name→type) with optional `-g pattern` type filter.
+//!
+//! Simplified Rust port: takes a `&HashMap<String, String>` from
+//! the caller (caller pulls live names from runtime paramtab) and
+//! emits names prefix-filtered. The `-g` type filter is not yet
+//! exposed — most call sites want every parameter name.
 
 use std::collections::HashMap;
 
