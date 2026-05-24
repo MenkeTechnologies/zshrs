@@ -8128,8 +8128,7 @@ pub fn scanendscope(pm: &mut param, _flags: i32) {
             }
         };
 
-        // USE_LOCALE branch: LC_*/LANG bumps lc_update_needed.
-        // Global not yet ported; placeholder comment retains intent.
+        // USE_LOCALE branch: LC_*/LANG bumps LC_UPDATE_NEEDED.
         if pm.node.nam.starts_with("LC_") || pm.node.nam == "LANG" {
             LC_UPDATE_NEEDED.store(1, Ordering::SeqCst);
         }
@@ -8360,12 +8359,8 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         if (f & PM_AUTOLOAD) != 0 {
             return;
         }
-        // c:6157-6163 — PM_RO_BY_DESIGN with level check. C uses
-        // `if (hn->level != locallevel) return;` — only show the
-        // entry when its level matches the current scope. The
-        // previous Rust port hardcoded `locallevel = 0` with a
-        // "global not yet wired" comment, but the canonical
-        // global IS at params.rs (declared above). Read it live.
+        // c:6157-6163 — PM_RO_BY_DESIGN with level check: only show
+        // the entry when its level matches the current scope.
         if (f & PM_RO_BY_DESIGN) != 0 {
             let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
             if hn.level != cur_ll {
