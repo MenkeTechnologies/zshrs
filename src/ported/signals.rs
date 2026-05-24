@@ -453,13 +453,35 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 let cur = errflag.load(Ordering::Relaxed);
                 errflag
                     .store(cur | ERRFLAG_INT, Ordering::Relaxed); // c:457
-                                                                                     // c:458-462 — list_pipe/chline/simple_pline branch
-                                                                                     // (loops break, inerrflush, check_cursh_sig) lives
-                                                                                     // in the executor; not yet plumbed.
-                                                                                     // c:463 — `lastval = 128 + SIGINT;`
-                LASTVAL
-                    .store(128 + libc::SIGINT, Ordering::Relaxed);
-                // c:463
+                // c:458-462 — `if (list_pipe || chline || simple_pline)`:
+                // an interactive SIGINT mid-pipeline must break loops,
+                // flush pending input, and signal any cursh job.
+                let in_list_pipe = crate::ported::exec::list_pipe
+                    .load(Ordering::Relaxed) != 0;
+                let chline_nonempty = crate::ported::hist::chline
+                    .lock()
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false);
+                let in_simple_pline = crate::ported::exec::simple_pline
+                    .load(Ordering::Relaxed) != 0;
+                if in_list_pipe || chline_nonempty || in_simple_pline {
+                    // c:459 — `breaks = loops;`
+                    let l = crate::ported::builtin::LOOPS.load(Ordering::Relaxed);
+                    crate::ported::builtin::BREAKS.store(l, Ordering::Relaxed);
+                    // c:460 — `inerrflush();`
+                    crate::ported::input::inerrflush();
+                    // c:461 — `check_cursh_sig(SIGINT);`. Rust port
+                    // takes `(jobtab, sig)`; load the canonical JOBTAB
+                    // snapshot then dispatch.
+                    #[cfg(unix)]
+                    if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
+                        if let Ok(jt) = tab.lock() {
+                            crate::ported::jobs::check_cursh_sig(&jt, libc::SIGINT);
+                        }
+                    }
+                }
+                // c:463 — `lastval = 128 + SIGINT;`
+                LASTVAL.store(128 + libc::SIGINT, Ordering::Relaxed);
             }
         }
         libc::SIGWINCH => {
