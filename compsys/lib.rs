@@ -47,7 +47,7 @@
 ///   * Description rendering: [`describe`] / [`computil`] (`_describe`)
 ///   * File / path completers: [`files`] / [`library`] (`_files`,
 ///     `_directories`, `_path_files`, `_tilde_files`)
-///   * Per-command completers wired in [`main`] (`_git`, `_docker`,
+///   * Per-command completers wired in `main` (`_git`, `_docker`,
 ///     `_cargo`, `_kubectl`, `_terraform`, plus `_ls` / `_cd` / `_cp`
 ///     / `_mv` / `_rm` / `_cat` / `_grep` baseline stubs).
 ///

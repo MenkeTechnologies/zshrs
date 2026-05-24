@@ -3293,7 +3293,7 @@ pub fn permmatches(last: i32) -> i32 {
 /// (str/orig/ipre/ripre/isuf/ppre/psuf/pre/suf/prpre/rems/remf/disp/
 /// autoq) and `zfree(m->brpl, nbeg * sizeof(int))` /
 /// `zfree(m->brsl, nend * sizeof(int))` — all collapse to Rust's
-/// automatic Drop on the owned String / Vec<i32> fields. nbeg/nend
+/// automatic Drop on the owned String / `Vec<i32>` fields. nbeg/nend
 /// kept on the signature for C parity (consumed by C as `zfree` size
 /// args; Rust Vec carries its own length).
 pub fn freematch(m: Cmatch, _nbeg: i32, _nend: i32) {

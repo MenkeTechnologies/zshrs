@@ -137,7 +137,7 @@ pub fn scanpmwidgets(
 // Functions for the zlekeymaps special parameter.                          // c:105
 /// Port of `static char **keymapsgetfn(UNUSED(Param pm))` from
 /// `Src/Zle/zleparameter.c:105-119`. Walks `keymapnamtab` and returns
-/// every keymap name as a sorted Vec<String>.
+/// every keymap name as a sorted `Vec<String>`.
 pub fn keymapsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
     // c:105
     let mut names: Vec<String> = crate::ported::zle::zle_keymap::keymapnamtab()
