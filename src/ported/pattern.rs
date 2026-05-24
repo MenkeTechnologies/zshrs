@@ -2645,7 +2645,7 @@ pub fn patallocstr(
 ) -> Option<String> {
     // c:2132
     // c:2137 — `int needfullpath;`
-    let needfullpath: bool;
+    let mut needfullpath: bool;
     // Working values (mutated when force triggers patmungestring).
     let mut string: &str = string;                                           // c:2133 char *string param
     let mut stringlen: i32 = stringlen;
@@ -2662,10 +2662,15 @@ pub fn patallocstr(
      * current test string.
      */                                                                      // c:2142-2146
     // c:2147 — `needfullpath = (prog->flags & PAT_HAS_EXCLUDP) && pathpos;`
-    // Stub: `pathpos` (`Src/glob.c:pathpos`) tracks current glob path
-    // depth; not yet ported. Treat as 0 so the needfullpath branch is
-    // inactive — same end-state as PAT_HAS_EXCLUDP being clear.
-    let pathpos: i32 = 0;                                                    // c:glob.c pathpos
+    // `pathpos` is the `gd_pathpos` field of `curglobdata` (c:Src/glob.c:166-170
+    // struct globdata; c:197 static curglobdata; c:199-201 macros expand
+    // `pathpos`→`curglobdata.gd_pathpos`). Read directly from the
+    // shared CURGLOBDATA mutex — the canonical port surface for glob
+    // state in zshrs.
+    let pathpos: i32 = crate::ported::glob::CURGLOBDATA
+        .lock()
+        .map(|gd| gd.pathpos as i32)
+        .unwrap_or(0); // c:Src/glob.c:169 gd_pathpos
     needfullpath = (prog.0.flags & PAT_HAS_EXCLUDP as i32) != 0 && pathpos != 0; // c:2147
 
     /* Get the length of the full string when unmetafied. */                 // c:2149
@@ -2683,12 +2688,18 @@ pub fn patallocstr(
     }
     if needfullpath {                                                        // c:2154
         // c:2155 — `patstralloc->unmetalenp = ztrsub(pathbuf + pathpos, pathbuf);`
-        // Stub: `pathbuf` global not yet ported (Src/glob.c). When
-        // pathpos == 0 (above stub), needfullpath is also false, so this
-        // branch is unreachable in current state.
-        patstralloc.unmetalenp = 0;                                          // c:2155 stubbed
+        // `pathbuf` is `curglobdata.gd_pathbuf` (c:Src/glob.c:170, macro
+        // at c:200). ztrsub(end, start) returns unmetafied char count
+        // between pointers. With pathpos in [0, pathbuf.len()] the
+        // Rust analog is ztrsub(pathbuf, 0, pathpos as usize).
+        let pathbuf = crate::ported::glob::CURGLOBDATA
+            .lock()
+            .map(|gd| gd.pathbuf.clone())
+            .unwrap_or_default(); // c:Src/glob.c:170 gd_pathbuf
+        let p_end = (pathpos as usize).min(pathbuf.len());
+        patstralloc.unmetalenp = ztrsub(&pathbuf, 0, p_end) as i32;          // c:2155
         if patstralloc.unmetalenp == 0 {                                     // c:2156
-            // c:2157 — `needfullpath = 0;` (recompute since len was 0).
+            needfullpath = false;                                            // c:2157 (`needfullpath = 0;`)
         }
     } else {                                                                 // c:2158
         patstralloc.unmetalenp = 0;                                          // c:2159
