@@ -853,17 +853,28 @@ pub fn bin_zle_refresh(_name: &str, args: &[String], ops: &options, _func: i32) 
 /// }
 /// ```
 /// `zle -M msg` — display a transient message during widget run.
-pub fn bin_zle_mesg(_name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
+pub fn bin_zle_mesg(name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:459
-    // c:459-468 — `if (!zleactive) { zwarnnam; return 1; }
-    //               showmsg(*args); if (sfcontext != SFC_WIDGET)
-    //                   zrefresh(); return 0`.
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
+        crate::ported::utils::zwarnnam(
+            name,
+            "can only be called from widget function",
+        );
         return 1; // c:463
     }
-    // c:465 — `showmsg(*args); zrefresh()`. zshrs's status-line
-    // display is host-driven (the prompt drawer reads from
-    // `$STATUSLINE`); zrefresh fires on the next event loop tick.
+    if let Some(arg) = args.first() {
+        crate::ported::zle::zle_utils::showmsg(arg); // c:465
+    }
+    // c:467 — `if (sfcontext != SFC_WIDGET) zrefresh();`. SFC_WIDGET
+    // means the call came from a user widget body and the editor
+    // will redraw soon; outside that path, redraw now so the message
+    // is visible before the next event-loop tick.
+    use crate::ported::zsh_h::SFC_WIDGET;
+    if crate::ported::builtin::SFCONTEXT.load(std::sync::atomic::Ordering::Relaxed)
+        != SFC_WIDGET
+    {
+        crate::ported::zle::zle_refresh::zrefresh(); // c:467
+    }
     0 // c:468
 }
 
