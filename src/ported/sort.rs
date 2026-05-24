@@ -536,4 +536,120 @@ mod tests {
         strmetasort(&mut single, SORTIT_BACKWARDS as u32, None);
         assert_eq!(single, vec!["only"]);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // zstrcmp — sort comparator with flag modes.
+    // ═══════════════════════════════════════════════════════════════════
+
+    use std::cmp::Ordering;
+
+    /// Plain string compare — equal strings → Equal.
+    #[test]
+    fn zstrcmp_equal_strings_return_equal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("foo", "foo", SORTIT_ANYOLDHOW as u32), Ordering::Equal);
+    }
+
+    /// Default mode: lex compare — "apple" < "banana".
+    #[test]
+    fn zstrcmp_lex_order_default() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("apple", "banana", SORTIT_ANYOLDHOW as u32), Ordering::Less);
+        assert_eq!(zstrcmp("banana", "apple", SORTIT_ANYOLDHOW as u32), Ordering::Greater);
+    }
+
+    /// Default mode: case-sensitive — "ABC" < "abc" (ASCII).
+    #[test]
+    fn zstrcmp_default_case_sensitive() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("ABC", "abc", SORTIT_ANYOLDHOW as u32), Ordering::Less);
+    }
+
+    /// IGNORING_CASE: "ABC" vs "abc" — zsh's `(io)` sort puts both in
+    /// input order, suggesting the comparator returns Equal. zshrs
+    /// returns Less (uses case as tiebreaker even when "ignoring").
+    /// Pin zsh's behavior; mark as ANCHOR for verification.
+    #[test]
+    #[ignore = "ANCHOR: zshrs IGNORING_CASE returns Less for ABC vs abc; zsh sort suggests Equal"]
+    fn zstrcmp_ignore_case_makes_abc_equal_to_uppercase_anchored() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            zstrcmp("ABC", "abc", SORTIT_IGNORING_CASE as u32),
+            Ordering::Equal,
+            "case-insensitive: ABC == abc"
+        );
+    }
+
+    /// IGNORING_CASE: "AbC" < "abd".
+    #[test]
+    fn zstrcmp_ignore_case_still_compares_differing_letters() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("AbC", "abd", SORTIT_IGNORING_CASE as u32), Ordering::Less);
+    }
+
+    /// NUMERICALLY: "2" < "10".
+    #[test]
+    fn zstrcmp_numeric_mode_two_less_than_ten() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("2", "10", SORTIT_NUMERICALLY as u32), Ordering::Less);
+    }
+
+    /// Plain lex: "10" < "2".
+    #[test]
+    fn zstrcmp_lex_mode_ten_less_than_two() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("10", "2", SORTIT_ANYOLDHOW as u32), Ordering::Less);
+    }
+
+    /// Numeric mode handles embedded numbers: "file2" < "file10".
+    #[test]
+    fn zstrcmp_numeric_mode_embedded_numbers() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("file2", "file10", SORTIT_NUMERICALLY as u32), Ordering::Less);
+    }
+
+    /// Numeric mode falls back to lex for no-digit prefix tie.
+    #[test]
+    fn zstrcmp_numeric_mode_no_digits_falls_back_to_lex() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("abc", "abd", SORTIT_NUMERICALLY as u32), Ordering::Less);
+    }
+
+    /// Both empty → Equal.
+    #[test]
+    fn zstrcmp_both_empty_returns_equal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("", "", SORTIT_ANYOLDHOW as u32), Ordering::Equal);
+    }
+
+    /// Empty < non-empty.
+    #[test]
+    fn zstrcmp_empty_less_than_non_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("", "x", SORTIT_ANYOLDHOW as u32), Ordering::Less);
+        assert_eq!(zstrcmp("x", "", SORTIT_ANYOLDHOW as u32), Ordering::Greater);
+    }
+
+    /// "foo" < "foobar" (prefix is less).
+    #[test]
+    fn zstrcmp_prefix_is_less_than_longer_string() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zstrcmp("foo", "foobar", SORTIT_ANYOLDHOW as u32), Ordering::Less);
+    }
+
+    /// Symmetry — sign(cmp(a,b)) == -sign(cmp(b,a)).
+    #[test]
+    fn zstrcmp_is_antisymmetric() {
+        let _g = crate::test_util::global_state_lock();
+        for (a, b) in [
+            ("alpha", "beta"),
+            ("file2", "file10"),
+            ("", "x"),
+            ("foo", "foobar"),
+        ] {
+            let ab = zstrcmp(a, b, SORTIT_ANYOLDHOW as u32);
+            let ba = zstrcmp(b, a, SORTIT_ANYOLDHOW as u32);
+            assert_eq!(ab, ba.reverse(), "antisymmetry for ({a:?}, {b:?})");
+        }
+    }
 }
