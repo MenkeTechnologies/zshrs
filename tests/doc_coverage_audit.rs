@@ -22,15 +22,13 @@ fn is_placeholder(s: &str) -> bool {
 // These match what the IntelliJ tool window's reflection panel lists.
 // Audit script source: src/extensions/lsp.rs::dump_reflection_json.
 
-// Canonical reserved-word inventory minus declaration commands —
-// matches what `dump_reflection_json` / `dump_reference_html` emit
-// in the IntelliJ Keywords tab. Sourced at test-time from the same
-// `ported::hashtable::RESWDS` table so the test can't drift from the
-// canonical port of `Src/hashtable.c:1076-1108`.
+// Canonical reserved-word inventory — same source as `dump_reflection_json`
+// / `dump_reference_html`'s Keywords tab. All 31 entries from the
+// ported `Src/hashtable.c:1076-1108` reswds[] table, matching the
+// `man zshmisc` "Reserved Words" section (`Doc/Zsh/grammar.yo:501-504`).
 fn canonical_keywords() -> Vec<&'static str> {
     zsh::ported::hashtable::RESWDS
         .iter()
-        .filter(|(_, t)| *t != zsh::ported::zsh_h::TYPESET)
         .map(|(n, _)| *n)
         .collect()
 }
@@ -73,21 +71,32 @@ fn every_keyword_has_real_doc() {
 }
 
 #[test]
-fn keywords_inventory_excludes_declaration_commands() {
-    // Sanity pin: declaration commands (local / typeset / declare /
-    // export / readonly / integer / float) must NOT appear in the
-    // keyword inventory — the user's complaint was that the IntelliJ
-    // Keywords tab listed `export` / `float` / `integer` as keywords
-    // when they're really builtins (aliased to `typeset` by the parser).
-    let kws = canonical_keywords();
-    for declarer in ["local", "typeset", "declare", "export", "readonly", "integer", "float"] {
-        assert!(
-            !kws.contains(&declarer),
-            "declaration command `{}` leaked into the keyword inventory: {:?}",
-            declarer,
-            kws,
-        );
-    }
+fn keywords_inventory_matches_man_zshmisc_reserved_words() {
+    // Pin: the keyword inventory must mirror `man zshmisc` "Reserved
+    // Words" (`Doc/Zsh/grammar.yo:501-504`) verbatim. All 31 entries
+    // including the declarers (`declare` / `export` / `float` /
+    // `integer` / `local` / `readonly` / `typeset`) — those are
+    // reserved AND also builtins; both classifications apply.
+    let kws: std::collections::BTreeSet<&str> = canonical_keywords().into_iter().collect();
+    let upstream: std::collections::BTreeSet<&str> = [
+        "!", "[[", "{", "}",
+        "case", "coproc", "declare", "do", "done", "elif", "else",
+        "end", "esac", "export", "fi", "float", "for", "foreach",
+        "function", "if", "integer", "local", "nocorrect", "readonly",
+        "repeat", "select", "then", "time", "typeset", "until", "while",
+    ]
+    .into_iter()
+    .collect();
+    let only_in_zshrs: Vec<_> = kws.difference(&upstream).collect();
+    let only_in_upstream: Vec<_> = upstream.difference(&kws).collect();
+    assert!(
+        only_in_zshrs.is_empty() && only_in_upstream.is_empty(),
+        "keyword inventory drift from man zshmisc:\n\
+         only in zshrs: {:?}\n\
+         only in upstream: {:?}",
+        only_in_zshrs,
+        only_in_upstream,
+    );
 }
 
 #[test]

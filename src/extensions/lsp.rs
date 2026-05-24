@@ -1262,6 +1262,30 @@ pub fn lookup_doc(name: &str) -> String {
     if let Some((canon, body)) = crate::zsh_keyword_docs::lookup_keyword_doc(name) {
         return format!("**{}** — _zsh keyword_\n\n{}", canon, body);
     }
+    // Hard-classify canonical reserved words BEFORE consulting the
+    // yodl builtin table — but only when the name ISN'T also a real
+    // builtin in `ported::builtin::BUILTINS`. `mod_complist.yo`
+    // (LS_COLORS docs) defines `item(tt(fi 0))(for regular files)`,
+    // `item(tt(no 0))(...)`, `item(tt(do 0))(...)` etc. The multi-word
+    // `tt(NAME N)` regex in the gen script extracts `fi` / `no` / `do`
+    // as builtin names — without this guard, hover on `fi` returned
+    // "fi — zsh builtin: for regular files". The declarers (`export`,
+    // `typeset`, `float`, `integer`, etc.) ARE real builtins so they
+    // must keep flowing to the substantive yodl builtin doc.
+    let is_keyword = crate::ported::hashtable::RESWDS
+        .iter()
+        .any(|(n, _)| *n == name);
+    let is_real_builtin = crate::ported::builtin::BUILTINS
+        .iter()
+        .any(|b| b.node.nam == name);
+    if is_keyword && !is_real_builtin {
+        if let Some(d) = KEYWORD_DOCS.iter().find(|(k, _)| *k == name) {
+            return format!("**{}** — _zsh keyword_\n\n{}", d.0, d.1);
+        }
+        // Reserved word with no hand fallback — emit a minimal stub
+        // instead of falling through to a bogus builtin entry.
+        return format!("**{}** — _zsh keyword_", name);
+    }
     if let Some((canon, body)) = crate::zsh_builtin_docs::lookup_builtin_doc(name) {
         return format!("**{}** — _zsh builtin_\n\n{}", canon, body);
     }
@@ -3475,6 +3499,22 @@ const KEYWORD_DOCS: &[(&str, &str)] = &[
         "Command-group close brace. Pairs with `{ … }`. Reserved word — preceded by `;` or newline.",
     ),
     (
+        "!",
+        "Pipeline negation. `! cmd` inverts `cmd`'s exit status — zero becomes non-zero, non-zero becomes zero. As the first word of a command. Distinct from `!` history expansion (which is a lexer-stage substitution, not a reserved word).",
+    ),
+    (
+        "fi",
+        "Closes an `if` block. `if cmd; then body; fi`. Required terminator — without it the parser keeps reading until EOF.",
+    ),
+    (
+        "done",
+        "Closes a `for` / `foreach` / `while` / `until` / `select` / `repeat` loop body. `for v in a b c; do echo $v; done`. Required terminator.",
+    ),
+    (
+        "end",
+        "Closes the alternate-form compound statement (`foreach NAME (WORDS) … end`, `if COND … end`, `while COND … end`). Csh-style syntactic mirror of `fi` / `done` / `esac` for users coming from csh / tcsh.",
+    ),
+    (
         "declare",
         "Alias for `typeset`. Set variable attributes. `-a` array, `-A` assoc, `-i` integer, `-r` readonly.",
     ),
@@ -3717,11 +3757,16 @@ pub fn dump_reflection_json() -> String {
     // / float) that the parser folds into the `typeset` builtin. They
     // already show up in the Builtins tab; listing them in Keywords too
     // duplicates them and miscategorizes them as control-flow.
+    // Keywords sourced from the canonical `reswds[]` table at
+    // `Src/hashtable.c:1076-1108` (port: `ported::hashtable::RESWDS`).
+    // Per `man zshmisc` "Reserved Words" (`Doc/Zsh/grammar.yo:501-504`),
+    // ALL 31 names are reserved words — including `declare`/`export`/
+    // `float`/`integer`/`local`/`readonly`/`typeset`. Those also exist
+    // as builtins (the parser folds them into the `typeset` builtin via
+    // the `TYPESET` lextok), but `man zshmisc` lists them as reserved
+    // first. We list them in both tabs.
     let mut keywords = serde_json::Map::new();
-    for (name, token) in crate::ported::hashtable::RESWDS {
-        if *token == crate::ported::zsh_h::TYPESET {
-            continue;
-        }
+    for (name, _token) in crate::ported::hashtable::RESWDS {
         keywords.insert(name.to_string(), Value::String("keyword".into()));
         all.insert(name.to_string(), Value::String("keyword".into()));
     }
@@ -3776,6 +3821,92 @@ pub fn dump_reflection_json() -> String {
     .unwrap_or_else(|_| "{}".into())
 }
 
+/// Every canonical name across every registry, sorted and de-duped.
+/// Drives `zshrs --names` (fed into the `_zshrs` completer for
+/// `--docs <TAB>`) and the closest-name fuzzy-suggest fallback when
+/// `--docs FOO` doesn't resolve.
+pub fn all_canonical_names() -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut set: BTreeSet<String> = BTreeSet::new();
+    for b in crate::ported::builtin::BUILTINS.iter() {
+        set.insert(b.node.nam.clone());
+    }
+    for (n, t) in crate::ported::hashtable::RESWDS {
+        if *t == crate::ported::zsh_h::TYPESET {
+            continue;
+        }
+        set.insert((*n).to_string());
+    }
+    for o in crate::ported::options::ZSH_OPTIONS_SET.iter() {
+        set.insert((*o).to_string());
+    }
+    for s in SPECIAL_VARS {
+        set.insert((*s).to_string());
+    }
+    for n in compsys::COMPSYS_FN_NAMES {
+        set.insert((*n).to_string());
+    }
+    for n in crate::ext_builtins::EXT_BUILTIN_NAMES {
+        set.insert((*n).to_string());
+    }
+    for n in crate::daemon::builtins::ZSHRS_BUILTIN_NAMES {
+        set.insert((*n).to_string());
+    }
+    set.into_iter().collect()
+}
+
+/// Closest canonical name to `query` by edit distance, when the
+/// distance is small enough to be useful. Used by `--docs FOO` to
+/// suggest "did you mean `bar`?" on typo.
+///
+/// Threshold: ≤ max(2, query.len() / 3). Below that we'd suggest
+/// random unrelated names; the slop scales with input length so
+/// `xy` doesn't pick `if` but `compdefffff` can still find `compdef`.
+pub fn closest_name(query: &str) -> Option<String> {
+    let names = all_canonical_names();
+    let q_bare = query.strip_prefix('$').unwrap_or(query);
+    let max_dist = std::cmp::max(2, q_bare.len() / 3);
+    let mut best: Option<(usize, String)> = None;
+    for n in names {
+        let n_bare = n.strip_prefix('$').unwrap_or(&n);
+        let d = edit_distance(q_bare, n_bare);
+        if d > max_dist {
+            continue;
+        }
+        match best {
+            None => best = Some((d, n)),
+            Some((bd, _)) if d < bd => best = Some((d, n)),
+            _ => {}
+        }
+    }
+    best.map(|(_, n)| n)
+}
+
+/// Damerau-Levenshtein-lite (insertions + deletions + substitutions,
+/// no transpositions). Hand-rolled to avoid a dependency on
+/// `strsim` / `edit-distance` crates. O(m·n) with rolling two-row buffer.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let av: Vec<char> = a.chars().collect();
+    let bv: Vec<char> = b.chars().collect();
+    let m = av.len();
+    let n = bv.len();
+    if m == 0 { return n; }
+    if n == 0 { return m; }
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut cur: Vec<usize> = vec![0; n + 1];
+    for i in 1..=m {
+        cur[0] = i;
+        for j in 1..=n {
+            let cost = if av[i - 1] == bv[j - 1] { 0 } else { 1 };
+            cur[j] = (cur[j - 1] + 1)
+                .min(prev[j] + 1)
+                .min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[n]
+}
+
 /// Render the full LSP knowledge base as the four chapter `<section>`s
 /// that `docs/reference.html` splices in between its `<!-- BEGIN/END
 /// LSP-REFERENCE -->` markers. One `<article class="doc-entry">` per
@@ -3811,14 +3942,15 @@ pub fn dump_reference_html() -> String {
         "builtin",
     );
 
-    // ── keywords (canonical `reswds[]` minus declaration commands) ──
+    // ── keywords (canonical `reswds[]`) ─────────────────────────────
     // Source: `ported::hashtable::RESWDS` — direct port of upstream
-    // `Src/hashtable.c:1076-1108`. Skip `TYPESET`-tokened entries (those
-    // are declaration commands that double as builtins; including them
-    // here would duplicate the Builtin Index entries).
+    // `Src/hashtable.c:1076-1108`. Mirrors the `man zshmisc` "Reserved
+    // Words" section (`Doc/Zsh/grammar.yo:501-504`) verbatim — every
+    // one of the 31 entries (including the declarers `declare` /
+    // `export` / `float` / `integer` / `local` / `readonly` / `typeset`,
+    // which are reserved AND also exist as builtins).
     let keywords: Vec<String> = crate::ported::hashtable::RESWDS
         .iter()
-        .filter(|(_, t)| *t != crate::ported::zsh_h::TYPESET)
         .map(|(n, _)| n.to_string())
         .collect();
     write_chapter(
@@ -3827,11 +3959,11 @@ pub fn dump_reference_html() -> String {
         "Keyword Index",
         &format!(
             "{} entries · zsh reserved words from <code>Src/hashtable.c</code> \
-             <code>reswds[]</code>. Declaration commands (<code>local</code>, \
-             <code>typeset</code>, <code>declare</code>, <code>export</code>, \
-             <code>readonly</code>, <code>integer</code>, <code>float</code>) \
-             are reserved at the grammar level but live as builtins, so they \
-             appear in the Builtin Index only — not duplicated here.",
+             <code>reswds[]</code>. Mirrors the <code>man zshmisc</code> \
+             \"Reserved Words\" section. Declarers (<code>declare</code>, \
+             <code>export</code>, <code>float</code>, <code>integer</code>, \
+             <code>local</code>, <code>readonly</code>, <code>typeset</code>) \
+             are reserved AND also appear in the Builtin Index — they're both.",
             keywords.len()
         ),
         &keywords,
