@@ -41,13 +41,15 @@ use zsh::{highlight_shell, validate_command, HighlightRole, ValidationStatus};
 /// Render an LSP hover card (`**name** — _kind_\n\n<body>`) as a
 /// colored terminal page. Matches the `stryke docs NAME` shape:
 ///
-///     CYAN  name             NORMAL
-///     DIM   ───────────────  NORMAL
-///     DIM   zsh keyword      NORMAL    (or whatever kind)
+/// ```text
+///   CYAN  name             NORMAL
+///   DIM   ───────────────  NORMAL
+///   DIM   zsh keyword      NORMAL    (or whatever kind)
 ///
-///     body paragraph 1, wrapped to ~term width…
+///   body paragraph 1, wrapped to ~term width…
 ///
-///         GREEN indented code block GREEN  (code-fence or 4-sp indent)
+///       GREEN indented code block GREEN  (code-fence or 4-sp indent)
+/// ```
 ///
 /// Inline backticks → cyan; `**bold**` → ANSI bold (kept readable when
 /// `color=false`, which strips all escapes and leaves plain markdown).
@@ -255,7 +257,7 @@ fn terminal_size() -> Result<(u16, u16), std::io::Error> {
     use std::process::Command;
     let out = Command::new("stty").arg("size").output()?;
     let s = String::from_utf8_lossy(&out.stdout);
-    let mut parts = s.trim().split_whitespace();
+    let mut parts = s.split_whitespace();
     let rows: u16 = parts
         .next()
         .and_then(|x| x.parse().ok())
@@ -277,7 +279,7 @@ fn terminal_size() -> Result<(u16, u16), std::io::Error> {
 /// human-readable reference docs alongside your shell scripts —
 /// extracts `##` doc-comments paired with the function decl below.
 fn run_gen_docs_subcommand(args: &[&str]) -> i32 {
-    if args.first().map(|s| *s) == Some("-h") || args.first().map(|s| *s) == Some("--help") {
+    if args.first().copied() == Some("-h") || args.first().copied() == Some("--help") {
         println!("usage: zshrs --gen-docs [PATH] [--out DIR]");
         println!();
         println!("Walk PATH (default `.`) for `.zsh` / `.sh` / `.bash` / `.ksh`");
@@ -1292,8 +1294,8 @@ pub fn zshrs_main() {
             }
             // Any remaining `--*` is unknown. C zsh emits
             // `zsh: no such option: <name>` (no leading dashes); match that.
-            if a.starts_with("--") {
-                eprintln!("zshrs: no such option: {}", &a[2..]);
+            if let Some(name) = a.strip_prefix("--") {
+                eprintln!("zshrs: no such option: {}", name);
                 std::process::exit(1);
             }
             out.push(a.clone());

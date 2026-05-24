@@ -312,11 +312,7 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
                             found_close = true;
                             break;
                         }
-                        if bytes[j] == b'\\' && !escape {
-                            escape = true;
-                        } else {
-                            escape = false;
-                        }
+                        escape = bytes[j] == b'\\' && !escape;
                         j += 1;
                     }
                     if found_close {
