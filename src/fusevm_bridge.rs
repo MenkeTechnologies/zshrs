@@ -922,11 +922,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    vm.register_builtin(BUILTIN_COMPOPT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_compopt(&args));
-        Value::Status(status)
-    });
 
     vm.register_builtin(BUILTIN_COMPADD, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -1271,6 +1266,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_overridable!(vm, BUILTIN_UNAME, "uname", builtin_uname);
     reg_overridable!(vm, BUILTIN_DATE, "date", builtin_date);
     reg_overridable!(vm, BUILTIN_MKTEMP, "mktemp", builtin_mktemp);
+    // `cp` — zshrs extension (NOT in upstream zsh; upstream's
+    // zsh/files module ships `ln`/`mv`/`rm`/`chmod`/`chown` but no
+    // `cp`). In-process implementation in
+    // `ext_builtins::cp_impl` — recursive copy with -r/-R, -f, -i,
+    // -n, -p (chown + utimensat), -v. ID 263 is the first slot
+    // past fusevm's built-in range (260-262) and before BUILTIN_MAX
+    // (280).
+    pub const BUILTIN_CP: u16 = 263;
+    reg_overridable!(vm, BUILTIN_CP, "cp", builtin_cp);
 
     // BUILTIN_EXPAND_WORD_RUNTIME (id 281) was a legacy JSON round-trip
     // bridge that no chunk emits anymore. The constant + handler are
