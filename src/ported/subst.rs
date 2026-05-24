@@ -10540,6 +10540,94 @@ mod tests {
         );
         crate::ported::params::unsetparam("PS_ASSIGN3");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Compound chains and substring-on-flag-result forms.
+    // Anchored to `print -r --` in zsh 5.9.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `${(U)X:0:3}` — uppercase X then take first 3 chars.
+    /// X=Hello → ${(U)X}=HELLO → ${(U)X:0:3} = "HEL".
+    #[test]
+    fn paramsubst_compound_uppercase_then_substring() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PCC1", "Hello", "${(U)PCC1:0:3}"),
+            "HEL"
+        );
+    }
+
+    /// `${(U)X:1}` — uppercase + drop first char.
+    /// Hello → HELLO → ELLO.
+    #[test]
+    fn paramsubst_compound_uppercase_then_drop_first() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PCC2", "Hello", "${(U)PCC2:1}"),
+            "ELLO"
+        );
+    }
+
+    /// `${#${(U)X}}` — length of uppercase result. = 5 for "Hello".
+    /// Nested ${(U)...} inside ${#...}.
+    #[test]
+    fn paramsubst_compound_length_of_uppercase() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PCC3", "Hello", "${#${(U)PCC3}}"),
+            "5"
+        );
+    }
+
+    /// `${(L)X##*B}` — lowercase then strip longest *B prefix.
+    /// FOOBARBAZ → fooBARBAZ→... actually zsh applies strip BEFORE the
+    /// flag conversion order. Verified output: "az" (strip then lower).
+    #[test]
+    fn paramsubst_compound_lowercase_strip_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PCC4", "FOOBARBAZ", "${(L)PCC4##*B}"),
+            "az",
+            "zsh: ${{(L)FOOBARBAZ##*B}} → 'az' (strip + lower)"
+        );
+    }
+
+    /// `${#${X##*B}}` — length of prefix-strip result.
+    /// FOOBARBAZ##*B = "AZ" → length 2.
+    #[test]
+    fn paramsubst_compound_length_of_strip_result() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PCC5", "FOOBARBAZ", "${#${PCC5##*B}}"),
+            "2"
+        );
+    }
+
+    /// `${${S#*:}#*:}` — double-strip prefix (chained nested expansion).
+    /// alpha:beta:gamma → beta:gamma → gamma.
+    /// **Real zsh: "gamma". zshrs: "beta:gamma" — outer prefix-strip
+    /// doesn't apply to the inner result.** Bug.
+    #[test]
+    #[ignore = "ZSHRS BUG: nested ${${X#*:}#*:} only applies inner prefix-strip; outer skipped"]
+    fn paramsubst_nested_double_strip_prefix_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PCC6", "alpha:beta:gamma", "${${PCC6#*:}#*:}"),
+            "gamma",
+            "zsh: alpha:beta:gamma → beta:gamma → gamma"
+        );
+    }
+
+    /// `${${S%:*}%:*}` — double-strip suffix.
+    /// alpha:beta:gamma → alpha:beta → alpha.
+    #[test]
+    fn paramsubst_nested_double_strip_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            psubst_one("PCC7", "alpha:beta:gamma", "${${PCC7%:*}%:*}"),
+            "alpha"
+        );
+    }
 } // c:3193
 
 // ============================================================================
