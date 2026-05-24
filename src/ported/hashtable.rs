@@ -696,7 +696,7 @@ pub fn scanmatchtable<T: HashNodeFlags, F: FnMut(&str, &T)>(
 impl alias_table {
     pub fn new() -> Self {
         Self {
-            table: HashMap::new(),
+            table: indexmap::IndexMap::new(),
         }
     }
 
@@ -2275,7 +2275,15 @@ pub struct reswd_table {
 /// **NOT C-FAITHFUL — Rust-only typed wrapper.** See WARNING on
 /// `cmdnam_table` for the canonical-port direction.
 pub struct alias_table {
-    table: HashMap<String, alias>,
+    // c:Src/hashtable.c:1186 — aliastab is a HashTable. C's iteration
+    // order is bucket-walk through hash(name); zsh's order is therefore
+    // deterministic per-name but not insertion-order. Tests anchored
+    // to real zsh (zinit/p10k parity) expect insertion-order iteration
+    // (declarations appear in script order) because that's what users
+    // see in practice with small alias counts. IndexMap preserves
+    // insertion order — closer to zsh's observed behavior than the
+    // previous HashMap (randomized).
+    table: indexmap::IndexMap<String, alias>,
 }
 
 // Mirrors C's file-statics at hashtable.c:1517:
