@@ -6,7 +6,7 @@ use compsys::{
     arguments_execute, build_cache_from_fpath,
     cache::{default_cache_path, CompsysCache},
     cache_is_valid, compadd_execute, compinit, compinit_lazy, compset_execute, describe_execute,
-    do_completion, functions, get_system_fpath, load_from_cache, native_describe, ArgumentsSpec,
+    do_completion, ported, get_system_fpath, load_from_cache, native_describe, ArgumentsSpec,
     CompDescribe, CompParams, CompTags, CompadOpts, Completion, CompletionReceiver,
     CompletionState, CompsetOp, DescribeItem, DescribeOpts, ZStyleStore,
 };
@@ -570,31 +570,39 @@ fn test_functions() {
     println!("\n--- Testing functions module ---");
 
     // Test glob matching
-    assert!(functions::glob_match("*.rs", "zle_main"));
-    assert!(functions::glob_match("foo*", "foobar"));
-    assert!(functions::glob_match("*.txt", "readme.txt"));
-    assert!(!functions::glob_match("*.rs", "main.txt"));
+    assert!(ported::shared::glob_match("*.rs", "zle_main"));
+    assert!(ported::shared::glob_match("foo*", "foobar"));
+    assert!(ported::shared::glob_match("*.txt", "readme.txt"));
+    assert!(!ported::shared::glob_match("*.rs", "main.txt"));
     println!("  glob_match: OK");
 
     // Test edit distance
-    assert_eq!(functions::edit_distance("foo", "foo"), 0);
-    assert_eq!(functions::edit_distance("foo", "fob"), 1);
-    assert_eq!(functions::edit_distance("kitten", "sitting"), 3);
+    assert_eq!(ported::shared::edit_distance("foo", "foo"), 0);
+    assert_eq!(ported::shared::edit_distance("foo", "fob"), 1);
+    assert_eq!(ported::shared::edit_distance("kitten", "sitting"), 3);
     println!("  edit_distance: OK");
 
     // Test compiled arg spec
-    let spec = functions::CompiledArgSpec::parse("*:file:_files").unwrap();
+    let spec = ported::CompiledArgSpec::parse("*:file:_files").unwrap();
     assert_eq!(spec.pattern, "*");
     assert_eq!(spec.description, "file");
     assert_eq!(spec.action, "_files");
     println!("  CompiledArgSpec: OK");
 
-    // Test numbers completion
+    // Test numbers completion. The faithful _numbers port doesn't
+    // enumerate min..max (DoS-safe); it emits a description message
+    // for entry mode.
     let mut state = CompletionState::from_line("pick ", 5);
-    let matched = functions::_numbers(&mut state, 1, 10, 1, Some("number"));
+    let opts = ported::NumbersOpts {
+        description: "number",
+        min: Some("1"),
+        max: Some("10"),
+        ..Default::default()
+    };
+    let matched = ported::_numbers(&mut state, &opts);
     assert!(matched);
-    assert!(state.nmatches > 0);
-    println!("  numbers: OK (matched {} numbers)", state.nmatches);
+    assert!(state.nmessages > 0, "expected entry-mode description message");
+    println!("  numbers: OK (description emitted, no DoS-enumeration)");
 
     // Test sub_commands
     let mut state = CompletionState::from_line("git ", 4);
@@ -603,7 +611,7 @@ fn test_functions() {
         ("push".to_string(), "Push to remote".to_string()),
         ("pull".to_string(), "Pull from remote".to_string()),
     ];
-    let matched = functions::_sub_commands(&mut state, &commands);
+    let matched = ported::_sub_commands(&mut state, &commands);
     assert!(matched);
     assert_eq!(state.nmatches, 3);
     println!("  sub_commands: OK");
@@ -617,14 +625,14 @@ fn test_functions() {
         "git checkout main".to_string(),
         "grep foo bar".to_string(),
     ];
-    let matched = functions::_history(&mut state, &history);
+    let matched = ported::_history(&mut state, &history);
     assert!(matched);
     assert_eq!(state.nmatches, 2); // "git commit" and "git checkout"
     println!("  history: OK (matched {} entries)", state.nmatches);
 
     // Test expand (tilde)
     let mut state = CompletionState::from_line("cd ~", 4);
-    let expanded = functions::expand(&mut state);
+    let expanded = ported::_expand(&mut state);
     if std::env::var("HOME").is_ok() {
         assert!(expanded);
         println!("  expand (tilde): OK");
@@ -639,7 +647,7 @@ fn test_functions() {
         "comment".to_string(),
         "commerce".to_string(),
     ];
-    let matched = functions::_correct_word(&mut state, &words);
+    let matched = ported::_correct_word(&mut state, &words);
     assert!(matched);
     println!("  correct_word: OK (found {} corrections)", state.nmatches);
 
