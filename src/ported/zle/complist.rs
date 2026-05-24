@@ -1776,7 +1776,7 @@ pub fn singledraw() -> i32 {
     }
     if mc1 != 0 {
         // c:1954
-        tcmultout("TCRIGHT", mc1); // c:1955
+        tcmultout(crate::ported::zsh_h::TCRIGHT, crate::ported::zsh_h::TCMULTRIGHT, mc1); // c:1955
     }
 
     // c:1957-1959 — `g = mgtab[ml1 * zterm_columns + mc1];
@@ -1799,7 +1799,7 @@ pub fn singledraw() -> i32 {
     let mlprinted = MLPRINTED.load(Ordering::SeqCst);
     if mlprinted != 0 {
         // c:1960
-        tcmultout("TCUP", mlprinted); // c:1961
+        tcmultout(crate::ported::zsh_h::TCUP, crate::ported::zsh_h::TCMULTUP, mlprinted); // c:1961
     }
     // c:1962 — putc('\r', shout)
     let fd = SHTTY.load(Ordering::Relaxed);
@@ -1813,7 +1813,7 @@ pub fn singledraw() -> i32 {
     }
     if mc2 != 0 {
         // c:1966
-        tcmultout("TCRIGHT", mc2); // c:1967
+        tcmultout(crate::ported::zsh_h::TCRIGHT, crate::ported::zsh_h::TCMULTRIGHT, mc2); // c:1967
     }
 
     let idx2 = (ml2 * zterm_columns + mc2) as usize;
@@ -1833,7 +1833,7 @@ pub fn singledraw() -> i32 {
 
     if mlprinted != 0 {
         // c:1972
-        tcmultout("TCUP", mlprinted); // c:1973
+        tcmultout(crate::ported::zsh_h::TCUP, crate::ported::zsh_h::TCMULTUP, mlprinted); // c:1973
     }
     let _ = write_loop(out_fd, b"\r"); // c:1974
 

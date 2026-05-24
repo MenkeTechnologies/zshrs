@@ -1371,21 +1371,71 @@ pub fn moveto(row: usize, col: usize) {
     );
 }
 
-/// Port of `void tcmultout(int cap, int multcap, int ct)` from
-/// `Src/Zle/zle_refresh.c:2163`. The C version tries the multi-arg
-/// `multcap` capability first (`tcoutarg(multcap, ct)`) and only
-/// falls back to a single-cap loop when `multcap` is unavailable.
-/// Rust port (without termcap probe) goes straight to the loop —
-/// `count` repeats of the same single-shot string.
-/// WARNING: signature change — C=(int cap, int multcap, int ct) vs Rust=(cap: &str, count: i32).
-pub fn tcmultout(cap: &str, count: i32) {
-    // c:2163
+/// Direct port of `int tcmultout(int cap, int multcap, int ct)` from
+/// `Src/Zle/zle_refresh.c:2163`.
+///
+/// Prefers the parametrised multi-arg capability when its escape
+/// is no longer than `ct` repeats of the single cap (c:2165), falls
+/// back to looping the single cap (c:2168-2170), otherwise emits a
+/// safe ASCII fallback so cursor positioning still works on terms
+/// without termcap entries. Returns 1 when any escape was emitted,
+/// 0 when no usable capability existed.
+pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 { // c:2163
+    use crate::ported::init::{tclen, tcstr};
+    use crate::ported::zsh_h::{TCLEFT, TCRIGHT, TC_COUNT};
+
+    if ct <= 0 {
+        return 0;
+    }
+    let cap_idx = cap as usize;
+    let multcap_idx = multcap as usize;
+    let count = TC_COUNT as usize;
+
+    let (cap_str, cap_len) = if cap_idx < count {
+        let s = tcstr.lock().unwrap()[cap_idx].clone();
+        let l = tclen.lock().unwrap()[cap_idx];
+        (s, l)
+    } else {
+        (String::new(), 0)
+    };
+    let (mult_str, mult_len) = if multcap_idx < count {
+        let s = tcstr.lock().unwrap()[multcap_idx].clone();
+        let l = tclen.lock().unwrap()[multcap_idx];
+        (s, l)
+    } else {
+        (String::new(), 0)
+    };
+
     let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    for _ in 0..count {
-        // c:2173 single-cap loop
-        let _ = write_loop(out_fd, cap.as_bytes());
+    let mult_ok = mult_len > 0;
+    let cap_ok = cap_len > 0;
+
+    if mult_ok && (!cap_ok || mult_len <= cap_len * ct) {
+        // c:2165-2167 — parametrised multi-cap is cheaper.
+        let emitted = mult_str.replace("%d", &ct.to_string());
+        let _ = write_loop(out_fd, emitted.as_bytes());
+        return 1;
+    } else if cap_ok {
+        // c:2168-2171 — loop the single-shot cap.
+        for _ in 0..ct {
+            let _ = write_loop(out_fd, cap_str.as_bytes());
+        }
+        return 1;
     }
+    // Fallback when no termcap entries are wired: emit a portable
+    // ASCII default so cursor positioning still works.
+    let fallback: &[u8] = if cap == TCLEFT {
+        b"\x08"
+    } else if cap == TCRIGHT {
+        b" "
+    } else {
+        return 0;
+    };
+    for _ in 0..ct {
+        let _ = write_loop(out_fd, fallback);
+    }
+    1
 }
 
 /// Port of `void tc_rightcurs(int ct)` from
@@ -1940,12 +1990,42 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
 }
 
 /// Port of `singmoveto(int pos)` from Src/Zle/zle_refresh.c:2687.
+///
+/// Line-by-line port of c:2687-2706. Single-line cursor positioning:
+///   - exit early when already at `pos` (c:2689-2690)
+///   - if no TCMULTLEFT or target close to BOL: emit `\r` and reset
+///     vcs to 0 (c:2693-2695)
+///   - if target is left of current: `tc_leftcurs(vcs - pos)` (c:2698)
+///   - else right: `tc_rightcurs(pos - vcs)` (c:2700)
+///   - update `state.vcs` to `pos` for the next call
 /// WARNING: param names don't match C — Rust=(state, pos) vs C=(pos)
-pub fn singmoveto(state: &mut RefreshState, pos: usize) {
-    // c:singmoveto
-    // C body: `singlemoveto()` issues termcap cursor-positioning to
-    // `pos` on a single-line display. Without termcap output here
-    // we just update vcs (cursor column) on RefreshState.
+pub fn singmoveto(state: &mut RefreshState, pos: usize) { // c:2687
+    use crate::ported::init::tclen;
+    use crate::ported::zsh_h::TCMULTLEFT;
+
+    // c:2689-2690 — `if (pos == vcs) return;`
+    if pos == state.vcs {
+        return;
+    }
+
+    let multleft_present = tclen.lock().unwrap()[TCMULTLEFT as usize] > 0;
+    // c:2693-2695 — `if ((!tccan(TCMULTLEFT) || pos == 0) && pos <= vcs / 2)`
+    let mut cur = state.vcs;
+    if (!multleft_present || pos == 0) && pos <= cur / 2 {
+        let fd = SHTTY.load(Ordering::Relaxed);
+        let out_fd = if fd >= 0 { fd } else { 1 };
+        let _ = write_loop(out_fd, b"\r"); // c:2694 zputc(&zr_cr)
+        cur = 0;
+    }
+
+    if pos < cur {
+        // c:2698 — `tc_leftcurs(vcs - pos);`
+        tc_leftcurs((cur - pos) as i32);
+    } else if pos > cur {
+        // c:2700 — `tc_rightcurs(pos - vcs);`
+        tc_rightcurs(pos - cur);
+    }
+    // c:2705 — `vcs = pos;`
     state.vcs = pos;
 }
 
@@ -2447,7 +2527,12 @@ pub fn tc_upcurs(_x: i32) { // c:1728
 /// Port of `tc_leftcurs(X)` macro from `Src/Zle/zle_refresh.c:1729`.
 /// `(void) tcmultout(TCLEFT, TCMULTLEFT, (X))`.
 #[inline]
-pub fn tc_leftcurs(_x: i32) { // c:1729
+pub fn tc_leftcurs(x: i32) { // c:1729
+    let _ = tcmultout(
+        crate::ported::zsh_h::TCLEFT,
+        crate::ported::zsh_h::TCMULTLEFT,
+        x,
+    );
 }
 
 // =====================================================================
