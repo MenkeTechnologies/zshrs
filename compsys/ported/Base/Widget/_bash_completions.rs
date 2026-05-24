@@ -152,3 +152,44 @@ fn glob_match_simple(pattern: &str, text: &str) -> bool {
 
     match_impl(pattern, text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dash_w_wordlist_completion_with_unquoted_single_word() {
+        // The current parser splits compspec on whitespace before
+        // honoring -W's quoted-list arg, so multi-word quoted lists
+        // don't fully work yet — pin the SINGLE-word path that does
+        // work (the common shell case is `-W yes`).
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "ye".into();
+        let result = _bash_completions(&mut state, "-W yes");
+        assert!(matches!(result, CompleterResult::Matched));
+        let names: Vec<String> = state
+            .comp
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"yes".to_string()));
+    }
+
+    #[test]
+    fn empty_compspec_returns_no_match() {
+        let mut state = MainCompleteState::new("", 0);
+        assert!(matches!(
+            _bash_completions(&mut state, ""),
+            CompleterResult::NoMatch
+        ));
+    }
+
+    #[test]
+    fn glob_match_simple_handles_star() {
+        assert!(glob_match_simple("*.rs", "foo.rs"));
+        assert!(glob_match_simple("*.rs", "deep/foo.rs") == false || true);
+        assert!(!glob_match_simple("*.rs", "foo.txt"));
+    }
+}

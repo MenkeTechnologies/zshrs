@@ -14,3 +14,17 @@ pub fn _complete_debug(state: &mut MainCompleteState) -> CompleterResult {
     eprintln!("Current: {}", state.comp.params.current);
     CompleterResult::NoMatch
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_no_match_no_panic() {
+        let mut state = MainCompleteState::new("hello world", 11);
+        assert!(matches!(
+            _complete_debug(&mut state),
+            CompleterResult::NoMatch
+        ));
+    }
+}

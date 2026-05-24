@@ -42,3 +42,35 @@ pub fn _complete_help_generic(state: &mut CompletionState, help_text: &str) -> b
 
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_dash_lines_with_descriptions() {
+        let help = "
+        -h, --help    Show help message
+        -v            Verbose output
+        --version     Print version
+        ";
+        let mut state = CompletionState::new();
+        assert!(_complete_help_generic(&mut state, help));
+        let by_str: std::collections::HashMap<&str, &str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| (c.str_.as_str(), c.disp.as_deref().unwrap_or("")))
+            .collect();
+        // The parser splits at first whitespace, so the first
+        // segment becomes the option.
+        assert!(by_str.contains_key("-v"));
+        assert!(by_str["-v"].starts_with("-v -- "));
+        assert!(by_str.contains_key("--version"));
+    }
+
+    #[test]
+    fn no_dash_lines_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_complete_help_generic(&mut state, "no dashes here at all"));
+    }
+}

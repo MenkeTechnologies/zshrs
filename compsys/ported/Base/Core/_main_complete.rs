@@ -97,3 +97,51 @@ pub fn _main_complete(
 
     state.ret
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatches_to_each_completer_until_one_matches() {
+        let mut state = MainCompleteState::new("", 0);
+        state.completers = vec!["_complete".into(), "_match".into()];
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let _ = _main_complete(&mut state, |s, name| {
+            calls.borrow_mut().push(name.to_string());
+            if name == "_match" {
+                s.ret = 0;
+                CompleterResult::Matched
+            } else {
+                CompleterResult::NoMatch
+            }
+        });
+        let names = calls.into_inner();
+        assert!(names.contains(&"_complete".to_string()), "got {names:?}");
+        assert!(names.contains(&"_match".to_string()));
+    }
+
+    #[test]
+    fn ret_zero_after_match() {
+        let mut state = MainCompleteState::new("", 0);
+        state.completers = vec!["_complete".into()];
+        let ret = _main_complete(&mut state, |s, _| {
+            s.ret = 0;
+            CompleterResult::Matched
+        });
+        assert_eq!(ret, 0);
+    }
+
+    #[test]
+    fn lastcomp_populated_with_completion_result() {
+        let mut state = MainCompleteState::new("git", 3);
+        state.comp.params.prefix = "git".into();
+        state.completers = vec!["_complete".into()];
+        _main_complete(&mut state, |_, _| CompleterResult::NoMatch);
+        assert_eq!(
+            state.lastcomp.get("prefix").map(String::as_str),
+            Some("git")
+        );
+        assert!(state.lastcomp.contains_key("nmatches"));
+    }
+}

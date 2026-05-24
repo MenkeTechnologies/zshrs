@@ -19,3 +19,31 @@ pub fn _complete_tag(
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unrequested_tag_skips_action() {
+        let mut state = MainCompleteState::new("", 0);
+        let ran = std::cell::Cell::new(false);
+        let result = _complete_tag(&mut state, "values", |_| {
+            ran.set(true);
+            true
+        });
+        assert!(!result);
+        assert!(!ran.get(), "action must NOT run when tag not requested");
+    }
+
+    #[test]
+    fn requested_tag_runs_action_and_returns_its_result() {
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["values".into()]);
+        state.tags.configure_from_style(&["values".into()]);
+        state.tags.start();
+        assert!(_complete_tag(&mut state, "values", |_| true));
+        // Group named after the tag was begun.
+        assert!(state.comp.groups.iter().any(|g| g.name == "values"));
+    }
+}

@@ -126,3 +126,43 @@ pub fn _path_files(state: &mut CompletionState, opts: &PathFilesOpts) -> bool {
     state.end_group();
     state.nmatches > 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn directory_entries_get_slash_suffix_and_nospace() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "bi".into(); // matches `bins` under compsys/
+        assert!(_path_files(&mut state, &PathFilesOpts::default()));
+        let bins_match = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .find(|c| c.str_.starts_with("bins"))
+            .expect("`bins` dir present in test cwd");
+        assert_eq!(bins_match.suf.as_deref(), Some("/"));
+        assert!(bins_match.flags.contains(CompletionFlags::NOSPACE));
+        assert_eq!(bins_match.modec, '/');
+    }
+
+    #[test]
+    fn dirs_only_filter_excludes_files() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "C".into();
+        let opts = PathFilesOpts {
+            dirs_only: true,
+            ..Default::default()
+        };
+        let _ = _path_files(&mut state, &opts);
+        for m in state.groups.iter().flat_map(|g| g.matches.iter()) {
+            assert_eq!(
+                m.suf.as_deref(),
+                Some("/"),
+                "dirs_only must yield only directory entries; got `{}`",
+                m.str_
+            );
+        }
+    }
+}
