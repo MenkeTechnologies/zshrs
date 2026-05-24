@@ -8603,7 +8603,7 @@ pub fn execcmd_exec(
         if redir_list.is_empty() {
             break;
         }
-        let fn_ = redir_list.remove(0); // c:3732 `fn = (Redir) ugetnode(redir);`
+        let mut fn_ = redir_list.remove(0); // c:3732 `fn = (Redir) ugetnode(redir);`
         // c:3734-3735 DPUTS — debug assert REDIR_HEREDOC* gone.
         if fn_.typ == crate::ported::zsh_h::REDIR_INPIPE {
             // c:3736
@@ -8759,15 +8759,73 @@ pub fn execcmd_exec(
                     // c:3805 — `if (fn->varid) { parse fd from variable }`
                     let mut fd1_local = fn_.fd1;
                     if let Some(varname) = fn_.varid.as_deref() {
-                        // c:3806-3849 — bad/varid-readonly/param-resolve.
-                        // Substrate gap: full getvalue/zstrtol+param-readonly
-                        // checks too deep for inline. Treat as bad → execerr.
-                        zwarn(&format!(
-                            "parameter {} does not contain a file descriptor (substrate not yet ported)",
-                            varname
-                        ));
-                        { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); }
-                        break;
+                        // c:3806-3849 — `{var}>&-`/`{var}<&-` REDIR_CLOSE
+                        // with varid. The C path resolves the named param
+                        // to its integer-string value, parses as base-10
+                        // (or base#NN), and rejects readonly / non-numeric
+                        // / shell-owned-fd values.
+                        //
+                        //   bad=1  → "parameter %s does not contain a file descriptor"
+                        //   bad=2  → "can't close file descriptor from readonly parameter %s"
+                        //   bad=3  → "file descriptor %d used by shell, not closed"
+                        //
+                        // Substrate now available: getsparam for value,
+                        // paramtab read for PM_READONLY, MAX_ZSH_FD +
+                        // fdtable_get for shell-owned guard.
+                        let mut bad: u8 = 0;
+                        let value_opt = crate::ported::params::getsparam(varname);
+                        let is_ro = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| t.get(varname).map(|p| (p.node.flags as u32 & PM_READONLY) != 0))
+                            .unwrap_or(false);
+                        if value_opt.is_none() {
+                            bad = 1; // c:3811 getvalue failed
+                        } else if is_ro {
+                            bad = 2; // c:3813 PM_READONLY
+                        } else {
+                            let s = value_opt.as_deref().unwrap_or("");
+                            match s.trim().parse::<i32>() {
+                                Ok(n) => {
+                                    fd1_local = n;
+                                    fn_.fd1 = n;
+                                    let max_fd = crate::ported::utils::MAX_ZSH_FD
+                                        .load(Ordering::Relaxed);
+                                    if n >= 10
+                                        && n <= max_fd
+                                        && (crate::ported::utils::fdtable_get(n)
+                                            & FDT_TYPE_MASK)
+                                            == FDT_INTERNAL
+                                    {
+                                        // c:3835 shell-owned-fd reject
+                                        bad = 3;
+                                    }
+                                }
+                                Err(_) => {
+                                    bad = 1; // c:3823 strtol failure
+                                }
+                            }
+                        }
+                        if bad != 0 {
+                            // c:3840-3849
+                            match bad {
+                                3 => zwarn(&format!(
+                                    "file descriptor {} used by shell, not closed",
+                                    fn_.fd1
+                                )),
+                                2 => zwarn(&format!(
+                                    "can't close file descriptor from readonly parameter {}",
+                                    varname
+                                )),
+                                _ => zwarn(&format!(
+                                    "parameter {} does not contain a file descriptor",
+                                    varname
+                                )),
+                            }
+                            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                            LASTVAL.store(1, Ordering::Relaxed);
+                            break;
+                        }
                     }
                     // c:3852-3865 — `closed`: optional movefd save.
                     closed = 0;
