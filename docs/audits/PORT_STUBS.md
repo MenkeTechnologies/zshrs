@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:33:06.173097+00:00
+Generated: 2026-05-24T22:35:14.902429+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 149 stubs across 47 files
+## Summary: 148 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -27,10 +27,10 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (19 / 746) |
 | `src/ported/zle/zle_main.rs` | 6 | `describekeybriefly` (2 / 28) |
-| `src/ported/zle/zle_refresh.rs` | 6 | `addmultiword` (1 / 14) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
 | `src/ported/module.rs` | 5 | `load_and_bind` (1 / 20) |
 | `src/ported/zle/zle_keymap.rs` | 5 | `newkeytab` (1 / 15) |
+| `src/ported/zle/zle_refresh.rs` | 5 | `addmultiword` (1 / 14) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
 | `src/ported/glob.rs` | 3 | `get_match_ret` (5 / 71) |
@@ -168,17 +168,6 @@ python3 scripts/gen_port_stubs.py
 | 685 | `zleread` | 26 | 127 | 20% |
 | 321 | `raw_getbyte` | 50 | 242 | 20% |
 
-### `src/ported/zle/zle_refresh.rs` — 6 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 713 | `addmultiword` | 1 | 14 | 7% |
-| 526 | `freevideo` | 2 | 19 | 10% |
-| 541 | `resetvideo` | 7 | 53 | 13% |
-| 736 | `zrefresh` | 93 | 602 | 15% |
-| 1527 | `tc_rightcurs` | 15 | 63 | 23% |
-| 1441 | `moveto` | 13 | 44 | 29% |
-
 ### `src/ported/zle/zle_tricky.rs` — 6 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -209,6 +198,16 @@ python3 scripts/gen_port_stubs.py
 | 111 | `createkeymapnamtab` | 1 | 13 | 7% |
 | 567 | `scankeys` | 1 | 13 | 7% |
 | 1566 | `default_bindings` | 24 | 121 | 19% |
+
+### `src/ported/zle/zle_refresh.rs` — 5 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 811 | `addmultiword` | 1 | 14 | 7% |
+| 526 | `freevideo` | 2 | 19 | 10% |
+| 834 | `zrefresh` | 93 | 602 | 15% |
+| 1625 | `tc_rightcurs` | 15 | 63 | 23% |
+| 1539 | `moveto` | 13 | 44 | 29% |
 
 ### `src/ported/parse.rs` — 4 stubs
 
