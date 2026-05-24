@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:24:26.979872+00:00
+Generated: 2026-05-24T22:25:52.693512+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 154 stubs across 47 files
+## Summary: 153 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -38,7 +38,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/init.rs` | 3 | `init_shout` (4 / 23) |
 | `src/ported/modules/db_gdbm.rs` | 3 | `gdbmhashsetfn` (7 / 47) |
 | `src/ported/pattern.rs` | 3 | `patmatch` (4 / 575) |
-| `src/ported/zle/complist.rs` | 3 | `boot_` (2 / 15) |
 | `src/ported/zle/zle_move.rs` | 3 | `backwardmetafiedchar` (3 / 75) |
 | `src/ported/builtin.rs` | 2 | `bin_print` (202 / 812) |
 | `src/ported/compat.rs` | 2 | `zgettime_monotonic_if_available` (23 / 404) |
@@ -47,6 +46,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/modules/curses.rs` | 2 | `zccmd_input` (36 / 179) |
 | `src/ported/modules/zpty.rs` | 2 | `newptycmd` (20 / 147) |
 | `src/ported/zle/compcore.rs` | 2 | `set_comp_sep` (9 / 321) |
+| `src/ported/zle/complist.rs` | 2 | `domenuselect` (129 / 925) |
 | `src/ported/zle/zle_hist.rs` | 2 | `doisearch` (19 / 462) |
 | `src/ported/zle/zle_vi.rs` | 2 | `getvirange` (4 / 82) |
 | `src/ported/builtins/rlimits.rs` | 1 | `printrlim` (1 / 13) |
@@ -272,14 +272,6 @@ python3 scripts/gen_port_stubs.py
 | 1888 | `pattryrefs` | 41 | 202 | 20% |
 | 2002 | `patmatchrange` | 26 | 113 | 23% |
 
-### `src/ported/zle/complist.rs` — 3 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 3097 | `boot_` | 2 | 15 | 13% |
-| 2812 | `domenuselect` | 129 | 925 | 13% |
-| 734 | `clnicezputs` | 24 | 107 | 22% |
-
 ### `src/ported/zle/zle_move.rs` — 3 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -336,6 +328,13 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 1457 | `set_comp_sep` | 9 | 321 | 2% |
 | 607 | `callcompfunc` | 63 | 345 | 18% |
+
+### `src/ported/zle/complist.rs` — 2 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 2812 | `domenuselect` | 129 | 925 | 13% |
+| 734 | `clnicezputs` | 24 | 107 | 22% |
 
 ### `src/ported/zle/zle_hist.rs` — 2 stubs
 

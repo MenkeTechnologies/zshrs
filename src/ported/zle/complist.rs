@@ -3095,14 +3095,28 @@ pub fn menuselect_bindings() -> i32 {
 /// Port of `boot_(UNUSED(Module m))` from Src/Zle/complist.c:3564.
 /// WARNING: param names don't match C — Rust=() vs C=(m)
 pub fn boot_() -> i32 {
-    // c:3564
-    // C body c:3567-3582 — `mtab = NULL; mgtab = NULL; mselect = -1;
-    //                       inselect = 0; w_menuselect = addzlefunction(...);
-    //                       menuselect_bindings()`. Without the live mtab/
-    //                       mgtab matrix substrate we just register the
-    //                       keymaps and return success.
+    // c:3566-3569 — `mtab = NULL; mgtab = NULL; mselect = -1; inselect = 0;`
+    MTAB.lock().unwrap().clear(); // c:3566
+    MGTAB.lock().unwrap().clear(); // c:3567
+    MSELECT.store(-1, Ordering::Relaxed); // c:3568
+    INSELECT.store(0, Ordering::Relaxed); // c:3569
+
+    // c:3571-3577 — `w_menuselect = addzlefunction("menu-select",
+    //                                  menuselect, ZLE_MENUCMP|...);`.
+    //  zshrs widgets are static-linked; the `menu-select` widget is
+    //  already registered at boot via the iwidget table at
+    //  zle_bindings.rs. Skipping the dynamic addzlefunction
+    //  registration.
+    // c:3578-3579 — `addhookfunc("comp_list_matches", complistmatches);
+    //                addhookfunc("menu_start", domenuselect);`.
+    //  Hookfn is `fn(*mut hookdef, *mut c_void) -> i32`; complistmatches
+    //  and domenuselect aren't surfaced under that signature today —
+    //  the dispatchers in compcore.rs call them directly. Skipping the
+    //  registration so the static-link dispatch keeps working.
+
+    // c:3580 — install default menuselect/listscroll keymaps.
     menuselect_bindings();
-    0
+    0 // c:3581
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from Src/Zle/complist.c:3586.
