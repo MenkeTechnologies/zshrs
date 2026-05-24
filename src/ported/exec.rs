@@ -486,18 +486,10 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
             return Vec::new();                                               // c:4744
         }
         // c:4746 — `retval = readoutput(stream, qt, &readerror);`
-        // readoutput is not yet ported as a stand-alone fn; use the
-        // canonical executor read path. The c:4855-4871 byte-walking
-        // / qt / spacesplit logic stays where it was, applied below.
-        let mut buf_str = String::new();
         let mut readerror: i32 = 0;
-        let mut file = unsafe { <std::fs::File as std::os::unix::io::FromRawFd>::from_raw_fd(stream) };
-        use std::io::Read;
-        if let Err(e) = file.read_to_string(&mut buf_str) {
-            readerror = e.raw_os_error().unwrap_or(1);
-        }
-        // file drops → fd closed
+        let retval = readoutput(stream, qt, &mut readerror); // c:4746
         if readerror != 0 {
+            // c:4747
             crate::ported::utils::zerr(&format!(
                 "error when reading {}: {}",                                 // c:4748
                 s,
@@ -506,18 +498,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
             crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
             crate::ported::exec::cmdoutval.store(1, std::sync::atomic::Ordering::Relaxed);
         }
-        // c:4751 return retval — readoutput post-walk (c:4855-4871 tail)
-        // inlined: trim trailing newlines, then qt-branch.
-        let buf = buf_str.trim_end_matches('\n');
-        return if qt != 0 {
-            if buf.is_empty() {
-                vec![String::from(crate::ported::zsh_h::Nularg)]             // c:4859-4861
-            } else {
-                vec![buf.to_string()]                                        // c:4863
-            }
-        } else {
-            crate::ported::utils::spacesplit(buf, false)                     // c:4865
-        };
+        return retval; // c:4751
     }
 
     // c:4753-4790 — Full fork path: mpipe + zfork + parent
@@ -3126,6 +3107,94 @@ pub fn namedpipe() -> Option<String> {
 /// return prog;
 /// ```
 ///
+/// Port of `static LinkList readoutput(int in, int qt, int *readerror)`
+/// from `Src/exec.c:4805`. Drain a command-substitution pipe fd and
+/// return the captured output split per `qt`.
+///
+/// `qt=1` (quoted-substitution `"$(...)"`): single-element vec with
+/// the trailing-newline-trimmed buffer (empty buffer → `Nularg` sentinel
+/// per c:4861).
+/// `qt=0` (unquoted `$(...)`): split on IFS via `spacesplit`; if
+/// `GLOBSUBST` is set, each word is `shtokenize`d for downstream globbing.
+///
+/// `readerror` is set to the errno on read failure, 0 on clean EOF.
+pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
+    // c:4805
+    let mut buf: Vec<u8> = Vec::with_capacity(64); // c:4816 (initial bsiz=64)
+    let mut readret: isize = 0; // c:4818 readret tracks last read return
+    // c:4824 dont_queue_signals(); c:4825 child_unblock(); — signal-queue
+    // dance keeps SIGCHLD live so the foreground process can be reaped
+    // while we drain. zshrs's in-process command-sub runs without the
+    // queue (no fork), but the C call surface is preserved for parity.
+    dont_queue_signals(); // c:4824
+    child_unblock(); // c:4825
+    let mut inbuf = [0u8; 64]; // c:4815 inbuf[64]
+    loop {
+        // c:4826
+        // c:4828 — `readret = read(in, inbuf, 64);`
+        let r = unsafe {
+            libc::read(
+                in_fd,
+                inbuf.as_mut_ptr() as *mut libc::c_void,
+                inbuf.len(),
+            )
+        };
+        readret = r as isize;
+        if readret <= 0 {
+            // c:4829
+            if readret < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                // c:4830 — `if (readret < 0 && errno == EINTR) continue;`
+                continue;
+            }
+            break; // c:4832
+        }
+        // c:4835 — `for (bufptr = inbuf; bufptr < inbuf + readret; bufptr++)`
+        for i in 0..(readret as usize) {
+            let c = inbuf[i];
+            if crate::ported::ztype_h::imeta(c) {
+                // c:4837 — `if (imeta(c)) { *ptr++ = Meta; c ^= 32; cnt++; }`
+                buf.push(Meta as u8); // c:4838
+                buf.push(c ^ 32); // c:4839 (Meta-encoded payload)
+            } else {
+                buf.push(c); // c:4848 *ptr++ = c
+            }
+        }
+    }
+    child_block(); // c:4854
+    // c:4855 — `if (readerror) *readerror = readret < 0 ? errno : 0;`
+    *readerror = if readret < 0 {
+        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+    } else {
+        0
+    };
+    // c:4857 — `close(in);`
+    unsafe {
+        libc::close(in_fd);
+    }
+    // c:4858-4859 — `while (cnt && ptr[-1] == '\n') ptr--, cnt--;`
+    while buf.last() == Some(&b'\n') {
+        buf.pop();
+    }
+    // c:4861-4863 — qt branch: empty → Nularg sentinel; else single elem.
+    let s = String::from_utf8_lossy(&buf).into_owned();
+    if qt != 0 {
+        // c:4861
+        if buf.is_empty() {
+            return vec![String::from(crate::ported::zsh_h::Nularg)]; // c:4862
+        }
+        return vec![s]; // c:4864
+    }
+    // c:4866-4871 — `spacesplit` + per-word GLOBSUBST `shtokenize`.
+    let mut words = crate::ported::utils::spacesplit(&s, false); // c:4867
+    if isset(crate::ported::zsh_h::GLOBSUBST) {
+        // c:4870
+        for w in words.iter_mut() {
+            crate::ported::glob::shtokenize(w); // c:4870
+        }
+    }
+    words
+}
+
 /// Lex a `<(...)`/`>(...)`/`=(...)` body — the leading 2 chars are
 /// the marker pair (`Inang+Inpar`, `Outang+Inpar`, `Equals+Inpar`),
 /// remainder is the command up to the matching `Outpar`. Returns the
