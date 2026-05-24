@@ -1601,11 +1601,19 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
     let chars: Vec<char> = namptr.chars().collect(); // c:737
     let first = chars[0]; // c:737
 
-    // `~` (and Tilde token) — but not `~=` (handled separately by =arm).
-    // C: `if (*str == Tilde && str[1] != '=' && str[1] != Equals)`.
-    if first == '~' || first == '\u{98}'
-    /* Tilde token */
-    {
+    // c:741 — `if (*str == Tilde && str[1] != '=' && str[1] != Equals)`.
+    // Should STRICTLY match Tilde TOKEN (Src/zsh.h:189 Tilde=0x98)
+    // per C — but our lexer flow ends up untokenizing Tilde back to
+    // ASCII `~` before filesub runs, so unquoted `~` becomes ASCII
+    // `~` by the time we see it. Accepting both keeps unquoted
+    // `echo ~` working at the cost of one parity bug:
+    // `short="~/foo"; echo "$short"` wrongly tilde-expands.
+    // The proper fix lives upstream in the lexer (LX2_TILDE arm
+    // should preserve Tilde token through untokenize until filesub)
+    // or in the dquote path (currently inside dquote_parse the `~`
+    // stays ASCII — but the OUTER untokenize collapses Tilde to `~`
+    // before the quoted-context distinction is preserved).
+    if first == '~' || first == '\u{98}' /* Tilde token */ {
         // c:741
         if chars.len() == 1 {
             // c:748 — bare ~
