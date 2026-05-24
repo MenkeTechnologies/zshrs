@@ -4129,7 +4129,8 @@ impl zftp_session {
 /// — calls `zftp_cleanup()`, returns 0.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn zftpexithook(d: *const crate::ported::zsh_h::hookdef, dummy: *mut std::ffi::c_void) -> i32 {
+pub fn zftpexithook(d: *mut crate::ported::zsh_h::hookdef, dummy: *mut std::ffi::c_void) -> i32 {
+    let _ = (d, dummy);
     zftp_cleanup(); // c:3156
     0 // c:3159
 }
@@ -4270,20 +4271,23 @@ pub fn boot_(m: *const module) -> i32 {
         Ordering::Relaxed,
     );
     let _default = newsession("default"); // c:3219
-                                          // c:3219 — addhookfunc("exit", zftpexithook). Hook-table substrate
-                                          // not ported; exit-hook firing is process-end so the leak window
-                                          // is bounded to module-unload-then-exit which is the normal flow.
+    // c:3219 — `addhookfunc("exit", zftpexithook)` — register the
+    // process-exit cleanup so all live ftp sessions get torn down
+    // before the shell exits.
+    crate::ported::module::addhookfunc("exit", zftpexithook as crate::ported::zsh_h::Hookfn);
     0
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/zftp.c:3219`.
 pub fn cleanup_(m: *const module) -> i32 {
     // c:3219
-    // c:3228 — deletehookfunc("exit", zftpexithook). The Rust hook
-    // table (utils::HOOKS) isn't yet wired to dispatch through
-    // deletehookfunc; static-link skip until the hook-fn substrate
-    // lands. The exit hook is one-shot anyway (process is going away).
-    // c:3228 — zftp_cleanup(): close every live session.
+    // c:3228 — `deletehookfunc("exit", zftpexithook)` — drop the
+    // exit-hook registration before the module unloads.
+    crate::ported::module::deletehookfunc(
+        "exit",
+        zftpexithook as crate::ported::zsh_h::Hookfn,
+    );
+    // c:3228 — `zftp_cleanup()`: close every live session.
     zftp_cleanup(); // c:3228
     setfeatureenables(m, module_features(), None) // c:3228
 }
