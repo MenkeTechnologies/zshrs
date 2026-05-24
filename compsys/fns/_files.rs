@@ -146,7 +146,7 @@ pub fn files_execute(state: &mut CompletionState, opts: &FilesOpts) -> bool {
         let file = &prefix[sep_pos + 1..];
         (PathBuf::from(dir), file.to_string())
     } else {
-        (PathBuf::from("."), prefix.clone())
+        (PathBuf::from("../.."), prefix.clone())
     };
 
     // Use working directory if specified
