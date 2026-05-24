@@ -43,3 +43,46 @@ pub fn _absolute_command_paths(state: &mut CompletionState) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_are_absolute_paths() {
+        // Inject /bin into PATH so the scan has known content.
+        let orig = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", "/bin");
+        let mut state = CompletionState::new();
+        // Use bare letter prefix; `l` finds `ls`, `ln`, … in /bin.
+        state.params.prefix = "l".into();
+        let _ = _absolute_command_paths(&mut state);
+        std::env::set_var("PATH", &orig);
+
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        for n in &names {
+            assert!(
+                n.starts_with('/'),
+                "_absolute_command_paths must emit absolute paths; got `{n}`"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_path_dirs_emit_no_matches() {
+        // Set PATH to a definitely-nonexistent dir; the read_dir
+        // call fails and no matches are added.
+        let orig = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", "/no/such/path/at/all/for/zshrs/test");
+        let mut state = CompletionState::new();
+        state.params.prefix = "anything".into();
+        let result = _absolute_command_paths(&mut state);
+        std::env::set_var("PATH", &orig);
+        assert!(!result, "nonexistent PATH dir → no matches → false");
+    }
+}

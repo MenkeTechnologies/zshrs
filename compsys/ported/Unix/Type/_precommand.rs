@@ -14,3 +14,29 @@ pub fn _precommand(state: &mut MainCompleteState) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_eq_1_returns_false() {
+        // current == 1 means we're still on the precommand itself
+        // (`sudo<TAB>`). _precommand can't help — it dispatches the
+        // FOLLOWING word.
+        let mut state = MainCompleteState::new("sudo", 4);
+        state.comp.params.current = 1;
+        assert!(!_precommand(&mut state));
+    }
+
+    #[test]
+    fn current_gt_1_delegates_to_normal() {
+        // current > 1 → delegate to _normal (currently returns
+        // NoMatch until comps table is wired). Pin the delegation
+        // path is taken.
+        let mut state = MainCompleteState::new("sudo ls", 7);
+        state.comp.params.current = 2;
+        state.comp.params.words = vec!["sudo".into(), "ls".into()];
+        assert!(!_precommand(&mut state));
+    }
+}

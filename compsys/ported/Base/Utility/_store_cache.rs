@@ -25,3 +25,42 @@ pub fn _store_cache(state: &MainCompleteState, cache_name: &str, data: &[String]
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::_retrieve_cache::_retrieve_cache;
+
+    #[test]
+    fn no_cache_path_returns_false() {
+        let state = MainCompleteState::new("", 0);
+        assert!(!_store_cache(&state, "x", &["a".into()]));
+    }
+
+    #[test]
+    fn store_then_retrieve_round_trips() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_sc_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec![tmp.to_string_lossy().to_string()],
+            false,
+        );
+
+        let data = vec!["alpha".into(), "beta".into(), "gamma".into()];
+        assert!(_store_cache(&state, "round.cache", &data));
+        let got = _retrieve_cache(&state, "round.cache").expect("cache file readable");
+        assert_eq!(got, data, "store→retrieve round-trip mismatch");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
