@@ -198,6 +198,7 @@ The "Extensions" tab includes daemon-backed `z*` builtins (`zd`, `zcache`, `zls`
 | **Context menu** | *Run with zshrs* on any `.zsh` file in the editor or project view; auto-creates a config |
 | **Producer** | `ZshrsRunConfigurationProducer` materializes a run config from the active file |
 | **Output** | Standard `ConsoleView` — `print` / `echo` / `printf` stream in real time |
+| **File → New → Zsh File** | Standard New-File dialog; pick *Script* (shebanged, `set -euo pipefail`, `main` stub), *Function library*, *Rc fragment*, or *Empty*. Same entry surfaces in the Project-view right-click *New* submenu. |
 
 ### Debug
 

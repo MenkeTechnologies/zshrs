@@ -752,8 +752,24 @@ fn completion(state: &State, params: &Value) -> Value {
     let line_no = params["position"]["line"].as_u64().unwrap_or(0) as usize;
     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
     let text = state.docs.get(uri);
-    let prefix = text
-        .and_then(|t| t.lines().nth(line_no))
+    let line = text.and_then(|t| t.lines().nth(line_no));
+
+    // Context gate: inside a `"..."` or `'...'` literal segment we
+    // should NOT fire arbitrary builtin / keyword / option completions
+    // — they're noise (the user is typing English / a URL / a JSON
+    // payload, not shell code). Exceptions:
+    //   * Inside `$(…)` or `` `…` `` command substitution — that IS
+    //     shell code, fire normally.
+    //   * Inside `${…}` parameter expansion — variable / option name
+    //     completion is useful there.
+    //   * Inside `$'…'` ANSI-C strings — opaque, no completion.
+    if let Some(l) = line {
+        if cursor_in_uninterpolated_string(l, col) {
+            return json!({ "isIncomplete": false, "items": [] });
+        }
+    }
+
+    let prefix = line
         .map(|line| {
             let upto = &line[..line.len().min(col)];
             let start = upto
@@ -1269,6 +1285,168 @@ fn word_span_at(line_text: &str, col: usize) -> Option<(usize, usize)> {
 /// before `end`. Used by `references` / `rename` to suppress textual
 /// matches that occur inside string content or comment text — those
 /// are not real code references and should not surface in Find Usages.
+/// True if `col` (a byte column on `line`) sits inside a string
+/// literal where completion should be SUPPRESSED. Specifically:
+///   * Inside `"..."` literal text → suppress (user is typing prose,
+///     not shell code).
+///   * Inside `'...'` single-quoted → suppress (opaque to expansion).
+///   * Inside `$'...'` ANSI-C quoted → suppress.
+/// EXCEPT when we're nested inside a substitution that resumes shell
+/// grammar:
+///   * `$(...)` command substitution → shell code, allow completion.
+///   * `` `...` `` backtick command substitution → allow completion.
+///   * `${...}` parameter expansion → allow (variable names useful).
+///
+/// Walks the line char-by-char tracking the innermost open
+/// container. A trailing `$(` / `` ` `` / `${` un-opens any
+/// surrounding quotes for completion purposes.
+pub(crate) fn cursor_in_uninterpolated_string(line: &str, col: usize) -> bool {
+    let bytes = line.as_bytes();
+    let cap = col.min(bytes.len());
+    // Stack of open containers — `'"', '\'', '`'` for strings,
+    // `'('` for `$(...)`, `'{'` for `${...}`. The TOP of the stack
+    // tells us what context the cursor sits in.
+    let mut stack: Vec<u8> = Vec::new();
+    let mut i = 0;
+    while i < cap {
+        let c = bytes[i];
+        let top = stack.last().copied();
+        // Escapes — only `\X` inside double-quoted / backtick strings.
+        // Single-quoted is opaque (no escapes).
+        if matches!(top, Some(b'"') | Some(b'`')) && c == b'\\' && i + 1 < cap {
+            i += 2;
+            continue;
+        }
+        match top {
+            // Inside single-quote — only `'` closes.
+            Some(b'\'') => {
+                if c == b'\'' {
+                    stack.pop();
+                }
+                i += 1;
+                continue;
+            }
+            // Inside double-quote — `"` closes, OR enter sub/expansion.
+            Some(b'"') => {
+                if c == b'"' {
+                    stack.pop();
+                    i += 1;
+                    continue;
+                }
+                if c == b'$' && i + 1 < cap {
+                    let nxt = bytes[i + 1];
+                    if nxt == b'(' {
+                        stack.push(b'(');
+                        i += 2;
+                        continue;
+                    }
+                    if nxt == b'{' {
+                        stack.push(b'{');
+                        i += 2;
+                        continue;
+                    }
+                }
+                if c == b'`' {
+                    stack.push(b'`');
+                    i += 1;
+                    continue;
+                }
+                i += 1;
+                continue;
+            }
+            // Inside backtick — `` ` `` closes, `$(` / `${` nest.
+            Some(b'`') => {
+                if c == b'`' {
+                    stack.pop();
+                    i += 1;
+                    continue;
+                }
+                if c == b'$' && i + 1 < cap {
+                    let nxt = bytes[i + 1];
+                    if nxt == b'(' {
+                        stack.push(b'(');
+                        i += 2;
+                        continue;
+                    }
+                    if nxt == b'{' {
+                        stack.push(b'{');
+                        i += 2;
+                        continue;
+                    }
+                }
+                i += 1;
+                continue;
+            }
+            // Inside `$(…)` — `)` closes, quotes / nested subst open.
+            Some(b'(') => {
+                if c == b')' {
+                    stack.pop();
+                    i += 1;
+                    continue;
+                }
+                // Fall through to top-level handling for nested
+                // strings / substitutions.
+            }
+            // Inside `${…}` — `}` closes.
+            Some(b'{') => {
+                if c == b'}' {
+                    stack.pop();
+                    i += 1;
+                    continue;
+                }
+                // Fall through to top-level.
+            }
+            _ => {}
+        }
+        // Top-level (or inside `$()` / `${}`) — track new openers.
+        match c {
+            b'"' => stack.push(b'"'),
+            b'\'' => stack.push(b'\''),
+            b'`' => stack.push(b'`'),
+            b'$' if i + 1 < cap => {
+                let nxt = bytes[i + 1];
+                if nxt == b'(' {
+                    stack.push(b'(');
+                    i += 2;
+                    continue;
+                }
+                if nxt == b'{' {
+                    stack.push(b'{');
+                    i += 2;
+                    continue;
+                }
+                if nxt == b'\'' {
+                    // `$'...'` ANSI-C — push single-quote so the
+                    // body counts as opaque-string for completion.
+                    stack.push(b'\'');
+                    i += 2;
+                    continue;
+                }
+            }
+            b'#' => {
+                // `#` only starts a comment at statement-start position.
+                // Inside strings / subs this branch isn't reached anyway
+                // (top is non-None). At top-level treat the rest as a
+                // comment — cursor inside a comment also suppresses
+                // shell-code completion.
+                let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
+                let comment_open = matches!(
+                    prev,
+                    None | Some(b' ') | Some(b'\t') | Some(b';') | Some(b'&') | Some(b'|') | Some(b'(')
+                );
+                if comment_open {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // Cursor is in an UNINTERPOLATED string when the innermost open
+    // container is `"` / `'` (NOT a `$(…)` / `${…}` / backtick).
+    matches!(stack.last().copied(), Some(b'"') | Some(b'\''))
+}
+
 pub(crate) fn line_position_inside_string_or_comment(line: &str, end: usize) -> bool {
     let bytes = line.as_bytes();
     let cap = end.min(bytes.len());
@@ -5204,6 +5382,139 @@ mod tests {
         );
         let body = snippet["insertText"].as_str().unwrap();
         assert!(body.contains("then") && body.contains("fi"), "snippet body wrong: {}", body);
+    }
+
+    #[test]
+    fn completion_suppressed_inside_double_quoted_literal() {
+        // User report: "inside dbl strings I shouldnt be getting
+        // random completions unless inside $() or ``". A double-quoted
+        // string body is prose / URLs / JSON — not shell code — so
+        // surfacing `if`, `cd`, `setopt` etc. is noise. Pin the gate.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), r#"echo "hello if"#.into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            // Cursor sits right after `if` INSIDE the open `"...` literal.
+            "position": { "line": 0, "character": 14 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(
+            items.is_empty(),
+            "expected 0 items inside dq literal, got {}: {:?}",
+            items.len(),
+            items.iter().take(5).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn completion_active_inside_command_substitution_inside_dq() {
+        // Counterpart to the dq gate: cursor inside `$(...)` IS shell
+        // code even when wrapped by `"..."`. The gate must NOT swallow
+        // completion here.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), r#"echo "x $(cd"#.into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            // Cursor right after `cd` inside `$(`.
+            "position": { "line": 0, "character": 12 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(
+            items.iter().any(|i| i["label"] == "cd"),
+            "expected `cd` to surface inside $() within dq: {:?}",
+            items.iter().take(5).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn completion_active_inside_backticks_inside_dq() {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "echo \"x `cd".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 11 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(
+            items.iter().any(|i| i["label"] == "cd"),
+            "expected `cd` to surface inside backticks within dq",
+        );
+    }
+
+    #[test]
+    fn completion_active_inside_param_expansion_inside_dq() {
+        // `${...}` is parameter expansion — variable / option name
+        // completion is genuinely useful here, so the gate must allow it.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), r#"echo "x ${P"#.into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 11 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(
+            !items.is_empty(),
+            "expected non-empty items inside ${{...}} within dq",
+        );
+    }
+
+    #[test]
+    fn completion_suppressed_inside_single_quoted_literal() {
+        // Single-quoted strings are opaque — no interpolation possible —
+        // so completion is pure noise.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "echo 'hello if".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 14 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(items.is_empty(), "expected 0 items inside sq literal");
+    }
+
+    #[test]
+    fn completion_suppressed_inside_comment() {
+        // Comments are docs / TODOs / disabled code — not shell code.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "# todo: if".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 10 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(items.is_empty(), "expected 0 items inside comment");
+    }
+
+    #[test]
+    fn completion_active_after_closing_double_quote() {
+        // Sanity check: the gate must REOPEN once the cursor crosses
+        // the closing quote. `echo "x" if|` is back at shell-code top
+        // level.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), r#"echo "x" if"#.into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 11 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(
+            items.iter().any(|i| i["label"] == "if"),
+            "expected `if` to surface after closed dq string"
+        );
     }
 
     #[test]
