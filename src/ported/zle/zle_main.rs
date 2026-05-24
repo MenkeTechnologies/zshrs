@@ -710,6 +710,13 @@ pub fn zleread(
     // Set up terminal
     zsetterm()?;
 
+    // c:1303 — `zlecallhook("zle-line-init", NULL)` — runs user's
+    // zle-line-init widget before the prompt is drawn (e.g. for
+    // bindkey installation / zle -A wiring).
+    if crate::ported::zle::zle_thingy::rthingy_nocreate("zle-line-init") {
+        let _ = execzlefunc("zle-line-init", &["zle-line-init".to_string()], 1, 0);
+    }
+
     // Display prompt — port of `write_loop(SHTTY, lprompt, lpromptlen)`
     // at `Src/Zle/zle_main.c:1321`. C writes the expanded prompt
     // directly to the shell-output fd; we mirror that, with stdout
@@ -723,6 +730,13 @@ pub fn zleread(
 
     // Enter core loop
     zlecore();
+
+    // c:1335 — `zlecallhook("zle-line-finish", NULL)` — runs user's
+    // zle-line-finish widget after the line is accepted so cleanup
+    // (vi-mode reset etc.) can fire.
+    if crate::ported::zle::zle_thingy::rthingy_nocreate("zle-line-finish") {
+        let _ = execzlefunc("zle-line-finish", &["zle-line-finish".to_string()], 1, 0);
+    }
 
     // Return the line
     Ok(ZLELINE.lock().unwrap().iter().collect())
