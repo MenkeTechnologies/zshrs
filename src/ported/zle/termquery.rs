@@ -348,25 +348,47 @@ pub fn handle_query(sequence: i32, numbers: &[i32], capture: &str) {
 /// full 5+ probe round-trip.
 pub fn query_terminal() {
     // c:505
-    // c:505-509 — build TQ_BGCOLOR TQ_FGCOLOR TQ_CURSOR TQ_KITTYKB
-    // TQ_RGB TQ_XTVERSION TQ_DA, prime the state-machine matcher.
-    // c:510-540 — read responses + dispatch through `handle_query()`
-    // / `handle_color()` / `handle_paste()`.
-    // c:487 — discovered capabilities go to `.term.extensions` via
-    // assignaparam(EXTVAR, feat, ASSPM_AUGMENT).
-    // Discovered capabilities feed into `.term.extensions` via
-    // `assignaparam(EXTVAR, feat, ASSPM_AUGMENT)` once the
-    // `probe_terminal` state-machine matcher's per-query dispatch
-    // returns. The minimal probe below issues TQ_DA which all
-    // terminals answer; richer probes layer on as the state machine
-    // grows.
+    // c:506 — `char tquery[sizeof(TQ_BGCOLOR TQ_FGCOLOR ... TQ_DA)]`.
+    // c:144-167 — TQ_* DEC OSC query sequences. Concatenate all
+    // probes into one packet; terminals that don't understand a
+    // given OSC will silently drop it.
+    const TQ_BGCOLOR: &str = "\x1b]11;?\x1b\\";
+    const TQ_FGCOLOR: &str = "\x1b]10;?\x1b\\";
+    const TQ_CURSOR: &str = "\x1b]12;?\x1b\\";
+    const TQ_KITTYKB: &str = "\x1b[?u";
+    const TQ_RGB: &str = "\x1bP+q524742\x1b\\";
+    const TQ_XTVERSION: &str = "\x1b[>0q";
+    const TQ_DA: &str = "\x1b[c  \r";
+
     #[cfg(unix)]
     {
         if unsafe { libc::isatty(1) } != 1 {
             return;
         }
     }
-    let _ = probe_terminal("\x1b[c", PROBE_TIMEOUT_MS);
+    // c:512-518 — build the combined query packet, gated on
+    // `.term.extensions` flags so users can disable noisy probes.
+    let mut tquery = String::with_capacity(64);
+    if extension_enabled("bg", "color", true) {
+        tquery.push_str(TQ_BGCOLOR);
+        tquery.push_str(TQ_FGCOLOR);
+    }
+    if extension_enabled("cursor", "color", true) {
+        tquery.push_str(TQ_CURSOR);
+    }
+    if extension_enabled("kbprotocol", "kitty", false) {
+        tquery.push_str(TQ_KITTYKB);
+    }
+    if extension_enabled("truecolor", "query", true) {
+        tquery.push_str(TQ_RGB);
+    }
+    if extension_enabled("xtversion", "query", true) {
+        tquery.push_str(TQ_XTVERSION);
+    }
+    // c:530 — TQ_DA always emitted last as the "all probes done"
+    // marker (every terminal answers DA1).
+    tquery.push_str(TQ_DA);
+    let _ = probe_terminal(&tquery, PROBE_TIMEOUT_MS);
 }
 
 fn base64_encode(data: &[u8]) -> String {
