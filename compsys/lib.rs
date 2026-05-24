@@ -120,9 +120,11 @@ pub mod completion;
 pub mod compset;
 pub mod computil;
 pub mod fns;
-pub mod functions;
+// `compsys/functions.rs` + `compsys/library.rs` — DELETED.
+// All per-fn ports live under `compsys/fns/Base/{Completer,Core,
+// Utility,Widget}/` (and `Unix/Type/` / `Zsh/Type/`). Callers use
+// `compsys::fns::_NAME` directly. No more shim layer.
 pub mod generate;
-pub mod library;
 pub mod matching;
 pub mod menu;
 pub mod shell_runner;
