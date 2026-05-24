@@ -1174,7 +1174,14 @@ pub fn reexpandprompt() {
             // c:2025 — new_lprompt = promptexpand(raw_lp ? *raw_lp : NULL, 1, markers[0], NULL, NULL);
             let raw_lp = RAW_LP.lock().unwrap().clone();
             let new_lp = crate::prompt::expand_prompt(&raw_lp);
-            // c:2026 — pmpt_attr = txtcurrentattrs;   (not yet ported)
+            // c:2026 — `pmpt_attr = txtcurrentattrs;`. The capture
+            // call requires a `txtcurrentattrs` reader which is
+            // currently behind a private `fn current_attrs_lock()` in
+            // crate::ported::prompt; exposing it via a new pub fn
+            // would add a non-C helper name. PMPT_ATTR static is
+            // declared in zle_refresh.rs and refresh-side readers
+            // (c:1163/1657) read it correctly; capture write site
+            // deferred until a pub accessor exists.
             // c:2027-2028 — free(lpromptbuf); lpromptbuf = new_lprompt;
             *LPROMPT.lock().unwrap() = new_lp;
 
@@ -1186,7 +1193,10 @@ pub fn reexpandprompt() {
             // c:2033 — new_rprompt = promptexpand(raw_rp ? *raw_rp : NULL, 1, markers[2], NULL, NULL);
             let raw_rp = RAW_RP.lock().unwrap().clone();
             let new_rp = crate::prompt::expand_prompt(&raw_rp);
-            // c:2034-2035 — rpmpt_attr / prompt_attr computation (not yet ported)
+            // c:2034 — `rpmpt_attr = txtcurrentattrs;`. Same gap as
+            // c:2026 above — capture site deferred pending a pub
+            // txtcurrentattrs accessor. RPMPT_ATTR / PROMPT_ATTR
+            // statics declared and refresh-side reads work.
             // c:2036-2037 — free(rpromptbuf); rpromptbuf = new_rprompt;
             *RPROMPT.lock().unwrap() = new_rp;
 
