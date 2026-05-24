@@ -5922,27 +5922,38 @@ pub fn paramsubst(
             // matching zsh's `"${(s. .)str}"` per-word output.
             isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
         } else if let Some(ref sp) = sep {
-            // c:3963 (j with no s)
-            // (j:STR:) — join an array with STR. Source priority:
+            // c:3906-3907 — `val = sepjoin(aval, sep, 1); isarr = 0;`
+            // (j:STR:) / (F) — join an array with STR. Source priority:
             // split_parts (operator result) → state.arrays →
             // assoc-values → whitespace-split fallback. Direct
-            // port of subst.c:3963 sepjoin which reads aval.
+            // port of subst.c:3906 sepjoin which reads aval.
+            //
+            // CRITICAL: clear isarr to 0 after the join (c:3907) so the
+            // auto_splat block at c:4245 (subst.rs:6789) doesn't re-
+            // fetch the unjoined array and splat element-by-element,
+            // dropping the joined string. Without isarr=0 the j/F flag
+            // returns only arr[0]. The auto_splat third clause is also
+            // gated on `sep.is_none()` to skip the arrays_contains
+            // fallback for the same reason.
+            let mut joined = false;
             if let Some(parts) = split_parts.clone() {
-                value = parts.join(sp); // c:3963
-                                        // Join collapses array shape → reset split_parts
-                                        // so auto_splat emits one scalar node, not the
-                                        // joined-then-1-elem-splat.
-                split_parts = None; // c:3963
+                value = parts.join(sp); // c:3906
+                split_parts = None; // c:3906 (sepjoin collapses to scalar)
+                joined = true;
             } else if let Some(arr) = arrays_get(&var_name) {
-                // c:3963
-                value = arr.join(sp); // c:3963
+                value = arr.join(sp); // c:3906
+                joined = true;
             } else if let Some(map) = assoc_get(&var_name) {
-                // c:3963
                 let vals: Vec<String> = map.values().cloned().collect();
-                value = vals.join(sp); // c:3963
+                value = vals.join(sp); // c:3906
+                joined = true;
             } else if value.contains(' ') || value.contains('\n') {
                 let parts: Vec<&str> = value.split_whitespace().collect();
                 value = parts.join(sp);
+                joined = true;
+            }
+            if joined {
+                isarr = 0; // c:3907
             }
         }
 
@@ -6781,6 +6792,7 @@ pub fn paramsubst(
             && pf_flags & PREFORK_SINGLE == 0         // c:3950 (multsub context)
             && rest.is_empty()                               // c:3950 (no operator subverted shape)
             && !scripted_scalar                              // c:3950 (single-elem pick is scalar)
+            && sep.is_none()                                 // c:3906-3907 (j/F flag already sepjoin'd → scalar)
             && (arrays_contains(&var_name)         // c:3950
                 || split_parts.is_some())); // c:3950 ((s::) made an array)
         if (nojoin == 2) || auto_splat {
@@ -9741,17 +9753,16 @@ mod tests {
     }
 
     // ── Join flag ───────────────────────────────────────────────────
-    // KNOWN ZSHRS BUG (surfaced 2026-05-23): the (j/x/), (j::), and
-    // (F) join flags on array parameters drop all elements except the
-    // first. Real zsh `print -r -- "${(j/_/)arr}"` produces
-    // `alpha_beta_gamma_delta`; zshrs returns just `alpha`. Marked
-    // #[ignore] so CI stays green; run `cargo test --ignored` to verify
-    // the bug or to confirm a fix. Remove the #[ignore] once paramsubst
-    // honors the join flag against array parameters.
+    // FIXED 2026-05-23 (subst.rs:5924/6788): the (j/x/), (j::), and (F)
+    // join flags on array parameters now correctly join all elements.
+    // Root cause: after `sep` was applied (c:3906 sepjoin), the port
+    // left `isarr` at 1 and the auto_splat block (c:4245) re-fetched
+    // the unjoined array from paramtab, splatting element-by-element
+    // and returning only arr[0]. Fix mirrors C's `isarr = 0` at c:3907
+    // and gates the auto_splat fallback on `sep.is_none()`.
 
     /// `${(j/_/)arr}` → `alpha_beta_gamma_delta` (explicit underscore join)
     #[test]
-    #[ignore = "ZSHRS BUG: (j/_/)arr drops all but first element; zsh joins"]
     fn paramsubst_arr_join_underscore_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
@@ -9767,7 +9778,6 @@ mod tests {
 
     /// `${(j::)arr}` → `alphabetagammadelta` (empty-string join)
     #[test]
-    #[ignore = "ZSHRS BUG: (j::)arr drops all but first element; zsh joins"]
     fn paramsubst_arr_join_empty_string_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
@@ -9784,7 +9794,6 @@ mod tests {
     // ── F-flag (newline join) ──────────────────────────────────────
     /// `${(F)arr}` → `alpha\nbeta\ngamma\ndelta` (newline-join, same bug class)
     #[test]
-    #[ignore = "ZSHRS BUG: (F)arr drops all but first element; zsh newline-joins"]
     fn paramsubst_arr_F_flag_joins_with_newlines_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
