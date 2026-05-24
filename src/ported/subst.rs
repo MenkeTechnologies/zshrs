@@ -2760,13 +2760,27 @@ pub fn paramsubst(
                         // c:2236
                         // c:2237 — `if (quotetype == QT_DOLLARS ||
                         // quotetype == QT_BACKSLASH_PATTERN) goto flagerr;`
-                        // (skipped here — flag-error tracking not yet
-                        // ported; full goto-flagerr arm is c:2237-2239).
+                        // Five `q`s would push quotetype past QT_DOLLARS;
+                        // `(b)` sets QT_BACKSLASH_PATTERN. Either case
+                        // followed by another `q` is invalid per C.
+                        if quotetype == QT_DOLLARS
+                            || quotetype == QT_BACKSLASH_PATTERN
+                        {
+                            zerr("error in flags");
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
+                        }
                         let next = body_chars.get(idx + 1).copied(); // c:2240 IS_DASH(s[1]) || s[1]=='+'
                         if next == Some('-') || next == Some('+') {
                             // c:2240
-                            // c:2241-2242 — `if (quotemod) goto flagerr;`
-                            // (flagerr not yet ported; skipped).
+                            // c:2241-2242 — `if (quotemod) goto flagerr;`.
+                            // q- / q+ are independent flag-block entries
+                            // and can't be combined with another q-mod.
+                            if quotemod != 0 {
+                                zerr("error in flags");
+                                errflag_set_error();
+                                return (String::new(), new_pos, vec![]);
+                            }
                             idx += 1; // c:2243 s++
                             quotemod = 1; // c:2244
                             quotetype = if next == Some('+') {
@@ -2779,7 +2793,14 @@ pub fn paramsubst(
                         } else {
                             // c:2247
                             // c:2248-2251 — `if (quotetype ==
-                            // QT_SINGLE_OPTIONAL) goto flagerr;` (skipped).
+                            // QT_SINGLE_OPTIONAL) goto flagerr;`.
+                            // Once q- has set QT_SINGLE_OPTIONAL,
+                            // additional plain `q`s are invalid.
+                            if quotetype == QT_SINGLE_OPTIONAL {
+                                zerr("error in flags");
+                                errflag_set_error();
+                                return (String::new(), new_pos, vec![]);
+                            }
                             quotemod += 1; // c:2252 quotemod++
                             quotetype += 1; // c:2252 quotetype++
                         } // c:2253
