@@ -229,7 +229,6 @@ mod redefinition {
 
     /// `unset -f name` removes function.
     #[test]
-    #[ignore = "ZSHRS BUG: `unset -f name` doesn't remove the function; later `f` still runs"]
     fn unset_f_removes_function() {
         assert_parity("f() { echo hi; }; unset -f f; f 2>/dev/null; echo done");
     }
