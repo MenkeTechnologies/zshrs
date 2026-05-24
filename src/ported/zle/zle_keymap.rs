@@ -1045,11 +1045,39 @@ pub fn bin_bindkey_lsmaps(
     _func: i32,
 ) -> i32 {
     // c:834
-    // C body (c:856-873): `scanhashtable(keymapnamtab, 1, ...,
-    //                      scanlistmaps, 0)`. Format each as
-    // `name (-> alias)` for entries that share a keymap.
-    for k in keymapnamtab().lock().unwrap().keys() {
-        println!("{}", k);
+    // c:856-873 — `scanhashtable(keymapnamtab, 1, ..., scanlistmaps, 0)`.
+    // Walk every keymap-name entry and emit `name -> alias` when the
+    // keymap is shared with another name (i.e. when openkeymap returned
+    // the same Arc as the keymap's primary name).
+    let snapshot: Vec<(String, std::sync::Arc<Keymap>)> = {
+        let g = keymapnamtab().lock().unwrap();
+        g.iter().map(|(n, k)| (n.clone(), k.keymap.clone())).collect()
+    };
+    // First pass: pick the primary name for each unique Arc<Keymap>.
+    let mut primary_for: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+    for (name, arc) in &snapshot {
+        let id = std::sync::Arc::as_ptr(arc) as usize;
+        // c:865 — `if (!km->primary || ...)`: pick the first-seen
+        // name as the primary unless the kmn carries an explicit
+        // primary tag. Our Keymap.primary field, when set, names
+        // the canonical owner.
+        if let Some(p) = &arc.primary {
+            primary_for.insert(id, p.clone());
+        } else {
+            primary_for.entry(id).or_insert_with(|| name.clone());
+        }
+    }
+    // c:866-872 — emit `name` for primary, `name -> primary` for aliases.
+    let mut names: Vec<(String, std::sync::Arc<Keymap>)> = snapshot;
+    names.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, arc) in &names {
+        let id = std::sync::Arc::as_ptr(arc) as usize;
+        let p = primary_for.get(&id).cloned().unwrap_or_else(|| name.clone());
+        if p == *name {
+            println!("{}", name); // c:866
+        } else {
+            println!("{} -> {}", name, p); // c:868
+        }
     }
     0
 }
@@ -1502,19 +1530,69 @@ pub fn getrestchar_keybuf() -> i32 {
 
 /// !!! WARNING: PARTIAL PORT — stub. C `getkeymapcmd(Keymap km,
 /// Thingy *funcp, char **strp)` at Src/Zle/zle_keymap.c:1581 is the
-/// 89-line keystroke-to-Thingy resolver: it walks the keybinding
-/// trie character-by-character (via `getkeybuf`), returns the
-/// matched Thingy on a leaf, and feeds extra-keys-after-leaf back
-/// via `ungetbyte`. Returns the trie depth on success, -1 on no-match.
+/// Direct port of `char *getkeymapcmd(Keymap km, Thingy *funcp,
+/// char **strp)` from `Src/Zle/zle_keymap.c:1581`. Walks the
+/// keybinding trie one byte at a time against the supplied
+/// `km`: tracks the longest prefix that hit a binding,
+/// stops when the in-flight sequence is no longer a prefix of
+/// any binding, and unget-bytes any chars read past the
+/// matched prefix.
 ///
-/// Wrong sig too: C is `(Keymap, Thingy*, char**)`, Rust is `(i32)`.
-///
-/// Zero Rust callers reach this fn; the live key-dispatch path
-/// uses `zle_main::get_key_cmd` directly. Faithful port needs the
-/// Keymap struct + Thingy out-param infrastructure.
-pub fn getkeymapcmd(_km: i32) -> i32 {
-    // c:1581 — see WARNING above; stub returns -1 (no match).
-    -1
+/// Rust signature: `(&Keymap) -> Option<(Thingy, Vec<u8>,
+/// Option<String>)>` — the C `(funcp out, strp out)` collapse
+/// into the returned tuple (Thingy + matched key sequence +
+/// string-replacement when bound).
+pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, Option<String>)> {
+    // c:1581
+    let mut buf: Vec<u8> = Vec::with_capacity(8); // c:1583 keybuf
+    let mut last_match: Option<super::zle_thingy::Thingy> = None; // c:1584
+    let mut last_match_str: Option<String> = None;
+    let mut last_match_len = 0usize; // c:1585
+
+    // c:1591 — `while(getkeybuf(timeout) != EOF)`.
+    loop {
+        // Read one byte. Use timed read once we have a partial match.
+        let do_keytmout = last_match.is_some();
+        let b = match super::zle_main::getbyte(do_keytmout) {
+            Some(b) => b,
+            None => break, // c:1591 EOF
+        };
+        buf.push(b);
+
+        // c:1602-1604 — `f = keybind(km, keybuf, &s);` lookup.
+        let (current_match, current_str, is_prefix) = if buf.len() == 1 {
+            let m = km.first[b as usize].clone();
+            let pfx = km.multi.keys().any(|k| k.len() > 1 && k[0] == b);
+            (m, None, pfx)
+        } else {
+            let entry = km.multi.get(&buf[..]);
+            let m = entry.and_then(|e| e.bind.clone());
+            let s = entry.and_then(|e| e.str.clone());
+            let pfx = entry.map(|e| e.prefixct > 0).unwrap_or(false);
+            (m, s, pfx)
+        };
+
+        // c:1606-1614 — `if (f != t_undefinedkey)` → record match.
+        if let Some(t) = current_match {
+            last_match = Some(t);
+            last_match_str = current_str;
+            last_match_len = buf.len();
+        }
+
+        // c:1614 — `if (!ispfx) break;` stop when not a prefix anymore.
+        if !is_prefix {
+            break;
+        }
+    }
+
+    // c:1619 — unget extra bytes past the matched prefix.
+    if last_match.is_some() && buf.len() > last_match_len {
+        let extra = buf[last_match_len..].to_vec();
+        super::zle_main::ungetbytes(&extra);
+        buf.truncate(last_match_len);
+    }
+
+    last_match.map(|t| (t, buf, last_match_str))
 }
 
 /// Port of `addkeybuf(int c)` from Src/Zle/zle_keymap.c:1717.
