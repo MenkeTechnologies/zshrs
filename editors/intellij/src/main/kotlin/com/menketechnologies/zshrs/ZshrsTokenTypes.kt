@@ -20,6 +20,12 @@ object ZshrsTokenTypes {
     @JvmField val BACKTICK = ZshrsTokenType("ZSHRS_BACKTICK")
     @JvmField val HEREDOC = ZshrsTokenType("ZSHRS_HEREDOC")
     @JvmField val STRING_ESCAPE = ZshrsTokenType("ZSHRS_STRING_ESCAPE")
+    /// Printf-style format specifier inside a `"..."` dq-string —
+    /// `%d`, `%s`, `%10.2f`, `%-15s`, `%%`. Split from the
+    /// surrounding STRING_DQ token so the IDE can color them
+    /// distinctly (printf "%d %s\n" 42 hi → %d / %s pop out from
+    /// the literal text). Mirrors strykelang's STRING_FORMAT.
+    @JvmField val STRING_FORMAT = ZshrsTokenType("ZSHRS_STRING_FORMAT")
     @JvmField val NUMBER = ZshrsTokenType("ZSHRS_NUMBER")
 
     // ── Keywords ─────────────────────────────────────────────────────────
