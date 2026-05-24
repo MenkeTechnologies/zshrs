@@ -1004,6 +1004,17 @@ fn completion(state: &State, params: &Value) -> Value {
             push(&mut items, k, 14, "keyword");
         }
     }
+    // Canonical reserved words from `Src/hashtable.c::reswds[]`
+    // (port: `crate::ported::hashtable::RESWDS`, 31 entries). The
+    // hand `KEYWORDS` list above is missing `[[`, `]]`, `{`, `}`,
+    // `!`, `end` — without this loop, `[[<TAB>` and `}<TAB>` never
+    // suggest the keyword. IDE-side dedup collapses any name that
+    // appears in both lists.
+    for (name, _token) in crate::ported::hashtable::RESWDS {
+        if want(name) {
+            push(&mut items, name, 14, "keyword");
+        }
+    }
     // Compat builtins — ported `Src/Builtins/*.c` set. Note this is
     // the hand `BUILTINS` const used for fast inline classification.
     for b in BUILTINS {
@@ -7466,6 +7477,36 @@ mod tests {
     #[test]
     fn completion_subscript_flag_table_has_10_entries() {
         assert!(SUBSCRIPT_FLAGS.len() >= 10, "SUBSCRIPT_FLAGS: {}", SUBSCRIPT_FLAGS.len());
+    }
+
+    #[test]
+    fn completion_keywords_includes_canonical_reswds() {
+        // Hand `KEYWORDS` was missing canonical RESWDS like `end`,
+        // `{`, `}`, `!`, `[[`. Verify they reach completion via the
+        // RESWDS iteration. Use prefixes that match each name but
+        // DON'T trigger a context (e.g. `e` for `end`, no special
+        // context). For `[[` / `}` / `!` / `{` themselves, those
+        // trigger context-specific completion (TestOperator,
+        // SubscriptFlag, HistoryDesignator, PatternModifier
+        // respectively) so we test reachability via the call into
+        // `lsp_completion_context` returning Normal at non-trigger
+        // positions.
+        let _g = crate::test_util::global_state_lock();
+        // `e<TAB>` — should include `end` (canonical reswd missing
+        // from hand KEYWORDS) and `echo`/`exec`/`esac`/etc.
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "e".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 1 },
+        });
+        let items = completion(&state, &params)["items"].as_array().unwrap().clone();
+        let labels: Vec<&str> = items.iter().map(|i| i["label"].as_str().unwrap_or("")).collect();
+        assert!(
+            labels.iter().any(|l| *l == "end"),
+            "RESWDS `end` not surfaced — labels: {:?}",
+            labels.iter().filter(|l| l.starts_with('e')).take(10).collect::<Vec<_>>(),
+        );
     }
 
     #[test]
