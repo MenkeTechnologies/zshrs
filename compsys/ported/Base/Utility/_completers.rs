@@ -125,4 +125,86 @@ mod tests {
             .expect("_complete present");
         assert_eq!(c.disp.as_deref(), Some("complete"));
     }
+
+    #[test]
+    fn prefix_filter_narrows_emissions() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "co".into();
+        _completers(&mut state, false);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        // co* → complete, correct
+        assert!(names.contains(&"complete"));
+        assert!(names.contains(&"correct"));
+        assert!(!names.contains(&"match"));
+    }
+
+    #[test]
+    fn prefix_filter_with_underscore_form() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "_h".into();
+        _completers(&mut state, true);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names, vec!["_history"]);
+    }
+
+    #[test]
+    fn no_matching_prefix_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "definitely-not-a-completer-xyz".into();
+        let ok = _completers(&mut state, false);
+        assert!(!ok);
+    }
+
+    #[test]
+    fn prefix_hidden_no_effect_without_underscore_prefix() {
+        // shell sets disp ONLY when both -p and prefix-hidden are
+        // active (otherwise listing already shows the bare name).
+        let mut state = CompletionState::new();
+        state.styles.set(
+            ":completion:::completers:completers",
+            "prefix-hidden",
+            vec!["true".into()],
+            false,
+        );
+        _completers(&mut state, false); // no -p
+        let c = state.groups[0]
+            .matches
+            .iter()
+            .find(|m| m.str_ == "complete")
+            .expect("complete present");
+        assert!(c.disp.is_none(), "disp set unnecessarily; got {:?}", c.disp);
+    }
+
+    #[test]
+    fn canonical_list_matches_upstream_eleven_known_completers() {
+        // Pin that the constant matches upstream — if a 12th
+        // completer is ever added upstream, this fails loudly.
+        assert_eq!(CANONICAL_COMPLETER_NAMES.len(), 11);
+        for needed in [
+            "complete",
+            "approximate",
+            "correct",
+            "match",
+            "expand",
+            "list",
+            "menu",
+            "oldlist",
+            "ignored",
+            "prefix",
+            "history",
+        ] {
+            assert!(
+                CANONICAL_COMPLETER_NAMES.contains(&needed),
+                "missing `{needed}` from CANONICAL_COMPLETER_NAMES"
+            );
+        }
+    }
 }

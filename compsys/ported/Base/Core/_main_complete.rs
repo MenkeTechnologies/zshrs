@@ -23,6 +23,7 @@
 //! after every run — same as shell's `_lastcomp` association.
 
 use crate::base::{CompleterResult, MainCompleteState};
+use crate::ported::_call_function::_call_function;
 
 /// Main completion entry point (_main_complete)
 ///
@@ -41,11 +42,13 @@ pub fn _main_complete(
 
     state.ctx.completer_num = 1;
 
-    // Call pre-functions
+    // shell pre-functions (compprefuncs). Each registered prefunc
+    // is dispatched via `_call_function`, which silently no-ops if
+    // the name isn't registered (matches the shell
+    // `(( $+functions[$name] )) && $name` pattern).
     let prefuncs = state.prefuncs.clone();
     for func in &prefuncs {
-        // Would call the function here
-        let _ = func;
+        let _ = _call_function(state, func);
     }
 
     // Try each completer
@@ -91,10 +94,11 @@ pub fn _main_complete(
         state.ctx.completer_num += 1;
     }
 
-    // Call post-functions
+    // shell post-functions (comppostfuncs). Same dispatch as
+    // prefuncs above.
     let postfuncs = state.postfuncs.clone();
     for func in &postfuncs {
-        let _ = func;
+        let _ = _call_function(state, func);
     }
 
     // Store lastcomp info
@@ -159,5 +163,75 @@ mod tests {
             Some("git")
         );
         assert!(state.lastcomp.contains_key("nmatches"));
+    }
+
+    #[test]
+    fn registered_prefunc_fires_before_completer() {
+        use crate::ported::_call_function::{register, unregister};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        // Both prefunc and dispatch increment a counter; prefunc's
+        // value MUST be observed by dispatch (so prefunc ran first).
+        static SEEN: AtomicUsize = AtomicUsize::new(0);
+        SEEN.store(0, Ordering::SeqCst);
+        register(
+            "_mc_prefunc_pin",
+            Box::new(|_| {
+                SEEN.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+        );
+        let mut state = MainCompleteState::new("", 0);
+        state.completers = vec!["_complete".into()];
+        state.prefuncs = vec!["_mc_prefunc_pin".into()];
+        let observed = std::cell::Cell::new(0usize);
+        _main_complete(&mut state, |_, _| {
+            observed.set(SEEN.load(Ordering::SeqCst));
+            CompleterResult::NoMatch
+        });
+        unregister("_mc_prefunc_pin");
+        assert_eq!(observed.get(), 1, "prefunc must run before dispatch");
+    }
+
+    #[test]
+    fn registered_postfunc_fires_after_dispatch() {
+        use crate::ported::_call_function::{register, unregister};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static DISPATCH_AT: AtomicUsize = AtomicUsize::new(0);
+        static POSTFUNC_AT: AtomicUsize = AtomicUsize::new(0);
+        static CLOCK: AtomicUsize = AtomicUsize::new(0);
+        DISPATCH_AT.store(0, Ordering::SeqCst);
+        POSTFUNC_AT.store(0, Ordering::SeqCst);
+        CLOCK.store(0, Ordering::SeqCst);
+        register(
+            "_mc_postfunc_pin",
+            Box::new(|_| {
+                POSTFUNC_AT.store(CLOCK.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                true
+            }),
+        );
+        let mut state = MainCompleteState::new("", 0);
+        state.completers = vec!["_complete".into()];
+        state.postfuncs = vec!["_mc_postfunc_pin".into()];
+        _main_complete(&mut state, |_, _| {
+            DISPATCH_AT.store(CLOCK.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+            CompleterResult::NoMatch
+        });
+        unregister("_mc_postfunc_pin");
+        assert!(DISPATCH_AT.load(Ordering::SeqCst) > 0);
+        assert!(
+            POSTFUNC_AT.load(Ordering::SeqCst) > DISPATCH_AT.load(Ordering::SeqCst),
+            "postfunc ts must be > dispatch ts"
+        );
+    }
+
+    #[test]
+    fn unregistered_pre_post_funcs_silently_noop() {
+        // Calling with names that aren't registered must not crash —
+        // mirrors shell `(( $+functions[$name] )) && $name` guard.
+        let mut state = MainCompleteState::new("", 0);
+        state.completers = vec!["_complete".into()];
+        state.prefuncs = vec!["nobody-registered-1".into()];
+        state.postfuncs = vec!["nobody-registered-2".into()];
+        let _ = _main_complete(&mut state, |_, _| CompleterResult::NoMatch);
     }
 }

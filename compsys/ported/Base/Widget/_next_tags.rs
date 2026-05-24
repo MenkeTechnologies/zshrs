@@ -70,4 +70,46 @@ mod tests {
         state.tags.start();
         assert!(!_next_tags(&mut state));
     }
+
+    #[test]
+    fn three_sets_advance_then_exhaust() {
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["a".into(), "b".into(), "c".into()]);
+        state.tags.add_try(&["a".into()]);
+        state.tags.add_try(&["b".into()]);
+        state.tags.add_try(&["c".into()]);
+        state.tags.start();
+        assert!(_next_tags(&mut state), "a → b");
+        assert!(_next_tags(&mut state), "b → c");
+        assert!(!_next_tags(&mut state), "c → done");
+    }
+
+    #[test]
+    fn next_tags_does_not_emit_matches() {
+        // _next_tags only mutates the tag-set pointer; it doesn't
+        // add completion candidates. Pin that no group is created.
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["x".into(), "y".into()]);
+        state.tags.add_try(&["x".into()]);
+        state.tags.add_try(&["y".into()]);
+        state.tags.start();
+        let before_groups = state.comp.groups.len();
+        let before_n = state.comp.nmatches;
+        _next_tags(&mut state);
+        assert_eq!(state.comp.groups.len(), before_groups);
+        assert_eq!(state.comp.nmatches, before_n);
+    }
+
+    #[test]
+    fn idempotent_after_exhaustion() {
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["solo".into()]);
+        state.tags.add_try(&["solo".into()]);
+        state.tags.start();
+        assert!(!_next_tags(&mut state));
+        // Calling again must STILL return false (no panic, no state
+        // change).
+        assert!(!_next_tags(&mut state));
+        assert!(!_next_tags(&mut state));
+    }
 }

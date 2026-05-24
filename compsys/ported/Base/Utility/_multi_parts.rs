@@ -223,4 +223,80 @@ mod tests {
         let ns = names(&state);
         assert!(ns.iter().any(|n| n.starts_with("code:de")));
     }
+
+    #[test]
+    fn empty_prefix_passes_all_candidates() {
+        let mut state = CompletionState::new();
+        let parts = vec!["a".into(), "b".into(), "c".into()];
+        let ok = _multi_parts(&mut state, '/', &parts, &MultiPartsOpts::default());
+        assert!(ok);
+        assert_eq!(names(&state).len(), 3);
+    }
+
+    #[test]
+    fn no_candidates_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "any".into();
+        assert!(!_multi_parts(
+            &mut state,
+            '/',
+            &[],
+            &MultiPartsOpts::default()
+        ));
+    }
+
+    #[test]
+    fn duplicate_candidates_dedup() {
+        let mut state = CompletionState::new();
+        let parts = vec![
+            "/usr/bin".into(),
+            "/usr/bin".into(),
+            "/usr/local".into(),
+        ];
+        let _ = _multi_parts(&mut state, '/', &parts, &MultiPartsOpts::default());
+        let bin_count = names(&state).iter().filter(|n| *n == "/usr/bin").count();
+        assert_eq!(bin_count, 1, "duplicates must collapse via the BTreeSet");
+    }
+
+    #[test]
+    fn longer_typed_prefix_than_candidate_returns_false() {
+        // /a/b/c/d typed, but candidate is only 2-deep → no segment
+        // at position 2 → bail.
+        let mut state = CompletionState::new();
+        state.params.prefix = "/a/b/c/d".into();
+        let parts = vec!["/a/b".into()];
+        assert!(!_multi_parts(&mut state, '/', &parts, &MultiPartsOpts::default()));
+    }
+
+    #[test]
+    fn tag_name_from_opts_respected() {
+        let mut state = CompletionState::new();
+        let parts = vec!["/a/b".into()];
+        let opts = MultiPartsOpts {
+            tag: "my-custom-tag",
+            ..MultiPartsOpts::default()
+        };
+        let _ = _multi_parts(&mut state, '/', &parts, &opts);
+        assert!(state.groups.iter().any(|g| g.name == "my-custom-tag"));
+    }
+
+    #[test]
+    fn partial_segment_match_only_at_position() {
+        // The `lo` in `/usr/lo/x` should match `/usr/local/x` even
+        // though both `/usr/lo/x` and `/usr/long/y` are candidates.
+        let mut state = CompletionState::new();
+        state.params.prefix = "/usr/lo".into();
+        let parts = vec![
+            "/usr/local".into(),
+            "/usr/long-name".into(),
+            "/usr/loud".into(),
+            "/var/log".into(),
+        ];
+        let _ = _multi_parts(&mut state, '/', &parts, &MultiPartsOpts::default());
+        let ns = names(&state);
+        assert!(ns.contains(&"/usr/local".to_string()));
+        assert!(ns.contains(&"/usr/long-name".to_string()));
+        assert!(ns.contains(&"/usr/loud".to_string()));
+        assert!(!ns.contains(&"/var/log".to_string()));
+    }
 }

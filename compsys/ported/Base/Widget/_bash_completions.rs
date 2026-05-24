@@ -27,8 +27,11 @@ pub fn _bash_completions(state: &mut MainCompleteState, compspec: &str) -> Compl
     let prefix = &state.comp.params.prefix.clone();
     let mut matches = Vec::new();
 
-    // Parse compspec arguments
-    let args: Vec<&str> = compspec.split_whitespace().collect();
+    // Parse compspec arguments. Use a quote-aware tokenizer so
+    // `-W "yes no maybe"` survives as a single arg rather than
+    // splitting on the inner spaces.
+    let args: Vec<String> = tokenize_quoted(compspec);
+    let args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let mut i = 0;
 
     while i < args.len() {
@@ -167,19 +170,54 @@ fn glob_match_simple(pattern: &str, text: &str) -> bool {
     match_impl(pattern, text)
 }
 
+/// Quote-aware whitespace tokenizer. Handles `"..."` and `'...'`
+/// as single tokens (strips the outer quotes). Required so the
+/// compspec `-W "yes no maybe"` survives as ONE arg through to the
+/// `-W` handler, which then splits the wordlist on inner spaces.
+fn tokenize_quoted(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote: Option<char> = None;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (c, in_quote) {
+            ('\\', _) => {
+                // Backslash escapes the next char.
+                if let Some(nc) = chars.next() {
+                    cur.push(nc);
+                }
+            }
+            ('"' | '\'', None) => {
+                in_quote = Some(c);
+            }
+            (q, Some(open)) if q == open => {
+                in_quote = None;
+            }
+            (c, None) if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            (c, _) => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn dash_w_wordlist_completion_with_unquoted_single_word() {
-        // The current parser splits compspec on whitespace before
-        // honoring -W's quoted-list arg, so multi-word quoted lists
-        // don't fully work yet — pin the SINGLE-word path that does
-        // work (the common shell case is `-W yes`).
+    fn dash_w_quoted_wordlist_splits_and_filters() {
+        // Quote-aware tokenizer keeps `-W "yes no maybe yesterday"`
+        // as a single arg, then -W handler splits on inner spaces.
         let mut state = MainCompleteState::new("", 0);
         state.comp.params.prefix = "ye".into();
-        let result = _bash_completions(&mut state, "-W yes");
+        let result = _bash_completions(&mut state, "-W \"yes no maybe yesterday\"");
         assert!(matches!(result, CompleterResult::Matched));
         let names: Vec<String> = state
             .comp
@@ -189,6 +227,34 @@ mod tests {
             .map(|c| c.str_.clone())
             .collect();
         assert!(names.contains(&"yes".to_string()));
+        assert!(names.contains(&"yesterday".to_string()));
+        assert!(!names.contains(&"no".to_string()));
+        assert!(!names.contains(&"maybe".to_string()));
+    }
+
+    #[test]
+    fn dash_w_single_quoted_wordlist_works() {
+        let mut state = MainCompleteState::new("", 0);
+        let result = _bash_completions(&mut state, "-W 'alpha beta gamma'");
+        assert!(matches!(result, CompleterResult::Matched));
+        let names: std::collections::HashSet<String> = state
+            .comp
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains("alpha"));
+        assert!(names.contains("beta"));
+        assert!(names.contains("gamma"));
+    }
+
+    #[test]
+    fn dash_w_unquoted_single_word_still_works() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "ye".into();
+        let result = _bash_completions(&mut state, "-W yes");
+        assert!(matches!(result, CompleterResult::Matched));
     }
 
     #[test]
@@ -203,7 +269,34 @@ mod tests {
     #[test]
     fn glob_match_simple_handles_star() {
         assert!(glob_match_simple("*.rs", "foo.rs"));
-        assert!(glob_match_simple("*.rs", "deep/foo.rs") == false || true);
         assert!(!glob_match_simple("*.rs", "foo.txt"));
+    }
+
+    #[test]
+    fn glob_match_simple_handles_question() {
+        assert!(glob_match_simple("?oo", "foo"));
+        assert!(!glob_match_simple("?oo", "fooo"));
+    }
+
+    #[test]
+    fn tokenize_quoted_handles_mixed_quotes() {
+        let toks = tokenize_quoted("-W \"foo bar\" -G '*.txt'");
+        assert_eq!(toks, vec!["-W", "foo bar", "-G", "*.txt"]);
+    }
+
+    #[test]
+    fn tokenize_quoted_handles_backslash_escape() {
+        let toks = tokenize_quoted(r"-W foo\ bar baz");
+        assert_eq!(toks, vec!["-W", "foo bar", "baz"]);
+    }
+
+    #[test]
+    fn unknown_flags_silently_ignored() {
+        // -F, -C, -X, -P, -S are documented as skipped (need bash
+        // shell eval substrate). Pin they don't produce matches but
+        // also don't crash.
+        let mut state = MainCompleteState::new("", 0);
+        let r = _bash_completions(&mut state, "-F my_fn -X !*.bak");
+        assert!(matches!(r, CompleterResult::NoMatch));
     }
 }

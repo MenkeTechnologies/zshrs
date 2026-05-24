@@ -62,4 +62,34 @@ mod tests {
         let r2 = files_execute(&mut s2, &FilesOpts::default());
         assert_eq!(r1, r2, "_default must agree with files_execute(default())");
     }
+
+    #[test]
+    fn empty_prefix_passes_through_to_files() {
+        // _default with empty prefix should still drive files
+        // lookup; we don't assert match count (varies by cwd) — just
+        // that the call returns without panic.
+        let mut state = CompletionState::new();
+        let _ = _default(&mut state);
+    }
+
+    #[test]
+    fn does_not_mutate_prefix_or_suffix() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "x".into();
+        state.params.suffix = "y".into();
+        let _ = _default(&mut state);
+        assert_eq!(state.params.prefix, "x");
+        assert_eq!(state.params.suffix, "y");
+    }
+
+    #[test]
+    fn does_not_touch_compstate_insert() {
+        // _default only emits matches; the choice of insert mode
+        // is the caller's. Pin that the default `insert` value
+        // survives the call.
+        let mut state = CompletionState::new();
+        let original = state.params.compstate.insert.clone();
+        let _ = _default(&mut state);
+        assert_eq!(state.params.compstate.insert, original);
+    }
 }

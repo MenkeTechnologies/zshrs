@@ -75,4 +75,61 @@ mod tests {
         let words = vec!["completely-different".into()];
         assert!(!_correct_word(&mut state, &words));
     }
+
+    #[test]
+    fn empty_words_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "anything".into();
+        assert!(!_correct_word(&mut state, &[]));
+    }
+
+    #[test]
+    fn distance_exactly_2_included() {
+        // `comit` → `commit` is dist=1 (insert m); use a true dist=2:
+        // `ablc` → `abc` is dist=1, `cbd` → `abc` is dist=2.
+        let mut state = CompletionState::new();
+        state.params.prefix = "cbd".into();
+        let words = vec!["abc".into()];
+        assert!(_correct_word(&mut state, &words));
+    }
+
+    #[test]
+    fn distance_3_excluded() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "abc".into();
+        let words = vec!["xyzw".into()]; // dist 4 → out
+        assert!(!_correct_word(&mut state, &words));
+    }
+
+    #[test]
+    fn multiple_within_distance_all_emit() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "git".into();
+        let words = vec!["gat".into(), "gut".into(), "got".into(), "git".into()];
+        assert!(_correct_word(&mut state, &words));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert_eq!(names.len(), 4);
+    }
+
+    #[test]
+    fn empty_prefix_pulls_in_short_words() {
+        // dist("", "ab") = 2 → ab passes; dist("", "abcd") = 4 → out.
+        let mut state = CompletionState::new();
+        let words = vec!["a".into(), "ab".into(), "abc".into(), "abcd".into()];
+        assert!(_correct_word(&mut state, &words));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"a".to_string()));
+        assert!(names.contains(&"ab".to_string()));
+        assert!(!names.contains(&"abcd".to_string()));
+    }
 }

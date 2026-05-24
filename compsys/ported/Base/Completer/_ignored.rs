@@ -17,19 +17,39 @@
 //! `_comp_no_ignore=yes` set so they emit the matches that had been
 //! filtered out by `ignored-patterns` zstyle.
 //!
-//! Simplified Rust port: gates on `state.ignored > 0` (the count of
-//! previously-ignored matches) and returns true to signal "we should
-//! show these ignored matches now". Re-running completers under
-//! `_comp_no_ignore=yes` requires the full completer dispatch loop;
-//! caller wires that.
+//! Strict Rust port of the GATE half of the shell function. The
+//! gating is the only piece the leaf layer can implement here:
+//! re-running prior completers under `_comp_no_ignore=yes` is the
+//! caller's job (it owns the completer dispatch loop). Returns
+//! true iff the caller SHOULD run that loop now.
+//!
+//! Gate semantics (shell:5):
+//!   `[[ _matcher_num -gt 1 || $compstate[ignored] -eq 0 ]] && return 1`
+//! → return false (don't run) when either we're past matcher 1 OR
+//!   there are no ignored matches to recover. Otherwise return true.
 
 use crate::compcore::CompletionState;
 
-/// _ignored - Complete previously ignored matches
-pub fn _ignored(state: &mut CompletionState, ignored_patterns: &[String]) -> bool {
-    // Would complete things that were ignored by fignore
+/// _ignored - Complete previously ignored matches.
+///
+/// `matcher_num` mirrors the shell variable `_matcher_num` (1-based
+/// index of the current matcher within the matcher-list). `state.ignored`
+/// mirrors `$compstate[ignored]` (count of previously-suppressed
+/// matches). `ignored_patterns` is the resolved `ignored-patterns`
+/// zstyle list — currently consumed only as a gate, but kept in the
+/// signature so callers wire the real value (not yet applied because
+/// the re-run happens in the caller).
+pub fn _ignored(
+    state: &mut CompletionState,
+    matcher_num: usize,
+    ignored_patterns: &[String],
+) -> bool {
     let _ = ignored_patterns;
-    state.ignored > 0
+    // shell:5 — past first matcher OR no ignored count → bail.
+    if matcher_num > 1 || state.ignored == 0 {
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]
@@ -37,40 +57,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_true_when_state_has_ignored_matches() {
+    fn first_matcher_with_ignored_matches_returns_true() {
         let mut state = CompletionState::new();
         state.ignored = 3;
-        assert!(_ignored(&mut state, &[]));
+        assert!(_ignored(&mut state, 1, &[]));
     }
 
     #[test]
-    fn returns_false_when_no_ignored_matches() {
+    fn second_matcher_bails_even_with_ignored() {
+        // shell:5 — `_matcher_num -gt 1` short-circuits to false
+        // regardless of how many ignored matches there are.
         let mut state = CompletionState::new();
-        assert!(!_ignored(&mut state, &[]));
+        state.ignored = 99;
+        assert!(!_ignored(&mut state, 2, &[]));
     }
 
     #[test]
-    fn ignored_count_zero_means_false() {
+    fn zero_ignored_means_false() {
         let mut state = CompletionState::new();
-        state.ignored = 0;
-        assert!(!_ignored(&mut state, &["pat".into()]));
+        assert!(!_ignored(&mut state, 1, &["pat".into()]));
     }
 
     #[test]
-    fn patterns_arg_currently_unused_does_not_panic() {
+    fn patterns_arg_does_not_short_circuit_gate() {
         let mut state = CompletionState::new();
         state.ignored = 5;
-        // patterns arg is documented as "not yet wired" — pin it
-        // doesn't crash with various shapes.
-        assert!(_ignored(&mut state, &[]));
-        assert!(_ignored(&mut state, &["a".into()]));
-        assert!(_ignored(&mut state, &["a".into(), "b".into(), "c".into()]));
+        assert!(_ignored(&mut state, 1, &[]));
+        assert!(_ignored(&mut state, 1, &["a".into()]));
+        assert!(_ignored(
+            &mut state,
+            1,
+            &["a".into(), "b".into(), "c".into()]
+        ));
     }
 
     #[test]
-    fn high_ignored_count_still_returns_true() {
+    fn matcher_num_zero_treated_as_first_pass() {
+        // Some callers index from 0; matcher_num=0 is NOT > 1, so it
+        // still passes the gate.
+        let mut state = CompletionState::new();
+        state.ignored = 1;
+        assert!(_ignored(&mut state, 0, &[]));
+    }
+
+    #[test]
+    fn high_ignored_count_first_matcher_still_runs() {
         let mut state = CompletionState::new();
         state.ignored = 999_999;
-        assert!(_ignored(&mut state, &[]));
+        assert!(_ignored(&mut state, 1, &[]));
     }
 }

@@ -89,12 +89,10 @@ pub fn _complete_debug(state: &mut MainCompleteState) -> CompleterResult {
         let _ = f.write_all(body.as_bytes());
         record_last(tmpf.clone());
     }
-    // Always echo to stderr too (matches the user-facing "show me
-    // state" use case even when the tmpfile write fails).
-    eprintln!("{}", body);
     // shell:17 — `zle -M "Trace output left in $tmpf"` is the UI
     // ping; the caller's widget layer surfaces it via
-    // last_dump_path().
+    // last_dump_path(). The trace body itself stays in the file
+    // (matching upstream — no stderr spam).
 
     // shell-implicit return — _complete_debug never emits matches
     CompleterResult::NoMatch
@@ -103,9 +101,15 @@ pub fn _complete_debug(state: &mut MainCompleteState) -> CompleterResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Tests share the process-global `LAST` path slot; serialize
+    /// to avoid one test reading another's path.
+    static SERIAL: Mutex<()> = Mutex::new(());
 
     #[test]
     fn returns_no_match() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let mut state = MainCompleteState::new("hello world", 11);
         assert!(matches!(
             _complete_debug(&mut state),
@@ -115,6 +119,7 @@ mod tests {
 
     #[test]
     fn writes_dump_to_tmpfile_and_records_path() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let mut state = MainCompleteState::new("hello world", 11);
         state.ctx.context = ":complete::test:".into();
         state.ctx.completer = "_complete".into();
@@ -133,11 +138,86 @@ mod tests {
 
     #[test]
     fn does_not_emit_matches() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let mut state = MainCompleteState::new("", 0);
         let _ = _complete_debug(&mut state);
         assert_eq!(
             state.comp.nmatches, 0,
             "_complete_debug must NEVER emit completion matches"
+        );
+    }
+
+    #[test]
+    fn dump_includes_all_documented_state_fields() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        // Pin the dump format so refactors don't silently lose a
+        // field the user has come to rely on seeing.
+        let mut state = MainCompleteState::new("hello world", 11);
+        state.ctx.context = ":x:".into();
+        state.ctx.completer = "_c".into();
+        state.ctx.completer_num = 7;
+        state.ctx.matcher = "_m".into();
+        state.ctx.matcher_num = 3;
+        state.comp.params.prefix = "p".into();
+        state.comp.params.suffix = "s".into();
+        state.comp.params.iprefix = "ip".into();
+        state.comp.params.isuffix = "is".into();
+        state.comp.params.words = vec!["one".into(), "two".into()];
+        state.comp.params.current = 5;
+        state.completers = vec!["_a".into(), "_b".into()];
+        let _ = _complete_debug(&mut state);
+        let path = last_dump_path().expect("path set");
+        let body = std::fs::read_to_string(&path).unwrap();
+        for needle in [
+            "Context: :x:",
+            "Completer: _c",
+            "Completer#: 7",
+            "Matcher: _m",
+            "Matcher#: 3",
+            "Prefix:  \"p\"",
+            "Suffix:  \"s\"",
+            "IPrefix: \"ip\"",
+            "ISuffix: \"is\"",
+            "Current: 5",
+            "Completers: [\"_a\", \"_b\"]",
+            "Words:   [\"one\", \"two\"]",
+        ] {
+            assert!(
+                body.contains(needle),
+                "dump missing `{}`; got:\n{}",
+                needle,
+                body
+            );
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn repeated_calls_record_latest_path() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = MainCompleteState::new("", 0);
+        let _ = _complete_debug(&mut state);
+        let first = last_dump_path().expect("first path");
+        let _ = _complete_debug(&mut state);
+        let second = last_dump_path().expect("second path");
+        assert_ne!(first, second, "each call must produce a fresh tmpfile");
+        let _ = std::fs::remove_file(&first);
+        let _ = std::fs::remove_file(&second);
+    }
+
+    #[test]
+    fn dump_lists_existing_tag_groups() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = MainCompleteState::new("", 0);
+        state
+            .comp
+            .add_match(crate::completion::Completion::new("x"), Some("commands"));
+        state.comp.add_explanation("hint".into(), Some("commands"));
+        let _ = _complete_debug(&mut state);
+        let body = std::fs::read_to_string(last_dump_path().unwrap()).unwrap();
+        assert!(
+            body.contains("commands (1 matches, 1 explanations)"),
+            "expected per-group line in dump; got:\n{body}"
         );
     }
 }

@@ -109,4 +109,65 @@ mod tests {
         assert!(grp.explanations.is_empty(),
                 "empty description must not emit an explanation");
     }
+
+    #[test]
+    fn description_attached_to_named_group() {
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["values".into()]);
+        state.tags.configure_from_style(&["values".into()]);
+        state.tags.start();
+
+        _wanted(&mut state, "values", "Pick a value", |s| {
+            s.add_match(Completion::new("alpha".to_string()), Some("values"));
+            true
+        });
+        let grp = state.comp.groups.iter().find(|g| g.name == "values").unwrap();
+        assert!(grp.explanations.iter().any(|e| e == "Pick a value"));
+    }
+
+    #[test]
+    fn action_returning_false_propagates() {
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["files".into()]);
+        state.tags.configure_from_style(&["files".into()]);
+        state.tags.start();
+        let result = _wanted(&mut state, "files", "Files", |_| false);
+        assert!(!result, "action's false must be returned verbatim");
+    }
+
+    #[test]
+    fn action_observes_completion_state_not_main() {
+        // The action gets a `&mut CompletionState`, NOT
+        // `&mut MainCompleteState`. Pin that mutations made to the
+        // CompletionState DO show up in state.comp afterwards.
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["t".into()]);
+        state.tags.configure_from_style(&["t".into()]);
+        state.tags.start();
+        _wanted(&mut state, "t", "", |s| {
+            s.params.prefix = "mutated".into();
+            true
+        });
+        assert_eq!(state.comp.params.prefix, "mutated");
+    }
+
+    #[test]
+    fn multiple_tags_only_requested_one_runs_action() {
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["files".into(), "directories".into()]);
+        state.tags.configure_from_style(&["files".into()]);
+        state.tags.start();
+        let files_ran = std::cell::Cell::new(false);
+        let dirs_ran = std::cell::Cell::new(false);
+        _wanted(&mut state, "files", "", |_| {
+            files_ran.set(true);
+            true
+        });
+        _wanted(&mut state, "directories", "", |_| {
+            dirs_ran.set(true);
+            true
+        });
+        assert!(files_ran.get());
+        assert!(!dirs_ran.get(), "non-requested tag must skip action");
+    }
 }

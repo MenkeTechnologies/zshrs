@@ -18,16 +18,25 @@
 //! 15      zstyle() { …shadow zstyle to RECORD lookups… }
 //! ```
 //!
-//! Simplified Rust port: takes pre-collected `(topic, description)`
-//! pairs from the caller and emits each with `topic -- desc` disp
-//! formatting. This covers the user-visible "show me the help
-//! entries" mode without re-implementing zsh's compsys introspection
-//! plumbing (which would require shadowing zstyle/compadd globally).
+//! Strict Rust port: two entry points.
+//!
+//! 1. `_complete_help(state, entries)` — caller passes
+//!    pre-collected `(topic, description)` pairs and we emit each
+//!    with `topic -- desc` disp formatting under group `help`.
+//!    Used when the caller already has the entries (e.g. tag list).
+//!
+//! 2. `_complete_help_shadow(state, completer, label)` — runs
+//!    `completer` under `_shadow`, captures everything it would
+//!    have added, and renders the capture as topic+desc rows. This
+//!    is the closer analog of what the shell widget does: shadow
+//!    `compadd`/`zstyle` to RECORD what a completer would do
+//!    without polluting live state.
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;
+use crate::ported::_shadow::_shadow;
 
-/// _complete_help - Show completion help
+/// _complete_help - Show completion help (entry-driven form).
 pub fn _complete_help(state: &mut CompletionState, help_entries: &[(String, String)]) -> bool {
     state.begin_group("help", true);
 
@@ -39,6 +48,26 @@ pub fn _complete_help(state: &mut CompletionState, help_entries: &[(String, Stri
 
     state.end_group();
     !help_entries.is_empty()
+}
+
+/// _complete_help_shadow — run `completer` under `_shadow`, then
+/// emit each captured (group, match) pair as a topic+desc help row.
+/// `label` is forwarded as the shadow name (shows up in the
+/// underlying record, useful for debugging).
+pub fn _complete_help_shadow(
+    state: &mut CompletionState,
+    label: &str,
+    completer: impl FnOnce(&mut CompletionState) -> bool,
+) -> bool {
+    let record = _shadow(state, label, completer);
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for (group, m) in &record.matches {
+        entries.push((m.clone(), format!("(tag: {})", group)));
+    }
+    for e in &record.explanations {
+        entries.push((format!("[msg] {e}"), "explanation".into()));
+    }
+    _complete_help(state, &entries)
 }
 
 #[cfg(test)]
@@ -102,5 +131,81 @@ mod tests {
         let mut state = CompletionState::new();
         let entries = vec![("topic".into(), "desc".into())];
         assert!(_complete_help(&mut state, &entries));
+    }
+
+    #[test]
+    fn shadow_mode_captures_matches_a_completer_would_add() {
+        let mut state = CompletionState::new();
+        let ok = _complete_help_shadow(&mut state, "test-completer", |s| {
+            s.add_match(Completion::new("foo"), Some("commands"));
+            s.add_match(Completion::new("bar"), Some("commands"));
+            true
+        });
+        assert!(ok);
+        let entries: Vec<(String, String)> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| {
+                (
+                    c.str_.clone(),
+                    c.disp.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        // Two rows, one per shadowed match. Each disp encodes its
+        // source tag.
+        let disps: Vec<String> = entries.iter().map(|(_, d)| d.clone()).collect();
+        assert!(disps.iter().any(|d| d.contains("foo -- (tag: commands)")));
+        assert!(disps.iter().any(|d| d.contains("bar -- (tag: commands)")));
+    }
+
+    #[test]
+    fn shadow_mode_with_empty_completer_returns_false() {
+        let mut state = CompletionState::new();
+        let ok = _complete_help_shadow(&mut state, "empty", |_| true);
+        assert!(!ok, "no captured rows → no help entries → false");
+    }
+
+    #[test]
+    fn shadow_mode_rolls_back_live_completion_state() {
+        // The completer adds matches under shadow; after
+        // _complete_help_shadow returns, those matches do NOT
+        // appear in the live "commands" tag group. Only the
+        // synthesized "help" group exists.
+        let mut state = CompletionState::new();
+        let _ = _complete_help_shadow(&mut state, "noisy", |s| {
+            s.add_match(Completion::new("live-poison"), Some("commands"));
+            true
+        });
+        let live_commands_count: usize = state
+            .groups
+            .iter()
+            .filter(|g| g.name == "commands")
+            .map(|g| g.matches.len())
+            .sum();
+        assert_eq!(
+            live_commands_count, 0,
+            "shadowed completer's matches must not leak into live `commands` group"
+        );
+    }
+
+    #[test]
+    fn explanations_from_shadow_become_msg_rows() {
+        let mut state = CompletionState::new();
+        let ok = _complete_help_shadow(&mut state, "with-msg", |s| {
+            s.add_match(Completion::new("x"), Some("g"));
+            s.add_explanation("hint text".into(), Some("g"));
+            true
+        });
+        assert!(ok);
+        let disps: Vec<String> = state.groups[0]
+            .matches
+            .iter()
+            .filter_map(|c| c.disp.clone())
+            .collect();
+        assert!(
+            disps.iter().any(|d| d.contains("[msg] hint text")),
+            "explanation should round-trip as a [msg] help row; got {disps:?}"
+        );
     }
 }

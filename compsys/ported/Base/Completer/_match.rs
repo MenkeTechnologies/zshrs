@@ -83,4 +83,75 @@ mod tests {
         let mut state = CompletionState::new();
         assert!(!_match(&mut state, "*", &[]));
     }
+
+    #[test]
+    fn no_matches_returns_false_without_emitting() {
+        let mut state = CompletionState::new();
+        let cands = vec!["alpha".into(), "beta".into()];
+        assert!(!_match(&mut state, "*.rs", &cands));
+        assert_eq!(state.nmatches, 0);
+    }
+
+    #[test]
+    fn anchored_pattern_matches_full_string() {
+        // glob_match is anchored — `foo*` matches `foobar` but not
+        // `xfoobar`.
+        let mut state = CompletionState::new();
+        let cands = vec!["foobar".into(), "xfoobar".into(), "foo".into()];
+        assert!(_match(&mut state, "foo*", &cands));
+        let names: Vec<&str> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"foobar"));
+        assert!(names.contains(&"foo"));
+        assert!(!names.contains(&"xfoobar"), "anchor must hold");
+    }
+
+    #[test]
+    fn literal_pattern_matches_exact_candidate_only() {
+        let mut state = CompletionState::new();
+        let cands = vec!["abc".into(), "abcd".into(), "ab".into()];
+        assert!(_match(&mut state, "abc", &cands));
+        let names: Vec<&str> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names, vec!["abc"]);
+    }
+
+    #[test]
+    fn star_alone_matches_everything() {
+        let mut state = CompletionState::new();
+        let cands = vec!["".into(), "a".into(), "longer-thing".into()];
+        assert!(_match(&mut state, "*", &cands));
+        let count: usize = state.groups.iter().map(|g| g.matches.len()).sum();
+        assert_eq!(count, cands.len());
+    }
+
+    #[test]
+    fn multiple_globs_in_pattern() {
+        let mut state = CompletionState::new();
+        let cands = vec![
+            "a_b_c".into(),
+            "axx_byy_czz".into(),
+            "a_b".into(),
+            "x_b_c".into(),
+        ];
+        assert!(_match(&mut state, "a*_b*_c*", &cands));
+        let names: Vec<&str> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"a_b_c"));
+        assert!(names.contains(&"axx_byy_czz"));
+        assert!(!names.contains(&"a_b"));
+        assert!(!names.contains(&"x_b_c"));
+    }
 }

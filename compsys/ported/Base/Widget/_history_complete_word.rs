@@ -16,51 +16,105 @@
 //! `list`, `remove-all-dups` and walks the global $history array
 //! with cycling/wrap semantics.
 //!
-//! Simplified Rust port: takes the history array directly and walks
-//! forward/backward by `direction` (-1 = backward, 1 = forward),
-//! returning the first matching word that is NOT identical to the
-//! current prefix (matches shell's `word != prefix` filter).
+//! Strict Rust port: takes the history array directly. Honors
+//! `remove-all-dups` (dedup all matches), `sort` (lexical sort
+//! before emit), and `stop` (return false after first match,
+//! single-shot behavior). Walks forward or backward by direction.
+
+use std::collections::HashSet;
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;
 
-/// _history_complete_word - Complete word from history
+/// Options mirroring the `range` / `sort` / `stop` / `remove-all-dups`
+/// zstyles upstream consults.
+#[derive(Default)]
+pub struct HistoryCompleteOpts {
+    /// `direction` — -1 = backward (default; matches Esc-/ binding),
+    /// 1 = forward (Esc-, binding).
+    pub direction: i32,
+    /// `remove-all-dups` zstyle — drop duplicate words.
+    pub remove_all_dups: bool,
+    /// `sort` zstyle — emit alphabetically sorted matches.
+    pub sort: bool,
+    /// `stop` zstyle — return after first match (the "stop iterating"
+    /// branch). Default false: collect ALL matches.
+    pub stop: bool,
+    /// Cap on number of matches emitted (0 = unlimited).
+    pub max_matches: usize,
+}
+
+/// _history_complete_word - Complete word from history.
 pub fn _history_complete_word(
     state: &mut CompletionState,
     history_entries: &[String],
-    direction: i32, // -1 = backward, 1 = forward
+    opts: &HistoryCompleteOpts,
 ) -> bool {
     let prefix = state.params.prefix.clone();
-
-    let iter: Box<dyn Iterator<Item = &String>> = if direction < 0 {
+    let iter: Box<dyn Iterator<Item = &String>> = if opts.direction < 0 {
         Box::new(history_entries.iter().rev())
     } else {
         Box::new(history_entries.iter())
     };
 
-    for entry in iter {
-        // Find words in entry that match prefix
+    let mut collected: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    'outer: for entry in iter {
         for word in entry.split_whitespace() {
             if word.starts_with(&prefix) && word != prefix {
-                state.add_match(Completion::new(word), None);
-                return true;
+                if opts.remove_all_dups {
+                    if !seen.insert(word.to_string()) {
+                        continue;
+                    }
+                }
+                collected.push(word.to_string());
+                if opts.stop {
+                    break 'outer;
+                }
+                if opts.max_matches > 0 && collected.len() >= opts.max_matches {
+                    break 'outer;
+                }
             }
         }
     }
 
-    false
+    if collected.is_empty() {
+        return false;
+    }
+
+    if opts.sort {
+        collected.sort();
+    }
+    for w in collected {
+        state.add_match(Completion::new(&w), None);
+    }
+    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn opts(direction: i32) -> HistoryCompleteOpts {
+        HistoryCompleteOpts {
+            direction,
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn forward_iter_finds_first_match_after_prefix() {
+    fn forward_iter_finds_match_after_prefix() {
         let mut state = CompletionState::new();
         state.params.prefix = "che".into();
         let history = vec!["ls -la".into(), "git checkout main".into()];
-        assert!(_history_complete_word(&mut state, &history, 1));
+        assert!(_history_complete_word(&mut state, &history, &opts(1)));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"checkout".to_string()));
     }
 
     #[test]
@@ -69,9 +123,20 @@ mod tests {
         state.params.prefix = "che".into();
         let history = vec![
             "git checkout old".into(),
-            "git checkout new".into(),
+            "git cherry-pick xyz".into(),
         ];
-        assert!(_history_complete_word(&mut state, &history, -1));
+        // direction=-1 + stop=true → first match seen is from the
+        // newest entry (cherry-pick).
+        let mut o = opts(-1);
+        o.stop = true;
+        assert!(_history_complete_word(&mut state, &history, &o));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert_eq!(names, vec!["cherry-pick"]);
     }
 
     #[test]
@@ -79,8 +144,93 @@ mod tests {
         let mut state = CompletionState::new();
         state.params.prefix = "exactly".into();
         let history = vec!["exactly".into()];
-        // Only word matching prefix IS the prefix itself → skipped
-        // by `word != prefix` check.
-        assert!(!_history_complete_word(&mut state, &history, 1));
+        assert!(!_history_complete_word(&mut state, &history, &opts(1)));
+    }
+
+    #[test]
+    fn collects_all_matches_by_default() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "c".into();
+        let history = vec!["cat".into(), "checkout".into(), "cherry-pick".into()];
+        assert!(_history_complete_word(&mut state, &history, &opts(1)));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn remove_all_dups_deduplicates() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "g".into();
+        let history = vec![
+            "git status".into(),
+            "git status".into(),
+            "git diff".into(),
+            "git diff".into(),
+        ];
+        let mut o = opts(1);
+        o.remove_all_dups = true;
+        let _ = _history_complete_word(&mut state, &history, &o);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert_eq!(names.len(), 1, "only `git` survives dedup");
+        assert_eq!(names[0], "git");
+    }
+
+    #[test]
+    fn sort_orders_emitted_matches_lexically() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "c".into();
+        let history = vec!["cat zoo".into(), "cd zoo".into(), "cherry zoo".into()];
+        let mut o = opts(1);
+        o.sort = true;
+        o.remove_all_dups = true;
+        let _ = _history_complete_word(&mut state, &history, &o);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
+    }
+
+    #[test]
+    fn max_matches_caps_collection() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "c".into();
+        let history = vec![
+            "cat".into(),
+            "checkout".into(),
+            "cherry-pick".into(),
+            "commit".into(),
+        ];
+        let mut o = opts(1);
+        o.max_matches = 2;
+        let _ = _history_complete_word(&mut state, &history, &o);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn empty_history_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "anything".into();
+        assert!(!_history_complete_word(&mut state, &[], &opts(1)));
     }
 }
