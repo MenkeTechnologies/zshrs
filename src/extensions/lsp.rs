@@ -970,6 +970,23 @@ fn completion(state: &State, params: &Value) -> Value {
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
+            LspCompletionContext::BuiltinFlag(ref builtin_name) => {
+                // Parse the builtin's yodl doc body for `- **`-X`** — desc`
+                // bullets. Cached per-builtin so repeated `print -<TAB>`
+                // doesn't re-parse the same body. Emit each flag as a
+                // completion item with its description in `detail`.
+                let flags = extract_builtin_flags(builtin_name);
+                let bname = builtin_name.clone();
+                let items: Vec<Value> = flags
+                    .into_iter()
+                    .map(|(flag, desc)| ctx_item(
+                        &flag,
+                        &desc,
+                        &format!("**`{}`** — {}\n\n_option flag for `{}`_", flag, desc, bname),
+                    ))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
             LspCompletionContext::Normal => {}
         }
     }
@@ -2745,7 +2762,7 @@ const SUBSCRIPT_FLAGS: &[(&str, &str)] = &[
 /// Detected by scanning backward from the cursor for the innermost
 /// open paren / brace / `!` / `[` and looking at what precedes it,
 /// plus by inspecting the leading command on the line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum LspCompletionContext {
     Normal,
     ParamFlag,
@@ -2766,6 +2783,13 @@ enum LspCompletionContext {
     MathFunction,     // inside (( … )) or $(( … ))
     PatternModifier,  // inside (#…)
     SubscriptFlag,    // inside ${arr[(…)…]}
+    /// Cursor right after a `-` argument to a known builtin —
+    /// surface the builtin's option flags from its yodl hover doc.
+    /// `print -<TAB>` → -a/-b/-c/-C/-D/-f/-i/-l/-m/-n/-N/-o/-O/-P/-r
+    /// /-R/-s/-S/-u/-v/-x/-z + each one's description. The `.0`
+    /// field carries the builtin name so the dispatcher can look
+    /// up the right doc body.
+    BuiltinFlag(String),
 }
 
 /// Find the first whitespace-delimited word at or after a list-start
@@ -3118,11 +3142,116 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
             }
             "zstyle" => return LspCompletionContext::ZstyleContext,
             "compdef" => return LspCompletionContext::CompdefFn,
-            _ => {}
+            // Generic fallback: when the leading command is a known
+            // builtin AND the CURRENT word starts with `-`, surface
+            // the builtin's option flags from its doc body. Catches
+            // every `BUILTIN -<TAB>` invocation: `print -`, `read -`,
+            // `echo -`, `bindkey -`, `setopt -`, etc. — without
+            // needing per-builtin parser arms.
+            other => {
+                let bytes = line.as_bytes();
+                let cap = col.min(bytes.len());
+                let mut j = cap;
+                while j > 0 && !matches!(bytes[j - 1], b' ' | b'\t') {
+                    j -= 1;
+                }
+                let starts_with_dash = j < cap && bytes[j] == b'-';
+                let just_after_builtin = j == cap;
+                if (starts_with_dash || just_after_builtin)
+                    && is_known_builtin_with_flag_docs(other)
+                {
+                    return LspCompletionContext::BuiltinFlag(other.to_string());
+                }
+            }
         }
     }
 
     LspCompletionContext::Normal
+}
+
+/// True when `name` is a builtin whose yodl doc body contains flag
+/// bullets — used to gate the `BuiltinFlag` context dispatch. Quick
+/// boolean check based on whether the doc body has the
+/// `- **\`-X\`** —` pattern; cached per session.
+fn is_known_builtin_with_flag_docs(name: &str) -> bool {
+    let is_compat = crate::ported::builtin::BUILTINS
+        .iter()
+        .any(|b| b.node.nam == name);
+    let is_ext = crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&name);
+    if !is_compat && !is_ext {
+        return false;
+    }
+    !extract_builtin_flags(name).is_empty()
+}
+
+/// Parse `(flag, description)` pairs out of a builtin's hover-doc
+/// body. The yodl→markdown converter emits each documented option
+/// as a markdown bullet:
+///
+///     - **`-X`** — description text
+///
+/// (with a Unicode em-dash `\u{2014}`). For options that take an
+/// argument, the bullet is `- **\`-X _arg_\`** — desc`. This walks
+/// the body's lines looking for that exact shape.
+///
+/// Returns `Vec<(flag, desc)>` where `flag` is `-X` (just the letter,
+/// no arg name) and `desc` is the description prose. Cached per-name
+/// in `BUILTIN_FLAGS_CACHE` so a hot `print -<TAB>` doesn't re-parse
+/// the same body on every keystroke.
+fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
+    use std::sync::OnceLock;
+    use std::sync::Mutex;
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, Vec<(String, String)>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Ok(g) = cache.lock() {
+        if let Some(v) = g.get(name) {
+            return v.clone();
+        }
+    }
+    // Pull the doc body directly from the canonical table — DON'T
+    // route through `lookup_doc` because that one prepends a heading
+    // (`**name** — _zsh builtin_\n\n`) and routes through a cascade
+    // that can resolve to a special-var entry for the same name.
+    let body: String = match crate::zsh_builtin_docs::lookup_builtin_doc(name) {
+        Some((_, b)) => b.to_string(),
+        None => match crate::zsh_ext_builtin_docs::lookup_full(name) {
+            Some(b) => b.to_string(),
+            None => return Vec::new(),
+        },
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    // Pattern: `- **\`-X[ _arg_]\`** <anything-but-newline-or-bullet>`.
+    // The em-dash separator in zsh's yodl docs got double-mojibaked
+    // in some entries during extraction (`Ã¢Â\x80Â\x94` instead of
+    // `—`) — we don't care, just skip everything until the next
+    // alphabetic character which starts the description prose.
+    // Rust's `regex` crate has no look-around. Match flag header
+    // (`- **\`-X[ args]\`**`) and the FIRST line of description on
+    // its own line — enough for the LSP hover summary. Multi-line
+    // descriptions are truncated at the next newline, which is
+    // acceptable since the popup shows them inline anyway.
+    let re = regex::Regex::new(
+        r"(?m)^\s*-\s+\*\*`(-[A-Za-z+])(?:\s+[^`]*)?`\*\*[^A-Za-z\n]*([^\n]+)"
+    ).unwrap();
+    for cap in re.captures_iter(&body) {
+        let flag = cap.get(1).unwrap().as_str().to_string();
+        let raw_desc = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+        let desc: String = raw_desc.trim().chars().take(200).collect();
+        if !out.iter().any(|(f, _)| f == &flag) {
+            out.push((flag, desc));
+        }
+    }
+    tracing::debug!(
+        target: "zshrs::lsp::completion",
+        builtin = %name,
+        flag_count = out.len(),
+        "extract_builtin_flags",
+    );
+    if let Ok(mut g) = cache.lock() {
+        g.insert(name.to_string(), out.clone());
+    }
+    out
 }
 
 /// Hand docs for compsys functions whose names don't have a per-name
@@ -7507,6 +7636,36 @@ mod tests {
             labels.iter().any(|l| *l == "end"),
             "RESWDS `end` not surfaced — labels: {:?}",
             labels.iter().filter(|l| l.starts_with('e')).take(10).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn completion_builtin_flag_print_dash_tab() {
+        // User report: `print -<TAB>` showed nothing — zsh's native
+        // compsys produces a rich -a/-b/-c/-D/-f/-l/-n/-N/-o/-O/-P
+        // list with descriptions. Pin that the doc-body-derived
+        // BuiltinFlag context fires + extracts ≥15 flag bullets.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "print -".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 7 },
+        });
+        let items = completion(&state, &params)["items"].as_array().unwrap().clone();
+        let labels: Vec<&str> = items.iter().map(|i| i["label"].as_str().unwrap_or("")).collect();
+        for want in &["-a", "-b", "-c", "-n", "-N", "-o", "-O", "-P", "-r", "-R", "-z"] {
+            assert!(
+                labels.iter().any(|l| l == want),
+                "missing `print -` flag `{}` — got {:?}",
+                want,
+                labels.iter().take(20).collect::<Vec<_>>(),
+            );
+        }
+        assert!(
+            items.len() >= 15,
+            "expected ≥15 print flags, got {}",
+            items.len(),
         );
     }
 
