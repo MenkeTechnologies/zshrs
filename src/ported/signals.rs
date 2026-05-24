@@ -1235,20 +1235,33 @@ pub fn endtrapscope() {
     // C `dotrapargs(SIGEXIT, &exittr, exitfn)` invokes either:
     //   - ZSIG_FUNC: the `TRAPEXIT` shell function from shfunctab.
     //   - else: the eprog from siglists[SIGEXIT].
-    //
-    // ZSIG_FUNC branch is wired via the canonical dispatcher
-    // (`fusevm_bridge::with_executor` + `dispatch_function_call`).
-    // The non-FUNC eprog path stays deferred until the eprog→VM
-    // bridge for top-level traps lands.
     if exittr != 0 && (exittr & ZSIG_FUNC) != 0 {
-        // c:961, c:1132 FUNC branch
-        // Build args = ["TRAPEXIT", "<SIGEXIT-num>"]. Matches the
-        // canonical signature dotrapargs would have constructed.
+        // c:961, c:1132 FUNC branch — dispatch the TRAPEXIT shfunc.
         let signame = getsigname(SIGEXIT);
         let trap_fn = format!("TRAP{}", signame);
         if crate::ported::utils::getshfunc(&trap_fn).is_some() {
             let args = vec![SIGEXIT.to_string()];
             let _ = crate::ported::exec_hooks::dispatch_function_call(&trap_fn, &args);
+        }
+    } else if exittr != 0 {
+        // c:961 else branch — non-FUNC eprog. The Rust port stores
+        // the trap body as a string in `traps_table` (populated by
+        // `bin_trap` / settrap). Dispatch through the execute_script
+        // hook installed by fusevm_bridge — same path used by
+        // signals.rs dotrap for non-FUNC traps.
+        let body = {
+            let signame = getsigname(SIGEXIT);
+            let t = crate::ported::builtin::traps_table().lock();
+            t.ok()
+                .and_then(|g| {
+                    g.get(&signame)
+                        .cloned()
+                        .or_else(|| g.get("EXIT").cloned())
+                })
+                .unwrap_or_default()
+        };
+        if !body.is_empty() {
+            let _ = crate::ported::exec_hooks::execute_script(&body); // c:961 eprog body
         }
     }
 }
