@@ -123,6 +123,7 @@ pub mod compset;
 pub mod computil;
 pub mod describe;
 pub mod files;
+pub mod fns;
 pub mod functions;
 pub mod generate;
 pub mod library;
