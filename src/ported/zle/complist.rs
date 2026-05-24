@@ -864,7 +864,7 @@ pub fn putfilecol(group: &str, filename: &str, m: u32, _special: i32) -> i32 {
 /// `Src/Zle/complist.c:1001`.
 ///
 /// Shown when the completion list exceeds the screen — emits the
-/// "--More--" prompt, reads a key via [`getkeycmd`] under the
+/// "--More--" prompt, reads a key via `getkeycmd` under the
 /// `listscroll` keymap, then interprets the bound command:
 ///   - SIGINT / nothing → return 1 (abort scroll)
 ///   - accept-line / down-line-or-history / etc. → bump
