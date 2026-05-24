@@ -295,7 +295,20 @@ pub fn math_func(_name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
             if argv[0].type_ == MN_INTEGER {
                 ret.l = if argv[0].l < 0 { -argv[0].l } else { argv[0].l };
             } else {
+                // c:204 — `ret.u.d = fabs(argv->u.d);`. C relies on the
+                // mftab registration (c:115 NUMMATHFUNC("abs", …,
+                // MF_ABS | TFLAG(TF_NOCONV|TF_NOASS))) merging
+                // TF_NOASS into id so the post-match block (c:431-432
+                // `if (!(id & TFLAG(TF_NOASS))) ret.u.d = retd;`)
+                // doesn't clobber ret.d with retd=0.0. The Rust port
+                // is called directly from tests with bare MF_ABS, so
+                // the TF_NOASS-implicit-in-mftab assumption breaks.
+                // Set BOTH ret.d AND retd so the post-block overwrite
+                // is harmless either way — caller-supplied TF_NOASS
+                // is still honoured but no longer required for
+                // correctness.
                 ret.d = argv[0].d.abs();
+                retd = ret.d;
             }
         }
         MF_ACOS => retd = argd.acos(),   // c:208
@@ -795,7 +808,6 @@ mod tests {
     /// MF_ABS needs to either set `retd` instead, or set TF_NOASS to
     /// skip the post-match overwrite.
     #[test]
-    #[ignore = "ZSHRS BUG: math_func MF_ABS float result clobbered by ret.d = retd at c:432"]
     fn math_func_abs_float_input_preserves_float_type_anchored() {
         let _g = crate::test_util::global_state_lock();
         let r = math_func("abs", 1, &[mn_float(-3.14)], MF_ABS);
