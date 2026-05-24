@@ -987,25 +987,36 @@ pub fn get_context() -> &'static str {
     }
 }
 
-/// `$ZLE_STATE` accessor — "insert"|"overwrite" + ":" + keymap.
-/// Port of `get_zle_state(UNUSED(Param pm))` from Src/Zle/zle_params.c. The C
-/// source emits a space-separated list of state words; our
-/// minimal version covers the two most-consulted fields.
+/// `$ZLE_STATE` accessor — port of `static char *get_zle_state(
+/// UNUSED(Param pm))` from `Src/Zle/zle_params.c:966`. C builds
+/// "<insert|overwrite>:<localhistory|globalhistory>", splits by
+/// ":", sorts the components, then joins with space — so user
+/// scripts can do `[[ $ZLE_STATE == *foo* ]]` without caring
+/// about ordering.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_zle_state() -> String {
-    let mut state = String::new();
-
-    if (INSMODE.load(Ordering::SeqCst) != 0) {
-        state.push_str("insert");
+    // c:966
+    use crate::ported::zsh_h::HIST_FOREIGN;
+    // c:973-988 — accumulate (insmode, hist_skip_flags) state words.
+    let insmode_str = if INSMODE.load(Ordering::SeqCst) != 0 {
+        "insert" // c:975
     } else {
-        state.push_str("overwrite");
-    }
-
-    // Add keymap info
-    state.push(':');
-    state.push_str(&crate::ported::zle::zle_keymap::curkeymapname());
-
-    state
+        "overwrite" // c:977
+    };
+    let hist_str = if (crate::ported::hist::hist_skip_flags
+        .load(Ordering::SeqCst)
+        & HIST_FOREIGN as i32)
+        != 0
+    {
+        "localhistory" // c:982
+    } else {
+        "globalhistory" // c:984
+    };
+    // c:1015 — `strmetasort(arr, SORTIT_ANYOLDHOW, NULL);`
+    let mut parts = vec![insmode_str.to_string(), hist_str.to_string()];
+    parts.sort();
+    // c:1016 — `zjoin(arr, ' ', 1);`
+    parts.join(" ")
 }
 
 /// `$ZLE_STATE` insert/overwrite component — true for insert.
