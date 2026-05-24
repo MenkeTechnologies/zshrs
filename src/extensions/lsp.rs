@@ -1060,9 +1060,38 @@ fn completion(state: &State, params: &Value) -> Value {
             push(&mut items, o, 21, "option");
         }
     }
+    // Hand-curated `$`-prefixed names (`$0`, `$?`, `$*`, etc) — kept
+    // for the dollar-prefix completion path that needs the visible
+    // `$` for matching.
     for s in SPECIAL_VARS {
         if want(s) || (prefix.starts_with('$') && s.starts_with(&prefix)) {
             push(&mut items, s, 6, "special variable");
+        }
+    }
+    // Canonical special-param names from zsh's `params.yo` + every
+    // module's special-param table — 538 entries. The hand subset
+    // above misses PS2/PS3/PS4/psvar/PROMPT2/PROMPT3/PROMPT4 and
+    // hundreds more. Surface every canonical name so `setopt`,
+    // `typeset`, `unset`, etc. can complete against the full set.
+    for (name, _doc) in crate::zsh_special_var_docs::SPECIAL_VAR_DOCS {
+        // Skip the pure-symbolic ones (`$`, `?`, `*`, etc) — they're
+        // already in SPECIAL_VARS with the `$` prefix. The remaining
+        // alphabetic names are the meaningful completions.
+        if !name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+            continue;
+        }
+        if want(name) {
+            push(&mut items, name, 6, "special variable");
+        }
+    }
+    // Aliases (PROMPT/PROMPT2/PROMPT3 → PS1/PS2/PS3, NULLCMD etc.) —
+    // surface so completion offers every surface name.
+    for (alias, _canon) in crate::zsh_special_var_docs::SPECIAL_VAR_ALIASES {
+        if !alias.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+            continue;
+        }
+        if want(alias) {
+            push(&mut items, alias, 6, "special variable");
         }
     }
     // Snippet templates — mirrors strykelang's `SNIPPETS` table. Each
@@ -7284,6 +7313,59 @@ mod tests {
     #[test]
     fn completion_subscript_flag_table_has_10_entries() {
         assert!(SUBSCRIPT_FLAGS.len() >= 10, "SUBSCRIPT_FLAGS: {}", SUBSCRIPT_FLAGS.len());
+    }
+
+    #[test]
+    fn completion_special_vars_includes_full_canonical_set() {
+        // User report: `$PS2`, `$PS3`, `$PS4`, `$psvar` were missing
+        // from completion even though they're in the doc table. Root
+        // cause: hand `SPECIAL_VARS` const was a stale 40-entry
+        // subset of zsh's actual ~538 specials. Fix surfaces every
+        // canonical name from `SPECIAL_VAR_DOCS` + `SPECIAL_VAR_ALIASES`.
+        let _g = crate::test_util::global_state_lock();
+        for prefix in &["PS", "PROMPT", "psvar"] {
+            let mut state = State::default();
+            state.docs.insert("file:///t.zsh".into(), (*prefix).into());
+            let params = json!({
+                "textDocument": { "uri": "file:///t.zsh" },
+                "position": { "line": 0, "character": prefix.len() },
+            });
+            let result = completion(&state, &params);
+            let items = result["items"].as_array().unwrap();
+            let labels: Vec<&str> = items
+                .iter()
+                .map(|i| i["label"].as_str().unwrap_or(""))
+                .collect();
+            match *prefix {
+                "PS" => {
+                    for want in &["PS1", "PS2", "PS3", "PS4"] {
+                        assert!(
+                            labels.iter().any(|l| l == want),
+                            "missing `{}` for prefix `{}`",
+                            want,
+                            prefix,
+                        );
+                    }
+                }
+                "PROMPT" => {
+                    for want in &["PROMPT", "PROMPT2", "PROMPT3", "PROMPT4"] {
+                        assert!(
+                            labels.iter().any(|l| l == want),
+                            "missing `{}` for prefix `{}`",
+                            want,
+                            prefix,
+                        );
+                    }
+                }
+                "psvar" => {
+                    assert!(
+                        labels.iter().any(|l| *l == "psvar"),
+                        "missing `psvar`",
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 
     #[test]
