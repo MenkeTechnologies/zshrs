@@ -1092,6 +1092,8 @@ pub static FULLY_EMULATING: std::sync::atomic::AtomicBool =
 pub static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         "aliases",
+        // c:Src/options.c:81 — ALIASFUNCDEF.
+        "aliasfuncdef",
         "allexport",
         "alwayslastprompt",
         "alwaystoend",
@@ -1118,6 +1120,8 @@ pub static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "bsdecho",
         "caseglob",
         "casematch",
+        // c:Src/options.c:108 — CASEPATHS.
+        "casepaths",
         "cbases",
         "cdablevars",
         "cdsilent",
@@ -1126,6 +1130,8 @@ pub static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "checkjobs",
         "checkrunningjobs",
         "clobber",
+        // c:Src/options.c:118 — CLOBBEREMPTY.
+        "clobberempty",
         "combiningchars",
         "completealiases",
         "completeinword",
@@ -1420,15 +1426,17 @@ fn optns_flags(name: &str) -> u16 {
         "bsdecho" => OPT_EMULATE,                    // c:105
         "caseglob" => OPT_ALL as u16,                // c:106
         "casematch" => OPT_ALL as u16,               // c:107
-        "cbases" => 0,                               // c:108
+        "casepaths" => 0,                            // c:108
+        "cbases" => 0,                               // c:109
         "cdablevars" => OPT_EMULATE,                 // c:109
         "cdsilent" => 0,                             // c:110
         "chasedots" => 0,                            // c:111
         "chaselinks" => 0,                           // c:112
         "checkjobs" => OPT_EMULATE | (OPT_ZSH as u16), // c:113
         "checkrunningjobs" => OPT_EMULATE | (OPT_ZSH as u16), // c:114
-        "clobber" => OPT_EMULATE | (OPT_ALL as u16), // c:115
-        "combiningchars" => 0,                       // c:116
+        "clobber" => OPT_EMULATE | (OPT_ALL as u16), // c:117
+        "clobberempty" => 0,                         // c:118
+        "combiningchars" => 0,                       // c:119
         "completealiases" => 0,                      // c:117
         "completeinword" => 0,                       // c:118
         "correct" => 0,                              // c:119

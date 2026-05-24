@@ -1268,9 +1268,7 @@ pub fn endtrapscope() {
         let trap_fn = format!("TRAP{}", signame);
         if crate::ported::utils::getshfunc(&trap_fn).is_some() {
             let args = vec![SIGEXIT.to_string()];
-            let _ = crate::fusevm_bridge::with_executor(|exec| {
-                exec.dispatch_function_call(&trap_fn, &args).unwrap_or(0)
-            });
+            let _ = crate::ported::exec_hooks::dispatch_function_call(&trap_fn, &args);
         }
     }
 }
@@ -1409,7 +1407,38 @@ pub fn dotrap(sig: i32) -> i32 {
     if trapped & ZSIG_IGNORED != 0 {
         return 0;
     }
-    if trapped & (ZSIG_TRAPPED | ZSIG_FUNC) == 0 {
+    // Look up a fallback raw-text body installed by `bin_trap`
+    // (`trap '...' SIG` form). bin_trap stores the body in the
+    // canonical `traps_table` HashMap<String, String> but never
+    // calls settrap, so `sigtrapped[sig]` may be 0 here even when
+    // there IS a live trap. Treat presence in traps_table as
+    // equivalent to ZSIG_TRAPPED for the dispatch decision and
+    // dispatch via the exec_hooks::execute_script fn-ptr installed
+    // by fusevm_bridge.
+    let signame_for_lookup = getsigname(sig);
+    let table_body: Option<String> = {
+        let aliases: &[&str] = match sig {
+            x if x == SIGZERR => &["ZERR", "ERR"],
+            x if x == SIGDEBUG => &["DEBUG"],
+            x if x == SIGEXIT => &["EXIT"],
+            _ => &[],
+        };
+        let mut found = None;
+        if let Ok(t) = crate::ported::builtin::traps_table().lock() {
+            if let Some(b) = t.get(&signame_for_lookup) {
+                found = Some(b.clone());
+            } else {
+                for alias in aliases {
+                    if let Some(b) = t.get(*alias) {
+                        found = Some(b.clone());
+                        break;
+                    }
+                }
+            }
+        }
+        found
+    };
+    if trapped & (ZSIG_TRAPPED | ZSIG_FUNC) == 0 && table_body.is_none() {
         return 0;
     }
     if errflag.load(Ordering::Relaxed) != 0 {
@@ -1444,16 +1473,19 @@ pub fn dotrap(sig: i32) -> i32 {
             //              canonical `crate::exec::doshfunc` entry which
             //              handles the arg+env+local-scope wrap.
             let args = vec![sig.to_string()];
-            let _ = crate::fusevm_bridge::with_executor(|exec| {
-                exec.dispatch_function_call(&trap_fn, &args).unwrap_or(0)
-            });
+            let _ = crate::ported::exec_hooks::dispatch_function_call(&trap_fn, &args);
         }
     }
-    // c:1268 — non-FUNC `siglists[sig]` eprog branch. Without an
-    //          eprog→executor bridge yet, leave the eprog dispatch
-    //          deferred; the FUNC branch above covers `trap '...' EXIT`
-    //          style assignments which install through `settrap` as
-    //          ZSIG_FUNC via the canonical fusevm AST→shfunc compile.
+    // c:1268 — non-FUNC `siglists[sig]` eprog branch. The canonical
+    // settrap→siglists path isn't fully wired (bin_trap stores raw
+    // body text into `traps_table` rather than parsing to Eprog and
+    // calling settrap). Dispatch via the exec_hooks::execute_script
+    // fn-ptr installed by fusevm_bridge — no direct ShellExecutor
+    // reach-in from src/ported/ (see memory
+    // feedback_no_exec_script_from_ported).
+    if let Some(body) = table_body {
+        let _ = crate::ported::exec_hooks::execute_script(&body);
+    }
 
     // c:1277 — `if (sig == SIGEXIT) --in_exit_trap;` (decrement, not
     // store-0). The previous Rust port used `store(0)` which would
@@ -1650,9 +1682,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         // C's `void *sigfns[sig]` cast at c:1170), swap in
         // `crate::ported::exec::execode(eprog, 1, 0, "trap")` directly.
         if let Some(src) = sigfn {
-            let _ = crate::fusevm_bridge::with_executor(|e| {
-                e.execute_script_zsh_pipeline(src)
-            });
+            let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(src);
         }
     }
 

@@ -1023,9 +1023,7 @@ pub fn source(s: &str) -> i32 {
     // read-for-side-effects path so errors still surface.
     let contents = std::fs::read_to_string(path);
     if let Ok(body) = contents {
-        let _ = crate::fusevm_bridge::with_executor(|e| {
-            e.execute_script_zsh_pipeline(&body)
-        });
+        let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(&body);
     }
 
     sourcelevel.fetch_sub(1, Ordering::SeqCst); // c:1644

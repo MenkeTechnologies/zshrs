@@ -1813,6 +1813,27 @@ impl ZshCompiler {
             return;
         }
 
+        // Fast path: `$@[SUB]` / `$*[SUB]` / `$argv[SUB]` — bare-form
+        // positional/array subscript. Route through BUILTIN_ARRAY_INDEX
+        // which calls paramsubst with `${name[sub]}` so the full
+        // subscript dispatch (range, @, *, negatives, etc.) applies.
+        if !has_bnull {
+            let inner = untoked.strip_prefix('$').unwrap_or(&untoked);
+            if let Some(lb) = inner.find('[') {
+                let nm = &inner[..lb];
+                if matches!(nm, "@" | "*" | "argv") && inner.ends_with(']') {
+                    let key = &inner[lb + 1..inner.len() - 1];
+                    let name_const = self.builder.add_constant(Value::str(nm));
+                    let key_const = self.builder.add_constant(Value::str(key));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
+                    return;
+                }
+            }
+        }
+
         // Fast path: single bare `$NAME` (no braces, no concat, no idx,
         // no modifier). Covers `$x`, `$1`, `$#`, `$?`, `$!`, etc. — the
         // most common case in real scripts. Emits BUILTIN_GET_VAR
@@ -2571,6 +2592,32 @@ impl ZshCompiler {
                         );
                         return;
                     }
+                }
+            }
+        }
+
+        // Bridge-array fast path for array-shape operators: `:|`, `:*`,
+        // `:^`, `:^^` (set difference / intersection / zip / zip-long).
+        // Each takes `${arr<op>other}` and returns array shape; the
+        // EXPAND_TEXT default mode uses singsub which collapses arrays
+        // to a single joined string, so we need to route directly
+        // through paramsubst via BUILTIN_BRIDGE_BRACE_ARRAY. Direct
+        // port of subst.c:3522 SUB_DIFFERENCE / 3540 SUB_INTERSECT /
+        // 3548 SUB_ZIP returning array results.
+        if !has_bnull {
+            if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+                let has_array_op = inner.contains(":|")
+                    || inner.contains(":*")
+                    || inner.contains(":^^")
+                    || inner.contains(":^");
+                if has_array_op {
+                    let body_const = self.builder.add_constant(Value::str(inner));
+                    self.builder.emit(Op::LoadConst(body_const), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                        0,
+                    );
+                    return;
                 }
             }
         }
@@ -4900,7 +4947,29 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                     return j;
                 }
             }
-            i + 2
+            // Pull trailing `[subscript]` into the same expansion so
+            // `$@[2,-1]` / `$*[1]` (especially in DQ context) is one
+            // piece, not `$@` + literal `[2,-1]`. Same logic as the
+            // identifier branch below at 4971-4985.
+            // c:Src/lex.c gettokstr — bare `$@[SUB]` is a recognized
+            // positional-array subscript shape.
+            let mut j = i + 2;
+            if j < chars.len() && (chars[j] == '\u{91}' || chars[j] == '[') {
+                let in_b = chars[j];
+                let out_b = if in_b == '\u{91}' { '\u{92}' } else { ']' };
+                let mut depth = 1;
+                let mut k = j + 1;
+                while k < chars.len() && depth > 0 {
+                    if chars[k] == in_b {
+                        depth += 1;
+                    } else if chars[k] == out_b {
+                        depth -= 1;
+                    }
+                    k += 1;
+                }
+                j = k;
+            }
+            j
         }
         // All-digit positional: $0..$N
         Some(ch) if ch.is_ascii_digit() => {

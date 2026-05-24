@@ -2071,7 +2071,20 @@ pub fn createparam(
             env: None,
             ename: None,
             old: oldpm,            // c:1137 pm->old = oldpm
-            level: cur_locallevel, // c:builtin.c:2576 PM_LOCAL → pm->level = locallevel
+            // c:1136 — C: `pm = zshcalloc(sizeof *pm)`. calloc
+            // zeroes pm.level so a freshly created GLOBAL assignment
+            // (`x=foo` inside a function) gets level=0 and survives
+            // endparamscope. The `pm->level = locallevel` set happens
+            // ONLY through builtin.c:2576 (PM_LOCAL path: `local x=…`).
+            // Previously hardcoded cur_locallevel here made every bare
+            // `x=foo` inside a function become local and disappear on
+            // function exit — the regression that bit functions_set
+            // globals like `f() { x=set-by-f; }; f; echo $x`.
+            level: if (flags as u32 & PM_LOCAL) != 0 {
+                cur_locallevel
+            } else {
+                0
+            },
         })
     };
 
@@ -5030,6 +5043,26 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         if let Some(old_scalar) = prior_scalar {
             val.insert(0, old_scalar); // c:3408-3411
         }
+    }
+
+    // c:3570-3585 — ASSPM_AUGMENT on an existing PM_ARRAY target:
+    // append rather than replace. C bumps v->start to arrlen(existing)
+    // and v->end to start+1 so setarrvalue writes past the tail.
+    // zshrs writes through pm.u_arr without the value struct, so do
+    // the equivalent here: prepend the existing array elements to the
+    // new val so the final stored vec is [old..., new...].
+    if (flags & ASSPM_AUGMENT) != 0
+        && existed
+        && (prior_flags as u32 & PM_ARRAY) != 0
+        && (prior_flags as u32 & PM_UNSET) == 0
+    {
+        let prior_arr = {
+            let tab = paramtab().read().unwrap();
+            tab.get(name).and_then(|pm| pm.u_arr.clone()).unwrap_or_default()
+        };
+        let appended: Vec<String> =
+            prior_arr.into_iter().chain(val.into_iter()).collect();
+        val = appended;
     }
 
     // c:3434 — setarrvalue(v, val): store array in pm.u_arr.

@@ -458,7 +458,13 @@ impl ShellExecutor {
                 .filter(|(_, v)| **v)
                 .count()
         );
-        println!("  traps:       {} active", self.traps.len());
+        println!(
+            "  traps:       {} active",
+            crate::ported::builtin::traps_table()
+                .lock()
+                .map(|t| t.len())
+                .unwrap_or(0)
+        );
         // Count entries across all `<hook>_functions` arrays in paramtab.
         let hook_count: usize = [
             "chpwd",

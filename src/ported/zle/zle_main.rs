@@ -752,16 +752,13 @@ pub fn execzlefunc(
     // visible side effects.
 
     // c:1490 — `doshfunc(shf, args, …)` — invoke the user's shfunc.
-    // Real dispatch via the canonical fusevm_bridge::with_executor +
-    // dispatch_function_call path used by signal-trap shfunc dispatch
-    // (signals.rs:1087). Routes through the wordcode VM directly so
-    // the widget body's side-effects (BUFFER/CURSOR/KEYMAP writes,
-    // zle -K, etc.) land on the live ZLE state in this thread.
+    // Real dispatch via the canonical exec_hooks::dispatch_function_call
+    // fn-ptr installed by fusevm_bridge at startup. Direct ShellExecutor
+    // reach-in from src/ported/ is forbidden — see memory
+    // feedback_no_exec_script_from_ported.
     if getshfunc(name).is_some() {
         // c:1490
-        let rc = crate::fusevm_bridge::with_executor(|exec| {
-            exec.dispatch_function_call(name, args).unwrap_or(0)
-        });
+        let rc = crate::ported::exec_hooks::dispatch_function_call(name, args).unwrap_or(0);
         // c:1530 — capture LASTVAL after the call. dispatch_function_call
         // sets LASTVAL itself; mirror the return through.
         LASTVAL.store(rc, Ordering::Relaxed);

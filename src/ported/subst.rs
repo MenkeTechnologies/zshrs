@@ -2164,9 +2164,10 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
     let parsed = subst_parse_str(&content, false, true)?; // c:1442
 
     // C: `singsub(&p);` — parameter-substitute the content (so
-    // `(l:$n:)` looks up $n).
-    let mut __exec = crate::vm_helper::ShellExecutor::new();
-    let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
+    // `(l:$n:)` looks up $n). Caller is expected to be inside a live
+    // ExecutorContext (parsestr is reached from script execution);
+    // explicit ShellExecutor reach-in from src/ported/ is forbidden
+    // — see memory feedback_no_exec_script_from_ported.
     let expanded = singsub(&parsed); // c:1444
     if errflag_set() {
         return None;
@@ -5404,6 +5405,11 @@ pub fn paramsubst(
                     .collect();
                 value = kept.join(" ");
                 split_parts = Some(kept); // c:3540 (auto-splat)
+                // c:3548 SUB_DIFFERENCE returns array shape; mark
+                // isarr=1 so the auto_splat block at c:4245 fires
+                // even though `rest` is non-empty (the operator
+                // consumed it).
+                isarr = 1;
             } else if let Some(rhs) = r.strip_prefix(":*") {
                 // c:3540 (intersect)
                 // ${arr:*other} — array set-intersection — KEEP
@@ -5420,6 +5426,7 @@ pub fn paramsubst(
                     .collect();
                 value = kept.join(" ");
                 split_parts = Some(kept); // c:3540 (auto-splat)
+                isarr = 1; // c:3548 SUB_INTERSECT returns array shape
             } else if let Some(rhs) = r.strip_prefix(":^^") {
                 // c:3540 (zip-long)
                 // ${arr:^^other} — interleave two arrays, continuing
@@ -5436,6 +5443,7 @@ pub fn paramsubst(
                 }
                 value = zipped.join(" ");
                 split_parts = Some(zipped); // c:3540 (auto-splat)
+                isarr = 1; // c:3540 SUB_ZIP_LONG returns array shape
             } else if let Some(rhs) = r.strip_prefix(":^") {
                 // c:3540 (zip)
                 // ${arr:^other} — interleave two arrays element-by-elem.
@@ -5449,6 +5457,7 @@ pub fn paramsubst(
                 }
                 value = zipped.join(" ");
                 split_parts = Some(zipped); // c:3540 (auto-splat)
+                isarr = 1; // c:3540 SUB_ZIP returns array shape
             } else if let Some(slice) = r.strip_prefix(':') {
                 // c:715 (substring) OR :modifier
                 // Detect history-style modifier (`:h`, `:t`, `:r`,
@@ -7490,13 +7499,21 @@ pub fn paramsubst(
             // the bracket subscript inline. Walk a depth-tracked `[...]`
             // after the `@`/`*` and apply via getarrvalue when present.
             let mut after_pos = pos + 1;
-            if chars.get(after_pos).copied() == Some('[') {
+            // Accept literal `[` AND tokenized Inbrack (\u{86}) /
+            // Outbrack (\u{8b}). When paramsubst runs on input that
+            // came through the lexer (DQ context), `[`/`]` are stored
+            // as Inbrack/Outbrack tokens; bare-form input (direct call
+            // from BUILTIN_ARRAY_INDEX) keeps them as ASCII brackets.
+            // c:Src/lex.c gettokstr — bare `$@[SUB]` / `$*[SUB]` parses
+            // the bracket subscript inline. Both shapes need the walk.
+            let nxt = chars.get(after_pos).copied();
+            if nxt == Some('[') || nxt == Some(Inbrack) {
                 let mut depth = 1;
                 let mut q = after_pos + 1;
                 while q < chars.len() && depth > 0 {
                     match chars[q] {
-                        '[' => depth += 1,
-                        ']' => {
+                        c if c == '[' || c == Inbrack => depth += 1,
+                        c if c == ']' || c == Outbrack => {
                             depth -= 1;
                             if depth == 0 {
                                 break;
@@ -7506,7 +7523,7 @@ pub fn paramsubst(
                     }
                     q += 1;
                 }
-                if depth == 0 && q < chars.len() && chars[q] == ']' {
+                if depth == 0 && q < chars.len() && (chars[q] == ']' || chars[q] == Outbrack) {
                     let sub: String = chars[after_pos + 1..q].iter().collect();
                     after_pos = q + 1;
                     if let Some((lo, hi)) = sub.split_once(',') {
@@ -7643,7 +7660,13 @@ pub fn arithsubst(expr: &str, prefix: &str, rest: &str) -> String {
         let mut out = String::with_capacity(expr.len());
         let mut i = 0;
         while i < bytes.len() {
-            if bytes[i] == '$' && i + 1 < bytes.len() && bytes[i + 1] == '#' {
+            // Accept literal `$` AND Stringg (\u{85}) / Qstring (\u{8c})
+            // — the lexer emits Stringg for `$X` at top level, Qstring
+            // for `$X` inside double quotes. arithsubst sees the
+            // tokenized form whenever the `$(( ))` body was lexed
+            // through a DQ context (e.g. `"x=$(( $#a ))"`).
+            let is_dollar = bytes[i] == '$' || bytes[i] == Stringg || bytes[i] == Qstring;
+            if is_dollar && i + 1 < bytes.len() && bytes[i + 1] == '#' {
                 let name_start = i + 2;
                 let mut name_end = name_start;
                 while name_end < bytes.len()
@@ -9047,9 +9070,13 @@ mod tests {
         // c:3300
         // subst.c:3296-3305 `setaparam` path. zshrs port: numeric
         // subscript with no assoc declared → indexed slot, 1-based.
-        // `assignsparam` / `sync_state_from_paramtab` mirror into
-        // `ShellExecutor.arrays`; without `ExecutorContext` those
-        // bridges no-op and the slot never appears in `arrays_get`.
+        // arrays_insert / arrays_get write through `paramtab`
+        // directly (no ShellExecutor reach-in needed), so the test
+        // body works without an ExecutorContext. The previous
+        // incarnation that called `crate::vm_helper::ShellExecutor::new()`
+        // + `ExecutorContext::enter` was a leftover from when the
+        // ports mirrored writes into `exec.arrays`; both are now
+        // dissolved.
         // Reset `errflag` so prior tests' error states don't short-
         // circuit paramsubst (it returns early on errflag != 0).
         errflag.store(0, Ordering::Relaxed);
@@ -9058,8 +9085,6 @@ mod tests {
             module_path!().replace("::", "_"),
             line!()
         );
-        let mut exec = crate::vm_helper::ShellExecutor::new();
-        let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut exec);
         arrays_insert(name.clone(), Vec::new()); // c:3296
         let pat = format!("${{{}[3]:=val}}", name);
         let (_result, _, _) = paramsubst(&pat, 0, false, 0, &mut 0); // c:3296
