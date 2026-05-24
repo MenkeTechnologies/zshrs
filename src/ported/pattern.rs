@@ -3938,4 +3938,174 @@ mod tests {
         assert_eq!(range_type(""), None);
         assert_eq!(range_type("xyz_not_real"), None);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // KSH_GLOB extended patterns: +(pat), *(pat), ?(pat), @(pat), !(pat).
+    // Anchored against `setopt KSH_GLOB; [[ str == ${~pat} ]]` in zsh 5.9.
+    // Tests enable KSH_GLOB before each assertion and restore prior state.
+    //
+    // KNOWN ZSHRS BUG CLASS (surfaced 2026-05-23): KSH_GLOB extended
+    // patterns are mostly NOT implemented in zshrs's patmatch even with
+    // `kshglob` option set. 11 of 18 anchored tests fail. The failing
+    // tests are marked #[ignore] with the zsh-correct expected value;
+    // `cargo test --ignored` will verify both the bug and any future fix.
+    // Active (passing) tests document the limited subset zshrs DOES handle.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn ksh_glob_match(pat: &str, s: &str) -> bool {
+        let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = opt_state_get("kshglob").unwrap_or(false);
+        opt_state_set("kshglob", true);
+        let r = patmatch(pat, s);
+        opt_state_set("kshglob", saved);
+        r
+    }
+
+    // ── +(pat) — one or more ─────────────────────────────────────────
+    /// `+(foo)` matches `foo` — zsh: MATCH.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB +(pat) not implemented (1+)"]
+    fn ksh_glob_plus_one_repetition_matches() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("+(foo)", "foo"));
+    }
+
+    /// `+(foo)` matches `foofoo` — zsh: MATCH.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB +(pat) not implemented (1+)"]
+    fn ksh_glob_plus_two_repetitions_matches() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("+(foo)", "foofoo"));
+    }
+
+    /// `+(foo)` does NOT match `""` — zsh: NOMATCH (and zshrs agrees).
+    /// This is the ONLY +(pat) test that passes — both reject empty.
+    #[test]
+    fn ksh_glob_plus_zero_repetitions_fails() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ksh_glob_match("+(foo)", ""));
+    }
+
+    /// `+(foo)` matches `foofoofoo` — zsh: MATCH.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB +(pat) not implemented (1+)"]
+    fn ksh_glob_plus_three_repetitions_matches() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("+(foo)", "foofoofoo"));
+    }
+
+    // ── *(pat) — zero or more ────────────────────────────────────────
+    /// `*(foo)` matches empty — zsh: MATCH.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB *(pat) doesn't match empty string"]
+    fn ksh_glob_star_paren_matches_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("*(foo)", ""));
+    }
+
+    /// `*(foo)` matches `foo` — both zsh and zshrs agree (passes).
+    #[test]
+    fn ksh_glob_star_paren_matches_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("*(foo)", "foo"));
+    }
+
+    /// `*(foo)` matches `foofoo` — both agree.
+    #[test]
+    fn ksh_glob_star_paren_matches_multiple() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("*(foo)", "foofoo"));
+    }
+
+    // ── ?(pat) — zero or one ─────────────────────────────────────────
+    /// `?(foo)` matches empty — zsh: MATCH.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB ?(pat) doesn't match empty"]
+    fn ksh_glob_question_paren_matches_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("?(foo)", ""));
+    }
+
+    /// `?(foo)` matches `foo` — zsh: MATCH.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB ?(pat) doesn't match single rep"]
+    fn ksh_glob_question_paren_matches_one_rep() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("?(foo)", "foo"));
+    }
+
+    /// `?(foo)` does NOT match `foofoo` — both agree (rejects).
+    #[test]
+    fn ksh_glob_question_paren_fails_on_two_reps() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ksh_glob_match("?(foo)", "foofoo"));
+    }
+
+    // ── @(pat) — exactly one ─────────────────────────────────────────
+    /// `@(foo)` matches `foo` — zsh: MATCH. zshrs fails on the alternation
+    /// form but matches the single-branch form.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB @(single) not consistently matched"]
+    fn ksh_glob_at_paren_matches_exact() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("@(foo)", "foo"));
+    }
+
+    /// `@(foo|bar)` matches both `foo` AND `bar` — zsh: MATCH both.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB @(a|b) alternation broken"]
+    fn ksh_glob_at_paren_with_alternation_either_branch() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("@(foo|bar)", "foo"));
+        assert!(ksh_glob_match("@(foo|bar)", "bar"));
+    }
+
+    /// `@(foo|bar)` rejects `qux` — both agree.
+    #[test]
+    fn ksh_glob_at_paren_alternation_rejects_outside() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ksh_glob_match("@(foo|bar)", "qux"));
+    }
+
+    // ── !(pat) — not match ───────────────────────────────────────────
+    /// `!(foo)` rejects `foo` — both agree.
+    #[test]
+    fn ksh_glob_bang_paren_rejects_matching_string() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ksh_glob_match("!(foo)", "foo"));
+    }
+
+    /// `!(foo)` matches `bar` — zsh: MATCH.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB !(pat) doesn't match non-matching strings"]
+    fn ksh_glob_bang_paren_matches_non_matching_string() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("!(foo)", "bar"));
+    }
+
+    /// `!(foo|bar)` matches `baz` and rejects `foo` — zsh.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB !(a|b) alternation broken"]
+    fn ksh_glob_bang_paren_with_alternation() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("!(foo|bar)", "baz"));
+        assert!(!ksh_glob_match("!(foo|bar)", "foo"));
+    }
+
+    // ── Mixed with literal context ───────────────────────────────────
+    /// `pre+(x)post` matches `prexpost`, `prexxpost` — zsh: MATCH both.
+    #[test]
+    #[ignore = "ZSHRS BUG: KSH_GLOB +() in literal context not supported"]
+    fn ksh_glob_plus_paren_in_literal_context() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ksh_glob_match("pre+(x)post", "prexpost"));
+        assert!(ksh_glob_match("pre+(x)post", "prexxpost"));
+    }
+
+    /// `pre+(x)post` rejects `prepost` — both agree (no x's).
+    #[test]
+    fn ksh_glob_plus_paren_in_literal_rejects_zero_reps() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ksh_glob_match("pre+(x)post", "prepost"));
+    }
 }

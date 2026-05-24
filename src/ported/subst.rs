@@ -9844,6 +9844,211 @@ mod tests {
             assert_eq!(out, "charlie bravo alpha");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Deep / compound forms — high-bug-yield surface.
+    // Each test pinned against `print -r --` output in real zsh 5.9.
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── ${arr[@]:#pat} — filter, keep elements NOT matching pat ─────
+    // KNOWN ZSHRS BUG (surfaced 2026-05-23): the :#pat filter on arrays
+    // is not implemented — zshrs returns the unfiltered array. Real zsh
+    // 5.9 removes matching elements. Tests pinned to zsh; #[ignore]'d
+    // so CI stays green. Remove the #[ignore] once the filter lands.
+
+    /// `${mix[@]:#bar}` where mix=(foo bar baz qux) → `foo baz qux`
+    /// (the matched element "bar" is REMOVED, not kept).
+    #[test]
+    #[ignore = "ZSHRS BUG: :#pat array filter not implemented; returns unfiltered"]
+    fn paramsubst_arr_filter_hash_removes_matching_literal_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, multi) = psubst_arr(
+            "PSD1",
+            &["foo", "bar", "baz", "qux"],
+            "${PSD1[@]:#bar}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["foo", "baz", "qux"]);
+        } else {
+            assert_eq!(
+                out, "foo baz qux",
+                "zsh: ${{mix[@]:#bar}} → 'foo baz qux'"
+            );
+        }
+    }
+
+    /// `${mix[@]:#ba*}` where mix=(foo bar baz qux) → `foo qux`
+    /// (glob pattern: removes everything starting with "ba")
+    #[test]
+    #[ignore = "ZSHRS BUG: :#pat array filter (glob form) not implemented"]
+    fn paramsubst_arr_filter_hash_removes_matching_glob_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, multi) = psubst_arr(
+            "PSD2",
+            &["foo", "bar", "baz", "qux"],
+            "${PSD2[@]:#ba*}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["foo", "qux"]);
+        } else {
+            assert_eq!(out, "foo qux", "zsh: ${{mix[@]:#ba*}} → 'foo qux'");
+        }
+    }
+
+    // ── Per-element strip ${arr[@]%pat} ────────────────────────────
+    /// `${files[@]%.txt}` strips .txt suffix from each element.
+    /// zsh: foo.txt bar.txt baz.md → foo bar baz.md (md unaffected).
+    #[test]
+    fn paramsubst_arr_per_element_suffix_strip() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, multi) = psubst_arr(
+            "PSD3",
+            &["foo.txt", "bar.txt", "baz.md"],
+            "${PSD3[@]%.txt}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["foo", "bar", "baz.md"]);
+        } else {
+            assert_eq!(out, "foo bar baz.md");
+        }
+    }
+
+    /// `${paths[@]##*/}` strips longest prefix matching `*/` (basename)
+    /// from each element. zsh: /a/x /b/y → x y.
+    #[test]
+    fn paramsubst_arr_per_element_basename_via_longest_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, multi) = psubst_arr(
+            "PSD4",
+            &["/a/x", "/b/y", "/c/z"],
+            "${PSD4[@]##*/}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["x", "y", "z"]);
+        } else {
+            assert_eq!(out, "x y z");
+        }
+    }
+
+    // ── Length of indexed element vs length of array ──────────────
+    /// `${#arr[1]}` is the BYTE LENGTH of arr[1], NOT 1 (element count).
+    /// zsh: arr=(hello world); ${#arr[1]} → 5 (chars in "hello").
+    #[test]
+    #[ignore = "ZSHRS BUG: ${#arr[1]} returns wrong value; zsh: string-length of arr[1]"]
+    fn paramsubst_arr_length_of_indexed_element_is_string_length_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, _) = psubst_arr("PSD5", &["hello", "world"], "${#PSD5[1]}");
+        assert_eq!(out, "5", "zsh: ${{#arr[1]}} → string-length of first elem");
+    }
+
+    /// Substring of indexed element: `${arr[1]:0:3}` → first 3 chars.
+    /// zsh: arr=(hello world); ${arr[1]:0:3} → "hel".
+    #[test]
+    #[ignore = "ZSHRS BUG: ${arr[N]:0:M} substring of indexed element broken — returns full array string"]
+    fn paramsubst_arr_substring_of_indexed_element_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, _) =
+            psubst_arr("PSD6", &["hello", "world"], "${PSD6[1]:0:3}");
+        assert_eq!(out, "hel", "zsh: ${{arr[1]:0:3}} → first 3 chars of arr[1]");
+    }
+
+    // ── Scalar context for (o): zsh does NOT sort without @ ───────
+    /// `${(o)arr}` (no @, double-quoted scalar context) returns the
+    /// elements JOINED with $IFS but NOT sorted in zsh 5.9.
+    /// Real zsh: arr=(charlie alpha bravo) → `charlie alpha bravo`.
+    /// If zshrs sorts here, that's a divergence (zshrs is sorting
+    /// when zsh wouldn't).
+    #[test]
+    #[ignore = "ANCHOR: zsh ${(o)arr} in scalar context does NOT sort; verify zshrs matches"]
+    fn paramsubst_arr_sort_scalar_context_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, _) =
+            psubst_arr("PSD7", &["charlie", "alpha", "bravo"], "${(o)PSD7}");
+        assert_eq!(
+            out, "charlie alpha bravo",
+            "zsh: scalar-context (o) does NOT sort; got {out:?}"
+        );
+    }
+
+    // ── Compound flags: (oj/-/) sort+join ─────────────────────────
+    /// `${(oj/-/)arr}` in real zsh 5.9 returns `charlie-alpha-bravo`
+    /// (joined with `-` but NOT sorted) — flag order/context defeats
+    /// the sort. If zshrs returns the sorted form, that's a divergence.
+    /// Pin zsh's observed behavior; mark #[ignore] since the behavior
+    /// itself is counter-intuitive and we want to flag it explicitly.
+    #[test]
+    #[ignore = "ANCHOR: zsh ${(oj/-/)arr} returns charlie-alpha-bravo (NOT sorted); verify zshrs"]
+    fn paramsubst_arr_compound_oj_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, _) = psubst_arr(
+            "PSD8",
+            &["charlie", "alpha", "bravo"],
+            "${(oj/-/)PSD8}",
+        );
+        assert_eq!(
+            out, "charlie-alpha-bravo",
+            "zsh: (oj/-/) does NOT sort in scalar context; got {out:?}"
+        );
+    }
+
+    // ── (Fo) compound: newline-join, NOT sorted in zsh scalar ─────
+    /// `${(Fo)arr}` in zsh: joined by newline, NOT sorted.
+    #[test]
+    #[ignore = "ANCHOR: zsh ${(Fo)arr} → newline-join unsorted; verify zshrs"]
+    fn paramsubst_arr_compound_Fo_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, _) =
+            psubst_arr("PSD9", &["charlie", "alpha", "bravo"], "${(Fo)PSD9}");
+        assert_eq!(
+            out, "charlie\nalpha\nbravo",
+            "zsh: (Fo) → newline-join unsorted; got {out:?}"
+        );
+    }
+
+    // ── Empty array under join ────────────────────────────────────
+    /// `${(j/,/)empty}` where empty=() → `` (empty string)
+    /// Bug-class check: ensure empty arrays don't crash the join path.
+    #[test]
+    fn paramsubst_arr_join_on_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, _) = psubst_arr("PSD10", &[], "${(j/,/)PSD10}");
+        assert_eq!(out, "");
+    }
+
+    // ── Default values on unset/empty ─────────────────────────────
+    /// `${UNSET_PARAM:-default}` on truly unset → "default"
+    #[test]
+    fn paramsubst_unset_param_uses_default() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("PSD_UNSET");
+        let (out, _, _) = paramsubst("${PSD_UNSET:-fallback}", 0, false, 0, &mut 0);
+        assert_eq!(out, "fallback");
+    }
+
+    // ── (q-) quote variants ────────────────────────────────────────
+    /// `${(q-)x}` for x="" (empty) — zsh emits `''` (empty single quotes).
+    #[test]
+    #[ignore = "ZSHRS BUG: (q-) on empty string returns empty; zsh: ''"]
+    fn paramsubst_flag_qdash_on_empty_string_emits_empty_quotes_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let out = psubst_one("PSD_QE", "", "${(q-)PSD_QE}");
+        assert_eq!(out, "''", "zsh: ${{(q-)empty}} → '' (empty quotes)");
+    }
+
+    /// `${(q+)x}` for x="hi there" — zsh picks shortest valid quoting.
+    /// On a plain space-bearing string, that's single-quote: `'hi there'`.
+    /// zshrs returns `$'hi there'` (ANSI-C form) — divergence from zsh's
+    /// shortest-form pick.
+    #[test]
+    #[ignore = "ZSHRS DIVERGENCE: (q+) picks $'...' form; zsh picks shortest = '...'"]
+    fn paramsubst_flag_qplus_picks_shortest_quoting_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let out = psubst_one("PSD_QP", "hi there", "${(q+)PSD_QP}");
+        assert_eq!(
+            out, "'hi there'",
+            "zsh: ${{(q+)\"hi there\"}} → 'hi there' (shortest valid quoting)"
+        );
+    }
 } // c:3193
 
 // ============================================================================

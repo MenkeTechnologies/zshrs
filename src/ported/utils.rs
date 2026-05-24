@@ -12146,4 +12146,198 @@ mod tests {
             );
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Pure-utility tests — zstrtol/zstrtoul (numeric parse) and
+    // getkeystring (key-escape decode). Each test pinned against either
+    // C zsh semantics or a direct zsh shell invocation where applicable.
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── zstrtol: numeric string → (value, unconsumed_tail) ──────────
+    /// `zstrtol("42", 10)` → (42, "") — full consumption.
+    #[test]
+    fn zstrtol_decimal_full_consumption() {
+        let (v, t) = zstrtol("42", 10);
+        assert_eq!(v, 42);
+        assert_eq!(t, "");
+    }
+
+    /// `zstrtol("42abc", 10)` → (42, "abc") — stops at first non-digit.
+    #[test]
+    fn zstrtol_decimal_stops_at_non_digit() {
+        let (v, t) = zstrtol("42abc", 10);
+        assert_eq!(v, 42);
+        assert_eq!(t, "abc");
+    }
+
+    /// `zstrtol("-7", 10)` → (-7, "") — sign handling.
+    #[test]
+    fn zstrtol_negative_decimal() {
+        let (v, t) = zstrtol("-7", 10);
+        assert_eq!(v, -7);
+        assert_eq!(t, "");
+    }
+
+    /// `zstrtol("+12", 10)` → (12, "") — explicit `+` sign.
+    #[test]
+    fn zstrtol_explicit_plus_sign_consumed() {
+        let (v, t) = zstrtol("+12", 10);
+        assert_eq!(v, 12);
+        assert_eq!(t, "");
+    }
+
+    /// `zstrtol("ff", 16)` → (255, "") — hex base.
+    #[test]
+    fn zstrtol_hex_base_16() {
+        let (v, t) = zstrtol("ff", 16);
+        assert_eq!(v, 255);
+        assert_eq!(t, "");
+    }
+
+    /// `zstrtol("FF", 16)` → (255, "") — case-insensitive hex.
+    #[test]
+    fn zstrtol_hex_uppercase() {
+        let (v, t) = zstrtol("FF", 16);
+        assert_eq!(v, 255);
+    }
+
+    /// `zstrtol("1010", 2)` → (10, "") — binary base.
+    #[test]
+    fn zstrtol_binary_base_2() {
+        let (v, t) = zstrtol("1010", 2);
+        assert_eq!(v, 10);
+        assert_eq!(t, "");
+    }
+
+    /// `zstrtol("17", 8)` → (15, "") — octal base.
+    #[test]
+    fn zstrtol_octal_base_8() {
+        let (v, t) = zstrtol("17", 8);
+        assert_eq!(v, 15);
+    }
+
+    /// `zstrtol("0x1A", 0)` → base-detect picks hex from `0x` prefix → 26.
+    #[test]
+    fn zstrtol_base_zero_detects_hex_prefix() {
+        let (v, _) = zstrtol("0x1A", 0);
+        assert_eq!(v, 26, "0x1A with base=0 → hex 26");
+    }
+
+    /// `zstrtol("0b101", 0)` → base-detect picks binary → 5.
+    #[test]
+    fn zstrtol_base_zero_detects_binary_prefix() {
+        let (v, _) = zstrtol("0b101", 0);
+        assert_eq!(v, 5, "0b101 with base=0 → binary 5");
+    }
+
+    /// `zstrtol("017", 0)` → base-detect: leading `0` → octal → 15.
+    #[test]
+    fn zstrtol_base_zero_leading_zero_means_octal() {
+        let (v, _) = zstrtol("017", 0);
+        assert_eq!(v, 15, "017 with base=0 → octal 15");
+    }
+
+    /// `zstrtol("  42", 10)` → (42, "") — leading whitespace skipped.
+    #[test]
+    fn zstrtol_leading_whitespace_skipped() {
+        let (v, _) = zstrtol("  42", 10);
+        assert_eq!(v, 42);
+    }
+
+    /// `zstrtol("0", 10)` → (0, "") — zero is valid input.
+    #[test]
+    fn zstrtol_zero_input() {
+        let (v, t) = zstrtol("0", 10);
+        assert_eq!(v, 0);
+        assert_eq!(t, "");
+    }
+
+    // ── zstrtol_underscore: digit-separator support ─────────────────
+    /// `zstrtol_underscore("1_000_000", 10, true)` → (1_000_000, "")
+    /// — underscores skipped during digit accumulation.
+    #[test]
+    fn zstrtol_underscore_separator_in_decimal() {
+        let (v, _) = zstrtol_underscore("1_000_000", 10, true);
+        assert_eq!(v, 1_000_000);
+    }
+
+    /// Without underscore flag, `_` stops parsing.
+    #[test]
+    fn zstrtol_underscore_disabled_stops_at_underscore() {
+        let (v, t) = zstrtol_underscore("123_456", 10, false);
+        assert_eq!(v, 123);
+        assert_eq!(t, "_456");
+    }
+
+    // ── zstrtoul_underscore: unsigned variant ───────────────────────
+    /// Parses a plain decimal unsigned.
+    #[test]
+    fn zstrtoul_underscore_basic_decimal() {
+        let v = zstrtoul_underscore("12345");
+        assert_eq!(v, Some(12345));
+    }
+
+    /// Empty string → None (no number to parse).
+    #[test]
+    fn zstrtoul_underscore_empty_returns_none() {
+        let v = zstrtoul_underscore("");
+        assert_eq!(v, None);
+    }
+
+    // ── getkeystring: shell-escape decode ───────────────────────────
+    /// `\n` → newline, `\t` → tab, `\r` → CR.
+    /// Anchor: `print -r -- $'\n\t\r'` produces the three bytes.
+    #[test]
+    fn getkeystring_decodes_common_escapes() {
+        assert_eq!(getkeystring("\\n").0, "\n");
+        assert_eq!(getkeystring("\\t").0, "\t");
+        assert_eq!(getkeystring("\\r").0, "\r");
+    }
+
+    /// `\\` → single backslash.
+    #[test]
+    fn getkeystring_double_backslash_yields_single() {
+        assert_eq!(getkeystring("\\\\").0, "\\");
+    }
+
+    /// `\xNN` hex escape → byte value.
+    /// Anchor: `print -r -- $'\x41'` → "A" (0x41 = 65 = 'A').
+    #[test]
+    fn getkeystring_hex_escape_lowercase_x() {
+        assert_eq!(getkeystring("\\x41").0, "A");
+        assert_eq!(getkeystring("\\x7E").0, "~");
+    }
+
+    /// `\u{NNNN}` Unicode escape → corresponding char.
+    /// Anchor: `print -r -- $'é'` → "é".
+    #[test]
+    fn getkeystring_unicode_escape_u_four_digits() {
+        assert_eq!(getkeystring("\\u00E9").0, "é");
+    }
+
+    /// Plain text passes through unchanged.
+    #[test]
+    fn getkeystring_plain_text_passes_through() {
+        assert_eq!(getkeystring("hello").0, "hello");
+        assert_eq!(getkeystring("").0, "");
+    }
+
+    /// Mixed plain + escapes → both handled.
+    #[test]
+    fn getkeystring_mixed_text_and_escapes() {
+        assert_eq!(getkeystring("a\\nb").0, "a\nb");
+        assert_eq!(getkeystring("line1\\nline2\\tindented").0, "line1\nline2\tindented");
+    }
+
+    // ── metafy / unmetafy round-trip on ASCII (identity) ────────────
+    /// ASCII strings: metafy is identity (no meta-bytes to escape).
+    #[test]
+    fn metafy_then_unmetafy_ascii_roundtrips_to_input() {
+        let s = "hello world";
+        let m = metafy(s);
+        assert_eq!(m, s);
+        let mut bytes = m.into_bytes();
+        let _len = unmetafy(&mut bytes);
+        assert_eq!(String::from_utf8(bytes).unwrap(), "hello world");
+    }
 }
