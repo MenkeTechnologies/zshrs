@@ -68,3 +68,32 @@ pub fn _values(
     state.end_group();
     matched
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn already_used_values_filtered_out() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "yes,n".into();
+        let specs = vec!["yes".into(), "no".into(), "maybe".into()];
+        assert!(_values(&mut state, "vals", ',', &specs));
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(!names.contains(&"yes"), "used value leaked through filter");
+        assert!(names.contains(&"no"));
+    }
+
+    #[test]
+    fn description_emitted_as_disp() {
+        let mut state = CompletionState::new();
+        let specs = vec!["yes[Confirm action]".into()];
+        assert!(_values(&mut state, "vals", ',', &specs));
+        let disp = state.groups[0].matches[0].disp.clone().unwrap_or_default();
+        assert!(disp.contains("yes -- Confirm action"), "got {disp:?}");
+    }
+}
