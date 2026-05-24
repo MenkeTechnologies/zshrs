@@ -166,6 +166,65 @@ class ZshrsLexerTest {
         assertEquals(ZshrsTokenTypes.FN_KEYWORD, toks[0].first)
     }
 
+    @Test fun `backslash-newline is line continuation, not bad character`() {
+        // Regression: `\` followed by newline used to fall through to
+        // BAD_CHARACTER, painting every shell line continuation red.
+        val src = "curl -sS -f \\\n    -H 'X: y'\n"
+        val toks = tokens(src)
+        assertFalse(
+            "line-continuation `\\` should not be BAD_CHARACTER: $toks",
+            toks.any { it.first == TokenType.BAD_CHARACTER },
+        )
+        // The `\<newline>` pair is whitespace (joins lines)
+        assertTrue(
+            "expected WHITE_SPACE for `\\<newline>`: $toks",
+            toks.any { it.first == TokenType.WHITE_SPACE && it.second.contains('\n') && it.second.contains('\\') },
+        )
+    }
+
+    @Test fun `backslash-escape outside string tokenizes as STRING_ESCAPE`() {
+        // Bare `\$`, `\"`, `\(` etc. used to be BAD_CHARACTER.
+        val toks = tokens("echo \\\$home")
+        assertFalse(
+            "bare `\\X` outside string should not be BAD_CHARACTER: $toks",
+            toks.any { it.first == TokenType.BAD_CHARACTER },
+        )
+        assertTrue(
+            "expected STRING_ESCAPE token for `\\\$`: $toks",
+            toks.any { it.first == ZshrsTokenTypes.STRING_ESCAPE && it.second == "\\\$" },
+        )
+    }
+
+    @Test fun `escaped brace inside parameter default does not break param expansion`() {
+        // Pin: `${1:-{\}}` (zsh idiom for defaulting to literal `{}`) must
+        // consume the whole expression as one PARAM_EXPANSION token.
+        // Pre-fix the trailing `\` line-continuations on following lines
+        // showed red because the lexer mis-balanced braces here.
+        val toks = nonWs("\${1:-{\\}}")
+        assertEquals(ZshrsTokenTypes.PARAM_EXPANSION, toks[0].first)
+        assertEquals("\${1:-{\\}}", toks[0].second)
+    }
+
+    @Test fun `multi-line continuation block produces no bad characters`() {
+        // The exact pattern from examples/daemon-shell.zsh that triggered
+        // the false-positive squiggles: param-default with escaped brace,
+        // then a curl invocation chained over four `\<newline>` continuations.
+        val src = """
+            _daemon_post() {
+                local body="${'$'}{1:-{\}}"
+                curl -sS -f \
+                    -H 'Content-Type: application/json' \
+                    --data-raw "${'$'}body" \
+                    "${'$'}DAEMON_URL/op"
+            }
+        """.trimIndent() + "\n"
+        val toks = tokens(src)
+        assertFalse(
+            "real daemon-shell snippet produced BAD_CHARACTER tokens: ${toks.filter { it.first == TokenType.BAD_CHARACTER }}",
+            toks.any { it.first == TokenType.BAD_CHARACTER },
+        )
+    }
+
     @Test fun `heredoc body is captured to terminator`() {
         val src = "cat <<EOT\nhello\nworld\nEOT\nrest\n"
         val toks = nonWs(src)
