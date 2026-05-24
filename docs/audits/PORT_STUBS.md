@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:25:52.693512+00:00
+Generated: 2026-05-24T22:28:31.661991+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 153 stubs across 47 files
+## Summary: 151 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -30,13 +30,13 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/zle_main.rs` | 6 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
 | `src/ported/module.rs` | 5 | `load_and_bind` (1 / 20) |
-| `src/ported/modules/zutil.rs` | 5 | `map_opt_desc` (1 / 16) |
 | `src/ported/zle/zle_keymap.rs` | 5 | `newkeytab` (1 / 15) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
 | `src/ported/glob.rs` | 3 | `get_match_ret` (5 / 71) |
 | `src/ported/init.rs` | 3 | `init_shout` (4 / 23) |
 | `src/ported/modules/db_gdbm.rs` | 3 | `gdbmhashsetfn` (7 / 47) |
+| `src/ported/modules/zutil.rs` | 3 | `newzstyletable` (1 / 15) |
 | `src/ported/pattern.rs` | 3 | `patmatch` (4 / 575) |
 | `src/ported/zle/zle_move.rs` | 3 | `backwardmetafiedchar` (3 / 75) |
 | `src/ported/builtin.rs` | 2 | `bin_print` (202 / 812) |
@@ -202,16 +202,6 @@ python3 scripts/gen_port_stubs.py
 | 3123 | `bin_zmodload_features` | 30 | 217 | 13% |
 | 3028 | `unload_named_module` | 5 | 36 | 13% |
 
-### `src/ported/modules/zutil.rs` — 5 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 2159 | `map_opt_desc` | 1 | 16 | 6% |
-| 677 | `newzstyletable` | 1 | 15 | 6% |
-| 2136 | `lookup_opt` | 1 | 13 | 7% |
-| 694 | `setstypat` | 6 | 58 | 10% |
-| 148 | `freestylenode` | 2 | 10 | 20% |
-
 ### `src/ported/zle/zle_keymap.rs` — 5 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -263,6 +253,14 @@ python3 scripts/gen_port_stubs.py
 | 490 | `gdbmhashsetfn` | 7 | 47 | 14% |
 | 531 | `gdbmuntie` | 3 | 12 | 25% |
 | 986 | `unmetafy_zalloc` | 3 | 11 | 27% |
+
+### `src/ported/modules/zutil.rs` — 3 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 677 | `newzstyletable` | 1 | 15 | 6% |
+| 694 | `setstypat` | 6 | 58 | 10% |
+| 148 | `freestylenode` | 2 | 10 | 20% |
 
 ### `src/ported/pattern.rs` — 3 stubs
 

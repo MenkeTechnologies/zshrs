@@ -2063,21 +2063,41 @@ pub fn bin_zregexparse(
 }
 
 /// `Zoptdesc` family mirroring Src/Modules/zutil.c:1519-1538.
+#[derive(Clone)]
 #[allow(non_camel_case_types)]
 pub struct zoptdesc {
     pub name: String,
     pub flags: i32,
     pub arg: i32,
     pub vals: Vec<String>,
+    /// Owning `Zoptarr` name (the array this option's values go into).
+    /// Port of C `Zoptarr arr` pointer at zutil.c:1525 — Rust stores
+    /// the name and looks the arr up in `OPT_ARRS` on demand to
+    /// avoid the cyclic Box<zoptarr>/Box<zoptdesc> reference.
+    pub arr: Option<String>,
     pub next: Option<Box<zoptdesc>>,
 }
 pub type Zoptdesc = Box<zoptdesc>;
+#[derive(Clone)]
 #[allow(non_camel_case_types)]
 pub struct zoptarr {
     pub name: String,
     pub vals: Vec<String>,
+    pub num: i32,
+    pub next: Option<Box<zoptarr>>,
 }
 pub type Zoptarr = Box<zoptarr>;
+
+/// Port of `static Zoptdesc opt_descs` from
+/// `Src/Modules/zutil.c:1554`. Head of the per-`zparseopts`-call
+/// option-spec linked list. Reset at the top of every zparseopts
+/// invocation; walked by `get_opt_desc`/`lookup_opt`.
+pub static OPT_DESCS: std::sync::Mutex<Option<Zoptdesc>> = std::sync::Mutex::new(None); // c:1554
+
+/// Port of `static Zoptarr opt_arrs` from
+/// `Src/Modules/zutil.c:1555`. Head of the array-slot linked list
+/// each `Zoptdesc.arr` points into.
+pub static OPT_ARRS: std::sync::Mutex<Option<Zoptarr>> = std::sync::Mutex::new(None); // c:1555
 
 #[allow(non_camel_case_types)]
 
@@ -2117,49 +2137,102 @@ pub const ZOF_GNUS: i32 = 64; // c:1537
 /// long variant.
 pub const ZOF_GNUL: i32 = 128; // c:1538
 
-/// Port of `get_opt_desc(char *name)` from Src/Modules/zutil.c:1558.
-/// C: `static Zoptdesc get_opt_desc(char *name)` — find a Zoptdesc.
+/// Direct port of `static Zoptdesc get_opt_desc(char *name)` from
+/// `Src/Modules/zutil.c:1558`. Walks the [`OPT_DESCS`] linked list
+/// looking for an entry whose `name` matches `name` exactly.
 #[allow(non_snake_case)]
-#[allow(unused_variables)]
 pub fn get_opt_desc(name: &str) -> Option<Zoptdesc> {
-    // c:1558
-    // c:1570
-    // c:1570-1568 — walk opt_descs linked-list, name-compare.
+    // c:1560 — `for (p = opt_descs; p; p = p->next) if (!strcmp(...))`.
+    let head = OPT_DESCS.lock().unwrap();
+    let mut cur = head.as_deref();
+    while let Some(p) = cur {
+        if p.name == name {
+            return Some(Box::new(p.clone()));
+        }
+        cur = p.next.as_deref();
+    }
     None
 }
 
-/// Port of `lookup_opt(char *str)` from Src/Modules/zutil.c:1570.
-/// C: `static Zoptdesc lookup_opt(char *str)` — name-prefix match into
-/// opt_descs; returns the desc or NULL.
+/// Direct port of `static Zoptdesc lookup_opt(char *str)` from
+/// `Src/Modules/zutil.c:1570`. Walks [`OPT_DESCS`] looking for a
+/// match against `str` honouring the per-option style flags:
+///   - `ZOF_GNUL`: exact match OR prefix-match with `=` separator.
+///   - `ZOF_GNUS` (no arg, GNU-style): exact match only.
+///   - default (cuddled): prefix-match.
 #[allow(non_snake_case)]
-#[allow(unused_variables)]
 pub fn lookup_opt(str: &str) -> Option<Zoptdesc> {
-    // c:1570
-    // c:1570
-    // c:1572-1600 — walks opt_descs comparing prefix with str.
+    let head = OPT_DESCS.lock().unwrap();
+    let mut cur = head.as_deref();
+    while let Some(p) = cur {
+        // c:1573-1582 — ZOF_GNUL (long-form with `=value`).
+        if p.flags & ZOF_GNUL != 0 {
+            if p.name == str
+                || (str.starts_with(&p.name) && str.as_bytes().get(p.name.len()) == Some(&b'='))
+            {
+                return Some(Box::new(p.clone()));
+            }
+        // c:1584-1591 — default (cuddled) prefix-match.
+        } else if str.starts_with(&p.name) {
+            return Some(Box::new(p.clone()));
+        }
+        cur = p.next.as_deref();
+    }
     None
 }
 
-/// Port of `get_opt_arr(char *name)` from Src/Modules/zutil.c:1602.
-/// C: `static Zoptarr get_opt_arr(char *name)` — find a Zoptarr by name.
+/// Direct port of `static Zoptarr get_opt_arr(char *name)` from
+/// `Src/Modules/zutil.c:1602`. Walks the [`OPT_ARRS`] linked list
+/// looking for an entry whose `name` matches `name` exactly.
 #[allow(non_snake_case)]
-#[allow(unused_variables)]
 pub fn get_opt_arr(name: &str) -> Option<Zoptarr> {
-    // c:1602
-    // c:1602
-    // c:1604-1612 — walk opt_arrs linked-list, name-compare.
+    // c:1604 — `for (p = opt_arrs; p; p = p->next) if (!strcmp(...))`.
+    let head = OPT_ARRS.lock().unwrap();
+    let mut cur = head.as_deref();
+    while let Some(p) = cur {
+        if p.name == name {
+            return Some(Box::new(p.clone()));
+        }
+        cur = p.next.as_deref();
+    }
     None
 }
 
-/// Port of `map_opt_desc(Zoptdesc start)` from Src/Modules/zutil.c:1614.
-/// C: `static Zoptdesc map_opt_desc(Zoptdesc start)` — maps starting node
-/// through alias chain.
+/// Direct port of `static Zoptdesc map_opt_desc(Zoptdesc start)` from
+/// `Src/Modules/zutil.c:1614`. Chases the `arr->name`→`opt_descs`
+/// alias chain set up by `=` mapping in zparseopts option specs.
+/// Returns `start` if `start` isn't a mapping head, returns the
+/// mapped Zoptdesc on a clean chase, returns NULL on cycle detection.
 #[allow(non_snake_case)]
-#[allow(unused_variables)]
 pub fn map_opt_desc(start: Option<Zoptdesc>) -> Option<Zoptdesc> {
-    // c:1614
-    // c:1616-1640 — alias-chase via opt_descs links.
-    None
+    // c:1616-1617 — `if (!start || !(start->flags & ZOF_MAP)) return start;`
+    let mut s = start?;
+    if s.flags & ZOF_MAP == 0 {
+        return Some(s);
+    }
+    // c:1620 — `map = get_opt_desc(start->arr->name);`
+    let arr_name = s.arr.as_deref().unwrap_or("");
+    let map = get_opt_desc(arr_name);
+
+    // c:1622-1623 — `if (!map) return start;`
+    let map = match map {
+        Some(m) => m,
+        None => return Some(s),
+    };
+
+    // c:1625-1628 — `if (map == start) { start->flags &= ~ZOF_MAP;
+    //                                     return start; }`
+    if map.name == s.name {
+        s.flags &= !ZOF_MAP;
+        return Some(s);
+    }
+
+    // c:1630-1631 — `if (map->flags & ZOF_CYC) return NULL;`
+    if map.flags & ZOF_CYC != 0 {
+        return None;
+    }
+
+    Some(map)
 }
 
 /// Port of `static void add_opt_val(Zoptdesc d, char *arg)` from
