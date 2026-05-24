@@ -2159,8 +2159,15 @@ pub fn clobber_open(f: &redir) -> i32 {
     }
     // c:2262 — `errno = oerrno;` — restore the EEXIST so caller diagnoses
     // "file exists" not the noisier "couldn't reopen" trailing errno.
+    // Per-platform errno setter: __error() on macOS, __errno_location()
+    // on Linux. Without cfg gating the build breaks on Linux (CI).
+    #[cfg(target_os = "macos")]
     unsafe {
-        *libc::__error() = oerrno; // macOS errno location
+        *libc::__error() = oerrno;
+    }
+    #[cfg(target_os = "linux")]
+    unsafe {
+        *libc::__errno_location() = oerrno;
     }
     -1 // c:2263
 }
@@ -6358,10 +6365,23 @@ pub fn execcmd_fork(
         }
     }
     // c:2884-2890 — `if ((how & Z_ASYNC) && isset(BGNICE)) nice(5)`.
+    // Per-platform errno setter+reader: __error() on macOS,
+    // __errno_location() on Linux. Without cfg gating Linux CI breaks.
     if (how & Z_ASYNC as i32) != 0 && isset(BGNICE) {
+        #[cfg(target_os = "macos")]
         unsafe {
-            *libc::__error() = 0; // errno = 0
+            *libc::__error() = 0;
             if libc::nice(5) == -1 && *libc::__error() != 0 {
+                zwarn(&format!(
+                    "nice(5) failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+        #[cfg(target_os = "linux")]
+        unsafe {
+            *libc::__errno_location() = 0;
+            if libc::nice(5) == -1 && *libc::__errno_location() != 0 {
                 zwarn(&format!(
                     "nice(5) failed: {}",
                     std::io::Error::last_os_error()
@@ -8881,8 +8901,14 @@ pub fn execcmd_exec(
                         };
                         if in_table || fn_.fd2 == cin || fn_.fd2 == cout {
                             fil_local = -1; // c:3896
+                            // Per-platform errno setter (c:3897 `errno = EBADF;`).
+                            #[cfg(target_os = "macos")]
                             unsafe {
-                                *libc::__error() = libc::EBADF; // c:3897
+                                *libc::__error() = libc::EBADF;
+                            }
+                            #[cfg(target_os = "linux")]
+                            unsafe {
+                                *libc::__errno_location() = libc::EBADF;
                             }
                         } else {
                             let fd = if fn_.fd2 == -2 {
