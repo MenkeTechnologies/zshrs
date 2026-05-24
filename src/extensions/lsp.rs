@@ -1897,17 +1897,37 @@ pub fn lookup_doc(name: &str) -> String {
             return format!("**{}** — _zshrs extension builtin_\n\n{}", d.0, d.1);
         }
     }
+    // For names that AREN'T real builtins per the canonical
+    // `ported::builtin::BUILTINS` table, prefer the special-var
+    // classification if the name has a special-var doc. Names like
+    // `prompt`, `path`, `aliases`, `functions`, `history`,
+    // `jobdirs`, `commands`, … all have `item(tt(NAME))` blocks in
+    // module yo files (zsh/parameter, contrib, etc.) that describe
+    // them as PARAMETERS. The builtin extractor pulled them into
+    // BUILTIN_DOCS as a side-effect (the yodl format doesn't
+    // distinguish builtin-name `item` from parameter-name `item`),
+    // shadowing the special-var doc. 109 names overlap; the only
+    // genuine builtins among them are zero — they're all params.
+    if !is_real_builtin {
+        if let Some((canon, body)) = crate::zsh_special_var_docs::lookup_special_var_doc(name) {
+            return format!("**${}** — _special variable_\n\n{}", canon, body);
+        }
+        let bare = name.strip_prefix('$').unwrap_or(name);
+        if !bare.is_empty() && bare != name {
+            if let Some((canon, body)) = crate::zsh_special_var_docs::lookup_special_var_doc(bare) {
+                return format!("**${}** — _special variable_\n\n{}", canon, body);
+            }
+        }
+    }
     if let Some((canon, body)) = crate::zsh_builtin_docs::lookup_builtin_doc(name) {
         return format!("**{}** — _zsh builtin_\n\n{}", canon, body);
     }
     // Special vars: try the raw name first (so `$` resolves to its
     // own `$$` PID entry stored as canonical `"$"` in the doc
-    // table), then the bare-stripped form (`$VAR` → `VAR`). The yo
-    // source stores names without `$`, but the LSP hover may pass
-    // either spelling, AND the pure-symbolic specials (`$`, `?`,
-    // `*`, `#`, `@`, `-`, `_`) are stored under their bare-symbol
-    // key so naive `strip_prefix('$')` on `"$"` strips the actual
-    // lookup key to empty.
+    // table), then the bare-stripped form (`$VAR` → `VAR`). Pure-
+    // symbolic specials (`$`, `?`, `*`, `#`, `@`, `-`, `_`) are
+    // stored under their bare-symbol key so naive `strip_prefix('$')`
+    // on `"$"` strips the actual lookup key to empty.
     if let Some((canon, body)) = crate::zsh_special_var_docs::lookup_special_var_doc(name) {
         return format!("**${}** — _special variable_\n\n{}", canon, body);
     }
@@ -6388,6 +6408,47 @@ mod tests {
                 !card.is_empty(),
                 "lookup_doc({:?}) returned empty; pure-symbolic specials must resolve",
                 sym,
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_doc_special_var_wins_over_module_builtin_entry() {
+        // User report: `prompt` resolved as "zsh builtin" instead of
+        // special var. Root cause: module yo files (contrib.yo,
+        // zsh/parameter, etc) have `item(tt(NAME))` blocks that
+        // describe PARAMETERS but the builtin extractor classifies
+        // by macro shape, not semantic intent. 109 names overlap;
+        // none are real builtins per `ported::builtin::BUILTINS`.
+        // Names that aren't in the canonical builtin table must
+        // resolve to the special-var entry, not the misclassified
+        // builtin entry.
+        let _g = crate::test_util::global_state_lock();
+        // These names are NOT in `ported::builtin::BUILTINS` — they're
+        // purely special-var/array params. The bug was classifying
+        // them as builtins because module doc files have item(tt(X))
+        // blocks describing the parameter behavior.
+        for name in &["prompt", "path", "aliases", "jobdirs", "jobstates", "commands", "modules", "widgets"] {
+            let card = lookup_doc(name);
+            assert!(
+                card.contains("special variable"),
+                "lookup_doc({:?}) classified as: {:?} — expected 'special variable'",
+                name,
+                card.lines().take(3).collect::<Vec<_>>(),
+            );
+        }
+        // Real builtins must STAY classified as builtins —
+        // `functions`/`history`/`set`/`shift` are genuine builtins
+        // per `ported::builtin::BUILTINS` (history is fc-alias,
+        // functions is typeset-f-alias) so the special-var-wins
+        // override must NOT touch them.
+        for name in &["cd", "echo", "set", "shift", "unset", "functions", "history"] {
+            let card = lookup_doc(name);
+            assert!(
+                card.contains("zsh builtin") || card.contains("zshrs"),
+                "lookup_doc({:?}) lost its builtin classification: {:?}",
+                name,
+                card.lines().take(3).collect::<Vec<_>>(),
             );
         }
     }
