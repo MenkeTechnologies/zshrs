@@ -971,19 +971,64 @@ fn completion(state: &State, params: &Value) -> Value {
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::BuiltinFlag(ref builtin_name) => {
-                // Parse the builtin's yodl doc body for `- **`-X`** — desc`
-                // bullets. Cached per-builtin so repeated `print -<TAB>`
-                // doesn't re-parse the same body. Emit each flag as a
-                // completion item with its description in `detail`.
+                // Parse the builtin's yodl doc body for flag bullets
+                // / inline citations. Cached per-builtin.
                 let flags = extract_builtin_flags(builtin_name);
                 let bname = builtin_name.clone();
+                // STACKED-FLAG SUPPORT: when the current word is
+                // `-XYZ` (multi-char stack), each item label becomes
+                // `-XYZa`, `-XYZb`, … so the IDE matcher accepts them
+                // against the typed prefix. Single-dash prefix `-`
+                // yields plain `-a`, `-b`, etc. The dispatcher
+                // re-derives the current-word prefix from the typed
+                // line (the BuiltinFlag context lost it through the
+                // detector boundary).
+                let cur_word: String = if let Some(l) = line {
+                    let bytes = l.as_bytes();
+                    let cap = col.min(bytes.len());
+                    let mut j = cap;
+                    while j > 0 && !matches!(bytes[j - 1], b' ' | b'\t') {
+                        j -= 1;
+                    }
+                    String::from_utf8_lossy(&bytes[j..cap]).to_string()
+                } else {
+                    "-".to_string()
+                };
+                // If the user has typed `-XYZ` (≥2 chars including
+                // the dash), strip the trailing single letter that
+                // the next flag would replace: actually no — we
+                // want to APPEND, so keep the whole `-XYZ` and
+                // emit items `-XYZa`/`-XYZb`/…
+                let stack_prefix: String = if cur_word.starts_with('-') && cur_word.len() >= 2 {
+                    cur_word.clone()
+                } else {
+                    "-".to_string()
+                };
                 let items: Vec<Value> = flags
                     .into_iter()
-                    .map(|(flag, desc)| ctx_item(
-                        &flag,
-                        &desc,
-                        &format!("**`{}`** — {}\n\n_option flag for `{}`_", flag, desc, bname),
-                    ))
+                    .map(|(flag, desc)| {
+                        // `flag` is `-X` (always 2 chars). For
+                        // stacked context, build the full
+                        // `{stack_prefix}{X}` form. For initial
+                        // single-dash, that's just `-X` (unchanged).
+                        let letter = flag.trim_start_matches('-');
+                        let label = if stack_prefix == "-" {
+                            flag.clone()
+                        } else {
+                            format!("{}{}", stack_prefix, letter)
+                        };
+                        let detail = if desc.is_empty() {
+                            format!("option flag for `{}`", bname)
+                        } else {
+                            desc.clone()
+                        };
+                        let doc_md = if desc.is_empty() {
+                            format!("**`{}`** — option flag for `{}`", flag, bname)
+                        } else {
+                            format!("**`{}`** — {}\n\n_option flag for `{}`_", flag, desc, bname)
+                        };
+                        ctx_item(&label, &detail, &doc_md)
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
@@ -3178,7 +3223,13 @@ fn is_known_builtin_with_flag_docs(name: &str) -> bool {
         .iter()
         .any(|b| b.node.nam == name);
     let is_ext = crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&name);
-    if !is_compat && !is_ext {
+    // Compsys functions (`_arguments`, `_files`, `_describe`, …)
+    // also have option flags documented in compsys.yo / compwid.yo.
+    // The doc bodies got slurped into BUILTIN_DOCS so the same flag
+    // extractor works — just need to recognize the name as a real
+    // completion target.
+    let is_compsys = compsys::COMPSYS_FN_NAMES.contains(&name);
+    if !is_compat && !is_ext && !is_compsys {
         return false;
     }
     !extract_builtin_flags(name).is_empty()
@@ -3226,20 +3277,35 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     // in some entries during extraction (`Ã¢Â\x80Â\x94` instead of
     // `—`) — we don't care, just skip everything until the next
     // alphabetic character which starts the description prose.
-    // Rust's `regex` crate has no look-around. Match flag header
-    // (`- **\`-X[ args]\`**`) and the FIRST line of description on
-    // its own line — enough for the LSP hover summary. Multi-line
-    // descriptions are truncated at the next newline, which is
-    // acceptable since the popup shows them inline anyway.
-    let re = regex::Regex::new(
+    // Tier 1: bullet pattern `- **\`-X[ args]\`** — desc`. Yields
+    // (flag, first-line-desc). Used by the 25 builtins whose docs
+    // have proper bullet lists (print, typeset, read, compadd,
+    // stat, whence, bindkey, fc, zparseopts, zcompile, zmv, …).
+    let re_bullet = regex::Regex::new(
         r"(?m)^\s*-\s+\*\*`(-[A-Za-z+])(?:\s+[^`]*)?`\*\*[^A-Za-z\n]*([^\n]+)"
     ).unwrap();
-    for cap in re.captures_iter(&body) {
+    for cap in re_bullet.captures_iter(&body) {
         let flag = cap.get(1).unwrap().as_str().to_string();
         let raw_desc = cap.get(2).map(|m| m.as_str()).unwrap_or("");
         let desc: String = raw_desc.trim().chars().take(200).collect();
         if !out.iter().any(|(f, _)| f == &flag) {
             out.push((flag, desc));
+        }
+    }
+    // Tier 2: when tier-1 produced nothing, fall back to inline
+    // `` `-X` `` citations scattered through the prose. Covers
+    // cd / set / unset / echo / unsetopt / etc whose docs describe
+    // flags in flowing text rather than bullet lists. No
+    // description text (we'd have to NLP-parse the surrounding
+    // sentence), so item `detail` will be empty — but the FLAG NAME
+    // surfaces, which is the user-facing win.
+    if out.is_empty() {
+        let re_inline = regex::Regex::new(r"`(-[A-Za-z+])`").unwrap();
+        for cap in re_inline.captures_iter(&body) {
+            let flag = cap.get(1).unwrap().as_str().to_string();
+            if !out.iter().any(|(f, _)| f == &flag) {
+                out.push((flag, String::new()));
+            }
         }
     }
     tracing::debug!(
