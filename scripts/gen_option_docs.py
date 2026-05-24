@@ -532,7 +532,16 @@ def parse_yo(src: str, cfg: dict):
                 if mac == alias_macros[0]:
                     m = re.match(rf"\s*{mac}\(([^)]+)\)", l)
                     if m:
-                        pending_aliases.append(m.group(1).strip())
+                        # Yodl convention: `pindex(NAME, subindex)` /
+                        # `vindex(NAME, subindex)` etc — the comma+text
+                        # is a man-page sub-index entry (`vindex(incarg,
+                        # use of)`), NOT a second alias name. Only the
+                        # part BEFORE the first comma is the actual
+                        # alias name; the rest is metadata for `texinfo`
+                        # index sorting.
+                        name = m.group(1).split(",", 1)[0].strip()
+                        if name:
+                            pending_aliases.append(name)
                 matched_alias = True
                 break
         if matched_alias:

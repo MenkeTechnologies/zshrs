@@ -898,7 +898,6 @@ pub const OPTION_ALIASES: &[(&str, &str)] = &[
     ("NO_SINGLE_COMMAND", "SINGLE_COMMAND"),
     ("SINGLECOMMAND", "SINGLE_COMMAND"),
     ("NOSINGLECOMMAND", "SINGLE_COMMAND"),
-    ("INTERACTIVE, use of", "SINGLE_COMMAND"),
     ("BEEP", "BEEP"),
     ("NO_BEEP", "BEEP"),
     ("NOBEEP", "BEEP"),
