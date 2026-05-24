@@ -676,8 +676,7 @@ pub fn optlookupc(c: char) -> i32 {
 /// produced by `optlookup`; we look up by name in a reverse pass
 /// against the canonical option set, then write OPTS_LIVE.
 ///
-/// **c:743-755 locked-option gates** (previously omitted from the
-/// Rust port, defeating multiple safety checks):
+/// **c:743-755 locked-option gates**:
 ///   * c:743 — `force=0 && optno==EXECOPT && !value && interact` →
 ///     refuse `setopt noexec` in an interactive shell.
 ///   * c:746 — `force=0 && optno in {INTERACTIVE, SHINSTDIN,
@@ -818,9 +817,6 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     //                  inittyptab();`. These options change which
     //                  bytes are special in pattern matching and
     //                  word splitting; the typtab must be rebuilt.
-    // The previous Rust port skipped this tail entirely; flipping
-    // BANGHIST off would still leave `!` flagged ISPECIAL in the
-    // typtab, defeating the option's purpose.
     if ret == 0 && (idx == MULTIBYTE || idx == BANGHIST || idx == SHINSTDIN)
     // c:879-882
     {
@@ -1619,16 +1615,8 @@ fn setemulate_opts_lock() -> &'static std::sync::Mutex<std::collections::HashMap
 /// canonical idx→name mapping in `zh::opt_name` (zsh_h.rs:2954,
 /// kept in sync with the C `optns[]` table at `Src/options.c:43`).
 /// This fn walks `1..OPT_SIZE` and matches the first idx that
-/// names to `name`.
-///
-/// The previously-local `index_to_name` in this file was a
-/// near-duplicate of `zh::opt_name` and drifted out of sync —
-/// missing `cbases`, `cdsilent`, `checkrunningjobs`,
-/// `continueonerror`, `dvorak`, `emacs`, `evallineno`,
-/// `loginshell`, `typesettounset`. `setopt cbases` reported `no
-/// such option` because the lookup failed to find an idx matching
-/// "cbases". Deleted that copy; this single canonical table now
-/// serves both `opt_name(idx) → name` and the reverse via walk.
+/// names to `name`. Serves both `opt_name(idx) → name` and the
+/// reverse via this walk.
 fn optno_by_name(name: &str) -> Option<i32> {
     for idx in 1..OPT_SIZE {
         let n = opt_name(idx);
@@ -1899,10 +1887,7 @@ mod tests {
 
     /// Pin: `Src/options.c:702-703` — option-name lowercase folding
     /// is ASCII-A..Z-only per the explicit C comment at c:695-700
-    /// noting tr_TR.UTF-8 locale concerns.
-    ///
-    /// Previously the Rust port used `c.to_lowercase()` which is
-    /// Unicode-aware (full case folding). Pin the ASCII-only contract:
+    /// noting tr_TR.UTF-8 locale concerns. ASCII-only contract:
     ///   - Non-ASCII chars pass through unchanged (no folding).
     ///   - The result still resolves the option iff the ASCII core
     ///     matches.
@@ -1991,11 +1976,7 @@ mod tests {
 
     /// `Src/zsh.h:2363` — `OPT_INVALID` is the first slot in the
     /// option-index enum (= 0). `Src/options.c:714` returns it for
-    /// every unknown name. Previously the Rust port shadowed this
-    /// with `-10000` in `options.rs`, which silently diverged from
-    /// every C call site that does `n == 0` for invalid-check. Pin
-    /// the canonical value so a regression re-introducing the
-    /// sentinel shadow fails.
+    /// every unknown name. C call sites compare `n == 0` for invalid-check.
     #[test]
     fn opt_invalid_matches_c_enum_value_zero() {
         let _g = crate::test_util::global_state_lock();
@@ -2035,9 +2016,6 @@ mod tests {
     /// are init-only options (set by command-line flags or startup
     /// state); `setopt interactive` from a running shell must fail
     /// with return code -1 unless the value already matches.
-    ///
-    /// Previously the Rust port dropped the `force` arg entirely,
-    /// silently permitting any caller to flip these options post-init.
     #[test]
     fn dosetopt_rejects_locked_options_without_force() {
         let _g = crate::test_util::global_state_lock();

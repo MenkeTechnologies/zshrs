@@ -631,20 +631,13 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
 }
 
 // The canonical `zcontext_save()` / `zcontext_restore()` port lives
-// in `crate::ported::context` (Src/context.c:80/117), NOT here. The
-// previous Rust port had a `MemContext` aggregate + zero-arg
-// `zcontext_save() -> MemContext` shim attributed to "Src/init.c"
-// which is not where the C versions live — invented Rust-only
-// duplicate name. Deleted per PORT.md Rule A (no fns/structs whose
-// name doesn't exist in upstream C source at the cited location).
-// No external callers used the mem.rs versions.
+// in `crate::ported::context` (Src/context.c:80/117), NOT here.
 
 // queue_signals / unqueue_signals / QUEUEING_ENABLED / run_queued_signals
 // live in `signals_h.rs` — that's the canonical Rust home for the
 // `Src/signals.h:90/92/112/114/116` macros. mem.rs callers that need
 // the same state must go through signals_h so the counter is shared
-// across the whole tree (the prior parallel copies here split the
-// queueing state, which was wrong).
+// across the whole tree.
 
 /// Split string by separator.
 /// Port of `sepsplit(char *s, char *sep, int allownull, int heap)` from Src/utils.c:3962 — the C source's

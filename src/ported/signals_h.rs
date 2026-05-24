@@ -543,9 +543,7 @@ pub fn winch_unblock() {}
 /// signal `s` to be ignored. C: `signal(S, SIG_IGN)` — returns the
 /// PREVIOUS handler (the libc `signal(3)` contract). `init_signals`
 /// at `Src/init.c:1418` reads this return value to detect a parent-
-/// installed `SIG_IGN` on SIGHUP. Previously returned `()` — that
-/// silently broke the c:1418 conditional, leaving the HUP option
-/// always installed when the parent already had it set to SIG_IGN.
+/// installed `SIG_IGN` on SIGHUP.
 #[inline]
 #[allow(non_snake_case)]
 #[cfg(unix)]
@@ -659,9 +657,8 @@ mod tests {
     /// libc `signal(3)` returns the previous handler. Pin the round-
     /// trip: set SIG_IGN then SIG_DFL on a benign signal (SIGUSR2)
     /// and verify the returned previous-handler observation matches
-    /// what we just installed. Previously the Rust port returned
-    /// `()` — silently breaking `init_signals` at `Src/init.c:1418`
-    /// which reads `signal_ignore(SIGHUP) == SIG_IGN` to detect a
+    /// what we just installed. `init_signals` at `Src/init.c:1418`
+    /// reads `signal_ignore(SIGHUP) == SIG_IGN` to detect a
     /// parent-installed-ignored HUP.
     #[cfg(unix)]
     #[test]

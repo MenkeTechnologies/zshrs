@@ -665,21 +665,12 @@ pub fn cond_val(args: &[String], num: usize) -> i64 {
 /// global option state. The Rust `matchpat` extends the signature to
 /// take these as explicit args (a structural Rust adaptation), so we
 /// read the live option state here and pass it through.
-///
-/// **Previously hardcoded `(true, true)`** — defeating the
-/// `EXTENDED_GLOB` and `CASEGLOB` option flags entirely. A user who
-/// did `setopt nocaseglob` and ran `[[ ABC = abc ]]` would still get
-/// a case-sensitive failure under the Rust port; C respects nocaseglob.
 pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
     // c:552
     // c:556 — `char *s = args[num]; singsub(&s); return matchpat(str, s);`
-    //
-    // C calls `singsub(&s)` to perform parameter expansion / arithmetic
-    // / command substitution on the pattern BEFORE matching. Without
-    // this, `[[ $x = $pat ]]` would match the literal string "$pat"
-    // rather than the value of $pat. Previous Rust port skipped
-    // singsub entirely — `[[ $x = $pat ]]` silently failed to expand
-    // the RHS.
+    // `singsub(&s)` performs parameter / arithmetic / command
+    // substitution on the pattern BEFORE matching so `[[ $x = $pat ]]`
+    // matches the value of $pat, not the literal "$pat".
     let p_raw = match args.get(num) {
         Some(v) => v,
         None => return false,
@@ -1234,9 +1225,7 @@ mod tests {
 
     /// Pin: `cond_val` routes through `mathevali` per `Src/cond.c:548`.
     /// A `[[ -eq ]]` operand of `"1+2"` must evaluate to 3, not 0.
-    /// The previous Rust port called `s.trim().parse::<i64>()` which
-    /// silently returned 0 for any non-trivial arithmetic, defeating
-    /// `[[ N -eq M+0 ]]`-style asserts in user scripts.
+    /// `[[ N -eq M+0 ]]`-style asserts must work.
     #[test]
     fn cond_val_routes_through_mathevali() {
         let _g = crate::test_util::global_state_lock();

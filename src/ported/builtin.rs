@@ -5426,9 +5426,6 @@ pub fn bin_whence(
         // c:4089-4137 — !`-p` and !`-a` matched-from-prior-`-m` arm.
         if !OPT_ISSET(ops, b'p') {
             // c:4093-4097 — alias check. C: `aliastab->printnode(hn, aliasflags)`.
-            // Inline match-on-printflags was a fake reimplementation;
-            // route through the canonical `printaliasnode` so any
-            // future flag added there (PRINT_NAMEONLY etc.) is honored.
             let alias_text = aliastab_lock()
                 .read()
                 .ok()
@@ -8527,9 +8524,7 @@ pub fn bin_let(
         }
     }
     // c:7476-7480 — math errors are non-fatal in let; CLEAR ERRFLAG_ERROR
-    // and return 2. The previous Rust port used a local `had_error` flag
-    // and left the global `errflag` set — every subsequent command saw
-    // the error state, defeating C's "let errors are local" contract.
+    // and return 2 so subsequent commands don't inherit the error.
     if (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
         // c:7476
         errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:7478
@@ -11500,11 +11495,8 @@ mod tests {
     /// `Src/builtin.c:7469-7484` — `bin_let` semantics:
     ///   1. Returns 0 (success) when the LAST arg evaluates to non-zero.
     ///   2. Returns 1 (failure) when the LAST arg evaluates to zero.
-    ///   3. Returns 2 AND CLEARS ERRFLAG_ERROR when any arg errors.
-    /// The previous Rust port used a local `had_error` flag and never
-    /// cleared `errflag`, letting `let` errors leak into subsequent
-    /// commands — defeating the C `let` "errors are non-fatal and local"
-    /// contract.
+    ///   3. Returns 2 AND CLEARS ERRFLAG_ERROR when any arg errors
+    ///      (let errors are non-fatal and local).
     #[test]
     fn bin_let_clears_errflag_on_math_error() {
         let _g = crate::test_util::global_state_lock();

@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-23T17:41:31.969057+00:00
+Generated: 2026-05-24T17:33:57.225984+00:00
 
 ## Method
 
@@ -30,17 +30,17 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 3019 | `namedpipe` | 24 | 1068 | 2% |
+| 3129 | `namedpipe` | 24 | 1068 | 2% |
 
 ### `src/ported/prompt.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 466 | `addbufspc` | 1 | 15 | 6% |
+| 483 | `addbufspc` | 1 | 15 | 6% |
 
 ### `src/ported/zle/complist.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 2505 | `domenuselect` | 85 | 916 | 9% |
+| 2508 | `domenuselect` | 85 | 916 | 9% |
 

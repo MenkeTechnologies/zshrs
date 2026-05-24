@@ -1711,15 +1711,15 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
 /// unqueue_signals();
 /// ```
 ///
-/// (a) `wrap->module->wrapper++/--` (c:6178/6180) — IS now wired
-///     against `module::MODULESTAB.modules[name].wrapper` (i32),
-///     looked up by `wrap.module.node.nam`. Recursive unload during
-///     handler defers correctly.
-/// (b) `unload_module(wrap->module)` (c:6184) — IS now wired via
+/// (a) `wrap->module->wrapper++/--` (c:6178/6180) wired against
+///     `module::MODULESTAB.modules[name].wrapper` (i32), looked up
+///     by `wrap.module.node.nam`. Recursive unload during handler
+///     defers correctly.
+/// (b) `unload_module(wrap->module)` (c:6184) wired via
 ///     `modulestab.unload_module(name)` when wrapper hits 0 AND
 ///     MOD_UNLOAD flag is set on the module's hashnode.
-/// (c) `execode(prog, 1, 0, "shfunc")` (c:6195) — IS now ported
-///     (exec.rs:6047). Body uses execode for the no-source
+/// (c) `execode(prog, 1, 0, "shfunc")` (c:6195) ported at
+///     exec.rs:6047. Body uses execode for the no-source
 ///     (compiled-wordcode) branch and fusevm for the
 ///     source-preserving (autoloaded) branch per cache coherence.
 /// (d) `startparamscope/endparamscope` Rust signatures take
@@ -2517,10 +2517,8 @@ pub fn addfd(
 /// the original fd and the per-output fds. Single-output multios
 /// (ct=1) skip the fork entirely and just clear the slot.
 ///
-/// addproc was previously skipped here pending the canonical
-/// signature port; now wired (c:2299 — `addproc(pid, NULL, 1,
-/// &bgtime, -1, -1)`) so the parent records the tee/cat child in
-/// the current job's auxprocs.
+/// c:2299 — `addproc(pid, NULL, 1, &bgtime, -1, -1)` records the
+/// tee/cat child in the current job's auxprocs.
 pub fn closemn(
     mfds: &mut [Option<Box<multio>>; 10],
     fd: i32,
@@ -3362,7 +3360,7 @@ pub fn makecline(list: &[String]) -> Vec<String> {
 ///
 /// =================== WARNING — DIVERGENCE ====================
 /// (a) `cmdnamtab->getnode(cmdnamtab, arg0)` (c:824) — HASHED
-///     fast-path now wired via cmdnamtab_lock(); jumps direct to
+///     fast-path wired via cmdnamtab_lock(); jumps direct to
 ///     `cn.cmd` absolute path before the $PATH scan. Unhashed
 ///     cursor-walk (c:830-846) still falls to the full $PATH scan;
 ///     observable behavior matches C when the hash hit is HASHED.
@@ -3827,11 +3825,11 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
 /// filename. Optimised path: `=(<<<heredoc-str)` writes the
 /// heredoc body directly without a fork.
 ///
-/// (a) `addfilelist(nam, 0)` (c:4960) now wired via `JOBTAB[thisjob]`
-///     so the temp file gets cleaned at job exit (this session).
+/// (a) `addfilelist(nam, 0)` (c:4960) wired via `JOBTAB[thisjob]`
+///     so the temp file gets cleaned at job exit.
 /// (b) `waitforpid` Rust takes 1 arg `pid`, C takes `(pid, full)`.
 ///     Behavior matches the `full=0` case anyway.
-/// (c) `entersubsh` is now ported (exec.rs:3934) — wire it here when
+/// (c) `entersubsh` is ported at exec.rs:3934 — wire it here when
 ///     re-routing the fork path away from setsid-only fallback.
 /// (d) `execode` is now ported (exec.rs:6047) — the body still
 ///     re-feeds through fusevm for cache coherence with execstring.
@@ -3982,14 +3980,14 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
 ///     path c:5037-5064) is omitted; modern Linux/macOS both
 ///     provide /dev/fd. `namedpipe()` is ported (exec.rs:2701) but
 ///     unused here.
-/// (b) `addproc` now 7-arg; procsubst pid recorded via aux=true on
-///     the current job (wired this session at c:5141-5142).
-/// (c) `addfilelist(NULL, fd)` now wired via `JOBTAB[thisjob]` (this
-///     session at c:5087).
-/// (d) `entersubsh` is now ported (exec.rs:3934) — wired below at
+/// (b) `addproc` is 7-arg; procsubst pid recorded via aux=true on
+///     the current job (c:5141-5142).
+/// (c) `addfilelist(NULL, fd)` wired via `JOBTAB[thisjob]` at
+///     c:5087.
+/// (d) `entersubsh` is ported at exec.rs:3934 — wired below at
 ///     c:5063 (`entersubsh(ESUB_ASYNC|ESUB_PGRP, NULL)`).
-/// (e) `execode` is now ported (exec.rs:6047). Body still
-///     re-feeds through fusevm for cache coherence.
+/// (e) `execode` is ported at exec.rs:6047. Body still re-feeds
+///     through fusevm for cache coherence.
 /// (f) `_realexit` flushes stdio + jobs + history. We use bare
 ///     `std::process::exit(LASTVAL)` for now.
 /// (g) `fdtable[fd] = FDT_PROC_SUBST` (c:5086) — set via fdtable_set.
@@ -4388,8 +4386,6 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
     // c:1218-1219 — `clearjobtab(monitor);` — calls the canonical port
     // at jobs.rs:1695 which handles ALL the C body including the
     // oldjobtab snapshot path (c:1799-1817) under POSIXJOBS guard.
-    // Previously inlined the freejob walk here and noted the snapshot
-    // as deferred; clearjobtab() already does both correctly.
     let mut dummy_table = crate::exec_jobs::JobTable::new();
     crate::ported::jobs::clearjobtab(&mut dummy_table, monitor);
     let _ = get_usage(); // c:1220
@@ -4974,13 +4970,10 @@ use crate::ported::zsh_h::{
 /// }
 /// ```
 ///
-/// Previously a per-element `singsub` walk pinned to c:5160
-/// (mpipe's neighborhood) — wrong line cite and wrong semantic. The
-/// real execsubst runs `prefork` (parameter / arithmetic / command
+/// `execsubst` runs `prefork` (parameter / arithmetic / command
 /// substitution expansion + IFS-split) over the whole list, then
 /// (when `esglob` is set) `globlist` to do filename globbing on the
-/// result. Single-word singsub misses array splat, brace expansion,
-/// glob, and the IFS-shape preservation that prefork drives.
+/// result.
 fn execsubst(list: &mut Vec<String>) {
     // c:2684
     if list.is_empty() {
@@ -5245,8 +5238,8 @@ fn addvars(state: &mut estate, pc: usize, addflags: i32) {
 }
 
 // execfuncs[] dispatch table from `Src/exec.c:5499` is inlined as a
-// match expression at the call sites in execsimple and (formerly)
-// exec_cmd. Not a separate Rust fn — every C-side reference to
+// match expression at the call sites in execsimple. Not a separate
+// Rust fn — every C-side reference to
 // `execfuncs[code - WC_CURSH](state, ...)` resolves inline below.
 
 // --- exec.c entries ---------------------------------------------------

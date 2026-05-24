@@ -62,16 +62,6 @@ pub fn newmoduletable() -> modulestab {
     modulestab::new()
 }
 
-// `setbuiltins` / `setconddefs` / `setmathfuncs` / `setparamdefs`
-// / `setfeatureenables` all deleted — Rust-only ports that took
-// the deleted `Builtin` / `Conddef` / `MathFunc` / `Paramdef` /
-// `Module` / `Features` PascalCase structs. C versions
-// (module.c:501/754/1374/1165/3350) flip `*_ADDED` flags and
-// insert/remove from the global hashtabs; per-module Rust files
-// stub these locally and the canonical free-fn re-ports belong
-// in zsh_h.rs / hashtable.rs once `struct features` carries
-// real pointers.
-
 /// Port of `setup_(UNUSED(Module m))` from `Src/module.c:306`.
 ///
 /// C body: `setup_(UNUSED(Module m)) { return 0; }` — the no-op
@@ -920,18 +910,6 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
     0 // c:1160
 }
 
-// `pub struct Builtin` / `Conddef` / `MathFunc` / `Paramdef` /
-// `Features` deleted — Rust-only PascalCase duplicates of the
-// canonical C-port structs in zsh_h.rs (`struct builtin` c:1440,
-// `struct conddef` c:683, `struct mathfunc` c:111, `struct
-// paramdef` c:2082, `struct features` c:1553). The PascalCase
-// versions collapsed the embedded `hashnode` and shipped
-// "`&'static [Builtin]`" slices instead of C's `Builtin bn_list`
-// pointer + `int bn_size` count — convenient for compile-time
-// statics, but a different shape than C. Per-module Rust files
-// (curses.rs, langinfo.rs, rlimits.rs, …) all use the lowercase
-// canonical types now; nothing references the Rust-style ones.
-
 impl modulestab {
     pub fn new() -> Self {
         let mut table = Self::default();
@@ -1165,9 +1143,7 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, module) vs C=(b)
     ///
     /// In C, this inserts the builtin into the canonical `builtintab`
-    /// hashtable (Src/builtin.c). The per-module feature ledger is a
-    /// Rust-only invention that has been deleted; this method now just
-    /// confirms the module exists. The real builtin registration lives
+    /// hashtable (Src/builtin.c). The real builtin registration lives
     /// in `cmd.rs::BUILTINTAB`.
     pub fn addbuiltin(&mut self, _name: &str, _module: &str) { // c:409
     }
@@ -1314,8 +1290,7 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, module) vs C=(c)
     ///
     /// Like `addbuiltin`, C inserts into the canonical `condtab` table
-    /// (Src/cond.c). The per-module feature ledger has been deleted; the
-    /// real registration lives in `cond.rs::CONDTAB`.
+    /// (Src/cond.c); the real registration lives in `cond.rs::CONDTAB`.
     pub fn addconddef(&mut self, _name: &str, _module: &str) { // c:703
     }
 
@@ -1332,8 +1307,7 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name) vs C=(inf, name, autol)
     ///
     /// Returns the autoload mapping if any. C consults the canonical
-    /// `condtab` first; the autoload table is the fallback. With the
-    /// per-module ledger deleted, only the autoload table answers here.
+    /// `condtab` first; the autoload table is the fallback.
     pub fn getconddef(&self, name: &str) -> Option<&str> {
         self.autoload_conditions.get(name).map(|s| s.as_str())
     }
@@ -1416,16 +1390,11 @@ impl modulestab {
     //
     // C `hooktab` (Src/module.c:843) is a file-static `Hookdef` linked
     // list, NOT a member of `ModuleTable` (which is the `modulestab`
-    // HashTable of Module nodes at c:Modules/zmodload.c:32). The
-    // previous `ModuleTable::addhookdef/addhookdefs/deletehookdef/
-    // deletehookdefs/addhookfunc/deletehookfunc/gethookdef/runhookdef`
-    // methods on this struct were a bag-of-globals anti-pattern (PORT.md
-    // Rule D) — a Rust-only `hooks: HashMap<String,Vec<String>>`
-    // aggregator field absorbing what C stores in the separate
-    // `hooktab` chain. All hook ops are now free fns operating on the
-    // file-static `hooktab` (above): `gethookdef`, `addhookdef`,
-    // `addhookdefs`, `deletehookdef`, `deletehookdefs`, `addhookdeffunc`,
-    // `addhookfunc`, `deletehookdeffunc`, `deletehookfunc`, `runhookdef`.
+    // HashTable of Module nodes at c:Modules/zmodload.c:32). Hook ops
+    // are free fns operating on the file-static `hooktab` (above):
+    // `gethookdef`, `addhookdef`, `addhookdefs`, `deletehookdef`,
+    // `deletehookdefs`, `addhookdeffunc`, `addhookfunc`,
+    // `deletehookdeffunc`, `deletehookfunc`, `runhookdef`.
 
     // ------- Parameter management (from module.c addparamdef/deleteparamdef) -------
 
@@ -1566,13 +1535,6 @@ impl modulestab {
         }
     }
 
-    // `addwrapper` / `deletewrapper` deleted — Rust-only stubs that
-    // pushed/popped `Wrapper` records into the inert `wrappers: Vec<…>`
-    // field with zero external callers. C's `addwrapper(FuncWrap)` /
-    // `deletewrapper(FuncWrap)` (module.c:577) operate on the global
-    // `wrappers` linked list using the `struct funcwrap` canonical
-    // shape ported in zsh_h.rs:639; ports of those will live there.
-
     // ------- Feature enable/disable (from module.c features_/enables_) -------
 
     /// Enable a feature (from module.c enables_)
@@ -1647,14 +1609,6 @@ pub trait ModuleLifecycle {
         0
     }
 }
-
-// `getfeatureenables` deleted — Rust-only port that took the
-// deleted `Module` / `Features` PascalCase structs. C
-// `getfeatureenables(Module m, Features f)` at module.c:3314
-// returns the enable-bit array per feature. Per-module Rust files
-// inline their own version returning a hardcoded vec; a canonical
-// free-fn re-port belongs in zsh_h.rs once `struct features`
-// carries real bintab/conddefs/etc. pointers.
 
 /// Port of `getmathfunc(const char *name, int autol)` from `Src/module.c:1283`.
 ///
@@ -1764,15 +1718,6 @@ pub fn load_and_bind(_fn_path: &str) -> usize {
     // c:1468
     0 // c:1492 NULL
 }
-
-// `handlefeatures` deleted — Rust-only port that took the
-// deleted `Module` / `Features` PascalCase structs. C
-// `handlefeatures(Module m, Features f, int **enables)` at
-// module.c:3388 is the convenience front-end that picks
-// set/get based on whether enables is NULL. Per-module Rust
-// files inline a simpler 2-branch version (rlimits.rs:1428,
-// curses.rs etc.); a canonical free-fn re-port belongs in
-// zsh_h.rs once `struct features` carries real pointers.
 
 /// Port of `hpux_dlsym(void *handle, char *name)` from `Src/module.c:1530`.
 ///
@@ -2253,10 +2198,6 @@ pub fn do_module_features(m: &mut modulestab, enablesarr: &str, flags: i32) -> i
 ///
 /// Removes math function `f` from the global registry. Returns 0
 /// on hit, -1 on miss.
-// `deletemathfunc(table, &MathFunc)` deleted — Rust-only port that
-// took the deleted PascalCase `MathFunc` struct. The canonical
-// `removemathfunc` still operates on `ModuleTable.autoload_mathfuncs`
-// (the autoload registry).
 
 /// Port of `do_boot_module(Module m, Feature_enables enablesarr, int silent)` from `Src/module.c:2139`.
 ///
@@ -2379,12 +2320,6 @@ pub fn modname_ok(p: &str) -> i32 {
 /// Unlinks `current` from the global `mathfuncs` list and frees it.
 /// Rust port: `previous` is unused since the underlying HashMap
 /// removal doesn't need predecessor tracking.
-// `removemathfunc(table, &MathFunc, &MathFunc)` deleted — Rust-only
-// port that took the deleted PascalCase `MathFunc` struct. C
-// `removemathfunc(MathFunc previous, MathFunc current)` at
-// module.c:1267 unlinks `current` from the global `mathfuncs`
-// linked list (ported here as `MATHFUNCS`) — a re-port operating
-// on `zsh_h::mathfunc` belongs alongside `addmathfunc` above.
 
 /// Port of `require_module(const char *module, Feature_enables features, int silent)` from `Src/module.c:2344`.
 ///
@@ -3283,12 +3218,6 @@ pub fn ensurefeature(
 /// re-register MFF_ADDED entries, replaces autoloadable shims, then
 /// links into head. Rust port operates on `autoload_mathfuncs` map
 /// since zshrs's static-link path doesn't have per-entry MFF flags.
-// `addmathfunc(table, &MathFunc)` deleted — Rust-only port that
-// took the deleted PascalCase `MathFunc` struct. C
-// `addmathfunc(MathFunc f)` at module.c:1313 prepends to the
-// global `mathfuncs` linked list (ported as `MATHFUNCS` global
-// above). Re-port using `mathfunc` will
-// follow with the wider modulestab-as-global refactor.
 
 /// Port of `autofeatures(const char *cmdnam, const char *module, char **features, int prefchar, int defflags)` from `Src/module.c:3437`.
 ///
@@ -3818,24 +3747,14 @@ pub static hooktab: std::sync::atomic::AtomicPtr<hookdef> = // c:843
 pub static MODULESTAB: Lazy<Mutex<modulestab>> = // c:zmodload.c:32
     Lazy::new(|| Mutex::new(modulestab::new()));
 
-// `FeatureType` enum + `ModuleFeature` struct + `ModuleState` enum
-// DELETED.
-//
-// `FeatureType` / `ModuleState`: C zsh uses bare integers. C
-// `features_()` (`Src/module.c:313+`) classifies exports by `type`
-// index 0..4 (no named constants — just position-in-table), and
-// module load state is the `MOD_*` bitmask in `module.node.flags`
-// (`Src/zsh.h:1516-1532`, mirrored at `zsh_h.rs:2249-2255`).
-//
-// `ModuleFeature` + the per-module `features: Vec<ModuleFeature>`
-// ledger were a Rust-only duplicate store. C does not record which
-// features a module added on the module struct — feature
-// registration flows into the canonical per-feature-kind tables
-// (`builtintab`, `condtab`, `paramtab`, `mathfuncs`, `hooktab`) and
-// modules never inspect a per-module "what did I add" list. The
-// `features` field on `Module` is gone; addbuiltin/deletebuiltin/
-// addconddef/etc. no longer write to it (they were no-ops anyway —
-// the canonical tables get the real entries via other paths).
+// C zsh classifies module exports by bare integer `type` index 0..4
+// (no named constants — just position-in-table) in `features_()`
+// (`Src/module.c:313+`). Module load state is the `MOD_*` bitmask in
+// `module.node.flags` (`Src/zsh.h:1516-1532`, mirrored at
+// `zsh_h.rs:2249-2255`). C does not record which features a module
+// added on the module struct — feature registration flows into the
+// canonical per-feature-kind tables (`builtintab`, `condtab`,
+// `paramtab`, `mathfuncs`, `hooktab`).
 
 /// Feature-type index passed to `features_()` (`Src/module.c:313+`).
 /// C ships bare ints; Rust adds names for readability.
@@ -3861,20 +3780,10 @@ pub struct modulestab {
     pub autoload_params: HashMap<String, String>,
     /// Math function name → module name mapping for autoload
     pub autoload_mathfuncs: HashMap<String, String>,
-    // `hooks: HashMap<String, Vec<String>>` deleted — bag-of-globals
-    // shadow of the file-static `hooktab` linked list (Src/module.c:843).
-    // Hook registrations live in the `hooktab` global (above) via
-    // `addhookdef` / `addhookfunc` etc., not on the module table.
     /// BINF_ADDED ledger — tracks which builtins have been added via
     /// `setbuiltins` (C: `b->node.flags & BINF_ADDED`, c:508).
     pub added_builtins: HashMap<String, u32>,
 }
-
-// `pub struct Wrapper` deleted — Rust-only PascalCase mirror of
-// C's `struct funcwrap` (zsh.h:1362, ported as
-// `funcwrap` at zsh_h.rs:639). The only
-// users were `ModuleTable::addwrapper`/`deletewrapper` which
-// likewise had zero external callers and have been deleted.
 
 // =====================================================================
 // Builtin / Conddef / MathFunc / Paramdef descriptors and the
@@ -3888,19 +3797,9 @@ pub struct modulestab {
 // helpers below.
 // =====================================================================
 
-// `BINF_ADDED` / `CONDF_INFIX` / `CONDF_ADDED` / `MFF_ADDED` were
-// previously duplicated here as `pub const … : u32 = …` with values
-// that happened to match the canonical zsh_h.rs declarations — but
-// with a type mismatch (u32 here, i32 in zsh_h.rs).
-//
-// C uses `int` for all four flags. Re-exporting from zsh_h.rs:
-//   - Eliminates the duplicate (single source of truth)
-//   - Picks the i32 type matching C `int`
-//   - Catches future C-source drift in ONE place (zsh_h.rs)
-//
-// The drift caught earlier in this series was the HIST_* values
-// where hist.rs declared `1<<N` bit positions but zsh_h.rs had the
-// canonical C values — different bits. Avoid the same hazard here.
+// `BINF_ADDED` / `CONDF_INFIX` / `CONDF_ADDED` / `MFF_ADDED` are
+// re-exported from zsh_h.rs (single source of truth, i32 matching
+// C `int`).
 
 // ===========================================================
 // Methods moved verbatim from src/ported/vm_helper because their
@@ -3945,16 +3844,6 @@ pub const FEAT_REMOVE: i32 = 0x0008; // c:76
 /// `enum { FEAT_CHECKAUTO = 0x0010 }` from `Src/module.c:81`.
 pub const FEAT_CHECKAUTO: i32 = 0x0010; // c:81
 
-// `featuresarray` deleted — Rust-only port that took the deleted
-// `Module` / `Features` PascalCase structs. C
-// `featuresarray(Module m, Features f)` at module.c:3279 builds
-// the `b:NAME`/`c:NAME`/`f:NAME`/`p:NAME` descriptor array from
-// the module's bintab/conddefs/mathfuncs/paramdefs pointers. The
-// per-module rust files (rlimits.rs, langinfo.rs, curses.rs, …)
-// each ship their own local `featuresarray` stub returning a
-// hardcoded descriptor list; a future canonical free-fn port will
-// live in zsh_h.rs once `struct features` carries real bintab/etc.
-// pointers.
 
 /// `FINDMOD_ALIASP` — bit in `find_module()`'s `flags` arg.
 /// Port of `enum { FINDMOD_ALIASP = 0x0001 }` from `Src/module.c:110`.
@@ -4003,12 +3892,6 @@ mod tests {
         assert!(loaded.contains(&"zsh/complete"));
     }
 
-    // `test_hooks` deleted — it exercised the bag-of-globals
-    // `ModuleTable::{addhookdef,addhookfunc,runhookdef,deletehookfunc}`
-    // shadow methods that were dissolved. The canonical hook system
-    // is now tested via the free fns in module.rs's tests at
-    // `gethookdef_*`, `addhookdef_*`, `runhookdef_*` below.
-
     #[test]
     fn test_autoload() {
         let _g = crate::test_util::global_state_lock();
@@ -4042,10 +3925,6 @@ mod tests {
         assert!(table.module_linked("zsh/stat"));
         assert!(!table.module_linked("zsh/nonexistent"));
     }
-
-    // `test_wrappers` deleted — exercised the deleted
-    // `ModuleTable::addwrapper`/`deletewrapper`+`wrappers` field.
-    // The canonical `struct funcwrap` lives in zsh_h.rs:639.
 
     #[test]
     fn test_printmodulenode() {
@@ -4703,8 +4582,4 @@ mod modname_tests {
         );
     }
 
-    // `deletehookdef_returns_one_when_missing_zero_on_success` deleted —
-    // tested the deleted `ModuleTable::deletehookdef(&str) -> i32` shadow
-    // method. The canonical free-fn `deletehookdef(*mut hookdef) -> i32`
-    // is exercised by the new tests in `mod tests` above.
 }

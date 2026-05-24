@@ -29,12 +29,9 @@ pub const PCRE2_CODE_UNIT_WIDTH: i32 = 8; // c:38
 //
 //     static pcre2_code *pcre_pattern;
 //
-// Previous Rust port aggregated this with a Rust-only `pattern_str`
-// cache into `pub struct PcreState`, which is the bag-of-globals
-// anti-pattern. Dissolved into a single `thread_local!` mirroring
-// the C declaration; each worker thread's `pcre_compile` builtin
-// owns its own compiled regex (file-static semantics preserve under
-// threading per PORT_PLAN bucket-1 rule).
+// Mirrored as a single `thread_local!` — each worker thread's
+// `pcre_compile` builtin owns its own compiled regex (file-static
+// semantics preserve under threading per PORT_PLAN bucket-1 rule).
 
 thread_local! {
     /// Port of file-static `static pcre2_code *pcre_pattern;` at

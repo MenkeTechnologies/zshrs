@@ -599,9 +599,7 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
     // c:293 — prog = parse_string(val, 1);
     // parse_string ported at crate::ported::exec::parse_string (c:283
     // in Src/exec.c). Returns None on parse error → matches the C
-    // !prog guard at c:295. With this wired, the c:295-299 invalid-
-    // definition diagnostic now fires for actual parse errors rather
-    // than only the empty-input degenerate case.
+    // !prog guard at c:295.
     prog = crate::ported::exec::parse_string(&val, 1); // c:293
     if prog.is_none() {
         // c:295 !prog
