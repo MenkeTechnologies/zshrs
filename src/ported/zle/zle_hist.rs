@@ -17,7 +17,7 @@
 //! - accept-line-and-down-history, accept-and-infer-next-history
 //! - insert-last-word, push-line, push-line-or-edit
 
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicI64, AtomicUsize, Ordering};
 
 use super::zle_main::{BUFSTACK, MULT};
 use super::zle_misc::DONE;
@@ -716,36 +716,186 @@ pub fn endofhistory() -> i32 {
 }
 
 /// Port of `insertlastword()` from Src/Zle/zle_hist.c:612.
-/// Rust idiom replacement: `split_whitespace().last()` covers the
-/// C reverse-scan-for-IFS-boundary loop; the per-char insert at
-/// cursor mirrors the C `spaceinline`+`memcpy` pair without the
-/// growbuf bookkeeping.
+///
+/// Faithful translation of the C body: parses optional args
+/// (histstep, wordpos, reset), tracks repeated-call state via
+/// `LASTINSERT`/`LASTHIST`/`LASTPOS`/`LASTLEN` statics, deletes the
+/// previously-inserted word on repeat invocations, then walks back
+/// `histstep` entries via [`addhistnum`], extracts word `n` from
+/// either the current line ([`bufferwords`]) or a stored history
+/// entry, and inserts it via [`doinsert`].
 pub fn insertlastword() -> i32 {
-    // c:612
-    // C body (c:836-880): take last word of previous history entry
-    //                    and insert at cursor; with mult, take that
-    //                    many entries back.
-    let n = ZMOD.lock().unwrap().mult.max(1) as usize;
-    if history().lock().unwrap().cursor < n {
+    use crate::ported::hist::{addhistnum, bufferwords, curhist, quietgethist};
+    use crate::ported::zsh_h::HIST_FOREIGN;
+    use std::sync::Mutex;
+
+    // c:614 — local state mirrors C `int n, nwords, histstep = -1, ...`
+    let mut histstep: i32 = -1; // c:614
+    let mut wordpos: i32 = 0; // c:614
+    let mut deleteword: i32 = 0; // c:614
+
+    // c:621-622 — `static char *lastinsert; static int lasthist,
+    //              lastpos, lastlen;`
+    static LASTINSERT: Mutex<Option<String>> = Mutex::new(None);
+    static LASTHIST: AtomicI64 = AtomicI64::new(0);
+    static LASTPOS: AtomicUsize = AtomicUsize::new(0);
+    static LASTLEN: AtomicUsize = AtomicUsize::new(0);
+
+    // c:638-647 — arg parsing. The zshrs widget dispatcher does not
+    //              currently surface `char **args` to widgets, so we
+    //              keep the C defaults (histstep=-1, wordpos=0). When
+    //              the args path lands, parse `args[0]/args[1]/args[2]`
+    //              here exactly as C does.
+
+    // c:649 — fixsuffix();
+    fixsuffix();
+
+    let cs = ZLECS.load(Ordering::SeqCst);
+    let line: String = ZLELINE.lock().unwrap().iter().collect();
+
+    // c:651-657 — repeated-call detection: same word still at cursor?
+    {
+        let li = LASTINSERT.lock().unwrap();
+        let lp = LASTPOS.load(Ordering::SeqCst);
+        let ll = LASTLEN.load(Ordering::SeqCst);
+        let line_chars: Vec<char> = line.chars().collect();
+        if let Some(last) = li.as_ref() {
+            if ll > 0
+                && lp <= cs
+                && ll == cs - lp
+                && lp + ll <= line_chars.len()
+                && line_chars[lp..lp + ll].iter().collect::<String>() == *last
+            {
+                deleteword = 1; // c:655
+            } else {
+                LASTHIST.store(curhist.load(Ordering::SeqCst), Ordering::SeqCst); // c:657
+            }
+        } else {
+            LASTHIST.store(curhist.load(Ordering::SeqCst), Ordering::SeqCst); // c:657
+        }
+    }
+
+    // c:658-659 — `evhist = histstep ? addhistnum(lasthist, histstep,
+    //              HIST_FOREIGN) : lasthist;`
+    let lasthist = LASTHIST.load(Ordering::SeqCst);
+    let evhist = if histstep != 0 {
+        addhistnum(lasthist, histstep, HIST_FOREIGN as i32)
+    } else {
+        lasthist
+    };
+
+    let nwords: usize;
+    let mut words_from_line: Option<Vec<String>> = None;
+    let mut he_entry: Option<crate::ported::zsh_h::histent> = None;
+
+    // c:661-695 — current line branch
+    if evhist == curhist.load(Ordering::SeqCst) {
+        // c:667-685 — if we're replacing a previously-inserted word,
+        //              foredel it before re-tokenizing.
+        if deleteword != 0 {
+            let pos = cs; // c:668
+            let lp = LASTPOS.load(Ordering::SeqCst);
+            ZLECS.store(lp, Ordering::SeqCst); // c:669
+            foredel((pos - lp) as i32, 0); // c:670 CUT_RAW=0
+            deleteword = 0; // c:684
+        }
+        let cur_line: String = ZLELINE.lock().unwrap().iter().collect(); // re-read after foredel
+        let cur_pos = ZLECS.load(Ordering::SeqCst);
+        let (ws, _) = bufferwords(&cur_line, cur_pos); // c:692
+        if ws.is_empty() {
+            return 1; // c:694
+        }
+        nwords = ws.len(); // c:696
+        words_from_line = Some(ws);
+    } else {
+        // c:697-708 — stored history line branch
+        let mut ev = evhist;
+        loop {
+            let h = quietgethist(ev); // c:699
+            match h {
+                Some(he) if he.nwords > 0 => {
+                    he_entry = Some(he);
+                    break;
+                }
+                Some(_) if histstep == -1 => {
+                    // c:702 — skip empty entries when default-searching
+                    ev = addhistnum(ev, histstep, HIST_FOREIGN as i32);
+                    continue;
+                }
+                _ => break,
+            }
+        }
+        let he = match he_entry.as_ref() {
+            Some(h) if h.nwords > 0 => h,
+            _ => return 1, // c:706
+        };
+        nwords = he.nwords as usize; // c:708
+    }
+
+    // c:710-716 — pick which word index `n` (1-based) to extract.
+    let zmult = ZMOD.lock().unwrap().mult;
+    let n: i32 = if wordpos != 0 {
+        if wordpos > 0 {
+            wordpos
+        } else {
+            nwords as i32 + wordpos + 1
+        }
+    } else if zmult > 0 {
+        nwords as i32 - (zmult - 1)
+    } else {
+        1 - zmult
+    };
+
+    if n < 1 || n > nwords as i32 {
+        // c:725-727 — remember position to avoid getting stuck.
+        LASTHIST.store(evhist, Ordering::SeqCst);
         return 1;
     }
-    let idx = history().lock().unwrap().cursor - n;
-    let entry = match history().lock().unwrap().entries.get(idx) {
-        Some(e) => e.line.clone(),
-        None => return 1,
-    };
-    let word = match entry.split_whitespace().last() {
-        Some(w) => w.to_string(),
-        None => return 1,
-    };
-    for ch in word.chars() {
-        ZLELINE
-            .lock()
-            .unwrap()
-            .insert(ZLECS.load(Ordering::SeqCst), ch);
-        ZLECS.fetch_add(1, Ordering::SeqCst);
+
+    // c:733-737 — if we deleted earlier and got here, the deletion
+    //              already happened at c:670 (we set deleteword=0).
+    //              `deleteword > 0` is for the cross-branch case
+    //              where we deleted before knowing we'd succeed.
+    if deleteword > 0 {
+        let pos = ZLECS.load(Ordering::SeqCst);
+        let lp = LASTPOS.load(Ordering::SeqCst);
+        ZLECS.store(lp, Ordering::SeqCst);
+        foredel((pos - lp) as i32, 0);
     }
-    0
+
+    // c:738-741 — free previous lastinsert.
+    *LASTINSERT.lock().unwrap() = None;
+
+    // c:742-750 — extract word n from either current line tokens or
+    //              the stored history entry's words[] byte offsets.
+    let word: String = if let Some(ws) = words_from_line.as_ref() {
+        ws[(n - 1) as usize].clone() // c:743-746
+    } else if let Some(he) = he_entry.as_ref() {
+        let s = he.words[(2 * n - 2) as usize] as usize; // c:748
+        let t = he.words[(2 * n - 1) as usize] as usize; // c:749
+        let bytes = he.node.nam.as_bytes();
+        let lo = s.min(bytes.len());
+        let hi = t.min(bytes.len()).max(lo);
+        String::from_utf8_lossy(&bytes[lo..hi]).into_owned()
+    } else {
+        return 1;
+    };
+
+    // c:752-757 — remember insertion for next repeat.
+    LASTHIST.store(evhist, Ordering::SeqCst);
+    LASTPOS.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst);
+    LASTLEN.store(word.chars().count(), Ordering::SeqCst);
+    *LASTINSERT.lock().unwrap() = Some(word.clone());
+
+    // c:758-766 — `n = zmult; zmult = 1; doinsert(zs, len); zmult = n;`
+    let saved_mult = ZMOD.lock().unwrap().mult;
+    ZMOD.lock().unwrap().mult = 1;
+    let zs: Vec<char> = word.chars().collect();
+    doinsert(&zs);
+    ZMOD.lock().unwrap().mult = saved_mult;
+
+    let _ = deleteword;
+    0 // c:767
 }
 
 /// Port of `zle_setline(Histent he)` from Src/Zle/zle_hist.c:772.
