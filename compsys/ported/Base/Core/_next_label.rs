@@ -14,3 +14,23 @@ pub fn _next_label(tags: &TagManager, tag: &str) -> Option<String> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_tag_when_wanted() {
+        let mut tags = TagManager::new();
+        tags.init(&["files".into(), "directories".into()]);
+        tags.configure_from_style(&["files".into()]);
+        tags.start();
+        assert_eq!(_next_label(&tags, "files"), Some("files".into()));
+    }
+
+    #[test]
+    fn returns_none_when_not_wanted() {
+        let tags = TagManager::new();
+        assert_eq!(_next_label(&tags, "files"), None);
+    }
+}
