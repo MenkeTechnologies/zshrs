@@ -1434,9 +1434,9 @@ pub fn tc_downcurs(count: usize) {
 ///
 /// Faithful line-by-line translation of the C body (c:2293-2342).
 /// Saves the SFC/STOPMSG/INCOMPFUNC context, looks up the user's
-/// `$TCOUT_FUNC_NAME` (default `"tcout"`) via [`getshfunc`], builds the
+/// `$TCOUT_FUNC_NAME` (default `"tcout"`) via `getshfunc`, builds the
 /// `[tcout_func_name, cap_name, arg?]` arg list, dispatches through
-/// [`callhookfunc`] (the SFC_SUBST static-link path of `doshfunc`),
+/// `callhookfunc` (the SFC_SUBST static-link path of `doshfunc`),
 /// then reads `$REPLY` and writes each byte to the shell-output fd
 /// (decoding Meta-byte pairs). Returns 0 when the function ran (caller
 /// suppresses the raw termcap escape), 1 otherwise (caller emits raw).
