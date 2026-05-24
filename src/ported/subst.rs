@@ -6541,6 +6541,12 @@ pub fn paramsubst(
             // c:4030
             if quotetype == QT_SINGLE_OPTIONAL {
                 // c:2245 (q-)
+                // c:Src/utils.c:6190 — QT_SINGLE_OPTIONAL sets shownull=1
+                // so empty string always quotes as `''`. Without this the
+                // q- flag emitted bare empty instead of zsh's `''`.
+                if s.is_empty() {
+                    return "''".to_string(); // c:utils.c:6253-6256
+                }
                 let needs = s.chars().any(|c| {
                     // c:2245
                     c.is_whitespace()                                         // c:2245
@@ -6573,8 +6579,14 @@ pub fn paramsubst(
                     s.to_string() // c:2245
                 } // c:2245
             } else if quotetype == QT_QUOTEDZPUTS {
-                // c:2245 (q+)
-                quotestring(s, QT_DOLLARS) // c:2245
+                // c:4063-4064 — `for (; *ap; ap++) *ap = quotedzputs(*ap,
+                // NULL);` and scalar c:4109 `val = quotedzputs(val, NULL);`.
+                // Previously called quotestring(s, QT_DOLLARS) which
+                // unconditionally wraps in `$'…'`; quotedzputs only
+                // does so for nice-formatted (non-printable) strings,
+                // otherwise picks single-quote form. zsh: `${(q+)"hi
+                // there"}` → `'hi there'` (shortest valid quoting).
+                crate::ported::utils::quotedzputs(s) // c:4063
             } else if quotemod > 0 {
                 // c:4033 if (quotemod > 0)
                 // c:2252 — quotemod++ and quotetype++ cascade for
@@ -9977,14 +9989,22 @@ mod tests {
     /// If zshrs sorts here, that's a divergence (zshrs is sorting
     /// when zsh wouldn't).
     #[test]
-    #[ignore = "ANCHOR: zsh ${(o)arr} in scalar context does NOT sort; verify zshrs matches"]
     fn paramsubst_arr_sort_scalar_context_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSD7", &["charlie", "alpha", "bravo"], "${(o)PSD7}");
+        // Set the array directly, then call paramsubst with qt=true
+        // (DQ context). zsh: `"${(o)arr}"` does NOT sort because the
+        // DQ-sepjoin at c:3034 clears isarr=0 BEFORE the c:4245 sort
+        // block can fire. Verified: /bin/zsh -c 'arr=(charlie alpha
+        // bravo); print -r -- "${(o)arr}"' → "charlie alpha bravo".
+        errflag.store(0, Ordering::Relaxed);
+        let _ = crate::ported::params::setaparam(
+            "PSD7",
+            ["charlie", "alpha", "bravo"].iter().map(|s| (*s).to_string()).collect(),
+        );
+        let (out, _, _) = paramsubst("${(o)PSD7}", 0, true, 0, &mut 0);
         assert_eq!(
             out, "charlie alpha bravo",
-            "zsh: scalar-context (o) does NOT sort; got {out:?}"
+            "zsh: scalar (DQ) context (o) does NOT sort; got {out:?}"
         );
     }
 
@@ -10044,7 +10064,6 @@ mod tests {
     // ── (q-) quote variants ────────────────────────────────────────
     /// `${(q-)x}` for x="" (empty) — zsh emits `''` (empty single quotes).
     #[test]
-    #[ignore = "ZSHRS BUG: (q-) on empty string returns empty; zsh: ''"]
     fn paramsubst_flag_qdash_on_empty_string_emits_empty_quotes_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let out = psubst_one("PSD_QE", "", "${(q-)PSD_QE}");
@@ -10056,9 +10075,13 @@ mod tests {
     /// zshrs returns `$'hi there'` (ANSI-C form) — divergence from zsh's
     /// shortest-form pick.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: (q+) picks $'...' form; zsh picks shortest = '...'"]
     fn paramsubst_flag_qplus_picks_shortest_quoting_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
+        // quotedzputs reads the ISPECIAL typtab to decide whether a char
+        // needs quoting. Tests don't auto-init typtab (init happens at
+        // shell startup in C); without this call typtab is all-zero and
+        // hasspecial() returns false even for space → bare unquoted.
+        crate::ported::utils::inittyptab();
         let out = psubst_one("PSD_QP", "hi there", "${(q+)PSD_QP}");
         assert_eq!(
             out, "'hi there'",
