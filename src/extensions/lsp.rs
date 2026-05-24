@@ -5637,15 +5637,39 @@ pub fn dump_reflection_json() -> String {
         keywords.insert(name.to_string(), Value::String("keyword".into()));
         all.insert(name.to_string(), Value::String("keyword".into()));
     }
+    // Options surfaced in the canonical UPPERCASE_WITH_UNDERSCORES
+    // form per `man zshoptions` (`AUTO_CD`, not `autocd`). The
+    // `ZSH_OPTIONS_SET` set stores the normalized form zsh uses for
+    // lookup (lowercase, no underscores), which is correct for option
+    // resolution but unfamiliar in a doc panel — users reading the
+    // tool window expect to see the names the way `setopt` / `man`
+    // print them. OPTION_DOCS keys carry the canonical CAPS form.
     let mut options = serde_json::Map::new();
-    for o in crate::ported::options::ZSH_OPTIONS_SET.iter() {
-        options.insert(o.to_string(), Value::String("option".into()));
-        all.insert(o.to_string(), Value::String("option".into()));
+    for (name, _doc) in crate::zsh_option_docs::OPTION_DOCS {
+        options.insert((*name).to_string(), Value::String("option".into()));
+        all.insert((*name).to_string(), Value::String("option".into()));
     }
+    for (alias, _canon) in crate::zsh_option_docs::OPTION_ALIASES {
+        options.insert((*alias).to_string(), Value::String("option".into()));
+        all.insert((*alias).to_string(), Value::String("option".into()));
+    }
+    // Special params — source from the canonical doc table (538
+    // entries extracted from `params.yo` + every `mod_*.yo`) rather
+    // than the hand 41-entry `SPECIAL_VARS` subset above. The hand
+    // subset was missing `$PS2` / `$PS3` / `$PS4` / `$psvar` /
+    // `$PROMPT2` / hundreds more, so the tool window showed a tiny
+    // slice of zsh's actual special-param surface.
     let mut special_vars = serde_json::Map::new();
-    for s in SPECIAL_VARS {
-        special_vars.insert(s.to_string(), Value::String("special".into()));
-        all.insert(s.to_string(), Value::String("special".into()));
+    for (name, _doc) in crate::zsh_special_var_docs::SPECIAL_VAR_DOCS {
+        special_vars.insert((*name).to_string(), Value::String("special".into()));
+        all.insert((*name).to_string(), Value::String("special".into()));
+    }
+    // Also surface alias surface names (`PROMPT` / `PROMPT2` /
+    // `PROMPT3` → PS1/PS2/PS3, `NULLCMD` etc) so the tool window
+    // shows every name the user might type.
+    for (alias, _canon) in crate::zsh_special_var_docs::SPECIAL_VAR_ALIASES {
+        special_vars.insert((*alias).to_string(), Value::String("special".into()));
+        all.insert((*alias).to_string(), Value::String("special".into()));
     }
     // ── Compsys completion functions ────────────────────────────────
     // The `_arguments` / `_files` / `_describe` family — Rust-native
@@ -6512,19 +6536,31 @@ mod tests {
         assert!(v["options"].is_object());
         assert!(v["special_vars"].is_object());
         // Well-known names must be present. Option names follow the
-        // canonical `ZSH_OPTIONS_SET` casing (lowercase, no underscore)
-        // since dump_reflection_json now sources from there directly.
+        // canonical UPPERCASE_WITH_UNDERSCORES form per `man zshoptions`
+        // (`EXTENDED_GLOB`, not `extendedglob`) since dump_reflection_json
+        // now sources from `OPTION_DOCS` keys which carry the doc form.
         assert!(v["builtins"]["cd"].is_string());
         assert!(v["keywords"]["if"].is_string());
-        assert!(v["options"]["extendedglob"].is_string());
-        assert!(v["special_vars"]["$?"].is_string());
+        assert!(v["options"]["EXTENDED_GLOB"].is_string());
+        // PS2/PS3/PS4/psvar/PROMPT2 must surface (user-reported gap).
+        for want in ["PS1", "PS2", "PS3", "PS4", "psvar", "PROMPT2"] {
+            assert!(
+                v["special_vars"][want].is_string(),
+                "special_vars missing `{}` — reflection should source from SPECIAL_VAR_DOCS",
+                want,
+            );
+        }
         // Canonical sourcing produces the full inventory, not the
-        // hand subset. The pre-rewire JSON had ~49 options; post-
-        // rewire it should be the full ZSH_OPTIONS_SET (~200).
+        // hand subset. Options should include CAPS form + NO_ aliases.
         assert!(
-            v["options"].as_object().unwrap().len() > 150,
-            "dump_reflection options count regressed to {}; expected canonical full set",
+            v["options"].as_object().unwrap().len() >= 700,
+            "dump_reflection options regressed to {}; expected full OPTION_DOCS + aliases (~750)",
             v["options"].as_object().unwrap().len(),
+        );
+        assert!(
+            v["special_vars"].as_object().unwrap().len() >= 250,
+            "dump_reflection special_vars regressed to {}; expected full SPECIAL_VAR_DOCS (~280)",
+            v["special_vars"].as_object().unwrap().len(),
         );
     }
 
