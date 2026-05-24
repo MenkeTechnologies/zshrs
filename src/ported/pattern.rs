@@ -2539,6 +2539,39 @@ fn patmatch_internal(
     // toggle bits without affecting the caller's branch view.
     let mut glob_flags = glob_flags;
 
+    // Inlined port of CHARMATCH macro from `Src/pattern.c:2671-2677`:
+    //   #define CHARMATCH(chin, chpa) (chin == chpa || \
+    //       ((patglobflags & GF_IGNCASE) ?
+    //          ((ISUPPER(chin) ? TOLOWER(chin) : chin) ==
+    //           (ISUPPER(chpa) ? TOLOWER(chpa) : chpa)) :
+    //        (patglobflags & GF_LCMATCHUC) ?
+    //          (ISLOWER(chpa) && TOUPPER(chpa) == chin) : 0))
+    //
+    // - exact byte match always wins
+    // - GF_IGNCASE: SYMMETRIC fold (both lowercase before compare)
+    // - GF_LCMATCHUC: ASYMMETRIC — lowercase pattern char ALSO matches
+    //   uppercase text char; an UPPERCASE pattern char only matches
+    //   that exact uppercase text char. This is the `(#l)` flag's
+    //   "lowercase-in-pattern matches uppercase-in-text" semantic;
+    //   previously zshrs treated LCMATCHUC the same as IGNCASE (full
+    //   case-fold both sides) so `(#l)FOO` wrongly matched "foo".
+    let charmatch = |chin: u8, chpa: u8, flags: i32| -> bool {
+        if chin == chpa {
+            return true; // c:2671
+        }
+        if (flags & GF_IGNCASE) != 0 {
+            // c:2672-2674
+            let a = if chin.is_ascii_uppercase() { chin.to_ascii_lowercase() } else { chin };
+            let b = if chpa.is_ascii_uppercase() { chpa.to_ascii_lowercase() } else { chpa };
+            return a == b;
+        }
+        if (flags & GF_LCMATCHUC) != 0 {
+            // c:2675-2676
+            return chpa.is_ascii_lowercase() && chpa.to_ascii_uppercase() == chin;
+        }
+        false // c:2677
+    };
+
     while scan < code.len() {
         let op = code[scan + I_OP];
         let next_bytes: [u8; 4] = code[scan + I_NEXT..scan + I_NEXT + 4].try_into().unwrap();
@@ -2557,13 +2590,16 @@ fn patmatch_internal(
                 if s_off + len > input_bytes.len() {
                     return None;
                 }
-                let igncase = (glob_flags & (GF_IGNCASE | GF_LCMATCHUC)) != 0;
+                let case_flags = glob_flags & (GF_IGNCASE | GF_LCMATCHUC);
                 let multibyte = (glob_flags & GF_MULTIBYTE) != 0; // c:349 GF_MULTIBYTE
-                if igncase {
+                if case_flags != 0 {
                     let inp_slice = &input_bytes[s_off..s_off + len];
-                    if multibyte {
-                        // Char-level Unicode case fold (mirrors C's
-                        // mb_patmatch* path when GF_MULTIBYTE set).
+                    if multibyte && (glob_flags & GF_IGNCASE) != 0 {
+                        // Char-level Unicode case fold for IGNCASE only —
+                        // LCMATCHUC's asymmetric ASCII semantic doesn't
+                        // map cleanly to non-ASCII chars; per C the
+                        // CHARMATCH macro is byte-level anyway (TOLOWER/
+                        // TOUPPER from utils.c work on bytes).
                         let pat_str = std::str::from_utf8(str_bytes).ok();
                         let inp_str = std::str::from_utf8(inp_slice).ok();
                         if let (Some(p), Some(i)) = (pat_str, inp_str) {
@@ -2583,22 +2619,18 @@ fn patmatch_internal(
                                 }
                             }
                         } else {
-                            // Non-UTF-8 input — byte fallback.
+                            // Non-UTF-8 input — byte fallback through CHARMATCH.
                             for k in 0..len {
-                                if inp_slice[k].to_ascii_lowercase()
-                                    != str_bytes[k].to_ascii_lowercase()
-                                {
+                                if !charmatch(inp_slice[k], str_bytes[k], glob_flags) {
                                     return None;
                                 }
                             }
                         }
                     } else {
-                        // Byte-level ASCII case fold (mirrors C's
-                        // patmatch* path when GF_MULTIBYTE clear).
+                        // c:2694 — per-byte CHARMATCH walk (covers
+                        // GF_IGNCASE byte-mode AND GF_LCMATCHUC asymmetric).
                         for k in 0..len {
-                            if inp_slice[k].to_ascii_lowercase()
-                                != str_bytes[k].to_ascii_lowercase()
-                            {
+                            if !charmatch(inp_slice[k], str_bytes[k], glob_flags) {
                                 return None;
                             }
                         }
@@ -2624,13 +2656,11 @@ fn patmatch_internal(
                     return None;
                 }
                 let b = input_bytes[s_off];
-                let igncase = (glob_flags & (GF_IGNCASE | GF_LCMATCHUC)) != 0;
-                let found = if igncase {
-                    let lb = b.to_ascii_lowercase();
-                    set.iter().any(|&c| c.to_ascii_lowercase() == lb)
-                } else {
-                    set.contains(&b)
-                };
+                // c:2694 charmatch — each set byte tested as a CHARMATCH
+                // candidate against the input. GF_LCMATCHUC asymmetric
+                // semantic: `[a]` matches "A" (chpa='a' lowercase), but
+                // `[A]` does NOT match "a" (chpa='A' uppercase, no fold).
+                let found = set.iter().any(|&c| charmatch(b, c, glob_flags));
                 if !found {
                     return None;
                 }
@@ -2645,13 +2675,9 @@ fn patmatch_internal(
                     return None;
                 }
                 let b = input_bytes[s_off];
-                let igncase = (glob_flags & (GF_IGNCASE | GF_LCMATCHUC)) != 0;
-                let found = if igncase {
-                    let lb = b.to_ascii_lowercase();
-                    set.iter().any(|&c| c.to_ascii_lowercase() == lb)
-                } else {
-                    set.contains(&b)
-                };
+                // c:2694 charmatch — same asymmetry as P_ANYOF; ANYBUT
+                // succeeds iff no set element charmatches the input.
+                let found = set.iter().any(|&c| charmatch(b, c, glob_flags));
                 if found {
                     return None;
                 }
@@ -4588,7 +4614,6 @@ mod tests {
     /// `(#l)FOO` does NOT match "foo" — asymmetry: uppercase in pattern
     /// requires uppercase in text. zsh: NOMATCH.
     #[test]
-    #[ignore = "ZSHRS BUG: (#l) treats case-insensitivity symmetrically; zsh asymmetric"]
     fn ext_glob_hash_l_uppercase_pat_requires_uppercase_text_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         assert!(
