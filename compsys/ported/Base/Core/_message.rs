@@ -5,7 +5,7 @@
 //! function name at `Completion/Base/Core/_message`.
 
 use crate::compcore::CompletionState;
-use crate::fns::_description::_description;
+use crate::ported::_description::_description;
 use crate::zstyle::ZStyleStore;
 
 /// _message - display a message (no completions)

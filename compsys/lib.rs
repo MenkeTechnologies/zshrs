@@ -119,11 +119,11 @@ pub mod compdef;
 pub mod completion;
 pub mod compset;
 pub mod computil;
-pub mod fns;
+pub mod ported;
 // `compsys/functions.rs` + `compsys/library.rs` — DELETED.
-// All per-fn ports live under `compsys/fns/Base/{Completer,Core,
+// All per-fn ports live under `compsys/ported/Base/{Completer,Core,
 // Utility,Widget}/` (and `Unix/Type/` / `Zsh/Type/`). Callers use
-// `compsys::fns::_NAME` directly. No more shim layer.
+// `compsys::ported::_NAME` directly. No more shim layer.
 pub mod generate;
 pub mod matching;
 pub mod menu;
@@ -134,7 +134,7 @@ pub mod zle;
 pub mod zpwr_colors;
 pub mod zstyle;
 
-pub use fns::_arguments::{
+pub use ported::_arguments::{
     arguments_analyze, arguments_execute, parse_action, ActionType, ArgRequirement,
     ArgumentsAnalysis, ArgumentsSpec, ArgumentsState, OptSpec, OptType,
 };
@@ -147,10 +147,10 @@ pub use base::{
     TagManager,
     Value,
 };
-// Per-fn ports — these moved to `compsys/fns/Base/{Core,Completer,Utility}/`
-// and base.rs re-exports them, but pull them straight from `fns::` for
+// Per-fn ports — these moved to `compsys/ported/Base/{Core,Completer,Utility}/`
+// and base.rs re-exports them, but pull them straight from `ported::` for
 // downstream callers that want the canonical path.
-pub use fns::{
+pub use ported::{
     _all_labels, _alternative, _approximate, _complete, _description as base_description,
     _dispatch, _ignored, _main_complete, _message, _multi_parts, _next_label, _normal, _sep_parts,
     _values, _wanted, get_ignored_patterns, is_ignored,
@@ -160,7 +160,7 @@ pub use compcore::{
     do_completion, sort_and_prioritize, AmbiguousInfo, CompletionMode, CompletionRequestOptions,
     CompletionState, MenuInfo,
 };
-pub use fns::compinit::{
+pub use ported::compinit::{
     build_cache_from_fpath, cache_entry_count, cache_is_valid, check_dump, compdump, compinit,
     compinit_lazy, get_system_fpath, load_from_cache, CompDef, CompFile, CompFileDef, CompInitOpts,
     CompInitResult,
@@ -175,9 +175,9 @@ pub use computil::{
     describe_execute, ArgSpec as UtilArgSpec, CompArguments, CompDescribe, CompFiles,
     CompGroupConfig, CompGroups, CompTags, CompValues, ValueSpec,
 };
-pub use fns::_describe::{describe_execute as native_describe, parse_items, DescribeItem, DescribeOpts};
-pub use fns::_files::{directories_execute, files_execute, FilesOpts};
-use fns::{_arguments, _describe, _files};
+pub use ported::_describe::{describe_execute as native_describe, parse_items, DescribeItem, DescribeOpts};
+pub use ported::_files::{directories_execute, files_execute, FilesOpts};
+use ported::{_arguments, _describe, _files};
 pub use generate::{
     complete_builtins, complete_commands_from_cache, complete_files, complete_from_cache_function,
     complete_parameters, complete_shell_functions, detect_completion_context, generate_completions,

@@ -1,5 +1,5 @@
 //! Tiny helpers shared between per-fn ports. Kept here (not in
-//! library.rs) so the `fns/` tree stands alone.
+//! library.rs) so the `ported/` tree stands alone.
 
 use std::path::Path;
 
@@ -55,7 +55,7 @@ fn glob_helper(pat: &[char], txt: &[char]) -> bool {
 /// Shell-glob matcher mirror of the helper that used to live in
 /// `compsys/functions.rs` — kept as a separate symbol because callers
 /// were spelled `functions::glob_match(...)`, distinct from
-/// `glob_matches` above (which the `library.rs`/`fns/_path_files`
+/// `glob_matches` above (which the `library.rs`/`ported/_path_files`
 /// code used). Both share semantics; the duplicate is intentional for
 /// API-shape compat with both call-site styles.
 pub fn glob_match(pattern: &str, text: &str) -> bool {
