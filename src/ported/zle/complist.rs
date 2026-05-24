@@ -2620,23 +2620,85 @@ pub fn domenuselect() -> i32 {
         }
     }
 
-    // c:2463-3482 — main key-loop:
-    //   while (1) {
-    //       complistmatches(NULL, dat);  /* repaint */
-    //       cmd = getkeycmd();           /* widget for the next key */
-    //       dispatch on cmd: up-line-or-history / down-line-or-history /
-    //                       forward-char / backward-char / accept-line /
-    //                       send-break / vi-cmd-mode / etc.
-    //   }
-    // The keymap-dispatch entry (`getkeycmd` reading bytes through
-    // `selectkeymap("menuselect")` then resolving to a Thingy widget)
-    // isn't yet ported. Without it the loop can't progress. Return
-    // from the prologue with the snapshot state set up; the live
-    // dispatch lands when the menuselect keymap port arrives.
+    // c:2470 — `selectlocalmap(mskeymap)` — switch to the menuselect
+    // keymap so getkeycmd uses it for byte→widget resolution.
+    let saved_localmap = {
+        let g = crate::ported::zle::zle_keymap::LOCALKEYMAP.lock().unwrap();
+        g.clone()
+    };
+    if let Some(mskeymap) =
+        crate::ported::zle::zle_keymap::openkeymap("menuselect")
+    {
+        crate::ported::zle::zle_keymap::selectlocalmap(Some(mskeymap)); // c:2470
+    }
+
+    let mut acc = 0i32; // c:2392
+    let mut broken = 0i32; // c:2393
+
+    // c:2485 — `for (;;) { ... }`. Minimal main loop covering the
+    // exit dispatches: empty/sendbreak → break, acceptline → acc=1.
+    // mtab/mgtab-driven navigation (up/down/forward/backward) requires
+    // the Cmatch matrix substrate that isn't ported yet — those keys
+    // fall through the loop unhandled and exit via the wildcard arm.
+    loop {
+        // c:2586 — `zrefresh()` repaints the menu list each turn.
+        complistmatches(); // c:2486-2585 (display update)
+
+        // c:2629 — `cmd = getkeycmd();`
+        let cmd = crate::ported::zle::zle_keymap::getkeycmd();
+
+        // c:2643-2646 — empty / sendbreak → bell + break.
+        let name = match &cmd {
+            None => String::new(),
+            Some(t) => t.nam.clone(),
+        };
+        if name.is_empty() || name == "send-break" {
+            crate::ported::utils::zbeep(); // c:2644
+            broken = 1;
+            break; // c:2646
+        }
+        // c:2653 — `acceptline` / `acceptsearch` → acc=1, break.
+        if name == "accept-line" || name == "accept-search" {
+            // c:2654-2657 — accept inside search mode just exits search.
+            if mode == 2 || mode == 3 {
+                // MM_FSEARCH | MM_BSEARCH
+                mode = 0; // c:2655
+                continue; // c:2656
+            }
+            acc = 1; // c:2658
+            break; // c:2659
+        }
+        // c:2738 (etc.) — undo widget. Without mtab navigation
+        // there's nothing to undo, so treat as exit.
+        if name == "undo" {
+            break;
+        }
+        // c:3460 — anything else: walk did not handle this key. C
+        // dispatches via the giant `else if` ladder. Without the
+        // mtab/mgtab matrices the navigation keys are no-ops; exit
+        // so the user sees the cursor change come back.
+        broken = 1;
+        break;
+    }
+
+    // c:3469-3475 — restore localmap on exit.
+    crate::ported::zle::zle_keymap::selectlocalmap(saved_localmap);
+
     unqueue_signals();
 
+    // c:3477-3478 — `return (broken == 2 ? 3 : ((dat && !broken) ?
+    //                 (acc ? 1 : 2) : (!noselect ^ acc)));`. Without
+    // `dat` parameter wired through, treat as if `dat == NULL`:
+    // `return !noselect ^ acc`. `noselect` is 1 by default until a
+    // selection happens (set above).
     let _ = (oe, step, mode, status);
-    0
+    if broken == 2 {
+        3
+    } else if acc != 0 {
+        1
+    } else {
+        2
+    }
 }
 
 /// Port of `menuselect(char **args)` from Src/Zle/complist.c:3484.

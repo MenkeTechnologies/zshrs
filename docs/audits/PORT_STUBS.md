@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T17:33:57.225984+00:00
+Generated: 2026-05-24T20:42:32.307054+00:00
 
 ## Method
 
@@ -16,13 +16,12 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 3 stubs across 3 files
+## Summary: 2 stubs across 2 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
 | `src/ported/exec.rs` | 1 | `namedpipe` (24 / 1068) |
 | `src/ported/prompt.rs` | 1 | `addbufspc` (1 / 15) |
-| `src/ported/zle/complist.rs` | 1 | `domenuselect` (85 / 916) |
 
 ## Per-file detail
 
@@ -30,17 +29,11 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 3129 | `namedpipe` | 24 | 1068 | 2% |
+| 3135 | `namedpipe` | 24 | 1068 | 2% |
 
 ### `src/ported/prompt.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 483 | `addbufspc` | 1 | 15 | 6% |
-
-### `src/ported/zle/complist.rs` — 1 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 2508 | `domenuselect` | 85 | 916 | 9% |
 
