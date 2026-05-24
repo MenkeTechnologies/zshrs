@@ -52,7 +52,14 @@ SOURCES = {
         "alias_macros": ("findex", "pindex", "cindex"),
         "name_re": r"[A-Za-z_][A-Za-z0-9_]*",
         "table_name": "BUILTIN_DOCS",
-        "alias_table": None,
+        # Emit an alias table so xitem-only entries (`xitem(tt(comptags))`
+        # followed by `item(tt(comptry))`) and findex-declared synonyms
+        # (`findex(comptags)` + `findex(comptry)` → same body) resolve.
+        # Without aliasing 23/152 canonical builtins fall through to the
+        # placeholder; with it the count drops to the truly-undocumented
+        # internals (chdir/bye/declare/etc.) and they get a hand-curated
+        # fallback in `lookup_doc`.
+        "alias_table": "BUILTIN_ALIASES",
         "lookup_fn": "lookup_builtin_doc",
         "uppercase_alias": False,
         "key_prefix": "",
@@ -89,7 +96,21 @@ SOURCES = {
 }
 
 
+# Every yodl `*index(...)` macro that may appear between an entry's
+# primary-alias declarations and its `item(...)` body. All of these
+# must be silently skipped without clearing `pending_aliases`.
+INDEX_MACROS = ("pindex", "vindex", "findex", "cindex", "tindex")
+
+
 YODL_INLINE = [
+    # Order matters — the literal-paren producers (`LPAR()`, `RPAR()`,
+    # `PLUS()`) run BEFORE the macro processors so a `tt(PLUS())` collapses
+    # to `tt(+)` and then to `` `+` `` instead of `tt(+)` (whose inner
+    # `(+)` would otherwise trip the no-nested-parens guard).
+    (re.compile(r"LPAR\(\)"), "("),
+    (re.compile(r"RPAR\(\)"), ")"),
+    (re.compile(r"PLUS\(\)"), "+"),
+    (re.compile(r"NOTRANS\(([^()]*)\)"), r"\1"),
     (re.compile(r"tt\(([^()]*)\)"), r"`\1`"),
     (re.compile(r"em\(([^()]*)\)"), r"_\1_"),
     (re.compile(r"var\(([^()]*)\)"), r"_\1_"),
@@ -97,13 +118,35 @@ YODL_INLINE = [
     (re.compile(r"noderef\(([^()]*)\)"), r"(\1)"),
     (re.compile(r"manref\(([^,()]*),\s*([^()]*)\)"), r"`\1(\2)`"),
     (re.compile(r"footnote\(([^()]*)\)"), r"(\1)"),
+    # Section / cross references — drop the module suffix and keep the
+    # human-readable section title.
+    (re.compile(r"sectref\(([^,()]*)\)\(([^()]*)\)"), r"_\1_ (\2)"),
+    (re.compile(r"ifztexi\(([^()]*)\)"), r"\1"),
+    (re.compile(r"ifnztexi\(([^()]*)\)"), r"\1"),
+    # `example(...)` and `indent(...)` wrap blocks — collapse to inline
+    # so subsequent passes see plain prose. Real block-rendering would
+    # require a structural parser; not worth it for hover text.
+    (re.compile(r"example\(([^()]*)\)"), r"\n\n    \1\n\n"),
+    (re.compile(r"indent\(([^()]*)\)"), r"\n    \1\n"),
+    # Yodl prose-quote forms. The leading-backtick + trailing-apostrophe
+    # is yodl's smart-quote convention; conversion order matters because
+    # `tt(X)` runs FIRST and turns into `` `X` `` — so a source `` ``tt(X)' ``
+    # becomes `` ``X`' `` (double-backtick + content + backtick + apostrophe)
+    # by the time we get here. Patterns run longest-first.
+    #
+    #   ``X`'  →  "X"     (yodl double-open quote wrapping a tt-converted span)
+    #   ``X''  →  "X"     (yodl double-open / double-close)
+    #   `X'    →  "X"     (yodl single quote pair)
+    (re.compile(r"``([^`\n']+)`'"), r'"\1"'),
+    (re.compile(r"``([^`\n']+)''"), r'"\1"'),
+    (re.compile(r"`([^`\n']+)'"), r'"\1"'),
 ]
 
 
 def strip_yodl(text: str) -> str:
     """Convert yodl markup to markdown / plain text."""
     # Repeat until no inline macros remain (handles nested simple cases).
-    for _ in range(6):
+    for _ in range(8):
         prev = text
         for rx, repl in YODL_INLINE:
             text = rx.sub(repl, text)
@@ -111,6 +154,14 @@ def strip_yodl(text: str) -> str:
             break
     # Drop residual nested `xx(yy)` we couldn't match — leave the inner text.
     text = re.sub(r"(?:tt|em|var|bf)\(([^()]*)\)", r"\1", text)
+    # Yodl list markers we can't render cleanly — drop them.
+    text = re.sub(r"startit__\s*\n?", "", text)
+    text = re.sub(r"endit__\s*\n?", "", text)
+    text = re.sub(r"^x?it_", "", text, flags=re.MULTILINE)
+    # Stray `COMMENT(...)` blocks left over by the parse (we don't have
+    # nested-paren matching for arbitrary depth — drop the prefix).
+    text = re.sub(r"COMMENT\(\!MOD\![^\n]*", "", text)
+    text = re.sub(r"\!MOD\!\)", "", text)
     return text
 
 
@@ -130,16 +181,19 @@ def parse_yo(src: str, cfg: dict):
     to 0 and a fresh `(` opens.
     """
     alias_macros = cfg["alias_macros"]
-    # Allow optional trailing whitespace inside `tt(NAME )` — some
-    # entries write `xitem(tt(print )[ flags ])` with a space inside
-    # the closing paren of `tt`.
-    name_re = re.compile(r"\s*item\(tt\((" + cfg["name_re"] + r")\s*\)")
+    # Capture the first identifier inside `tt(...)`, then accept any
+    # non-`)` content until the closing paren of `tt`. This is needed
+    # for multi-word headers like `item(tt(zsystem flock -u) var(fd))(`
+    # where the canonical name is `zsystem` but the rest of the tt body
+    # describes a subcommand. Also covers `xitem(tt(print )[…])` (space
+    # before close) and `item(tt(NAME) (tt(-J)))(` (option-flag alias).
+    name_re = re.compile(r"\s*item\(tt\((" + cfg["name_re"] + r")[^)]*\)")
     # Some entries are declared as a stack of `xitem(tt(NAME)...)` /
     # `xitem(SPACES()...)` lines followed by a final `item(...)( body )`
     # where the `item(...)` header may or may not start with `tt(NAME)`.
     # Track the last `xitem(tt(NAME))` so we can fall back to it when
     # the `item(...)` header begins with `SPACES()` / `var(...)` etc.
-    xitem_re = re.compile(r"\s*xitem\(tt\((" + cfg["name_re"] + r")\s*\)")
+    xitem_re = re.compile(r"\s*xitem\(tt\((" + cfg["name_re"] + r")[^)]*\)")
     lines = src.split("\n")
     i = 0
     n = len(lines)
@@ -151,12 +205,25 @@ def parse_yo(src: str, cfg: dict):
         # Carry alias-introducing macros forward into the next item.
         # The first alias macro in the config is the "primary" — its
         # names actually get emitted into the alias table.
+        #
+        # We have to silently skip ALL recognized yodl index macros,
+        # not just the per-source alias set: every `.yo` interleaves
+        # `pindex`/`vindex`/`findex`/`cindex`/`tindex` lines between an
+        # entry's primary-alias declarations and its `item(...)` line.
+        # E.g. options.yo lines 60-65 are `pindex(AUTO_CD)` ×4 then
+        # `cindex(cd, automatic)` then `item(tt(AUTO_CD)…)`. If we let
+        # that `cindex` fall through to the "not an item" branch below
+        # it clears `pending_aliases` and we lose the 3 negated/compact
+        # forms (`AUTOCD`, `NO_AUTO_CD`, `NOAUTOCD`) → 121/203 zsh
+        # options end up with no resolvable doc body via the canonical
+        # `ZSH_OPTIONS_SET` lookup, even though upstream declares them.
         matched_alias = False
-        for mac in alias_macros:
+        for mac in INDEX_MACROS:
             if stripped.startswith(f"{mac}("):
-                m = re.match(rf"\s*{mac}\(([^)]+)\)", l)
-                if m and mac == alias_macros[0]:
-                    pending_aliases.append(m.group(1).strip())
+                if mac == alias_macros[0]:
+                    m = re.match(rf"\s*{mac}\(([^)]+)\)", l)
+                    if m:
+                        pending_aliases.append(m.group(1).strip())
                 matched_alias = True
                 break
         if matched_alias:
@@ -197,8 +264,16 @@ def parse_yo(src: str, cfg: dict):
         m = name_re.match(l)
         is_plain_item = stripped.startswith("item(")
         if not m and not is_plain_item:
-            pending_aliases = []
-            pending_canonical = None
+            # NOT clearing pending state here on purpose. Intervening
+            # yodl macros (`redef(SPACES)(...)`, `COMMENT(...)`, plain
+            # body text outside of a current item, etc.) can sit
+            # between an entry's alias declarations and its `item(...)`
+            # line — see mod_stat.yo:7-17 where `redef(SPACES)` between
+            # the `findex(zstat)` / `findex(stat)` declarations and the
+            # `item(tt(stat) ...)` block used to drop the `zstat` alias
+            # entirely. Pending state is reset only at the next real
+            # section boundary (`sect(`/`subsect(`/`startitem(`/`enditem(`)
+            # OR when consumed by an `item(...)`.
             i += 1
             continue
         # If this source requires entries to be vindex / pindex /
@@ -321,7 +396,7 @@ def emit_rust(entries, cfg, source_path):
     out.append("/// case-insensitive lookups and any negated/compact aliases.")
     out.append(f"pub const {table}: &[(&str, &str)] = &[")
     for name, _aliases, body in entries:
-        out.append(f'    ("{name}", "{rust_escape(body)}"),')
+        out.append(f'    ("{rust_escape(name)}", "{rust_escape(body)}"),')
     out.append("];")
     out.append("")
     if alias_table:
@@ -339,7 +414,7 @@ def emit_rust(entries, cfg, source_path):
                 if a in global_seen:
                     continue
                 global_seen[a] = name
-                out.append(f'    ("{a}", "{name}"),')
+                out.append(f'    ("{rust_escape(a)}", "{rust_escape(name)}"),')
         out.append("];")
         out.append("")
         out.append(f"/// Resolve a {label} name (case-insensitive, alias-aware)")
@@ -370,17 +445,23 @@ def main():
     if args and args[0] == "--source":
         source_key = args[1]
         args = args[2:]
-    if len(args) != 1:
-        sys.exit(f"usage: {sys.argv[0]} [--source KEY] <path-to-yo>")
+    if len(args) < 1:
+        sys.exit(f"usage: {sys.argv[0]} [--source KEY] <path-to-yo> [<more-yo>…]")
     if source_key not in SOURCES:
         sys.exit(f"unknown source {source_key!r}; one of: {', '.join(SOURCES)}")
     cfg = dict(SOURCES[source_key])
     cfg["_source_key"] = source_key
-    src_path = args[0]
-    src = Path(src_path).read_text(encoding="utf-8")
-    entries = list(parse_yo(src, cfg))
+    # Each input file is parsed independently — they're separate
+    # documents, so per-file pending state must reset at the
+    # boundary or the last `pindex(...)` of file A could bind to the
+    # first `item(...)` of file B.
+    entries = []
+    for p in args:
+        src = Path(p).read_text(encoding="utf-8")
+        entries.extend(parse_yo(src, cfg))
     if not entries:
         sys.exit(f"no entries parsed; verify the input is a yo file for source {source_key}")
+    src_path = args[0] if len(args) == 1 else f"{args[0]} (+{len(args)-1} more)"
     sys.stdout.write(emit_rust(entries, cfg, src_path))
 
 

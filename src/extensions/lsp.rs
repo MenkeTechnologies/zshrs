@@ -1287,17 +1287,28 @@ pub fn lookup_doc(name: &str) -> String {
             return format!("**{}** — _special variable_\n\n{}", d.0, d.1);
         }
     }
-    if BUILTINS.contains(&name) {
-        return format!("**{}** — _zsh builtin_", name);
-    }
-    if KEYWORDS.contains(&name) {
-        return format!("**{}** — _zsh keyword_", name);
-    }
-    if OPTIONS.contains(&name) {
-        return format!("**{}** — _zsh option_\n\n_see `man zshoptions`_", name);
+    if let Some(d) = OPTION_DOCS_FALLBACK.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
+        return format!("**{}** — _zsh option_\n\n{}", d.0, d.1);
     }
     String::new()
 }
+
+/// Hand-curated docs for options that no upstream yodl `item(tt(...))`
+/// block documents. The yodl alias-table-driven cascade covers 202/203
+/// canonical `ZSH_OPTIONS_SET` entries; this fills the remainder so
+/// every option gets real hover text instead of a `see man zshoptions`
+/// stub.
+const OPTION_DOCS_FALLBACK: &[(&str, &str)] = &[
+    (
+        "RESTRICTED",
+        "Restricted-shell mode (equivalent to invoking zsh as `rzsh` or with `-r`).\
+         \n\nDisables: `cd`, modifying `$PATH` / `$ENV` / `$SHELL`, `>` / `>>` redirects,\
+         creating functions with the `function` keyword, `exec`-ing commands containing `/`,\
+         `kill`-ing by pid, and several `setopt` toggles. Designed for sandboxed login shells\
+         where the user must stay inside a curated command set. Once set, cannot be cleared\
+         within the running shell.",
+    ),
+];
 
 // ── Document symbols ────────────────────────────────────────────────────
 
@@ -3111,6 +3122,21 @@ const KEYWORD_DOCS: &[(&str, &str)] = &[
         "Interactive menu. `select var in items; do …; done`",
     ),
     ("repeat", "Counted loop. `repeat N; do …; done`"),
+    // Compound-statement sub-keywords. Upstream zsh documents each
+    // compound (`if`, `for`, `case`, …) as one `item(...)` block, so
+    // the sub-keywords (`then`/`else`/`elif`/`fi`/`do`/`done`/`in`/
+    // `esac`) get no per-keyword `item` and fall through to the hand
+    // fallback. Each entry points the reader at the parent compound.
+    ("then", "Body separator for `if`/`elif`. `if cmd; then body; fi`"),
+    ("else", "Alternative branch for `if`. `if cmd; then a; else b; fi`"),
+    ("elif", "Alternative test in an `if` chain. `if a; then …; elif b; then …; fi`"),
+    ("do",  "Body-introducer for `for`/`while`/`until`/`select`/`repeat`. `for v in …; do body; done`"),
+    ("esac", "Closes a `case` statement. `case word in pat) …;; esac`"),
+    ("in",  "Word-list introducer for `for` and `case`. `for v in a b c; do …; done`"),
+    (
+        "declare",
+        "Alias for `typeset`. Set variable attributes. `-a` array, `-A` assoc, `-i` integer, `-r` readonly.",
+    ),
     (
         "function",
         "Function declaration. `function foo { body }` or `foo() { body }`",
@@ -3227,6 +3253,58 @@ const BUILTIN_DOCS: &[(&str, &str)] = &[
         "Parse positional parameters in the style of GNU getopt.",
     ),
     ("let", "Evaluate an arithmetic expression. `let count++`"),
+    // ── Builtins that have no per-name `item(tt(...))(…)` block in any
+    // upstream yodl source. Most are simple aliases for documented
+    // builtins; a few (`hashinfo`, `mem`, `patdebug`) are debug/internal
+    // entry points. The `zf_*` family are zftp companion functions
+    // documented as a group in `Functions/Zftp/README` rather than per-name.
+    (
+        ":",
+        "Null command. Returns true. Side-effects of argument expansion still happen.",
+    ),
+    (
+        "[",
+        "Alias for `test`. `[ expr ]` — POSIX conditional. Prefer `[[ expr ]]` in zsh.",
+    ),
+    ("bye", "Alias for `exit`. Exit the shell with the given status."),
+    ("chdir", "Alias for `cd`. Change the working directory."),
+    (
+        "compctl",
+        "Old completion control (compctl mechanism). Largely superseded by `compdef` / compsys.",
+    ),
+    ("declare", "Alias for `typeset`. Set variable attributes."),
+    (
+        "hashinfo",
+        "Print internal hash-table statistics. Debug builtin in `zsh/parameter`-adjacent code.",
+    ),
+    (
+        "mem",
+        "Print zsh memory-allocator statistics. Debug builtin compiled only with `--enable-zsh-mem`.",
+    ),
+    (
+        "noglob",
+        "Precommand modifier. Disable filename generation for the next command. `noglob ls *.tmp`",
+    ),
+    (
+        "patdebug",
+        "Print pattern-matcher internals for a glob/regex. Debug builtin from `zsh/pattern`.",
+    ),
+    ("r", "Re-execute the previous command. Shorthand for `fc -e -`."),
+    (
+        "unfunction",
+        "Remove a function definition. Equivalent to `unhash -f` / `unset -f name`.",
+    ),
+    // ── zftp companion functions (zsh/zftp module). Each `zf_X` mirrors
+    // the unix command `X` against the connected FTP server.
+    ("zf_chgrp", "zftp: change group of remote files. Mirrors `chgrp(1)`."),
+    ("zf_chmod", "zftp: change mode of remote files. Mirrors `chmod(1)`."),
+    ("zf_chown", "zftp: change owner of remote files. Mirrors `chown(1)`."),
+    ("zf_ln",    "zftp: link / rename remote files. Mirrors `ln(1)`."),
+    ("zf_mkdir", "zftp: create remote directories. Mirrors `mkdir(1)`."),
+    ("zf_mv",    "zftp: move / rename remote files. Mirrors `mv(1)`."),
+    ("zf_rm",    "zftp: remove remote files. Mirrors `rm(1)`."),
+    ("zf_rmdir", "zftp: remove remote directories. Mirrors `rmdir(1)`."),
+    ("zf_sync",  "zftp: flush pending writes on the FTP control channel."),
 ];
 
 const SPECIAL_VAR_DOCS: &[(&str, &str)] = &[
@@ -3263,6 +3341,9 @@ const SPECIAL_VAR_DOCS: &[(&str, &str)] = &[
     ("$path", "Array version of $PATH."),
     ("$argv", "Array of positional parameters (same as $@)."),
     ("$pipestatus", "Exit statuses of each pipeline element."),
+    ("$SHELL", "Pathname of the login shell. Honored by many tools as the default user shell."),
+    ("$EDITOR", "Preferred editor for tools that invoke an editor (`fc`, `git`, `crontab`, …)."),
+    ("$VISUAL", "Preferred full-screen editor. Takes precedence over `$EDITOR` when set."),
 ];
 
 // ── Reflection dump for the IntelliJ tool window ────────────────────────
@@ -3270,17 +3351,30 @@ const SPECIAL_VAR_DOCS: &[(&str, &str)] = &[
 /// Produce the JSON consumed by `zshrs --dump-reflection`. Each top-level
 /// key is a category; each entry is `name → tag` so the tool window can
 /// group by tag in its tree.
+///
+/// Sources the canonical registries (`ported::builtin::BUILTINS`,
+/// `ported::options::ZSH_OPTIONS_SET`) rather than the hand-curated
+/// LSP subsets above. The hand subsets were a 49-option / 67-builtin /
+/// 34-keyword / 41-special slice — fine for in-buffer keyword
+/// classification but wrong as a tool-window inventory because the
+/// IntelliJ panel is meant to mirror everything the runtime actually
+/// implements. Sourcing from the canonical sets keeps the panel honest
+/// as new ports land (e.g. adding a builtin to `ported::builtin::BUILTINS`
+/// makes it show up in the panel without a parallel edit here).
 pub fn dump_reflection_json() -> String {
     let mut builtins = serde_json::Map::new();
-    for b in BUILTINS {
-        builtins.insert(b.to_string(), Value::String("builtin".into()));
+    for b in crate::ported::builtin::BUILTINS.iter() {
+        builtins.insert(b.node.nam.clone(), Value::String("builtin".into()));
     }
+    // Keywords stay on the hand list — zsh's "reserved words" set is
+    // small, fixed, and grammatical (no canonical Rust registry mirrors
+    // it because keywords aren't a runtime table the way builtins are).
     let mut keywords = serde_json::Map::new();
     for k in KEYWORDS {
         keywords.insert(k.to_string(), Value::String("keyword".into()));
     }
     let mut options = serde_json::Map::new();
-    for o in OPTIONS {
+    for o in crate::ported::options::ZSH_OPTIONS_SET.iter() {
         options.insert(o.to_string(), Value::String("option".into()));
     }
     let mut special_vars = serde_json::Map::new();
@@ -3294,6 +3388,292 @@ pub fn dump_reflection_json() -> String {
         "special_vars": special_vars,
     }))
     .unwrap_or_else(|_| "{}".into())
+}
+
+/// Render the full LSP knowledge base as the four chapter `<section>`s
+/// that `docs/reference.html` splices in between its `<!-- BEGIN/END
+/// LSP-REFERENCE -->` markers. One `<article class="doc-entry">` per
+/// canonical name across builtins / keywords / options / specials.
+///
+/// All inputs come from the baked Rust tables — no upstream zsh repo
+/// access at runtime. The HTML uses the existing `.doc-entry` /
+/// `.chapter-meta` styling already defined in reference.html so no
+/// CSS changes are needed.
+pub fn dump_reference_html() -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+
+    // ── builtins (canonical from ported::builtin::BUILTINS) ──────────
+    let mut builtins: Vec<String> = crate::ported::builtin::BUILTINS
+        .iter()
+        .map(|b| b.node.nam.clone())
+        .collect();
+    builtins.sort();
+    builtins.dedup();
+    write_chapter(
+        &mut out,
+        "ch-lsp-builtins",
+        "Builtin Index",
+        &format!(
+            "{} entries · sourced from <code>ported::builtin::BUILTINS</code>. \
+             Each body is the canonical man-zshall yodl text routed through \
+             <code>lsp::lookup_doc</code>.",
+            builtins.len()
+        ),
+        &builtins,
+        "builtin",
+    );
+
+    // ── keywords (LSP hand registry — the grammatical reserved-word set) ──
+    let keywords: Vec<String> = KEYWORDS.iter().map(|s| s.to_string()).collect();
+    write_chapter(
+        &mut out,
+        "ch-lsp-keywords",
+        "Keyword Index",
+        &format!(
+            "{} entries · zsh reserved words. Sub-keywords (<code>then</code>, \
+             <code>else</code>, <code>do</code>, <code>esac</code>, …) point at \
+             the parent compound statement.",
+            keywords.len()
+        ),
+        &keywords,
+        "keyword",
+    );
+
+    // ── options (canonical ZSH_OPTIONS_SET) ──────────────────────────
+    let mut options: Vec<String> = crate::ported::options::ZSH_OPTIONS_SET
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    options.sort();
+    write_chapter(
+        &mut out,
+        "ch-lsp-options",
+        "Option Index",
+        &format!(
+            "{} entries · the canonical zsh option registry. \
+             Set / clear via <code>setopt NAME</code> / <code>unsetopt NAME</code>.",
+            options.len()
+        ),
+        &options,
+        "option",
+    );
+
+    // ── special vars (LSP hand registry, with `$` prefix kept) ───────
+    let specials: Vec<String> = SPECIAL_VARS.iter().map(|s| s.to_string()).collect();
+    write_chapter(
+        &mut out,
+        "ch-lsp-specials",
+        "Special Variable Index",
+        &format!(
+            "{} entries · zsh-defined parameters and well-known env vars. \
+             Includes both scalar (<code>$?</code>) and array (<code>$path</code>) forms.",
+            specials.len()
+        ),
+        &specials,
+        "special",
+    );
+
+    out
+}
+
+fn write_chapter(
+    out: &mut String,
+    id: &str,
+    title: &str,
+    meta_html: &str,
+    names: &[String],
+    kind: &str,
+) {
+    use std::fmt::Write;
+    let _ = writeln!(
+        out,
+        "\n    <!-- ════════════════════════════════════════════════════════════════════ -->\n\
+         \n    <section class=\"tutorial-section\" id=\"{id}\">\n\
+         \n      <h2>{title}</h2>\n\
+         \n      <p class=\"chapter-meta\">{meta_html}</p>",
+    );
+    for n in names {
+        let body = lookup_doc(n);
+        // lookup_doc returns `**HEADING** — _kind_\n\nBODY`. Split that
+        // apart so the article shows the body without the heading
+        // duplication (the article already prints the name in <h3>).
+        let body_only = body.split_once("\n\n").map(|(_, b)| b).unwrap_or("");
+        let anchor = anchor_for(kind, n);
+        let _ = writeln!(
+            out,
+            "\n      <article class=\"doc-entry\" id=\"{anchor}\">\n\
+             \n        <h3><code>{}</code> <a class=\"doc-anchor\" href=\"#{anchor}\">¶</a></h3>\n\
+             {}      </article>",
+            html_escape(n),
+            md_to_html(body_only),
+        );
+    }
+    out.push_str("\n    </section>\n");
+}
+
+fn anchor_for(kind: &str, name: &str) -> String {
+    // Map every non-alphanumeric char to a stable mnemonic so single-char
+    // punctuation builtins (`-`, `:`, `.`, `[`, `]`, `:`) each get a
+    // unique anchor instead of all collapsing to `doc-lsp-builtin-`.
+    // Preserve case to distinguish `$PATH` from `$path` (zsh ties them
+    // via `typeset -T` but they're distinct hover targets).
+    let mut slug = String::new();
+    for c in name.chars() {
+        match c {
+            c if c.is_ascii_alphanumeric() => slug.push(c),
+            '_' => slug.push('_'),
+            '-' => slug.push_str("dash"),
+            ':' => slug.push_str("colon"),
+            '.' => slug.push_str("dot"),
+            '[' => slug.push_str("lbracket"),
+            ']' => slug.push_str("rbracket"),
+            '(' => slug.push_str("lparen"),
+            ')' => slug.push_str("rparen"),
+            '{' => slug.push_str("lbrace"),
+            '}' => slug.push_str("rbrace"),
+            '?' => slug.push_str("qmark"),
+            '!' => slug.push_str("bang"),
+            '$' => slug.push_str("dollar"),
+            '#' => slug.push_str("hash"),
+            '*' => slug.push_str("star"),
+            '@' => slug.push_str("at"),
+            '/' => slug.push_str("slash"),
+            '+' => slug.push_str("plus"),
+            '=' => slug.push_str("eq"),
+            _ => slug.push('-'),
+        }
+    }
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        format!("doc-lsp-{}-unnamed", kind)
+    } else {
+        format!("doc-lsp-{}-{}", kind, slug)
+    }
+}
+
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Convert the markdown subset `lookup_doc` produces into HTML.
+///
+/// Supported: `**bold**`, `_italic_`, backtick code, blank-line
+/// paragraph breaks. Anything else passes through HTML-escaped. The
+/// generator in `scripts/gen_option_docs.py` already strips yodl down
+/// to this subset, so we don't need a full Markdown parser.
+fn md_to_html(s: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    for para in s.split("\n\n") {
+        let para = para.trim_matches('\n');
+        if para.is_empty() {
+            continue;
+        }
+        // Collapse intra-paragraph newlines to spaces so wrapped yodl
+        // text reflows cleanly.
+        let joined: String = para
+            .split('\n')
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let _ = writeln!(out, "        <p>{}</p>", inline_md(&joined));
+    }
+    out
+}
+
+fn inline_md(s: &str) -> String {
+    // Walk char-by-char tracking three states: code-span (between `…`),
+    // bold (between **…**), italic (between _…_). Code wins over the
+    // others; bold and italic stay greedy/non-overlapping.
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + 16);
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        // Code span — close at next backtick.
+        if c == '`' {
+            out.push_str("<code>");
+            i += 1;
+            while i < bytes.len() && bytes[i] as char != '`' {
+                let cc = bytes[i] as char;
+                match cc {
+                    '&' => out.push_str("&amp;"),
+                    '<' => out.push_str("&lt;"),
+                    '>' => out.push_str("&gt;"),
+                    _ => out.push(cc),
+                }
+                i += 1;
+            }
+            out.push_str("</code>");
+            if i < bytes.len() {
+                i += 1; // consume closing `
+            }
+            continue;
+        }
+        // **bold**
+        if c == '*' && i + 1 < bytes.len() && bytes[i + 1] as char == '*' {
+            if let Some(end) = find_close(bytes, i + 2, b"**") {
+                out.push_str("<strong>");
+                out.push_str(&inline_md(
+                    std::str::from_utf8(&bytes[i + 2..end]).unwrap_or(""),
+                ));
+                out.push_str("</strong>");
+                i = end + 2;
+                continue;
+            }
+        }
+        // _italic_ — only when bounded by non-alphanumeric on both sides
+        // so `name_with_underscores` doesn't trigger.
+        if c == '_'
+            && (i == 0 || !(bytes[i - 1] as char).is_alphanumeric())
+            && i + 1 < bytes.len()
+            && !(bytes[i + 1] as char).is_whitespace()
+        {
+            if let Some(end) = find_close(bytes, i + 1, b"_") {
+                let after_ok = end + 1 >= bytes.len() || !(bytes[end + 1] as char).is_alphanumeric();
+                if after_ok {
+                    out.push_str("<em>");
+                    out.push_str(&inline_md(
+                        std::str::from_utf8(&bytes[i + 1..end]).unwrap_or(""),
+                    ));
+                    out.push_str("</em>");
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    out
+}
+
+fn find_close(bytes: &[u8], start: usize, needle: &[u8]) -> Option<usize> {
+    let mut i = start;
+    while i + needle.len() <= bytes.len() {
+        if &bytes[i..i + needle.len()] == needle {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 // silence the unused-import warning when `Mutex` ends up not needed by future edits
@@ -3633,11 +4013,21 @@ mod tests {
         assert!(v["keywords"].is_object());
         assert!(v["options"].is_object());
         assert!(v["special_vars"].is_object());
-        // Well-known names must be present
+        // Well-known names must be present. Option names follow the
+        // canonical `ZSH_OPTIONS_SET` casing (lowercase, no underscore)
+        // since dump_reflection_json now sources from there directly.
         assert!(v["builtins"]["cd"].is_string());
         assert!(v["keywords"]["if"].is_string());
-        assert!(v["options"]["EXTENDED_GLOB"].is_string());
+        assert!(v["options"]["extendedglob"].is_string());
         assert!(v["special_vars"]["$?"].is_string());
+        // Canonical sourcing produces the full inventory, not the
+        // hand subset. The pre-rewire JSON had ~49 options; post-
+        // rewire it should be the full ZSH_OPTIONS_SET (~200).
+        assert!(
+            v["options"].as_object().unwrap().len() > 150,
+            "dump_reflection options count regressed to {}; expected canonical full set",
+            v["options"].as_object().unwrap().len(),
+        );
     }
 
     // ── completion ──────────────────────────────────────────────────────

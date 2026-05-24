@@ -1089,7 +1089,7 @@ pub static EMULATION: AtomicI32 =
 pub static FULLY_EMULATING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-pub(crate) static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+pub static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         "aliases",
         "allexport",
