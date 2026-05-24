@@ -780,26 +780,56 @@ pub fn tilde_files(state: &mut CompletionState) -> bool {
     false
 }
 
-/// _widgets - Complete widget names
-pub fn widgets(state: &mut CompletionState, widgets: &[String], pattern: Option<&str>) -> bool {
+/// Port of `_widgets` (zsh Completion/Zle/_widgets, 9 lines).
+///
+/// Shell impl:
+/// ```text
+/// pattern=( -g \* )
+/// zparseopts -D -K -E g:=pattern
+/// _description widgets expl widget
+/// compadd "$@" "$expl[@]" -M 'r:|-=* r:|=*' - "${(@k)widgets[(R)${pattern[2]}]}"
+/// ```
+///
+/// Two semantics the previous stub got wrong:
+///   1. `widgets[(R)pat]` matches against widget **value** (the
+///      implementation kind: `builtin`, `user:_complete_help`,
+///      `completion`, `redisplay`), not against the widget **name**.
+///      Returns matching KEYS via `${(@k)…}`. The previous stub
+///      compared `pat` against the name field.
+///   2. The `-M 'r:|-=* r:|=*'` matchspec means `-` acts as a segment
+///      separator and a typed `XYZ` can match any segment. So `bs`
+///      anchors at start of word OR after a `-`, matching
+///      `backward-skip-line` etc. Modeled here by treating `-` as
+///      word separator and matching PREFIX against any segment start.
+///
+/// `widgets` argument: `&[(name, kind)]` pairs — caller pulls from
+/// the parent crate's `THINGY_TABLE` / `THINGY_BINDINGS` etc. via
+/// `crate::ported::zle::thingytab_lock()` or similar.
+pub fn widgets(
+    state: &mut CompletionState,
+    widgets: &[(String, String)],
+    kind_pattern: Option<&str>,
+) -> bool {
     let prefix = state.params.prefix.clone();
 
     state.begin_group("widgets", true);
-
-    for widget in widgets {
-        if !widget.starts_with(&prefix) {
-            continue;
-        }
-
-        if let Some(pat) = pattern {
-            if !glob_matches(pat, widget) {
+    for (name, kind) in widgets {
+        // Filter by KIND glob (shell `[(R)pat]` is value-matching).
+        if let Some(pat) = kind_pattern {
+            if !glob_matches(pat, kind) {
                 continue;
             }
         }
-
-        state.add_match(Completion::new(widget.clone()), Some("widgets"));
+        // Match user-typed PREFIX against either start-of-name or
+        // start-of-segment-after-hyphen (mimics `r:|-=*`).
+        if !prefix.is_empty()
+            && !name.starts_with(&prefix)
+            && !name.split('-').any(|seg| seg.starts_with(&prefix))
+        {
+            continue;
+        }
+        state.add_match(Completion::new(name.clone()), Some("widgets"));
     }
-
     state.end_group();
     state.nmatches > 0
 }
@@ -977,6 +1007,52 @@ mod tests {
         // No bare names — `-p` flag means every entry MUST carry the
         // `_` prefix.
         assert!(!names.contains("complete"));
+    }
+
+    // ── _widgets port ─────────────────────────────────────────────────
+
+    #[test]
+    fn widgets_filters_by_kind_not_name() {
+        // `widgets[(R)pat]` matches against the IMPLEMENTATION kind
+        // (`builtin`, `user:_X`, …) — the previous stub matched the
+        // name. Pin the right semantics.
+        let mut state = CompletionState::new();
+        let ws = vec![
+            ("backward-char".into(), "builtin".into()),
+            ("_complete_help".into(), "completion".into()),
+            ("my-widget".into(), "user:my_widget".into()),
+        ];
+        widgets(&mut state, &ws, Some("user:*"));
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["my-widget"],
+            "kind-pattern `user:*` must select only the user-bound widget",
+        );
+    }
+
+    #[test]
+    fn widgets_matchspec_matches_after_hyphen() {
+        // shell `-M 'r:|-=*'` lets user-typed `bs` match
+        // `backward-skip-line` because the `s` lives after a `-`.
+        // Pin that segment-anchored matching.
+        let mut state = CompletionState::new();
+        state.params.prefix = "ski".into();
+        let ws = vec![
+            ("backward-skip-line".into(), "builtin".into()),
+            ("forward-word".into(), "builtin".into()),
+        ];
+        widgets(&mut state, &ws, None);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names, vec!["backward-skip-line"]);
     }
 
     #[test]
