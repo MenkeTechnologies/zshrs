@@ -484,6 +484,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
 | Directory | Rule | Enforcement |
 |-----------|------|-------------|
 | `src/ported/` | **Strict 1:1 port.** Every `.rs` mirrors a real `src/zsh/Src/<x>.c`; every top-level `fn` carries `/// Port of <cname>() from Src/<file>.c:NNNN`; no invented helpers; **directory and file set FROZEN** (89 files, no new files allowed). | `tests/port_purity.rs` |
+| `compsys/ported/` | **Strict 1:1 port of zsh's `Completion/` shell functions.** Same rule as `src/ported/` but for the compsys layer: each `.rs` mirrors a single upstream shell function under `/opt/homebrew/share/zsh/functions/_<NAME>`, organised in the same `Base/{Completer,Core,Utility,Widget}/` + `Unix/Type/` + `Zsh/Type/` subdir tree. Every fn carries a `Port of _<NAME>` header citing its shell source line. **No fake stubs allowed** — measured by `cargo test -p compsys --lib 'ported::'`. | per-fn tests; doc-comment shell-source citations |
 | `src/extensions/` | **Non-port only.** Features zsh C demonstrably does *not* have. Must not duplicate or shadow any port. | `port_purity` exempts the 1:1 file rule for this directory only |
 | `src/recorder/` | **Feature-gated.** Every symbol `#[cfg(feature = "recorder")]`; deleted by rustc when off. | `Cargo.toml` `required-features = ["recorder"]` on the `zshrs-recorder` bin |
 | `src/zsh/` | **Read-only reference.** Vendored upstream zsh C source. The spec; never modified. | n/a |
