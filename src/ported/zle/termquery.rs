@@ -567,30 +567,133 @@ pub fn extension_enabled(class: &str, ext: &str, def: bool) -> bool {
     def
 }
 
-/// Port of `collate_seq(int sindex, int dir)` from Src/Zle/termquery.c:676.
-/// WARNING: param names don't match C — Rust=(_seq) vs C=(sindex, dir)
-pub fn collate_seq(_seq: &str) -> Vec<u8> {
+/// Port of `static const struct extension editext[]` at
+/// `Src/Zle/termquery.c:666-672`. Per-class control-sequence pairs
+/// for entering / leaving ZLE edit mode.
+/// Fields: (key, [seq_enter, seq_leave], class_len, enabled).
+const EDITEXT: &[(&str, [&str; 2], usize, bool)] = &[
+    // c:667 — bracketed-paste — seqs are NULL in C; emission goes
+    // through the `zle_bracketed_paste` param array instead (see
+    // collate_seq's `bracket` branch).
+    ("bracketed-paste", ["", ""], 0, true),
+    // c:668 — integration-prompt — OSC 133;B before prompts.
+    ("integration-prompt", ["\x1b]133;B\x1b\\", ""], 11, true),
+    // c:671 — modkeys-xterm — `\e[>4;1m` to enter, `\e[>4m` to leave.
+    ("modkeys-xterm", ["\x1b[>4;1m", "\x1b[>4m"], 7, false),
+];
+
+/// Port of `static void collate_seq(int sindex, int dir)` from
+/// `Src/Zle/termquery.c:676`. Walks `EDITEXT[]` in `dir` order;
+/// for each enabled entry, checks per-class disable toggles from
+/// `$.term.extensions`, appends the chosen `seq[sindex]` to a
+/// buffer (or the corresponding `zle_bracketed_paste[sindex]`
+/// when the entry is `bracketed-paste`), then `write_loop`s the
+/// buffer to `SHTTY`.
+pub fn collate_seq(sindex: usize, dir: i32) {
     // c:676
-    // C body c:678-722 — collates a UTF-8 byte sequence into a single
-    //                    locale-aware key for sort comparison via
-    //                    strxfrm(). Without locale glue: identity.
-    _seq.as_bytes().to_vec()
+    let mut seq = Vec::<u8>::with_capacity(256); // c:678
+    let max = EDITEXT.len() as i32;
+    // c:683 — `char **elist = getaparam(EXTVAR);`
+    let elist: Vec<String> = {
+        let tab = match crate::ported::params::paramtab().read() {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        match tab.get(".term.extensions") {
+            Some(pm) => pm.u_arr.clone().unwrap_or_default(),
+            None => Vec::new(),
+        }
+    };
+
+    // c:685 — `for (i = dir > 0 ? 0 : max - 1; i >= 0 && i < max; i += dir)`.
+    let mut i: i32 = if dir > 0 { 0 } else { max - 1 };
+    while i >= 0 && i < max {
+        let (key, seqs, class, default_enabled) = EDITEXT[i as usize];
+        let mut enabled = default_enabled; // c:686
+        // c:687-688 — `if (i && !editext[i].seq[sindex]) continue;`
+        if i != 0 && seqs[sindex].is_empty() {
+            i += dir;
+            continue;
+        }
+        // c:689-701 — walk elist looking for an enable/disable that
+        // matches the entry's class or full `class:key` name.
+        for e in elist.iter() {
+            // c:691 — `negate = (**e == '-');`
+            let (negate, body) = match e.strip_prefix('-') {
+                Some(r) => (true, r),
+                None => (false, e.as_str()),
+            };
+            // c:692-695 — `negate != enabled` skip.
+            if negate != enabled {
+                continue;
+            }
+            // c:693-697 — class match: `class` prefix + either end or
+            // `:key` exact-suffix tail.
+            let class_str = &key[..class.min(key.len())];
+            let after_class = if body.starts_with(class_str) {
+                &body[class_str.len()..]
+            } else if body == key {
+                ""
+            } else {
+                continue;
+            };
+            if after_class.is_empty() || after_class == &key[class..] {
+                enabled = !negate; // c:698
+                break;
+            }
+        }
+        if enabled {
+            // c:703
+            if i != 0 {
+                // c:704 — non-bracketed entries write their fixed `seq`.
+                seq.extend_from_slice(seqs[sindex].as_bytes()); // c:706
+            } else {
+                // c:707-710 — bracketed-paste: copy from
+                // `$zle_bracketed_paste[sindex]`.
+                let bracket = {
+                    let tab = match crate::ported::params::paramtab().read() {
+                        Ok(t) => t,
+                        Err(_) => {
+                            i += dir;
+                            continue;
+                        }
+                    };
+                    tab.get("zle_bracketed_paste")
+                        .and_then(|pm| pm.u_arr.clone())
+                        .unwrap_or_default()
+                };
+                if bracket.len() == 2 {
+                    if let Some(s) = bracket.get(sindex) {
+                        // c:710
+                        seq.extend_from_slice(s.as_bytes()); // c:710
+                    }
+                }
+            }
+        }
+        i += dir;
+    }
+    // c:713 — `write_loop(SHTTY, seq, pos - seq);`
+    let fd = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::Relaxed);
+    if fd >= 0 && !seq.is_empty() {
+        let _ = crate::ported::utils::write_loop(fd, &seq); // c:713
+    }
 }
 
-/// Port of `start_edit()` from Src/Zle/termquery.c:717.
+/// Port of `void start_edit(void)` from Src/Zle/termquery.c:717.
+/// C body (one line): `collate_seq(0, 1);` — emit the `enter`
+/// sequences in forward order.
 pub fn start_edit() -> i32 {
     // c:717
-    // C body c:719-722 — emits OSC 1337;StartEdit (iTerm2). No
-    //                    iTerm2 dispatch in headless mode.
+    collate_seq(0, 1); // c:719
     0
 }
 
-/// Port of `end_edit()` from Src/Zle/termquery.c:724.
+/// Port of `void end_edit(void)` from Src/Zle/termquery.c:724.
+/// C body (one line): `collate_seq(1, -1);` — emit the `leave`
+/// sequences in reverse order.
 pub fn end_edit() -> i32 {
     // c:724
-    // C body c:726-729 — emits the iTerm2 OSC 1337;EndEdit terminator
-    //                    via shout when zterm_supports_iterm2 is true.
-    //                    No iTerm2 dispatch in headless mode.
+    collate_seq(1, -1); // c:726
     0
 }
 

@@ -5560,8 +5560,8 @@ pub fn doshfunc(
     // c:5898 — `starttrapscope();` — canonical port at signals.rs:1135
     // tags SIGEXIT for deferred restoration at scope end.
     crate::ported::signals::starttrapscope();
-    // c:5899 — `startpatternscope();` — pattern-scope port pending;
-    // tracked separately under pattern.rs.
+    // c:5899 — `startpatternscope();`
+    crate::ported::pattern::startpatternscope();
 
     // c:5901 — `pptab = pparams;` — save outer positional params.
     let pptab: Vec<String> = crate::ported::builtin::PPARAMS
@@ -5724,7 +5724,8 @@ pub fn doshfunc(
     // c:6064 — `scriptname = funcsave->scriptname;`
     crate::ported::utils::set_scriptname(funcsave_scriptname);
 
-    // c:6067 — `endpatternscope();` — pending pattern-scope port.
+    // c:6067 — `endpatternscope();`
+    crate::ported::pattern::endpatternscope();
 
     // c:6078-6102 — LOCALOPTIONS restore. Re-apply the snapshot when
     // localoptions was set inside the body.
