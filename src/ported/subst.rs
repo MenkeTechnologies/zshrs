@@ -3479,30 +3479,40 @@ pub fn paramsubst(
         };
 
         // Walk var-name chars
+        // c:Src/subst.c — when subexp_value is set (the body started
+        // with `${...}` / `$(...)`), the var-name is already provided
+        // by the inner expansion's result; the outer must NOT then
+        // greedily eat the next char as a single-char special name
+        // (`@`/`*`/`#`/`?`/`0`). Symptom: `${${X#*:}#*:}` had its
+        // outer `#` consumed as `$#` name, leaving rest=`*:` which
+        // never hit the prefix-strip arm — the outer became a no-op.
+        // Skip the name-walk entirely when subexp_value is in flight.
         let name_start = idx;
-        while idx < body_chars.len() {
-            let bc = body_chars[idx];
-            let allowed = if idx == name_start {
-                bc.is_ascii_alphanumeric()
-                    || bc == '_'
-                    || bc == '@'
-                    || bc == '*'
-                    || bc == '#'
-                    || bc == '?'
-                    || bc == '0'
-            } else {
-                bc.is_ascii_alphanumeric() || bc == '_'
-            };
-            if allowed {
-                idx += 1;
-                // Single-char specials stop after one char
-                if idx == name_start + 1
-                    && matches!(body_chars[name_start], '@' | '*' | '#' | '?' | '0')
-                {
+        if subexp_value.is_none() {
+            while idx < body_chars.len() {
+                let bc = body_chars[idx];
+                let allowed = if idx == name_start {
+                    bc.is_ascii_alphanumeric()
+                        || bc == '_'
+                        || bc == '@'
+                        || bc == '*'
+                        || bc == '#'
+                        || bc == '?'
+                        || bc == '0'
+                } else {
+                    bc.is_ascii_alphanumeric() || bc == '_'
+                };
+                if allowed {
+                    idx += 1;
+                    // Single-char specials stop after one char
+                    if idx == name_start + 1
+                        && matches!(body_chars[name_start], '@' | '*' | '#' | '?' | '0')
+                    {
+                        break;
+                    }
+                } else {
                     break;
                 }
-            } else {
-                break;
             }
         }
         let mut var_name: String = body_chars[name_start..idx].iter().collect();
@@ -10627,7 +10637,6 @@ mod tests {
     /// **Real zsh: "gamma". zshrs: "beta:gamma" — outer prefix-strip
     /// doesn't apply to the inner result.** Bug.
     #[test]
-    #[ignore = "ZSHRS BUG: nested ${${X#*:}#*:} only applies inner prefix-strip; outer skipped"]
     fn paramsubst_nested_double_strip_prefix_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
