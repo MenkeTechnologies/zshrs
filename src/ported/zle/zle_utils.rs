@@ -354,33 +354,114 @@ pub fn cut(i: i32, ct: i32, dir: i32) -> i32 {
     0
 }
 
-/// Port of `cuttext(ZLE_STRING_T line, int ct, int flags)` from Src/Zle/zle_utils.c:946.
-/// WARNING: param names don't match C — Rust=(zle, txt) vs C=(line, ct, flags)
+/// Direct port of `void cuttext(ZLE_STRING_T line, int ct, int flags)`
+/// from `Src/Zle/zle_utils.c:946`.
+///
+/// Stores `txt` in the right cut/kill buffer based on the current
+/// `zmod` and `flags`:
+///   - skip when ct == 0 && !vilinerange, or MOD_NULL is set (c:948)
+///   - MOD_VIBUF → write/append to `vibuf[zmod.vibuf]` honouring
+///     MOD_VIAPP and vilinerange's CUTBUFFER_LINE flag (c:953-979)
+///   - CUT_YANK → store in vibuf[26] (vi "0 register) (c:980-986)
+///   - default vi → shift "1-"8 down to "2-"9, store at vibuf[27]
+///     (vi "1 register) (c:987-997)
+///   - rotate CUTBUF into KILLRING when !ZLE_KILL or CUT_REPLACE
+///     (c:1004-1018), then apply CUT_FRONT/CUT_REPLACE direction or
+///     normal append (c:1019-1043).
+/// WARNING: param names don't match C — Rust=(txt, flags) vs C=(line, ct, flags)
 pub fn cuttext(
-    txt: &[char], // c:946
-    dir: i32,
+    txt: &[char], // c:946 line, ct
+    flags: i32,
 ) {
-    // C body c:948-1043 — pushes `txt` into vibuf[zmod.vibuf] when
-    //                     MOD_VIBUF is set, else front of killring.
-    //                     CUT_APPEND/CUT_REPLACE flag handling skipped
-    //                     in this distilled body.
+    use crate::ported::zle::zle_h::{
+        CUTBUFFER_LINE, CUT_FRONT, CUT_REPLACE, CUT_YANK, MOD_NULL, MOD_VIAPP, ZLE_KILL,
+    };
+    use crate::ported::zle::zle_main::{CUTBUF, KILLRING, KILLRINGMAX, KRINGNUM, LASTCMD};
+    use crate::ported::zle::zle_vi::VILINERANGE;
+
+    let ct = txt.len();
+    let vilinerange = VILINERANGE.load(Ordering::Relaxed) != 0;
+
+    // c:948 — `if (!(ct || vilinerange) || zmod.flags & MOD_NULL) return;`
+    if (ct == 0 && !vilinerange) || ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
+        return;
+    }
+
+    let mod_flags = ZMOD.lock().unwrap().flags;
+    let mod_vibuf = ZMOD.lock().unwrap().vibuf as usize;
     let chars: Vec<char> = txt.to_vec();
-    if ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
-        // c:961
-        let idx = ZMOD.lock().unwrap().vibuf as usize;
-        if idx < vibuf().lock().unwrap().len() {
-            if dir != 0 {
-                vibuf().lock().unwrap()[idx] = chars;
-            } else {
-                vibuf().lock().unwrap()[idx].extend(chars);
+
+    if mod_flags & MOD_VIBUF != 0 {
+        // c:961-979 — write to vibuf[zmod.vibuf].
+        let idx = mod_vibuf.min(vibuf().lock().unwrap().len().saturating_sub(1));
+        let viapp = mod_flags & MOD_VIAPP != 0;
+        let mut vibuf_guard = vibuf().lock().unwrap();
+        if !viapp || vibuf_guard[idx].is_empty() {
+            // c:962-967 — replace.
+            vibuf_guard[idx] = chars;
+        } else {
+            // c:968-979 — append; insert \n separator under
+            //              CUTBUFFER_LINE semantics.
+            if vilinerange {
+                vibuf_guard[idx].push('\n');
             }
+            vibuf_guard[idx].extend(chars);
+        }
+        return;
+    } else if flags & CUT_YANK != 0 {
+        // c:980-986 — vi "0 register (idx 26).
+        if let Some(slot) = vibuf().lock().unwrap().get_mut(26) {
+            *slot = chars;
         }
     } else {
-        KILLRING.lock().unwrap().push_front(chars); // c:996
+        // c:987-997 — shift "1-"8 to "2-"9, store at "1 (idx 27).
+        let mut v = vibuf().lock().unwrap();
+        for n in (28..36).rev() {
+            v[n] = v[n - 1].clone();
+        }
+        v[27] = chars.clone();
+    }
+
+    // c:1004-1018 — rotate CUTBUF into KILLRING on kill+replace
+    //                boundary. `!(lastcmd & ZLE_KILL) || (flags &
+    //                CUT_REPLACE)` → start a fresh CUTBUF, push the
+    //                old one to the ring.
+    let lastcmd_v = LASTCMD.load(Ordering::Relaxed) as i32;
+    let cutbuf_empty = CUTBUF.lock().unwrap().buf.is_empty();
+    let should_rotate = !cutbuf_empty
+        && ((lastcmd_v & ZLE_KILL) == 0 || (flags & CUT_REPLACE) != 0);
+    if should_rotate {
+        let old: Vec<char> = CUTBUF.lock().unwrap().buf.chars().collect();
+        KILLRING.lock().unwrap().push_front(old);
         let max = KILLRINGMAX.load(Ordering::SeqCst);
-        if KILLRING.lock().unwrap().len() > max {
+        while KILLRING.lock().unwrap().len() > max {
             KILLRING.lock().unwrap().pop_back();
         }
+        KRINGNUM.store(0, Ordering::Relaxed);
+        let mut cb = CUTBUF.lock().unwrap();
+        cb.buf.clear();
+        cb.len = 0;
+        cb.flags = 0;
+    }
+
+    // c:1019-1043 — apply CUT_FRONT/CUT_REPLACE direction or
+    //                normal append into CUTBUF.
+    let mut cb = CUTBUF.lock().unwrap();
+    let cell: String = txt.iter().collect();
+    if flags & (CUT_FRONT | CUT_REPLACE) != 0 {
+        // Text goes in front (or replaces).
+        if flags & CUT_REPLACE != 0 {
+            cb.buf = cell;
+        } else {
+            cb.buf = format!("{}{}", cell, cb.buf);
+        }
+    } else {
+        // Default: append.
+        cb.buf.push_str(&cell);
+    }
+    cb.len = cb.buf.chars().count();
+    if vilinerange {
+        cb.flags |= CUTBUFFER_LINE;
     }
 }
 

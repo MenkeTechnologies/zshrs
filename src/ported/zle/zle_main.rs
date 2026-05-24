@@ -2538,6 +2538,20 @@ pub static KILLRING: std::sync::Mutex<VecDeque<Vec<char>>> =
     std::sync::Mutex::new(VecDeque::new());
 /// Port of `int kringsize` from `Src/Zle/zle_misc.c`.
 pub static KILLRINGMAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(8);
+
+/// Port of `int kringnum` from `Src/Zle/zle_misc.c:106`. Current
+/// index into the kill ring — bumped on every kill+replace cycle.
+pub static KRINGNUM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0); // c:106
+
+/// Port of `struct cutbuffer cutbuf` from `Src/Zle/zle_misc.c:98`.
+/// The "head" cut buffer — every yank pulls from here. Cycled into
+/// KILLRING on kill+replace, re-seeded by [`cuttext`].
+pub static CUTBUF: std::sync::Mutex<crate::ported::zle::zle_h::cutbuffer> = // c:98
+    std::sync::Mutex::new(crate::ported::zle::zle_h::cutbuffer {
+        buf: String::new(),
+        len: 0,
+        flags: 0,
+    });
 /// Port of `int yanklast` from `Src/Zle/zle_misc.c`.
 pub static YANKLAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Port of `int neg_arg` from `Src/Zle/zle_main.c`.
