@@ -9054,7 +9054,9 @@ fn initial_username() -> String {
     {
         let uid = unsafe { libc::getuid() };
         let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
-        let mut buf = vec![0i8; 1024];
+        // libc::c_char is i8 on x86_64/aarch64-darwin and x86_64-linux but u8 on
+        // aarch64-linux. Use c_char so getpwuid_r's pointer type matches per-target.
+        let mut buf: Vec<libc::c_char> = vec![0; 1024];
         let mut result: *mut libc::passwd = std::ptr::null_mut();
         let rc =
             unsafe { libc::getpwuid_r(uid, &mut pwd, buf.as_mut_ptr(), buf.len(), &mut result) };
