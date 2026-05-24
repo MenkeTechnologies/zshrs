@@ -4108,4 +4108,107 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert!(!ksh_glob_match("pre+(x)post", "prepost"));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // EXTENDED_GLOB pattern flags: (#i) case-insensitive, (#l) lowercase
+    // matches uppercase, (#aN) approximate match. Anchored to
+    // `setopt EXTENDED_GLOB; [[ str == ${~pat} ]]` in real zsh 5.9.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn ext_glob_match(pat: &str, s: &str) -> bool {
+        let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = opt_state_get("extendedglob").unwrap_or(false);
+        opt_state_set("extendedglob", true);
+        let r = patmatch(pat, s);
+        opt_state_set("extendedglob", saved);
+        r
+    }
+
+    // ── (#i) case-insensitive ───────────────────────────────────────
+    /// `(#i)FOO` matches "foo" (case ignored).
+    #[test]
+    fn ext_glob_hash_i_matches_lowercase_against_uppercase_pat() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#i)FOO", "foo"));
+    }
+
+    /// `(#i)FOO` matches "FOO" exactly.
+    #[test]
+    fn ext_glob_hash_i_matches_exact_case() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#i)FOO", "FOO"));
+    }
+
+    /// `(#i)FOO` matches mixed-case "FoO".
+    #[test]
+    fn ext_glob_hash_i_matches_mixed_case() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#i)FOO", "FoO"));
+    }
+
+    /// `(#i)foo` rejects unrelated string "BAR".
+    #[test]
+    fn ext_glob_hash_i_rejects_unrelated_string() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("(#i)foo", "BAR"));
+    }
+
+    // ── (#l) lowercase-pattern matches uppercase-text ───────────────
+    /// `(#l)foo` matches "FOO" (lowercase pattern allows uppercase).
+    /// Distinct from (#i): asymmetric — pattern letter must be lowercase
+    /// AND text may be either case for that letter.
+    #[test]
+    fn ext_glob_hash_l_lowercase_pat_matches_uppercase_text() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#l)foo", "FOO"));
+    }
+
+    /// `(#l)foo` matches lowercase "foo".
+    #[test]
+    fn ext_glob_hash_l_lowercase_pat_matches_lowercase_text() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#l)foo", "foo"));
+    }
+
+    /// `(#l)FOO` does NOT match "foo" — asymmetry: uppercase in pattern
+    /// requires uppercase in text. zsh: NOMATCH.
+    #[test]
+    #[ignore = "ZSHRS BUG: (#l) treats case-insensitivity symmetrically; zsh asymmetric"]
+    fn ext_glob_hash_l_uppercase_pat_requires_uppercase_text_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            !ext_glob_match("(#l)FOO", "foo"),
+            "zsh: (#l)FOO must NOT match \"foo\" — uppercase-in-pattern is anchored"
+        );
+    }
+
+    // ── (#aN) approximate match (Damerau-Levenshtein distance ≤ N) ──
+    /// `(#a1)foo` matches "fop" (1 char substitution).
+    #[test]
+    #[ignore = "ZSHRS BUG: (#aN) approximate match not implemented"]
+    fn ext_glob_hash_a1_matches_one_substitution_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            ext_glob_match("(#a1)foo", "fop"),
+            "zsh: (#a1)foo matches 'fop' (1 substitution)"
+        );
+    }
+
+    /// `(#a2)foo` matches "fxy" (2 substitutions).
+    #[test]
+    #[ignore = "ZSHRS BUG: (#aN) approximate match not implemented"]
+    fn ext_glob_hash_a2_matches_two_substitutions_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            ext_glob_match("(#a2)foo", "fxy"),
+            "zsh: (#a2)foo matches 'fxy' (2 substitutions)"
+        );
+    }
+
+    /// `(#a1)foo` rejects "fxy" (2 substitutions > limit 1).
+    #[test]
+    fn ext_glob_hash_a1_rejects_two_substitutions() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("(#a1)foo", "fxy"));
+    }
 }
