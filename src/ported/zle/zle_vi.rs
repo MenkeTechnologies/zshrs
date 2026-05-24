@@ -1051,11 +1051,42 @@ pub fn vipoundinsert() -> i32 {
 }
 
 /// Port of `viquotedinsert(char **args)` from Src/Zle/zle_vi.c:1099.
+///
+/// Direct line-by-line port of the C body (c:1099-1120). Inserts a
+/// literal `^` placeholder at the cursor, refreshes the display so
+/// the user sees the indicator, reads one raw character via
+/// [`getfullchar`], deletes the placeholder, and on non-EOF inserts
+/// the character verbatim via [`selfinsert`]. The C source's
+/// `#ifndef HAS_TIO` sgttyb branch only runs on legacy systems
+/// without termios; zshrs only supports termios so it drops.
 pub fn viquotedinsert() -> i32 {
-    // c:viquotedinsert
-    // C body: same as quotedinsert with vi insmode setup.
-    startvichange(-1);
-    quotedinsert()
+    use crate::ported::zle::zle_h::ZLEEOF;
+    use crate::ported::zle::zle_main::LASTCHAR_WIDE;
+    use crate::ported::zle::zle_misc::selfinsert;
+    use crate::ported::zle::zle_refresh::zrefresh;
+    use crate::ported::zle::zle_utils::{foredel, spaceinline};
+    // c:1105 — `spaceinline(1)`.
+    spaceinline(1);
+    // c:1106 — `zleline[zlecs] = '^'`.
+    let cs = ZLECS.load(SeqCst);
+    {
+        let mut g = ZLELINE.lock().unwrap();
+        if cs < g.len() {
+            g[cs] = '^';
+        }
+    }
+    // c:1107 — `zrefresh()`.
+    zrefresh();
+    // c:1114 — `getfullchar(0)`.
+    let _ = crate::ported::zle::zle_main::getfullchar(false);
+    // c:1118 — `foredel(1, 0)`.
+    foredel(1, 0);
+    // c:1119-1122 — `if (LASTFULLCHAR == ZLEEOF) return 1; else
+    //                return selfinsert(args);`
+    if LASTCHAR_WIDE.load(SeqCst) == ZLEEOF {
+        return 1;
+    }
+    selfinsert()
 }
 
 /// Port of `vidigitorbeginningofline(char **args)` from Src/Zle/zle_vi.c:1129.
