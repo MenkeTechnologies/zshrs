@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:14:20.074883+00:00
+Generated: 2026-05-24T22:17:24.544998+00:00
 
 ## Method
 
@@ -16,17 +16,17 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 159 stubs across 47 files
+## Summary: 158 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
 | `src/ported/utils.rs` | 14 | `lchdir` (8 / 327) |
 | `src/ported/hashtable.rs` | 11 | `newhashtable` (1 / 19) |
 | `src/ported/mem.rs` | 10 | `malloc` (1 / 165) |
-| `src/ported/zle/complist.rs` | 8 | `menuselect_bindings` (1 / 25) |
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 182) |
 | `src/ported/zle/zle_refresh.rs` | 8 | `addmultiword` (1 / 14) |
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
+| `src/ported/zle/complist.rs` | 7 | `menuselect_bindings` (1 / 25) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (19 / 746) |
 | `src/ported/zle/zle_main.rs` | 6 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
@@ -120,19 +120,6 @@ python3 scripts/gen_port_stubs.py
 | 304 | `zalloc` | 1 | 10 | 10% |
 | 244 | `memory_validate` | 5 | 36 | 13% |
 
-### `src/ported/zle/complist.rs` — 8 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 2818 | `menuselect_bindings` | 1 | 25 | 4% |
-| 789 | `asklistscroll` | 2 | 40 | 5% |
-| 198 | `getcolval` | 2 | 37 | 5% |
-| 1752 | `singlecalc` | 1 | 15 | 6% |
-| 2411 | `msearchpop` | 1 | 10 | 10% |
-| 2832 | `boot_` | 2 | 15 | 13% |
-| 2581 | `domenuselect` | 129 | 925 | 13% |
-| 653 | `clnicezputs` | 24 | 107 | 22% |
-
 ### `src/ported/zle/compresult.rs` — 8 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -171,6 +158,18 @@ python3 scripts/gen_port_stubs.py
 | 181 | `zle_restore_positions` | 12 | 51 | 23% |
 | 210 | `spaceinline` | 14 | 54 | 25% |
 | 47 | `sizeline` | 5 | 18 | 27% |
+
+### `src/ported/zle/complist.rs` — 7 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 2899 | `menuselect_bindings` | 1 | 25 | 4% |
+| 870 | `asklistscroll` | 2 | 40 | 5% |
+| 1833 | `singlecalc` | 1 | 15 | 6% |
+| 2492 | `msearchpop` | 1 | 10 | 10% |
+| 2913 | `boot_` | 2 | 15 | 13% |
+| 2662 | `domenuselect` | 129 | 925 | 13% |
+| 734 | `clnicezputs` | 24 | 107 | 22% |
 
 ### `src/ported/zle/compctl.rs` — 6 stubs
 

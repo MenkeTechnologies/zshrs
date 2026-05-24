@@ -193,15 +193,96 @@ pub struct listcols {
     pub flags: i32, // c:257
 }
 
-/// Port of `getcolval(char *s, int multi)` from Src/Zle/complist.c:275.
-#[allow(unused_variables)]
-pub fn getcolval(s: &str, multi: i32) -> &str {
-    // c:275
-    // C body c:277-329 — walks one ANSI escape sequence (digits and
-    //                    `;`) and returns pointer past it. Used while
-    //                    parsing `key=val` from LS_COLORS.
-    let trimmed = s.trim_start_matches(|c: char| c.is_ascii_digit() || c == ';');
-    trimmed
+/// Port of `char *getcolval(char *s, int multi)` from
+/// `Src/Zle/complist.c:275`.
+///
+/// Line-by-line port of c:275-324. Parses one LS_COLORS value: walks
+/// until `:` (or `=` when `multi != 0`), decoding `\a/\n/\b/\t/\v/
+/// \f/\r/\e/\_/\?` and octal `\DDD` escapes (c:283-303), `^X`
+/// control-char shorthand (c:305-316), and copying every other byte
+/// verbatim. Bumps `MAX_CAPLEN` to track the longest cap escape
+/// emitted (c:321-322). Returns the unconsumed tail; the C function
+/// mutates `s` in place — we return both the decoded bytes and the
+/// remaining slice so callers can write the value somewhere durable
+/// before resuming parse.
+///
+/// C returns just the post-value pointer; Rust returns
+/// `(decoded, rest)` so callers don't lose the parsed payload.
+/// The pre-existing test asserts the empty-input invariant — the
+/// return-type change preserves that (`getcolval("", 0).1 == ""`).
+pub fn getcolval(s: &str, multi: i32) -> (String, &str) {
+    use crate::ported::init::tcstr;
+    let _ = tcstr; // touch import so cfg(test) regen doesn't trim it.
+
+    let bytes = s.as_bytes();
+    let mut p: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        let c = bytes[i];
+        // c:280 — stop on `:` or (multi && `=`).
+        if c == b':' || (multi != 0 && c == b'=') {
+            break;
+        }
+        if c == b'\\' && i + 1 < bytes.len() {
+            // c:283-303 — backslash escapes.
+            i += 1;
+            let n = bytes[i];
+            i += 1;
+            match n {
+                b'a' => p.push(0x07),
+                b'n' => p.push(b'\n'),
+                b'b' => p.push(0x08),
+                b't' => p.push(b'\t'),
+                b'v' => p.push(0x0b),
+                b'f' => p.push(0x0c),
+                b'r' => p.push(b'\r'),
+                b'e' => p.push(0x1b),
+                b'_' => p.push(b' '),
+                b'?' => p.push(0x7f),
+                d if (b'0'..=b'7').contains(&d) => {
+                    // c:296-303 — octal \DDD (up to 3 digits).
+                    let mut val = (d - b'0') as i32;
+                    if i < bytes.len() && (b'0'..=b'7').contains(&bytes[i]) {
+                        val = val * 8 + (bytes[i] - b'0') as i32;
+                        i += 1;
+                        if i < bytes.len() && (b'0'..=b'7').contains(&bytes[i]) {
+                            val = val * 8 + (bytes[i] - b'0') as i32;
+                            i += 1;
+                        }
+                    }
+                    p.push(val as u8);
+                }
+                _ => p.push(n),
+            }
+        } else if c == b'^' && i + 1 < bytes.len() {
+            // c:305-316 — `^X` control-char shorthand.
+            let n = bytes[i + 1];
+            if (b'@'..=b'_').contains(&n) || (b'a'..=b'z').contains(&n) {
+                p.push(n & !0x60);
+            } else if n == b'?' {
+                p.push(0x7f);
+            } else {
+                p.push(c);
+                p.push(n);
+            }
+            i += 2;
+        } else {
+            // c:317 — verbatim.
+            p.push(c);
+            i += 1;
+        }
+    }
+
+    // c:321-322 — `if ((s - o) > max_caplen) max_caplen = s - o;`
+    let consumed = i as i32;
+    if consumed > MAX_CAPLEN.load(Ordering::Relaxed) {
+        MAX_CAPLEN.store(consumed, Ordering::Relaxed);
+    }
+    // C returns the post-value pointer (s in c:323); Rust returns
+    // the decoded payload plus the unconsumed tail.
+    let decoded = String::from_utf8_lossy(&p).into_owned();
+    (decoded, &s[i..])
 }
 
 /// Port of `getcoldef(char *s)` from Src/Zle/complist.c:330.
@@ -3294,8 +3375,9 @@ mod tests {
     #[test]
     fn getcolval_empty_input_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        let r = getcolval("", 0);
-        assert_eq!(r, "");
+        let (decoded, rest) = getcolval("", 0);
+        assert_eq!(decoded, "");
+        assert_eq!(rest, "");
     }
 
     /// c:1054 — `compprintnl` should be safe to call without ZLE
