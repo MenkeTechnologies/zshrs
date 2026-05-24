@@ -1,6 +1,6 @@
 //! AST-walked symbol table for the zshrs LSP server. Powers cross-file
 //! rename and find-references with parser-validated scoping instead of
-//! the textual occurrence scan in [`crate::extensions::lsp::references`].
+//! the textual occurrence scan in `crate::extensions::lsp::references`.
 //!
 //! Mirrors the shape of `strykelang/lsp_symbols.rs` but specialized to
 //! zsh's AST (`ZshFuncDef` / `ZshSimple` / `ZshAssign`). Functions and

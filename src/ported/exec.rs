@@ -2242,11 +2242,11 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
 ///
 /// Register `fd2` (already-open) as a redirection target for `fd1`.
 /// Three branches: `varid` writes the moved fd to `$varid` and bumps
-/// fdtable[fd1] = FDT_EXTERNAL; new-multio path saves the original fd1
-/// (when `!forked`) and stamps mfds[fd1] as a single-entry struct;
+/// `fdtable[fd1]` = FDT_EXTERNAL; new-multio path saves the original fd1
+/// (when `!forked`) and stamps `mfds[fd1]` as a single-entry struct;
 /// extend-multio path either splits a ct=1 stream into a pipe + 2 fds
 /// via `mpipe`, or appends another fd to an already-split stream
-/// (re-allocating `mfds[fd1]` past the MULTIOUNIT boundary).
+/// (re-allocating mfds for fd1 past the MULTIOUNIT boundary).
 ///
 /// `multio.fds` is now `Vec<i32>` (zsh_h.rs:1397) so the C
 /// `hrealloc` at c:2485 maps to `Vec::push`; MULTIOUNIT is no
@@ -3561,8 +3561,8 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
 /// (d) `metafy(execvebuf+2, -1, META_STATIC)` (c:551, 575) — we
 ///     drop the metafy and pass byte ranges to zerr directly.
 /// (e) `argv[-1]` / `argv[-2]` shebang interpreter slot-overwriting
-///     (C overwrites BEFORE argv[0]) — Rust rebuilds a fresh
-///     Vec<String> with interp + optional arg + original argv tail
+///     (C overwrites BEFORE `argv[0]`) — Rust rebuilds a fresh
+///     `Vec<String>` with interp + optional arg + original argv tail
 ///     since Vec doesn't expose negative indexing.
 /// (f) `environ` is FFI-loaded only when `newenvp` is None.
 /// =============================================================
@@ -3809,7 +3809,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
 /// filename. Optimised path: `=(<<<heredoc-str)` writes the
 /// heredoc body directly without a fork.
 ///
-/// (a) `addfilelist(nam, 0)` (c:4960) now wired via JOBTAB[thisjob]
+/// (a) `addfilelist(nam, 0)` (c:4960) now wired via `JOBTAB[thisjob]`
 ///     so the temp file gets cleaned at job exit (this session).
 /// (b) `waitforpid` Rust takes 1 arg `pid`, C takes `(pid, full)`.
 ///     Behavior matches the `full=0` case anyway.
@@ -3966,7 +3966,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
 ///     unused here.
 /// (b) `addproc` now 7-arg; procsubst pid recorded via aux=true on
 ///     the current job (wired this session at c:5141-5142).
-/// (c) `addfilelist(NULL, fd)` now wired via JOBTAB[thisjob] (this
+/// (c) `addfilelist(NULL, fd)` now wired via `JOBTAB[thisjob]` (this
 ///     session at c:5087).
 /// (d) `entersubsh` is now ported (exec.rs:3934) — wired below at
 ///     c:5063 (`entersubsh(ESUB_ASYNC|ESUB_PGRP, NULL)`).
@@ -4108,7 +4108,7 @@ pub struct entersubsh_ret {
 /// cleared, ZSH_SUBSHELL bumped, forklevel = locallevel.
 ///
 /// (a) `jobtab[list_pipe_job]` / `jobtab[thisjob]` pgrp ops (c:1110-
-///     1151) are now ported via JOBTAB[thisjob].gleader access; the
+///     1151) are now ported via `JOBTAB[thisjob]`.gleader access; the
 ///     ESUB_PGRP+sync path establishes pipeline group-leadership
 ///     (list_pipe_job inherit or thisjob-as-leader), filling
 ///     entersubsh_ret with the chosen gleader + list_pipe_job index.
@@ -4417,7 +4417,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
 ///
 /// (a) `addproc` is now 7-arg (jobs.rs:1516) — wired at the
 ///     procsubst pid recording site (c:5141-5142) earlier this
-///     session; the child IS now recorded in JOBTAB[thisjob].
+///     session; the child IS now recorded in `JOBTAB[thisjob]`.
 /// (b) `entersubsh` IS now ported (exec.rs:3934) including the
 ///     ESUB_PGRP pipeline group-leadership path — wired this
 ///     session for getpipe's `entersubsh(ESUB_ASYNC|ESUB_PGRP|
@@ -7549,7 +7549,7 @@ pub fn exectry(state: &mut estate, _do_exec: i32) -> i32 {
 ///   c:2904-2916  — locals
 ///   c:2917-2924  — eparams field unpacking
 ///   c:2934-2939  — Z_TIMED + doneps4 reset
-///   c:2945-2960  — old_lastval + use_cmdoutval + save[]/mfds[] init
+///   c:2945-2960  — old_lastval + use_cmdoutval + `save[]`/`mfds[]` init
 ///   c:2962-2986  — %job head rewrite + AUTORESUME prefix match
 ///   c:2988-3011  — Z_ASYNC / pipeline-not-last / sh-emulation fork-immediately
 ///   c:3013-3283  — precommand-modifier walk (BINF_PREFIX strip)
@@ -7564,9 +7564,9 @@ pub fn exectry(state: &mut estate, _do_exec: i32) -> i32 {
 ///   c:3593-3632  — external resolution (cmdnamtab, hashcmd, AUTOCD)
 ///   c:3634-3697  — fork decision
 ///   c:3700-3955  — redir loop + multio + addfd + xpandredir
-///   c:3957-3961  — multio close (mfds[i].ct >= 2 → closemn)
+///   c:3957-3961  — multio close (`mfds[i].ct >= 2` → closemn)
 ///   c:3963-3995  — nullexec branch
-///   c:3996-4327  — main dispatch (entersubsh + execfuncdef / execcurshtable[] /
+///   c:3996-4327  — main dispatch (entersubsh + execfuncdef / `execcurshtable[]` /
 ///                  execbuiltin / execshfunc / execute)
 ///   c:4330-4365  — `err:` label: forked-child fd cleanup, fixfds
 ///   c:4366-4403  — `done:` label: POSIX special-builtin error escalation,
@@ -9254,7 +9254,7 @@ pub fn execcmd_exec(
                 // c:4105 — `pipecleanfilelist(filelist, 0);` — clean
                 // out the proc_subst entries from the current job's
                 // filelist after the shfunc body ran. Route through
-                // JOBTAB[thisjob].
+                // `JOBTAB[thisjob]`.
                 if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
                     let mut guard = jt.lock().unwrap();
                     let tj = crate::ported::jobs::THISJOB
