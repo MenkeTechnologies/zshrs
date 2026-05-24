@@ -87,7 +87,7 @@ pub struct CallProgramOpts<'a> {
 /// `argv` — the command to run. `argv[0]` is the binary, the rest are
 /// arguments. The shell version takes a `tag` as `$1` and the command
 /// as `$2..$#`; we hoist tag to its own parameter for clarity.
-pub fn call_program(
+pub fn _call_program(
     state: &MainCompleteState,
     tag: &str,
     argv: &[String],
@@ -235,7 +235,7 @@ mod tests {
             vec!["-echo HELLO".into()],
             false,
         );
-        let r = call_program(
+        let r = _call_program(
             &state,
             "branches",
             &["git".into(), "branch".into(), "--list".into()],
@@ -260,7 +260,7 @@ mod tests {
             vec!["echo override-only".into()],
             false,
         );
-        let r = call_program(
+        let r = _call_program(
             &state,
             "branches",
             &["git".into(), "branch".into(), "--list".into()],
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn case_c_no_style_runs_argv_directly() {
         let state = mk_state();
-        let r = call_program(
+        let r = _call_program(
             &state,
             "branches",
             &["echo".into(), "raw-args".into()],
@@ -306,7 +306,7 @@ mod tests {
             vec!["true".into()],
             false,
         );
-        let r = call_program(
+        let r = _call_program(
             &state,
             "branches",
             &["echo".into(), "hi".into()],
@@ -325,7 +325,7 @@ mod tests {
     fn no_priv_prefix_when_gain_privileges_unset() {
         let mut state = mk_state();
         // No gain-privileges style => priv prefix is NOT applied.
-        let r = call_program(
+        let r = _call_program(
             &state,
             "branches",
             &["echo".into(), "hi".into()],
@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn empty_argv_returns_none() {
         let state = mk_state();
-        let r = call_program(&state, "x", &[], &CallProgramOpts::default());
+        let r = _call_program(&state, "x", &[], &CallProgramOpts::default());
         assert!(r.is_none());
     }
 }

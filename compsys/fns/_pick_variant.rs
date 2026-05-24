@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::base::MainCompleteState;
-use crate::fns::call_program::{call_program, CallProgramOpts, CallProgramResult};
+use crate::fns::_call_program::{_call_program, CallProgramOpts, CallProgramResult};
 
 /// Process-global `_cmd_variant` cache. Maps `cmd → variant-label`.
 /// Lives for the lifetime of the process (matches shell `typeset -gA
@@ -103,7 +103,7 @@ impl PickVariantResult {
 /// we run out; remainder is argv-to-append.
 ///
 /// Returns the variant label and (when matched) caches it.
-pub fn pick_variant(
+pub fn _pick_variant(
     state: &MainCompleteState,
     labels: &[(String, String)],
     probe_argv: &[String],
@@ -146,7 +146,7 @@ pub fn pick_variant(
     // Build argv = [cmd, *probe_argv].
     let mut argv = vec![cmd.clone()];
     argv.extend(probe_argv.iter().cloned());
-    let res: Option<CallProgramResult> = call_program(
+    let res: Option<CallProgramResult> = _call_program(
         state,
         "variant",
         &argv,
@@ -229,7 +229,7 @@ mod tests {
             forced_command: false,
             cmd_is_builtin: true,
         };
-        let r = pick_variant(&state, &[("gnu".into(), "GNU".into())], &[], &opts);
+        let r = _pick_variant(&state, &[("gnu".into(), "GNU".into())], &[], &opts);
         assert_eq!(r, PickVariantResult::Builtin("zsh-bin".into()));
     }
 
@@ -246,7 +246,7 @@ mod tests {
             cmd_is_builtin: false,
         };
         // echo "GNU coreutils style output" → pattern "GNU" matches.
-        let r = pick_variant(
+        let r = _pick_variant(
             &state,
             &[
                 ("gnu".into(), "GNU".into()),
@@ -270,7 +270,7 @@ mod tests {
             forced_command: false,
             cmd_is_builtin: false,
         };
-        let r = pick_variant(
+        let r = _pick_variant(
             &state,
             &[("gnu".into(), "WONT-MATCH".into())],
             &["irrelevant".into()],
@@ -291,7 +291,7 @@ mod tests {
             forced_command: false,
             cmd_is_builtin: false,
         };
-        let _ = pick_variant(
+        let _ = _pick_variant(
             &state,
             &[("gnu".into(), "GNU".into())],
             &["GNU x".into()],
@@ -299,7 +299,7 @@ mod tests {
         );
         // Second call with DIFFERENT probe args should still return
         // the cached value (no re-exec).
-        let r2 = pick_variant(
+        let r2 = _pick_variant(
             &state,
             &[("bsd".into(), "BSD".into())],
             &["this would normally match bsd".into()],

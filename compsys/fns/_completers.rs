@@ -27,7 +27,7 @@ pub const CANONICAL_COMPLETER_NAMES: &[&str] = &[
     "history",
 ];
 
-pub fn completers(state: &mut CompletionState, with_underscore_prefix: bool) -> bool {
+pub fn _completers(state: &mut CompletionState, with_underscore_prefix: bool) -> bool {
     let prefix = state.params.prefix.clone();
     let curcontext = "::completers";
 
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn emits_canonical_eleven_bare() {
         let mut state = CompletionState::new();
-        completers(&mut state, false);
+        _completers(&mut state, false);
         let mut names: Vec<&str> = state.groups[0]
             .matches
             .iter()
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn with_p_flag_adds_underscore_prefix() {
         let mut state = CompletionState::new();
-        completers(&mut state, true);
+        _completers(&mut state, true);
         let names: std::collections::HashSet<&str> = state.groups[0]
             .matches
             .iter()
@@ -117,7 +117,7 @@ mod tests {
             vec!["true".into()],
             false,
         );
-        completers(&mut state, true);
+        _completers(&mut state, true);
         let c = state.groups[0]
             .matches
             .iter()

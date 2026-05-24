@@ -56,7 +56,7 @@ impl<'a> Default for SequenceOpts<'a> {
     }
 }
 
-pub fn sequence<F>(state: &mut CompletionState, opts: &SequenceOpts<'_>, completer: F) -> bool
+pub fn _sequence<F>(state: &mut CompletionState, opts: &SequenceOpts<'_>, completer: F) -> bool
 where
     F: FnOnce(&mut CompletionState, &[String]) -> bool,
 {
@@ -182,7 +182,7 @@ mod tests {
         let mut state = CompletionState::new();
         state.params.prefix = "alpha,b".into();
         let opts = SequenceOpts::default();
-        sequence(&mut state, &opts, fake_inner);
+        _sequence(&mut state, &opts, fake_inner);
         let names: Vec<&str> = state.groups[0]
             .matches
             .iter()
@@ -201,7 +201,7 @@ mod tests {
             allow_duplicates: true,
             ..Default::default()
         };
-        sequence(&mut state, &opts, fake_inner);
+        _sequence(&mut state, &opts, fake_inner);
         let names: Vec<&str> = state.groups[0]
             .matches
             .iter()
@@ -215,7 +215,7 @@ mod tests {
         let mut state = CompletionState::new();
         state.params.prefix = "alpha,beta,g".into();
         let opts = SequenceOpts::default();
-        sequence(&mut state, &opts, fake_inner);
+        _sequence(&mut state, &opts, fake_inner);
         // After chewing, prefix is "g" and iprefix carries "alpha,beta,".
         assert_eq!(state.params.iprefix, "alpha,beta,");
         assert_eq!(state.params.prefix, "g");
@@ -226,7 +226,7 @@ mod tests {
         let mut state = CompletionState::new();
         state.params.prefix = "alpha,".into();
         let opts = SequenceOpts::default();
-        sequence(&mut state, &opts, fake_inner);
+        _sequence(&mut state, &opts, fake_inner);
         // Every emitted match should carry the separator as suffix so
         // Tab into one continues into the next entry.
         for m in &state.groups[0].matches {
@@ -243,7 +243,7 @@ mod tests {
             max_entries: Some(2),
             ..Default::default()
         };
-        sequence(&mut state, &opts, fake_inner);
+        _sequence(&mut state, &opts, fake_inner);
         for m in &state.groups[0].matches {
             assert_eq!(m.suf, None, "at max → no separator suffix");
         }
@@ -257,7 +257,7 @@ mod tests {
             separator: ":",
             ..Default::default()
         };
-        sequence(&mut state, &opts, fake_inner);
+        _sequence(&mut state, &opts, fake_inner);
         let names: Vec<&str> = state.groups[0]
             .matches
             .iter()

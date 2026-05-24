@@ -92,10 +92,13 @@ pub fn cmdstring(state: &mut CompletionState, inv: &ShellInventory<'_>) -> bool 
     command_names(state, inv, false)
 }
 
-// `_command_names` moved to its own file at `compsys/fns/command_names.rs`
+// `_command_names` moved to its own file at `compsys/fns/_command_names`
 // per the per-fn layout mirroring zsh `Completion/Base/Utility/_command_names`.
 // Re-exported through the crate root so existing call sites keep working.
-pub use crate::fns::{command_names, command_names_with_ctx, ShellInventory};
+pub use crate::fns::{_command_names, _command_names_with_ctx, ShellInventory};
+/// Back-compat aliases for the no-underscore call sites in this
+/// crate. Prefer the `_NAME` forms directly to mirror zsh.
+pub use crate::fns::{_command_names as command_names, _command_names_with_ctx as command_names_with_ctx};
 
 /// _comp_caller_options - Get options from calling context
 pub fn comp_caller_options() -> HashMap<String, bool> {
@@ -110,9 +113,10 @@ pub fn comp_priv_prefix() -> Vec<String> {
     Vec::new()
 }
 
-// `_completers` moved to `compsys/fns/completers.rs`. Re-exported
+// `_completers` moved to `compsys/fns/_completers`. Re-exported
 // for back-compat with the old `library::completers` path.
-pub use crate::fns::{completers, CANONICAL_COMPLETER_NAMES};
+pub use crate::fns::{_completers, CANONICAL_COMPLETER_NAMES};
+pub use crate::fns::_completers as completers;
 
 /// _default - Default completion (files)
 pub fn default_complete(state: &mut CompletionState) -> bool {
@@ -127,7 +131,7 @@ pub fn dir_list(
     separator: Option<&str>,
     use_sep_as_suffix: bool,
 ) -> bool {
-    crate::fns::dir_list(
+    crate::fns::_dir_list(
         state,
         &crate::fns::DirListOpts {
             separator: separator.unwrap_or(":"),
@@ -472,7 +476,8 @@ pub fn tilde_files(state: &mut CompletionState) -> bool {
 }
 
 // `_widgets` moved to `compsys/fns/widgets.rs`. Re-exported.
-pub use crate::fns::widgets;
+pub use crate::fns::_widgets;
+pub use crate::fns::_widgets as widgets;
 
 // =============================================================================
 // Helper functions
