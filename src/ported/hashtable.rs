@@ -499,6 +499,51 @@ impl Default for shfunc_table {
 // to in-file callers and external imports.
 // c:1246
 
+/// Public copy of the canonical `reswds[]` table from
+/// `Src/hashtable.c:1076-1108`. Each entry is `(name, lextok)`; the
+/// token identifies which grammar production the word triggers.
+///
+/// Callers outside the hashtable (LSP reflection dump, IntelliJ
+/// inventory) iterate this directly so they don't have to take the
+/// `reswdtab` lock or duplicate the list. Filtering: entries with
+/// `token == TYPESET` are declaration commands (local / typeset /
+/// declare / export / readonly / integer / float) — they're aliased
+/// to `typeset` at the grammar level but really live as builtins, so
+/// a "reserved word" inventory should exclude them.
+pub const RESWDS: &[(&str, i32)] = &[
+    ("!", BANG_TOK),
+    ("[[", DINBRACK),
+    ("{", INBRACE_TOK),
+    ("}", OUTBRACE_TOK),
+    ("case", CASE),
+    ("coproc", COPROC),
+    ("declare", TYPESET),
+    ("do", DOLOOP),
+    ("done", DONE),
+    ("elif", ELIF),
+    ("else", ELSE),
+    ("end", ZEND),
+    ("esac", ESAC),
+    ("export", TYPESET),
+    ("fi", FI),
+    ("float", TYPESET),
+    ("for", FOR),
+    ("foreach", FOREACH),
+    ("function", FUNC),
+    ("if", IF),
+    ("integer", TYPESET),
+    ("local", TYPESET),
+    ("nocorrect", NOCORRECT),
+    ("readonly", TYPESET),
+    ("repeat", REPEAT),
+    ("select", SELECT),
+    ("then", THEN),
+    ("time", TIME),
+    ("typeset", TYPESET),
+    ("until", UNTIL),
+    ("while", WHILE),
+];
+
 /// Port of `enablehashnode(HashNode hn, UNUSED(int flags))` from `Src/hashtable.c:332`.
 ///
 /// C body: `hn->flags &= ~DISABLED;`. Inverse of [`disablehashnode`].
@@ -518,6 +563,11 @@ impl reswd_table {
         // Direct port of `static struct reswd reswds[]` at
         // Src/hashtable.c:1076-1108. Token IDs are the lextok
         // constants from zsh_h.rs (zsh.h:345-371).
+        //
+        // Same list is exposed via the public `RESWDS` const below so
+        // callers outside this module (LSP reflection dump, IntelliJ
+        // tool-window inventory) can enumerate reserved words without
+        // taking the table lock.
         let words: [(&str, i32); 31] = [
             // c:1076
             ("!", BANG_TOK),          // c:1077
@@ -552,6 +602,10 @@ impl reswd_table {
             ("until", UNTIL),         // c:1106
             ("while", WHILE),         // c:1107
         ];
+        // Sanity: the local `words` array and the public `RESWDS` const
+        // below MUST stay in sync — both are direct ports of the same
+        // upstream `reswds[]` table at Src/hashtable.c:1076-1108.
+        debug_assert_eq!(words.len(), RESWDS.len());
 
         for (name, token) in words {
             // Direct struct literal — canonical `reswd` has

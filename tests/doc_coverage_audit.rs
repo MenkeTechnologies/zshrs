@@ -22,16 +22,18 @@ fn is_placeholder(s: &str) -> bool {
 // These match what the IntelliJ tool window's reflection panel lists.
 // Audit script source: src/extensions/lsp.rs::dump_reflection_json.
 
-const KEYWORDS: &[&str] = &[
-    "if", "then", "else", "elif", "fi",
-    "for", "foreach", "while", "until", "do", "done",
-    "case", "esac", "select", "repeat",
-    "function", "local", "typeset", "declare", "export",
-    "readonly", "integer", "float", "private",
-    "break", "continue", "return", "exit",
-    "in", "time", "coproc",
-    "always", "nocorrect", "noglob",
-];
+// Canonical reserved-word inventory minus declaration commands —
+// matches what `dump_reflection_json` / `dump_reference_html` emit
+// in the IntelliJ Keywords tab. Sourced at test-time from the same
+// `ported::hashtable::RESWDS` table so the test can't drift from the
+// canonical port of `Src/hashtable.c:1076-1108`.
+fn canonical_keywords() -> Vec<&'static str> {
+    zsh::ported::hashtable::RESWDS
+        .iter()
+        .filter(|(_, t)| *t != zsh::ported::zsh_h::TYPESET)
+        .map(|(n, _)| *n)
+        .collect()
+}
 
 const SPECIAL_VARS: &[&str] = &[
     "$0", "$?", "$!", "$$", "$#", "$*", "$@", "$-", "$_",
@@ -65,8 +67,27 @@ fn audit(label: &str, names: &[&'static str]) -> Vec<&'static str> {
 
 #[test]
 fn every_keyword_has_real_doc() {
-    let m = audit("keywords", KEYWORDS);
+    let kws = canonical_keywords();
+    let m = audit("keywords", &kws);
     assert!(m.is_empty(), "{} keywords have placeholder docs: {:?}", m.len(), m);
+}
+
+#[test]
+fn keywords_inventory_excludes_declaration_commands() {
+    // Sanity pin: declaration commands (local / typeset / declare /
+    // export / readonly / integer / float) must NOT appear in the
+    // keyword inventory — the user's complaint was that the IntelliJ
+    // Keywords tab listed `export` / `float` / `integer` as keywords
+    // when they're really builtins (aliased to `typeset` by the parser).
+    let kws = canonical_keywords();
+    for declarer in ["local", "typeset", "declare", "export", "readonly", "integer", "float"] {
+        assert!(
+            !kws.contains(&declarer),
+            "declaration command `{}` leaked into the keyword inventory: {:?}",
+            declarer,
+            kws,
+        );
+    }
 }
 
 #[test]

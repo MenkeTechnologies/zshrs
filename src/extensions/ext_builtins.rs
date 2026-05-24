@@ -14,6 +14,92 @@
 
 #![allow(unused_imports)]
 
+/// Canonical name list of every extension builtin defined in this
+/// module. Each entry maps to a `builtin_<NAME>` method on
+/// `ShellExecutor`. Kept hand-sorted for review-friendly diffs.
+///
+/// Used by `lsp::dump_reflection_json` (Extensions tab in the
+/// IntelliJ tool window) and `lsp::dump_reference_html`
+/// (`ch-lsp-extensions` chapter in `docs/reference.html`). When you
+/// add a `pub(crate) fn builtin_X` method below, ALSO add `X` here
+/// (sorted) so the inventory stays in sync.
+pub const EXT_BUILTIN_NAMES: &[&str] = &[
+    "add_zsh_hook",
+    "arch",
+    "async",
+    "await",
+    "barrier",
+    "base64",
+    "basename",
+    "caller",
+    "cat",
+    "cdreplay",
+    "cksum",
+    "comm",
+    "compdef",
+    "compgen",
+    "compinit",
+    "complete",
+    "compopt",
+    "cut",
+    "date",
+    "dbview",
+    "dircolors",
+    "dirname",
+    "doctor",
+    "env",
+    "expand",
+    "expr",
+    "factor",
+    "find",
+    "fold",
+    "groups",
+    "head",
+    "help",
+    "hostname",
+    "id",
+    "intercept",
+    "intercept_proceed",
+    "link",
+    "logname",
+    "mkfifo",
+    "mktemp",
+    "nice",
+    "nl",
+    "nproc",
+    "paste",
+    "peach",
+    "pgrep",
+    "pmap",
+    "printenv",
+    "profile",
+    "realpath",
+    "rev",
+    "seq",
+    "sha256sum",
+    "shuf",
+    "sleep",
+    "sort",
+    "sum",
+    "tac",
+    "tail",
+    "tee",
+    "touch",
+    "tput",
+    "tr",
+    "tsort",
+    "tty",
+    "uname",
+    "unexpand",
+    "uniq",
+    "unlink",
+    "users",
+    "wc",
+    "whoami",
+    "yes",
+    "zbuild",
+];
+
 use crate::parse::Redirect;
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::vm_helper::ShellExecutor;

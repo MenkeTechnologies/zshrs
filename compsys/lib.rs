@@ -33,6 +33,71 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
+/// Canonical names of compsys-style completion functions (the
+/// underscore-prefixed `_arguments` / `_files` / `_describe` / …)
+/// that have native Rust implementations in this crate, so they
+/// don't hit the slow shell-function autoload path.
+///
+/// Sources:
+///   * Core dispatcher / completers: [`base`] (main_complete, normal,
+///     dispatch, alternative, values, complete/ignored/approximate/
+///     correct/expand/history/match/menu/prefix, description, message,
+///     requested, wanted, all_labels, next_label, sep_parts)
+///   * Arg-spec engine: [`arguments`] (`_arguments`)
+///   * Description rendering: [`describe`] / [`computil`] (`_describe`)
+///   * File / path completers: [`files`] / [`library`] (`_files`,
+///     `_directories`, `_path_files`, `_tilde_files`)
+///   * Per-command completers wired in [`main`] (`_git`, `_docker`,
+///     `_cargo`, `_kubectl`, `_terraform`, plus `_ls` / `_cd` / `_cp`
+///     / `_mv` / `_rm` / `_cat` / `_grep` baseline stubs).
+///
+/// Used by `lsp::dump_reflection_json` to populate the IntelliJ tool
+/// window "Compsys" tab and by `lsp::dump_reference_html` for the
+/// `ch-lsp-compsys` chapter in `docs/reference.html`. When a new `_*`
+/// function gets a Rust impl, add it here (sorted) so it surfaces in
+/// the inventory.
+pub const COMPSYS_FN_NAMES: &[&str] = &[
+    "_all_labels",
+    "_alternative",
+    "_approximate",
+    "_arguments",
+    "_cargo",
+    "_cat",
+    "_cd",
+    "_complete",
+    "_correct",
+    "_cp",
+    "_describe",
+    "_description",
+    "_directories",
+    "_dispatch",
+    "_docker",
+    "_expand",
+    "_files",
+    "_git",
+    "_grep",
+    "_history",
+    "_ignored",
+    "_kubectl",
+    "_ls",
+    "_main_complete",
+    "_match",
+    "_menu",
+    "_message",
+    "_mv",
+    "_next_label",
+    "_normal",
+    "_path_files",
+    "_prefix",
+    "_requested",
+    "_rm",
+    "_sep_parts",
+    "_terraform",
+    "_tilde_files",
+    "_values",
+    "_wanted",
+];
+
 pub mod arguments;
 pub mod base;
 pub mod cache;

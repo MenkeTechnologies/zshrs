@@ -1290,8 +1290,118 @@ pub fn lookup_doc(name: &str) -> String {
     if let Some(d) = OPTION_DOCS_FALLBACK.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
         return format!("**{}** — _zsh option_\n\n{}", d.0, d.1);
     }
+    if let Some(d) = EXT_BUILTIN_DOCS.iter().find(|(k, _)| *k == name) {
+        return format!("**{}** — _zshrs extension builtin_\n\n{}", d.0, d.1);
+    }
     String::new()
 }
+
+/// Hand-curated docs for the zshrs extension builtins (`coreutils`
+/// drop-ins, async/await primitives, doctor, intercept, etc.). The
+/// canonical name list lives in `ext_builtins::EXT_BUILTIN_NAMES`;
+/// every entry there must appear here too or the doc coverage gate
+/// (`tests/doc_coverage_audit::every_canonical_extension_has_real_doc`)
+/// fails.
+const EXT_BUILTIN_DOCS: &[(&str, &str)] = &[
+    ("add_zsh_hook", "Add a function to a zsh hook array (chpwd / precmd / preexec / periodic / zshaddhistory / zshexit). `add-zsh-hook chpwd my_chpwd_fn`. Idempotent — re-adding the same function is a no-op."),
+    ("arch", "Print the machine architecture (uname -m equivalent): `x86_64`, `arm64`, `aarch64`, etc."),
+    ("async", "Spawn a background task on the persistent worker pool. `async name { body }` queues the body for parallel execution. Pair with `await name` to join."),
+    ("await", "Block until a previously-spawned `async` task completes. `await name` returns the task's exit status; `await` with no args waits for all in-flight tasks."),
+    ("barrier", "Synchronization point for the parallel worker pool. Waits until every running `async`/`peach` task has finished before continuing."),
+    ("base64", "Encode / decode Base64. `-d` decodes; `-w0` no line wrap. coreutils drop-in."),
+    ("basename", "Strip leading directories and an optional suffix. `basename /a/b.txt .txt` → `b`. coreutils drop-in."),
+    ("caller", "Bash-compatible `caller` builtin. With no arg or 0: prints `LINE FUNC` for the current frame; with N>0: `LINE FUNC FILE` for the Nth call-stack frame."),
+    ("cat", "Concatenate files to stdout. `-n` numbers lines, `-A` shows tabs/EOLs. coreutils drop-in."),
+    ("cdreplay", "Replay the directory stack into the named directory. Reverses recent `cd` history without traversing the parent chain."),
+    ("cksum", "Print CRC32 checksum + byte count of each file. coreutils drop-in."),
+    ("comm", "Compare two sorted files line-by-line. `-1` / `-2` / `-3` suppress columns. coreutils drop-in."),
+    ("compdef", "Register a completion function for one or more commands. `compdef _git git`. Backed by the SQLite compsys cache; lookups are O(log n)."),
+    ("compgen", "Bash-compatible word generator. `compgen -W 'foo bar baz' fo` → `foo`. Used by bash-completion scripts ported to zshrs."),
+    ("compinit", "Initialize the completion system. Walks `$fpath` in parallel via rayon, populates the SQLite cache, marks every `_*` as autoloaded. Default mode skips `.zcompdump` entirely."),
+    ("complete", "Bash-compatible `complete` command — register a completion spec for a command. zshrs bridges to compsys internally."),
+    ("compopt", "Bash-compatible `compopt` — modify completion options at runtime."),
+    ("cut", "Extract fields or character ranges. `-d':' -f1,3` / `-c5-10`. coreutils drop-in."),
+    ("date", "Print or set the system date. `+%FORMAT` strftime; `-d 'rel'` parse relative; `-u` UTC. coreutils drop-in."),
+    ("dbview", "Dump the local zshrs SQLite caches (autoload bodies, completion cache, history FTS). `dbview --table autoloads` filters by table."),
+    ("dircolors", "Emit `LS_COLORS` from a `.dircolors` file. coreutils drop-in."),
+    ("dirname", "Strip the last path component. `dirname /a/b/c` → `/a/b`. coreutils drop-in."),
+    ("doctor", "Diagnostic report of shell health — cache stats, autoload coverage, fpath sanity, daemon presence, memory footprint, recent error summary. zshrs-only."),
+    ("env", "Run a command in a modified environment, or print the current environment. `env -i` empties; `env VAR=val cmd` sets. coreutils drop-in."),
+    ("expand", "Convert tabs to spaces. `-t N` sets tab width. coreutils drop-in."),
+    ("expr", "Evaluate an arithmetic / string expression. `expr 2 + 3` → `5`. Prefer `$(( … ))` in zshrs scripts; provided for POSIX compatibility."),
+    ("factor", "Print prime factors. `factor 60` → `60: 2 2 3 5`. coreutils drop-in."),
+    ("find", "Walk the filesystem and print / act on matches. Supports `-name`/`-type`/`-mtime`/`-exec`. coreutils drop-in (subset)."),
+    ("fold", "Wrap each input line to a width. `-w N` width, `-s` break at spaces. coreutils drop-in."),
+    ("groups", "Print groups the user (or named user) belongs to. coreutils drop-in."),
+    ("head", "Print the first N lines (`-n N`) or bytes (`-c N`) of each file. coreutils drop-in."),
+    ("help", "Print help for a builtin. `help cd` shows the cd usage. zshrs-only."),
+    ("hostname", "Print the system hostname. `-s` short, `-f` FQDN."),
+    ("id", "Print user / group IDs. `-u` user only, `-g` group only, `-n` names. coreutils drop-in."),
+    ("intercept", "Register an AOP intercept. `intercept before|after|around <cmd> { body }` runs `body` around every invocation of `<cmd>`. Bytecode-compiled at registration; no per-call interpreter overhead. zshrs-only."),
+    ("intercept_proceed", "Inside an `around` intercept body, invoke the underlying command. Required so the intercept doesn't shadow the call permanently."),
+    ("link", "Create a hard link. `link src dst`. coreutils drop-in."),
+    ("logname", "Print the user's login name. coreutils drop-in."),
+    ("mkfifo", "Create named pipes (FIFOs). `mkfifo path …`. coreutils drop-in."),
+    ("mktemp", "Create a temp file or directory with a unique name. `-d` directory, `-p DIR` parent. coreutils drop-in."),
+    ("nice", "Run a command with adjusted scheduling priority. `nice -n 10 cmd`. coreutils drop-in."),
+    ("nl", "Number lines. `-b a` numbers all, `-w N` field width. coreutils drop-in."),
+    ("nproc", "Print the number of processing units available. `--all` ignores affinity."),
+    ("paste", "Merge corresponding lines of files. `-d DELIM` separator. coreutils drop-in."),
+    ("peach", "Parallel-for-each — run a block once per element of an array across the worker pool. `peach arr { print $it }`. Returns when all workers finish. zshrs-only."),
+    ("pgrep", "Print PIDs of processes matching a pattern. `-f` matches full command line."),
+    ("pmap", "Display the memory map of one or more processes. `pmap PID`."),
+    ("printenv", "Print the value of one or more environment variables, or all if none given. coreutils drop-in."),
+    ("profile", "CPU / wall-time profile a command and emit a flamegraph. `profile cmd …` → SVG path printed on stdout. Backed by the same sampler as `zprof`."),
+    ("realpath", "Resolve symlinks and `.` / `..` to a canonical absolute path. coreutils drop-in."),
+    ("rev", "Reverse each input line character-by-character. coreutils drop-in."),
+    ("seq", "Print a sequence of numbers. `seq 1 10` / `seq 1 2 10` / `seq -w 1 10`. coreutils drop-in."),
+    ("sha256sum", "Print or check SHA-256 digests. `-c FILE` checks. coreutils drop-in."),
+    ("shuf", "Shuffle input lines. `-n N` limit, `-e ITEM…` shuffle args, `-i LO-HI` shuffle range. coreutils drop-in."),
+    ("sleep", "Pause for the given duration. `sleep 1`, `sleep 0.5`, `sleep 1m`. coreutils drop-in."),
+    ("sort", "Sort lines. `-n` numeric, `-r` reverse, `-k N` by field, `-u` unique. coreutils drop-in."),
+    ("sum", "BSD/sysv checksum + 1K-block count. coreutils drop-in."),
+    ("tac", "Concatenate files in reverse line order. coreutils drop-in."),
+    ("tail", "Print the last N lines (`-n N`) or follow appends (`-f`). coreutils drop-in."),
+    ("tee", "Copy stdin to stdout AND to each named file. `-a` append. coreutils drop-in."),
+    ("touch", "Create a file or update its mtime. `-d STR` set time, `-r REF` copy from REF. coreutils drop-in."),
+    ("tput", "Terminal-capability query. `tput cols`, `tput setaf 1`. Reads `$TERM` via terminfo."),
+    ("tr", "Translate / squeeze / delete characters. `tr a-z A-Z` uppercases. coreutils drop-in."),
+    ("tsort", "Topological sort of partial-order pairs read from stdin. coreutils drop-in."),
+    ("tty", "Print the controlling terminal device path, or `not a tty` if stdin isn't one."),
+    ("uname", "Print system info. `-a` all, `-s` kernel, `-m` machine, `-r` release. coreutils drop-in."),
+    ("unexpand", "Convert leading spaces to tabs. `-a` all spaces. coreutils drop-in."),
+    ("uniq", "Filter adjacent matching lines. `-c` prefix count, `-d` only duplicates. coreutils drop-in."),
+    ("unlink", "Remove a single file via the `unlink(2)` syscall (no `-r`, no prompts). coreutils drop-in."),
+    ("users", "Print the login names of users currently logged in."),
+    ("wc", "Count newlines, words, bytes. `-l` lines, `-w` words, `-c` bytes. coreutils drop-in."),
+    ("whoami", "Print the effective user name. coreutils drop-in."),
+    ("yes", "Repeatedly output a line. `yes` prints `y` forever; `yes STR` prints STR. coreutils drop-in."),
+    ("zbuild", "Bytecode-compile a zsh source file ahead of time. `zbuild script.zsh` writes `script.zwc` next to it; subsequent `source`s skip the lexer/parser. Same on-disk format as `zcompile` but uses fusevm bytecode."),
+    // ── Daemon-backed `z*` builtins (Unix-socket RPC to zshrs-daemon) ──
+    ("zask", "Send an ask-style request to the daemon and print the JSON response. Used by tools/agents that want a single synchronous query against the shared catalog."),
+    ("zcache", "Read / write / list the per-shell cache namespace. `zcache get K` / `zcache set K V [TTL]` / `zcache del K` / `zcache list [PREFIX]`. Backed by the daemon's in-memory KV with optional SQLite persistence."),
+    ("zcmd-result", "Push the exit status + output of a just-completed command to the daemon's command-history catalog. Used by `precmd` hooks to populate the cross-shell `zhistory` index."),
+    ("zcomplete", "Push a completion candidate to the daemon's shared completion cache. Other shells running compinit will see it without re-walking fpath."),
+    ("zd", "Daemon HTTP client. In-process when invoked from inside zshrs (Unix socket); same args as the standalone `zd` binary. `zd ping` / `zd ops` / `zd cache get K`. Maps 1:1 to `POST /op/<NAME>`."),
+    ("zhistory", "Query the daemon's federated command-history catalog. Spans every shell that pushed via `zcmd-result`. SQLite FTS5-backed; `zhistory search 'pattern'`."),
+    ("zid", "Print the current shell's federated ID — the stable `shell_id` (`bash` / `zsh` / `zshrs` / …) and the per-process `bundle_id` the daemon uses to scope state."),
+    ("zjob", "Manage background jobs through the daemon: `zjob submit -- cmd …` queues, `zjob status ID`, `zjob output ID`, `zjob wait ID`, `zjob kill ID`. Jobs survive shell exit because the daemon owns them."),
+    ("zlock", "Acquire / release / try a named cross-shell lock. `zlock acquire NAME [TIMEOUT]` / `zlock release NAME TOKEN` / `zlock try NAME` / `zlock do NAME -- cmd …`. PID-tagged so the daemon GCs stale entries."),
+    ("zlog", "Append a structured log entry to the daemon's log catalog. `zlog 'message' [key=val …]`. Queryable later via `zhistory` / `dbview`."),
+    ("zls", "List entries in the daemon's federated catalog (aliases, functions, env vars, etc.). `zls --kind alias --shell-id bash`. The cross-shell mirror of `alias`/`functions`/`typeset`."),
+    ("znotify", "Send a desktop / system notification through the daemon. Routes to `osascript` (macOS), `notify-send` (Linux), or the in-shell UI when no platform notifier is available."),
+    ("zping", "Round-trip latency probe against the daemon. Prints the RTT in microseconds; non-zero exit if the daemon is unreachable."),
+    ("zpublish", "Publish a JSON event to a pubsub topic. `zpublish topic.name '{\"key\":\"val\"}'`. Subscribers receive via `zsubscribe`."),
+    ("zsend", "Send a one-shot message to another shell (by `shell_id` or `bundle_id`). Like `znotify` but targets a specific shell, not the user's desktop."),
+    ("zsource", "Push a sourced-file event to the daemon's federated catalog. Used by `source`/`.` hooks so the daemon knows which rc files have been loaded by which shells."),
+    ("zsubscribe", "Subscribe to a pubsub topic and stream incoming messages to stdout as SSE-style JSON lines. `zsubscribe 'shell:*.build_done'`."),
+    ("zsuggest", "Query the daemon's suggestion engine for the next command, given the current cwd + history. Used by ZLE's autosuggestion widget when the local history can't supply a candidate."),
+    ("zsync", "Force a flush of the daemon's in-memory state to the SQLite catalog. Normally happens in the background; `zsync` makes it synchronous so a snapshot is consistent."),
+    ("ztag", "Tag the current shell session with one or more labels. `ztag prod-deploy`. Other shells can filter by tag via `zls --tag prod-deploy`."),
+    ("zunsubscribe", "Cancel a `zsubscribe` stream. `zunsubscribe TOPIC` or `zunsubscribe --all`."),
+    ("zuntag", "Remove a tag from the current shell session. Inverse of `ztag`."),
+    ("zwhere", "Locate which shell / bundle / cwd defined a given alias / function / env var in the federated catalog. `zwhere alias ll` → list of every shell that set `ll`."),
+];
 
 /// Hand-curated docs for options that no upstream yodl `item(tt(...))`
 /// block documents. The yodl alias-table-driven cascade covers 202/203
@@ -2440,8 +2550,18 @@ fn code_actions(state: &State, params: &Value) -> Value {
     let same_line = start_line == end_line;
     let nonempty = start_line != end_line || start_char != end_char;
 
+    // ── Multi-line selection → only Extract Function applies. ────────
+    // (Variable / constant extract require a single-line expression to
+    // assign to a name; multi-line bodies have to become a callable.)
+    if !same_line {
+        if let Some(action) = make_extract_function_multiline(&uri, &text, start_line, end_line) {
+            actions.push(action);
+        }
+        return Value::Array(actions);
+    }
+
     // Caret-only snap: if range is empty, expand to the word at cursor.
-    let (eff_start_char, eff_end_char) = if !nonempty && same_line {
+    let (eff_start_char, eff_end_char) = if !nonempty {
         let line_text = match text.lines().nth(start_line as usize) {
             Some(l) => l,
             None => return Value::Array(vec![]),
@@ -2450,10 +2570,8 @@ fn code_actions(state: &State, params: &Value) -> Value {
             Some((s, e)) => (s, e),
             None => return Value::Array(vec![]),
         }
-    } else if same_line {
-        (start_char, end_char)
     } else {
-        return Value::Array(vec![]); // multi-line — v1 skips
+        (start_char, end_char)
     };
 
     if eff_end_char <= eff_start_char {
@@ -2511,7 +2629,156 @@ fn code_actions(state: &State, params: &Value) -> Value {
         "Extract to constant (`readonly NAME=…`)",
     ));
 
+    // Extract to Function: also offer for whole-line selections so the
+    // IDE's Extract Method shortcut has a matching action. Skip when
+    // the selection is a sub-string expression (covered by the
+    // variable / constant extracts above).
+    if selection_covers_whole_line(line_text, eff_start_char, eff_end_char) {
+        actions.push(make_extract_function_singleline(
+            &uri,
+            &leading_ws,
+            start_line,
+            sel.trim_end(),
+        ));
+    }
+
     Value::Array(actions)
+}
+
+/// True when the selection spans the line's entire non-whitespace
+/// content — leading indent before `eff_start_char` is whitespace, and
+/// everything after `eff_end_char` is whitespace too. Used to decide
+/// whether Extract Function applies to a single-line selection (we want
+/// to extract whole statements, not arbitrary expression fragments —
+/// the latter are already covered by Extract Variable / Constant).
+fn selection_covers_whole_line(line_text: &str, start_col: u32, end_col: u32) -> bool {
+    let mut prefix_byte = 0;
+    let mut suffix_byte = line_text.len();
+    let mut u16_seen = 0u32;
+    for (i, ch) in line_text.char_indices() {
+        if u16_seen == start_col {
+            prefix_byte = i;
+        }
+        u16_seen += ch.len_utf16() as u32;
+        if u16_seen == end_col {
+            suffix_byte = i + ch.len_utf8();
+        }
+    }
+    line_text[..prefix_byte].chars().all(char::is_whitespace)
+        && line_text[suffix_byte..].chars().all(char::is_whitespace)
+}
+
+fn make_extract_function_singleline(
+    uri: &str,
+    leading_ws: &str,
+    line: u32,
+    body: &str,
+) -> Value {
+    // Insert `extracted_function() { body; }` above the line, replace
+    // the line's content with a bare call.
+    let name = "extracted_function";
+    let decl = format!("{leading_ws}{name}() {{\n{leading_ws}    {body}\n{leading_ws}}}\n");
+    let insert_range = json!({
+        "start": { "line": line, "character": 0 },
+        "end":   { "line": line, "character": 0 },
+    });
+    let replace_range = json!({
+        "start": { "line": line, "character": 0 },
+        "end":   { "line": line + 1, "character": 0 },
+    });
+    let replacement = format!("{leading_ws}{name}\n");
+    let changes = json!({
+        uri: [
+            { "range": insert_range, "newText": decl },
+            { "range": replace_range, "newText": replacement },
+        ]
+    });
+    json!({
+        "title": "Extract to function (`name() { … }`)",
+        "kind": "refactor.extract",
+        "edit": { "changes": changes },
+    })
+}
+
+fn make_extract_function_multiline(
+    uri: &str,
+    text: &str,
+    start_line: u32,
+    end_line: u32,
+) -> Option<Value> {
+    // Pull the inclusive line range, snapping the LSP exclusive end-line
+    // semantics to "all lines that the selection touches." A selection
+    // ending at column 0 of line N covers lines start..N-1 only; a
+    // selection ending mid-line N covers start..N inclusive.
+    let lines: Vec<&str> = text.lines().collect();
+    if (start_line as usize) >= lines.len() {
+        return None;
+    }
+    let last = (end_line as usize).min(lines.len() - 1);
+    let block = &lines[start_line as usize..=last];
+    if block.iter().all(|l| l.trim().is_empty()) {
+        return None;
+    }
+
+    // Common leading-whitespace prefix on non-blank lines determines the
+    // function-body indent we'll strip back to.
+    let common_indent = block
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.chars().take_while(|c| c.is_whitespace()).count())
+        .min()
+        .unwrap_or(0);
+
+    let leading_ws: String = block
+        .iter()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.chars().take(common_indent).collect())
+        .unwrap_or_default();
+
+    let name = "extracted_function";
+    let mut decl = String::new();
+    decl.push_str(&format!("{leading_ws}{name}() {{\n"));
+    for l in block {
+        if l.trim().is_empty() {
+            decl.push('\n');
+        } else {
+            // Strip the common indent then re-indent one level past the
+            // function-decl leading whitespace.
+            let stripped = if l.chars().take(common_indent).all(|c| c.is_whitespace()) {
+                &l[l
+                    .char_indices()
+                    .nth(common_indent)
+                    .map(|(i, _)| i)
+                    .unwrap_or(l.len())..]
+            } else {
+                l.trim_start()
+            };
+            decl.push_str(&format!("{leading_ws}    {stripped}\n"));
+        }
+    }
+    decl.push_str(&format!("{leading_ws}}}\n"));
+
+    let insert_range = json!({
+        "start": { "line": start_line, "character": 0 },
+        "end":   { "line": start_line, "character": 0 },
+    });
+    let replace_range = json!({
+        "start": { "line": start_line,    "character": 0 },
+        "end":   { "line": last as u32 + 1, "character": 0 },
+    });
+    let replacement = format!("{leading_ws}{name}\n");
+
+    let changes = json!({
+        uri: [
+            { "range": insert_range, "newText": decl },
+            { "range": replace_range, "newText": replacement },
+        ]
+    });
+    Some(json!({
+        "title": "Extract to function (`name() { … }`)",
+        "kind": "refactor.extract",
+        "edit": { "changes": changes },
+    }))
 }
 
 fn make_extract_action(
@@ -3134,6 +3401,14 @@ const KEYWORD_DOCS: &[(&str, &str)] = &[
     ("esac", "Closes a `case` statement. `case word in pat) …;; esac`"),
     ("in",  "Word-list introducer for `for` and `case`. `for v in a b c; do …; done`"),
     (
+        "{",
+        "Command-group open brace. `{ cmd1; cmd2; }` runs the commands in the current shell (no subshell), grouping them as one syntactic unit. Reserved word — must be followed by whitespace or a newline.",
+    ),
+    (
+        "}",
+        "Command-group close brace. Pairs with `{ … }`. Reserved word — preceded by `;` or newline.",
+    ),
+    (
         "declare",
         "Alias for `typeset`. Set variable attributes. `-a` array, `-A` assoc, `-i` integer, `-r` readonly.",
     ),
@@ -3362,30 +3637,75 @@ const SPECIAL_VAR_DOCS: &[(&str, &str)] = &[
 /// as new ports land (e.g. adding a builtin to `ported::builtin::BUILTINS`
 /// makes it show up in the panel without a parallel edit here).
 pub fn dump_reflection_json() -> String {
+    let mut all = serde_json::Map::new();
+
     let mut builtins = serde_json::Map::new();
     for b in crate::ported::builtin::BUILTINS.iter() {
         builtins.insert(b.node.nam.clone(), Value::String("builtin".into()));
+        all.insert(b.node.nam.clone(), Value::String("builtin".into()));
     }
-    // Keywords stay on the hand list — zsh's "reserved words" set is
-    // small, fixed, and grammatical (no canonical Rust registry mirrors
-    // it because keywords aren't a runtime table the way builtins are).
+    // Keywords sourced from the canonical `reswds[]` table at
+    // `Src/hashtable.c:1076-1108` (Rust port: `ported::hashtable::RESWDS`).
+    // Filter out entries with `token == TYPESET` — those are declaration
+    // commands (local / typeset / declare / export / readonly / integer
+    // / float) that the parser folds into the `typeset` builtin. They
+    // already show up in the Builtins tab; listing them in Keywords too
+    // duplicates them and miscategorizes them as control-flow.
     let mut keywords = serde_json::Map::new();
-    for k in KEYWORDS {
-        keywords.insert(k.to_string(), Value::String("keyword".into()));
+    for (name, token) in crate::ported::hashtable::RESWDS {
+        if *token == crate::ported::zsh_h::TYPESET {
+            continue;
+        }
+        keywords.insert(name.to_string(), Value::String("keyword".into()));
+        all.insert(name.to_string(), Value::String("keyword".into()));
     }
     let mut options = serde_json::Map::new();
     for o in crate::ported::options::ZSH_OPTIONS_SET.iter() {
         options.insert(o.to_string(), Value::String("option".into()));
+        all.insert(o.to_string(), Value::String("option".into()));
     }
     let mut special_vars = serde_json::Map::new();
     for s in SPECIAL_VARS {
         special_vars.insert(s.to_string(), Value::String("special".into()));
+        all.insert(s.to_string(), Value::String("special".into()));
+    }
+    // ── Compsys completion functions ────────────────────────────────
+    // The `_arguments` / `_files` / `_describe` family — Rust-native
+    // implementations from the `compsys` crate. Sourced from
+    // `compsys::COMPSYS_FN_NAMES`.
+    let mut compsys = serde_json::Map::new();
+    for n in compsys::COMPSYS_FN_NAMES {
+        compsys.insert((*n).to_string(), Value::String("compsys".into()));
+        all.insert((*n).to_string(), Value::String("compsys".into()));
+    }
+    // ── zshrs extension builtins ────────────────────────────────────
+    // Builtins that have NO upstream zsh C counterpart. Two sources:
+    //   * `ext_builtins::EXT_BUILTIN_NAMES` — in-process builtins
+    //     dispatched by `ShellExecutor` (coreutils drop-ins, bash-only
+    //     builtins, async/await/barrier, doctor, intercept, contrib
+    //     autoloads exposed as builtins, etc.).
+    //   * `daemon::builtins::ZSHRS_BUILTIN_NAMES` — daemon-backed `z*`
+    //     builtins (zd, zcache, zls, zping, zlock, zpublish, …) that
+    //     proxy to the local Unix-socket daemon for cross-shell state.
+    // Both are zshrs-only; combining them gives the full inventory of
+    // builtins the user can call that aren't in upstream zsh.
+    let mut extensions = serde_json::Map::new();
+    for n in crate::ext_builtins::EXT_BUILTIN_NAMES {
+        extensions.insert((*n).to_string(), Value::String("extension".into()));
+        all.insert((*n).to_string(), Value::String("extension".into()));
+    }
+    for n in crate::daemon::builtins::ZSHRS_BUILTIN_NAMES {
+        extensions.insert((*n).to_string(), Value::String("extension".into()));
+        all.insert((*n).to_string(), Value::String("extension".into()));
     }
     serde_json::to_string_pretty(&json!({
+        "all": all,
         "builtins": builtins,
         "keywords": keywords,
         "options": options,
         "special_vars": special_vars,
+        "compsys": compsys,
+        "extensions": extensions,
     }))
     .unwrap_or_else(|_| "{}".into())
 }
@@ -3425,16 +3745,27 @@ pub fn dump_reference_html() -> String {
         "builtin",
     );
 
-    // ── keywords (LSP hand registry — the grammatical reserved-word set) ──
-    let keywords: Vec<String> = KEYWORDS.iter().map(|s| s.to_string()).collect();
+    // ── keywords (canonical `reswds[]` minus declaration commands) ──
+    // Source: `ported::hashtable::RESWDS` — direct port of upstream
+    // `Src/hashtable.c:1076-1108`. Skip `TYPESET`-tokened entries (those
+    // are declaration commands that double as builtins; including them
+    // here would duplicate the Builtin Index entries).
+    let keywords: Vec<String> = crate::ported::hashtable::RESWDS
+        .iter()
+        .filter(|(_, t)| *t != crate::ported::zsh_h::TYPESET)
+        .map(|(n, _)| n.to_string())
+        .collect();
     write_chapter(
         &mut out,
         "ch-lsp-keywords",
         "Keyword Index",
         &format!(
-            "{} entries · zsh reserved words. Sub-keywords (<code>then</code>, \
-             <code>else</code>, <code>do</code>, <code>esac</code>, …) point at \
-             the parent compound statement.",
+            "{} entries · zsh reserved words from <code>Src/hashtable.c</code> \
+             <code>reswds[]</code>. Declaration commands (<code>local</code>, \
+             <code>typeset</code>, <code>declare</code>, <code>export</code>, \
+             <code>readonly</code>, <code>integer</code>, <code>float</code>) \
+             are reserved at the grammar level but live as builtins, so they \
+             appear in the Builtin Index only — not duplicated here.",
             keywords.len()
         ),
         &keywords,
@@ -4525,6 +4856,133 @@ mod tests {
         assert!(!is_zsh_source_filename("foo.py"));
         assert!(!is_zsh_source_filename(".gitignore"));
         assert!(!is_zsh_source_filename("README.md"));
+    }
+
+    // ── code_actions: Extract Variable / Constant / Function ───────────
+
+    fn run_code_actions(text: &str, sl: u32, sc: u32, el: u32, ec: u32) -> Vec<Value> {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), text.to_string());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "range": {
+                "start": { "line": sl, "character": sc },
+                "end":   { "line": el, "character": ec },
+            },
+        });
+        match code_actions(&state, &params) {
+            Value::Array(v) => v,
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn code_actions_single_line_offers_var_const_and_function() {
+        let acts = run_code_actions("    echo hello\n", 0, 4, 0, 14);
+        let titles: Vec<&str> = acts
+            .iter()
+            .map(|a| a["title"].as_str().unwrap_or(""))
+            .collect();
+        // Whole-line selection: all three should fire.
+        assert!(
+            titles.iter().any(|t| t.contains("variable")),
+            "missing Extract Variable: {:?}",
+            titles,
+        );
+        assert!(
+            titles.iter().any(|t| t.contains("constant")),
+            "missing Extract Constant: {:?}",
+            titles,
+        );
+        assert!(
+            titles.iter().any(|t| t.contains("function")),
+            "missing Extract Function: {:?}",
+            titles,
+        );
+    }
+
+    #[test]
+    fn code_actions_subexpression_skips_function_extract() {
+        // Selection covers only "hello" inside `echo hello world` — a
+        // sub-expression, not a whole statement. Function extract on a
+        // partial expression would call a function whose result is then
+        // interpolated weirdly; the user wants Extract Variable for
+        // that case (already covered).
+        let acts = run_code_actions("echo hello world\n", 0, 5, 0, 10);
+        let titles: Vec<&str> = acts
+            .iter()
+            .map(|a| a["title"].as_str().unwrap_or(""))
+            .collect();
+        assert!(titles.iter().any(|t| t.contains("variable")));
+        assert!(
+            !titles.iter().any(|t| t.contains("function")),
+            "function extract leaked on sub-expression: {:?}",
+            titles,
+        );
+    }
+
+    #[test]
+    fn code_actions_multiline_only_offers_function_extract() {
+        // Spans three lines — variable / constant extract require a
+        // single-line expression target and must NOT appear.
+        let text = "if true; then\n    echo a\n    echo b\nfi\n";
+        let acts = run_code_actions(text, 1, 0, 3, 0);
+        let titles: Vec<&str> = acts
+            .iter()
+            .map(|a| a["title"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(acts.len(), 1, "expected exactly one action: {:?}", titles);
+        assert!(titles[0].contains("function"));
+        // Verify the edit shape: insert a `extracted_function() { … }`
+        // declaration above and replace the lines with a bare call.
+        let changes = &acts[0]["edit"]["changes"]["file:///t.zsh"];
+        let edits = changes.as_array().expect("edits array");
+        assert_eq!(edits.len(), 2);
+        let decl = edits[0]["newText"].as_str().unwrap_or("");
+        assert!(
+            decl.contains("extracted_function() {")
+                && decl.contains("echo a")
+                && decl.contains("echo b"),
+            "decl missing body lines: {:?}",
+            decl,
+        );
+        let call = edits[1]["newText"].as_str().unwrap_or("");
+        assert!(call.trim() == "extracted_function", "call must be bare: {:?}", call);
+    }
+
+    #[test]
+    fn code_actions_multiline_preserves_relative_indent() {
+        // Inner if-block: the extracted body should keep the inner
+        // indent so re-indenting against the function-body indent
+        // (`+4 spaces`) doesn't flatten the structure.
+        let text = "if outer; then\n    if inner; then\n        echo nested\n    fi\nfi\n";
+        let acts = run_code_actions(text, 1, 0, 3, 0);
+        assert_eq!(acts.len(), 1);
+        let decl = acts[0]["edit"]["changes"]["file:///t.zsh"][0]["newText"]
+            .as_str()
+            .unwrap_or("");
+        // The `echo nested` line had 8 spaces; common-indent for the
+        // block is 4; after stripping common and adding +4 indent it
+        // should still be 4 leading spaces past the function indent.
+        assert!(
+            decl.contains("        echo nested"),
+            "relative indent lost: {:?}",
+            decl,
+        );
+    }
+
+    #[test]
+    fn code_actions_caret_only_snaps_to_word() {
+        // Cursor with no selection — must snap to identifier under
+        // caret and still produce Extract Variable.
+        let acts = run_code_actions("echo greeting\n", 0, 8, 0, 8);
+        assert!(
+            acts.iter()
+                .any(|a| a["title"].as_str().unwrap_or("").contains("variable")),
+            "caret-only didn't snap to a word: {:?}",
+            acts.iter().map(|a| a["title"].clone()).collect::<Vec<_>>(),
+        );
     }
 
     #[test]
