@@ -258,13 +258,8 @@ pub fn zgetdir(d: Option<&mut dirsav>) -> Option<String> {
 /// ```
 ///
 /// Three-level fallback: real cwd via `zgetdir(NULL)`, then the
-/// shell's `$pwd` parameter (unmetafied), then literal `"."`. The
-/// previous Rust port only did the first level (`env::current_dir()`)
-/// and returned `None` on failure — dropping the documented fallback
-/// chain. Callers (`pwd` builtin, prompt expansion, etc.) reading
-/// `zgetcwd()` would get `None` instead of `"."` when the filesystem
-/// cwd became inaccessible (deleted dir, perm denied), diverging
-/// from zsh which always returns a non-empty string.
+/// shell's `$pwd` parameter (unmetafied), then literal `"."`.
+/// Always returns a non-empty string, matching zsh.
 pub fn zgetcwd() -> String {
     // c:559
     // c:561 — `ret = zgetdir(NULL);`

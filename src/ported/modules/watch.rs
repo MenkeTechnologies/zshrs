@@ -404,11 +404,9 @@ pub fn ucmp(u: &libc::utmpx, v: &libc::utmpx) -> i32 {
 //     static time_t lastutmpcheck = 0;             // line 156
 //     static char **watch;  /* $watch */           // line 689
 //
-// Rust port previously aggregated these into `WatchState` and also
-// pulled in `WATCHFMT` and `LOGCHECK` (which in C live on the
-// param table, NOT as file-statics) — bag-of-globals. Dissolved
-// into individual thread_locals matching the C declarations 1:1.
-// `WATCHFMT`/`LOGCHECK` are looked up via the param table at use
+// Stored as individual thread_locals matching the C declarations
+// 1:1. `WATCHFMT`/`LOGCHECK` live on the param table in C, NOT as
+// file-statics — they're looked up via the param table at use
 // sites, not stored here.
 
 thread_local! {

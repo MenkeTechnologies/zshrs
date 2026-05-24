@@ -1747,9 +1747,6 @@ pub fn init_thingies() -> i32 {
     // those names that have a fn-pointer port via `iwidget_lookup`.
     // Walking only the ported subset matches what `zle -N` /
     // `bindkey` can actually dispatch.
-    // Previously a no-op stub: created the table and exited.
-    // `zle -l` returned an empty widget list because nothing was
-    // ever added.
     let names = crate::ported::zle::zle_bindings::IWIDGET_NAMES;
     let mut tab = thingytab().lock().unwrap();
     for nam in names {

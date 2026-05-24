@@ -2962,9 +2962,9 @@ mod tests {
     fn test_compprintfmt() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        // c:1072 — compprintfmt now matches C: returns the visible
-        // width (cc) consumed when rendering the format. Calling with
-        // dopr=0 (don't print) and a literal fmt returns its char count.
+        // c:1072 — compprintfmt returns the visible width (cc) consumed
+        // when rendering the format. Calling with dopr=0 (don't print)
+        // and a literal fmt returns its char count.
         let mut stop = 0i32;
         let cc = compprintfmt("hello", 0, 0, 0, 0, &mut stop);
         assert_eq!(cc, 5);
