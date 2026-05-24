@@ -40,7 +40,7 @@ pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "compgen",
     "compinit",
     "complete",
-    "compopt",
+    "cp",
     "cut",
     "date",
     "dbview",
@@ -1761,12 +1761,6 @@ impl ShellExecutor {
         for cmd in commands {
             self.completions.insert(cmd, spec.clone());
         }
-        0
-    }
-
-    /// Modify completion options
-    pub(crate) fn builtin_compopt(&mut self, args: &[String]) -> i32 {
-        // Basic stub - just accept the options
         0
     }
 
@@ -7586,6 +7580,16 @@ impl ShellExecutor {
         eprintln!("mktemp: too many collisions");
         1
     }
+
+    /// `cp` — in-process recursive copy. zshrs extension (not in
+    /// upstream zsh — `zsh/files` ships `ln`/`mv`/`rm`/`chmod`/
+    /// `chown`/`mkdir`/`rmdir`/`sync` but no `cp`). Thin method
+    /// wrapper around the free fn `cp_impl` so the
+    /// `reg_overridable!` macro in fusevm_bridge can dispatch to it
+    /// the same way as every other coreutils-style builtin.
+    pub(crate) fn builtin_cp(&self, args: &[String]) -> i32 {
+        cp_impl(args)
+    }
 }
 
 // =====================================================================
@@ -7809,29 +7813,6 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
     }
     0
 }
-
-/// `nocorrect CMD ARGS...` — disable spelling correction for CMD
-/// then dispatch the rest. In `-fc` / non-interactive contexts
-/// spelling correction is already off, so this reduces to plain
-/// dispatch. Direct port of zsh's `nocorrect` precommand
-/// modifier (Src/exec.c precommand-modifier loop). Without this
-/// handler, `nocorrect echo hello` resolved `nocorrect` as a
-/// command and exited 127.
-pub(crate) fn nocorrect(args: &[String], _redirects: &[Redirect]) -> i32 {
-    if args.is_empty() {
-        return 0;
-    }
-    // Earlier code routed through `builtin_builtin` / `builtin_command`
-    // dead stubs (return-0 fakes from the old `Src/exec.c` port).
-    // Until `nocorrect` dispatch is wired through the fusevm
-    // execute-command path properly, return 0 — same observable
-    // behavior as the stubs but without pretending to dispatch.
-    // C zsh `nocorrect` is a precommand modifier handled in
-    // `Src/exec.c`; the real port lives in the parser/compiler,
-    // not as a builtin call.
-    0
-}
-
 /// zsleep - sleep with fractional seconds
 pub(crate) fn zsleep(args: &[String]) -> i32 {
     // zsh/Src/Modules/system.c sleep_main accepts a single
@@ -7868,8 +7849,6 @@ pub(crate) fn zsleep(args: &[String]) -> i32 {
     0
 }
 
-/// cp - copy files
-/// Port from zsh/Src/Modules/files.c recursive copy functionality
 pub(crate) fn cp_impl(args: &[String]) -> i32 {
     let mut recursive = false;
     let mut force = false;
@@ -8011,116 +7990,6 @@ pub(crate) fn cp_impl(args: &[String]) -> i32 {
         }
     }
     cp_status
-}
-
-/// zln/zmv/zcp - file operations (zsh/files module)
-pub(crate) fn zfiles(cmd: &str, args: &[String]) -> i32 {
-    let mut force = false;
-    let mut verbose = false;
-    let mut files: Vec<&str> = Vec::new();
-
-    for arg in args {
-        match arg.as_str() {
-            "-f" => force = true,
-            "-v" => verbose = true,
-            "-i" => {} // interactive - ignored
-            s if !s.starts_with('-') => files.push(s),
-            s => {
-                eprintln!("zshrs:{}:1: bad option: {}", cmd, s);
-                return 1;
-            }
-        }
-    }
-
-    if files.len() < 2 {
-        eprintln!("zshrs:{}:1: missing operand", cmd);
-        return 1;
-    }
-
-    let target = files.pop().unwrap();
-    let target_is_dir = std::path::Path::new(target).is_dir();
-
-    for src in files {
-        let dest = if target_is_dir {
-            format!(
-                "{}/{}",
-                target,
-                std::path::Path::new(src)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| src.to_string())
-            )
-        } else {
-            target.to_string()
-        };
-
-        if !force && std::path::Path::new(&dest).exists() {
-            eprintln!("{}: '{}' already exists", cmd, dest);
-            continue;
-        }
-
-        let result = match cmd {
-            "zln" => {
-                #[cfg(unix)]
-                {
-                    std::os::unix::fs::symlink(src, &dest)
-                }
-                #[cfg(not(unix))]
-                {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::Unsupported,
-                        "symlinks not supported",
-                    ))
-                }
-            }
-            "zcp" => std::fs::copy(src, &dest).map(|_| ()),
-            "zmv" => std::fs::rename(src, &dest),
-            _ => Ok(()),
-        };
-
-        match result {
-            Ok(()) => {
-                if verbose {
-                    println!("{} -> {}", src, dest);
-                }
-            }
-            Err(e) => {
-                eprintln!("{}: {}: {}", cmd, src, e);
-                return 1;
-            }
-        }
-    }
-
-    0
-}
-
-/// coproc - manage coprocesses
-pub(crate) fn coproc(args: &[String]) -> i32 {
-    // Basic coproc implementation
-    if args.is_empty() {
-        // List coprocesses
-        println!("(no coprocesses)");
-        return 0;
-    }
-
-    // Start a coprocess
-    let cmd = args.join(" ");
-    match std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&cmd)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => {
-            println!("[coproc] {}", child.id());
-            0
-        }
-        Err(e) => {
-            eprintln!("zshrs:coproc:1: {}", e);
-            1
-        }
-    }
 }
 
 /// zmv / zcp / zln — pattern-based rename. Native Rust port of
