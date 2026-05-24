@@ -6049,10 +6049,26 @@ pub fn bin_unhash(
                 .map(|mut g| g.remove(nm).is_some())
                 .unwrap_or(false),
             Tab::NamedDir => crate::ported::hashnameddir::removenameddirnode(nm).is_some(),
-            Tab::Shfunc => shfunctab_lock()
-                .write()
-                .map(|mut g| g.remove(nm).is_some())
-                .unwrap_or(false),
+            Tab::Shfunc => {
+                let from_tab = shfunctab_lock()
+                    .write()
+                    .map(|mut g| g.remove(nm).is_some())
+                    .unwrap_or(false);
+                // Also remove from the executor's compiled-function /
+                // source maps (vm_helper::ShellExecutor::functions_compiled
+                // and function_source). Without this, `unset -f f`
+                // cleared shfunctab but dispatch_function_call still
+                // found the compiled chunk and ran the old body.
+                // dispatch hits compiled FIRST (vm_helper.rs:1612), so
+                // removing from shfunctab alone left the function
+                // callable.
+                let from_exec = crate::fusevm_bridge::with_executor(|exec| {
+                    let a = exec.functions_compiled.remove(nm).is_some();
+                    let b = exec.function_source.remove(nm).is_some();
+                    a || b
+                });
+                from_tab || from_exec
+            }
             // c:4405 — `if ((hn = ht->removenode(ht, *argv)))`.
             // Removal returns truthy only when the entry actually
             // existed. Previous Rust port hardcoded `true` after a
