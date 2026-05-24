@@ -111,8 +111,21 @@
 
 // ── Zsh/Context/ ──────────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_assign.rs"] pub mod _assign;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_autocd.rs"] pub mod _autocd;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_brace_parameter.rs"] pub mod _brace_parameter;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_condition.rs"] pub mod _condition;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_default.rs"] pub mod _context_default;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_dynamic_directory_name.rs"] pub mod _dynamic_directory_name;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_equal.rs"] pub mod _equal;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_first.rs"] pub mod _first;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_in_vared.rs"] pub mod _in_vared;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_math.rs"] pub mod _math;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_parameter.rs"] pub mod _parameter;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_redirect.rs"] pub mod _redirect;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_subscript.rs"] pub mod _subscript;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_tilde.rs"] pub mod _tilde;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_value.rs"] pub mod _value;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_zcalc_line.rs"] pub mod _zcalc_line;
 
 // ── Zsh/Type/ ─────────────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_aliases.rs"] pub mod _aliases;
@@ -190,8 +203,21 @@ pub use _widgets::_widgets;
 
 // Zsh/Context
 pub use _assign::_assign;
+pub use _autocd::_autocd;
+pub use _brace_parameter::_brace_parameter;
+pub use _condition::_condition;
+pub use _context_default::_default as _context_default;
+pub use _dynamic_directory_name::_dynamic_directory_name;
 pub use _equal::_equal;
+pub use _first::_first;
+pub use _in_vared::_in_vared;
+pub use _math::_math;
 pub use _parameter::_parameter;
+pub use _redirect::_redirect;
+pub use _subscript::{SubscriptTarget, _subscript};
+pub use _tilde::_tilde;
+pub use _value::_value;
+pub use _zcalc_line::{ZCALC_ESCAPES, _zcalc_line};
 
 // Unix/Type — newly-added
 pub use _path_commands::_path_commands;
