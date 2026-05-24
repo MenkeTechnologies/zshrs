@@ -35,6 +35,14 @@ object ZshrsColors {
     @JvmField val FUNCTION_DECL = mk("ZSHRS_FUNCTION_DECL", Defaults.FUNCTION_DECLARATION)
     @JvmField val IDENTIFIER = mk("ZSHRS_IDENTIFIER", Defaults.IDENTIFIER)
     @JvmField val OPTION_NAME = mk("ZSHRS_OPTION_NAME", Defaults.CONSTANT)
+    // Distinct slots for zshrs-only builtins (coreutils drop-ins,
+    // async/await/barrier, doctor, intercept, daemon `z*` …) and for
+    // the compsys `_arguments` / `_files` / `_describe` family. Drive
+    // visual separation between compat / extension / compsys so users
+    // can spot at a glance which class a name belongs to. Fallbacks
+    // mirror BUILTIN so the default scheme stays readable.
+    @JvmField val EXTENSION_BUILTIN = mk("ZSHRS_EXTENSION_BUILTIN", Defaults.STATIC_METHOD)
+    @JvmField val COMPSYS_FUNCTION = mk("ZSHRS_COMPSYS_FUNCTION", Defaults.STATIC_METHOD)
 
     @JvmField val SIGIL = mk("ZSHRS_SIGIL", Defaults.OPERATION_SIGN)
     @JvmField val VARIABLE = mk("ZSHRS_VARIABLE", Defaults.LOCAL_VARIABLE)

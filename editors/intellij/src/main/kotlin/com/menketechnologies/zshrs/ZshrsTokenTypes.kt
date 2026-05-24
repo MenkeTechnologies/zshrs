@@ -33,6 +33,8 @@ object ZshrsTokenTypes {
 
     // ── Builtins / commands ──────────────────────────────────────────────
     @JvmField val BUILTIN = ZshrsTokenType("ZSHRS_BUILTIN")
+    @JvmField val EXTENSION_BUILTIN = ZshrsTokenType("ZSHRS_EXTENSION_BUILTIN")
+    @JvmField val COMPSYS_FUNCTION = ZshrsTokenType("ZSHRS_COMPSYS_FUNCTION")
     @JvmField val COMMAND = ZshrsTokenType("ZSHRS_COMMAND")
     @JvmField val FUNCTION_DECL = ZshrsTokenType("ZSHRS_FUNCTION_DECL")
     @JvmField val IDENTIFIER = ZshrsTokenType("ZSHRS_IDENTIFIER")

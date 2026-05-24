@@ -190,9 +190,66 @@ jobs:
         # tempdir cleanup on slow CI runners.
         run: cargo test --locked --test daemon_http -- --test-threads=1 --nocapture
 
+  intellij-plugin:
+    name: IntelliJ plugin tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: editors/intellij
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        # Kotlin 2.0.21 pinned by IntelliJ Platform Gradle Plugin 2.16
+        # crashes parsing 3-part version strings of newer JDKs. JDK 17
+        # is the supported sweet spot — matches editors/intellij/README.md.
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '17'
+      - name: Cache Gradle + IntelliJ Platform SDK
+        # Caches ~/.gradle/caches AND ~/.gradle/wrapper AND the
+        # downloaded IntelliJ Platform JARs (~1 GB) so they don't
+        # re-download every CI run. Same shape as strykelang's
+        # equivalent job.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            editors/intellij/.intellijPlatform
+          key: ${{ runner.os }}-gradle-${{ hashFiles('editors/intellij/build.gradle.kts', 'editors/intellij/gradle.properties', 'editors/intellij/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+      - name: Run JUnit tests (lexer, commenter, registry, plugin manifest, settings)
+        # `--no-daemon` keeps the gradle process from sticking around
+        # for CI; `-x buildSearchableOptions` skips the heavy IDE
+        # indexing pass — we only need the test task.
+        run: ./gradlew test --no-daemon -x buildSearchableOptions
+      - name: Build plugin zip
+        # Verifies the full pipeline (compile, instrument, package,
+        # search-options indexer) works — catches discontinuous-token
+        # contract violations that unit tests miss.
+        run: ./gradlew buildPlugin --no-daemon
+      - name: Upload plugin zip
+        # Make the built `.zip` downloadable from the workflow run so
+        # contributors can grab it without rebuilding locally.
+        uses: actions/upload-artifact@v4
+        with:
+          name: zshrs-intellij-plugin
+          path: editors/intellij/build/distributions/*.zip
+          retention-days: 14
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intellij-plugin-test-results
+          path: editors/intellij/build/test-results/test/
+          retention-days: 14
+
   release-build:
     name: Release Build
-    needs: [check, test, doc, corpus, recorder-harness, daemon-http]
+    needs: [check, test, doc, corpus, recorder-harness, daemon-http, intellij-plugin]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:

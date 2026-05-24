@@ -26,6 +26,7 @@ class ZshrsSettingsConfigurable : Configurable {
     private val defaultNoRcsBox = JBCheckBox("Default new run configs to `--no-rcs` (-f)")
     private val disableLexerBox = JBCheckBox("Disable lexer highlighting (rely on LSP semantic tokens only)")
     private val fileExtensionsField = JBTextField()
+    private val claimShFilesBox = JBCheckBox("Also claim `.sh` files (treat as zshrs)")
     private val autoRestartBox = JBCheckBox("Auto-restart LSP after settings change")
     private val lspEnvField = JBTextField()
     private val enableHoversBox = JBCheckBox("Show server-provided builtin hovers")
@@ -62,8 +63,10 @@ class ZshrsSettingsConfigurable : Configurable {
 
             .addComponent(sectionHeader("Editor"))
             .addComponent(disableLexerBox)
+            .addComponent(claimShFilesBox)
+            .addTooltip("Off by default — turn on if you save zsh scripts with `.sh` so portable shells can run them.")
             .addLabeledComponent(JBLabel("File extensions:"), fileExtensionsField, 1, false)
-            .addTooltip("Comma-separated, no leading dot. Default: `zsh`.")
+            .addTooltip("Comma-separated, no leading dot. Default: `zsh`. Use this for extensions beyond `.sh` (e.g. `bash, ksh`).")
 
             .addComponent(sectionHeader("Run configurations"))
             .addComponent(defaultNoRcsBox)
@@ -91,7 +94,8 @@ class ZshrsSettingsConfigurable : Configurable {
             lspEnvField.text != s.lspEnv ||
             enableHoversBox.isSelected != s.enableBuiltinHovers ||
             logToFileBox.isSelected != s.logLspToFile ||
-            lspLogPathField.text != s.lspLogPath
+            lspLogPathField.text != s.lspLogPath ||
+            claimShFilesBox.isSelected != s.claimShFiles
     }
 
     override fun apply() {
@@ -107,6 +111,11 @@ class ZshrsSettingsConfigurable : Configurable {
         s.enableBuiltinHovers = enableHoversBox.isSelected
         s.logLspToFile = logToFileBox.isSelected
         s.lspLogPath = lspLogPathField.text
+        s.claimShFiles = claimShFilesBox.isSelected
+        // Re-apply dynamic file-extension associations so the change
+        // takes effect immediately — without this the user would have
+        // to restart the IDE for `.sh` files to start using zshrs.
+        ZshrsExtensionAssociator.applyDynamicAssociations()
     }
 
     override fun reset() {
@@ -122,6 +131,7 @@ class ZshrsSettingsConfigurable : Configurable {
         enableHoversBox.isSelected = s.enableBuiltinHovers
         logToFileBox.isSelected = s.logLspToFile
         lspLogPathField.text = s.lspLogPath
+        claimShFilesBox.isSelected = s.claimShFiles
     }
 
     override fun disposeUIResources() { panel = null }

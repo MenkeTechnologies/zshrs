@@ -124,6 +124,7 @@ private class ZshrsReflectionPanel(private val project: Project) : SimpleToolWin
     private fun prettyName(name: String): String = when (name) {
         "all"          -> "All"
         "builtins"     -> "Builtins"
+        "compat"       -> "Compat"
         "keywords"     -> "Keywords"
         "options"      -> "Options"
         "parameters"   -> "Parameters"

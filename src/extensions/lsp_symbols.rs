@@ -145,6 +145,139 @@ pub fn find_ast_occurrences(src: &str, name: &str, kind: SymbolKind) -> Vec<u32>
     finder.out
 }
 
+/// AST-walk `src` looking for `source X` / `. X` / `zsource X`
+/// commands. Resolves each X against `base_dir` (the dir of the
+/// file being walked) and returns the absolute paths that actually
+/// exist on disk.
+///
+/// Path resolution:
+///   * Leading `~/...` — expanded against `$HOME`.
+///   * Absolute (`/`, `~`) — taken as-is.
+///   * Relative — joined to `base_dir`.
+///
+/// Skipped (intentionally — they require shell runtime state we
+/// don't have at LSP time):
+///   * `$ENV/X` / `${PATH_DIRS}/X` expansion.
+///   * `$fpath`-relative autoload resolution.
+///   * Glob expansion (`source ~/*.zsh`).
+///
+/// Used by `references` and `rename` for source-chain following —
+/// the active file's deps get walked even when they live outside
+/// the LSP workspace root (e.g. `source ~/.zshrc` from a project
+/// `init.zsh`).
+pub fn collect_sourced_paths(src: &str, base_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Some(prog) = parse_locked(src) else {
+        return Vec::new();
+    };
+    let mut finder = SourceFinder {
+        out: Vec::new(),
+    };
+    finder.walk_program(&prog);
+    // Resolve every collected path against `base_dir` + $HOME.
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let mut resolved: Vec<std::path::PathBuf> = Vec::new();
+    for raw in finder.out {
+        let untok = crate::ported::lex::untokenize(&raw);
+        // Drop quoting if present (parser keeps literal text).
+        let trimmed = untok.trim_matches(|c| c == '"' || c == '\'');
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = if let Some(rest) = trimmed.strip_prefix("~/") {
+            match &home {
+                Some(h) => h.join(rest),
+                None => continue,
+            }
+        } else if trimmed.starts_with('/') {
+            std::path::PathBuf::from(trimmed)
+        } else if trimmed.contains('$') {
+            // Skip env-var paths we can't resolve at LSP time.
+            continue;
+        } else {
+            base_dir.join(trimmed)
+        };
+        // Canonicalize when possible so symlinks dedup; fall back to
+        // the original path otherwise (canonicalize fails on missing
+        // files, which we DO want to skip).
+        if let Ok(canon) = std::fs::canonicalize(&path) {
+            resolved.push(canon);
+        }
+    }
+    resolved
+}
+
+struct SourceFinder {
+    out: Vec<String>,
+}
+
+impl SourceFinder {
+    fn walk_program(&mut self, p: &ZshProgram) {
+        for list in &p.lists {
+            self.walk_sublist(&list.sublist);
+        }
+    }
+    fn walk_sublist(&mut self, sl: &ZshSublist) {
+        self.walk_pipe(&sl.pipe);
+        if let Some((_, next)) = &sl.next {
+            self.walk_sublist(next);
+        }
+    }
+    fn walk_pipe(&mut self, pipe: &ZshPipe) {
+        self.walk_command(&pipe.cmd);
+        if let Some(next) = &pipe.next {
+            self.walk_pipe(next);
+        }
+    }
+    fn walk_command(&mut self, cmd: &ZshCommand) {
+        match cmd {
+            ZshCommand::Simple(s) => {
+                // `source X` / `. X` / `zsource X` — first word matches
+                // one of the source-loader spellings, second word is
+                // the path.
+                if let Some(verb) = s.words.first() {
+                    let v = crate::ported::lex::untokenize(verb);
+                    if matches!(v.as_str(), "source" | "." | "zsource") {
+                        if let Some(arg) = s.words.get(1) {
+                            self.out.push(arg.clone());
+                        }
+                    }
+                }
+            }
+            ZshCommand::FuncDef(fd) => self.walk_program(&fd.body),
+            ZshCommand::Subsh(p) | ZshCommand::Cursh(p) => self.walk_program(p),
+            ZshCommand::For(f) => self.walk_program(&f.body),
+            ZshCommand::Case(c) => {
+                for arm in &c.arms {
+                    self.walk_program(&arm.body);
+                }
+            }
+            ZshCommand::If(iff) => {
+                self.walk_program(&iff.cond);
+                self.walk_program(&iff.then);
+                for (cond, body) in &iff.elif {
+                    self.walk_program(cond);
+                    self.walk_program(body);
+                }
+                if let Some(els) = &iff.else_ {
+                    self.walk_program(els);
+                }
+            }
+            ZshCommand::While(w) | ZshCommand::Until(w) => {
+                self.walk_program(&w.cond);
+                self.walk_program(&w.body);
+            }
+            ZshCommand::Repeat(r) => self.walk_program(&r.body),
+            ZshCommand::Try(t) => {
+                self.walk_program(&t.try_block);
+                self.walk_program(&t.always);
+            }
+            ZshCommand::Redirected(inner, _) => self.walk_command(inner),
+            ZshCommand::Time(Some(sl)) => self.walk_sublist(sl),
+            ZshCommand::Time(None) | ZshCommand::Cond(_) | ZshCommand::Arith(_) => {}
+        }
+    }
+}
+
 struct OccurrenceFinder<'a> {
     target: &'a str,
     kind: SymbolKind,

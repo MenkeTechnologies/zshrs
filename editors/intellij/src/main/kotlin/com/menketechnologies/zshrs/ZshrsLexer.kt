@@ -31,11 +31,32 @@ class ZshrsLexer : LexerBase() {
     private var tokenType: IElementType? = null
     private var state = 0
 
+    // Depth of unclosed `${…}` openers. Incremented when we emit a `${`
+    // opener (PARAM_EXPANSION), decremented when we hit the matching
+    // `}`. Used to recognize the closing `}` as part of the param
+    // expansion (PARAM_EXPANSION token, same color) rather than a bare
+    // RBRACE / command-group close. Nested `${a${b}}` increments twice.
+    private var paramBraceDepth = 0
+
+    // When `${…}` was opened inside an interpolating string, save the
+    // resume-state here so the matching `}` can pop us back into
+    // string-content mode. Required because while inside `${…}` we
+    // want the NORMAL lexer to run (the body is param-expansion
+    // grammar, not string content); resuming string-content mode too
+    // early would treat `HOME:-/tmp}y"` as a single string segment.
+    private var pendingStringResumeState = STATE_NORMAL
+
     override fun start(buffer: CharSequence, startOffset: Int, endOffset: Int, initialState: Int) {
         buf = buffer
         this.endOffset = endOffset
         pos = startOffset
         state = initialState
+        // Reset transient counters that DON'T survive lexer restarts.
+        // `paramBraceDepth` tracks within-document `${…}` nesting and
+        // must start at 0 — non-zero from a prior buffer would mis-
+        // classify the first `}` we see as a param-close.
+        paramBraceDepth = 0
+        pendingStringResumeState = STATE_NORMAL
         advance()
     }
 
@@ -70,7 +91,16 @@ class ZshrsLexer : LexerBase() {
         when {
             // Shebang first line takes priority over plain comment
             c == '#' && pos == 0 && peek(1) == '!' -> consumeShebang()
-            c == '#' -> consumeLineComment()
+            // `#` inside an open `${…}` is the parameter-length
+            // operator (`${#var}`) or a pattern-anchor (`${var/#pat/repl}`),
+            // NOT a line comment. Only treat `#` as a comment-start
+            // when we're at the OUTER lexer level (paramBraceDepth==0).
+            c == '#' && paramBraceDepth == 0 -> consumeLineComment()
+            // Inside `${…}`, emit `#` as part of the param-expansion
+            // segment so it gets the param color (not BAD_CHARACTER
+            // from the catch-all below). Covers `${#var}` length-op,
+            // `${var/#pat/repl}` pattern-anchor, etc.
+            c == '#' -> emit(1, ZshrsTokenTypes.PARAM_EXPANSION)
             c == '\n' || c == '\r' || c == ' ' || c == '\t' -> consumeWhitespace()
             c == '"' -> consumeInterpolatingString('"', ZshrsTokenTypes.STRING_DQ)
             c == '\'' -> consumeString('\'', ZshrsTokenTypes.STRING_SQ)
@@ -99,7 +129,36 @@ class ZshrsLexer : LexerBase() {
             c == ';' && peek(1) == '|' -> emit(2, ZshrsTokenTypes.DOUBLE_SEMI)
             c == '(' -> emit(1, ZshrsTokenTypes.LPAREN)
             c == ')' -> emit(1, ZshrsTokenTypes.RPAREN)
+            c == '{' && paramBraceDepth > 0 -> {
+                // Literal `{` inside a `${…}` default-value (e.g.
+                // `${1:-{\}}` whose default is the literal `{}`).
+                // Emit as PARAM_EXPANSION so the brace matcher
+                // doesn't pair it with the surrounding function's
+                // closing `}` — the regression was: function-close
+                // `}` highlighted as the partner of this literal `{`,
+                // and the visible `}` on the next line looked
+                // unmatched / wrong-colored.
+                emit(1, ZshrsTokenTypes.PARAM_EXPANSION)
+            }
             c == '{' -> emit(1, ZshrsTokenTypes.LBRACE)
+            c == '}' && paramBraceDepth > 0 -> {
+                // Close marker for a `${…}` we previously opened —
+                // emit as PARAM_EXPANSION so it pairs visually with
+                // its `${` opener. Decrement the depth tracker so a
+                // subsequent literal `}` (command-group close)
+                // routes back through the bare-RBRACE branch.
+                paramBraceDepth--
+                emit(1, ZshrsTokenTypes.PARAM_EXPANSION)
+                // If this close ends the OUTERMOST `${…}` AND we
+                // entered it from a string-interpolation context,
+                // restore the string-resume state so the next
+                // advance() picks up the rest of the surrounding
+                // `"…"` / `` `…` ``.
+                if (paramBraceDepth == 0 && pendingStringResumeState != STATE_NORMAL) {
+                    state = pendingStringResumeState
+                    pendingStringResumeState = STATE_NORMAL
+                }
+            }
             c == '}' -> emit(1, ZshrsTokenTypes.RBRACE)
             c == '[' -> emit(1, ZshrsTokenTypes.LBRACKET)
             c == ']' -> emit(1, ZshrsTokenTypes.RBRACKET)
@@ -122,12 +181,19 @@ class ZshrsLexer : LexerBase() {
             // OPERATOR + IDENTIFIER + … (which made `do`/`load`/etc.
             // mid-name get mis-highlighted as keywords).
             // zsh permits `.zinit-foo` / `+vi-mode` / `@hook-fn` / `:foo`
-            // / `^foo` as identifier-start. Per `Src/utils.c::inittyptab`,
-            // `.` and `-` are explicitly in IUSER; function names accept
-            // anything that isn't a metachar. The conservative set used
-            // here covers every convention seen in real plugins (zinit,
-            // p10k, oh-my-zsh, zsh-syntax-highlighting).
-            (c == '.' || c == '+' || c == '@' || c == ':' || c == '^') &&
+            // / `^foo` / `-hsmw-…` as identifier-start. Per
+            // `Src/utils.c::inittyptab`, `.` and `-` are explicitly in
+            // IUSER; function names accept anything that isn't a
+            // metachar. Audited against ~/.zinit/plugins/** — the set
+            // here covers zsh-syntax-highlighting (`-hsmw-…`), zui
+            // (`-zui_std_…`), zinit (`.zinit-…`), p10k (`+vi-mode-…`),
+            // async hooks (`@hook-fn`), and OO-style (`:hist:…`).
+            //
+            // Trade-off for leading `-`: `cmd -opt arg` now lexes as
+            // IDENTIFIER+IDENTIFIER instead of IDENTIFIER+OPERATOR+IDENT.
+            // That's actually closer to how shell treats the option —
+            // it IS a single word at the parser level.
+            (c == '.' || c == '+' || c == '@' || c == ':' || c == '^' || c == '-') &&
                 peek(1).let { it == '_' || it.isLetter() } ->
                 consumeWord()
             isOperatorChar(c) -> emit(1, ZshrsTokenTypes.OPERATOR)
@@ -165,20 +231,18 @@ class ZshrsLexer : LexerBase() {
     }
 
     /// Open + consume a `"..."` or `` `...` `` string with `$var` /
-    /// `${...}` / `$(...)` interpolation splitting. Emits the run of
-    /// literal characters up to the first `$`-interpolation (or the
-    /// closing quote) as a single string token. The interpolation, if
-    /// any, is handled on the next `advance()` via the `STATE_*_INTERP`
-    /// branch — splitting the string into [STRING] [VARIABLE] [STRING]
-    /// segments is what lets the IDE offer completion + recognize the
-    /// var as a variable inside the string (a single string token would
-    /// trip `ZshrsQuoteHandler.isInsideLiteral` and suppress both).
+    /// `${...}` / `$(...)` interpolation splitting. Always emits the
+    /// opening quote as its OWN string token (a discontinuous token
+    /// stream — gaps between tokens — is a contract violation that
+    /// makes IntelliJ's searchable-options indexer crash); the body
+    /// scan runs on the next advance() via the RESUME state.
+    /// Splitting the string into [STRING] [VARIABLE] [STRING] is what
+    /// lets the IDE offer completion on the var.
     private fun consumeInterpolatingString(quote: Char, tt: IElementType) {
-        // Consume the opening quote first; the prefix-or-rest scan is
-        // shared with the RESUME path that picks up after an
-        // interpolation closes.
-        pos++
-        consumeStringContent(quote, tt)
+        pos++  // past the opening quote
+        tokenEnd = pos
+        tokenType = tt
+        state = if (quote == '"') STATE_DQ_RESUME else STATE_BT_RESUME
     }
 
     /// Scan the body of a `"..."` / `` `...` `` string starting at the
@@ -231,11 +295,20 @@ class ZshrsLexer : LexerBase() {
     /// advance() picks up scanning the rest of the string.
     private fun consumeStringInterpolation(quote: Char) {
         val resume = if (quote == '"') STATE_DQ_RESUME else STATE_BT_RESUME
-        // pos at the `$` — delegate to the existing top-level $-handler
-        // for the actual span calc + classification, then override the
-        // state it leaves so the next advance() resumes string content.
+        // Reset `tokenStart` — see consumeStringInterpolation docs above.
+        tokenStart = pos
+        val depthBefore = paramBraceDepth
         consumeDollar()
-        state = resume
+        // If consumeDollar opened a `${…}` (depth went up), DON'T
+        // resume string mode yet — the body needs normal-lexer
+        // tokenization. Save the resume target so the matching `}`
+        // pops us back into string-content mode.
+        if (paramBraceDepth > depthBefore) {
+            pendingStringResumeState = resume
+            state = STATE_NORMAL
+        } else {
+            state = resume
+        }
     }
 
     private fun consumeString(quote: Char, tt: IElementType) {
@@ -335,20 +408,59 @@ class ZshrsLexer : LexerBase() {
             return
         }
         val nxt = buf[p]
-        // ${...} parameter expansion — consume the whole {...} block
+        // ${...} parameter expansion — emit the leading `${` as
+        // PARAM_EXPANSION (covers `${` opener), then re-enter the
+        // outer lexer so the variable name inside lexes as its own
+        // VARIABLE / IDENTIFIER token. The IDE can offer completion
+        // on that token (Cmd-Space inside `${name|}` replaces the
+        // `name` segment cleanly instead of overwriting the entire
+        // expansion). The closing `}` and any modifiers (`:-default`,
+        // `:offset:length`, `/pat/replace`, `(flags)`, etc.) flow
+        // through the normal token stream until the matching close.
+        //
+        // The full multi-token rendering is enabled by setting a
+        // STATE_IN_PARAM_BODY marker so the close `}` knows to emit
+        // PARAM_EXPANSION_CLOSE rather than the bare LBRACE/RBRACE
+        // it would otherwise. Brace depth tracked at the outer level
+        // so the `}` that closes us doesn't get confused with a
+        // command-group `}`.
+        //
+        // Pre-flight: verify the param expansion actually closes
+        // before we commit to segment mode. Without this, an unclosed
+        // `${` would leave the lexer in body mode forever (file-level
+        // OOM cascade). The pre-scan uses the same brace-counting
+        // rules as the old opaque path: `${` nests, bare `{` is
+        // literal, `\}` is escaped, FIRST `}` at depth 0 closes.
         if (nxt == '{') {
-            p++
+            // pos at `$`. Pre-scan to find matching `}`.
+            var pp = p + 1  // past `{`
             var depth = 1
-            while (p < endOffset && depth > 0) {
-                val c = buf[p]
-                if (c == '{') depth++
-                else if (c == '}') depth--
-                if (depth == 0) { p++; break }
-                if (c == '\\' && p + 1 < endOffset) { p += 2; continue }
-                p++
+            while (pp < endOffset && depth > 0) {
+                val cc = buf[pp]
+                if (cc == '\\' && pp + 1 < endOffset) { pp += 2; continue }
+                if (cc == '$' && pp + 1 < endOffset && buf[pp + 1] == '{') {
+                    depth++; pp += 2; continue
+                }
+                if (cc == '}') {
+                    depth--; pp++
+                    if (depth == 0) break
+                    continue
+                }
+                pp++
             }
-            tokenEnd = p; pos = p
-            tokenType = ZshrsTokenTypes.PARAM_EXPANSION
+            if (depth != 0) {
+                // Unclosed — fall back to opaque-token mode so the
+                // rest of the file still lexes (rather than leaving
+                // the lexer in body mode forever).
+                tokenEnd = pp; pos = pp
+                tokenType = ZshrsTokenTypes.PARAM_EXPANSION
+                return
+            }
+            // Emit `${` as the opener, set state so the matching `}`
+            // gets recognized as PARAM_EXPANSION_CLOSE, and let the
+            // outer lexer take over for the body.
+            paramBraceDepth++
+            emit(2, ZshrsTokenTypes.PARAM_EXPANSION)
             return
         }
         // $(...) command substitution — punctuation-only; treat as variable
@@ -413,7 +525,7 @@ class ZshrsLexer : LexerBase() {
         // `advance()` loop would re-fire on the same byte → OOM.)
         if (p < endOffset) {
             val c0 = buf[p]
-            if ((c0 == '.' || c0 == '+' || c0 == '@' || c0 == ':' || c0 == '^')
+            if ((c0 == '.' || c0 == '+' || c0 == '@' || c0 == ':' || c0 == '^' || c0 == '-')
                 && p + 1 < endOffset
                 && (buf[p + 1] == '_' || buf[p + 1].isLetter())
             ) {
@@ -426,12 +538,14 @@ class ZshrsLexer : LexerBase() {
                 p++
                 continue
             }
-            // Hyphens are valid INSIDE a zsh identifier — function names
-            // like `daemon-lock-do` / `daemon-export-pdf` are one symbol,
-            // not five. Only swallow the hyphen when followed by another
-            // word character; a trailing `-` (e.g. `cmd -` for a flag
-            // separator) stays a separate token.
-            if (c == '-' && p + 1 < endOffset) {
+            // Internal connector chars from `Src/utils.c::IUSER` — the
+            // ones zsh allows mid-name. `-` is the common case
+            // (`daemon-lock-do`, `daemon-export-pdf`); `.` covers
+            // `_dotdrop.sh-compare` / `_polca.sh`; `:` covers
+            // `:hist:precmd`. Only swallow when followed by another
+            // word char so trailing `-` / `.` (option separator,
+            // end-of-statement dot) stays a distinct token.
+            if ((c == '-' || c == '.' || c == ':') && p + 1 < endOffset) {
                 val nxt = buf[p + 1]
                 if (nxt == '_' || nxt.isLetterOrDigit()) {
                     p++
