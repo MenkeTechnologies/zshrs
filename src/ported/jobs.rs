@@ -448,12 +448,10 @@ pub fn handle_sub(jobtab: &mut [job], super_idx: usize, fg: bool) -> i32 {
                 .map(|p| p.pid != jobtab[super_idx].gleader)
                 .unwrap_or(false);
             if cond_attach && (single_proc || cp || first_pid_neq_gleader) {
-                // attachtty is interactive substrate — call the helper
-                // when wired; for now just log the intent.
-                tracing::trace!(
-                    "handle_sub: attachtty({}) (substrate gap)",
-                    jobtab[super_idx].gleader
-                );
+                // c:319 — `attachtty(jn->gleader);` hand the tty to
+                // the super-job's process group leader.
+                #[cfg(unix)]
+                crate::ported::utils::attachtty(jobtab[super_idx].gleader);
             }
             // c:321 — kill(sj->other, SIGCONT);
             #[cfg(unix)]
