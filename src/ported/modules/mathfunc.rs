@@ -763,4 +763,138 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // math_func — dispatcher for math/MF_* function IDs.
+    // Anchored to known math library results. Build mnumber args
+    // explicitly; pin the resulting mnumber's type and float value
+    // (or integer value for MF_ABS which preserves input type).
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn mn_int(v: i64) -> mnumber {
+        mnumber { l: v, d: 0.0, type_: MN_INTEGER }
+    }
+
+    fn mn_float(v: f64) -> mnumber {
+        mnumber { l: 0, d: v, type_: MN_FLOAT }
+    }
+
+    /// `abs(-5)` (integer) preserves integer type and returns 5.
+    #[test]
+    fn math_func_abs_integer_input_preserves_int_type() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("abs", 1, &[mn_int(-5)], MF_ABS);
+        assert_eq!(r.type_, MN_INTEGER);
+        assert_eq!(r.l, 5);
+    }
+
+    /// `abs(-3.14)` (float) preserves float type and returns 3.14.
+    /// **ZSHRS BUG**: the MF_ABS arm sets `ret.d = argv[0].d.abs()` but
+    /// the post-match block at c:431-432 unconditionally assigns
+    /// `ret.d = retd` (which starts at 0.0 and was never set by MF_ABS).
+    /// MF_ABS needs to either set `retd` instead, or set TF_NOASS to
+    /// skip the post-match overwrite.
+    #[test]
+    #[ignore = "ZSHRS BUG: math_func MF_ABS float result clobbered by ret.d = retd at c:432"]
+    fn math_func_abs_float_input_preserves_float_type_anchored() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("abs", 1, &[mn_float(-3.14)], MF_ABS);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!(
+            (r.d - 3.14).abs() < 1e-9,
+            "abs(-3.14) must be 3.14; got {} (zsh: 3.14)",
+            r.d
+        );
+    }
+
+    /// `abs(+5)` → 5 (positive input unchanged).
+    #[test]
+    fn math_func_abs_positive_input_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("abs", 1, &[mn_int(5)], MF_ABS);
+        assert_eq!(r.l, 5);
+    }
+
+    /// `sqrt(16.0)` → 4.0.
+    #[test]
+    fn math_func_sqrt_of_sixteen_is_four() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("sqrt", 1, &[mn_float(16.0)], MF_SQRT);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!((r.d - 4.0).abs() < 1e-9);
+    }
+
+    /// `sqrt(0.0)` → 0.0.
+    #[test]
+    fn math_func_sqrt_of_zero_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("sqrt", 1, &[mn_float(0.0)], MF_SQRT);
+        assert!(r.d.abs() < 1e-9);
+    }
+
+    /// `sqrt(2.0)` ≈ 1.41421356...
+    #[test]
+    fn math_func_sqrt_of_two_is_root_two() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("sqrt", 1, &[mn_float(2.0)], MF_SQRT);
+        assert!((r.d - std::f64::consts::SQRT_2).abs() < 1e-9);
+    }
+
+    /// `floor(-2.3)` → -3.0 (floors toward negative infinity).
+    #[test]
+    fn math_func_floor_negative_rounds_toward_neg_infinity() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("floor", 1, &[mn_float(-2.3)], MF_FLOOR);
+        assert!((r.d - (-3.0)).abs() < 1e-9);
+    }
+
+    /// `ceil(-2.7)` → -2.0 (ceils toward positive infinity).
+    #[test]
+    fn math_func_ceil_negative_rounds_toward_pos_infinity() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("ceil", 1, &[mn_float(-2.7)], MF_CEIL);
+        assert!((r.d - (-2.0)).abs() < 1e-9);
+    }
+
+    /// `sin(π/2)` → 1.0.
+    #[test]
+    fn math_func_sin_of_pi_over_two_is_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("sin", 1, &[mn_float(std::f64::consts::FRAC_PI_2)], MF_SIN);
+        assert!((r.d - 1.0).abs() < 1e-9);
+    }
+
+    /// `log(e)` → 1.0 (natural log of e).
+    #[test]
+    fn math_func_log_of_e_is_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("log", 1, &[mn_float(std::f64::consts::E)], MF_LOG);
+        assert!((r.d - 1.0).abs() < 1e-9);
+    }
+
+    /// `log10(100)` → 2.0.
+    #[test]
+    fn math_func_log10_of_hundred_is_two() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("log10", 1, &[mn_float(100.0)], MF_LOG10);
+        assert!((r.d - 2.0).abs() < 1e-9);
+    }
+
+    /// `log2(8)` → 3.0.
+    #[test]
+    fn math_func_log2_of_eight_is_three() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("log2", 1, &[mn_float(8.0)], MF_LOG2);
+        assert!((r.d - 3.0).abs() < 1e-9);
+    }
+
+    // ─ Integer input → float coercion (TF_INT1 NOT set) ────────────
+    /// `sqrt(16)` (int input) coerces to float, returns 4.0.
+    #[test]
+    fn math_func_sqrt_int_input_coerces_to_float() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("sqrt", 1, &[mn_int(16)], MF_SQRT);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!((r.d - 4.0).abs() < 1e-9);
+    }
 }
