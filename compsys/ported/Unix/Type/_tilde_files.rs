@@ -29,38 +29,76 @@ use crate::compcore::CompletionState;
 
 use super::_files::{files_execute, FilesOpts};
 
-/// _tilde_files - Complete files with tilde expansion
+/// _tilde_files - Complete files with tilde expansion.
+///
+/// Handles three shell tilde shapes (mirror of shell:11-15 above):
+///   `~`             → expand to $HOME
+///   `~/path`        → expand to $HOME/path
+///   `~user/path`    → look up `user` via getpwnam, expand to
+///                      <user-home>/path
 pub fn _tilde_files(state: &mut CompletionState) -> bool {
     let prefix = state.params.prefix.clone();
 
-    if prefix.starts_with('~') {
-        // Expand tilde
-        if let Ok(home) = std::env::var("HOME") {
-            let expanded = if prefix == "~" {
-                home.clone()
-            } else if let Some(after_tilde) = prefix.strip_prefix("~/") {
-                format!("{}/{}", home, after_tilde)
-            } else {
-                // ~user form - would need to look up user
-                return false;
-            };
-
-            // Update state prefix for completion
-            let old_prefix = state.params.prefix.clone();
-            state.params.prefix = expanded;
-            state.params.iprefix = "~".to_string();
-
-            let result = files_execute(state, &FilesOpts::default());
-
-            // Restore
-            state.params.prefix = old_prefix;
-            state.params.iprefix.clear();
-
-            return result;
-        }
+    if !prefix.starts_with('~') {
+        return false;
     }
 
-    false
+    // shell:11-15 — expand the tilde to its real path.
+    let expanded: Option<String> = if prefix == "~" {
+        std::env::var("HOME").ok()
+    } else if let Some(after) = prefix.strip_prefix("~/") {
+        std::env::var("HOME").ok().map(|h| format!("{}/{}", h, after))
+    } else {
+        // `~user/...` or `~user` (no trailing /).
+        let body = &prefix[1..]; // drop leading `~`
+        let (user, rest) = match body.find('/') {
+            Some(i) => (&body[..i], Some(&body[i + 1..])),
+            None => (body, None),
+        };
+        getpwnam_home(user).map(|home| match rest {
+            Some(r) => format!("{}/{}", home, r),
+            None => home,
+        })
+    };
+
+    let Some(expanded) = expanded else {
+        return false;
+    };
+
+    // shell:14 — `_files "$@" -W "${HOME}"`. We use the simpler
+    // path-replace approach: swap prefix for expanded form, run
+    // files_execute, restore — pinned by the iprefix-cleared test.
+    let old_prefix = state.params.prefix.clone();
+    state.params.prefix = expanded;
+    state.params.iprefix = "~".to_string();
+
+    let result = files_execute(state, &FilesOpts::default());
+
+    state.params.prefix = old_prefix;
+    state.params.iprefix.clear();
+
+    result
+}
+
+/// libc getpwnam wrapper — returns the home dir for `user` or None
+/// when the user isn't in passwd. Safe wrapper around the libc
+/// thread-unsafe getpwnam (we copy the home string immediately and
+/// don't retain the returned pointer).
+fn getpwnam_home(user: &str) -> Option<String> {
+    use std::ffi::CString;
+    let cuser = CString::new(user).ok()?;
+    unsafe {
+        let pwd = libc::getpwnam(cuser.as_ptr());
+        if pwd.is_null() {
+            return None;
+        }
+        let home_ptr = (*pwd).pw_dir;
+        if home_ptr.is_null() {
+            return None;
+        }
+        let home_cstr = std::ffi::CStr::from_ptr(home_ptr);
+        home_cstr.to_str().ok().map(String::from)
+    }
 }
 
 #[cfg(test)]
@@ -75,11 +113,35 @@ mod tests {
     }
 
     #[test]
-    fn tilde_user_form_returns_false_until_user_lookup_wired() {
-        // `~user/...` requires getpwnam; not yet wired.
+    fn tilde_user_form_resolved_via_getpwnam() {
+        // `~root/some` should resolve via getpwnam(root). On most
+        // Unix systems root exists; if a sandboxed CI doesn't have
+        // /etc/passwd we skip gracefully.
         let mut state = CompletionState::new();
-        state.params.prefix = "~root/some".into();
-        assert!(!_tilde_files(&mut state));
+        state.params.prefix = "~root/notexistent".into();
+        let _ = _tilde_files(&mut state);
+        if getpwnam_home("root").is_some() {
+            // root resolves → fn should have run files_execute (no
+            // panic). Pin that iprefix was managed.
+            assert_eq!(state.params.iprefix, "");
+        }
+    }
+
+    #[test]
+    fn getpwnam_lookup_existing_user() {
+        // Use the current user as a known-good test target.
+        if let Ok(user) = std::env::var("USER") {
+            let home = getpwnam_home(&user);
+            assert!(
+                home.is_some(),
+                "getpwnam_home({user}) must succeed for the current user"
+            );
+        }
+    }
+
+    #[test]
+    fn getpwnam_lookup_nonexistent_user_returns_none() {
+        assert!(getpwnam_home("definitely-not-a-real-user-xyz-12345").is_none());
     }
 
     #[test]

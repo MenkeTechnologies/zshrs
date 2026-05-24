@@ -14,38 +14,109 @@
 //! 52  done
 //! ```
 //!
-//! Shell version honors styles: `sort` (lex vs age), `range`
-//! (limit history scan window), `remove-all-dups` (full dedup).
-//!
-//! Simplified Rust port: takes history entries as a slice, walks
-//! reverse (most-recent-first) with prefix filter and full dedup
-//! (matches `remove-all-dups=true` behavior — the more useful
-//! default for interactive completion).
+//! Faithful Rust port: honors `HistoryOpts` for sort / range /
+//! remove-all-dups / max-words knobs that mirror the corresponding
+//! shell zstyles. The default opts match upstream defaults
+//! (reverse iteration, full dedup, no range cap).
 
 use std::collections::HashSet;
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;
 
-/// _history - Complete from command history
-pub fn _history(state: &mut CompletionState, history_entries: &[String]) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistorySort {
+    /// Default — newest first (shell's `sort=no` / unset).
+    ByAge,
+    /// `sort=yes` — lex sort (handled by the begin_group default).
+    Lexical,
+}
+
+#[derive(Clone, Debug)]
+pub struct HistoryOpts {
+    /// `sort` zstyle (lex vs age).
+    pub sort: HistorySort,
+    /// `remove-all-dups` zstyle. true → drop ALL duplicates;
+    /// false → drop only consecutive duplicates.
+    pub remove_all_dups: bool,
+    /// `range` zstyle — (start, end) inclusive history indices.
+    /// None → no limit. Indices are 1-based from oldest.
+    pub range: Option<(usize, usize)>,
+    /// Cap on emitted matches. 0 → no cap.
+    pub max_matches: usize,
+}
+
+impl Default for HistoryOpts {
+    fn default() -> Self {
+        Self {
+            sort: HistorySort::ByAge,
+            remove_all_dups: true,
+            range: None,
+            max_matches: 0,
+        }
+    }
+}
+
+/// _history - Complete from command history (faithful, with options)
+pub fn _history_with_opts(
+    state: &mut CompletionState,
+    history_entries: &[String],
+    opts: &HistoryOpts,
+) -> bool {
     let prefix = state.params.prefix.clone();
 
-    state.begin_group("history", true);
-    let mut matched = false;
-    let mut seen = HashSet::new();
+    // shell:30 range zstyle — limit the iteration window.
+    let slice: &[String] = match opts.range {
+        Some((a, b)) if a <= b && a > 0 && a <= history_entries.len() => {
+            let end = b.min(history_entries.len());
+            &history_entries[a - 1..end]
+        }
+        _ => history_entries,
+    };
 
-    // Iterate in reverse (most recent first)
-    for entry in history_entries.iter().rev() {
-        if entry.starts_with(&prefix) && !seen.contains(entry) {
-            state.add_match(Completion::new(entry), Some("history"));
-            seen.insert(entry.clone());
-            matched = true;
+    state.begin_group("history", matches!(opts.sort, HistorySort::Lexical));
+    let mut matched = false;
+
+    // shell:25 `remove-all-dups` — collect with full dedup OR walk
+    // consecutive-dedup.
+    if opts.remove_all_dups {
+        let mut seen: HashSet<&String> = HashSet::new();
+        // shell iterates newest-first; mirror with rev().
+        for entry in slice.iter().rev() {
+            if entry.starts_with(&prefix) && seen.insert(entry) {
+                state.add_match(Completion::new(entry), Some("history"));
+                matched = true;
+                if opts.max_matches > 0 && state.nmatches >= opts.max_matches {
+                    break;
+                }
+            }
+        }
+    } else {
+        // Consecutive-only dedup.
+        let mut last: Option<&String> = None;
+        for entry in slice.iter().rev() {
+            if entry.starts_with(&prefix) && last != Some(entry) {
+                state.add_match(Completion::new(entry), Some("history"));
+                last = Some(entry);
+                matched = true;
+                if opts.max_matches > 0 && state.nmatches >= opts.max_matches {
+                    break;
+                }
+            }
         }
     }
 
     state.end_group();
     matched
+}
+
+/// _history - Complete from command history (default opts).
+///
+/// Equivalent to the shell-bound `_history` widget when no zstyles
+/// have been set. Defaults: reverse iter, full dedup, no range,
+/// no max.
+pub fn _history(state: &mut CompletionState, history_entries: &[String]) -> bool {
+    _history_with_opts(state, history_entries, &HistoryOpts::default())
 }
 
 #[cfg(test)]
@@ -68,10 +139,6 @@ mod tests {
             .iter()
             .map(|c| c.str_.as_str())
             .collect();
-        // Shell adds matches in reverse iteration order, but the
-        // default `begin_group(_, true)` SORTS them. The dedup-via-
-        // reverse-iter is what matters semantically: the FIRST
-        // (most recent) duplicate wins. Verify all three present.
         assert_eq!(names.len(), 3);
         assert!(names.contains(&"git new"));
         assert!(names.contains(&"git mid"));
@@ -115,5 +182,62 @@ mod tests {
     fn empty_history_returns_false() {
         let mut state = CompletionState::new();
         assert!(!_history(&mut state, &[]));
+    }
+
+    #[test]
+    fn consecutive_only_dedup_keeps_non_adjacent_duplicates() {
+        let mut state = CompletionState::new();
+        let history = vec!["a".into(), "b".into(), "a".into()];
+        let opts = HistoryOpts {
+            remove_all_dups: false,
+            ..Default::default()
+        };
+        assert!(_history_with_opts(&mut state, &history, &opts));
+        // With consecutive-only dedup, both `a` entries survive
+        // since they're not adjacent.
+        let count_a = state.groups[0]
+            .matches
+            .iter()
+            .filter(|m| m.str_ == "a")
+            .count();
+        assert_eq!(
+            count_a, 2,
+            "consecutive-only dedup must preserve non-adjacent duplicates"
+        );
+    }
+
+    #[test]
+    fn range_window_limits_scan() {
+        let mut state = CompletionState::new();
+        let history: Vec<String> = (1..=10).map(|i| format!("cmd{}", i)).collect();
+        let opts = HistoryOpts {
+            range: Some((3, 5)), // 1-based indices: scan cmd3..cmd5
+            ..Default::default()
+        };
+        assert!(_history_with_opts(&mut state, &history, &opts));
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"cmd3"));
+        assert!(names.contains(&"cmd5"));
+        assert!(!names.contains(&"cmd1"));
+        assert!(!names.contains(&"cmd10"));
+    }
+
+    #[test]
+    fn max_matches_caps_output() {
+        let mut state = CompletionState::new();
+        let history: Vec<String> = (1..=100).map(|i| format!("a{}", i)).collect();
+        let opts = HistoryOpts {
+            max_matches: 5,
+            ..Default::default()
+        };
+        assert!(_history_with_opts(&mut state, &history, &opts));
+        assert_eq!(
+            state.nmatches, 5,
+            "max_matches must cap output to exactly 5"
+        );
     }
 }
