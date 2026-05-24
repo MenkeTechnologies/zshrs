@@ -142,4 +142,18 @@ mod tests {
             .collect();
         assert_eq!(names.len(), 3);
     }
+
+    #[test]
+    fn each_unset_carries_unset_disp_label() {
+        let mut state = CompletionState::new();
+        let opts: Vec<(&str, bool)> = vec![("A", false), ("B", false)];
+        let _ = _options_unset(&mut state, &opts);
+        for m in &state.groups[0].matches {
+            assert!(
+                m.disp.as_deref().unwrap_or("").ends_with("(unset)"),
+                "every unset option needs `(unset)` disp; got {:?}",
+                m.disp
+            );
+        }
+    }
 }

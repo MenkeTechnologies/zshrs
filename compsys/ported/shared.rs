@@ -24,19 +24,63 @@ pub fn is_executable(path: &Path) -> bool {
     false
 }
 
-/// Trivial shell-glob matcher — supports `*` and `?` only, no
-/// character classes / extended globs. Sufficient for the `[(R)pat]`
-/// value-match in `_widgets` and the prefix filters used by other
-/// ports. For full glob semantics use `crate::matching`.
+/// Shell-glob matcher — supports `*`, `?`, and `(a|b|c)`
+/// alternation (zsh extended-glob's `(…|…)` form). Sufficient for
+/// the patterns end-user completion files use (e.g.
+/// `*.(md|rs|toml)` from `_suffix_alias_files`).
 pub fn glob_matches(pattern: &str, text: &str) -> bool {
+    // Handle leading `(alt1|alt2|…)` at the top level — split at the
+    // matching close paren, try each alternative concatenated with
+    // the remainder.
+    if let Some(rest) = pattern.strip_prefix('(') {
+        if let Some(close) = find_top_close_paren(rest) {
+            let group = &rest[..close];
+            let after = &rest[close + 1..];
+            return group.split('|').any(|alt| {
+                let combined = format!("{}{}", alt, after);
+                glob_matches(&combined, text)
+            });
+        }
+    }
     let pat: Vec<char> = pattern.chars().collect();
     let txt: Vec<char> = text.chars().collect();
     glob_helper(&pat, &txt)
 }
 
+fn find_top_close_paren(s: &str) -> Option<usize> {
+    let mut depth: i32 = 1;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn glob_helper(pat: &[char], txt: &[char]) -> bool {
     if pat.is_empty() {
         return txt.is_empty();
+    }
+    // Inline alternation at any position: when we encounter `(...)`,
+    // re-route through `glob_matches` on the remainder.
+    if pat[0] == '(' {
+        let rest: String = pat[1..].iter().collect();
+        let txt_str: String = txt.iter().collect();
+        if let Some(close) = find_top_close_paren(&rest) {
+            let group = &rest[..close];
+            let after = &rest[close + 1..];
+            return group.split('|').any(|alt| {
+                let combined = format!("{}{}", alt, after);
+                glob_matches(&combined, &txt_str)
+            });
+        }
     }
     match pat[0] {
         '*' => {

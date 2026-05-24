@@ -211,4 +211,69 @@ mod tests {
             "policy should have seen cache path with the requested name"
         );
     }
+
+    #[test]
+    fn words_restored_after_policy_call() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "use-cache",
+            vec!["true".into()],
+            false,
+        );
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-policy",
+            vec!["restore-spy".into()],
+            false,
+        );
+        // Seed pre-existing words.
+        let original = vec!["pre".to_string(), "existing".to_string()];
+        state.comp.params.words = original.clone();
+        register("restore-spy", Box::new(|_| true));
+        let _ = _cache_invalid(&mut state, "x.cache");
+        unregister("restore-spy");
+        assert_eq!(
+            state.comp.params.words, original,
+            "_cache_invalid must restore words after policy returns"
+        );
+    }
+
+    #[test]
+    fn default_cache_dir_uses_zdotdir_or_home() {
+        // If neither cache-path style is set nor ZDOTDIR/HOME, the
+        // dir fallback should still work without panic.
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "use-cache",
+            vec!["true".into()],
+            false,
+        );
+        // No cache-policy → return false (cache fine).
+        assert!(!_cache_invalid(&mut state, "x.cache"));
+    }
+
+    #[test]
+    fn unknown_policy_name_silently_returns_false() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "use-cache",
+            vec!["true".into()],
+            false,
+        );
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-policy",
+            vec!["definitely-not-registered-fn".into()],
+            false,
+        );
+        // _call_function returns false for unknown names; we
+        // propagate as "cache fine" (false).
+        assert!(!_cache_invalid(&mut state, "x.cache"));
+    }
 }

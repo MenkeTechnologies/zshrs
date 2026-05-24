@@ -186,4 +186,47 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn empty_description_skips_explanation() {
+        let mut state = CompletionState::new();
+        let specs = vec!["x".into()];
+        _values(&mut state, "", ',', &specs);
+        let g = &state.groups[0];
+        assert!(g.explanations.is_empty());
+    }
+
+    #[test]
+    fn all_already_used_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "a,b,c,".into();
+        let specs = vec!["a".into(), "b".into(), "c".into()];
+        assert!(!_values(&mut state, "", ',', &specs));
+    }
+
+    #[test]
+    fn empty_prefix_emits_all_unused_specs() {
+        let mut state = CompletionState::new();
+        let specs = vec!["alpha".into(), "beta".into(), "gamma".into()];
+        assert!(_values(&mut state, "", ',', &specs));
+        assert_eq!(state.groups[0].matches.len(), 3);
+    }
+
+    #[test]
+    fn malformed_spec_silently_skipped() {
+        // Whatever Value::parse rejects, _values should also skip
+        // without crashing.
+        let mut state = CompletionState::new();
+        let specs = vec![
+            "".to_string(), // empty spec — Value::parse returns None
+            "valid".to_string(),
+        ];
+        let _ = _values(&mut state, "", ',', &specs);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"valid"));
+    }
 }

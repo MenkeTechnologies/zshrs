@@ -234,4 +234,72 @@ mod tests {
         state.postfuncs = vec!["nobody-registered-2".into()];
         let _ = _main_complete(&mut state, |_, _| CompleterResult::NoMatch);
     }
+
+    #[test]
+    fn completers_style_overrides_default_completers() {
+        // When `completer` zstyle is set, state.completers is
+        // replaced with that list.
+        let mut state = MainCompleteState::new("", 0);
+        state.completers = vec!["_default".into()];
+        state.styles.set(
+            ":completion:::",
+            "completer",
+            vec!["_match".into(), "_approximate".into()],
+            false,
+        );
+        state.ctx.context = "::".into();
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        _main_complete(&mut state, |_, n| {
+            calls.borrow_mut().push(n.to_string());
+            CompleterResult::NoMatch
+        });
+        let seen = calls.into_inner();
+        // The style's completers should appear, overriding default.
+        assert!(seen.contains(&"_match".to_string()), "got {seen:?}");
+        assert!(seen.contains(&"_approximate".to_string()));
+        assert!(!seen.contains(&"_default".to_string()));
+    }
+
+    #[test]
+    fn completer_num_increments_per_completer() {
+        let mut state = MainCompleteState::new("", 0);
+        state.completers = vec!["_a".into(), "_b".into(), "_c".into()];
+        let max_seen = std::cell::Cell::new(0_usize);
+        _main_complete(&mut state, |s, _| {
+            if s.ctx.completer_num > max_seen.get() {
+                max_seen.set(s.ctx.completer_num);
+            }
+            CompleterResult::NoMatch
+        });
+        assert!(max_seen.get() >= 3, "expected at least 3 dispatches");
+    }
+
+    #[test]
+    fn lastcomp_suffix_recorded() {
+        let mut state = MainCompleteState::new("foo", 3);
+        state.comp.params.suffix = "BAR".into();
+        state.completers = vec!["_complete".into()];
+        _main_complete(&mut state, |_, _| CompleterResult::NoMatch);
+        assert_eq!(state.lastcomp.get("suffix").map(String::as_str), Some("BAR"));
+    }
+
+    #[test]
+    fn matched_short_circuits_remaining_completers() {
+        let mut state = MainCompleteState::new("", 0);
+        state.completers = vec!["_a".into(), "_b".into(), "_c".into()];
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        _main_complete(&mut state, |s, name| {
+            calls.borrow_mut().push(name.to_string());
+            if name == "_a" {
+                s.ret = 0;
+                CompleterResult::Matched
+            } else {
+                CompleterResult::NoMatch
+            }
+        });
+        // Only `_a` should have run; matched short-circuits.
+        let seen = calls.into_inner();
+        assert!(seen.contains(&"_a".to_string()));
+        assert!(!seen.contains(&"_b".to_string()), "should have stopped at _a");
+    }
 }

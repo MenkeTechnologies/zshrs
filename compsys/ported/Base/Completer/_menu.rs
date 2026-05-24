@@ -112,4 +112,33 @@ mod tests {
         let _ = _menu(&mut state, 0);
         assert_eq!(state.params.compstate.insert, "1");
     }
+
+    #[test]
+    fn negative_old_insert_parsed_as_signed() {
+        // old_insert="-1" → +1 = 0 (cycle wrap).
+        let mut state = CompletionState::new();
+        state.params.compstate.old_list = "shown".into();
+        state.params.compstate.old_insert = "-1".into();
+        let _ = _menu(&mut state, 1);
+        assert_eq!(state.params.compstate.insert, "0");
+    }
+
+    #[test]
+    fn unparseable_old_insert_defaults_to_zero() {
+        // old_insert="abc" → parse fails → 0+1 = 1
+        let mut state = CompletionState::new();
+        state.params.compstate.old_list = "shown".into();
+        state.params.compstate.old_insert = "abc".into();
+        let _ = _menu(&mut state, 1);
+        assert_eq!(state.params.compstate.insert, "1");
+    }
+
+    #[test]
+    fn large_old_insert_bumps_correctly() {
+        let mut state = CompletionState::new();
+        state.params.compstate.old_list = "shown".into();
+        state.params.compstate.old_insert = "999999".into();
+        let _ = _menu(&mut state, 1);
+        assert_eq!(state.params.compstate.insert, "1000000");
+    }
 }

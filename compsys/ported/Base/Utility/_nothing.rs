@@ -116,4 +116,25 @@ mod tests {
             "format-style %d substitution should still contain the body; got {exps:?}"
         );
     }
+
+    #[test]
+    fn idempotent_across_repeated_calls() {
+        // Calling _nothing multiple times should keep accumulating
+        // messages but never crash.
+        let mut state = CompletionState::new();
+        let styles = ZStyleStore::new();
+        for _ in 0..3 {
+            assert!(_nothing(&mut state, &styles, ""));
+        }
+        assert_eq!(state.nmessages, 3, "each call increments nmessages");
+    }
+
+    #[test]
+    fn no_completion_matches_added_ever() {
+        let mut state = CompletionState::new();
+        let styles = ZStyleStore::new();
+        _nothing(&mut state, &styles, "");
+        _nothing(&mut state, &styles, "");
+        assert_eq!(state.nmatches, 0);
+    }
 }

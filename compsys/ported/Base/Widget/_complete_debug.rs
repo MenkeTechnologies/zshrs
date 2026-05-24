@@ -220,4 +220,33 @@ mod tests {
             "expected per-group line in dump; got:\n{body}"
         );
     }
+
+    #[test]
+    fn dump_path_lives_in_tmp_dir() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = MainCompleteState::new("", 0);
+        let _ = _complete_debug(&mut state);
+        let path = last_dump_path().expect("path");
+        let tmp = std::env::temp_dir();
+        assert!(
+            path.starts_with(&tmp),
+            "dump path `{path:?}` not under TMPDIR `{tmp:?}`"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dump_filename_includes_process_id() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = MainCompleteState::new("", 0);
+        let _ = _complete_debug(&mut state);
+        let path = last_dump_path().expect("path");
+        let pid = std::process::id();
+        let fname = path.file_name().unwrap().to_string_lossy();
+        assert!(
+            fname.contains(&pid.to_string()),
+            "dump filename `{fname}` should embed pid {pid}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
 }

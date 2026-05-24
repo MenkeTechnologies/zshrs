@@ -151,4 +151,47 @@ mod tests {
         let s = empty_styles();
         assert!(!_sub_commands(&mut state, &[], 2, &s, ""));
     }
+
+    #[test]
+    fn off_position_with_empty_commands_still_emits_message() {
+        let mut state = CompletionState::new();
+        let s = empty_styles();
+        // Off position + empty commands → still emits the message.
+        let _ = _sub_commands(&mut state, &[], 5, &s, "");
+        let exps: Vec<&str> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.explanations.iter())
+            .map(|s| s.as_str())
+            .collect();
+        assert!(exps.iter().any(|s| s.contains("no more arguments")));
+    }
+
+    #[test]
+    fn subcommand_with_description_in_disp() {
+        let mut state = CompletionState::new();
+        let s = empty_styles();
+        let cmds = vec![("status".into(), "show status".into())];
+        assert!(_sub_commands(&mut state, &cmds, 2, &s, ""));
+        let d = state.groups[0].matches[0]
+            .disp
+            .as_deref()
+            .unwrap_or_default();
+        assert_eq!(d, "status -- show status");
+    }
+
+    #[test]
+    fn high_position_treated_as_off() {
+        // Any position != 2 → off-position branch.
+        let mut state = CompletionState::new();
+        let s = empty_styles();
+        let _ = _sub_commands(&mut state, &[("x".into(), "".into())], 100, &s, "");
+        let names: Vec<&str> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(!names.contains(&"x"), "off-position must not emit subcommands");
+    }
 }
