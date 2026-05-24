@@ -11920,4 +11920,85 @@ mod tests {
         assert_eq!(fixdir("/a/b/"), "/a/b");
         assert_eq!(fixdir("a/b/"), "a/b");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // cd_able_vars — CDABLEVARS option-gated lookup. Returns Some(val/tail)
+    // if `s` head is a set parameter AND `cdablevars` is on. Else None.
+    // ═══════════════════════════════════════════════════════════════════
+
+    use crate::ported::options::{opt_state_get, opt_state_set};
+
+    /// `cd_able_vars` returns None when CDABLEVARS option is OFF.
+    #[test]
+    fn cd_able_vars_returns_none_when_option_off() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("cdablevars").unwrap_or(false);
+        opt_state_set("cdablevars", false);
+        // Even if HOME is set, with cdablevars off cd_able_vars rejects.
+        assert_eq!(cd_able_vars("HOME"), None);
+        opt_state_set("cdablevars", saved);
+    }
+
+    /// `cd_able_vars` looks up the named var when CDABLEVARS is ON.
+    #[test]
+    fn cd_able_vars_returns_value_when_option_on_and_var_set() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_opt = opt_state_get("cdablevars").unwrap_or(false);
+        opt_state_set("cdablevars", true);
+        opt_state_set("exec", true);
+        crate::ported::params::unsetparam("zshrs_cdav_proj");
+        setsparam("zshrs_cdav_proj", "/tmp/myproject");
+
+        assert_eq!(
+            cd_able_vars("zshrs_cdav_proj"),
+            Some("/tmp/myproject".to_string())
+        );
+
+        crate::ported::params::unsetparam("zshrs_cdav_proj");
+        opt_state_set("cdablevars", saved_opt);
+    }
+
+    /// With slash: head looked up, tail appended.
+    /// `cd_able_vars("PROJ/src")` where PROJ=/home/user → "/home/user/src".
+    #[test]
+    fn cd_able_vars_appends_tail_after_head_substitution() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_opt = opt_state_get("cdablevars").unwrap_or(false);
+        opt_state_set("cdablevars", true);
+        opt_state_set("exec", true);
+        crate::ported::params::unsetparam("zshrs_cdav_PROJ");
+        setsparam("zshrs_cdav_PROJ", "/home/user");
+
+        assert_eq!(
+            cd_able_vars("zshrs_cdav_PROJ/src"),
+            Some("/home/user/src".to_string())
+        );
+
+        crate::ported::params::unsetparam("zshrs_cdav_PROJ");
+        opt_state_set("cdablevars", saved_opt);
+    }
+
+    /// Unknown head var → None (even with option on).
+    #[test]
+    fn cd_able_vars_unknown_var_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_opt = opt_state_get("cdablevars").unwrap_or(false);
+        opt_state_set("cdablevars", true);
+        crate::ported::params::unsetparam("zshrs_cdav_doesnt_exist");
+
+        assert_eq!(cd_able_vars("zshrs_cdav_doesnt_exist"), None);
+
+        opt_state_set("cdablevars", saved_opt);
+    }
+
+    /// Empty head (e.g. "/some/path" starts with `/`) → None.
+    #[test]
+    fn cd_able_vars_empty_head_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_opt = opt_state_get("cdablevars").unwrap_or(false);
+        opt_state_set("cdablevars", true);
+        // Leading `/` → head split is empty.
+        assert_eq!(cd_able_vars("/path/to/foo"), None);
+        opt_state_set("cdablevars", saved_opt);
+    }
 }
