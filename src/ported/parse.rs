@@ -1455,12 +1455,8 @@ fn par_case() -> Option<ZshCommand> {
         // Port of Src/parse.c:1310-1313 — when the case pattern
         // closes with `)`, set `incmdpos = 1` BEFORE consuming
         // the token so the first word of the arm body is lexed
-        // in command position. Without this, `case X in X) c1=v ;;`
-        // lexes `c1=v` as a plain STRING rather than an assignment
-        // word, and exec treats it as a command name (yielding
-        // "command not found: c1=v"). Subsequent statements after
-        // `;` parse correctly because the `;` separator restores
-        // command position; only the FIRST body word was broken.
+        // in command position (so `case X in X) c1=v ;;` parses
+        // `c1=v` as an assignment word, not a command name).
         set_incmdpos(true);
         zshlex();
         if had_leading_paren && tok() == OUTPAR_TOK {

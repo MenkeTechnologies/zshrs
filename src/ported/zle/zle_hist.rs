@@ -1945,8 +1945,7 @@ mod tests {
     #[test]
     fn beginningofhistory_fills_buffer_from_oldest_entry() {
         let _g = crate::test_util::global_state_lock();
-        // c:584 — must drive cursor to entry 0 AND refill the buffer
-        //          (was a fake that only set cursor=0 without buffer fill).
+        // c:584 — must drive cursor to entry 0 AND refill the buffer.
         let _g = zle_test_setup();
         let _zle = zle_with_history(&["alpha", "bravo", "charlie"]);
         history().lock().unwrap().cursor = 3; // sentinel

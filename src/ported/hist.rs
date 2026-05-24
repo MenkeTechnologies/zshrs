@@ -465,11 +465,9 @@ pub static hatchar: AtomicI32 = AtomicI32::new(b'^' as i32); // c:params.c:132
 
 /// Port of `unsigned char hashchar` from `Src/params.c:132`. Comment-
 /// start character; init'd to `'#'` at `Src/init.c:1101`. Read by
-/// `gettokstr` (`Src/lex.c:678`). Made atomic so `histcharssetfn`
+/// `gettokstr` (`Src/lex.c:678`). Atomic so `histcharssetfn`
 /// (`Src/params.c:5097`) can update it dynamically when `$HISTCHARS`
-/// changes — previously was a `const char` in `lex.rs:3507`, which
-/// silently diverged from C (no `setopt HISTCHARS='!^@'` syntax
-/// could change the comment character).
+/// changes.
 pub static hashchar: AtomicI32 = AtomicI32::new(b'#' as i32); // c:params.c:132
 
 /// Port of `static int marg` from `Src/hist.c:599`. Argument index of the
@@ -655,10 +653,8 @@ pub fn histsubchar(c_in: i32) -> i32 {
             // c:685 *ptr = '\0' — Rust String is already terminated.
             *hsubl.lock().unwrap() = Some(buf.clone()); // c:686 hsubl = ztrdup(buf)
                                                         // c:686 — `mev = ev = hconsearch(hsubl = ztrdup(buf), &marg);`
-                                                        // hconsearch now returns Option<(histnum, marg)> per C
-                                                        // out-pointer pair — previously dropped the marg side,
-                                                        // forcing the caller to hardcode margbox=0 which lost
-                                                        // the matched word index.
+                                                        // hconsearch returns Option<(histnum, marg)> per C's
+                                                        // out-pointer pair.
             let (ev_val, marg_val) = match hconsearch(&buf) {
                 // c:686
                 Some((e, m)) => (e, m),
@@ -1323,11 +1319,9 @@ pub fn strinbeg(dohist: i32) {
 ///     isfirstch = 1;
 ///     histdone = 0;
 ///
-/// The previous Rust port called only `hend` and decremented `strin`,
-/// missing the `isfirstch = 1` and `histdone = 0` resets. Effect: the
-/// next strinbeg-driven parse inherited stale "we're past the first
-/// char" state from the prior scope, defeating `^foo^bar`-style
-/// histsubchar shortcuts that key on `isfirstch`.
+/// `isfirstch = 1` and `histdone = 0` resets are critical for the
+/// `^foo^bar`-style histsubchar shortcut that keys on `isfirstch`
+/// in the next strinbeg-driven parse.
 pub fn strinend() {
     // c:1049
     hend(None); // c:1051
@@ -2670,7 +2664,7 @@ pub fn chabspath(input: &str) -> Option<String> {
 /// resolves, then re-appending the remaining tail (matches the C
 /// fallback at c:2027-2030).
 ///
-/// Signature now matches C (Rule B): `path`, `mode` ('A' or 'P'),
+/// Signature mirrors C (Rule B): `path`, `mode` ('A' or 'P'),
 /// `use_heap` (ignored — Rust strings are heap by default).
 pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> {
     // c:1971
@@ -2838,9 +2832,7 @@ pub fn rembutext(s: &str) -> String {
 /// already reached the start of the string (`str > *junkptr` fails),
 /// the function returns 1 ("whole string needed") WITHOUT modifying
 /// `*junkptr` — preserving the original input verbatim (including
-/// the leading slash for absolute paths). The Rust port previously
-/// stripped the leading slash unconditionally, so `:t4` on
-/// `/a/b/c` returned `"a/b/c"` instead of C's `"/a/b/c"`.
+/// the leading slash for absolute paths).
 pub fn remlpaths(s: &str, count: i32) -> String {
     // c:2152
     // c:2156-2161 — `if (IS_DIRSEP(*str))` block trims trailing slashes
@@ -3136,22 +3128,13 @@ pub fn gethist(ev: i64) -> Option<histent> {
 /// return dupstrpfx(elist->node.nam + pos1, pos2 - pos1);
 /// ```
 ///
-/// Three divergences in the previous Rust port:
-///   1. Used `entry.words.len() / 2` for nwords — C uses the explicit
-///      `elist->nwords` field. The two MAY agree but the field is
-///      the authoritative source per the storage shape.
-///   2. Had an extra `nwords == 0` check that C lacks; the existing
-///      `arg1 >= nwords` check already covers the empty case
-///      (arg1: usize >= 0 vs nwords=0 returns true).
-///   3. Overflow check was wrong: `pos2 > nam.len() || pos1 > pos2`
-///      instead of the C `pos1 < 0 || pos1 < arg1 || pos2 < 0 ||
-///      pos2 < arg2`. The C check detects signed-short overflow —
-///      since each word must be ≥1 char long, the start-byte index
-///      must be ≥ the 0-based word index; a negative or too-small
-///      stored position signals i16 overflow on history lines >32KB.
-///      The Rust port's bounds check missed the overflow case
-///      and let bogus garbage positions through into the slice
-///      indexing.
+/// Notes:
+///   - `nwords` reads `elist->nwords` directly (authoritative).
+///   - Overflow check `pos1 < arg1 || pos2 < arg2` detects signed-
+///     short overflow: since each word must be ≥1 char long, the
+///     start-byte index must be ≥ the 0-based word index; a
+///     too-small stored position signals i16 overflow on history
+///     lines >32KB.
 pub fn getargs(entry: &histent, arg1: usize, arg2: usize) -> Option<String> {
     // c:2454
     let nwords = entry.nwords as usize; // c:2457 nwords = elist->nwords
@@ -4086,9 +4069,6 @@ pub fn pophiststack() -> i32 {
         None => return 0, // c:3907
     };
     // c:3920-3924 — restore HISTFILE via setsparam / unsetparam.
-    // Was previously `let _ = snap.histfile;` (dropped on the
-    // floor). With this in place, `fc -p file ...; fc -P`
-    // properly restores the outer HISTFILE value.
     if let Some(ref hf) = snap.histfile {
         if !hf.is_empty() {
             // c:3922 *h->histfile
@@ -5326,9 +5306,7 @@ mod subst_modifier_tests {
     /// off should leave the user's history untouched even when
     /// passed an explicit fn_path.
     ///
-    /// Also pins the `savehistsiz <= 0` short-circuit. Previously
-    /// the port wrote an EMPTY file (cap=0 means no entries
-    /// written), TRUNCATING the user's saved history. Either
+    /// Also pins the `savehistsiz <= 0` short-circuit. Either
     /// gate firing must leave the file untouched.
     #[test]
     fn savehistfile_short_circuits_on_non_interactive() {
@@ -5557,7 +5535,7 @@ mod subst_modifier_tests {
         assert_eq!(
             hptr.load(SeqCst),
             3,
-            "c:368 — hptr advances by 1 (CRITICAL — previous port left this stale)"
+            "c:368 — hptr advances by 1"
         );
 
         // Push 'y' → second advance.
@@ -5580,7 +5558,7 @@ mod subst_modifier_tests {
         assert_eq!(
             hptr.load(SeqCst),
             6,
-            "c:366+c:368 — both pushes advance hptr (was off-by-one previously)"
+            "c:366+c:368 — both pushes advance hptr"
         );
 
         // errflag set → no-op.
@@ -5780,9 +5758,8 @@ mod subst_modifier_tests {
 
     /// Pin `iaddtoline` to its canonical C body at
     /// `Src/hist.c:397-413`, specifically the c:405-411 ZLE cursor
-    /// adjustment block that the previous port skipped.
-    /// `excs > zlemetacs` → `excs += 1 + inbufct - exlast` with a
-    /// clamp to zlemetacs.
+    /// adjustment block: `excs > zlemetacs` → `excs += 1 + inbufct -
+    /// exlast` with a clamp to zlemetacs.
     #[test]
     fn iaddtoline_adjusts_excs_relative_to_zlemetacs() {
         let _g = crate::test_util::global_state_lock();

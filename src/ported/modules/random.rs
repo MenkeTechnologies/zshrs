@@ -32,18 +32,14 @@ pub fn getrandom_buffer(buf: &mut [u8]) -> io::Result<()> {
 }
 
 // Per-evaluator random-buffer state — bucket-1 dissolution per
-// PORT_PLAN.md Phase 2. C source has TWO file-statics at
-// Src/Modules/random.c:50-51:
+// C source has TWO file-statics at Src/Modules/random.c:50-51:
 //
 //     static uint32_t rand_buff[8];
 //     static int      buf_cnt = -1;
 //
-// Previous Rust port aggregated these into a `pub struct
-// RandomState { buffer, buf_cnt }`, which is the bag-of-globals
-// anti-pattern PORT_PLAN forbids. Dissolved into two
-// `thread_local!`s mirroring the C declarations one-for-one;
-// each worker thread owns its own buffer (file-static semantics
-// preserve under threading per PORT_PLAN bucket-1 rule).
+// Mirrored as two `thread_local!`s — each worker thread owns its
+// own buffer (file-static semantics preserve under threading per
+// PORT_PLAN bucket-1 rule).
 
 thread_local! {
     /// Port of file-static `static uint32_t rand_buff[8];` at

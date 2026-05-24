@@ -296,8 +296,7 @@ pub fn signal_suspend(sig: i32, wait_cmd: bool) -> i32 {
     // Three escape hatches let SIGINT stay UNblocked during suspend:
     //   1. `wait_cmd` — the `wait` builtin wants SIGINT to break it.
     //   2. `isset(TRAPSASYNC)` — async-trap mode means traps fire even
-    //      while blocked, so SIGINT must arrive in real time. Previously
-    //      missing in the Rust port — silently dropped the option gate.
+    //      while blocked, so SIGINT must arrive in real time.
     //   3. SIGINT is trapped but not ignored — user trap must fire.
     let int_state = sigtrapped
         .lock()
@@ -489,10 +488,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 let tmout = getiparam("TMOUT"); // c:479
                 if idle >= 0 && idle < tmout {
                     // c:481 — `alarm(tmout - idle);` — re-arm for
-                    // remaining idle window. Previously this branch
-                    // was missing entirely; the shell would TIMEOUT
-                    // and exit on every SIGALRM-triggered TMOUT
-                    // check even if the user had been active recently.
+                    // remaining idle window.
                     unsafe {
                         libc::alarm((tmout - idle) as u32); // c:481
                     }
@@ -908,10 +904,6 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
         // c:720-723 — RT-signal trap-table branch:
         //   `else if (sig >= VSIGCOUNT && sig < TRAPCOUNT)
         //                signal_ignore(SIGNUM(sig));`
-        // Previously omitted from the Rust port; trapping `RTMIN+1` to
-        // ignore did NOT actually call signal_ignore on the real
-        // SIGRTMIN+1 signal — the signal would still fire and the
-        // default action would kick in instead of being suppressed.
         #[cfg(target_os = "linux")]
         if sig >= VSIGCOUNT && sig < TRAPCOUNT_H {
             signal_ignore(SIGNUM(sig)); // c:722
@@ -999,14 +991,8 @@ pub fn removetrap(sig: i32) {
     // c:769-774 — `if (!dontsavetrap && (sig == SIGEXIT ? !isset(POSIXTRAPS)
     // : isset(LOCALTRAPS)) && locallevel && (!trapped || locallevel >
     // (sigtrapped[sig] >> ZSIG_SHIFT))) dosavetrap(sig, locallevel);`.
-    //
-    // The previous Rust port was buggy in three ways:
-    //   (a) early-returned on `trapped == 0`, defeating the C path
-    //       that wants to save-trap for clean unset of an untrapped slot;
-    //   (b) used `!trapped` as BITWISE NOT (Rust `!i32` is bitwise) instead
-    //       of LOGICAL NOT (`trapped == 0`);
-    //   (c) omitted the SIGEXIT/POSIXTRAPS-LOCALTRAPS option gates and the
-    //       locallevel-non-zero requirement entirely.
+    // Note: `!trapped` is LOGICAL NOT (`trapped == 0`), not Rust's
+    // bitwise `!i32`.
     let cond_local_or_exit = if sig == SIGEXIT {
         !isset(POSIXTRAPS) // c:771 sig==SIGEXIT branch
     } else {
@@ -1062,10 +1048,7 @@ pub fn removetrap(sig: i32) {
         // c:810
         signal_default(sig); // c:815
     }
-    // c:816-819 — RT-signal branch (Linux). Previously omitted;
-    // un-trapping `RTMIN+1` left the libc handler installed, so
-    // subsequent SIGRTMIN+1 deliveries would still run the
-    // (no-longer-trapped) shell handler.
+    // c:816-819 — RT-signal branch (Linux).
     #[cfg(target_os = "linux")]
     {
         if sig >= VSIGCOUNT && sig < TRAPCOUNT_H {
@@ -1092,17 +1075,10 @@ pub fn removetrap(sig: i32) {
 /// signal-disposition logic lives in `removetrap`. The Rust port
 /// inverts the relationship — `unsettrap` carries the full body
 /// (matching C lines 781-820), and `removetrap` is the thin
-/// wrapper.
-///
-/// The previous Rust `removetrap` body added `libc::signal(sig,
-/// SIG_DFL)` AFTER calling `unsettrap`. That was wrong: `unsettrap`
-/// already runs the per-signal disposition (c:802-820) which has
-/// special cases for SIGINT (intr() not SIG_DFL), SIGHUP (re-
-/// install_handler), and SIGPIPE under interactive non-fork
-/// (also re-install_handler). The extra SIG_DFL clobbered those
-/// special branches — `trap - INT` would default-reset SIGINT
-/// AFTER unsettrap had called intr(), losing the interactive
-/// interrupt path. Same for HUP/PIPE in interactive mode.
+/// wrapper. `unsettrap` runs the per-signal disposition
+/// (c:802-820): SIGINT → intr(), SIGHUP → re-install_handler,
+/// SIGPIPE under interactive non-fork → re-install_handler.
+/// Never SIG_DFL these branches directly.
 pub fn unsettrap(sig: i32) {
     // c:759
     // c:763 — queue_signals();
@@ -1250,13 +1226,7 @@ pub fn endtrapscope() {
     //   - ZSIG_FUNC: the `TRAPEXIT` shell function from shfunctab.
     //   - else: the eprog from siglists[SIGEXIT].
     //
-    // The previous Rust port left this as a comment-only no-op
-    // ("Eprog dispatch staged through the executor on the next
-    // idle tick"). A function-defined `TRAPEXIT() { ... }` body
-    // never fired on scope exit, defeating one of the most common
-    // shell-script teardown patterns.
-    //
-    // Wire the ZSIG_FUNC branch via the canonical dispatcher
+    // ZSIG_FUNC branch is wired via the canonical dispatcher
     // (`fusevm_bridge::with_executor` + `dispatch_function_call`).
     // The non-FUNC eprog path stays deferred until the eprog→VM
     // bridge for top-level traps lands.
@@ -1308,10 +1278,7 @@ pub fn handletrap(sig: i32) -> i32 {
     if sig == libc::SIGALRM {
         // c:992
         // c:996 — `if ((tmout = getiparam("TMOUT"))) alarm(tmout);`
-        // Re-arm the TMOUT timer after the trap dispatched. C reads
-        // TMOUT via getiparam (params resolver). Previously commented
-        // as "not wired" — getiparam IS available via params.rs, so
-        // the alarm-reset can now mirror C exactly.
+        // Re-arm the TMOUT timer after the trap dispatched.
         #[cfg(unix)]
         unsafe {
             let tmout = getiparam("TMOUT");
@@ -1332,13 +1299,8 @@ pub fn handletrap(sig: i32) -> i32 {
 ///
 /// C ONLY enables queueing when NEITHER `TRAPSASYNC` is set NOR the
 /// caller is the `wait` builtin (which wants traps to fire immediately
-/// so the wait can be interrupted). The previous Rust port:
-///   1. Dropped the `wait_cmd` arg (named `_wait_cmd`), defeating the
-///      `wait` builtin's expectation that trap delivery stays inline.
-///   2. Skipped the `isset(TRAPSASYNC)` check, defeating async-trap mode.
-///   3. Used `fetch_add(1)` instead of `= 1` — turned the C boolean
-///      flag into a counter, breaking the symmetric `= 0` reset that
-///      `unqueue_traps` does at c:1042.
+/// so the wait can be interrupted). The flag is a boolean (`= 1` /
+/// `= 0`), symmetric with the reset in `unqueue_traps` at c:1042.
 pub fn queue_traps(wait_cmd: i32) {
     // c:1024
     // c:1026 — both gates must be off for queueing to be enabled.
@@ -1454,9 +1416,7 @@ pub fn dotrap(sig: i32) -> i32 {
     crate::ported::signals_h::dont_queue_signals(); // c:1270
 
     // c:1272-1273 — `if (sig == SIGEXIT) ++in_exit_trap;` (counter,
-    // not boolean). The previous Rust port used `store(1)` which
-    // overwrites — nested EXIT traps would all share the same flag
-    // state. C uses a depth counter so observers can detect re-entry.
+    // not boolean — depth tracking lets observers detect re-entry).
     if sig == SIGEXIT {
         in_exit_trap.fetch_add(1, Ordering::SeqCst); // c:1273
     }
@@ -1800,17 +1760,9 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
 /// NAME STRING ("RTMIN", "RTMIN+3", "RTMAX-1", etc.) and returns
 /// the signal number, or 0 on parse failure.
 ///
-/// **Previous Rust port divergence**: signature was `rtsigno(signame:
-/// i32) -> Option<i32>` — took an offset INT and added it to a
-/// hardcoded SIGRTMIN=34. This was completely different from C: the
-/// C function parses a NAME STRING, not an integer offset. The
-/// hardcoded `sigrtmin=34` was also wrong (RT range can vary by libc).
-///
-/// **Fixed**:
-///   * Signature now matches C: `(signame: &str) -> Option<i32>`.
-///   * Returns `Option<i32>` (None = C's 0 sentinel for parse failure).
-///   * Uses `libc::SIGRTMIN()` / `libc::SIGRTMAX()` for canonical bounds.
-///   * Parses "RTMIN[+N]" / "RTMAX[-N]" per C body.
+/// Rust signature: `(signame: &str) -> Option<i32>` — `None`
+/// matches C's `0` sentinel. Uses `libc::SIGRTMIN()` /
+/// `libc::SIGRTMAX()` for canonical bounds.
 /// WARNING: param names don't match C — Rust takes &str directly
 pub fn rtsigno(signame: &str) -> Option<i32> {
     // c:1291
@@ -2388,8 +2340,7 @@ mod tests {
 
     /// `Src/signals.c:1024-1033` — `queue_traps(wait_cmd)` enables
     /// queueing ONLY when BOTH `!isset(TRAPSASYNC)` AND `!wait_cmd`.
-    /// The previous Rust port hardcoded a `fetch_add(1)`, defeating
-    /// both option gates entirely. Pin:
+    /// Pin:
     ///   * TRAPSASYNC=on  → queue_traps(0) is a no-op.
     ///   * wait_cmd=1     → queue_traps(1) is a no-op.
     ///   * both off       → queue_traps(0) sets trap_queueing_enabled=1.
@@ -2436,9 +2387,7 @@ mod tests {
 
     /// `Src/signals.c:696-699` — `settrap` rejects trapping
     /// SIGTTOU/SIGTSTP/SIGTTIN when `jobbing` (= `isset(MONITOR)`).
-    /// The Rust port previously hardcoded `let jobbing = false;`,
-    /// silently letting users trap job-control signals from an
-    /// interactive shell (breaking their own job control). Pin:
+    /// Pin:
     ///   * MONITOR unset → settrap on SIGTSTP succeeds (returns 0).
     ///   * MONITOR set   → settrap on SIGTSTP rejected (returns 1).
     #[cfg(unix)]

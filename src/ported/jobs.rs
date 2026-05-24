@@ -1083,8 +1083,8 @@ pub fn should_report_time(job: &job, reporttime: f64) -> bool {
     }
     // c:1077-1094 — reporttime threshold check against (user+sys) CPU.
     if reporttime >= 0.0 {
-        // C diffs reporttime against the first proc's ut+st; matches
-        // the (now correctly populated) rusage diff from update_process.
+        // C diffs reporttime against the first proc's ut+st; the
+        // rusage diff is populated by update_process.
         let cpu_secs = (first.ti.ut + first.ti.st) as f64 / 1_000_000.0;
         if cpu_secs >= reporttime {
             return true;

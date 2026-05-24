@@ -1819,9 +1819,9 @@ pub fn addsuffixstring(tp: i32, flags: i32, chars: &str, lensuf: i32) {
 
 /// Direct port of `void makesuffix(int n)` from
 /// `Src/Zle/zle_misc.c:1598`. Reads `$ZLE_REMOVE_SUFFIX_CHARS` from
-/// paramtab (NOT the OS env — was a fake) and registers it as the
-/// active suffix-removal char set via `addsuffixstring`. Defaults
-/// to ` \t\n;&|` when the param is unset.
+/// paramtab and registers it as the active suffix-removal char set
+/// via `addsuffixstring`. Defaults to ` \t\n;&|` when the param is
+/// unset.
 pub fn makesuffix(n: i32) {
     // c:1598
     // c:1642 — `suffixchars = getsparam_u("ZLE_REMOVE_SUFFIX_CHARS")`.

@@ -2076,10 +2076,6 @@ pub fn createparam(
             // (`x=foo` inside a function) gets level=0 and survives
             // endparamscope. The `pm->level = locallevel` set happens
             // ONLY through builtin.c:2576 (PM_LOCAL path: `local x=…`).
-            // Previously hardcoded cur_locallevel here made every bare
-            // `x=foo` inside a function become local and disappear on
-            // function exit — the regression that bit functions_set
-            // globals like `f() { x=set-by-f; }; f; echo $x`.
             level: if (flags as u32 & PM_LOCAL) != 0 {
                 cur_locallevel
             } else {
@@ -4167,9 +4163,6 @@ pub fn getsparam(name: &str) -> Option<String> {
             //   PM_INTEGER           → convbase(u_val, base) per c:2364
             //   PM_EFLOAT/PM_FFLOAT  → convfloat(u_dval) per c:2367-2368
             //   PM_ARRAY             → sepjoin(arr)
-            // Previously fell through PM_INTEGER → env-var fallback
-            // which always missed → `read REPLY` after `(( REPLY=42 ))`
-            // got nothing.
             let t = PM_TYPE(pm.node.flags as u32);
             // c:2390-2538 — when PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z + width
             // are set, getstrvalue (called from getsparam in C) applies
@@ -6937,11 +6930,9 @@ pub fn argzerosetfn(x: String) {
 ///     `return isset(POSIXARGZERO) ? posixzero : argzero;`
 ///
 /// Both `argzero` and `posixzero` live in `utils.rs` (OnceLock storage).
-/// The previous Rust port ALWAYS returned `argzero`, defeating the
-/// POSIXARGZERO option entirely. After `exec -a foo` or function-call
-/// argv-rewrite, `$0` under POSIXARGZERO should report the ORIGINAL
-/// startup `argv[0]`, not the rewritten name. Now wired via
-/// `isset(POSIXARGZERO)` + the canonical posixzero accessor.
+/// After `exec -a foo` or function-call argv-rewrite, `$0` under
+/// POSIXARGZERO reports the ORIGINAL startup `argv[0]`, not the
+/// rewritten name.
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn argzerogetfn() -> String {
     if isset(POSIXARGZERO) {
@@ -7063,11 +7054,7 @@ unsafe fn errno_ptr() -> *mut libc::c_int {
 /// Port of `errnogetfn(UNUSED(Param pm))` from `Src/params.c:5015`. C body: `return errno;`
 ///
 /// Reads the libc errno directly through the per-platform accessor
-/// (matching C's `return errno;` semantics). Previously routed
-/// through `std::io::Error::last_os_error()` which is NOT errno —
-/// it's a snapshot taken at the most recent stdlib syscall. That
-/// silently broke `$ERRNO` round-trip: `ERRNO=42` followed by
-/// `$ERRNO` could return any stale value.
+/// (matching C's `return errno;` semantics).
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn errnogetfn() -> i64 {
     let p = unsafe { errno_ptr() }; // c:5017 return errno
@@ -10406,10 +10393,6 @@ mod tests {
         });
     }
 
-    // test_param_value_conversions removed: tested deleted fake
-    // `ParamValue::Scalar` constructor. C uses union access on
-    // `pm->u.str`/`u.val`/`u.dval`/`u.arr` dispatched via
-    // `PM_TYPE(pm->node.flags)` (Src/zsh.h:540).
     #[test]
     fn test_colonarr_conversion() {
         let _g = crate::test_util::global_state_lock();
@@ -11184,11 +11167,9 @@ mod tests {
     }
 
     /// `Src/params.c:4954-4961` — `argzerogetfn` returns `posixzero`
-    /// when `isset(POSIXARGZERO)`, else `argzero`. The previous Rust
-    /// port always returned `argzero`, defeating the POSIXARGZERO
-    /// option entirely. After mutating argzero (e.g. `exec -a foo`),
-    /// `$0` under POSIXARGZERO must report the ORIGINAL startup
-    /// argv[0], not the rewritten name.
+    /// when `isset(POSIXARGZERO)`, else `argzero`. After mutating
+    /// argzero (e.g. `exec -a foo`), `$0` under POSIXARGZERO must
+    /// report the ORIGINAL startup argv[0], not the rewritten name.
     #[test]
     fn argzerogetfn_respects_posixargzero_option() {
         let _g = crate::test_util::global_state_lock();
