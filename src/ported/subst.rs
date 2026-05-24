@@ -11,7 +11,7 @@
 //! names, and control flow where possible. The Rust port is larger
 //! than the C source (~8.6k vs 4.9k lines) primarily because it
 //! splits long C arms into named functions, lifts inline `static`
-//! helpers into module-level fns, and replaces unsafe pointer walks
+//! helpers into module-level ported, and replaces unsafe pointer walks
 //! with explicit `Vec<char>` / `Vec<String>` traversals.
 //!
 //! Original C file: ~/forkedRepos/zsh/Src/subst.c (4922 lines)
@@ -8469,7 +8469,7 @@ fn errflag_set_error() {
 // each magic-assoc Param through its own `gsu->scantab` callback
 // (set at module init); the per-Param scantab plumbing is a
 // follow-up, but the body is now decomposed into individual
-// `scanpm*` fns matching C's names, plus a `splice_magic_assoc`
+// `scanpm*` ported matching C's names, plus a `splice_magic_assoc`
 // dispatcher that routes name → fn.
 
 // =====================================================================
@@ -10865,4 +10865,4 @@ pub fn sub_flags_set(v: i32) {
 // BEGIN moved-from-exec-rs
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-// END moved-from-exec-rs (free fns)
+// END moved-from-exec-rs (free ported)

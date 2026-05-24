@@ -12,7 +12,7 @@
 //!     `winch_unblock`).
 //!   - Convenience wrappers (`signal_ignore`/`signal_default`).
 //!
-//! C source: 0 structs/enums/fns. ~25 #defines.
+//! C source: 0 structs/enums/ported. ~25 #defines.
 //!
 //! Macro casing preserved verbatim per the casing rule. The
 //! signal-queue mutable state (`queue_front`/`queue_rear`/
@@ -315,7 +315,7 @@ pub const MAX_QUEUE_SIZE: usize = 128; // c:76
 
 /// Port of the global `int queueing_enabled;` (Src/signals.c). The
 // ---------------------------------------------------------------------------
-// Signal-queueing macros (c:78-127). Ported as fns since Rust has
+// Signal-queueing macros (c:78-127). Ported as ported since Rust has
 // no preprocessor macros. The mutable state (`queueing_enabled`,
 // `queue_front`, `queue_rear`, `signal_queue[]`, `signal_mask_queue[]`)
 // lives in `signals.rs` per `Src/signals.c:77-81`; these wrappers
@@ -445,9 +445,9 @@ pub fn run_queued_signals() {
 // ---------------------------------------------------------------------------
 // Block helpers (c:52-61).
 //
-// These wrap the lower-level `signal_block`/`signal_unblock` fns
+// These wrap the lower-level `signal_block`/`signal_unblock` ported
 // declared at c:129-130 (defined in signals.c). Rust ports as
-// inline fns delegating to the same primitives in `signals.rs`.
+// inline ported delegating to the same primitives in `signals.rs`.
 // ---------------------------------------------------------------------------
 
 /// Port of `#define child_block()` from `Src/signals.h:52`. Block

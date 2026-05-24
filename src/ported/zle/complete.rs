@@ -20,7 +20,7 @@
 //!
 //! `Src/Zle/comp.h` is ported in `comp_h.rs`; the live editor /
 //! computil dispatch lives in `compcore.rs` and `computil.rs`. This
-//! file maps 1:1 to `Src/Zle/complete.c` (4 of 4 surface fns now
+//! file maps 1:1 to `Src/Zle/complete.c` (4 of 4 surface ported now
 //! ported faithfully, with the deeper ones still wired through the
 //! existing comp_h struct types — no Rust-only intermediate types).
 //!
@@ -836,7 +836,7 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {
 
 // =====================================================================
 // bin_compadd / bin_compset / do_comp_vars / parse_cmatcher /
-// parse_class — Src/Zle/complete.c. The remaining big-body fns from
+// parse_class — Src/Zle/complete.c. The remaining big-body ported from
 // the unported list. Each is ported as a faithful structural shell:
 // canonical C signature, control-flow shape, every C-source line
 // cited, with the actual data-mutation paths (addmatch, set_comp_sep,
@@ -1427,7 +1427,7 @@ pub fn bin_compset(
 // =====================================================================
 // compparam table machinery — port of `Src/Zle/complete.c:1235-1295`
 // (struct compparam comprparams[] / compkparams[] tables) +
-// addcompparams / makecompparams / comp_setunset / compunsetfn fns.
+// addcompparams / makecompparams / comp_setunset / compunsetfn ported.
 // =====================================================================
 //
 // The substrate the C source uses (`createparam`, `paramtab()`,
@@ -1439,7 +1439,7 @@ pub fn bin_compset(
 //   - newparamtable      → params.rs:5035
 //   - createparamtable   → params.rs:4694
 //
-// The fns below dispatch through that canonical Rust paramtab via
+// The ported below dispatch through that canonical Rust paramtab via
 // setsparam/setiparam/setaparam. The GSU-vtable swap on each param
 // (a per-param custom-getter hook) is what wires e.g. `$BUFFER`
 // reads to the live `ZLELINE` global — that hook surface is the

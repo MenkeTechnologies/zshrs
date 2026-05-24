@@ -80,7 +80,7 @@ pub fn evalcond(
     // one fn. `prec` selects the recursion level (0=OR, 1=AND,
     // 2=NOT, 3=primary). This is the one Rust adaptation: C's
     // `evalcond` walks a single wordcode stream; we walk argv via
-    // operator-precedence climbing. No helper fns / no AST.
+    // operator-precedence climbing. No helper ported / no AST.
     fn walk(
         toks: &[&str],
         pos: &mut usize,

@@ -3575,16 +3575,16 @@ pub fn lextok2_get(c: char) -> u8 {
 ///
 // All lexer state lives in the file-scope `LEX_*` thread_local statics
 // above, each one matching a `static` in `Src/lex.c`. There's no
-// holder struct — callers use the free fns directly:
+// holder struct — callers use the free ported directly:
 //
 //    lex_init(input);
 //    zshlex();
 //   let tok =  tok();
 //
-// Accessor fns named after the former field identifiers (`tok()`,
+// Accessor ported named after the former field identifiers (`tok()`,
 // `tokstr()`, `set_tok(v)`, etc.) provide read/write into LEX_*.
 
-// ─── Accessor fns for the LEX_* thread_locals (Src/lex.c file-statics) ───
+// ─── Accessor ported for the LEX_* thread_locals (Src/lex.c file-statics) ───
 
 pub fn toklineno() -> u64 {
     LEX_TOKLINENO.get()

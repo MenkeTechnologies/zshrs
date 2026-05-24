@@ -3392,7 +3392,7 @@ fn is_ident(c: char) -> bool {
 // WARNING: NOT IN MATH.C — Rust-only stack helper. C inlines
 // this inside `pop()` (math.c:931) — its `noget` flag controls
 // whether to resolve the deferred Unset+lval read; zshrs splits
-// the two paths into separate fns so the resolved-vs-raw choice
+// the two paths into separate ported so the resolved-vs-raw choice
 // is at the call site.
 pub(crate) fn pop_with_lval() -> mathvalue {
     m_stack_pop().unwrap_or_default()
@@ -3439,9 +3439,9 @@ pub(crate) fn getmathparams() -> HashMap<String, mnumber> {
 // END moved-from-exec-rs
 
 // ===========================================================
-// Free fns moved verbatim from src/ported/vm_helper.
+// Free ported moved verbatim from src/ported/vm_helper.
 // ===========================================================
-// BEGIN moved-from-exec-rs (free fns)
+// BEGIN moved-from-exec-rs (free ported)
 /// Pop argc arguments from the VM stack into a Vec<String>.
 ///
 /// `Value::Array` entries (produced by `${arr[@]}`, glob expansion, brace
@@ -3644,7 +3644,7 @@ pub(crate) fn parse_assign(expr: &str) -> Option<(String, String, String)> {
     Some((name, idx_expr, rhs))
 }
 
-// END moved-from-exec-rs (free fns)
+// END moved-from-exec-rs (free ported)
 
 // ===========================================================
 // Numeric formatting helpers moved from src/ported/vm_helper.

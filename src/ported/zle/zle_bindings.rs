@@ -776,14 +776,14 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "visual-line-mode" => Some(|_| visuallinemode()),
         "visual-mode" => Some(|_| visualmode()),
         "yank-pop" => Some(|_| yankpop()),
-        // Below: widget names that map to C fns with non-1:1 names
+        // Below: widget names that map to C ported with non-1:1 names
         // (per iwidgets.list). C uses the same fn for multiple
         // widget names — dispatch by bindk->nam inside the body.
         // clear-screen / redisplay / yank — existing `pub fn`s
         // live inside inner scopes in zle_refresh.rs / zle_misc.rs
         // (legacy nested impl/mod blocks). Inline minimal bodies
         // here matching the C source (zle_refresh.c:2366/2377,
-        // zle_misc.c:533). Will redirect to canonical fns once
+        // zle_misc.c:533). Will redirect to canonical ported once
         // the inner-scope wrapping is unwound.
         "clear-screen" => Some(|_| {
             // Port of `clearscreen(char **args)` from

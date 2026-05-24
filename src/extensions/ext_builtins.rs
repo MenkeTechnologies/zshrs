@@ -2121,7 +2121,7 @@ impl ShellExecutor {
 
     // zgetattr/zsetattr/zdelattr/zlistattr - extended attributes
     // builtin_zattr deleted — zero callers. Was a Rust-only dispatcher
-    // wrapping the 4 zattr bin_* free fns; callers should use
+    // wrapping the 4 zattr bin_* free ported; callers should use
     // canonical dispatch_builtin("zgetattr"/etc, args) which goes
     // through execbuiltin → BUILTINS entry (attr.c:NNN ports) with
     // optstr parsing built in.
@@ -7601,7 +7601,7 @@ impl ShellExecutor {
 // =====================================================================
 // rlimits dispatcher bridges. Build a `struct options` (zsh.h:1416)
 // from the leading short-option run and delegate to the C-faithful
-// free fns in `src/ported/builtins/rlimits.rs`. This lives outside
+// free ported in `src/ported/builtins/rlimits.rs`. This lives outside
 // `src/ported/` because it is the dispatcher slice (analogue of
 // `Src/builtin.c:execbuiltin` + `parseopts`), not a port of
 // `rlimits.c` itself.
@@ -7637,7 +7637,7 @@ impl ShellExecutor {
 // ─────────────────────────────────────────────────────────
 // Extracted from `impl ShellExecutor` per the FAKE DUP audit:
 // these zshrs-specific builtins / autoload-style helpers don't
-// need executor state, so they live as free fns.
+// need executor state, so they live as free ported.
 // ─────────────────────────────────────────────────────────
 
 /// readarray/mapfile - read lines into array (bash)

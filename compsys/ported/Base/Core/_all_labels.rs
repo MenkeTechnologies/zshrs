@@ -33,3 +33,44 @@ where
     state.end_group();
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_tags(active: &[&str]) -> TagManager {
+        let mut tm = TagManager::new();
+        let all: Vec<String> = active.iter().map(|s| s.to_string()).collect();
+        tm.init(&all);
+        tm.add_try(&all);
+        assert!(tm.start());
+        tm
+    }
+
+    #[test]
+    fn returns_false_when_tag_not_in_try_set() {
+        let mut state = CompletionState::new();
+        let mut tm = make_tags(&["files"]);
+        let invoked = std::cell::Cell::new(false);
+        let ok = _all_labels(&mut state, &mut tm, "options", "opts", |_, _| {
+            invoked.set(true);
+            true
+        });
+        assert!(!ok);
+        assert!(!invoked.get(), "closure must NOT run when tag inactive");
+    }
+
+    #[test]
+    fn runs_closure_and_emits_explanation_when_active() {
+        let mut state = CompletionState::new();
+        let mut tm = make_tags(&["files"]);
+        let invoked = std::cell::Cell::new(false);
+        let ok = _all_labels(&mut state, &mut tm, "files", "the files", |_, tag| {
+            invoked.set(true);
+            assert_eq!(tag, "files");
+            true
+        });
+        assert!(ok);
+        assert!(invoked.get());
+    }
+}

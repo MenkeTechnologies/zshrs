@@ -7,3 +7,16 @@ pub fn _comp_priv_prefix() -> Vec<String> {
     // Returns the privilege prefix if any
     Vec::new()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_priv_prefix_until_caller_populates() {
+        // The shell-side equivalent is set by `sudo`/`doas` completion
+        // wrappers; the leaf default is the empty vector. Pin so any
+        // future drift surfaces as a test diff.
+        assert!(_comp_priv_prefix().is_empty());
+    }
+}

@@ -502,7 +502,7 @@ pub fn before_complete(lst: &mut i32) -> i32 {
 /// from `Src/Zle/compcore.c:503`. Post-completion hook: when a
 /// completion has just transitioned into menu-completion (menucmp
 /// went 0→1 across this round), runs MENUSTARTHOOK so registered
-/// hook fns can veto or modify the about-to-display menu.
+/// hook ported can veto or modify the about-to-display menu.
 ///
 /// Hook handlers are registered via `addhookfunc("menu_start", fn)`
 /// (see `crate::ported::module::addhookfunc`), which writes to the
@@ -3692,7 +3692,7 @@ fn goto_compend(ret: i32) -> i32 {
 // The duplicates here narrowed C signatures (foredel dropped `flags`,
 // inststr dropped the i32 return + duplicated inststrlen's body) and
 // violated Rule C (every decl in its mirroring C file). Callers in
-// this module now route through the canonical fns.
+// this module now route through the canonical ported.
 
 pub const IN_NOTHING_LW: i32 = 0; // lex.h
 pub const IN_CMD_LW: i32 = 1; // lex.h

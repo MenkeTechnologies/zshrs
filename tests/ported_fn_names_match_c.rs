@@ -8,7 +8,7 @@
 //! name. Only top-level free functions count.
 //!
 //! Why this test exists: the substitution-bug audit on 2026-05-07
-//! found two helper fns I added (`paramsubst_bridge`, `store_assign`)
+//! found two helper ported I added (`paramsubst_bridge`, `store_assign`)
 //! plus seven pre-existing helpers that drifted from the freeze. The
 //! port was claiming "100% port" while running 11 helpers with no C
 //! counterpart. This test fails CI on any future drift so the next
@@ -36,7 +36,7 @@ fn collect_rust_files(root: &Path, out: &mut Vec<PathBuf>) {
 /// Extract free-fn names from a Rust source file. Skips methods
 /// (lines indented inside `impl` / `trait` blocks) by tracking brace
 /// depth: depth 0 = module level. A `fn` at depth > 0 is a method.
-/// Also skips test-only fns (#[test], #[cfg(test)] modules).
+/// Also skips test-only ported (#[test], #[cfg(test)] modules).
 fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
     let mut fns: Vec<(String, usize)> = Vec::new();
     let mut depth: i32 = 0;
@@ -344,7 +344,7 @@ fn ported_fns_match_c_source() {
         .map(|l| l.to_string())
         .collect();
 
-    // File-mapping allowlist: pre-existing fns whose Rust file
+    // File-mapping allowlist: pre-existing ported whose Rust file
     // doesn't match the expected C basename. Same shape as the
     // name allowlist — exempt-for-now snapshot. Anything new
     // landing in the wrong file fails immediately.

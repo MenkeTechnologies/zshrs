@@ -802,7 +802,7 @@ mod tests {
     }
 
     // `sepjoin` / `sepsplit` tests live alongside their canonical
-    // ports in `src/ported/utils.rs` (the C source's home for both fns).
+    // ports in `src/ported/utils.rs` (the C source's home for both ported).
 
     /// `new_heap_id` is monotonically increasing — each call returns
     /// a strictly greater id. Catches a regression where the counter

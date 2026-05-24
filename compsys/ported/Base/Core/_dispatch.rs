@@ -22,3 +22,35 @@ pub fn _dispatch(
     }
     CompleterResult::NoMatch
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn known_command_returns_matched() {
+        let mut state = MainCompleteState::new("git status", 10);
+        let mut comps = HashMap::new();
+        comps.insert("git".to_string(), "_git".to_string());
+        let r = _dispatch(&mut state, &comps, &["git"]);
+        assert!(matches!(r, CompleterResult::Matched));
+    }
+
+    #[test]
+    fn unknown_commands_return_nomatch() {
+        let mut state = MainCompleteState::new("x", 1);
+        let comps = HashMap::new();
+        let r = _dispatch(&mut state, &comps, &["x", "y"]);
+        assert!(matches!(r, CompleterResult::NoMatch));
+    }
+
+    #[test]
+    fn first_matching_command_short_circuits() {
+        let mut state = MainCompleteState::new("a", 1);
+        let mut comps = HashMap::new();
+        comps.insert("b".to_string(), "_b".to_string());
+        // a is missing → skipped; b matches → Matched returned.
+        let r = _dispatch(&mut state, &comps, &["a", "b", "c"]);
+        assert!(matches!(r, CompleterResult::Matched));
+    }
+}

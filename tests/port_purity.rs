@@ -135,7 +135,7 @@ fn collect_rust_files(root: &Path) -> Vec<PathBuf> {
             continue;
         }
         // Skip the ported/ umbrella module. It contains only `pub use`
-        // re-exports of crate-root modules — no real fns, no logic.
+        // re-exports of crate-root modules — no real ported, no logic.
         if p.starts_with(src.join("ported")) {
             continue;
         }
@@ -227,9 +227,9 @@ fn every_top_level_fn_cites_its_c_source() {
     let rust_files = collect_rust_files(&root);
 
     // Match top-level fn signatures (depth 0). We do a simple brace
-    // walk to track depth and only flag fns at depth 0 outside of any
+    // walk to track depth and only flag ported at depth 0 outside of any
     // `mod tests` block. This deliberately ignores impl-block methods
-    // (depth > 0) and inner test fns.
+    // (depth > 0) and inner test ported.
     let fn_re = Regex::new(
         r"^(?P<vis>(?:pub(?:\([^)]*\))?\s+)?(?:async\s+|unsafe\s+|extern\s+\x22[^\x22]*\x22\s+|const\s+)*)fn\s+(?P<name>[A-Za-z_][A-Za-z_0-9]*)",
     )

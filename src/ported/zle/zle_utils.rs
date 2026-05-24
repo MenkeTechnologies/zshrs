@@ -1494,7 +1494,7 @@ pub fn paste_from_buffer(buf: usize, after: bool) {
 // with zero references across the codebase. The canonical undo
 // machinery lives in file-scope statics (`UNDO_STACK: Mutex<Vec<change>>`,
 // `CHANGENO`, `CURCHANGE`, `UNDO_CHANGENO`, `UNDO_LIMITNO` —
-// declared in zle_main.rs) and the canonical port fns are:
+// declared in zle_main.rs) and the canonical port ported are:
 //
 //   mkundoent       — port of mkundoent (zle_utils.c)
 //   apply_change    — port of applychange (zle_utils.c:1633)

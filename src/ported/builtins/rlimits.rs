@@ -408,7 +408,7 @@ pub(crate) fn showlimitvalue(_lim: i32, _val: u64) {}
 // WARNING: NOT IN RLIMITS.C — Rust-only helper. C dereferences the
 // `resinfo` pointer-table inline (`resinfo[lim]->name` etc.); Rust
 // port factors out the bounds-checked + lock-acquired lookup so the
-// rlimit-printing fns don't each duplicate the lock dance.
+// rlimit-printing ported don't each duplicate the lock dance.
 #[cfg(unix)]
 fn lookup_resinfo(lim: i32) -> Option<resinfo_T> {
     if (lim as usize) >= nlimits() {
@@ -1538,7 +1538,7 @@ pub(crate) fn setlimits(_nam: &str) -> i32 {
 }
 
 // =====================================================================
-// External fns from Src/module.c. Stubbed locally with C-faithful
+// External ported from Src/module.c. Stubbed locally with C-faithful
 // signatures pending the module.c port from `&Module`/`&Features`
 // (CamelCase Rust-native) to `*const module`/`&Mutex<features>`.
 // =====================================================================
@@ -1586,10 +1586,10 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&Vec<i3
     0
 }
 
-// Bridge fns
+// Bridge ported
 // `bin_ulimit` live in `src/extensions/ext_builtins.rs` (the
 // non-ported dispatcher layer). They construct a `struct options`
-// from the leading flag run and delegate to the free fns above.
+// from the leading flag run and delegate to the free ported above.
 
 // =====================================================================
 // Tests
@@ -1598,23 +1598,23 @@ fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&Vec<i3
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───
 //
-// Singleton accessor fns for `OnceLock<Mutex<T>>` / `OnceLock<
+// Singleton accessor ported for `OnceLock<Mutex<T>>` / `OnceLock<
 // RwLock<T>>` globals declared above. C zsh uses direct global
 // access; Rust needs these wrappers because `OnceLock::get_or_init`
-// is the only way to lazily construct shared state. These fns sit
+// is the only way to lazily construct shared state. These ported sit
 // here so the body of this file reads in C source order without
-// the accessor wrappers interleaved between real port fns.
+// the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn module_features() -> &'static Mutex<features> {

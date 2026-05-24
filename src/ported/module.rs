@@ -1386,12 +1386,12 @@ impl modulestab {
         0 // c:834
     }
 
-    // ------- Hook management lives in the file-static free fns above ------
+    // ------- Hook management lives in the file-static free ported above ------
     //
     // C `hooktab` (Src/module.c:843) is a file-static `Hookdef` linked
     // list, NOT a member of `ModuleTable` (which is the `modulestab`
     // HashTable of Module nodes at c:Modules/zmodload.c:32). Hook ops
-    // are free fns operating on the file-static `hooktab` (above):
+    // are free ported operating on the file-static `hooktab` (above):
     // `gethookdef`, `addhookdef`, `addhookdefs`, `deletehookdef`,
     // `deletehookdefs`, `addhookdeffunc`, `addhookfunc`,
     // `deletehookdeffunc`, `deletehookfunc`, `runhookdef`.
@@ -2930,7 +2930,7 @@ pub fn printautoparams(name: &str, module: &str, flags: u32, lon: i32) {
 /// register-autoload of builtins/conditions/params/mathfns. C body
 /// (80 lines) walks the appropriate dispatch table per opt flag.
 ///
-/// `-c` lists/registers conditions, `-p` parameters, `-f` math fns,
+/// `-c` lists/registers conditions, `-p` parameters, `-f` math ported,
 /// default is builtins. `-L` toggles long-form listing.
 ///
 /// Static-link path: registers via `add_autoaliasbuiltin` /
@@ -3337,7 +3337,7 @@ pub fn autofeatures(
 
 /// Port of `MathFunc mathfuncs;` from `Src/module.c:1258` — the
 /// global head of the linked list of math functions. Both
-/// autoloadable math fns (added by modules) and user math fns
+/// autoloadable math ported (added by modules) and user math ported
 /// (added by `functions -M`) live here.
 ///
 /// C is a singly linked list with `mathfunc.next` chaining. The
@@ -4235,7 +4235,7 @@ mod tests {
     // start so any incidental registrations from other state leak don't
     // affect outcomes.
 
-    // Real Rust fns matching the `Hookfn` shape. Used as test handlers
+    // Real Rust ported matching the `Hookfn` shape. Used as test handlers
     // that bump a per-test atomic counter when invoked, proving
     // `runhookdef` actually dispatches the registered fn pointers.
     static H1_CALLS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
