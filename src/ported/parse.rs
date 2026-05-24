@@ -8894,4 +8894,265 @@ esac"#;
         );
         assert!(incmdpos(), "c:502 — incmdpos = 1");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // AST shape tests — feed source through parse(), walk the resulting
+    // ZshProgram, assert structural properties. Each test uses the local
+    // `parse(input)` helper that errors cleanly on parse failure.
+    // Anchor: where applicable, behavior matches `zsh -n -c '...'`
+    // (parse-only, no execution — which would error on syntax issues).
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Empty input → ZshProgram with no lists.
+    #[test]
+    fn parse_empty_source_yields_zero_lists() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("").unwrap();
+        assert_eq!(prog.lists.len(), 0);
+    }
+
+    /// Comment-only input → no lists (comments are skipped at lex level).
+    #[test]
+    fn parse_only_comment_yields_zero_lists() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("# this is just a comment").unwrap();
+        assert_eq!(prog.lists.len(), 0, "comments alone produce no cmds");
+    }
+
+    /// Three commands separated by `;` → three lists.
+    #[test]
+    fn parse_three_semicolon_separated_commands_yield_three_lists() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("a; b; c").unwrap();
+        assert_eq!(prog.lists.len(), 3);
+    }
+
+    /// Background command — async flag set on the list.
+    #[test]
+    fn parse_background_command_sets_async_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("sleep 1 &").unwrap();
+        assert_eq!(prog.lists.len(), 1);
+        assert!(
+            prog.lists[0].flags.async_,
+            "trailing `&` must set async_ flag"
+        );
+    }
+
+    /// Pipe count: `a | b | c | d` → 4 stages.
+    #[test]
+    fn parse_four_stage_pipeline_has_three_next_links() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("a | b | c | d").unwrap();
+        let mut pipe = &prog.lists[0].sublist.pipe;
+        let mut count = 1;
+        while let Some(next) = &pipe.next {
+            pipe = next;
+            count += 1;
+        }
+        assert_eq!(count, 4, "4 commands should produce 4 pipe stages");
+    }
+
+    /// `|&` between pipeline stages sets merge_stderr.
+    #[test]
+    fn parse_pipe_amp_sets_merge_stderr() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("a |& b").unwrap();
+        let pipe = &prog.lists[0].sublist.pipe;
+        assert!(pipe.next.is_some());
+        assert!(pipe.merge_stderr, "|& must set merge_stderr");
+    }
+
+    /// `cmd1 || cmd2`: sublist.next is Some with `Or`.
+    #[test]
+    fn parse_or_operator_sets_sublist_op_or() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("cmd1 || cmd2").unwrap();
+        let sublist = &prog.lists[0].sublist;
+        let (op, _) = sublist.next.as_ref().expect("must have next");
+        assert_eq!(*op, SublistOp::Or);
+    }
+
+    /// `! cmd` sets the not flag on the sublist.
+    #[test]
+    fn parse_bang_negation_sets_sublist_not_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("! false").unwrap();
+        let sublist = &prog.lists[0].sublist;
+        assert!(sublist.flags.not, "`!` prefix must set sublist.flags.not");
+    }
+
+    // ── Compound commands ────────────────────────────────────────────
+    /// `while cond; do body; done` → ZshCommand::While.
+    #[test]
+    fn parse_while_loop_yields_while_command() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("while true; do echo x; done").unwrap();
+        assert!(matches!(
+            prog.lists[0].sublist.pipe.cmd,
+            ZshCommand::While(_)
+        ));
+    }
+
+    /// `until cond; do body; done` → ZshCommand::Until.
+    /// Anchor: `zsh -n -c 'until false; do echo; done'` accepts and parses
+    /// as an until-loop. zshrs accepts but emits a DIFFERENT AST variant
+    /// (not Until). Bug — until loop is mis-classified.
+    #[test]
+    #[ignore = "ZSHRS BUG: until-loop parses to wrong AST variant (not ZshCommand::Until)"]
+    fn parse_until_loop_yields_until_command_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("until false; do echo x; done").unwrap();
+        assert!(
+            matches!(prog.lists[0].sublist.pipe.cmd, ZshCommand::Until(_)),
+            "zsh parses `until` as Until variant; zshrs uses different variant: {:?}",
+            prog.lists[0].sublist.pipe.cmd
+        );
+    }
+
+    /// `(cmd)` → Subsh variant.
+    #[test]
+    fn parse_parens_yield_subsh_command() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("(echo hi)").unwrap();
+        assert!(matches!(
+            prog.lists[0].sublist.pipe.cmd,
+            ZshCommand::Subsh(_)
+        ));
+    }
+
+    /// `{ cmd; }` → Cursh (current-shell) command.
+    #[test]
+    fn parse_braces_yield_cursh_command() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("{ echo hi; }").unwrap();
+        assert!(matches!(
+            prog.lists[0].sublist.pipe.cmd,
+            ZshCommand::Cursh(_)
+        ));
+    }
+
+    /// `[[ a == b ]]` → ZshCommand::Cond.
+    #[test]
+    fn parse_double_brackets_yield_cond_command() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("[[ a == b ]]").unwrap();
+        assert!(matches!(
+            prog.lists[0].sublist.pipe.cmd,
+            ZshCommand::Cond(_)
+        ));
+    }
+
+    /// `(( 1 + 2 ))` → ZshCommand::Arith.
+    #[test]
+    fn parse_double_parens_yield_arith_command() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("(( 1 + 2 ))").unwrap();
+        assert!(matches!(
+            prog.lists[0].sublist.pipe.cmd,
+            ZshCommand::Arith(_)
+        ));
+    }
+
+    /// `repeat 3 do echo x; done` → ZshCommand::Repeat.
+    #[test]
+    fn parse_repeat_loop_yields_repeat_command() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("repeat 3 do echo x; done").unwrap();
+        assert!(matches!(
+            prog.lists[0].sublist.pipe.cmd,
+            ZshCommand::Repeat(_)
+        ));
+    }
+
+    // ── Function definitions ─────────────────────────────────────────
+    /// `name() { body; }` → FuncDef variant.
+    #[test]
+    fn parse_paren_funcdef_yields_funcdef_command() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("greet() { echo hi; }").unwrap();
+        assert!(matches!(
+            prog.lists[0].sublist.pipe.cmd,
+            ZshCommand::FuncDef(_)
+        ));
+    }
+
+    /// `function name { body; }` → FuncDef variant (zsh keyword form).
+    #[test]
+    fn parse_function_keyword_funcdef_yields_funcdef_command() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("function greet { echo hi; }").unwrap();
+        assert!(matches!(
+            prog.lists[0].sublist.pipe.cmd,
+            ZshCommand::FuncDef(_)
+        ));
+    }
+
+    /// Syntax error — `if` without `fi` → parse returns Err.
+    /// Anchor: `echo 'if true; then echo' | zsh -n` → "parse error".
+    #[test]
+    #[ignore = "ZSHRS BUG: unterminated `if` accepted; zsh -n errors"]
+    fn parse_unterminated_if_returns_error_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("if true; then echo yes");
+        assert!(r.is_err(), "zsh -n: parse error near `\\n`");
+    }
+
+    /// Syntax error — bare `done` without `for/while/until` → error.
+    /// Anchor: `echo done | zsh -n` → "parse error near `done`".
+    #[test]
+    #[ignore = "ZSHRS BUG: orphan `done` accepted; zsh -n errors"]
+    fn parse_orphan_done_returns_error_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("done");
+        assert!(r.is_err(), "zsh -n: parse error near `done`");
+    }
+
+    /// Simple command's words include the command name AND args.
+    /// Pin the CURRENT zshrs contract: word bytes carry the metafied
+    /// form internally (`-` shows up as `\u{9b}` = the `Dash` meta-byte).
+    /// Real zsh stores the same internal form but unmetafies before
+    /// surfacing to user-visible levels. Document the divergence; if
+    /// zshrs ever changes to unmetafy at parse time the test will
+    /// surface that as a regression.
+    #[test]
+    #[ignore = "ANCHOR: zshrs word array carries metafied bytes; verify if/when unmetafy moves into parse"]
+    fn parse_simple_command_words_unmetafied_like_zsh_anchored() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("ls -la /tmp").unwrap();
+        match &prog.lists[0].sublist.pipe.cmd {
+            ZshCommand::Simple(s) => {
+                assert_eq!(
+                    s.words,
+                    vec!["ls", "-la", "/tmp"],
+                    "user-visible words must be unmetafied"
+                );
+            }
+            other => panic!("expected Simple, got {other:?}"),
+        }
+    }
+
+    /// Pin the OBSERVED zshrs contract: simple-command word array
+    /// contains metafied bytes. This is the active (passing) version
+    /// of the anchor above — it documents zshrs's current internal
+    /// representation. If zshrs starts unmetafying at parse time, this
+    /// test will FAIL and the anchor-style test above will start passing.
+    #[test]
+    fn parse_simple_command_words_metafied_internal_form() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("ls -la /tmp").unwrap();
+        match &prog.lists[0].sublist.pipe.cmd {
+            ZshCommand::Simple(s) => {
+                assert_eq!(s.words.len(), 3);
+                assert_eq!(s.words[0], "ls");
+                assert_eq!(s.words[2], "/tmp");
+                // s.words[1] contains the metafied `-` (`\u{9b}` Dash byte)
+                // followed by "la". Don't pin the exact byte form (it
+                // may change); pin that the length is right.
+                assert_eq!(s.words[1].chars().count(), 3, "`-la` is 3 chars");
+                assert!(s.words[1].ends_with("la"));
+            }
+            other => panic!("expected Simple, got {other:?}"),
+        }
+    }
 }

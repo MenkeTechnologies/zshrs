@@ -5952,4 +5952,222 @@ mod tests {
         assert_eq!(head, "(a)");
         assert_eq!(qual, Some("b"));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // parse_qualifier_string — file-type / permission / sort qualifiers.
+    // Tests call the private fn directly (same crate, same file).
+    // Each qualifier letter maps to a `qualifier::*` variant per the
+    // zsh glob.c arm at c:1495+. Pin the parse, not the match — the
+    // match path needs a real filesystem.
+    //
+    // IMPORTANT: at end of parse_qualifier_string (c:3433-3435 in this
+    // file), if `qualifiers` is non-empty it gets moved into
+    // `alternatives[]`. So tests read the qualifier from `alternatives[0]`
+    // — qualifiers itself is empty after the move.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Helper: read the only qualifier from a single-letter parse result.
+    fn first_qual(qs: &qualifier_set) -> &qualifier {
+        // After the post-loop move, single-letter input lands in
+        // alternatives[0][0]. Fall back to qualifiers[0] for safety in
+        // case the move ever changes.
+        if !qs.alternatives.is_empty() && !qs.alternatives[0].is_empty() {
+            &qs.alternatives[0][0]
+        } else {
+            &qs.qualifiers[0]
+        }
+    }
+
+    /// Empty qualifier body → no alternatives, no qualifiers.
+    #[test]
+    fn parse_qualifier_string_empty_returns_empty_set() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("");
+        assert!(qs.qualifiers.is_empty());
+        assert!(qs.alternatives.is_empty());
+        assert!(!qs.nullglob);
+    }
+
+    /// `/` → IsDirectory (in alternatives[0]).
+    #[test]
+    fn parse_qualifier_string_slash_is_directory() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("/");
+        assert!(matches!(first_qual(&qs), qualifier::IsDirectory));
+    }
+
+    /// `.` → IsRegular.
+    #[test]
+    fn parse_qualifier_string_dot_is_regular() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string(".");
+        assert!(matches!(first_qual(&qs), qualifier::IsRegular));
+    }
+
+    /// `@` → IsSymlink.
+    #[test]
+    fn parse_qualifier_string_at_is_symlink() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("@");
+        assert!(matches!(first_qual(&qs), qualifier::IsSymlink));
+    }
+
+    /// `=` → IsSocket.
+    #[test]
+    fn parse_qualifier_string_equals_is_socket() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("=");
+        assert!(matches!(first_qual(&qs), qualifier::IsSocket));
+    }
+
+    /// `p` → IsFifo.
+    #[test]
+    fn parse_qualifier_string_p_is_fifo() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("p");
+        assert!(matches!(first_qual(&qs), qualifier::IsFifo));
+    }
+
+    /// `*` → IsExecutable.
+    #[test]
+    fn parse_qualifier_string_star_is_executable() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("*");
+        assert!(matches!(first_qual(&qs), qualifier::IsExecutable));
+    }
+
+    /// `%b` → IsBlockDev.
+    #[test]
+    fn parse_qualifier_string_pct_b_is_block_device() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("%b");
+        assert!(matches!(first_qual(&qs), qualifier::IsBlockDev));
+    }
+
+    /// `%c` → IsCharDev.
+    #[test]
+    fn parse_qualifier_string_pct_c_is_char_device() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("%c");
+        assert!(matches!(first_qual(&qs), qualifier::IsCharDev));
+    }
+
+    /// `r` / `w` / `x` → Readable / Writable / Executable.
+    #[test]
+    fn parse_qualifier_string_perm_letters_map_to_perm_qualifiers() {
+        let _g = crate::test_util::global_state_lock();
+        for (letter, expected) in [
+            ("r", qualifier::Readable),
+            ("w", qualifier::Writable),
+            ("x", qualifier::Executable),
+        ] {
+            let qs = parse_qualifier_string(letter);
+            assert_eq!(
+                std::mem::discriminant(first_qual(&qs)),
+                std::mem::discriminant(&expected),
+                "letter {letter:?} should map to {expected:?}"
+            );
+        }
+    }
+
+    /// `U` → OwnedByEuid (process EUID).
+    #[test]
+    fn parse_qualifier_string_capital_U_is_owned_by_euid() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("U");
+        assert!(matches!(first_qual(&qs), qualifier::OwnedByEuid));
+    }
+
+    /// `G` → OwnedByEgid.
+    #[test]
+    fn parse_qualifier_string_capital_G_is_owned_by_egid() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("G");
+        assert!(matches!(first_qual(&qs), qualifier::OwnedByEgid));
+    }
+
+    /// Multiple file-type qualifiers stack — `./` → IsRegular then IsDirectory
+    /// both end up in alternatives[0].
+    #[test]
+    fn parse_qualifier_string_multiple_letters_stack_in_one_alternative() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("./");
+        assert_eq!(qs.alternatives.len(), 1);
+        assert_eq!(qs.alternatives[0].len(), 2);
+        assert!(matches!(qs.alternatives[0][0], qualifier::IsRegular));
+        assert!(matches!(qs.alternatives[0][1], qualifier::IsDirectory));
+    }
+
+    /// `,` separates alternatives — `/,.` → two alternatives, each with one
+    /// qualifier (IsDirectory and IsRegular respectively).
+    #[test]
+    fn parse_qualifier_string_comma_creates_two_alternatives() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("/,.");
+        assert_eq!(qs.alternatives.len(), 2, "two alternatives expected");
+        assert!(matches!(qs.alternatives[0][0], qualifier::IsDirectory));
+        assert!(matches!(qs.alternatives[1][0], qualifier::IsRegular));
+    }
+
+    /// `:` introduces colon-modifiers; rest captured into colon_mods.
+    #[test]
+    fn parse_qualifier_string_colon_captures_modifiers_in_field() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string(":h");
+        assert_eq!(qs.colon_mods.as_deref(), Some(":h"));
+    }
+
+    /// `:` after a qualifier captures BOTH.
+    #[test]
+    fn parse_qualifier_string_qualifier_then_colon_mod() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("/:h");
+        assert!(matches!(first_qual(&qs), qualifier::IsDirectory));
+        assert_eq!(qs.colon_mods.as_deref(), Some(":h"));
+    }
+
+    /// `N` flag → nullglob set, no qualifier pushed.
+    #[test]
+    fn parse_qualifier_string_capital_N_sets_nullglob_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("N");
+        assert!(qs.nullglob, "(N) must set nullglob");
+        assert!(qs.alternatives.is_empty(), "N doesn't push to qualifiers");
+    }
+
+    /// `M` flag → mark_dirs.
+    #[test]
+    fn parse_qualifier_string_capital_M_sets_mark_dirs_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("M");
+        assert!(qs.mark_dirs, "(M) must set mark_dirs");
+    }
+
+    /// `T` flag → list_types.
+    #[test]
+    fn parse_qualifier_string_capital_T_sets_list_types_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("T");
+        assert!(qs.list_types, "(T) must set list_types");
+    }
+
+    // ── split_qualifier integration with parse_qualifier_string ──────
+    /// `*(.)` — split yields ("*", Some(".")); parse yields IsRegular.
+    #[test]
+    fn split_then_parse_dot_qualifier_yields_is_regular() {
+        let _g = crate::test_util::global_state_lock();
+        let (head, qual) = split_qualifier("*(.)");
+        assert_eq!(head, "*");
+        let qs = parse_qualifier_string(qual.unwrap());
+        assert!(matches!(first_qual(&qs), qualifier::IsRegular));
+    }
+
+    /// `*(/)` — directory-only glob.
+    #[test]
+    fn split_then_parse_slash_qualifier_yields_is_directory() {
+        let _g = crate::test_util::global_state_lock();
+        let (_, qual) = split_qualifier("*(/)");
+        let qs = parse_qualifier_string(qual.unwrap());
+        assert!(matches!(first_qual(&qs), qualifier::IsDirectory));
+    }
 }

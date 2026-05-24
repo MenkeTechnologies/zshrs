@@ -11803,4 +11803,121 @@ mod tests {
         }
         assert_eq!(buf, "hello\n", "c:4847 — write should land on -u FD");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // fixdir — pure path-normalization helper (port of c:1297-1395).
+    // Tests pin C-faithful collapsing of `.`, `..`, double slashes, and
+    // sticky-`..` semantics for relative paths.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Empty input → empty output.
+    #[test]
+    fn fixdir_empty_returns_empty() {
+        assert_eq!(fixdir(""), "");
+    }
+
+    /// Root passes through.
+    #[test]
+    fn fixdir_root_passes_through() {
+        assert_eq!(fixdir("/"), "/");
+    }
+
+    /// `/.` → `/` (drop `.`).
+    #[test]
+    fn fixdir_root_dot_collapses_to_root() {
+        assert_eq!(fixdir("/."), "/");
+    }
+
+    /// `/a/./b` → `/a/b` (drop intermediate `.`).
+    #[test]
+    fn fixdir_strips_dot_components() {
+        assert_eq!(fixdir("/a/./b"), "/a/b");
+    }
+
+    /// `/a/b/..` → `/a` (`..` pops).
+    #[test]
+    fn fixdir_dot_dot_pops_previous_component() {
+        assert_eq!(fixdir("/a/b/.."), "/a");
+    }
+
+    /// `/a/b/../c` → `/a/c` (pop then append).
+    #[test]
+    fn fixdir_dot_dot_then_continue() {
+        assert_eq!(fixdir("/a/b/../c"), "/a/c");
+    }
+
+    /// `/..` → `/` (`..` past root silently drops).
+    #[test]
+    fn fixdir_dot_dot_past_root_drops() {
+        assert_eq!(fixdir("/.."), "/");
+    }
+
+    /// `/../..` → `/` (multiple `..` past root all drop).
+    #[test]
+    fn fixdir_multiple_dot_dot_past_root_drops() {
+        assert_eq!(fixdir("/../.."), "/");
+    }
+
+    /// `//a` → `/a` (collapse `//`).
+    #[test]
+    fn fixdir_collapses_double_slash() {
+        assert_eq!(fixdir("//a"), "/a");
+    }
+
+    /// `/a//b///c` → `/a/b/c` (collapse runs of slashes).
+    #[test]
+    fn fixdir_collapses_repeated_slashes() {
+        assert_eq!(fixdir("/a//b///c"), "/a/b/c");
+    }
+
+    // ── Relative paths ───────────────────────────────────────────────
+    /// `a/b/c` → `a/b/c` (no change).
+    #[test]
+    fn fixdir_relative_no_dots_unchanged() {
+        assert_eq!(fixdir("a/b/c"), "a/b/c");
+    }
+
+    /// `a/./b` → `a/b` (drop `.`).
+    #[test]
+    fn fixdir_relative_drops_dot() {
+        assert_eq!(fixdir("a/./b"), "a/b");
+    }
+
+    /// `a/b/..` → `a` — `..` pops.
+    #[test]
+    fn fixdir_relative_dot_dot_pops() {
+        assert_eq!(fixdir("a/b/.."), "a");
+    }
+
+    /// `..` (leading) → `..` — relative path keeps leading `..`.
+    #[test]
+    fn fixdir_leading_dot_dot_preserved_in_relative() {
+        assert_eq!(fixdir(".."), "..");
+    }
+
+    /// `../..` (sticky `..`) — both preserved.
+    #[test]
+    fn fixdir_double_leading_dot_dot_both_preserved() {
+        assert_eq!(fixdir("../.."), "../..");
+    }
+
+    /// `../foo/..` → `..` (pop `foo`, leading `..` remains).
+    #[test]
+    fn fixdir_dot_dot_then_dir_then_dot_dot() {
+        assert_eq!(fixdir("../foo/.."), "..");
+    }
+
+    /// `.` alone → `.` (empty body → "." preserved for relative).
+    #[test]
+    fn fixdir_single_dot_returns_dot() {
+        // No components, not absolute → returns "." per the c:1395 path.
+        assert_eq!(fixdir("."), ".");
+    }
+
+    /// Trailing slash dropped (output never has trailing `/`).
+    #[test]
+    fn fixdir_trailing_slash_dropped() {
+        assert_eq!(fixdir("/a/b/"), "/a/b");
+        assert_eq!(fixdir("a/b/"), "a/b");
+    }
 }
