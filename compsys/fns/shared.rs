@@ -49,3 +49,52 @@ fn glob_helper(pat: &[char], txt: &[char]) -> bool {
         c => !txt.is_empty() && txt[0] == c && glob_helper(&pat[1..], &txt[1..]),
     }
 }
+
+/// Shell-glob matcher mirror of the helper that used to live in
+/// `compsys/functions.rs` — kept as a separate symbol because callers
+/// were spelled `functions::glob_match(...)`, distinct from
+/// `glob_matches` above (which the `library.rs`/`fns/_path_files`
+/// code used). Both share semantics; the duplicate is intentional for
+/// API-shape compat with both call-site styles.
+pub fn glob_match(pattern: &str, text: &str) -> bool {
+    glob_matches(pattern, text)
+}
+
+/// Levenshtein edit distance, used by `_approximate`, `_correct`,
+/// `_correct_filename`, and `_correct_word`. Moved out of
+/// `compsys/functions.rs` so it can be shared across the per-fn ports
+/// without introducing a circular dependency between them.
+pub fn edit_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
+
+    let mut dp = vec![vec![0; n + 1]; m + 1];
+
+    // Levenshtein DP base row/col init — needless_range_loop trips here
+    // but the index IS the value being written, not a positional access.
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..=m {
+        dp[i][0] = i;
+    }
+    #[allow(clippy::needless_range_loop)]
+    for j in 0..=n {
+        dp[0][j] = j;
+    }
+
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+
+    dp[m][n]
+}
