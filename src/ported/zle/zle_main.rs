@@ -1014,16 +1014,15 @@ pub fn bin_vared(
 /// resolves it through the current keymap, and prints the bound
 /// widget name via `showmsg`.
 ///
-/// **Substrate trade-off:** the interactive prompt path needs the
-/// `getkeymapcmd` input driver (live key buffer + `statusline`
-/// "Describe key briefly: _" prompt + `zrefresh` redraw + main-
-/// keymap walk). Compcore-call-context ported don't have access to
-/// the live key reader. Returns 1 to signal "no resolution"; the
-/// live widget tick has its own copy of this fn that touches the
-/// active state directly.
+/// Delegates to the live-substrate implementation at
+/// `describe_key_briefly()` (snake-cased Rust name) which reads
+/// the key via getfullchar and emits the binding name via
+/// display_msg. This C-name-parity entry stays so widget-dispatch
+/// callers can find it.
 pub fn describekeybriefly() -> i32 {
     // c:1892
-    1 // c:1929 no-resolution path
+    describe_key_briefly(); // c:1929 — real-substrate entry.
+    0
 }
 
 /// Port of `MAXFOUND` from `Src/Zle/zle_main.c:1925`.
