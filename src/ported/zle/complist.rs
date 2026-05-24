@@ -3045,16 +3045,50 @@ pub fn enables_() -> i32 {
     0
 }
 
-/// Port of `menuselect_bindings()` from Src/Zle/complist.c:3533.
+/// Direct port of `void menuselect_bindings(void)` from
+/// `Src/Zle/complist.c:3533`. Lazy-create the `menuselect` and
+/// `listscroll` keymaps with the default tab/CR/arrow-key bindings
+/// if the user hasn't already provided them. Idempotent: re-running
+/// is safe because `openkeymap` returns the existing entry when
+/// already linked.
 pub fn menuselect_bindings() -> i32 {
-    // c:3533
-    // C body c:3535-3562 — `if (!(mskeymap = openkeymap("menuselect")))
-    //                       { mskeymap = newkeymap(...); linkkeymap(...);
-    //                         bindkey(... default arrow/tab/CR keys) }`
-    //                       same for "listscroll" keymap. The keymap
-    //                       substrate exists in zle_keymap.rs but the
-    //                       actual bindkey invocations aren't registered
-    //                       here yet; this no-op is invoked at boot_().
+    use crate::ported::zle::zle_keymap::{linkkeymap, newkeymap, openkeymap, Keymap};
+    use crate::ported::zle::zle_thingy::Thingy;
+    use std::sync::Arc;
+
+    let bind = |km: &mut Keymap, seq: &[u8], name: &str| {
+        km.bind_seq(seq, Thingy::builtin(name));
+    };
+
+    // c:3535-3551 — menuselect keymap.
+    if openkeymap("menuselect").is_none() {
+        let mut mskeymap = newkeymap(None, "menuselect");
+        let km = Arc::get_mut(&mut mskeymap).unwrap();
+        bind(km, b"\t", "complete-word"); // c:3540
+        bind(km, b"\n", "accept-line"); // c:3541
+        bind(km, b"\r", "accept-line"); // c:3542
+        bind(km, b"\x1b[A", "up-line-or-history"); // c:3543
+        bind(km, b"\x1b[B", "down-line-or-history"); // c:3544
+        bind(km, b"\x1b[C", "forward-char"); // c:3545
+        bind(km, b"\x1b[D", "backward-char"); // c:3546
+        bind(km, b"\x1bOA", "up-line-or-history"); // c:3547
+        bind(km, b"\x1bOB", "down-line-or-history"); // c:3548
+        bind(km, b"\x1bOC", "forward-char"); // c:3549
+        bind(km, b"\x1bOD", "backward-char"); // c:3550
+        linkkeymap(mskeymap, "menuselect", 1); // c:3537
+    }
+    // c:3552-3561 — listscroll keymap.
+    if openkeymap("listscroll").is_none() {
+        let mut lskeymap = newkeymap(None, "listscroll");
+        let km = Arc::get_mut(&mut lskeymap).unwrap();
+        bind(km, b"\t", "complete-word"); // c:3556
+        bind(km, b" ", "complete-word"); // c:3557
+        bind(km, b"\n", "accept-line"); // c:3558
+        bind(km, b"\r", "accept-line"); // c:3559
+        bind(km, b"\x1b[B", "down-line-or-history"); // c:3560
+        bind(km, b"\x1bOB", "down-line-or-history"); // c:3561
+        linkkeymap(lskeymap, "listscroll", 1); // c:3554
+    }
     0
 }
 
