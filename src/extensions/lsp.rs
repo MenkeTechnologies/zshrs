@@ -3300,11 +3300,11 @@ fn is_known_builtin_with_flag_docs(name: &str) -> bool {
         .iter()
         .any(|b| b.node.nam == name);
     let is_ext = crate::ext_builtins::EXT_BUILTIN_NAMES.contains(&name);
-    // Compsys functions (`_arguments`, `_files`, `_describe`, …)
-    // also have option flags documented in compsys.yo / compwid.yo.
-    // The doc bodies got slurped into BUILTIN_DOCS so the same flag
-    // extractor works — just need to recognize the name as a real
-    // completion target.
+    // Every compsys fn documented in `man zshcompsys` has a Rust
+    // shadow in `compsys/` (canonical_paths in library.rs,
+    // call_program in shell_runner.rs, widgets in library.rs, etc.)
+    // so they all live in `COMPSYS_FN_NAMES`. Flag completion routes
+    // through the per-fn `COMPSYS_FN_FLAG_DOCS` table.
     let is_compsys = compsys::COMPSYS_FN_NAMES.contains(&name);
     if !is_compat && !is_ext && !is_compsys {
         return false;
@@ -3336,6 +3336,22 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
         if let Some(v) = g.get(name) {
             return v.clone();
         }
+    }
+    // Tier 0 (compsys functions): hand-curated table derived from
+    // `man zshcompsys` signatures. Beats the bullet/inline scrapers
+    // for the 26 compsys fns documented there because the yodl
+    // source uses signature-style headers (`item(tt(_foo [ -x ] …))`)
+    // not bullet lists, so tier-1 picks up nothing and tier-2 only
+    // catches whichever flags happen to be re-cited inline.
+    if let Some(flags) = lookup_compsys_flag_docs(name) {
+        let out: Vec<(String, String)> = flags
+            .iter()
+            .map(|(f, d)| (f.to_string(), d.to_string()))
+            .collect();
+        if let Ok(mut g) = cache.lock() {
+            g.insert(name.to_string(), out.clone());
+        }
+        return out;
     }
     // Pull the doc body directly from the canonical table — DON'T
     // route through `lookup_doc` because that one prepends a heading
@@ -3403,6 +3419,245 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     }
     out
 }
+
+/// Per-compsys-fn flag tables sourced from `man zshcompsys` signatures
+/// (`_foo [ -x ] [ -12VJ ] tag name descr …`). The yodl source for
+/// compsys docs uses signature-style headers — not bullet lists — so
+/// the bullet/inline scrapers in `extract_builtin_flags` miss most
+/// flags. This table beats both tiers for the 26 fns documented in
+/// `zshcompsys.1`.
+///
+/// Shared conventions (per zsh source):
+///   `-1`, `-2`, `-V`, `-J`     — passed through to `compadd` for
+///                                 grouping / sort-order tags.
+///   `-x`                        — show description even when no
+///                                 matches are added (else descr
+///                                 only shows when matches exist).
+///   `-C name`                   — set the curcontext parameter to
+///                                 `name` while running.
+fn lookup_compsys_flag_docs(name: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    COMPSYS_FN_FLAG_DOCS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, flags)| *flags)
+}
+
+const COMPSYS_FN_FLAG_DOCS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "_all_labels",
+        &[
+            ("-x", "Show the description even when no matches are added."),
+            ("-1", "Pass `-1` through to `compadd` (suppress duplicate-removal of literal matches)."),
+            ("-2", "Pass `-2` through to `compadd` (suppress de-duplication based on display string)."),
+            ("-V", "Pass `-V name` through to `compadd` (put matches in a named unsorted group)."),
+            ("-J", "Pass `-J name` through to `compadd` (put matches in a named sorted group)."),
+        ],
+    ),
+    (
+        "_alternative",
+        &[
+            ("-O", "Pass `-O name` through to nested `_arguments` calls (preserve the option-spec array)."),
+            ("-C", "Set the curcontext parameter to `name` while running each alternative."),
+        ],
+    ),
+    (
+        "_arguments",
+        &[
+            ("-n", "Set `$NORMARG` to the position of the first normal argument in the `$words` array."),
+            ("-s", "Allow option stacking (`-abc` parsed as `-a -b -c`) — required for typical POSIX-style getopts CLIs."),
+            ("-w", "Even with `-s`, allow stacked options to consume an argument before the next short option."),
+            ("-W", "Even after a `--` separator, keep parsing further `-x` as options instead of treating them as positional."),
+            ("-C", "Make `curcontext` available to action handlers in `->state` form."),
+            ("-R", "Return status 300 instead of 0 when a `->state` action is dispatched (lets callers chain dispatch)."),
+            ("-S", "Stop parsing options once a non-option word is seen (treat the rest as positionals)."),
+            ("-A", "Treat any argument matching pattern `pat` as a non-option terminator (e.g. `-A '-*'`)."),
+            ("-O", "Name an array holding extra `compadd` options to pass to every match."),
+            ("-M", "Pass match spec `matchspec` to `compadd` (controls case-folding, partial-word matching, etc.)."),
+            ("--", "Separator between option specs and rest-arg `[helpspec ...]` syntax."),
+            ("-l", "Long-option style: each rest-arg `helpspec` describes one long option (e.g. `--foo=bar`)."),
+            ("-i", "Skip option specs whose names match any of the patterns in `pats`."),
+        ],
+    ),
+    (
+        "_call_program",
+        &[
+            ("-l", "Read one line at a time from the external program (don't slurp all output)."),
+            ("-p", "Treat the tag as a program-call context for the `command` style lookup."),
+        ],
+    ),
+    (
+        "_canonical_paths",
+        &[
+            ("-A", "Store the resolved canonical paths in array variable `var`."),
+            ("-N", "Don't realpath-resolve — treat the input paths as already canonical."),
+            ("-M", "Pass `-M matchspec` through to `compadd`."),
+            ("-J", "Pass `-J name` through to `compadd` (named sorted group)."),
+            ("-V", "Pass `-V name` through to `compadd` (named unsorted group)."),
+            ("-1", "Pass `-1` through to `compadd`."),
+            ("-2", "Pass `-2` through to `compadd`."),
+            ("-n", "Pass `-n` through to `compadd` (no inserted suffix)."),
+            ("-f", "Pass `-f` through to `compadd` (mark matches as filenames for suffix/cdpath handling)."),
+            ("-X", "Pass `-X explanation` through to `compadd` (custom listing-line message)."),
+        ],
+    ),
+    (
+        "_combination",
+        &[
+            ("-s", "Use `pattern` to split each existing style value into fields (default is comma)."),
+        ],
+    ),
+    (
+        "_command_names",
+        &[
+            ("-e", "Complete only external commands found in `$path` (skip aliases, builtins, functions, reserved words)."),
+            ("-", "Same as `-e`: external-only mode."),
+        ],
+    ),
+    (
+        "_completers",
+        &[
+            ("-p", "List only completer-function names that are valid for use in the `completer` style."),
+        ],
+    ),
+    (
+        "_describe",
+        &[
+            ("-1", "Pass `-1` through to `_next_label`/`compadd`."),
+            ("-2", "Pass `-2` through to `_next_label`/`compadd`."),
+            ("-J", "Pass `-J name` through to `_next_label` (named sorted group)."),
+            ("-V", "Pass `-V name` through to `_next_label` (named unsorted group)."),
+            ("-x", "Show the description even when no matches are added."),
+            ("-o", "Treat each `name1`/`name2` array as describing options (default tag is `options`)."),
+            ("-O", "Like `-o` but each match supports an argument-string suffix after a colon."),
+            ("-t", "Use `tag` instead of the default `values`/`options` tag."),
+        ],
+    ),
+    (
+        "_description",
+        &[
+            ("-x", "Show the description even when no matches are added."),
+            ("-1", "Pass `-1` through to `compadd`."),
+            ("-2", "Pass `-2` through to `compadd`."),
+            ("-V", "Pass `-V name` through to `compadd`."),
+            ("-J", "Pass `-J name` through to `compadd` (groups matches in a named sorted group based on group-name style)."),
+        ],
+    ),
+    (
+        "_dir_list",
+        &[
+            ("-s", "Use `sep` instead of `:` as the directory-list separator."),
+            ("-S", "Keep partially-typed list elements in the completion (allow trailing separator)."),
+        ],
+    ),
+    (
+        "_email_addresses",
+        &[
+            ("-c", "Add only the current-typed prefix as a match (don't expand to full addresses)."),
+            ("-n", "Restrict to entries returned by the named `plugin` backend (`_email-`<plugin>)."),
+        ],
+    ),
+    (
+        "_message",
+        &[
+            ("-r", "Take `descr` literally as the message text (skip the `format` style lookup)."),
+            ("-1", "Show the message even when no matches are added."),
+            ("-2", "Show the message only when matches already exist for some other tag."),
+            ("-V", "Display the message in a named unsorted group `group`."),
+            ("-J", "Display the message in a named sorted group `group`."),
+        ],
+    ),
+    (
+        "_multi_parts",
+        &[
+            ("-i", "Insert matches immediately rather than only when uniquely determined."),
+        ],
+    ),
+    (
+        "_next_label",
+        &[
+            ("-x", "Show the description even when no matches are added."),
+            ("-1", "Pass `-1` through to `compadd`."),
+            ("-2", "Pass `-2` through to `compadd`."),
+            ("-V", "Pass `-V name` through to `compadd`."),
+            ("-J", "Pass `-J name` through to `compadd`."),
+        ],
+    ),
+    (
+        "_normal",
+        &[
+            ("-P", "Treat the current word as following a precommand (`nohup`, `time`, …) — skip to the real command."),
+            ("-p", "Like `-P` but explicitly name the precommand for context lookup."),
+        ],
+    ),
+    (
+        "_numbers",
+        &[
+            // _numbers signature uses `[ option ... ]` — flags are
+            // the `compadd` ones plus signal-specific selectors. No
+            // canonical short-flag list in the man page; intentionally
+            // empty so caller falls back to no-flag-completion.
+        ],
+    ),
+    (
+        "_pick_variant",
+        &[
+            ("-b", "Treat `builtin-label` as the variant when the command is a shell builtin."),
+            ("-c", "Run `command` (with its args) to obtain the version string instead of the default `--version` invocation."),
+            ("-r", "Store the matched variant name in the parameter `name`."),
+        ],
+    ),
+    (
+        "_requested",
+        &[
+            ("-x", "Show the description even when no matches are added."),
+            ("-1", "Pass `-1` through to `compadd`."),
+            ("-2", "Pass `-2` through to `compadd`."),
+            ("-V", "Pass `-V name` through to `compadd`."),
+            ("-J", "Pass `-J name` through to `compadd`."),
+        ],
+    ),
+    (
+        "_sequence",
+        &[
+            ("-s", "Use `sep` instead of `,` as the list separator."),
+            ("-n", "Stop accepting more matches once `max` items have been completed in the sequence."),
+            ("-d", "Allow duplicate entries in the sequence (default rejects already-typed values)."),
+        ],
+    ),
+    (
+        "_tags",
+        &[
+            ("-C", "Set the curcontext parameter to `name` while iterating the tag list."),
+        ],
+    ),
+    (
+        "_values",
+        &[
+            ("-O", "Name an array holding extra `compadd` options to pass to every match."),
+            ("-s", "Use `sep` as the value separator between multiple keywords (default is comma)."),
+            ("-S", "Use `sep` as the keyword-and-argument separator (default is `=`)."),
+            ("-w", "Examine other typed arguments as well when computing which value-specs are already used."),
+            ("-C", "Make `curcontext` available to action handlers (must be made local by the caller)."),
+        ],
+    ),
+    (
+        "_wanted",
+        &[
+            ("-x", "Show the description even when no matches are added."),
+            ("-C", "Set the curcontext parameter to `name` while invoking the inner command."),
+            ("-1", "Pass `-1` through to `compadd`."),
+            ("-2", "Pass `-2` through to `compadd`."),
+            ("-V", "Pass `-V name` through to `compadd`."),
+            ("-J", "Pass `-J name` through to `compadd`."),
+        ],
+    ),
+    (
+        "_widgets",
+        &[
+            ("-g", "Restrict completions to widget names matching shell pattern `pattern`."),
+        ],
+    ),
+];
 
 /// Hand docs for compsys functions whose names don't have a per-name
 /// `item(tt(_X))` block in `compsys.yo` / `compwid.yo`. Per-command
@@ -6555,6 +6810,84 @@ struct _Placeholder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── compsys flag docs (man zshcompsys-derived hand table) ──────────
+
+    #[test]
+    fn compsys_flag_table_covers_wanted_with_all_six_flags() {
+        // `_wanted -<TAB>` previously returned 0 because tier-1 saw no
+        // bullets in the doc body and tier-2 caught at most 2 inline
+        // citations. The man-derived hand table should now serve all 6
+        // flags from the signature `[ -x ] [ -C name ] [ -12VJ ]`.
+        let flags = extract_builtin_flags("_wanted");
+        let names: Vec<&str> = flags.iter().map(|(f, _)| f.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["-x", "-C", "-1", "-2", "-V", "-J"],
+            "_wanted flag set drifted from man zshcompsys signature",
+        );
+        for (f, d) in &flags {
+            assert!(!d.is_empty(), "flag {f} has no description");
+        }
+    }
+
+    #[test]
+    fn compsys_flag_table_overrides_bullet_scraper_for_arguments() {
+        // `_arguments` is the marquee compsys fn — the man page
+        // documents 12+ flags but the bullet scraper only catches 7.
+        // The man-derived hand table is consulted FIRST, so the count
+        // should be the full 12.
+        let flags = extract_builtin_flags("_arguments");
+        assert!(
+            flags.len() >= 12,
+            "expected _arguments to surface >=12 flags from man-derived table, got {}",
+            flags.len()
+        );
+        // Spot-check that the man-only flags (-w, -W, -A, -O, --) are
+        // present — these are missing from the BUILTIN_DOCS scrape.
+        let names: std::collections::HashSet<&str> =
+            flags.iter().map(|(f, _)| f.as_str()).collect();
+        for must_have in ["-n", "-s", "-w", "-W", "-C", "-R", "-S", "-A", "-O", "-M"] {
+            assert!(
+                names.contains(must_have),
+                "_arguments missing canonical flag {must_have}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_compsys_fn_in_man_is_in_inventory() {
+        // The 26 compsys fns documented in `man zshcompsys` all have
+        // Rust shadows in `compsys/` (canonical_paths, call_program,
+        // widgets, …) — so `COMPSYS_FN_NAMES` is the canonical truth
+        // and `is_known_builtin_with_flag_docs` doesn't need a doc-
+        // only fallback. This test pins that. If a future yo extract
+        // adds a new compsys fn, add it to `COMPSYS_FN_NAMES` AND
+        // give it a row in `COMPSYS_FN_FLAG_DOCS`.
+        for name in [
+            "_call_program",
+            "_canonical_paths",
+            "_combination",
+            "_command_names",
+            "_completers",
+            "_dir_list",
+            "_email_addresses",
+            "_multi_parts",
+            "_numbers",
+            "_pick_variant",
+            "_sequence",
+            "_tags",
+            "_widgets",
+        ] {
+            assert!(
+                compsys::COMPSYS_FN_NAMES.contains(&name),
+                "{name}: missing from COMPSYS_FN_NAMES inventory",
+            );
+        }
+        assert!(is_known_builtin_with_flag_docs("_canonical_paths"));
+        assert!(is_known_builtin_with_flag_docs("_widgets"));
+        assert!(is_known_builtin_with_flag_docs("_call_program"));
+    }
 
     // ── word_at ─────────────────────────────────────────────────────────
 
