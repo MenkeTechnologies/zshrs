@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T20:46:44.235438+00:00
+Generated: 2026-05-24T20:56:16.770928+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 183 stubs across 48 files
+## Summary: 181 stubs across 48 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -24,9 +24,9 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/hashtable.rs` | 11 | `newhashtable` (1 / 19) |
 | `src/ported/mem.rs` | 10 | `malloc` (1 / 165) |
 | `src/ported/zle/complist.rs` | 10 | `putfilecol` (2 / 71) |
-| `src/ported/zle/zle_keymap.rs` | 10 | `getkeymapcmd` (1 / 89) |
 | `src/ported/zle/zle_refresh.rs` | 10 | `addmultiword` (1 / 14) |
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 182) |
+| `src/ported/zle/zle_keymap.rs` | 8 | `getrestchar_keybuf` (2 / 39) |
 | `src/ported/zle/zle_main.rs` | 8 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
 | `src/ported/zle/zle_hist.rs` | 7 | `doisearch` (19 / 462) |
@@ -136,21 +136,6 @@ python3 scripts/gen_port_stubs.py
 | 2508 | `domenuselect` | 129 | 925 | 13% |
 | 653 | `clnicezputs` | 24 | 107 | 22% |
 
-### `src/ported/zle/zle_keymap.rs` — 10 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1515 | `getkeymapcmd` | 1 | 89 | 1% |
-| 1496 | `getrestchar_keybuf` | 2 | 39 | 5% |
-| 264 | `newkeytab` | 1 | 15 | 6% |
-| 153 | `emptykeymapnamtab` | 1 | 14 | 7% |
-| 111 | `createkeymapnamtab` | 1 | 13 | 7% |
-| 567 | `scankeys` | 1 | 13 | 7% |
-| 1439 | `add_cursor_key` | 3 | 18 | 16% |
-| 1460 | `default_bindings` | 24 | 121 | 19% |
-| 1197 | `bin_bindkey_meta` | 4 | 19 | 21% |
-| 1039 | `bin_bindkey_lsmaps` | 4 | 16 | 25% |
-
 ### `src/ported/zle/zle_refresh.rs` — 10 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -178,6 +163,19 @@ python3 scripts/gen_port_stubs.py
 | 68 | `cut_cline` | 5 | 81 | 6% |
 | 215 | `instmatch` | 6 | 80 | 7% |
 | 96 | `cline_str` | 50 | 271 | 18% |
+
+### `src/ported/zle/zle_keymap.rs` — 8 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1524 | `getrestchar_keybuf` | 2 | 39 | 5% |
+| 264 | `newkeytab` | 1 | 15 | 6% |
+| 153 | `emptykeymapnamtab` | 1 | 14 | 7% |
+| 111 | `createkeymapnamtab` | 1 | 13 | 7% |
+| 567 | `scankeys` | 1 | 13 | 7% |
+| 1467 | `add_cursor_key` | 3 | 18 | 16% |
+| 1488 | `default_bindings` | 24 | 121 | 19% |
+| 1225 | `bin_bindkey_meta` | 4 | 19 | 21% |
 
 ### `src/ported/zle/zle_main.rs` — 8 stubs
 
