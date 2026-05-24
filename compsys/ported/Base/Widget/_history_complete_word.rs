@@ -30,3 +30,37 @@ pub fn _history_complete_word(
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forward_iter_finds_first_match_after_prefix() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "che".into();
+        let history = vec!["ls -la".into(), "git checkout main".into()];
+        assert!(_history_complete_word(&mut state, &history, 1));
+    }
+
+    #[test]
+    fn backward_iter_walks_recent_first() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "che".into();
+        let history = vec![
+            "git checkout old".into(),
+            "git checkout new".into(),
+        ];
+        assert!(_history_complete_word(&mut state, &history, -1));
+    }
+
+    #[test]
+    fn word_equal_to_prefix_skipped() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "exactly".into();
+        let history = vec!["exactly".into()];
+        // Only word matching prefix IS the prefix itself → skipped
+        // by `word != prefix` check.
+        assert!(!_history_complete_word(&mut state, &history, 1));
+    }
+}

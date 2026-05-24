@@ -33,3 +33,26 @@ pub fn _regex_words(
     state.end_group();
     matched
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefix_filter_and_disp_format() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "co".into();
+        let specs = vec![
+            ("commit".into(), "Create commit".into()),
+            ("push".into(), "Push to remote".into()),
+        ];
+        assert!(_regex_words(&mut state, "words", "verb", &specs));
+        let by_str: std::collections::HashMap<&str, &str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| (c.str_.as_str(), c.disp.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(by_str.get("commit"), Some(&"commit -- Create commit"));
+        assert!(!by_str.contains_key("push"));
+    }
+}

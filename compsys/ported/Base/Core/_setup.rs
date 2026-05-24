@@ -74,3 +74,50 @@ pub fn _setup(state: &mut MainCompleteState, tag: &str) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_packed_zstyle_appends_packed() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::values",
+            "list-packed",
+            vec!["yes".into()],
+            false,
+        );
+        _setup(&mut state, "values");
+        assert!(state.comp.params.compstate.list.contains("packed"));
+    }
+
+    #[test]
+    fn accept_exact_zstyle_sets_compstate_exact() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::values",
+            "accept-exact",
+            vec!["true".into()],
+            false,
+        );
+        _setup(&mut state, "values");
+        assert_eq!(state.comp.params.compstate.exact, "accept");
+    }
+
+    #[test]
+    fn force_list_always_appends_force_marker() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::values",
+            "force-list",
+            vec!["always".into()],
+            false,
+        );
+        _setup(&mut state, "values");
+        assert!(state.comp.params.compstate.list.contains("force"));
+    }
+}
