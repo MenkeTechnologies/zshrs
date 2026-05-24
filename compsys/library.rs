@@ -14,7 +14,7 @@ use std::path::Path;
 // =============================================================================
 
 /// _absolute_command_paths - Complete commands with absolute paths
-pub fn absolute_command_paths(state: &mut CompletionState) -> bool {
+pub fn _absolute_command_paths(state: &mut CompletionState) -> bool {
     let prefix = state.params.prefix.clone();
 
     // Search PATH for executables
@@ -49,7 +49,7 @@ pub fn absolute_command_paths(state: &mut CompletionState) -> bool {
 }
 
 /// _canonical_paths - Complete canonical (resolved) paths
-pub fn canonical_paths(
+pub fn _canonical_paths(
     state: &mut CompletionState,
     tag: &str,
     description: &str,
@@ -76,7 +76,7 @@ pub fn canonical_paths(
 }
 
 /// _cmdambivalent - Handle commands that can be run with or without arguments
-pub fn cmdambivalent(state: &mut MainCompleteState, inv: &ShellInventory<'_>) -> bool {
+pub fn _cmdambivalent(state: &mut MainCompleteState, inv: &ShellInventory<'_>) -> bool {
     // If no arguments yet, complete as command
     if state.comp.params.current <= 1 {
         command_names(&mut state.comp, inv, false)
@@ -87,7 +87,7 @@ pub fn cmdambivalent(state: &mut MainCompleteState, inv: &ShellInventory<'_>) ->
 }
 
 /// _cmdstring - Complete a command string (for eval, etc.)
-pub fn cmdstring(state: &mut CompletionState, inv: &ShellInventory<'_>) -> bool {
+pub fn _cmdstring(state: &mut CompletionState, inv: &ShellInventory<'_>) -> bool {
     // Complete as if it were a command line
     command_names(state, inv, false)
 }
@@ -101,14 +101,14 @@ pub use crate::fns::{_command_names, _command_names_with_ctx, ShellInventory};
 pub use crate::fns::{_command_names as command_names, _command_names_with_ctx as command_names_with_ctx};
 
 /// _comp_caller_options - Get options from calling context
-pub fn comp_caller_options() -> HashMap<String, bool> {
+pub fn _comp_caller_options() -> HashMap<String, bool> {
     // Returns shell options that were set when completion was invoked
     // This is stored in $_comp_caller_options in zsh
     HashMap::new()
 }
 
 /// _comp_priv_prefix - Prefix for privilege escalation (sudo, doas, etc.)
-pub fn comp_priv_prefix() -> Vec<String> {
+pub fn _comp_priv_prefix() -> Vec<String> {
     // Returns the privilege prefix if any
     Vec::new()
 }
@@ -119,14 +119,14 @@ pub use crate::fns::{_completers, CANONICAL_COMPLETER_NAMES};
 pub use crate::fns::_completers as completers;
 
 /// _default - Default completion (files)
-pub fn default_complete(state: &mut CompletionState) -> bool {
+pub fn _default(state: &mut CompletionState) -> bool {
     crate::fns::_files::files_execute(state, &crate::fns::_files::FilesOpts::default())
 }
 
 // `_dir_list` moved to `compsys/fns/dir_list.rs`. Re-exported for
 // back-compat. Old signature `dir_list(state, Option<&str>, bool)`
 // preserved via a thin shim.
-pub fn dir_list(
+pub fn _dir_list(
     state: &mut CompletionState,
     separator: Option<&str>,
     use_sep_as_suffix: bool,
@@ -141,7 +141,7 @@ pub fn dir_list(
 }
 
 /// _email_addresses - Complete email addresses
-pub fn email_addresses(state: &mut CompletionState, complete_struc: bool) -> bool {
+pub fn _email_addresses(state: &mut CompletionState, complete_struc: bool) -> bool {
     let prefix = state.params.prefix.clone();
 
     // Try to read from common sources
@@ -180,7 +180,7 @@ pub fn email_addresses(state: &mut CompletionState, complete_struc: bool) -> boo
 }
 
 /// _gnu_generic - Generic GNU-style option completion from --help
-pub fn gnu_generic(state: &mut CompletionState, command: &str) -> bool {
+pub fn _gnu_generic(state: &mut CompletionState, command: &str) -> bool {
     let prefix = state.params.prefix.clone();
 
     // Run command --help and parse options
@@ -253,7 +253,7 @@ pub fn gnu_generic(state: &mut CompletionState, command: &str) -> bool {
 }
 
 /// _options - Complete shell options
-pub fn options(state: &mut CompletionState, shell_options: &[(&str, bool)]) -> bool {
+pub fn _options(state: &mut CompletionState, shell_options: &[(&str, bool)]) -> bool {
     let prefix = state.params.prefix.clone();
 
     state.begin_group("options", true);
@@ -275,27 +275,27 @@ pub fn options(state: &mut CompletionState, shell_options: &[(&str, bool)]) -> b
 }
 
 /// _options_set - Complete currently set options
-pub fn options_set(state: &mut CompletionState, shell_options: &[(&str, bool)]) -> bool {
+pub fn _options_set(state: &mut CompletionState, shell_options: &[(&str, bool)]) -> bool {
     let set_opts: Vec<(&str, bool)> = shell_options
         .iter()
         .filter(|(_, is_set)| *is_set)
         .copied()
         .collect();
-    options(state, &set_opts)
+    _options(state, &set_opts)
 }
 
 /// _options_unset - Complete currently unset options
-pub fn options_unset(state: &mut CompletionState, shell_options: &[(&str, bool)]) -> bool {
+pub fn _options_unset(state: &mut CompletionState, shell_options: &[(&str, bool)]) -> bool {
     let unset_opts: Vec<(&str, bool)> = shell_options
         .iter()
         .filter(|(_, is_set)| !*is_set)
         .copied()
         .collect();
-    options(state, &unset_opts)
+    _options(state, &unset_opts)
 }
 
 /// _parameters - Complete parameter (variable) names
-pub fn parameters(state: &mut CompletionState, params: &HashMap<String, String>) -> bool {
+pub fn _parameters(state: &mut CompletionState, params: &HashMap<String, String>) -> bool {
     let prefix = state.params.prefix.clone();
 
     state.begin_group("parameters", true);
@@ -311,7 +311,7 @@ pub fn parameters(state: &mut CompletionState, params: &HashMap<String, String>)
 }
 
 /// _path_files - Complete files with path handling
-pub fn path_files(state: &mut CompletionState, opts: &PathFilesOpts) -> bool {
+pub fn _path_files(state: &mut CompletionState, opts: &PathFilesOpts) -> bool {
     let prefix = state.params.prefix.clone();
 
     // Determine directory to search
@@ -428,7 +428,7 @@ pub struct PathFilesOpts {
 }
 
 /// _precommand - Complete after a precommand (sudo, nohup, etc.)
-pub fn precommand(state: &mut MainCompleteState) -> bool {
+pub fn _precommand(state: &mut MainCompleteState) -> bool {
     // Skip the precommand and complete as normal command
     if state.comp.params.current > 1 {
         // Treat rest as command line
@@ -442,7 +442,7 @@ pub fn precommand(state: &mut MainCompleteState) -> bool {
 }
 
 /// _tilde_files - Complete files with tilde expansion
-pub fn tilde_files(state: &mut CompletionState) -> bool {
+pub fn _tilde_files(state: &mut CompletionState) -> bool {
     let prefix = state.params.prefix.clone();
 
     if prefix.starts_with('~') {

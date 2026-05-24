@@ -43,9 +43,9 @@
 ///     dispatch, alternative, values, complete/ignored/approximate/
 ///     correct/expand/history/match/menu/prefix, description, message,
 ///     requested, wanted, all_labels, next_label, sep_parts)
-///   * Arg-spec engine: [`arguments`] (`_arguments`)
-///   * Description rendering: [`describe`] / [`computil`] (`_describe`)
-///   * File / path completers: [`files`] / [`library`] (`_files`,
+///   * Arg-spec engine: [`_arguments`] (`_arguments`)
+///   * Description rendering: [`_describe`] / [`computil`] (`_describe`)
+///   * File / path completers: [`_files`] / [`library`] (`_files`,
 ///     `_directories`, `_path_files`, `_tilde_files`)
 ///   * Per-command completers wired in `main` (`_git`, `_docker`,
 ///     `_cargo`, `_kubectl`, `_terraform`, plus `_ls` / `_cd` / `_cp`
@@ -111,7 +111,6 @@ pub const COMPSYS_FN_NAMES: &[&str] = &[
     "_widgets",
 ];
 
-pub mod arguments;
 pub mod base;
 pub mod cache;
 pub mod compadd;
@@ -121,8 +120,6 @@ pub mod compinit;
 pub mod completion;
 pub mod compset;
 pub mod computil;
-pub mod describe;
-pub mod files;
 pub mod fns;
 pub mod functions;
 pub mod generate;
@@ -136,7 +133,7 @@ pub mod zle;
 pub mod zpwr_colors;
 pub mod zstyle;
 
-pub use arguments::{
+pub use fns::_arguments::{
     arguments_analyze, arguments_execute, parse_action, ActionType, ArgRequirement,
     ArgumentsAnalysis, ArgumentsSpec, ArgumentsState, OptSpec, OptType,
 };
@@ -197,8 +194,9 @@ pub use computil::{
     describe_execute, ArgSpec as UtilArgSpec, CompArguments, CompDescribe, CompFiles,
     CompGroupConfig, CompGroups, CompTags, CompValues, ValueSpec,
 };
-pub use describe::{describe_execute as native_describe, parse_items, DescribeItem, DescribeOpts};
-pub use files::{directories_execute, files_execute, FilesOpts};
+pub use fns::_describe::{describe_execute as native_describe, parse_items, DescribeItem, DescribeOpts};
+pub use fns::_files::{directories_execute, files_execute, FilesOpts};
+use fns::{_arguments, _describe, _files};
 pub use generate::{
     complete_builtins, complete_commands_from_cache, complete_files, complete_from_cache_function,
     complete_parameters, complete_shell_functions, detect_completion_context, generate_completions,
