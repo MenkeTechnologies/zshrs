@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:21:25.956802+00:00
+Generated: 2026-05-24T22:23:33.334685+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 156 stubs across 47 files
+## Summary: 155 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -31,10 +31,10 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
 | `src/ported/module.rs` | 5 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 5 | `map_opt_desc` (1 / 16) |
-| `src/ported/zle/complist.rs` | 5 | `menuselect_bindings` (1 / 25) |
 | `src/ported/zle/zle_keymap.rs` | 5 | `newkeytab` (1 / 15) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
+| `src/ported/zle/complist.rs` | 4 | `menuselect_bindings` (1 / 25) |
 | `src/ported/glob.rs` | 3 | `get_match_ret` (5 / 71) |
 | `src/ported/init.rs` | 3 | `init_shout` (4 / 23) |
 | `src/ported/modules/db_gdbm.rs` | 3 | `gdbmhashsetfn` (7 / 47) |
@@ -212,16 +212,6 @@ python3 scripts/gen_port_stubs.py
 | 694 | `setstypat` | 6 | 58 | 10% |
 | 148 | `freestylenode` | 2 | 10 | 20% |
 
-### `src/ported/zle/complist.rs` — 5 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 2975 | `menuselect_bindings` | 1 | 25 | 4% |
-| 870 | `asklistscroll` | 2 | 40 | 5% |
-| 2989 | `boot_` | 2 | 15 | 13% |
-| 2738 | `domenuselect` | 129 | 925 | 13% |
-| 734 | `clnicezputs` | 24 | 107 | 22% |
-
 ### `src/ported/zle/zle_keymap.rs` — 5 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -249,6 +239,15 @@ python3 scripts/gen_port_stubs.py
 | 345 | `promptexpand` | 4 | 43 | 9% |
 | 438 | `parsecolorchar` | 3 | 24 | 12% |
 | 2511 | `match_highlight` | 10 | 75 | 13% |
+
+### `src/ported/zle/complist.rs` — 4 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 3049 | `menuselect_bindings` | 1 | 25 | 4% |
+| 3063 | `boot_` | 2 | 15 | 13% |
+| 2812 | `domenuselect` | 129 | 925 | 13% |
+| 734 | `clnicezputs` | 24 | 107 | 22% |
 
 ### `src/ported/glob.rs` — 3 stubs
 
