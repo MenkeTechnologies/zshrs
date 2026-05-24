@@ -3591,15 +3591,21 @@ impl ZshCompiler {
         let count_slot = self.next_slot;
         self.next_slot += 1;
 
-        // c:Src/loop.c — `repeat $((expr))` counts iterations from the
-        // inner arith. The lexer tokenizes `$((2+3))` as
-        // `<Stringg><Inparmath>(2+3)<Outparmath>` — Stringg=0x85,
-        // Inparmath=0x89, Outparmath=0x8b (zsh.h). compile_arith_str
-        // expects bare arith, so untokenize → "$((2+3))" doesn't
-        // parse. Strip the outer arith-sub wrapping so the inner
-        // "2+3" reaches the arith compiler. Bare numeric count
-        // (`repeat 5`) and parameter count (`repeat $N`) pass
-        // through unchanged.
+        // c:Src/parse.c:1600 — `par_repeat` captures the count via
+        // `tokstr()` raw (carrying lexer-emitted token markers).
+        // C's wordcode VM at `execrepeat` (Src/loop.c:519) handles
+        // the WC_MATH node directly. zshrs lowers via fusevm
+        // compile_zsh (this file) — a Rust-only step with no C
+        // counterpart since C uses wordcode VM dispatch instead.
+        //
+        // For `repeat $((2+3))`, the lex tokenizes as
+        // `<Stringg><Inparmath>(2+3)<Outparmath>` —
+        // Stringg=0x85, Inparmath=0x89, Outparmath=0x8b (zsh.h).
+        // compile_arith_str expects bare arith; untokenize →
+        // "$((2+3))" doesn't parse cleanly. Strip the outer
+        // arith-sub wrapping so the inner "2+3" reaches the arith
+        // compiler. Bare numeric count (`repeat 5`) and parameter
+        // count (`repeat $N`) pass through unchanged.
         let count_str = {
             let s = r.count.as_str();
             // Match `Stringg Inparmath (...) Outparmath` (with optional
