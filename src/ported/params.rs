@@ -12121,4 +12121,300 @@ mod tests {
             tab.remove("zshrs_test_getaparam_scalar");
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // setX/getX round-trips and cross-type coercion.
+    // Anchored to zsh behavior:
+    //   - `typeset -i x=42; print -- $x` → "42"
+    //   - `x=42; print -- ${(t)x}` → "scalar" (set without typeset stays scalar)
+    //   - integer ↔ scalar coercion when reading back.
+    // Each test sets up via setX, reads back via getX, and asserts the
+    // observable shell-level value.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn with_exec<F: FnOnce()>(body: F) {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("exec").unwrap_or(false);
+        opt_state_set("exec", true);
+        body();
+        opt_state_set("exec", saved);
+    }
+
+    // ── Scalar round-trip ──────────────────────────────────────────
+    /// `setsparam("X", "hello"); getsparam("X")` → Some("hello").
+    /// Anchor: `X=hello; print -r -- "$X"` in zsh → `hello`.
+    #[test]
+    fn setsparam_then_getsparam_roundtrip_basic() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_s1");
+            setsparam("zshrs_rt_s1", "hello");
+            assert_eq!(getsparam("zshrs_rt_s1").as_deref(), Some("hello"));
+            unsetparam("zshrs_rt_s1");
+        });
+    }
+
+    /// Empty string round-trip — scalar can hold "".
+    #[test]
+    fn setsparam_empty_string_roundtrips_as_empty() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_s2");
+            setsparam("zshrs_rt_s2", "");
+            assert_eq!(getsparam("zshrs_rt_s2").as_deref(), Some(""));
+            unsetparam("zshrs_rt_s2");
+        });
+    }
+
+    /// Multi-byte UTF-8 scalar round-trip.
+    /// Anchor: `X="日本語"; print -r -- "$X"` → "日本語"
+    #[test]
+    fn setsparam_multibyte_utf8_roundtrips() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_s3");
+            setsparam("zshrs_rt_s3", "日本語");
+            assert_eq!(getsparam("zshrs_rt_s3").as_deref(), Some("日本語"));
+            unsetparam("zshrs_rt_s3");
+        });
+    }
+
+    /// Embedded newline survives round-trip.
+    #[test]
+    fn setsparam_embedded_newline_roundtrips() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_s4");
+            setsparam("zshrs_rt_s4", "a\nb\nc");
+            assert_eq!(getsparam("zshrs_rt_s4").as_deref(), Some("a\nb\nc"));
+            unsetparam("zshrs_rt_s4");
+        });
+    }
+
+    /// Overwrite: setsparam twice returns the latter value.
+    #[test]
+    fn setsparam_overwrite_replaces_previous_value() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_s5");
+            setsparam("zshrs_rt_s5", "first");
+            setsparam("zshrs_rt_s5", "second");
+            assert_eq!(getsparam("zshrs_rt_s5").as_deref(), Some("second"));
+            unsetparam("zshrs_rt_s5");
+        });
+    }
+
+    // ── Integer round-trip ─────────────────────────────────────────
+    /// `setiparam("X", 42); getiparam("X")` → 42.
+    /// Anchor: `typeset -i X=42; print -- $X` → "42".
+    #[test]
+    fn setiparam_then_getiparam_roundtrip_basic() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_i1");
+            setiparam("zshrs_rt_i1", 42);
+            assert_eq!(getiparam("zshrs_rt_i1"), 42);
+            unsetparam("zshrs_rt_i1");
+        });
+    }
+
+    /// Negative integer round-trip.
+    #[test]
+    fn setiparam_negative_value_roundtrips() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_i2");
+            setiparam("zshrs_rt_i2", -12345);
+            assert_eq!(getiparam("zshrs_rt_i2"), -12345);
+            unsetparam("zshrs_rt_i2");
+        });
+    }
+
+    /// Zero round-trip — distinct from "unset".
+    #[test]
+    fn setiparam_zero_roundtrips() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_i3");
+            setiparam("zshrs_rt_i3", 0);
+            assert_eq!(getiparam("zshrs_rt_i3"), 0);
+            unsetparam("zshrs_rt_i3");
+        });
+    }
+
+    /// `i64::MAX` and `i64::MIN` survive — zsh uses zlong (= long long
+    /// on 64-bit hosts, which is i64 in Rust).
+    #[test]
+    fn setiparam_i64_extremes_roundtrip() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_i4");
+            setiparam("zshrs_rt_i4", i64::MAX);
+            assert_eq!(getiparam("zshrs_rt_i4"), i64::MAX);
+            setiparam("zshrs_rt_i4", i64::MIN);
+            assert_eq!(getiparam("zshrs_rt_i4"), i64::MIN);
+            unsetparam("zshrs_rt_i4");
+        });
+    }
+
+    // ── Cross-type coercion: setiparam → getsparam (int → string) ──
+    /// `setiparam("X", 42); getsparam("X")` → Some("42").
+    /// Anchor: `typeset -i X=42; print -r -- "$X"` → "42".
+    #[test]
+    fn setiparam_then_getsparam_coerces_to_decimal_string() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_x1");
+            setiparam("zshrs_rt_x1", 42);
+            assert_eq!(getsparam("zshrs_rt_x1").as_deref(), Some("42"));
+            unsetparam("zshrs_rt_x1");
+        });
+    }
+
+    /// Negative int → "-N" string form via getsparam.
+    #[test]
+    fn setiparam_negative_int_to_string_carries_minus_sign() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_x2");
+            setiparam("zshrs_rt_x2", -7);
+            assert_eq!(getsparam("zshrs_rt_x2").as_deref(), Some("-7"));
+            unsetparam("zshrs_rt_x2");
+        });
+    }
+
+    // ── Cross-type: setsparam("42") → getiparam → 42 ───────────────
+    /// `setsparam("X", "42"); getiparam("X")` → 42 (numeric parse).
+    /// Anchor: `X=42; print -- $((X+0))` → "42" (arith coerces).
+    #[test]
+    fn setsparam_numeric_string_then_getiparam_coerces_to_int() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_x3");
+            setsparam("zshrs_rt_x3", "42");
+            assert_eq!(getiparam("zshrs_rt_x3"), 42);
+            unsetparam("zshrs_rt_x3");
+        });
+    }
+
+    /// Non-numeric scalar → getiparam returns 0 (C zsh behavior).
+    /// Anchor: `X=hello; print -- $((X+0))` → "0" (no numeric parse).
+    #[test]
+    fn setsparam_non_numeric_then_getiparam_returns_zero() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_x4");
+            setsparam("zshrs_rt_x4", "not a number");
+            assert_eq!(getiparam("zshrs_rt_x4"), 0);
+            unsetparam("zshrs_rt_x4");
+        });
+    }
+
+    // ── Array round-trip ───────────────────────────────────────────
+    /// `setaparam("X", vec![...]); getaparam("X")` round-trips elements.
+    /// Anchor: `X=(a b c); print -r -- "${X[@]}"` → "a b c".
+    #[test]
+    fn setaparam_then_getaparam_roundtrip_basic() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_a1");
+            setaparam(
+                "zshrs_rt_a1",
+                vec!["a".into(), "b".into(), "c".into()],
+            );
+            assert_eq!(
+                getaparam("zshrs_rt_a1"),
+                Some(vec!["a".into(), "b".into(), "c".into()])
+            );
+            unsetparam("zshrs_rt_a1");
+        });
+    }
+
+    /// Empty array round-trip — distinct from unset.
+    #[test]
+    fn setaparam_empty_array_roundtrips_as_empty_vec() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_a2");
+            setaparam("zshrs_rt_a2", vec![]);
+            assert_eq!(getaparam("zshrs_rt_a2"), Some(vec![]));
+            unsetparam("zshrs_rt_a2");
+        });
+    }
+
+    /// Array element with embedded space stays one element (not split).
+    /// Anchor: `X=("hi there" world); print ${#X}` → 2.
+    #[test]
+    fn setaparam_element_with_space_stays_one_element() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_a3");
+            setaparam(
+                "zshrs_rt_a3",
+                vec!["hi there".into(), "world".into()],
+            );
+            assert_eq!(
+                getaparam("zshrs_rt_a3"),
+                Some(vec!["hi there".into(), "world".into()])
+            );
+            unsetparam("zshrs_rt_a3");
+        });
+    }
+
+    // ── unsetparam: idempotent + clears value ──────────────────────
+    /// Unsetting a never-set param does nothing (no panic, no error).
+    #[test]
+    fn unsetparam_on_never_set_param_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("zshrs_rt_never_existed");
+        // No assertion — just must not panic.
+    }
+
+    /// Unset then get → None.
+    #[test]
+    fn unsetparam_then_getsparam_returns_none() {
+        with_exec(|| {
+            setsparam("zshrs_rt_u1", "value");
+            unsetparam("zshrs_rt_u1");
+            assert_eq!(getsparam("zshrs_rt_u1"), None);
+        });
+    }
+
+    /// Unsetting twice is idempotent.
+    #[test]
+    fn unsetparam_twice_is_idempotent() {
+        with_exec(|| {
+            setsparam("zshrs_rt_u2", "value");
+            unsetparam("zshrs_rt_u2");
+            unsetparam("zshrs_rt_u2"); // second call must not panic
+            assert_eq!(getsparam("zshrs_rt_u2"), None);
+        });
+    }
+
+    // ── Cross-type: setiparam writes through scalar table, getaparam None ─
+    /// PM_INTEGER is NOT PM_ARRAY — getaparam on integer returns None.
+    /// Anchor: `typeset -i X=42; print -- ${X[1]}` errors (not an array).
+    #[test]
+    fn setiparam_then_getaparam_returns_none_not_an_array() {
+        with_exec(|| {
+            unsetparam("zshrs_rt_x5");
+            setiparam("zshrs_rt_x5", 42);
+            assert_eq!(
+                getaparam("zshrs_rt_x5"),
+                None,
+                "PM_INTEGER is not PM_ARRAY — getaparam must return None"
+            );
+            unsetparam("zshrs_rt_x5");
+        });
+    }
+
+    // ── Read missing param: returns None / 0 ───────────────────────
+    /// `getsparam("doesnt_exist")` → None.
+    #[test]
+    fn getsparam_on_unset_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("zshrs_rt_missing");
+        assert_eq!(getsparam("zshrs_rt_missing"), None);
+    }
+
+    /// `getiparam("doesnt_exist")` → 0 (C zsh semantics).
+    /// Anchor: `unset X; print -- $((X+1))` → "1" (X read as 0).
+    #[test]
+    fn getiparam_on_unset_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("zshrs_rt_missing2");
+        assert_eq!(getiparam("zshrs_rt_missing2"), 0);
+    }
+
+    /// `getaparam("doesnt_exist")` → None.
+    #[test]
+    fn getaparam_on_unset_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("zshrs_rt_missing3");
+        assert_eq!(getaparam("zshrs_rt_missing3"), None);
+    }
 }
