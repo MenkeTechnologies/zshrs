@@ -87,4 +87,53 @@ mod tests {
         assert_eq!(_next_label(&tags, "a"), None);
         assert_eq!(_next_label(&tags, "b"), None);
     }
+
+    #[test]
+    fn iteration_walks_try_sets_one_at_a_time() {
+        // Pin LIFO ordering of try-sets: first try-set wins until
+        // `next()` advances.
+        let mut tags = TagManager::new();
+        tags.init(&["x".into(), "y".into()]);
+        tags.add_try(&["x".into()]);
+        tags.add_try(&["y".into()]);
+        tags.start();
+        assert_eq!(_next_label(&tags, "x"), Some("x".into()));
+        assert_eq!(_next_label(&tags, "y"), None);
+        tags.next();
+        assert_eq!(_next_label(&tags, "x"), None);
+        assert_eq!(_next_label(&tags, "y"), Some("y".into()));
+    }
+
+    #[test]
+    fn empty_string_tag_lookup_returns_none() {
+        let mut tags = TagManager::new();
+        tags.init(&["files".into()]);
+        tags.add_try(&["files".into()]);
+        tags.start();
+        // Empty-string tag was never added → not wanted.
+        assert_eq!(_next_label(&tags, ""), None);
+    }
+
+    #[test]
+    fn round_trip_label_matches_input_exactly() {
+        // The label returned is the input tag verbatim — no
+        // canonicalization, no case-folding.
+        let mut tags = TagManager::new();
+        tags.init(&["MixedCase".into()]);
+        tags.add_try(&["MixedCase".into()]);
+        tags.start();
+        assert_eq!(_next_label(&tags, "MixedCase"), Some("MixedCase".into()));
+        assert_eq!(_next_label(&tags, "mixedcase"), None);
+    }
+
+    #[test]
+    fn fresh_tagmanager_returns_none_before_start() {
+        // Without calling `start()`, no try-set is active even if
+        // `init` was called.
+        let mut tags = TagManager::new();
+        tags.init(&["a".into()]);
+        tags.add_try(&["a".into()]);
+        // Skip tags.start() — pin no-active-set semantics.
+        assert_eq!(_next_label(&tags, "a"), None);
+    }
 }

@@ -120,4 +120,44 @@ mod tests {
             true
         });
     }
+
+    #[test]
+    fn description_attached_as_group_explanation() {
+        let mut state = CompletionState::new();
+        let mut tm = make_tags(&["files"]);
+        _all_labels(&mut state, &mut tm, "files", "Pick a file", |_, _| true);
+        let grp = state
+            .groups
+            .iter()
+            .find(|g| g.name == "files")
+            .unwrap();
+        assert!(grp.explanations.iter().any(|e| e == "Pick a file"));
+    }
+
+    #[test]
+    fn nested_all_labels_calls_isolate_groups() {
+        // Two _all_labels calls under different tags should each
+        // get their own group.
+        let mut state = CompletionState::new();
+        let mut tm = make_tags(&["files", "directories"]);
+        _all_labels(&mut state, &mut tm, "files", "F", |_, _| true);
+        _all_labels(&mut state, &mut tm, "directories", "D", |_, _| true);
+        let names: Vec<&str> = state.groups.iter().map(|g| g.name.as_str()).collect();
+        assert!(names.contains(&"files"));
+        assert!(names.contains(&"directories"));
+    }
+
+    #[test]
+    fn closure_can_emit_matches_via_state() {
+        use crate::completion::Completion;
+        let mut state = CompletionState::new();
+        let mut tm = make_tags(&["files"]);
+        _all_labels(&mut state, &mut tm, "files", "", |s, _| {
+            s.add_match(Completion::new("file1"), Some("files"));
+            s.add_match(Completion::new("file2"), Some("files"));
+            true
+        });
+        let grp = state.groups.iter().find(|g| g.name == "files").unwrap();
+        assert_eq!(grp.matches.len(), 2);
+    }
 }

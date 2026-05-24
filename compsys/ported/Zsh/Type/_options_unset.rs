@@ -85,4 +85,61 @@ mod tests {
         assert!(!names.contains(&"NO_BEEP"), "set option must not appear");
         assert!(!names.contains(&"NULL_GLOB"), "off-prefix must not appear");
     }
+
+    #[test]
+    fn complement_of_options_set() {
+        // For any (key, is_set) entry: _options_unset and _options_set
+        // should be exact complements.
+        use crate::ported::_options_set::_options_set;
+        let opts: Vec<(&str, bool)> = vec![
+            ("A", true),
+            ("B", false),
+            ("C", true),
+            ("D", false),
+            ("E", false),
+        ];
+        let mut s1 = CompletionState::new();
+        let mut s2 = CompletionState::new();
+        let _ = _options_set(&mut s1, &opts);
+        let _ = _options_unset(&mut s2, &opts);
+        let set: std::collections::HashSet<String> = s1
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        let unset: std::collections::HashSet<String> = s2
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(
+            set.is_disjoint(&unset),
+            "set and unset must be disjoint; set={set:?} unset={unset:?}"
+        );
+        let total = set.len() + unset.len();
+        assert_eq!(
+            total,
+            opts.len(),
+            "every option must appear in exactly one bucket"
+        );
+    }
+
+    #[test]
+    fn no_prefix_emits_all_unset_options() {
+        let mut state = CompletionState::new();
+        let opts: Vec<(&str, bool)> = vec![
+            ("A", false),
+            ("B", false),
+            ("C", false),
+        ];
+        let _ = _options_unset(&mut state, &opts);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names.len(), 3);
+    }
 }

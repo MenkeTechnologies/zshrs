@@ -122,4 +122,54 @@ mod tests {
         assert!(_comp_caller_options().is_empty());
         assert_eq!(get("X"), None);
     }
+
+    #[test]
+    fn set_wholesale_replaces_existing() {
+        let _g = lock();
+        clear();
+        set_one("OLD", true);
+        let mut snap = HashMap::new();
+        snap.insert("NEW".into(), false);
+        set(snap);
+        // OLD should be gone after wholesale replace.
+        assert_eq!(get("OLD"), None);
+        assert_eq!(get("NEW"), Some(false));
+        clear();
+    }
+
+    #[test]
+    fn snapshot_is_a_clone_not_a_reference() {
+        // Mutating the returned HashMap shouldn't affect the registry.
+        let _g = lock();
+        clear();
+        set_one("Z", true);
+        let mut snap = _comp_caller_options();
+        snap.insert("Z".into(), false);
+        snap.insert("INJECTED".into(), true);
+        assert_eq!(get("Z"), Some(true), "registry must not see external mutations");
+        assert_eq!(get("INJECTED"), None);
+        clear();
+    }
+
+    #[test]
+    fn case_sensitive_key_lookup() {
+        // Shell options are typically uppercase but the table is
+        // case-sensitive — pin behavior.
+        let _g = lock();
+        clear();
+        set_one("EXTENDED_GLOB", true);
+        assert_eq!(get("EXTENDED_GLOB"), Some(true));
+        assert_eq!(get("extended_glob"), None);
+        assert_eq!(get("Extended_Glob"), None);
+        clear();
+    }
+
+    #[test]
+    fn empty_string_key_supported() {
+        let _g = lock();
+        clear();
+        set_one("", true);
+        assert_eq!(get(""), Some(true));
+        clear();
+    }
 }

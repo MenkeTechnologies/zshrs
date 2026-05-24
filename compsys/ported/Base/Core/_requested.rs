@@ -200,4 +200,42 @@ mod tests {
         assert_eq!(pos[0], "files");
         assert_eq!(pos[1], "expl");
     }
+
+    #[test]
+    fn empty_args_returns_none() {
+        let mut tm = make_tags();
+        assert!(_requested(&mut tm, &[]).is_none());
+    }
+
+    #[test]
+    fn flags_only_no_positional_returns_none() {
+        // Just flags, no tag → first positional doesn't exist.
+        let mut tm = make_tags();
+        assert!(_requested(&mut tm, &s(&["-1", "-2", "-x"])).is_none());
+    }
+
+    #[test]
+    fn dash_J_carries_group_name_argument() {
+        let mut tm = make_tags();
+        let (flags, _, _) =
+            _requested(&mut tm, &s(&["-J", "sortgroup", "files"])).unwrap();
+        assert_eq!(flags.j_group.as_deref(), Some("sortgroup"));
+    }
+
+    #[test]
+    fn dash_2_flag_recognized() {
+        let mut tm = make_tags();
+        let (flags, _, _) = _requested(&mut tm, &s(&["-2", "files"])).unwrap();
+        assert!(flags.two);
+        assert!(!flags.one);
+    }
+
+    #[test]
+    fn unknown_flag_treated_as_positional() {
+        let mut tm = make_tags();
+        // `-z` is not in the zparseopts spec; should be treated as a
+        // bare positional (which makes it the first arg = "tag name").
+        // Since "-z" isn't a wanted tag, returns None.
+        assert!(_requested(&mut tm, &s(&["-z", "files"])).is_none());
+    }
 }

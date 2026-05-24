@@ -149,4 +149,43 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn after_dash_p_falls_through_to_normal() {
+        // -p doesn't take an arg, so the next word is treated as the
+        // command name → Normal dispatch.
+        let s = st(&["command", "-p", "ls"], 3, "ls");
+        // current=3, words[1]="-p", prefix="ls" (no leading dash)
+        // → Normal branch.
+        assert_eq!(
+            _command(&s, "command"),
+            Some(CommandStage::Normal {
+                service: "command".into()
+            })
+        );
+    }
+
+    #[test]
+    fn service_string_is_forwarded_verbatim() {
+        let s = st(&["command", "ls", ""], 3, "");
+        if let Some(CommandStage::Normal { service }) = _command(&s, "my-service") {
+            assert_eq!(service, "my-service");
+        } else {
+            panic!("expected Normal stage");
+        }
+    }
+
+    #[test]
+    fn dash_v_with_arg_typed_completes_command_with_prefix() {
+        // command -v gi<cursor>  → still FlagArg('v') because prev=-v.
+        let s = st(&["command", "-v", "gi"], 3, "gi");
+        assert_eq!(_command(&s, "command"), Some(CommandStage::FlagArg('v')));
+    }
+
+    #[test]
+    fn dash_partial_typed_still_offers_flags() {
+        // User typed `-v` halfway; still in flag mode.
+        let s = st(&["command", "-v"], 2, "-v");
+        assert_eq!(_command(&s, "command"), Some(CommandStage::Flag));
+    }
 }

@@ -135,4 +135,49 @@ mod tests {
             let _ = pwds;
         }
     }
+
+    #[test]
+    fn empty_prefix_emits_at_least_one_match() {
+        // With empty prefix, every collected PWD passes the filter.
+        // At minimum we expect our own cwd.
+        let mut state = CompletionState::new();
+        assert!(_external_pwds(&mut state));
+        let total: usize = state.groups.iter().map(|g| g.matches.len()).sum();
+        assert!(total >= 1);
+    }
+
+    #[test]
+    fn dedup_via_btreeset() {
+        // collect_pwds returns a BTreeSet — duplicates are impossible.
+        let pwds = collect_pwds();
+        let unique: std::collections::HashSet<&PathBuf> = pwds.iter().collect();
+        assert_eq!(pwds.len(), unique.len(), "BTreeSet must enforce uniqueness");
+    }
+
+    #[test]
+    fn returns_lexically_sorted_pwds() {
+        // BTreeSet iteration is lexically ordered; our emissions
+        // therefore come out sorted. Pin that contract.
+        let pwds = collect_pwds();
+        let collected: Vec<&PathBuf> = pwds.iter().collect();
+        let mut sorted = collected.clone();
+        sorted.sort();
+        assert_eq!(collected, sorted, "BTreeSet output must be sorted");
+    }
+
+    #[test]
+    fn cwd_path_matches_prefix_filter_when_specific() {
+        // Use the cwd itself as a prefix — exact match should pass.
+        let mut state = CompletionState::new();
+        let cwd = std::env::current_dir().unwrap().to_string_lossy().to_string();
+        state.params.prefix = cwd.clone();
+        let _ = _external_pwds(&mut state);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&cwd));
+    }
 }

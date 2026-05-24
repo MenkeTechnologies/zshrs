@@ -274,4 +274,79 @@ mod tests {
         assert_eq!(desc, "command");
         assert_eq!(items, vec!["items_array"]);
     }
+
+    #[test]
+    fn dash_V_group_unsorted_dash_J_sorted() {
+        let (opts_v, _, _) =
+            DescribeOpts::parse(&["-V".into(), "g1".into(), "desc".into()]);
+        assert!(!opts_v.sorted, "-V → unsorted group");
+        assert_eq!(opts_v.group.as_deref(), Some("g1"));
+        let (opts_j, _, _) =
+            DescribeOpts::parse(&["-J".into(), "g2".into(), "desc".into()]);
+        assert!(opts_j.sorted, "-J → sorted group");
+        assert_eq!(opts_j.group.as_deref(), Some("g2"));
+    }
+
+    #[test]
+    fn dash_P_S_prefix_and_suffix() {
+        let (opts, _, _) = DescribeOpts::parse(&[
+            "-P".into(),
+            "prefix_".into(),
+            "-S".into(),
+            "/".into(),
+            "desc".into(),
+        ]);
+        assert_eq!(opts.prefix.as_deref(), Some("prefix_"));
+        assert_eq!(opts.suffix.as_deref(), Some("/"));
+    }
+
+    #[test]
+    fn dash_Q_no_quote_flag() {
+        let (opts, _, _) = DescribeOpts::parse(&["-Q".into(), "desc".into()]);
+        assert!(opts.no_quote);
+    }
+
+    #[test]
+    fn dash_r_remove_suffix_chars() {
+        let (opts, _, _) =
+            DescribeOpts::parse(&["-r".into(), " \\t".into(), "desc".into()]);
+        assert_eq!(opts.remove_suffix.as_deref(), Some(" \\t"));
+    }
+
+    #[test]
+    fn parse_item_with_only_separator_yields_empty_description() {
+        let item = DescribeItem::parse("foo:");
+        assert_eq!(item.value, "foo");
+        assert_eq!(item.description, "");
+    }
+
+    #[test]
+    fn parse_items_array_round_trips_all_specs() {
+        let specs = vec![
+            "alpha:first".to_string(),
+            "beta:second".to_string(),
+            "gamma:third".to_string(),
+        ];
+        let items = parse_items(&specs);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].value, "alpha");
+        assert_eq!(items[2].description, "third");
+    }
+
+    #[test]
+    fn parse_escaped_with_backslash_in_description_kept() {
+        // `\:` only escapes COLONS — backslashes in the description
+        // pass through unchanged.
+        let item = DescribeItem::parse_escaped(r"value:foo\bar");
+        assert_eq!(item.value, "value");
+        assert_eq!(item.description, r"foo\bar");
+    }
+
+    #[test]
+    fn item_with_multiple_unescaped_colons_splits_on_first() {
+        let item = DescribeItem::parse("a:b:c:d");
+        assert_eq!(item.value, "a");
+        // First-colon split, rest stays whole.
+        assert_eq!(item.description, "b:c:d");
+    }
 }

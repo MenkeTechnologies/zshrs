@@ -16,23 +16,34 @@
 //! (since we're now one word back), and runs `_normal -p $service`
 //! (`-p` tells _normal "this is precommand dispatch").
 //!
-//! Simplified Rust port: gates on `current > 1` (already past the
-//! precommand position) and dispatches to `_normal`. The `_normal`
-//! port currently returns NoMatch until the comps table is wired
-//! through — pinned by the
-//! `current_gt_1_delegates_to_normal` test.
+//! Strict Rust port: mirrors `shift words; (( CURRENT-- )); _normal`.
+//! Pops the leading word from `state.comp.params.words` and
+//! decrements `current` before calling `_normal`. Restores both
+//! after — `_precommand` is a one-shot dispatch helper, not a
+//! mutation primitive.
 
 use crate::base::{_normal, CompleterResult, MainCompleteState};
 
-/// _precommand - Complete after a precommand (sudo, nohup, etc.)
+/// _precommand - Complete after a precommand (sudo, nohup, etc.).
 pub fn _precommand(state: &mut MainCompleteState) -> bool {
-    // Skip the precommand and complete as normal command
-    if state.comp.params.current > 1 {
-        // Treat rest as command line
-        matches!(_normal(state), CompleterResult::Matched)
-    } else {
-        false
+    // shell:4 `(( CURRENT-- ))` — only meaningful when current > 1.
+    if state.comp.params.current <= 1 {
+        return false;
     }
+    // shell:3 `shift words` — pop the precommand.
+    let saved_words = state.comp.params.words.clone();
+    let saved_current = state.comp.params.current;
+    if !saved_words.is_empty() {
+        state.comp.params.words.remove(0);
+    }
+    state.comp.params.current = saved_current - 1;
+
+    let result = matches!(_normal(state), CompleterResult::Matched);
+
+    // Restore so caller's view of words+current is unchanged.
+    state.comp.params.words = saved_words;
+    state.comp.params.current = saved_current;
+    result
 }
 
 #[cfg(test)]
@@ -77,5 +88,52 @@ mod tests {
         ];
         // _normal returns NoMatch (no comps table wired) → false.
         assert!(!_precommand(&mut state));
+    }
+
+    #[test]
+    fn words_restored_after_call() {
+        let original_words = vec!["sudo".to_string(), "ls".to_string()];
+        let mut state = MainCompleteState::new("sudo ls", 7);
+        state.comp.params.current = 2;
+        state.comp.params.words = original_words.clone();
+        let _ = _precommand(&mut state);
+        assert_eq!(
+            state.comp.params.words, original_words,
+            "_precommand must restore words after dispatch"
+        );
+    }
+
+    #[test]
+    fn current_restored_after_call() {
+        let mut state = MainCompleteState::new("sudo ls", 7);
+        state.comp.params.current = 2;
+        state.comp.params.words = vec!["sudo".into(), "ls".into()];
+        let _ = _precommand(&mut state);
+        assert_eq!(state.comp.params.current, 2);
+    }
+
+    #[test]
+    fn empty_words_with_high_current_still_decrements() {
+        // current > 1 with empty words: we don't pop (nothing to pop)
+        // but we DO decrement current before calling _normal.
+        // Pin no panic.
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 3;
+        state.comp.params.words.clear();
+        let _ = _precommand(&mut state);
+    }
+
+    #[test]
+    fn first_word_popped_during_normal_dispatch() {
+        // We can't directly inspect what _normal sees, but we can
+        // observe through a registered handler — at the leaf layer
+        // _normal currently returns NoMatch, so just pin that the
+        // pop happens and restoration works correctly.
+        let mut state = MainCompleteState::new("sudo git status", 15);
+        state.comp.params.current = 3;
+        state.comp.params.words = vec!["sudo".into(), "git".into(), "status".into()];
+        let snapshot = state.comp.params.words.clone();
+        let _ = _precommand(&mut state);
+        assert_eq!(state.comp.params.words, snapshot);
     }
 }

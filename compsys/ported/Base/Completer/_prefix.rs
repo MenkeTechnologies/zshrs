@@ -19,24 +19,43 @@
 //! preserved on the line but excluded from completion matching),
 //! then runs the rest of the completer pipeline against bare PREFIX.
 //!
-//! Faithful Rust port: takes an action closure and runs it with
-//! SUFFIX cleared. Restores SUFFIX afterward — pinned by the
-//! `suffix_cleared_during_action_and_restored_after` test.
+//! Strict Rust port: honors `matcher_num > 1 || empty SUFFIX → bail`
+//! gate AND the `add-space` style. Moves SUFFIX into ISUFFIX (with
+//! optional leading space) for the action's duration, clears SUFFIX,
+//! then restores both on return.
 
 use crate::compcore::CompletionState;
 
-/// _prefix - Complete with prefix handling
+/// _prefix - Complete with prefix handling.
+///
+/// `matcher_num` mirrors `_matcher_num`; `add_space` mirrors the
+/// `add-space` zstyle resolved to bool by the caller.
 pub fn _prefix(
     state: &mut CompletionState,
+    matcher_num: usize,
+    add_space: bool,
     action: impl FnOnce(&mut CompletionState) -> bool,
 ) -> bool {
-    // Save suffix, complete prefix only, restore
+    // shell:3 — bail when past first matcher OR no suffix.
+    if matcher_num > 1 || state.params.suffix.is_empty() {
+        return false;
+    }
+    // shell:16-22 — move SUFFIX → ISUFFIX (with optional leading
+    // space), then clear SUFFIX.
     let saved_suffix = state.params.suffix.clone();
+    let saved_isuffix = state.params.isuffix.clone();
+    state.params.isuffix = if add_space {
+        format!(" {}", saved_suffix)
+    } else {
+        saved_suffix.clone()
+    };
     state.params.suffix.clear();
 
     let result = action(state);
 
+    // Restore both fields.
     state.params.suffix = saved_suffix;
+    state.params.isuffix = saved_isuffix;
     result
 }
 
@@ -49,40 +68,74 @@ mod tests {
         let mut state = CompletionState::new();
         state.params.suffix = "BACK".into();
         let observed = std::cell::Cell::new(String::new());
-        let result = _prefix(&mut state, |s| {
-            // Snapshot what action sees.
+        let result = _prefix(&mut state, 1, false, |s| {
             observed.set(s.params.suffix.clone());
             true
         });
         assert!(result);
-        assert_eq!(
-            observed.into_inner(),
-            "",
-            "action must see EMPTY suffix (prefix-only completion)"
-        );
-        assert_eq!(
-            state.params.suffix, "BACK",
-            "suffix must be restored after action returns"
-        );
+        assert_eq!(observed.into_inner(), "");
+        assert_eq!(state.params.suffix, "BACK");
     }
 
     #[test]
     fn propagates_action_return_value() {
         let mut state = CompletionState::new();
-        assert!(!_prefix(&mut state, |_| false), "false action -> false return");
-        assert!(_prefix(&mut state, |_| true), "true action -> true return");
+        state.params.suffix = "x".into();
+        assert!(!_prefix(&mut state, 1, false, |_| false));
+        assert!(_prefix(&mut state, 1, false, |_| true));
     }
 
     #[test]
-    fn suffix_restored_even_if_action_panics_via_unwind() {
-        // Drop ordering would matter here if we held a Drop guard;
-        // current impl restores via explicit assignment. Pin that
-        // explicit-restore at least works on the happy path with
-        // an empty suffix.
+    fn empty_suffix_bails_per_shell_gate() {
         let mut state = CompletionState::new();
-        state.params.suffix = "ZED".into();
-        _prefix(&mut state, |_| true);
-        assert_eq!(state.params.suffix, "ZED");
+        let called = std::cell::Cell::new(false);
+        let r = _prefix(&mut state, 1, false, |_| {
+            called.set(true);
+            true
+        });
+        assert!(!r);
+        assert!(!called.get(), "action must NOT run when suffix is empty");
+    }
+
+    #[test]
+    fn past_first_matcher_bails() {
+        let mut state = CompletionState::new();
+        state.params.suffix = "BACK".into();
+        let r = _prefix(&mut state, 2, false, |_| true);
+        assert!(!r);
+    }
+
+    #[test]
+    fn add_space_prepends_space_to_isuffix() {
+        let mut state = CompletionState::new();
+        state.params.suffix = "BACK".into();
+        let observed_isuffix = std::cell::Cell::new(String::new());
+        _prefix(&mut state, 1, true, |s| {
+            observed_isuffix.set(s.params.isuffix.clone());
+            true
+        });
+        assert_eq!(observed_isuffix.into_inner(), " BACK");
+    }
+
+    #[test]
+    fn no_add_space_isuffix_equals_suffix_verbatim() {
+        let mut state = CompletionState::new();
+        state.params.suffix = "BACK".into();
+        let observed = std::cell::Cell::new(String::new());
+        _prefix(&mut state, 1, false, |s| {
+            observed.set(s.params.isuffix.clone());
+            true
+        });
+        assert_eq!(observed.into_inner(), "BACK");
+    }
+
+    #[test]
+    fn isuffix_restored_to_original_after_action() {
+        let mut state = CompletionState::new();
+        state.params.suffix = "S".into();
+        state.params.isuffix = "ORIGINAL".into();
+        _prefix(&mut state, 1, false, |_| true);
+        assert_eq!(state.params.isuffix, "ORIGINAL");
     }
 
     #[test]
@@ -90,7 +143,7 @@ mod tests {
         use crate::completion::Completion;
         let mut state = CompletionState::new();
         state.params.suffix = "X".into();
-        _prefix(&mut state, |s| {
+        _prefix(&mut state, 1, false, |s| {
             s.add_match(Completion::new("emit"), None);
             true
         });
@@ -101,24 +154,20 @@ mod tests {
             .map(|c| c.str_.clone())
             .collect();
         assert!(names.contains(&"emit".to_string()));
-        // Suffix still restored.
         assert_eq!(state.params.suffix, "X");
     }
 
     #[test]
-    fn action_runs_with_modified_state() {
+    fn prefix_field_untouched() {
         let mut state = CompletionState::new();
         state.params.prefix = "git".into();
         state.params.suffix = "-svn".into();
         let observed_prefix = std::cell::Cell::new(String::new());
-        let observed_suffix = std::cell::Cell::new(String::new());
-        _prefix(&mut state, |s| {
+        _prefix(&mut state, 1, false, |s| {
             observed_prefix.set(s.params.prefix.clone());
-            observed_suffix.set(s.params.suffix.clone());
             true
         });
-        // Prefix is UNTOUCHED by _prefix; suffix is cleared.
         assert_eq!(observed_prefix.into_inner(), "git");
-        assert_eq!(observed_suffix.into_inner(), "");
+        assert_eq!(state.params.prefix, "git");
     }
 }

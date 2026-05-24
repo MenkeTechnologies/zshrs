@@ -154,7 +154,10 @@ where
     }
 
     // shell:93 `tmp=( ${tmp%%${~sep}*} )` — keep only the FIRST
-    // remaining axis value.
+    // remaining axis value. Dedup mirrors shell's `compadd`
+    // implicit unique-match table (same candidate emitted twice
+    // collapses to one).
+    let mut seen = std::collections::HashSet::new();
     let candidates: Vec<String> = filtered
         .into_iter()
         .map(|s| match s.find(sep) {
@@ -162,6 +165,7 @@ where
             None => s,
         })
         .filter(|s| !s.is_empty())
+        .filter(|s| seen.insert(s.clone()))
         .collect();
 
     if candidates.is_empty() {
@@ -299,5 +303,115 @@ mod tests {
             true
         });
         assert!(fallback_ran);
+    }
+
+    #[test]
+    fn empty_target_field_skipped_in_results() {
+        // Tuples with an empty field at the target position should
+        // be skipped (the empty string isn't a useful completion).
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::svc:accounts",
+            "users-hosts-ports",
+            vec![
+                "u1:h1:22".into(),
+                "u2::33".into(), // empty host slot
+                "u3:h3:44".into(),
+            ],
+            false,
+        );
+        let opts = CombinationOpts {
+            separator: ":",
+            tag: "accounts",
+            style: "users-hosts-ports",
+            fixed: &[],
+            target_key: "hosts",
+            target_num: 1,
+        };
+        let _ = _combination(&mut state, &styles, ":svc", &opts, never_fallback);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"h1"));
+        assert!(names.contains(&"h3"));
+        assert!(
+            !names.iter().any(|n| n.is_empty()),
+            "empty target must NOT appear; got {names:?}"
+        );
+    }
+
+    #[test]
+    fn multi_constraint_filter_works() {
+        // Constrain both user AND port.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::svc:accounts",
+            "users-hosts-ports",
+            vec![
+                "u1:h1:22".into(),
+                "u1:h2:80".into(),
+                "u2:h1:22".into(),
+                "u1:h3:22".into(),
+            ],
+            false,
+        );
+        let opts = CombinationOpts {
+            separator: ":",
+            tag: "accounts",
+            style: "users-hosts-ports",
+            fixed: &[
+                ("users".into(), 1, "u1".into()),
+                ("ports".into(), 1, "22".into()),
+            ],
+            target_key: "hosts",
+            target_num: 1,
+        };
+        let _ = _combination(&mut state, &styles, ":svc", &opts, never_fallback);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        // Only u1+22 tuples: h1, h3
+        assert!(names.contains(&"h1"));
+        assert!(names.contains(&"h3"));
+        assert!(!names.contains(&"h2"), "h2 violates port constraint");
+    }
+
+    #[test]
+    fn dedup_repeated_target_values() {
+        // The same host appearing in multiple tuples shouldn't
+        // emit duplicates.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::svc:accounts",
+            "users-hosts-ports",
+            vec![
+                "u1:repeat:22".into(),
+                "u2:repeat:80".into(),
+                "u3:other:443".into(),
+            ],
+            false,
+        );
+        let opts = CombinationOpts {
+            separator: ":",
+            tag: "accounts",
+            style: "users-hosts-ports",
+            fixed: &[],
+            target_key: "hosts",
+            target_num: 1,
+        };
+        let _ = _combination(&mut state, &styles, ":svc", &opts, never_fallback);
+        let repeat_count = state.groups[0]
+            .matches
+            .iter()
+            .filter(|c| c.str_ == "repeat")
+            .count();
+        assert_eq!(repeat_count, 1, "repeated target value must dedupe");
     }
 }

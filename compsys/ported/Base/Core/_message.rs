@@ -110,4 +110,39 @@ mod tests {
         _message(&mut state, &styles, ":complete::test:", "msg", "hi");
         assert!(state.nmessages > before);
     }
+
+    #[test]
+    fn hidden_all_suppresses_emission() {
+        // When the tag's `hidden` style is `all`, _description
+        // returns None → no group created, nmessages unchanged.
+        // `_description` builds ctx = `{context}:{tag}` so we set
+        // the style at that combined path.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        // context=":t:", tag="tag" → lookup ctx is ":t::tag"
+        styles.set(":t::tag", "hidden", vec!["all".into()], false);
+        let before = state.nmessages;
+        _message(&mut state, &styles, ":t:", "tag", "should be hidden");
+        assert_eq!(state.nmessages, before);
+        assert!(!state.groups.iter().any(|g| g.name == "tag"));
+    }
+
+    #[test]
+    fn format_d_substitution_appears_in_explanation() {
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        // context=":t:", tag="msg" → lookup ctx is ":t::msg"
+        styles.set(":t::msg", "format", vec!["<<%d>>".into()], false);
+        _message(&mut state, &styles, ":t:", "msg", "INSIDE");
+        let grp = state.groups.iter().find(|g| g.name == "msg").unwrap();
+        assert!(grp.explanations.iter().any(|e| e.contains("<<INSIDE>>")));
+    }
+
+    #[test]
+    fn message_does_not_add_completion_matches() {
+        let mut state = CompletionState::new();
+        let styles = ZStyleStore::new();
+        _message(&mut state, &styles, ":t:", "tag", "msg");
+        assert_eq!(state.nmatches, 0, "_message MUST NOT emit candidate matches");
+    }
 }

@@ -345,4 +345,86 @@ mod tests {
         let r = _call_program(&state, "x", &[], &CallProgramOpts::default());
         assert!(r.is_none());
     }
+
+    #[test]
+    fn nonzero_exit_returns_none() {
+        // `false` exits 1 → no output captured.
+        let state = mk_state();
+        let r = _call_program(
+            &state,
+            "x",
+            &["false".into()],
+            &CallProgramOpts {
+                skip_locale: true,
+                ..Default::default()
+            },
+        );
+        assert!(r.is_none(), "nonzero exit must surface as None");
+    }
+
+    #[test]
+    fn columns_env_set_to_999() {
+        // We can't directly inspect cmd.env, but we CAN observe the
+        // effect: `echo $COLUMNS` via sh -c.
+        let state = mk_state();
+        let r = _call_program(
+            &state,
+            "x",
+            &["sh".into(), "-c".into(), "echo $COLUMNS".into()],
+            &CallProgramOpts {
+                skip_locale: true,
+                ..Default::default()
+            },
+        );
+        let out = r.expect("ran").stdout;
+        assert!(out.trim() == "999", "COLUMNS not set to 999; got {out:?}");
+    }
+
+    #[test]
+    fn locale_env_set_unless_skipped() {
+        // With skip_locale=false, LC_ALL must be "C" inside the call.
+        let state = mk_state();
+        let r = _call_program(
+            &state,
+            "x",
+            &["sh".into(), "-c".into(), "echo $LC_ALL".into()],
+            &CallProgramOpts {
+                skip_locale: false,
+                ..Default::default()
+            },
+        );
+        let out = r.expect("ran").stdout;
+        assert_eq!(out.trim(), "C");
+    }
+
+    #[test]
+    fn used_priv_prefix_false_without_dash_p_flag() {
+        // Even with a non-empty priv_prefix, if `-p` (use_priv_prefix)
+        // isn't set, the flag stays false.
+        let state = mk_state();
+        let r = _call_program(
+            &state,
+            "x",
+            &["echo".into(), "ok".into()],
+            &CallProgramOpts {
+                use_priv_prefix: false,
+                priv_prefix: &["sudo".into()],
+                skip_locale: true,
+            },
+        );
+        let r = r.expect("ran");
+        assert!(!r.used_priv_prefix);
+    }
+
+    #[test]
+    fn nonexistent_command_returns_none() {
+        let state = mk_state();
+        let r = _call_program(
+            &state,
+            "x",
+            &["/definitely-not-a-real-binary-xyz-12345".into()],
+            &CallProgramOpts::default(),
+        );
+        assert!(r.is_none());
+    }
 }

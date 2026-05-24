@@ -382,4 +382,116 @@ mod tests {
         assert!(tags.wanted("argument-1"));
         assert!(tags.wanted("values"), "sort hook should have included values");
     }
+
+    #[test]
+    fn empty_offered_returns_false() {
+        let mut state = CompletionState::new();
+        let styles = ZStyleStore::new();
+        let mut tags = TagManager::new();
+        let ok = _tags(
+            &mut state,
+            &styles,
+            &mut tags,
+            ":complete::test:",
+            &[],
+            &TagsOpts::default(),
+            None,
+        );
+        // No tags offered → no try-sets to start → false.
+        assert!(!ok);
+    }
+
+    #[test]
+    fn tag_order_with_grouped_tags_in_same_set() {
+        // `arg-1 option-1` on the SAME line groups them into one
+        // try-set; both should be wanted simultaneously.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::complete::test::",
+            "tag-order",
+            vec!["argument-1 option-1".into(), "values".into()],
+            false,
+        );
+        let mut tags = TagManager::new();
+        let offered = vec![
+            "argument-1".into(),
+            "option-1".into(),
+            "values".into(),
+        ];
+        _tags(
+            &mut state,
+            &styles,
+            &mut tags,
+            ":complete::test:",
+            &offered,
+            &TagsOpts::default(),
+            None,
+        );
+        assert!(tags.wanted("argument-1"));
+        assert!(tags.wanted("option-1"));
+        assert!(!tags.wanted("values"), "values in a LATER try-set");
+    }
+
+    #[test]
+    fn tag_order_advance_to_next_set() {
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::complete::test::",
+            "tag-order",
+            vec!["argument-1".into(), "values".into()],
+            false,
+        );
+        let mut tags = TagManager::new();
+        let offered = vec!["argument-1".into(), "values".into()];
+        _tags(
+            &mut state,
+            &styles,
+            &mut tags,
+            ":complete::test:",
+            &offered,
+            &TagsOpts::default(),
+            None,
+        );
+        assert!(tags.wanted("argument-1"));
+        let more = _tags_next(&mut tags);
+        assert!(more, "second try-set (values) should exist");
+        assert!(tags.wanted("values"));
+        assert!(!tags.wanted("argument-1"));
+    }
+
+    #[test]
+    fn glob_pattern_in_tag_order_matches_multiple_tags() {
+        // `option-*` should pull in all option-N variants.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion::complete::test::",
+            "tag-order",
+            vec!["option-*".into()],
+            false,
+        );
+        let mut tags = TagManager::new();
+        let offered = vec![
+            "argument-1".into(),
+            "option-1".into(),
+            "option-2".into(),
+            "option-3".into(),
+            "values".into(),
+        ];
+        _tags(
+            &mut state,
+            &styles,
+            &mut tags,
+            ":complete::test:",
+            &offered,
+            &TagsOpts::default(),
+            None,
+        );
+        assert!(tags.wanted("option-1"));
+        assert!(tags.wanted("option-2"));
+        assert!(tags.wanted("option-3"));
+        assert!(!tags.wanted("argument-1"));
+    }
 }

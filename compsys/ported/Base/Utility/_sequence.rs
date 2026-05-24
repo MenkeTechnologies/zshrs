@@ -266,4 +266,102 @@ mod tests {
         assert!(!names.contains(&"alpha"));
         assert!(names.contains(&"beta"));
     }
+
+    #[test]
+    fn fixed_prefix_set_on_emitted_matches() {
+        let mut state = CompletionState::new();
+        let opts = SequenceOpts {
+            fixed_prefix: Some("PFX_"),
+            ..Default::default()
+        };
+        _sequence(&mut state, &opts, fake_inner);
+        for m in &state.groups[0].matches {
+            assert_eq!(m.pre.as_deref(), Some("PFX_"));
+        }
+    }
+
+    #[test]
+    fn fixed_suffix_set_on_emitted_matches_when_no_sep_auto() {
+        // fixed_suffix only fires when there's no auto-separator
+        // suffix (no entries yet, max=1 so we're already at the LAST
+        // entry — no auto-sep). Then fixed_suffix shines through.
+        let mut state = CompletionState::new();
+        let opts = SequenceOpts {
+            fixed_suffix: Some("__END"),
+            max_entries: Some(1),
+            ..Default::default()
+        };
+        _sequence(&mut state, &opts, fake_inner);
+        for m in &state.groups[0].matches {
+            assert_eq!(m.suf.as_deref(), Some("__END"));
+        }
+    }
+
+    #[test]
+    fn empty_prefix_no_dedup_no_chew() {
+        let mut state = CompletionState::new();
+        let opts = SequenceOpts::default();
+        _sequence(&mut state, &opts, fake_inner);
+        // All three candidates should appear.
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names.len(), 3);
+        // iprefix unchanged.
+        assert_eq!(state.params.iprefix, "");
+    }
+
+    #[test]
+    fn dedup_with_multiple_existing_entries() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "alpha,beta,g".into();
+        let opts = SequenceOpts::default();
+        _sequence(&mut state, &opts, fake_inner);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        // alpha + beta already typed → only gamma survives.
+        assert_eq!(names, vec!["gamma"]);
+    }
+
+    #[test]
+    fn suffix_already_separator_blocks_auto_suffix() {
+        // SUFFIX="rest,end" already starts with sep → don't add a
+        // second sep after the match.
+        let mut state = CompletionState::new();
+        state.params.prefix = "".into();
+        state.params.suffix = ",rest".into();
+        let opts = SequenceOpts::default();
+        _sequence(&mut state, &opts, fake_inner);
+        for m in &state.groups[0].matches {
+            assert!(
+                m.suf.is_none(),
+                "suffix already starts with sep → no auto-sep; got `{:?}`",
+                m.suf
+            );
+        }
+    }
+
+    #[test]
+    fn dedup_uses_both_prefix_and_suffix_sides() {
+        // PREFIX=alpha,X SUFFIX=Y,gamma — both `alpha` (from PREFIX)
+        // and `gamma` (from SUFFIX) are already chosen.
+        let mut state = CompletionState::new();
+        state.params.prefix = "alpha,".into();
+        state.params.suffix = ",gamma".into();
+        let opts = SequenceOpts::default();
+        _sequence(&mut state, &opts, fake_inner);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(!names.contains(&"alpha"));
+        assert!(!names.contains(&"gamma"));
+        assert!(names.contains(&"beta"));
+    }
 }

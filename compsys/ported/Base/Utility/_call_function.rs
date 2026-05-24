@@ -197,4 +197,38 @@ mod tests {
         assert!(unregister("test-unreg"));
         assert!(!unregister("test-unreg"), "second unregister sees no entry");
     }
+
+    #[test]
+    fn empty_string_name_can_be_registered_and_called() {
+        let _g = lock();
+        register("", Box::new(|_| true));
+        let mut state = MainCompleteState::new("", 0);
+        assert!(_call_function(&mut state, ""));
+        unregister("");
+    }
+
+    #[test]
+    fn many_distinct_registrations_coexist() {
+        let _g = lock();
+        for i in 0..10 {
+            let name = format!("test-coexist-{i}");
+            register(name.clone(), Box::new(|_| true));
+            assert!(is_registered(&name));
+        }
+        // All 10 distinct registrations should be callable.
+        let mut state = MainCompleteState::new("", 0);
+        for i in 0..10 {
+            let name = format!("test-coexist-{i}");
+            assert!(_call_function(&mut state, &name));
+        }
+        for i in 0..10 {
+            unregister(&format!("test-coexist-{i}"));
+        }
+    }
+
+    #[test]
+    fn is_registered_for_unregistered_returns_false() {
+        let _g = lock();
+        assert!(!is_registered("a-fn-that-never-existed-anywhere"));
+    }
 }

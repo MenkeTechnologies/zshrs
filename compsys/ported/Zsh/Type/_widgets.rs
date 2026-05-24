@@ -140,4 +140,88 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["backward-word"]);
     }
+
+    #[test]
+    fn middle_segment_after_hyphen_matches() {
+        // `cha` should match `backward-char` (segment after first `-`).
+        let mut state = CompletionState::new();
+        state.params.prefix = "cha".into();
+        let ws = vec![
+            ("backward-char".into(), "builtin".into()),
+            ("forward-word".into(), "builtin".into()),
+            ("nothing".into(), "builtin".into()),
+        ];
+        _widgets(&mut state, &ws, None);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"backward-char"));
+        assert!(!names.contains(&"forward-word"));
+        assert!(!names.contains(&"nothing"));
+    }
+
+    #[test]
+    fn underscore_prefixed_completion_widget_passes() {
+        // _complete_help has kind `completion`; prefix _com matches.
+        let mut state = CompletionState::new();
+        state.params.prefix = "_com".into();
+        let ws = vec![
+            ("_complete_help".into(), "completion".into()),
+            ("user-fn".into(), "user:fn".into()),
+        ];
+        _widgets(&mut state, &ws, None);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"_complete_help"));
+    }
+
+    #[test]
+    fn no_matching_kind_returns_false() {
+        let mut state = CompletionState::new();
+        let ws = vec![("forward-word".into(), "builtin".into())];
+        // Kind `nonexistent` matches nothing.
+        assert!(!_widgets(&mut state, &ws, Some("nonexistent")));
+    }
+
+    #[test]
+    fn kind_filter_combined_with_name_prefix() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "back".into();
+        let ws = vec![
+            ("backward-word".into(), "builtin".into()),
+            ("backward-user".into(), "user:x".into()),
+            ("forward-word".into(), "builtin".into()),
+        ];
+        _widgets(&mut state, &ws, Some("builtin"));
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names, vec!["backward-word"]);
+    }
+
+    #[test]
+    fn duplicates_in_input_preserved_in_output() {
+        // _widgets doesn't dedup — pass-through. (compsys's compadd
+        // table is what dedups in the full pipeline.)
+        let mut state = CompletionState::new();
+        let ws = vec![
+            ("repeat".into(), "builtin".into()),
+            ("repeat".into(), "builtin".into()),
+        ];
+        let _ = _widgets(&mut state, &ws, None);
+        let count = state.groups[0]
+            .matches
+            .iter()
+            .filter(|c| c.str_ == "repeat")
+            .count();
+        // _widgets emits whatever was given; dedup is upstream.
+        assert_eq!(count, 2);
+    }
 }

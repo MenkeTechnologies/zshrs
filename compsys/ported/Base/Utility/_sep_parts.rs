@@ -37,11 +37,18 @@ pub fn _sep_parts(state: &mut CompletionState, separators: &str, arrays: &[Vec<S
     let prefix = state.params.prefix.clone();
     let sep_chars: Vec<char> = separators.chars().collect();
 
-    // Find which array we're completing based on separators in prefix
+    // Walk the prefix consuming one positional separator at a time.
+    // sep_chars[0] separates array[0] from array[1], sep_chars[1]
+    // separates array[1] from array[2], etc.
     let mut array_idx = 0;
-    for sep in &sep_chars {
-        if prefix.contains(*sep) {
+    let mut cursor = 0;
+    while array_idx < sep_chars.len() {
+        let sep = sep_chars[array_idx];
+        if let Some(pos) = prefix[cursor..].find(sep) {
+            cursor += pos + sep.len_utf8();
             array_idx += 1;
+        } else {
+            break;
         }
     }
 
@@ -49,12 +56,9 @@ pub fn _sep_parts(state: &mut CompletionState, separators: &str, arrays: &[Vec<S
         return false;
     }
 
-    // Get prefix for current part
-    let current_prefix = if let Some(sep) = sep_chars.get(array_idx.saturating_sub(1)) {
-        prefix.rsplit(*sep).next().unwrap_or("").to_string()
-    } else {
-        prefix.clone()
-    };
+    // The unconsumed tail of `prefix` is the user's typed text for
+    // the current segment.
+    let current_prefix = prefix[cursor..].to_string();
 
     state.begin_group("sep-parts", true);
 
@@ -125,5 +129,90 @@ mod tests {
     fn empty_arrays_returns_false() {
         let mut state = CompletionState::new();
         assert!(!_sep_parts(&mut state, "/", &[]));
+    }
+
+    #[test]
+    fn next_separator_attached_as_suffix_when_more_arrays_follow() {
+        // First-segment match should carry the next separator as
+        // `suf` + NOSPACE so the user continues onto the second
+        // segment without losing the delimiter.
+        let mut state = CompletionState::new();
+        let arrays = vec![
+            vec!["alice".into(), "bob".into()],
+            vec!["host1".into(), "host2".into()],
+        ];
+        assert!(_sep_parts(&mut state, "@", &arrays));
+        let c = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .find(|c| c.str_ == "alice")
+            .expect("alice present");
+        assert_eq!(c.suf.as_deref(), Some("@"));
+        assert!(c.flags.contains(CompletionFlags::NOSPACE));
+    }
+
+    #[test]
+    fn last_array_does_not_attach_suffix() {
+        // After the final separator, completion of the last segment
+        // should NOT add a separator after itself.
+        let mut state = CompletionState::new();
+        state.params.prefix = "alice@".into();
+        let arrays = vec![
+            vec!["alice".into()],
+            vec!["host1".into(), "host2".into()],
+        ];
+        assert!(_sep_parts(&mut state, "@", &arrays));
+        let c = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .find(|c| c.str_ == "host1")
+            .expect("host1 present");
+        assert!(c.suf.is_none(), "last segment should not have suf");
+    }
+
+    #[test]
+    fn three_segments_with_colon_separator() {
+        // user:host:port style — three arrays separated by colons.
+        // The `separators` string has one CHAR PER ARRAY BOUNDARY:
+        // two arrays need 1 char, three arrays need 2 chars.
+        let mut state = CompletionState::new();
+        state.params.prefix = "alice:web:".into();
+        let arrays = vec![
+            vec!["alice".into()],
+            vec!["web".into(), "api".into()],
+            vec!["80".into(), "443".into()],
+        ];
+        assert!(_sep_parts(&mut state, "::", &arrays));
+        let names: Vec<String> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.clone())
+            .collect();
+        // We're past two `:` separators → third array (ports).
+        assert!(names.contains(&"80".to_string()));
+        assert!(names.contains(&"443".to_string()));
+    }
+
+    #[test]
+    fn no_matching_prefix_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "definitely-not".into();
+        let arrays = vec![vec!["alpha".into(), "beta".into()]];
+        assert!(!_sep_parts(&mut state, "/", &arrays));
+    }
+
+    #[test]
+    fn prefix_past_all_arrays_returns_false() {
+        // Two arrays, but the prefix already has THREE separators →
+        // we'd be looking for an array at index 3 which doesn't exist.
+        let mut state = CompletionState::new();
+        state.params.prefix = "a/b/c/".into();
+        let arrays = vec![
+            vec!["a".into()],
+            vec!["b".into()],
+        ];
+        assert!(!_sep_parts(&mut state, "/", &arrays));
     }
 }

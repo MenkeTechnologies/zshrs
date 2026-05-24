@@ -75,4 +75,43 @@ mod tests {
         assert_eq!(saw.into_inner(), "");
         assert_eq!(state.ctx.context, ":orig:");
     }
+
+    #[test]
+    fn nested_as_if_restore_in_lifo_order() {
+        // Inner _as_if changes context; on its return outer's
+        // context is still the OUTER override, NOT the original.
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":root:".into();
+        _as_if(&mut state, ":outer:", |s| {
+            assert_eq!(s.ctx.context, ":outer:");
+            _as_if(s, ":inner:", |t| {
+                assert_eq!(t.ctx.context, ":inner:");
+                true
+            });
+            // After inner returns, we're back to outer's context.
+            assert_eq!(s.ctx.context, ":outer:");
+            true
+        });
+        assert_eq!(state.ctx.context, ":root:");
+    }
+
+    #[test]
+    fn action_can_mutate_state_other_than_context() {
+        // Pin that mutations to non-context fields survive.
+        let mut state = MainCompleteState::new("", 0);
+        _as_if(&mut state, ":shadow:", |s| {
+            s.comp.params.prefix = "set-by-as-if".into();
+            true
+        });
+        assert_eq!(state.comp.params.prefix, "set-by-as-if");
+    }
+
+    #[test]
+    fn context_with_special_chars_survives_roundtrip() {
+        let original = ":complete::cmd[git]::tag(*):value:";
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = original.into();
+        _as_if(&mut state, ":new:", |_| true);
+        assert_eq!(state.ctx.context, original);
+    }
 }

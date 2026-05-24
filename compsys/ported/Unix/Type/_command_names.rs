@@ -285,4 +285,71 @@ mod tests {
         assert!(names.contains(&"greet"));
         assert!(!names.contains(&"_grep"));
     }
+
+    #[test]
+    fn builtins_emitted_into_named_tag_group() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "t".into();
+        let builtins = vec!["true".into(), "trap".into(), "test".into(), "exit".into()];
+        let inv = _inv(&builtins, &[], &[], &[]);
+        _command_names(&mut state, &inv, false);
+        let b = state
+            .groups
+            .iter()
+            .find(|g| g.name == "builtins")
+            .expect("builtins group");
+        let names: Vec<&str> = b.matches.iter().map(|c| c.str_.as_str()).collect();
+        assert!(names.contains(&"true"));
+        assert!(names.contains(&"trap"));
+        assert!(names.contains(&"test"));
+        assert!(!names.contains(&"exit"));
+    }
+
+    #[test]
+    fn aliases_emitted_into_aliases_group() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "l".into();
+        let aliases = vec!["ll".into(), "la".into(), "gst".into()];
+        let inv = _inv(&[], &aliases, &[], &[]);
+        _command_names(&mut state, &inv, false);
+        let group = state
+            .groups
+            .iter()
+            .find(|g| g.name == "aliases")
+            .expect("aliases group");
+        let names: Vec<&str> = group.matches.iter().map(|c| c.str_.as_str()).collect();
+        assert!(names.contains(&"ll"));
+        assert!(names.contains(&"la"));
+        assert!(!names.contains(&"gst"));
+    }
+
+    #[test]
+    fn empty_prefix_emits_all_inventory_entries() {
+        let mut state = CompletionState::new();
+        let builtins = vec!["true".into(), "false".into()];
+        let aliases = vec!["ll".into()];
+        let functions = vec!["myfn".into()];
+        let inv = _inv(&builtins, &aliases, &functions, &[]);
+        _command_names(&mut state, &inv, false);
+        let by_group: std::collections::HashMap<&str, usize> = state
+            .groups
+            .iter()
+            .map(|g| (g.name.as_str(), g.matches.len()))
+            .collect();
+        assert_eq!(by_group["builtins"], 2);
+        assert_eq!(by_group["aliases"], 1);
+        assert_eq!(by_group["functions"], 1);
+    }
+
+    #[test]
+    fn externals_only_includes_path_commands_under_commands_tag() {
+        // -e mode reads from PATH. We can't assert specific contents
+        // (system-dependent) but the `commands` group MUST exist and
+        // any non-empty inventory means SOME commands are emitted.
+        let mut state = CompletionState::new();
+        state.params.prefix = "ls".into();
+        let inv = _inv(&[], &[], &[], &[]);
+        _command_names(&mut state, &inv, true);
+        assert!(state.groups.iter().any(|g| g.name == "commands"));
+    }
 }

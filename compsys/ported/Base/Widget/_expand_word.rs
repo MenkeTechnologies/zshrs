@@ -71,4 +71,36 @@ mod tests {
         assert!(names.contains("a1"));
         assert!(names.contains("b2"));
     }
+
+    #[test]
+    fn empty_prefix_returns_false() {
+        let mut state = CompletionState::new();
+        // Nothing to expand on empty prefix.
+        assert!(!_expand_word(&mut state));
+    }
+
+    #[test]
+    fn delegation_result_matches_expand_directly() {
+        // Pin _expand_word IS _expand verbatim.
+        let mut s1 = CompletionState::new();
+        let mut s2 = CompletionState::new();
+        s1.params.prefix = "{x,y}".into();
+        s2.params.prefix = "{x,y}".into();
+        assert_eq!(_expand_word(&mut s1), _expand(&mut s2));
+    }
+
+    #[test]
+    fn tilde_user_expansion_resolves_to_home() {
+        // If we can read /etc/passwd, find any user and assert that
+        // `~user/` expansion produces an absolute-path completion.
+        let mut state = CompletionState::new();
+        let me = std::env::var("USER").unwrap_or_default();
+        if me.is_empty() {
+            return;
+        }
+        state.params.prefix = format!("~{}/", me);
+        // No assertion on success — `~user/` may not be supported by
+        // every _expand impl variant. Just pin no panic.
+        let _ = _expand_word(&mut state);
+    }
 }

@@ -73,12 +73,12 @@ pub fn _numbers(state: &mut CompletionState, opts: &NumbersOpts<'_>) -> bool {
     let prefix = state.params.prefix.clone();
 
     // ── Suffix-completion mode (shell:52-58) ──────────────────────────
-    // If the user already typed a number AND we have unit suffixes,
-    // emit the unit suffixes.
-    let typed_number = is_typed_number(&prefix, opts.allow_float, allow_neg);
-    if typed_number && !opts.unit_suffixes.is_empty() {
+    // If the user already typed a number (even with partial unit
+    // letters typed after) AND we have unit suffixes, emit the
+    // unit suffixes.
+    let num_len = number_prefix_len(&prefix, opts.allow_float, allow_neg);
+    if num_len > 0 && !opts.unit_suffixes.is_empty() {
         // Strip the number from PREFIX; remainder becomes iprefix.
-        let num_len = number_prefix_len(&prefix, opts.allow_float, allow_neg);
         state.params.iprefix.push_str(&prefix[..num_len]);
         state.params.prefix = prefix[num_len..].to_string();
 
@@ -260,9 +260,10 @@ mod tests {
     }
 
     #[test]
-    fn float_pattern_rejects_decimal_when_not_allowed() {
-        // PREFIX "1.5" with allow_float=false → NOT a typed number
-        // → fall to entry mode (no unit completion, message-only).
+    fn float_pattern_rejects_decimal_part_when_not_allowed() {
+        // PREFIX "1.5" with allow_float=false → only `1` is the
+        // numeric prefix; `.5` is the unit-side. None of the
+        // declared suffixes (`s`) start with `.5`, so 0 matches.
         let mut state = CompletionState::new();
         state.params.prefix = "1.5".into();
         let opts = NumbersOpts {
@@ -270,10 +271,16 @@ mod tests {
             unit_suffixes: &["s".into()],
             ..Default::default()
         };
-        let ok = _numbers(&mut state, &opts);
-        assert!(ok);
-        let total_matches: usize = state.groups.iter().map(|g| g.matches.len()).sum();
-        assert_eq!(total_matches, 0);
+        let _ = _numbers(&mut state, &opts);
+        // After numeric prefix strip with allow_float=false, prefix
+        // becomes `.5` which doesn't start with `s`.
+        let names: Vec<&str> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(!names.contains(&"s"), "`.5` doesn't match `s` filter");
     }
 
     #[test]
@@ -305,5 +312,81 @@ mod tests {
         assert!(ok);
         let total: usize = state.groups.iter().map(|g| g.matches.len()).sum();
         assert!(total < 100, "should NOT enumerate huge ranges, got {total}");
+    }
+
+    #[test]
+    fn description_message_includes_range_units_default_and_suffixes() {
+        let mut state = CompletionState::new();
+        let opts = NumbersOpts {
+            description: "delay",
+            units: Some("seconds"),
+            min: Some("1"),
+            max: Some("60"),
+            default: Some("30"),
+            unit_suffixes: &["s".into(), "m".into(), "h".into()],
+            ..Default::default()
+        };
+        _numbers(&mut state, &opts);
+        let exps: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.explanations.iter().cloned())
+            .collect();
+        let msg = exps.first().cloned().unwrap_or_default();
+        assert!(msg.contains("delay"));
+        assert!(msg.contains("(seconds)"));
+        assert!(msg.contains("(1-60)"));
+        assert!(msg.contains("[30]"));
+        assert!(msg.contains("[s|m|h]"));
+    }
+
+    #[test]
+    fn unit_suffix_filtering_by_typed_unit_partial() {
+        // After typing the number, also typing partial unit chars
+        // should narrow the suffix list.
+        let mut state = CompletionState::new();
+        state.params.prefix = "30m".into();
+        let opts = NumbersOpts {
+            unit_suffixes: &[
+                "s".into(),
+                "min".into(),
+                "ms".into(),
+                "h".into(),
+            ],
+            ..Default::default()
+        };
+        let _ = _numbers(&mut state, &opts);
+        let names: Vec<&str> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.as_str())
+            .collect();
+        // typed unit prefix = "m" → only `min`, `ms` survive.
+        assert!(names.contains(&"min"));
+        assert!(names.contains(&"ms"));
+        assert!(!names.contains(&"s"));
+        assert!(!names.contains(&"h"));
+    }
+
+    #[test]
+    fn is_typed_number_helper_handles_various_forms() {
+        assert!(is_typed_number("42", false, false));
+        assert!(!is_typed_number("", false, false));
+        assert!(!is_typed_number("abc", false, false));
+        assert!(!is_typed_number("4a", false, false));
+        assert!(is_typed_number("-5", false, true));
+        assert!(!is_typed_number("-5", false, false));
+        assert!(is_typed_number("1.5", true, false));
+        assert!(!is_typed_number("1.5", false, false));
+        assert!(!is_typed_number("1.5.0", true, false), "two dots invalid");
+    }
+
+    #[test]
+    fn number_prefix_len_helper_stops_at_first_non_digit() {
+        assert_eq!(number_prefix_len("30s", false, false), 2);
+        assert_eq!(number_prefix_len("30.5s", true, false), 4);
+        assert_eq!(number_prefix_len("-5s", false, true), 2);
+        assert_eq!(number_prefix_len("abc", false, false), 0);
     }
 }
