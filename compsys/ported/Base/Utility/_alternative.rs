@@ -1,10 +1,32 @@
 //! Port of `_alternative` — try multiple completion alternatives.
 //!
-//! Extracted from `compsys/base.rs` (was lines ~406-449). Mirrors zsh
-//! upstream `Completion/Base/Utility/_alternative`. Each spec has the
-//! form `tag:description:action`; iterates over the active tag set and
-//! invokes the caller-supplied `action_handler` for each requested
-//! alternative.
+//! Local shell reference: `compsys/functions/Base/Utility/_alternative`
+//! (system copy `/opt/homebrew/share/zsh/functions/_alternative`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  3  local tags def expl descr action mesgs nm="$compstate[nmatches]" subopts
+//!  6  subopts=()
+//!  7  while getopts 'O:C:' opt; do
+//!  8    case "$opt" in
+//!  9    O) subopts=( "${(@P)OPTARG}" ) ;;
+//! 10    C) curcontext="${curcontext%:*}:$OPTARG" ;;
+//! 14  shift OPTIND-1
+//! 18  for def; do
+//! 22    tags=( "$tags[@]" "${def%%:*}" )
+//! 26  _tags "$tags[@]"
+//! 27  while _tags; do
+//! 28    for def in "$@"; do
+//! 33      _requested "$tag" expl "$descr" "$action" "$subopts[@]" && ret=0
+//! ```
+//!
+//! Upstream walks `tag:description:action` specs; for each tag in
+//! the active set, dispatches the action.
+//!
+//! Faithful Rust port: parses specs via `Alternative::parse`, calls
+//! `TagManager` to drive the iteration (matching shell's
+//! `while _tags`), and invokes the caller-supplied `action_handler`
+//! once per requested alternative.
 
 use crate::base::{Alternative, MainCompleteState};
 

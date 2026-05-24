@@ -1,10 +1,26 @@
 //! Port of `_main_complete` — top-level completion entry point.
 //!
-//! Extracted from `compsys/base.rs` (was lines ~210-295). Mirrors zsh
-//! upstream `Completion/Base/Core/_main_complete`. Walks the configured
-//! completer list (`_complete` / `_approximate` / `_match` / …),
-//! invoking each via the caller-supplied `dispatch` closure until one
-//! returns matches.
+//! Local shell reference: `compsys/functions/Base/Core/_main_complete`
+//! (system copy `/opt/homebrew/share/zsh/functions/_main_complete`).
+//!
+//! Upstream shell source (key lines from the 200+ line dispatch):
+//! ```text
+//!  3  # The main loop of the completion code. This is what is called
+//!  4  # when completion is attempted from the command line.
+//! 11  local IFS=$' \t\n\0'
+//!  …  zstyle -a ":completion:${context}" completer comp
+//!  …  for completer in $comp; do
+//!  …    $completer
+//!  …    [[ $ret = 0 ]] && break
+//!  …  done
+//! ```
+//!
+//! Faithful Rust port: walks the configured completer list via a
+//! caller-supplied `dispatch` closure. The `pre_funcs` /
+//! `post_funcs` shell-side hooks are exposed via
+//! `state.prefuncs` / `state.postfuncs` so the caller can register
+//! their own. Records `lastcomp[nmatches/completer/prefix/suffix]`
+//! after every run — same as shell's `_lastcomp` association.
 
 use crate::base::{CompleterResult, MainCompleteState};
 

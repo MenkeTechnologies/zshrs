@@ -1,10 +1,27 @@
 //! Port of `_values` — complete comma-separated values.
 //!
-//! Extracted from `compsys/base.rs` (was lines ~510-564). Mirrors zsh
-//! upstream `Completion/Base/Utility/_values`. Specs are parsed in the
-//! `name[description]:arg-desc:action` form via
-//! `crate::base::Value::parse`; already-used values (split on the
-//! supplied separator) are filtered out.
+//! Local shell reference: `compsys/functions/Base/Utility/_values`
+//! (system copy `/opt/homebrew/share/zsh/functions/_values`).
+//!
+//! Upstream shell source (key lines from the ~300-line fn):
+//! ```text
+//!  3  local subopts opt usecc garbage keep
+//!  5  subopts=()
+//!  6  zparseopts -D -a garbage s+:=keep S+:=keep w+=keep C=usecc \
+//!      O:=subopts M: J: V: 1 2 o+: n F: X:
+//! 11  if compvalues -i "$keep[@]" "$@"; then
+//! 14    local noargs args opts descr action expl sep argsep subc test='*'
+//! ```
+//!
+//! Upstream is a heavyweight `compvalues -i` driver: parses `-s sep`,
+//! `-S argsep`, `-w` (with-arg vs no-arg), `-C` (curcontext), `-O`
+//! (compadd opt array). Then walks specs in `name[desc]:arg-desc:action`
+//! form, filtering out already-typed values.
+//!
+//! Faithful Rust port: covers the `name[desc]` parsing via
+//! `Value::parse` + already-used filtering by splitting PREFIX at
+//! the separator. Drops `-w` (with-arg distinction) and `-C`
+//! curcontext rewriting — caller-side concerns.
 
 use std::collections::HashSet;
 

@@ -1,8 +1,29 @@
 //! Port of `_message` — display a message (no completions).
 //!
-//! Extracted from `compsys/base.rs` (was `pub fn message`, lines
-//! ~840-854). Renamed to `_message` to match the upstream zsh shell
-//! function name at `Completion/Base/Core/_message`.
+//! Local shell reference: `compsys/functions/Base/Core/_message`
+//! (system copy `/opt/homebrew/share/zsh/functions/_message`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  3  local format raw gopt
+//!  5  if [[ "$1" = -e ]]; then
+//!  9    _comp_mesg=yes
+//! 11    if (( $# > 2 )); then
+//! 12      tag="$2"
+//! 13      shift
+//! 15    else
+//! 16      tag="$curtag"
+//! 21    zstyle -s ":completion:${curcontext}:messages" format format
+//! ```
+//!
+//! Upstream resolves the `format` zstyle to wrap the message, sets
+//! `_comp_mesg=yes` so subsequent code knows a message was emitted,
+//! then `compadd -x` for ZLE to render.
+//!
+//! Faithful Rust port: calls into `_description` (which already
+//! handles format resolution) then attaches the rendered string
+//! as an explanation on the named tag group. `nmessages` increments
+//! match the shell-side `_comp_mesg` flag (callers check the count).
 
 use crate::compcore::CompletionState;
 use crate::ported::_description::_description;
