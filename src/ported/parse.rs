@@ -7344,6 +7344,14 @@ fn parse_assign() -> Option<ZshAssign> {
 
     let value = if tok() == ENVARRAY {
         // Array assignment: name=(...)
+        // c:Src/parse.c:1895 par_simple ENVARRAY arm:
+        //   `int oldcmdpos = incmdpos; ... incmdpos = 0; ... zshlex();`
+        // Reset incmdpos to false BEFORE the array body's first lex so
+        // a leading `{...}` (brace expansion) doesn't trip the
+        // empty-buf+incmdpos rule at lex.c:1141 that returns `{` as
+        // STRING and lets the reswd_lookup promote it to INBRACE_TOK.
+        let oldcmdpos = crate::ported::lex::incmdpos();
+        crate::ported::lex::set_incmdpos(false);
         let mut elements = Vec::new();
         zshlex(); // skip past token
 
@@ -7363,6 +7371,8 @@ fn parse_assign() -> Option<ZshAssign> {
             }
             zshlex();
         }
+        // c:Src/parse.c — `incmdpos = oldcmdpos;` (restore at end of arm)
+        crate::ported::lex::set_incmdpos(oldcmdpos);
 
         // The closing Outpar is consumed here. The outer par_simple
         // loop will then `zshlex()` past whatever follows (typically

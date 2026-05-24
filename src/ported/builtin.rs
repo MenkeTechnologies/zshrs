@@ -10636,11 +10636,12 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
                     out.push_str(&format!("{:o}", n));
                     arg_i += 1;
                 }
-                Some('f') | Some('F') | Some('g') | Some('G') | Some('e') | Some('E') => {
+                Some(conv @ ('f' | 'F' | 'g' | 'G' | 'e' | 'E')) => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     let n: f64 = a.parse().unwrap_or(0.0);
-                    spec.push('f');
-                    out.push_str(&format_spec_float(&spec, n));
+                    // c:Src/builtin.c printf %g/%G uses libc snprintf
+                    // which strips trailing zeros; %e/%E uses scientific.
+                    out.push_str(&format_spec_float_conv(&spec, n, conv));
                     arg_i += 1;
                 }
                 Some('c') => {
@@ -10753,6 +10754,96 @@ fn format_spec_float(spec: &str, n: f64) -> String {
     let (left_align, width, prec) = parse_width_prec(spec);
     let p = prec.unwrap_or(6);
     let body = format!("{:.*}", p, n);
+    let pad = width.saturating_sub(body.chars().count());
+    if pad == 0 {
+        body
+    } else if left_align {
+        format!("{}{}", body, " ".repeat(pad))
+    } else {
+        format!("{}{}", " ".repeat(pad), body)
+    }
+}
+
+/// printf %g / %G / %e / %E / %f / %F dispatch. Mirrors C printf
+/// semantics (Src/builtin.c — libc snprintf): %g picks the shorter
+/// of %e/%f and strips trailing zeros; %e/%E uses scientific notation;
+/// %f/%F is decimal-fraction (no scientific). Default precision is 6.
+fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
+    let (left_align, width, prec) = parse_width_prec(spec);
+    let body = match conv {
+        'f' | 'F' => {
+            let p = prec.unwrap_or(6);
+            format!("{:.*}", p, n)
+        }
+        'e' | 'E' => {
+            // Rust's `{:e}` always uses lowercase `e` and doesn't pad
+            // exponent; libc uses 2-digit exponent and sign. Build it
+            // manually for parity.
+            let p = prec.unwrap_or(6);
+            let exp = if n == 0.0 {
+                0i32
+            } else {
+                n.abs().log10().floor() as i32
+            };
+            let mantissa = n / 10f64.powi(exp);
+            let body = format!("{:.*}", p, mantissa);
+            let e_char = if conv == 'E' { 'E' } else { 'e' };
+            let exp_sign = if exp >= 0 { '+' } else { '-' };
+            format!("{}{}{}{:02}", body, e_char, exp_sign, exp.abs())
+        }
+        'g' | 'G' => {
+            // c:libc printf %g: precision is # significant digits
+            // (default 6). Use %e if exp < -4 OR exp >= precision,
+            // else %f. Trailing zeros stripped unless `#` flag set
+            // (zshrs doesn't track # — skip stripping suppression).
+            let p_sig: i32 = prec.unwrap_or(6).max(1) as i32;
+            let exp = if n == 0.0 {
+                0i32
+            } else {
+                n.abs().log10().floor() as i32
+            };
+            let use_e = exp < -4 || exp >= p_sig;
+            let body = if use_e {
+                let mantissa = n / 10f64.powi(exp);
+                let dec = (p_sig - 1).max(0) as usize;
+                let m = format!("{:.*}", dec, mantissa);
+                let e_char = if conv == 'G' { 'E' } else { 'e' };
+                let exp_sign = if exp >= 0 { '+' } else { '-' };
+                format!("{}{}{}{:02}", m, e_char, exp_sign, exp.abs())
+            } else {
+                // p_sig - 1 - exp digits after decimal point
+                let dec = (p_sig - 1 - exp).max(0) as usize;
+                format!("{:.*}", dec, n)
+            };
+            // Strip trailing zeros from the fractional part (but keep
+            // at least one digit after `.` if `.` is present).
+            // Only strip if no `#` flag was set in spec.
+            // c:libc snprintf %g — trailing-zero strip done inline; no
+            // separate helper in C source.
+            if !spec.contains('#') {
+                let stripped = if let Some(e_pos) = body.find(|c| c == 'e' || c == 'E') {
+                    let (mantissa, exp) = body.split_at(e_pos);
+                    let m = if mantissa.contains('.') {
+                        mantissa
+                            .trim_end_matches('0')
+                            .trim_end_matches('.')
+                            .to_string()
+                    } else {
+                        mantissa.to_string()
+                    };
+                    format!("{}{}", m, exp)
+                } else if body.contains('.') {
+                    body.trim_end_matches('0').trim_end_matches('.').to_string()
+                } else {
+                    body
+                };
+                stripped
+            } else {
+                body
+            }
+        }
+        _ => format!("{}", n),
+    };
     let pad = width.saturating_sub(body.chars().count());
     if pad == 0 {
         body

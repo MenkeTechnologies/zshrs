@@ -201,9 +201,20 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         return 1;
     }
     if let Some(status) = try_user_fn_override(name, &args) {
+        // c:Src/jobs.c:1739 `pipestats[0] = lastval; numpipestats = 1;`
+        // Single-command pipestatus update — applies to user-function
+        // dispatch as well as raw builtins below.
+        with_executor(|exec| {
+            exec.set_array("pipestatus".to_string(), vec![status.to_string()]);
+        });
         return status;
     }
-    dispatch_builtin_raw(name, args)
+    let status = dispatch_builtin_raw(name, args);
+    // c:Src/jobs.c:1739 `pipestats[0] = lastval; numpipestats = 1;`
+    with_executor(|exec| {
+        exec.set_array("pipestatus".to_string(), vec![status.to_string()]);
+    });
+    status
 }
 
 /// Register all zsh builtins with the VM.
@@ -580,14 +591,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let Some((name, rest)) = post.split_first() else {
             return Value::Status(0);
         };
-        if crate::ported::builtin::BUILTINS
-            .iter()
-            .any(|b| b.node.nam == name.as_str())
-        {
-            return Value::Status(dispatch_builtin_raw(name, rest.to_vec()));
-        }
+        // c:Src/exec.c execcmd_exec — `command` precommand-modifier
+        // skips function/alias lookup but DOES still check special
+        // builtins (set, exec, etc.). For zsh-only builtins like
+        // `print` / `echo` / `[` that ARE both builtin AND external,
+        // zsh runs the external (via $PATH). If only a builtin exists
+        // (no external counterpart), zsh emits "command not found".
+        // Always try external first; fall back to builtin only for
+        // the POSIX special-builtin set.
+        let is_special_builtin = matches!(
+            name.as_str(),
+            "break" | "continue" | "exit" | "return" | "shift" | "set" | "unset"
+            | "export" | "readonly" | "trap" | "wait" | ":" | "." | "source"
+            | "eval" | "exec" | "local" | "typeset"
+        );
         let n = name.clone();
         let r = rest.to_vec();
+        if is_special_builtin {
+            if crate::ported::builtin::BUILTINS
+                .iter()
+                .any(|b| b.node.nam == n.as_str())
+            {
+                return Value::Status(dispatch_builtin_raw(&n, r));
+            }
+        }
         Value::Status(
             with_executor(|exec| exec.execute_external(&n, &r, &[])).unwrap_or(127),
         )
@@ -5141,7 +5168,15 @@ impl fusevm::ShellHost for ZshrsHost {
         // pre/postexec hooks, and zsh-specific fork-then-exec all apply.
         // Without this override, fusevm's default `host.exec` calls
         // `Command::new` directly, bypassing zshrs's dispatch logic.
-        with_executor(|exec| exec.host_exec_external(&args))
+        let status = with_executor(|exec| exec.host_exec_external(&args));
+        // c:Src/jobs.c:1739 `pipestats[0] = lastval; numpipestats = 1;`
+        // — every single-command job finishes by updating pipestats to
+        // a one-element array. Without this, `$pipestatus` is empty
+        // after non-pipe commands (zsh prints "1", zshrs prints "0").
+        with_executor(|exec| {
+            exec.set_array("pipestatus".to_string(), vec![status.to_string()]);
+        });
+        status
     }
 
     fn cmd_subst(&mut self, sub: &fusevm::Chunk) -> String {
@@ -5416,7 +5451,64 @@ impl fusevm::ShellHost for ZshrsHost {
                 let line_base = exec.function_line_base.get(&fn_name).copied().unwrap_or(0);
                 let def_file = exec.function_def_file.get(&fn_name).cloned().flatten();
                 exec.prompt_funcstack
-                    .push((fn_name.clone(), line_base, def_file));
+                    .push((fn_name.clone(), line_base, def_file.clone()));
+                // c:Src/exec.c:5903 doshfunc — push a funcstack frame
+                // onto the canonical FUNCSTACK list. funcstackgetfn /
+                // functracegetfn / funcfiletracegetfn (modules/parameter.c
+                // c:627/648/681) walk this list to return the per-frame
+                // tuples for `$funcstack` / `$functrace` / `$funcfiletrace`
+                // parameter reads. Without this push, `print $#funcstack`
+                // inside a function returned 0 instead of the call depth.
+                {
+                    let prev_frame = {
+                        let stk = crate::ported::modules::parameter::FUNCSTACK
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        stk.last().cloned()
+                    };
+                    let lineno_now =
+                        crate::ported::input::lineno.with(|c| c.get()) as i64;
+                    // c:5907-5910 — caller/flineno/filename derivation
+                    // mirrors the FS_FUNC frame logic in doshfunc.
+                    // For the outermost frame (no prev), caller is the
+                    // pre-call argzero — captured into saved_argzero_global
+                    // above before the function-arg-zero override. For
+                    // inner frames, caller is the parent frame's name.
+                    let caller = match &prev_frame {
+                        Some(p) => Some(p.name.clone()),
+                        None => saved_argzero_global
+                            .clone()
+                            .flatten()
+                            .or_else(|| crate::ported::utils::argzero()),
+                    };
+                    let (flineno, filename): (i64, Option<String>) = match &prev_frame {
+                        None => (lineno_now, def_file.clone()),
+                        Some(p) if p.tp == crate::ported::zsh_h::FS_SOURCE => {
+                            (lineno_now, def_file.clone().or_else(|| Some(String::new())))
+                        }
+                        Some(p) => {
+                            let mut fl = p.flineno + lineno_now;
+                            if p.tp == crate::ported::zsh_h::FS_EVAL {
+                                fl -= 1;
+                            }
+                            let fname = p.filename.clone().or_else(|| Some(String::new()));
+                            (fl, fname)
+                        }
+                    };
+                    let frame = crate::ported::zsh_h::funcstack {
+                        prev: None,
+                        name: fn_name.clone(),
+                        filename,
+                        caller,
+                        flineno,
+                        lineno: lineno_now,
+                        tp: crate::ported::zsh_h::FS_FUNC,
+                    };
+                    let mut stack = crate::ported::modules::parameter::FUNCSTACK
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    stack.push(frame);
+                }
                 // Set `$_` BEFORE the function body runs. zsh: inside
                 // a function, `echo $_` reads the function name (when
                 // called with no args) or the last call-arg.
@@ -5530,6 +5622,15 @@ impl fusevm::ShellHost for ZshrsHost {
                 None => {
                     exec.unset_array("funcstack");
                 }
+            }
+            // c:Src/exec.c:5907 doshfunc — pop the funcstack frame we
+            // pushed at entry. Mirrors `funcstack = fstack.prev;` at
+            // c:6201.
+            {
+                let mut stack = crate::ported::modules::parameter::FUNCSTACK
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                stack.pop();
             }
             // c:Src/exec.c doshfunc → endparamscope(). Walks paramtab
             // restoring Param.old chain for every local declaration

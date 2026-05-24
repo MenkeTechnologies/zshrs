@@ -258,7 +258,27 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 type_: MN_FLOAT,
             };
         }
-        // Non-numeric string: fall through to recursive-eval below.
+        // c:Src/math.c:337 getmathparam — falls back to recursively
+        // evaluating the raw string as an arith expression. zsh: a
+        // scalar holding `0xff` / `0b101` / `3+2` / `1e3` all evaluate
+        // when used in arith context. Direct path through `matheval`
+        // gives lexconstant + parser its full integer-base + float
+        // handling.
+        let saved = save_state();
+        let inherited_strs = saved.string_variables.clone();
+        new(&raw);
+        m_variables_set(saved.variables.clone());
+        let mut strs = inherited_strs;
+        strs.remove(base_name);
+        m_string_variables_set(strs);
+        m_prec_set(saved.prec);
+        m_c_precedences_set(saved.c_precedences);
+        let result = mathevall();
+        restore_state(saved);
+        if let Ok(r) = result {
+            return r;
+        }
+        // Non-numeric and non-evaluable string: fall through.
     }
     // Recursive eval: if the var holds a non-numeric string, evaluate
     // it AS an arith expression. zsh: `a="3+2"; $((a))` → 5. Bound

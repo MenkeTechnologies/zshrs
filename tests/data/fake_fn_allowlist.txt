@@ -150,6 +150,7 @@ format_spec_str
 format_spec_int
 format_spec_uint
 format_spec_float
+format_spec_float_conv
 parse_width_prec
 
 # optno_by_name (options.rs) — forward direction of the same

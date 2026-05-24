@@ -1023,8 +1023,12 @@ pub fn scanpmdisfunction_source(
 pub fn funcstackgetfn(pm: *mut param) -> Vec<String> {
     // c:627
     // c:627-643 — count frames, allocate, walk linking *p = f->name.
+    // C walks `for (f = funcstack; f; f = f->prev)` — head of list is
+    // most-recent frame. Rust stores frames in a Vec push-back, so the
+    // last element is the most-recent; reverse-iterate to match C's
+    // head-first order: innermost frame first, outermost last.
     let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
-    stack.iter().map(|f| f.name.clone()).collect() // c:648
+    stack.iter().rev().map(|f| f.name.clone()).collect() // c:648
 }
 
 /// Port of `functracegetfn(UNUSED(Param pm))` from Src/Modules/parameter.c:648.
@@ -1061,7 +1065,9 @@ pub fn functracegetfn(pm: *mut param) -> Vec<String> {
                              // c:656 — `ret = zhalloc((num + 1) * sizeof(char *));`
     let mut ret: Vec<String> = Vec::with_capacity(num + 1); // c:656
                                                             // c:658 — `for (f = funcstack, p = ret; f; f = f->prev, p++)`
-    for f in &f_stack {
+    // C walks from head (most recent) outward via f->prev. Rust's Vec
+    // is push-back so iterate reverse to match C head-first order.
+    for f in f_stack.iter().rev() {
         // c:658
         // c:661 — `colonpair = zhalloc(...)`; c:663-665 — `sprintf(colonpair, "%s:%lld", f->caller, f->lineno);`
         let caller = f.caller.as_deref().unwrap_or(""); // c:661
@@ -1090,7 +1096,9 @@ pub fn funcsourcetracegetfn(pm: *mut param) -> Vec<String> {
     let f_stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default(); // c:681
     let num = f_stack.len(); // c:685
     let mut ret: Vec<String> = Vec::with_capacity(num + 1); // c:687
-    for f in &f_stack {
+    // C walks head-first via f->prev; Rust Vec push-back stores in
+    // reverse order — reverse-iterate to match.
+    for f in f_stack.iter().rev() {
         // c:689
         let fname = f.filename.as_deref().unwrap_or(""); // c:691
         let colonpair = format!("{}:{}", fname, f.flineno); // c:695
@@ -1110,12 +1118,24 @@ pub fn funcfiletracegetfn(pm: *mut param) -> Vec<String> {
     // c:717 — for (f = funcstack, num = 0; f; f = f->prev, num++);
     let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
     let mut ret: Vec<String> = Vec::with_capacity(stack.len());
-    // c:721 — for (f = funcstack, p = ret; f; f = f->prev, p++)
-    for (i, f) in stack.iter().enumerate() {
+    // c:721 — for (f = funcstack, p = ret; f; f = f->prev, p++).
+    // C walks head→tail via f->prev. Rust Vec is push-back order;
+    // reverse-iterate so index 0 = most recent and `i+1` = previous
+    // frame (the C `f->prev` link target).
+    let n = stack.len();
+    for i in 0..n {
+        let f = &stack[n - 1 - i];
         // c:724 — if (!f->prev || f->prev->tp == FS_SOURCE) {
-        let parent_is_source = match stack.get(i + 1) {
+        // In reverse view: prev frame is at index `n - 1 - i - 1`
+        // i.e. the next element in our reverse walk.
+        let prev: Option<&crate::ported::zsh_h::funcstack> = if i + 1 < n {
+            Some(&stack[n - 1 - i - 1])
+        } else {
+            None
+        };
+        let parent_is_source = match prev {
             None => true, // !f->prev
-            Some(prev) => prev.tp == FS_SOURCE,
+            Some(p) => p.tp == FS_SOURCE,
         };
         if parent_is_source {
             // c:731-737 — file context: "<caller>:<lineno>"
@@ -1124,7 +1144,7 @@ pub fn funcfiletracegetfn(pm: *mut param) -> Vec<String> {
                 f.caller.as_deref().unwrap_or(""), // c:734
                 f.lineno
             ));
-        } else if let Some(prev) = stack.get(i + 1) {
+        } else if let Some(prev) = prev {
             // c:747 — zlong flineno = f->prev->flineno + f->lineno;
             let mut flineno = prev.flineno + f.lineno;
             // c:752-753 — if (f->prev->tp == FS_EVAL) flineno--;
