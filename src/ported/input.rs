@@ -240,8 +240,16 @@ pub fn shingetline() -> String {
 /// lexer; consumes pushback first, then top-of-stack input.
 pub fn ingetc() -> Option<char> {
     // c:318
+    // c:Src/input.c:322 — `if (lexstop) return ' ';`. The C source
+    // returns the literal byte 32. The Rust port wraps the result
+    // in Option<char> where None is the canonical EOF marker (callers
+    // map None → -1 at hist.rs:392). Returning Some(' ') from this
+    // guard treated EOF as a real space byte downstream and broke
+    // every "drain past end" caller; consistent EOF means None for
+    // every post-lexstop call, matching the function's already-emitted
+    // None when buffer drains at line 293.
     if lexstop.with(|c| c.get()) {
-        return Some(' ');
+        return None; // c:322 (mapped to Rust None EOF marker)
     }
 
     if let Some(c) = pushback.with(|p| p.borrow_mut().pop_front()) {
@@ -331,6 +339,14 @@ pub fn inputsetline(str: &str, flags: i32) {
         inbufct.with(|c| c.set(len));
     }
     inbufflags.with(|f| f.set(flags));
+    // c:Src/input.c — inputsetline is the "fresh input arrives" entry
+    // point. In C, ingetc's lexstop guard is reset by every grammar-
+    // boundary call (zshlex/getfirsttok/zshlex_raw_back at lex.c:455,
+    // 519, etc.) BEFORE the next ingetc fires. zshrs has no such
+    // reset surface yet, so a previously-drained buffer leaves
+    // lexstop=true and the new content is unreadable. Reset here so
+    // the contract "inputsetline(s) makes s readable" holds.
+    lexstop.with(|c| c.set(false));
 }
 
 /// Push a character back onto the input stream.
@@ -947,7 +963,6 @@ mod tests {
     /// append a trailing separator like space/newline before the buffer
     /// drains, then None thereafter). Pin: eventually None, no panic.
     #[test]
-    #[ignore = "ANCHOR: zshrs input buffer state across reset_input + inputsetline is opaque; behavior unclear"]
     fn input_repeated_reads_past_end_keep_returning_none_eventually() {
         let _g = crate::test_util::global_state_lock();
         reset_input();
@@ -1014,7 +1029,6 @@ mod tests {
     /// (Skip the post-empty read since zshrs leaves the empty-set buffer
     /// state opaque — just drain any residue, then set new buffer.)
     #[test]
-    #[ignore = "ANCHOR: zshrs input buffer state across empty+nonempty set is opaque; behavior unclear"]
     fn input_set_empty_then_set_nonempty_reads_new_content() {
         let _g = crate::test_util::global_state_lock();
         reset_input();
@@ -1046,20 +1060,30 @@ mod tests {
         assert_eq!(got, src);
     }
 
-    /// Line-number tracking: no INP_LINENO flag → lineno doesn't advance
-    /// on `\n`. (Behavior may have changed; the test_line_number_tracking
-    /// test above pins the WITH-flag case. Mark this as anchor pending
-    /// verification of the no-flag contract.)
+    /// Line-number tracking gate: per `c:Src/input.c:330` —
+    /// `if (((inbufflags & INP_LINENO) || !strin) && lastc == '\n') lineno++;`
+    /// The gate fires when EITHER the flag is set OR we're not in
+    /// string-input mode. The "no INP_LINENO" path only suppresses
+    /// the advance when `strin != 0` (string-input mode like eval).
+    /// Test pins both the strin=1 suppression (this test) and the
+    /// strin=0 always-advance shape — the latter is covered by
+    /// input_lineno_flag_increments_on_each_newline below.
     #[test]
-    #[ignore = "ANCHOR: lineno-no-flag contract needs verification — observed behavior may differ"]
     fn input_no_lineno_flag_means_lineno_unchanged_on_newline_anchored() {
         let _g = crate::test_util::global_state_lock();
         reset_input();
+        // c:330 gate: !strin path triggers the advance even when the
+        // INP_LINENO flag is unset. Set strin=1 so the gate's `||`
+        // short-circuit relies on the flag alone; with flag=0 lineno
+        // must stay put.
+        let saved_strin = strin.with(|s| s.get());
+        strin.with(|s| s.set(1));
         let start = lineno.with(|l| l.get());
         inputsetline("a\nb\n", 0);
         while ingetc().is_some() {}
         let end = lineno.with(|l| l.get());
-        assert_eq!(end, start, "no INP_LINENO → lineno stable");
+        strin.with(|s| s.set(saved_strin));
+        assert_eq!(end, start, "c:330 — strin && !INP_LINENO → lineno stable");
     }
 
     /// INP_LINENO flag → lineno advances by the number of `\n`s.
