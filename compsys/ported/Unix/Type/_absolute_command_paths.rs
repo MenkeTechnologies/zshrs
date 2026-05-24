@@ -49,23 +49,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn matches_are_absolute_paths() {
-        // Inject /bin into PATH so the scan has known content.
-        let orig = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", "/bin");
+    fn emitted_names_under_current_path_are_absolute() {
+        // No env mutation — read whatever PATH the test process has.
+        // If matches come back, every one MUST start with `/`. This
+        // pins the absolute-path contract without racing with
+        // parallel tests that fork external commands.
         let mut state = CompletionState::new();
-        // Use bare letter prefix; `l` finds `ls`, `ln`, … in /bin.
-        state.params.prefix = "l".into();
+        state.params.prefix = "ls".into();
         let _ = _absolute_command_paths(&mut state);
-        std::env::set_var("PATH", &orig);
-
-        let names: Vec<String> = state
+        for n in state
             .groups
             .iter()
             .flat_map(|g| g.matches.iter())
-            .map(|c| c.str_.clone())
-            .collect();
-        for n in &names {
+            .map(|c| c.str_.as_str())
+        {
             assert!(
                 n.starts_with('/'),
                 "_absolute_command_paths must emit absolute paths; got `{n}`"
@@ -74,15 +71,12 @@ mod tests {
     }
 
     #[test]
-    fn empty_path_dirs_emit_no_matches() {
-        // Set PATH to a definitely-nonexistent dir; the read_dir
-        // call fails and no matches are added.
-        let orig = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", "/no/such/path/at/all/for/zshrs/test");
+    fn prefix_that_matches_nothing_returns_false() {
         let mut state = CompletionState::new();
-        state.params.prefix = "anything".into();
-        let result = _absolute_command_paths(&mut state);
-        std::env::set_var("PATH", &orig);
-        assert!(!result, "nonexistent PATH dir → no matches → false");
+        state.params.prefix = "definitely-not-a-real-cmd-xyz".into();
+        assert!(
+            !_absolute_command_paths(&mut state),
+            "off-prefix → no matches → false"
+        );
     }
 }
