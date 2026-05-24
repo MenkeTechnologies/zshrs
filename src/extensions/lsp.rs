@@ -3187,27 +3187,27 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
             }
             "zstyle" => return LspCompletionContext::ZstyleContext,
             "compdef" => return LspCompletionContext::CompdefFn,
-            // Generic fallback: when the leading command is a known
-            // builtin AND the CURRENT word starts with `-`, surface
-            // the builtin's option flags from its doc body. Catches
-            // every `BUILTIN -<TAB>` invocation: `print -`, `read -`,
-            // `echo -`, `bindkey -`, `setopt -`, etc. — without
-            // needing per-builtin parser arms.
-            other => {
-                let bytes = line.as_bytes();
-                let cap = col.min(bytes.len());
-                let mut j = cap;
-                while j > 0 && !matches!(bytes[j - 1], b' ' | b'\t') {
-                    j -= 1;
-                }
-                let starts_with_dash = j < cap && bytes[j] == b'-';
-                let just_after_builtin = j == cap;
-                if (starts_with_dash || just_after_builtin)
-                    && is_known_builtin_with_flag_docs(other)
-                {
-                    return LspCompletionContext::BuiltinFlag(other.to_string());
-                }
-            }
+            _ => {}
+        }
+        // Universal fallback: ANY named-or-unnamed command where the
+        // current word starts with `-` AND the command has doc-body
+        // flag bullets / citations. This runs AFTER the per-command
+        // named arms above so e.g. `typeset -<TAB>` keeps its
+        // hand-curated TypesetFlag table (better descriptions),
+        // `set -o foo<TAB>` keeps OptionOnly, etc. Catches `set -`,
+        // `bindkey -`, `zmv -`, `kill -` (when not after `-s`), etc.
+        let bytes = line.as_bytes();
+        let cap = col.min(bytes.len());
+        let mut j = cap;
+        while j > 0 && !matches!(bytes[j - 1], b' ' | b'\t') {
+            j -= 1;
+        }
+        let starts_with_dash = j < cap && bytes[j] == b'-';
+        let just_after_builtin = j == cap;
+        if (starts_with_dash || just_after_builtin)
+            && is_known_builtin_with_flag_docs(&cmd)
+        {
+            return LspCompletionContext::BuiltinFlag(cmd);
         }
     }
 
@@ -3218,6 +3218,83 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
 /// bullets — used to gate the `BuiltinFlag` context dispatch. Quick
 /// boolean check based on whether the doc body has the
 /// `- **\`-X\`** —` pattern; cached per session.
+/// Heuristic — given a builtin doc body and a flag like `-f`, find a
+/// sentence describing that flag. Walks every backtick-wrapped flag
+/// citation, expands to its enclosing sentence (bounded by `. ` or
+/// `\n\n`), keeps the FIRST one that looks descriptive (skip section
+/// headers and synopsis-style fragments).
+///
+/// Returns the cleaned-up description or None if no suitable
+/// sentence found.
+fn derive_inline_flag_desc(body: &str, flag: &str) -> Option<String> {
+    let needle = format!("`{}`", flag);
+    let bytes = body.as_bytes();
+    let nbytes = needle.as_bytes();
+    // Walk every occurrence — keep the best one.
+    let mut best: Option<String> = None;
+    let mut search_from = 0;
+    while let Some(pos) = body[search_from..].find(&needle) {
+        let abs = search_from + pos;
+        search_from = abs + needle.len();
+        // Find sentence start: walk back from `abs` over chars
+        // until we hit `. ` (period-space), `\n\n`, or start of body.
+        let mut sstart = abs;
+        while sstart > 0 {
+            let c = bytes[sstart - 1];
+            if c == b'\n' && sstart >= 2 && bytes[sstart - 2] == b'\n' {
+                break;
+            }
+            if c == b'.' && sstart < bytes.len() && matches!(bytes[sstart], b' ' | b'\n') {
+                sstart += 1; // skip the period that ENDED the previous sentence
+                break;
+            }
+            sstart -= 1;
+        }
+        // Find sentence end: walk forward from `abs` until `.` followed
+        // by space/newline, or `\n\n`, or end of body. Cap at 300 chars.
+        let mut send = abs + needle.len();
+        let cap_end = (sstart + 400).min(bytes.len());
+        while send < cap_end {
+            let c = bytes[send];
+            if c == b'.'
+                && send + 1 < bytes.len()
+                && matches!(bytes[send + 1], b' ' | b'\n')
+            {
+                send += 1; // include the period
+                break;
+            }
+            if c == b'\n' && send + 1 < bytes.len() && bytes[send + 1] == b'\n' {
+                break;
+            }
+            send += 1;
+        }
+        let raw = &body[sstart..send.min(bytes.len())];
+        // Clean: collapse whitespace, strip markdown emphasis chars.
+        let cleaned: String = raw
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string();
+        if cleaned.len() < 15 {
+            continue; // too short to be useful
+        }
+        // Skip section-header-looking fragments.
+        if cleaned.starts_with('#') {
+            continue;
+        }
+        // Prefer shorter, sentence-like descriptions.
+        if best
+            .as_ref()
+            .map(|b| b.len() > cleaned.len())
+            .unwrap_or(true)
+        {
+            best = Some(cleaned);
+        }
+    }
+    best.map(|s| s.chars().take(200).collect())
+}
+
 fn is_known_builtin_with_flag_docs(name: &str) -> bool {
     let is_compat = crate::ported::builtin::BUILTINS
         .iter()
@@ -3295,17 +3372,24 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     // Tier 2: when tier-1 produced nothing, fall back to inline
     // `` `-X` `` citations scattered through the prose. Covers
     // cd / set / unset / echo / unsetopt / etc whose docs describe
-    // flags in flowing text rather than bullet lists. No
-    // description text (we'd have to NLP-parse the surrounding
-    // sentence), so item `detail` will be empty — but the FLAG NAME
-    // surfaces, which is the user-facing win.
+    // flags in flowing text rather than bullet lists.
+    //
+    // For each cited flag, pull a SENTENCE-ish description from the
+    // surrounding prose. Heuristic: find the sentence that contains
+    // the flag mention, take from its opening (`. ` boundary or
+    // start-of-paragraph) to the next `.` / `\n\n`. Strip markdown
+    // backticks and underscore-italics for readability.
     if out.is_empty() {
         let re_inline = regex::Regex::new(r"`(-[A-Za-z+])`").unwrap();
         for cap in re_inline.captures_iter(&body) {
             let flag = cap.get(1).unwrap().as_str().to_string();
-            if !out.iter().any(|(f, _)| f == &flag) {
-                out.push((flag, String::new()));
+            if out.iter().any(|(f, _)| f == &flag) {
+                continue;
             }
+            // Find the FIRST occurrence position of this flag in
+            // body, then scan around for a description sentence.
+            let desc = derive_inline_flag_desc(&body, &flag).unwrap_or_default();
+            out.push((flag, desc));
         }
     }
     tracing::debug!(
