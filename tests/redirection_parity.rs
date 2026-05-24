@@ -27,7 +27,29 @@ fn run_zshrs_in(dir: &Path, s: &str) -> R {
 }
 fn assert_parity_in(dir: &Path, s: &str) {
     if !zsh_available() { return; }
+    // Snapshot every file in `dir` BEFORE the first shell runs so the
+    // second shell sees the same starting state. Without this, redirect
+    // tests that pre-create files (`echo line1 > out.txt` then
+    // `assert_parity_in`) see zsh mutate the file first, then zshrs run
+    // against zsh's already-modified state. Cumulative-append redirects
+    // (`>>`, `&>>`, `2>>`) then look broken even when both shells
+    // perform identical operations.
+    let snapshot: Vec<(PathBuf, Vec<u8>)> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                .filter_map(|e| {
+                    let p = e.path();
+                    std::fs::read(&p).ok().map(|b| (p, b))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let z = run_zsh_in(dir, s);
+    // Restore the snapshot so zshrs starts from the same state.
+    for (p, b) in &snapshot {
+        let _ = std::fs::write(p, b);
+    }
     let r = run_zshrs_in(dir, s);
     assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
     assert_eq!(z.exit, r.exit);
@@ -51,7 +73,6 @@ mod stdout_redirect {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: `>>` append redirect doesn't preserve existing content"]
     fn gt_gt_appends() {
         let d = tdir();
         std::fs::write(d.path().join("out.txt"), "line1\n").unwrap();
@@ -86,7 +107,6 @@ mod stderr_redirect {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: `2>>` stderr append redirect doesn't preserve existing content"]
     fn stderr_append() {
         let d = tdir();
         std::fs::write(d.path().join("err.txt"), "first\n").unwrap();
@@ -154,7 +174,6 @@ mod amp_redirect {
 
     /// `&>>` appends both streams.
     #[test]
-    #[ignore = "ZSHRS BUG: `&>>` append doesn't preserve existing content (same bug class as >>)"]
     fn amp_gt_gt_appends_both() {
         let d = tdir();
         std::fs::write(d.path().join("all.txt"), "first\n").unwrap();
