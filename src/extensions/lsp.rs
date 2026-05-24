@@ -1321,6 +1321,14 @@ pub fn lookup_doc(name: &str) -> String {
     if let Some(d) = OPTION_DOCS_FALLBACK.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
         return format!("**{}** — _zsh option_\n\n{}", d.0, d.1);
     }
+    // Full doc-comment body (extracted from source `///` blocks by
+    // `scripts/gen_ext_builtin_docs.py`). Wins over the hand one-liner
+    // in EXT_BUILTIN_DOCS — the user's complaint was that `zwhere`/
+    // `zd` etc. were returning one-line summaries when the source has
+    // rich multi-paragraph descriptions.
+    if let Some(body) = crate::zsh_ext_builtin_docs::lookup_full(name) {
+        return format!("**{}** — _zshrs extension builtin_\n\n{}", name, body);
+    }
     if let Some(d) = EXT_BUILTIN_DOCS.iter().find(|(k, _)| *k == name) {
         return format!("**{}** — _zshrs extension builtin_\n\n{}", d.0, d.1);
     }
@@ -2647,13 +2655,31 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                 col += end;
                 continue;
             }
-            // Word — classify
-            if c0 == '_' || c0.is_alphabetic() {
+            // Word — classify. Allow leading `.` / `+` / `@` when
+            // followed by `_`/letter (zinit-style function names like
+            // `.zinit-foo` / `+vi-…` / `@hook-fn`). Body chars allow
+            // `-` for hyphenated names (`daemon-lock-do`,
+            // `daemon-export-pdf`) so they don't lex as multiple tokens
+            // with `do` / `export` getting mis-classified.
+            let leading_sigil =
+                matches!(c0, '.' | '+' | '@' | ':' | '^') && rest.as_bytes().get(1).map_or(false, |b| {
+                    let c1 = *b as char;
+                    c1 == '_' || c1.is_alphabetic()
+                });
+            if c0 == '_' || c0.is_alphabetic() || leading_sigil {
                 let b = rest.as_bytes();
-                let mut end = 0;
+                let mut end = if leading_sigil { 1 } else { 0 };
                 while end < b.len() {
                     let c = b[end] as char;
                     if c == '_' || c.is_alphanumeric() {
+                        end += 1;
+                    } else if c == '-'
+                        && end + 1 < b.len()
+                        && {
+                            let nxt = b[end + 1] as char;
+                            nxt == '_' || nxt.is_alphanumeric()
+                        }
+                    {
                         end += 1;
                     } else {
                         break;

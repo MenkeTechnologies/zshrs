@@ -89,6 +89,41 @@ class ZshrsLexerTest {
         assertEquals("\${HOME:-/tmp}", toks[0].second)
     }
 
+    @Test fun `leading-dot identifiers stay one token (zinit-style)`() {
+        // zinit defines functions like `.zinit-any-colorify-as-uspl2`.
+        // Per zsh's `Src/utils.c::inittyptab`, `.` and `-` are both in
+        // the IUSER class so they're valid in function names. Without
+        // this support `.zinit-foo` was OPERATOR + IDENTIFIER + OPERATOR
+        // + IDENTIFIER and any mid-name `do` / `load` / etc. got mis-
+        // classified as a keyword.
+        val toks = nonWs(".zinit-load() { :; }")
+        assertEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
+        assertEquals(".zinit-load", toks[0].second)
+    }
+
+    @Test fun `leading-plus identifiers stay one token (zsh-extension hooks)`() {
+        // `+vi-mode-set` is a real zsh-syntax-highlighting / p10k hook name.
+        val toks = nonWs("+vi-mode-set foo bar")
+        assertEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
+        assertEquals("+vi-mode-set", toks[0].second)
+    }
+
+    @Test fun `leading-at identifiers stay one token`() {
+        // `@hook-fn` style — used by some plugin frameworks.
+        val toks = nonWs("@hook-fn arg")
+        assertEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
+        assertEquals("@hook-fn", toks[0].second)
+    }
+
+    @Test fun `bare dot still routes through other paths`() {
+        // `.` alone (the `source` builtin) must NOT become a sigil-start
+        // — the next char isn't a word char so the leading-sigil path
+        // skips. Falls through to operator-char handling.
+        val toks = nonWs(". ./foo.zsh")
+        // First token is `.` — not an IDENTIFIER bearing `.zsh` etc.
+        assertNotEquals(ZshrsTokenTypes.IDENTIFIER, toks[0].first)
+    }
+
     @Test fun `hyphenated identifiers stay one token`() {
         // Regression: `daemon-lock-do` was lexing as IDENTIFIER, OPERATOR,
         // IDENTIFIER, OPERATOR, CONTROL_KEYWORD (`do`) — the IDE then
