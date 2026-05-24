@@ -230,6 +230,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if let Some(s) = try_user_fn_override($name, &args) {
                     return Value::Status(s);
                 }
+                // `[builtins].coreutils_shadows = off` in
+                // ~/.zshrs/zshrs.toml (or `ZSHRS_NO_COREUTILS_SHADOWS=1`
+                // env override) bypasses the in-process shadow and
+                // fork-execs the real /bin/X. Safety valve for any
+                // script that hits an edge-case divergence between
+                // the zshrs shadow and system coreutils. Cached
+                // after first call, so the hot path is one atomic
+                // load per shadowed-builtin invocation.
+                if !crate::daemon_presence::coreutils_shadows_enabled() {
+                    return Value::Status(exec_system_command($name, &args));
+                }
                 let status = with_executor(|exec| exec.$method(&args));
                 Value::Status(status)
             });
@@ -4293,6 +4304,32 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 /// without this check). Returns Some(status) when the call is routed
 /// to the user function; the builtin handler should fall through to
 /// its native impl when None.
+/// Fork+exec a system binary by name. Used by `reg_overridable!` as
+/// the fall-through path when `[builtins].coreutils_shadows = off`
+/// (the default) — runs the canonical `/bin/X` instead of zshrs's
+/// in-process shadow so old scripts hit zero behavioral divergence.
+///
+/// Inherits stdin/stdout/stderr from the parent so pipelines work
+/// transparently. Resolves the binary via PATH; mirrors what zsh's
+/// own external-command dispatch would do. Returns the child's exit
+/// status (or 127 if PATH lookup fails — the standard "command not
+/// found" code).
+fn exec_system_command(name: &str, args: &[String]) -> i32 {
+    let status = std::process::Command::new(name)
+        .args(args)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status();
+    match status {
+        Ok(s) => s.code().unwrap_or(if s.success() { 0 } else { 1 }),
+        Err(e) => {
+            eprintln!("zshrs: {}: {}", name, e);
+            127
+        }
+    }
+}
+
 fn try_user_fn_override(name: &str, args: &[String]) -> Option<i32> {
     let has_fn = with_executor(|exec| {
         exec.functions_compiled.contains_key(name) || exec.function_exists(name)
