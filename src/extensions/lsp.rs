@@ -1073,6 +1073,15 @@ fn completion(state: &State, params: &Value) -> Value {
     // above misses PS2/PS3/PS4/psvar/PROMPT2/PROMPT3/PROMPT4 and
     // hundreds more. Surface every canonical name so `setopt`,
     // `typeset`, `unset`, etc. can complete against the full set.
+    //
+    // Two prefix-match paths because the user may type the name two
+    // ways:
+    //   1. Bare `HIST<TAB>` — want("HISTCMD") starts-with "HIST" ✓
+    //   2. Dollar `$HIST<TAB>` — bare `name` does NOT start with `$HIST`,
+    //      so fall back to comparing the prefix's bare form. When the
+    //      $-prefix path matches, emit the candidate WITH `$` prepended
+    //      so the IDE inserts the dollar the user typed.
+    let bare_prefix: String = prefix.strip_prefix('$').map(|s| s.to_string()).unwrap_or_default();
     for (name, _doc) in crate::zsh_special_var_docs::SPECIAL_VAR_DOCS {
         // Skip the pure-symbolic ones (`$`, `?`, `*`, etc) — they're
         // already in SPECIAL_VARS with the `$` prefix. The remaining
@@ -1082,16 +1091,27 @@ fn completion(state: &State, params: &Value) -> Value {
         }
         if want(name) {
             push(&mut items, name, 6, "special variable");
+        } else if !bare_prefix.is_empty()
+            && name.to_lowercase().starts_with(&bare_prefix.to_lowercase())
+        {
+            let with_sigil = format!("${}", name);
+            push(&mut items, &with_sigil, 6, "special variable");
         }
     }
     // Aliases (PROMPT/PROMPT2/PROMPT3 → PS1/PS2/PS3, NULLCMD etc.) —
-    // surface so completion offers every surface name.
+    // surface so completion offers every surface name. Same dual-prefix
+    // match as above so `$PROMPT<TAB>` hits aliased forms.
     for (alias, _canon) in crate::zsh_special_var_docs::SPECIAL_VAR_ALIASES {
         if !alias.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
             continue;
         }
         if want(alias) {
             push(&mut items, alias, 6, "special variable");
+        } else if !bare_prefix.is_empty()
+            && alias.to_lowercase().starts_with(&bare_prefix.to_lowercase())
+        {
+            let with_sigil = format!("${}", alias);
+            push(&mut items, &with_sigil, 6, "special variable");
         }
     }
     // Snippet templates — mirrors strykelang's `SNIPPETS` table. Each
@@ -7446,6 +7466,37 @@ mod tests {
     #[test]
     fn completion_subscript_flag_table_has_10_entries() {
         assert!(SUBSCRIPT_FLAGS.len() >= 10, "SUBSCRIPT_FLAGS: {}", SUBSCRIPT_FLAGS.len());
+    }
+
+    #[test]
+    fn completion_dollar_prefix_matches_canonical_specials() {
+        // User report: `$HIST<TAB>` only surfaced `$HISTFILE`/`$HISTSIZE`
+        // (the hand SPECIAL_VARS subset which stores names with `$`
+        // prefix). Canonical SPECIAL_VAR_DOCS stores names WITHOUT
+        // `$`, so the prefix-match `"$HISTCMD".starts_with("$HIST")`
+        // failed because the candidate was just `"HISTCMD"`. Fix
+        // adds a $-prefix path that matches the bare prefix against
+        // the bare name + emits the candidate with `$` prepended.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "$HIST".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 5 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        let labels: Vec<&str> = items
+            .iter()
+            .map(|i| i["label"].as_str().unwrap_or(""))
+            .collect();
+        for want in &["$HISTCMD", "$HISTNO", "$HISTCHARS"] {
+            assert!(
+                labels.iter().any(|l| l == want),
+                "missing `{}` for `$HIST` prefix",
+                want,
+            );
+        }
     }
 
     #[test]
