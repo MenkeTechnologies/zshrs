@@ -77,8 +77,9 @@ mod tests {
 
     #[test]
     fn matches_files_with_named_extension_in_cwd() {
-        // Cargo.toml lives at the workspace root which is the test
-        // cwd — extension `toml` should bring it back.
+        // Cargo.toml exists under compsys/ (the test cwd when
+        // `cargo test -p compsys` runs). Extension `toml` brings it
+        // back via the prefix `Cargo`.
         let mut state = CompletionState::new();
         state.params.prefix = "Cargo".into();
         assert!(_extensions(&mut state, &["toml"]));
@@ -98,9 +99,11 @@ mod tests {
     fn directories_always_match_regardless_of_extension() {
         // Subdirs should appear even when their name doesn't end in
         // the requested extension — Tab into a dir is always wanted
-        // so the user can keep walking.
+        // so the user can keep walking. `bins/` exists under compsys/
+        // which is the test cwd (`cargo test -p compsys` runs from
+        // the package dir).
         let mut state = CompletionState::new();
-        state.params.prefix = "co".into();
+        state.params.prefix = "bi".into();
         let _ = _extensions(&mut state, &["xyz_unlikely"]);
         let names: Vec<String> = state
             .groups
@@ -108,9 +111,8 @@ mod tests {
             .flat_map(|g| g.matches.iter())
             .map(|c| c.str_.clone())
             .collect();
-        // `compsys/` exists at the workspace root.
         assert!(
-            names.iter().any(|n| n == "compsys"),
+            names.iter().any(|n| n == "bins"),
             "subdirectory must appear regardless of extension filter; got {names:?}"
         );
     }
