@@ -10471,7 +10471,6 @@ mod tests {
     /// `${list[@]:*other}` — set INTERSECTION with another named array.
     /// zsh: list=(a b c d e), other=(b d) → "b d"
     #[test]
-    #[ignore = "ANCHOR: zsh ${list[@]:*other} → set intersection 'b d'; verify zshrs supports"]
     fn paramsubst_arr_set_intersection_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         errflag.store(0, Ordering::Relaxed);
@@ -10494,7 +10493,6 @@ mod tests {
     /// `${list[@]:|other}` — set SUBTRACTION (list MINUS other).
     /// zsh: list=(a b c d e), other=(b d) → "a c e"
     #[test]
-    #[ignore = "ANCHOR: zsh ${list[@]:|other} → set difference 'a c e'; verify zshrs supports"]
     fn paramsubst_arr_set_subtraction_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         errflag.store(0, Ordering::Relaxed);
