@@ -98,4 +98,30 @@ mod tests {
         let mut state = CompletionState::new();
         assert!(!_complete_help_generic(&mut state, "no dashes here at all"));
     }
+
+    #[test]
+    fn empty_help_text_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_complete_help_generic(&mut state, ""));
+    }
+
+    #[test]
+    fn prefix_filters_options() {
+        let help = "
+        --verbose    Be verbose
+        --version    Print version
+        --debug      Enable debug
+        ";
+        let mut state = CompletionState::new();
+        state.params.prefix = "--ver".into();
+        assert!(_complete_help_generic(&mut state, help));
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"--verbose"));
+        assert!(names.contains(&"--version"));
+        assert!(!names.contains(&"--debug"));
+    }
 }

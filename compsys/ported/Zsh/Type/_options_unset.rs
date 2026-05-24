@@ -48,7 +48,41 @@ mod tests {
             .collect();
         assert!(names.contains(&"NULL_GLOB"));
         assert!(names.contains(&"NO_BANG_HIST"));
-        assert!(!names.contains(&"EXTENDED_GLOB"), "set option leaked through filter");
+        assert!(!names.contains(&"EXTENDED_GLOB"));
         assert!(!names.contains(&"PIPE_FAIL"));
+    }
+
+    #[test]
+    fn returns_false_when_no_unset_options() {
+        let mut state = CompletionState::new();
+        let opts: Vec<(&str, bool)> = vec![("A", true), ("B", true)];
+        assert!(!_options_unset(&mut state, &opts));
+    }
+
+    #[test]
+    fn empty_options_list_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_options_unset(&mut state, &[]));
+    }
+
+    #[test]
+    fn prefix_filters_combined_with_set_filter() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "NO".into();
+        let opts: Vec<(&str, bool)> = vec![
+            ("NO_BANG_HIST", false),
+            ("NO_BEEP", true), // set, should be excluded
+            ("NULL_GLOB", false),
+        ];
+        let ok = _options_unset(&mut state, &opts);
+        assert!(ok);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"NO_BANG_HIST"));
+        assert!(!names.contains(&"NO_BEEP"), "set option must not appear");
+        assert!(!names.contains(&"NULL_GLOB"), "off-prefix must not appear");
     }
 }

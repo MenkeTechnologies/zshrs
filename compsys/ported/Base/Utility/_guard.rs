@@ -30,13 +30,17 @@ use super::shared::glob_match;
 
 /// _guard - Guard against completing in wrong context
 pub fn _guard(state: &MainCompleteState, pattern: &str) -> bool {
-    let prefix = state.comp.params.prefix.clone();
+    // shell:7 — `[[ "$PREFIX$SUFFIX" != $~1 ]] && return 1`. The
+    // match target is PREFIX+SUFFIX, not just PREFIX.
+    let text = format!(
+        "{}{}",
+        state.comp.params.prefix, state.comp.params.suffix
+    );
 
-    // Simple glob matching
     if pattern.contains('*') || pattern.contains('?') {
-        glob_match(pattern, &prefix)
+        glob_match(pattern, &text)
     } else {
-        prefix.starts_with(pattern)
+        text.starts_with(pattern)
     }
 }
 
@@ -60,5 +64,33 @@ mod tests {
         assert!(_guard(&state, "git-"));
         state.comp.params.prefix = "ls".into();
         assert!(!_guard(&state, "git-"));
+    }
+
+    #[test]
+    fn star_only_matches_anything_non_empty() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "anything".into();
+        assert!(_guard(&state, "*"));
+        state.comp.params.prefix = "".into();
+        // Empty prefix → glob_matches("*", "") = true (star can match empty)
+        assert!(_guard(&state, "*"));
+    }
+
+    #[test]
+    fn question_mark_matches_single_char() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "ab".into();
+        assert!(_guard(&state, "??"));
+        state.comp.params.prefix = "abc".into();
+        assert!(!_guard(&state, "??"));
+    }
+
+    #[test]
+    fn suffix_concatenated_to_prefix_for_check() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "git".into();
+        state.comp.params.suffix = "-status".into();
+        // PREFIX+SUFFIX = "git-status" → matches "git-*"
+        assert!(_guard(&state, "git-*"));
     }
 }

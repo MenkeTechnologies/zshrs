@@ -76,4 +76,53 @@ mod tests {
         assert_eq!(by_str.get("commit"), Some(&"commit -- Create commit"));
         assert!(!by_str.contains_key("push"));
     }
+
+    #[test]
+    fn empty_specs_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_regex_words(&mut state, "words", "verb", &[]));
+    }
+
+    #[test]
+    fn empty_description_emits_word_without_disp() {
+        let mut state = CompletionState::new();
+        let specs = vec![("up".into(), "".into())];
+        assert!(_regex_words(&mut state, "words", "verb", &specs));
+        assert_eq!(state.groups[0].matches[0].disp, None);
+    }
+
+    #[test]
+    fn empty_tag_description_skips_explanation() {
+        let mut state = CompletionState::new();
+        let specs = vec![("x".into(), "x desc".into())];
+        // empty top-level description ("verb" → "") means no
+        // group explanation attached.
+        _regex_words(&mut state, "words", "", &specs);
+        let g = state
+            .groups
+            .iter()
+            .find(|g| g.name == "words")
+            .expect("group exists");
+        assert!(g.explanations.is_empty());
+    }
+
+    #[test]
+    fn empty_prefix_emits_all_words() {
+        let mut state = CompletionState::new();
+        let specs = vec![
+            ("a".into(), "first".into()),
+            ("b".into(), "second".into()),
+            ("c".into(), "third".into()),
+        ];
+        assert!(_regex_words(&mut state, "words", "test", &specs));
+        assert_eq!(state.groups[0].matches.len(), 3);
+    }
+
+    #[test]
+    fn tag_name_used_as_group_name() {
+        let mut state = CompletionState::new();
+        let specs = vec![("x".into(), "".into())];
+        _regex_words(&mut state, "my-tag", "", &specs);
+        assert!(state.groups.iter().any(|g| g.name == "my-tag"));
+    }
 }
