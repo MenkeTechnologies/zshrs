@@ -2398,6 +2398,26 @@ pub fn tc_leftcurs(_x: i32) { // c:1729
 pub static TCOUT_FUNC_NAME: std::sync::Mutex<Option<String>> = // c:246
     std::sync::Mutex::new(None);
 
+/// Port of `zattr pmpt_attr, rpmpt_attr, prompt_attr;` from
+/// `Src/Zle/zle_refresh.c:152`. Captured text attributes for the
+/// left prompt / right prompt / the prompt-tail position respectively.
+///
+/// Used by:
+///   - zle_main.c:1238 — `pmpt_attr = txtcurrentattrs;` after
+///     left-prompt expansion to remember the SGR state at prompt end.
+///   - zle_main.c:1247 — same for `rpmpt_attr` after right-prompt.
+///   - zle_main.c:1248 — `prompt_attr = …` derived from the two.
+///   - zle_refresh.c:1163/1666 — `txtcurrentattrs = txtpendingattrs =
+///     {pmpt,rpmpt}_attr;` to restore the captured state when
+///     redrawing.
+///   - zle_refresh.c:1657 — `treplaceattrs(pmpt_attr);` to flush.
+///
+/// `zattr` is `u64` (zsh.h:2689); AtomicU64 with Relaxed ordering
+/// matches C's plain global-int read/write shape.
+pub static PMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152
+pub static RPMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152
+pub static PROMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152
+
 /// Port of `static int cleareol` from `Src/Zle/zle_refresh.c:827`.
 /// Clear-to-end-of-line flag — set when the terminal lacks `cleareod`
 /// and we have to fall back to per-line clear.
