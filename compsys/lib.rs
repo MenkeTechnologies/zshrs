@@ -116,7 +116,6 @@ pub mod cache;
 pub mod compadd;
 pub mod compcore;
 pub mod compdef;
-pub mod compinit;
 pub mod completion;
 pub mod compset;
 pub mod computil;
@@ -138,48 +137,28 @@ pub use fns::_arguments::{
     ArgumentsAnalysis, ArgumentsSpec, ArgumentsState, OptSpec, OptType,
 };
 pub use base::{
-    all_labels,
-    alternative,
-    completer_approximate,
-    // Completers
-    completer_complete,
-    completer_correct,
-    completer_expand,
-    completer_history,
-    completer_ignored,
-    completer_match,
-    completer_menu,
-    completer_prefix,
-    // Messages
-    description as base_description,
-    dispatch_complete,
-    get_ignored_patterns,
-    is_ignored,
-    main_complete,
-    message,
-    multi_parts,
-    next_label,
-    normal_complete,
-    // Tags
-    requested,
-    sep_parts,
-    values_complete,
-    wanted,
-    // Utility
+    // Tag/spec types (still defined in base.rs)
     Alternative,
     CompleterResult,
     CompletionContext as BaseCompletionContext,
-    // Core
     MainCompleteState,
     TagManager,
     Value,
+};
+// Per-fn ports — these moved to `compsys/fns/Base/{Core,Completer,Utility}/`
+// and base.rs re-exports them, but pull them straight from `fns::` for
+// downstream callers that want the canonical path.
+pub use fns::{
+    _all_labels, _alternative, _approximate, _complete, _description as base_description,
+    _dispatch, _ignored, _main_complete, _message, _multi_parts, _next_label, _normal, _sep_parts,
+    _values, _wanted, get_ignored_patterns, is_ignored,
 };
 pub use compadd::{compadd_execute, CompadOpts};
 pub use compcore::{
     do_completion, sort_and_prioritize, AmbiguousInfo, CompletionMode, CompletionRequestOptions,
     CompletionState, MenuInfo,
 };
-pub use compinit::{
+pub use fns::compinit::{
     build_cache_from_fpath, cache_entry_count, cache_is_valid, check_dump, compdump, compinit,
     compinit_lazy, get_system_fpath, load_from_cache, CompDef, CompFile, CompFileDef, CompInitOpts,
     CompInitResult,

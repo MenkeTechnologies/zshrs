@@ -3,6 +3,8 @@
 
 use std::path::Path;
 
+use crate::zstyle::ZStyleStore;
+
 pub fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -97,4 +99,76 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
     }
 
     dp[m][n]
+}
+
+/// Get ignored-patterns for a context/tag. Extracted from
+/// `compsys/base.rs::get_ignored_patterns` (was a free helper, not a
+/// shell function). Shared by `_description`/`_message` and any
+/// caller that needs to consult the `ignored-patterns` zstyle.
+pub fn get_ignored_patterns(styles: &ZStyleStore, context: &str, tag: &str) -> Vec<String> {
+    let ctx = format!("{}:{}", context, tag);
+    styles
+        .lookup_values(&ctx, "ignored-patterns")
+        .map(|v| v.to_vec())
+        .unwrap_or_default()
+}
+
+/// Check if a string matches any ignored pattern. Extracted from
+/// `compsys/base.rs::is_ignored`. Uses the same `glob_match` helper
+/// as the rest of the per-fn ports.
+pub fn is_ignored(s: &str, patterns: &[String]) -> bool {
+    for pattern in patterns {
+        if glob_match(pattern, s) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // glob_match coverage migrated from `compsys/base.rs` when the
+    // local glob_match helper there was removed in favor of this
+    // single shared implementation.
+
+    #[test]
+    fn test_glob_match_simple() {
+        assert!(glob_match("*.txt", "file.txt"));
+        assert!(glob_match("*.txt", ".txt"));
+        assert!(!glob_match("*.txt", "file.rs"));
+    }
+
+    #[test]
+    fn test_glob_match_question() {
+        assert!(glob_match("file?.txt", "file1.txt"));
+        assert!(glob_match("file?.txt", "fileX.txt"));
+        assert!(!glob_match("file?.txt", "file.txt"));
+        assert!(!glob_match("file?.txt", "file12.txt"));
+    }
+
+    #[test]
+    fn test_glob_match_star_middle() {
+        assert!(glob_match("foo*bar", "foobar"));
+        assert!(glob_match("foo*bar", "foo123bar"));
+        assert!(glob_match("foo*bar", "fooXYZbar"));
+        assert!(!glob_match("foo*bar", "foobaz"));
+    }
+
+    #[test]
+    fn test_glob_match_multiple_stars() {
+        assert!(glob_match("*foo*", "foo"));
+        assert!(glob_match("*foo*", "afoo"));
+        assert!(glob_match("*foo*", "foob"));
+        assert!(glob_match("*foo*", "afoob"));
+        assert!(!glob_match("*foo*", "bar"));
+    }
+
+    #[test]
+    fn test_glob_match_exact() {
+        assert!(glob_match("exact", "exact"));
+        assert!(!glob_match("exact", "exacty"));
+        assert!(!glob_match("exact", "xact"));
+    }
 }
