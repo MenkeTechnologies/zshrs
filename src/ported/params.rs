@@ -3556,8 +3556,6 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
 
     if (pm.node.flags as u32 & PM_READONLY) != 0 {
         // c:2701 — `zerr("read-only variable: %s", pm->node.nam)`.
-        // The previous Rust port left this as a comment-only stub,
-        // so silent assignment failures masked typeset -r protection.
         zerr(&format!("read-only variable: {}", pm.node.nam)); // c:2701
         return;
     }
@@ -5568,15 +5566,6 @@ pub fn unsetparam(name: &str) {
 #[allow(unused_variables)]
 pub fn unsetparam_pm(pm: &mut param, altflag: i32, exp: i32) -> i32 {
     // c:3850 — `if ((pm->node.flags & PM_READONLY) && pm->level <= locallevel)`.
-    // The previous Rust port hardcoded `pm.level <= 0` with a
-    // "locallevel global not yet ported — assume 0" comment, but
-    // `crate::ported::params::locallevel` IS the canonical port of
-    // the C global (declared above in this file). Reading it live
-    // matters: a function-scope readonly assignment (`typeset -r x`)
-    // gets pm.level == current locallevel; without the live check,
-    // unsetting from a NESTED scope (locallevel > pm.level) would
-    // succeed when C rejects, AND unsetting from a deeper scope
-    // (locallevel < pm.level) would reject when C succeeds.
     let cur_ll = locallevel.load(Ordering::Relaxed) as i32; // c:3850 locallevel
     if (pm.node.flags as u32 & PM_READONLY) != 0 && pm.level <= cur_ll {
         // c:3850
@@ -8566,7 +8555,6 @@ pub fn resolve_nameref_rec(
     }
     if (f & PM_TAGGED) != 0 {
         // c: `zerr("%s: invalid self reference", pm->node.nam)`.
-        // The previous Rust port left this as a comment-only stub.
         let nam = pm.as_ref().map(|p| p.node.nam.clone()).unwrap_or_default();
         zerr(&format!("{}: invalid self reference", nam));
         return None;
