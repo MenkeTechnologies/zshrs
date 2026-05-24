@@ -860,17 +860,91 @@ pub fn putfilecol(group: &str, filename: &str, m: u32, _special: i32) -> i32 {
     0
 }
 
-/// Format the "scroll for more?" prompt shown when the match list
-/// exceeds the terminal height.
-/// Port of `asklistscroll(int ml)` from Src/Zle/complist.c. The C source
-/// emits "--More--" plus a percent indicator and reads y/n via
-/// `getzlequery`; ours produces the prompt string and leaves the
-/// input read to the caller.
-/// WARNING: param names don't match C — Rust=(total, shown) vs C=(ml)
-pub fn asklistscroll(total: usize, shown: usize) -> String {
-    // c:1001
-    let _remaining = total.saturating_sub(shown);
-    format!("--More--({}/{})", shown, total)
+/// Direct port of `int asklistscroll(int ml)` from
+/// `Src/Zle/complist.c:1001`.
+///
+/// Shown when the completion list exceeds the screen — emits the
+/// "--More--" prompt, reads a key via [`getkeycmd`] under the
+/// `listscroll` keymap, then interprets the bound command:
+///   - SIGINT / nothing → return 1 (abort scroll)
+///   - accept-line / down-line-or-history / etc. → bump
+///     `MRESTLINES = 1` (one more line) and continue (return 0)
+///   - menu-select / complete-word / etc. → set
+///     `MRESTLINES = zterm_lines - 1` (full page) and continue
+///   - accept-search → return 1 (abort)
+///   - anything else → unget the cmd and return 1
+/// Finally clears the prompt line with `\r<columns spaces>\r`.
+pub fn asklistscroll(ml: i32) -> i32 {
+    use crate::ported::utils::{adjustcolumns, adjustlines};
+    use crate::ported::zle::zle_keymap::{getkeycmd, selectlocalmap, ungetkeycmd};
+    use crate::ported::zle::zle_main::zsetterm;
+
+    // c:1004 — `compprintfmt(NULL, 1, 1, 1, ml, NULL);` — render the
+    //          mstatus / LISTPROMPT line.
+    let mut _stop = 0i32;
+    let _ = compprintfmt("", 1, 1, 1, ml, &mut _stop);
+
+    // c:1006-1007 — `fflush(shout); zsetterm();`
+    let fd = SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = zsetterm();
+
+    // c:1008-1009 — `menuselect_bindings(); selectlocalmap(lskeymap);`
+    menuselect_bindings();
+    let lsk = crate::ported::zle::zle_keymap::openkeymap("listscroll");
+    selectlocalmap(lsk);
+
+    // c:1010 — `cmd = getkeycmd()`. Empty cmd or send-break → abort.
+    let ret;
+    let cmd = getkeycmd();
+    let nm = cmd.as_ref().map(|t| t.nam.as_str()).unwrap_or("");
+    match nm {
+        "" | "send-break" => {
+            ret = 1; // c:1011
+        }
+        // c:1012-1017 — accept-line family: one more line.
+        "accept-line"
+        | "down-history"
+        | "down-line-or-history"
+        | "down-line-or-search"
+        | "vi-down-line-or-history" => {
+            MRESTLINES.store(1, Ordering::Relaxed);
+            ret = 0;
+        }
+        // c:1018-1029 — menu-complete family: full page.
+        "complete-word"
+        | "expand-or-complete"
+        | "expand-or-complete-prefix"
+        | "menu-complete"
+        | "menu-expand-or-complete"
+        | "menu-select" => {
+            MRESTLINES.store(adjustlines() as i32 - 1, Ordering::Relaxed);
+            ret = 0;
+        }
+        // c:1030-1031 — accept-search → abort.
+        "accept-search" => {
+            ret = 1;
+        }
+        // c:1032-1035 — anything else: unget + abort.
+        _ => {
+            ungetkeycmd();
+            ret = 1;
+        }
+    }
+    // c:1037 — `selectlocalmap(NULL);`
+    selectlocalmap(None);
+    // c:1038 — `settyinfo(&shttyinfo);` — restore tty mode after raw read.
+    // (zshrs's tty restore happens implicitly when the next prompt
+    //  draws; explicit call site omitted until shttyinfo wires up.)
+
+    // c:1039-1043 — clear the prompt line: `\r<spaces*cols-1>\r`.
+    let _ = write_loop(out_fd, b"\r");
+    let cols = adjustcolumns().saturating_sub(1);
+    let blank = vec![b' '; cols];
+    let _ = write_loop(out_fd, &blank);
+    let _ = write_loop(out_fd, b"\r");
+
+    ret // c:1045
 }
 
 /// Port of `int compprintnl(int ml)` from
