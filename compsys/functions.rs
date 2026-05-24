@@ -171,7 +171,7 @@ pub fn call_function(_state: &mut MainCompleteState, _func: &str) -> bool {
 }
 
 /// _cache_invalid - Check if completion cache is invalid
-pub fn cache_invalid(state: &MainCompleteState, cache_name: &str) -> bool {
+pub fn _cache_invalid(state: &MainCompleteState, cache_name: &str) -> bool {
     let context = format!(":completion:{}:", state.ctx.context);
 
     // Check cache-policy style
@@ -201,7 +201,7 @@ pub fn cache_invalid(state: &MainCompleteState, cache_name: &str) -> bool {
 }
 
 /// _retrieve_cache - Retrieve completion data from cache
-pub fn retrieve_cache(state: &MainCompleteState, cache_name: &str) -> Option<Vec<String>> {
+pub fn _retrieve_cache(state: &MainCompleteState, cache_name: &str) -> Option<Vec<String>> {
     let context = format!(":completion:{}:", state.ctx.context);
 
     if let Some(cache_path) = state.styles.lookup_values(&context, "cache-path") {
@@ -217,7 +217,7 @@ pub fn retrieve_cache(state: &MainCompleteState, cache_name: &str) -> Option<Vec
 }
 
 /// _store_cache - Store completion data to cache
-pub fn store_cache(state: &MainCompleteState, cache_name: &str, data: &[String]) -> bool {
+pub fn _store_cache(state: &MainCompleteState, cache_name: &str, data: &[String]) -> bool {
     let context = format!(":completion:{}:", state.ctx.context);
 
     if let Some(cache_path) = state.styles.lookup_values(&context, "cache-path") {
@@ -238,7 +238,7 @@ pub fn store_cache(state: &MainCompleteState, cache_name: &str, data: &[String])
 }
 
 /// _guard - Guard against completing in wrong context
-pub fn guard(state: &MainCompleteState, pattern: &str) -> bool {
+pub fn _guard(state: &MainCompleteState, pattern: &str) -> bool {
     let prefix = state.comp.params.prefix.clone();
 
     // Simple glob matching
@@ -269,13 +269,13 @@ fn glob_match_helper(pattern: &[char], text: &[char]) -> bool {
 }
 
 /// _nothing - Add no completions (but don't fail)
-pub fn nothing(_state: &mut CompletionState) -> bool {
+pub fn _nothing(_state: &mut CompletionState) -> bool {
     // Intentionally does nothing but returns success
     true
 }
 
 /// _numbers - Complete numbers in a range
-pub fn numbers(
+pub fn _numbers(
     state: &mut CompletionState,
     min: i64,
     max: i64,
@@ -305,7 +305,7 @@ pub fn numbers(
 }
 
 /// _pick_variant - Detect command variant (GNU vs BSD, etc.)
-pub fn pick_variant(
+pub fn _pick_variant(
     command: &str,
     tests: &[(&str, &str)], // (test_arg, expected_output)
 ) -> Option<String> {
@@ -325,7 +325,7 @@ pub fn pick_variant(
 }
 
 /// _sub_commands - Complete subcommands
-pub fn sub_commands(
+pub fn _sub_commands(
     state: &mut CompletionState,
     commands: &[(String, String)], // (name, description)
 ) -> bool {
@@ -350,7 +350,7 @@ pub fn sub_commands(
 }
 
 /// _sequence - Complete a sequence of values with separator
-pub fn sequence(
+pub fn _sequence(
     state: &mut CompletionState,
     separator: &str,
     completer: impl Fn(&mut CompletionState) -> bool,
@@ -369,7 +369,7 @@ pub fn sequence(
 }
 
 /// _combination - Complete combinations of values
-pub fn combination(
+pub fn _combination(
     state: &mut CompletionState,
     tag: &str,
     specs: &[(&str, Vec<String>)], // (style_name, possible_values)
@@ -396,7 +396,7 @@ pub fn combination(
 }
 
 /// _regex_arguments - Complete using regex-based argument specs
-pub fn regex_arguments(
+pub fn _regex_arguments(
     state: &mut CompletionState,
     _name: &str,
     patterns: &[(String, String, String)], // (pattern, description, action)
@@ -420,7 +420,7 @@ pub fn regex_arguments(
 }
 
 /// _regex_words - Complete words matching regex
-pub fn regex_words(
+pub fn _regex_words(
     state: &mut CompletionState,
     tag: &str,
     description: &str,
@@ -459,7 +459,7 @@ pub fn set_command(state: &mut MainCompleteState) {
 }
 
 /// _shadow - Shadow existing completions
-pub fn shadow(
+pub fn _shadow(
     state: &mut CompletionState,
     _shadow_name: &str,
     action: impl FnOnce(&mut CompletionState) -> bool,
@@ -562,14 +562,14 @@ impl CompiledArgSpec {
 // =============================================================================
 
 /// _all_matches - Show all possible matches
-pub fn all_matches(state: &mut CompletionState) -> bool {
+pub fn _all_matches(state: &mut CompletionState) -> bool {
     // Just show all matches without filtering
     state.params.compstate.insert = "all".to_string();
     true
 }
 
 /// _approximate - Approximate/fuzzy matching
-pub fn approximate(state: &mut MainCompleteState, max_errors: usize) -> CompleterResult {
+pub fn _approximate(state: &mut MainCompleteState, max_errors: usize) -> CompleterResult {
     let original = state.comp.params.prefix.clone();
 
     // Get all potential matches and filter by edit distance
@@ -630,7 +630,7 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
 /// _correct - Spelling correction
 pub fn correct(state: &mut MainCompleteState) -> CompleterResult {
     // Same as approximate with error=1
-    approximate(state, 1)
+    _approximate(state, 1)
 }
 
 /// _expand - Expand special characters ($, ~, {})
@@ -676,7 +676,7 @@ pub fn expand(state: &mut CompletionState) -> bool {
 }
 
 /// _expand_alias - Expand aliases
-pub fn expand_alias(state: &mut CompletionState, aliases: &HashMap<String, String>) -> bool {
+pub fn _expand_alias(state: &mut CompletionState, aliases: &HashMap<String, String>) -> bool {
     let word = state.params.current_word();
 
     if let Some(expansion) = aliases.get(&word) {
@@ -690,7 +690,7 @@ pub fn expand_alias(state: &mut CompletionState, aliases: &HashMap<String, Strin
 }
 
 /// _extensions - Complete by file extension
-pub fn extensions(state: &mut CompletionState, extensions: &[&str]) -> bool {
+pub fn _extensions(state: &mut CompletionState, extensions: &[&str]) -> bool {
     use std::fs;
 
     let prefix = state.params.prefix.clone();
@@ -757,7 +757,7 @@ pub fn extensions(state: &mut CompletionState, extensions: &[&str]) -> bool {
 }
 
 /// _external_pwds - Complete from other shell's PWDs
-pub fn external_pwds(state: &mut CompletionState) -> bool {
+pub fn _external_pwds(state: &mut CompletionState) -> bool {
     // Would read from /proc/*/cwd or similar
     // Simplified: just add current directory
     if let Ok(pwd) = std::env::current_dir() {
@@ -769,7 +769,7 @@ pub fn external_pwds(state: &mut CompletionState) -> bool {
 }
 
 /// _history - Complete from command history
-pub fn history(state: &mut CompletionState, history_entries: &[String]) -> bool {
+pub fn _history(state: &mut CompletionState, history_entries: &[String]) -> bool {
     let prefix = state.params.prefix.clone();
 
     state.begin_group("history", true);
@@ -790,21 +790,21 @@ pub fn history(state: &mut CompletionState, history_entries: &[String]) -> bool 
 }
 
 /// _ignored - Complete previously ignored matches
-pub fn ignored(state: &mut CompletionState, ignored_patterns: &[String]) -> bool {
+pub fn _ignored(state: &mut CompletionState, ignored_patterns: &[String]) -> bool {
     // Would complete things that were ignored by fignore
     let _ = ignored_patterns;
     state.ignored > 0
 }
 
 /// _list - List completions without inserting
-pub fn list(state: &mut CompletionState) -> bool {
+pub fn _list(state: &mut CompletionState) -> bool {
     state.params.compstate.list.push_str(" list");
     state.params.compstate.insert.clear();
     true
 }
 
 /// _match - Pattern-based matching
-pub fn match_pattern(state: &mut CompletionState, pattern: &str, candidates: &[String]) -> bool {
+pub fn _match(state: &mut CompletionState, pattern: &str, candidates: &[String]) -> bool {
     let mut matched = false;
 
     for candidate in candidates {
@@ -818,19 +818,19 @@ pub fn match_pattern(state: &mut CompletionState, pattern: &str, candidates: &[S
 }
 
 /// _menu - Menu completion mode
-pub fn menu(state: &mut CompletionState) -> bool {
+pub fn _menu(state: &mut CompletionState) -> bool {
     state.params.compstate.insert = "menu".to_string();
     true
 }
 
 /// _oldlist - Use previous completion list
-pub fn oldlist(state: &mut CompletionState) -> bool {
+pub fn _oldlist(state: &mut CompletionState) -> bool {
     state.params.compstate.old_list = "keep".to_string();
     true
 }
 
 /// _prefix - Complete with prefix handling
-pub fn prefix_complete(
+pub fn _prefix(
     state: &mut CompletionState,
     action: impl FnOnce(&mut CompletionState) -> bool,
 ) -> bool {
@@ -845,7 +845,7 @@ pub fn prefix_complete(
 }
 
 /// _user_expand - User-defined expansions
-pub fn user_expand(state: &mut CompletionState, expansions: &HashMap<String, String>) -> bool {
+pub fn _user_expand(state: &mut CompletionState, expansions: &HashMap<String, String>) -> bool {
     let prefix = state.params.prefix.clone();
 
     let mut matched = false;
@@ -870,7 +870,7 @@ pub fn user_expand(state: &mut CompletionState, expansions: &HashMap<String, Str
 /// It parses bash compspec strings and generates completions accordingly.
 ///
 /// Compspec format: -F function | -C command | -G globpat | -W wordlist | -X filterpat
-pub fn bash_completions(state: &mut MainCompleteState, compspec: &str) -> CompleterResult {
+pub fn _bash_completions(state: &mut MainCompleteState, compspec: &str) -> CompleterResult {
     let prefix = &state.comp.params.prefix.clone();
     let mut matches = Vec::new();
 
@@ -1015,7 +1015,7 @@ fn glob_match_simple(pattern: &str, text: &str) -> bool {
 }
 
 /// _complete_debug - Debug completion
-pub fn complete_debug(state: &mut MainCompleteState) -> CompleterResult {
+pub fn _complete_debug(state: &mut MainCompleteState) -> CompleterResult {
     // Print debug info
     eprintln!("Context: {}", state.ctx.context);
     eprintln!("Completer: {}", state.ctx.completer);
@@ -1027,7 +1027,7 @@ pub fn complete_debug(state: &mut MainCompleteState) -> CompleterResult {
 }
 
 /// _complete_help - Show completion help
-pub fn complete_help(state: &mut CompletionState, help_entries: &[(String, String)]) -> bool {
+pub fn _complete_help(state: &mut CompletionState, help_entries: &[(String, String)]) -> bool {
     state.begin_group("help", true);
 
     for (topic, desc) in help_entries {
@@ -1041,7 +1041,7 @@ pub fn complete_help(state: &mut CompletionState, help_entries: &[(String, Strin
 }
 
 /// _complete_tag - Complete for specific tag
-pub fn complete_tag(
+pub fn _complete_tag(
     state: &mut MainCompleteState,
     tag: &str,
     action: impl FnOnce(&mut CompletionState) -> bool,
@@ -1057,7 +1057,7 @@ pub fn complete_tag(
 }
 
 /// _correct_filename - Correct filename spelling
-pub fn correct_filename(state: &mut CompletionState) -> bool {
+pub fn _correct_filename(state: &mut CompletionState) -> bool {
     use std::fs;
 
     let prefix = state.params.prefix.clone();
@@ -1093,7 +1093,7 @@ pub fn correct_filename(state: &mut CompletionState) -> bool {
 }
 
 /// _correct_word - Correct word spelling
-pub fn correct_word(state: &mut CompletionState, words: &[String]) -> bool {
+pub fn _correct_word(state: &mut CompletionState, words: &[String]) -> bool {
     let prefix = state.params.prefix.clone();
 
     let mut matched = false;
@@ -1108,12 +1108,12 @@ pub fn correct_word(state: &mut CompletionState, words: &[String]) -> bool {
 }
 
 /// _expand_word - Expand word (aliases, variables, etc.)
-pub fn expand_word(state: &mut CompletionState) -> bool {
+pub fn _expand_word(state: &mut CompletionState) -> bool {
     expand(state)
 }
 
 /// _generic - Generic completion widget
-pub fn generic(
+pub fn _generic(
     state: &mut MainCompleteState,
     action: impl FnOnce(&mut MainCompleteState) -> CompleterResult,
 ) -> CompleterResult {
@@ -1121,7 +1121,7 @@ pub fn generic(
 }
 
 /// _history_complete_word - Complete word from history
-pub fn history_complete_word(
+pub fn _history_complete_word(
     state: &mut CompletionState,
     history_entries: &[String],
     direction: i32, // -1 = backward, 1 = forward
@@ -1148,7 +1148,7 @@ pub fn history_complete_word(
 }
 
 /// _most_recent_file - Complete most recently modified file
-pub fn most_recent_file(state: &mut CompletionState, dir: &str, pattern: Option<&str>) -> bool {
+pub fn _most_recent_file(state: &mut CompletionState, dir: &str, pattern: Option<&str>) -> bool {
     use std::fs;
 
     let entries = match fs::read_dir(dir) {
@@ -1185,7 +1185,7 @@ pub fn most_recent_file(state: &mut CompletionState, dir: &str, pattern: Option<
 }
 
 /// _next_tags - Move to next tag set
-pub fn next_tags(state: &mut MainCompleteState) -> bool {
+pub fn _next_tags(state: &mut MainCompleteState) -> bool {
     state.tags.next()
 }
 

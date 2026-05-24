@@ -591,7 +591,7 @@ fn test_functions() {
 
     // Test numbers completion
     let mut state = CompletionState::from_line("pick ", 5);
-    let matched = functions::numbers(&mut state, 1, 10, 1, Some("number"));
+    let matched = functions::_numbers(&mut state, 1, 10, 1, Some("number"));
     assert!(matched);
     assert!(state.nmatches > 0);
     println!("  numbers: OK (matched {} numbers)", state.nmatches);
@@ -603,7 +603,7 @@ fn test_functions() {
         ("push".to_string(), "Push to remote".to_string()),
         ("pull".to_string(), "Pull from remote".to_string()),
     ];
-    let matched = functions::sub_commands(&mut state, &commands);
+    let matched = functions::_sub_commands(&mut state, &commands);
     assert!(matched);
     assert_eq!(state.nmatches, 3);
     println!("  sub_commands: OK");
@@ -617,7 +617,7 @@ fn test_functions() {
         "git checkout main".to_string(),
         "grep foo bar".to_string(),
     ];
-    let matched = functions::history(&mut state, &history);
+    let matched = functions::_history(&mut state, &history);
     assert!(matched);
     assert_eq!(state.nmatches, 2); // "git commit" and "git checkout"
     println!("  history: OK (matched {} entries)", state.nmatches);
@@ -639,7 +639,7 @@ fn test_functions() {
         "comment".to_string(),
         "commerce".to_string(),
     ];
-    let matched = functions::correct_word(&mut state, &words);
+    let matched = functions::_correct_word(&mut state, &words);
     assert!(matched);
     println!("  correct_word: OK (found {} corrections)", state.nmatches);
 
