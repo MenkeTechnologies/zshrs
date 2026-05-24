@@ -755,17 +755,33 @@ pub fn zshrs_main() {
     }
 
     // --docs NAME: render the same hover card the LSP would return for
-    // NAME. Used by the IntelliJ tool window's docs popup.
+    // NAME. Used by the IntelliJ tool window's docs popup and by shell
+    // tab-completion (`zshrs --docs <TAB>` via completions/_zshrs).
     if let Some(i) = args.iter().position(|a| a == "--docs") {
         if let Some(name) = args.get(i + 1) {
             let card = zsh::lsp::lookup_doc(name);
             if card.is_empty() {
                 eprintln!("zshrs: no docs for {}", name);
+                if let Some(s) = zsh::lsp::closest_name(name) {
+                    eprintln!("zshrs: did you mean `{}`?", s);
+                }
                 std::process::exit(1);
             }
             println!("{}", card);
             return;
         }
+    }
+
+    // --names: emit every canonical name across builtins / keywords /
+    // options / specials / compsys / extensions, one per line, sorted
+    // and de-duplicated. Drives `compadd ${(f)"$(zshrs --names)"}` in
+    // the `_zshrs` completer for `--docs <TAB>`. Fast path: iterates
+    // the in-memory const tables, no I/O, ~1 ms cold.
+    if args.iter().any(|a| a == "--names") {
+        for n in zsh::lsp::all_canonical_names() {
+            println!("{}", n);
+        }
+        return;
     }
 
     // Extract flags before filtering: -x (xtrace), -f (no rcs), -v (verbose)
