@@ -43,4 +43,27 @@ mod tests {
         assert_eq!(state.params.compstate.old_list, "keep",
                    "shell `compstate[old_list]=keep` must be reflected");
     }
+
+    #[test]
+    fn returns_true() {
+        let mut state = CompletionState::new();
+        assert!(_oldlist(&mut state));
+    }
+
+    #[test]
+    fn does_not_add_matches() {
+        // _oldlist signals "reuse old matches"; it never creates new
+        // ones.
+        let mut state = CompletionState::new();
+        _oldlist(&mut state);
+        assert_eq!(state.nmatches, 0);
+    }
+
+    #[test]
+    fn overwrites_any_existing_old_list_value() {
+        let mut state = CompletionState::new();
+        state.params.compstate.old_list = "shown".into();
+        _oldlist(&mut state);
+        assert_eq!(state.params.compstate.old_list, "keep");
+    }
 }

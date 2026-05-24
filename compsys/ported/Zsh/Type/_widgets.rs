@@ -85,4 +85,59 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["backward-skip-line"]);
     }
+
+    #[test]
+    fn empty_prefix_emits_all_widgets() {
+        let mut state = CompletionState::new();
+        let ws = vec![
+            ("forward-word".into(), "builtin".into()),
+            ("backward-word".into(), "builtin".into()),
+        ];
+        _widgets(&mut state, &ws, None);
+        assert_eq!(state.nmatches, 2);
+    }
+
+    #[test]
+    fn empty_widget_list_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_widgets(&mut state, &[], None));
+    }
+
+    #[test]
+    fn kind_glob_supports_star_wildcard() {
+        let mut state = CompletionState::new();
+        let ws = vec![
+            ("forward-word".into(), "builtin".into()),
+            ("_complete_help".into(), "completion".into()),
+            ("my-widget".into(), "user:_complete".into()),
+            ("redraw".into(), "redisplay".into()),
+        ];
+        // `*letion*` matches "completion".
+        _widgets(&mut state, &ws, Some("*letion*"));
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"_complete_help"));
+        assert!(!names.contains(&"forward-word"));
+        assert!(!names.contains(&"redraw"));
+    }
+
+    #[test]
+    fn prefix_matches_start_of_name() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "back".into();
+        let ws = vec![
+            ("backward-word".into(), "builtin".into()),
+            ("forward-word".into(), "builtin".into()),
+        ];
+        _widgets(&mut state, &ws, None);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names, vec!["backward-word"]);
+    }
 }

@@ -45,4 +45,27 @@ mod tests {
             "_complete must delegate verbatim to _normal"
         );
     }
+
+    #[test]
+    fn empty_state_returns_no_match() {
+        let mut state = MainCompleteState::new("", 0);
+        assert!(matches!(_complete(&mut state), CompleterResult::NoMatch));
+    }
+
+    #[test]
+    fn command_position_returns_no_match_pending_dispatch() {
+        // Without a -command- handler registered, _normal returns
+        // NoMatch — _complete must propagate.
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.current = 1;
+        assert!(matches!(_complete(&mut state), CompleterResult::NoMatch));
+    }
+
+    #[test]
+    fn argument_position_returns_no_match_when_no_comps_registered() {
+        let mut state = MainCompleteState::new("git status", 10);
+        state.comp.params.current = 2;
+        state.comp.params.words = vec!["git".into(), "status".into()];
+        assert!(matches!(_complete(&mut state), CompleterResult::NoMatch));
+    }
 }

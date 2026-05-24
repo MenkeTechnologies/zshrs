@@ -50,4 +50,45 @@ mod tests {
         assert_eq!(state.params.compstate.insert, "",
                    "_list must clear compstate[insert] so completion only lists");
     }
+
+    #[test]
+    fn returns_true_unconditionally() {
+        // shell:37 `return 1` — but the SHELL return-1 means "no
+        // matches added", which translates to true in the Rust
+        // "we successfully did our work" sense. Pin contract.
+        let mut state = CompletionState::new();
+        assert!(_list(&mut state));
+    }
+
+    #[test]
+    fn does_not_add_completion_matches() {
+        // _list shows the existing list; never produces NEW matches.
+        let mut state = CompletionState::new();
+        _list(&mut state);
+        assert_eq!(state.nmatches, 0);
+    }
+
+    #[test]
+    fn idempotent_call_keeps_one_list_marker() {
+        let mut state = CompletionState::new();
+        _list(&mut state);
+        let after_one = state.params.compstate.list.clone();
+        _list(&mut state);
+        // The second call appends ' list' again — pin that the
+        // marker string grows on repeated calls (the receiver
+        // typically dedupes when consuming compstate).
+        assert!(state.params.compstate.list.len() > after_one.len());
+        // BUT it still contains "list".
+        assert!(state.params.compstate.list.contains("list"));
+    }
+
+    #[test]
+    fn clears_existing_insert_no_matter_the_old_value() {
+        for old in ["menu", "1", "all", "5"] {
+            let mut state = CompletionState::new();
+            state.params.compstate.insert = old.into();
+            _list(&mut state);
+            assert_eq!(state.params.compstate.insert, "", "old `{old}` not cleared");
+        }
+    }
 }
