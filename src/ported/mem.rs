@@ -620,15 +620,9 @@ pub fn arrlen_gt<T>(s: &[T], lower_bound: usize) -> bool {
     s.len() > lower_bound
 }
 
-/// Concatenate strings with separator.
-/// Port of `sepjoin(char **s, char *sep, int heap)` from Src/utils.c:3928 — C source's `IFS`-
-/// driven array→string join. Default separator is space, matching
-/// the C source's `sep ? sep : " "` fallback.
-/// WARNING: param names don't match C — Rust=(arr, sep) vs C=(s, sep, heap)
-pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
-    // c:3928
-    arr.join(sep.unwrap_or(" "))
-}
+// `sepjoin` lives at its canonical C location (utils.c:3928) →
+// `crate::ported::utils::sepjoin`. Removed the dropped-IFS-support
+// duplicate that lived here.
 
 // The canonical `zcontext_save()` / `zcontext_restore()` port lives
 // in `crate::ported::context` (Src/context.c:80/117), NOT here.
@@ -639,22 +633,9 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
 // the same state must go through signals_h so the counter is shared
 // across the whole tree.
 
-/// Split string by separator.
-/// Port of `sepsplit(char *s, char *sep, int allownull, int heap)` from Src/utils.c:3962 — the C source's
-/// `IFS`-driven splitter. `allow_empty` mirrors the `allownull`
-/// argument the C function takes.
-/// WARNING: param names don't match C — Rust=(s, sep, allow_empty) vs C=(s, sep, allownull, heap)
-pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {
-    // c:3962
-    if allow_empty {
-        s.split(sep).map(|s| s.to_string()).collect()
-    } else {
-        s.split(sep)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect()
-    }
-}
+// `sepsplit` lives at its canonical C location (utils.c:3962) →
+// `crate::ported::utils::sepsplit`. Removed the duplicate that lived
+// here.
 
 // `next_heap_id` from Src/mem.c:178 — monotonically incrementing counter
 // for heap-arena identification under ZSH_MEM_DEBUG.
@@ -820,69 +801,8 @@ mod tests {
         // Should not panic
     }
 
-    /// c:3928 — `sepjoin([a, b, c], Some("-"))` produces `"a-b-c"`.
-    /// Used by `${(j:-:)array}`. Regression dropping the separator
-    /// or doubling it would silently mangle every joined-array path.
-    #[test]
-    fn sepjoin_with_explicit_separator() {
-        let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            sepjoin(&["a".into(), "b".into(), "c".into()], Some("-")),
-            "a-b-c"
-        );
-        assert_eq!(
-            sepjoin(&["a".into(), "b".into(), "c".into()], Some("")),
-            "abc"
-        );
-    }
-
-    /// c:3928 — `sepjoin(arr, None)` defaults separator to space (matches
-    /// C's `s ? s : " "` pattern).
-    #[test]
-    fn sepjoin_none_defaults_to_space() {
-        let _g = crate::test_util::global_state_lock();
-        assert_eq!(sepjoin(&["a".into(), "b".into()], None), "a b");
-    }
-
-    /// c:3928 — empty array returns empty string regardless of sep.
-    /// Catches a regression that returns the separator alone.
-    #[test]
-    fn sepjoin_empty_array_returns_empty() {
-        let _g = crate::test_util::global_state_lock();
-        assert_eq!(sepjoin(&[], Some("-")), "");
-        assert_eq!(sepjoin(&[], None), "");
-    }
-
-    /// c:3962 — `sepsplit("a/b/c", "/", false)` → `["a","b","c"]`.
-    /// Used by `${(s:/:)PATH}` style splits. Regression that drops
-    /// the splitter would yield the whole string as one element.
-    #[test]
-    fn sepsplit_canonical_path_split() {
-        let _g = crate::test_util::global_state_lock();
-        let r = sepsplit("a/b/c", "/", false);
-        assert_eq!(r, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
-    }
-
-    /// c:3962 — `allow_empty=false` filters empty segments (consecutive
-    /// separators don't produce empty entries). Critical for path-walks
-    /// where `//` should not yield `""`.
-    #[test]
-    fn sepsplit_filters_empty_segments_when_disallowed() {
-        let _g = crate::test_util::global_state_lock();
-        let r = sepsplit("a//b", "/", false);
-        assert_eq!(r, vec!["a".to_string(), "b".to_string()]);
-    }
-
-    /// c:3962 — `allow_empty=true` PRESERVES empty segments (matches
-    /// C `allownull=1`). Used by IFS-driven word splits where each
-    /// run of separators counts as one boundary.
-    #[test]
-    fn sepsplit_preserves_empty_segments_when_allowed() {
-        let _g = crate::test_util::global_state_lock();
-        let r = sepsplit("a//b", "/", true);
-        assert_eq!(r.len(), 3, "consecutive sep yields empty middle entry");
-        assert_eq!(r[1], "");
-    }
+    // `sepjoin` / `sepsplit` tests live alongside their canonical
+    // ports in `src/ported/utils.rs` (the C source's home for both fns).
 
     /// `new_heap_id` is monotonically increasing — each call returns
     /// a strictly greater id. Catches a regression where the counter

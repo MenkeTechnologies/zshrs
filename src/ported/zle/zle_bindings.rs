@@ -825,7 +825,7 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "vi-yank" => Some(viyank),
         "which-command" => Some(super::zle_misc::processcmd),
         "run-help" => Some(super::zle_misc::processcmd),
-        "get-line" => Some(super::zle_misc::zgetline),
+        "get-line" => Some(|_| super::zle_hist::zgetline()),
         // execute-named-cmd / execute-last-named-cmd have NULL fn
         // in C iwidgets.list — handled inline at C bind dispatch
         // via `bindk->nam` check. The Rust dispatch path doesn't

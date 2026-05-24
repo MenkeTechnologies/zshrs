@@ -669,9 +669,7 @@ pub const NO_INSERT_CHAR: i32 = 256; // c:331
 /// C: `iremovesuffix(NO_INSERT_CHAR, 0)`.
 pub fn removesuffix() -> i32 {
     // c:333
-    // c:333 — `iremovesuffix(NO_INSERT_CHAR, 0)`. iremovesuffix is
-    // defined in zle_misc.c; the wrapper preserves the call shape.
-    0
+    crate::ported::zle::zle_misc::iremovesuffix(NO_INSERT_CHAR, 0) // c:333
 }
 
 // =====================================================================

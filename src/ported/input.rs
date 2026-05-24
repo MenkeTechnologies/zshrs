@@ -373,14 +373,54 @@ pub fn inungetc(c: char) {
     }
 }
 
-/// Read entire file into memory
-/// Read a file as a string for `source`/`stuff` semantics.
-/// Port of `zstuff(char **out, const char *fn)` from Src/input.c:614 — the C source uses
-/// it for `Functions/Misc/run-help` and similar autoload paths.
-/// WARNING: param names don't match C — Rust=(path) vs C=(out, fn)
-pub fn zstuff(path: &str) -> io::Result<String> {
+/// Read entire file into memory.
+/// Port of `mod_export off_t zstuff(char **out, const char *fn)`
+/// from Src/input.c:614. C body opens via `unmeta(fn)`, fseeks to
+/// end for size, fread()s the body, queues signals around the IO,
+/// zerr()s on open/read failures, returns byte count or -1.
+///
+/// Rust signature: `(path: &str) -> Result<(String, i64), i32>`
+/// — Ok((contents, byte_count)) or Err(-1) on open/read fail.
+/// Path is unmetafied to match C's `unmeta(fn)` step before open.
+/// WARNING: param names don't match C — Rust=(path) vs C=(out, fn).
+pub fn zstuff(path: &str) -> Result<(String, i64), i32> {
     // c:614
-    std::fs::read_to_string(path)
+    use std::io::Read;
+    // c:621 — `unmeta(fn)`: de-metafy the path before open(2).
+    let mut path_bytes = path.as_bytes().to_vec();
+    crate::ported::utils::unmetafy(&mut path_bytes);
+    let real_path = String::from_utf8_lossy(&path_bytes);
+    // c:621 — `fopen(unmeta(fn), "r")`. Rust File::open mirrors fopen
+    // with read-only mode; failure path zerrs and returns -1.
+    let mut file = match std::fs::File::open(real_path.as_ref()) {
+        // c:621
+        Ok(f) => f,
+        Err(_) => {
+            // c:622
+            crate::ported::utils::zerr(&format!("can't open {}", path)); // c:622
+            return Err(-1); // c:623
+        }
+    };
+    // c:625 — `queue_signals();` block syscalls from the trap fast path
+    // for the duration of the read.
+    crate::ported::signals_h::queue_signals();
+    // c:626-628 — `fseek(end); ftell; fseek(start);` to size the file
+    // without consuming the stream. Use stream metadata in Rust.
+    let len = match file.metadata() {
+        // c:627
+        Ok(m) => m.len() as i64,
+        Err(_) => 0,
+    };
+    let mut buf = String::new(); // c:629 — `buf = zalloc(len + 1);`
+    // c:630-635 — `fread(buf, len, 1, in)` failure arm zerrs read error.
+    if file.read_to_string(&mut buf).is_err() {
+        // c:630
+        crate::ported::utils::zerr(&format!("read error on {}", path)); // c:631
+        crate::ported::signals_h::unqueue_signals(); // c:633
+        return Err(-1); // c:634
+    }
+    crate::ported::signals_h::unqueue_signals(); // c:640
+    Ok((buf, len)) // c:642
 }
 
 // `input_has_alias` / `take_raw_input` deleted — Rust-only helpers
