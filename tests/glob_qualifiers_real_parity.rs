@@ -1,0 +1,214 @@
+//! Glob-qualifier parity tests in real file-globbing context.
+//!
+//! Each test creates a tempdir with specific file types, then globs
+//! with a qualifier and compares the sorted result against zsh.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn zshrs_bin() -> PathBuf {
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+}
+fn zsh_path() -> &'static str {
+    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
+    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
+    else { "/bin/zsh" }
+}
+fn zsh_available() -> bool {
+    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+#[allow(dead_code)]
+struct R { stdout: String, exit: i32 }
+fn run_zsh_in(d: &Path, s: &str) -> R {
+    let o = Command::new(zsh_path()).args(["-fc", s]).current_dir(d).output().expect("zsh");
+    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+}
+fn run_zshrs_in(d: &Path, s: &str) -> R {
+    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
+        .current_dir(d).env_remove("ZSHRS_CACHE").output().expect("zshrs");
+    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+}
+fn assert_parity_sorted(d: &Path, s: &str) {
+    if !zsh_available() { return; }
+    let z = run_zsh_in(d, s);
+    let r = run_zshrs_in(d, s);
+    let z_sorted = {
+        let mut v: Vec<&str> = z.stdout.lines().collect();
+        v.sort();
+        v.join("\n")
+    };
+    let r_sorted = {
+        let mut v: Vec<&str> = r.stdout.lines().collect();
+        v.sort();
+        v.join("\n")
+    };
+    assert_eq!(z_sorted, r_sorted, "glob divergence on:\n{s}\n--- zsh ---\n{z_sorted}\n--- zshrs ---\n{r_sorted}");
+}
+
+fn setup_mixed_dir() -> tempfile::TempDir {
+    let d = tempfile::tempdir().expect("tempdir");
+    let base = d.path();
+    // 3 regular files
+    std::fs::write(base.join("file1.txt"), b"").unwrap();
+    std::fs::write(base.join("file2.txt"), b"").unwrap();
+    std::fs::write(base.join("file3.md"), b"").unwrap();
+    // 1 subdirectory
+    std::fs::create_dir(base.join("subdir")).unwrap();
+    // 1 hidden file
+    std::fs::write(base.join(".hidden"), b"").unwrap();
+    d
+}
+
+mod file_type_qualifiers {
+    use super::*;
+
+    /// `*(.)` — regular files only (no dirs, no symlinks).
+    #[test]
+    fn dot_qualifier_only_regular_files() {
+        let d = setup_mixed_dir();
+        assert_parity_sorted(d.path(), "print -l *(.)");
+    }
+
+    /// `*(/)` — directories only.
+    #[test]
+    fn slash_qualifier_only_directories() {
+        let d = setup_mixed_dir();
+        assert_parity_sorted(d.path(), "print -l *(/)");
+    }
+
+    /// `*(.x)` — regular file AND executable.
+    /// Setup: write file and `chmod +x` one of them.
+    #[test]
+    fn dot_x_qualifier_regular_executable() {
+        let d = setup_mixed_dir();
+        // Make file1.txt executable
+        let mut perm = std::fs::metadata(d.path().join("file1.txt")).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perm.set_mode(0o755);
+        std::fs::set_permissions(d.path().join("file1.txt"), perm).unwrap();
+        assert_parity_sorted(d.path(), "print -l *(.x)");
+    }
+
+    /// `*(.,*)` — regular files OR (separated by ,) executable.
+    #[test]
+    fn comma_alternation_in_qualifiers() {
+        let d = setup_mixed_dir();
+        assert_parity_sorted(d.path(), "print -l *(.,*)");
+    }
+}
+
+mod null_glob {
+    use super::*;
+
+    /// `*(N)` — null-glob: no error on no-match, just empty.
+    #[test]
+    #[allow(non_snake_case)]
+    fn N_qualifier_no_error_on_no_match() {
+        let d = setup_mixed_dir();
+        assert_parity_sorted(d.path(), "print -l *.nonexistent_xyz(N); echo done");
+    }
+
+    /// `*(N)` with match still works.
+    #[test]
+    #[allow(non_snake_case)]
+    fn N_qualifier_with_match_returns_files() {
+        let d = setup_mixed_dir();
+        assert_parity_sorted(d.path(), "print -l *.txt(N)");
+    }
+}
+
+mod sort_qualifiers {
+    use super::*;
+
+    /// `*(on)` — sort by name ascending.
+    #[test]
+    fn on_qualifier_sorts_by_name_ascending() {
+        let d = setup_mixed_dir();
+        // Don't sort the output since the qualifier already sorts;
+        // compare line-by-line ordering.
+        if !zsh_available() { return; }
+        let s = "print -l *.txt(on)";
+        let z = run_zsh_in(d.path(), s);
+        let r = run_zshrs_in(d.path(), s);
+        // Order matters here — pin strict equality.
+        assert_eq!(z.stdout, r.stdout);
+    }
+
+    /// `*(On)` — sort by name descending.
+    #[test]
+    #[allow(non_snake_case)]
+    fn On_qualifier_sorts_by_name_descending() {
+        let d = setup_mixed_dir();
+        if !zsh_available() { return; }
+        let s = "print -l *.txt(On)";
+        let z = run_zsh_in(d.path(), s);
+        let r = run_zshrs_in(d.path(), s);
+        assert_eq!(z.stdout, r.stdout);
+    }
+}
+
+mod size_qualifier {
+    use super::*;
+
+    /// `*(Lk+1)` — files larger than 1 kilobyte.
+    #[test]
+    #[allow(non_snake_case)]
+    fn L_kilobyte_size_filter() {
+        let d = tempfile::tempdir().unwrap();
+        // small file
+        std::fs::write(d.path().join("small"), b"x").unwrap();
+        // large file (>1KB)
+        std::fs::write(d.path().join("big"), vec![b'x'; 2000]).unwrap();
+        assert_parity_sorted(d.path(), "print -l *(Lk+1)");
+    }
+
+    /// `*(L+100)` — files larger than 100 bytes.
+    #[test]
+    #[allow(non_snake_case)]
+    fn L_byte_size_filter() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a"), b"short").unwrap();
+        std::fs::write(d.path().join("b"), vec![b'x'; 150]).unwrap();
+        assert_parity_sorted(d.path(), "print -l *(L+100)");
+    }
+}
+
+mod count_subscript {
+    use super::*;
+
+    /// `*([1])` — first match only.
+    #[test]
+    fn bracket_one_keeps_first() {
+        let d = setup_mixed_dir();
+        if !zsh_available() { return; }
+        // Sort first to anchor "first" deterministically.
+        let s = "print -l *(on[1])";
+        let z = run_zsh_in(d.path(), s);
+        let r = run_zshrs_in(d.path(), s);
+        assert_eq!(z.stdout, r.stdout);
+    }
+}
+
+mod combined {
+    use super::*;
+
+    /// `*(.on)` — regular files, sorted by name.
+    #[test]
+    fn dot_then_on_sorted_regular_files() {
+        let d = setup_mixed_dir();
+        if !zsh_available() { return; }
+        let s = "print -l *(.on)";
+        let z = run_zsh_in(d.path(), s);
+        let r = run_zshrs_in(d.path(), s);
+        assert_eq!(z.stdout, r.stdout);
+    }
+
+    /// `*(.N)` — regular files OR no-match-empty.
+    #[test]
+    #[allow(non_snake_case)]
+    fn dot_then_N_regular_with_null_glob() {
+        let d = setup_mixed_dir();
+        assert_parity_sorted(d.path(), "print -l *(.N)");
+    }
+}
