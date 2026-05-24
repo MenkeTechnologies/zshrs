@@ -610,8 +610,8 @@ pub fn downhistory() -> i32 {
 /// Faithful translation of c:457-515: handles zmult<0 redirect to the
 /// forward variant, computes the search prefix (first word of buffer
 /// when no args are passed) with the C source's cache-and-reuse logic
-/// via [`SRCH_STR`] / [`SRCH_HL`] / [`SRCH_CS`] statics, then walks
-/// the ring backward with [`movehistent`], gating on HISTFINDNODUPS
+/// via `SRCH_STR` / `SRCH_HL` / `SRCH_CS` statics, then walks
+/// the ring backward with `movehistent`, gating on HISTFINDNODUPS
 /// and the dual zlinecmp/strcmp tests, calling [`zle_setline`] on the
 /// `zmult`-th hit.
 pub fn historysearchbackward() -> i32 {
@@ -881,8 +881,8 @@ pub fn endofhistory() -> i32 {
 /// (histstep, wordpos, reset), tracks repeated-call state via
 /// `LASTINSERT`/`LASTHIST`/`LASTPOS`/`LASTLEN` statics, deletes the
 /// previously-inserted word on repeat invocations, then walks back
-/// `histstep` entries via [`addhistnum`], extracts word `n` from
-/// either the current line ([`bufferwords`]) or a stored history
+/// `histstep` entries via `addhistnum`, extracts word `n` from
+/// either the current line (`bufferwords`) or a stored history
 /// entry, and inserts it via [`doinsert`].
 pub fn insertlastword() -> i32 {
     use crate::ported::hist::{addhistnum, bufferwords, curhist, quietgethist};
@@ -1672,7 +1672,7 @@ pub fn virevrepeatsearch() -> i32 {
 /// Port of `historybeginningsearchbackward(char **args)` from Src/Zle/zle_hist.c:2039.
 ///
 /// Direct line-by-line port: saves the cursor position, walks history
-/// backward via [`movehistent`] (so `hist_skip_flags` / `HIST_FOREIGN`
+/// backward via `movehistent` (so `hist_skip_flags` / `HIST_FOREIGN`
 /// gating works), compares each entry's prefix against the buffer-up-
 /// to-cursor via [`zlinecmp`], and on the `zmult`-th match restores the
 /// cursor position the C source preserves at c:2057.
