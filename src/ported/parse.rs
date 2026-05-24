@@ -1557,6 +1557,12 @@ fn par_if() -> Option<ZshCommand> {
     // body close and the elif/else token.
     let mut elif = Vec::new();
     let mut else_ = None;
+    // c:Src/parse.c:1501-1504 — `if (tok != FI) { cmdpop(); YYERRORV; }`.
+    // The C parser fails the whole if-construct when the body close
+    // isn't seen. zshrs's loop fell through silently on ENDINPUT, so
+    // `if true; then echo yes` (no `fi`) was accepted. Track whether
+    // we hit a real terminator and error after the loop if not.
+    let mut saw_terminator = use_brace; // `{ … }` body already consumed its close
 
     {
         loop {
@@ -1581,6 +1587,7 @@ fn par_if() -> Option<ZshCommand> {
                         let body = parse_program_until(Some(&[OUTBRACE_TOK]));
                         if tok() == OUTBRACE_TOK {
                             zshlex();
+                            saw_terminator = true; // brace close on elif
                         }
                         body
                     } else {
@@ -1603,6 +1610,7 @@ fn par_if() -> Option<ZshCommand> {
                         let body = parse_program_until(Some(&[OUTBRACE_TOK]));
                         if tok() == OUTBRACE_TOK {
                             zshlex();
+                            saw_terminator = true;
                         }
                         body
                     } else {
@@ -1612,16 +1620,24 @@ fn par_if() -> Option<ZshCommand> {
                     // Consume the 'fi' if present (not for brace syntax)
                     if !else_use_brace && tok() == FI {
                         zshlex();
+                        saw_terminator = true;
                     }
                     break;
                 }
                 FI => {
                     zshlex();
+                    saw_terminator = true;
                     break;
                 }
                 _ => break,
             }
         }
+    }
+
+    if !saw_terminator {
+        // c:1501-1504 — YYERRORV when the if-construct never closed.
+        zerr("parse error: unterminated if");
+        return None;
     }
 
     Some(ZshCommand::If(ZshIf {
@@ -1644,11 +1660,22 @@ fn par_while(until: bool) -> Option<ZshCommand> {
     skip_separators();
     let body = parse_loop_body(false, false)?;
 
-    Some(ZshCommand::While(ZshWhile {
+    // c:Src/parse.c:1521-1551 par_while — WC_WHILE wordcode is tagged
+    // with WC_WHILE_TYPE differentiating WHILE vs UNTIL at the wordcode
+    // layer. The AST mirror in zsh_ast.rs has separate Until(ZshWhile)
+    // and While(ZshWhile) variants; route by the `until` flag here so
+    // downstream pattern-matchers can distinguish without poking
+    // inside the payload's bool.
+    let w = ZshWhile {
         cond,
         body: Box::new(body),
         until,
-    }))
+    };
+    Some(if until {
+        ZshCommand::Until(w) // c:1521 (WC_WHILE_TYPE = WC_WHILE_UNTIL)
+    } else {
+        ZshCommand::While(w) // c:1521 (WC_WHILE_TYPE = WC_WHILE_WHILE)
+    })
 }
 
 /// Parse repeat loop
@@ -7040,7 +7067,20 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
         // Also stop at these tokens when not explicitly looking for them
         // Note: Else/Elif/Then are NOT here - they're handled by par_if
         // to allow nested if statements inside case arms, loops, etc.
+        //
+        // c:Src/parse.c:par_event — when an orphan terminator (DONE
+        // outside a loop, FI outside an if, ESAC outside a case)
+        // appears at the top level (end_tokens=None), C errors via
+        // YYERROR. zshrs's `break` silently accepted `done`/`fi`/
+        // `esac` as no-op input. Error at the outermost call so
+        // unscoped terminators don't sneak through; nested calls
+        // still break cleanly via the end_tokens contains-check
+        // above.
         match tok() {
+            DONE | FI | ESAC if end_tokens.is_none() => {
+                zerr("parse error near orphan terminator");
+                break;
+            }
             OUTBRACE_TOK | DSEMI | SEMIAMP | SEMIBAR | DONE | FI | ESAC | ZEND => break,
             _ => {}
         }
@@ -7609,21 +7649,24 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
     //   else — short form (single command).
     if tok() == DOLOOP {
         zshlex();
-        let body = parse_program();
+        // Body parse must declare DONE as an end-token so the
+        // parse_program_until top-level orphan-DONE guard doesn't
+        // mis-fire on the legitimate loop terminator.
+        let body = parse_program_until(Some(&[DONE]));
         if tok() == DONE {
             zshlex();
         }
         Some(body)
     } else if tok() == INBRACE_TOK {
         zshlex();
-        let body = parse_program();
+        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
         if tok() == OUTBRACE_TOK {
             zshlex();
         }
         Some(body)
     } else if foreach_style || isset(CSHJUNKIELOOPS) {
         // c:1184 / 1546 / 1595 — `else if (csh || isset(CSHJUNKIELOOPS))`.
-        let body = parse_program();
+        let body = parse_program_until(Some(&[ZEND]));
         if tok() == ZEND {
             zshlex();
         }
@@ -8999,7 +9042,6 @@ esac"#;
     /// as an until-loop. zshrs accepts but emits a DIFFERENT AST variant
     /// (not Until). Bug — until loop is mis-classified.
     #[test]
-    #[ignore = "ZSHRS BUG: until-loop parses to wrong AST variant (not ZshCommand::Until)"]
     fn parse_until_loop_yields_until_command_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let prog = parse("until false; do echo x; done").unwrap();
@@ -9091,7 +9133,6 @@ esac"#;
     /// Syntax error — `if` without `fi` → parse returns Err.
     /// Anchor: `echo 'if true; then echo' | zsh -n` → "parse error".
     #[test]
-    #[ignore = "ZSHRS BUG: unterminated `if` accepted; zsh -n errors"]
     fn parse_unterminated_if_returns_error_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let r = parse("if true; then echo yes");
@@ -9101,7 +9142,6 @@ esac"#;
     /// Syntax error — bare `done` without `for/while/until` → error.
     /// Anchor: `echo done | zsh -n` → "parse error near `done`".
     #[test]
-    #[ignore = "ZSHRS BUG: orphan `done` accepted; zsh -n errors"]
     fn parse_orphan_done_returns_error_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let r = parse("done");
