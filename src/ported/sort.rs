@@ -139,6 +139,12 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
         a_str = a_str.chars().filter(|&c| c != '\\').collect();
         b_str = b_str.chars().filter(|&c| c != '\\').collect();
     }
+    // NOTE: c:Src/sort.c::zstrcmp does NOT honor SORTIT_IGNORING_CASE.
+    // The case-fold happens in strmetasort's pre-pass at c:290-372
+    // (lowercase into a separate buffer before eltpcmp + strcoll/strcmp).
+    // Callers wanting case-insensitive sort must pre-lower or route
+    // through strmetasort. Companion test
+    // `test_zstrcmp_ignores_case_flag_per_c` pins this behavior.
 
     // Numeric comparison — direct port of the `if (sortnumeric)`
     // block at Src/sort.c:137-172. Walks both strings to first
@@ -565,19 +571,22 @@ mod tests {
         assert_eq!(zstrcmp("ABC", "abc", SORTIT_ANYOLDHOW as u32), Ordering::Less);
     }
 
-    /// IGNORING_CASE: "ABC" vs "abc" — zsh's `(io)` sort puts both in
-    /// input order, suggesting the comparator returns Equal. zshrs
-    /// returns Less (uses case as tiebreaker even when "ignoring").
-    /// Pin zsh's behavior; mark as ANCHOR for verification.
+    /// IGNORING_CASE on zstrcmp directly is a NO-OP per C semantics:
+    /// `c:Src/sort.c::zstrcmp` doesn't honor the flag itself. The
+    /// case-fold happens in strmetasort's pre-pass (c:290-372) which
+    /// lowercases each element into a separate buffer before calling
+    /// the comparator. zsh's `(io)` sort flow goes through strmetasort
+    /// so the user-visible result IS case-insensitive — but at this
+    /// single-comparator level, "ABC" still sorts Less than "abc"
+    /// because they're byte-different. Companion test
+    /// `test_zstrcmp_ignores_case_flag_per_c` pins the same contract.
     #[test]
-    #[ignore = "ANCHOR: zshrs IGNORING_CASE returns Less for ABC vs abc; zsh sort suggests Equal"]
     fn zstrcmp_ignore_case_makes_abc_equal_to_uppercase_anchored() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            zstrcmp("ABC", "abc", SORTIT_IGNORING_CASE as u32),
-            Ordering::Equal,
-            "case-insensitive: ABC == abc"
-        );
+        // strcoll under the test runner's locale returns Less for ABC<abc.
+        let with = zstrcmp("ABC", "abc", SORTIT_IGNORING_CASE as u32);
+        let without = zstrcmp("ABC", "abc", SORTIT_ANYOLDHOW as u32);
+        assert_eq!(with, without, "c:zstrcmp ignores IGNORING_CASE; pre-pass lives in strmetasort");
     }
 
     /// IGNORING_CASE: "AbC" < "abd".
