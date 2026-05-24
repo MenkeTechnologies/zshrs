@@ -5110,9 +5110,9 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
 /// }
 /// ```
 ///
-/// `ASSPM_WARN` (params.c:104) is a no-op in our port — the global
-/// "warn on creation" tracking is not yet ported. Call shape
-/// preserved so callers can use this where C calls setaparam.
+/// `ASSPM_WARN` (params.c:104) drives the WARN_CREATE_GLOBAL /
+/// WARN_NESTED_VAR diagnostics inside `assignaparam` →
+/// `check_warn_pm` (params.rs:4428).
 /// WARNING: param names don't match C — Rust=() vs C=(s, val)
 pub fn setaparam(name: &str, val: Vec<String>) -> Option<Param> {
     // c:3766 — `return assignaparam(s, val, ASSPM_WARN)`.

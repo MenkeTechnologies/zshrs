@@ -2023,7 +2023,13 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
         }
         if (flag & HISTFLAG_RECALL) != 0 {
             // c:1562
-            // zpushnode(bufstack, ptr) — bufstack push not yet wired here. // c:1563
+            // c:1563 — `zpushnode(bufstack, ptr)` — push the expanded
+            // history line onto the buf-stack so ZLE recalls it on
+            // the next prompt.
+            crate::ported::zle::zle_main::BUFSTACK
+                .lock()
+                .unwrap()
+                .insert(0, ptr.clone()); // c:1563
             save = 0; // c:1564
         }
     }
