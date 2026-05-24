@@ -80,13 +80,11 @@ mod via_eval {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: eval doesn't re-parse alias hashtable; zsh expands via eval"]
     fn alias_via_eval_expands_in_both_shells() {
         assert_parity(r#"alias hi='echo hello'; eval hi"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: eval doesn't see defined alias; zsh expands"]
     fn alias_with_args_via_eval() {
         assert_parity(r#"alias greet='echo hi'; eval "greet world""#);
     }

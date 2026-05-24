@@ -2890,6 +2890,31 @@ fn checkalias(lextext: &str) -> bool {
             // c:1918-1927 — if the next char isn't blank, insert a
             // space so the alias body can't accidentally join the
             // following word.
+            //
+            // C does: `int c = hgetc(); hungetc(c); if (!iblank(c))
+            // inpush(" ", ...);` — actually CONSUMES one char then
+            // un-consumes it, ensuring the check uses the "actual
+            // next char that would be read". zshrs's peek() reads
+            // LEX_INPUT[pos] directly, but the inter-token blank
+            // that broke gettokstr's loop is already consumed (lex.rs
+            // line 1506 `if inbl ... break;` without hungetc). The
+            // next char is in LEX_INPUT past the blank — peek returns
+            // 'w' for `greet world`, the space-push fires correctly.
+            // But if any earlier hungetc left a ' ' in UNGET_BUF
+            // (e.g. from c:546 / c:578 / c:616 paths), peek returns
+            // that blank and skips the separator push — fusing
+            // alias body with the following word.
+            //
+            // Drain any blank chars sitting in UNGET_BUF before the
+            // check so peek sees the actual next-non-blank position.
+            // This pulls a blank out of the queue if its only purpose
+            // was a pending re-read for whitespace handling.
+            while let Some(c) = LEX_UNGET_BUF.with_borrow(|b| b.front().copied()) {
+                if !crate::ztype_h::iblank(c as u8) {
+                    break;
+                }
+                LEX_UNGET_BUF.with_borrow_mut(|b| { b.pop_front(); });
+            }
             if !LEX_LEXSTOP.get() {
                 if let Some(c) = peek() {
                     if !crate::ztype_h::iblank(c as u8) {
@@ -3770,15 +3795,22 @@ pub(crate) fn hgetc() -> Option<char> {
     // Two-input-system bridge (c:Src/input.c): zshrs's lexer has its
     // own LEX_INPUT/LEX_POS char-window while input.rs maintains
     // ingetc's inbuf stack (used by inpush for alias / here-string /
-    // eval content). Prefer the inbuf stack WHEN something has been
-    // pushed onto it (`inbufct > 0` indicates a live push), so
-    // mid-LEX_INPUT inpush calls (e.g. exalias pushing the alias body)
-    // read the pushed bytes first, then unwind to LEX_INPUT for the
-    // remainder. C zsh's single input stack handles this naturally;
-    // zshrs's split needs an explicit priority gate here.
+    // eval content). Prefer the inbuf stack WHEN it has any content
+    // (inbufct > 0). If inbufct == 0 but there's a pending instack
+    // frame to pop (INP_CONT'd lower frame e.g. exalias's leading
+    // " " separator after the body drained), ingetc's c:296
+    // `if (inbufflags & INP_CONT) { inpoptop(); continue; }` arm
+    // handles the pop. Then unwind to LEX_INPUT for the remainder.
     let pos = LEX_POS.get();
     let inbufct = crate::ported::input::inbufct.with(|c| c.get());
-    let from_inbuf = if inbufct > 0 {
+    // Also probe instack via the flags-on-current-frame: if the
+    // CURRENT frame has INP_CONT, ingetc will pop and continue. The
+    // bridge needs to call ingetc to trigger that pop even when
+    // inbufct == 0.
+    let flags = crate::ported::input::inbufflags.with(|f| f.get());
+    let inp_cont_pending = (flags & crate::ported::zsh_h::INP_CONT) != 0;
+    let try_inbuf = inbufct > 0 || inp_cont_pending;
+    let from_inbuf = if try_inbuf {
         crate::ported::input::ingetc()
     } else {
         None
@@ -3789,8 +3821,8 @@ pub(crate) fn hgetc() -> Option<char> {
         LEX_POS.set(pos + c.len_utf8());
         c
     } else {
-        // Last resort: even with inbufct == 0, try ingetc — it may
-        // serve buffered-but-not-yet-counted content.
+        // Last resort: even with inbufct == 0 and no INP_CONT, try
+        // ingetc — covers any buffered-but-not-yet-counted content.
         crate::ported::input::ingetc()?
     };
 
