@@ -6522,8 +6522,19 @@ pub fn ifssetfn(_pm: &mut param, x: String) {
 /// Resets the mbstate_t globals after LC_CTYPE changes (NetBSD-9
 /// requires this). Rust port forwards to the matching helpers.
 pub fn clear_mbstate() {
-    // mb_charinit / clear_shiftstate not yet ported; once they are
-    // (Src/utils.c, Src/pattern.c) wire the calls here.
+    // c:Src/params.c:4732+ — `#ifdef MULTIBYTE_SUPPORT
+    //   mb_charinit();        /* utils.c */
+    //   clear_shiftstate();   /* pattern.c */
+    // #endif`
+    // Both helpers are ported (utils.rs:526 and pattern.rs:190). The
+    // pattern.rs version is currently a no-op (shiftstate machine
+    // not stored) and utils.rs::mb_charinit resets the mbstate_t
+    // tracking. Wire them through so a future locale-change hook
+    // routes through this one entry point per c:Src/params.c
+    // setlang(c:4842) which calls clear_mbstate() between setlocale
+    // and the per-LC_* re-apply loop.
+    crate::ported::utils::mb_charinit();         // c:utils.c mb_charinit
+    crate::ported::pattern::clear_shiftstate(); // c:pattern.c:327 clear_shiftstate
 }
 
 /// Port of `static struct localename lc_names[]` from `Src/params.c:4805-4825`.

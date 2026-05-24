@@ -262,6 +262,19 @@ pub static list_pipe_job: std::sync::atomic::AtomicI32 = // c:462 (Src/exec.c)
 pub static doneps4: std::sync::atomic::AtomicI32 = // c:262 (Src/exec.c)
     std::sync::atomic::AtomicI32::new(0);
 
+/// Port of `static int esprefork, esglob = 1;` from `Src/exec.c:2680`.
+///
+/// File-static "execsubst parameters" — callers (execcmd_exec at
+/// c:3298 / c:3700) set these BEFORE invoking execsubst, which then
+/// uses them as the `flags` arg to prefork() and the gate on
+/// globlist(). `esprefork` is `PREFORK_TYPESET` for magic-assign /
+/// MAGICEQUALSUBST words, else 0. `esglob` defaults to 1; cleared
+/// when the dispatched builtin has `BINF_NOGLOB`.
+pub static esprefork: std::sync::atomic::AtomicI32 = // c:2680
+    std::sync::atomic::AtomicI32::new(0);
+pub static esglob: std::sync::atomic::AtomicI32 = // c:2680 (= 1)
+    std::sync::atomic::AtomicI32::new(1);
+
 /// Port of `struct execstack *exstack;` from `Src/exec.c:244`. Head
 /// of the linked exec-context save stack — `execsave` pushes a frame
 /// before signal-handler / trap dispatch; `execrestore` pops it
@@ -4920,16 +4933,46 @@ use crate::ported::zsh_h::{
 // work (sub-PR). Once those land, these locals collapse to direct
 // `crate::ported::<owner>::<fn>` calls.
 
-/// `execsubst(LinkList list)` — `Src/exec.c:5160`. In-place token
-/// expansion of a word list (singsub-equivalent walk). The full port
-/// belongs in `crate::ported::exec` as a top-level fn; until then,
-/// per-element `singsub` matches the no-history single-word case.
+/// Port of `void execsubst(LinkList strs)` from `Src/exec.c:2684`.
+///
+/// C body (c:2684-2693):
+/// ```c
+/// void execsubst(LinkList strs) {
+///     if (strs) {
+///         prefork(strs, esprefork, NULL);
+///         if (esglob && !errflag) {
+///             LinkList ostrs = strs;
+///             globlist(strs, 0);
+///             strs = ostrs;
+///         }
+///     }
+/// }
+/// ```
+///
+/// Previously a per-element `singsub` walk pinned to c:5160
+/// (mpipe's neighborhood) — wrong line cite and wrong semantic. The
+/// real execsubst runs `prefork` (parameter / arithmetic / command
+/// substitution expansion + IFS-split) over the whole list, then
+/// (when `esglob` is set) `globlist` to do filename globbing on the
+/// result. Single-word singsub misses array splat, brace expansion,
+/// glob, and the IFS-shape preservation that prefork drives.
 fn execsubst(list: &mut Vec<String>) {
-    // c:5160 — `for (node = firstnode(l); node; incnode(node)) { ... }`
-    for word in list.iter_mut() {
-        let expanded = singsub(word); // c:5166 `singsub((char **)getaddrdata(node));`
-        *word = expanded;
+    // c:2684
+    if list.is_empty() {
+        return; // c:2686 `if (strs)`
     }
+    let mut ll: crate::ported::subst::LinkList =
+        std::mem::take(list).into_iter().collect();
+    let prefork_flags = esprefork.load(Ordering::Relaxed); // c:2687 esprefork
+    let mut rf: i32 = 0;
+    crate::ported::subst::prefork(&mut ll, prefork_flags, &mut rf); // c:2687
+    if esglob.load(Ordering::Relaxed) != 0
+        && errflag.load(Ordering::Relaxed) == 0
+    {
+        // c:2688 `if (esglob && !errflag)`
+        crate::ported::subst::globlist(&mut ll, 0); // c:2690
+    }
+    *list = ll.into_iter().collect();
 }
 
 /// Direct port of `static void addvars(Estate state, Wordcode pc,
@@ -7876,13 +7919,18 @@ pub fn execcmd_exec(
     }
 
     // c:3285-3300 — `Do prefork substitutions.` magic_assign handling.
-    let esprefork: i32 = if magic_assign != 0
+    // Sets the file-static `esprefork` (exec.rs:267) so any downstream
+    // execsubst() call inside this command's expansion uses the same
+    // prefork flags. Also keep a local copy for the immediate
+    // prefork(args, esprefork, NULL) below.
+    let esprefork_v: i32 = if magic_assign != 0
         || (isset(MAGICEQUALSUBST) && typ != WC_TYPESET as i32)
     {
         PREFORK_TYPESET                                                    // c:3300
     } else {
         0
     };
+    esprefork.store(esprefork_v, Ordering::Relaxed); // c:3298 esprefork = ...
 
     // c:3302-3307 — prefork(args, esprefork, NULL) + joinlists(preargs, args).
     if args.is_some() && eparams.htok != 0 {
@@ -7895,7 +7943,7 @@ pub fn execcmd_exec(
             }
         }
         let mut rf = 0i32;
-        crate::ported::subst::prefork(&mut as_linklist, esprefork, &mut rf);
+        crate::ported::subst::prefork(&mut as_linklist, esprefork_v, &mut rf);
         // Move back into args.
         let mut out: Vec<String> = Vec::new();
         while let Some(s) = as_linklist.pop_front() {
