@@ -770,4 +770,157 @@ mod tests {
             "c:188-206 zutil.c:1324 — lastnode anchor → tail-append"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Round-7: LinkList edge cases — pop on empty, countlinknodes,
+    // joinlists, linknodebydatum/string, ugetnode, hlinklist2array.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `pop_front` / `pop_back` on empty list → None (no panic).
+    #[test]
+    fn linklist_pop_on_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let mut list: LinkList<i32> = LinkList::new();
+        assert_eq!(list.pop_front(), None);
+        assert_eq!(list.pop_back(), None);
+    }
+
+    /// `front` / `back` on empty list → None.
+    #[test]
+    fn linklist_front_back_on_empty_return_none() {
+        let _g = crate::test_util::global_state_lock();
+        let list: LinkList<i32> = LinkList::new();
+        assert!(list.front().is_none());
+        assert!(list.back().is_none());
+    }
+
+    /// `countlinknodes` on empty → 0.
+    #[test]
+    fn countlinknodes_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let list: LinkList<i32> = LinkList::new();
+        assert_eq!(countlinknodes(&list), 0);
+    }
+
+    /// `countlinknodes` matches `len()`.
+    #[test]
+    fn countlinknodes_matches_len_for_populated_list() {
+        let _g = crate::test_util::global_state_lock();
+        let mut list = LinkList::new();
+        for i in 0..7 {
+            list.push_back(i);
+        }
+        assert_eq!(countlinknodes(&list), 7);
+        assert_eq!(countlinknodes(&list), list.len());
+    }
+
+    /// `joinlists`: second appended to first; second empties.
+    #[test]
+    fn joinlists_appends_second_to_first_and_empties_second() {
+        let _g = crate::test_util::global_state_lock();
+        let mut first: LinkList<i32> = LinkList::new();
+        first.push_back(1);
+        first.push_back(2);
+        let mut second: LinkList<i32> = LinkList::new();
+        second.push_back(3);
+        second.push_back(4);
+
+        joinlists(&mut first, &mut second);
+
+        assert_eq!(first.len(), 4, "first must absorb second's elements");
+        assert!(
+            second.is_empty(),
+            "second must be emptied after joinlists"
+        );
+    }
+
+    /// `joinlists` with empty second → first unchanged.
+    #[test]
+    fn joinlists_with_empty_second_leaves_first_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        let mut first: LinkList<i32> = LinkList::new();
+        first.push_back(1);
+        first.push_back(2);
+        let len_before = first.len();
+        let mut second: LinkList<i32> = LinkList::new();
+
+        joinlists(&mut first, &mut second);
+        assert_eq!(first.len(), len_before);
+    }
+
+    /// `linknodebydatum` finds the first matching element (Some(idx))
+    /// or None if absent.
+    #[test]
+    fn linknodebydatum_finds_existing_element() {
+        let _g = crate::test_util::global_state_lock();
+        let mut list = LinkList::new();
+        list.push_back(10);
+        list.push_back(20);
+        list.push_back(30);
+        assert!(linknodebydatum(&list, &20).is_some());
+        assert!(linknodebydatum(&list, &99).is_none());
+    }
+
+    /// `linknodebystring` — same as datum but for &str.
+    #[test]
+    fn linknodebystring_finds_existing_string() {
+        let _g = crate::test_util::global_state_lock();
+        let mut list: LinkList<String> = LinkList::new();
+        list.push_back("alpha".into());
+        list.push_back("beta".into());
+        list.push_back("gamma".into());
+        assert!(linknodebystring(&list, "beta").is_some());
+        assert!(linknodebystring(&list, "delta").is_none());
+    }
+
+    /// `hlinklist2array` converts to Vec<String> preserving order.
+    #[test]
+    fn hlinklist2array_preserves_insertion_order() {
+        let _g = crate::test_util::global_state_lock();
+        let mut list: LinkList<String> = LinkList::new();
+        list.push_back("x".into());
+        list.push_back("y".into());
+        list.push_back("z".into());
+        assert_eq!(
+            hlinklist2array(&list),
+            vec!["x".to_string(), "y".into(), "z".into()]
+        );
+    }
+
+    /// `hlinklist2array` on empty list returns empty Vec.
+    #[test]
+    fn hlinklist2array_on_empty_returns_empty_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let list: LinkList<String> = LinkList::new();
+        let v = hlinklist2array(&list);
+        assert!(v.is_empty());
+    }
+
+    /// `freelinklist` clears the list to length 0.
+    #[test]
+    fn freelinklist_empties_the_list() {
+        let _g = crate::test_util::global_state_lock();
+        let mut list = LinkList::new();
+        for i in 0..5 {
+            list.push_back(i);
+        }
+        assert_eq!(list.len(), 5);
+        freelinklist(&mut list);
+        assert!(list.is_empty());
+    }
+
+    /// `getlinknode` removes and returns the first element (head pop).
+    #[test]
+    fn getlinknode_pops_head_returning_value() {
+        let _g = crate::test_util::global_state_lock();
+        let mut list = LinkList::new();
+        list.push_back(1);
+        list.push_back(2);
+        list.push_back(3);
+        assert_eq!(getlinknode(&mut list), Some(1));
+        assert_eq!(list.len(), 2, "head removed → len down by 1");
+        assert_eq!(getlinknode(&mut list), Some(2));
+        assert_eq!(getlinknode(&mut list), Some(3));
+        assert_eq!(getlinknode(&mut list), None, "empty → None");
+    }
 }

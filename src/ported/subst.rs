@@ -10370,6 +10370,176 @@ mod tests {
         );
         crate::ported::params::unsetparam("PSH7");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Round-7 deeper forms — slice end-anchored, set ops, paren-index,
+    // assign-default side effect. Each anchored to `print -r --` in
+    // real zsh 5.9.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `${arr[1,-2]}` — slice from 1 to second-to-last.
+    /// zsh: arr=(a b c d e) → "a b c d"
+    #[test]
+    fn paramsubst_arr_slice_to_negative_two() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, multi) = psubst_arr(
+            "PS_S1",
+            &["a", "b", "c", "d", "e"],
+            "${PS_S1[1,-2]}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["a", "b", "c", "d"]);
+        } else {
+            assert_eq!(out, "a b c d");
+        }
+    }
+
+    /// `${arr[-3,-1]}` — slice last three.
+    /// zsh: arr=(a b c d e) → "c d e"
+    #[test]
+    fn paramsubst_arr_slice_negative_three_to_negative_one() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, multi) = psubst_arr(
+            "PS_S2",
+            &["a", "b", "c", "d", "e"],
+            "${PS_S2[-3,-1]}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["c", "d", "e"]);
+        } else {
+            assert_eq!(out, "c d e");
+        }
+    }
+
+    /// `${arr[(-1)]}` — paren-wrapped negative index → last element.
+    /// zsh: arr=(a b c d e) → "e"
+    #[test]
+    #[ignore = "ZSHRS BUG: ${arr[(N)]} paren-wrapped subscript returns empty; zsh: indexed element"]
+    fn paramsubst_arr_paren_negative_one_is_last_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, _) = psubst_arr(
+            "PS_S3",
+            &["a", "b", "c", "d", "e"],
+            "${PS_S3[(-1)]}",
+        );
+        assert_eq!(out, "e", "zsh: arr=(a b c d e); ${{arr[(-1)]}} → e");
+    }
+
+    /// `${arr[(1)]}` — paren-wrapped positive index → first.
+    /// zsh: arr=(a b c d e) → "a"
+    #[test]
+    #[ignore = "ZSHRS BUG: ${arr[(N)]} paren-wrapped subscript returns empty; zsh: indexed element"]
+    fn paramsubst_arr_paren_positive_one_is_first_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let (out, _) = psubst_arr(
+            "PS_S4",
+            &["a", "b", "c", "d", "e"],
+            "${PS_S4[(1)]}",
+        );
+        assert_eq!(out, "a", "zsh: arr=(a b c d e); ${{arr[(1)]}} → a");
+    }
+
+    /// `${list[@]:*other}` — set INTERSECTION with another named array.
+    /// zsh: list=(a b c d e), other=(b d) → "b d"
+    #[test]
+    #[ignore = "ANCHOR: zsh ${list[@]:*other} → set intersection 'b d'; verify zshrs supports"]
+    fn paramsubst_arr_set_intersection_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        errflag.store(0, Ordering::Relaxed);
+        let _ = crate::ported::params::setaparam(
+            "PS_OTHER1",
+            vec!["b".into(), "d".into()],
+        );
+        let (out, multi) = psubst_arr(
+            "PS_LIST1",
+            &["a", "b", "c", "d", "e"],
+            "${PS_LIST1[@]:*PS_OTHER1}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["b", "d"]);
+        } else {
+            assert_eq!(out, "b d");
+        }
+    }
+
+    /// `${list[@]:|other}` — set SUBTRACTION (list MINUS other).
+    /// zsh: list=(a b c d e), other=(b d) → "a c e"
+    #[test]
+    #[ignore = "ANCHOR: zsh ${list[@]:|other} → set difference 'a c e'; verify zshrs supports"]
+    fn paramsubst_arr_set_subtraction_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        errflag.store(0, Ordering::Relaxed);
+        let _ = crate::ported::params::setaparam(
+            "PS_OTHER2",
+            vec!["b".into(), "d".into()],
+        );
+        let (out, multi) = psubst_arr(
+            "PS_LIST2",
+            &["a", "b", "c", "d", "e"],
+            "${PS_LIST2[@]:|PS_OTHER2}",
+        );
+        if !multi.is_empty() {
+            assert_eq!(multi, vec!["a", "c", "e"]);
+        } else {
+            assert_eq!(out, "a c e");
+        }
+    }
+
+    /// `${X:=newval}` on UNSET param both sets X and returns "newval".
+    /// zsh: unset X; ${X:=newval} → "newval"; $X is "newval" thereafter.
+    #[test]
+    fn paramsubst_colon_equals_assigns_and_returns_default_on_unset() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("PS_ASSIGN1");
+        errflag.store(0, Ordering::Relaxed);
+        let (out, _, _) =
+            paramsubst("${PS_ASSIGN1:=newval}", 0, false, 0, &mut 0);
+        assert_eq!(out, "newval", "expansion returns the assigned value");
+        // Side effect: the param now equals "newval"
+        assert_eq!(
+            crate::ported::params::getsparam("PS_ASSIGN1").as_deref(),
+            Some("newval"),
+            "X must be SET to newval by `:=` operator"
+        );
+        crate::ported::params::unsetparam("PS_ASSIGN1");
+    }
+
+    /// `${X:=newval}` on EMPTY param sets X to newval (the `:` triggers
+    /// on both unset AND empty).
+    /// zsh: X=""; ${X:=newval} → "newval"; $X is "newval".
+    #[test]
+    fn paramsubst_colon_equals_assigns_on_empty_too() {
+        let _g = crate::test_util::global_state_lock();
+        errflag.store(0, Ordering::Relaxed);
+        setsparam("PS_ASSIGN2", "");
+        let (out, _, _) =
+            paramsubst("${PS_ASSIGN2:=newval}", 0, false, 0, &mut 0);
+        assert_eq!(out, "newval");
+        assert_eq!(
+            crate::ported::params::getsparam("PS_ASSIGN2").as_deref(),
+            Some("newval"),
+            "empty X gets reassigned to newval"
+        );
+        crate::ported::params::unsetparam("PS_ASSIGN2");
+    }
+
+    /// `${X:=newval}` on a NON-empty SET param leaves X unchanged and
+    /// returns the existing value.
+    #[test]
+    fn paramsubst_colon_equals_noop_on_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        errflag.store(0, Ordering::Relaxed);
+        setsparam("PS_ASSIGN3", "preserved");
+        let (out, _, _) =
+            paramsubst("${PS_ASSIGN3:=newval}", 0, false, 0, &mut 0);
+        assert_eq!(out, "preserved");
+        assert_eq!(
+            crate::ported::params::getsparam("PS_ASSIGN3").as_deref(),
+            Some("preserved"),
+            "non-empty X stays unchanged"
+        );
+        crate::ported::params::unsetparam("PS_ASSIGN3");
+    }
 } // c:3193
 
 // ============================================================================
