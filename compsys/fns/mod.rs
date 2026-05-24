@@ -20,18 +20,24 @@ pub mod _completers;
 #[allow(non_snake_case, non_camel_case_types)]
 pub mod _dir_list;
 #[allow(non_snake_case, non_camel_case_types)]
+pub mod _numbers;
+#[allow(non_snake_case, non_camel_case_types)]
 pub mod _pick_variant;
 #[allow(non_snake_case, non_camel_case_types)]
 pub mod _sequence;
 pub(crate) mod shared;
 #[allow(non_snake_case, non_camel_case_types)]
 pub mod _widgets;
+pub mod _arguments;
+pub mod _describe;
+pub mod _files;
 
-pub use _call_program::{_call_program, CallProgramOpts, CallProgramResult};
-pub use _combination::{_combination, _combination_mcs, CombinationOpts};
-pub use _command_names::{_command_names, _command_names_with_ctx, ShellInventory};
+pub use _call_program::{CallProgramOpts, CallProgramResult, _call_program};
+pub use _combination::{CombinationOpts, _combination, _combination_mcs};
+pub use _command_names::{ShellInventory, _command_names, _command_names_with_ctx};
 pub use _completers::{_completers, CANONICAL_COMPLETER_NAMES};
-pub use _dir_list::{_dir_list, DirListOpts};
-pub use _pick_variant::{_pick_variant, PickVariantOpts, PickVariantResult};
-pub use _sequence::{_sequence, SequenceOpts};
+pub use _dir_list::{DirListOpts, _dir_list};
+pub use _numbers::{NumbersOpts, _numbers};
+pub use _pick_variant::{PickVariantOpts, PickVariantResult, _pick_variant};
+pub use _sequence::{SequenceOpts, _sequence};
 pub use _widgets::_widgets;

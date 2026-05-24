@@ -120,7 +120,7 @@ pub use crate::fns::_completers as completers;
 
 /// _default - Default completion (files)
 pub fn default_complete(state: &mut CompletionState) -> bool {
-    crate::files::files_execute(state, &crate::files::FilesOpts::default())
+    crate::fns::_files::files_execute(state, &crate::fns::_files::FilesOpts::default())
 }
 
 // `_dir_list` moved to `compsys/fns/dir_list.rs`. Re-exported for
@@ -462,7 +462,7 @@ pub fn tilde_files(state: &mut CompletionState) -> bool {
             state.params.prefix = expanded;
             state.params.iprefix = "~".to_string();
 
-            let result = crate::files::files_execute(state, &crate::files::FilesOpts::default());
+            let result = crate::_files::files_execute(state, &crate::_files::FilesOpts::default());
 
             // Restore
             state.params.prefix = old_prefix;
