@@ -39,6 +39,7 @@ _arguments -S -s : \
   '--dump-reference-html[emit the HTML chapter sections for docs/reference.html]' \
   '--names[print every LSP-known canonical name, one per line]' \
   '--docs[render the LSP hover card for NAME]:name:->docnames' \
+  '--color[ANSI color in --docs output]:mode:(auto always never)' \
   '--lsp[run the in-process LSP server over stdio]' \
   '--dap[run the in-process DAP debugger]:host\:port' \
   '(-)1:script file:_files' \

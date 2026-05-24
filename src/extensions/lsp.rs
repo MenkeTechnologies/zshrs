@@ -1259,6 +1259,13 @@ pub fn lookup_doc(name: &str) -> String {
     //   * Doc/Zsh/builtins.yo   → BUILTIN_DOCS    (`lookup_builtin_doc`)
     //   * Doc/Zsh/params.yo     → SPECIAL_VAR_DOCS (`lookup_special_var_doc`)
     //   * Doc/Zsh/options.yo    → OPTION_DOCS     (`lookup_option_doc`)
+    // Operators / punctuation tokens. Match these BEFORE the yodl
+    // keyword table — `man zshmisc` documents `&&` / `||` / `>` / `[[`
+    // etc. in section prose, not per-name `item(tt(NAME))` blocks, so
+    // the only way to surface them is a hand fallback.
+    if let Some(d) = OPERATOR_DOCS.iter().find(|(k, _)| *k == name) {
+        return format!("**{}** — _zsh operator_\n\n{}", d.0, d.1);
+    }
     if let Some((canon, body)) = crate::zsh_keyword_docs::lookup_keyword_doc(name) {
         return format!("**{}** — _zsh keyword_\n\n{}", canon, body);
     }
@@ -1322,6 +1329,99 @@ pub fn lookup_doc(name: &str) -> String {
     }
     String::new()
 }
+
+/// Hand-curated docs for every shell operator / punctuation token.
+/// Sourced from `man zshmisc` — Pipelines, Simple Commands & Pipelines
+/// (lists), Complex Commands, Reserved Words; `man zshparam` for
+/// expansion forms; `man zshmisc` Conditional Expressions for `[[ … ]]`
+/// operators; `man zshexpn` for substitution / brace expansion.
+///
+/// These don't have per-name `item(tt(X))` blocks in any yodl file —
+/// they're documented in section prose, so the gen script has nothing
+/// to extract. Hand-bodies are the only path to hover docs for them.
+const OPERATOR_DOCS: &[(&str, &str)] = &[
+    // ── Pipelines ────────────────────────────────────────────────────
+    ("|",   "Pipeline. `cmd1 | cmd2` connects `cmd1`'s stdout to `cmd2`'s stdin. Each stage runs in a separate process; exit status is the last stage's (unless `PIPE_FAIL` is set, in which case the first non-zero in the chain wins)."),
+    ("|&",  "Pipeline merging stderr. `cmd1 |& cmd2` = `cmd1 2>&1 | cmd2`. Both stdout AND stderr of `cmd1` are piped to `cmd2`."),
+    // ── Lists ────────────────────────────────────────────────────────
+    ("&&",  "Logical AND list operator. `cmd1 && cmd2` runs `cmd2` only if `cmd1` succeeded (exit status 0). Short-circuits."),
+    ("||",  "Logical OR list operator. `cmd1 || cmd2` runs `cmd2` only if `cmd1` failed (non-zero exit). Short-circuits."),
+    (";",   "Sequential list separator. `cmd1; cmd2` runs `cmd2` after `cmd1` finishes, regardless of its exit status."),
+    ("&",   "Background list operator. `cmd &` runs `cmd` asynchronously in the background; the shell does not wait. Sets `$!` to the job's PID."),
+    (";;",  "Case-branch terminator. Ends a `case` arm: `case x in pat) cmds ;; esac`. Stops case dispatch after this arm."),
+    (";;&", "Case-branch fall-through-and-test-next. Continues to the next `case` arm and tests its pattern."),
+    (";|",  "Case-branch unconditional fall-through. Continues to the next `case` arm and runs it without testing its pattern."),
+    // ── Negation ─────────────────────────────────────────────────────
+    ("!",   "Pipeline negation (also a reserved word). `! cmd` inverts `cmd`'s exit status — zero becomes 1, non-zero becomes 0. Distinct from `!` history expansion (lexer-stage)."),
+    // ── Redirection ──────────────────────────────────────────────────
+    (">",   "Stdout redirect. `cmd > file` writes `cmd`'s stdout to `file` (overwrite). With `NO_CLOBBER`, refuses to overwrite an existing file — use `>|` or `>!` to force."),
+    (">>",  "Stdout append. `cmd >> file` appends `cmd`'s stdout to `file` (creates if missing)."),
+    ("<",   "Stdin redirect. `cmd < file` makes `file` the source of `cmd`'s stdin."),
+    ("<<",  "Heredoc start. `cmd <<MARKER` reads the following lines as `cmd`'s stdin until a line containing only `MARKER`. Variants: `<<-` strips leading tabs; `<<'MARKER'` disables expansion in the body."),
+    ("<<-", "Heredoc with tab-stripping. Like `<<` but every leading tab on body lines (and the terminator) is removed — lets you indent the heredoc for readability."),
+    ("<<<", "Here-string. `cmd <<< 'text'` makes the literal string `text` the source of `cmd`'s stdin. Adds a trailing newline."),
+    ("&>",  "Redirect stdout + stderr together. `cmd &> file` = `cmd > file 2>&1`. Shorthand for the common combined redirect."),
+    ("&>>", "Append stdout + stderr together. `cmd &>> file` = `cmd >> file 2>&1`."),
+    (">&",  "Redirect a file descriptor. `2>&1` sends stderr to wherever stdout currently points. `>& file` is also accepted as `&> file`."),
+    ("<&",  "Duplicate an input file descriptor. `cmd <&3` reads from fd 3. `<& -` closes stdin."),
+    ("<>",  "Read+write redirect. `cmd <> file` opens `file` for both reading and writing on stdin."),
+    (">|",  "Force-overwrite redirect. Equivalent to `>` but ignores `NO_CLOBBER`."),
+    (">!",  "Same as `>|` — force-overwrite, bypass `NO_CLOBBER`."),
+    // ── Conditional expressions ──────────────────────────────────────
+    ("[[",  "Open zsh conditional expression. `[[ EXPR ]]` evaluates a boolean. No word splitting / glob inside; supports `&&`, `||`, `!`, `==`, `!=`, `=~`, `-e`, `-f`, `-d`, `-z`, `-n`, etc. Prefer this over `[ ]` in zsh."),
+    ("]]",  "Close zsh conditional expression. Pairs with `[[`. Must be a separate word — `[[ -n $x]]` is a syntax error; use `[[ -n $x ]]`."),
+    ("[",   "POSIX `test` command (also spelled `test`). Same conditional semantics as POSIX `test`. Prefer `[[ … ]]` in zsh — it's safer (no word splitting) and supports more operators."),
+    ("]",   "Close POSIX `test`. Pairs with `[`."),
+    ("((",  "Open arithmetic command. `(( EXPR ))` evaluates `EXPR` as C-style integer arithmetic; exit 0 if the result is non-zero, 1 otherwise. Inside, `$` on var names is optional: `(( i++ ))`."),
+    ("))",  "Close arithmetic command. Pairs with `((`."),
+    // ── Command / parameter / arithmetic substitution ────────────────
+    ("$(",  "Command substitution open. `$(cmd)` runs `cmd` and substitutes its trimmed-trailing-newline stdout. Nestable: `$(echo $(date))`. Preferred over backticks."),
+    ("${",  "Parameter expansion open. `${VAR}` is the value of `VAR`. Rich modifier set: `${VAR:-default}`, `${VAR:=assign}`, `${VAR:+alt}`, `${#VAR}` length, `${VAR/p/r}` replace, `${VAR%suffix}` / `${VAR#prefix}` strip, `${(flags)VAR}` zsh flags."),
+    ("$((", "Arithmetic expansion open. `$(( EXPR ))` evaluates `EXPR` as integer arithmetic and substitutes the result as a string. Distinct from `(( … ))` which is a command, not an expansion."),
+    ("<(",  "Process substitution (input). `cmd <(producer)` exposes `producer`'s stdout as a filename (`/dev/fd/N`) to `cmd`. Lets commands that take filenames consume pipe output."),
+    (">(",  "Process substitution (output). `cmd >(consumer)` exposes a filename to `cmd`; anything `cmd` writes there flows to `consumer`'s stdin."),
+    ("`",   "Backtick command substitution. ``cmd`` runs `cmd` and substitutes its stdout. Legacy form — prefer `$(cmd)` for nestability and quoting clarity."),
+    // ── Test-operator unaries (most common) ──────────────────────────
+    ("-e",  "File-exists test. `[[ -e PATH ]]` is true if `PATH` exists (any type — file / dir / link / socket / ...)."),
+    ("-f",  "Regular-file test. `[[ -f PATH ]]` is true if `PATH` exists AND is a regular file (not a directory / symlink / device)."),
+    ("-d",  "Directory test. `[[ -d PATH ]]` is true if `PATH` exists AND is a directory."),
+    ("-r",  "Readable test. `[[ -r PATH ]]` is true if `PATH` exists AND is readable by the current process."),
+    ("-w",  "Writable test. `[[ -w PATH ]]` is true if `PATH` exists AND is writable by the current process."),
+    ("-x",  "Executable test. `[[ -x PATH ]]` is true if `PATH` exists AND has execute permission (or for directories, search permission)."),
+    ("-s",  "Non-empty test. `[[ -s PATH ]]` is true if `PATH` exists AND has size > 0."),
+    ("-L",  "Symlink test. `[[ -L PATH ]]` is true if `PATH` is a symbolic link (does NOT dereference)."),
+    ("-h",  "Same as `-L` — symlink test."),
+    ("-z",  "Empty-string test. `[[ -z $s ]]` is true if `$s` is the empty string."),
+    ("-n",  "Non-empty-string test. `[[ -n $s ]]` is true if `$s` has length > 0. Equivalent to `[[ $s ]]`."),
+    // ── Test-operator binaries (numeric) ─────────────────────────────
+    ("-eq", "Numeric equality. `[[ a -eq b ]]` is true if integers `a` and `b` are equal. For strings use `==`."),
+    ("-ne", "Numeric inequality. `[[ a -ne b ]]` is true if integers `a` and `b` differ."),
+    ("-lt", "Numeric less-than. `[[ a -lt b ]]` is true if integer `a` < `b`."),
+    ("-le", "Numeric less-or-equal. `[[ a -le b ]]` is true if integer `a` ≤ `b`."),
+    ("-gt", "Numeric greater-than. `[[ a -gt b ]]` is true if integer `a` > `b`."),
+    ("-ge", "Numeric greater-or-equal. `[[ a -ge b ]]` is true if integer `a` ≥ `b`."),
+    ("-ot", "Older-than test. `[[ A -ot B ]]` is true if file `A` has an older mtime than `B`."),
+    ("-nt", "Newer-than test. `[[ A -nt B ]]` is true if file `A` has a newer mtime than `B`."),
+    ("-ef", "Same-file test. `[[ A -ef B ]]` is true if `A` and `B` are the same inode (hard-linked / same path)."),
+    // ── String / pattern operators (inside [[ … ]]) ──────────────────
+    ("==",  "Pattern-match equality (inside `[[ … ]]`). `[[ $s == pat* ]]` matches `$s` against the glob pattern `pat*`. RHS is a pattern unless quoted. For literal equality, quote: `[[ $s == \"literal\" ]]`."),
+    ("!=",  "Pattern-mismatch (inside `[[ … ]]`). Inverse of `==`. Quote the RHS for literal comparison."),
+    ("=~",  "Regex match (inside `[[ … ]]`). `[[ $s =~ pat ]]` matches `$s` against the regex `pat`. Capture groups land in `$match` / `$MATCH` / `$BASH_REMATCH`."),
+    // ── Glob / pattern characters ────────────────────────────────────
+    ("*",   "Glob: match zero or more characters of any name (excluding leading `.` unless `GLOB_DOTS` is set). Also a multiplication operator inside `(( … ))`."),
+    ("?",   "Glob: match exactly one character. Also the last-exit-status variable when used as `$?`."),
+    ("**",  "Recursive glob (zsh extended). `**/*.rs` matches `*.rs` at any depth under the current directory. Requires `EXTENDED_GLOB` for additional pattern operators."),
+    ("~",   "Pattern exclude (with `EXTENDED_GLOB`). `*~README` matches everything except `README`. Also tilde expansion: `~` = `$HOME`, `~user` = user's home, `~+` = `$PWD`, `~-` = `$OLDPWD`."),
+    ("^",   "Pattern negate first-match (with `EXTENDED_GLOB`). `^*.rs` matches everything that's NOT `*.rs`. Inside `[…]` ranges, negates: `[^abc]`."),
+    // ── Brace expansion ──────────────────────────────────────────────
+    ("{a,b,c}", "Brace expansion (literal list). Expands to multiple words: `cp file.{txt,bak}` becomes `cp file.txt file.bak`. No whitespace before commas."),
+    ("{1..10}", "Brace range expansion. `{1..10}` expands to `1 2 3 4 5 6 7 8 9 10`. Supports step: `{1..10..2}` → `1 3 5 7 9`. Letters work too: `{a..z}`."),
+    // ── Assignment ───────────────────────────────────────────────────
+    ("=",   "Assignment. `VAR=value`. NO whitespace around `=`. With `local` / `typeset`: `local VAR=value` declares + assigns."),
+    ("+=",  "Append assignment. `VAR+=more` appends to a scalar; for arrays `arr+=(x y)` appends elements. Numeric for `integer`: `(( count += 1 ))`."),
+    (":=",  "Conditional-assign default (inside `${…}`). `${VAR:=fallback}` assigns `fallback` to `VAR` (and substitutes it) if `VAR` is unset or empty."),
+    ("?=",  "Error-if-unset (inside `${…}`). `${VAR:?msg}` substitutes `$VAR` if set, else prints `msg` to stderr and exits."),
+];
 
 /// Hand docs for compsys functions whose names don't have a per-name
 /// `item(tt(_X))` block in `compsys.yo` / `compwid.yo`. Per-command
@@ -2650,31 +2750,64 @@ fn code_actions(state: &State, params: &Value) -> Value {
         return Value::Array(actions);
     }
 
-    // Caret-only snap: if range is empty, expand to the word at cursor.
-    let (eff_start_char, eff_end_char) = if !nonempty {
-        let line_text = match text.lines().nth(start_line as usize) {
-            Some(l) => l,
-            None => return Value::Array(vec![]),
+    // Resolve the line first — every action below needs it, and an
+    // out-of-bounds line means no actions regardless of mode.
+    let line_text = match text.lines().nth(start_line as usize) {
+        Some(l) => l,
+        None => return Value::Array(vec![]),
+    };
+    let leading_ws: String = line_text
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .collect();
+
+    // ── Extract Function: offered whenever the cursor's line has
+    // any non-whitespace content, regardless of whether the user has
+    // an explicit selection. The Cmd-Opt-M ("Extract Method") common
+    // case is caret-only; before this branch the LSP returned an
+    // empty action list, the plugin showed "LSP returned no code
+    // actions for this range", and the user's only recourse was to
+    // manually select the line first.
+    let line_has_content = !line_text.trim().is_empty();
+    let whole_line_selected =
+        nonempty && selection_covers_whole_line(line_text, start_char, end_char);
+    if line_has_content && (whole_line_selected || !nonempty) {
+        let body = if whole_line_selected {
+            utf16_slice(line_text, start_char, end_char)
+                .map(str::trim_end)
+                .unwrap_or_else(|| line_text.trim())
+        } else {
+            line_text.trim()
         };
+        actions.push(make_extract_function_singleline(
+            &uri,
+            &leading_ws,
+            start_line,
+            body,
+        ));
+    }
+
+    // ── Extract Variable / Constant: need a concrete sub-expression
+    // to assign to a name. Caret-only invocations snap to the word at
+    // the cursor; explicit selections use the user's range as-is.
+    let (eff_start_char, eff_end_char) = if !nonempty {
         match snap_to_word_at_cursor(line_text, start_char) {
             Some((s, e)) => (s, e),
-            None => return Value::Array(vec![]),
+            // Caret not on a word — Extract Function still applied
+            // above (if line had content), so return what we have.
+            None => return Value::Array(actions),
         }
     } else {
         (start_char, end_char)
     };
 
     if eff_end_char <= eff_start_char {
-        return Value::Array(vec![]);
+        return Value::Array(actions);
     }
 
-    let line_text = match text.lines().nth(start_line as usize) {
-        Some(l) => l,
-        None => return Value::Array(vec![]),
-    };
     let sel = match utf16_slice(line_text, eff_start_char, eff_end_char) {
         Some(s) if !s.trim().is_empty() => s,
-        _ => return Value::Array(vec![]),
+        _ => return Value::Array(actions),
     };
 
     let eff_range = json!({
@@ -2692,12 +2825,6 @@ fn code_actions(state: &State, params: &Value) -> Value {
         sel.to_string()
     };
 
-    let leading_ws: String = line_text
-        .chars()
-        .take_while(|c| c.is_whitespace())
-        .collect();
-
-    // Extract to Variable: `local EXTRACTED=<rhs>` above, replace with `$EXTRACTED`.
     actions.push(make_extract_action(
         &uri,
         &leading_ws,
@@ -2718,19 +2845,6 @@ fn code_actions(state: &State, params: &Value) -> Value {
         "readonly",
         "Extract to constant (`readonly NAME=…`)",
     ));
-
-    // Extract to Function: also offer for whole-line selections so the
-    // IDE's Extract Method shortcut has a matching action. Skip when
-    // the selection is a sub-string expression (covered by the
-    // variable / constant extracts above).
-    if selection_covers_whole_line(line_text, eff_start_char, eff_end_char) {
-        actions.push(make_extract_function_singleline(
-            &uri,
-            &leading_ws,
-            start_line,
-            sel.trim_end(),
-        ));
-    }
 
     Value::Array(actions)
 }
@@ -3809,6 +3923,12 @@ pub fn dump_reflection_json() -> String {
         extensions.insert((*n).to_string(), Value::String("extension".into()));
         all.insert((*n).to_string(), Value::String("extension".into()));
     }
+    // ── Operators / punctuation tokens (man zshmisc) ─────────────────
+    let mut operators = serde_json::Map::new();
+    for (op, _body) in OPERATOR_DOCS {
+        operators.insert((*op).to_string(), Value::String("operator".into()));
+        all.insert((*op).to_string(), Value::String("operator".into()));
+    }
     serde_json::to_string_pretty(&json!({
         "all": all,
         "builtins": builtins,
@@ -3817,6 +3937,7 @@ pub fn dump_reflection_json() -> String {
         "special_vars": special_vars,
         "compsys": compsys,
         "extensions": extensions,
+        "operators": operators,
     }))
     .unwrap_or_else(|_| "{}".into())
 }
@@ -3851,6 +3972,9 @@ pub fn all_canonical_names() -> Vec<String> {
     }
     for n in crate::daemon::builtins::ZSHRS_BUILTIN_NAMES {
         set.insert((*n).to_string());
+    }
+    for (op, _) in OPERATOR_DOCS {
+        set.insert((*op).to_string());
     }
     set.into_iter().collect()
 }
@@ -4051,6 +4175,35 @@ pub fn dump_reference_html() -> String {
         ),
         &ext_names,
         "extension",
+    );
+
+    // ── operators / punctuation tokens ───────────────────────────────
+    let op_names: Vec<String> = OPERATOR_DOCS
+        .iter()
+        .map(|(op, _)| (*op).to_string())
+        .collect();
+    write_chapter(
+        &mut out,
+        "ch-lsp-operators",
+        "Operator / Punctuation Index",
+        &format!(
+            "{} entries · pipelines (<code>|</code>, <code>|&amp;</code>), list ops \
+             (<code>&amp;&amp;</code>, <code>||</code>, <code>;</code>, <code>&amp;</code>, \
+             <code>;;</code>), redirects (<code>&gt;</code>, <code>&gt;&gt;</code>, \
+             <code>&lt;&lt;</code>, <code>&lt;&lt;&lt;</code>, <code>&amp;&gt;</code>, …), \
+             conditional/arithmetic openers (<code>[[</code>, <code>]]</code>, <code>((</code>, \
+             <code>))</code>), substitution forms (<code>$(</code>, <code>${{</code>, \
+             <code>$((</code>, <code>&lt;(</code>, <code>&gt;(</code>), test ops \
+             (<code>-e</code>, <code>-eq</code>, <code>=~</code>, …), pattern chars \
+             (<code>*</code>, <code>?</code>, <code>**</code>, <code>~</code>), brace \
+             expansion (<code>{{a,b,c}}</code>, <code>{{1..10}}</code>), and assignment \
+             (<code>=</code>, <code>+=</code>). Sourced from <code>man zshmisc</code> \
+             section prose — these have no per-name yodl <code>item</code> blocks so \
+             they're hand-curated.",
+            op_names.len()
+        ),
+        &op_names,
+        "operator",
     );
 
     out
@@ -5228,6 +5381,72 @@ mod tests {
             acts.iter()
                 .any(|a| a["title"].as_str().unwrap_or("").contains("variable")),
             "caret-only didn't snap to a word: {:?}",
+            acts.iter().map(|a| a["title"].clone()).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn code_actions_caret_only_offers_extract_function() {
+        // Regression: the JetBrains plugin's Extract Method shortcut
+        // (Cmd-Opt-M) used to report "LSP returned no code actions for
+        // this range" because caret-only invocations only produced
+        // Extract Variable / Constant — no function action existed for
+        // the plugin's title filter to match. Cursor at column 8 of
+        // `echo greeting` should now ALSO emit Extract Function over
+        // the whole line.
+        let acts = run_code_actions("echo greeting\n", 0, 8, 0, 8);
+        let titles: Vec<&str> = acts
+            .iter()
+            .map(|a| a["title"].as_str().unwrap_or(""))
+            .collect();
+        assert!(
+            titles.iter().any(|t| t.contains("function")),
+            "caret-only must include Extract Function for Cmd-Opt-M: {:?}",
+            titles,
+        );
+        // The function body should be the trimmed whole line, not just
+        // the snapped word.
+        let fn_act = acts
+            .iter()
+            .find(|a| a["title"].as_str().unwrap_or("").contains("function"))
+            .expect("function action present");
+        let decl = fn_act["edit"]["changes"]["file:///t.zsh"][0]["newText"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            decl.contains("echo greeting"),
+            "caret-only function extract should wrap the whole line, not just the word: {:?}",
+            decl,
+        );
+    }
+
+    #[test]
+    fn code_actions_caret_on_whitespace_still_offers_function() {
+        // Cursor sits in the leading indent of `    echo hello` (col 2,
+        // inside whitespace). Snap-to-word returns None — without the
+        // fix, the LSP returned []. With the fix, Extract Function
+        // still applies over the line's actual content.
+        let acts = run_code_actions("    echo hello\n", 0, 2, 0, 2);
+        let titles: Vec<&str> = acts
+            .iter()
+            .map(|a| a["title"].as_str().unwrap_or(""))
+            .collect();
+        assert!(
+            titles.iter().any(|t| t.contains("function")),
+            "cursor on whitespace must still emit Extract Function: {:?}",
+            titles,
+        );
+    }
+
+    #[test]
+    fn code_actions_caret_on_blank_line_returns_empty() {
+        // Truly nothing to extract — blank line, no content. Returning
+        // an empty list is correct; the plugin will surface "no code
+        // actions for this range" which is the honest answer.
+        let acts = run_code_actions("foo\n\nbar\n", 1, 0, 1, 0);
+        assert!(
+            acts.is_empty(),
+            "blank line should produce no actions: {:?}",
             acts.iter().map(|a| a["title"].clone()).collect::<Vec<_>>(),
         );
     }

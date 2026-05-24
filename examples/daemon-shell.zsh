@@ -222,7 +222,7 @@ daemon-export() {
 # `daemon-export-pdf TARGET OUTFILE` — convenience: hit the export op
 # with format=pdf and write the decoded PDF bytes to OUTFILE.
 #     daemon-export-pdf alias my-aliases.pdf
-daemon-export-pdf() {
+    daemon-export-pdf() {
     [[ $# -ne 2 ]] && { echo 'usage: daemon-export-pdf TARGET OUTFILE' >&2; return 2; }
     local target="$1"
     local out="$2"

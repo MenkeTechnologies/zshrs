@@ -153,6 +153,24 @@ fn every_canonical_extension_has_real_doc() {
 }
 
 #[test]
+fn every_operator_has_real_doc() {
+    // The operator inventory IS the doc table — they're the same const,
+    // so this can't fail by construction. Test exists as a coverage
+    // gate: future additions to OPERATOR_DOCS run through `is_placeholder`
+    // and catch any one-liner that forgets the body.
+    let names: Vec<&'static str> = zsh::lsp::all_canonical_names()
+        .into_iter()
+        .filter(|n| matches!(zsh::lsp::lookup_doc(n).split_once("\n\n"), Some((h, _)) if h.contains("operator")))
+        .collect::<Vec<_>>()
+        // leak each name to get a 'static reference for `audit`
+        .into_iter()
+        .map(|s| Box::leak(s.into_boxed_str()) as &'static str)
+        .collect();
+    let m = audit("operators", &names);
+    assert!(m.is_empty(), "{} operators have placeholder docs: {:?}", m.len(), m);
+}
+
+#[test]
 fn every_compsys_fn_has_real_doc() {
     // Rust-native compsys functions (`compsys::COMPSYS_FN_NAMES`).
     // Most resolve via the yodl-derived BUILTIN_DOCS table (compsys.yo
