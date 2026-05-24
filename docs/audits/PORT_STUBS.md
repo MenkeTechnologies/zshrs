@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:39:07.858829+00:00
+Generated: 2026-05-24T22:40:50.876013+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 147 stubs across 47 files
+## Summary: 145 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -24,10 +24,10 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/hashtable.rs` | 11 | `newhashtable` (1 / 19) |
 | `src/ported/mem.rs` | 10 | `malloc` (1 / 165) |
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 182) |
-| `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (19 / 746) |
 | `src/ported/zle/zle_main.rs` | 6 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
+| `src/ported/zle/zle_utils.rs` | 6 | `showmsg` (4 / 72) |
 | `src/ported/zle/zle_keymap.rs` | 5 | `newkeytab` (1 / 15) |
 | `src/ported/zle/zle_refresh.rs` | 5 | `addmultiword` (1 / 14) |
 | `src/ported/module.rs` | 4 | `load_and_bind` (1 / 20) |
@@ -133,19 +133,6 @@ python3 scripts/gen_port_stubs.py
 | 215 | `instmatch` | 6 | 80 | 7% |
 | 96 | `cline_str` | 50 | 271 | 18% |
 
-### `src/ported/zle/zle_utils.rs` — 8 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 841 | `showmsg` | 4 | 72 | 5% |
-| 73 | `zlecharasstring` | 3 | 43 | 6% |
-| 95 | `stringaszleline` | 14 | 109 | 12% |
-| 332 | `cuttext` | 17 | 79 | 21% |
-| 165 | `zle_save_positions` | 8 | 34 | 23% |
-| 181 | `zle_restore_positions` | 12 | 51 | 23% |
-| 210 | `spaceinline` | 14 | 54 | 25% |
-| 47 | `sizeline` | 5 | 18 | 27% |
-
 ### `src/ported/zle/compctl.rs` — 6 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -178,6 +165,17 @@ python3 scripts/gen_port_stubs.py
 | 382 | `docomplete` | 32 | 210 | 15% |
 | 931 | `listlist` | 32 | 174 | 18% |
 | 195 | `expandorcomplete` | 4 | 16 | 25% |
+
+### `src/ported/zle/zle_utils.rs` — 6 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 868 | `showmsg` | 4 | 72 | 5% |
+| 73 | `zlecharasstring` | 3 | 43 | 6% |
+| 95 | `stringaszleline` | 14 | 109 | 12% |
+| 359 | `cuttext` | 17 | 79 | 21% |
+| 237 | `spaceinline` | 14 | 54 | 25% |
+| 47 | `sizeline` | 5 | 18 | 27% |
 
 ### `src/ported/zle/zle_keymap.rs` — 5 stubs
 

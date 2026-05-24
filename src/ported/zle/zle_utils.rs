@@ -163,15 +163,32 @@ pub struct zle_position {
 /// region highlighting. Must be matched by a subsequent
 /// `zle_restore_positions()`."
 pub fn zle_save_positions() {
-    // c:619
+    use crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS;
+    // c:621 — `newpos = zalloc(sizeof(*newpos));`
+    let mk = MARK.load(Ordering::SeqCst); // c:625
+    let cs = ZLECS.load(Ordering::SeqCst); // c:634
+    let ll = ZLELL.load(Ordering::SeqCst); // c:635
+
+    // c:641-664 — snapshot region_highlights past N_SPECIAL_HIGHLIGHTS
+    //              so the user-driven (predisplay/normal) entries
+    //              survive the nested ZLE call.
+    const N_SPECIAL_HIGHLIGHTS: usize = 4;
+    let regions: Vec<crate::ported::zle::zle_refresh::RegionHighlight> = REGION_HIGHLIGHTS
+        .lock()
+        .unwrap()
+        .iter()
+        .skip(N_SPECIAL_HIGHLIGHTS)
+        .cloned()
+        .collect();
+
     let pos = ZlePosition {
-        // c:619 newpos = zalloc
-        mk: MARK.load(Ordering::SeqCst), // c:627
-        cs: ZLECS.load(Ordering::SeqCst), // c:634 (no zlemetaline branch)
-        ll: ZLELL.load(Ordering::SeqCst), // c:635
+        mk,
+        cs,
+        ll,
+        regions,
     };
     if let Ok(mut s) = ZLE_POSITIONS.lock() {
-        // c:677 push
+        // c:677 — push to head of stack.
         s.push(pos);
     }
 }
@@ -179,18 +196,28 @@ pub fn zle_save_positions() {
 /// Port of `mod_export void zle_restore_positions(void)` from
 /// Src/Zle/zle_utils.c:677. Pops the last saved (cs, mark, ll).
 pub fn zle_restore_positions() {
-    // c:677
-    if let Ok(mut s) = ZLE_POSITIONS.lock() {
-        if let Some(oldpos) = s.pop() {
-            // c:679-684
-            MARK.store(oldpos.mk, Ordering::SeqCst); // c:686
-            ZLECS.store(
-                oldpos
-                    .cs
-                    .min(ZLELL.load(Ordering::SeqCst)),
-                Ordering::SeqCst,
-            ); // c:693
-            ZLELL.store(oldpos.ll, Ordering::SeqCst); // c:694
+    use crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS;
+    // c:679 — pop the head of the position stack.
+    let oldpos = match ZLE_POSITIONS.lock().ok().and_then(|mut s| s.pop()) {
+        Some(p) => p,
+        None => return,
+    };
+    // c:684-686 — restore mark + cursor + ll (clamp cs to ll for safety).
+    MARK.store(oldpos.mk, Ordering::SeqCst); // c:686
+    ZLECS.store(
+        oldpos.cs.min(oldpos.ll), // c:693
+        Ordering::SeqCst,
+    );
+    ZLELL.store(oldpos.ll, Ordering::SeqCst); // c:694
+
+    // c:696-732 — restore region_highlights tail (everything past
+    //              N_SPECIAL_HIGHLIGHTS). C grows the array and copies
+    //              memo+atr+start+end+flags from each saved zle_region.
+    const N_SPECIAL_HIGHLIGHTS: usize = 4;
+    if let Ok(mut rh) = REGION_HIGHLIGHTS.lock() {
+        rh.truncate(N_SPECIAL_HIGHLIGHTS); // c:705 free user entries
+        for r in &oldpos.regions {
+            rh.push(r.clone()); // c:715-728 restore each saved entry
         }
     }
 }
@@ -1636,8 +1663,8 @@ pub fn get_zle_query() -> bool {
 }
 
 /// Port of `struct zle_position` from Src/Zle/zle_utils.c:594.
-/// Saved (cs, mark, ll) for a stacked position.
-#[derive(Debug, Clone)]
+/// Saved (cs, mark, ll, regions) for a stacked position.
+#[derive(Debug, Clone, Default)]
 pub struct ZlePosition {
     // c:594
     /// Cursor position.
@@ -1646,9 +1673,10 @@ pub struct ZlePosition {
     pub mk: usize, // c:601
     /// Line length.
     pub ll: usize, // c:603
-                   // c:604 region_highlights chain — region-highlight system not yet
-                   // a static-link Rust struct; saved positions don't carry region
-                   // state until that lands.
+    /// Region-highlight snapshot taken at save time so the
+    /// concurrent user-driven highlights survive nested ZLE entries
+    /// (port of C's `zle_region *regions` chain at c:604).
+    pub regions: Vec<crate::ported::zle::zle_refresh::RegionHighlight>,
 }
 
 /// Port of `static struct zle_position *zle_positions` from
