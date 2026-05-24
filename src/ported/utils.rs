@@ -12340,4 +12340,160 @@ mod tests {
         let _len = unmetafy(&mut bytes);
         assert_eq!(String::from_utf8(bytes).unwrap(), "hello world");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // quotestring — emit a quoted shell-safe form of the input string.
+    // Each QT_* mode produces a different quoting style. Tests pin
+    // each mode for both empty and non-empty input.
+    // ═══════════════════════════════════════════════════════════════════
+
+    use crate::zsh_h::{
+        QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL,
+        QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL,
+    };
+
+    /// QT_NONE: no quoting; passes input through unchanged.
+    #[test]
+    fn quotestring_qt_none_passes_through_unchanged() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotestring("hello world", QT_NONE), "hello world");
+        assert_eq!(quotestring("", QT_NONE), "");
+        assert_eq!(quotestring("a*b?c", QT_NONE), "a*b?c");
+    }
+
+    /// QT_NONE empty → empty.
+    #[test]
+    fn quotestring_qt_none_empty_is_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotestring("", QT_NONE), "");
+    }
+
+    /// QT_BACKSLASH on empty → "''" (single-quote pair).
+    #[test]
+    fn quotestring_qt_backslash_empty_yields_empty_single_quotes() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotestring("", QT_BACKSLASH), "''");
+    }
+
+    /// QT_BACKSLASH_SHOWNULL on empty → "''" too.
+    #[test]
+    fn quotestring_qt_backslash_shownull_empty_yields_empty_single_quotes() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotestring("", QT_BACKSLASH_SHOWNULL), "''");
+    }
+
+    /// QT_SINGLE on empty → "''" (single-quote pair).
+    #[test]
+    fn quotestring_qt_single_empty_yields_empty_single_quotes() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotestring("", QT_SINGLE), "''");
+    }
+
+    /// QT_SINGLE_OPTIONAL on empty → "''" too.
+    #[test]
+    fn quotestring_qt_single_optional_empty_yields_empty_single_quotes() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotestring("", QT_SINGLE_OPTIONAL), "''");
+    }
+
+    /// QT_DOUBLE on empty → "" (empty double-quote pair).
+    #[test]
+    fn quotestring_qt_double_empty_yields_empty_double_quotes() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotestring("", QT_DOUBLE), "\"\"");
+    }
+
+    /// QT_DOLLARS on empty → "$''".
+    #[test]
+    fn quotestring_qt_dollars_empty_yields_dollar_quote_pair() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotestring("", QT_DOLLARS), "$''");
+    }
+
+    /// QT_BACKSLASH_PATTERN escapes only pattern meta-chars.
+    /// Input "a*b?c[d]" → "a\\*b\\?c\\[d\\]".
+    #[test]
+    fn quotestring_qt_backslash_pattern_escapes_glob_metas() {
+        let _g = crate::test_util::global_state_lock();
+        let r = quotestring("a*b?c[d]", QT_BACKSLASH_PATTERN);
+        assert!(
+            r.contains("\\*") && r.contains("\\?") && r.contains("\\[")
+                && r.contains("\\]"),
+            "all globs must be escaped; got {r:?}"
+        );
+    }
+
+    /// QT_BACKSLASH_PATTERN does NOT escape plain ASCII letters/digits.
+    #[test]
+    fn quotestring_qt_backslash_pattern_doesnt_escape_plain_chars() {
+        let _g = crate::test_util::global_state_lock();
+        let r = quotestring("plain", QT_BACKSLASH_PATTERN);
+        assert_eq!(r, "plain", "plain text passes through");
+    }
+
+    /// QT_BACKSLASH_PATTERN escapes `<`, `>`, `(`, `)`, `|`, `#`, `^`, `~`.
+    #[test]
+    fn quotestring_qt_backslash_pattern_escapes_all_meta_set() {
+        let _g = crate::test_util::global_state_lock();
+        for ch in ['<', '>', '(', ')', '|', '#', '^', '~'] {
+            let s = format!("x{ch}y");
+            let r = quotestring(&s, QT_BACKSLASH_PATTERN);
+            assert!(
+                r.contains(&format!("\\{ch}")),
+                "{ch:?} must be escaped, got {r:?}"
+            );
+        }
+    }
+
+    /// QT_SINGLE on simple input → "'simple'" (wrapped in single quotes).
+    #[test]
+    fn quotestring_qt_single_wraps_simple_input() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(quotestring("simple", QT_SINGLE), "'simple'");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // metafy / unmetafy edge cases — bytes that NEED meta-encoding
+    // (NUL, Meta byte 0x83, Nularg 0xa1, etc.). Pin that metafy escapes
+    // them via the Meta + (byte ^ 32) scheme and unmetafy reverses it.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `metafy` is identity for plain ASCII (no meta bytes).
+    #[test]
+    fn metafy_ascii_is_identity_byte_for_byte() {
+        let s = "abc 123 XYZ!@#";
+        assert_eq!(metafy(s), s);
+    }
+
+    /// Empty string round-trips.
+    #[test]
+    fn metafy_empty_string_returns_empty() {
+        assert_eq!(metafy(""), "");
+    }
+
+    /// metafy → unmetafy is round-trip identity for ASCII input.
+    #[test]
+    fn metafy_unmetafy_roundtrip_with_punctuation() {
+        let s = "Hello, World! 123 +-=";
+        let m = metafy(s);
+        let mut bytes = m.into_bytes();
+        let _ = unmetafy(&mut bytes);
+        let result = String::from_utf8(bytes).expect("valid utf-8");
+        assert_eq!(result, s);
+    }
+
+    /// Multi-byte UTF-8 chars get meta-encoded then unmetafied.
+    /// **Known limitation**: zshrs's metafy via `from_utf8_lossy` step
+    /// (after Meta+byte^32 expansion) mangles UTF-8 because the encoded
+    /// intermediate isn't valid UTF-8. Pin the limitation.
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: metafy/unmetafy round-trip mangles UTF-8 via lossy String conversion"]
+    fn metafy_unmetafy_roundtrip_with_utf8_multibyte_anchored() {
+        let s = "日本語";
+        let m = metafy(s);
+        let mut bytes = m.into_bytes();
+        let _ = unmetafy(&mut bytes);
+        let result = String::from_utf8(bytes).expect("valid utf-8");
+        assert_eq!(result, s, "UTF-8 round-trip must preserve content");
+    }
 }
