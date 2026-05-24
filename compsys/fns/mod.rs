@@ -27,6 +27,8 @@ pub mod _numbers;
 pub mod _pick_variant;
 #[allow(non_snake_case, non_camel_case_types)]
 pub mod _sequence;
+#[allow(non_snake_case, non_camel_case_types)]
+pub mod _tags;
 pub(crate) mod shared;
 #[allow(non_snake_case, non_camel_case_types)]
 pub mod _widgets;
@@ -43,4 +45,5 @@ pub use _dir_list::{DirListOpts, _dir_list};
 pub use _numbers::{NumbersOpts, _numbers};
 pub use _pick_variant::{PickVariantOpts, PickVariantResult, _pick_variant};
 pub use _sequence::{SequenceOpts, _sequence};
+pub use _tags::{TagSortHook, TagsOpts, _tags, _tags_mcs, _tags_next};
 pub use _widgets::_widgets;
