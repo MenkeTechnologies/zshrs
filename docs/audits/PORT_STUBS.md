@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T21:15:45.716626+00:00
+Generated: 2026-05-24T21:22:33.013247+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 179 stubs across 48 files
+## Summary: 178 stubs across 48 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -50,7 +50,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/modules/zftp.rs` | 2 | `newsession` (1 / 18) |
 | `src/ported/modules/zpty.rs` | 2 | `newptycmd` (20 / 147) |
 | `src/ported/zle/compcore.rs` | 2 | `set_comp_sep` (9 / 321) |
-| `src/ported/zle/termquery.rs` | 2 | `probe_terminal` (46 / 208) |
 | `src/ported/builtins/rlimits.rs` | 1 | `printrlim` (1 / 13) |
 | `src/ported/hashnameddir.rs` | 1 | `createnameddirtable` (2 / 15) |
 | `src/ported/input.rs` | 1 | `inputline` (5 / 88) |
@@ -66,6 +65,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/compmatch.rs` | 1 | `bld_line` (40 / 139) |
 | `src/ported/zle/computil.rs` | 1 | `cfp_add_sdirs` (18 / 73) |
 | `src/ported/zle/deltochar.rs` | 1 | `boot_` (1 / 11) |
+| `src/ported/zle/termquery.rs` | 1 | `probe_terminal` (46 / 208) |
 | `src/ported/zle/zle_params.rs` | 1 | `get_cursor` (1 / 11) |
 | `src/ported/zle/zle_thingy.rs` | 1 | `createthingytab` (1 / 13) |
 
@@ -381,13 +381,6 @@ python3 scripts/gen_port_stubs.py
 | 1457 | `set_comp_sep` | 9 | 321 | 2% |
 | 607 | `callcompfunc` | 63 | 345 | 18% |
 
-### `src/ported/zle/termquery.rs` — 2 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 151 | `probe_terminal` | 46 | 208 | 22% |
-| 349 | `query_terminal` | 7 | 31 | 22% |
-
 ### `src/ported/builtins/rlimits.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -477,6 +470,12 @@ python3 scripts/gen_port_stubs.py
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 174 | `boot_` | 1 | 11 | 9% |
+
+### `src/ported/zle/termquery.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 151 | `probe_terminal` | 46 | 208 | 22% |
 
 ### `src/ported/zle/zle_params.rs` — 1 stubs
 
