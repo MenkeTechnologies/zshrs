@@ -118,3 +118,90 @@ jobs:
             --title "${{ github.ref_name }}" \
             --generate-notes \
             artifacts/*.tar.gz artifacts/*.zip
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute SHA256 sums
+        id: sha
+        shell: bash
+        run: |
+          for f in artifacts/*.tar.gz; do
+            base=$(basename "$f")
+            sum=$(sha256sum "$f" | awk '{print $1}')
+            # e.g. zshrs-vX.Y.Z-aarch64-apple-darwin.tar.gz → aarch64_apple_darwin
+            key=$(echo "$base" | sed 's/zshrs-v[^-]*-//; s/\.tar\.gz//; s/-/_/g; s/\./_/g')
+            echo "${key}=${sum}" >> "$GITHUB_OUTPUT"
+          done
+
+      - uses: actions/checkout@v4
+        with:
+          repository: MenkeTechnologies/homebrew-menketech
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update formula
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # Strip leading 'v' from VERSION (e.g. v1.2.3 → 1.2.3).
+          VERSION="${VERSION#v}"
+          cd tap
+          cat > Formula/zshrs.rb <<'FORMULA_HEAD'
+          class Zshrs < Formula
+            desc "The first compiled Unix shell — drop-in zsh replacement with bytecode JIT, AOP, worker pool"
+            homepage "https://github.com/MenkeTechnologies/zshrs"
+            license "MIT"
+          FORMULA_HEAD
+          cat >> Formula/zshrs.rb <<EOF
+            version "${VERSION}"
+
+            on_macos do
+            on_arm do
+              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-v${VERSION}-aarch64-apple-darwin.tar.gz"
+              sha256 "${{ steps.sha.outputs.aarch64_apple_darwin }}"
+            end
+            on_intel do
+              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-v${VERSION}-x86_64-apple-darwin.tar.gz"
+              sha256 "${{ steps.sha.outputs.x86_64_apple_darwin }}"
+            end
+            end
+
+            on_linux do
+            on_intel do
+              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+              sha256 "${{ steps.sha.outputs.x86_64_unknown_linux_gnu }}"
+            end
+            end
+
+            def install
+            bin.install "zshrs"
+            bin.install "zd"
+            end
+
+            test do
+              assert_match "hi", shell_output("#{bin}/zshrs -c \'echo hi\'")
+            end
+          end
+          EOF
+
+      - name: Push formula update
+        run: |
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/zshrs.rb
+          if git diff --cached --quiet; then
+            echo "no changes — formula already up to date"
+            exit 0
+          fi
+          git commit -m "zshrs: bump to ${{ github.ref_name }}"
+          git push
