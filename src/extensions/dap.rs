@@ -582,21 +582,34 @@ fn handle_request(
             );
         }
         "scopes" => {
+            // Three separate scopes so IntelliJ renders them as
+            // collapsible groups in this fixed order — `Locals` (user
+            // vars) first, then `Specials` (zsh PM_SPECIAL params),
+            // then `Environment` (caps-name env vars). One big scope
+            // gets alpha-sorted client-side, burying the user's vars
+            // under 300 env entries. The IDE's sort toggle still works
+            // WITHIN each scope but the groups themselves are stable.
             let _ = shared.emit_response(
                 req_seq,
                 &cmd,
                 true,
                 json!({
-                    "scopes": [{
-                        "name": "Locals",
-                        "variablesReference": 1,
-                        "expensive": false,
-                    }],
+                    "scopes": [
+                        { "name": "Locals",      "variablesReference": 1, "expensive": false, "presentationHint": "locals" },
+                        { "name": "Specials",    "variablesReference": 2, "expensive": false },
+                        { "name": "Environment", "variablesReference": 3, "expensive": false },
+                    ],
                 }),
             );
         }
         "variables" => {
-            let vars = snapshot_variables();
+            let r = args["variablesReference"].as_u64().unwrap_or(1);
+            let vars = match r {
+                1 => snapshot_user_vars(),
+                2 => snapshot_special_vars(),
+                3 => snapshot_env_vars(),
+                _ => snapshot_user_vars(),
+            };
             let _ = shared.emit_response(req_seq, &cmd, true, json!({ "variables": vars }));
         }
         "evaluate" => {
@@ -658,31 +671,22 @@ fn current_lineno() -> u32 {
         .unwrap_or(1)
 }
 
-/// Snapshot of zsh parameters (scalars only in v1) — surfaced as the
-/// IDE's Variables panel. After the executor has started, paramtab is
-/// populated with the script's locals + env. Before launch (and as a
-/// fallback when paramtab is empty), surface raw process env so the
-/// panel is never empty for the IDE to display.
+/// Buckets all paramtab entries into (user, specials, env) by zsh
+/// `PM_SPECIAL` flag + caps-name + process-env presence. Returned
+/// tuples are sorted alpha within each bucket. Used by the three
+/// `snapshot_*_vars` helpers so each scope returns just its bucket.
 ///
-/// Ordering (matches strykelang's Variables panel UX):
-///   1. **User vars** — script-defined names sorted alpha. These are
-///      what the user is actually debugging; they go on top so the
-///      panel reads as "MY VARIABLES first" without scrolling past
-///      300 env vars.
-///   2. **Specials** — zsh `PM_SPECIAL` params (`$?`, `$$`, `$#`,
-///      `$IFS`, `$PS1`, `$LINENO`, `$RANDOM`, etc). Useful but
-///      tier-2; sorted alpha below user vars.
-///   3. **Env vars** — all-caps env names imported at startup
-///      (`$PATH`, `$HOME`, `$USER`, `$SHELL`, …). Tier-3; alpha at
-///      the bottom.
-fn snapshot_variables() -> Vec<Value> {
+/// Splitting into separate scopes (instead of one big list) means
+/// IntelliJ renders them as collapsible groups in fixed order, even
+/// when the user has "Sort Values Alphabetically" enabled — that
+/// toggle only sorts WITHIN a scope, not across scopes.
+fn snapshot_bucketed() -> (Vec<(String, String)>, Vec<(String, String)>, Vec<(String, String)>) {
     let mut user: Vec<(String, String)> = Vec::new();
     let mut specials: Vec<(String, String)> = Vec::new();
     let mut env: Vec<(String, String)> = Vec::new();
 
     if let Ok(tab) = crate::ported::params::paramtab().read() {
         for (name, pm) in tab.iter() {
-            // Skip the noisiest specials so the panel isn't flooded.
             if matches!(
                 name.as_str(),
                 "_" | "PIPESTATUS" | "pipestatus" | "ZSH_ARGZERO"
@@ -700,20 +704,27 @@ fn snapshot_variables() -> Vec<Value> {
             };
             let is_special =
                 (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0;
-            let is_env_capsname =
-                !is_special && name.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
-                    && std::env::var(name).is_ok();
-            if is_special {
-                specials.push((name.clone(), value));
-            } else if is_env_capsname {
+            // Environment FIRST — most users think of PATH/HOME/USER
+            // as env vars even though zsh marks them PM_SPECIAL. The
+            // process-env presence is what makes them env, not the
+            // zsh flag.
+            let in_process_env = std::env::var(name).is_ok();
+            // Caps-only names not in env → zsh internal specials
+            // bucket (CPUTYPE, MACHTYPE, OSTYPE, HOST, etc).
+            let is_caps_only = !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+                && name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
+            if in_process_env {
                 env.push((name.clone(), value));
+            } else if is_special || is_caps_only {
+                specials.push((name.clone(), value));
             } else {
                 user.push((name.clone(), value));
             }
         }
     }
-    // Fallback / supplement with process env when paramtab is empty
-    // (e.g. before the executor has started).
     if user.is_empty() && specials.is_empty() && env.is_empty() {
         for (k, v) in std::env::vars() {
             env.push((k, v));
@@ -722,35 +733,34 @@ fn snapshot_variables() -> Vec<Value> {
     user.sort_by(|a, b| a.0.cmp(&b.0));
     specials.sort_by(|a, b| a.0.cmp(&b.0));
     env.sort_by(|a, b| a.0.cmp(&b.0));
+    (user, specials, env)
+}
 
-    let mut out = Vec::with_capacity(user.len() + specials.len() + env.len());
-    let push = |out: &mut Vec<Value>, name: &str, value: &str| {
-        out.push(json!({
-            "name": name,
-            "value": value,
+fn vars_to_json(vars: &[(String, String)]) -> Vec<Value> {
+    vars.iter()
+        .take(500)
+        .map(|(n, v)| json!({
+            "name": n,
+            "value": v,
             "type": "scalar",
             "variablesReference": 0,
-        }));
-    };
-    for (n, v) in &user {
-        push(&mut out, n, v);
-        if out.len() >= 500 {
-            return out;
-        }
-    }
-    for (n, v) in &specials {
-        push(&mut out, n, v);
-        if out.len() >= 500 {
-            return out;
-        }
-    }
-    for (n, v) in &env {
-        push(&mut out, n, v);
-        if out.len() >= 500 {
-            return out;
-        }
-    }
-    out
+        }))
+        .collect()
+}
+
+fn snapshot_user_vars() -> Vec<Value> {
+    let (user, _, _) = snapshot_bucketed();
+    vars_to_json(&user)
+}
+
+fn snapshot_special_vars() -> Vec<Value> {
+    let (_, specials, _) = snapshot_bucketed();
+    vars_to_json(&specials)
+}
+
+fn snapshot_env_vars() -> Vec<Value> {
+    let (_, _, env) = snapshot_bucketed();
+    vars_to_json(&env)
 }
 
 fn evaluate_expression(expr: &str) -> (String, String) {
