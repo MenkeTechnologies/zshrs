@@ -1,0 +1,445 @@
+//! Arithmetic expansion parity tests — pin `$(( expr ))` and `(( expr ))`
+//! against real zsh 5.9.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn zshrs_bin() -> PathBuf {
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
+}
+
+fn zsh_path() -> &'static str {
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
+}
+
+fn zsh_available() -> bool {
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+struct ShellResult {
+    stdout: String,
+    stderr: String,
+    exit: i32,
+}
+
+fn run_zsh(script: &str) -> ShellResult {
+    let out = Command::new(zsh_path())
+        .args(["-fc", script])
+        .output()
+        .expect("invoke zsh");
+    ShellResult {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        exit: out.status.code().unwrap_or(-1),
+    }
+}
+
+fn run_zshrs(script: &str) -> ShellResult {
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", script])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("invoke zshrs");
+    ShellResult {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        exit: out.status.code().unwrap_or(-1),
+    }
+}
+
+fn assert_parity(script: &str) {
+    if !zsh_available() {
+        return;
+    }
+    let z = run_zsh(script);
+    let r = run_zshrs(script);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on script:\n{script}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
+    assert_eq!(z.exit, r.exit, "exit divergence on script:\n{script}");
+}
+
+mod literals {
+    use super::*;
+
+    #[test]
+    fn integer_literal() {
+        assert_parity("echo $((42))");
+    }
+
+    #[test]
+    fn negative_literal() {
+        assert_parity("echo $((-7))");
+    }
+
+    #[test]
+    fn hex_literal_lowercase() {
+        assert_parity("echo $((0xff))");
+    }
+
+    #[test]
+    fn hex_literal_uppercase() {
+        assert_parity("echo $((0XDEAD))");
+    }
+
+    #[test]
+    fn base_hash_hex() {
+        assert_parity("echo $((16#FF))");
+    }
+
+    #[test]
+    fn base_hash_binary() {
+        assert_parity("echo $((2#1010))");
+    }
+
+    #[test]
+    fn base_hash_octal() {
+        assert_parity("echo $((8#17))");
+    }
+
+    /// `010` in zsh default is DECIMAL 10 (not octal). Pin.
+    #[test]
+    fn leading_zero_decimal_default() {
+        assert_parity("echo $((010))");
+    }
+
+    #[test]
+    fn float_literal() {
+        assert_parity("echo $((3.14))");
+    }
+}
+
+mod binary_ops {
+    use super::*;
+
+    #[test]
+    fn add() {
+        assert_parity("echo $((1 + 2))");
+    }
+
+    #[test]
+    fn sub() {
+        assert_parity("echo $((10 - 3))");
+    }
+
+    #[test]
+    fn mul() {
+        assert_parity("echo $((6 * 7))");
+    }
+
+    #[test]
+    fn div_integer() {
+        assert_parity("echo $((17 / 5))");
+    }
+
+    #[test]
+    fn div_integer_below_one() {
+        assert_parity("echo $((1 / 4))");
+    }
+
+    #[test]
+    fn mod_op() {
+        assert_parity("echo $((17 % 5))");
+    }
+
+    #[test]
+    fn power() {
+        assert_parity("echo $((2 ** 10))");
+    }
+
+    #[test]
+    fn power_cubed() {
+        assert_parity("echo $((3 ** 3))");
+    }
+
+    #[test]
+    fn unary_minus_power() {
+        assert_parity("echo $((-2 ** 2))");
+    }
+
+    #[test]
+    fn paren_unary_minus_power() {
+        assert_parity("echo $(((-2) ** 2))");
+    }
+}
+
+mod precedence {
+    use super::*;
+
+    #[test]
+    fn mul_over_add() {
+        assert_parity("echo $((2 + 3 * 4))");
+    }
+
+    #[test]
+    fn parens_override() {
+        assert_parity("echo $(((2 + 3) * 4))");
+    }
+
+    #[test]
+    fn nested_parens() {
+        assert_parity("echo $(((1 + 2) * (3 + 4)))");
+    }
+
+    #[test]
+    fn chain_add() {
+        assert_parity("echo $((1 + 2 + 3 + 4 + 5))");
+    }
+
+    #[test]
+    fn chain_sub_left_assoc() {
+        assert_parity("echo $((100 - 1 - 2 - 3))");
+    }
+}
+
+mod bitwise {
+    use super::*;
+
+    #[test]
+    fn bitand() {
+        assert_parity("echo $((0xff & 0x0f))");
+    }
+
+    #[test]
+    fn bitor() {
+        assert_parity("echo $((0xff | 0x100))");
+    }
+
+    #[test]
+    fn bitxor() {
+        assert_parity("echo $((0xff ^ 0x0f))");
+    }
+
+    #[test]
+    fn bitnot_zero() {
+        assert_parity("echo $((~0))");
+    }
+
+    #[test]
+    fn shift_left() {
+        assert_parity("echo $((1 << 8))");
+    }
+
+    #[test]
+    fn shift_right() {
+        assert_parity("echo $((256 >> 4))");
+    }
+
+    #[test]
+    fn arithmetic_right_shift_preserves_sign() {
+        assert_parity("echo $((-1 >> 1))");
+    }
+}
+
+mod comparison_logical {
+    use super::*;
+
+    #[test]
+    fn eq_true() {
+        assert_parity("echo $((5 == 5))");
+    }
+
+    #[test]
+    fn eq_false() {
+        assert_parity("echo $((5 == 6))");
+    }
+
+    #[test]
+    fn ne_true() {
+        assert_parity("echo $((5 != 6))");
+    }
+
+    #[test]
+    fn lt_true() {
+        assert_parity("echo $((3 < 5))");
+    }
+
+    #[test]
+    fn le_on_equal() {
+        assert_parity("echo $((5 <= 5))");
+    }
+
+    #[test]
+    fn gt_true() {
+        assert_parity("echo $((5 > 3))");
+    }
+
+    #[test]
+    fn ge_on_equal() {
+        assert_parity("echo $((5 >= 5))");
+    }
+
+    #[test]
+    fn logand_both_true() {
+        assert_parity("echo $((1 && 1))");
+    }
+
+    #[test]
+    fn logand_short_circuit_false() {
+        assert_parity("echo $((0 && 99))");
+    }
+
+    #[test]
+    fn logor_one_true() {
+        assert_parity("echo $((0 || 1))");
+    }
+
+    #[test]
+    fn lognot_zero_is_one() {
+        assert_parity("echo $((!0))");
+    }
+
+    #[test]
+    fn lognot_nonzero_is_zero() {
+        assert_parity("echo $((!42))");
+    }
+}
+
+mod ternary {
+    use super::*;
+
+    #[test]
+    fn ternary_true_branch() {
+        assert_parity("echo $((1 ? 10 : 20))");
+    }
+
+    #[test]
+    fn ternary_false_branch() {
+        assert_parity("echo $((0 ? 10 : 20))");
+    }
+
+    #[test]
+    fn ternary_with_compare_cond() {
+        assert_parity("echo $(((3 < 5) ? 100 : 200))");
+    }
+}
+
+mod comma_and_assignment {
+    use super::*;
+
+    #[test]
+    fn comma_returns_last() {
+        assert_parity("echo $(((1,2,3)))");
+    }
+
+    #[test]
+    fn assign_and_use() {
+        assert_parity("echo $((A=5, A * 2))");
+    }
+
+    #[test]
+    fn assign_then_read() {
+        assert_parity("(( B = 7 + 3 )); echo $B");
+    }
+
+    #[test]
+    fn add_assign_op() {
+        assert_parity("C=10; (( C += 5 )); echo $C");
+    }
+
+    #[test]
+    fn sub_assign_op() {
+        assert_parity("D=10; (( D -= 3 )); echo $D");
+    }
+
+    #[test]
+    fn mul_assign_op() {
+        assert_parity("E=6; (( E *= 7 )); echo $E");
+    }
+}
+
+mod inc_dec {
+    use super::*;
+
+    #[test]
+    fn post_increment_returns_old() {
+        assert_parity("X=10; echo $((X++)); echo $X");
+    }
+
+    #[test]
+    fn pre_increment_returns_new() {
+        assert_parity("X=10; echo $((++X)); echo $X");
+    }
+
+    #[test]
+    fn post_decrement_returns_old() {
+        assert_parity("X=10; echo $((X--)); echo $X");
+    }
+
+    #[test]
+    fn pre_decrement_returns_new() {
+        assert_parity("X=10; echo $((--X)); echo $X");
+    }
+}
+
+mod arith_command_exit {
+    use super::*;
+
+    /// `(( expr ))` exits 0 if expr is nonzero, 1 if zero.
+    #[test]
+    fn arith_cmd_nonzero_exits_zero() {
+        assert_parity("(( 1 )); echo $?");
+    }
+
+    #[test]
+    fn arith_cmd_zero_exits_one() {
+        assert_parity("(( 0 )); echo $?");
+    }
+
+    #[test]
+    fn arith_cmd_compare_true() {
+        assert_parity("(( 5 > 3 )); echo $?");
+    }
+
+    #[test]
+    fn arith_cmd_compare_false() {
+        assert_parity("(( 5 < 3 )); echo $?");
+    }
+}
+
+mod with_parameters {
+    use super::*;
+
+    #[test]
+    fn dollar_var_in_arith() {
+        assert_parity("X=42; echo $((X))");
+    }
+
+    #[test]
+    fn dollar_var_arith() {
+        assert_parity("X=10; Y=3; echo $((X + Y))");
+    }
+
+    #[test]
+    fn unset_var_treated_as_zero() {
+        assert_parity("echo $((UNDEFINED + 5))");
+    }
+
+    #[test]
+    fn integer_typeset_arith() {
+        assert_parity("typeset -i X=10; X=X+5; echo $X");
+    }
+
+    #[test]
+    fn nested_arith_substitution() {
+        assert_parity("X=5; echo $(($((X)) * 2))");
+    }
+}
