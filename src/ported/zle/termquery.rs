@@ -1102,20 +1102,157 @@ pub fn free_cursor_forms() {
     CURSOR_FORMS.with(|cf| cf.borrow_mut().clear());
 }
 
-/// !!! WARNING: PARTIAL PORT — stub. C `cursor_form(void)` at
-/// Src/Zle/termquery.c:913 walks the `cursor_forms[]` array and
-/// emits the DECSCUSR escape (CSI Ps ` q`) appropriate to the
-/// current `state` (CURF_DEFAULT/CURF_INSERT/CURF_OVERWRITE/
-/// CURF_VICMD/CURF_VIINS/CURF_DEFAULTSTATE), respecting
-/// trashedzle / insmode / vichgflag. Writes via `putshout` to set
-/// the terminal cursor shape.
-///
-/// Wrong sig too: C returns `void`, Rust returns `Vec<String>`.
-/// Empty Vec means callers get nothing — vi-mode cursor reshape
-/// (block in cmd, beam in insert) doesn't fire. Tracked.
-pub fn cursor_form() -> Vec<String> {
-    // c:913 — see WARNING above; stub.
-    Vec::new()
+/// Direct port of `void cursor_form(void)` from
+/// `Src/Zle/termquery.c:913`. Picks the `cursor_forms[context]`
+/// entry per the current ZLE state (CURC_EDIT / CURC_COMMAND /
+/// CURC_INSERT / CURC_OVERWRITE / CURC_PENDING /
+/// CURC_REGION_START/_END / CURC_VISUAL), diffs against the
+/// previously-emitted `state`, and writes only the changed
+/// DECSCUSR / DECSET / OSC 12 fragments to SHTTY.
+pub fn cursor_form() {
+    // c:913
+    use crate::ported::zle::zle_h::{CURC_COMMAND, CURC_EDIT, CURC_OVERWRITE, CURC_VISUAL};
+    // c:919 — `if (!cursor_forms) return;` — `zle_set_cursorform`
+    // populates this on first ZLE entry. Without entries → no-op.
+    let forms_empty = CURSOR_FORMS.with(|cf| cf.borrow().is_empty());
+    if forms_empty {
+        return; // c:919
+    }
+    // c:922-933 — pick context. The trashedzle short-circuit (c:921)
+    // is omitted; zshrs has no trashedzle global. The remaining
+    // arms cover insmode (overwrite), vichgflag==2 (pending),
+    // region_active (visual / region start / region end), then the
+    // default cmd-vs-edit-vs-insert split via vichgflag.
+    let context: u32 = {
+        let insmode = crate::ported::zle::zle_main::INSMODE
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let vichgflag = crate::ported::zle::zle_vi::VICHGFLAG
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let region_active = crate::ported::zle::zle_main::REGION_ACTIVE
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let in_vicmd = {
+            let name = crate::ported::zle::zle_keymap::curkeymapname();
+            *name == "vicmd"
+        };
+        if insmode == 0 {
+            // c:925 — `!insmode` → CURC_OVERWRITE
+            CURC_OVERWRITE as u32
+        } else if vichgflag == 2 {
+            // c:927 — `vichgflag == 2` → CURC_PENDING
+            CURC_PENDING as u32
+        } else if region_active != 0 {
+            // c:929 — region active
+            if in_vicmd {
+                // c:930 — visual
+                CURC_VISUAL as u32
+            } else {
+                // c:932-933 — region start or end. C compares `mark > zlecs`;
+                // Rust uses MARK / ZLECS atomics.
+                let mark =
+                    crate::ported::zle::zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst);
+                let zlecs =
+                    crate::ported::zle::zle_main::ZLECS.load(std::sync::atomic::Ordering::SeqCst);
+                if mark as usize > zlecs {
+                    CURC_REGION_START as u32
+                } else {
+                    CURC_REGION_END as u32
+                }
+            }
+        } else if in_vicmd {
+            // c:935 — vicmd → CURC_COMMAND
+            CURC_COMMAND as u32
+        } else if vichgflag != 0 {
+            // c:935 — vichgflag set (non-2 already handled) → CURC_INSERT
+            CURC_INSERT as u32
+        } else {
+            // c:935 — default → CURC_EDIT
+            CURC_EDIT as u32
+        }
+    };
+    // c:936 — `want = (context == CURC_DEFAULT) ? CURF_DEFAULT : cursor_forms[context];`.
+    // CURF_DEFAULT == 0 per zle_h.rs. Rust always picks from the array.
+    let want = CURSOR_FORMS.with(|cf| cf.borrow().get(context as usize).copied().unwrap_or(0));
+
+    // File-static `static unsigned int state = CURF_DEFAULT;` at c:917.
+    static STATE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let prev_state = STATE.load(std::sync::atomic::Ordering::Relaxed);
+    let disabled = CURSOR_ENABLED_MASK.with(|m| m.get());
+    // c:937 — `if (!(changed = (want ^ state) & ~cursor_enabled_mask)) return;`.
+    let changed = (want ^ prev_state) & !disabled;
+    if changed == 0 {
+        return; // c:937
+    }
+
+    let mut seq = String::new();
+    // c:939-940 — CURF_HIDDEN: emit TCCURINV / TCCURVIS via tcout.
+    // Termcap substrate isn't wired here; we still emit the escape
+    // sequence DECSET 25 (show/hide cursor) which is the standard.
+    if (changed & CURF_HIDDEN as u32) != 0 {
+        // c:939
+        if (want & CURF_HIDDEN as u32) != 0 {
+            seq.push_str("\x1b[?25l"); // hide
+        } else {
+            seq.push_str("\x1b[?25h"); // show
+        }
+    }
+    // c:941-948 — CURF_SHAPE_MASK + CURF_BLINK selector → DECSCUSR.
+    // C source maps:
+    //   CURF_BLOCK + steady → 2     CURF_BLOCK + blink → 1
+    //   CURF_UNDERLINE + steady → 4 CURF_UNDERLINE + blink → 3
+    //   CURF_BAR + steady → 6       CURF_BAR + blink → 5
+    let mut changed_mut = changed;
+    if (changed_mut & CURF_SHAPE_MASK as u32) != 0 {
+        // c:941
+        let mut c: u8 = b'0';
+        let shape = want & CURF_SHAPE_MASK as u32;
+        if shape == CURF_BAR as u32 {
+            c += 2; // c:945 (fall-through pattern compresses to BAR=6)
+            c += 2;
+            c += 2 - (if (want & CURF_BLINK as u32) != 0 { 1 } else { 0 });
+        } else if shape == CURF_UNDERLINE as u32 {
+            c += 2; // c:946
+            c += 2 - (if (want & CURF_BLINK as u32) != 0 { 1 } else { 0 });
+        } else if shape == CURF_BLOCK as u32 {
+            c += 2 - (if (want & CURF_BLINK as u32) != 0 { 1 } else { 0 }); // c:947
+        }
+        // c:949 — `changed &= ~(CURF_BLINK | CURF_STEADY);`
+        changed_mut &= !((CURF_BLINK | CURF_STEADY) as u32);
+        // c:950 — `s += sprintf(s, "\033[%c q", c);`
+        seq.push_str("\x1b[");
+        seq.push(c as char);
+        seq.push_str(" q");
+    }
+    // c:952-953 — `if (changed & (CURF_BLINK | CURF_STEADY)) ...`.
+    if (changed_mut & ((CURF_BLINK | CURF_STEADY) as u32)) != 0 {
+        // c:952
+        // c:953 — `\033[?12h` (blink on) / `\033[?12l` (off).
+        seq.push_str(if (want & CURF_BLINK as u32) != 0 {
+            "\x1b[?12h"
+        } else {
+            "\x1b[?12l"
+        });
+    }
+    // c:955-960 — CURF_COLOR_MASK → OSC 12 RGB.
+    if (changed_mut & CURF_COLOR_MASK) != 0 {
+        // c:955
+        let mut want_color = want;
+        if (want & CURF_COLOR_MASK) == 0 {
+            // c:957 — `want = memo_cursor | (want & 0xff);`
+            want_color = memo_cursor.load(std::sync::atomic::Ordering::Relaxed) | (want & 0xff);
+        }
+        let r = (want_color >> CURF_RED_SHIFT) & 0xff;
+        let g = (want_color >> CURF_GREEN_SHIFT) & 0xff;
+        let b = (want_color >> CURF_BLUE_SHIFT) & 0xff;
+        seq.push_str(&format!("\x1b]12;rgb:{:02x}00/{:02x}00/{:02x}00\x1b\\", r, g, b));
+    }
+    if !seq.is_empty() {
+        let fd = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::Relaxed);
+        if fd >= 0 {
+            let _ = crate::ported::utils::write_loop(fd, seq.as_bytes()); // c:963
+        }
+    }
+    STATE.store(want, std::sync::atomic::Ordering::Relaxed); // c:964
+    let _ = CURF_COLOR; // silence unused-import warning until tests cover the color path
 }
 
 const PROBE_TIMEOUT_MS: u64 = 500;
