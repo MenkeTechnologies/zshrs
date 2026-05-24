@@ -44,7 +44,7 @@
 //!     `/` and re-arms the separator for the next item.
 
 use crate::compcore::CompletionState;
-use crate::files::{files_execute, FilesOpts};
+use crate::fns::_files::{files_execute, FilesOpts};
 
 pub struct DirListOpts<'a> {
     /// Separator character (`-s sep` flag; default `:`).
