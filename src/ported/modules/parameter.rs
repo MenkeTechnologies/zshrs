@@ -1876,38 +1876,48 @@ pub fn scanpmhistory(
     }
 }
 
-/// Port of `histwgetfn(UNUSED(Param pm))` from Src/Modules/parameter.c:1217.
-/// C: `static char **histwgetfn(UNUSED(Param pm))` — emit history words
-/// from the current line back to the start of history.
+/// Direct port of `static char **histwgetfn(UNUSED(Param pm))` from
+/// `Src/Modules/parameter.c:1217`. The `$historywords` array getter.
+/// C body c:1224-1226 prepends `bufferwords(NULL, NULL, NULL, 0)`
+/// (current editor line) to the result, then walks the history
+/// ring newest→oldest slicing each entry's words via the
+/// `histent.words[]` (begin,end) byte-offset pairs in reverse
+/// position order.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
 pub fn histwgetfn(pm: *mut param) -> Vec<String> {
     // c:1217
-    // c:1217-1248 — walk hist_ring newest-to-oldest, slicing words by
-    // the histent.words[iw*2..iw*2+2] byte offsets. zshrs's hist_ring
-    // (hist.rs:27) carries the same `histent` shape (node.nam + words
-    // + nwords); read the lock then iterate.
     let mut out: Vec<String> = Vec::new();
-    let ring = hist_ring.lock();
-    if let Ok(ring) = ring {
-        // c:1229-1247 — newest entry first.
+    // c:1224 — `bufferwords(NULL, NULL, NULL, 0)` — current editor line.
+    let zleline: String = crate::ported::zle::zle_main::ZLELINE
+        .lock()
+        .unwrap()
+        .iter()
+        .collect();
+    let cursor = crate::ported::zle::zle_main::ZLECS
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let (bw, _) = crate::ported::hist::bufferwords(&zleline, cursor);
+    out.extend(bw); // c:1225-1226 pushnode
+    // c:1229-1247 — walk hist_ring newest-to-oldest, slicing each
+    // entry's words by `histent.words[iw*2..iw*2+2]` byte offsets in
+    // reverse-position order.
+    if let Ok(ring) = hist_ring.lock() {
         for he in ring.iter().rev() {
             // c:1229
             let hstr = he.node.nam.as_bytes();
             let len = hstr.len() as i32;
-            // c:1232 — for (iw = he->nwords - 1; iw >= 0; iw--)
             let nwords = he.nwords as i32;
+            // c:1232 — `for (iw = he->nwords - 1; iw >= 0; iw--)`
             let mut iw = nwords - 1;
             while iw >= 0 {
-                // c:1232
                 let i2 = (iw as usize) * 2;
                 if i2 + 1 >= he.words.len() {
                     break;
                 }
                 let wbegin = he.words[i2] as i32; // c:1233
                 let wend = he.words[i2 + 1] as i32; // c:1234
+                // c:1236 — signed-short overflow bounds check.
                 if wbegin < 0 || wbegin >= len || wend < 0 || wend > len {
-                    // c:1236
                     break;
                 }
                 let slice = &hstr[wbegin as usize..wend as usize]; // c:1240-1244
@@ -3597,10 +3607,14 @@ pub struct PartabArrayEntry {
 /// `static const struct paramdef partab[]` PM_ARRAY subset from
 /// `Src/Modules/parameter.c:2239-2291`. Each entry's `gsu_array.getfn`
 /// returns the full array (no per-key dispatch).
-///
-/// `historywords` (c:2273) is listed in C but its canonical getfn
-/// (`historywordsgetfn` or similar) isn't yet ported in zshrs — TODO.
 pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
+    // c:2273 — `historywords`: words from current line + every history
+    // entry, newest-first, reverse-by-position within each entry.
+    PartabArrayEntry {
+        name: "historywords",
+        flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2273 PM_READONLY_SPECIAL
+        getfn: histwgetfn,
+    },
     // c:2239 — `dirstack`: $DIRSTACK pushd/popd state.
     PartabArrayEntry {
         name: "dirstack",
