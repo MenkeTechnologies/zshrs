@@ -6,7 +6,7 @@
 //! every Base/ shell function (`_main_complete`, `_normal`,
 //! `_alternative`, `_values`, `_description`, `_message`, etc.).
 //! The per-function bodies have now been extracted into
-//! `compsys/fns/Base/{Core,Completer,Utility}/_NAME.rs` to mirror
+//! `compsys/ported/Base/{Core,Completer,Utility}/_NAME.rs` to mirror
 //! zsh's `Completion/Base/{Core,Completer,Utility,Widget}/` taxonomy
 //! one-file-per-shell-function.
 //!
@@ -309,7 +309,7 @@ impl Value {
 
 // =============================================================================
 // Back-compat re-exports — every Base/ fn that used to live here now
-// resolves to its per-file port under `crate::fns::`. Names match the
+// resolves to its per-file port under `crate::ported::`. Names match the
 // upstream zsh shell-function names. Pre-rename aliases
 // (`completer_correct` → `_correct`, `next_label` → `_next_label`,
 // `message` → `_message`, `_description` → `base_description` already
@@ -317,7 +317,7 @@ impl Value {
 // base::{…}` continues to compile.
 // =============================================================================
 
-pub use crate::fns::{
+pub use crate::ported::{
     _all_labels, _alternative, _approximate, _complete, _description, _dispatch, _ignored,
     _main_complete, _message, _multi_parts, _next_label, _normal, _sep_parts, _values, _wanted,
     get_ignored_patterns, is_ignored,

@@ -10,7 +10,7 @@
 //!
 //! Module declarations use `#[path = "..."]` so the on-disk subdir
 //! structure matches zsh exactly while module names stay flat
-//! (`compsys::fns::_command_names`) so existing call sites need
+//! (`compsys::ported::_command_names`) so existing call sites need
 //! no changes.
 
 // ── Base/Completer/ ───────────────────────────────────────────────────
@@ -113,7 +113,7 @@
 pub mod shared;
 
 /// `compinit` — top-level shell initialisation entry point. Lives at
-/// `compsys/fns/compinit.rs` (no leading `_` because it's the shell
+/// `compsys/ported/compinit.rs` (no leading `_` because it's the shell
 /// front-end, not a `_NAME` completion fn).
 pub mod compinit;
 

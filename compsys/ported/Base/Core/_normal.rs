@@ -7,7 +7,7 @@
 //!
 //! Note: the original base.rs implementation invoked a 2-arg
 //! `_dispatch(state, cmd)` stub that always returned `NoMatch`. The
-//! current `fns/Base/Core/_dispatch.rs` port has a richer 3-arg
+//! current `ported/Base/Core/_dispatch.rs` port has a richer 3-arg
 //! signature (state, comps, commands). Until the shell-side comps
 //! table is wired through `_normal`, this port preserves the original
 //! no-dispatch behavior — returns `NoMatch` for unrecognized commands.

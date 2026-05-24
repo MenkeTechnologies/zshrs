@@ -6,7 +6,7 @@
 //! `_normal` for command-vs-argument dispatch.
 
 use crate::base::{CompleterResult, MainCompleteState};
-use crate::fns::_normal::_normal;
+use crate::ported::_normal::_normal;
 
 /// _complete - the main completer
 pub fn _complete(state: &mut MainCompleteState) -> CompleterResult {

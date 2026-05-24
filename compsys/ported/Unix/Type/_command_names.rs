@@ -21,7 +21,7 @@
 //!   `:commands rehash` (l.9)         — silently true; the caller
 //!                                       owns the cmdnam cache.
 //!   `:functions prefix-needed` (l.11) — when PREFIX is not `[_.]*`,
-//!                                       filter out `_*` / `.*` fns.
+//!                                       filter out `_*` / `.*` ported.
 //!   `command-path` (l.49)             — if set, use these dirs instead
 //!                                       of $path for external scan.
 
@@ -43,7 +43,7 @@ use super::shared::is_executable;
 ///     .iter().map(|(k, _)| k.clone()).collect();
 /// // ... same for the other six tables ...
 /// let inv = ShellInventory { aliases: &aliases, ..Default::default() };
-/// compsys::fns::_command_names(state, &inv, false);
+/// compsys::ported::_command_names(state, &inv, false);
 /// ```
 #[derive(Default)]
 pub struct ShellInventory<'a> {

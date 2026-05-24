@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::base::MainCompleteState;
-use crate::fns::_call_program::{_call_program, CallProgramOpts, CallProgramResult};
+use crate::ported::_call_program::{_call_program, CallProgramOpts, CallProgramResult};
 
 /// Process-global `_cmd_variant` cache. Maps `cmd → variant-label`.
 /// Lives for the lifetime of the process (matches shell `typeset -gA
