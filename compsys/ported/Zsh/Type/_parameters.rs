@@ -9,6 +9,7 @@
 //! 10    _history_modifiers p
 //! 11    return
 //! 12  fi
+//! 14  local i pfilt
 //! 18  zparseopts -E -a opts g:=pfilt
 //! 21  if (( $#pfilt )); then
 //! 22    i=( ${(k)parameters[(R)$pfilt[2]]} )
@@ -16,32 +17,69 @@
 //! ```
 //!
 //! Upstream pulls names from `${(k)parameters}` (built-in assoc
-//! array mapping name→type) with optional `-g pattern` type filter.
+//! array mapping name→type) with optional `-g pattern` type filter
+//! on the value side.
 //!
-//! Simplified Rust port: takes a `&HashMap<String, String>` from
-//! the caller (caller pulls live names from runtime paramtab) and
-//! emits names prefix-filtered. The `-g` type filter is not yet
-//! exposed — most call sites want every parameter name.
+//! Faithful Rust port: takes a `&HashMap<String, String>` from the
+//! caller (caller pulls live names from runtime paramtab) and emits
+//! names prefix-filtered. NEW: honors `type_filter: Option<&str>`
+//! for the `-g pattern` behavior — when set, only emit names
+//! whose type matches the glob.
 
 use std::collections::HashMap;
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;
 
-/// _parameters - Complete parameter (variable) names
-pub fn _parameters(state: &mut CompletionState, params: &HashMap<String, String>) -> bool {
+/// Glob match for type filter (supports `*` and `?`).
+fn type_matches(pattern: &str, type_str: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = type_str.chars().collect();
+    glob_helper(&pat, &txt)
+}
+
+fn glob_helper(pat: &[char], txt: &[char]) -> bool {
+    if pat.is_empty() {
+        return txt.is_empty();
+    }
+    match pat[0] {
+        '*' => (0..=txt.len()).any(|i| glob_helper(&pat[1..], &txt[i..])),
+        '?' => !txt.is_empty() && glob_helper(&pat[1..], &txt[1..]),
+        c => !txt.is_empty() && txt[0] == c && glob_helper(&pat[1..], &txt[1..]),
+    }
+}
+
+/// _parameters - Complete parameter (variable) names with optional
+/// type filter (shell `-g pattern`).
+pub fn _parameters_with_filter(
+    state: &mut CompletionState,
+    params: &HashMap<String, String>,
+    type_filter: Option<&str>,
+) -> bool {
     let prefix = state.params.prefix.clone();
 
     state.begin_group("parameters", true);
 
-    for name in params.keys() {
-        if name.starts_with(&prefix) {
-            state.add_match(Completion::new(name.clone()), Some("parameters"));
+    for (name, type_str) in params {
+        if !name.starts_with(&prefix) {
+            continue;
         }
+        // shell:22 `-g pattern` — filter by type.
+        if let Some(pat) = type_filter {
+            if !type_matches(pat, type_str) {
+                continue;
+            }
+        }
+        state.add_match(Completion::new(name.clone()), Some("parameters"));
     }
 
     state.end_group();
     state.nmatches > 0
+}
+
+/// _parameters - Complete parameter names (no type filter).
+pub fn _parameters(state: &mut CompletionState, params: &HashMap<String, String>) -> bool {
+    _parameters_with_filter(state, params, None)
 }
 
 #[cfg(test)]
@@ -53,9 +91,9 @@ mod tests {
         let mut state = CompletionState::new();
         state.params.prefix = "HOM".into();
         let mut params = HashMap::new();
-        params.insert("HOME".into(), "/root".into());
-        params.insert("HOST".into(), "x".into());
-        params.insert("USER".into(), "wizard".into());
+        params.insert("HOME".into(), "scalar".into());
+        params.insert("HOST".into(), "scalar".into());
+        params.insert("USER".into(), "scalar".into());
         let ok = _parameters(&mut state, &params);
         assert!(ok);
         let names: Vec<&str> = state.groups[0]
@@ -63,15 +101,15 @@ mod tests {
             .iter()
             .map(|c| c.str_.as_str())
             .collect();
-        assert_eq!(names, vec!["HOME"], "HOST also starts with HO but not HOM; USER not in prefix");
+        assert_eq!(names, vec!["HOME"]);
     }
 
     #[test]
     fn empty_prefix_emits_all_keys() {
         let mut state = CompletionState::new();
         let mut params = HashMap::new();
-        params.insert("A".into(), "1".into());
-        params.insert("B".into(), "2".into());
+        params.insert("A".into(), "scalar".into());
+        params.insert("B".into(), "array".into());
         let ok = _parameters(&mut state, &params);
         assert!(ok);
         assert_eq!(state.groups[0].matches.len(), 2);
@@ -82,7 +120,41 @@ mod tests {
         let mut state = CompletionState::new();
         state.params.prefix = "ZZZ".into();
         let mut params = HashMap::new();
-        params.insert("HOME".into(), "/root".into());
+        params.insert("HOME".into(), "scalar".into());
         assert!(!_parameters(&mut state, &params));
+    }
+
+    #[test]
+    fn type_filter_array_excludes_scalars() {
+        let mut state = CompletionState::new();
+        let mut params = HashMap::new();
+        params.insert("PATH_ARR".into(), "array".into());
+        params.insert("PATH_STR".into(), "scalar".into());
+        params.insert("PATH_HASH".into(), "association".into());
+        let ok = _parameters_with_filter(&mut state, &params, Some("array"));
+        assert!(ok);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names, vec!["PATH_ARR"]);
+    }
+
+    #[test]
+    fn type_filter_glob_pattern() {
+        let mut state = CompletionState::new();
+        let mut params = HashMap::new();
+        params.insert("RO_SCAL".into(), "readonly-scalar".into());
+        params.insert("RW_SCAL".into(), "scalar".into());
+        // `readonly*` matches `readonly-scalar` but not `scalar`.
+        let ok = _parameters_with_filter(&mut state, &params, Some("readonly*"));
+        assert!(ok);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names, vec!["RO_SCAL"]);
     }
 }
