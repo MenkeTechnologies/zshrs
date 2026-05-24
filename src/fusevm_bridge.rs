@@ -2850,6 +2850,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Mirror to the file-static `lineno` (utils.c:121) that
         // zerrmsg reads at utils.c:301 for the `:N: msg` prefix.
         crate::ported::utils::set_lineno(n as i32);
+        // DAP hook — checks breakpoints / step mode / pause-request
+        // for the line we just landed on. O(1) no-op when DAP is off
+        // (single atomic load on a OnceLock). Inside `--dap` mode
+        // this is the call that blocks the executor on a Condvar
+        // until the IDE sends `continue`. Mirrors strykelang's
+        // `debugger.should_stop(line) → debugger.prompt(...)` flow.
+        crate::extensions::dap::check_line(n as u32);
         Value::Status(0)
     });
 
