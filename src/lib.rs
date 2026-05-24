@@ -209,6 +209,8 @@ pub mod zsh_builtin_docs;
 pub mod zsh_keyword_docs;
 #[path = "extensions/zsh_special_var_docs.rs"]
 pub mod zsh_special_var_docs;
+#[path = "extensions/zsh_ext_builtin_docs.rs"]
+pub mod zsh_ext_builtin_docs;
 // Backwards-compat re-export so `crate::rlimits::…` keeps resolving.
 pub use builtins::rlimits;
 

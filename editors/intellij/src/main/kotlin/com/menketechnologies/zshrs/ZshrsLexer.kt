@@ -114,6 +114,22 @@ class ZshrsLexer : LexerBase() {
             c == '?' && peek(1) == '=' -> emit(2, ZshrsTokenTypes.ASSIGN_OP)
             c.isDigit() -> consumeNumber()
             c == '_' || c.isLetter() -> consumeWord()
+            // zsh permits leading `.` / `+` / `@` in function / command
+            // names — zinit liberally uses `.zinit-foo` / `+vi-…` /
+            // `@hook-fn` for its private functions. Treat them as
+            // identifier-start when the next char is a word char so
+            // `.zinit-load` lexes as one IDENTIFIER instead of
+            // OPERATOR + IDENTIFIER + … (which made `do`/`load`/etc.
+            // mid-name get mis-highlighted as keywords).
+            // zsh permits `.zinit-foo` / `+vi-mode` / `@hook-fn` / `:foo`
+            // / `^foo` as identifier-start. Per `Src/utils.c::inittyptab`,
+            // `.` and `-` are explicitly in IUSER; function names accept
+            // anything that isn't a metachar. The conservative set used
+            // here covers every convention seen in real plugins (zinit,
+            // p10k, oh-my-zsh, zsh-syntax-highlighting).
+            (c == '.' || c == '+' || c == '@' || c == ':' || c == '^') &&
+                peek(1).let { it == '_' || it.isLetter() } ->
+                consumeWord()
             isOperatorChar(c) -> emit(1, ZshrsTokenTypes.OPERATOR)
             else -> emit(1, TokenType.BAD_CHARACTER)
         }
@@ -389,6 +405,21 @@ class ZshrsLexer : LexerBase() {
 
     private fun consumeWord() {
         var p = pos
+        // Leading zsh-extended sigils: `.zinit-foo` / `+vi-mode` /
+        // `@hook-fn`. The dispatcher in `advance()` only routes here
+        // when the next char is a word char, so consuming the sigil
+        // unconditionally here advances past it without re-checking.
+        // (Skipping this step would leave `p == pos` and the outer
+        // `advance()` loop would re-fire on the same byte → OOM.)
+        if (p < endOffset) {
+            val c0 = buf[p]
+            if ((c0 == '.' || c0 == '+' || c0 == '@' || c0 == ':' || c0 == '^')
+                && p + 1 < endOffset
+                && (buf[p + 1] == '_' || buf[p + 1].isLetter())
+            ) {
+                p++
+            }
+        }
         while (p < endOffset) {
             val c = buf[p]
             if (c == '_' || c.isLetterOrDigit()) {

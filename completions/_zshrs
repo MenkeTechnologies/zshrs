@@ -5,11 +5,32 @@ typeset -A opt_args
 
 [[ $CURRENT = 2 ]] && not=''
 
-# `_zshrs_doc_names` enumerates every LSP-known canonical name
-# (builtins / keywords / options / specials / compsys / extensions)
-# via `zshrs --names`. Cached in a static array within the shell
-# session so repeated tab presses don't re-spawn the binary.
-(( ${+_zshrs_doc_names_cache} )) || _zshrs_doc_names_cache=( ${(f)"$(command zshrs --names 2>/dev/null)"} )
+# Per-session cache of every LSP-known canonical name (builtins /
+# keywords / options / specials / compsys / extensions / operators).
+# Three layered sources (first hit wins):
+#   1. `$ZSHRS_LSP_WORDS_FILE` env override — for power-users who keep
+#      a custom word-list at a known path.
+#   2. The committed static snapshot at the completions dir's sibling
+#      `lsp_completion_words.txt` — mirrors stryke's same-named file;
+#      regenerate with `scripts/gen_lsp_completion_words.sh`.
+#   3. Dynamic `zshrs --names` fallback for fresh checkouts where the
+#      snapshot hasn't been generated yet (spawns the binary once
+#      per shell session — ~30 ms cold).
+if (( ! ${+_zshrs_doc_names_cache} )); then
+    _zshrs_doc_names_cache=()
+    local _zshrs_words_file
+    if [[ -n "${ZSHRS_LSP_WORDS_FILE:-}" && -r "$ZSHRS_LSP_WORDS_FILE" ]]; then
+        _zshrs_words_file="$ZSHRS_LSP_WORDS_FILE"
+    else
+        # Resolve the path relative to this completer file (`$0`).
+        _zshrs_words_file="${${(%):-%x}:A:h}/lsp_completion_words.txt"
+    fi
+    if [[ -r "$_zshrs_words_file" ]]; then
+        _zshrs_doc_names_cache=( ${(f)"$(<$_zshrs_words_file)"} )
+    else
+        _zshrs_doc_names_cache=( ${(f)"$(command zshrs --names 2>/dev/null)"} )
+    fi
+fi
 
 _arguments -S -s : \
   ${not}'--emulate[specify emulation mode]:mode:(zsh sh ksh csh)' \
