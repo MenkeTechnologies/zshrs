@@ -20,7 +20,7 @@ use crate::ported::zsh_h::{features, module};
 use std::sync::{Mutex, OnceLock};
 use crate::DPUTS;
 use crate::options::{opt_state_get, opt_state_set, optlookup};
-use crate::ported::params::{setiparam, setsparam};
+use crate::ported::params::{setaparam, setiparam, setsparam};
 use crate::ported::utils::zwarnnam;
 use crate::zsh_h::isset;
 /// `ZREGEX_EXTENDED` from `Src/Modules/regex.c:36`.
@@ -176,10 +176,15 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
                 }
             }
         }
-        // c:182-184 — `setaparam("match"/"mbegin"/"mend", ...);`
-        setsparam("match", &arr.join(":"));
-        setsparam("mbegin", &mbegin_arr.join(":"));
-        setsparam("mend", &mend_arr.join(":"));
+        // c:182-184 — `setaparam("match"/"mbegin"/"mend", ...);` —
+        // ARRAY set, not scalar-colon-join. C uses setaparam so the
+        // captures become a real array readable as `$match[1]`,
+        // `$match[2]`, etc.; setsparam joined them into a single
+        // scalar so `$match[1]` returned the FIRST CHAR of the
+        // joined string instead of the first capture group.
+        setaparam("match", arr.clone());
+        setaparam("mbegin", mbegin_arr);
+        setaparam("mend", mend_arr);
     }
 
     return_value // c:200

@@ -16,8 +16,9 @@ use crate::ported::builtin::LASTVAL;
 use crate::ported::signals::unqueue_signals;
 use crate::ported::string::dyncat;
 use crate::ported::utils::{zerr, errflag, init_dirsav, lchdir, restoredir};
-#[allow(unused_imports)]
-use crate::ported::vm_helper::{self};
+// `vm_helper` import removed — ShellExecutor reach-in routed through
+// `crate::ported::exec_hooks` fn-ptrs (see memory
+// feedback_no_exec_script_from_ported).
 use crate::ported::zsh_h::{isset, redir, Bnull, Bnullkeep, Dnull, Inang, Nularg, Outang, Pound, Snull, BAREGLOBQUAL, BRACECCL, CASEGLOB, ERRFLAG_INT, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT, IS_DASH, LISTTYPES, MARKDIRS, Meta, MULTIOS, NULLGLOB, NUMERICGLOBSORT, PP_UNKWN, PREFORK_SINGLE, REDIR_CLOSE, REDIR_ERRWRITE, REDIR_MERGEIN, REDIR_MERGEOUT, SHGLOB, SUB_ALL, SUB_END, SUB_GLOBAL, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_START, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST};
 use std::sync::atomic::Ordering;
 use std::collections::HashSet;
@@ -2587,11 +2588,11 @@ pub fn qualsheval(filename: &str, expr: &str) -> bool {
                                                 // canonical paramtab so the evaluated expression sees `$REPLY`.
     crate::ported::params::setsparam("REPLY", filename); // c:3916
                                                          // c:3919 — `execode(prog, 1, 0, "globqual");`. Route through the
-                                                         // current ShellExecutor for in-shell evaluation. Falls back to
-                                                         // a fresh executor if no ExecutorContext is active.
-    let mut __exec = vm_helper::ShellExecutor::new();
-    let _ctx = crate::fusevm_bridge::ExecutorContext::enter(&mut __exec);
-    let rc = __exec.execute_script(expr).unwrap_or(1); // c:3919
+                                                         // executor via the exec_hooks fn-ptr installed by
+                                                         // fusevm_bridge at startup. Direct ShellExecutor reach-in
+                                                         // from src/ported/ is forbidden — see memory
+                                                         // feedback_no_exec_script_from_ported.
+    let rc = crate::ported::exec_hooks::execute_script(expr).unwrap_or(1); // c:3919
     let ret = LASTVAL.load(Ordering::Relaxed); // c:3921 ret = lastval
     let _ = rc;
     // c:3924 — `errflag = ef | (errflag & ERRFLAG_INT);`. Restore
@@ -4117,10 +4118,20 @@ fn sort_matches(state: &mut globdata) {
     // RUST-ONLY
     // Default sort is GS_NAME ascending (c:204 gf_sortlist
     // initial setup). Per-qualifier `o<key>` / `O<key>` overrides.
+    // c:1855-1857 — when gf_nsorts == 0 (no explicit o/O qualifier),
+    // glob.c falls back to GS_NAME (or GS_NONE under shortcircuit).
+    // Mirror that here so a qualifier set carrying ONLY non-sort
+    // qualifiers (`Lk+0`, etc.) still sorts alphabetically.
     let specs: Vec<i32> = state
         .qualifiers
         .as_ref()
-        .map(|q| q.sorts.clone())
+        .map(|q| {
+            if q.sorts.is_empty() {
+                vec![GS_NAME] // c:1856
+            } else {
+                q.sorts.clone()
+            }
+        })
         .unwrap_or_else(|| vec![GS_NAME]);
 
     // GS_NONE marker — caller wants no sort at all.

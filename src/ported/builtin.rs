@@ -3617,17 +3617,10 @@ pub fn bin_typeset(
                             map.insert(k, v); // c:2964 hashtab insert
                         }
                     }
-                    let n_owned = n.to_string();
-                    crate::fusevm_bridge::with_executor(|exec| {
-                        exec.set_assoc(n_owned, map.clone());
-                    });
+                    crate::ported::exec_hooks::set_assoc(n, map.clone());
                 } else {
                     // c:2980-2995 — plain array.
-                    let n_owned = n.to_string();
-                    let elems_owned = elems.clone();
-                    crate::fusevm_bridge::with_executor(|exec| {
-                        exec.set_array(n_owned, elems_owned);
-                    });
+                    crate::ported::exec_hooks::set_array(n, elems.clone());
                 }
                 // c:2510-2520 — `on = pm->node.flags;` then stamp the
                 // attribute bits on the just-assigned param. The
@@ -3805,16 +3798,13 @@ pub fn bin_typeset(
         } else if is_hashed || is_array {
             // c:3060-3070 — bare name + `-A`/`-a` declares an empty
             // assoc/array.
-            let n_owned = arg.clone();
-            crate::fusevm_bridge::with_executor(|exec| {
-                if is_hashed {
-                    if exec.assoc(&n_owned).is_none() {
-                        exec.set_assoc(n_owned.clone(), IndexMap::new());
-                    }
-                } else if exec.array(&n_owned).is_none() {
-                    exec.set_array(n_owned.clone(), Vec::new());
+            if is_hashed {
+                if crate::ported::exec_hooks::assoc(arg).is_none() {
+                    crate::ported::exec_hooks::set_assoc(arg, IndexMap::new());
                 }
-            });
+            } else if crate::ported::exec_hooks::array(arg).is_none() {
+                crate::ported::exec_hooks::set_array(arg, Vec::new());
+            }
             // c:Src/params.c:4087 arrsetfn — when PM_UNIQUE is set on
             // an existing array, the canonical setfn applies
             // `uniqarray()` to the current contents. `typeset -aU arr`
@@ -3822,10 +3812,7 @@ pub fn bin_typeset(
             // the flag stamp lands on pm.flags but the value stays
             // un-deduped until the next assignment.
             if is_array && (on as u32 & PM_UNIQUE) != 0 {
-                let n_clone = arg.clone();
-                let current = crate::fusevm_bridge::with_executor(|exec| {
-                    exec.array(&n_clone).unwrap_or_default()
-                });
+                let current = crate::ported::exec_hooks::array(arg).unwrap_or_default();
                 // simple_arrayuniq is the in-place dedupe used by
                 // params.rs arrsetfn (PM_UNIQUE path).
                 let deduped = {
@@ -3835,9 +3822,7 @@ pub fn bin_typeset(
                         .filter(|x| seen.insert(x.clone()))
                         .collect::<Vec<_>>()
                 };
-                crate::fusevm_bridge::with_executor(|exec| {
-                    exec.set_array(n_clone.clone(), deduped);
-                });
+                crate::ported::exec_hooks::set_array(arg, deduped);
             }
             // Stamp attribute bits on paramtab entry — same set as
             // the `name=value` post-assign mask.
@@ -5115,37 +5100,28 @@ pub fn bin_unset(
         match subscript {
             // c:3886
             Some(key) => {
-                let nm_owned = nm.to_string();
-                let key_owned = key.to_string();
-                crate::fusevm_bridge::with_executor(|exec| {
-                    // c:3893 assoc subscript: `m[key]` delete.
-                    if let Some(mut map) = exec.assoc(&nm_owned) {
-                        map.shift_remove(&key_owned); // c:3893
-                        exec.set_assoc(nm_owned.clone(), map);
-                    } else if let Some(mut arr) = exec.array(&nm_owned) {
-                        // c:3895 array subscript: `arr[N]` set to empty.
-                        if let Ok(i) = key_owned.parse::<i32>() {
-                            let idx = if i > 0 {
-                                (i - 1) as usize
-                            } else {
-                                return;
-                            };
+                // c:3893 assoc subscript: `m[key]` delete.
+                if let Some(mut map) = crate::ported::exec_hooks::assoc(nm) {
+                    map.shift_remove(key); // c:3893
+                    crate::ported::exec_hooks::set_assoc(nm, map);
+                } else if let Some(mut arr) = crate::ported::exec_hooks::array(nm) {
+                    // c:3895 array subscript: `arr[N]` set to empty.
+                    if let Ok(i) = key.parse::<i32>() {
+                        if i > 0 {
+                            let idx = (i - 1) as usize;
                             if idx < arr.len() {
                                 arr[idx] = String::new();
-                                exec.set_array(nm_owned.clone(), arr);
+                                crate::ported::exec_hooks::set_array(nm, arr);
                             }
                         }
                     }
-                });
+                }
             }
             None => {
                 // c:3900-3905 — whole-param unset.
-                let nm_owned = nm.to_string();
-                crate::fusevm_bridge::with_executor(|exec| {
-                    exec.unset_scalar(&nm_owned);
-                    exec.unset_array(&nm_owned);
-                    exec.unset_assoc(&nm_owned);
-                });
+                crate::ported::exec_hooks::unset_scalar(nm);
+                crate::ported::exec_hooks::unset_array(nm);
+                crate::ported::exec_hooks::unset_assoc(nm);
                 let _ = paramtab()
                     .write()
                     .ok()
@@ -6055,18 +6031,13 @@ pub fn bin_unhash(
                     .map(|mut g| g.remove(nm).is_some())
                     .unwrap_or(false);
                 // Also remove from the executor's compiled-function /
-                // source maps (vm_helper::ShellExecutor::functions_compiled
-                // and function_source). Without this, `unset -f f`
-                // cleared shfunctab but dispatch_function_call still
-                // found the compiled chunk and ran the old body.
-                // dispatch hits compiled FIRST (vm_helper.rs:1612), so
-                // removing from shfunctab alone left the function
-                // callable.
-                let from_exec = crate::fusevm_bridge::with_executor(|exec| {
-                    let a = exec.functions_compiled.remove(nm).is_some();
-                    let b = exec.function_source.remove(nm).is_some();
-                    a || b
-                });
+                // source maps. Without this, `unset -f f` cleared
+                // shfunctab but dispatch_function_call still found the
+                // compiled chunk and ran the old body. Routed via the
+                // exec_hooks unregister_function fn-ptr installed by
+                // fusevm_bridge at startup (no ShellExecutor reach-in
+                // from src/ported/).
+                let from_exec = crate::ported::exec_hooks::unregister_function(nm);
                 from_tab || from_exec
             }
             // c:4405 — `if ((hn = ht->removenode(ht, *argv)))`.
@@ -7602,7 +7573,7 @@ pub fn bin_dot(
     let result = match fs::read_to_string(&path) {
         // c:6140
         Ok(src) => {
-            crate::fusevm_bridge::with_executor(|exec| exec.execute_script(&src).unwrap_or(1))
+            crate::ported::exec_hooks::execute_script(&src).unwrap_or(1)
         }
         // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
         Err(_) => 128 - 2,
@@ -7718,9 +7689,7 @@ pub fn eval(argv: &[String]) -> i32 {
             // flowing to the caller (no capture) which is what eval
             // wants. Same routing the eval-via-execstring path uses
             // (vm_helper.rs:1518 EXIT-trap fire).
-            let _ = crate::fusevm_bridge::with_executor(|exec| {
-                exec.execute_script_zsh_pipeline(&joined)
-            });
+            let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(&joined);
             // c:6211-6212 — `if (errflag && !lastval) lastval = errflag;`
             let ef = errflag.load(Relaxed);
             let lv = LASTVAL.load(Relaxed);
@@ -10922,49 +10891,13 @@ fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
 pub use crate::ported::exec::findcmd;
 use crate::ported::signals_h::run_queued_signals;
 
-/// Port of `getsigidx(const char *s)` from Src/signals.c — return signal number for
-/// a name, or -1 if unknown. Strips optional `SIG` prefix; falls back
-/// to numeric parse.
+/// Port of `getsigidx(const char *s)` from `Src/jobs.c:3047`.
+/// Local wrapper that delegates to the canonical
+/// `crate::ported::jobs::getsigidx` (matching `Src/jobs.c` location).
+/// Returns -1 for unknown so existing builtin.rs call sites (which
+/// use the i32 sentinel) don't need to change.
 fn getsigidx(name: &str) -> i32 {
-    let s = name.strip_prefix("SIG").unwrap_or(name);
-    // Try parse as integer first.
-    if let Ok(n) = s.parse::<i32>() {
-        return n;
-    }
-    // Common signal name → number mapping.
-    match s {
-        "HUP" => 1,
-        "INT" => 2,
-        "QUIT" => 3,
-        "ILL" => 4,
-        "TRAP" => 5,
-        "ABRT" => 6,
-        "FPE" => 8,
-        "KILL" => 9,
-        "USR1" => 10,
-        "SEGV" => 11,
-        "USR2" => 12,
-        "PIPE" => 13,
-        "ALRM" => 14,
-        "TERM" => 15,
-        "CHLD" => 17,
-        "CONT" => 18,
-        "STOP" => 19,
-        "TSTP" => 20,
-        "TTIN" => 21,
-        "TTOU" => 22,
-        "URG" => 23,
-        "XCPU" => 24,
-        "XFSZ" => 25,
-        "VTALRM" => 26,
-        "PROF" => 27,
-        "WINCH" => 28,
-        "IO" => 29,
-        "PWR" => 30,
-        "SYS" => 31,
-        "EXIT" => 0,
-        _ => -1,
-    }
+    crate::ported::jobs::getsigidx(name).unwrap_or(-1)
 }
 
 /// Port of `int pat_enables(const char *cmd, char **patp, int enable)`

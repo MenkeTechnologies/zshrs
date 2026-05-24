@@ -2527,13 +2527,11 @@ pub fn bin_zparseopts(
 
     // Phase 3: source params (c:1955-1959).
     let params_src = paramsname.clone().unwrap_or_else(|| "argv".to_string());
-    let mut params: Vec<String> = crate::fusevm_bridge::with_executor(|exec| {
-        if params_src == "argv" {
-            exec.pparams()
-        } else {
-            exec.array(&params_src).unwrap_or_default()
-        }
-    });
+    let mut params: Vec<String> = if params_src == "argv" {
+        crate::ported::exec_hooks::pparams()
+    } else {
+        crate::ported::exec_hooks::array(&params_src).unwrap_or_default()
+    };
 
     // Phase 4: walk params (c:1961-2060).
     let mut new_params: Vec<String> = Vec::new(); // -E -D rebuild
@@ -2767,9 +2765,7 @@ pub fn bin_zparseopts(
     // c:2124-2131 — write back consumed argv when -D was given.
     if del {
         if params_src == "argv" {
-            crate::fusevm_bridge::with_executor(|exec| {
-                exec.set_pparams(new_params.clone());
-            });
+            crate::ported::exec_hooks::set_pparams(new_params.clone());
             if let Ok(mut pp) = PPARAMS.lock() {
                 *pp = new_params;
             }

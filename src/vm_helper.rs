@@ -241,7 +241,8 @@ pub struct SubshellSnapshot {
     /// continues. Without this snapshot, the trap inherited from parent
     /// would fire, OR a trap set inside the subshell would leak to the
     /// parent's process exit. Restored on subshell_end after the
-    /// subshell's own EXIT trap (if any) has fired.
+    /// subshell's own EXIT trap (if any) has fired. Stores a snapshot
+    /// of `crate::ported::builtin::traps_table()` (canonical).
     pub traps: HashMap<String, String>,
 }
 
@@ -326,7 +327,6 @@ pub struct ShellExecutor {
     /// from the persistent disk history total.
     pub session_histnum: i64,
     pub(crate) process_sub_counter: u32,
-    pub traps: HashMap<String, String>,
     // `options` field deleted — dup of canonical `OPTS_LIVE` in
     // `src/ported/options.rs:1112`. Callers route through
     // `opt_state_get`/`opt_state_set`/`opt_state_unset`/`opt_state_snapshot`.
@@ -1015,7 +1015,6 @@ impl ShellExecutor {
             session_histnum: 0,
             completions: HashMap::new(),
             process_sub_counter: 0,
-            traps: HashMap::new(),
             // zsh completion system
             comp_matches: Vec::new(),
             comp_groups: Vec::new(),
@@ -1261,14 +1260,22 @@ impl ShellExecutor {
                         });
                         tab.insert(entry.name.to_string(), pm);
                     }
-                    // Tied partner side. For PATH ↔ path, FPATH ↔ fpath, etc.
-                    // C zsh IPDEF9 stamps PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT|PM_TIED.
-                    if let Some(tied) = entry.tied_name {
-                        if let Some(pm) = tab.get_mut(tied) {
-                            let partner_bits = PM_ARRAY | PM_SPECIAL | PM_DONTIMPORT | PM_TIED;
-                            pm.node.flags |= partner_bits as i32;
-                        }
-                    }
+                    // Tied partner side. The previous loop body ORed
+                    // PM_ARRAY|PM_SPECIAL|PM_DONTIMPORT|PM_TIED onto the
+                    // partner indiscriminately, but for a SCALAR ↔
+                    // ARRAY tied pair (PATH ↔ path, FIGNORE ↔ fignore),
+                    // that incorrectly stamped PM_ARRAY onto the scalar
+                    // partner (FIGNORE, PATH, FPATH, MAILPATH, MANPATH,
+                    // PSVAR, CDPATH, MODULE_PATH). Result: `(t)PATH`
+                    // returned `array-tied-export-special` instead of
+                    // `scalar-tied-export-special`.
+                    //
+                    // Both partners are already listed in `special_params`
+                    // (the scalar at the IPDEF8 block, the array at the
+                    // IPDEF9 block past the sentinel), so each gets its
+                    // own pass through this loop and ends up with the
+                    // correct flags. No cross-stamping needed.
+                    let _ = entry.tied_name;
                 }
             }
         }
@@ -1394,8 +1401,11 @@ impl ShellExecutor {
             .to_string();
 
         // Try bytecode cache first — rkyv shard at ~/.zshrs/scripts.rkyv.
-        // The cache validates path + mtime + zshrs binary mtime; on any miss
-        // we fall through to lex/parse/compile.
+        // The cache validates path + mtime + zshrs binary mtime; on any
+        // miss we fall through to lex/parse/compile. Cached path uses
+        // `run_chunk` (the shared VM-execution helper); script-eval
+        // path delegates to `execute_script_zsh_pipeline` so the
+        // full parse/compile/cache-save/run flow stays in one place.
         if let Some(bc_blob) = crate::script_cache::try_load_bytes(path) {
             if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
                 if !chunk.ops.is_empty() {
@@ -1404,82 +1414,70 @@ impl ShellExecutor {
                         ops = chunk.ops.len(),
                         "execute_script_file: bytecode cache hit"
                     );
-                    crate::fusevm_disasm::maybe_print_stdout(
+                    return self.run_chunk(
+                        chunk,
                         &format!("execute_script_file:cache:{abs_path}"),
-                        &chunk,
                     );
-                    let mut vm = fusevm::VM::new(chunk);
-                    register_builtins(&mut vm);
-                    let _ctx = ExecutorContext::enter(self);
-                    match vm.run() {
-                        fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                            self.set_last_status(vm.last_status);
-                        }
-                        fusevm::VMResult::Error(e) => {
-                            return Err(format!("VM error: {}", e));
-                        }
-                    }
-                    return Ok(self.last_status());
                 }
             }
         }
 
-        // Cache miss — read, parse, compile, execute, then cache.
-        // No history expansion: zsh fires `!` history sub only on
-        // interactive input (the REPL line). Sourced files are
-        // verbatim — `(( !${#ARR} ))` (logical-not) must NOT
-        // become `(( <last-arg-of-prev-cmd>{#ARR} ))`. Direct port
-        // of Src/init.c source() which calls `lex_init_buf` /
-        // `loop()` without engaging the history layer.
+        // Cache miss — read, parse, compile via execute_script_zsh_pipeline,
+        // then snapshot the resulting chunk into the cache for next
+        // time. Direct port of Src/init.c source() which calls
+        // `lex_init_buf` / `loop()` without engaging the history layer.
+        // (zsh fires `!` history sub only on interactive input, so
+        // sourced files run verbatim.)
         let content =
             fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
-        // Save & clear errflag around the parse so we can detect a
-        // fresh syntax error vs an inherited one. Direct port of
-        // Src/init.c source()'s `errflag &= ~ERRFLAG_ERROR;` before
-        // `parse_event(ENDINPUT)` and the post-parse errflag check.
+        let status = self.execute_script_zsh_pipeline(&content)?;
+
+        // Best-effort cache save — failures don't block execution.
+        // Re-parse/-compile here instead of trying to thread the chunk
+        // back out of execute_script_zsh_pipeline; the cost is one extra
+        // compile per CACHE MISS, paid back on every subsequent run.
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
         crate::ported::parse::parse_init(&content);
         let program = crate::ported::parse::parse();
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
-        if parse_failed {
-            return Err("parse error".to_string());
-        }
-
-        let compiler = crate::compile_zsh::ZshCompiler::new();
-        let chunk = compiler.compile(&program);
-
-        // Cache the bytecode for next time. Best-effort — failures don't
-        // block execution since the chunk is already in hand.
-        if let Ok(blob) = bincode::serialize(&chunk) {
-            let _ = crate::script_cache::try_save_bytes(path, &blob);
-            tracing::trace!(
-                path = %abs_path,
-                bytes = blob.len(),
-                "execute_script_file: bytecode cached"
-            );
-        }
-
-        // Execute
-        if !chunk.ops.is_empty() {
-            crate::fusevm_disasm::maybe_print_stdout(
-                &format!("execute_script_file:compile:{abs_path}"),
-                &chunk,
-            );
-            let mut vm = fusevm::VM::new(chunk);
-            register_builtins(&mut vm);
-            let _ctx = ExecutorContext::enter(self);
-            match vm.run() {
-                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                    self.set_last_status(vm.last_status);
-                }
-                fusevm::VMResult::Error(e) => {
-                    return Err(format!("VM error: {}", e));
-                }
+        if !parse_failed {
+            let compiler = crate::compile_zsh::ZshCompiler::new();
+            let chunk = compiler.compile(&program);
+            if let Ok(blob) = bincode::serialize(&chunk) {
+                let _ = crate::script_cache::try_save_bytes(path, &blob);
+                tracing::trace!(
+                    path = %abs_path,
+                    bytes = blob.len(),
+                    "execute_script_file: bytecode cached"
+                );
             }
         }
 
+        Ok(status)
+    }
+
+    /// Run a compiled `fusevm::Chunk` to completion inside this
+    /// executor's context. Shared by `execute_script_zsh_pipeline`,
+    /// `execute_script_file`'s bytecode-cache hit path, and the
+    /// function-dispatch body_runner. Centralises the VM setup so
+    /// `register_builtins` and `ExecutorContext::enter` invariants
+    /// stay in lockstep.
+    fn run_chunk(&mut self, chunk: fusevm::Chunk, label: &str) -> Result<i32, String> {
+        if chunk.ops.is_empty() {
+            return Ok(self.last_status());
+        }
+        crate::fusevm_disasm::maybe_print_stdout(label, &chunk);
+        let mut vm = fusevm::VM::new(chunk);
+        register_builtins(&mut vm);
+        let _ctx = ExecutorContext::enter(self);
+        match vm.run() {
+            fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                self.set_last_status(vm.last_status);
+            }
+            fusevm::VMResult::Error(e) => return Err(format!("VM error: {}", e)),
+        }
         Ok(self.last_status())
     }
 
@@ -1507,31 +1505,21 @@ impl ShellExecutor {
 
         let compiler = crate::compile_zsh::ZshCompiler::new();
         let chunk = compiler.compile(&program);
+        let status = self.run_chunk(chunk, "execute_script_zsh_pipeline")?;
 
-        if chunk.ops.is_empty() {
-            return Ok(self.last_status());
-        }
-
-        crate::fusevm_disasm::maybe_print_stdout("execute_script_zsh_pipeline", &chunk);
-        let mut vm = fusevm::VM::new(chunk);
-        register_builtins(&mut vm);
-        {
-            let _ctx = ExecutorContext::enter(self);
-            match vm.run() {
-                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                    self.set_last_status(vm.last_status);
-                }
-                fusevm::VMResult::Error(e) => return Err(format!("VM error: {}", e)),
-            }
-        }
-
-        // Fire EXIT trap if set. Same logic as execute_script's old path:
-        // remove first to prevent infinite recursion, then run.
-        if let Some(action) = self.traps.remove("EXIT") {
+        // Fire EXIT trap if set. Remove first to prevent infinite
+        // recursion, then run. Reads from canonical traps_table —
+        // `bin_trap` writes (`Src/builtin.c`).
+        let exit_body = crate::ported::builtin::traps_table()
+            .lock()
+            .ok()
+            .and_then(|mut t| t.remove("EXIT"));
+        if let Some(action) = exit_body {
             tracing::debug!("firing EXIT trap (new pipeline)");
             let _ = self.execute_script_zsh_pipeline(&action);
         }
 
+        let _ = status;
         Ok(self.last_status())
     }
 
@@ -1582,28 +1570,22 @@ impl ShellExecutor {
         set.into_iter().collect()
     }
 
-    /// Dispatch a function by name through the new (compiled) pipeline.
-    /// Mirrors `ZshrsHost::call_function`'s resolution order — checks
-    /// `functions_compiled` first, triggers autoload if needed, then falls
-    /// back to the legacy AST recompile path. Returns `None` if the name
-    /// isn't a function (caller falls back to external dispatch).
+    /// Dispatch a function by name. Thin passthru — autoload-materialize
+    /// the body if needed, build a synthetic `shfunc`, and hand off to
+    /// the canonical `doshfunc` port (`Src/exec.c:5823` →
+    /// `src/ported/exec.rs::doshfunc`). doshfunc owns ALL scope
+    /// management (starttrapscope/endtrapscope, startparamscope/
+    /// endparamscope, funcdepth bump, pipestats save/restore, scriptname
+    /// snapshot, BREAKS/CONTFLAG/LOOPS/RETFLAG snapshot+restore, `$0`
+    /// override via FUNCTIONARGZERO, etc.). The body run itself is the
+    /// Rust-only adaptation passed via the `body_runner` closure because
+    /// zshrs runs function bodies through fusevm bytecode (not C zsh's
+    /// wordcode walker via `runshfunc`).
     ///
-    /// This is the synchronous-side replacement for the legacy
-    /// `call_function(&ShellCommand, args)`. It avoids the AST detour when
-    /// the new pipeline already has a Chunk for the function.
+    /// Returns `None` when the name isn't a known function so the caller
+    /// can fall through to external dispatch.
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
-        // Autoload prelude: if `name` isn't yet compiled but exists as
-        // a PM_UNDEFINED stub in shfunctab (registered by `autoload`
-        // builtin via `add_autoload_function` at builtin.rs:3654),
-        // materialize it via `loadautofn_by_name` (exec.rs) which reads
-        // the file from $fpath and stores raw body text on
-        // `shfunctab.body`. Then wrap as `name() { <body> }` and eval
-        // through the standard zsh pipeline — the wrap parses as a
-        // function-def, fusevm emits `BUILTIN_REGISTER_COMPILED_FN`,
-        // and the function lands in `functions_compiled`. This covers
-        // zsh-style autoload (default + `-z`); ksh-style (`-k` /
-        // KSH_AUTOLOAD) would eval the unwrapped body and rely on the
-        // file to define+call the function itself — TODO once needed.
+        // Autoload prelude: PM_UNDEFINED stub → loadautofn → wrap + eval.
         if !self.functions_compiled.contains_key(name) {
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
@@ -1624,9 +1606,9 @@ impl ShellExecutor {
         }
         let chunk = self.functions_compiled.get(name).cloned()?;
 
-        // FUNCNEST guard — see `call_function` for the lower-than-
-        // zsh ceiling rationale. Cap at 100 by default (matches
-        // call_function's ceiling).
+        // zshrs-specific bookkeeping that doshfunc doesn't own:
+        // - prompt_funcstack (PS4 trace) push/pop
+        // - local_scope_depth FUNCNEST guard
         let funcnest_limit: usize = self
             .scalar("FUNCNEST")
             .and_then(|s| s.parse().ok())
@@ -1638,60 +1620,69 @@ impl ShellExecutor {
             );
             return Some(1);
         }
-        // Save and replace positional params + local-scope save/restore,
-        // mirroring the legacy `call_function(&ShellCommand, args)` and
-        // ZshrsHost::call_function.
-        let saved_params = self.pparams();
-        self.set_pparams(args.to_vec());
-        // FUNCTION_ARGZERO: zsh sets `\$0` inside a function to the
-        // function name (default-on option). The bytecode-level
-        // call_function path already does this; the dispatch path
-        // used by dynamic-command-name dispatch (`f=hook; \$f`)
-        // didn't, so plugin code reading `\$0` saw the binary path
-        // instead. Save and install the function name; restore on
-        // exit. Anonymous functions get the cosmetic `(anon)` per
-        // call_function above.
         let display_name = if name.starts_with("_zshrs_anon_") {
             "(anon)".to_string()
         } else {
             name.to_string()
         };
-        let saved_zero = getsparam("0");
-        self.set_scalar("0".to_string(), display_name);
-        self.local_scope_depth += 1;
-        // c:Src/exec.c doshfunc startparamscope(): bump canonical
-        // `locallevel` so any `local`/`typeset` inside the body
-        // installs Params at the correct scope. endparamscope at
-        // exit decrements + restores Param.old chain.
-        locallevel.fetch_add(1, Ordering::Relaxed);
         let line_base = self.function_line_base.get(name).copied().unwrap_or(0);
         let def_file = self.function_def_file.get(name).cloned().flatten();
         self.prompt_funcstack
             .push((name.to_string(), line_base, def_file));
+        self.local_scope_depth += 1;
+
+        // Synthetic shfunc for doshfunc — carries the name + def-file
+        // info so funcstack push gets a proper filename. funcdef/body
+        // stay None because the wordcode body is irrelevant on this
+        // path (body_runner runs the fusevm Chunk directly).
+        let mut synth_shf = crate::ported::zsh_h::shfunc {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: display_name.clone(),
+                flags: 0,
+            },
+            filename: self.function_def_file.get(name).cloned().flatten(),
+            lineno: self.function_line_base.get(name).copied().unwrap_or(0) as i64,
+            funcdef: None,
+            redir: None,
+            sticky: None,
+            body: None,
+        };
+        // doshargs: C convention — argv[0] = function name (for
+        // FUNCTIONARGZERO `$0`), argv[1..] = real positional args.
+        let mut doshargs: Vec<String> = vec![display_name.clone()];
+        doshargs.extend(args.iter().cloned());
 
         crate::fusevm_disasm::maybe_print_stdout(&format!("function:{name}"), &chunk);
-        let mut vm = fusevm::VM::new(chunk);
-        register_builtins(&mut vm);
+        let chunk_for_run = chunk.clone();
+        // Seed `$?` with the parent's last status — C zsh's
+        // doshfunc inherits lastval automatically because it's a
+        // process-global; the fusevm VM creates a fresh
+        // `vm.last_status = 0` per call, so we mirror the inherit
+        // explicitly. Without this, a function reading `$?` BEFORE
+        // running any command sees 0 instead of the caller's status.
+        let seed_status = self.last_status();
+        let body_runner = move || -> i32 {
+            let mut vm = fusevm::VM::new(chunk_for_run.clone());
+            register_builtins(&mut vm);
+            vm.last_status = seed_status;
+            let _ = vm.run();
+            vm.last_status
+        };
+
+        // Enter executor context BEFORE doshfunc so the body_runner's
+        // VM builtins can `with_executor(...)` to reach this state.
         let _ctx = ExecutorContext::enter(self);
-        let _ = vm.run();
-        let status = vm.last_status;
+        let status = crate::ported::exec::doshfunc(
+            &mut synth_shf,
+            doshargs,
+            false,
+            body_runner,
+        );
         drop(_ctx);
 
-        self.set_pparams(saved_params);
         self.prompt_funcstack.pop();
-        // c:Src/exec.c doshfunc → endparamscope(). Decrements
-        // canonical locallevel and walks paramtab restoring the
-        // Param.old chain for every entry installed at this depth.
-        endparamscope();
         self.local_scope_depth -= 1;
-        match saved_zero {
-            Some(v) => {
-                self.set_scalar("0".to_string(), v);
-            }
-            None => {
-                self.unset_scalar("0");
-            }
-        }
 
         // Honor explicit `return N` from inside the function body.
         if let Some(ret) = self.returning.take() {
@@ -2287,31 +2278,11 @@ pub(crate) fn emit_path_or_assign(
     }
 }
 
-// Whole impl block is `#[cfg(feature = "recorder")]` so the default
-// build sees no recorder symbols on `ShellExecutor`.
-#[cfg(feature = "recorder")]
-impl ShellExecutor {}
-
-#[cfg(feature = "recorder")]
-impl ShellExecutor {}
-
-impl ShellExecutor {
-    // `add_hook` / `delete_hook` now live in src/extensions/hooks.rs.
-    // That file was orphaned (never declared as a module) and the no-op
-    // stubs that previously sat here silently swallowed every
-    // `add-zsh-hook` registration. Wiring hooks.rs back into lib.rs
-    // restored the real paramtab-backed implementation; the empty
-    // stubs were removed so dispatch resolves unambiguously.
-
-    // ═══════════════════════════════════════════════════════════════════
-    // AOP INTERCEPT — the killer builtin
-    // ═══════════════════════════════════════════════════════════════════
-
-    // ═══════════════════════════════════════════════════════════════════
-    // CONCURRENT PRIMITIVES — ship work to the worker pool from shell
-    // No stryke dependency. Pure zshrs. Thin binary gets full parallelism.
-    // ═══════════════════════════════════════════════════════════════════
-}
+// Empty `impl ShellExecutor` blocks (recorder-feature placeholders +
+// AOP/concurrent-primitives comment markers) deleted. Their bodies
+// migrated out long ago (`add_hook` → src/extensions/hooks.rs;
+// recorder methods → src/recorder/*). The leftover empty braces
+// added line count without behaviour.
 
 impl ShellExecutor {
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2494,17 +2465,21 @@ impl ShellExecutor {
     }
 }
 
-// =====================================================================
-// MOVED FROM: src/ported/signals.rs
-// =====================================================================
-
 impl ShellExecutor {
-    /// Execute trap handlers for a signal
+    /// Execute the trap body for a signal name from the REPL signal
+    /// loop (bins/zshrs.rs CtrlC/CtrlD dispatch). Thin passthru to
+    /// `traps_table` lookup + `execute_script` — kept as a method
+    /// because the REPL loop owns `&mut ShellExecutor` and needs a
+    /// single call point. The async signal-handler dispatch path
+    /// goes through `crate::ported::signals::dotrap` instead.
     pub fn run_trap(&mut self, signal: &str) {
-        if let Some(action) = self.traps.get(signal).cloned() {
-            // Empty action = signal-ignore. Don't try to execute "".
-            if !action.is_empty() {
-                let _ = self.execute_script(&action);
+        let action = crate::ported::builtin::traps_table()
+            .lock()
+            .ok()
+            .and_then(|t| t.get(signal).cloned());
+        if let Some(body) = action {
+            if !body.is_empty() {
+                let _ = self.execute_script(&body);
             }
         }
     }

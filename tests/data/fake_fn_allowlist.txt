@@ -1610,3 +1610,44 @@ dispatch_execfuncs
 # Rust fn pointers can't auto-coerce between sigs.
 list_matches_hook
 invalidate_list_hook
+
+
+# exec_hooks.rs — Rust-only callback fn-ptr registry that lets
+# src/ported/ dispatch to operations owned by `ShellExecutor`
+# (array/assoc storage, script eval, function dispatch, command
+# substitution) WITHOUT taking a direct `ShellExecutor` reference or
+# calling `crate::fusevm_bridge::with_executor` (both forbidden per
+# memory feedback_no_exec_script_from_ported,
+# feedback_no_shellexecutor_in_ported). fusevm_bridge installs each
+# fn-ptr at startup; src/ported/ calls the hook by name. No C analog
+# because C does direct global access (`pparams`, `aliastab->...`)
+# while Rust ownership requires explicit dispatch through a known
+# thread-local or static. Architectural Rust-only.
+install_array_get
+install_assoc_get
+install_array_set
+install_assoc_set
+install_scalar_unset
+install_array_unset
+install_assoc_unset
+install_dispatch_function_call
+install_execute_script
+install_execute_script_zsh_pipeline
+install_run_command_substitution
+install_pparams_get
+install_pparams_set
+install_unregister_function
+array
+assoc
+set_array
+set_assoc
+unset_scalar
+unset_array
+unset_assoc
+dispatch_function_call
+execute_script
+execute_script_zsh_pipeline
+run_command_substitution
+pparams
+set_pparams
+unregister_function

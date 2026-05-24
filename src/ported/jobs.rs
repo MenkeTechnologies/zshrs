@@ -3276,6 +3276,12 @@ pub fn getsigidx(s: &str) -> Option<i32> {
     let s = s.strip_prefix("SIG").unwrap_or(s);
     match s.to_uppercase().as_str() {
         "EXIT" => Some(0),
+        // c:Src/signames.c:62-98 + jobs.c:2761 — zsh-internal virtual
+        // signals: ZERR/DEBUG are SIGCOUNT+1 / SIGCOUNT+2; ERR aliases
+        // ZERR when SIGERR isn't OS-defined (the common POSIX case
+        // since most kernels don't ship a SIGERR signal).
+        "ZERR" | "ERR" => Some(crate::ported::signals_h::SIGZERR),
+        "DEBUG" => Some(crate::ported::signals_h::SIGDEBUG),
         "HUP" => Some(libc::SIGHUP),
         "INT" => Some(libc::SIGINT),
         "QUIT" => Some(libc::SIGQUIT),
@@ -3760,14 +3766,51 @@ pub static PIPESTATS: OnceLock<Mutex<[i32; MAX_PIPESTATS]>> = OnceLock::new();
 /// Default time format (from jobs.c DEFAULT_TIMEFMT)
 pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
 
-/// Wait for a single specific job (from jobs.c waitonejob)
-pub fn waitonejob(job: &mut job) {
-    for proc in &mut job.procs {
-        if proc.is_running() {
-            if let Some(_status) = waitforpid(proc.pid) {
-                // status already updated by waitforpid
-            }
+/// Port of `static void waitonejob(Job jn)` from `Src/jobs.c:1748-1757`.
+///
+/// C body:
+/// ```c
+/// static void waitonejob(Job jn)
+/// {
+///     if (jn->procs || jn->auxprocs)
+///         zwaitjob(jn - jobtab, 0);
+///     else {
+///         deletejob(jn, 0);
+///         pipestats[0] = lastval;
+///         numpipestats = 1;
+///     }
+/// }
+/// ```
+pub fn waitonejob(jn: &mut job) {
+    // c:1750 — `if (jn->procs || jn->auxprocs)`
+    if !jn.procs.is_empty() || !jn.auxprocs.is_empty() {
+        // c:1751 — `zwaitjob(jn - jobtab, 0);` — pass job by reference
+        // (Rust port takes &mut job vs C's jobtab-relative index since
+        // jobs.rs's JOBTAB lookup-by-pointer-arithmetic isn't ported).
+        zwaitjob(jn, 0);
+    } else {
+        // c:1753 — `deletejob(jn, 0);`
+        deletejob(jn, false);
+        // c:1754 — `pipestats[0] = lastval;`
+        let lastval = crate::ported::builtin::LASTVAL
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let p = PIPESTATS.get_or_init(|| Mutex::new([0; MAX_PIPESTATS]));
+        if let Ok(mut pguard) = p.lock() {
+            pguard[0] = lastval; // c:1754
         }
+        // c:1755 — `numpipestats = 1;`
+        let n = NUMPIPESTATS.get_or_init(|| Mutex::new(0));
+        if let Ok(mut nguard) = n.lock() {
+            *nguard = 1; // c:1755
+        }
+        // c:Src/params.c:5232 pipestatus_gsu — `$pipestatus` reads
+        // walk the C `pipestats[]` array. zshrs's paramtab fast-path
+        // reads from `paramtab["pipestatus"]` so mirror the C array
+        // into the param table for visibility.
+        crate::ported::params::setaparam(
+            "pipestatus",
+            vec![lastval.to_string()],
+        );
     }
 }
 

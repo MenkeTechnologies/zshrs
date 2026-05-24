@@ -57,6 +57,7 @@ pub mod builtin;
 pub mod builtins;
 pub mod config_h;
 pub mod exec;
+pub mod exec_hooks;
 pub mod lex;
 pub mod parse;
 pub mod patchlevel;

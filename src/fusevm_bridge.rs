@@ -201,24 +201,87 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         return 1;
     }
     if let Some(status) = try_user_fn_override(name, &args) {
-        // c:Src/jobs.c:1739 `pipestats[0] = lastval; numpipestats = 1;`
-        // Single-command pipestatus update — applies to user-function
-        // dispatch as well as raw builtins below.
-        with_executor(|exec| {
-            exec.set_array("pipestatus".to_string(), vec![status.to_string()]);
-        });
+        // c:Src/jobs.c:1748 waitonejob — canonical single-command
+        // pipestats update via the no-procs else-branch.
+        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
+        let mut synth = crate::ported::zsh_h::job::default();
+        crate::ported::jobs::waitonejob(&mut synth);
         return status;
     }
     let status = dispatch_builtin_raw(name, args);
-    // c:Src/jobs.c:1739 `pipestats[0] = lastval; numpipestats = 1;`
-    with_executor(|exec| {
-        exec.set_array("pipestatus".to_string(), vec![status.to_string()]);
-    });
+    // c:Src/jobs.c:1748 waitonejob — canonical single-command pipestats update.
+    crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
+    let mut synth = crate::ported::zsh_h::job::default();
+    crate::ported::jobs::waitonejob(&mut synth);
     status
+}
+
+/// Install the `crate::ported::exec_hooks` fn-pointer registry so
+/// code under `src/ported/` can dispatch to operations owned by
+/// `ShellExecutor` (array/assoc storage, script eval, function
+/// dispatch, command substitution) WITHOUT a direct executor
+/// reference or `with_executor` call from inside src/ported/.
+///
+/// Idempotent — each hook uses `OnceLock::set`, so calling this
+/// multiple times (once per `ShellExecutor::new`) is safe; the second
+/// and later calls are no-ops.
+///
+/// **Extension** — no C analog. Bridges the Rust-only `src/ported/`
+/// → executor boundary that the user pinned as forbidden via memory
+/// `feedback_no_exec_script_from_ported` /
+/// `feedback_no_shellexecutor_in_ported`.
+pub(crate) fn install_exec_hooks() {
+    use crate::ported::exec_hooks as h;
+    h::install_array_get(|name| with_executor(|exec| exec.array(name)));
+    h::install_assoc_get(|name| with_executor(|exec| exec.assoc(name)));
+    h::install_array_set(|name, val| {
+        with_executor(|exec| exec.set_array(name.to_string(), val));
+    });
+    h::install_assoc_set(|name, val| {
+        with_executor(|exec| exec.set_assoc(name.to_string(), val));
+    });
+    h::install_scalar_unset(|name| {
+        with_executor(|exec| exec.unset_scalar(name));
+    });
+    h::install_array_unset(|name| {
+        with_executor(|exec| exec.unset_array(name));
+    });
+    h::install_assoc_unset(|name| {
+        with_executor(|exec| exec.unset_assoc(name));
+    });
+    h::install_dispatch_function_call(|name, args| {
+        with_executor(|exec| exec.dispatch_function_call(name, args))
+    });
+    h::install_execute_script(|src| {
+        with_executor(|exec| exec.execute_script(src))
+    });
+    h::install_execute_script_zsh_pipeline(|src| {
+        with_executor(|exec| exec.execute_script_zsh_pipeline(src))
+    });
+    h::install_run_command_substitution(|cmd| {
+        with_executor(|exec| exec.run_command_substitution(cmd))
+    });
+    h::install_pparams_get(|| with_executor(|exec| exec.pparams()));
+    h::install_pparams_set(|v| {
+        with_executor(|exec| exec.set_pparams(v));
+    });
+    h::install_unregister_function(|name| {
+        with_executor(|exec| {
+            let a = exec.functions_compiled.remove(name).is_some();
+            let b = exec.function_source.remove(name).is_some();
+            a || b
+        })
+    });
 }
 
 /// Register all zsh builtins with the VM.
 pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
+    // exec_hooks fn-ptrs MUST be installed before any builtin can
+    // reach into src/ported/ code that consults them (e.g.
+    // `BUILTIN_ERREXIT_CHECK` → `dotrap` → `exec_hooks::dispatch_function_call`).
+    // OnceLock makes the call idempotent — repeated invocations from
+    // every `ShellExecutor::new` are no-ops.
+    install_exec_hooks();
     // Macro for builtins that user functions are allowed to shadow.
     // zsh dispatch order is alias → function → builtin; without the
     // try_user_fn_override probe a `cat() { ... }; cat` would silently
@@ -254,17 +317,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(s);
         }
         let status = dispatch_builtin("cd", args);
-        // c:Src/builtin.c:1254-1261 — after cd succeeds, fire the
-        // chpwd hooks: the `chpwd` shfunc itself and every entry in
-        // the `chpwd_functions` array. C calls
-        // `callhookfunc("chpwd", NULL, 1, NULL)` (utils.c:1469).
-        // The port of callhookfunc in utils.rs only detects whether
-        // a fn exists — actual invocation has to go through the
-        // executor's compiled-function dispatch which lives in
-        // vm_helper.rs (outside src/ported/). Inline the C
-        // semantics here at the bridge layer.
+        // c:Src/builtin.c:1258 — `callhookfunc("chpwd", NULL, 1, NULL)`
+        // after cd succeeds. The canonical port at
+        // src/ported/utils.rs:1532 handles both the `chpwd` shfunc
+        // dispatch AND the `chpwd_functions` array walk.
         if status == 0 {
-            run_chpwd_hooks();
+            crate::ported::utils::callhookfunc(
+                "chpwd",
+                None,
+                1,
+                std::ptr::null_mut(),
+            );
         }
         Value::Status(status)
     });
@@ -602,29 +665,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let Some((name, rest)) = post.split_first() else {
             return Value::Status(0);
         };
-        // c:Src/exec.c execcmd_exec — `command` precommand-modifier
-        // skips function/alias lookup but DOES still check special
-        // builtins (set, exec, etc.). For zsh-only builtins like
-        // `print` / `echo` / `[` that ARE both builtin AND external,
-        // zsh runs the external (via $PATH). If only a builtin exists
-        // (no external counterpart), zsh emits "command not found".
-        // Always try external first; fall back to builtin only for
-        // the POSIX special-builtin set.
-        let is_special_builtin = matches!(
-            name.as_str(),
-            "break" | "continue" | "exit" | "return" | "shift" | "set" | "unset"
-            | "export" | "readonly" | "trap" | "wait" | ":" | "." | "source"
-            | "eval" | "exec" | "local" | "typeset"
-        );
+        // c:Src/exec.c:3275-3278 — `execcmd_compile_head` cleared
+        // hn for the BINF_COMMAND + !POSIXBUILTINS case, surfacing
+        // is_builtin=false. Run as external. Under POSIXBUILTINS
+        // dispatch.is_builtin would be true; honour it.
         let n = name.clone();
         let r = rest.to_vec();
-        if is_special_builtin {
-            if crate::ported::builtin::BUILTINS
+        if dispatch.is_builtin
+            && crate::ported::builtin::BUILTINS
                 .iter()
                 .any(|b| b.node.nam == n.as_str())
-            {
-                return Value::Status(dispatch_builtin_raw(&n, r));
-            }
+        {
+            return Value::Status(dispatch_builtin_raw(&n, r));
         }
         Value::Status(
             with_executor(|exec| exec.execute_external(&n, &r, &[])).unwrap_or(127),
@@ -1709,15 +1761,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_assoc(name, map);
                 return;
             }
-            // Indexed-array append `arr+=(d e f)`: C parses this to
-            // an opcode that pre-concats `old + new` BEFORE assigning.
-            // The bridge does the same: read current, extend, write
-            // via canonical setaparam → assignaparam (which handles
-            // PM_UNIQUE dedupe in arrsetfn).
-            let prior = exec.array(&name).unwrap_or_default();
-            let mut merged = prior;
-            merged.extend(values.iter().cloned());
-            let _ = crate::ported::params::setaparam(&name, merged.clone());
+            // Indexed-array append `arr+=(d e f)` — route directly
+            // through canonical assignaparam with ASSPM_AUGMENT
+            // (`Src/params.c:3570-3585` append-on-array branch).
+            // assignaparam reads the prior array internally and
+            // appends the new values, so the bridge no longer needs
+            // to pre-concat manually.
+            let _ = crate::ported::params::assignaparam(
+                &name,
+                values.clone(),
+                crate::ported::zsh_h::ASSPM_AUGMENT,
+            );
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
@@ -1726,9 +1780,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             // Tied-scalar mirror — TODO faithful: should live in
             // setarrvalue's gsu dispatch once boot_ paramtab wiring
-            // lands (Task #16).
+            // lands (Task #16). Re-read the canonical post-augment
+            // array so the joined scalar matches.
             let tied_scalar = exec.tied_array_to_scalar.get(&name).cloned();
             if let Some((scalar_name, sep)) = tied_scalar {
+                let merged = exec.array(&name).unwrap_or_default();
                 let joined = merged.join(&sep);
                 exec.set_scalar(scalar_name.clone(), joined.clone());
                 env::set_var(&scalar_name, &joined);
@@ -1955,17 +2011,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         let body = format!("${{{}[{}]}}", name, idx);
-        let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            with_executor(|exec| exec.set_last_status(1));
-        }
-        if nodes.len() == 1 {
-            Value::str(nodes.into_iter().next().unwrap())
-        } else {
-            Value::Array(nodes.into_iter().map(Value::str).collect())
-        }
+        paramsubst_to_value(&body)
     });
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
         // Inner body of `${(...)...}` (already stripped of `${`/`}` by
@@ -2023,17 +2069,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         let body = format!("${{({}){}}}", flags, name);
-        let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            with_executor(|exec| exec.set_last_status(1));
-        }
-        if nodes.len() == 1 {
-            Value::str(nodes.into_iter().next().unwrap())
-        } else {
-            Value::Array(nodes.into_iter().map(Value::str).collect())
-        }
+        paramsubst_to_value(&body)
     });
 
     // `foo[key]=val` — single-key set on an assoc array. Stack: [name, key, value].
@@ -2930,19 +2966,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
         let body = format!("${{{}:#{}}}", name, pattern);
-        let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            with_executor(|exec| exec.set_last_status(1));
-        }
-        if nodes.is_empty() {
-            Value::Array(Vec::new())
-        } else if nodes.len() == 1 {
-            Value::str(nodes.into_iter().next().unwrap())
-        } else {
-            Value::Array(nodes.into_iter().map(Value::str).collect())
-        }
+        paramsubst_to_value(&body)
     });
 
     // `a[i]=(elements)` / `a[i,j]=(elements)` / `a[i]=()`
@@ -3570,26 +3594,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if last == 0 {
             return Value::Status(0);
         }
-        // ZERR / ERR trap fires whenever a command exits non-zero
-        // (zsh signals.c handle_signals path). Read the trap body
-        // BEFORE the errexit check so a trap on the failing
-        // command's last command can run before we exit.
-        let zerr_body = with_executor(|exec| {
-            exec.traps
-                .get("ZERR")
-                .cloned()
-                .or_else(|| exec.traps.get("ERR").cloned())
-        });
-        if let Some(body) = zerr_body {
-            // Run the trap. Don't recurse on the trap's own failure
-            // (clear last_status during the run).
-            with_executor(|exec| {
-                let saved = exec.last_status();
-                exec.set_last_status(0);
-                let _ = exec.execute_script(&body);
-                exec.set_last_status(saved);
-            });
-        }
+        // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR trap
+        // dispatch. Fires whenever a command exits non-zero. dotrap
+        // reads sigtrapped[SIGZERR] + the registered trap body and
+        // runs it; bridge is a passthru.
+        let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR);
         let should_exit = with_executor(|exec| {
             // zsh stores the option as `errexit` (default OFF). Honor
             // both keys (`errexit=true` from `setopt errexit` /
@@ -3654,19 +3663,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             };
             format!("${{{}{}{}}}", name, op_str, rhs)
         };
-        let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            with_executor(|exec| exec.set_last_status(1));
-        }
-        if nodes.is_empty() {
-            Value::Array(Vec::new())
-        } else if nodes.len() == 1 {
-            Value::str(nodes.into_iter().next().unwrap())
-        } else {
-            Value::Array(nodes.into_iter().map(Value::str).collect())
-        }
+        paramsubst_to_value(&body)
     });
 
     // `${var:offset[:length]}` — substring. Pops [name, offset, length].
@@ -3684,19 +3681,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             format!("${{{}:{}:{}}}", name, offset, length)
         };
-        let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            with_executor(|exec| exec.set_last_status(1));
-        }
-        if nodes.is_empty() {
-            Value::Array(Vec::new())
-        } else if nodes.len() == 1 {
-            Value::str(nodes.into_iter().next().unwrap())
-        } else {
-            Value::Array(nodes.into_iter().map(Value::str).collect())
-        }
+        paramsubst_to_value(&body)
     });
 
     // BUILTIN_PARAM_SUBSTRING_EXPR — `${var:offset_expr[:length_expr]}` form.
@@ -3713,19 +3698,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             format!("${{{}:{}}}", name, off_expr)
         };
-        let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            with_executor(|exec| exec.set_last_status(1));
-        }
-        if nodes.is_empty() {
-            Value::Array(Vec::new())
-        } else if nodes.len() == 1 {
-            Value::str(nodes.into_iter().next().unwrap())
-        } else {
-            Value::Array(nodes.into_iter().map(Value::str).collect())
-        }
+        paramsubst_to_value(&body)
     });
 
     // `${var#pat}` / `${var##pat}` / `${var%pat}` / `${var%%pat}`
@@ -3750,19 +3723,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             _ => "#",
         };
         let body = format!("${{{}{}{}}}", name, op_str, pattern);
-        let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            with_executor(|exec| exec.set_last_status(1));
-        }
-        if nodes.is_empty() {
-            Value::Array(Vec::new())
-        } else if nodes.len() == 1 {
-            Value::str(nodes.into_iter().next().unwrap())
-        } else {
-            Value::Array(nodes.into_iter().map(Value::str).collect())
-        }
+        paramsubst_to_value(&body)
     });
 
     // `$((expr))` — pops [expr_string], evaluates via MathEval which
@@ -4135,19 +4096,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             3 => format!("${{{}/%{}/{}}}", name, pattern, repl),
             _ => format!("${{{}/{}/{}}}", name, pattern, repl),
         };
-        let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
-        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            with_executor(|exec| exec.set_last_status(1));
-        }
-        if nodes.is_empty() {
-            Value::Array(Vec::new())
-        } else if nodes.len() == 1 {
-            Value::str(nodes.into_iter().next().unwrap())
-        } else {
-            Value::Array(nodes.into_iter().map(Value::str).collect())
-        }
+        paramsubst_to_value(&body)
     });
 
     vm.register_builtin(BUILTIN_REGISTER_COMPILED_FN, |vm, argc| {
@@ -4211,39 +4160,32 @@ impl ZshrsHost {
     }
 }
 
-/// Fire `chpwd` hook — calls the `chpwd` shfunc (if defined) and
-/// every fn in the `chpwd_functions` array. Direct port of C's
-/// `callhookfunc("chpwd", NULL, 1, NULL)` at Src/utils.c:1469-1524,
-/// invoked from cd at Src/builtin.c:1258. Routes function calls
-/// through the executor's `dispatch_function_call` since that's
-/// the only path that runs compiled function bodies in zshrs's VM.
-fn run_chpwd_hooks() {
-    let has_chpwd = crate::ported::hashtable::shfunctab_lock()
-        .read()
-        .map(|t| t.get("chpwd").is_some())
-        .unwrap_or(false); // c:1482
-    let arr = crate::ported::params::paramtab()
-        .read()
-        .ok()
-        .and_then(|t| t.get("chpwd_functions").and_then(|p| p.u_arr.clone()))
-        .unwrap_or_default(); // c:1498 getaparam
-    with_executor(|exec| {
-        if has_chpwd {
-            // c:1487 doshfunc(shfunc, lnklst, 1)
-            let _ = exec.dispatch_function_call("chpwd", &[]);
-        }
-        for fn_name in &arr {
-            // c:1502 if ((shfunc = getshfunc(*arrptr)))
-            let exists = crate::ported::hashtable::shfunctab_lock()
-                .read()
-                .map(|t| t.get(fn_name).is_some())
-                .unwrap_or(false);
-            if exists {
-                // c:1508 doshfunc(...)
-                let _ = exec.dispatch_function_call(fn_name, &[]);
-            }
-        }
-    });
+/// Run `body` through `crate::ported::subst::paramsubst` and convert
+/// the resulting node list into a fusevm `Value`. Centralises the
+/// pattern duplicated across ~10 BUILTIN_* handlers:
+///   - build a `${...}` body string from opcode operands
+///   - paramsubst the body
+///   - propagate errflag to `exec.last_status`
+///   - unwrap nodes: 0 → empty Array, 1 → Str, >1 → Array
+///
+/// **Extension** — Rust-only helper that wraps paramsubst's
+/// LinkList return into fusevm's Value enum. No direct C analog
+/// because C zsh uses LinkList everywhere; the conversion happens
+/// at the boundary back into the VM's stack.
+fn paramsubst_to_value(body: &str) -> Value {
+    let mut ret_flags: i32 = 0;
+    let (_full, _pos, nodes) =
+        crate::ported::subst::paramsubst(body, 0, false, 0i32, &mut ret_flags);
+    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        with_executor(|exec| exec.set_last_status(1));
+    }
+    if nodes.is_empty() {
+        Value::Array(Vec::new())
+    } else if nodes.len() == 1 {
+        Value::str(nodes.into_iter().next().unwrap())
+    } else {
+        Value::Array(nodes.into_iter().map(Value::str).collect())
+    }
 }
 
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
@@ -4952,14 +4894,22 @@ impl fusevm::ShellHost for ZshrsHost {
                     .map(PathBuf::from)
                     .or_else(|| env::current_dir().ok()),
                 umask: cur_umask,
-                traps: exec.traps.clone(),
+                // Snapshot canonical `traps_table` — bin_trap writes
+                // there (`Src/builtin.c`). The exec.traps field was
+                // a dead parallel store; deleted.
+                traps: crate::ported::builtin::traps_table()
+                    .lock()
+                    .map(|t| t.clone())
+                    .unwrap_or_default(),
             });
             // Subshell starts with EXIT trap cleared so the parent's
             // EXIT handler doesn't fire when the subshell ends. zsh:
             // each subshell has its own trap context. Other signals
             // are inherited (well, parent's are still in place — but
             // a trap set INSIDE the subshell shouldn't leak out).
-            exec.traps.remove("EXIT");
+            if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                t.remove("EXIT");
+            }
             let level = exec
                 .scalar("ZSH_SUBSHELL")
                 .and_then(|s| s.parse::<i32>().ok())
@@ -4993,7 +4943,10 @@ impl fusevm::ShellHost for ZshrsHost {
         // before exit. We mirror by running it here, just before the
         // pop+restore. REMOVE the trap before firing so the inner
         // execute_script doesn't fire it again at its own end.
-        let exit_trap_body = with_executor(|exec| exec.traps.remove("EXIT"));
+        let exit_trap_body = crate::ported::builtin::traps_table()
+            .lock()
+            .ok()
+            .and_then(|mut t| t.remove("EXIT"));
         if let Some(body) = exit_trap_body {
             // Execute the trap body. Errors during trap execution
             // don't bubble — zsh ignores trap-body errors.
@@ -5050,8 +5003,11 @@ impl fusevm::ShellHost for ZshrsHost {
                 }
                 // Restore parent's traps (the subshell's own traps die
                 // with it). zsh: `(trap "X" USR1)` doesn't leak the
-                // USR1 trap out of the subshell.
-                exec.traps = snap.traps;
+                // USR1 trap out of the subshell. Write back to the
+                // canonical `traps_table` (bin_trap writes there).
+                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                    *t = snap.traps;
+                }
             }
         });
         // Decrement SUBSHELL_DEPTH. If a deferred subshell exit
@@ -5099,48 +5055,15 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn regex_match(&mut self, s: &str, regex: &str) -> bool {
-        // c:Src/Modules/regex.c:60-210 `cond_regex_match` — POSIX
-        // ERE matching with optional MULTIBYTE-aware case folding.
-        // Default fusevm host returns `false` for everything; route
-        // through the Rust `regex` crate (RE2 engine — sub-features of
-        // POSIX ERE) so `[[ str =~ pat ]]` works. Also populates
-        // `\$MATCH`, `\$MBEGIN`, `\$MEND`, `\$match[]`, `\$mbegin[]`,
-        // `\$mend[]` per the C populate-magic-vars contract at
-        // regex.c:185-209.
-        let case_match = crate::ported::zsh_h::isset(crate::ported::zsh_h::CASEMATCH);
-        let mut builder = regex::RegexBuilder::new(regex);
-        let re = match builder.case_insensitive(!case_match).build() {
-            Ok(r) => r,
-            Err(_) => return false,
-        };
-        if let Some(m) = re.find(s) {
-            let matched = m.as_str().to_string();
-            let beg = m.start() + 1; // c:189 MBEGIN is 1-based
-            let end = m.end(); // c:190 MEND is 1-based-inclusive
-            // Populate magic vars; ignore errors (e.g. read-only).
-            crate::ported::params::setsparam("MATCH", &matched);
-            crate::ported::params::setsparam("MBEGIN", &beg.to_string());
-            crate::ported::params::setsparam("MEND", &end.to_string());
-            // c:194-209 — `match[]` / `mbegin[]` / `mend[]` arrays
-            // for capture groups. Best-effort: walk re.captures.
-            if let Some(caps) = re.captures(s) {
-                let mut match_arr: Vec<String> = Vec::new();
-                let mut mbegin_arr: Vec<String> = Vec::new();
-                let mut mend_arr: Vec<String> = Vec::new();
-                for i in 1..caps.len() {
-                    if let Some(c) = caps.get(i) {
-                        match_arr.push(c.as_str().to_string());
-                        mbegin_arr.push((c.start() + 1).to_string());
-                        mend_arr.push(c.end().to_string());
-                    }
-                }
-                crate::ported::params::setaparam("match", match_arr);
-                crate::ported::params::setaparam("mbegin", mbegin_arr);
-                crate::ported::params::setaparam("mend", mend_arr);
-            }
-            return true;
-        }
-        false
+        // c:Src/Modules/regex.c:54 `zcond_regex_match` — POSIX ERE
+        // matching + populate `$MATCH` / `$MBEGIN` / `$MEND` /
+        // `$match[]` / `$mbegin[]` / `$mend[]` (or `$BASH_REMATCH`
+        // under BASHREMATCH). Direct delegation to the canonical
+        // port at src/ported/modules/regex.rs:58.
+        crate::ported::modules::regex::zcond_regex_match(
+            &[s, regex],
+            crate::ported::modules::regex::ZREGEX_EXTENDED,
+        ) != 0
     }
 
     fn with_redirects_end(&mut self) {
@@ -5217,13 +5140,16 @@ impl fusevm::ShellHost for ZshrsHost {
         // Without this override, fusevm's default `host.exec` calls
         // `Command::new` directly, bypassing zshrs's dispatch logic.
         let status = with_executor(|exec| exec.host_exec_external(&args));
-        // c:Src/jobs.c:1739 `pipestats[0] = lastval; numpipestats = 1;`
-        // — every single-command job finishes by updating pipestats to
-        // a one-element array. Without this, `$pipestatus` is empty
-        // after non-pipe commands (zsh prints "1", zshrs prints "0").
-        with_executor(|exec| {
-            exec.set_array("pipestatus".to_string(), vec![status.to_string()]);
-        });
+        // c:Src/jobs.c:1748 waitonejob (no-procs else-branch). zshrs's
+        // exec model routes external commands through host_exec_external
+        // (which already waitpid'd in-line); the canonical waitonejob
+        // expects a Job to derive lastval, but here we already know
+        // it. Synthesize a procs-less job so waitonejob's no-procs
+        // branch fires the `pipestats[0]=lastval; numpipestats=1;`
+        // update via the canonical port.
+        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
+        let mut synth = crate::ported::zsh_h::job::default();
+        crate::ported::jobs::waitonejob(&mut synth);
         status
     }
 
@@ -5355,340 +5281,36 @@ impl fusevm::ShellHost for ZshrsHost {
             return Some(status);
         }
 
-        // Resolve to a compiled Chunk:
-        //   1. Already in functions_compiled → use as-is
-        //   2. AST-only (sourced / defined earlier) → compile on demand
-        //   3. Pending autoload → trigger autoload, then retry the AST path
-        //   4. Available via fpath ZWC scan → autoload via that, then AST path
-        //   5. Not a function → None so fusevm falls back to host.exec
-        let chunk = with_executor(|exec| {
-            // Autoload pending: the legacy stub in self.functions makes
-            // maybe_autoload / autoload_function were deleted with
-            // the old exec.c stubs (they were return-false / no-op).
-            // The autoload dispatch needs a proper port of
-            // `Src/builtin.c:bin_autoload` + `Src/exec.c:loadautofn`.
-            // Until that lands, skip the autoload trigger — the eager
-            // fpath scan below covers the common interactive case.
-            if let Some(c) = exec.functions_compiled.get(name) {
-                return Some(c.clone());
-            }
-            exec.functions_compiled.get(name).cloned()
-        });
-
-        let chunk = chunk?;
-
-        // FUNCNEST recursion guard. zsh enforces a max depth
-        // (default 500) — past that the call is refused with
-        // `<name>: maximum nested function level reached; increase
-        // FUNCNEST?` and exit 1. Without this, `foo() { foo; }; foo`
-        // overflowed the Rust stack instead of erroring gracefully.
-        // zshrs's effective ceiling is lower than zsh's: each
-        // `call_function` recursion consumes ~40KB of Rust stack
-        // (the bytecode VM is recursive at the host level), so the
-        // 8MB default stack tops out around ~150 frames. Cap at 100
-        // by default — users with deeper need can raise FUNCNEST
-        // explicitly AND run with a larger stack (RUST_MIN_STACK).
-        let funcnest_limit = with_executor(|exec| {
-            exec.scalar("FUNCNEST")
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(100)
-        });
-        let cur_depth = with_executor(|exec| exec.local_scope_depth);
-        if cur_depth >= funcnest_limit {
-            eprintln!(
-                "{}: maximum nested function level reached; increase FUNCNEST?",
-                name
-            );
-            return Some(1);
-        }
-
-        // Save and replace positional params, mirror local-scope save/restore
-        // from the tree-walker `call_function`. The thread-local executor
-        // pointer set by the outer VM remains valid for the nested VM —
-        // nested CallBuiltin handlers and host callbacks all see the same
-        // executor.
+        // $_ pre-body bump and pending-underscore tracking are
+        // ZshrsHost-only concerns (prompt rendering). Apply BEFORE
+        // delegating to dispatch_function_call so the body sees the
+        // bumped value.
         let fn_name = name.to_string();
-        // Snapshot options at function entry. zsh restores these on
-        // exit when `local_options` is set at that time (per zshmisc
-        // LOCAL_OPTIONS — `setopt local_options` and `emulate -L
-        // ...` both arm the restore). Without this, a function that
-        // does `setopt no_glob` to scope an option leaked the change
-        // to the caller, breaking p10k/zinit's per-function emulate
-        // -L sticky-mode pattern.
-        let saved_options = crate::ported::options::opt_state_snapshot();
-        let (
-            saved_params,
-            saved_zero,
-            saved_scriptname,
-            saved_funcstack,
-            saved_exit_trap,
-            saved_argzero_global,
-        ) = with_executor(|exec| {
-                let prev = exec.pparams();
-                exec.set_pparams(args.clone());
-                exec.local_scope_depth += 1;
-                // c:Src/exec.c doshfunc startparamscope() — bump
-                // canonical locallevel before the function body runs
-                // so any inner `local`/`typeset` writes Params at the
-                // right scope. endparamscope at exit restores.
-                crate::ported::params::locallevel
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                // Save and clear EXIT trap before function body
-                // runs. Direct port of zsh's exec.c
-                // `dotrapargs(SIGEXIT, ...)` deferred-fire pattern
-                // — an EXIT trap set INSIDE a function fires on
-                // function return (NOT shell exit), and the outer
-                // EXIT trap is preserved across the call. Without
-                // this save/restore, `foo() { trap "echo X" EXIT; }`
-                // either fired X at SHELL exit (if no outer trap)
-                // or polluted the parent's EXIT trap.
-                let saved = exec.traps.remove("EXIT");
-                // zsh's `$0` inside a function returns the function name
-                // (under the FUNCTION_ARGZERO option, default on). Save
-                // the previous `$0` and install the function name.
-                // Anonymous functions get the cosmetic name `(anon)` —
-                // zshrs's parser synthesizes `_zshrs_anon_N` /
-                // `_zshrs_anon_kw_N` for `() { … }` and `function { … }`
-                // so users would see the internal name otherwise.
-                let display_name = if fn_name.starts_with("_zshrs_anon_") {
-                    "(anon)".to_string()
-                } else {
-                    fn_name.clone()
-                };
-                let prev_zero = crate::ported::params::getsparam("0");
-                exec.set_scalar("0".to_string(), display_name.clone());
-                // c:Src/exec.c:5903 doshfunc — when FUNCTION_ARGZERO is
-                // set (default-on under zsh emulation) the global
-                // `argzero` is overwritten with the function name so
-                // every `$0` read (which routes through
-                // lookup_special_var("0") → argzero()) returns the
-                // function name. set_scalar above writes to paramtab,
-                // but lookup_special_var short-circuits to argzero()
-                // BEFORE consulting paramtab — so without this
-                // mirror, `$0` inside `f() { echo $0; }` returned the
-                // shell binary path instead of `f`.
-                let saved_argzero_global = if isset(
-                    crate::ported::zsh_h::FUNCTIONARGZERO,
-                ) {
-                    let prev = crate::ported::utils::argzero();
-                    crate::ported::utils::set_argzero(Some(display_name.clone()));
-                    Some(prev)
-                } else {
-                    None
-                };
-                // scriptname: PS4's `%N` and error-message prefix both
-                // read `exec.scriptname`. Inside a function, C zsh sets
-                // `scriptname = dupstring(name)` at Src/exec.c:5903 so
-                // `%N` shows the function name. Save the outer
-                // scriptname before overwrite; restored on return.
-                // Also update the canonical `scriptname_lock()` static
-                // (port of Src/utils.c:36 file-static `scriptname`)
-                // since the prompt expander reads from there, not
-                // from exec.scriptname.
-                let prev_scriptname =
-                    std::mem::replace(&mut exec.scriptname, Some(display_name.clone()));
-                crate::ported::utils::set_scriptname(Some(display_name.clone()));
-                // funcstack: prepend the function name; outermost call
-                // is at the END of the stack per zsh.
-                let prev_stack = exec.array("funcstack");
-                let mut new_stack = vec![fn_name.clone()];
-                if let Some(ref s) = prev_stack {
-                    new_stack.extend_from_slice(s);
-                }
-                exec.set_array("funcstack".to_string(), new_stack);
-                let line_base = exec.function_line_base.get(&fn_name).copied().unwrap_or(0);
-                let def_file = exec.function_def_file.get(&fn_name).cloned().flatten();
-                exec.prompt_funcstack
-                    .push((fn_name.clone(), line_base, def_file.clone()));
-                // c:Src/exec.c:5903 doshfunc — push a funcstack frame
-                // onto the canonical FUNCSTACK list. funcstackgetfn /
-                // functracegetfn / funcfiletracegetfn (modules/parameter.c
-                // c:627/648/681) walk this list to return the per-frame
-                // tuples for `$funcstack` / `$functrace` / `$funcfiletrace`
-                // parameter reads. Without this push, `print $#funcstack`
-                // inside a function returned 0 instead of the call depth.
-                {
-                    let prev_frame = {
-                        let stk = crate::ported::modules::parameter::FUNCSTACK
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        stk.last().cloned()
-                    };
-                    let lineno_now =
-                        crate::ported::input::lineno.with(|c| c.get()) as i64;
-                    // c:5907-5910 — caller/flineno/filename derivation
-                    // mirrors the FS_FUNC frame logic in doshfunc.
-                    // For the outermost frame (no prev), caller is the
-                    // pre-call argzero — captured into saved_argzero_global
-                    // above before the function-arg-zero override. For
-                    // inner frames, caller is the parent frame's name.
-                    let caller = match &prev_frame {
-                        Some(p) => Some(p.name.clone()),
-                        None => saved_argzero_global
-                            .clone()
-                            .flatten()
-                            .or_else(|| crate::ported::utils::argzero()),
-                    };
-                    let (flineno, filename): (i64, Option<String>) = match &prev_frame {
-                        None => (lineno_now, def_file.clone()),
-                        Some(p) if p.tp == crate::ported::zsh_h::FS_SOURCE => {
-                            (lineno_now, def_file.clone().or_else(|| Some(String::new())))
-                        }
-                        Some(p) => {
-                            let mut fl = p.flineno + lineno_now;
-                            if p.tp == crate::ported::zsh_h::FS_EVAL {
-                                fl -= 1;
-                            }
-                            let fname = p.filename.clone().or_else(|| Some(String::new()));
-                            (fl, fname)
-                        }
-                    };
-                    let frame = crate::ported::zsh_h::funcstack {
-                        prev: None,
-                        name: fn_name.clone(),
-                        filename,
-                        caller,
-                        flineno,
-                        lineno: lineno_now,
-                        tp: crate::ported::zsh_h::FS_FUNC,
-                    };
-                    let mut stack = crate::ported::modules::parameter::FUNCSTACK
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    stack.push(frame);
-                }
-                // Set `$_` BEFORE the function body runs. zsh: inside
-                // a function, `echo $_` reads the function name (when
-                // called with no args) or the last call-arg.
-                // Without this, internal builtins that ran before
-                // (like REGISTER_COMPILED_FN) leaked their last arg
-                // (the function body source!) as $_.
-                let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
-                exec.set_scalar("_".to_string(), dollar_underscore.clone());
-                exec.pending_underscore = Some(dollar_underscore);
-                (prev, prev_zero, prev_scriptname, prev_stack, saved, saved_argzero_global)
-            });
-
-        crate::fusevm_disasm::maybe_print_stdout(&format!("host.call_function:{fn_name}"), &chunk);
-        let mut vm = fusevm::VM::new(chunk);
-        register_builtins(&mut vm);
-        // Seed the function-body VM with the parent's `$?` so a
-        // function that reads `$?` BEFORE running any command sees
-        // the caller's last status. Direct port of zsh's exec.c
-        // `execfuncdef`/`doshfunc` semantics — function entry does
-        // NOT reset `$?`. Without this, `false; foo() { echo $?; }; foo`
-        // printed 0 instead of 1 because the fresh VM defaulted
-        // last_status to 0.
-        vm.last_status = with_executor(|exec| exec.last_status());
-        let _ = vm.run();
-        let status = vm.last_status;
-
-        // Fire any EXIT trap set INSIDE the function body, then
-        // restore the outer EXIT trap. zsh fires the function-
-        // scope EXIT trap BEFORE control returns to the caller,
-        // so `foo() { trap "echo X" EXIT; }; foo; echo done`
-        // outputs `X` then `done`. Without this, X never fired
-        // (or fired at shell exit, polluting unrelated commands).
-        let inner_exit = with_executor(|exec| exec.traps.remove("EXIT"));
-        if let Some(action) = inner_exit {
-            // Run the trap in the current (still-inside-function)
-            // scope so it sees `$0 == fn_name` etc. Errors are
-            // swallowed — zsh's trap dispatch tolerates body
-            // failures.
-            let _ = with_executor(|exec| {
-                exec.set_last_status(status);
-                exec.execute_script_zsh_pipeline(&action)
-            });
-        }
-        // Restore outer EXIT trap (if any).
-        if let Some(outer) = saved_exit_trap {
-            with_executor(|exec| {
-                exec.traps.insert("EXIT".to_string(), outer);
-            });
-        }
-
         with_executor(|exec| {
-            // Set `$_` to the last arg the function was called with
-            // (or the function name when called with no args). zsh:
-            // `$_` after `foo arg` is `arg`; after `foo` (no args) is
-            // `foo`. The function-internal `pop_args` calls polluted
-            // pending_underscore with internal command args; clear and
-            // overwrite here so the caller sees the function's call
-            // form, not internal `return 42` arg.
+            let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
+            exec.set_scalar("_".to_string(), dollar_underscore.clone());
+            exec.pending_underscore = Some(dollar_underscore);
+        });
+
+        // Delegate the actual function dispatch to the canonical
+        // `dispatch_function_call` (which itself wraps the canonical
+        // `doshfunc` port from `Src/exec.c:5823`). Single doshfunc
+        // call-site keeps scope-mgmt invariants in one place.
+        let status =
+            with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
+
+        // $_ post-body — last call-arg or function name. Mirrors the
+        // C `setunderscore` invocation after the body returns.
+        with_executor(|exec| {
             let last_call_arg = args.last().cloned().unwrap_or_else(|| fn_name.clone());
             exec.set_scalar("_".to_string(), last_call_arg.clone());
             exec.pending_underscore = Some(last_call_arg);
-            exec.set_pparams(saved_params);
-            exec.local_scope_depth -= 1;
-            // LOCAL_OPTIONS: when set at function exit, restore all
-            // options to the snapshot taken at entry. `emulate -L`
-            // arms this; plugin code uses both forms to scope option
-            // changes inside helpers without leaking to callers.
-            // Without it, `setopt no_glob` inside a helper polluted
-            // the caller's option state.
-            if opt_state_get("localoptions").unwrap_or(false) {
-                // Walk all options touched since entry; reset to snapshot.
-                let current = crate::ported::options::opt_state_snapshot();
-                for (k, _) in &current {
-                    if !saved_options.contains_key(k) {
-                        crate::ported::options::opt_state_unset(k);
-                    }
-                }
-                for (k, v) in &saved_options {
-                    crate::ported::options::opt_state_set(k, *v);
-                }
-            }
-            let _ = exec; // exec still used below for other restores
-                          // Restore `$0`, scriptname, and `$funcstack` to their
-                          // pre-call values. scriptname mirrors C exec.c:5907
-                          // `scriptname = oldscriptname;` after execode returns.
-            match saved_zero {
-                Some(v) => {
-                    exec.set_scalar("0".to_string(), v);
-                }
-                None => {
-                    exec.unset_scalar("0");
-                }
-            }
-            // c:Src/exec.c:5907 doshfunc — restore global argzero to
-            // the caller's value when FUNCTION_ARGZERO was honored at
-            // entry. Mirrors the `argzero = old0;` line. When the
-            // option was NOT set at entry, saved_argzero_global is
-            // None and we leave argzero untouched.
-            if let Some(prev) = saved_argzero_global {
-                crate::ported::utils::set_argzero(prev);
-            }
-            exec.scriptname = saved_scriptname.clone();
-            // Mirror restore to canonical scriptname_lock() static
-            // (c:6064 in Src/exec.c — `scriptname = funcsave->scriptname`).
-            crate::ported::utils::set_scriptname(saved_scriptname);
-            exec.prompt_funcstack.pop();
-            match saved_funcstack {
-                Some(s) => {
-                    exec.set_array("funcstack".to_string(), s);
-                }
-                None => {
-                    exec.unset_array("funcstack");
-                }
-            }
-            // c:Src/exec.c:5907 doshfunc — pop the funcstack frame we
-            // pushed at entry. Mirrors `funcstack = fstack.prev;` at
-            // c:6201.
-            {
-                let mut stack = crate::ported::modules::parameter::FUNCSTACK
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                stack.pop();
-            }
-            // c:Src/exec.c doshfunc → endparamscope(). Walks paramtab
-            // restoring Param.old chain for every local declaration
-            // made during the call.
-            crate::ported::params::endparamscope();
         });
 
-        Some(status)
+        status
     }
 }
+
 
 // ───────────────────────────────────────────────────────────────────────────
 // Host-routed shell ops: ShellExecutor methods invoked by ZshrsHost from the

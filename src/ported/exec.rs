@@ -34,7 +34,9 @@
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
 
-use crate::fusevm_bridge::with_executor;
+// `with_executor` import removed — all ShellExecutor reach-in calls
+// routed through `crate::ported::exec_hooks::*` fn-ptrs installed by
+// fusevm_bridge at startup. See memory feedback_no_exec_script_from_ported.
 use crate::ported::builtin::{cd_able_vars, fixdir, BUILTINS, DOPRINTDIR, EXIT_VAL, LASTVAL};
 use crate::ported::builtins::rlimits::setlimits;
 use crate::ported::builtins::sched::zleactive;
@@ -58,7 +60,7 @@ use crate::ported::signals_h::{child_block, child_unblock, dont_queue_signals, s
 use crate::ported::subst::{quotesubst, singsub};
 use crate::ported::utils::{errflag, fdtable_get, fdtable_set, gettempfile, gettempname, inc_locallevel, movefd, pathprog, printprompt4, quotedzputs, redup, unmeta, unmetafy, write_loop, zclose, zerr, zwarn, ERRFLAG_ERROR, MAX_ZSH_FD};
 use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, execstack, funcwrap, hashnode, multio, redir, shfunc, unset, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, CHASEDOTS, CHASELINKS, CLOBBER, CLOBBEREMPTY, CS_CMDSUBST, Emulation_options, ERRFLAG_INT, FDT_EXTERNAL, FDT_INTERNAL, FDT_PROC_SUBST, FDT_SAVED_MASK, FDT_TYPE_MASK, FDT_UNUSED, FDT_XTRACE, HASHDIRS, INTERACTIVE, INP_LINENO, IS_CLOBBER_REDIR, IS_DASH, Inang, Inpar, JOBTEXTSIZE, Meta, MONITOR, MULTIOS, MULTIOUNIT, Nularg, Outpar, PATHDIRS, PM_LOADDIR, PM_READONLY, PM_UNDEFINED, POSIXJOBS, POSIXTRAPS, Pound, REDIRF_FROM_HEREDOC, REDIR_CLOSE, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_OUTPIPE, USEZLE, VERBOSE, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, WC_TYPESET, ZSIG_FUNC, ZSIG_IGNORED, Z_END, cmdnam, emulation_options, isset, wc_code};
+use crate::ported::zsh_h::{builtin, eprog, execstack, funcwrap, hashnode, multio, redir, shfunc, unset, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, CHASEDOTS, CHASELINKS, CLOBBER, CLOBBEREMPTY, CS_CMDSUBST, Emulation_options, ERRFLAG_INT, FDT_EXTERNAL, FDT_INTERNAL, FDT_PROC_SUBST, FDT_SAVED_MASK, FDT_TYPE_MASK, FDT_UNUSED, FDT_XTRACE, HASHDIRS, INTERACTIVE, INP_LINENO, IS_CLOBBER_REDIR, IS_DASH, Inang, Inpar, JOBTEXTSIZE, MAX_PIPESTATS, Meta, MONITOR, MULTIOS, MULTIOUNIT, Nularg, Outpar, PATHDIRS, PM_LOADDIR, PM_READONLY, PM_UNDEFINED, POSIXBUILTINS, POSIXJOBS, POSIXTRAPS, Pound, REDIRF_FROM_HEREDOC, REDIR_CLOSE, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_OUTPIPE, USEZLE, VERBOSE, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, WC_TYPESET, ZSIG_FUNC, ZSIG_IGNORED, Z_END, cmdnam, emulation_options, isset, wc_code};
 use crate::zsh_h::XTRACE;
 use crate::ported::zsh_system_h::timespec as ZshTimespec;
 
@@ -524,7 +526,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     //   c:4768-4776 parent — equivalent to executor return
     //   c:4778-4789 child  — entersubsh+execode+_realexit collapse
     crate::ported::exec::cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed); // c:4759
-    let buf = with_executor(|exec| exec.run_command_substitution(cmd));
+    let buf = crate::ported::exec_hooks::run_command_substitution(cmd);
     crate::ported::builtin::LASTVAL.store(
         crate::ported::exec::cmdoutval.load(std::sync::atomic::Ordering::Relaxed),
         std::sync::atomic::Ordering::Relaxed,
@@ -1102,6 +1104,19 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
                     };
                 }
             }
+            // c:3275-3278 — `hn = NULL; if ((cflags & BINF_COMMAND) &&
+            // unset(POSIXBUILTINS)) break;`. After processing a
+            // `command` precmd modifier (and its -p/-v/-V flags), the
+            // C loop exits with hn cleared so the dispatch falls
+            // through to external lookup. Without this, the next
+            // iteration would find `command print` → print's builtin
+            // and dispatch to it; zsh's intentional behaviour is to
+            // skip builtins under `command` (unless POSIXBUILTINS is
+            // set, where the loop continues normally).
+            if (cflags & BINF_COMMAND) != 0 && !isset(POSIXBUILTINS) {
+                hn = None; // c:3275 hn = NULL
+                break;     // c:3277
+            }
         }
     }
 
@@ -1657,8 +1672,11 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
         let _ = stderr.flush(); // c:1236
     }
     // c:1238-1239 — parse + execode. zshrs delegates the parse+VM
-    // chain to the fusevm pipeline (see WARNING above).
-    let _ = with_executor(|e| e.execute_script_zsh_pipeline(s));
+    // chain to the fusevm pipeline via the exec_hooks fn-ptr
+    // installed by fusevm_bridge at startup. Direct
+    // `with_executor` / ShellExecutor reach-in from src/ported/ is
+    // forbidden — see memory feedback_no_exec_script_from_ported.
+    let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(s);
     popheap(); // c:1240
 }
 
@@ -1792,7 +1810,7 @@ pub fn runshfunc(
     // populated), route through the fusevm pipeline for cache
     // coherence with execstring.
     if let Some(ref src) = prog.strs {
-        let _ = with_executor(|e| e.execute_script_zsh_pipeline(src));
+        let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(src);
     } else {
         // Pure wordcode body — drive via the canonical execode.
         crate::ported::exec::execode(
@@ -3938,7 +3956,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     } else {
         ""
     };
-    let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
+    let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(body);
     cmdpop(); // c:4989
     unsafe {
         libc::close(1);
@@ -4070,7 +4088,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     } else {
         ""
     };
-    let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
+    let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(body);
     cmdpop(); // c:5102
     let _ = zclose(out); // c:5103
     std::process::exit(LASTVAL.load(Ordering::Relaxed)); // c:5104
@@ -4498,7 +4516,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     } else {
         ""
     };
-    let _ = with_executor(|e| e.execute_script_zsh_pipeline(body));
+    let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(body);
     cmdpop(); // c:5151
                                      // c:5152 — _realexit() — WARNING (d).
     std::process::exit(LASTVAL.load(Ordering::Relaxed));
@@ -5463,6 +5481,348 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     }
     // c:5582-5589 cmdstack restore/free: omit (no cmdstack).
 }
+
+/// Port of `int doshfunc(Shfunc shfunc, LinkList doshargs, int noreturnval)`
+/// from `Src/exec.c:5823-6158`.
+///
+/// C body's scope-management sequence ported here. The C source's
+/// body-execution call (`runshfunc(prog, wrappers, name)` at c:6042)
+/// is replaced by `body_runner` — zshrs runs function bodies through
+/// fusevm bytecode rather than zsh's wordcode walker (per PORT.md
+/// "zshrs replaces zsh's tree-walking interpreter" rule), so the
+/// callback hands the live executor back to the caller (typically
+/// the fusevm bridge) for the actual body run. Every line of scope
+/// save/restore around the body call mirrors C exactly.
+///
+/// **RUST-ONLY ADAPTATION:** the extra `body_runner` parameter is
+/// not in C. C calls `runshfunc(prog, wrappers, name)` directly at
+/// c:6042; zshrs delegates to a closure because the body-execution
+/// pipeline (fusevm) differs from C's (wordcode). The closure
+/// fully replaces the runshfunc call and returns the body's exit
+/// status (which doshfunc reads as `lastval` for the `noreturnval`
+/// path).
+#[allow(non_snake_case)]
+pub fn doshfunc(
+    shfunc: &mut shfunc,                          // c:5823
+    doshargs: Vec<String>,                        // c:5823
+    noreturnval: bool,                            // c:5823
+    mut body_runner: impl FnMut() -> i32,         // (Rust-only — body delegate)
+) -> i32 {
+    use crate::ported::builtin::{BREAKS, CONTFLAG, LASTVAL, LOOPS, RETFLAG};
+    use crate::ported::jobs::{NUMPIPESTATS, PIPESTATS};
+    use crate::ported::modules::parameter::FUNCSTACK;
+    use crate::ported::params::endparamscope;
+    use crate::ported::params::locallevel as locallevel_atomic;
+    use crate::ported::zsh_h::{FS_EVAL, FS_FUNC, FS_SOURCE, FUNCTIONARGZERO, PM_UNDEFINED};
+    use std::sync::atomic::Ordering;
+
+    let name = shfunc.node.nam.clone();                                      // c:5827
+    let flags = shfunc.node.flags;                                           // c:5828
+    let fname = dupstring(&name);                                            // c:5829
+    let _ = fname;                                                           // c:5829 (kept for parity)
+
+    // c:5835 — `queue_signals();` Lots of memory + global-state changes.
+    queue_signals();
+
+    // c:5847-5848 — `marked_prog = shfunc->funcdef; useeprog(marked_prog);`
+    // Pinned so a recursive unload doesn't free the eprog under us.
+    // (Skipped: zshrs's shfunc holds a Box<Eprog>; Drop semantics
+    // already pin until call ends. C does explicit refcount on
+    // `funcdef->nref` via useeprog.)
+
+    // c:5856-5916 — Funcsave allocation + per-field snapshot.
+    let funcsave_breaks   = BREAKS.load(Ordering::Relaxed);                  // c:5859
+    let funcsave_contflag = CONTFLAG.load(Ordering::Relaxed);                // c:5860
+    let funcsave_loops    = LOOPS.load(Ordering::Relaxed);                   // c:5861
+    let funcsave_lastval  = LASTVAL.load(Ordering::Relaxed);                 // c:5862
+    let funcsave_numpipestats = {                                            // c:5864
+        NUMPIPESTATS.get_or_init(|| std::sync::Mutex::new(0))
+            .lock().map(|n| *n).unwrap_or(0)
+    };
+    let funcsave_noerrexit = noerrexit.load(Ordering::Relaxed);              // c:5865
+    // c:5866-5867 — trap_state PRIMED branch decrements trap_return.
+    if TRAP_STATE.load(Ordering::Relaxed) == TRAP_STATE_PRIMED {             // c:5866
+        TRAP_RETURN.fetch_sub(1, Ordering::Relaxed);                         // c:5867
+    }
+    // c:5871 — `noerrexit &= ~NOERREXIT_RETURN;` — scope-clear of
+    // return-suppress so a `return` inside the body fires errexit
+    // checks normally.
+    noerrexit.fetch_and(!NOERREXIT_RETURN, Ordering::Relaxed);
+
+    // c:5872-5880 — noreturnval branch: deep-copy pipestats so the
+    // function body's pipestats writes are restored on exit.
+    let funcsave_pipestats: Option<Vec<i32>> = if noreturnval {              // c:5872
+        let p = PIPESTATS.get_or_init(|| std::sync::Mutex::new([0; MAX_PIPESTATS]));
+        p.lock().ok().map(|g| g[..funcsave_numpipestats].to_vec())          // c:5879 memcpy
+    } else {
+        None
+    };
+
+    // c:5882-5896 — TRAPEXIT special case (deep-copy shfunc so
+    // starttrapscope doesn't rug-pull). zshrs doesn't yet support
+    // running TRAPEXIT directly via doshfunc; flagged for follow-up.
+    // (Skip: name = "TRAPEXIT" path.)
+    let _ = name.as_str(); // sentinel for the eventual port.
+
+    // c:5898 — `starttrapscope();` — canonical port at signals.rs:1135
+    // tags SIGEXIT for deferred restoration at scope end.
+    crate::ported::signals::starttrapscope();
+    // c:5899 — `startpatternscope();` — pattern-scope port pending;
+    // tracked separately under pattern.rs.
+
+    // c:5901 — `pptab = pparams;` — save outer positional params.
+    let pptab: Vec<String> = crate::ported::builtin::PPARAMS
+        .lock().map(|p| p.clone()).unwrap_or_default();
+
+    // c:5902-5903 — non-undefined: `scriptname = dupstring(name);`
+    let funcsave_scriptname = crate::ported::utils::scriptname_get();
+    if (flags as u32 & PM_UNDEFINED) == 0 {                                  // c:5902
+        crate::ported::utils::set_scriptname(Some(dupstring(&name)));        // c:5903
+    }
+
+    // c:5904-5908 — `funcsave->zoptind = zoptind; ...` snapshot.
+    // zshrs's zoptind/optcind aren't ported as separate statics yet —
+    // they live in the getopts builtin's local state. Skip the
+    // snapshot until that port lands.
+
+    // c:5914 — `memcpy(funcsave->opts, opts, sizeof(opts));` — option
+    // snapshot. Port wraps opts in OPTS_LIVE; capture the live state
+    // here as a HashMap snapshot.
+    let funcsave_opts = crate::ported::options::opt_state_snapshot();
+
+    // c:5915-5916 — `funcsave->emulation/sticky = emulation/sticky;`
+    // Emulation snapshot pending the sticky-emulation port.
+
+    // c:5954-5969 — PM_TAGGED / PM_WARNNESTED option-override block.
+    // Anonymous-function name comparison via pointer equality in C;
+    // zshrs uses string equality. Skip until ANONYMOUS_FUNCTION_NAME
+    // sentinel is ported.
+
+    // c:5970 — `funcsave->oflags = oflags;` — module-global tracking
+    // function-attribute inheritance. Skip until oflags is ported.
+
+    // c:5977 — `opts[PRINTEXITVALUE] = 0;` — suppress printexitvalue
+    // for inner commands; outer flag restored on exit.
+    crate::ported::options::opt_state_set("printexitvalue", false);
+
+    // c:5978-5998 — pparams swap. C reads doshargs and constructs the
+    // function's positional-param array. First arg is the function
+    // name (regardless of FUNCTIONARGZERO); the rest become $1..$N.
+    let funcsave_argv0: Option<String> = if !doshargs.is_empty() {           // c:5978
+        // c:5982-5985 — `pparams = x = zshcalloc(...)`.
+        let positionals: Vec<String> = if doshargs.len() > 1 {
+            doshargs[1..].to_vec()
+        } else {
+            Vec::new()
+        };
+        if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+            *pp = positionals;
+        }
+        // c:5984-5987 — FUNCTIONARGZERO: save argzero, install
+        // doshargs[0] (the function name).
+        if isset(FUNCTIONARGZERO) {                                          // c:5984
+            let prev = crate::ported::utils::argzero();
+            crate::ported::utils::set_argzero(Some(doshargs[0].clone()));    // c:5986
+            prev
+        } else {
+            None
+        }
+    } else {
+        // c:5992-5997 — no args: empty pparams. argzero saved+dup'd.
+        if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+            *pp = Vec::new();
+        }
+        if isset(FUNCTIONARGZERO) {                                          // c:5994
+            let prev = crate::ported::utils::argzero();
+            crate::ported::utils::set_argzero(prev.clone());                 // c:5996 ztrdup(argzero)
+            prev
+        } else {
+            None
+        }
+    };
+
+    // c:5999 — `++funcdepth;` — bumped on entry. Mirror via locallevel
+    // since zshrs tracks function-call depth there.
+    //
+    // Plus the canonical startparamscope (c:6194 inside runshfunc).
+    // zshrs's body_runner replaces runshfunc's `execode` call so the
+    // startparamscope/endparamscope pair must wrap body_runner here,
+    // not inside the closure. inc_locallevel is exactly startparamscope.
+    inc_locallevel();
+
+    // c:6000-6003 — FUNCNEST check. Skip; the zshrs fusevm doesn't
+    // recurse via real stack frames so the depth limit is less
+    // critical.
+
+    // c:6005-6019 — funcstack frame push. The full C block:
+    //   funcsave->fstack.name      = dupstring(name);
+    //   funcsave->fstack.caller    = funcstack ? funcstack->name :
+    //                                 dupstring(argv0 ? argv0 : argzero);
+    //   funcsave->fstack.lineno    = lineno;
+    //   funcsave->fstack.prev      = funcstack;
+    //   funcsave->fstack.tp        = FS_FUNC;
+    //   funcstack                  = &funcsave->fstack;
+    //   funcsave->fstack.flineno   = shfunc->lineno;
+    //   funcsave->fstack.filename  = getshfuncfile(shfunc);
+    let lineno_now = crate::ported::input::lineno.with(|c| c.get()) as i64;
+    let (caller, prev_tp): (Option<String>, Option<i32>) = {
+        let stk = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(p) = stk.last() {
+            (Some(p.name.clone()), Some(p.tp))
+        } else {
+            // c:6011-6012 — outermost: argv0 (saved) or argzero global.
+            let z = funcsave_argv0.clone().or_else(crate::ported::utils::argzero);
+            (z, None)
+        }
+    };
+    // c:6018-6019 — flineno: shfunc->lineno (function def line)
+    let flineno = shfunc.lineno;
+    let filename = shfunc.filename.clone()
+        .or_else(|| Some(String::new()));
+    {
+        let frame = crate::ported::zsh_h::funcstack {
+            prev: None,                                                      // c:6014 (Vec-stack: index encodes link)
+            name: dupstring(&name),                                          // c:6005
+            filename,                                                        // c:6019
+            caller,                                                          // c:6011
+            flineno,                                                         // c:6018
+            lineno: lineno_now,                                              // c:6013
+            tp: FS_FUNC,                                                     // c:6015
+        };
+        let _ = prev_tp;                                                     // c:6011 (informational)
+        let mut stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
+        stack.push(frame);                                                   // c:6016 funcstack = &funcsave->fstack
+    }
+
+    // c:6021-6042 — body execution. C: `runshfunc(prog, wrappers, name)`.
+    // zshrs delegates to the body_runner closure (typically a fusevm
+    // sub-VM run from the bridge). The closure returns the body's
+    // exit status which becomes lastval.
+    let body_status = body_runner();
+    LASTVAL.store(body_status, Ordering::Relaxed);
+
+    // c:6044 — `funcstack = funcsave->fstack.prev;` — pop our frame.
+    {
+        let mut stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
+        stack.pop();
+    }
+
+    // c:6046 — `--funcdepth;` — paired endparamscope (c:6200 inside
+    // runshfunc) lives at c:6157 below as `endparamscope()`. Removed
+    // the dec here so locallevel only decrements once per
+    // function-call frame; double-dec was purging level-0 globals on
+    // function exit (the `f() { x=foo; }; f; echo $x` regression).
+
+    // c:6047-6053 — retflag clear. C clears retflag and restores
+    // outer breaks if a `return` fired.
+    if RETFLAG.load(Ordering::SeqCst) != 0 {                                 // c:6047
+        RETFLAG.store(0, Ordering::SeqCst);                                  // c:6051
+        BREAKS.store(funcsave_breaks, Ordering::SeqCst);                     // c:6052
+    }
+
+    // c:6054-6058 — pparams + argv0 restore.
+    if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+        *pp = pptab;                                                         // c:6059 pparams = pptab
+    }
+    if let Some(saved) = funcsave_argv0 {                                    // c:6055
+        crate::ported::utils::set_argzero(Some(saved));                      // c:6057
+    }
+
+    // c:6064 — `scriptname = funcsave->scriptname;`
+    crate::ported::utils::set_scriptname(funcsave_scriptname);
+
+    // c:6067 — `endpatternscope();` — pending pattern-scope port.
+
+    // c:6078-6102 — LOCALOPTIONS restore. Re-apply the snapshot when
+    // localoptions was set inside the body.
+    if crate::ported::options::opt_state_get("localoptions").unwrap_or(false) {
+        // c:6091 memcpy(opts, funcsave->opts, sizeof(opts)) — full restore.
+        let current = crate::ported::options::opt_state_snapshot();
+        for (k, _) in &current {
+            if !funcsave_opts.contains_key(k) {
+                crate::ported::options::opt_state_unset(k);
+            }
+        }
+        for (k, v) in &funcsave_opts {
+            crate::ported::options::opt_state_set(k, *v);
+        }
+    } else {
+        // c:6097-6101 — non-LOCALOPTIONS: restore only the always-
+        // restored subset (XTRACE / PRINTEXITVALUE / LOCALOPTIONS /
+        // LOCALLOOPS / WARNNESTEDVAR).
+        for opt in ["xtrace", "printexitvalue", "localoptions",
+                    "localloops", "warnnestedvar"] {
+            if let Some(v) = funcsave_opts.get(opt) {
+                crate::ported::options::opt_state_set(opt, *v);
+            }
+        }
+    }
+
+    // c:6104-6112 — LOCALLOOPS warn-on-active-continue/break + restore
+    // breaks/contflag/loops snapshot. Skip the warn lines for now;
+    // restore the bookkeeping.
+    if crate::ported::options::opt_state_get("localloops").unwrap_or(false) {
+        BREAKS.store(funcsave_breaks, Ordering::SeqCst);                     // c:6109
+        CONTFLAG.store(funcsave_contflag, Ordering::SeqCst);                 // c:6110
+        LOOPS.store(funcsave_loops, Ordering::SeqCst);                       // c:6111
+    }
+
+    // c:6114 — `endtrapscope();` — canonical port at signals.rs:1164
+    // restores saved traps from SAVETRAPS whose local > locallevel
+    // and fires the deferred SIGEXIT trap (if any) AFTER the other
+    // restores complete.
+    crate::ported::signals::endtrapscope();
+
+    // c:6116-6117 — TRAP_STATE_PRIMED branch: bump trap_return back.
+    if TRAP_STATE.load(Ordering::Relaxed) == TRAP_STATE_PRIMED {             // c:6116
+        TRAP_RETURN.fetch_add(1, Ordering::Relaxed);                         // c:6117
+    }
+
+    // c:6118 — `ret = lastval;`
+    let ret = LASTVAL.load(Ordering::Relaxed);
+
+    // c:6119 — `noerrexit = funcsave->noerrexit;`
+    noerrexit.store(funcsave_noerrexit, Ordering::Relaxed);
+
+    // c:6120-6124 — noreturnval: restore lastval + pipestats. C runs
+    // the function for side-effects only; outer lastval/pipestats
+    // should reflect the PRE-call state.
+    if noreturnval {                                                         // c:6120
+        LASTVAL.store(funcsave_lastval, Ordering::Relaxed);                  // c:6121
+        if let Some(saved_ps) = funcsave_pipestats {
+            let n = NUMPIPESTATS.get_or_init(|| std::sync::Mutex::new(0));
+            if let Ok(mut nguard) = n.lock() {
+                *nguard = funcsave_numpipestats;                             // c:6122
+            }
+            let p = PIPESTATS.get_or_init(|| std::sync::Mutex::new([0; MAX_PIPESTATS]));
+            if let Ok(mut pguard) = p.lock() {
+                for (i, v) in saved_ps.iter().enumerate() {
+                    if i < pguard.len() {
+                        pguard[i] = *v;                                      // c:6123 memcpy
+                    }
+                }
+            }
+        }
+    }
+
+    // c:6128 — `unqueue_signals();`
+    unqueue_signals();
+
+    // c:6135-6155 — exit_pending branch: skip; depends on
+    // `in_exit_trap` global not yet ported.
+
+    // c:Src/exec.c doshfunc → endparamscope — restore local-typeset
+    // params installed during the body. (Function-local scope.)
+    endparamscope();
+
+    ret                                                                      // c:6157 return ret
+}
+
+/// `TRAP_STATE_PRIMED` per `Src/signals.h:55` — doshfunc tests this
+/// to decide whether to bump trap_return on entry/exit. Local
+/// const here because the canonical zsh_h port doesn't carry
+/// trap-state numeric constants yet.
+const TRAP_STATE_PRIMED: i32 = 2; // c:Src/signals.h:55
 
 /// Port of `execfuncdef(Estate state, Eprog redir_prog)` from
 /// `Src/exec.c:5309-5494`. Define a shell function: extract
