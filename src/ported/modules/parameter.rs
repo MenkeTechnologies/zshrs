@@ -588,7 +588,7 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
     // c:284-289 — declarations at function top (PORT.md Rule 5: same
     // names, same order, same scope as C).
     let value: String; // c:286 char *value
-    let shf: shfunc; // c:287 Shfunc shf
+    let mut shf: shfunc; // c:287 Shfunc shf
     let prog: Option<crate::ported::zsh_h::eprog>; // c:288 Eprog prog
                                                     // c:289 — int sn (used inside the TRAP branch only)
 
@@ -625,9 +625,9 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
         sticky: None,
         body: Some(val.clone()), // body source retained for deferred-recompile flows
     };
-    // c:303 — shfunc_set_sticky(shf); (EXTERN exec.c sticky-options bit)
-    // Not yet ported; sticky-options propagation is a no-op until the
-    // emulation framework supports per-function emulation switches.
+    // c:303 — `shfunc_set_sticky(shf);` (EXTERN exec.c). Stamps the
+    // pending sticky-emulation snapshot onto the new function.
+    crate::ported::exec::shfunc_set_sticky(&mut shf);
 
     // c:305-313 — TRAP* handling.
     if name.len() >= 4 && &name[..4] == "TRAP" {
