@@ -1216,7 +1216,7 @@ pub fn bin_bindkey_new(
 /// Line-by-line port of c:966-988. Walks bytes 0x80..=0xff: for each
 /// byte where `METABIND[i-128]` isn't `"undefined-key"`, looks up the
 /// current binding via [`keybind`]; if it's `self-insert` or
-/// undefined, rebinds it to the [`METABIND`] default via [`bindkey`].
+/// undefined, rebinds it to the [`METABIND`] default via `bindkey`.
 /// Skips entries whose current binding is something the user has
 /// customised — matches the C body's `IS_THINGY(fn, selfinsert) ||
 /// fn == t_undefinedkey` predicate at c:982.

@@ -2073,7 +2073,7 @@ pub struct zoptdesc {
     /// Owning `Zoptarr` name (the array this option's values go into).
     /// Port of C `Zoptarr arr` pointer at zutil.c:1525 — Rust stores
     /// the name and looks the arr up in `OPT_ARRS` on demand to
-    /// avoid the cyclic Box<zoptarr>/Box<zoptdesc> reference.
+    /// avoid the cyclic `Box<zoptarr>`/`Box<zoptdesc>` reference.
     pub arr: Option<String>,
     pub next: Option<Box<zoptdesc>>,
 }

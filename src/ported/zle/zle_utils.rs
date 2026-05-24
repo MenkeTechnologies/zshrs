@@ -362,8 +362,8 @@ pub fn cut(i: i32, ct: i32, dir: i32) -> i32 {
 ///   - skip when ct == 0 && !vilinerange, or MOD_NULL is set (c:948)
 ///   - MOD_VIBUF → write/append to `vibuf[zmod.vibuf]` honouring
 ///     MOD_VIAPP and vilinerange's CUTBUFFER_LINE flag (c:953-979)
-///   - CUT_YANK → store in vibuf[26] (vi "0 register) (c:980-986)
-///   - default vi → shift "1-"8 down to "2-"9, store at vibuf[27]
+///   - CUT_YANK → store in `vibuf[26]` (vi "0 register) (c:980-986)
+///   - default vi → shift "1-"8 down to "2-"9, store at `vibuf[27]`
 ///     (vi "1 register) (c:987-997)
 ///   - rotate CUTBUF into KILLRING when !ZLE_KILL or CUT_REPLACE
 ///     (c:1004-1018), then apply CUT_FRONT/CUT_REPLACE direction or
