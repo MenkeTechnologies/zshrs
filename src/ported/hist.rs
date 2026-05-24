@@ -6481,4 +6481,166 @@ mod subst_modifier_tests {
             "c:2354 — '%foo' must not match unless `foo` is at end"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // histreduceblanks edge cases — pure function, anchored to C semantics
+    // (c:50, c:1240): collapse runs of space/tab to single space; trim
+    // leading and trailing space; PRESERVE embedded newlines/CRs.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Single space stays single.
+    #[test]
+    fn histreduceblanks_single_space_stays_one() {
+        assert_eq!(histreduceblanks("a b"), "a b");
+    }
+
+    /// Run of spaces collapses to one.
+    #[test]
+    fn histreduceblanks_multi_space_collapses_to_one() {
+        assert_eq!(histreduceblanks("a     b"), "a b");
+    }
+
+    /// Tab counts as inblank — collapses to single space.
+    #[test]
+    fn histreduceblanks_tab_collapses_with_spaces() {
+        assert_eq!(histreduceblanks("a \t  b"), "a b");
+    }
+
+    /// Leading whitespace trimmed.
+    #[test]
+    fn histreduceblanks_leading_whitespace_trimmed() {
+        assert_eq!(histreduceblanks("   hello"), "hello");
+    }
+
+    /// Trailing whitespace trimmed.
+    #[test]
+    fn histreduceblanks_trailing_whitespace_trimmed() {
+        assert_eq!(histreduceblanks("hello   "), "hello");
+    }
+
+    /// Both leading AND trailing trimmed.
+    #[test]
+    fn histreduceblanks_both_ends_trimmed() {
+        assert_eq!(histreduceblanks("  hi  "), "hi");
+    }
+
+    /// Empty input → empty output.
+    #[test]
+    fn histreduceblanks_empty_input_returns_empty() {
+        assert_eq!(histreduceblanks(""), "");
+    }
+
+    /// All-whitespace input → empty after trim.
+    #[test]
+    fn histreduceblanks_all_whitespace_becomes_empty() {
+        assert_eq!(histreduceblanks("     "), "");
+        assert_eq!(histreduceblanks("\t\t  \t"), "");
+    }
+
+    /// Embedded newline is NOT treated as inblank — preserved as-is.
+    /// (c:50 — `inblank` is space/tab ONLY; newline is preserved.)
+    #[test]
+    fn histreduceblanks_newline_preserved_not_collapsed() {
+        // Newlines stay; surrounding spaces collapse normally.
+        let r = histreduceblanks("a\nb");
+        assert_eq!(r, "a\nb", "newline must be preserved");
+    }
+
+    /// Multiple newlines stay; flanking spaces don't get consumed.
+    #[test]
+    fn histreduceblanks_multiple_newlines_preserved() {
+        // Pin contract: newlines are not in inblank → preserved exactly.
+        let r = histreduceblanks("a\n\nb");
+        assert_eq!(r, "a\n\nb");
+    }
+
+    /// Space-newline-space — the spaces flanking the newline are not
+    /// treated as a "run" because newline breaks continuity.
+    #[test]
+    fn histreduceblanks_space_around_newline_preserved() {
+        // Trim only happens at the very ends, not inside.
+        let r = histreduceblanks("a \n b");
+        // Each space around \n is its own (already single) run; newline
+        // resets prev_space; the second space starts a new run.
+        assert_eq!(r, "a \n b");
+    }
+
+    /// Mixed: leading + multi + trailing all trimmed/collapsed.
+    #[test]
+    fn histreduceblanks_complex_input_normalizes() {
+        assert_eq!(
+            histreduceblanks("   a   b\t\tc   "),
+            "a b c"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // histsplitwords edge cases — pure tokenizer pinning byte spans.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Single word, no whitespace.
+    #[test]
+    fn histsplitwords_single_word_returns_one_span() {
+        let words = histsplitwords("echo", false);
+        assert_eq!(words, vec![(0, 4)]);
+    }
+
+    /// Empty input → no words.
+    #[test]
+    fn histsplitwords_empty_input_returns_no_words() {
+        let words = histsplitwords("", false);
+        assert!(words.is_empty(), "empty line has no words; got {words:?}");
+    }
+
+    /// Only whitespace → no words.
+    #[test]
+    fn histsplitwords_only_whitespace_returns_no_words() {
+        let words = histsplitwords("    ", false);
+        assert!(words.is_empty(), "whitespace-only has no words; got {words:?}");
+    }
+
+    /// Leading whitespace doesn't create phantom first word at offset 0.
+    #[test]
+    fn histsplitwords_leading_whitespace_skipped_no_uselex() {
+        // "   hi" — first word starts at offset 3.
+        let words = histsplitwords("   hi", false);
+        assert_eq!(words, vec![(3, 5)]);
+    }
+
+    /// Tab-separated words.
+    #[test]
+    fn histsplitwords_tab_separator_works_like_space() {
+        let words = histsplitwords("a\tb\tc", false);
+        // 3 words, each one char long.
+        assert_eq!(words.len(), 3);
+        for (s, e) in &words {
+            assert_eq!(e - s, 1, "each word is one char; got ({s},{e})");
+        }
+    }
+
+    /// Spans never overlap and never overflow the input length.
+    #[test]
+    fn histsplitwords_spans_well_formed() {
+        let line = "alpha beta gamma";
+        for use_lex in [false, true] {
+            let words = histsplitwords(line, use_lex);
+            for (s, e) in &words {
+                assert!(
+                    s < e && *e <= line.len(),
+                    "bad span ({s},{e}) for line len {} use_lex={}",
+                    line.len(),
+                    use_lex
+                );
+            }
+            // Spans must be monotonically advancing.
+            for i in 1..words.len() {
+                assert!(
+                    words[i].0 >= words[i - 1].1,
+                    "spans overlap: {:?} then {:?}",
+                    words[i - 1],
+                    words[i]
+                );
+            }
+        }
+    }
 }
