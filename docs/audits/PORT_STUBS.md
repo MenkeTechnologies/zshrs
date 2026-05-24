@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:06:26.690112+00:00
+Generated: 2026-05-24T22:14:20.074883+00:00
 
 ## Method
 
@@ -16,14 +16,14 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 161 stubs across 47 files
+## Summary: 159 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
 | `src/ported/utils.rs` | 14 | `lchdir` (8 / 327) |
 | `src/ported/hashtable.rs` | 11 | `newhashtable` (1 / 19) |
 | `src/ported/mem.rs` | 10 | `malloc` (1 / 165) |
-| `src/ported/zle/complist.rs` | 10 | `putfilecol` (2 / 71) |
+| `src/ported/zle/complist.rs` | 8 | `menuselect_bindings` (1 / 25) |
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 182) |
 | `src/ported/zle/zle_refresh.rs` | 8 | `addmultiword` (1 / 14) |
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
@@ -120,19 +120,17 @@ python3 scripts/gen_port_stubs.py
 | 304 | `zalloc` | 1 | 10 | 10% |
 | 244 | `memory_validate` | 5 | 36 | 13% |
 
-### `src/ported/zle/complist.rs` — 10 stubs
+### `src/ported/zle/complist.rs` — 8 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 699 | `putfilecol` | 2 | 71 | 2% |
-| 2745 | `menuselect_bindings` | 1 | 25 | 4% |
-| 716 | `asklistscroll` | 2 | 40 | 5% |
+| 2818 | `menuselect_bindings` | 1 | 25 | 4% |
+| 789 | `asklistscroll` | 2 | 40 | 5% |
 | 198 | `getcolval` | 2 | 37 | 5% |
-| 1679 | `singlecalc` | 1 | 15 | 6% |
-| 2338 | `msearchpop` | 1 | 10 | 10% |
-| 688 | `putmatchcol` | 2 | 15 | 13% |
-| 2759 | `boot_` | 2 | 15 | 13% |
-| 2508 | `domenuselect` | 129 | 925 | 13% |
+| 1752 | `singlecalc` | 1 | 15 | 6% |
+| 2411 | `msearchpop` | 1 | 10 | 10% |
+| 2832 | `boot_` | 2 | 15 | 13% |
+| 2581 | `domenuselect` | 129 | 925 | 13% |
 | 653 | `clnicezputs` | 24 | 107 | 22% |
 
 ### `src/ported/zle/compresult.rs` — 8 stubs
