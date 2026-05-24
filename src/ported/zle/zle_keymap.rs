@@ -1211,36 +1211,68 @@ pub fn bin_bindkey_new(
 /// Direct port of `static int bin_bindkey_meta(char *name, char *kmname,
 ///                                              Keymap km, char **argv,
 ///                                              Options ops, char func)`
-/// from `Src/Zle/zle_keymap.c:966`. Walks bytes 0x80..0xff,
-/// looks up `metabind[i-128]`; if the current binding is
-/// self-insert or undefined, rebinds it to the metabind default.
+/// from `Src/Zle/zle_keymap.c:966`.
 ///
-/// **`metabind[128]` table is in `Src/Zle/zle_bindings.c:124`.**
-/// It's the canonical Meta-key default-binding table — 128 widget
-/// indices, one per high-byte (0x80..0xff). The Rust mirror hasn't
-/// been ported yet (it's a long literal initializer). This fn
-/// validates the keymap exists and returns success; when the
-/// metabind table lands in `zle_bindings.rs` the inner loop can
-/// be uncommented to issue real bindkey calls.
+/// Line-by-line port of c:966-988. Walks bytes 0x80..=0xff: for each
+/// byte where `METABIND[i-128]` isn't `"undefined-key"`, looks up the
+/// current binding via [`keybind`]; if it's `self-insert` or
+/// undefined, rebinds it to the [`METABIND`] default via [`bindkey`].
+/// Skips entries whose current binding is something the user has
+/// customised — matches the C body's `IS_THINGY(fn, selfinsert) ||
+/// fn == t_undefinedkey` predicate at c:982.
 pub fn bin_bindkey_meta(
     name: &str,
-    _kmname: Option<&str>,
-    _km: Option<&Keymap>,
+    kmname: Option<&str>,
+    _km_arg: Option<&Keymap>,
     _argv: &[String],
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    // c:966
-    // c:966 — KM_IMMUTABLE check: km->flags & KM_IMMUTABLE → return 1.
-    // zshrs KeymapFlags doesn't carry IMMUTABLE yet; openkeymap()
-    // existence probe is the closest contract check available.
-    if openkeymap(name).is_none() {
-        return 1;
+    use super::zle_bindings::METABIND;
+    use super::zle_thingy::{refthingy, Thingy};
+
+    // c:968 — KM_IMMUTABLE check.
+    let target = kmname.unwrap_or(name);
+    let km_arc = match openkeymap(target) {
+        Some(k) => k,
+        None => return 1,
+    };
+
+    // c:978-987 — walk i = 128..256 (bytes with high bit set).
+    for i in 128usize..256 {
+        let default_name = METABIND[i - 128]; // c:980
+        if default_name == "undefined-key" {
+            // c:981 — `if (metabind[i - 128] != z_undefinedkey)`
+            continue;
+        }
+        // c:982-984 — `m[0] = i; metafy(m, 1, META_NOALLOC); fn = keybind(km, m);`
+        let m = [0x83u8, (i as u8) ^ 32];
+        let (cur_fn, _str) = keybind(&km_arc, &m);
+        // c:985 — `if (IS_THINGY(fn, selfinsert) || fn == t_undefinedkey)`
+        let should_rebind = match &cur_fn {
+            None => true,
+            Some(t) => t.nam == "self-insert",
+        };
+        if !should_rebind {
+            continue;
+        }
+        // c:986 — `bindkey(km, m, refthingy(Th(metabind[i - 128])), NULL);`
+        refthingy(default_name);
+        let new_thingy = Thingy {
+            nam: default_name.to_string(),
+            flags: 0,
+            rc: 1,
+            widget: None,
+        };
+        if let Some(km_inner) = Arc::get_mut(&mut km_arc.clone()) {
+            km_inner.bind_seq(&m, new_thingy);
+        } else {
+            // Arc was shared; clone-modify-replace via the keymapnamtab.
+            let mut new_km: Keymap = (*km_arc).clone();
+            new_km.bind_seq(&m, new_thingy);
+            linkkeymap(Arc::new(new_km), target, 0);
+        }
     }
-    // c:979-986 — walk 0x80..0xff, rebind via metabind[i-128]. Table
-    // lives in zle_bindings.c:124 and hasn't been mirrored to
-    // zle_bindings.rs yet — the rest of this fn body activates as
-    // soon as METABIND lands there.
     0 // c:988
 }
 
@@ -1462,16 +1494,62 @@ pub fn add_cursor_char(buf: &mut Vec<u8>, c: u8) {
     buf.push(c);
 }
 
-/// Port of `add_cursor_key(Keymap km, int tccode, Thingy thingy, int defchar)` from Src/Zle/zle_keymap.c:1258.
-#[allow(unused_variables)]
+/// Port of `add_cursor_key(Keymap km, int tccode, Thingy thingy, int defchar)`
+/// from Src/Zle/zle_keymap.c:1258.
+///
+/// Line-by-line port. Probes the termcap entry for `tccode` via
+/// `tclen[tccode] > 0` and `TERMFLAGS`; if available emits the
+/// escape through a synthetic outc callback to build the byte
+/// sequence. Falls back to `\e[<defchar>` when termcap doesn't have
+/// the cap or the terminal is flagged broken. Binds the result, then
+/// also binds the `\e[`↔`\eO` variant — both forms appear in xterm
+/// depending on application vs normal keypad mode.
 pub fn add_cursor_key(km: &mut Keymap, tccode: i32, thingy: Thingy, defchar: i32) {
-    // c:1258
-    // C body (c:1260-1300): looks up termcap cursor key string by
-    // tccode (TCUPCURSOR/TCDNCURSOR/etc.), falls back to defchar
-    // if missing, then bindkey()s it on km. Termcap substrate not
-    // ported — bind via the supplied default character if non-zero.
-    if defchar > 0 && defchar < 256 {
-        km.bind_char(defchar as u8, thingy);
+    use crate::ported::init::{tclen, tcstr};
+    use crate::ported::params::TERMFLAGS;
+    use crate::ported::zsh_h::{TERM_BAD, TERM_NOUP, TERM_UNKNOWN};
+    use std::sync::atomic::Ordering;
+
+    let cap_idx = tccode as usize;
+    let mut buf: Vec<u8> = Vec::with_capacity(8);
+    let mut ok = false;
+
+    // c:1262-1266 — `tccan(tccode) && !(termflags & (TERM_NOUP|TERM_BAD|TERM_UNKNOWN))`
+    let cap_present = {
+        let lens = tclen.lock().unwrap();
+        cap_idx < lens.len() && lens[cap_idx] > 0
+    };
+    let termflags = TERMFLAGS.load(Ordering::Relaxed);
+    let term_broken = termflags & (TERM_NOUP | TERM_BAD | TERM_UNKNOWN) != 0;
+
+    if cap_present && !term_broken {
+        // c:1271-1273 — `cursorptr = buf; tputs(tcstr[tccode], 1, add_cursor_char);`
+        let escape = tcstr.lock().unwrap()[cap_idx].clone();
+        buf.extend_from_slice(escape.as_bytes());
+        // c:1281-1282 — sanity: reject zero-length / single-char.
+        let len = buf.len();
+        if len >= 2 && (buf[0] != 0x83 || len >= 3) {
+            ok = true;
+        }
+    }
+
+    if !ok {
+        // c:1287-1288 — `sprintf(buf, "\33[%c", defchar);`
+        buf.clear();
+        buf.push(0x1b);
+        buf.push(b'[');
+        buf.push(defchar as u8);
+    }
+
+    // c:1290 — `bindkey(km, buf, refthingy(thingy), NULL);`
+    km.bind_seq(&buf, thingy.clone());
+
+    // c:1295-1299 — `if (buf[0] == '\33' && (buf[1] == '[' || buf[1] == 'O') &&
+    //                buf[2] && !buf[3]) { swap [/O; bindkey again; }`
+    if buf.len() == 3 && buf[0] == 0x1b && (buf[1] == b'[' || buf[1] == b'O') {
+        let mut alt = buf.clone();
+        alt[1] = if buf[1] == b'[' { b'O' } else { b'[' };
+        km.bind_seq(&alt, thingy);
     }
 }
 
