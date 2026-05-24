@@ -35,7 +35,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        # --features zd is required to build the `zd` binary (required-features
+        # gate in Cargo.toml keeps ureq+base64 out of the default zshrs build).
+        run: cargo build --release --locked --features zd --bin zshrs --bin zd --target ${{ matrix.target }}
 
       - name: Package
         shell: bash
