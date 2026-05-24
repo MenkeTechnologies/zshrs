@@ -158,6 +158,19 @@ pub struct Config {
     /// Absolute or `~`-prefixed path to a zsh script sourced after
     /// normal startup when set. `None` if the key is absent or empty.
     pub startup_config: Option<PathBuf>,
+    /// `[builtins].coreutils_shadows` — whether to use in-process
+    /// coreutils shadow builtins (`cat`/`head`/`tail`/`sort`/`cut`/
+    /// `tr`/`find`/`cp`/...) for the fork-elimination speedup, or
+    /// fall through to the real `/bin/X` binaries.
+    ///
+    /// **Default `off`** — old scripts run against the canonical
+    /// system coreutils out of the box, no edge-case divergence
+    /// surprises. Opt IN to the speedup with
+    ///   [builtins]
+    ///   coreutils_shadows = "on"
+    /// in `~/.zshrs/zshrs.toml`, or via `ZSHRS_COREUTILS_SHADOWS=1`
+    /// env for one-off testing.
+    pub coreutils_shadows: bool,
 }
 
 /// Resolved `[shell].startup_config` from the last `probe()` (same
@@ -182,6 +195,10 @@ pub fn read_config_full() -> Config {
         daemon: ConfigSetting::Auto,
         skip_configs: SkipConfigs::Off,
         startup_config: None,
+        // OFF by default — old scripts run against system /bin/X
+        // out of the box. Opt-in to the in-process speedup via
+        // [builtins].coreutils_shadows = on.
+        coreutils_shadows: false,
     };
     let path = match config_file_path() {
         Some(p) => p,
@@ -245,11 +262,69 @@ pub fn read_config_full() -> Config {
                 None
             }
         });
+    // `[builtins].coreutils_shadows` — accept booleans (`true`/`false`)
+    // OR string aliases (`on`/`off`/`yes`/`no`). String-aliased
+    // matches how `[daemon].enabled` accepts `auto`/`off`/`require`
+    // so the file stays toml-string-uniform.
+    let coreutils_shadows = parsed
+        .get("builtins")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("coreutils_shadows"))
+        .map(|v| match v {
+            toml::Value::Boolean(b) => *b,
+            toml::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+                "off" | "false" | "no" | "0" => false,
+                "on" | "true" | "yes" | "1" => true,
+                other => {
+                    tracing::warn!(
+                        value = other,
+                        "zshrs.toml: [builtins].coreutils_shadows invalid; using off"
+                    );
+                    false
+                }
+            },
+            _ => {
+                tracing::warn!("zshrs.toml: [builtins].coreutils_shadows must be bool or string; using off");
+                false
+            }
+        })
+        .unwrap_or(false);
     Config {
         daemon,
         skip_configs,
         startup_config,
+        coreutils_shadows,
     }
+}
+
+/// Snapshot of `[builtins].coreutils_shadows` cached after the first
+/// `coreutils_shadows_enabled()` lookup. `OnceLock` lazy so the toml
+/// read is one-shot, then every subsequent dispatch through
+/// `reg_overridable!` becomes a single atomic load.
+static CORE_SHADOWS_CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Hot-path query for whether to dispatch the in-process coreutils
+/// shadow (`cat`/`cp`/`find`/`sort`/etc) or fall through to the
+/// system binary. Read by the `reg_overridable!` macro in
+/// `fusevm_bridge.rs` on every shadowed-builtin invocation. O(1)
+/// after first call.
+pub fn coreutils_shadows_enabled() -> bool {
+    *CORE_SHADOWS_CACHE.get_or_init(|| {
+        // Env override wins for one-off testing:
+        //   ZSHRS_COREUTILS_SHADOWS=1 — force ON
+        //   ZSHRS_COREUTILS_SHADOWS=0 — force OFF
+        // Absent → fall through to toml / default-off.
+        if let Ok(v) = std::env::var("ZSHRS_COREUTILS_SHADOWS") {
+            let v = v.trim().to_ascii_lowercase();
+            if matches!(v.as_str(), "1" | "on" | "true" | "yes") {
+                return true;
+            }
+            if matches!(v.as_str(), "0" | "off" | "false" | "no" | "") {
+                return false;
+            }
+        }
+        read_config_full().coreutils_shadows
+    })
 }
 
 /// Path from `[shell].startup_config` captured during `probe()`.
