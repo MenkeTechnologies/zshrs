@@ -317,13 +317,72 @@ pub fn comp_priv_prefix() -> Vec<String> {
     Vec::new()
 }
 
-/// _completers - List active completers
-pub fn completers(state: &MainCompleteState, print_current: bool) -> Vec<String> {
-    if print_current {
-        vec![state.ctx.completer.clone()]
-    } else {
-        state.completers.clone()
+/// Canonical 11-completer list emitted by `_completers` (shell:7-8).
+/// Mirrors the upstream `list=(…)` literal verbatim — order matters
+/// because zsh's `compadd` preserves it when sorting is off.
+pub const CANONICAL_COMPLETER_NAMES: &[&str] = &[
+    "complete",
+    "approximate",
+    "correct",
+    "match",
+    "expand",
+    "list",
+    "menu",
+    "oldlist",
+    "ignored",
+    "prefix",
+    "history",
+];
+
+/// Port of `_completers` (zsh Completion/Base/Utility/_completers).
+///
+/// Emits completer names into the `completers` tag group. Matches the
+/// 14-line shell function exactly:
+///   - With `with_underscore_prefix = true` (shell `-p` flag), names
+///     are emitted as `_complete` / `_approximate` / … so the user
+///     gets the function form usable in `compdef -K`.
+///   - Otherwise names are emitted bare (`complete` / `approximate`)
+///     — the form usable in `zstyle :completion:*:completer …`.
+///   - The `prefix-hidden` zstyle (shell:11) drives a `-d list`
+///     display alias when bare names should be shown alongside the
+///     `_xxx` insertion form. Modeled here by setting `disp` to the
+///     bare name while `str_` carries the `_xxx` form.
+///
+/// Signature change from the previous stub (which returned a `Vec<String>`
+/// of currently-active completers — not a completion at all, despite
+/// the shell impl's actual job being to ADD completion matches into
+/// the receiver).
+pub fn completers(state: &mut CompletionState, with_underscore_prefix: bool) -> bool {
+    let prefix = state.params.prefix.clone();
+    let curcontext = "::completers";
+
+    // shell:11-12: zstyle -t :completion:${curcontext}:completers prefix-hidden
+    let prefix_hidden = state
+        .styles
+        .lookup_bool(
+            &format!(":completion:{}:completers", curcontext),
+            "prefix-hidden",
+        )
+        .unwrap_or(false);
+
+    let us = if with_underscore_prefix { "_" } else { "" };
+
+    state.begin_group("completers", true);
+    for &bare in CANONICAL_COMPLETER_NAMES {
+        let inserted = format!("{}{}", us, bare);
+        if !inserted.starts_with(&prefix) {
+            continue;
+        }
+        let mut c = Completion::new(inserted);
+        // `prefix-hidden`: shell uses `-d list` so listing shows the
+        // BARE name (`complete`) while insertion still uses `_complete`.
+        if prefix_hidden && with_underscore_prefix {
+            c.disp = Some(bare.into());
+        }
+        state.add_match(c, Some("completers"));
     }
+    state.end_group();
+    state.nmatches > 0
 }
 
 /// _default - Default completion (files)
@@ -867,6 +926,77 @@ mod tests {
             vec!["commands"],
             "externals_only must NOT emit internal-category groups",
         );
+    }
+
+    // ── _completers port ──────────────────────────────────────────────
+
+    #[test]
+    fn completers_emits_canonical_eleven_bare() {
+        let mut state = CompletionState::new();
+        completers(&mut state, false);
+        let mut names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        names.sort();
+        // Default group sort matches shell `compadd` alpha-sort. The
+        // SET must contain all 11 canonical names from the shell
+        // `list=(…)` literal at compsys/library.rs ~324.
+        assert_eq!(
+            names,
+            vec![
+                "approximate",
+                "complete",
+                "correct",
+                "expand",
+                "history",
+                "ignored",
+                "list",
+                "match",
+                "menu",
+                "oldlist",
+                "prefix",
+            ],
+        );
+    }
+
+    #[test]
+    fn completers_with_p_flag_adds_underscore_prefix() {
+        let mut state = CompletionState::new();
+        completers(&mut state, true);
+        let names: std::collections::HashSet<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert_eq!(names.len(), 11);
+        assert!(names.contains("_complete"));
+        assert!(names.contains("_approximate"));
+        assert!(names.contains("_history"));
+        // No bare names — `-p` flag means every entry MUST carry the
+        // `_` prefix.
+        assert!(!names.contains("complete"));
+    }
+
+    #[test]
+    fn completers_prefix_hidden_shows_bare_in_disp() {
+        let mut state = CompletionState::new();
+        state.styles.set(
+            ":completion:::completers:completers",
+            "prefix-hidden",
+            vec!["true".into()],
+            false,
+        );
+        completers(&mut state, true);
+        // Pick the `_complete` entry by string match (group is sorted).
+        let c = state
+            .groups[0]
+            .matches
+            .iter()
+            .find(|m| m.str_ == "_complete")
+            .expect("_complete present");
+        assert_eq!(c.disp.as_deref(), Some("complete"));
     }
 
     #[test]
