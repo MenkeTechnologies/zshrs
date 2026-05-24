@@ -7437,7 +7437,9 @@ impl ShellExecutor {
             }
         };
         let fmt_str = format.unwrap_or_else(|| "%a %b %e %H:%M:%S %Z %Y".to_string());
-        let mut buf = [0i8; 1024];
+        // c_char is i8 on most targets, u8 on aarch64-linux; use c_char so
+        // strftime + CStr::from_ptr accept the same pointer type per-target.
+        let mut buf = [0 as libc::c_char; 1024];
         let fmt_cstr = std::ffi::CString::new(fmt_str.as_str()).unwrap_or_default();
         let len = unsafe { libc::strftime(buf.as_mut_ptr(), buf.len(), fmt_cstr.as_ptr(), &tm) };
         if len > 0 {
