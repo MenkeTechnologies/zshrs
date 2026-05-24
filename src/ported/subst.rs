@@ -5816,7 +5816,16 @@ pub fn paramsubst(
         // splat block is INSIDE this gate. Scalar shape (isarr=0)
         // after DQ sepjoin at c:3034 means no sort applies. C does
         // not have a separate "sort the joined string" path.
-        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) {
+        //
+        // sep.is_none() guard: C's sepjoin at c:3906 runs BEFORE c:4245
+        // and clears isarr=0 when (j)/(F) flag was set, so the sort
+        // block at c:4245 is gated out by `if (isarr)`. zshrs's port
+        // ordering inverts that (sort here at 5819, sep below at 5924),
+        // so explicitly skip sort when sep is set to mirror C's
+        // join-collapses-first behavior. `${(oj/-/)arr}` for
+        // (charlie alpha bravo) returns "charlie-alpha-bravo" in zsh —
+        // the o flag is a no-op because j collapsed shape first.
+        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none() {
             // c:4245 + c:4290
             // Sort/unique source: prefer split_parts (any prior
             // operator result like :# filter, (s::) split, or
@@ -9986,7 +9995,6 @@ mod tests {
     /// Pin zsh's observed behavior; mark #[ignore] since the behavior
     /// itself is counter-intuitive and we want to flag it explicitly.
     #[test]
-    #[ignore = "ANCHOR: zsh ${(oj/-/)arr} returns charlie-alpha-bravo (NOT sorted); verify zshrs"]
     fn paramsubst_arr_compound_oj_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
@@ -10003,7 +10011,6 @@ mod tests {
     // ── (Fo) compound: newline-join, NOT sorted in zsh scalar ─────
     /// `${(Fo)arr}` in zsh: joined by newline, NOT sorted.
     #[test]
-    #[ignore = "ANCHOR: zsh ${(Fo)arr} → newline-join unsorted; verify zshrs"]
     fn paramsubst_arr_compound_Fo_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) =
