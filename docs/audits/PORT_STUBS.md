@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T21:13:16.676197+00:00
+Generated: 2026-05-24T21:15:45.716626+00:00
 
 ## Method
 
@@ -217,11 +217,11 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 1074 | `describekeybriefly` | 2 | 28 | 7% |
+| 1088 | `describekeybriefly` | 2 | 28 | 7% |
 | 414 | `getbyte` | 11 | 76 | 14% |
-| 685 | `zleread` | 20 | 127 | 15% |
-| 764 | `execzlefunc` | 27 | 149 | 18% |
-| 1313 | `trashzle` | 4 | 22 | 18% |
+| 778 | `execzlefunc` | 27 | 149 | 18% |
+| 1327 | `trashzle` | 4 | 22 | 18% |
+| 685 | `zleread` | 26 | 127 | 20% |
 | 321 | `raw_getbyte` | 50 | 242 | 20% |
 
 ### `src/ported/zle/zle_tricky.rs` — 6 stubs
