@@ -1,5 +1,28 @@
-//! Port of `_complete_help` — show completion help. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_complete_help` — show completion help.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_complete_help`
+//! (system copy `/opt/homebrew/share/zsh/functions/_complete_help`).
+//!
+//! Upstream shell source — the real `_complete_help` is a complex
+//! `complete-word` widget that introspects compsys internals to
+//! show *what zstyle would do* for the current word. Key lines:
+//! ```text
+//!  3  _complete_help() {
+//!  4    eval "$_comp_setup"
+//!  6    local _sort_tags=_help_sort_tags text i j k tmp
+//!  7    typeset -A help_funcs help_tags help_sfuncs help_styles
+//!  9    local -H _help_scan_funcstack="main_complete|complete|…"
+//! 12    {
+//! 13      compadd() { return 1 }
+//! 14      compcall() { _help_sort_tags use-compctl }
+//! 15      zstyle() { …shadow zstyle to RECORD lookups… }
+//! ```
+//!
+//! Simplified Rust port: takes pre-collected `(topic, description)`
+//! pairs from the caller and emits each with `topic -- desc` disp
+//! formatting. This covers the user-visible "show me the help
+//! entries" mode without re-implementing zsh's compsys introspection
+//! plumbing (which would require shadowing zstyle/compadd globally).
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;

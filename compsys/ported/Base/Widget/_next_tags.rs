@@ -1,5 +1,22 @@
-//! Port of `_next_tags` — move to next tag set. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_next_tags` — move to next tag set.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_next_tags`
+//! (system copy `/opt/homebrew/share/zsh/functions/_next_tags`).
+//!
+//! Upstream shell source is a `list-choices` widget that swaps the
+//! `_all_labels` and `_next_label` fns with wrappers that advance
+//! the active tag set, then re-runs completion:
+//! ```text
+//!  5  _next_tags() {
+//!  6    eval "$_comp_setup"
+//!  8    local ins ops="$PREFIX$SUFFIX"
+//! 10    unfunction _all_labels _next_label
+//! 12    _all_labels() { …advance + dispatch… }
+//! ```
+//!
+//! Simplified Rust port: drops the fn-shadowing trick (Rust can't
+//! re-bind named fns at runtime) and just calls `TagManager::next()`
+//! directly — which IS the advance the shadowed fns ultimately do.
 
 use crate::base::MainCompleteState;
 

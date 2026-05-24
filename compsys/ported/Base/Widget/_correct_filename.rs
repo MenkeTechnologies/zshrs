@@ -1,5 +1,27 @@
-//! Port of `_correct_filename` — correct filename spelling. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_correct_filename` — correct filename spelling.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_correct_filename`
+//! (system copy `/opt/homebrew/share/zsh/functions/_correct_filename`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//! 19  local file="$PREFIX$SUFFIX" trylist tilde etilde testcmd
+//! 20  integer approx max_approx=6
+//! 22  if [[ -z $WIDGET ]]; then
+//! 23    file=$1
+//! 26    (( ${NUMERIC:-1} > 1 )) && max_approx=$NUMERIC
+//! 29  if [[ $file = \~*/* ]]; then
+//! 30    tilde=${file%%/*}
+//! ```
+//!
+//! The shell version walks `~user/` expansion, splits the path into
+//! components, and tries each component against the filesystem with
+//! incrementally larger approximation budgets (1, then 2, then …).
+//!
+//! Simplified Rust port: skips the `~/` walking + variable-budget
+//! loop; uses a flat Levenshtein ≤2 cutoff across each entry in the
+//! enclosing directory. Sufficient for the common single-typo case
+//! (`Carg.tom` → `Cargo.toml`).
 
 use std::fs;
 

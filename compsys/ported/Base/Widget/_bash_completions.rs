@@ -1,5 +1,19 @@
-//! Port of `_bash_completions` — compatibility with bash completion
-//! specs. Moved from `compsys/functions.rs`.
+//! Port of `_bash_completions` — bash compspec compatibility.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_bash_completions`
+//! (system copy `/opt/homebrew/share/zsh/functions/_bash_completions`).
+//!
+//! Upstream `_bash_completions` is a `complete-word` widget. The
+//! shell-side implementation is small (~50 lines) and primarily
+//! delegates to bash's `complete -p` output parsing.
+//!
+//! Simplified Rust port: parses a single bash compspec string
+//! directly (no shell-out to bash) and implements the most common
+//! `-W wordlist`, `-G glob`, `-d` (dirs), `-f` (files), `-c`
+//! (commands from PATH), `-u` (usernames from /etc/passwd) actions.
+//! `-F function` / `-C command` (callbacks into shell) are noted
+//! and skipped — they'd require a shell-eval substrate this layer
+//! doesn't have.
 
 use crate::base::{CompleterResult, MainCompleteState};
 
