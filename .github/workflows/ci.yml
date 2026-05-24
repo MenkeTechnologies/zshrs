@@ -29,6 +29,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-targets --locked
 
+  # Cross-compile to aarch64-linux to catch portability regressions where
+  # c_char (= u8 on aarch64-linux, = i8 on x86_64-linux) drifts in libc
+  # callers. Compile-only — no test execution on aarch64 (no native
+  # runners). Catches the bug class fixed in c48cbf6 (params.rs /
+  # utils.rs / ext_builtins.rs hardcoded i8 where c_char was meant).
+  cross-aarch64-linux:
+    name: Cross-check aarch64-unknown-linux-gnu
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cross
+        run: cargo install cross --locked
+      - run: cross check --locked --target aarch64-unknown-linux-gnu
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}

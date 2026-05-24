@@ -7206,7 +7206,10 @@ impl ShellExecutor {
         }
 
         let mut buf = [0u8; 256];
-        let result = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) };
+        // c_char is i8 on most targets but u8 on aarch64-linux; cast through
+        // libc::c_char so this builds on every Unix target the matrix covers.
+        let result =
+            unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
         if result != 0 {
             eprintln!("hostname: cannot get hostname");
             return 1;
