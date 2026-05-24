@@ -3972,12 +3972,39 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
                     spscan(k);
                 }
             }
-            // c:3231-3247 — autocd $cdpath scan.
-            // SKIPPED: needs `mindist(*pp, *s, bestcd, 1)` (utils.c:4624)
-            // with a 4-arg signature; the Rust port at utils.rs:4391
-            // has a drift'd 2-arg signature and the dist=0 best-write
-            // semantics. Re-port when the canonical mindist lands.
-            let _ = autocd;
+            // c:3231-3247 — autocd $cdpath scan: for each cdpath
+            // entry, find the closest filename match via mindist.
+            // Strict `<` (not `<=` as in spscan) so a cdpath dir
+            // wins only when STRICTLY better than the existing best
+            // — preferring earlier cdpath dirs on ties.
+            if autocd {
+                // c:3232 — `if (cd_able_vars(unmeta(guess))) return;`
+                let unmeta_guess = crate::ported::utils::unmeta(&guess);
+                if crate::ported::builtin::cd_able_vars(&unmeta_guess).is_some() {
+                    return; // c:3233
+                }
+                // c:3234 — `for (pp = cdpath; *pp; pp++)`. Read CDPATH.
+                let cdpath: Vec<String> = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get("cdpath").and_then(|pm| pm.u_arr.clone()))
+                    .unwrap_or_default();
+                let mut cur_d = SPCK_D.with(|c| c.get());
+                let mut cur_best = SPCK_BEST.with(|b| b.borrow().clone());
+                for pp in cdpath.iter() {
+                    // c:3235-3245 — `mindist(*pp, *s, bestcd, 1)`.
+                    if let Some((bestcd, thisdist)) = mindist(pp, &s) {
+                        // c:3239 — STRICT `<` (not `<=`) per C comment
+                        // at c:3236-3239.
+                        if (thisdist as i32) < cur_d {
+                            cur_best = Some(bestcd);
+                            cur_d = thisdist as i32;
+                        }
+                    }
+                }
+                SPCK_BEST.with(|b| *b.borrow_mut() = cur_best);
+                SPCK_D.with(|c| c.set(cur_d));
+            }
         }
     }
     // c:3250-3251 — `if (errflag) return;`
