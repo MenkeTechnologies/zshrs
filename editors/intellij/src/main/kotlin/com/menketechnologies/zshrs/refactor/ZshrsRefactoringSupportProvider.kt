@@ -42,10 +42,15 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either
  * (…)` / `Extract to constant (…)`). If those titles change, update
  * the [titleMatches] predicates below.
  *
- * The zshrs LSP server only emits Extract Variable and Extract
- * Constant. Cmd-Opt-M (Extract Method) and Cmd-Opt-P (Extract
- * Parameter) handlers are still wired so users see a clear "no
- * matching action" notification rather than silent dead keys.
+ * The zshrs LSP server emits Extract Variable, Extract Constant, and
+ * Extract Function (the shell-script analog of Extract Method — produces
+ * `name() { … }` and replaces the selection with a bare call). Whole-
+ * line and multi-line selections trigger the Extract Function action;
+ * sub-expression selections (mid-line) get only Variable / Constant.
+ *
+ * Cmd-Opt-P (Extract Parameter) has no LSP-side action because zsh
+ * functions don't have a parameter list — the equivalent is `local
+ * NAME=$1` inside the body, which Extract Variable already covers.
  */
 class ZshrsRefactoringSupportProvider : RefactoringSupportProvider() {
     override fun isAvailable(context: PsiElement): Boolean = true
@@ -56,7 +61,7 @@ class ZshrsRefactoringSupportProvider : RefactoringSupportProvider() {
         LspExtractActionHandler(
             "Extract Method",
             { it.contains("function") || it.contains("method") },
-            hint = "zshrs LSP only supports Extract Variable (Cmd-Opt-V) and Extract Constant (Cmd-Opt-C).",
+            hint = "Select whole lines (or a full statement) for Extract Function; sub-expressions fall back to Extract Variable (Cmd-Opt-V) or Extract Constant (Cmd-Opt-C).",
         )
 
     override fun getIntroduceVariableHandler(): RefactoringActionHandler =

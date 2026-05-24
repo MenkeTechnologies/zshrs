@@ -110,24 +110,44 @@ YODL_INLINE = [
     (re.compile(r"LPAR\(\)"), "("),
     (re.compile(r"RPAR\(\)"), ")"),
     (re.compile(r"PLUS\(\)"), "+"),
+    # `sitem(KEY)(VALUE)` — yodl short-item list entry. Two paren
+    # groups. Rendered as a markdown list bullet so the `KEY → VALUE`
+    # pairing survives. MUST appear before the unanchored `em(...)`
+    # rule below or `sit` + `em(...)` substring-matches first and
+    # mangles the output into `sit_KEY_(VALUE)`.
+    (re.compile(r"sitem\(([^()]*)\)\(([^()]*)\)"), r"- \1 — \2"),
+    (re.compile(r"startsitem\(\s*\)"), ""),
+    (re.compile(r"endsitem\(\s*\)"), ""),
+    # Body-internal `item(KEY)(VALUE)` pairs — these are NESTED items
+    # inside a body the top-level parse_yo already extracted (e.g. the
+    # bindkey body has `item(\`-e\`)(Selects keymap "emacs"…)`. Render
+    # them as markdown list bullets so the option-list structure
+    # survives in hover text. The `xitem(KEY)` header-only form (no
+    # body paren) collapses to a bare bullet.
+    (re.compile(r"\bitem\(([^()]*)\)\(([^()]*)\)"), r"\n- **\1** — \2\n"),
+    (re.compile(r"\bxitem\(([^()]*)\)"), r"\n- **\1**\n"),
+    (re.compile(r"\bstartitem\(\s*\)"), ""),
+    (re.compile(r"\benditem\(\s*\)"), ""),
     (re.compile(r"NOTRANS\(([^()]*)\)"), r"\1"),
-    (re.compile(r"tt\(([^()]*)\)"), r"`\1`"),
-    (re.compile(r"em\(([^()]*)\)"), r"_\1_"),
-    (re.compile(r"var\(([^()]*)\)"), r"_\1_"),
-    (re.compile(r"bf\(([^()]*)\)"), r"**\1**"),
-    (re.compile(r"noderef\(([^()]*)\)"), r"(\1)"),
-    (re.compile(r"manref\(([^,()]*),\s*([^()]*)\)"), r"`\1(\2)`"),
-    (re.compile(r"footnote\(([^()]*)\)"), r"(\1)"),
+    # `\b` boundaries on tt/em/var/bf so they don't substring-match
+    # inside identifiers like `sitem`, `startitem`, `bindkey -em`, etc.
+    (re.compile(r"\btt\(([^()]*)\)"), r"`\1`"),
+    (re.compile(r"\bem\(([^()]*)\)"), r"_\1_"),
+    (re.compile(r"\bvar\(([^()]*)\)"), r"_\1_"),
+    (re.compile(r"\bbf\(([^()]*)\)"), r"**\1**"),
+    (re.compile(r"\bnoderef\(([^()]*)\)"), r"(\1)"),
+    (re.compile(r"\bmanref\(([^,()]*),\s*([^()]*)\)"), r"`\1(\2)`"),
+    (re.compile(r"\bfootnote\(([^()]*)\)"), r"(\1)"),
     # Section / cross references — drop the module suffix and keep the
     # human-readable section title.
-    (re.compile(r"sectref\(([^,()]*)\)\(([^()]*)\)"), r"_\1_ (\2)"),
-    (re.compile(r"ifztexi\(([^()]*)\)"), r"\1"),
-    (re.compile(r"ifnztexi\(([^()]*)\)"), r"\1"),
+    (re.compile(r"\bsectref\(([^,()]*)\)\(([^()]*)\)"), r"_\1_ (\2)"),
+    (re.compile(r"\bifztexi\(([^()]*)\)"), r"\1"),
+    (re.compile(r"\bifnztexi\(([^()]*)\)"), r"\1"),
     # `example(...)` and `indent(...)` wrap blocks — collapse to inline
     # so subsequent passes see plain prose. Real block-rendering would
     # require a structural parser; not worth it for hover text.
-    (re.compile(r"example\(([^()]*)\)"), r"\n\n    \1\n\n"),
-    (re.compile(r"indent\(([^()]*)\)"), r"\n    \1\n"),
+    (re.compile(r"\bexample\(([^()]*)\)"), r"\n\n    \1\n\n"),
+    (re.compile(r"\bindent\(([^()]*)\)"), r"\n    \1\n"),
     # Yodl prose-quote forms. The leading-backtick + trailing-apostrophe
     # is yodl's smart-quote convention; conversion order matters because
     # `tt(X)` runs FIRST and turns into `` `X` `` — so a source `` ``tt(X)' ``
@@ -153,10 +173,19 @@ def strip_yodl(text: str) -> str:
         if text == prev:
             break
     # Drop residual nested `xx(yy)` we couldn't match — leave the inner text.
-    text = re.sub(r"(?:tt|em|var|bf)\(([^()]*)\)", r"\1", text)
-    # Yodl list markers we can't render cleanly — drop them.
-    text = re.sub(r"startit__\s*\n?", "", text)
-    text = re.sub(r"endit__\s*\n?", "", text)
+    # `\b` boundary so we don't substring-strip `em(` from inside `item(`,
+    # `sitem(`, `xitem(`, `enditem(`, etc.
+    text = re.sub(r"\b(?:tt|em|var|bf)\(([^()]*)\)", r"\1", text)
+    # Yodl list markers we can't render cleanly — drop them. Match the
+    # full `(start|end)(s?)itemize?_*()_*` family that survives parsing.
+    text = re.sub(r"\bstartitem\(\s*\)\s*\n?", "", text)
+    text = re.sub(r"\benditem\(\s*\)\s*\n?", "", text)
+    text = re.sub(r"\bstartsitem\(\s*\)\s*\n?", "", text)
+    text = re.sub(r"\bendsitem\(\s*\)\s*\n?", "", text)
+    # Legacy single-line `startit__`/`endit__` markers (produced by older
+    # rule before sitem became a first-class transform).
+    text = re.sub(r"\bstart(?:s)?it_+\s*\n?", "", text)
+    text = re.sub(r"\bend(?:s)?it_+\s*\n?", "", text)
     text = re.sub(r"^x?it_", "", text, flags=re.MULTILINE)
     # Stray `COMMENT(...)` blocks left over by the parse (we don't have
     # nested-paren matching for arbitrary depth — drop the prefix).
