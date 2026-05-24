@@ -7284,7 +7284,9 @@ pub fn ucs4tomb(wval: u32, buf: &mut [u8]) -> i32 {
     extern "C" {
         fn wctomb(s: *mut libc::c_char, wc: libc::wchar_t) -> libc::c_int;
     }
-    let mut local = [0i8; 16];
+    // libc::c_char is i8 on most targets but u8 on aarch64-linux. Use c_char
+    // so the wctomb arg pointer type matches per-target without a cast.
+    let mut local = [0 as libc::c_char; 16];
     let count = unsafe { wctomb(local.as_mut_ptr(), wval as libc::wchar_t) };
     if count < 0 {
         zerr("character not in range");
