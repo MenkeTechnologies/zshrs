@@ -1,7 +1,12 @@
-//! Native Rust implementation of _describe
+//! Port of `_describe` (zsh Completion/Base/Utility/_describe).
 //!
-//! _describe adds completions with descriptions to the completion system.
-//! It's called by most command-specific completion functions.
+//! Upstream shell source: `compsys/functions/Base/Utility/_describe` (vendored)
+//! or `/opt/homebrew/share/zsh/functions/_describe` (system).
+//!
+//! Native Rust implementation. `_describe` adds completions with
+//! descriptions to the completion system and is called by most
+//! command-specific completion functions. See commit log for the
+//! original (pre-port stub) diff and the shell→Rust algorithm mapping.
 
 use crate::compcore::CompletionState;
 use crate::completion::{Completion, CompletionFlags};

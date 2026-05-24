@@ -1,7 +1,13 @@
-//! Native Rust implementation of _files and _directories
+//! Port of `_files` (zsh Completion/Unix/Type/_files) plus the
+//! `directories_execute` helper used by [`crate::ported::_directories`].
 //!
-//! File/directory completion is one of the most common operations.
-//! Native implementation avoids shell overhead on every TAB.
+//! Upstream shell source: `compsys/functions/Unix/Type/_files` (vendored)
+//! or `/opt/homebrew/share/zsh/functions/_files` (system).
+//!
+//! Native Rust implementation — file/directory completion is one of the
+//! most common operations, so we bypass the shell layer entirely. See
+//! commit log for the original (pre-port stub) diff and the shell→Rust
+//! algorithm mapping.
 
 use crate::compcore::CompletionState;
 use crate::completion::{Completion, CompletionFlags};
