@@ -1796,6 +1796,43 @@ pub fn runshfunc(
                                  // c:6198 — zfree(ou, ouu) — Rust drops on scope exit.
     }
     endparamscope(); // c:6200
+    // c:6141 — deferred-exit gate. After endparamscope() unwinds the
+    // function's local scope (locallevel--), check whether an exit
+    // queued inside the function has reached its target scope:
+    //   if (exit_pending && exit_level >= locallevel+1 && !in_exit_trap)
+    // The `+1` accounts for endparamscope having already happened
+    // here (locallevel is already one less than when exit_level was
+    // captured at c:5890). When the gate fires:
+    //   - locallevel > forklevel: still in a nested function — force
+    //     the outer frame to return too (retflag=1, breaks=loops).
+    //   - locallevel <= forklevel: out of all functions — actually
+    //     exit the shell now via zexit(exit_val, ZEXIT_NORMAL).
+    // `in_exit_trap` is the EXIT-trap guard that prevents the exit-
+    // trap itself from triggering another exit. Not yet ported as a
+    // separate global; pass 0 here so the gate behaves as if the
+    // exit isn't issued from inside the EXIT trap (the canonical
+    // call-site behaviour: traps run AFTER this returns).
+    let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
+    let exit_level = crate::ported::builtin::EXIT_LEVEL.load(Ordering::Relaxed);
+    let cur_locallevel = crate::ported::params::locallevel.load(Ordering::Relaxed) as i32;
+    let cur_forklevel = FORKLEVEL.load(Ordering::Relaxed);
+    let in_exit_trap = 0; // c:6141 in_exit_trap — not yet ported
+    if exit_pending != 0 && exit_level >= cur_locallevel + 1 && in_exit_trap == 0 {
+        // c:6141
+        if cur_locallevel > cur_forklevel {
+            // c:6143 — still inside a nested function: keep unwinding.
+            crate::ported::builtin::RETFLAG.store(1, Ordering::Relaxed); // c:6144
+            crate::ported::builtin::BREAKS.store(
+                crate::ported::builtin::LOOPS.load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            ); // c:6145
+        } else {
+            // c:6151 — out of all functions: exit for real.
+            crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:6151
+            let val = crate::ported::builtin::EXIT_VAL.load(Ordering::Relaxed);
+            crate::ported::builtin::zexit(val, crate::ported::zsh_h::ZEXIT_NORMAL); // c:6152
+        }
+    }
     unqueue_signals(); // c:6202
 }
 
