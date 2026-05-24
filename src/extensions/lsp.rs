@@ -987,10 +987,20 @@ fn completion(state: &State, params: &Value) -> Value {
 
     let mut items = Vec::new();
     let push = |items: &mut Vec<Value>, label: &str, kind: u8, detail: &str| {
+        // Explicit `filterText` + `insertText` so IntelliJ's LSP
+        // matcher uses the FULL label (sigil and all) when ranking
+        // against the typed prefix. Without this, IDE-side
+        // CamelHumpMatcher may strip leading non-alpha chars (`$`)
+        // from labels and stop matching half the canonical set when
+        // the user types `$HIS`. Symptom: only the hand 2 items
+        // surfaced; canonical `$HISTCMD`/`$HISTNO`/`$HISTCHARS`
+        // were sent but invisibly filtered out before display.
         items.push(json!({
             "label": label,
             "kind": kind,
             "detail": detail,
+            "filterText": label,
+            "insertText": label,
         }));
     };
 
@@ -1071,14 +1081,6 @@ fn completion(state: &State, params: &Value) -> Value {
             push(&mut items, o, 21, "option");
         }
     }
-    // Hand-curated `$`-prefixed names (`$0`, `$?`, `$*`, etc) — kept
-    // for the dollar-prefix completion path that needs the visible
-    // `$` for matching.
-    for s in SPECIAL_VARS {
-        if want(s) || (prefix.starts_with('$') && s.starts_with(&prefix)) {
-            push(&mut items, s, 6, "special variable");
-        }
-    }
     // Canonical special-param names from zsh's `params.yo` + every
     // module's special-param table — 538 entries. The hand subset
     // above misses PS2/PS3/PS4/psvar/PROMPT2/PROMPT3/PROMPT4 and
@@ -1092,7 +1094,18 @@ fn completion(state: &State, params: &Value) -> Value {
     //      so fall back to comparing the prefix's bare form. When the
     //      $-prefix path matches, emit the candidate WITH `$` prepended
     //      so the IDE inserts the dollar the user typed.
+    // The $-prefix path fires WHENEVER the user-typed prefix starts
+    // with `$` (or IS exactly `$`). When the prefix is just `$`,
+    // `bare_prefix` is empty — we still need to surface every
+    // canonical name as `$NAME` so the IDE's local-filter step on
+    // subsequent keystrokes (`G`/`H`/etc) has the full set to
+    // narrow from. Without this, typing `$` opened a popup of just
+    // the hand 41-entry list, then typing `G` filtered locally to
+    // zero items and the popup closed — even though the server has
+    // `$GID`/`$galiases`/`$gid` available.
+    let prefix_has_dollar = prefix.starts_with('$');
     let bare_prefix: String = prefix.strip_prefix('$').map(|s| s.to_string()).unwrap_or_default();
+    let bare_prefix_lc = bare_prefix.to_lowercase();
     for (name, _doc) in crate::zsh_special_var_docs::SPECIAL_VAR_DOCS {
         // Skip the pure-symbolic ones (`$`, `?`, `*`, etc) — they're
         // already in SPECIAL_VARS with the `$` prefix. The remaining
@@ -1102,8 +1115,9 @@ fn completion(state: &State, params: &Value) -> Value {
         }
         if want(name) {
             push(&mut items, name, 6, "special variable");
-        } else if !bare_prefix.is_empty()
-            && name.to_lowercase().starts_with(&bare_prefix.to_lowercase())
+        } else if prefix_has_dollar
+            && (bare_prefix_lc.is_empty()
+                || name.to_lowercase().starts_with(&bare_prefix_lc))
         {
             let with_sigil = format!("${}", name);
             push(&mut items, &with_sigil, 6, "special variable");
@@ -1118,8 +1132,9 @@ fn completion(state: &State, params: &Value) -> Value {
         }
         if want(alias) {
             push(&mut items, alias, 6, "special variable");
-        } else if !bare_prefix.is_empty()
-            && alias.to_lowercase().starts_with(&bare_prefix.to_lowercase())
+        } else if prefix_has_dollar
+            && (bare_prefix_lc.is_empty()
+                || alias.to_lowercase().starts_with(&bare_prefix_lc))
         {
             let with_sigil = format!("${}", alias);
             push(&mut items, &with_sigil, 6, "special variable");
@@ -5332,49 +5347,11 @@ const OPTIONS: &[&str] = &[
     "WARN_NESTED_VAR",
 ];
 
-const SPECIAL_VARS: &[&str] = &[
-    "$0",
-    "$?",
-    "$!",
-    "$$",
-    "$#",
-    "$*",
-    "$@",
-    "$-",
-    "$_",
-    "$PATH",
-    "$HOME",
-    "$USER",
-    "$PWD",
-    "$OLDPWD",
-    "$SHELL",
-    "$IFS",
-    "$PROMPT",
-    "$PS1",
-    "$ZSH_VERSION",
-    "$ZSH_NAME",
-    "$ZSH_ARGZERO",
-    "$ZSH_SUBSHELL",
-    "$ZSH_PATCHLEVEL",
-    "$RANDOM",
-    "$LINENO",
-    "$SECONDS",
-    "$EPOCHSECONDS",
-    "$EPOCHREALTIME",
-    "$HISTFILE",
-    "$HISTSIZE",
-    "$SAVEHIST",
-    "$DIRSTACKSIZE",
-    "$fpath",
-    "$path",
-    "$cdpath",
-    "$manpath",
-    "$module_path",
-    "$argv",
-    "$status",
-    "$pipestatus",
-    "$signals",
-];
+// `SPECIAL_VARS` hand list deleted. The 41 `$`-prefixed entries were
+// a stale subset of zsh's actual ~538 special params per `man zshparam`
+// + every `mod_*.yo`. All call sites now iterate the canonical
+// `zsh_special_var_docs::SPECIAL_VAR_DOCS` table directly (prepending
+// `$` where the legacy site expected sigiled labels).
 
 const KEYWORD_DOCS: &[(&str, &str)] = &[
     (
@@ -5808,8 +5785,17 @@ pub fn all_canonical_names() -> Vec<String> {
     for o in crate::ported::options::ZSH_OPTIONS_SET.iter() {
         set.insert((*o).to_string());
     }
-    for s in SPECIAL_VARS {
-        set.insert((*s).to_string());
+    // Canonical 538-entry special-param doc table — bare names per
+    // params.yo convention. Inserted with `$` prefix to match the
+    // form users actually type / search for in name lookups.
+    for (name, _) in crate::zsh_special_var_docs::SPECIAL_VAR_DOCS {
+        // Skip pure-symbolic ones — they're handled separately by
+        // the lookup_doc cascade.
+        if name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+            set.insert(format!("${}", name));
+        } else {
+            set.insert((*name).to_string());
+        }
     }
     for n in compsys::COMPSYS_FN_NAMES {
         set.insert((*n).to_string());
@@ -5965,8 +5951,23 @@ pub fn dump_reference_html() -> String {
         "option",
     );
 
-    // ── special vars (LSP hand registry, with `$` prefix kept) ───────
-    let specials: Vec<String> = SPECIAL_VARS.iter().map(|s| s.to_string()).collect();
+    // ── special vars (canonical 538-entry doc table) ─────────────────
+    // Bare names from `SPECIAL_VAR_DOCS` get `$` prepended so the
+    // chapter header matches the form users type. Pure-symbolic
+    // ones (`?`/`*`/`#`/`@`/`-`/`_`) stay as-is — they're documented
+    // under their bare key.
+    let mut specials: Vec<String> = crate::zsh_special_var_docs::SPECIAL_VAR_DOCS
+        .iter()
+        .map(|(name, _)| {
+            if name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+                format!("${}", name)
+            } else {
+                (*name).to_string()
+            }
+        })
+        .collect();
+    specials.sort();
+    specials.dedup();
     write_chapter(
         &mut out,
         "ch-lsp-specials",
