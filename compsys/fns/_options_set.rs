@@ -15,3 +15,37 @@ pub fn _options_set(state: &mut CompletionState, shell_options: &[(&str, bool)])
         .collect();
     _options(state, &set_opts)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_to_set_only() {
+        let mut state = CompletionState::new();
+        let opts: Vec<(&str, bool)> = vec![
+            ("EXTENDED_GLOB", true),
+            ("NULL_GLOB", false),
+            ("PIPE_FAIL", true),
+            ("NO_BANG_HIST", false),
+        ];
+        let ok = _options_set(&mut state, &opts);
+        assert!(ok);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"EXTENDED_GLOB"));
+        assert!(names.contains(&"PIPE_FAIL"));
+        assert!(!names.contains(&"NULL_GLOB"), "unset option leaked through filter");
+        assert!(!names.contains(&"NO_BANG_HIST"));
+    }
+
+    #[test]
+    fn returns_false_when_no_set_options() {
+        let mut state = CompletionState::new();
+        let opts: Vec<(&str, bool)> = vec![("A", false), ("B", false)];
+        assert!(!_options_set(&mut state, &opts));
+    }
+}

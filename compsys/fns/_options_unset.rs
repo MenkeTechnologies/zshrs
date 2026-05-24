@@ -15,3 +15,30 @@ pub fn _options_unset(state: &mut CompletionState, shell_options: &[(&str, bool)
         .collect();
     _options(state, &unset_opts)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_to_unset_only() {
+        let mut state = CompletionState::new();
+        let opts: Vec<(&str, bool)> = vec![
+            ("EXTENDED_GLOB", true),
+            ("NULL_GLOB", false),
+            ("PIPE_FAIL", true),
+            ("NO_BANG_HIST", false),
+        ];
+        let ok = _options_unset(&mut state, &opts);
+        assert!(ok);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"NULL_GLOB"));
+        assert!(names.contains(&"NO_BANG_HIST"));
+        assert!(!names.contains(&"EXTENDED_GLOB"), "set option leaked through filter");
+        assert!(!names.contains(&"PIPE_FAIL"));
+    }
+}
