@@ -1,5 +1,36 @@
 //! fusevm bytecode-VM bridge for ShellExecutor.
 //!
+//! ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//! !!! LAST-RESORT FILE — NOT FOR NEW LOGIC !!!
+//!
+//! This file is a **bridge**, not a port. It exists ONLY because zshrs uses
+//! a fusevm bytecode VM where C zsh uses its own wordcode walker (Src/exec.c
+//! `execlist`). Every line here is plumbing that hooks fusevm opcodes onto
+//! the canonical ports in `src/ported/`.
+//!
+//! **Before adding code to this file, STOP and ask:**
+//!
+//!   1. Is this logic that already lives in `src/ported/`?
+//!      → Call the canonical fn. Don't reinline.
+//!
+//!   2. Is this logic that SHOULD live in `src/ported/` but isn't ported yet?
+//!      → Port it. Add it to `src/ported/<file>.rs` with a `c:` citation.
+//!        Then call the canonical fn from here.
+//!
+//!   3. Is this purely fusevm/bytecode plumbing (Op decode, Value conversion,
+//!      VM-stack manipulation, thread-local executor pointer, etc.)?
+//!      → OK to put it here. Cite the closest C analog in the comment.
+//!
+//! **NEVER:** reinvent paramsubst/expansion/glob/typeset/redirect logic here.
+//! Those have canonical ports in `src/ported/subst.rs`, `src/ported/glob.rs`,
+//! `src/ported/builtin.rs`, etc. The bridge should be SHRINKING over time,
+//! not growing.
+//!
+//! See also: memory `feedback_no_shortcuts_in_porting` (port C bodies
+//! faithfully, no structural shells), `feedback_no_exec_script_from_ported`
+//! (the inverse direction — src/ported must not call back into the bridge).
+//! ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//!
 //! **Extension** — has no Src/exec.c counterpart. C zsh's `Src/exec.c::execlist`
 //! (and related routines) implement the native **wordcode VM** that executes
 //! compiler output from `parse.c`. zshrs compiles the parsed AST to fusevm
@@ -12,24 +43,13 @@
 
 #![allow(unused_imports)]
 
-use crate::history::HistoryEngine;
-// MathState is private to math.rs (no public state struct in math.c).
-use crate::options::ZSH_OPTIONS_SET;
-// TcpSessions struct deleted — modules/tcp.rs uses ZTCP_SESSIONS thread_local.
-use crate::zftp::zftp_globals;
-// `Profiler` deleted — zprof state is module-level statics now.
-use crate::zutil::style_table;
-use compsys::cache::CompsysCache;
-use compsys::CompInitResult;
 use indexmap::IndexMap;
-use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::PathBuf;
-use std::sync::LazyLock;
 
 use crate::exec_jobs::JobState;
-use crate::intercepts::{intercept_matches, AdviceKind, Intercept};
+use crate::intercepts::Intercept;
 use crate::ported::vm_helper::*;
 use std::io::Write;
 
@@ -37,10 +57,8 @@ use std::io::Write;
 // Thread-local executor context for VM builtin dispatch
 // ═══════════════════════════════════════════════════════════════════════════
 
-use crate::ported::zle::zle_thingy::getwidgettarget;
 use crate::ported::options::opt_state_get;
 use crate::ported::zsh_h::{isset, options, ERREXIT, MAX_OPS};
-use crate::socket::bin_zsocket;
 use fusevm::op::redirect_op as r;
 use fusevm::shell_builtins::*;
 use fusevm::Value;
@@ -58,7 +76,6 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::io::IntoRawFd;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::zsh_h::CASMOD_CAPS;
 
 thread_local! {
     /// Mirror of C zsh's `doneps4` local in execcmd_exec
@@ -139,20 +156,6 @@ where
         f(executor)
     })
 }
-
-// `try_with_executor` removed. The fallible variant was the bridge
-// canonical-side ports used to mirror writes into the legacy
-// exec.{variables,arrays,assoc_arrays,positional_params,
-// local_save_stack,var_attrs} caches. All such mirrors are now
-// dissolved: canonical setaparam / sethparam / setsparam write
-// paramtab as the single source of truth; fusevm reads consult
-// paramtab via exec.array() / exec.assoc() / exec.scalar() /
-// exec.pparams() / exec.param_flags() helpers.
-//
-// PM_LOCAL scope save lives in BUILTIN_LOCAL dispatcher (with
-// with_executor — the mandatory variant). Eval execute_script lives
-// in BUILTIN_EVAL dispatcher. Lastval reads from canonical LASTVAL
-// atomic that exec.set_last_status keeps current.
 
 /// Look up a canonical builtin by name in `BUILTINS` and dispatch
 /// via `execbuiltin` (Src/builtin.c:250). NO shadow check — calls the
@@ -310,6 +313,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         };
     }
 
+    // Pure-passthru builtin: pops args, routes to canonical
+    // `dispatch_builtin(name, args)` (which goes via execbuiltin →
+    // BUILTINS[name] → bin_X). No pre/post bridge work. Used by
+    // ~25 handlers that were 4-line copy-paste boilerplate.
+    macro_rules! reg_passthru {
+        ($vm:expr, $id:expr, $name:literal) => {
+            $vm.register_builtin($id, |vm, argc| {
+                Value::Status(dispatch_builtin($name, pop_args(vm, argc)))
+            });
+        };
+    }
+
     // Core builtins
     vm.register_builtin(BUILTIN_CD, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -366,35 +381,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    vm.register_builtin(BUILTIN_PRINTF, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("printf", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_EXPORT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("export", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_UNSET, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("unset", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_SOURCE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // BUILTINS has `source` (c:116, Src/builtin.c) wired to
-        // bin_dot. The legacy `dot` lookup-name predated the
-        // canonical table merge and silently returned 1 without
-        // emitting the "no such file or directory" error from
-        // bin_dot's missing-file path, so failed sources looked
-        // like silent successes from the user's side.
-        let status = dispatch_builtin("source", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_PRINTF, "printf");
+    reg_passthru!(vm, BUILTIN_EXPORT, "export");
+    reg_passthru!(vm, BUILTIN_UNSET, "unset");
+    // `source` (Src/builtin.c c:116) wired to bin_dot via BUILTINS.
+    reg_passthru!(vm, BUILTIN_SOURCE, "source");
 
     vm.register_builtin(BUILTIN_EXIT, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -446,13 +437,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::params::set_zunderscore(&args);
         }
         // Route through canonical execbuiltin so PS4 xtrace fires
-        // via the c:442 printprompt4 path. Without this, the fast-
-        // path Value::Status(0) return bypassed xtrace and the
-        // BUILTIN_XTRACE_ARGS-skip logic had to special-case "true"
-        // in a hardcoded list — fakery removed by deferring to
-        // dispatch_builtin like every other builtin.
-        let status = dispatch_builtin("true", args);
-        Value::Status(status)
+        // via the c:442 printprompt4 path.
+        Value::Status(dispatch_builtin("true", args))
     });
     vm.register_builtin(BUILTIN_FALSE, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -492,77 +478,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    // Variable declaration
-    vm.register_builtin(BUILTIN_LOCAL, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // Canonical bin_local handles the entire scope chain
-        // (`pm->old = oldpm` at Src/params.c:1137 inside createparam,
-        // `pm->level = locallevel` at Src/builtin.c:2576 inside
-        // typeset_single). The dispatcher only routes args.
-        let status = dispatch_builtin("local", args);
-        Value::Status(status)
-    });
+    // Variable declaration. `local` (Src/builtin.c bin_local) handles
+    // the scope chain (`pm->old = oldpm` at Src/params.c:1137 inside
+    // createparam, `pm->level = locallevel` at Src/builtin.c:2576).
+    // `typeset` / `declare` are aliases — fusevm maps both to
+    // BUILTIN_TYPESET; compile_zsh special-cases `declare` to keep
+    // the `declare:` error prefix.
+    reg_passthru!(vm, BUILTIN_LOCAL, "local");
+    reg_passthru!(vm, BUILTIN_TYPESET, "typeset");
 
-    vm.register_builtin(BUILTIN_TYPESET, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // fusevm's builtin_id maps both `declare` and `typeset` to
-        // BUILTIN_TYPESET, so this handler must default to the
-        // typeset error-prefix. compile_zsh special-cases `declare`
-        // to register BUILTIN_DECLARE explicitly so that path keeps
-        // the `declare:` prefix in error messages.
-        let status = dispatch_builtin("typeset", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_DECLARE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("declare", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_READONLY, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("readonly", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_INTEGER, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("integer", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_FLOAT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("float", args);
-        Value::Status(status)
-    });
-
-    // I/O
-    vm.register_builtin(BUILTIN_READ, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("read", args);
-        Value::Status(status)
-    });
-
-    // Control flow
-    vm.register_builtin(BUILTIN_BREAK, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("break", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_CONTINUE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("continue", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_SHIFT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("shift", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_DECLARE, "declare");
+    reg_passthru!(vm, BUILTIN_READONLY, "readonly");
+    reg_passthru!(vm, BUILTIN_INTEGER, "integer");
+    reg_passthru!(vm, BUILTIN_FLOAT, "float");
+    reg_passthru!(vm, BUILTIN_READ, "read");
+    reg_passthru!(vm, BUILTIN_BREAK, "break");
+    reg_passthru!(vm, BUILTIN_CONTINUE, "continue");
+    reg_passthru!(vm, BUILTIN_SHIFT, "shift");
 
     vm.register_builtin(BUILTIN_EVAL, |vm, argc| {
         // Direct port of `bin_eval(UNUSED(char *nam), char **argv, UNUSED(Options ops), UNUSED(int func))` body from Src/builtin.c:6151:
@@ -768,107 +700,32 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         std::process::exit(code);
     });
 
-    vm.register_builtin(BUILTIN_LET, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("let", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_LET, "let");
 
     // Job control
-    vm.register_builtin(BUILTIN_JOBS, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("jobs", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_JOBS, "jobs");
+    reg_passthru!(vm, BUILTIN_FG, "fg");
+    reg_passthru!(vm, BUILTIN_BG, "bg");
+    reg_passthru!(vm, BUILTIN_KILL, "kill");
+    reg_passthru!(vm, BUILTIN_DISOWN, "disown");
+    reg_passthru!(vm, BUILTIN_WAIT, "wait");
+    reg_passthru!(vm, BUILTIN_SUSPEND, "suspend");
 
-    vm.register_builtin(BUILTIN_FG, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("fg", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_BG, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("bg", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_KILL, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("kill", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_DISOWN, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("disown", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_WAIT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("wait", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_SUSPEND, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("suspend", args);
-        Value::Status(status)
-    });
-
-    // History — `fc`, `history`, and `r` all route to `bin_fc` (zsh
+    // History — `fc` / `history` / `r` all route to `bin_fc` (zsh
     // registers them as aliases of the same builtin per Src/builtin.c).
-    // Previous "wires deleted; opcode never emitted" comment was wrong:
-    // fusevm's `builtin_id("history")` / `("r")` ARE Some(…), so
-    // compile_zsh emits Op::CallBuiltin for them — without a registered
-    // handler they were silent no-ops, masking user `r () { … }` wrappers
-    // (the ZPWR autoload pattern hit this).
-    vm.register_builtin(BUILTIN_FC, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("fc", args);
-        Value::Status(status)
-    });
-    vm.register_builtin(BUILTIN_HISTORY, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("history", args);
-        Value::Status(status)
-    });
-    vm.register_builtin(BUILTIN_R, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("r", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_FC, "fc");
+    reg_passthru!(vm, BUILTIN_HISTORY, "history");
+    reg_passthru!(vm, BUILTIN_R, "r");
 
     // Aliases
-    vm.register_builtin(BUILTIN_ALIAS, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("alias", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_ALIAS, "alias");
 
-    // BUILTIN_UNALIAS wire deleted with its stub.
-
-    // Options
-    vm.register_builtin(BUILTIN_SET, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("set", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_SETOPT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // Canonical bin_setopt per options.c:580 — BUILTINS["setopt"]
-        // carries BIN_SETOPT=0 funcid which discriminates the polarity.
-        Value::Status(dispatch_builtin("setopt", args))
-    });
-
-    vm.register_builtin(BUILTIN_UNSETOPT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // BUILTINS["unsetopt"] carries BIN_UNSETOPT=1 funcid which
-        // bin_setopt reads as `isun` to flip the action polarity.
-        Value::Status(dispatch_builtin("unsetopt", args))
-    });
+    // Options. `setopt` (BIN_SETOPT=0) / `unsetopt` (BIN_UNSETOPT=1)
+    // share bin_setopt (options.c:580) — funcid bit discriminates
+    // the polarity via BUILTINS table entries.
+    reg_passthru!(vm, BUILTIN_SET, "set");
+    reg_passthru!(vm, BUILTIN_SETOPT, "setopt");
+    reg_passthru!(vm, BUILTIN_UNSETOPT, "unsetopt");
 
     vm.register_builtin(BUILTIN_SHOPT, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -876,93 +733,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    vm.register_builtin(BUILTIN_EMULATE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("emulate", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_GETOPTS, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("getopts", args);
-        Value::Status(status)
-    });
-    // BUILTIN_AUTOLOAD / BUILTIN_UNFUNCTION wires deleted with their
-    // stubs. `bin_functions` stays — wired to the canonical port.
-    vm.register_builtin(BUILTIN_AUTOLOAD, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("autoload", args);
-        Value::Status(status)
-    });
-    // BUILTIN_AUTOLOAD / BUILTIN_UNFUNCTION wires deleted with their
-    // stubs. `bin_functions` stays — wired to the canonical port.
-    vm.register_builtin(BUILTIN_FUNCTIONS, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("functions", args);
-        Value::Status(status)
-    });
-
-    // Traps
-    vm.register_builtin(BUILTIN_TRAP, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("trap", args);
-        Value::Status(status)
-    });
-
-    // BUILTIN_PUSHD / BUILTIN_POPD wires deleted with their stubs.
-    // `bin_dirs` stays — wired to the canonical port.
-    vm.register_builtin(BUILTIN_DIRS, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("dirs", args);
-        Value::Status(status)
-    });
-
+    reg_passthru!(vm, BUILTIN_EMULATE, "emulate");
+    reg_passthru!(vm, BUILTIN_GETOPTS, "getopts");
+    reg_passthru!(vm, BUILTIN_AUTOLOAD, "autoload");
+    reg_passthru!(vm, BUILTIN_FUNCTIONS, "functions");
+    reg_passthru!(vm, BUILTIN_TRAP, "trap");
+    reg_passthru!(vm, BUILTIN_DIRS, "dirs");
     // type / whence / where / which all route through `bin_whence`
     // (canonical port at `src/ported/builtin.rs:3734` of
     // `Src/builtin.c:3975`). Each gets its own opcode so funcid +
     // defopts come from the BUILTINS table entry — execbuiltin
     // applies them correctly via the module-level dispatch_builtin.
-    vm.register_builtin(BUILTIN_WHENCE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        Value::Status(dispatch_builtin("whence", args))
-    });
-    vm.register_builtin(BUILTIN_TYPE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        Value::Status(dispatch_builtin("type", args))
-    });
-    vm.register_builtin(BUILTIN_WHICH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        Value::Status(dispatch_builtin("which", args))
-    });
-    vm.register_builtin(BUILTIN_WHERE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        Value::Status(dispatch_builtin("where", args))
-    });
+    reg_passthru!(vm, BUILTIN_WHENCE, "whence");
+    reg_passthru!(vm, BUILTIN_TYPE, "type");
+    reg_passthru!(vm, BUILTIN_WHICH, "which");
+    reg_passthru!(vm, BUILTIN_WHERE, "where");
+    reg_passthru!(vm, BUILTIN_HASH, "hash");
+    reg_passthru!(vm, BUILTIN_REHASH, "rehash");
 
-    vm.register_builtin(BUILTIN_HASH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("hash", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_REHASH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("rehash", args);
-        Value::Status(status)
-    });
-
-    // `unhash`/`unalias`/`unfunction` share `bin_unhash` (Src/builtin.c:
+    // `unhash`/`unalias`/`unfunction` share `bin_unhash` (Src/builtin.c
     // c:4350) but each carries its own funcid (BIN_UNHASH /
     // BIN_UNALIAS / BIN_UNFUNCTION) in the BUILTINS table.
-    // `unhash_via_execbuiltin` deleted — was a duplicate of
-    // `dispatch_builtin_raw` (same BUILTINS table walk + execbuiltin
-    // call). dispatch_builtin (with user-fn override probe) is the
-    // canonical entry; using it lets user `unalias()` / `unfunction()`
-    // wrappers take precedence per zsh's name-resolution order.
-    vm.register_builtin(BUILTIN_UNHASH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        Value::Status(dispatch_builtin("unhash", args))
-    });
+    reg_passthru!(vm, BUILTIN_UNHASH, "unhash");
     vm.register_builtin(BUILTIN_UNALIAS, |vm, argc| {
         let args = pop_args(vm, argc);
         Value::Status(dispatch_builtin("unalias", args))
@@ -986,225 +778,76 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
 
-    vm.register_builtin(BUILTIN_COMPADD, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("compadd", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_COMPSET, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("compset", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_COMPADD, "compadd");
+    reg_passthru!(vm, BUILTIN_COMPSET, "compset");
 
     vm.register_builtin(BUILTIN_COMPDEF, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_compdef(&args));
-        Value::Status(status)
+        Value::Status(with_executor(|exec| exec.builtin_compdef(&args)))
     });
 
     vm.register_builtin(BUILTIN_COMPINIT, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_compinit(&args));
-        Value::Status(status)
+        Value::Status(with_executor(|exec| exec.builtin_compinit(&args)))
     });
 
     vm.register_builtin(BUILTIN_CDREPLAY, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_cdreplay(&args));
-        Value::Status(status)
+        Value::Status(with_executor(|exec| exec.builtin_cdreplay(&args)))
     });
 
     // Zsh-specific
-    vm.register_builtin(BUILTIN_ZSTYLE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("zstyle", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_ZMODLOAD, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("zmodload", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_BINDKEY, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("bindkey", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_ZLE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("zle", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_VARED, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("vared", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_ZCOMPILE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("zcompile", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_ZFORMAT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("zformat", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_ZPARSEOPTS, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("zparseopts", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_ZREGEXPARSE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("zregexparse", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_ZSTYLE, "zstyle");
+    reg_passthru!(vm, BUILTIN_ZMODLOAD, "zmodload");
+    reg_passthru!(vm, BUILTIN_BINDKEY, "bindkey");
+    reg_passthru!(vm, BUILTIN_ZLE, "zle");
+    reg_passthru!(vm, BUILTIN_VARED, "vared");
+    reg_passthru!(vm, BUILTIN_ZCOMPILE, "zcompile");
+    reg_passthru!(vm, BUILTIN_ZFORMAT, "zformat");
+    reg_passthru!(vm, BUILTIN_ZPARSEOPTS, "zparseopts");
+    reg_passthru!(vm, BUILTIN_ZREGEXPARSE, "zregexparse");
 
     // Resource limits
-    vm.register_builtin(BUILTIN_ULIMIT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("ulimit", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_LIMIT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("limit", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_UNLIMIT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("unlimit", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_UMASK, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("umask", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_ULIMIT, "ulimit");
+    reg_passthru!(vm, BUILTIN_LIMIT, "limit");
+    reg_passthru!(vm, BUILTIN_UNLIMIT, "unlimit");
+    reg_passthru!(vm, BUILTIN_UMASK, "umask");
 
     // Misc
-    vm.register_builtin(BUILTIN_TIMES, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("times", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_TIMES, "times");
 
     vm.register_builtin(BUILTIN_CALLER, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_caller(&args));
-        Value::Status(status)
+        Value::Status(with_executor(|exec| exec.builtin_caller(&args)))
     });
 
     vm.register_builtin(BUILTIN_HELP, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_help(&args));
-        Value::Status(status)
+        Value::Status(with_executor(|exec| exec.builtin_help(&args)))
     });
 
-    vm.register_builtin(BUILTIN_ENABLE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("enable", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_DISABLE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("disable", args);
-        Value::Status(status)
-    });
-
-    // BUILTIN_NOGLOB wire deleted with its stub.
-
-    vm.register_builtin(BUILTIN_TTYCTL, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("ttyctl", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_SYNC, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // Canonical bin_sync per files.c:53 via BUILTINS["sync"] entry.
-        Value::Status(dispatch_builtin("sync", args))
-    });
-
-    vm.register_builtin(BUILTIN_MKDIR, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // Canonical bin_mkdir wired in BUILTINS table (files.c:63).
-        // execbuiltin handles the "pm:" optstr parsing.
-        Value::Status(dispatch_builtin("mkdir", args))
-    });
-
-    vm.register_builtin(BUILTIN_STRFTIME, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // Canonical bin_strftime per Src/Modules/datetime.c:187 via
-        // BUILTINS["strftime"] entry. execbuiltin walks the optstr.
-        Value::Status(dispatch_builtin("strftime", args))
-    });
+    reg_passthru!(vm, BUILTIN_ENABLE, "enable");
+    reg_passthru!(vm, BUILTIN_DISABLE, "disable");
+    reg_passthru!(vm, BUILTIN_TTYCTL, "ttyctl");
+    reg_passthru!(vm, BUILTIN_SYNC, "sync");
+    reg_passthru!(vm, BUILTIN_MKDIR, "mkdir");
+    reg_passthru!(vm, BUILTIN_STRFTIME, "strftime");
 
     vm.register_builtin(BUILTIN_ZSLEEP, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = crate::extensions::ext_builtins::zsleep(&args);
-        Value::Status(status)
+        Value::Status(crate::extensions::ext_builtins::zsleep(&pop_args(vm, argc)))
     });
 
-    vm.register_builtin(BUILTIN_ZSYSTEM, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // Canonical bin_zsystem per Src/Modules/system.c:806 via
-        // BUILTINS["zsystem"] entry.
-        Value::Status(dispatch_builtin("zsystem", args))
-    });
+    reg_passthru!(vm, BUILTIN_ZSYSTEM, "zsystem");
 
     // PCRE
-    vm.register_builtin(BUILTIN_PCRE_COMPILE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("pcre_compile", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_PCRE_MATCH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("pcre_match", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_PCRE_STUDY, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("pcre_study", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_PCRE_COMPILE, "pcre_compile");
+    reg_passthru!(vm, BUILTIN_PCRE_MATCH, "pcre_match");
+    reg_passthru!(vm, BUILTIN_PCRE_STUDY, "pcre_study");
 
     // Database (GDBM)
-    vm.register_builtin(BUILTIN_ZTIE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("ztie", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_ZUNTIE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("zuntie", args);
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_ZGDBMPATH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = dispatch_builtin("zgdbmpath", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_ZTIE, "ztie");
+    reg_passthru!(vm, BUILTIN_ZUNTIE, "zuntie");
+    reg_passthru!(vm, BUILTIN_ZGDBMPATH, "zgdbmpath");
 
     // Prompt
     vm.register_builtin(BUILTIN_PROMPTINIT, |vm, argc| {
@@ -1286,14 +929,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    vm.register_builtin(BUILTIN_ZPROF, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // Route through canonical dispatch_builtin → execbuiltin →
-        // BUILTINS["zprof"] (zprof.c:139) which parses the optstr
-        // automatically. Replaces inline `-c` flag scan.
-        let status = dispatch_builtin("zprof", args);
-        Value::Status(status)
-    });
+    reg_passthru!(vm, BUILTIN_ZPROF, "zprof");
 
     // ═══════════════════════════════════════════════════════════════════════
     // Coreutils builtins (anti-fork, gated by !posix_mode)
@@ -1338,11 +974,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // (280).
     pub const BUILTIN_CP: u16 = 263;
     reg_overridable!(vm, BUILTIN_CP, "cp", builtin_cp);
-
-    // BUILTIN_EXPAND_WORD_RUNTIME (id 281) was a legacy JSON round-trip
-    // bridge that no chunk emits anymore. The constant + handler are
-    // removed; the ID stays reserved in the gap before
-    // BUILTIN_REGISTER_FUNCTION so future remaps don't reuse it.
 
     // Pipeline execution — bytecode-native fork-per-stage. Pops N sub-chunk
     // indices, forks N children with stdin/stdout wired through N-1 pipes,
@@ -1997,11 +1628,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Sentinel bytes the compile path tags onto `idx` (`\u{02}` =
     // compile-time DQ, `\u{05}` = outer `(@)` flag, `\u{06}` /
     // `\u{07}` = outer `(v)`/`(k)` flag) are stripped here because
-    // paramsubst's input must be a valid zsh expression. The
-    // context bumps that previously happened here move into the
-    // callers (BUILTIN_EXPAND_TEXT bumps `in_dq_context`; the (v)/
-    // (k) outer flag is encoded as an actual flag in the outer
-    // paramsubst call once that path is wired).
+    // paramsubst's input must be a valid zsh expression. Context
+    // bumps for DQ / (v) / (k) live in the callers (BUILTIN_EXPAND_TEXT
+    // bumps `in_dq_context`).
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
         let mut idx = vm.pop().to_str();
         let name = vm.pop().to_str();
@@ -2015,32 +1644,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
         // Inner body of `${(...)...}` (already stripped of `${`/`}` by
-        // the caller). Re-wrap and route through subst.rs's paramsubst
-        // so the flag-loop + per-operator array semantics
-        // (e.g. `(M)arr:#pat`) execute properly. Earlier this returned
-        // the body verbatim, which is why `${(M)arr:#pat}` printed as
-        // literal text.
+        // the caller). Re-wrap and route through paramsubst_to_value
+        // so the flag-loop + per-operator array semantics execute.
         let body = vm.pop().to_str();
-        let full = format!("${{{}}}", body);
-        let result = with_executor(|exec| {
-            let mut ret_flags: i32 = 0;
-            let (_full_str, _new_pos, nodes) =
-                crate::ported::subst::paramsubst(&full, 0, false, 0i32, &mut ret_flags);
-            // c:Src/subst.c errflag bail — propagate to caller's
-            // exit status the way `subst_state_commit_to_executor`
-            // used to.
-            if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-                exec.set_last_status(1);
-            }
-            nodes
-        });
-        if result.is_empty() {
-            return Value::Array(Vec::new());
-        }
-        if result.len() == 1 {
-            return Value::str(result.into_iter().next().unwrap());
-        }
-        Value::Array(result.into_iter().map(Value::str).collect())
+        paramsubst_to_value(&format!("${{{}}}", body))
     });
 
     // BUILTIN_PARAM_FLAG — `${(flags)name}` paramsubst dispatch.
@@ -2054,10 +1661,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // DQ-wrapped, `\u{03}` = had `[@]`/`[*]` subscript, `\u{04}` =
     // scalar-assignment context) are stripped before the
     // `${(flags)name}` reconstruction so paramsubst's input is a
-    // valid zsh expression. The context bumps that previously
-    // happened here move into the caller (BUILTIN_EXPAND_TEXT etc.
-    // already bump `in_dq_context` for DQ, and `in_scalar_assign`
-    // for scalar-assign RHS).
+    // valid zsh expression. Context bumps live in the caller
+    // (BUILTIN_EXPAND_TEXT bumps `in_dq_context` and `in_scalar_assign`).
     vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
         let mut flags = vm.pop().to_str();
         let name = vm.pop().to_str();
@@ -2136,29 +1741,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             &s,
             crate::ported::zsh_h::PREFORK_SPLIT,
         );
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            Value::Array(Vec::new())
-        } else if parts.len() == 1 {
-            Value::str(parts.into_iter().next().unwrap())
-        } else {
-            Value::Array(parts.into_iter().map(Value::str).collect())
+        // Empty single-string special case → empty Array (drop empty arg).
+        if parts.len() == 1 && parts[0].is_empty() {
+            return Value::Array(Vec::new());
         }
+        nodes_to_value(parts)
     });
 
     vm.register_builtin(BUILTIN_BRACE_EXPAND, |vm, _argc| {
         let s = vm.pop().to_str();
         // Direct call to the canonical brace expander (port of
-        // Src/glob.c::xpandbraces at glob.rs:1678). Was stubbed
-        // as `vec![s]` — every `print X{1,2,3}Y` returned literal.
-        let brace_ccl = with_executor(|exec| {
-            opt_state_get("braceccl").unwrap_or(false)
-        });
-        let parts = crate::ported::glob::xpandbraces(&s, brace_ccl);
-        if parts.len() == 1 {
-            Value::str(parts.into_iter().next().unwrap_or_default())
-        } else {
-            Value::Array(parts.into_iter().map(Value::str).collect())
-        }
+        // Src/glob.c::xpandbraces at glob.rs:1678).
+        let brace_ccl = opt_state_get("braceccl").unwrap_or(false);
+        nodes_to_value(crate::ported::glob::xpandbraces(&s, brace_ccl))
     });
 
     // `*(qual)` glob qualifier filter. Stack: [pattern, qualifier].
@@ -2459,14 +2054,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
             // Canonical PARTAB dispatch (Src/Modules/parameter.c:2235-
-            // 2298 + Src/Modules/{mapfile,terminfo,termcap,system}.c +
-            // Src/Zle/zleparameter.c SPECIALPMDEFs):
-            //   1. PARTAB_ARRAY: PM_ARRAY entries → whole-array getfn
-            //   2. PARTAB:       PM_HASHED entries → scan keys + per-key
-            //
-            // Every magic-assoc name now routes through canonical
-            // getpm*/scanpm* fn pointers. The legacy
-            // `get_special_array_value` dispatcher has been deleted.
+            // 2298 + SPECIALPMDEFs in mapfile/terminfo/termcap/system/
+            // zleparameter): PARTAB_ARRAY entries → whole-array getfn;
+            // PARTAB entries → scan keys + per-key getpm/scanpm fn
+            // pointers.
             let _ = exec;
             if let Some(values) = partab_array_get(&name) {
                 Some(values)
@@ -2609,11 +2200,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return;
             }
             // Scalar / integer / float form: route through canonical
-            // assignsparam(name, value, ASSPM_AUGMENT). assignsparam
-            // dispatches to assignstrvalue (params.rs:3467) which
-            // walks PM_TYPE — PM_SCALAR concats, PM_INTEGER does
-            // arithmetic add (c:2775-2778 ASSPM_AUGMENT arm), PM_FLOAT
-            // adds float. Replaces 30 lines of inline arith/concat.
+            // assignsparam(name, value, ASSPM_AUGMENT) which
+            // dispatches PM_TYPE — PM_SCALAR concats, PM_INTEGER
+            // arith-adds (c:2775-2778), PM_FLOAT float-adds.
             let _ = crate::ported::params::assignsparam(
                 &name,
                 &value,
@@ -2702,11 +2291,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         });
         Value::Status(vm.last_status)
     });
-
-    // BUILTIN_REGISTER_FUNCTION (id 282) was a legacy JSON-AST body
-    // bridge. ZshCompiler emits BUILTIN_REGISTER_COMPILED_FN (id 305)
-    // instead, which carries a base64 bincode of an already-compiled
-    // Chunk. The constant + handler are removed; the ID stays reserved.
 
     // Pre-compiled function registration — used by compile_zsh.rs's
     // FuncDef path. Stack: [name, base64-bincode-of-Chunk]. We decode
@@ -2924,10 +2508,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if (token as i32) < crate::ported::zsh_h::CS_COUNT {
             crate::ported::prompt::cmdpush(token);
         }
-        // Canonical `cmdpush()` above already mirrors into the
-        // `prompt::CMDSTACK` thread_local (Src/prompt.c:1620). The
-        // legacy `exec.cmd_stack` mirror is gone.
-        let _ = token;
         Value::Status(0)
     });
 
@@ -4058,19 +3638,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // BUILTIN_PARAM_LENGTH — `${#name}`. PURE PASSTHRU.
     vm.register_builtin(BUILTIN_PARAM_LENGTH, |vm, _argc| {
         let name = vm.pop().to_str();
-        let body = format!("${{#{}}}", name);
+        // PARAM_LENGTH's empty-result semantics differ from
+        // paramsubst_to_value: 0 nodes → "0" (numeric length), not
+        // empty array. paramsubst on `${#X}` always returns at least
+        // one node in practice (the length string); the empty case
+        // is defensive.
         let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
+        let (_full, _pos, nodes) = crate::ported::subst::paramsubst(
+            &format!("${{#{}}}", name),
+            0, false, 0i32, &mut ret_flags,
+        );
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
             with_executor(|exec| exec.set_last_status(1));
         }
         if nodes.is_empty() {
             Value::str("0")
-        } else if nodes.len() == 1 {
-            Value::str(nodes.into_iter().next().unwrap())
         } else {
-            Value::Array(nodes.into_iter().map(Value::str).collect())
+            nodes_to_value(nodes)
         }
     });
 
@@ -4166,12 +3750,11 @@ impl ZshrsHost {
 ///   - build a `${...}` body string from opcode operands
 ///   - paramsubst the body
 ///   - propagate errflag to `exec.last_status`
-///   - unwrap nodes: 0 → empty Array, 1 → Str, >1 → Array
+///   - delegate the LinkList → Value conversion to `nodes_to_value`
 ///
-/// **Extension** — Rust-only helper that wraps paramsubst's
-/// LinkList return into fusevm's Value enum. No direct C analog
-/// because C zsh uses LinkList everywhere; the conversion happens
-/// at the boundary back into the VM's stack.
+/// **Extension** — Rust-only helper. No direct C analog because C
+/// zsh uses LinkList everywhere; the conversion happens at the
+/// boundary back into the VM's stack.
 fn paramsubst_to_value(body: &str) -> Value {
     let mut ret_flags: i32 = 0;
     let (_full, _pos, nodes) =
@@ -4179,6 +3762,14 @@ fn paramsubst_to_value(body: &str) -> Value {
     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         with_executor(|exec| exec.set_last_status(1));
     }
+    nodes_to_value(nodes)
+}
+
+/// Wrap a `Vec<String>` (e.g. paramsubst nodes, multsub parts,
+/// xpandbraces output) into a fusevm `Value`: 0 → empty Array, 1 →
+/// Str, >1 → Array. Same unwrap idiom every handler that calls a
+/// canonical Vec-returning fn does.
+fn nodes_to_value(nodes: Vec<String>) -> Value {
     if nodes.is_empty() {
         Value::Array(Vec::new())
     } else if nodes.len() == 1 {
@@ -4205,20 +3796,11 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
             other => args.push(other.to_str()),
         }
     }
-    // `expand_glob` set the glob-failed cell when a no-match glob in
-    // this command's argv triggered the `nomatch` error. C zsh
-    // (Src/glob.c:1877) calls `zerr("no matches found: %s", ostr)`
-    // which sets errflag|=ERRFLAG_ERROR, then unwinds out of the
-    // execpline path; the next top-level event clears errflag and
-    // the script continues. Previously zshrs called
-    // `process::exit(1)` here — killing the WHOLE shell on the first
-    // failed glob and breaking any plugin script that uses optional
-    // patterns (`ls /no_match*; echo after` lost the "after" line).
-    // Now just signal the failure via last_status + the per-command
-    // glob_failed cell so the downstream builtin handler /
-    // host_exec_external (line ~10245) short-circuits and returns
-    // status 1 without running the command body. The flag is left
-    // set for the dispatcher to consume + clear.
+    // `expand_glob` set the glob-failed cell when a no-match glob
+    // triggered nomatch (c:Src/glob.c:1877). Signal the failure via
+    // last_status + the per-command glob_failed cell; the dispatcher
+    // (`host_exec_external`) consumes + clears it and returns status 1
+    // without running the command body.
     if with_executor(|exec| exec.current_command_glob_failed.get()) {
         with_executor(|exec| exec.set_last_status(1));
     }
@@ -4284,22 +3866,13 @@ fn try_user_fn_override(name: &str, args: &[String]) -> Option<i32> {
     }))
 }
 
-// IDs 281 (was BUILTIN_EXPAND_WORD_RUNTIME) and 282 (was
-// BUILTIN_REGISTER_FUNCTION) were legacy JSON-AST bridges. ZshCompiler
-// emits BUILTIN_EXPAND_TEXT (314) and BUILTIN_REGISTER_COMPILED_FN
-// (305) instead. The IDs stay reserved in this gap so future builtins
-// don't reuse them.
-
-/// Builtin ID for `${name}` reads — routes through `ShellExecutor::get_variable`
-/// which knows about special params (`$?`, `$@`, `$#`, `$1..$9`), shell vars
-/// (`self.variables`), arrays, and env. Replaces emission of `Op::GetVar` for
-/// shell variable names so nested VMs (function calls) see the same storage.
+/// Builtin ID for `${name}` reads — routes through canonical
+/// `getsparam` (Src/params.c:3076) via paramtab + env walk so nested
+/// VMs (function calls) see the same storage.
 pub const BUILTIN_GET_VAR: u16 = 283;
 
-/// Builtin ID for `name=value` assignments — pops [name, value] and stores
-/// into `executor.variables`. Replaces `Op::SetVar` emission for the same
-/// reason: the storage must be visible to both bytecode and tree-walker code,
-/// across nested VM boundaries.
+/// Builtin ID for `name=value` assignments — pops [name, value] and
+/// routes through canonical `setsparam` (Src/params.c:3350).
 pub const BUILTIN_SET_VAR: u16 = 284;
 
 /// Builtin ID for pipeline execution. Pops N sub-chunk indices from the stack;
@@ -4424,10 +3997,8 @@ pub const BUILTIN_WORD_SPLIT: u16 = 304;
 /// ShellCommand JSON serialization path.
 pub const BUILTIN_REGISTER_COMPILED_FN: u16 = 305;
 pub const BUILTIN_VAR_EXISTS: u16 = 306;
-/// Phase 1 native param-modifier builtins. Each takes a fixed argv shape
-/// and returns the modified value as Value::Str. Replaces the runtime
-/// ShellWord round-trip via BUILTIN_EXPAND_WORD_RUNTIME for the common
-/// shapes.
+/// Native param-modifier builtins. Each takes a fixed argv shape and
+/// returns the modified value as Value::Str.
 ///
 /// `${var:-default}` / `${var:=default}` / `${var:?error}` / `${var:+alt}`
 /// — pop [name, op_byte, rhs]. op_byte: 0=`:-`, 1=`:=`, 2=`:?`, 3=`:+`.
@@ -4895,8 +4466,7 @@ impl fusevm::ShellHost for ZshrsHost {
                     .or_else(|| env::current_dir().ok()),
                 umask: cur_umask,
                 // Snapshot canonical `traps_table` — bin_trap writes
-                // there (`Src/builtin.c`). The exec.traps field was
-                // a dead parallel store; deleted.
+                // there (`Src/builtin.c`).
                 traps: crate::ported::builtin::traps_table()
                     .lock()
                     .map(|t| t.clone())
@@ -5624,22 +5194,16 @@ impl ShellExecutor {
             "sched" => return dispatch_builtin("sched", rest_vec.clone()),
             "echotc" => return dispatch_builtin("echotc", rest_vec.clone()),
             "echoti" => return dispatch_builtin("echoti", rest_vec.clone()),
-            // "getln" handler deleted with its stub.
             "zpty" => return dispatch_builtin("zpty", rest_vec.clone()),
             "ztcp" => return dispatch_builtin("ztcp", rest_vec.clone()),
             "zsocket" => {
-                // Route through canonical dispatch_builtin which goes
-                // via execbuiltin's BUILTINS["zsocket"].optstr parse
-                // ("ad:ltv" per Src/Modules/socket.c:276 BUILTIN spec).
-                // Replaces 55 lines of inline option-bit packing that
-                // duplicated execbuiltin's flag-parser.
+                // c:Src/Modules/socket.c:276 BUILTIN spec — BUILTINS["zsocket"]
+                // optstr "ad:ltv" parsed by execbuiltin.
                 return dispatch_builtin("zsocket", rest_vec.clone());
             }
             "private" => {
-                // Route through canonical dispatch_builtin → execbuiltin
-                // → BUILTINS["private"] handler (param_private.c:217).
-                // Eliminates a 16-line inline ops-construct + direct
-                // bin_private call.
+                // c:Src/Modules/param_private.c:217 — bin_private via
+                // BUILTINS["private"].
                 return dispatch_builtin("private", rest_vec.clone());
             }
             "zformat" => {
@@ -5675,13 +5239,9 @@ impl ShellExecutor {
             "env" => return self.builtin_env(&rest_vec),
             "printenv" => return self.builtin_printenv(&rest_vec),
             "tty" => return self.builtin_tty(&rest_vec),
-            "chgrp" => {
-                // Route through canonical dispatch_builtin which goes
-                // via execbuiltin → BUILTINS["chgrp"] (files.c:806)
-                // with BIN_CHGRP funcid + "hRs" optstr. Replaces 38
-                // lines of inline option-bit packing.
-                return dispatch_builtin("chgrp", rest_vec.clone());
-            }
+            // c:Src/Modules/files.c:806 — BUILTINS["chgrp"] with
+            // BIN_CHGRP funcid + "hRs" optstr.
+            "chgrp" => return dispatch_builtin("chgrp", rest_vec.clone()),
             "nproc" => return self.builtin_nproc(&rest_vec),
             "expr" => return self.builtin_expr(&rest_vec),
             "sha256sum" => return self.builtin_sha256sum(&rest_vec),
