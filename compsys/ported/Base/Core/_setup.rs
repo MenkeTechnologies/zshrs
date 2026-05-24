@@ -1,6 +1,27 @@
 //! Port of `_setup` — set up completion context based on zstyle
-//! settings. Moved from `compsys/functions.rs`. Renamed from `setup`
-//! to mirror zsh shell function name `_setup`.
+//! settings.
+//!
+//! Local shell reference: `compsys/functions/Base/Core/_setup`
+//! (system copy `/opt/homebrew/share/zsh/functions/_setup`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  3  local val nm="$compstate[nmatches]"
+//!  7  if zstyle -a ":completion:${curcontext}:$1" list-colors val; then
+//! 10    _comp_colors=( "$val[@]" )
+//! 27  if zstyle -s ":completion:${curcontext}:$1" show-ambiguity val; then
+//! 29    [[ $val = (yes|true|on) ]] && _ambiguous_color=4 || _ambiguous_color=$val
+//! 32  if zstyle -t ":completion:${curcontext}:$1" list-packed; then
+//! 33    compstate[list]="${compstate[list]} packed"
+//! 40  if zstyle -t ":completion:${curcontext}:$1" list-rows-first; then
+//! 41    compstate[list]="${compstate[list]} rows"
+//! ```
+//!
+//! Simplified Rust port: handles the list-packed / list-rows-first /
+//! last-prompt / accept-exact / menu / force-list styles by tweaking
+//! `compstate.list` / `compstate.exact`. The list-colors + show-
+//! ambiguity styles (require zsh/complist module integration) are
+//! looked up but their effect is deferred to the receiver.
 
 use crate::base::MainCompleteState;
 
@@ -8,13 +29,12 @@ use crate::base::MainCompleteState;
 pub fn _setup(state: &mut MainCompleteState, tag: &str) {
     let context = format!(":completion:{}:{}", state.ctx.context, tag);
 
-    // list-colors
+    // shell:7-13 — list-colors → _comp_colors (deferred to receiver)
     if let Some(colors) = state.styles.lookup_values(&context, "list-colors") {
-        // Would set ZLS_COLORS
         let _ = colors;
     }
 
-    // show-ambiguity
+    // shell:27-30 — show-ambiguity → _ambiguous_color (deferred)
     if let Some(val) = state.styles.lookup_values(&context, "show-ambiguity") {
         if let Some(v) = val.first() {
             if v == "yes" || v == "true" || v == "on" {
@@ -23,7 +43,7 @@ pub fn _setup(state: &mut MainCompleteState, tag: &str) {
         }
     }
 
-    // list-packed
+    // shell:32-33 — list-packed → compstate[list]+=' packed'
     if state
         .styles
         .lookup_values(&context, "list-packed")
@@ -32,7 +52,7 @@ pub fn _setup(state: &mut MainCompleteState, tag: &str) {
         state.comp.params.compstate.list.push_str(" packed");
     }
 
-    // list-rows-first
+    // shell:40-41 — list-rows-first → compstate[list]+=' rows'
     if state
         .styles
         .lookup_values(&context, "list-rows-first")

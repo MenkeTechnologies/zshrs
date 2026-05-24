@@ -1,6 +1,27 @@
 //! Port of `_dispatch` — dispatch to the appropriate completion
-//! function. Moved from `compsys/functions.rs`. Renamed from
-//! `dispatch` to mirror zsh shell function name `_dispatch`.
+//! function.
+//!
+//! Local shell reference: `compsys/functions/Base/Core/_dispatch`
+//! (system copy `/opt/homebrew/share/zsh/functions/_dispatch`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  9  if [[ "$1" = -s ]]; then noskip=yes; shift; fi
+//! 14  [[ -z "$noskip" ]] && _compskip=
+//! 16  curcontext="${curcontext%:*:*}:${1}:"
+//! 22  if [[ "$_compskip" != (all|*patterns*) ]]; then
+//! 24    for str in "$@"; do
+//! 26      service="${_services[$str]:-$str}"
+//! 27      for i in "${(@)_patcomps[(K)$str]}"; do
+//! 32        eval "$i" && ret=0
+//! ```
+//!
+//! Simplified Rust port: takes the registered (comps, commands)
+//! maps explicitly instead of going through shell `_services` /
+//! `_patcomps` globals. The lookup-and-invoke loop is the same
+//! shape — try the per-command function for `cmd`, walk pattern
+//! fallbacks. The `-s` / `_compskip` machinery is shell-side state
+//! deferred to the caller.
 
 use std::collections::HashMap;
 

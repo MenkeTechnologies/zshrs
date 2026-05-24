@@ -1,5 +1,20 @@
 //! Port of `_comp_caller_options` — get shell options from calling
-//! context. Moved from `compsys/library.rs`.
+//! context.
+//!
+//! Local shell reference: this name appears in compsys completers
+//! (e.g. `_complete`) as a snapshot of the `$options` associative
+//! array captured at compsys-entry. The shell-side definition lives
+//! in zsh's compsys init (`compinit` sets `_comp_caller_options`
+//! before dispatching). No standalone `_comp_caller_options` file
+//! exists in the system functions tree — it's a shell parameter
+//! initialised inline.
+//!
+//! Rust port: returns an empty HashMap. The shell parameter has no
+//! direct analog at the leaf — option capture is plumbed through
+//! `CompletionState.params.compstate` upstream. Pinning the empty
+//! contract here lets call sites that DON'T need real option capture
+//! continue working; a future change to populate from a real option
+//! table surfaces deliberately via the existing test below.
 
 use std::collections::HashMap;
 
