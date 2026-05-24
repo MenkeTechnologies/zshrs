@@ -9148,24 +9148,29 @@ esac"#;
         assert!(r.is_err(), "zsh -n: parse error near `done`");
     }
 
-    /// Simple command's words include the command name AND args.
-    /// Pin the CURRENT zshrs contract: word bytes carry the metafied
-    /// form internally (`-` shows up as `\u{9b}` = the `Dash` meta-byte).
-    /// Real zsh stores the same internal form but unmetafies before
-    /// surfacing to user-visible levels. Document the divergence; if
-    /// zshrs ever changes to unmetafy at parse time the test will
-    /// surface that as a regression.
+    /// Simple command's words are metafied at the AST layer (matches
+    /// zsh's internal representation: `-` lexes to `Dash` = 0x9b, `*`
+    /// to `Star`, etc.). zsh untokenizes via `untokenize()` BEFORE
+    /// surfacing words at execution time (Src/exec.c:execcmd_args).
+    /// This test pins the round-trip: `untokenize(word)` recovers the
+    /// user-visible form. If parse-time unmetafy ever lands the
+    /// untokenize call becomes a no-op; the test stays green either
+    /// way. Companion test below pins the metafied internal form.
     #[test]
-    #[ignore = "ANCHOR: zshrs word array carries metafied bytes; verify if/when unmetafy moves into parse"]
     fn parse_simple_command_words_unmetafied_like_zsh_anchored() {
         let _g = crate::test_util::global_state_lock();
         let prog = parse("ls -la /tmp").unwrap();
         match &prog.lists[0].sublist.pipe.cmd {
             ZshCommand::Simple(s) => {
+                let untok: Vec<String> = s
+                    .words
+                    .iter()
+                    .map(|w| crate::ported::lex::untokenize(w))
+                    .collect();
                 assert_eq!(
-                    s.words,
+                    untok,
                     vec!["ls", "-la", "/tmp"],
-                    "user-visible words must be unmetafied"
+                    "untokenize(word) must yield the user-visible form"
                 );
             }
             other => panic!("expected Simple, got {other:?}"),
