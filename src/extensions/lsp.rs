@@ -792,10 +792,6 @@ fn completion(state: &State, params: &Value) -> Value {
             "label": label,
             "kind": 14, // Constant
             "detail": detail,
-            // filterText="" → match against any user-typed prefix
-            // (the IDE's matcher accepts empty-filter items
-            // unconditionally). insertText=label → insert exactly
-            // the label text when the user picks it.
             "filterText": label,
             "insertText": label,
             "sortText": format!("0_{}", label),
@@ -805,20 +801,47 @@ fn completion(state: &State, params: &Value) -> Value {
             },
         })
     }
+    // Variant for contexts where items CHAIN — `${(LU)var}` /
+    // `*(/D^.)` / `(#iI)` / `${arr[(Ri)…]}` / `${var:h:t:r}`. The
+    // `command` field re-invokes the suggest popup after insertion
+    // so the user can keep adding qualifiers without re-typing or
+    // pressing Ctrl-Space. Mirrors how VS Code / IntelliJ Platform
+    // LSP honor `editor.action.triggerSuggest`.
+    fn ctx_item_chain(label: &str, detail: &str, doc_md: &str) -> Value {
+        json!({
+            "label": label,
+            "kind": 14,
+            "detail": detail,
+            "filterText": label,
+            "insertText": label,
+            "sortText": format!("0_{}", label),
+            "documentation": {
+                "kind": "markdown",
+                "value": doc_md,
+            },
+            "command": {
+                "title": "Re-trigger completion",
+                "command": "editor.action.triggerSuggest",
+            },
+        })
+    }
     if let Some(l) = line {
         match lsp_completion_context(l, col) {
             LspCompletionContext::ParamFlag => {
+                // `${(LU)var}` / `${(jks)arr}` chain — use chain variant
+                // so the popup re-opens after each flag insertion.
                 let items: Vec<Value> = PARAM_FLAG_DOCS
                     .iter()
-                    .map(|(flag, doc)| ctx_item(flag, *doc,
+                    .map(|(flag, doc)| ctx_item_chain(flag, *doc,
                         &format!("**`(`{}`)`** — {}\n\n_zsh parameter expansion flag — `${{(FLAGS)var}}`_", flag, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::GlobQualifier => {
+                // `*(/D^.)` chain — directories that aren't dotfiles.
                 let items: Vec<Value> = GLOB_QUALIFIER_DOCS
                     .iter()
-                    .map(|(q, doc)| ctx_item(q, *doc,
+                    .map(|(q, doc)| ctx_item_chain(q, *doc,
                         &format!("**`(`{}`)`** — {}\n\n_zsh glob qualifier — `*(QUALIFIERS)`_", q, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
@@ -832,9 +855,16 @@ fn completion(state: &State, params: &Value) -> Value {
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::ParamColonModifier => {
+                // `${var:h:t:r}` / `!!:s/old/new/:gs/a/b/` chain.
+                // Each modifier letter inserted; user adds another `:`
+                // and re-types — but `:` is already a triggerChar so
+                // re-open is automatic without the command field.
+                // Still emit the command so insertion-without-typing-
+                // colon also re-opens (e.g. for `${var:hto…}` style
+                // multi-letter input).
                 let items: Vec<Value> = PARAM_MODIFIER_DOCS
                     .iter()
-                    .map(|(m, doc)| ctx_item(m, *doc,
+                    .map(|(m, doc)| ctx_item_chain(m, *doc,
                         &format!("**`:{}`** — {}\n\n_zsh modifier — `${{var:MOD}}` / `!event:MOD`_", m, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
@@ -922,17 +952,20 @@ fn completion(state: &State, params: &Value) -> Value {
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::PatternModifier => {
+                // `(#iI)` / `(#ba3)` chain — case-insensitive + ID-reset,
+                // backref + approx-3-errors.
                 let items: Vec<Value> = PATTERN_MODIFIERS
                     .iter()
-                    .map(|(m, doc)| ctx_item(m, *doc,
+                    .map(|(m, doc)| ctx_item_chain(m, *doc,
                         &format!("**`(#{})`** — {}\n\n_extended-glob pattern modifier (needs `EXTENDED_GLOB`)_", m, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::SubscriptFlag => {
+                // `${arr[(Ri)pat]}` chain — reverse + case-insensitive.
                 let items: Vec<Value> = SUBSCRIPT_FLAGS
                     .iter()
-                    .map(|(f, doc)| ctx_item(f, *doc,
+                    .map(|(f, doc)| ctx_item_chain(f, *doc,
                         &format!("**`({})`** — {}\n\n_array subscript flag — `${{arr[({})pattern]}}`_", f, doc, f)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
