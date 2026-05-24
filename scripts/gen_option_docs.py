@@ -234,7 +234,11 @@ def _strip_nested_items_with_paren_names(text: str) -> str:
     out = []
     i = 0
     n = len(text)
-    item_macro_re = re.compile(r"\b(s?item|xitem)\(")
+    # Match `item` / `sitem` / `xitem` / `sxitem` macros. `sxitem` is
+    # a short-item-form xitem (`xitem` for short-item lists — used in
+    # zmv to chain `sxitem(-C)\nsxitem(-L)\nsitem(-M)(body)` where
+    # only the LAST one has a body, the first two share it).
+    item_macro_re = re.compile(r"\b(s?item|s?xitem)\(")
     while i < n:
         m = item_macro_re.search(text, i)
         if not m:
@@ -249,8 +253,12 @@ def _strip_nested_items_with_paren_names(text: str) -> str:
             out.append(text[m.start() : m.end()])
             i = m.end()
             continue
-        # `xitem(...)` has no body paren — emit as a bare bullet.
-        if macro == "xitem":
+        # `xitem(...)` / `sxitem(...)` — no body paren of their own;
+        # the body belongs to the next `item(...)(body)` / `sitem(...)(body)`
+        # that follows them. Emit as a bare bullet for now (rendering
+        # them inline with the next bullet's body would need
+        # multi-block lookahead).
+        if macro in ("xitem", "sxitem"):
             name = _render_item_header(header_body)
             out.append(f"\n- **{name}**\n")
             i = header_end
@@ -308,31 +316,82 @@ def _extract_body_heuristic(text: str, start: int) -> tuple[str, int] | tuple[No
     return "".join(out)
 
 
+_PLACEHOLDERS = {
+    "LPAR()": "(",
+    "RPAR()": ")",
+    "LSQUARE()": "[",
+    "RSQUARE()": "]",
+    "PLUS()": "+",
+    "RQUOTE()": "'",
+}
+
+
+def _extract_paren_balanced_placeholder(text: str, start: int) -> tuple[str, int] | tuple[None, None]:
+    """Like `_extract_paren_balanced`, but treats yodl literal-char
+    producers (`LPAR()` / `RPAR()` / `LSQUARE()` / …) as opaque
+    tokens whose `(` and `)` chars do NOT count toward paren depth.
+    Used by `_render_item_header` for `tt(...)` bodies that contain
+    LPAR()/RPAR() — otherwise the balanced extractor walks past the
+    intended `tt(...)` close because LPAR()'s `(` opens a fake
+    nested level."""
+    if start >= len(text) or text[start] != "(":
+        return (None, None)
+    depth = 0
+    i = start
+    in_squote = False
+    while i < len(text):
+        # Skip placeholders — their parens don't count.
+        matched = False
+        for ph in _PLACEHOLDERS:
+            if text.startswith(ph, i):
+                i += len(ph)
+                matched = True
+                break
+        if matched:
+            continue
+        c = text[i]
+        if c == "'":
+            in_squote = not in_squote
+            i += 1
+            continue
+        if in_squote:
+            i += 1
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return (text[start + 1 : i], i + 1)
+        i += 1
+    return (None, None)
+
+
+def _sub_placeholders(s: str) -> str:
+    for ph, rep in _PLACEHOLDERS.items():
+        s = s.replace(ph, rep)
+    return s
+
+
 def _render_item_header(header: str) -> str:
     r"""Convert an `item(...)` header body (between the outer parens)
     into the bullet label. Examples:
         tt('+(') (`KSH_GLOB`)  →  `+(` (KSH_GLOB)
         tt(?()  →  `?(`
-        tt(LSQUARE())  →  `[`
-        tt(<LPAR()>)  →  `<(>`
-        tt(RPAR()>)  →  `)>`
+        tt(LPAR())             →  `(`
+        tt(<LPAR()>)           →  `<(>`
+        tt(RPAR()>)            →  `)>`
+        tt(LSQUARE())          →  `[`
     """
     s = header.strip()
-    # Yodl literal-paren producers — substitute FIRST so any tt(...)
-    # rule downstream sees `(` / `)` chars instead of LPAR()/RPAR()
-    # placeholders. Otherwise `tt(<LPAR())` becomes `tt(<())` after
-    # the single-pass LPAR substitution, and the no-paren regex
-    # can't match.
-    s = s.replace("LPAR()", "(")
-    s = s.replace("RPAR()", ")")
-    s = s.replace("LSQUARE()", "[")
-    s = s.replace("RSQUARE()", "]")
-    s = s.replace("PLUS()", "+")
-    s = s.replace("RQUOTE()", "'")
     # `tt('X')` — single-quote-protected literal containing parens.
     s = re.sub(r"\btt\('([^']*)'\)", r"`\1`", s)
-    # `tt(X)` with balanced parens inside — use the balanced extractor
-    # so `tt(<()>)` becomes `` `<()>` `` instead of being skipped.
+    # `tt(X)` with `(` / `)` chars produced by yodl LPAR()/RPAR()/…
+    # macros. Extract the body using a placeholder-aware paren walker
+    # — its parens are opaque tokens — then substitute the
+    # placeholders to their literal chars within the extracted body.
+    # Without this, `tt(LPAR())` becomes `tt(()` after a naive
+    # LPAR()→`(` substitution that eats the outer tt's closing `)`.
     out_parts = []
     i = 0
     while i < len(s):
@@ -341,19 +400,48 @@ def _render_item_header(header: str) -> str:
             out_parts.append(s[i:])
             break
         out_parts.append(s[i : i + m.start()])
-        body, end = _extract_paren_balanced(s, i + m.end() - 1)
+        body, end = _extract_paren_balanced_placeholder(s, i + m.end() - 1)
         if body is None:
             out_parts.append(s[i + m.start() : i + m.end()])
             i = i + m.end()
             continue
-        out_parts.append(f"`{body}`")
+        out_parts.append(f"`{_sub_placeholders(body)}`")
         i = end
     s = "".join(out_parts)
+    # Any stray LPAR()/RPAR()/LSQUARE() etc. still sitting outside
+    # a tt(...) wrapper — substitute them now.
+    s = _sub_placeholders(s)
     return s.strip()
 
 
 def strip_yodl(text: str) -> str:
     """Convert yodl markup to markdown / plain text."""
+    # Recover already-corrupted `sitem(tt(())(BODY))` patterns that
+    # are the result of an earlier `LPAR()` → `(` substitution that
+    # ate the closing paren of the surrounding `tt(...)`. These no
+    # longer have balanced parens so the generic extractor can't
+    # touch them — match the broken shape directly. Insert a stub
+    # missing `)` so the placeholder-aware extractor can finish.
+    text = re.sub(
+        r"\b(s?item)\(tt\(\(\)\)\(",
+        r"\1(tt(LPAR()))(",
+        text,
+    )
+    text = re.sub(
+        r"\b(s?item)\(tt\(<\(\)\)\(",
+        r"\1(tt(<LPAR()))(",
+        text,
+    )
+    text = re.sub(
+        r"\b(s?item)\(tt\(\(([!?])\)\)\(",
+        r"\1(tt(LPAR()\2))(",
+        text,
+    )
+    text = re.sub(
+        r"\b(s?item)\(tt\(([!?])\(\)\)\(",
+        r"\1(tt(\2RPAR()))(",
+        text,
+    )
     # Handle nested `item(tt('X(') (FLAG))( BODY )` blocks first —
     # the regex pass can't touch them because the NAME has parens.
     text = _strip_nested_items_with_paren_names(text)
