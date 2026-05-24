@@ -505,37 +505,35 @@ mod arrays {
         assert_parity("arr=(a b c); echo [${arr[99]}]");
     }
 
-    /// `${(j/_/)arr}` — known zshrs bug (drops all but first element).
+    /// `${(j/_/)arr}` — fixed by subst.rs:5924 (j/F flag clears isarr
+    /// after sepjoin); see commit ffa01c7233.
     #[test]
-    #[ignore = "ZSHRS BUG: (j/_/)arr drops all but first element; zsh joins"]
     fn array_join_underscore() {
         assert_parity("arr=(a b c d); echo ${(j/_/)arr}");
     }
 
-    /// `${(F)arr}` — known zshrs bug (drops all but first element).
+    /// `${(F)arr}` — fixed by subst.rs:5924; same root as (j) above.
     #[test]
-    #[ignore = "ZSHRS BUG: (F)arr drops all but first element; zsh newline-joins"]
     fn array_join_newlines_via_F() {
         assert_parity(r#"arr=(a b c d); print -r -- "${(F)arr}""#);
     }
 
-    /// `${arr[@]:#pat}` — known zshrs bug (filter not implemented).
+    /// `${arr[@]:#pat}` — fixed by subst.rs:4562 (:#pat array filter
+    /// fires for [@]/[*]/range subscripts); see commit b677c95d32.
     #[test]
-    #[ignore = "ZSHRS BUG: :#pat array filter not implemented"]
     fn array_filter_hash_removes_match() {
         assert_parity(r#"arr=(foo bar baz qux); print -l "${arr[@]:#bar}""#);
     }
 
-    /// `${arr[@]:#glob}` — known zshrs bug.
+    /// `${arr[@]:#glob}` — same fix as literal above.
     #[test]
-    #[ignore = "ZSHRS BUG: :#glob array filter not implemented"]
     fn array_filter_hash_with_glob() {
         assert_parity(r#"arr=(foo bar baz qux); print -l "${arr[@]:#ba*}""#);
     }
 
-    /// `${arr[(N)]}` paren-wrapped subscript — known zshrs bug.
+    /// `${arr[(N)]}` paren-wrapped subscript — fixed by subst.rs:3737
+    /// (or_else paren-strip retry); see commit 3ab947a915.
     #[test]
-    #[ignore = "ZSHRS BUG: ${arr[(N)]} paren-wrapped subscript returns empty"]
     fn array_paren_subscript() {
         assert_parity("arr=(a b c d e); echo ${arr[(1)]}");
     }
@@ -597,15 +595,15 @@ mod hashes {
 mod nested {
     use super::*;
 
+    /// `${${X%:*}#*:}` — fixed by subst.rs:3481 (var-name walk skips
+    /// when subexp_value in flight); see commit 979b4eb401.
     #[test]
-    #[ignore = "ZSHRS BUG: nested ${${X%:*}#*:} outer strip dropped"]
     fn nested_strip_prefix_suffix() {
         assert_parity("X=alpha:beta:gamma; echo ${${X%:*}#*:}");
     }
 
-    /// `${${X#*:}#*:}` — known zshrs bug (outer strip skipped on nested).
+    /// `${${X#*:}#*:}` — same fix as nested_strip_prefix_suffix.
     #[test]
-    #[ignore = "ZSHRS BUG: nested ${${X#*:}#*:} outer prefix-strip skipped"]
     fn nested_double_strip_prefix() {
         assert_parity("X=alpha:beta:gamma; echo ${${X#*:}#*:}");
     }
