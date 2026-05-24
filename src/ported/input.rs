@@ -455,6 +455,15 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {
         inbufct.with(|c| c.set(new_len));
     }
     inbufflags.with(|f| f.set(combined));
+    // c:Src/input.c — same lexstop reset as inputsetline (input.rs:336).
+    // Without this, an inpush after the buffer drained leaves lexstop=true
+    // and ingetc returns None immediately, so the just-pushed alias body
+    // (e.g. `inpush("echo hello")` after lexing `hi`) never gets read.
+    // Symptom: `alias hi='echo hello'; eval hi` → empty output, because
+    // eval's inner `hi` token drained the buffer, set lexstop, then
+    // exalias inpushed `echo hello` but the next ingetc still saw
+    // lexstop=true and returned None → tok=ENDINPUT.
+    crate::ported::lex::LEX_LEXSTOP.with(|c| c.set(false));
 }
 
 // Remove the top element of the stack                                       // c:736
