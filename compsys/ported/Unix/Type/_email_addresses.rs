@@ -45,6 +45,19 @@ pub struct EmailAddressesOpts<'a> {
     /// `.addressbook` / `.mh_profile`. Defaults to `$HOME` when None.
     /// Test-friendly: pass a tmpdir without mutating process env.
     pub home_dir: Option<&'a Path>,
+    /// LDAP `filter` zstyle from shell:51-58. Each entry is an LDAP
+    /// attribute name (e.g. "cn", "uid", "mail"). When non-empty,
+    /// triggers an `ldapsearch` invocation building a filter like
+    /// `(|(cn=PREFIX*)(uid=PREFIX*))`. Empty disables LDAP entirely.
+    pub ldap_filter: Vec<String>,
+    /// `local` plugin user list — names that complete BEFORE the
+    /// `@` in `user@host`. Caller pulls from /etc/passwd or NSS.
+    pub users: Vec<String>,
+    /// `local` plugin host list — names that complete AFTER the
+    /// `@`. Caller pulls from /etc/hosts, ~/.ssh/known_hosts, etc.
+    pub hosts: Vec<String>,
+    /// Optional `-S` suffix value passed to LDAP filter building.
+    pub suffix: Option<&'a str>,
 }
 
 impl<'a> Default for EmailAddressesOpts<'a> {
@@ -54,6 +67,10 @@ impl<'a> Default for EmailAddressesOpts<'a> {
             separator: None,
             bare_addresses: false,
             home_dir: None,
+            ldap_filter: Vec::new(),
+            users: Vec::new(),
+            hosts: Vec::new(),
+            suffix: None,
         }
     }
 }
@@ -141,7 +158,6 @@ pub fn _email_addresses(state: &mut CompletionState, opts: &EmailAddressesOpts<'
             .map(PathBuf::from)
             .unwrap_or_else(|_| home.join(".mh_profile"));
         if mh_profile.exists() {
-            // Run `ali` (MH alias listing). Output format `NAME: ADDR`.
             if let Ok(out) = std::process::Command::new("ali").output() {
                 if out.status.success() {
                     for line in String::from_utf8_lossy(&out.stdout).lines() {
@@ -149,6 +165,60 @@ pub fn _email_addresses(state: &mut CompletionState, opts: &EmailAddressesOpts<'
                             entries.push(("MH".into(), addr.to_string()));
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // ── ldap plugin: shell:46-74 ──────────────────────────────────────
+    // When `opts.ldap_filter` is non-empty, invoke `ldapsearch` and
+    // parse `mail:` lines from the LDIF output. Skipped silently when
+    // ldapsearch is not installed.
+    if want("ldap") && !opts.ldap_filter.is_empty() {
+        let prefix = state.params.prefix.clone();
+        let suffix_part = opts.suffix.unwrap_or("");
+        let filter_combined = if opts.ldap_filter.len() > 1 {
+            let inner: String = opts
+                .ldap_filter
+                .iter()
+                .map(|f| format!("({}={}{}*)", f, prefix, suffix_part))
+                .collect();
+            format!("(|{})", inner)
+        } else {
+            format!(
+                "({}={}{}*)",
+                opts.ldap_filter[0], prefix, suffix_part
+            )
+        };
+        let mut cmd = std::process::Command::new("ldapsearch");
+        cmd.args(["-LLL", &filter_combined, "cn", "mail"]);
+        if let Ok(out) = cmd.output() {
+            if out.status.success() {
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    if let Some(mail) = line.strip_prefix("mail: ") {
+                        entries.push(("ldap".into(), mail.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── local plugin: shell:76-88 ─────────────────────────────────────
+    // Pre-`@` → user names; post-`@` → host names. Caller supplies
+    // both lists.
+    if want("local") {
+        let prefix = state.params.prefix.clone();
+        if let Some(at_idx) = prefix.find('@') {
+            let host_prefix = &prefix[at_idx + 1..];
+            for h in &opts.hosts {
+                if h.starts_with(host_prefix) {
+                    entries.push(("local".into(), format!("{}@{}", &prefix[..at_idx], h)));
+                }
+            }
+        } else {
+            for u in &opts.users {
+                if u.starts_with(&prefix) {
+                    entries.push(("local".into(), u.clone()));
                 }
             }
         }
@@ -345,5 +415,70 @@ mod tests {
             );
             assert!(!ok);
         });
+    }
+
+    #[test]
+    fn local_plugin_before_at_emits_user_candidates() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "al".into();
+        let ok = _email_addresses(
+            &mut state,
+            &EmailAddressesOpts {
+                only_plugin: Some("local"),
+                home_dir: Some(std::path::Path::new("/tmp")),
+                users: vec!["alice".into(), "bob".into(), "alex".into()],
+                ..Default::default()
+            },
+        );
+        assert!(ok);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains(&"alice"));
+        assert!(names.contains(&"alex"));
+        assert!(!names.contains(&"bob"));
+    }
+
+    #[test]
+    fn local_plugin_after_at_emits_host_candidates() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "alice@ex".into();
+        let ok = _email_addresses(
+            &mut state,
+            &EmailAddressesOpts {
+                only_plugin: Some("local"),
+                home_dir: Some(std::path::Path::new("/tmp")),
+                hosts: vec!["example.com".into(), "other.org".into()],
+                ..Default::default()
+            },
+        );
+        assert!(ok);
+        let names: Vec<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(
+            names.contains(&"alice@example.com"),
+            "host candidates after `@` should yield user@host — got {names:?}"
+        );
+        assert!(!names.iter().any(|n| n.contains("other.org")));
+    }
+
+    #[test]
+    fn ldap_skipped_when_filter_empty() {
+        let mut state = CompletionState::new();
+        let ok = _email_addresses(
+            &mut state,
+            &EmailAddressesOpts {
+                only_plugin: Some("ldap"),
+                home_dir: Some(std::path::Path::new("/tmp")),
+                ldap_filter: vec![], // empty → skip LDAP entirely
+                ..Default::default()
+            },
+        );
+        assert!(!ok, "empty ldap_filter must skip ldap and return false");
     }
 }
