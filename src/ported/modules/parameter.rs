@@ -4438,4 +4438,221 @@ mod paramtypestr_table_tests {
         assert!(i_left < i_ro, "c:65-76 — -left must precede -readonly");
         assert!(i_ro < i_exp, "c:75-82 — -readonly must precede -export");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // paramtypestr — per-flag combination pinning. Each test builds a
+    // param with a specific flag set and asserts the exact return string.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn mk_pm(flags: u32, level: i32) -> param {
+        param {
+            node: hashnode { next: None, nam: String::new(), flags: flags as i32 },
+            u_data: 0,
+            u_arr: None,
+            u_str: None,
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: None,
+            level,
+        }
+    }
+
+    /// PM_SCALAR (flag value 0) → "scalar".
+    #[test]
+    fn paramtypestr_scalar_with_no_flags_is_scalar() {
+        let pm = mk_pm(PM_SCALAR, 0);
+        assert_eq!(paramtypestr(&pm), "scalar");
+    }
+
+    /// PM_INTEGER → "integer".
+    #[test]
+    fn paramtypestr_integer_flag_is_integer() {
+        let pm = mk_pm(PM_INTEGER, 0);
+        assert_eq!(paramtypestr(&pm), "integer");
+    }
+
+    /// PM_ARRAY → "array".
+    #[test]
+    fn paramtypestr_array_flag_is_array() {
+        let pm = mk_pm(PM_ARRAY, 0);
+        assert_eq!(paramtypestr(&pm), "array");
+    }
+
+    /// PM_HASHED → "association".
+    #[test]
+    fn paramtypestr_hashed_flag_is_association() {
+        let pm = mk_pm(PM_HASHED, 0);
+        assert_eq!(paramtypestr(&pm), "association");
+    }
+
+    /// PM_NAMEREF → "nameref".
+    #[test]
+    fn paramtypestr_nameref_flag_is_nameref() {
+        let pm = mk_pm(PM_NAMEREF, 0);
+        assert_eq!(paramtypestr(&pm), "nameref");
+    }
+
+    /// PM_EFLOAT → "float".
+    #[test]
+    fn paramtypestr_efloat_flag_is_float() {
+        let pm = mk_pm(PM_EFLOAT, 0);
+        assert_eq!(paramtypestr(&pm), "float");
+    }
+
+    /// PM_FFLOAT → "float".
+    #[test]
+    fn paramtypestr_ffloat_flag_is_float() {
+        let pm = mk_pm(PM_FFLOAT, 0);
+        assert_eq!(paramtypestr(&pm), "float");
+    }
+
+    /// PM_UNSET shortcut returns empty string regardless of other flags.
+    /// c:48-92 — `if (PM_UNSET) return ""`.
+    #[test]
+    fn paramtypestr_unset_short_circuits_to_empty() {
+        let pm = mk_pm(PM_UNSET | PM_INTEGER, 0);
+        assert_eq!(paramtypestr(&pm), "");
+    }
+
+    /// PM_AUTOLOAD → "undefined" (precedes the type switch).
+    #[test]
+    fn paramtypestr_autoload_overrides_type_to_undefined() {
+        let pm = mk_pm(PM_AUTOLOAD | PM_INTEGER, 0);
+        assert_eq!(paramtypestr(&pm), "undefined");
+    }
+
+    // ─ Suffix combinations ─────────────────────────────────────────
+    /// PM_INTEGER + PM_READONLY → "integer-readonly".
+    #[test]
+    fn paramtypestr_integer_readonly_combo() {
+        let pm = mk_pm(PM_INTEGER | PM_READONLY, 0);
+        assert_eq!(paramtypestr(&pm), "integer-readonly");
+    }
+
+    /// PM_SCALAR + PM_EXPORTED → "scalar-export".
+    #[test]
+    fn paramtypestr_scalar_exported_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_EXPORTED, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-export");
+    }
+
+    /// PM_ARRAY + PM_UNIQUE → "array-unique".
+    #[test]
+    fn paramtypestr_array_unique_combo() {
+        let pm = mk_pm(PM_ARRAY | PM_UNIQUE, 0);
+        assert_eq!(paramtypestr(&pm), "array-unique");
+    }
+
+    /// PM_SCALAR + PM_LOWER → "scalar-lower".
+    #[test]
+    fn paramtypestr_scalar_lower_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_LOWER, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-lower");
+    }
+
+    /// PM_SCALAR + PM_UPPER → "scalar-upper".
+    #[test]
+    fn paramtypestr_scalar_upper_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_UPPER, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-upper");
+    }
+
+    /// PM_SCALAR + PM_LEFT → "scalar-left".
+    #[test]
+    fn paramtypestr_scalar_left_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_LEFT, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-left");
+    }
+
+    /// PM_SCALAR + PM_RIGHT_B → "scalar-right_blanks".
+    #[test]
+    fn paramtypestr_scalar_right_blanks_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_RIGHT_B, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-right_blanks");
+    }
+
+    /// PM_SCALAR + PM_RIGHT_Z → "scalar-right_zeros".
+    #[test]
+    fn paramtypestr_scalar_right_zeros_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_RIGHT_Z, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-right_zeros");
+    }
+
+    /// PM_SCALAR + PM_HIDE → "scalar-hide".
+    #[test]
+    fn paramtypestr_scalar_hide_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_HIDE, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-hide");
+    }
+
+    /// PM_SCALAR + PM_HIDEVAL → "scalar-hideval".
+    #[test]
+    fn paramtypestr_scalar_hideval_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_HIDEVAL, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-hideval");
+    }
+
+    /// PM_SCALAR + PM_SPECIAL → "scalar-special".
+    #[test]
+    fn paramtypestr_scalar_special_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_SPECIAL, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-special");
+    }
+
+    /// PM_SCALAR + PM_TIED → "scalar-tied".
+    #[test]
+    fn paramtypestr_scalar_tied_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_TIED, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-tied");
+    }
+
+    /// PM_SCALAR + PM_TAGGED → "scalar-tag".
+    #[test]
+    fn paramtypestr_scalar_tagged_combo() {
+        let pm = mk_pm(PM_SCALAR | PM_TAGGED, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-tag");
+    }
+
+    /// level > 0 → adds "-local" right after type.
+    #[test]
+    fn paramtypestr_level_nonzero_adds_local_suffix() {
+        let pm = mk_pm(PM_SCALAR, 1);
+        assert_eq!(paramtypestr(&pm), "scalar-local");
+    }
+
+    /// level=0 → no "-local" suffix.
+    #[test]
+    fn paramtypestr_level_zero_no_local_suffix() {
+        let pm = mk_pm(PM_SCALAR, 0);
+        assert!(
+            !paramtypestr(&pm).contains("-local"),
+            "no -local when level=0"
+        );
+    }
+
+    /// All flags combined: long suffix chain.
+    #[test]
+    fn paramtypestr_many_flags_combined() {
+        let pm = mk_pm(
+            PM_INTEGER | PM_READONLY | PM_EXPORTED | PM_TIED | PM_UNIQUE,
+            2,
+        );
+        let s = paramtypestr(&pm);
+        assert!(s.starts_with("integer"));
+        assert!(s.contains("-local"));
+        assert!(s.contains("-readonly"));
+        assert!(s.contains("-export"));
+        assert!(s.contains("-tied"));
+        assert!(s.contains("-unique"));
+    }
 }
