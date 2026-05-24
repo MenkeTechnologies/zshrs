@@ -865,11 +865,7 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
     }
     // c:696 (zsh.h:2563) — `if (jobbing && (sig == SIGTTOU ||
     // sig == SIGTSTP || sig == SIGTTIN)) { zerr("can't trap SIG%s
-    // in interactive shells", ...); return 1; }`. The previous Rust
-    // port both hardcoded `jobbing = false` (now fixed) AND omitted
-    // the `zerr` emission — silently failing with no diagnostic.
-    // C names the specific signal in the error so the user knows
-    // which trap was rejected.
+    // in interactive shells", ...); return 1; }`.
     let jobbing = isset(MONITOR); // c:696
     if jobbing && (sig == libc::SIGTTOU || sig == libc::SIGTSTP || sig == libc::SIGTTIN) {
         // c:697 — `zerr("can't trap SIG%s in interactive shells", sigs[sig])`.
@@ -893,11 +889,7 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
 
     // c:712 — `if (!(flags & ZSIG_FUNC) && empty_eprog(l))`. C's
     // `empty_eprog` returns true for NULL, NULL prog, OR a prog whose
-    // first wordcode is WCB_END (`Src/parse.c:586`). The previous Rust
-    // port used `l.is_none()`, catching only the NULL case — a non-
-    // NULL but empty Eprog (e.g. `trap -- '' SIGINT` with an empty
-    // body) would fall through to the trapped branch, install a
-    // handler, and dispatch to an empty body instead of ignoring.
+    // first wordcode is WCB_END (`Src/parse.c:586`).
     let l_is_empty = match &l {
         None => true,
         Some(eprog) => crate::ported::parse::empty_eprog(eprog),

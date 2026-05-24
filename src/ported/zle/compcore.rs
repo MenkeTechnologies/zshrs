@@ -3820,12 +3820,12 @@ pub fn shfunc_call(name: &str) -> i32 {
         // c:exec.c:5800
         return 1; // missing fn → status 1
     }
-    // The full VM dispatch (Op::CallFunction) lives inside the fusevm
-    // bridge; from compcore we can't synthesize a VM frame, so we
-    // probe + return the last status which mirrors C's "function
-    // already returned, just read $?" behavior in the common case
-    // of compfunc returning before exit.
-    crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) // c:exec.c return lastval
+    // Route through the canonical exec_hooks dispatcher so the
+    // function actually executes. Hook returns Option<i32>; None
+    // means no executor context is set up yet (fall back to
+    // LASTVAL read).
+    crate::ported::exec_hooks::dispatch_function_call(name, &[])
+        .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
 }
 /// Real call into `setsparam(&format!("compstate[{key}]"), val)` — the
 /// canonical paramtab write. Mirrors C's `setsparam` at params.c:3350.
