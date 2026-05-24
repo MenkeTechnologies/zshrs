@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:40:50.876013+00:00
+Generated: 2026-05-24T22:43:58.772967+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 145 stubs across 47 files
+## Summary: 144 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -27,9 +27,9 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (19 / 746) |
 | `src/ported/zle/zle_main.rs` | 6 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
-| `src/ported/zle/zle_utils.rs` | 6 | `showmsg` (4 / 72) |
 | `src/ported/zle/zle_keymap.rs` | 5 | `newkeytab` (1 / 15) |
 | `src/ported/zle/zle_refresh.rs` | 5 | `addmultiword` (1 / 14) |
+| `src/ported/zle/zle_utils.rs` | 5 | `showmsg` (4 / 72) |
 | `src/ported/module.rs` | 4 | `load_and_bind` (1 / 20) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
@@ -166,17 +166,6 @@ python3 scripts/gen_port_stubs.py
 | 931 | `listlist` | 32 | 174 | 18% |
 | 195 | `expandorcomplete` | 4 | 16 | 25% |
 
-### `src/ported/zle/zle_utils.rs` — 6 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 868 | `showmsg` | 4 | 72 | 5% |
-| 73 | `zlecharasstring` | 3 | 43 | 6% |
-| 95 | `stringaszleline` | 14 | 109 | 12% |
-| 359 | `cuttext` | 17 | 79 | 21% |
-| 237 | `spaceinline` | 14 | 54 | 25% |
-| 47 | `sizeline` | 5 | 18 | 27% |
-
 ### `src/ported/zle/zle_keymap.rs` — 5 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -196,6 +185,16 @@ python3 scripts/gen_port_stubs.py
 | 531 | `freevideo` | 4 | 19 | 21% |
 | 1636 | `tc_rightcurs` | 15 | 63 | 23% |
 | 1550 | `moveto` | 13 | 44 | 29% |
+
+### `src/ported/zle/zle_utils.rs` — 5 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 949 | `showmsg` | 4 | 72 | 5% |
+| 73 | `zlecharasstring` | 3 | 43 | 6% |
+| 95 | `stringaszleline` | 14 | 109 | 12% |
+| 237 | `spaceinline` | 14 | 54 | 25% |
+| 47 | `sizeline` | 5 | 18 | 27% |
 
 ### `src/ported/module.rs` — 4 stubs
 
