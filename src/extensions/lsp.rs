@@ -1900,12 +1900,22 @@ pub fn lookup_doc(name: &str) -> String {
     if let Some((canon, body)) = crate::zsh_builtin_docs::lookup_builtin_doc(name) {
         return format!("**{}** — _zsh builtin_\n\n{}", canon, body);
     }
-    // Special vars: try both `$VAR` and bare `VAR` forms — the yo
+    // Special vars: try the raw name first (so `$` resolves to its
+    // own `$$` PID entry stored as canonical `"$"` in the doc
+    // table), then the bare-stripped form (`$VAR` → `VAR`). The yo
     // source stores names without `$`, but the LSP hover may pass
-    // either spelling.
-    let bare = name.strip_prefix('$').unwrap_or(name);
-    if let Some((canon, body)) = crate::zsh_special_var_docs::lookup_special_var_doc(bare) {
+    // either spelling, AND the pure-symbolic specials (`$`, `?`,
+    // `*`, `#`, `@`, `-`, `_`) are stored under their bare-symbol
+    // key so naive `strip_prefix('$')` on `"$"` strips the actual
+    // lookup key to empty.
+    if let Some((canon, body)) = crate::zsh_special_var_docs::lookup_special_var_doc(name) {
         return format!("**${}** — _special variable_\n\n{}", canon, body);
+    }
+    let bare = name.strip_prefix('$').unwrap_or(name);
+    if !bare.is_empty() && bare != name {
+        if let Some((canon, body)) = crate::zsh_special_var_docs::lookup_special_var_doc(bare) {
+            return format!("**${}** — _special variable_\n\n{}", canon, body);
+        }
     }
     if let Some((canon, body)) = crate::zsh_option_docs::lookup_option_doc(name) {
         return format!("**{}** — _zsh option_\n\n{}", canon, body);
@@ -6354,6 +6364,32 @@ mod tests {
             "expected $? doc; got: {}",
             lookup_doc("$?")
         );
+    }
+
+    #[test]
+    fn lookup_doc_handles_pure_symbolic_specials() {
+        // User report: `zshrs --docs '$'` returned "no docs for $".
+        // Root cause: strip_prefix('$') on the lookup key turned `"$"`
+        // (the canonical entry for `$$`/PID) into "" which failed.
+        // Now the raw key is tried first.
+        let _g = crate::test_util::global_state_lock();
+        // `$` = PID — canonical entry under bare `"$"` key
+        let s = lookup_doc("$");
+        assert!(
+            !s.is_empty() && s.contains("process ID"),
+            "lookup_doc('$') should return the PID doc; got: {:?}",
+            s,
+        );
+        // Other pure-symbolic specials must also resolve via their
+        // bare key — `?` / `*` / `#` / `@` / `-` / `_` / `!`.
+        for sym in &["$?", "$*", "$#", "$@", "$-", "$_", "$!"] {
+            let card = lookup_doc(sym);
+            assert!(
+                !card.is_empty(),
+                "lookup_doc({:?}) returned empty; pure-symbolic specials must resolve",
+                sym,
+            );
+        }
     }
 
     #[test]
