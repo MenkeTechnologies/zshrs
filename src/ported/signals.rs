@@ -1356,13 +1356,6 @@ pub fn unqueue_traps() {
 }
 
 // Standard call to execute a trap for a given signal.                     // c:1245
-/// Port of `mod_export int dotrap(int sig)` from
-/// `Src/signals.c:1245`. The synchronous trap dispatcher — looks
-/// up `siglists[sig]` (or shfunctab TRAPxxx for ZSIG_FUNC) and
-/// runs it via the executor. Eprog execution is staged through
-/// the executor when the call site lands; for now the wrapper
-/// flips `intrap`/`in_exit_trap` so observers see the correct
-/// scope state.
 /// Direct port of `void dotrap(int sig)` from `Src/signals.c:1245`.
 /// Dispatches the trap registered for `sig`:
 ///   - ZSIG_FUNC: invoke the `TRAPxxx` shell function from shfunctab
