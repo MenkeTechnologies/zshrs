@@ -589,20 +589,21 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
     // names, same order, same scope as C).
     let value: String; // c:286 char *value
     let shf: shfunc; // c:287 Shfunc shf
-                                               // c:288 — Eprog prog (skipped: parse_string not yet ported)
-                                               // c:289 — int sn (used inside the TRAP branch only)
+    let prog: Option<crate::ported::zsh_h::eprog>; // c:288 Eprog prog
+                                                    // c:289 — int sn (used inside the TRAP branch only)
 
     // c:286 — char *value = dupstring(val);
     value = val.clone();
     // c:291 — val = metafy(val, strlen(val), META_REALLOC);
     val = crate::ported::utils::metafy(&val);
     // c:293 — prog = parse_string(val, 1);
-    // EXTERN: `parse_string` lives in Src/parse.c — not yet ported.
-    // ShFunc stores the source string and the executor parses at first
-    // call (deferred parse). The c:295-299 "invalid function definition"
-    // guard only fires on parse errors; with deferred parse we only
-    // filter empty input.
-    if val.is_empty() {
+    // parse_string ported at crate::ported::exec::parse_string (c:283
+    // in Src/exec.c). Returns None on parse error → matches the C
+    // !prog guard at c:295. With this wired, the c:295-299 invalid-
+    // definition diagnostic now fires for actual parse errors rather
+    // than only the empty-input degenerate case.
+    prog = crate::ported::exec::parse_string(&val, 1); // c:293
+    if prog.is_none() {
         // c:295 !prog
         zwarn(
             // c:296
@@ -611,7 +612,7 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
         return; // c:298
     }
     // c:300 — shf = zshcalloc(sizeof(*shf));
-    // c:301 — shf->funcdef = dupeprog(prog, 0); (deferred — ShFunc.body)
+    // c:301 — shf->funcdef = dupeprog(prog, 0);
     // c:302 — shf->node.flags = dis;
     shf = shfunc {
         node: hashnode {
@@ -621,10 +622,10 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
         },
         filename: None,
         lineno: 0,
-        funcdef: None,
+        funcdef: prog.clone().map(Box::new), // c:301 — dupeprog(prog, 0)
         redir: None,
         sticky: None,
-        body: Some(val.clone()), // c:301 (deferred-parse path)
+        body: Some(val.clone()), // body source retained for deferred-recompile flows
     };
     // c:303 — shfunc_set_sticky(shf); (EXTERN exec.c sticky-options bit)
     // Not yet ported; sticky-options propagation is a no-op until the
