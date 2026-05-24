@@ -2193,23 +2193,19 @@ impl ShellExecutor {
         self.compsys_cache = None;
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
-        // Route through canonical dispatch_builtin → BUILTINS["emulate"]
-        // (Src/builtin.c bin_emulate entry). execbuiltin parses the
-        // `-R` flag from the "LR" optstr automatically.
-        dispatch_builtin(
-            "emulate",
-            vec!["sh".to_string(), "-R".to_string()],
-        );
+        // Direct call to the canonical `emulate()` port
+        // (Src/options.c:533) — `-R` semantics = fully=true.
+        // bin_emulate goes through dispatch_builtin which needs an
+        // ExecutorContext that isn't set up yet at apply_cli_flags
+        // time; the underlying emulate() doesn't need one.
+        crate::ported::options::emulate("sh", true);
     }
     pub fn enter_ksh_mode(&mut self) {
         self.plugin_cache = None;
         self.compsys_cache = None;
         self.compinit_pending = None;
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
-        dispatch_builtin(
-            "emulate",
-            vec!["ksh".to_string(), "-R".to_string()],
-        );
+        crate::ported::options::emulate("ksh", true);
     }
 }
 

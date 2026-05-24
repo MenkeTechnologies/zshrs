@@ -470,8 +470,16 @@ byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --zsh        identical-behaviour drop-in for /bin/zsh (compat-test entrypoint)
   --bash       identical-behaviour drop-in for /bin/bash
   --ksh        identical-behaviour drop-in for /bin/ksh (ksh-93)
+  --sh         identical-behaviour drop-in for /bin/sh / POSIX (alias of --posix)
+  --csh        identical-behaviour drop-in for /bin/csh
   --posix      identical-behaviour drop-in for /bin/sh (Bourne / dash)
+  --emulate MODE  alias for --MODE (zsh-compat: `emulate zsh` etc.)
   --zsh-compat alias of --zsh (legacy spelling)
+
+Argv[0] inference: invoking the binary as `ksh` / `sh` / `csh` / `bash`
+(via symlink or hardlink) selects the matching mode automatically, matching
+C zsh's behaviour at Src/init.c:1869+. Use the explicit `--MODE` flag to
+override.
 
 Default mode (no flag) is full zshrs: rkyv script_cache + plugin_cache
 + daemon enabled. Use the parity flags for compat testing or when caching
@@ -1010,45 +1018,90 @@ pub fn zshrs_main() {
         }
     }
 
-    // Handle shell mode flags (must be checked early). Every parity
-    // mode (`--zsh`, `--bash`, `--posix`) force-disables zshrs's
-    // caches and daemon by setting `ZSHRS_CACHE=0`. Rationale: the
-    // reference shells (zsh, bash, sh) have no caching layer —
-    // C zsh's Src/builtin.c:6080-6123 bin_dot reads + execnodes the
-    // file every call. A drop-in mode needs the same observable
-    // behavior so `source` re-runs the file fresh, `echo` / `print`
-    // / signal handlers re-fire, and side-effects (file I/O,
-    // network) repeat on every invocation. The plugin_cache replay
-    // captures only state mutations and silently swallows stdout-
-    // producing commands on cache hit — that diverges from every
-    // reference shell, so parity modes opt out entirely.
-    let parity_mode_selected = if args.iter().any(|a| a == "--posix") {
-        unsafe {
-            SHELL_MODE = ShellMode::Posix;
-        }
-        true
+    // Argv[0] inference — matches C zsh's behaviour at
+    // Src/init.c:1869+. Invoking via `ksh` / `sh` / `csh` / `bash`
+    // symlink selects the mode before explicit flags are parsed.
+    let argv0_basename: String = args
+        .first()
+        .map(|a| {
+            let bare = a.trim_start_matches('-'); // strip login-shell `-` prefix
+            std::path::Path::new(bare)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(bare)
+                .to_string()
+        })
+        .unwrap_or_default();
+    let argv0_inferred_mode: Option<ShellMode> = match argv0_basename.as_str() {
+        "ksh" | "ksh93" | "mksh" | "pdksh" => Some(ShellMode::Ksh),
+        "sh" | "dash" => Some(ShellMode::Posix),
+        "bash" => Some(ShellMode::Bash),
+        "zsh" | "zsh-5.9" => Some(ShellMode::Zsh),
+        _ => None,
+    };
+
+    // Handle shell mode flags. Every parity mode (`--zsh`, `--bash`,
+    // `--ksh`, `--sh`, `--csh`, `--posix`) force-disables zshrs's
+    // caches and daemon by setting `ZSHRS_CACHE=0`. Explicit flags
+    // override argv[0] inference.
+    //
+    // `--emulate MODE` form is zsh-compat (Src/init.c:443) — looks at
+    // the next arg as the mode name; same final mapping.
+    let explicit_mode: Option<ShellMode> = if args.iter().any(|a| a == "--posix" || a == "--sh") {
+        Some(ShellMode::Posix)
     } else if args.iter().any(|a| a == "--bash") {
-        unsafe {
-            SHELL_MODE = ShellMode::Bash;
-        }
-        true
+        Some(ShellMode::Bash)
     } else if args.iter().any(|a| a == "--ksh") {
-        unsafe {
-            SHELL_MODE = ShellMode::Ksh;
-        }
-        true
+        Some(ShellMode::Ksh)
+    } else if args.iter().any(|a| a == "--csh") {
+        // csh emulation routes to Zsh mode (zshrs has no separate csh
+        // bucket; `emulate csh` flips the canonical option deltas via
+        // `crate::ported::options::emulate("csh", true)` below).
+        Some(ShellMode::Zsh)
     } else if args.iter().any(|a| a == "--zsh" || a == "--zsh-compat") {
-        unsafe {
-            SHELL_MODE = ShellMode::Zsh;
+        Some(ShellMode::Zsh)
+    } else if let Some(emu_idx) = args.iter().position(|a| a == "--emulate") {
+        // `--emulate MODE` — consume the next arg as the mode name.
+        match args.get(emu_idx + 1).map(|s| s.as_str()) {
+            Some("ksh") => Some(ShellMode::Ksh),
+            Some("sh" | "posix") => Some(ShellMode::Posix),
+            Some("bash") => Some(ShellMode::Bash),
+            Some("csh" | "zsh") => Some(ShellMode::Zsh),
+            _ => None,
         }
+    } else {
+        None
+    };
+    let selected_mode = explicit_mode.or(argv0_inferred_mode);
+    let parity_mode_selected = if let Some(mode) = selected_mode {
+        unsafe { SHELL_MODE = mode; }
         true
     } else {
         false
     };
+
+    // Apply the canonical emulation option deltas via the ported
+    // `crate::ported::options::emulate` (port of Src/options.c:533).
+    // This is what `emulate ksh` / `emulate sh` / `emulate csh`
+    // builtin does at runtime; calling it here from the bin entry
+    // mirrors the C source's parseopts_setemulate (Src/init.c:348)
+    // path that runs during shell init for `--ksh` etc. The Zsh /
+    // Zshrs modes still go through this to set the canonical
+    // EMULATE_ZSH bitmap (idempotent — that's the default).
+    let emu_name = match shell_mode() {
+        ShellMode::Ksh => "ksh",
+        ShellMode::Posix => "sh",
+        ShellMode::Bash => "sh", // bash ≈ sh emulation; bash-specific bits flagged via is_bash_mode()
+        ShellMode::Zsh | ShellMode::Zshrs => "zsh",
+    };
+    if argv0_basename == "csh" || args.iter().any(|a| a == "--csh") {
+        zsh::ported::options::emulate("csh", true);
+    } else {
+        zsh::ported::options::emulate(emu_name, true);
+    }
+
     if parity_mode_selected {
-        unsafe {
-            std::env::set_var("ZSHRS_CACHE", "0");
-        }
+        unsafe { std::env::set_var("ZSHRS_CACHE", "0"); }
         tracing::info!(mode = ?shell_mode(), "parity mode: ZSHRS_CACHE=0, daemon disabled, plugin_cache replay disabled");
     }
     tracing::info!(mode = ?shell_mode(), "shell mode selected");
@@ -1287,6 +1340,8 @@ pub fn zshrs_main() {
                 || a == "--zsh"
                 || a == "--bash"
                 || a == "--ksh"
+                || a == "--sh"
+                || a == "--csh"
                 || a == "--posix"
                 || a == "-f"
                 || a == "--no-rcs"
@@ -1295,6 +1350,11 @@ pub fn zshrs_main() {
                 || a == "--disasm"
             {
                 i += 1;
+                continue;
+            }
+            // `--emulate MODE` — consume the flag AND the next arg.
+            if a == "--emulate" && i + 1 < args.len() {
+                i += 2;
                 continue;
             }
             if (a == "-o" || a == "+o") && i + 1 < args.len() {

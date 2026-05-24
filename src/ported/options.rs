@@ -1423,7 +1423,7 @@ fn optns_flags(name: &str) -> u16 {
         "beep" => OPT_ALL as u16,                    // c:102
         "bgnice" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:103
         "braceccl" => 0,                             // c:104
-        "bsdecho" => OPT_EMULATE,                    // c:105
+        "bsdecho" => OPT_EMULATE | (OPT_SH as u16),  // c:105
         "caseglob" => OPT_ALL as u16,                // c:106
         "casematch" => OPT_ALL as u16,               // c:107
         "casepaths" => 0,                            // c:108
@@ -1441,12 +1441,12 @@ fn optns_flags(name: &str) -> u16 {
         "completeinword" => 0,                       // c:118
         "correct" => 0,                              // c:119
         "correctall" => 0,                           // c:120
-        "cprecedences" => OPT_EMULATE,               // c:121
-        "cshjunkiehistory" => OPT_EMULATE,           // c:122
-        "cshjunkieloops" => OPT_EMULATE,             // c:123
-        "cshjunkiequotes" => OPT_EMULATE,            // c:124
-        "cshnullcmd" => OPT_EMULATE,                 // c:125
-        "cshnullglob" => OPT_EMULATE,                // c:126
+        "cprecedences" => OPT_EMULATE | (OPT_NONZSH as u16), // c:110
+        "cshjunkiehistory" => OPT_EMULATE | (OPT_CSH as u16), // c:125
+        "cshjunkieloops" => OPT_EMULATE | (OPT_CSH as u16),   // c:126
+        "cshjunkiequotes" => OPT_EMULATE | (OPT_CSH as u16),  // c:127
+        "cshnullcmd" => OPT_EMULATE | (OPT_CSH as u16),       // c:128
+        "cshnullglob" => OPT_EMULATE | (OPT_CSH as u16),      // c:129
         "debugbeforecmd" => OPT_ALL as u16,          // c:127
         "emacs" => 0,                                // c:128
         "equals" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:129
@@ -1462,7 +1462,7 @@ fn optns_flags(name: &str) -> u16 {
         "glob" => OPT_EMULATE | (OPT_ALL as u16),    // c:139
         "globalexport" => OPT_EMULATE | (OPT_ZSH as u16), // c:140
         "globalrcs" => OPT_ALL as u16,               // c:141
-        "globassign" => OPT_EMULATE,                 // c:142
+        "globassign" => OPT_EMULATE | (OPT_CSH as u16), // c:145
         "globcomplete" => 0,                         // c:143
         "globdots" => OPT_EMULATE,                   // c:144
         "globstarshort" => OPT_EMULATE,              // c:145
