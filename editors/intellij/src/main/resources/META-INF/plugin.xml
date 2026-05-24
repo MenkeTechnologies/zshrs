@@ -149,5 +149,20 @@
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
+
+        <!-- File > New > Zsh File (and right-click in Project view → New).
+             `NewGroup` is the platform group ID for both the File menu
+             and the Project-view popup New submenu, so this single
+             registration surfaces in both. anchor="first" puts it
+             near the top of the New menu so it's a one-key reach
+             after typing N. -->
+        <action
+            id="zshrs.NewFile"
+            class="com.menketechnologies.zshrs.actions.CreateZshrsFileAction"
+            text="Zsh File"
+            description="Create a new zsh / zshrs script"
+            icon="com.menketechnologies.zshrs.ZshrsIcons.FILE">
+            <add-to-group group-id="NewGroup" anchor="before" relative-to-action="NewFile"/>
+        </action>
     </actions>
 </idea-plugin>
