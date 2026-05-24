@@ -1563,41 +1563,46 @@ pub fn tcout_via_func(cap: i32, arg: i32) -> i32 {
     }
 }
 
-/// Port of `void tcout(int cap)` from `Src/Zle/zle_refresh.c:2339`.
-/// C looks up the termcap string via `tcstr[cap]` and writes it
-/// through `tputs(..., putshout)` to the shell-output fd. Rust port
-/// takes the resolved escape string directly (skipping the
-/// `tcstr[]` index lookup, since termcap probing isn't fully wired)
-/// and writes the bytes to `SHTTY` via `write_loop`.
-///
-/// Falls back to stdout (fd 1) when `SHTTY` is unset — covers the
-/// non-interactive paths (tests, batch evaluation) where there's no
-/// dedicated shell-output fd yet.
-/// WARNING: signature change — C=(int cap) vs Rust=(cap: &str).
-pub fn tcout(cap: &str) {
-    // c:2339
-    let fd = SHTTY.load(Ordering::Relaxed);
-    if fd >= 0 {
-        let _ = write_loop(fd, cap.as_bytes());
-    } else {
-        let _ = write_loop(1, cap.as_bytes());
+/// Direct port of `void tcout(int cap)` from `Src/Zle/zle_refresh.c:2339`.
+/// Resolves the cap escape via `tcstr[cap]` and writes it to SHTTY
+/// (stdout fallback when unset). Now that init_term populates tcstr
+/// with ANSI/VT100 escapes, the index lookup actually does something.
+pub fn tcout(cap: i32) { // c:2339
+    use crate::ported::init::tcstr;
+    use crate::ported::zsh_h::TC_COUNT;
+    let cap_idx = cap as usize;
+    if cap_idx >= TC_COUNT as usize {
+        return;
     }
-    // c:2346 — `SELECT_ADD_COST(tclen[cap])` — without per-cap tclen
-    //          table, the cost accounting is dropped (no scheduling
-    //          consumer reads it yet).
+    let escape = tcstr.lock().unwrap()[cap_idx].clone();
+    if escape.is_empty() {
+        return;
+    }
+    let fd = SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = write_loop(out_fd, escape.as_bytes());
+    // c:2346 — `SELECT_ADD_COST(tclen[cap])` cost accounting dropped
+    //          (no scheduling consumer reads it yet).
 }
 
 /// Port of `void tcoutarg(int cap, int arg)` from
-/// `Src/Zle/zle_refresh.c:2351`. C calls `tgoto(tcstr[cap], arg, arg)`
-/// to expand termcap `%d` / parametrised escape codes. Rust port
-/// does a literal `%d → arg` substring substitution (mirrors the
-/// most common case; doesn't handle the rare termcap `%p1%d`
-/// parametrisation that `tgoto` handles).
-/// WARNING: signature change — C=(int cap, int arg) vs Rust=(cap: &str, arg: i32).
-pub fn tcoutarg(cap: &str, arg: i32) {
-    // c:2351
+/// Direct port of `void tcoutarg(int cap, int arg)` from
+/// `Src/Zle/zle_refresh.c:2351`. Resolves the cap escape via
+/// `tcstr[cap]`, expands `%d` against `arg` (the most common
+/// termcap parametrisation), and writes the result to SHTTY.
+pub fn tcoutarg(cap: i32, arg: i32) { // c:2351
+    use crate::ported::init::tcstr;
+    use crate::ported::zsh_h::TC_COUNT;
+    let cap_idx = cap as usize;
+    if cap_idx >= TC_COUNT as usize {
+        return;
+    }
     // c:2355 — `result = tgoto(tcstr[cap], arg, arg);`
-    let s = cap.replace("%d", &arg.to_string());
+    let escape = tcstr.lock().unwrap()[cap_idx].clone();
+    if escape.is_empty() {
+        return;
+    }
+    let s = escape.replace("%d", &arg.to_string());
     let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
     let _ = write_loop(out_fd, s.as_bytes()); // c:2359

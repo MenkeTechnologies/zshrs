@@ -998,11 +998,11 @@ pub fn compprintlist(showall: i32) -> i32 {
         cl = -1; // c:1397
         if tcd_avail {
             // c:1398
-            tcout("TCCLEAREOD"); // c:1399
+            tcout(TCCLEAREOD); // c:1399
         }
     } else if mlbeg >= 0 && !tceol_avail && tcd_avail {
         // c:1400
-        tcout("TCCLEAREOD"); // c:1401
+        tcout(TCCLEAREOD); // c:1401
     }
 
     // c:1403-1679 — walk amatches groups.
@@ -1060,7 +1060,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                                 cl = -1; // c:1428
                                 if tcd_avail {
                                     // c:1429
-                                    tcout("TCCLEAREOD");
+                                    tcout(TCCLEAREOD);
                                 }
                             }
                         }
@@ -1098,7 +1098,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                         if cl <= 1 {
                             cl = -1;
                             if tcd_avail {
-                                tcout("TCCLEAREOD");
+                                tcout(TCCLEAREOD);
                             }
                         }
                     }
@@ -1125,7 +1125,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                     if cl <= 1 {
                         cl = -1;
                         if tcd_avail {
-                            tcout("TCCLEAREOD");
+                            tcout(TCCLEAREOD);
                         }
                     }
                 }
@@ -1187,7 +1187,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                                 if cl <= 1 {
                                     cl = -1;
                                     if tcd_avail {
-                                        tcout("TCCLEAREOD");
+                                        tcout(TCCLEAREOD);
                                     }
                                 }
                             }
@@ -1217,7 +1217,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                             if cl <= 1 {
                                 cl = -1;
                                 if tcd_avail {
-                                    tcout("TCCLEAREOD");
+                                    tcout(TCCLEAREOD);
                                 }
                             }
                         }
@@ -1240,7 +1240,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                     if cl <= 1 {
                         cl = -1;
                         if tcd_avail {
-                            tcout("TCCLEAREOD");
+                            tcout(TCCLEAREOD);
                         }
                     }
                 }
@@ -1312,7 +1312,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                                 if cl < 1 {
                                     cl = -1;
                                     if tcd_avail {
-                                        tcout("TCCLEAREOD");
+                                        tcout(TCCLEAREOD);
                                     }
                                 }
                             }
@@ -1375,7 +1375,7 @@ pub fn compprintlist(showall: i32) -> i32 {
                         if cl <= 1 {
                             cl = -1;
                             if tcd_avail {
-                                tcout("TCCLEAREOD");
+                                tcout(TCCLEAREOD);
                             }
                         }
                     }
