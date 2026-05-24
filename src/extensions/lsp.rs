@@ -843,6 +843,166 @@ fn completion(state: &State, params: &Value) -> Value {
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
+            // ── Command-position contexts ─────────────────────────────
+            LspCompletionContext::OptionOnly => {
+                let mut items = Vec::new();
+                for o in crate::ported::options::ZSH_OPTIONS_SET.iter() {
+                    items.push(json!({
+                        "label": o,
+                        "kind": 21, // Constant
+                        "detail": "zsh option (setopt / unsetopt)",
+                    }));
+                }
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::SignalName => {
+                let items: Vec<Value> = SIGNAL_NAMES
+                    .iter()
+                    .map(|(n, doc)| json!({
+                        "label": n,
+                        "kind": 14,
+                        "detail": *doc,
+                        "documentation": {
+                            "kind": "markdown",
+                            "value": format!("**SIG{}** — {}\n\n_signal name — `kill -{}` / `trap … {}`_", n, doc, n, n),
+                        },
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::ModuleName => {
+                let items: Vec<Value> = ZSH_MODULE_NAMES
+                    .iter()
+                    .map(|(n, doc)| json!({
+                        "label": n,
+                        "kind": 9, // Module
+                        "detail": *doc,
+                        "documentation": {
+                            "kind": "markdown",
+                            "value": format!("**`{}`** — {}\n\n_zsh module — `zmodload {}`_", n, doc, n),
+                        },
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::KeymapName => {
+                let items: Vec<Value> = KEYMAP_NAMES
+                    .iter()
+                    .map(|(n, doc)| json!({
+                        "label": n,
+                        "kind": 14,
+                        "detail": *doc,
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::WidgetName => {
+                let items: Vec<Value> = ZLE_WIDGET_NAMES
+                    .iter()
+                    .map(|(n, doc)| json!({
+                        "label": n,
+                        "kind": 3, // Function
+                        "detail": *doc,
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::TypesetFlag => {
+                let items: Vec<Value> = TYPESET_FLAGS
+                    .iter()
+                    .map(|(f, doc)| json!({
+                        "label": f,
+                        "kind": 14,
+                        "detail": *doc,
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::ZstyleContext => {
+                let items: Vec<Value> = ZSTYLE_CONTEXTS
+                    .iter()
+                    .map(|(c, doc)| json!({
+                        "label": c,
+                        "kind": 14,
+                        "detail": *doc,
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::CompdefFn => {
+                // compdef takes a completion function (`_*`) as its
+                // first arg. Surface canonical `_…` names.
+                let mut items = Vec::new();
+                for n in compsys::COMPSYS_FN_NAMES {
+                    items.push(json!({
+                        "label": n,
+                        "kind": 3,
+                        "detail": "compsys completion function",
+                    }));
+                }
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            // ── Bracket contexts ───────────────────────────────────────
+            LspCompletionContext::TestOperator => {
+                let items: Vec<Value> = TEST_OPERATORS
+                    .iter()
+                    .map(|(op, doc)| json!({
+                        "label": op,
+                        "kind": 24, // Operator
+                        "detail": *doc,
+                        "documentation": {
+                            "kind": "markdown",
+                            "value": format!("**`{}`** — {}\n\n_inside `[[ … ]]` conditional_", op, doc),
+                        },
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::MathFunction => {
+                let items: Vec<Value> = MATH_FUNCTIONS
+                    .iter()
+                    .map(|(n, doc)| json!({
+                        "label": n,
+                        "kind": 3,
+                        "detail": *doc,
+                        "documentation": {
+                            "kind": "markdown",
+                            "value": format!("**`{}(…)`** — {}\n\n_math function — inside `((…))` / `$((…))` (most require `zmodload zsh/mathfunc`)_", n, doc),
+                        },
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::PatternModifier => {
+                let items: Vec<Value> = PATTERN_MODIFIERS
+                    .iter()
+                    .map(|(m, doc)| json!({
+                        "label": m,
+                        "kind": 14,
+                        "detail": *doc,
+                        "documentation": {
+                            "kind": "markdown",
+                            "value": format!("**`(#{})`** — {}\n\n_extended-glob pattern modifier (needs `EXTENDED_GLOB`)_", m, doc),
+                        },
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::SubscriptFlag => {
+                let items: Vec<Value> = SUBSCRIPT_FLAGS
+                    .iter()
+                    .map(|(f, doc)| json!({
+                        "label": f,
+                        "kind": 14,
+                        "detail": *doc,
+                        "documentation": {
+                            "kind": "markdown",
+                            "value": format!("**`({})`** — {}\n\n_array subscript flag — `${{arr[({})pattern]}}`_", f, doc, f),
+                        },
+                    }))
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
             LspCompletionContext::Normal => {}
         }
     }
@@ -1506,11 +1666,13 @@ pub(crate) fn cursor_in_uninterpolated_string(line: &str, col: usize) -> bool {
                 // Inside strings / subs this branch isn't reached anyway
                 // (top is non-None). At top-level treat the rest as a
                 // comment — cursor inside a comment also suppresses
-                // shell-code completion.
+                // shell-code completion. Caveat: `(#…)` is zsh's
+                // extended-glob pattern modifier syntax, NOT a comment
+                // — so `(` is EXCLUDED from the comment-open precedents.
                 let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
                 let comment_open = matches!(
                     prev,
-                    None | Some(b' ') | Some(b'\t') | Some(b';') | Some(b'&') | Some(b'|') | Some(b'(')
+                    None | Some(b' ') | Some(b'\t') | Some(b';') | Some(b'&') | Some(b'|')
                 );
                 if comment_open {
                     return true;
@@ -2061,33 +2223,543 @@ const PARAM_MODIFIER_DOCS: &[(&str, &str)] = &[
     ("^^",  "`${arr:^^other}` — distributed zip (every pair)"),
 ];
 
+/// Signal names — POSIX + zsh-specific synthetic signals (`ZERR`,
+/// `DEBUG`, `EXIT`). Used by `kill -SIG` and `trap`. Numeric form
+/// (`SIGINT` / `INT`) is offered without the `SIG` prefix per zsh's
+/// `kill -l` output convention.
+const SIGNAL_NAMES: &[(&str, &str)] = &[
+    ("HUP",    "1 — hangup (terminal closed)"),
+    ("INT",    "2 — interrupt (Ctrl-C)"),
+    ("QUIT",   "3 — quit + core dump (Ctrl-\\)"),
+    ("ILL",    "4 — illegal instruction"),
+    ("TRAP",   "5 — trace/breakpoint trap"),
+    ("ABRT",   "6 — abort (`abort()` syscall)"),
+    ("BUS",    "7 — bus error"),
+    ("FPE",    "8 — floating-point exception"),
+    ("KILL",   "9 — kill (uncatchable, unblockable)"),
+    ("USR1",   "10 — user-defined signal 1"),
+    ("SEGV",   "11 — segmentation fault"),
+    ("USR2",   "12 — user-defined signal 2"),
+    ("PIPE",   "13 — write to pipe with no readers"),
+    ("ALRM",   "14 — alarm clock (`alarm()`)"),
+    ("TERM",   "15 — termination request (default `kill`)"),
+    ("CHLD",   "17 — child process state change"),
+    ("CONT",   "18 — continue if stopped"),
+    ("STOP",   "19 — stop (uncatchable)"),
+    ("TSTP",   "20 — terminal stop (Ctrl-Z)"),
+    ("TTIN",   "21 — background process needs tty input"),
+    ("TTOU",   "22 — background process tty output"),
+    ("URG",    "23 — urgent socket data"),
+    ("XCPU",   "24 — CPU time limit exceeded"),
+    ("XFSZ",   "25 — file size limit exceeded"),
+    ("VTALRM", "26 — virtual timer alarm"),
+    ("PROF",   "27 — profiling timer alarm"),
+    ("WINCH",  "28 — window size change"),
+    ("IO",     "29 — async I/O ready"),
+    ("PWR",    "30 — power failure"),
+    ("SYS",    "31 — bad syscall"),
+    // ── zsh synthetic signals ──
+    ("EXIT",   "0 — shell exit (special — `trap ... EXIT`)"),
+    ("ZERR",   "zsh — fires on any non-zero exit status"),
+    ("DEBUG",  "zsh — fires before every command (with `DEBUG_BEFORE_CMD`)"),
+];
+
+/// Loadable zsh modules — `zmodload zsh/MOD`. Canonical list from
+/// `man zshmodules`. Most expose builtins, parameters, or math fns
+/// that aren't compiled into the core.
+const ZSH_MODULE_NAMES: &[(&str, &str)] = &[
+    ("zsh/attr",         "extended file attribute manipulation"),
+    ("zsh/cap",          "POSIX capability sets"),
+    ("zsh/clone",        "fork the shell to a new session"),
+    ("zsh/compctl",      "legacy `compctl` completion (deprecated)"),
+    ("zsh/complete",     "core programmable completion machinery"),
+    ("zsh/complist",     "completion list display + menuselect keymap"),
+    ("zsh/computil",     "internal helpers used by `_arguments` / `_describe`"),
+    ("zsh/curses",       "ncurses bindings (`zcurses`)"),
+    ("zsh/datetime",     "`strftime` builtin + `$EPOCHSECONDS` / `$EPOCHREALTIME`"),
+    ("zsh/db/gdbm",      "GDBM key-value store as a zsh associative array"),
+    ("zsh/deltochar",    "`delete-to-char` / `zap-to-char` ZLE widgets"),
+    ("zsh/example",      "template module (skeleton; not useful)"),
+    ("zsh/files",        "in-shell file ops (`mkdir`, `chmod`, `mv`, `rm`, `chown`, `sync`, `ln`)"),
+    ("zsh/langinfo",     "locale info (`$langinfo`)"),
+    ("zsh/mapfile",      "read/write a file as an assoc array"),
+    ("zsh/mathfunc",     "`sin`, `cos`, `sqrt`, `log`, `exp`, … math functions for `((…))`"),
+    ("zsh/nearcolor",    "approximate-color terminal fallback"),
+    ("zsh/newuser",      "first-run user setup helper"),
+    ("zsh/parameter",    "reflection — `$functions`, `$aliases`, `$options`, `$commands`, `$parameters`, etc."),
+    ("zsh/pcre",         "Perl-compatible regex (`pcre_match` / `=~`)"),
+    ("zsh/regex",        "POSIX extended regex (`=~`)"),
+    ("zsh/sched",        "in-shell scheduler (`sched +5 cmd`)"),
+    ("zsh/net/socket",   "Unix-domain socket builtin (`zsocket`)"),
+    ("zsh/stat",         "`stat` builtin returning fields into a hash"),
+    ("zsh/system",       "low-level syscalls (`sysread`, `syswrite`, `syserror`, `sysopen`)"),
+    ("zsh/net/tcp",      "TCP socket builtin (`ztcp`)"),
+    ("zsh/termcap",      "termcap parameter access (`$termcap`)"),
+    ("zsh/terminfo",     "terminfo parameter access (`$terminfo`)"),
+    ("zsh/zftp",         "FTP client built into the shell"),
+    ("zsh/zle",          "Zsh Line Editor — `bindkey`, `zle`, widget registration"),
+    ("zsh/zleparameter", "ZLE introspection — `$widgets`, `$keymaps`"),
+    ("zsh/zprof",        "profiling — `zprof` builtin"),
+    ("zsh/zpty",         "spawn commands in a pseudo-terminal"),
+    ("zsh/zselect",      "`select(2)` on fds with a timeout"),
+    ("zsh/zutil",        "core utilities — `zparseopts`, `zformat`, `zstyle`, `zregexparse`"),
+];
+
+/// Keymap names — `bindkey -A NAME` source / `bindkey -N NAME` target,
+/// also `bindkey -M NAME …`. The named maps zsh ships out of the box.
+const KEYMAP_NAMES: &[(&str, &str)] = &[
+    ("emacs",       "GNU Readline emacs bindings (default)"),
+    ("vicmd",       "vi command-mode keymap"),
+    ("viins",       "vi insert-mode keymap"),
+    ("viopp",       "vi operator-pending keymap (for `d` / `c` / `y`)"),
+    ("visual",      "vi visual-mode keymap"),
+    (".safe",       "minimal fallback keymap — only `self-insert` + `accept-line`"),
+    ("main",        "alias — whichever keymap is currently the editing map"),
+    ("command",     "vi-mode command-line input keymap"),
+    ("menuselect",  "active inside `menu-select` widget"),
+    ("isearch",     "active inside incremental-search widgets"),
+    ("listscroll",  "active when scrolling completion list"),
+];
+
+/// Built-in ZLE widgets — second arg of `bindkey`, first arg of `zle`,
+/// what `zle -al` enumerates at runtime. Covers movement / editing /
+/// history / completion / vi-mode / misc. Curated subset of the most
+/// commonly used ~120 widgets from `man zshzle` "Standard Widgets".
+const ZLE_WIDGET_NAMES: &[(&str, &str)] = &[
+    // ── movement ──
+    ("backward-char",                 "move one character left"),
+    ("forward-char",                  "move one character right"),
+    ("backward-word",                 "move one word left"),
+    ("forward-word",                  "move one word right"),
+    ("beginning-of-line",             "move to start of line"),
+    ("end-of-line",                   "move to end of line"),
+    ("beginning-of-buffer-or-history", "start of buffer / previous-history at top"),
+    ("end-of-buffer-or-history",      "end of buffer / next-history at bottom"),
+    // ── editing ──
+    ("self-insert",                   "insert the typed character"),
+    ("accept-line",                   "submit current line for execution"),
+    ("accept-and-hold",               "submit + keep line in buffer"),
+    ("accept-and-infer-next-history", "submit + recall the line after this in history"),
+    ("backward-delete-char",          "delete character before cursor"),
+    ("delete-char",                   "delete character under cursor"),
+    ("backward-kill-word",            "delete word before cursor (saves to kill ring)"),
+    ("kill-word",                     "delete word after cursor"),
+    ("backward-kill-line",            "delete from cursor to start of line"),
+    ("kill-line",                     "delete from cursor to end of line"),
+    ("kill-whole-line",               "delete entire line"),
+    ("kill-region",                   "delete from mark to cursor"),
+    ("yank",                          "paste last kill"),
+    ("yank-pop",                      "rotate to earlier kill (after `yank`)"),
+    ("transpose-chars",               "swap two characters"),
+    ("transpose-words",               "swap two words"),
+    ("up-case-word",                  "uppercase next word"),
+    ("down-case-word",                "lowercase next word"),
+    ("capitalize-word",               "capitalize next word"),
+    ("quoted-insert",                 "literal-insert next key (e.g. for control chars)"),
+    ("overwrite-mode",                "toggle insert / overwrite"),
+    ("undo",                          "undo last edit"),
+    ("redo",                          "redo last undone edit"),
+    ("clear-screen",                  "clear terminal + redraw"),
+    ("redisplay",                     "force redraw"),
+    ("send-break",                    "abandon line (SIGINT-equivalent)"),
+    // ── history ──
+    ("up-line-or-history",            "previous line / previous history entry"),
+    ("down-line-or-history",          "next line / next history entry"),
+    ("up-history",                    "previous history entry"),
+    ("down-history",                  "next history entry"),
+    ("beginning-of-history",          "first history entry"),
+    ("end-of-history",                "last history entry (current line)"),
+    ("history-incremental-search-backward", "Ctrl-R — incremental search backward"),
+    ("history-incremental-search-forward",  "Ctrl-S — incremental search forward"),
+    ("history-search-backward",       "search history matching current line prefix"),
+    ("history-search-forward",        "forward variant of `history-search-backward`"),
+    ("history-beginning-search-backward", "search backward keeping cursor position"),
+    ("history-beginning-search-forward",  "search forward keeping cursor position"),
+    ("infer-next-history",            "infer next-history based on previous match"),
+    ("insert-last-word",              "insert last word of previous line (`!!:$`)"),
+    // ── completion ──
+    ("complete-word",                 "complete the current word"),
+    ("expand-or-complete",            "expand alias / glob, else complete"),
+    ("expand-or-complete-prefix",     "as above but with prefix match"),
+    ("list-choices",                  "show completion options without inserting"),
+    ("menu-complete",                 "cycle through completions"),
+    ("menu-expand-or-complete",       "expand / cycle"),
+    ("reverse-menu-complete",         "cycle backward"),
+    ("delete-char-or-list",           "delete-char if not at EOL, else list-choices"),
+    ("complete-prefix",               "complete current prefix"),
+    ("expand-cmd-path",               "expand command to full path"),
+    ("expand-word",                   "expand current word"),
+    // ── vi mode ──
+    ("vi-cmd-mode",                   "switch to vi command mode"),
+    ("vi-insert",                     "switch to vi insert mode"),
+    ("vi-insert-bol",                 "insert at start of line"),
+    ("vi-add-next",                   "append after current char (vi `a`)"),
+    ("vi-add-eol",                    "append at end of line (vi `A`)"),
+    ("vi-backward-char",              "h"),
+    ("vi-forward-char",               "l"),
+    ("vi-backward-word",              "b"),
+    ("vi-forward-word",               "w"),
+    ("vi-backward-word-end",          "ge"),
+    ("vi-forward-word-end",           "e"),
+    ("vi-backward-blank-word",        "B"),
+    ("vi-forward-blank-word",         "W"),
+    ("vi-up-line-or-history",         "k — previous line / history"),
+    ("vi-down-line-or-history",       "j — next line / history"),
+    ("vi-beginning-of-line",          "0"),
+    ("vi-end-of-line",                "$"),
+    ("vi-first-non-blank",            "^"),
+    ("vi-delete",                     "d"),
+    ("vi-delete-char",                "x"),
+    ("vi-backward-delete-char",       "X"),
+    ("vi-change",                     "c"),
+    ("vi-change-eol",                 "C"),
+    ("vi-change-whole-line",          "S"),
+    ("vi-substitute",                 "s"),
+    ("vi-yank",                       "y"),
+    ("vi-yank-eol",                   "Y"),
+    ("vi-yank-whole-line",            "yy"),
+    ("vi-put-after",                  "p"),
+    ("vi-put-before",                 "P"),
+    ("vi-replace",                    "R"),
+    ("vi-replace-chars",              "r"),
+    ("vi-repeat-change",              "."),
+    ("vi-repeat-search",              "n"),
+    ("vi-rev-repeat-search",          "N"),
+    ("vi-find-next-char",             "f"),
+    ("vi-find-prev-char",             "F"),
+    ("vi-find-next-char-skip",        "t"),
+    ("vi-find-prev-char-skip",        "T"),
+    ("vi-undo-change",                "u"),
+    ("vi-join",                       "J — join with next line"),
+    ("vi-quoted-insert",              "Ctrl-V — literal next"),
+    ("vi-set-buffer",                 "select named register"),
+    ("vi-history-search-backward",    "?"),
+    ("vi-history-search-forward",     "/"),
+    ("vi-match-bracket",              "% — jump to matching bracket"),
+    // ── misc ──
+    ("which-command",                 "show what command would run"),
+    ("describe-key-briefly",          "show binding for next key"),
+    ("execute-named-cmd",             "M-x style command execution"),
+    ("execute-last-named-cmd",        "re-run last named command"),
+    ("push-line",                     "save line + clear, runs on next prompt"),
+    ("push-line-or-edit",             "push-line or edit multiline"),
+    ("push-input",                    "push to input stack"),
+    ("get-line",                      "pop input from stack"),
+    ("set-mark-command",              "set the mark at cursor"),
+    ("exchange-point-and-mark",       "swap cursor + mark"),
+    ("digit-argument",                "begin numeric argument"),
+    ("universal-argument",            "begin numeric argument"),
+    ("undefined-key",                 "called when binding lookup fails"),
+];
+
+/// `typeset` / `declare` / `local` / `readonly` / `integer` / `float`
+/// / `export` flags — what to surface when the current arg starts with
+/// `-`. From `man zshbuiltins` "TYPESET".
+const TYPESET_FLAGS: &[(&str, &str)] = &[
+    ("-a", "indexed array"),
+    ("-A", "associative array (hash)"),
+    ("-i", "integer (with optional base: `-i 16`)"),
+    ("-E", "float, scientific notation"),
+    ("-F", "float, fixed notation"),
+    ("-l", "lowercase on assignment"),
+    ("-u", "uppercase on assignment"),
+    ("-L", "left-justify, width N (`-L4`)"),
+    ("-R", "right-justify, width N (`-R8`)"),
+    ("-Z", "zero-pad (right-justified, numeric)"),
+    ("-r", "readonly"),
+    ("-x", "export to environment"),
+    ("-g", "global (skip the local scope this would create)"),
+    ("-U", "unique — for arrays, drop duplicate elements"),
+    ("-T", "tie scalar ↔ array (`-T PATH path :`)"),
+    ("-t", "set the `TAGGED` flag (used by some completions)"),
+    ("-H", "hide value in `typeset` listing"),
+    ("-h", "hide builtin/special status"),
+    ("-f", "operate on functions, not parameters"),
+    ("-p", "print declarations in re-readable form"),
+    ("-m", "treat name args as patterns (`typeset -m 'FOO*'`)"),
+    ("-+", "operate at the next outer scope"),
+];
+
+/// `[[ ... ]]` test operators — what completes inside a conditional
+/// expression. File tests, string tests, numeric tests, file-compare
+/// tests, logical ops. From `man zshmisc` "CONDITIONAL EXPRESSIONS".
+const TEST_OPERATORS: &[(&str, &str)] = &[
+    // ── file existence + type ──
+    ("-e", "file exists"),
+    ("-f", "regular file"),
+    ("-d", "directory"),
+    ("-L", "symbolic link"),
+    ("-h", "symbolic link (alias for `-L`)"),
+    ("-b", "block special device"),
+    ("-c", "character special device"),
+    ("-p", "named pipe (FIFO)"),
+    ("-S", "socket"),
+    ("-t", "fd refers to a terminal"),
+    // ── permission ──
+    ("-r", "readable"),
+    ("-w", "writable"),
+    ("-x", "executable / searchable"),
+    ("-s", "size greater than zero"),
+    ("-u", "setuid bit set"),
+    ("-g", "setgid bit set"),
+    ("-k", "sticky bit set"),
+    ("-O", "owned by effective uid"),
+    ("-G", "owned by effective gid"),
+    ("-N", "modified since last read"),
+    // ── string ──
+    ("-z", "string is empty (length 0)"),
+    ("-n", "string is non-empty"),
+    ("=",  "string equality (POSIX)"),
+    ("==", "string equality with glob (zsh-extended `[[ str == pat ]]`)"),
+    ("!=", "string inequality with glob"),
+    ("<",  "lexicographic less-than"),
+    (">",  "lexicographic greater-than"),
+    ("=~", "regex match — bash-compatible (sets `$MATCH` / `$match`)"),
+    // ── numeric ──
+    ("-eq", "numeric equal"),
+    ("-ne", "numeric not-equal"),
+    ("-lt", "numeric less-than"),
+    ("-le", "numeric less-or-equal"),
+    ("-gt", "numeric greater-than"),
+    ("-ge", "numeric greater-or-equal"),
+    // ── file compare ──
+    ("-nt", "file1 newer than file2"),
+    ("-ot", "file1 older than file2"),
+    ("-ef", "file1 + file2 refer to same inode"),
+    // ── logical ──
+    ("!",  "negation"),
+    ("&&", "logical AND (short-circuit)"),
+    ("||", "logical OR (short-circuit)"),
+    ("-o", "POSIX-style OR (deprecated; prefer `||`)"),
+    ("-a", "POSIX-style AND (deprecated; prefer `&&`)"),
+];
+
+/// Math functions for `((…))` / `$((…))`. Most require `zmodload zsh/mathfunc`.
+/// From `man zshmodules` "THE ZSH/MATHFUNC MODULE".
+const MATH_FUNCTIONS: &[(&str, &str)] = &[
+    // ── trigonometry ──
+    ("sin",     "sine"),
+    ("cos",     "cosine"),
+    ("tan",     "tangent"),
+    ("asin",    "arcsine"),
+    ("acos",    "arccosine"),
+    ("atan",    "arctangent"),
+    ("atan2",   "arctangent of y/x with correct quadrant"),
+    ("sinh",    "hyperbolic sine"),
+    ("cosh",    "hyperbolic cosine"),
+    ("tanh",    "hyperbolic tangent"),
+    ("asinh",   "inverse hyperbolic sine"),
+    ("acosh",   "inverse hyperbolic cosine"),
+    ("atanh",   "inverse hyperbolic tangent"),
+    // ── exponential / logarithm ──
+    ("exp",     "e^x"),
+    ("expm1",   "e^x − 1 (accurate near 0)"),
+    ("log",     "natural log"),
+    ("log2",    "log base 2"),
+    ("log10",   "log base 10"),
+    ("log1p",   "log(1+x) (accurate near 0)"),
+    ("pow",     "x^y (power)"),
+    ("sqrt",    "square root"),
+    ("cbrt",    "cube root"),
+    ("hypot",   "sqrt(x² + y²)"),
+    // ── rounding / abs ──
+    ("abs",     "absolute value"),
+    ("ceil",    "round up to integer"),
+    ("floor",   "round down to integer"),
+    ("round",   "round to nearest integer"),
+    ("trunc",   "truncate to integer"),
+    ("rint",    "round to nearest integer per current rounding mode"),
+    // ── special ──
+    ("gamma",   "Γ(x) — gamma function"),
+    ("lgamma",  "log |Γ(x)|"),
+    ("erf",     "error function"),
+    ("erfc",    "complementary error function"),
+    ("j0",      "Bessel function of the first kind, order 0"),
+    ("j1",      "Bessel function of the first kind, order 1"),
+    ("jn",      "Bessel function of the first kind, order n"),
+    ("y0",      "Bessel function of the second kind, order 0"),
+    ("y1",      "Bessel function of the second kind, order 1"),
+    ("yn",      "Bessel function of the second kind, order n"),
+    // ── classification ──
+    ("isinf",   "1 if x is infinity, 0 otherwise"),
+    ("isnan",   "1 if x is NaN, 0 otherwise"),
+    ("finite",  "1 if x is finite, 0 otherwise"),
+    // ── conversion ──
+    ("int",     "convert to integer (truncate)"),
+    ("float",   "convert to float"),
+    ("rand48",  "pseudo-random double in [0,1) (drand48-based)"),
+    ("max",     "maximum of args"),
+    ("min",     "minimum of args"),
+    ("sum",     "sum of args"),
+    ("copysign", "value of x with sign of y"),
+    ("ilogb",   "integer binary exponent of x"),
+    ("logb",    "binary exponent of x as float"),
+    ("scalb",   "x × 2^n"),
+    ("nextafter", "next representable double after x toward y"),
+    ("fma",     "fused multiply-add: x*y + z"),
+    ("fmod",    "floating-point remainder"),
+    ("drem",    "IEEE remainder of x/y"),
+];
+
+/// `zstyle` well-known context patterns. From the most common
+/// `zstyle -L` outputs in `.zshrc` configs. NOT exhaustive — zstyle
+/// contexts are user-defined — but covers the canonical completion /
+/// vcs_info / prompt namespaces.
+const ZSTYLE_CONTEXTS: &[(&str, &str)] = &[
+    (":completion:*",                              "all completion settings"),
+    (":completion:*:default",                      "default completion"),
+    (":completion:*:descriptions",                 "tag-group descriptions in menus"),
+    (":completion:*:matches",                      "match grouping / formatting"),
+    (":completion:*:options",                      "option-name completion"),
+    (":completion:*:warnings",                     "no-match warning style"),
+    (":completion:*:messages",                     "info messages from completion fns"),
+    (":completion:*:corrections",                  "spell-correction style"),
+    (":completion:*:*:*:*:processes",              "process-name completion (`kill <TAB>`)"),
+    (":completion:*:functions",                    "function-name completion"),
+    (":completion:*:manuals",                      "man-page completion"),
+    (":completion:*:hosts",                        "hostname completion (ssh, scp, etc.)"),
+    (":vcs_info:*",                                "version-control info system (`git`/`hg`/`svn` in prompt)"),
+    (":vcs_info:git:*",                            "git-specific vcs_info"),
+    (":prompt:*",                                  "prompt customization (themes)"),
+    (":urlglobber",                                "URL-glob filtering"),
+    (":zftp:*",                                    "zftp module configuration"),
+    (":grep:*",                                    "grep widget configuration"),
+    (":compinstall",                               "`compinstall` wizard state"),
+    (":zle:*",                                     "ZLE widget configuration"),
+    (":bracketed-paste-magic",                     "bracketed-paste-magic widget"),
+    (":syntax-highlighting",                       "fast-syntax-highlighting / zsh-syntax-highlighting"),
+];
+
+/// Pattern modifiers for extended-glob `(#…)`. Need `EXTENDED_GLOB`.
+/// From `man zshexpn` "Pattern Matching → Globbing Flags".
+const PATTERN_MODIFIERS: &[(&str, &str)] = &[
+    ("i",   "case-insensitive matching for the rest of the pattern"),
+    ("l",   "lowercase chars match upper + lower"),
+    ("I",   "case-sensitive — reset after `(#i)`"),
+    ("b",   "activate backreferences (`$match[N]` / `$mbegin` / `$mend`)"),
+    ("B",   "deactivate backreferences"),
+    ("m",   "set `$MATCH` / `$MBEGIN` / `$MEND` even without backref"),
+    ("M",   "deactivate `m`"),
+    ("a",   "`(#aN)` — approximate match with up to N errors"),
+    ("s",   "anchor pattern to start of string"),
+    ("e",   "anchor pattern to end of string"),
+    ("c",   "`(#cN,M)` — preceding atom matched between N and M times"),
+    ("u",   "use Unicode character properties"),
+    ("U",   "deactivate `u`"),
+    ("q",   "treat following pattern as glob qualifier list (`(#q.,L0)`)"),
+];
+
+/// Subscript flags for `${arr[(X)pattern]}` — reverse / index / range
+/// search modifiers inside array subscripts. From `man zshparam`
+/// "ARRAY PARAMETERS → SUBSCRIPT FLAGS".
+const SUBSCRIPT_FLAGS: &[(&str, &str)] = &[
+    ("e",   "exact match — disable globbing on subscript"),
+    ("i",   "return INDEX of first matching element"),
+    ("I",   "return INDEX of LAST matching element"),
+    ("r",   "return VALUE of first match — search reverse"),
+    ("R",   "as `r` but ranged"),
+    ("b",   "byte offset (with `i` / `I`)"),
+    ("n",   "`(nN)` — Nth match (with `i` / `I` / `r` / `R`)"),
+    ("w",   "word offset (split on `$IFS`)"),
+    ("W",   "word offset with empty fields"),
+    ("p",   "process `\\NNN` escapes in `(s::)` separator"),
+    ("s",   "`(s:STR:)` — split on STR (with `w` / `W`)"),
+    ("f",   "split scalar on newlines (= `(s.\\n.)`)"),
+    ("k",   "match against keys of an associative array"),
+    ("v",   "match against values of an associative array"),
+];
+
 /// Where the cursor sits — drives which completion table to surface.
 /// Detected by scanning backward from the cursor for the innermost
-/// open paren / brace / `!` and looking at what precedes it.
+/// open paren / brace / `!` / `[` and looking at what precedes it,
+/// plus by inspecting the leading command on the line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LspCompletionContext {
-    /// Default — surface builtins / keywords / options / params / snippets.
     Normal,
-    /// Cursor inside `${(…)` before the closing `)`. Surface `PARAM_FLAG_DOCS`.
     ParamFlag,
-    /// Cursor inside `pattern(…)` where `pattern` ends in a glob meta
-    /// (`*`, `?`, `]`, `)`). Surface `GLOB_QUALIFIER_DOCS`.
     GlobQualifier,
-    /// Cursor after `!` at a word boundary. Surface `HISTORY_DESIGNATOR_DOCS`.
     HistoryDesignator,
-    /// Cursor sits after a `:` whose nearest enclosing brace is `${`,
-    /// or after the `:` of a history reference (`!!:`). Surface
-    /// `PARAM_MODIFIER_DOCS`.
     ParamColonModifier,
+    // NEW — command-position contexts (leading command dispatches).
+    OptionOnly,       // setopt / unsetopt / set -o / set +o
+    SignalName,       // kill -SIG / trap … SIG
+    ModuleName,       // zmodload
+    KeymapName,       // bindkey -M / -A / -N (1st arg)
+    WidgetName,       // zle … / bindkey "key" (2nd arg)
+    TypesetFlag,      // typeset / declare / local / readonly / integer / float / export with leading `-`
+    ZstyleContext,    // zstyle (1st arg)
+    CompdefFn,        // compdef (1st arg)
+    // NEW — bracket / paren contexts.
+    TestOperator,     // inside [[ … ]]
+    MathFunction,     // inside (( … )) or $(( … ))
+    PatternModifier,  // inside (#…)
+    SubscriptFlag,    // inside ${arr[(…)…]}
+}
+
+/// Find the first whitespace-delimited word at or after a list-start
+/// boundary on the line — i.e. the "command" of the current pipeline /
+/// command-list segment. Returns the command text + the byte position
+/// where its first argument begins (skipping the command + one space).
+fn leading_command_at(line: &str, col: usize) -> Option<(String, usize)> {
+    let bytes = line.as_bytes();
+    let cap = col.min(bytes.len());
+    // Walk back from cursor to find the most recent statement
+    // separator (`;`, `&&`, `||`, `|`, `&`, `(`, newline) or start of
+    // line. Skip over chars; treat that position as the cmd start.
+    let mut s: usize = 0;
+    let mut i = cap;
+    while i > 0 {
+        i -= 1;
+        let c = bytes[i];
+        if c == b'\n' || c == b';' {
+            s = i + 1;
+            break;
+        }
+        if (c == b'|' || c == b'&') && i > 0 {
+            // Bare `|` or `&` is a separator; `&&` / `||` too.
+            s = i + 1;
+            break;
+        }
+    }
+    // Skip leading whitespace.
+    while s < cap && matches!(bytes[s], b' ' | b'\t') {
+        s += 1;
+    }
+    // Read the command token — bare-word chars only.
+    let mut e = s;
+    while e < cap && (bytes[e].is_ascii_alphanumeric() || matches!(bytes[e], b'_' | b'-' | b'.')) {
+        e += 1;
+    }
+    if e == s {
+        return None;
+    }
+    let cmd = std::str::from_utf8(&bytes[s..e]).ok()?.to_string();
+    Some((cmd, e))
+}
+
+/// Count occurrences of the 2-byte token `tok` in `bytes[0..end]`.
+fn count_pair(bytes: &[u8], end: usize, tok: [u8; 2]) -> i32 {
+    let cap = end.min(bytes.len());
+    let mut n: i32 = 0;
+    let mut i = 0;
+    while i + 1 < cap {
+        if bytes[i] == tok[0] && bytes[i + 1] == tok[1] {
+            n += 1;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    n
 }
 
 /// Walks the line backward from `col` to classify the context for
 /// completion routing. Order of checks:
-///   1. History designator — `!` at word boundary, not inside `((…))`
-///   2. Paren-based: innermost unmatched `(` preceded by `${` → ParamFlag,
-///      or by `*` / `?` / `]` / `)` → GlobQualifier
-///   3. Param colon modifier — most recent `:` at brace-depth-0 inside
-///      `${…}`, OR after a `!event:` history reference
+///   1. Bracket contexts — `[[ … ]]` / `((…))` / `(#…)` / `[(…)`
+///   2. History designator — `!` at word boundary, not in arith
+///   3. Paren-based: `${(…)` / glob-meta-`(…)`
+///   4. Param/history modifier — `:` inside `${…}` or after `!event:`
+///   5. Command-position dispatch — leading command's first arg
 fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
     let bytes = line.as_bytes();
     let cap = col.min(bytes.len());
@@ -2230,6 +2902,151 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
                     return LspCompletionContext::ParamColonModifier;
                 }
             }
+        }
+    }
+
+    // ── 4. Bracket contexts (`[[ … ]]`, `((…))`, `(#…)`, `${arr[(…)`) ─
+    {
+        let bytes = line.as_bytes();
+        let cap = col.min(bytes.len());
+        // PatternModifier — innermost unmatched `(#…`. Walk back; if
+        // we hit `(#` before any `)`, trigger.
+        {
+            let mut depth: i32 = 0;
+            let mut i = cap;
+            while i > 0 {
+                i -= 1;
+                let c = bytes[i];
+                if c == b')' {
+                    depth += 1;
+                } else if c == b'(' {
+                    if depth == 0 {
+                        if i + 1 < bytes.len() && bytes[i + 1] == b'#' {
+                            return LspCompletionContext::PatternModifier;
+                        }
+                        break;
+                    }
+                    depth -= 1;
+                }
+            }
+        }
+        // SubscriptFlag — innermost unmatched `[(…` (the `(X)` form
+        // inside `${arr[(X)pattern]}`). Walk back through `(`/`)` to
+        // find an unmatched `(` whose preceding char is `[`.
+        {
+            let mut depth: i32 = 0;
+            let mut i = cap;
+            while i > 0 {
+                i -= 1;
+                let c = bytes[i];
+                if c == b')' {
+                    depth += 1;
+                } else if c == b'(' {
+                    if depth == 0 {
+                        if i >= 1 && bytes[i - 1] == b'[' {
+                            return LspCompletionContext::SubscriptFlag;
+                        }
+                        break;
+                    }
+                    depth -= 1;
+                }
+            }
+        }
+        // TestOperator — inside `[[ … ]]`. Cheap heuristic: count
+        // `[[` vs `]]` before cursor; if `[[` > `]]`, we're inside.
+        let lbrack = count_pair(bytes, cap, [b'[', b'[']);
+        let rbrack = count_pair(bytes, cap, [b']', b']']);
+        if lbrack > rbrack {
+            return LspCompletionContext::TestOperator;
+        }
+        // MathFunction — inside `((…))` or `$((…))`. Count `((` vs `))`.
+        let lparen = count_pair(bytes, cap, [b'(', b'(']);
+        let rparen = count_pair(bytes, cap, [b')', b')']);
+        if lparen > rparen {
+            return LspCompletionContext::MathFunction;
+        }
+    }
+
+    // ── 5. Command-position dispatch ─────────────────────────────────
+    if let Some((cmd, _arg_start)) = leading_command_at(line, col) {
+        match cmd.as_str() {
+            "setopt" | "unsetopt" => return LspCompletionContext::OptionOnly,
+            "set" => {
+                // `set -o` / `set +o` followed by option name. Cheap
+                // check: any `-o` / `+o` between cmd and cursor.
+                let bytes = line.as_bytes();
+                let cap = col.min(bytes.len());
+                let mut j = 0;
+                let mut saw_o = false;
+                while j + 1 < cap {
+                    if (bytes[j] == b'-' || bytes[j] == b'+') && bytes[j + 1] == b'o' {
+                        saw_o = true;
+                        break;
+                    }
+                    j += 1;
+                }
+                if saw_o {
+                    return LspCompletionContext::OptionOnly;
+                }
+            }
+            "kill" => {
+                // `kill -SIG` or `kill -s SIG` → signal name.
+                // Bare `kill` first arg is a PID; once we see a `-`
+                // we're in signal context. Cheap: check for `-` in args.
+                let bytes = line.as_bytes();
+                let cap = col.min(bytes.len());
+                let mut has_dash = false;
+                let mut j = 0;
+                while j < cap {
+                    if bytes[j] == b'-' && j > 0 && matches!(bytes[j - 1], b' ' | b'\t') {
+                        has_dash = true;
+                        break;
+                    }
+                    j += 1;
+                }
+                if has_dash {
+                    return LspCompletionContext::SignalName;
+                }
+            }
+            "trap" => return LspCompletionContext::SignalName,
+            "zmodload" => return LspCompletionContext::ModuleName,
+            "bindkey" => {
+                // First non-flag arg = key sequence, second = widget.
+                // Flag arg `-M name` / `-A from to` / `-N name` = keymap.
+                // Cheap: if last seen flag is `-A`/`-M`/`-N` and cursor
+                // is on its arg → KeymapName. Otherwise WidgetName.
+                let bytes = line.as_bytes();
+                let cap = col.min(bytes.len());
+                let mut last_flag: Option<u8> = None;
+                let mut j = 0;
+                while j < cap {
+                    if bytes[j] == b'-' && j > 0 && matches!(bytes[j - 1], b' ' | b'\t') && j + 1 < cap {
+                        last_flag = Some(bytes[j + 1]);
+                    }
+                    j += 1;
+                }
+                if matches!(last_flag, Some(b'A') | Some(b'M') | Some(b'N')) {
+                    return LspCompletionContext::KeymapName;
+                }
+                return LspCompletionContext::WidgetName;
+            }
+            "zle" => return LspCompletionContext::WidgetName,
+            "typeset" | "declare" | "local" | "readonly" | "integer" | "float" | "export" | "private" => {
+                // Surface flags only when the current arg starts with `-`.
+                let bytes = line.as_bytes();
+                let cap = col.min(bytes.len());
+                // Walk back from cursor to find start of current arg.
+                let mut j = cap;
+                while j > 0 && !matches!(bytes[j - 1], b' ' | b'\t') {
+                    j -= 1;
+                }
+                if j < cap && bytes[j] == b'-' {
+                    return LspCompletionContext::TypesetFlag;
+                }
+            }
+            "zstyle" => return LspCompletionContext::ZstyleContext,
+            "compdef" => return LspCompletionContext::CompdefFn,
+            _ => {}
         }
     }
 
@@ -6291,6 +7108,215 @@ mod tests {
             "HISTORY_DESIGNATOR_DOCS dropped below 9: {}",
             HISTORY_DESIGNATOR_DOCS.len()
         );
+    }
+
+    // ── command-position + bracket-context completion ──────────────
+
+    fn complete_at(input: &str, col: usize) -> Vec<Value> {
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), input.into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": col },
+        });
+        completion(&state, &params)["items"].as_array().cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn completion_setopt_surfaces_options_only() {
+        let items = complete_at("setopt extend", 13);
+        // Should include real options, NOT builtins / keywords.
+        assert!(items.iter().any(|i| i["label"] == "extended_glob"
+            || i["label"] == "extendedglob"
+            || i["label"] == "EXTENDED_GLOB"), "no extended_glob variant");
+        assert!(!items.iter().any(|i| i["label"] == "cd" || i["label"] == "if"));
+    }
+
+    #[test]
+    fn completion_unsetopt_surfaces_options_only() {
+        let items = complete_at("unsetopt nul", 12);
+        assert!(items.iter().any(|i| i["label"].as_str().unwrap_or("").to_lowercase().contains("null")));
+        assert!(!items.iter().any(|i| i["label"] == "if"));
+    }
+
+    #[test]
+    fn completion_set_dash_o_surfaces_options() {
+        let items = complete_at("set -o errex", 12);
+        assert!(items.iter().any(|i| i["label"].as_str().unwrap_or("").to_lowercase().contains("err")));
+    }
+
+    #[test]
+    fn completion_kill_dash_surfaces_signals() {
+        let items = complete_at("kill -", 6);
+        for want in &["HUP", "INT", "TERM", "KILL", "USR1"] {
+            assert!(items.iter().any(|i| i["label"] == *want), "missing signal `{}`", want);
+        }
+    }
+
+    #[test]
+    fn completion_trap_surfaces_signals() {
+        let items = complete_at("trap 'cmd' ", 11);
+        for want in &["INT", "TERM", "EXIT", "ZERR", "DEBUG"] {
+            assert!(items.iter().any(|i| i["label"] == *want), "missing signal `{}`", want);
+        }
+    }
+
+    #[test]
+    fn completion_zmodload_surfaces_modules() {
+        let items = complete_at("zmodload ", 9);
+        for want in &["zsh/zle", "zsh/datetime", "zsh/system", "zsh/parameter", "zsh/mathfunc"] {
+            assert!(items.iter().any(|i| i["label"] == *want), "missing module `{}`", want);
+        }
+    }
+
+    #[test]
+    fn completion_bindkey_dash_M_surfaces_keymaps() {
+        let items = complete_at("bindkey -M ", 11);
+        for want in &["emacs", "vicmd", "viins", "viopp"] {
+            assert!(items.iter().any(|i| i["label"] == *want), "missing keymap `{}`", want);
+        }
+    }
+
+    #[test]
+    fn completion_bindkey_bare_surfaces_widgets() {
+        // `bindkey "^A" <TAB>` — second arg is a widget. With no `-A/M/N`
+        // flag, we default to WidgetName.
+        let items = complete_at("bindkey '^A' acce", 17);
+        assert!(items.iter().any(|i| i["label"] == "accept-line"));
+        assert!(items.iter().any(|i| i["label"] == "accept-and-hold"));
+    }
+
+    #[test]
+    fn completion_zle_surfaces_widgets() {
+        let items = complete_at("zle for", 7);
+        assert!(items.iter().any(|i| i["label"] == "forward-char"));
+        assert!(items.iter().any(|i| i["label"] == "forward-word"));
+    }
+
+    #[test]
+    fn completion_typeset_dash_surfaces_flags() {
+        let items = complete_at("typeset -", 9);
+        for want in &["-a", "-A", "-i", "-g", "-r", "-x", "-U", "-f"] {
+            assert!(items.iter().any(|i| i["label"] == *want), "missing flag `{}`", want);
+        }
+    }
+
+    #[test]
+    fn completion_typeset_no_flag_falls_through() {
+        // `typeset FOO=bar` — second arg has no leading `-`, normal flow.
+        let items = complete_at("typeset FOO", 11);
+        // Should NOT be the flags table — `-a` etc. shouldn't appear.
+        assert!(!items.iter().any(|i| i["label"] == "-a"));
+    }
+
+    #[test]
+    fn completion_zstyle_surfaces_contexts() {
+        let items = complete_at("zstyle ", 7);
+        assert!(items.iter().any(|i| i["label"] == ":completion:*"));
+        assert!(items.iter().any(|i| i["label"] == ":vcs_info:*"));
+    }
+
+    #[test]
+    fn completion_compdef_surfaces_compsys_fns() {
+        let items = complete_at("compdef ", 8);
+        // Should be `_*` style fns only.
+        assert!(items.iter().any(|i| i["label"].as_str().unwrap_or("").starts_with('_')));
+    }
+
+    #[test]
+    fn completion_inside_double_bracket_surfaces_test_ops() {
+        let items = complete_at("[[ -f /tmp/x && -", 17);
+        for want in &["-f", "-d", "-e", "-z", "-n", "=~"] {
+            assert!(items.iter().any(|i| i["label"] == *want), "missing test op `{}`", want);
+        }
+    }
+
+    #[test]
+    fn completion_inside_double_paren_surfaces_math_fns() {
+        let items = complete_at("(( x = sq", 9);
+        for want in &["sqrt", "sin", "cos", "log", "exp"] {
+            assert!(items.iter().any(|i| i["label"] == *want), "missing math fn `{}`", want);
+        }
+    }
+
+    #[test]
+    fn completion_inside_dollar_double_paren_surfaces_math_fns() {
+        let items = complete_at("echo $(( ab", 11);
+        assert!(items.iter().any(|i| i["label"] == "abs"));
+    }
+
+    #[test]
+    fn completion_inside_pattern_modifier_paren() {
+        let items = complete_at("ls *.(#", 7);
+        for want in &["i", "l", "b", "m", "a", "s", "e"] {
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing pattern mod `{}` — got {:?}",
+                want,
+                items.iter().take(20).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    #[test]
+    fn completion_inside_subscript_flag_paren() {
+        let items = complete_at("echo ${arr[(", 12);
+        for want in &["i", "I", "r", "R", "e", "n"] {
+            assert!(items.iter().any(|i| i["label"] == *want), "missing subscript flag `{}`", want);
+        }
+    }
+
+    // ── table size floors ────────────────────────────────────────────
+
+    #[test]
+    fn completion_signal_table_has_30_entries() {
+        assert!(SIGNAL_NAMES.len() >= 30, "SIGNAL_NAMES: {}", SIGNAL_NAMES.len());
+    }
+
+    #[test]
+    fn completion_module_table_has_30_entries() {
+        assert!(ZSH_MODULE_NAMES.len() >= 30, "ZSH_MODULE_NAMES: {}", ZSH_MODULE_NAMES.len());
+    }
+
+    #[test]
+    fn completion_keymap_table_has_10_entries() {
+        assert!(KEYMAP_NAMES.len() >= 10, "KEYMAP_NAMES: {}", KEYMAP_NAMES.len());
+    }
+
+    #[test]
+    fn completion_widget_table_has_100_entries() {
+        assert!(ZLE_WIDGET_NAMES.len() >= 100, "ZLE_WIDGET_NAMES: {}", ZLE_WIDGET_NAMES.len());
+    }
+
+    #[test]
+    fn completion_typeset_flag_table_has_20_entries() {
+        assert!(TYPESET_FLAGS.len() >= 20, "TYPESET_FLAGS: {}", TYPESET_FLAGS.len());
+    }
+
+    #[test]
+    fn completion_test_op_table_has_30_entries() {
+        assert!(TEST_OPERATORS.len() >= 30, "TEST_OPERATORS: {}", TEST_OPERATORS.len());
+    }
+
+    #[test]
+    fn completion_math_fn_table_has_40_entries() {
+        assert!(MATH_FUNCTIONS.len() >= 40, "MATH_FUNCTIONS: {}", MATH_FUNCTIONS.len());
+    }
+
+    #[test]
+    fn completion_zstyle_context_table_has_15_entries() {
+        assert!(ZSTYLE_CONTEXTS.len() >= 15, "ZSTYLE_CONTEXTS: {}", ZSTYLE_CONTEXTS.len());
+    }
+
+    #[test]
+    fn completion_pattern_modifier_table_has_10_entries() {
+        assert!(PATTERN_MODIFIERS.len() >= 10, "PATTERN_MODIFIERS: {}", PATTERN_MODIFIERS.len());
+    }
+
+    #[test]
+    fn completion_subscript_flag_table_has_10_entries() {
+        assert!(SUBSCRIPT_FLAGS.len() >= 10, "SUBSCRIPT_FLAGS: {}", SUBSCRIPT_FLAGS.len());
     }
 
     #[test]
