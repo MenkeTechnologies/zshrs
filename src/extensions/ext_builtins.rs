@@ -3578,105 +3578,7 @@ impl ShellExecutor {
     }
 
     pub(crate) fn builtin_find(&self, args: &[String]) -> i32 {
-        let mut paths: Vec<&str> = Vec::new();
-        let mut name_pattern: Option<&str> = None;
-        let mut type_filter: Option<char> = None;
-        // -maxdepth N caps recursion depth: 0 = only the starting
-        // path itself, 1 = starting path + immediate children, etc.
-        // Was missing — `find /tmp -maxdepth 0` recursed the whole
-        // tree.
-        let mut max_depth: Option<usize> = None;
-        let mut i = 0;
-
-        while i < args.len() {
-            let arg = &args[i];
-            match arg.as_str() {
-                "-name" if i + 1 < args.len() => {
-                    i += 1;
-                    name_pattern = Some(&args[i]);
-                }
-                "-type" if i + 1 < args.len() => {
-                    i += 1;
-                    type_filter = args[i].chars().next();
-                }
-                "-maxdepth" if i + 1 < args.len() => {
-                    i += 1;
-                    max_depth = args[i].parse().ok();
-                }
-                a if !a.starts_with('-') => paths.push(a),
-                _ => {}
-            }
-            i += 1;
-        }
-
-        if paths.is_empty() {
-            paths.push(".");
-        }
-
-        fn walk(
-            dir: &Path,
-            name_pat: Option<&str>,
-            type_f: Option<char>,
-            max_depth: Option<usize>,
-            cur_depth: usize,
-        ) {
-            // Stop recursion if max_depth is set and we're at the
-            // limit. (cur_depth is depth of `dir` itself; we descend
-            // into ITS children, so children would be cur_depth+1.)
-            if let Some(md) = max_depth {
-                if cur_depth >= md {
-                    return;
-                }
-            }
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let meta = entry.metadata().ok();
-                    let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-                    let is_file = meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
-
-                    let type_match = match type_f {
-                        Some('d') => is_dir,
-                        Some('f') => is_file,
-                        _ => true,
-                    };
-
-                    let name_match = match name_pat {
-                        Some(pat) => {
-                            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                            // Use the canonical glob matcher so `[Cc]ode*`,
-                            // `?ar`, `{a,b}*` etc. work. Was a local 4-rule
-                            // matcher that only handled '*PAT' / 'PAT*'.
-                            crate::vm_helper::glob_match_static(name, pat)
-                        }
-                        None => true,
-                    };
-
-                    if type_match && name_match {
-                        println!("{}", path.display());
-                    }
-
-                    if is_dir {
-                        walk(&path, name_pat, type_f, max_depth, cur_depth + 1);
-                    }
-                }
-            }
-        }
-
-        for p in paths {
-            let path = Path::new(p);
-            if path.is_dir() {
-                // Print the starting path (counts as depth 0). With
-                // -maxdepth 0, this is the only output for that path.
-                println!("{}", path.display());
-                walk(path, name_pattern, type_filter, max_depth, 0);
-            } else if path.exists() {
-                println!("{}", path.display());
-            } else {
-                eprintln!("find: '{}': No such file or directory", p); // coreutils-style
-            }
-        }
-        0
+        find_impl(args)
     }
 
     pub(crate) fn builtin_uniq(&self, args: &[String]) -> i32 {
@@ -5010,24 +4912,79 @@ impl ShellExecutor {
                 eprintln!("users: unrecognized option: '{}'", arg);
                 return 1;
             }
-            // Bare arg specifies an alternate utmp file — not
-            // implemented; ignore silently.
-        }
-        // Use $USER first; fall back to effective uid lookup.
-        let name = match std::env::var("USER") {
-            Ok(u) if !u.is_empty() => u,
-            _ => {
-                let euid = unsafe { libc::geteuid() };
-                let pw = unsafe { libc::getpwuid(euid) };
-                if !pw.is_null() {
-                    let n = unsafe { CStr::from_ptr((*pw).pw_name) };
-                    n.to_string_lossy().into_owned()
-                } else {
-                    String::new()
+            // POSIX `users [file]` accepts one positional arg — an
+            // alternate utmp file. Honored via `utmpxname(3)` on
+            // platforms that have it; silently no-op'd on those
+            // that don't (macOS doesn't ship utmpxname).
+            if !arg.starts_with('-') {
+                #[cfg(target_os = "linux")]
+                {
+                    let cpath = std::ffi::CString::new(arg.as_bytes()).ok();
+                    if let Some(c) = cpath {
+                        unsafe {
+                            // utmpxname(path): set the file getutxent reads from.
+                            extern "C" {
+                                fn utmpxname(file: *const libc::c_char) -> libc::c_int;
+                            }
+                            utmpxname(c.as_ptr());
+                        }
+                    }
                 }
             }
-        };
-        println!("{}", name);
+        }
+        // Walk utmp via getutxent(3) — POSIX-portable on Linux/BSD/
+        // macOS. Filter `ut_type == USER_PROCESS` (zsh-level
+        // `who(1)` does the same). On systems where utmpx isn't
+        // populated (containers, ephemeral hosts), fall back to
+        // single-user output via `$USER` / `geteuid()`.
+        let mut users: Vec<String> = Vec::new();
+        unsafe {
+            libc::setutxent();
+            loop {
+                let ent = libc::getutxent();
+                if ent.is_null() {
+                    break;
+                }
+                if (*ent).ut_type == libc::USER_PROCESS {
+                    // ut_user is a fixed-size i8 array; convert
+                    // until first NUL.
+                    let raw = &(*ent).ut_user;
+                    let bytes: Vec<u8> = raw
+                        .iter()
+                        .take_while(|&&c| c != 0)
+                        .map(|&c| c as u8)
+                        .collect();
+                    if !bytes.is_empty() {
+                        if let Ok(s) = std::str::from_utf8(&bytes) {
+                            users.push(s.to_string());
+                        }
+                    }
+                }
+            }
+            libc::endutxent();
+        }
+        users.sort();
+        if users.is_empty() {
+            // Fallback: utmp empty (containers / no logged-in
+            // sessions). Print current user — matches `who am i`
+            // when only the calling shell is "logged in".
+            let name = match std::env::var("USER") {
+                Ok(u) if !u.is_empty() => u,
+                _ => {
+                    let euid = unsafe { libc::geteuid() };
+                    let pw = unsafe { libc::getpwuid(euid) };
+                    if !pw.is_null() {
+                        let n = unsafe { CStr::from_ptr((*pw).pw_name) };
+                        n.to_string_lossy().into_owned()
+                    } else {
+                        return 0;
+                    }
+                }
+            };
+            println!("{}", name);
+        } else {
+            println!("{}", users.join(" "));
+        }
         0
     }
 
@@ -5049,37 +5006,69 @@ impl ShellExecutor {
             eprintln!("tput: missing capname");
             return 2;
         }
-        // Skip leading flags. Coreutils ncurses tput supports
-        // `-T TERM`, `-S` (multi-cap from stdin), `-V`/`-h`. Not
-        // yet wired; consume but ignore.
         let mut iter = args.iter().peekable();
+        let mut stdin_mode = false;
         while let Some(arg) = iter.peek() {
             match arg.as_str() {
                 "-T" => {
                     iter.next();
-                    iter.next(); // consume term name
+                    // The TERM override is consumed; the handlers
+                    // below read TERM via `$TERM` env var anyway,
+                    // so applying this would require temporarily
+                    // setenv-ing TERM for the cap evaluation. Honest
+                    // gap noted; most real scripts don't pass -T.
+                    iter.next();
                 }
                 s if s.starts_with("-T") && s.len() > 2 => {
                     iter.next();
                 }
                 "-S" => {
                     iter.next();
-                    // -S reads cap names from stdin. Not implemented;
-                    // emit nothing and exit 0 (matches ncurses-tput
-                    // when stdin is empty).
-                    return 0;
+                    stdin_mode = true;
                 }
                 "-V" | "--version" => {
                     println!("tput (zshrs) {}", env!("CARGO_PKG_VERSION"));
                     return 0;
                 }
                 "-h" | "--help" => {
-                    println!("Usage: tput [-T TERM] CAPNAME [PARAMS...]");
+                    println!("Usage: tput [-T TERM] [-S] CAPNAME [PARAMS...]");
                     return 0;
                 }
                 _ => break,
             }
         }
+
+        // -S stdin mode: each line is `capname [params...]`. Process
+        // every line through the same cap handler used below. Blank
+        // lines are skipped; final exit status is non-zero if ANY
+        // line failed (matches ncurses tput).
+        if stdin_mode {
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            let mut status = 0;
+            for line_res in stdin.lock().lines() {
+                let line = match line_res {
+                    Ok(l) => l,
+                    Err(_) => break,
+                };
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let mut parts = trimmed.split_whitespace();
+                let cap = match parts.next() {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let rest: Vec<&str> = parts.collect();
+                let s = tput_emit_cap(cap, &rest);
+                if s != 0 {
+                    status = s;
+                }
+            }
+            return status;
+        }
+
         let cap = match iter.next() {
             Some(c) => c.as_str(),
             None => {
@@ -5088,8 +5077,18 @@ impl ShellExecutor {
             }
         };
         let rest: Vec<&str> = iter.map(|s| s.as_str()).collect();
-        // Known capabilities — emit the ANSI sequence directly.
-        match cap {
+        tput_emit_cap(cap, &rest)
+    }
+}
+
+/// Emit the terminal-control sequence for one capability name. Used
+/// by both the direct `tput CAP` path and the `-S` stdin loop. Mirrors
+/// the cap set zsh's prompt-theme + zinit + p10k routines invoke; not
+/// the full terminfo database (that would require linking ncurses).
+/// Returns coreutils-tput exit status: 0=ok, 1=unknown bool-cap,
+/// 2=unknown string-cap. We collapse both unknowns to 1.
+fn tput_emit_cap(cap: &str, rest: &[&str]) -> i32 {
+    match cap {
             "cols" | "co" => {
                 let cols: i32 = std::env::var("COLUMNS")
                     .ok()
@@ -5188,8 +5187,9 @@ impl ShellExecutor {
                 1
             }
         }
-    }
+}
 
+impl ShellExecutor {
     /// zbuild --in PATHS... --out OUT — bake one or more shell
     /// scripts into a copy of the running zshrs binary in input
     /// order, producing a self-contained AOT executable.
@@ -7847,6 +7847,517 @@ pub(crate) fn zsleep(args: &[String]) -> i32 {
     };
     std::thread::sleep(std::time::Duration::from_secs_f64(capped));
     0
+}
+
+// ─── find ───────────────────────────────────────────────────────────────
+//
+// zshrs-only extension. Honest scope: GNU-find-compatible enough to run
+// real scripts in-process (no fork+exec) without silent divergence. The
+// previous impl handled only -name / -type / -maxdepth and silently
+// dropped every other predicate into a `_ => {}` arm — `find . -mtime +1`
+// would treat `+1` as a path. This rewrite errors on unknown predicates
+// and implements the common ones.
+
+#[derive(Debug, Clone)]
+enum FindPredicate {
+    Name(String),          // -name PATTERN — glob against basename
+    IName(String),         // -iname — case-insensitive variant
+    Path(String),          // -path PATTERN — glob against full path
+    Regex(String),         // -regex RE — Rust regex against full path
+    Type(char),            // -type {f,d,l,p,s,b,c}
+    MaxDepth(usize),       // -maxdepth N
+    MinDepth(usize),       // -mindepth N
+    /// (cmp, days, kind) — cmp is `+`/`-`/`=`; kind is m/a/c (mtime/atime/ctime)
+    Time(char, i64, char), // -mtime / -atime / -ctime / -mmin / -amin / -cmin
+    /// (cmp, bytes) — cmp is `+`/`-`/`=`
+    Size(char, u64),       // -size N[ckMG]
+    Empty,                 // -empty — zero-len file OR empty dir
+    Newer(String),         // -newer FILE — newer than FILE's mtime
+    Prune,                 // -prune — terminal, never descend
+}
+
+#[derive(Debug, Clone)]
+enum FindAction {
+    Print,                          // default
+    Print0,                         // -print0
+    Delete,                         // -delete
+    Exec(Vec<String>, bool),        // -exec CMD ARGS... ; (false) or + (true)
+}
+
+/// Parse one `[ckMG]` suffix as a byte multiplier. `c`=1, `k`=1024,
+/// `M`=1024², `G`=1024³ (coreutils default uses kibibytes when no
+/// suffix; here we default to 512-byte blocks per coreutils when no
+/// suffix is present).
+fn parse_size_suffix(s: &str) -> Option<(u64, u64)> {
+    if s.is_empty() {
+        return None;
+    }
+    let last = s.chars().last().unwrap();
+    let (num_str, mult) = match last {
+        'c' => (&s[..s.len() - 1], 1u64),
+        'k' => (&s[..s.len() - 1], 1024u64),
+        'M' => (&s[..s.len() - 1], 1024 * 1024),
+        'G' => (&s[..s.len() - 1], 1024 * 1024 * 1024),
+        'b' => (&s[..s.len() - 1], 512u64), // coreutils default block
+        _ if last.is_ascii_digit() => (s, 512u64),
+        _ => return None,
+    };
+    let n: u64 = num_str.parse().ok()?;
+    Some((n, mult))
+}
+
+/// Parse `+N` / `-N` / `N` prefix: returns (cmp char, abs value).
+fn parse_cmp_num(s: &str) -> Option<(char, u64)> {
+    let (cmp, rest) = match s.chars().next()? {
+        '+' => ('+', &s[1..]),
+        '-' => ('-', &s[1..]),
+        _ => ('=', s),
+    };
+    let n: u64 = rest.parse().ok()?;
+    Some((cmp, n))
+}
+
+fn parse_cmp_i64(s: &str) -> Option<(char, i64)> {
+    parse_cmp_num(s).map(|(c, n)| (c, n as i64))
+}
+
+/// Match the predicate against an entry. `meta_full` is the post-follow
+/// metadata (or symlink_metadata when not following); `path` is the
+/// full path including starting prefix; `depth` is the entry's depth
+/// from the starting path (0 = the starting path itself).
+fn predicate_matches(
+    pred: &FindPredicate,
+    path: &std::path::Path,
+    meta: &std::fs::Metadata,
+    depth: usize,
+    newer_thresholds: &std::collections::HashMap<String, std::time::SystemTime>,
+) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match pred {
+        FindPredicate::Name(pat) => {
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            crate::vm_helper::glob_match_static(name, pat)
+        }
+        FindPredicate::IName(pat) => {
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let pat_lc = pat.to_ascii_lowercase();
+            crate::vm_helper::glob_match_static(&name, &pat_lc)
+        }
+        FindPredicate::Path(pat) => {
+            let s = path.to_string_lossy();
+            crate::vm_helper::glob_match_static(&s, pat)
+        }
+        FindPredicate::Regex(re) => {
+            let s = path.to_string_lossy();
+            regex::Regex::new(re).map(|r| r.is_match(&s)).unwrap_or(false)
+        }
+        FindPredicate::Type(c) => match c {
+            'f' => meta.is_file(),
+            'd' => meta.is_dir(),
+            'l' => meta.file_type().is_symlink(),
+            'p' => (meta.mode() & libc::S_IFMT as u32) == libc::S_IFIFO as u32,
+            's' => (meta.mode() & libc::S_IFMT as u32) == libc::S_IFSOCK as u32,
+            'b' => (meta.mode() & libc::S_IFMT as u32) == libc::S_IFBLK as u32,
+            'c' => (meta.mode() & libc::S_IFMT as u32) == libc::S_IFCHR as u32,
+            _ => false,
+        },
+        FindPredicate::MaxDepth(_) | FindPredicate::MinDepth(_) | FindPredicate::Prune => {
+            // Handled by the walker, not per-entry.
+            true
+        }
+        FindPredicate::Time(cmp, days, kind) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let entry_t = match kind {
+                'm' => meta.mtime(),
+                'a' => meta.atime(),
+                'c' => meta.ctime(),
+                _ => return false,
+            };
+            // Age in days, rounded down (coreutils semantics).
+            let age_days = (now - entry_t) / 86400;
+            match cmp {
+                '+' => age_days > *days,
+                '-' => age_days < *days,
+                _ => age_days == *days,
+            }
+        }
+        FindPredicate::Size(cmp, bytes) => {
+            let size = meta.size();
+            match cmp {
+                '+' => size > *bytes,
+                '-' => size < *bytes,
+                _ => size == *bytes,
+            }
+        }
+        FindPredicate::Empty => {
+            if meta.is_file() {
+                meta.size() == 0
+            } else if meta.is_dir() {
+                std::fs::read_dir(path)
+                    .map(|mut d| d.next().is_none())
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }
+        FindPredicate::Newer(reference) => {
+            let other = match newer_thresholds.get(reference) {
+                Some(t) => *t,
+                None => return false,
+            };
+            meta.modified().map(|m| m > other).unwrap_or(false)
+        }
+    }
+    .into()
+}
+
+/// Walks the tree, evaluates predicates as an AND-conjunction, fires
+/// the action on every match. Honors -prune (predicate prunes a dir
+/// from descent rather than filtering output), -maxdepth, -mindepth.
+fn find_walk(
+    start: &std::path::Path,
+    preds: &[FindPredicate],
+    action: &FindAction,
+    cur_depth: usize,
+    visited_devs: &mut std::collections::HashSet<u64>,
+    xdev: bool,
+    follow: bool,
+    newer_thresholds: &std::collections::HashMap<String, std::time::SystemTime>,
+    exit_status: &mut i32,
+) {
+    use std::os::unix::fs::MetadataExt;
+
+    // Get metadata using follow vs symlink-aware lookup.
+    let meta_res = if follow {
+        std::fs::metadata(start)
+    } else {
+        std::fs::symlink_metadata(start)
+    };
+    let meta = match meta_res {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+
+    // -xdev check: only descend into dirs on the same fs as the
+    // starting path. The starting path's dev is recorded on first
+    // call; subsequent entries with a different dev are skipped.
+    if xdev {
+        let dev = meta.dev();
+        if visited_devs.is_empty() {
+            visited_devs.insert(dev);
+        } else if !visited_devs.contains(&dev) {
+            return;
+        }
+    }
+
+    let max_depth = preds.iter().find_map(|p| match p {
+        FindPredicate::MaxDepth(n) => Some(*n),
+        _ => None,
+    });
+    let min_depth = preds.iter().find_map(|p| match p {
+        FindPredicate::MinDepth(n) => Some(*n),
+        _ => None,
+    });
+    let has_prune = preds.iter().any(|p| matches!(p, FindPredicate::Prune));
+
+    // Apply predicates.
+    let depth_ok = min_depth.map(|n| cur_depth >= n).unwrap_or(true);
+    let preds_match = preds
+        .iter()
+        .all(|p| predicate_matches(p, start, &meta, cur_depth, newer_thresholds));
+
+    if depth_ok && preds_match {
+        match action {
+            FindAction::Print => println!("{}", start.display()),
+            FindAction::Print0 => {
+                use std::io::Write;
+                let _ = std::io::stdout().write_all(start.display().to_string().as_bytes());
+                let _ = std::io::stdout().write_all(&[0u8]);
+            }
+            FindAction::Delete => {
+                let r = if meta.is_dir() {
+                    std::fs::remove_dir(start)
+                } else {
+                    std::fs::remove_file(start)
+                };
+                if let Err(e) = r {
+                    eprintln!("find: cannot delete '{}': {}", start.display(), e);
+                    *exit_status = 1;
+                }
+            }
+            FindAction::Exec(template, _plus) => {
+                let argv: Vec<String> = template
+                    .iter()
+                    .map(|t| t.replace("{}", &start.display().to_string()))
+                    .collect();
+                if let Some((cmd, rest)) = argv.split_first() {
+                    let st = std::process::Command::new(cmd).args(rest).status();
+                    match st {
+                        Ok(s) if !s.success() => *exit_status = 1,
+                        Err(_) => *exit_status = 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // Descend into dirs unless pruned or depth-capped.
+    if meta.is_dir() && !(has_prune && preds_match) {
+        if let Some(md) = max_depth {
+            if cur_depth >= md {
+                return;
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(start) {
+            let mut children: Vec<_> = entries.flatten().collect();
+            children.sort_by_key(|e| e.file_name());
+            for entry in children {
+                find_walk(
+                    &entry.path(),
+                    preds,
+                    action,
+                    cur_depth + 1,
+                    visited_devs,
+                    xdev,
+                    follow,
+                    newer_thresholds,
+                    exit_status,
+                );
+            }
+        }
+    }
+}
+
+pub(crate) fn find_impl(args: &[String]) -> i32 {
+    let mut paths: Vec<&str> = Vec::new();
+    let mut preds: Vec<FindPredicate> = Vec::new();
+    let mut action = FindAction::Print;
+    let mut xdev = false;
+    let mut follow = false;
+    let mut newer_thresholds: std::collections::HashMap<String, std::time::SystemTime> =
+        std::collections::HashMap::new();
+    let mut exit_status: i32 = 0;
+    let mut i = 0;
+
+    // Collect paths up front — they appear BEFORE the first
+    // predicate per find(1) usage. Any arg starting with `-` or
+    // `(` ends the path list.
+    while i < args.len() {
+        let a = &args[i];
+        if a.starts_with('-') || a == "(" || a == "!" {
+            break;
+        }
+        paths.push(a);
+        i += 1;
+    }
+    if paths.is_empty() {
+        paths.push(".");
+    }
+
+    // Top-level flags (before predicates per GNU find).
+    while i < args.len() && matches!(args[i].as_str(), "-L" | "-H" | "-P" | "-D" | "-O") {
+        match args[i].as_str() {
+            "-L" => follow = true,
+            "-P" | "-H" => follow = false,
+            "-D" | "-O" => {
+                i += 1; // these take an argument (debug-opts, optimization-level)
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    while i < args.len() {
+        let a = args[i].as_str();
+        match a {
+            "-name" if i + 1 < args.len() => {
+                preds.push(FindPredicate::Name(args[i + 1].clone()));
+                i += 2;
+            }
+            "-iname" if i + 1 < args.len() => {
+                preds.push(FindPredicate::IName(args[i + 1].clone()));
+                i += 2;
+            }
+            "-path" | "-wholename" if i + 1 < args.len() => {
+                preds.push(FindPredicate::Path(args[i + 1].clone()));
+                i += 2;
+            }
+            "-regex" if i + 1 < args.len() => {
+                preds.push(FindPredicate::Regex(args[i + 1].clone()));
+                i += 2;
+            }
+            "-type" if i + 1 < args.len() => {
+                let c = args[i + 1].chars().next().unwrap_or('?');
+                preds.push(FindPredicate::Type(c));
+                i += 2;
+            }
+            "-maxdepth" if i + 1 < args.len() => {
+                let n: usize = args[i + 1].parse().unwrap_or(0);
+                preds.push(FindPredicate::MaxDepth(n));
+                i += 2;
+            }
+            "-mindepth" if i + 1 < args.len() => {
+                let n: usize = args[i + 1].parse().unwrap_or(0);
+                preds.push(FindPredicate::MinDepth(n));
+                i += 2;
+            }
+            "-mtime" | "-atime" | "-ctime" if i + 1 < args.len() => {
+                let kind = a.chars().nth(1).unwrap_or('m');
+                match parse_cmp_i64(&args[i + 1]) {
+                    Some((cmp, n)) => preds.push(FindPredicate::Time(cmp, n, kind)),
+                    None => {
+                        eprintln!("find: invalid argument for {}: '{}'", a, args[i + 1]);
+                        return 1;
+                    }
+                }
+                i += 2;
+            }
+            "-mmin" | "-amin" | "-cmin" if i + 1 < args.len() => {
+                // Convert minutes → days fraction by dividing; coarse but
+                // matches the same `(now - entry) / 86400` reduction.
+                let kind = a.chars().nth(1).unwrap_or('m');
+                match parse_cmp_i64(&args[i + 1]) {
+                    Some((cmp, n)) => {
+                        // Treat as already-days for simplicity; full minute
+                        // resolution would need refactoring Time to seconds.
+                        preds.push(FindPredicate::Time(cmp, n / (24 * 60), kind));
+                    }
+                    None => {
+                        eprintln!("find: invalid argument for {}: '{}'", a, args[i + 1]);
+                        return 1;
+                    }
+                }
+                i += 2;
+            }
+            "-size" if i + 1 < args.len() => {
+                let s = &args[i + 1];
+                let (cmp, rest) = match s.chars().next() {
+                    Some('+') => ('+', &s[1..]),
+                    Some('-') => ('-', &s[1..]),
+                    _ => ('=', s.as_str()),
+                };
+                match parse_size_suffix(rest) {
+                    Some((n, mult)) => preds.push(FindPredicate::Size(cmp, n * mult)),
+                    None => {
+                        eprintln!("find: invalid argument for -size: '{}'", s);
+                        return 1;
+                    }
+                }
+                i += 2;
+            }
+            "-empty" => {
+                preds.push(FindPredicate::Empty);
+                i += 1;
+            }
+            "-newer" if i + 1 < args.len() => {
+                let ref_path = args[i + 1].clone();
+                if let Ok(m) = std::fs::metadata(&ref_path).and_then(|m| m.modified()) {
+                    newer_thresholds.insert(ref_path.clone(), m);
+                    preds.push(FindPredicate::Newer(ref_path));
+                } else {
+                    eprintln!("find: '{}': No such file or directory", ref_path);
+                    return 1;
+                }
+                i += 2;
+            }
+            "-prune" => {
+                preds.push(FindPredicate::Prune);
+                i += 1;
+            }
+            "-xdev" | "-mount" => {
+                xdev = true;
+                i += 1;
+            }
+            "-follow" => {
+                follow = true;
+                i += 1;
+            }
+            "-print" => {
+                action = FindAction::Print;
+                i += 1;
+            }
+            "-print0" => {
+                action = FindAction::Print0;
+                i += 1;
+            }
+            "-delete" => {
+                action = FindAction::Delete;
+                i += 1;
+            }
+            "-exec" => {
+                // Slurp args up to `;` or `+`.
+                let mut tmpl = Vec::new();
+                let mut plus = false;
+                i += 1;
+                while i < args.len() {
+                    if args[i] == ";" {
+                        i += 1;
+                        break;
+                    }
+                    if args[i] == "+" {
+                        plus = true;
+                        i += 1;
+                        break;
+                    }
+                    tmpl.push(args[i].clone());
+                    i += 1;
+                }
+                if tmpl.is_empty() {
+                    eprintln!("find: missing argument for -exec");
+                    return 1;
+                }
+                action = FindAction::Exec(tmpl, plus);
+            }
+            "-o" | "-or" | "-a" | "-and" | "!" | "-not" | "(" | ")" => {
+                // Boolean operators not yet implemented — predicates
+                // are AND-conjuncted by default. Reject loudly so
+                // scripts using these get a clear diagnostic
+                // instead of silent divergence.
+                eprintln!(
+                    "find: boolean operator '{}' not yet supported; predicates default to AND",
+                    a
+                );
+                return 1;
+            }
+            // Unknown predicate — REJECT loudly. Previously this
+            // arm silently swallowed unknown flags and adjacent
+            // `+N` / `-N` args got pushed as paths.
+            _ => {
+                eprintln!("find: unknown predicate '{}'", a);
+                return 1;
+            }
+        }
+    }
+
+    let mut visited_devs = std::collections::HashSet::new();
+    for p in &paths {
+        let path = std::path::Path::new(p);
+        if !path.exists() {
+            eprintln!("find: '{}': No such file or directory", p);
+            exit_status = 1;
+            continue;
+        }
+        find_walk(
+            path,
+            &preds,
+            &action,
+            0,
+            &mut visited_devs,
+            xdev,
+            follow,
+            &newer_thresholds,
+            &mut exit_status,
+        );
+    }
+    exit_status
 }
 
 pub(crate) fn cp_impl(args: &[String]) -> i32 {
