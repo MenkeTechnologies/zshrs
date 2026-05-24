@@ -70,3 +70,55 @@ pub fn _extensions(state: &mut CompletionState, extensions: &[&str]) -> bool {
     state.end_group();
     matched
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_files_with_named_extension_in_cwd() {
+        // Cargo.toml lives at the workspace root which is the test
+        // cwd — extension `toml` should bring it back.
+        let mut state = CompletionState::new();
+        state.params.prefix = "Cargo".into();
+        assert!(_extensions(&mut state, &["toml"]));
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "Cargo.toml"),
+            "Cargo.toml missing from extension matches; got {names:?}"
+        );
+    }
+
+    #[test]
+    fn directories_always_match_regardless_of_extension() {
+        // Subdirs should appear even when their name doesn't end in
+        // the requested extension — Tab into a dir is always wanted
+        // so the user can keep walking.
+        let mut state = CompletionState::new();
+        state.params.prefix = "co".into();
+        let _ = _extensions(&mut state, &["xyz_unlikely"]);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        // `compsys/` exists at the workspace root.
+        assert!(
+            names.iter().any(|n| n == "compsys"),
+            "subdirectory must appear regardless of extension filter; got {names:?}"
+        );
+    }
+
+    #[test]
+    fn nonexistent_directory_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "/no/such/dir/prefix".into();
+        assert!(!_extensions(&mut state, &["txt"]));
+    }
+}

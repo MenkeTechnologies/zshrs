@@ -46,3 +46,46 @@ pub fn _expand(state: &mut CompletionState) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tilde_expands_to_home() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "~/projects".into();
+        let home = std::env::var("HOME").expect("HOME set in test env");
+        assert!(_expand(&mut state));
+        let m = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .next()
+            .expect("expansion emitted");
+        assert_eq!(m.str_, format!("{}/projects", home));
+    }
+
+    #[test]
+    fn variable_expands_when_set() {
+        std::env::set_var("ZSHRS_TEST_VAR_777", "VALUE");
+        let mut state = CompletionState::new();
+        state.params.prefix = "$ZSHRS_TEST_VAR_777/sub".into();
+        assert!(_expand(&mut state));
+        let m = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .next()
+            .expect("expansion emitted");
+        assert_eq!(m.str_, "VALUE/sub");
+        std::env::remove_var("ZSHRS_TEST_VAR_777");
+    }
+
+    #[test]
+    fn no_expansion_chars_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "plain_word".into();
+        assert!(!_expand(&mut state));
+    }
+}

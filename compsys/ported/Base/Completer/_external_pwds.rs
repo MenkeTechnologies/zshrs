@@ -15,3 +15,25 @@ pub fn _external_pwds(state: &mut CompletionState) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emits_current_directory_as_pwd_candidate() {
+        let mut state = CompletionState::new();
+        assert!(_external_pwds(&mut state));
+        let cwd = std::env::current_dir().unwrap().to_string_lossy().to_string();
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(
+            names.contains(&cwd),
+            "current dir must appear as a PWD candidate; got {names:?}"
+        );
+    }
+}

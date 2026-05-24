@@ -29,3 +29,44 @@ pub fn _approximate(state: &mut MainCompleteState, max_errors: usize) -> Complet
         CompleterResult::Matched
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_typo_within_max_errors_matches() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "comit".into();
+        state.comp.add_match(Completion::new("commit"), None);
+        state.comp.add_match(Completion::new("checkout"), None);
+        match _approximate(&mut state, 1) {
+            CompleterResult::Matched => {}
+            other => panic!("expected Matched, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn beyond_max_errors_returns_no_match() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "totally-different".into();
+        state.comp.add_match(Completion::new("xyz"), None);
+        assert!(matches!(
+            _approximate(&mut state, 1),
+            CompleterResult::NoMatch
+        ));
+    }
+
+    #[test]
+    fn zero_max_errors_only_exact() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "git".into();
+        state.comp.add_match(Completion::new("git"), None);
+        state.comp.add_match(Completion::new("gut"), None);
+        // max_errors=0 → only the exact "git" passes the filter.
+        assert!(matches!(
+            _approximate(&mut state, 0),
+            CompleterResult::Matched
+        ));
+    }
+}
