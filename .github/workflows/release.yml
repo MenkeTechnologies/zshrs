@@ -52,9 +52,53 @@ jobs:
           name: zshrs-${{ matrix.target }}
           path: zshrs-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
 
+  plugin:
+    name: Build IntelliJ plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: editors/intellij
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '17'
+
+      - name: Cache Gradle + IntelliJ Platform SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            editors/intellij/.intellijPlatform
+          key: ${{ runner.os }}-gradle-${{ hashFiles('editors/intellij/build.gradle.kts', 'editors/intellij/gradle.properties', 'editors/intellij/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build plugin zip
+        # -x test skips the test task (CI has its own IntelliJ plugin
+        # tests job). -x buildSearchableOptions skips heavy IDE indexing.
+        run: ./gradlew buildPlugin --no-daemon -x test -x buildSearchableOptions
+
+      - name: Locate plugin zip
+        id: plugin_zip
+        run: |
+          zip_path=$(ls build/distributions/*.zip | head -1)
+          echo "path=$zip_path" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename $zip_path)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zshrs-intellij-plugin
+          path: editors/intellij/${{ steps.plugin_zip.outputs.path }}
+
   publish:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, plugin]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,7 +112,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Attach BOTH the Rust binary tarballs (per-target) and the
+          # IntelliJ plugin zip (single file from the `plugin` job).
           gh release create ${{ github.ref_name }} \
             --title "${{ github.ref_name }}" \
             --generate-notes \
-            artifacts/*.tar.gz
+            artifacts/*.tar.gz artifacts/*.zip
