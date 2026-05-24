@@ -1828,13 +1828,70 @@ pub fn clprintm(
 pub static LAST_GROUP: std::sync::LazyLock<std::sync::Mutex<String>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new())); // c:1729
 
-/// Port of `singlecalc(int *cp, int l, int *lcp)` from Src/Zle/complist.c:1909.
-#[allow(unused_variables)]
+/// Direct port of `int singlecalc(int *cp, int l, int *lcp)` from
+/// `Src/Zle/complist.c:1909`.
+///
+/// Used by single-column listing scroll: scans `mtab[l]` backward
+/// from `*cp` counting distinct Cmatch pointers, then forward to
+/// see whether the rest of the row is uniform. Returns the count of
+/// distinct matches seen on the way back to the first occurrence.
 pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {
-    // c:1909
-    // C body c:1911-1933 — computes scroll offset for single-column
-    //                      mode. Without mtab/mline substrate: 0.
-    0
+    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
+    if zterm_columns <= 0 {
+        *lcp = 1;
+        return 0;
+    }
+    let mtab_guard = MTAB.lock().unwrap();
+    let row_base = (l * zterm_columns) as usize;
+    let mut c = *cp;
+    if c < 0 {
+        c = 0;
+    }
+    // c:1913 — `mp = mtab[l*cols + c]`.
+    let mp = mtab_guard.get(row_base + c as usize).cloned().flatten();
+
+    // c:1915-1923 — backward scan counting distinct pointers,
+    //                tracking first cell where `*p == mp`. C uses
+    //                raw pointer equality on `Cmatch *`; we mirror
+    //                via `str_` slice-start identity since every
+    //                mtab insert reuses the same Cmatch struct.
+    let cm_eq = |a: Option<&Cmatch>, b: Option<&Cmatch>| -> bool {
+        match (a, b) {
+            (None, None) => true,
+            (Some(x), Some(y)) => x.str == y.str,
+            _ => false,
+        }
+    };
+    let mut n = 0i32;
+    let mut op: Option<Cmatch> = None;
+    let mut first = true;
+    let mut j = c;
+    while j >= 0 {
+        let p = mtab_guard.get(row_base + j as usize).cloned().flatten();
+        if cm_eq(p.as_ref(), mp.as_ref()) {
+            c = j;
+        }
+        if !first && !cm_eq(p.as_ref(), op.as_ref()) {
+            n += 1;
+        }
+        op = p;
+        first = false;
+        j -= 1;
+    }
+    *cp = c; // c:1924
+
+    // c:1926-1929 — forward scan: `*lcp = 1` then clear if anything
+    //                else in the row.
+    *lcp = 1;
+    let mut k = c;
+    while k < zterm_columns {
+        let p = mtab_guard.get(row_base + k as usize).cloned().flatten();
+        if p.is_some() && !cm_eq(p.as_ref(), mp.as_ref()) {
+            *lcp = 0;
+        }
+        k += 1;
+    }
+    n // c:1931
 }
 
 /// Direct port of `static int singledraw(void)` from
@@ -2487,14 +2544,27 @@ pub fn msearchpush() -> i32 {
     0
 }
 
-/// Port of `msearchpop(int *backp)` from Src/Zle/complist.c:2281.
-/// WARNING: param names don't match C — Rust=() vs C=(backp)
+/// Direct port of `int *msearchpop(int *backp)` from
+/// `Src/Zle/complist.c:2281`.
+///
+/// Pops one [`menusearch`] frame off [`MSEARCHSTACK`] and restores
+/// the per-frame state into `MSEARCHSTR` / `MLINE` / `MCOL` /
+/// `MSEARCHSTATE`. Returns the `back` flag of the popped frame so
+/// callers can re-run the search in the original direction.
 pub fn msearchpop() -> i32 {
-    // c:2281
-    // C body c:2283-2301 — pops one entry off msearchstack restoring
-    //                      mline/mcol/msearchstr.
-    //                      Without msearchstack substrate: no-op.
-    0
+    let mut stack = MSEARCHSTACK.lock().unwrap();
+    // c:2284 — `if (!s) return NULL;` (empty stack → no-op).
+    let popped = match stack.pop() {
+        Some(s) => s,
+        None => return 0,
+    };
+    // c:2289-2293 — restore msearchstr / mline / mcol / msearchstate.
+    *MSEARCHSTR.lock().unwrap() = popped.str.clone();
+    MLINE.store(popped.line, Ordering::Relaxed);
+    MCOL.store(popped.col, Ordering::Relaxed);
+    MSEARCHSTATE.store(popped.state, Ordering::Relaxed);
+    // c:2294-2295 — return the back direction so caller can re-search.
+    popped.back
 }
 
 /// Port of `msearch(Cmatch **ptr, char *ins, int back, int rep, int *wrapp)` from Src/Zle/complist.c:2302.
@@ -2652,6 +2722,12 @@ pub static MSEARCHSTR: std::sync::LazyLock<std::sync::Mutex<String>> =
 /// Port of `static int msearchstate` from `Src/Zle/complist.c`. Search
 /// state bitmask: `MS_OK` / `MS_FAILED` / `MS_WRAPPED`.
 pub static MSEARCHSTATE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(MS_OK); // c:msearchstate
+
+/// Port of `static Menusearch msearchstack` from
+/// `Src/Zle/complist.c:2263`. LIFO stack of `menusearch` frames so
+/// `msearchpop` can rewind the incremental search by one char.
+pub static MSEARCHSTACK: std::sync::LazyLock<std::sync::Mutex<Vec<menusearch>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new())); // c:2263
 
 /// Port of `static int domenuselect(Hookdef dummy, Chdata dat)` from
 /// `Src/Zle/complist.c:2383`. Menu-select interactive key-loop:
