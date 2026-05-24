@@ -1807,16 +1807,17 @@ pub fn runshfunc(
     //     the outer frame to return too (retflag=1, breaks=loops).
     //   - locallevel <= forklevel: out of all functions — actually
     //     exit the shell now via zexit(exit_val, ZEXIT_NORMAL).
-    // `in_exit_trap` is the EXIT-trap guard that prevents the exit-
-    // trap itself from triggering another exit. Not yet ported as a
-    // separate global; pass 0 here so the gate behaves as if the
-    // exit isn't issued from inside the EXIT trap (the canonical
-    // call-site behaviour: traps run AFTER this returns).
+    // `in_exit_trap` (c:Src/signals.c:63 — `int in_exit_trap;`) is the
+    // EXIT-trap reentry counter. dotrap at signals.c:1272/1277 wraps
+    // SIGEXIT handler dispatch with ++/--, so an exit issued FROM an
+    // EXIT trap shouldn't re-trigger the gate (or the trap would
+    // recurse). zshrs's signals::in_exit_trap is the canonical port
+    // surface — read it directly here.
     let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
     let exit_level = crate::ported::builtin::EXIT_LEVEL.load(Ordering::Relaxed);
     let cur_locallevel = crate::ported::params::locallevel.load(Ordering::Relaxed) as i32;
     let cur_forklevel = FORKLEVEL.load(Ordering::Relaxed);
-    let in_exit_trap = 0; // c:6141 in_exit_trap — not yet ported
+    let in_exit_trap = crate::ported::signals::in_exit_trap.load(Ordering::Relaxed); // c:Src/signals.c:63
     if exit_pending != 0 && exit_level >= cur_locallevel + 1 && in_exit_trap == 0 {
         // c:6141
         if cur_locallevel > cur_forklevel {
