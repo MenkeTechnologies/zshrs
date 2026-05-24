@@ -7183,6 +7183,7 @@ pub fn bin_break(
                         Relaxed,
                     );
                     EXIT_PENDING.store(1, Relaxed); // c:5889
+                    EXIT_LEVEL.store(cur_locallevel, Relaxed); // c:5890 — exit_level = locallevel;
                     EXIT_VAL.store(num, Relaxed); // c:5891
                 }
             } else {
@@ -7235,8 +7236,7 @@ pub fn bin_break(
                         Relaxed,
                     );
                     EXIT_PENDING.store(1, Relaxed); // c:5889
-                                                              // exit_level not yet ported as a global; the
-                                                              // RETFLAG path handles function-scope unwind.
+                    EXIT_LEVEL.store(cur_locallevel, Relaxed); // c:5890 — exit_level = locallevel;
                     EXIT_VAL.store(num, Relaxed); // c:5891
                 }
             } else {
@@ -10319,6 +10319,18 @@ pub static JOBSTATS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 pub static SHELL_EXITING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static EXIT_PENDING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 pub static EXIT_VAL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// Port of `mod_export volatile int exit_level;` from `Src/builtin.c:5796`.
+///
+/// Records the `locallevel` at the moment a deferred `exit` was issued
+/// inside a function. The `exec.c:6141` gate
+/// `if (exit_pending && exit_level >= locallevel+1 && !in_exit_trap)`
+/// fires only when the unwind has reached a scope at or above the
+/// deferral point — preventing premature exit while the deferred
+/// status walks back through nested function frames. C uses
+/// `volatile int` because the value is read from a signal-touching
+/// context; Rust's AtomicI32 with Relaxed ordering matches the same
+/// no-fence read shape.
+pub static EXIT_LEVEL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 // ====================================================================
 // !!! WARNING: RUST-ONLY ATOMIC — NO DIRECT C COUNTERPART !!!
 // ====================================================================
