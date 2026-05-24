@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T21:59:30.048508+00:00
+Generated: 2026-05-24T22:02:35.704941+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 164 stubs across 47 files
+## Summary: 163 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -24,8 +24,8 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/hashtable.rs` | 11 | `newhashtable` (1 / 19) |
 | `src/ported/mem.rs` | 10 | `malloc` (1 / 165) |
 | `src/ported/zle/complist.rs` | 10 | `putfilecol` (2 / 71) |
-| `src/ported/zle/zle_refresh.rs` | 9 | `addmultiword` (1 / 14) |
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 182) |
+| `src/ported/zle/zle_refresh.rs` | 8 | `addmultiword` (1 / 14) |
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (19 / 746) |
 | `src/ported/zle/zle_keymap.rs` | 6 | `getrestchar_keybuf` (2 / 39) |
@@ -135,20 +135,6 @@ python3 scripts/gen_port_stubs.py
 | 2508 | `domenuselect` | 129 | 925 | 13% |
 | 653 | `clnicezputs` | 24 | 107 | 22% |
 
-### `src/ported/zle/zle_refresh.rs` — 9 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 629 | `addmultiword` | 1 | 14 | 7% |
-| 1944 | `singmoveto` | 1 | 12 | 8% |
-| 526 | `freevideo` | 2 | 19 | 10% |
-| 541 | `resetvideo` | 7 | 53 | 13% |
-| 652 | `zrefresh` | 93 | 602 | 15% |
-| 604 | `snextline` | 5 | 27 | 18% |
-| 1393 | `tc_rightcurs` | 15 | 63 | 23% |
-| 586 | `nextline` | 6 | 22 | 27% |
-| 1357 | `moveto` | 13 | 44 | 29% |
-
 ### `src/ported/zle/compresult.rs` — 8 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -161,6 +147,19 @@ python3 scripts/gen_port_stubs.py
 | 68 | `cut_cline` | 5 | 81 | 6% |
 | 215 | `instmatch` | 6 | 80 | 7% |
 | 96 | `cline_str` | 50 | 271 | 18% |
+
+### `src/ported/zle/zle_refresh.rs` — 8 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 629 | `addmultiword` | 1 | 14 | 7% |
+| 526 | `freevideo` | 2 | 19 | 10% |
+| 541 | `resetvideo` | 7 | 53 | 13% |
+| 652 | `zrefresh` | 93 | 602 | 15% |
+| 604 | `snextline` | 5 | 27 | 18% |
+| 1443 | `tc_rightcurs` | 15 | 63 | 23% |
+| 586 | `nextline` | 6 | 22 | 27% |
+| 1357 | `moveto` | 13 | 44 | 29% |
 
 ### `src/ported/zle/zle_utils.rs` — 8 stubs
 
