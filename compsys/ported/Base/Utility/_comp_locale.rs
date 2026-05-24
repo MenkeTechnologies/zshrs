@@ -210,4 +210,52 @@ mod tests {
         // way LC_CTYPE is non-empty.
         assert!(!lc.is_empty());
     }
+
+    #[test]
+    fn removes_every_lc_underscore_variant() {
+        let _g = env_lock();
+        let _saver = EnvSaver::snap();
+        for k in [
+            "LC_NUMERIC",
+            "LC_TIME",
+            "LC_MONETARY",
+            "LC_PAPER",
+            "LC_NAME",
+            "LC_ADDRESS",
+            "LC_TELEPHONE",
+            "LC_MEASUREMENT",
+            "LC_IDENTIFICATION",
+        ] {
+            std::env::set_var(k, "fr_FR.UTF-8");
+        }
+        _comp_locale();
+        for k in [
+            "LC_NUMERIC",
+            "LC_TIME",
+            "LC_MONETARY",
+            "LC_PAPER",
+            "LC_NAME",
+            "LC_ADDRESS",
+            "LC_TELEPHONE",
+            "LC_MEASUREMENT",
+            "LC_IDENTIFICATION",
+        ] {
+            assert!(
+                std::env::var(k).is_err(),
+                "{k} not removed by _comp_locale"
+            );
+        }
+    }
+
+    #[test]
+    fn lc_ctype_reset_to_preserved_value_not_one_of_removed_lc_vars() {
+        // After running, LC_CTYPE is back — every OTHER LC_* should
+        // be gone.
+        let _g = env_lock();
+        let _saver = EnvSaver::snap();
+        std::env::set_var("LC_MESSAGES", "polluter");
+        _comp_locale();
+        assert!(std::env::var("LC_CTYPE").is_ok());
+        assert!(std::env::var("LC_MESSAGES").is_err());
+    }
 }

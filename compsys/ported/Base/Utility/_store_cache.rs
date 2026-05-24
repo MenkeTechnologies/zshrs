@@ -139,4 +139,59 @@ mod tests {
         let _ = ok;
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn overwrites_existing_cache_file_on_repeat_store() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_sc_ow_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec![tmp.to_string_lossy().to_string()],
+            false,
+        );
+        assert!(_store_cache(&state, "ow.cache", &["v1".into()]));
+        assert!(_store_cache(&state, "ow.cache", &["v2-new".into(), "v3".into()]));
+        let body = std::fs::read_to_string(tmp.join("ow.cache")).unwrap();
+        assert_eq!(body, "v2-new\nv3");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn newline_in_data_value_writes_as_expected() {
+        // Each entry is its own line; values with embedded newlines
+        // would break the round-trip. Pin that we DON'T silently
+        // mangle them — they go through verbatim (data:join("\n")).
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_sc_nl_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec![tmp.to_string_lossy().to_string()],
+            false,
+        );
+        let data = vec!["a".into(), "b\nwith-newline".into(), "c".into()];
+        assert!(_store_cache(&state, "nl.cache", &data));
+        let body = std::fs::read_to_string(tmp.join("nl.cache")).unwrap();
+        assert_eq!(body, "a\nb\nwith-newline\nc");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

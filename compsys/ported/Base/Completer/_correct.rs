@@ -65,4 +65,42 @@ mod tests {
         state.comp.params.prefix = "anything".into();
         assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
     }
+
+    #[test]
+    fn single_char_prefix_bails_like_approximate() {
+        // _approximate gates on `|PREFIX+SUFFIX| > 1`. Since
+        // _correct delegates, the same gate applies.
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "g".into();
+        state.comp.add_match(Completion::new("git"), None);
+        assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
+    }
+
+    #[test]
+    fn delegates_max_errors_1_not_higher() {
+        // Pin: _correct accepts dist-1 but NOT dist-2 typos. If the
+        // delegation were `_approximate(2)`, "xyz" would match "abc"
+        // (dist 3) too — we want max_errors=1 strict.
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "ab".into();
+        state.comp.add_match(Completion::new("xy"), None);
+        // dist("ab", "xy") = 2 → out of max_errors=1.
+        assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
+    }
+
+    #[test]
+    fn correct_does_not_emit_from_pattern_match_path() {
+        // The upstream uses compstate[pattern_match]='-' to suppress
+        // glob acceptance. We can't directly assert that property
+        // at the Rust layer, but we CAN pin that a candidate that
+        // would only have matched via pattern (not Levenshtein) is
+        // not surfaced. Use a glob char in the prefix: with dist=1
+        // it has to match a candidate within 1 edit of literally
+        // the chars "f*" — only "fa", "fb" etc. would qualify.
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "f*".into();
+        state.comp.add_match(Completion::new("file"), None);
+        // edit_distance("f*", "file") = 3 → too far for _correct.
+        assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
+    }
 }

@@ -101,4 +101,60 @@ mod tests {
         let m = &state.groups[0].matches[0];
         assert_eq!(m.disp.as_deref(), Some("MAGIC (set)"));
     }
+
+    #[test]
+    fn empty_prefix_emits_all_set_options() {
+        let mut state = CompletionState::new();
+        let opts: Vec<(&str, bool)> = vec![
+            ("A", true),
+            ("B", true),
+            ("C", true),
+        ];
+        let _ = _options_set(&mut state, &opts);
+        assert_eq!(state.groups[0].matches.len(), 3);
+    }
+
+    #[test]
+    fn complement_of_options_unset() {
+        // Pin that _options_set + _options_unset partition the input.
+        use crate::ported::_options_unset::_options_unset;
+        let opts: Vec<(&str, bool)> = vec![
+            ("A", true),
+            ("B", false),
+            ("C", true),
+            ("D", false),
+        ];
+        let mut s1 = CompletionState::new();
+        let mut s2 = CompletionState::new();
+        let _ = _options_set(&mut s1, &opts);
+        let _ = _options_unset(&mut s2, &opts);
+        let set: std::collections::HashSet<String> = s1
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        let unset: std::collections::HashSet<String> = s2
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(set.is_disjoint(&unset));
+        assert_eq!(set.len() + unset.len(), opts.len());
+    }
+
+    #[test]
+    fn all_set_options_show_disp_set_label() {
+        let mut state = CompletionState::new();
+        let opts: Vec<(&str, bool)> = vec![("A", true), ("B", true)];
+        let _ = _options_set(&mut state, &opts);
+        for m in &state.groups[0].matches {
+            assert!(
+                m.disp.as_deref().unwrap_or("").ends_with("(set)"),
+                "every set option should have `(set)` disp; got {:?}",
+                m.disp
+            );
+        }
+    }
 }

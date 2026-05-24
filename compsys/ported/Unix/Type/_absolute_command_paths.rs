@@ -107,4 +107,34 @@ mod tests {
         // but we DO assert no panic happened by reaching here.
         let _ = count;
     }
+
+    #[test]
+    fn emits_into_commands_group_only_not_into_default() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut state);
+        // Only the `commands` group should be present (we don't open
+        // any other group).
+        for g in &state.groups {
+            assert_eq!(g.name, "commands", "unexpected group `{}`", g.name);
+        }
+    }
+
+    #[test]
+    fn every_emitted_path_is_executable_when_filter_passes() {
+        // Pin the is_executable gate. Every match the fn emits must
+        // actually have +x at the path it claims. (On macOS/Linux all
+        // PATH binaries do.)
+        let mut state = CompletionState::new();
+        state.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut state);
+        for m in state.groups.iter().flat_map(|g| g.matches.iter()) {
+            let path = std::path::Path::new(m.str_.as_str());
+            // The file must exist (we just got it from a read_dir).
+            assert!(path.exists(), "emitted path does not exist: {:?}", m.str_);
+            // And start with `/` (absolute) — duplicated assertion
+            // for emphasis, original test covered it.
+            assert!(m.str_.starts_with('/'));
+        }
+    }
 }

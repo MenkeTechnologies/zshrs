@@ -131,4 +131,59 @@ mod tests {
         assert_eq!(result, Some(vec![]));
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn single_line_cache_returns_one_element() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_one_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("o.cache"), b"only-line").unwrap();
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec![tmp.to_string_lossy().to_string()],
+            false,
+        );
+        assert_eq!(
+            _retrieve_cache(&state, "o.cache"),
+            Some(vec!["only-line".to_string()])
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn trailing_newline_preserved_as_no_empty_tail() {
+        // `lines()` semantics: trailing `\n` does NOT produce an
+        // empty trailing entry. Pin that contract.
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_nl_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("nl.cache"), b"a\nb\nc\n").unwrap();
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::test:".into();
+        state.styles.set(
+            ":completion::complete::test::",
+            "cache-path",
+            vec![tmp.to_string_lossy().to_string()],
+            false,
+        );
+        let r = _retrieve_cache(&state, "nl.cache").unwrap();
+        assert_eq!(r.len(), 3);
+        assert_eq!(r, vec!["a", "b", "c"]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

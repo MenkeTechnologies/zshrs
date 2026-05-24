@@ -107,4 +107,82 @@ mod tests {
         let got = _description(&mut state, &styles, ":completion:::*", "files", "x");
         assert_eq!(got.as_deref(), Some("100% sure: x"));
     }
+
+    #[test]
+    fn descriptions_tag_fallback_when_no_tag_specific() {
+        // Per-tag format unset, but :descriptions catch-all is set →
+        // fall back to it.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion:::*:descriptions",
+            "format",
+            vec!["[%d]".into()],
+            false,
+        );
+        // No per-tag `files` format → falls back.
+        let got = _description(&mut state, &styles, ":completion:::*", "files", "filename");
+        assert_eq!(got.as_deref(), Some("[filename]"));
+    }
+
+    #[test]
+    fn tag_specific_format_overrides_descriptions_catch_all() {
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion:::*:descriptions",
+            "format",
+            vec!["catch-all: %d".into()],
+            false,
+        );
+        styles.set(
+            ":completion:::*:files",
+            "format",
+            vec!["files-only: %d".into()],
+            false,
+        );
+        let got = _description(&mut state, &styles, ":completion:::*", "files", "X");
+        assert_eq!(got.as_deref(), Some("files-only: X"));
+    }
+
+    #[test]
+    fn hidden_yes_still_returns_formatted_string() {
+        // hidden=yes hides matches but keeps the format string for
+        // the group header. Confirm we return Some(_), not None.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(":completion:::*:files", "hidden", vec!["yes".into()], false);
+        let got = _description(&mut state, &styles, ":completion:::*", "files", "x");
+        assert!(got.is_some());
+    }
+
+    #[test]
+    fn empty_description_round_trips_through_format() {
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion:::*:files",
+            "format",
+            vec!["[%d]".into()],
+            false,
+        );
+        let got = _description(&mut state, &styles, ":completion:::*", "files", "");
+        assert_eq!(got.as_deref(), Some("[]"));
+    }
+
+    #[test]
+    fn format_with_no_percent_d_emits_literal() {
+        // If the format has no `%d`, the description is dropped and
+        // the literal string is returned verbatim.
+        let mut state = CompletionState::new();
+        let mut styles = ZStyleStore::new();
+        styles.set(
+            ":completion:::*:files",
+            "format",
+            vec!["literal".into()],
+            false,
+        );
+        let got = _description(&mut state, &styles, ":completion:::*", "files", "ignored");
+        assert_eq!(got.as_deref(), Some("literal"));
+    }
 }

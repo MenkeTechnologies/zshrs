@@ -204,4 +204,84 @@ mod tests {
         let result = _normal_with_handlers(&mut state, |_, _| false, |_, _, _| false);
         assert!(matches!(result, CompleterResult::NoMatch));
     }
+
+    #[test]
+    fn context_rewrite_strips_last_two_colon_segments() {
+        // shell:29 `curcontext="${curcontext%:*:*}:-command-:"`
+        // strips back through the last two `:` segments.
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::cmd::tag:".into();
+        state.comp.params.current = 1;
+        let observed = std::cell::Cell::new(String::new());
+        _normal_with_handlers(
+            &mut state,
+            |s, _| {
+                observed.set(s.ctx.context.clone());
+                true
+            },
+            |_, _, _| false,
+        );
+        // Observed context should end with :-command-:
+        let seen = observed.into_inner();
+        assert!(
+            seen.ends_with(":-command-:"),
+            "context rewrite missing `-command-` segment: {seen}"
+        );
+    }
+
+    #[test]
+    fn context_rewrite_empty_initial_yields_command_only() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = "".into();
+        state.comp.params.current = 1;
+        let observed = std::cell::Cell::new(String::new());
+        _normal_with_handlers(
+            &mut state,
+            |s, _| {
+                observed.set(s.ctx.context.clone());
+                true
+            },
+            |_, _, _| false,
+        );
+        assert_eq!(observed.into_inner(), ":-command-:");
+    }
+
+    #[test]
+    fn fallbacks_always_include_default_dash() {
+        let mut state = MainCompleteState::new("git st", 6);
+        state.comp.params.current = 2;
+        state.comp.params.words = vec!["git".into(), "st".into()];
+        let observed = std::cell::RefCell::new(Vec::<String>::new());
+        _normal_with_handlers(
+            &mut state,
+            |_, _| false,
+            |_, _, fallbacks| {
+                for f in fallbacks {
+                    observed.borrow_mut().push(f.to_string());
+                }
+                true
+            },
+        );
+        assert!(observed.into_inner().contains(&"-default-".to_string()));
+    }
+
+    #[test]
+    fn current_position_zero_treated_as_argument_position() {
+        // CURRENT == 0 (synthetic edge case) — not command, not arg
+        // → fall through to argument-position handler.
+        let mut state = MainCompleteState::new("git", 3);
+        state.comp.params.current = 0;
+        state.comp.params.words = vec!["git".into()];
+        let called = std::cell::Cell::new(false);
+        let _ = _normal_with_handlers(
+            &mut state,
+            |_, _| panic!("cmd_handler must not fire at current=0"),
+            |_, cmd, _| {
+                called.set(true);
+                assert_eq!(cmd, "git");
+                true
+            },
+        );
+        assert!(called.get());
+    }
 }

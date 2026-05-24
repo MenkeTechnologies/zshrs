@@ -93,4 +93,37 @@ mod tests {
         // PREFIX+SUFFIX = "git-status" → matches "git-*"
         assert!(_guard(&state, "git-*"));
     }
+
+    #[test]
+    fn empty_prefix_and_suffix_with_literal_pattern_fails() {
+        let state = MainCompleteState::new("", 0);
+        // empty.starts_with("foo") is false.
+        assert!(!_guard(&state, "foo"));
+    }
+
+    #[test]
+    fn complex_glob_with_multiple_stars() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "abc-xyz-123".into();
+        assert!(_guard(&state, "*-*-*"));
+        assert!(_guard(&state, "abc*123"));
+        assert!(!_guard(&state, "abc*456"));
+    }
+
+    #[test]
+    fn literal_pattern_must_start_exactly() {
+        // starts_with is exact prefix, not substring containment.
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "xfoo".into();
+        assert!(!_guard(&state, "foo"), "literal must be a PREFIX");
+    }
+
+    #[test]
+    fn glob_question_then_literal() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "abc".into();
+        // `?bc` matches `abc` — one wild char + literal `bc`.
+        assert!(_guard(&state, "?bc"));
+        assert!(!_guard(&state, "?bd"));
+    }
 }

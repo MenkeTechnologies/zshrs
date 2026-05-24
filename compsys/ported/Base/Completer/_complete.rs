@@ -68,4 +68,38 @@ mod tests {
         state.comp.params.words = vec!["git".into(), "status".into()];
         assert!(matches!(_complete(&mut state), CompleterResult::NoMatch));
     }
+
+    #[test]
+    fn passes_through_curcontext_unchanged() {
+        // shell:10 `typeset -T curcontext` — local copy, restored on
+        // return. Our impl doesn't shadow either; the context value
+        // the caller sees should match what was passed in.
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":pinned-context:".into();
+        let _ = _complete(&mut state);
+        assert_eq!(state.ctx.context, ":pinned-context:");
+    }
+
+    #[test]
+    fn does_not_create_groups_when_no_match() {
+        let mut state = MainCompleteState::new("", 0);
+        let before = state.comp.groups.len();
+        let _ = _complete(&mut state);
+        // _normal returning NoMatch means no group should have been
+        // created.
+        assert_eq!(state.comp.groups.len(), before);
+    }
+
+    #[test]
+    fn idempotent_on_no_match_state() {
+        // Calling twice with the same NoMatch state should still
+        // return NoMatch — no hidden side effects accumulate.
+        let mut state = MainCompleteState::new("", 0);
+        let first = _complete(&mut state);
+        let second = _complete(&mut state);
+        assert_eq!(
+            std::mem::discriminant(&first),
+            std::mem::discriminant(&second)
+        );
+    }
 }

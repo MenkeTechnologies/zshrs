@@ -105,4 +105,51 @@ mod tests {
         assert!(!r);
         assert!(!invoked.get());
     }
+
+    #[test]
+    fn empty_action_state_creates_tag_group_for_later_population() {
+        // Even a no-op action should leave behind the named group so
+        // a later caller can pop matches into it.
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["x".into()]);
+        state.tags.configure_from_style(&["x".into()]);
+        state.tags.start();
+        _complete_tag(&mut state, "x", |_| true);
+        assert!(state.comp.groups.iter().any(|g| g.name == "x"));
+    }
+
+    #[test]
+    fn two_complete_tag_calls_keep_groups_isolated() {
+        let mut state = MainCompleteState::new("", 0);
+        state.tags.init(&["files".into(), "dirs".into()]);
+        state
+            .tags
+            .configure_from_style(&["files dirs".into()]);
+        state.tags.start();
+        _complete_tag(&mut state, "files", |s| {
+            s.add_match(crate::completion::Completion::new("a"), Some("files"));
+            true
+        });
+        _complete_tag(&mut state, "dirs", |s| {
+            s.add_match(crate::completion::Completion::new("b"), Some("dirs"));
+            true
+        });
+        let files_grp = state.comp.groups.iter().find(|g| g.name == "files").unwrap();
+        let dirs_grp = state.comp.groups.iter().find(|g| g.name == "dirs").unwrap();
+        assert!(files_grp.matches.iter().any(|c| c.str_ == "a"));
+        assert!(dirs_grp.matches.iter().any(|c| c.str_ == "b"));
+        // Cross-contamination check.
+        assert!(!files_grp.matches.iter().any(|c| c.str_ == "b"));
+    }
+
+    #[test]
+    fn special_chars_in_tag_name_preserved() {
+        let mut state = MainCompleteState::new("", 0);
+        let tag = "argument-1";
+        state.tags.init(&[tag.into()]);
+        state.tags.configure_from_style(&[tag.into()]);
+        state.tags.start();
+        _complete_tag(&mut state, tag, |_| true);
+        assert!(state.comp.groups.iter().any(|g| g.name == tag));
+    }
 }

@@ -140,4 +140,62 @@ mod tests {
         assert_eq!(state.nmatches, 3);
         let _ = std::fs::remove_file(&tmp);
     }
+
+    #[test]
+    fn comment_with_leading_whitespace_still_skipped() {
+        // After trim() the `#` is at line start → comment.
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_ws_cmt_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&tmp, b"   # whitespace then comment\nreal\n").unwrap();
+        let mut state = CompletionState::new();
+        let _ = _read_comp(&mut state, tmp.to_str().unwrap());
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"real".to_string()));
+        assert!(!names.iter().any(|n| n.contains('#')));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn file_with_only_comments_returns_false() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_allcmt_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&tmp, b"# a\n# b\n#   c\n").unwrap();
+        let mut state = CompletionState::new();
+        assert!(!_read_comp(&mut state, tmp.to_str().unwrap()));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn no_matching_prefix_returns_false() {
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_rc_nomatch_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&tmp, b"alpha\nbeta\n").unwrap();
+        let mut state = CompletionState::new();
+        state.params.prefix = "xyz".into();
+        assert!(!_read_comp(&mut state, tmp.to_str().unwrap()));
+        let _ = std::fs::remove_file(&tmp);
+    }
 }

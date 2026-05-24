@@ -141,4 +141,48 @@ mod tests {
             assert!(_comp_priv_prefix().is_empty());
         }
     }
+
+    #[test]
+    fn multi_arg_priv_prefix_preserved_in_order() {
+        let _g = lock();
+        let _guard = push_scope(vec![
+            "doas".into(),
+            "-u".into(),
+            "root".into(),
+            "--".into(),
+        ]);
+        assert_eq!(
+            _comp_priv_prefix(),
+            vec![
+                "doas".to_string(),
+                "-u".into(),
+                "root".into(),
+                "--".into()
+            ]
+        );
+    }
+
+    #[test]
+    fn returned_vec_is_clone_not_reference() {
+        // Mutating the returned Vec shouldn't affect the registry.
+        let _g = lock();
+        let _guard = push_scope(vec!["sudo".into()]);
+        let mut v = _comp_priv_prefix();
+        v.push("INJECTED".into());
+        v.clear();
+        // Registry view should still report just `sudo`.
+        assert_eq!(_comp_priv_prefix(), vec!["sudo".to_string()]);
+    }
+
+    #[test]
+    fn same_priv_command_can_be_pushed_twice() {
+        let _g = lock();
+        let _g1 = push_scope(vec!["sudo".into()]);
+        let _g2 = push_scope(vec!["sudo".into()]);
+        // Both scopes show the same prefix; popping inner restores
+        // the same value (outer).
+        assert_eq!(_comp_priv_prefix(), vec!["sudo".to_string()]);
+        drop(_g2);
+        assert_eq!(_comp_priv_prefix(), vec!["sudo".to_string()]);
+    }
 }

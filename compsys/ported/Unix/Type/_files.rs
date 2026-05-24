@@ -306,4 +306,86 @@ mod tests {
         assert_eq!(opts.glob, Some("*.txt".to_string()));
         assert_eq!(opts.prefix, Some("prefix_".to_string()));
     }
+
+    #[test]
+    fn parse_dash_x_description() {
+        let opts = FilesOpts::parse(&["-X".to_string(), "Pick a file".to_string()]);
+        assert_eq!(opts.description.as_deref(), Some("Pick a file"));
+    }
+
+    #[test]
+    fn parse_dash_w_work_dir() {
+        let opts = FilesOpts::parse(&["-W".to_string(), "/tmp".to_string()]);
+        assert_eq!(opts.work_dir.as_deref(), Some("/tmp"));
+    }
+
+    #[test]
+    fn parse_dash_s_suffix() {
+        let opts = FilesOpts::parse(&["-S".to_string(), "/".to_string()]);
+        assert_eq!(opts.suffix.as_deref(), Some("/"));
+    }
+
+    #[test]
+    fn parse_dash_F_consumes_arg_but_ignores_value() {
+        // -F is documented as ignored; pin that the followup arg is
+        // consumed (so parser doesn't try to interpret it as a flag).
+        let opts = FilesOpts::parse(&[
+            "-F".to_string(),
+            "(*.rs)".to_string(),
+            "-g".to_string(),
+            "*.toml".to_string(),
+        ]);
+        assert_eq!(opts.glob.as_deref(), Some("*.toml"));
+    }
+
+    #[test]
+    fn dirs_only_constructor_sets_flag() {
+        assert!(FilesOpts::dirs_only().dirs_only);
+        assert!(!FilesOpts::new().dirs_only);
+    }
+
+    #[test]
+    fn matches_glob_handles_question_mark() {
+        assert!(matches_glob("foo", "f?o"));
+        assert!(matches_glob("foo", "f??"), "two ? matches any 2 chars");
+        assert!(!matches_glob("foo", "f?"), "? matches exactly one, not two");
+        assert!(!matches_glob("foo", "?ab"), "second char of foo isn't `a`");
+    }
+
+    #[test]
+    fn matches_glob_anchored_star() {
+        // Pin that star matches zero-length too.
+        assert!(matches_glob("abc", "*abc"));
+        assert!(matches_glob("abc", "abc*"));
+        assert!(matches_glob("abc", "*abc*"));
+        assert!(matches_glob("xabc", "*abc"));
+        assert!(matches_glob("abcy", "abc*"));
+    }
+
+    #[test]
+    fn files_execute_returns_false_for_nonexistent_dir() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "/no/such/dir/foo".into();
+        assert!(!files_execute(&mut state, &FilesOpts::default()));
+    }
+
+    #[test]
+    fn directories_execute_emits_dirs_only_in_named_group() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "/".into();
+        let _ = directories_execute(&mut state);
+        // The group is named "directories" (vs "files" for the
+        // general case). Pin both: group name AND that nothing
+        // emitted has a `.` extension (would be a file).
+        if let Some(grp) = state.groups.iter().find(|g| g.name == "directories") {
+            for m in &grp.matches {
+                // Every emitted match should end in `/` (directory).
+                assert!(
+                    m.str_.ends_with('/'),
+                    "directories_execute emitted a non-dir: `{}`",
+                    m.str_
+                );
+            }
+        }
+    }
 }

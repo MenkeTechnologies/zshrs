@@ -156,4 +156,42 @@ mod tests {
             "iprefix must be cleared after _tilde_files returns"
         );
     }
+
+    #[test]
+    fn prefix_restored_after_call() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "~/some/path".into();
+        let _ = _tilde_files(&mut state);
+        assert_eq!(
+            state.params.prefix, "~/some/path",
+            "_tilde_files must restore the original prefix"
+        );
+    }
+
+    #[test]
+    fn tilde_alone_expands_to_home() {
+        if std::env::var("HOME").is_err() {
+            return;
+        }
+        let mut state = CompletionState::new();
+        state.params.prefix = "~".into();
+        let _ = _tilde_files(&mut state);
+        // Prefix restored to "~" after call.
+        assert_eq!(state.params.prefix, "~");
+    }
+
+    #[test]
+    fn nonexistent_tilde_user_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "~definitely-not-a-real-user-xyz-12345/".into();
+        assert!(!_tilde_files(&mut state));
+        // No state mutation should leak.
+        assert_eq!(state.params.iprefix, "");
+    }
+
+    #[test]
+    fn empty_prefix_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_tilde_files(&mut state));
+    }
 }

@@ -157,4 +157,65 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["RO_SCAL"]);
     }
+
+    #[test]
+    fn type_matches_helper_glob_question_mark() {
+        assert!(type_matches("?cala?", "scalar"));
+        assert!(!type_matches("?cala?", "scalars"));
+    }
+
+    #[test]
+    fn type_matches_helper_literal_string() {
+        assert!(type_matches("array", "array"));
+        assert!(!type_matches("array", "arrays"));
+    }
+
+    #[test]
+    fn empty_params_returns_false() {
+        let mut state = CompletionState::new();
+        let params = HashMap::new();
+        assert!(!_parameters(&mut state, &params));
+    }
+
+    #[test]
+    fn type_filter_excludes_when_pattern_matches_nothing() {
+        let mut state = CompletionState::new();
+        let mut params = HashMap::new();
+        params.insert("X".into(), "scalar".into());
+        params.insert("Y".into(), "array".into());
+        assert!(!_parameters_with_filter(
+            &mut state,
+            &params,
+            Some("nonsense-type")
+        ));
+    }
+
+    #[test]
+    fn association_type_filter_isolates_associations() {
+        let mut state = CompletionState::new();
+        let mut params = HashMap::new();
+        params.insert("MAP_A".into(), "association".into());
+        params.insert("MAP_B".into(), "association".into());
+        params.insert("PATH".into(), "scalar".into());
+        let _ = _parameters_with_filter(&mut state, &params, Some("association"));
+        let names: std::collections::HashSet<&str> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.as_str())
+            .collect();
+        assert!(names.contains("MAP_A"));
+        assert!(names.contains("MAP_B"));
+        assert!(!names.contains("PATH"));
+    }
+
+    #[test]
+    fn star_type_filter_matches_all_types() {
+        // `*` matches everything → equivalent to no filter.
+        let mut state = CompletionState::new();
+        let mut params = HashMap::new();
+        params.insert("S".into(), "scalar".into());
+        params.insert("A".into(), "array".into());
+        let _ = _parameters_with_filter(&mut state, &params, Some("*"));
+        assert_eq!(state.groups[0].matches.len(), 2);
+    }
 }
