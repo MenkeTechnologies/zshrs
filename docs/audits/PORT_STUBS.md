@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T21:41:39.873750+00:00
+Generated: 2026-05-24T21:44:44.643588+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 171 stubs across 48 files
+## Summary: 169 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -46,7 +46,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/exec.rs` | 2 | `namedpipe` (24 / 1076) |
 | `src/ported/hist.rs` | 2 | `lockhistfile` (25 / 124) |
 | `src/ported/modules/curses.rs` | 2 | `zccmd_input` (36 / 179) |
-| `src/ported/modules/zftp.rs` | 2 | `newsession` (1 / 18) |
 | `src/ported/modules/zpty.rs` | 2 | `newptycmd` (20 / 147) |
 | `src/ported/zle/compcore.rs` | 2 | `set_comp_sep` (9 / 321) |
 | `src/ported/zle/zle_hist.rs` | 2 | `doisearch` (19 / 462) |
@@ -345,13 +344,6 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 1065 | `zccmd_input` | 36 | 179 | 20% |
 | 636 | `zccmd_delwin` | 12 | 44 | 27% |
-
-### `src/ported/modules/zftp.rs` — 2 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 3033 | `newsession` | 1 | 18 | 5% |
-| 300 | `zfmovefd` | 1 | 10 | 10% |
 
 ### `src/ported/modules/zpty.rs` — 2 stubs
 
