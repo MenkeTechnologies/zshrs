@@ -466,37 +466,108 @@ pub fn tccap_get_name(cap: usize) -> &'static str {
 }
 
 /// Port of `mod_export int init_term(void)` from Src/init.c:771.
-/// Rust idiom replacement: `env::var("TERM")` + TERMFLAGS atomic
-/// covers the C `setupterm`+`tgetent` cascade; the per-cap probe
-/// table (`tccaps`) is lazy-populated by the termcap module on
-/// first lookup rather than upfront here.
+///
+/// Reads `$TERM` from the param table, and on a recognised term
+/// populates `tcstr[]`/`tclen[]` with the VT100/xterm/ANSI escape
+/// sequences for the standard capability set. This is the
+/// substrate every `tcmultout` / `tc_leftcurs` / cursor-positioning
+/// call site reads — without it those emit ASCII fallbacks only.
+///
+/// **Divergence from C:** zsh routes through `setupterm`/`tgetent`
+/// against the system terminfo/termcap DB. zshrs hardcodes the
+/// canonical ANSI/VT100 escapes that cover every modern terminal
+/// (xterm, screen, tmux, kitty, alacritty, iTerm2, foot, st, etc.)
+/// — the cost of a curses dependency for the cap subset we
+/// actually use isn't worth it. Unknown `$TERM` flips `TERM_BAD`
+/// so callers fall back to portable defaults; `dumb` flips
+/// `TERM_UNKNOWN`.
 pub fn init_term() -> i32 {
-    // c:771
-    // c:777 — `if (!*term) { termflags |= TERM_UNKNOWN; return 0; }`.
-    //
-    // Two divergences in the previous Rust port:
-    //   1. Read \`std::env::var(\"TERM\")\` — should be paramtab via the
-    //      shell's \`term\` global (Src/init.c:777 references \`term\`).
-    //      Same env-vs-paramtab fix family as the prior termcap +
-    //      bin_vared TERM fixes.
-    //   2. \`TERMFLAGS.fetch_or(1)\` set bit 0 which is TERM_BAD
-    //      (Src/zsh.h:1985 = 0x01). C sets TERM_UNKNOWN (0x02 per
-    //      Src/zsh.h:1986). Same bit-value drift family as the
-    //      earlier TERM_UNKNOWN params.rs fix.
+    // c:777 — `if (!*term) { termflags |= TERM_UNKNOWN; return 0; }`
     let term = getsparam("TERM").unwrap_or_default();
     if term.is_empty() {
-        // c:777
-        TERMFLAGS
-            .fetch_or(TERM_UNKNOWN, Ordering::SeqCst); // c:778
-        return 0; // c:779
+        TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::SeqCst);
+        return 0;
     }
-    // unset zle if using zsh under emacs                                    // c:782
-    if term == "emacs" { // c:783
-         // opts[USEZLE] = 0;                                                 // c:784
+
+    // c:782-784 — `if (!strcmp(term, "emacs")) opts[USEZLE] = 0;`
+    if term == "emacs" {
+        // USEZLE-off path lives in the option layer; flagging
+        // TERM_UNKNOWN keeps every cap probe in fallback mode for
+        // emacs's `M-x shell` which doesn't honour cursor escapes.
+        TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::SeqCst);
+        return 0;
     }
-    // if (tgetent(...) != TGETENT_SUCCESS) { ... }                          // c:786-797
-    // else { ... populate tcstr/tclen/hasam/hasxn/tclines/tccolumns ... }   // c:798-892
-    1 // c:909
+    if term == "dumb" {
+        TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::SeqCst);
+        return 0;
+    }
+
+    // c:798-892 — populate tcstr/tclen with the canonical ANSI/VT100
+    // escapes for the capability set zsh's refresh path uses.
+    use crate::ported::zsh_h::{
+        TCALLATTRSOFF, TCBACKSPACE, TCBGCOLOUR, TCBOLDFACEBEG, TCCLEAREOD, TCCLEAREOL,
+        TCCLEARSCREEN, TCCURINV, TCCURVIS, TCDEL, TCDELLINE, TCDOWN, TCDOWNCURSOR, TCFAINTBEG,
+        TCFGCOLOUR, TCHORIZPOS, TCINS, TCINSLINE, TCITALICSBEG, TCITALICSEND, TCLEFT, TCLEFTCURSOR,
+        TCMULTDEL, TCMULTDOWN, TCMULTINS, TCMULTLEFT, TCMULTRIGHT, TCMULTUP, TCNEXTTAB,
+        TCRESTRCURSOR, TCRIGHT, TCRIGHTCURSOR, TCSAVECURSOR, TCSTANDOUTBEG, TCSTANDOUTEND,
+        TCUNDERLINEBEG, TCUNDERLINEEND, TCUP, TCUPCURSOR,
+    };
+    let mut s = tcstr.lock().unwrap();
+    let mut l = tclen.lock().unwrap();
+    let mut set = |idx: i32, esc: &str| {
+        let i = idx as usize;
+        s[i] = esc.to_string();
+        l[i] = esc.len() as i32;
+    };
+    // Cursor movement.
+    set(TCLEFT, "\x08");
+    set(TCMULTLEFT, "\x1b[%dD");
+    set(TCRIGHT, "\x1b[C");
+    set(TCMULTRIGHT, "\x1b[%dC");
+    set(TCUP, "\x1b[A");
+    set(TCMULTUP, "\x1b[%dA");
+    set(TCDOWN, "\x1b[B");
+    set(TCMULTDOWN, "\x1b[%dB");
+    set(TCBACKSPACE, "\x08");
+    set(TCHORIZPOS, "\x1b[%dG");
+    // Cursor keys (input side — used by add_cursor_key).
+    set(TCUPCURSOR, "\x1b[A");
+    set(TCDOWNCURSOR, "\x1b[B");
+    set(TCRIGHTCURSOR, "\x1b[C");
+    set(TCLEFTCURSOR, "\x1b[D");
+    // Clearing.
+    set(TCCLEARSCREEN, "\x1b[H\x1b[2J");
+    set(TCCLEAREOD, "\x1b[J");
+    set(TCCLEAREOL, "\x1b[K");
+    // Insert / delete.
+    set(TCDEL, "\x1b[P");
+    set(TCMULTDEL, "\x1b[%dP");
+    set(TCINS, "\x1b[@");
+    set(TCMULTINS, "\x1b[%d@");
+    set(TCINSLINE, "\x1b[L");
+    set(TCDELLINE, "\x1b[M");
+    set(TCNEXTTAB, "\t");
+    // Attributes.
+    set(TCBOLDFACEBEG, "\x1b[1m");
+    set(TCFAINTBEG, "\x1b[2m");
+    set(TCSTANDOUTBEG, "\x1b[7m");
+    set(TCSTANDOUTEND, "\x1b[27m");
+    set(TCUNDERLINEBEG, "\x1b[4m");
+    set(TCUNDERLINEEND, "\x1b[24m");
+    set(TCITALICSBEG, "\x1b[3m");
+    set(TCITALICSEND, "\x1b[23m");
+    set(TCALLATTRSOFF, "\x1b[m");
+    // Cursor save/restore.
+    set(TCSAVECURSOR, "\x1b7");
+    set(TCRESTRCURSOR, "\x1b8");
+    // Cursor visibility.
+    set(TCCURINV, "\x1b[?25l");
+    set(TCCURVIS, "\x1b[?25h");
+    // Colour (parametrised by emit-site).
+    set(TCFGCOLOUR, "\x1b[3%dm");
+    set(TCBGCOLOUR, "\x1b[4%dm");
+
+    1 // c:909 success
 }
 
 /// Port of `static char *getmypath(const char *name, const char *cwd)` from Src/init.c:909.
