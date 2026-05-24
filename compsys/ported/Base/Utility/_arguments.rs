@@ -1,8 +1,13 @@
-//! Native Rust implementation of _arguments
+//! Port of `_arguments` (zsh Completion/Base/Utility/_arguments, ~590 lines).
 //!
-//! This replaces the ~590 line zsh shell function with native Rust for speed.
-//! The _arguments function is the most commonly used completion helper -
-//! it parses option specifications and generates completions.
+//! Upstream shell source: `compsys/functions/Base/Utility/_arguments` (vendored)
+//! or `/opt/homebrew/share/zsh/functions/_arguments` (system).
+//!
+//! Native Rust implementation — replaces the ~590 line zsh shell function
+//! with a faithful port for speed. `_arguments` is the most commonly used
+//! completion helper: it parses option specifications and generates
+//! completions. See commit log for the original (pre-port stub) diff and
+//! the shell→Rust algorithm mapping.
 
 use crate::compcore::CompletionState;
 use crate::completion::{Completion, CompletionFlags};
