@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:28:31.661991+00:00
+Generated: 2026-05-24T22:33:06.173097+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 151 stubs across 47 files
+## Summary: 149 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -24,10 +24,10 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/hashtable.rs` | 11 | `newhashtable` (1 / 19) |
 | `src/ported/mem.rs` | 10 | `malloc` (1 / 165) |
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 182) |
-| `src/ported/zle/zle_refresh.rs` | 8 | `addmultiword` (1 / 14) |
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (19 / 746) |
 | `src/ported/zle/zle_main.rs` | 6 | `describekeybriefly` (2 / 28) |
+| `src/ported/zle/zle_refresh.rs` | 6 | `addmultiword` (1 / 14) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
 | `src/ported/module.rs` | 5 | `load_and_bind` (1 / 20) |
 | `src/ported/zle/zle_keymap.rs` | 5 | `newkeytab` (1 / 15) |
@@ -133,19 +133,6 @@ python3 scripts/gen_port_stubs.py
 | 215 | `instmatch` | 6 | 80 | 7% |
 | 96 | `cline_str` | 50 | 271 | 18% |
 
-### `src/ported/zle/zle_refresh.rs` — 8 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 629 | `addmultiword` | 1 | 14 | 7% |
-| 526 | `freevideo` | 2 | 19 | 10% |
-| 541 | `resetvideo` | 7 | 53 | 13% |
-| 652 | `zrefresh` | 93 | 602 | 15% |
-| 604 | `snextline` | 5 | 27 | 18% |
-| 1443 | `tc_rightcurs` | 15 | 63 | 23% |
-| 586 | `nextline` | 6 | 22 | 27% |
-| 1357 | `moveto` | 13 | 44 | 29% |
-
 ### `src/ported/zle/zle_utils.rs` — 8 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -180,6 +167,17 @@ python3 scripts/gen_port_stubs.py
 | 1327 | `trashzle` | 4 | 22 | 18% |
 | 685 | `zleread` | 26 | 127 | 20% |
 | 321 | `raw_getbyte` | 50 | 242 | 20% |
+
+### `src/ported/zle/zle_refresh.rs` — 6 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 713 | `addmultiword` | 1 | 14 | 7% |
+| 526 | `freevideo` | 2 | 19 | 10% |
+| 541 | `resetvideo` | 7 | 53 | 13% |
+| 736 | `zrefresh` | 93 | 602 | 15% |
+| 1527 | `tc_rightcurs` | 15 | 63 | 23% |
+| 1441 | `moveto` | 13 | 44 | 29% |
 
 ### `src/ported/zle/zle_tricky.rs` — 6 stubs
 

@@ -578,39 +578,123 @@ pub fn scrollwindow(lines: i32) {
     );
 }
 
-/// Port of `nextline(Rparams rpms, int wrapped)` from Src/Zle/zle_refresh.c:842.
-/// Rust idiom replacement: RefreshState owns its row vec, so the
-/// C `ln++` + per-row reallocation collapses to a vln increment +
-/// vertical-overflow check; row allocation lives on VideoBuffer.
-#[allow(unused_variables)]
-pub fn nextline(rpms: &mut RefreshState, wrapped: i32) -> i32 {
-    // c:842
-    // C body (c:842-873): advance rpms->ln++; check space against
-    // winh; allocate new buffer row if needed; return 1 when display
-    // is full (caller should stop emitting). zshrs uses RefreshState
-    // for the cursor; this advances vln and signals overflow.
-    rpms.vln += 1;
-    if rpms.vln >= rpms.lines {
-        return 1; // out of vertical space
+/// Direct port of `int nextline(Rparams rpms, int wrapped)` from
+/// `Src/Zle/zle_refresh.c:842`.
+///
+/// Advances `rpms->ln` to the next video row inside the new-video
+/// buffer. When already at the last row, either declines further
+/// scroll (`canscroll==0` and constraints fail → return 1, caller
+/// stops emitting) or scrolls the window by one line and decrements
+/// `nvln` so cursor tracking stays consistent. Always ensures the
+/// fresh row exists, then resets `rpms->s`/`sen` to the start/end
+/// of that row.
+///
+/// **Signature note (faithful to C):** takes the rparams struct
+/// directly + the RefreshState for video-buffer access. Mirrors the
+/// C call where `nbuf`/`winw`/`winh`/`numscrolls` are file-statics.
+pub fn nextline(
+    rpms: &mut rparams,       // c:842
+    state: &mut RefreshState, // for new_video / columns / lines access
+    wrapped: i32,             // c:842
+) -> i32 {
+    let winw = state.columns as i32;
+    let winh = state.lines as i32;
+    let new_video = match state.new_video.as_mut() {
+        Some(v) => v,
+        None => return 1,
+    };
+
+    // c:844-845 — `nbuf[ln][winw+1] = wrapped ? zr_nl : zr_zr; *s = zr_zr;`
+    if let Some(row) = new_video.lines.get_mut(rpms.ln as usize) {
+        let end_idx = (winw + 1) as usize;
+        if end_idx < row.len() {
+            row[end_idx] = if wrapped != 0 {
+                RefreshElement {
+                    chr: '\n',
+                    ..RefreshElement::default()
+                }
+            } else {
+                RefreshElement::default()
+            };
+        }
+        if (rpms.pos) < row.len() {
+            row[rpms.pos] = RefreshElement::default();
+        }
     }
-    rpms.vcs = 0;
-    0
+
+    if rpms.ln != winh - 1 {
+        // c:849 — `rpms->ln++;`
+        rpms.ln += 1;
+    } else {
+        // c:851-860 — scroll-or-bail branch.
+        if rpms.canscroll == 0 {
+            let onumscrolls = ONUMSCROLLS.load(Ordering::Relaxed);
+            let numscrolls = NUMSCROLLS.load(Ordering::Relaxed);
+            // c:853-855 — bail when we shouldn't scroll yet.
+            if rpms.nvln != -1
+                && rpms.nvln != winh - 1
+                && (numscrolls != onumscrolls - 1 || rpms.nvln <= winh / 2)
+            {
+                return 1;
+            }
+            NUMSCROLLS.fetch_add(1, Ordering::Relaxed); // c:858
+            rpms.canscroll = winh / 2; // c:859
+        }
+        rpms.canscroll -= 1; // c:862
+        scrollwindow(0); // c:863
+        if rpms.nvln != -1 {
+            rpms.nvln -= 1; // c:865
+        }
+    }
+
+    // c:867-869 — allocate the row if missing.
+    if rpms.ln as usize >= new_video.lines.len() {
+        new_video
+            .lines
+            .resize(rpms.ln as usize + 1, vec![RefreshElement::default(); (winw + 2) as usize]);
+    }
+    // c:871-872 — `rpms->s = nbuf[ln]; rpms->sen = s + winw;`
+    rpms.pos = 0;
+    rpms.end = winw as usize;
+    0 // c:873
 }
 
-/// Port of `snextline(Rparams rpms)` from Src/Zle/zle_refresh.c:875.
-/// Rust idiom replacement: scroll-up is a vln decrement + vcs
-/// reset; the C `memmove(rows+1, rows, ...)` pair drops since the
-/// terminal emits the scroll itself via the wrap escape sequence.
-pub fn snextline(rpms: &mut RefreshState) -> i32 {
-    // c:875
-    // C body (c:875-919): scroll the on-screen display up one line
-    // when the new line wraps past the bottom. zshrs decrements
-    // vln so the next emit lands on the (now-cleared) bottom row.
-    if rpms.vln > 0 {
-        rpms.vln -= 1;
+/// Direct port of `int snextline(Rparams rpms)` from
+/// `Src/Zle/zle_refresh.c:875`.
+///
+/// "Status next line" — advances inside the optional status area
+/// (the line zsh draws below the prompt when more_status is set).
+/// Mirrors the C body's `if (more_status && tosln != ln && ln != winh
+/// - 1)` decision tree: bumps `rpms->ln` if we have room in the
+/// status pane, otherwise gives up (return 1). Returns 0 on success.
+pub fn snextline(
+    rpms: &mut rparams,       // c:875
+    state: &mut RefreshState, // for columns / lines access
+) -> i32 {
+    let winw = state.columns as i32;
+    let winh = state.lines as i32;
+
+    // c:877-878 — `if (rpms->more_status && rpms->tosln != rpms->ln
+    //              && rpms->ln != winh - 1) {`
+    if rpms.more_status != 0 && rpms.tosln != rpms.ln && rpms.ln != winh - 1 {
+        // c:879 — `rpms->ln++;`
+        rpms.ln += 1;
+        // c:881-883 — alloc the status row if missing.
+        if let Some(new_video) = state.new_video.as_mut() {
+            if rpms.ln as usize >= new_video.lines.len() {
+                new_video.lines.resize(
+                    rpms.ln as usize + 1,
+                    vec![RefreshElement::default(); (winw + 2) as usize],
+                );
+            }
+        }
+        // c:885-886 — `rpms->s = nbuf[ln]; rpms->sen = s + winw;`
+        rpms.pos = 0;
+        rpms.end = winw as usize;
+        0 // c:887
+    } else {
+        1 // c:889 — out of status pane room.
     }
-    rpms.vcs = 0;
-    0
 }
 
 /// Direct port of `static void addmultiword(REFRESH_ELEMENT *base,
