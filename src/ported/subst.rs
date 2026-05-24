@@ -1171,6 +1171,10 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
             // C zglob does its own NOMATCH/badcshglob accounting
             // when nothing matches. Preserve the original entry on
             // empty match (zsh default; NOMATCH option would zerr).
+            // The canonical NOMATCH error fires in
+            // vm_helper::ShellExecutor::expand_glob (the dispatch-layer
+            // entry) — globlist is the prefork-time pre-pass and only
+            // does NULLGLOB-style empty-result preservation.
             node_idx += 1;
         } else if expanded.len() == 1 {
             // c:N/A
