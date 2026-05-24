@@ -4170,9 +4170,19 @@ pub fn paramsubst(
                 } else {
                     None
                 };
-            let is_array_source = arrays_contains(&var_name)
+            // c:Src/params.c:2915 — `v->scanflags ? 1 : 0`. A
+            // single-slot subscript (`[N]`, `[name]`) clears isarr;
+            // subsequent length-op runs on the picked SCALAR (`${#arr[1]}`
+            // = chars in arr[1]). Only `[@]`/`[*]`/range `[N,M]` keep
+            // array shape (SCANPM_ISVAR_AT at c:2027-2029), feeding the
+            // c:3853 element-count path.
+            let single_slot_subscript = subscript
+                .as_deref()
+                .map_or(false, |s| s != "@" && s != "*" && !s.contains(','));
+            let is_array_source = (arrays_contains(&var_name)
                 || assoc_contains(&var_name)
-                || magic_keys.is_some();
+                || magic_keys.is_some())
+                && !single_slot_subscript;
             let n: usize = if is_array_source {
                 // c:3849 if (isarr)
                 if getlen == 1 {
@@ -5445,8 +5455,20 @@ pub fn paramsubst(
                     // result like filter/sort) → state.arrays → joined
                     // value. Direct port of zsh's getarrvalue → slice
                     // dispatch which uses aval if isarr is set.
-                    let array_source: Option<Vec<String>> =
-                        split_parts.clone().or_else(|| arrays_get(&var_name));
+                    //
+                    // c:Src/params.c:2915 — single-slot subscript (`[N]`,
+                    // `[name]`) clears isarr; the substring then runs on
+                    // the picked SCALAR (`${arr[1]:0:3}` = first 3 chars
+                    // of arr[1]). Only `[@]`/`[*]`/range `[N,M]` keep the
+                    // array shape that drives the slice path.
+                    let single_slot_subscript = subscript
+                        .as_deref()
+                        .map_or(false, |s| s != "@" && s != "*" && !s.contains(','));
+                    let array_source: Option<Vec<String>> = if single_slot_subscript {
+                        None // c:2915 (scalar picked → substring on val)
+                    } else {
+                        split_parts.clone().or_else(|| arrays_get(&var_name))
+                    };
                     if let Some(mut arr) = array_source {
                         // Positional-param slice (`@`/`*`/`argv`) — zsh
                         // counts offset 0 as $0 (script/function name),
@@ -9972,7 +9994,6 @@ mod tests {
     /// `${#arr[1]}` is the BYTE LENGTH of arr[1], NOT 1 (element count).
     /// zsh: arr=(hello world); ${#arr[1]} → 5 (chars in "hello").
     #[test]
-    #[ignore = "ZSHRS BUG: ${#arr[1]} returns wrong value; zsh: string-length of arr[1]"]
     fn paramsubst_arr_length_of_indexed_element_is_string_length_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr("PSD5", &["hello", "world"], "${#PSD5[1]}");
@@ -9982,7 +10003,6 @@ mod tests {
     /// Substring of indexed element: `${arr[1]:0:3}` → first 3 chars.
     /// zsh: arr=(hello world); ${arr[1]:0:3} → "hel".
     #[test]
-    #[ignore = "ZSHRS BUG: ${arr[N]:0:M} substring of indexed element broken — returns full array string"]
     fn paramsubst_arr_substring_of_indexed_element_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) =
