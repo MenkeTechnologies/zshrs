@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T21:44:44.643588+00:00
+Generated: 2026-05-24T21:47:57.138051+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 169 stubs across 47 files
+## Summary: 168 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -24,7 +24,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/hashtable.rs` | 11 | `newhashtable` (1 / 19) |
 | `src/ported/mem.rs` | 10 | `malloc` (1 / 165) |
 | `src/ported/zle/complist.rs` | 10 | `putfilecol` (2 / 71) |
-| `src/ported/zle/zle_refresh.rs` | 10 | `addmultiword` (1 / 14) |
+| `src/ported/zle/zle_refresh.rs` | 9 | `addmultiword` (1 / 14) |
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 182) |
 | `src/ported/zle/zle_keymap.rs` | 8 | `getrestchar_keybuf` (2 / 39) |
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
@@ -135,15 +135,14 @@ python3 scripts/gen_port_stubs.py
 | 2508 | `domenuselect` | 129 | 925 | 13% |
 | 653 | `clnicezputs` | 24 | 107 | 22% |
 
-### `src/ported/zle/zle_refresh.rs` — 10 stubs
+### `src/ported/zle/zle_refresh.rs` — 9 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 629 | `addmultiword` | 1 | 14 | 7% |
-| 1877 | `singmoveto` | 1 | 12 | 8% |
+| 1944 | `singmoveto` | 1 | 12 | 8% |
 | 526 | `freevideo` | 2 | 19 | 10% |
 | 541 | `resetvideo` | 7 | 53 | 13% |
-| 1437 | `tcout_via_func` | 5 | 34 | 14% |
 | 652 | `zrefresh` | 93 | 602 | 15% |
 | 604 | `snextline` | 5 | 27 | 18% |
 | 1393 | `tc_rightcurs` | 15 | 63 | 23% |
