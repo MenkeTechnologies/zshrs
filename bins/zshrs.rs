@@ -745,6 +745,15 @@ pub fn zshrs_main() {
         return;
     }
 
+    // --dump-reference-html: emit the HTML chapter sections that
+    // docs/reference.html splices between its LSP-REFERENCE markers.
+    // `scripts/update_reference_html.sh` calls this then rewrites the
+    // doc in place.
+    if args.iter().any(|a| a == "--dump-reference-html") {
+        print!("{}", zsh::lsp::dump_reference_html());
+        return;
+    }
+
     // --docs NAME: render the same hover card the LSP would return for
     // NAME. Used by the IntelliJ tool window's docs popup.
     if let Some(i) = args.iter().position(|a| a == "--docs") {

@@ -75,6 +75,7 @@ class ZshrsLexer : LexerBase() {
             c == '&' && peek(1) == '>' -> emit(2, ZshrsTokenTypes.REDIRECT)
             c == '&' -> emit(1, ZshrsTokenTypes.BACKGROUND)
             c == '$' -> consumeDollar()
+            c == '\\' -> consumeEscape()
             c == ';' && peek(1) == ';' -> {
                 // `;;`, `;;&`, `;|` — all case-branch terminators
                 var p = pos + 2
@@ -200,6 +201,26 @@ class ZshrsLexer : LexerBase() {
         }
         tokenEnd = p; pos = p
         tokenType = ZshrsTokenTypes.REDIRECT
+    }
+
+    private fun consumeEscape() {
+        // `\<newline>` is a shell line continuation — the two-char sequence
+        // is logically whitespace (the parser joins the lines). Optional
+        // `\r` before `\n` covers CRLF files. `\X` for any other char is a
+        // literal escape (e.g. `\$`, `\"`, `\\`); emit as STRING_ESCAPE so
+        // it isn't flagged BAD_CHARACTER. Bare trailing `\` at EOF is also
+        // accepted (one-char escape) to avoid red squiggles on partial input.
+        val nxt = peek(1)
+        if (nxt == '\n' || nxt == '\r') {
+            var p = pos + 1
+            if (p < endOffset && buf[p] == '\r') p++
+            if (p < endOffset && buf[p] == '\n') p++
+            tokenEnd = p; pos = p
+            tokenType = TokenType.WHITE_SPACE
+            return
+        }
+        val len = if (pos + 1 < endOffset) 2 else 1
+        emit(len, ZshrsTokenTypes.STRING_ESCAPE)
     }
 
     private fun consumeDollar() {
