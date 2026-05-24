@@ -57,7 +57,45 @@ class ZshrsLspServerDescriptor(project: Project) :
 
     override val lspCodeActionsSupport: LspCodeActionsSupport = LspCodeActionsSupport()
     override val lspDiagnosticsSupport: LspDiagnosticsSupport = LspDiagnosticsSupport()
-    override val lspCompletionSupport: LspCompletionSupport = LspCompletionSupport()
+    /// Re-trigger completion popup after inserting an item whose
+    /// LSP `command` is `editor.action.triggerSuggest`. zsh lets you
+    /// chain glob qualifiers (`*(/D^.)`), param flags (`${(LU)var}`),
+    /// pattern modifiers (`(#ib)`), subscript flags (`${arr[(Ri)x]}`),
+    /// and `:` modifiers (`${var:h:t:r}`) — without this hook the
+    /// popup closes after the first insertion and the user has to
+    /// press Ctrl-Space again to pick another. The Platform LSP API's
+    /// default `LspCompletionSupport` doesn't honor the `command`
+    /// field on completion items; this subclass adds that behavior.
+    override val lspCompletionSupport: LspCompletionSupport = object : LspCompletionSupport() {
+        override fun createLookupElement(
+            parameters: com.intellij.codeInsight.completion.CompletionParameters,
+            item: org.eclipse.lsp4j.CompletionItem,
+        ): com.intellij.codeInsight.lookup.LookupElement? {
+            val base = super.createLookupElement(parameters, item) ?: return null
+            val cmd = item.command ?: return base
+            if (cmd.command != "editor.action.triggerSuggest") return base
+            val editor = parameters.editor
+            val proj = editor.project ?: project
+            return com.intellij.codeInsight.lookup.LookupElementDecorator
+                .withDelegateInsertHandler<com.intellij.codeInsight.lookup.LookupElement>(
+                    base,
+                ) { ctx, _ ->
+                    // The decorator already wraps `base`; invoke its
+                    // insert handler via the captured reference. The
+                    // lambda's second arg is the decorator itself
+                    // (whose `delegate` property is private in the
+                    // current Platform API), so we use `base` instead.
+                    base.handleInsert(ctx)
+                    // Schedule auto-popup at the new cursor position
+                    // after the IDE finishes the insertion + caret-move.
+                    ctx.setLaterRunnable {
+                        com.intellij.codeInsight.AutoPopupController
+                            .getInstance(proj)
+                            .scheduleAutoPopup(editor)
+                    }
+                }
+        }
+    }
     override val lspFormattingSupport: LspFormattingSupport = LspFormattingSupport()
     override val lspHoverSupport: Boolean = true
     override val lspGoToDefinitionSupport: Boolean = true
