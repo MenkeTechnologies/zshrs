@@ -4577,9 +4577,19 @@ pub fn paramsubst(
                                   // is cleared at line 2915 (`v->scanflags ? 1 : 0`) and
                                   // the C source falls through to getmatch on `val`
                                   // (line 3451). Mirror that here: when subscript was
-                                  // applied, treat raw_value as the scalar `val` and
-                                  // skip the per-element arr loop.
-                let has_subscript = subscript.is_some();
+                                  // applied AND it picks a single slot, treat raw_value
+                                  // as the scalar `val` and skip the per-element arr
+                                  // loop. For `[@]`/`[*]` and range `[N,M]`, isarr stays
+                                  // set (SCANPM_ISVAR_AT path at c:2027-2029) so the
+                                  // array iteration MUST fire — `\${arr[@]:#pat}` filters
+                                  // the elements, not the joined scalar.
+                let is_array_subscript = matches!(
+                    subscript.as_deref(),
+                    Some("@") | Some("*")
+                ) || subscript
+                    .as_deref()
+                    .map_or(false, |s| s.contains(','));
+                let has_subscript = subscript.is_some() && !is_array_subscript;
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript) {
                     let kept: Vec<String> = arr
                         .into_iter() // c:3540
@@ -9889,7 +9899,6 @@ mod tests {
     /// `${mix[@]:#bar}` where mix=(foo bar baz qux) → `foo baz qux`
     /// (the matched element "bar" is REMOVED, not kept).
     #[test]
-    #[ignore = "ZSHRS BUG: :#pat array filter not implemented; returns unfiltered"]
     fn paramsubst_arr_filter_hash_removes_matching_literal_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, multi) = psubst_arr(
@@ -9910,7 +9919,6 @@ mod tests {
     /// `${mix[@]:#ba*}` where mix=(foo bar baz qux) → `foo qux`
     /// (glob pattern: removes everything starting with "ba")
     #[test]
-    #[ignore = "ZSHRS BUG: :#pat array filter (glob form) not implemented"]
     fn paramsubst_arr_filter_hash_removes_matching_glob_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, multi) = psubst_arr(
