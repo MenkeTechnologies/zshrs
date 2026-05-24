@@ -8154,11 +8154,14 @@ pub fn execcmd_exec(
         let head = args.as_ref().unwrap()[0].clone();
         let maxjob = JOBTAB.get().map(|m| m.lock().unwrap().len() as i32).unwrap_or(0);
         let thisjob = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
+        // c:2982 — `findjobnam(s)`. Canonical port at
+        // jobs.rs::findjobnam matches against `proc.text`, which is
+        // the command text actually saved into the job at fork —
+        // matching C exactly. Returns the job index if any non-
+        // SUBJOB jobtab entry's first-proc text starts with `s`.
         let found = if let Some(jt) = JOBTAB.get() {
             let guard = jt.lock().unwrap();
-            // findjobnam takes &[job] — pass it.
-            // findjobnam is private — approximation: scan jobtab for prefix match.
-            guard.iter().any(|j| j.pwd.as_deref().map(|p| p.starts_with(&head)).unwrap_or(false))
+            crate::ported::jobs::findjobnam(&head, &guard, maxjob - 1, thisjob).is_some()
         } else {
             false
         };
