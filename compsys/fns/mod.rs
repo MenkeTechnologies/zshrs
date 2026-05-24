@@ -12,6 +12,8 @@
 #[allow(non_snake_case, non_camel_case_types)]
 pub mod _call_program;
 #[allow(non_snake_case, non_camel_case_types)]
+pub mod _canonical_paths;
+#[allow(non_snake_case, non_camel_case_types)]
 pub mod _combination;
 #[allow(non_snake_case, non_camel_case_types)]
 pub mod _command_names;
@@ -33,6 +35,7 @@ pub mod _describe;
 pub mod _files;
 
 pub use _call_program::{CallProgramOpts, CallProgramResult, _call_program};
+pub use _canonical_paths::{CanonicalPathsOpts, _canonical_paths};
 pub use _combination::{CombinationOpts, _combination, _combination_mcs};
 pub use _command_names::{ShellInventory, _command_names, _command_names_with_ctx};
 pub use _completers::{_completers, CANONICAL_COMPLETER_NAMES};
