@@ -53,3 +53,42 @@ pub fn _alternative(
 
     matched
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::completion::Completion;
+
+    #[test]
+    fn iterates_each_spec_and_calls_action_handler() {
+        let mut state = MainCompleteState::new("", 0);
+        let specs = vec![
+            "users:user name:_users".into(),
+            "hosts:host name:_hosts".into(),
+        ];
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let result = _alternative(&mut state, &specs, |s, action| {
+            calls.borrow_mut().push(action.to_string());
+            s.comp
+                .add_match(Completion::new(format!("via-{action}")), None);
+            true
+        });
+        assert!(result);
+        let actions = calls.into_inner();
+        assert!(actions.contains(&"_users".to_string()));
+        assert!(actions.contains(&"_hosts".to_string()));
+    }
+
+    #[test]
+    fn empty_specs_returns_false() {
+        let mut state = MainCompleteState::new("", 0);
+        assert!(!_alternative(&mut state, &[], |_, _| true));
+    }
+
+    #[test]
+    fn action_returning_false_does_not_force_overall_match() {
+        let mut state = MainCompleteState::new("", 0);
+        let specs = vec!["x:desc:_xxx".into()];
+        assert!(!_alternative(&mut state, &specs, |_, _| false));
+    }
+}

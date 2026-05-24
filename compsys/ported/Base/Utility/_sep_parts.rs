@@ -59,3 +59,51 @@ pub fn _sep_parts(state: &mut CompletionState, separators: &str, arrays: &[Vec<S
     state.end_group();
     matched
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_array_completes_first_segment() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "us".into();
+        let arrays = vec![
+            vec!["users".into(), "usr".into(), "var".into()],
+            vec!["local".into(), "share".into()],
+        ];
+        assert!(_sep_parts(&mut state, "/", &arrays));
+        let names: Vec<String> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"users".to_string()));
+        assert!(names.contains(&"usr".to_string()));
+        assert!(!names.contains(&"var".to_string()));
+    }
+
+    #[test]
+    fn second_array_used_after_first_separator() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "usr/lo".into();
+        let arrays = vec![
+            vec!["users".into(), "usr".into()],
+            vec!["local".into(), "share".into()],
+        ];
+        assert!(_sep_parts(&mut state, "/", &arrays));
+        let names: Vec<String> = state.groups[0]
+            .matches
+            .iter()
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(names.contains(&"local".to_string()));
+        assert!(!names.contains(&"share".to_string()));
+    }
+
+    #[test]
+    fn empty_arrays_returns_false() {
+        let mut state = CompletionState::new();
+        assert!(!_sep_parts(&mut state, "/", &[]));
+    }
+}
