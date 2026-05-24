@@ -680,4 +680,204 @@ mod tests {
         assert!(!icntrl(b' '));
         assert!(!icntrl(b'a'));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Per-predicate coverage of ztype_h classifiers. Each fn maps to a
+    // typtab bit (IDIGIT, IALPHA, IBLANK, etc.) populated by inittyptab.
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn with_typtab<F: FnOnce()>(body: F) {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TYPTAB_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::ported::utils::inittyptab();
+        body();
+    }
+
+    // ── idigit: ASCII digits 0..9 only ─────────────────────────────
+    #[test]
+    fn idigit_recognizes_ascii_digits() {
+        with_typtab(|| {
+            for d in b'0'..=b'9' {
+                assert!(idigit(d), "{:?} must be IDIGIT", d as char);
+            }
+        });
+    }
+
+    #[test]
+    fn idigit_rejects_non_digit_ascii() {
+        with_typtab(|| {
+            for c in [b'a', b'Z', b' ', b'.', b'-', b'!', 0] {
+                assert!(!idigit(c), "{c:?} must NOT be IDIGIT");
+            }
+        });
+    }
+
+    // ── ialnum: digits + letters ───────────────────────────────────
+    #[test]
+    fn ialnum_recognizes_letters_and_digits() {
+        with_typtab(|| {
+            for c in b'a'..=b'z' {
+                assert!(ialnum(c));
+            }
+            for c in b'A'..=b'Z' {
+                assert!(ialnum(c));
+            }
+            for c in b'0'..=b'9' {
+                assert!(ialnum(c));
+            }
+        });
+    }
+
+    #[test]
+    fn ialnum_rejects_punctuation_and_whitespace() {
+        with_typtab(|| {
+            for c in [b' ', b'\t', b'!', b'@', b'.', b'/', b'-'] {
+                assert!(!ialnum(c), "{c:?} must not be IALNUM");
+            }
+        });
+    }
+
+    // ── iblank: space or tab ───────────────────────────────────────
+    #[test]
+    fn iblank_matches_space_and_tab() {
+        with_typtab(|| {
+            assert!(iblank(b' '));
+            assert!(iblank(b'\t'));
+        });
+    }
+
+    #[test]
+    fn iblank_rejects_newline_and_other_whitespace() {
+        with_typtab(|| {
+            // Per c:50 — IBLANK is space/tab ONLY. Newline isn't IBLANK.
+            assert!(!iblank(b'\n'));
+            assert!(!iblank(b'\r'));
+            assert!(!iblank(b'\x0c')); // form feed
+        });
+    }
+
+    // ── inblank: zsh extended "narrow blank" ───────────────────────
+    #[test]
+    fn inblank_matches_basic_whitespace() {
+        with_typtab(|| {
+            assert!(inblank(b' '));
+            assert!(inblank(b'\t'));
+        });
+    }
+
+    // ── ialpha: letters only ───────────────────────────────────────
+    #[test]
+    fn ialpha_matches_all_ascii_letters() {
+        with_typtab(|| {
+            for c in b'a'..=b'z' {
+                assert!(ialpha(c));
+            }
+            for c in b'A'..=b'Z' {
+                assert!(ialpha(c));
+            }
+        });
+    }
+
+    #[test]
+    fn ialpha_rejects_digits_and_underscore() {
+        with_typtab(|| {
+            for c in b'0'..=b'9' {
+                assert!(!ialpha(c), "{:?} digit must NOT be IALPHA", c as char);
+            }
+            // Underscore is IIDENT but NOT IALPHA.
+            assert!(!ialpha(b'_'));
+        });
+    }
+
+    // ── iident: identifier chars (letters + digits + underscore) ───
+    #[test]
+    fn iident_matches_letters_digits_and_underscore() {
+        with_typtab(|| {
+            assert!(iident(b'a'));
+            assert!(iident(b'Z'));
+            assert!(iident(b'0'));
+            assert!(iident(b'_'));
+        });
+    }
+
+    #[test]
+    fn iident_rejects_punct() {
+        with_typtab(|| {
+            for c in [b' ', b'.', b'-', b'/', b'!', b'@', b'#'] {
+                assert!(!iident(c), "{c:?} must NOT be IIDENT");
+            }
+        });
+    }
+
+    // ── iword: zsh word-char (matches WORDCHARS setting + default) ─
+    #[test]
+    fn iword_includes_letters_and_digits_at_minimum() {
+        with_typtab(|| {
+            assert!(iword(b'a'));
+            assert!(iword(b'Z'));
+            assert!(iword(b'5'));
+        });
+    }
+
+    // ── iwsep: word separator ──────────────────────────────────────
+    #[test]
+    fn iwsep_includes_space_and_tab_at_minimum() {
+        with_typtab(|| {
+            assert!(iwsep(b' '));
+            assert!(iwsep(b'\t'));
+        });
+    }
+
+    // ── icntrl: control chars (0x00-0x1F + 0x7F) ───────────────────
+    #[test]
+    fn icntrl_matches_low_control_chars() {
+        with_typtab(|| {
+            // 0x01..=0x1f are control (skip 0x00 — special handling).
+            for c in 0x01..=0x1fu8 {
+                assert!(icntrl(c), "{c:#04x} must be ICNTRL");
+            }
+            assert!(icntrl(0x7f), "DEL is ICNTRL");
+        });
+    }
+
+    // ── isep: ISEP is the IFS-default bitset (space, tab, newline) ──
+    /// `isep` matches IFS chars (space/tab/newline) NOT shell `;`/`&`
+    /// (those go through ISEP elsewhere via a different path).
+    #[test]
+    fn isep_includes_ifs_chars_only() {
+        with_typtab(|| {
+            assert!(isep(b' '));
+            assert!(isep(b'\t'));
+            assert!(isep(b'\n'));
+            // Shell metas are NOT in the IFS-default set.
+            assert!(!isep(b';'), "`;` is not IFS-default ISEP");
+            assert!(!isep(b'&'), "`&` is not IFS-default ISEP");
+        });
+    }
+
+    // ── inull: zsh null tokens (Snull..Nularg range) ───────────────
+    #[test]
+    fn inull_matches_zsh_null_byte_range() {
+        with_typtab(|| {
+            // Snull = 0x9d, Nularg = 0xa1.
+            assert!(inull(0x9d));
+            assert!(inull(0xa1));
+            // Bytes outside the range are NOT inull.
+            assert!(!inull(b'a'));
+            assert!(!inull(b'0'));
+        });
+    }
+
+    // ── ipattern: pattern meta-chars (raw ASCII bytes aren't pattern) ─
+    #[test]
+    fn ipattern_rejects_plain_ascii() {
+        with_typtab(|| {
+            // Pattern bits are set on metafied tokens (Star byte etc.),
+            // NOT on raw ASCII chars. Plain `*` byte is just printable.
+            assert!(!ipattern(b'a'));
+            assert!(!ipattern(b'0'));
+        });
+    }
 }

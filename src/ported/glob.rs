@@ -6186,4 +6186,157 @@ mod tests {
         let qs = parse_qualifier_string(qual.unwrap());
         assert!(matches!(first_qual(&qs), qualifier::IsDirectory));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Sort qualifiers — `o<key>` ascending, `O<key>` descending.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `oN` — sort by NONE (no sorting key requested).
+    #[test]
+    fn parse_qualifier_string_oN_pushes_gs_none() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("oN");
+        assert_eq!(qs.sorts.len(), 1);
+        assert_ne!(qs.sorts[0] & GS_NONE, 0, "oN must set GS_NONE bit");
+    }
+
+    /// `on` — sort by name ascending.
+    #[test]
+    fn parse_qualifier_string_on_pushes_gs_name_ascending() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("on");
+        assert_eq!(qs.sorts.len(), 1);
+        assert_eq!(qs.sorts[0] & GS_NAME, GS_NAME);
+        assert_eq!(qs.sorts[0] & GS_DESC, 0);
+    }
+
+    /// `On` — sort by name descending.
+    #[test]
+    fn parse_qualifier_string_On_pushes_gs_name_descending() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("On");
+        assert_eq!(qs.sorts.len(), 1);
+        assert_eq!(qs.sorts[0] & GS_NAME, GS_NAME);
+        assert_eq!(qs.sorts[0] & GS_DESC, GS_DESC);
+    }
+
+    /// Multiple sort keys stack.
+    #[test]
+    fn parse_qualifier_string_chained_sort_keys_stack() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("onOL");
+        assert_eq!(qs.sorts.len(), 2);
+    }
+
+    // ── Size qualifier — `L<unit><op><value>` ───────────────────────
+    // NOTE: zshrs's parse_range_spec normalises `+` (greater) → '>' and
+    // `-` (less) → '<' for the internal op char, matching C's qgetnum
+    // convention (Src/glob.c c:1620-ish).
+
+    /// `Lk+1` — size > 1 kilobyte. zsh syntax: `L<unit><op><value>`
+    /// (unit char BEFORE op).
+    #[test]
+    fn parse_qualifier_string_Lk_plus_one_size_kilobyte() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("Lk+1");
+        match first_qual(&qs) {
+            qualifier::Size { value, unit, op } => {
+                assert_eq!(*value, 1);
+                assert_eq!(*unit, TT_KILOBYTES);
+                assert_eq!(*op, '>', "+ is stored as '>' (greater than)");
+            }
+            other => panic!("expected Size, got {other:?}"),
+        }
+    }
+
+    /// `L-100` — size < 100 (default unit bytes). Stored op is '<'.
+    #[test]
+    fn parse_qualifier_string_L_minus_100_size_bytes() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("L-100");
+        match first_qual(&qs) {
+            qualifier::Size { value, unit, op } => {
+                assert_eq!(*value, 100);
+                assert_eq!(*unit, TT_BYTES);
+                assert_eq!(*op, '<', "- is stored as '<' (less than)");
+            }
+            other => panic!("expected Size, got {other:?}"),
+        }
+    }
+
+    /// `Lm+1` — size > 1 megabyte; unit recognised.
+    #[test]
+    fn parse_qualifier_string_Lm_megabyte_unit() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("Lm+1");
+        match first_qual(&qs) {
+            qualifier::Size { unit, .. } => assert_eq!(*unit, TT_MEGABYTES),
+            other => panic!("expected Size, got {other:?}"),
+        }
+    }
+
+    // ── Time qualifier — same op normalisation ───────────────────────
+    /// `m-1` — modified less than 1 day ago. Stored op '<'.
+    #[test]
+    fn parse_qualifier_string_m_minus_1_day_default_unit() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("m-1");
+        match first_qual(&qs) {
+            qualifier::Mtime { value, unit, op } => {
+                assert_eq!(*value, 1);
+                assert_eq!(*unit, TT_DAYS);
+                assert_eq!(*op, '<');
+            }
+            other => panic!("expected Mtime, got {other:?}"),
+        }
+    }
+
+    /// `mh+24` — modified more than 24 hours ago. Stored op '>'.
+    #[test]
+    fn parse_qualifier_string_mh_plus_24_hours() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("mh+24");
+        match first_qual(&qs) {
+            qualifier::Mtime { value, unit, op } => {
+                assert_eq!(*value, 24);
+                assert_eq!(*unit, TT_HOURS);
+                assert_eq!(*op, '>');
+            }
+            other => panic!("expected Mtime, got {other:?}"),
+        }
+    }
+
+    /// `a-7` — accessed less than 7 days ago. Stored op '<'.
+    #[test]
+    fn parse_qualifier_string_a_minus_7_days() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("a-7");
+        match first_qual(&qs) {
+            qualifier::Atime { value, unit, op } => {
+                assert_eq!(*value, 7);
+                assert_eq!(*unit, TT_DAYS);
+                assert_eq!(*op, '<');
+            }
+            other => panic!("expected Atime, got {other:?}"),
+        }
+    }
+
+    // ── Subscript qualifier — `[N]` keep first ───────────────────────
+    /// `[1]` — first entry only.
+    #[test]
+    fn parse_qualifier_string_bracket_one_sets_first_to_one() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("[1]");
+        assert_eq!(qs.first, Some(1));
+    }
+
+    /// `om[1]` — sort by mtime, keep first.
+    #[test]
+    fn parse_qualifier_string_om_bracket_one_sort_and_subscript() {
+        let _g = crate::test_util::global_state_lock();
+        let qs = parse_qualifier_string("om[1]");
+        assert_eq!(qs.sorts.len(), 1);
+        assert_eq!(qs.sorts[0] & GS_MTIME, GS_MTIME);
+        assert_eq!(qs.first, Some(1));
+    }
 }
