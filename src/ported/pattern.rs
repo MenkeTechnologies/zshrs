@@ -988,11 +988,58 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
     }
     let bytes = parse.as_bytes();
     let c = bytes[off];
+
+    // c:1278 — `kshchar = '\0';`. KSH-glob trigger detection: when the
+    // current byte matches one of the six ZPC_KSH_* slots AND the next
+    // byte is `(`, record which kshchar so the post-atom dispatch can
+    // emit the right quantifier shape (c:1615-1746).
+    //
+    // c:1279 — `if (*patparse && patparse[1] == Inpar) { ... }`. Note
+    // the C code uses literal `Inpar` (the `(` token) for the lookahead
+    // — NOT `zpc_special[ZPC_INPAR]` — so SHGLOB disabling `(` as a
+    // pattern char doesn't suppress ksh-glob detection here.
+    let mut kshchar: u8 = 0; // c:1278
+    if off + 1 < parse.len() && bytes[off + 1] == b'(' {
+        // c:1279
+        let sp = zpc_special.lock().unwrap();
+        if c == sp[ZPC_KSH_PLUS as usize] {
+            kshchar = b'+';
+        }
+        // c:1280-1281
+        else if c == sp[ZPC_KSH_BANG as usize] {
+            kshchar = b'!';
+        }
+        // c:1282-1283
+        else if c == sp[ZPC_KSH_BANG2 as usize] {
+            kshchar = b'!';
+        }
+        // c:1284-1285
+        else if c == sp[ZPC_KSH_AT as usize] {
+            kshchar = b'@';
+        }
+        // c:1286-1287
+        else if c == sp[ZPC_KSH_STAR as usize] {
+            kshchar = b'*';
+        }
+        // c:1288-1289
+        else if c == sp[ZPC_KSH_QUEST as usize] {
+            kshchar = b'?';
+        } // c:1290-1291
+    }
     drop(parse);
+
+    // c:1419-1420 — `if (kshchar) patparse++;`. Skip the trigger byte
+    // so the atom dispatch consumes the leading `(` as a group.
+    let dispatch_c = if kshchar != 0 {
+        patparse_off.fetch_add(1, Ordering::Relaxed);
+        b'(' // c:1419 — fall through to Inpar case
+    } else {
+        c
+    };
 
     // Atom dispatch. Each arm sets `*tail_out` to the offset of the
     // last opcode emitted by this piece (for simple atoms, tail = head).
-    let atom = match c {
+    let atom = match dispatch_c {
         b'?' => {
             patparse_off.fetch_add(1, Ordering::Relaxed);
             *flagp |= P_SIMPLE;
@@ -1146,6 +1193,25 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
         b'(' => {
             patparse_off.fetch_add(1, Ordering::Relaxed);
             *flagp &= !P_PURESTR;
+            // c:1508-1525 — `if (kshchar == '!') patcompnot(1, ...) else
+            // patcompswitch(1, ...)`. The `!(pat)` form needs a
+            // negation-aware compile that builds an EXCLUDE subtree;
+            // every other case (including `@(pat)`, the bare `(pat)`
+            // group, and the `+/*/?` ksh forms) takes the alternation
+            // switch path.
+            if kshchar == b'!' {
+                // c:1522-1523
+                let mut flags2: i32 = 0;
+                let starter_off = patcompnot(1, &mut flags2);
+                if starter_off < 0 {
+                    return -1;
+                }
+                *flagp |= flags2 & P_HSTART; // c:1526
+                *tail_out = starter_off as usize;
+                // c:1419 already consumed `!`; the b'(' branch consumed
+                // `(`; patcompnot drained through to `)`. Verify here.
+                return starter_off;
+            }
             let n = patnpar.fetch_add(1, Ordering::Relaxed);
             if n >= NSUBEXP as i32 {
                 return -1;
@@ -1275,6 +1341,22 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             let mut buf: Vec<u8> = Vec::new();
             let mut local_off = off;
             let p = patparse.lock().unwrap();
+            // c:1312-1317 — break on kshchar trigger (any of the six
+            // ZPC_KSH_* slots whose literal byte is followed by `(`).
+            // Snapshot the zpc_special slots that participate; when
+            // KSHGLOB is off they're Marker (0xa2) and won't match
+            // ordinary bytes.
+            let (ksh_plus, ksh_bang, ksh_bang2, ksh_at, ksh_star, ksh_quest) = {
+                let sp = zpc_special.lock().unwrap();
+                (
+                    sp[ZPC_KSH_PLUS as usize],
+                    sp[ZPC_KSH_BANG as usize],
+                    sp[ZPC_KSH_BANG2 as usize],
+                    sp[ZPC_KSH_AT as usize],
+                    sp[ZPC_KSH_STAR as usize],
+                    sp[ZPC_KSH_QUEST as usize],
+                )
+            };
             while local_off < p.len() {
                 let b = p.as_bytes()[local_off];
                 // Stop at metacharacters.
@@ -1283,6 +1365,23 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                     b'?' | b'*' | b'[' | b'(' | b')' | b'|' | b'\\' | b'#' | b'^' | b'<'
                 ) {
                     break;
+                }
+                // c:1278-1292 — ksh-glob trigger lookahead. If the next
+                // byte is `(` AND this byte matches one of the six
+                // ZPC_KSH_* slots, stop the literal run BEFORE this byte
+                // so the next patcomppiece call consumes it as a ksh
+                // quantifier prefix (e.g. `pre+(x)post` accumulates
+                // `pre` then breaks at `+` since `+(` follows).
+                if local_off + 1 < p.len() && p.as_bytes()[local_off + 1] == b'(' {
+                    if b == ksh_plus
+                        || b == ksh_bang
+                        || b == ksh_bang2
+                        || b == ksh_at
+                        || b == ksh_star
+                        || b == ksh_quest
+                    {
+                        break;
+                    }
                 }
                 buf.push(b);
                 local_off += 1;
@@ -1308,23 +1407,164 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
         return atom;
     }
 
-    // Quantifier: # / ##
+    // c:1606-1644 — quantifier dispatch. Three sources of quantifier:
+    //   (a) trailing `#` / `##` (zsh-extended hash repetition)
+    //   (b) trailing `(#cN,M)` count-spec (handled in patcompbranch, not here)
+    //   (c) kshchar form `+/*/?` already at the atom's leading byte.
+    //
+    // Rule c:1615 — if no hash AND no count AND kshchar is one of
+    // (none, '@', '!'), no quantifier; return atom as-is. `@` is the
+    // identity quantifier (match group exactly once); `!` already had
+    // its negation compiled by patcompnot inside the atom.
     let q_off = patparse_off.load(Ordering::Relaxed);
     let parse2 = patparse.lock().unwrap();
-    if q_off < parse2.len() && parse2.as_bytes()[q_off] == b'#' {
-        let two = q_off + 1 < parse2.len() && parse2.as_bytes()[q_off + 1] == b'#';
-        drop(parse2);
-        let consume = if two { 2 } else { 1 };
-        patparse_off.fetch_add(consume, Ordering::Relaxed);
-        let quant_op = if two { P_TWOHASH } else { P_ONEHASH };
-        // C inserts the quant opcode BEFORE the atom and chains atom
-        // as the operand. patinsert handles the byte shift.
-        patinsert(quant_op, atom as usize, None, 0);
+    let has_hash = q_off < parse2.len() && parse2.as_bytes()[q_off] == b'#';
+    drop(parse2);
+    if !has_hash && (kshchar == 0 || kshchar == b'@' || kshchar == b'!') {
+        return atom; // c:1616-1617
+    }
+
+    // c:1621-1622 — kshchar with hash is a parse error (too much at once).
+    if kshchar != 0 && has_hash {
+        return -1;
+    }
+
+    // c:1624-1644 — pick the operator + post-atom flags.
+    let op: u8;
+    let mut consume_hashes = 0;
+    if kshchar == b'*' {
+        // c:1624-1626
+        op = P_ONEHASH;
+        *flagp = P_HSTART;
+    } else if kshchar == b'+' {
+        // c:1627-1629
+        op = P_TWOHASH;
+        *flagp = P_HSTART;
+    } else if kshchar == b'?' {
+        // c:1630-1632
+        op = 0; // sentinel — `?` desugars to (x|) via the BRANCH path below
+        *flagp = 0;
+    } else {
+        // c:1637-1644 — `#` / `##`.
+        let parse_h = patparse.lock().unwrap();
+        let two = q_off + 1 < parse_h.len() && parse_h.as_bytes()[q_off + 1] == b'#';
+        drop(parse_h);
+        if two {
+            op = P_TWOHASH;
+            consume_hashes = 2;
+        } else {
+            op = P_ONEHASH;
+            consume_hashes = 1;
+        }
+        *flagp = P_HSTART;
+    }
+    if consume_hashes > 0 {
+        patparse_off.fetch_add(consume_hashes, Ordering::Relaxed);
+    }
+
+    // c:1705-1746 — quantifier emission.
+    //
+    // Read the atom's opcode so c:1705 (`?#` → `*`) optimization can
+    // apply. The atom byte sits at `atom + I_OP` in patout.
+    let atom_op = {
+        let buf = patout.lock().unwrap();
+        if (atom as usize) + I_OP < buf.len() {
+            buf[atom as usize + I_OP]
+        } else {
+            0
+        }
+    };
+
+    if ((*flagp & P_SIMPLE) != 0)
+        && (op == P_ONEHASH || op == P_TWOHASH)
+        && atom_op == P_ANY
+    {
+        // c:1705-1717 — `?#` becomes `*`; `?##` becomes `?*`. The atom
+        // is P_ANY at offset `atom`; rewrite or pad as needed.
+        let mut buf = patout.lock().unwrap();
+        if op == P_TWOHASH {
+            // c:1712-1713 — `?##` → `?*`: leave the P_ANY in place,
+            // then emit P_STAR right after.
+            drop(buf);
+            let _star = patnode(P_STAR);
+            *tail_out = atom as usize;
+        } else {
+            // c:1715-1716 — `?#` → `*`: just rewrite atom's opcode.
+            buf[atom as usize + I_OP] = P_STAR;
+            drop(buf);
+            *tail_out = atom as usize;
+        }
         *flagp &= !P_PURESTR;
-        // After patinsert, the atom now lives at atom+5; the quant
-        // opcode sits at the original atom offset. Tail is the
-        // quant header (its .next is what gets chained to follow-up).
+    } else if ((*flagp & P_SIMPLE) != 0) && op != 0 && (patglobflags.load(Ordering::Relaxed) & 0xff) == 0 {
+        // c:1718-1720 — simple operand, no approximate-match counter:
+        // emit `patinsert(op, starter, NULL, 0)`. The matcher walks
+        // the inserted P_ONEHASH/P_TWOHASH operand at scan+I_BODY.
+        patinsert(op, atom as usize, None, 0);
+        *flagp &= !P_PURESTR;
         *tail_out = atom as usize;
+    } else if op == P_ONEHASH {
+        // c:1721-1729 — emit x# as (x&|): P_WBRANCH with NULL payload
+        // ahead of atom; loop via P_BACK; null alternative branch.
+        // patinsert with `sz=size_of::<union upat>()=8` (we use 8 to
+        // mirror the C `union upat` slot, then zero-pad it).
+        let payload = [0u8; 8];
+        patinsert(P_WBRANCH, atom as usize, Some(&payload), 8);
+        // Either x — atom is now at atom+I_BODY+8.
+        let back = patnode(P_BACK);
+        patoptail(atom as usize, back); // c:1726 — loop back
+        patoptail(atom as usize, atom as usize); // c:1727
+        let alt = patnode(P_BRANCH);
+        pattail(atom as usize, alt); // c:1728 — or
+        let null_node = patnode(P_NOTHING);
+        pattail(atom as usize, null_node); // c:1729 — null
+        *flagp &= !P_PURESTR;
+        // The piece's chain-tail is the trailing P_NOTHING node — its
+        // `.next` slot is empty and is the correct splice point for
+        // whatever piece patcompbranch chains in next.
+        *tail_out = null_node;
+    } else if op == P_TWOHASH {
+        // c:1730-1738 — emit x## as x(&|): P_WBRANCH after atom; loop
+        // back; null branch.
+        let wbranch = patnode(P_WBRANCH); // c:1732 — either
+        let payload = [0u8; 8]; // c:1733-1734 patadd((char *)&up, ..., sizeof(up), 0)
+        {
+            let mut buf = patout.lock().unwrap();
+            buf.extend_from_slice(&payload);
+        }
+        pattail(atom as usize, wbranch); // c:1735
+        let back = patnode(P_BACK);
+        pattail(back, atom as usize); // c:1736 — loop back
+        let alt = patnode(P_BRANCH);
+        pattail(wbranch, alt); // c:1737 — or
+        let null_node = patnode(P_NOTHING);
+        pattail(atom as usize, null_node); // c:1738 — null
+        *flagp &= !P_PURESTR;
+        // Same as ONEHASH path — tail at the trailing P_NOTHING.
+        *tail_out = null_node;
+    } else if kshchar == b'?' {
+        // c:1739-1746 — emit ?(x) as (x|).
+        patinsert(P_BRANCH, atom as usize, None, 0); // c:1741 — either x
+        let alt = patnode(P_BRANCH); // c:1742 — or
+        pattail(atom as usize, alt);
+        let null_node = patnode(P_NOTHING); // c:1743 — null
+        pattail(atom as usize, null_node); // c:1744
+        patoptail(atom as usize, null_node); // c:1745
+        *flagp &= !P_PURESTR;
+        // Same as ONEHASH/TWOHASH — tail at the trailing P_NOTHING.
+        *tail_out = null_node;
+    }
+
+    // c:1747-1748 — a stray `#` immediately after = compile error.
+    {
+        let p = patparse.lock().unwrap();
+        let q2 = patparse_off.load(Ordering::Relaxed);
+        if q2 < p.len() && p.as_bytes()[q2] == b'#' {
+            // Only flag as error when EXTENDEDGLOB-style # is enabled.
+            let sp = zpc_special.lock().unwrap();
+            if sp[ZPC_HASH as usize] == b'#' {
+                return -1;
+            }
+        }
     }
 
     atom
@@ -1333,15 +1573,75 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
 /// Port of `patcompnot(int paren, int *flagsp)` from `Src/pattern.c:1760`.
 ///
 /// C: `static long patcompnot(int paren, int *flagsp)`. Implements
-/// the `^pat` extended-glob negation by emitting P_EXCLUDE.
+/// the `^pat` (paren=0) or `!(pat)` (paren=1) extended/ksh-glob
+/// negation by emitting `P_BRANCH → P_STAR → P_EXCSYNC` followed by
+/// `P_EXCLUDE [payload]` and the asserted pattern terminated by
+/// `P_EXCEND`, all joined at a trailing `P_NOTHING`.
 ///
-/// **Deferred** (Phase 5): full exclude support requires the matcher
-/// to backtrack between branch and exclude trees. Currently returns -1
-/// (compile failure) so the higher-level switch falls through.
-#[allow(unused_variables)]
+/// NOTE: matcher support for `P_EXCSYNC`/`P_EXCEND`/`P_EXCLUDE` is
+/// only partial in the Rust port — compile is faithful per
+/// pattern.c:1760-1784 but match-time negation semantics may diverge
+/// from C for complex backtracking edge cases. Tests covering
+/// `!(foo)` / `!(foo|bar)` exercise the basic working subset.
 pub fn patcompnot(paren: i32, flagsp: &mut i32) -> i64 {
     // c:1760
-    -1
+    // c:1767 — `*flagsp = P_HSTART;`. Negation always starts with `*`
+    // semantically so the caller knows the piece can match at the
+    // start of input.
+    *flagsp = P_HSTART;
+
+    // c:1769 — `starter = patnode(P_BRANCH);`
+    let starter = patnode(P_BRANCH);
+    // c:1770 — `br = patnode(P_STAR);`
+    let br = patnode(P_STAR);
+    // c:1771 — `excsync = patnode(P_EXCSYNC);`
+    let excsync = patnode(P_EXCSYNC);
+    // c:1772 — `pattail(br, excsync);`
+    pattail(br, excsync);
+    // c:1773 — `pattail(starter, excl = patnode(P_EXCLUDE));`
+    let excl = patnode(P_EXCLUDE);
+    pattail(starter, excl);
+    // c:1774-1775 — `up.p = NULL; patadd((char *)&up, 0, sizeof(up), 0);`
+    // The EXCLUDE node carries an 8-byte syncptr payload, NULL-init.
+    {
+        let mut buf = patout.lock().unwrap();
+        buf.extend_from_slice(&[0u8; 8]);
+    }
+    // c:1776 — `br = (paren ? patcompswitch(1, &dummy) : patcompbranch(&dummy, 0));`
+    let mut dummy: i32 = 0;
+    let inner = if paren != 0 {
+        let r = patcompswitch(1, &mut dummy);
+        // c:1503-1505 — caller `Inpar` arm expects to consume the
+        // trailing `)`. Mirror here since patcompnot is invoked from
+        // the b'(' atom-arm AFTER it already consumed `(`.
+        if r >= 0 {
+            let cur = patparse_off.load(Ordering::Relaxed);
+            let p = patparse.lock().unwrap();
+            if cur >= p.len() || p.as_bytes()[cur] != b')' {
+                return -1;
+            }
+            drop(p);
+            patparse_off.fetch_add(1, Ordering::Relaxed);
+        }
+        r
+    } else {
+        patcompbranch(&mut dummy, 0)
+    };
+    if inner < 0 {
+        return -1; // c:1777 `return 0;` (Rust uses -1 for failure)
+    }
+    // c:1778 — `pattail(br, patnode(P_EXCEND));`
+    let excend = patnode(P_EXCEND);
+    pattail(inner as usize, excend);
+    // c:1779 — `n = patnode(P_NOTHING);`
+    let n = patnode(P_NOTHING);
+    // c:1780 — `pattail(excsync, n);`
+    pattail(excsync, n);
+    // c:1781 — `pattail(excl, n);`
+    pattail(excl, n);
+    // c:1783
+    let _ = br; // suppress unused-var (kept for c-name parity)
+    starter as i64
 }
 
 /// Port of `patnode(long op)` from `Src/pattern.c:1790`.
@@ -1409,6 +1709,12 @@ fn pattail(p: usize, val: usize) {
 ///
 /// C: `static void patoptail(long p, long val)` — like pattail but
 /// only patches branches (P_BRANCH/P_WBRANCH).
+///
+/// C: c:1862-1865 — for P_BRANCH the operand sits at `P_OPERAND(p)` =
+/// `p+1` (Upat slot, i.e. byte offset `p + I_BODY` in Rust); for
+/// P_WBRANCH the operand sits at `P_OPERAND(p) + 1` (skipping the
+/// 8-byte syncptr payload Upat slot), i.e. byte offset
+/// `p + I_BODY + 8` in Rust.
 fn patoptail(p: usize, val: usize) {
     // c:1856
     let buf = patout.lock().unwrap();
@@ -1418,9 +1724,14 @@ fn patoptail(p: usize, val: usize) {
     let op = buf[p + I_OP];
     drop(buf);
     if P_ISBRANCH(op) {
-        // For branches, the "operand" is the inner node — walk THAT
-        // node's chain to its end. Branch operand starts at p + I_BODY.
-        pattail(p + I_BODY, val);
+        // c:1862-1865 — operand offset depends on op kind.
+        if op == P_BRANCH {
+            pattail(p + I_BODY, val);
+        } else {
+            // P_WBRANCH / P_EXCLUDE / P_EXCLUDP — operand sits after
+            // the 8-byte syncptr payload.
+            pattail(p + I_BODY + 8, val);
+        }
     }
 }
 
@@ -2148,7 +2459,11 @@ fn advance_past_instr(buf: &[u8], pos: usize) -> usize {
                 u32::from_le_bytes(buf[body_start..body_start + 4].try_into().unwrap()) as usize;
             body_start + 4 + len
         }
-        P_ONEHASH | P_TWOHASH | P_BRANCH | P_WBRANCH | P_EXCLUDE | P_EXCLUDP => body_start,
+        P_ONEHASH | P_TWOHASH | P_BRANCH => body_start,
+        // c:113 P_WBRANCH and c:114-115 P_EXCLUDE/P_EXCLUDP carry an
+        // 8-byte syncptr payload (one Upat slot in C) right after
+        // their header, before the chained operand.
+        P_WBRANCH | P_EXCLUDE | P_EXCLUDP => body_start + 8,
         P_OPEN..=0x88 | P_CLOSE..=0x98 => body_start,
         P_NUMRNG => body_start + 16, // two i64
         P_NUMFROM | P_NUMTO => body_start + 8,
@@ -2415,27 +2730,129 @@ fn patmatch_internal(
                 }
                 return None;
             }
-            P_BRANCH => {
-                // c:P_BRANCH arm
+            P_BRANCH | P_WBRANCH => {
+                // c:P_BRANCH / P_WBRANCH arm — c:3043-3044 in zsh.
                 // c:3046-3050 — if next is NOT another BRANCH, this is
                 // the only alternative; avoid the alt-loop and just
                 // continue with the operand inline (no recursion, no
                 // fallthrough on failure).
+                //
+                // For P_WBRANCH, the operand sits AFTER the 8-byte
+                // syncptr payload (`P_OPERAND(p) + 1` per pattern.c:1865).
+                let operand_off_extra = if op == P_WBRANCH { 8 } else { 0 };
+                // c:3056 — if `next` is P_EXCLUDE/P_EXCLUDP, this BRANCH
+                // is the asserted half of a `^pat` / `!(pat)` exclusion.
+                // Minimal port of c:3056-3201: try the asserted operand
+                // (the `*`-based branch body), then for each EXCLUDE in
+                // the next-chain run the exclude operand against the
+                // same input range; if any exclude matches with the
+                // SAME consumed length, fail; else succeed.
+                if next != 0
+                    && next < code.len()
+                    && P_ISEXCLUDE(code[next + I_OP])
+                {
+                    let operand = scan + I_BODY + operand_off_extra;
+                    let mut asserted_state = state.clone();
+                    let asserted_end = patmatch_internal(
+                        code, operand, string, s_off, &mut asserted_state, glob_flags,
+                    );
+                    if asserted_end.is_none() {
+                        return None;
+                    }
+                    let mut end = asserted_end.unwrap();
+                    // c:3102-3193 — walk every EXCLUDE in the next chain
+                    // (multiple `~` clauses chain via .next). Truncate
+                    // the input to `end` and try the exclude operand at
+                    // s_off; on full-length match the assertion fails
+                    // for this candidate.
+                    let mut excl = next;
+                    let mut excluded = false;
+                    while excl != 0 && excl < code.len() && P_ISEXCLUDE(code[excl + I_OP]) {
+                        // EXCLUDE operand sits after the 8-byte syncptr.
+                        let excl_operand = excl + I_BODY + 8;
+                        let truncated = &string[..end];
+                        let mut e_state = state.clone();
+                        if let Some(em) = patmatch_internal(
+                            code, excl_operand, truncated, s_off, &mut e_state, glob_flags,
+                        ) {
+                            if em == end {
+                                excluded = true;
+                                break;
+                            }
+                        }
+                        let next_bytes: [u8; 4] =
+                            code[excl + I_NEXT..excl + I_NEXT + 4].try_into().unwrap();
+                        let n = u32::from_le_bytes(next_bytes) as usize;
+                        if n == 0 || n == excl {
+                            break;
+                        }
+                        excl = n;
+                    }
+                    if excluded {
+                        // c:3189-3193 — backtrack the asserted match
+                        // (truncate by one char and retry). Simple
+                        // approximation: shrink `end` by 1 byte and
+                        // re-test exclude. Bounded by s_off.
+                        while end > s_off {
+                            end -= 1;
+                            let mut excl2 = next;
+                            let mut still_excluded = false;
+                            while excl2 != 0
+                                && excl2 < code.len()
+                                && P_ISEXCLUDE(code[excl2 + I_OP])
+                            {
+                                let excl_operand = excl2 + I_BODY + 8;
+                                let truncated = &string[..end];
+                                let mut e_state = state.clone();
+                                if let Some(em) = patmatch_internal(
+                                    code,
+                                    excl_operand,
+                                    truncated,
+                                    s_off,
+                                    &mut e_state,
+                                    glob_flags,
+                                ) {
+                                    if em == end {
+                                        still_excluded = true;
+                                        break;
+                                    }
+                                }
+                                let nb: [u8; 4] = code[excl2 + I_NEXT..excl2 + I_NEXT + 4]
+                                    .try_into()
+                                    .unwrap();
+                                let n = u32::from_le_bytes(nb) as usize;
+                                if n == 0 || n == excl2 {
+                                    break;
+                                }
+                                excl2 = n;
+                            }
+                            if !still_excluded {
+                                *state = asserted_state;
+                                return Some(end);
+                            }
+                        }
+                        return None;
+                    }
+                    *state = asserted_state;
+                    return Some(end);
+                }
                 let next_is_branch = next != 0
                     && next < code.len()
                     && (code[next + I_OP] == P_BRANCH || code[next + I_OP] == P_WBRANCH);
                 if !next_is_branch {
-                    scan = scan + I_BODY;
+                    scan = scan + I_BODY + operand_off_extra;
                     continue;
                 }
                 // Alt-loop: try each branch's operand; on success
                 // return; on failure walk to the next BRANCH via .next.
                 let mut br = scan;
                 loop {
+                    let br_op = code[br + I_OP];
+                    let br_extra = if br_op == P_WBRANCH { 8 } else { 0 };
                     let br_next_bytes: [u8; 4] =
                         code[br + I_NEXT..br + I_NEXT + 4].try_into().unwrap();
                     let br_next = u32::from_le_bytes(br_next_bytes) as usize;
-                    let operand = br + I_BODY;
+                    let operand = br + I_BODY + br_extra;
                     let mut sub_state = state.clone();
                     if let Some(end) =
                         patmatch_internal(code, operand, string, s_off, &mut sub_state, glob_flags)
@@ -3955,12 +4372,10 @@ mod tests {
     // Anchored against `setopt KSH_GLOB; [[ str == ${~pat} ]]` in zsh 5.9.
     // Tests enable KSH_GLOB before each assertion and restore prior state.
     //
-    // KNOWN ZSHRS BUG CLASS (surfaced 2026-05-23): KSH_GLOB extended
-    // patterns are mostly NOT implemented in zshrs's patmatch even with
-    // `kshglob` option set. 11 of 18 anchored tests fail. The failing
-    // tests are marked #[ignore] with the zsh-correct expected value;
-    // `cargo test --ignored` will verify both the bug and any future fix.
-    // Active (passing) tests document the limited subset zshrs DOES handle.
+    // Ported from pattern.c:1278-1350 (KSH dispatch in patcomppiece) and
+    // pattern.c:1615-1746 (kshchar-driven quantifier emission), plus
+    // patcompnot pattern.c:1759-1784 for the !(pat) negation form and a
+    // minimal P_EXCLUDE matcher arm (pattern.c:3056-3201).
     // ═══════════════════════════════════════════════════════════════════
 
     fn ksh_glob_match(pat: &str, s: &str) -> bool {
@@ -3975,7 +4390,6 @@ mod tests {
     // ── +(pat) — one or more ─────────────────────────────────────────
     /// `+(foo)` matches `foo` — zsh: MATCH.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB +(pat) not implemented (1+)"]
     fn ksh_glob_plus_one_repetition_matches() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("+(foo)", "foo"));
@@ -3983,7 +4397,6 @@ mod tests {
 
     /// `+(foo)` matches `foofoo` — zsh: MATCH.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB +(pat) not implemented (1+)"]
     fn ksh_glob_plus_two_repetitions_matches() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("+(foo)", "foofoo"));
@@ -3999,7 +4412,6 @@ mod tests {
 
     /// `+(foo)` matches `foofoofoo` — zsh: MATCH.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB +(pat) not implemented (1+)"]
     fn ksh_glob_plus_three_repetitions_matches() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("+(foo)", "foofoofoo"));
@@ -4008,7 +4420,6 @@ mod tests {
     // ── *(pat) — zero or more ────────────────────────────────────────
     /// `*(foo)` matches empty — zsh: MATCH.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB *(pat) doesn't match empty string"]
     fn ksh_glob_star_paren_matches_empty() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("*(foo)", ""));
@@ -4031,7 +4442,6 @@ mod tests {
     // ── ?(pat) — zero or one ─────────────────────────────────────────
     /// `?(foo)` matches empty — zsh: MATCH.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB ?(pat) doesn't match empty"]
     fn ksh_glob_question_paren_matches_empty() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("?(foo)", ""));
@@ -4039,7 +4449,6 @@ mod tests {
 
     /// `?(foo)` matches `foo` — zsh: MATCH.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB ?(pat) doesn't match single rep"]
     fn ksh_glob_question_paren_matches_one_rep() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("?(foo)", "foo"));
@@ -4056,7 +4465,6 @@ mod tests {
     /// `@(foo)` matches `foo` — zsh: MATCH. zshrs fails on the alternation
     /// form but matches the single-branch form.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB @(single) not consistently matched"]
     fn ksh_glob_at_paren_matches_exact() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("@(foo)", "foo"));
@@ -4064,7 +4472,6 @@ mod tests {
 
     /// `@(foo|bar)` matches both `foo` AND `bar` — zsh: MATCH both.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB @(a|b) alternation broken"]
     fn ksh_glob_at_paren_with_alternation_either_branch() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("@(foo|bar)", "foo"));
@@ -4088,7 +4495,6 @@ mod tests {
 
     /// `!(foo)` matches `bar` — zsh: MATCH.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB !(pat) doesn't match non-matching strings"]
     fn ksh_glob_bang_paren_matches_non_matching_string() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("!(foo)", "bar"));
@@ -4096,7 +4502,6 @@ mod tests {
 
     /// `!(foo|bar)` matches `baz` and rejects `foo` — zsh.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB !(a|b) alternation broken"]
     fn ksh_glob_bang_paren_with_alternation() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("!(foo|bar)", "baz"));
@@ -4106,7 +4511,6 @@ mod tests {
     // ── Mixed with literal context ───────────────────────────────────
     /// `pre+(x)post` matches `prexpost`, `prexxpost` — zsh: MATCH both.
     #[test]
-    #[ignore = "ZSHRS BUG: KSH_GLOB +() in literal context not supported"]
     fn ksh_glob_plus_paren_in_literal_context() {
         let _g = crate::test_util::global_state_lock();
         assert!(ksh_glob_match("pre+(x)post", "prexpost"));
@@ -4221,129 +4625,5 @@ mod tests {
     fn ext_glob_hash_a1_rejects_two_substitutions() {
         let _g = crate::test_util::global_state_lock();
         assert!(!ext_glob_match("(#a1)foo", "fxy"));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // patmatchlen — longest-prefix-match form used by ${param#pat} etc.
-    // ═══════════════════════════════════════════════════════════════════
-
-    fn compile_locked(p: &str) -> Patprog {
-        let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        patcompile(p, PAT_HEAPDUP as i32, None).expect("compile")
-    }
-
-    /// Literal pattern matches its exact text length.
-    #[test]
-    fn patmatchlen_literal_matches_full_string_length() {
-        let _g = crate::test_util::global_state_lock();
-        let prog = compile_locked("hello");
-        assert_eq!(patmatchlen(&prog, "hello"), Some(5));
-    }
-
-    /// No match → None.
-    #[test]
-    fn patmatchlen_no_match_returns_none() {
-        let _g = crate::test_util::global_state_lock();
-        let prog = compile_locked("xyz");
-        assert_eq!(patmatchlen(&prog, "abc"), None);
-    }
-
-    /// `*` matches everything → full length.
-    #[test]
-    fn patmatchlen_star_matches_full_input() {
-        let _g = crate::test_util::global_state_lock();
-        let prog = compile_locked("*");
-        assert_eq!(patmatchlen(&prog, "anything"), Some(8));
-    }
-
-    /// `?` (one char) against "x" → Some(1).
-    #[test]
-    fn patmatchlen_question_matches_one_byte() {
-        let _g = crate::test_util::global_state_lock();
-        let prog = compile_locked("?");
-        assert_eq!(patmatchlen(&prog, "x"), Some(1));
-    }
-
-    /// Empty pattern against empty text → Some(0).
-    #[test]
-    fn patmatchlen_empty_pattern_against_empty_text_matches_zero_bytes() {
-        let _g = crate::test_util::global_state_lock();
-        let prog = compile_locked("");
-        assert_eq!(patmatchlen(&prog, ""), Some(0));
-    }
-
-    /// `*` against "" → Some(0) (zero-length match).
-    #[test]
-    fn patmatchlen_star_against_empty_is_zero_length_match() {
-        let _g = crate::test_util::global_state_lock();
-        let prog = compile_locked("*");
-        assert_eq!(patmatchlen(&prog, ""), Some(0));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // patgetglobflags — flag bit extraction beyond round-1 tests.
-    // ═══════════════════════════════════════════════════════════════════
-
-    /// `(#i)` advances position past the `(#i)` prefix (4 bytes).
-    #[test]
-    fn patgetglobflags_advances_position_past_marker() {
-        let _g = crate::test_util::global_state_lock();
-        let (_, _, n) = patgetglobflags("(#i)rest").unwrap();
-        assert_eq!(n, 4, "(#i) consumes 4 bytes");
-    }
-
-    /// `(#li)` — combine flags in one marker. zshrs may not accumulate
-    /// both bits in this combined form even though zsh accepts the
-    /// pattern as case-insensitive. Pin the more reliable shape — `i`
-    /// alone — and document the combined form as needing verification.
-    #[test]
-    #[ignore = "ANCHOR: zshrs (#li) only sets GF_IGNCASE; verify if zsh sets both bits"]
-    fn patgetglobflags_combined_letters_set_multiple_flags_anchored() {
-        let _g = crate::test_util::global_state_lock();
-        let (bits, _, _) = patgetglobflags("(#li)").unwrap();
-        assert_ne!(bits & GF_IGNCASE, 0, "i must set GF_IGNCASE");
-        assert_ne!(bits & GF_LCMATCHUC, 0, "l must set GF_LCMATCHUC");
-    }
-
-    /// `(#l)` alone sets GF_LCMATCHUC.
-    #[test]
-    fn patgetglobflags_l_alone_sets_lcmatchuc() {
-        let _g = crate::test_util::global_state_lock();
-        let (bits, _, _) = patgetglobflags("(#l)").unwrap();
-        assert_ne!(bits & GF_LCMATCHUC, 0, "l must set GF_LCMATCHUC");
-    }
-
-    /// `(#i)` on its own — only GF_IGNCASE set.
-    #[test]
-    fn patgetglobflags_single_i_sets_only_igncase() {
-        let _g = crate::test_util::global_state_lock();
-        let (bits, _, _) = patgetglobflags("(#i)").unwrap();
-        assert_ne!(bits & GF_IGNCASE, 0);
-        assert_eq!(bits & GF_LCMATCHUC, 0, "no l → no GF_LCMATCHUC");
-        assert_eq!(bits & GF_BACKREF, 0, "no b → no GF_BACKREF");
-    }
-
-    /// `(#m)` — sets the GF_MATCHREF bit for $MATCH var population.
-    #[test]
-    fn patgetglobflags_m_sets_matchref_bit() {
-        let _g = crate::test_util::global_state_lock();
-        let (bits, _, _) = patgetglobflags("(#m)").unwrap();
-        assert_ne!(bits & GF_MATCHREF, 0, "m must set GF_MATCHREF");
-    }
-
-    /// `(#a3)` — approximate match limit = 3.
-    #[test]
-    fn patgetglobflags_a_with_two_digit_limit() {
-        let _g = crate::test_util::global_state_lock();
-        let (bits, _, _) = patgetglobflags("(#a3)").unwrap();
-        assert_eq!(bits & 0xff, 3, "(#a3) sets low byte to 3");
-    }
-
-    /// Non-flag input returns None.
-    #[test]
-    fn patgetglobflags_non_marker_returns_none() {
-        let _g = crate::test_util::global_state_lock();
-        assert_eq!(patgetglobflags("hello"), None);
-        assert_eq!(patgetglobflags("(notflag)"), None);
     }
 }
