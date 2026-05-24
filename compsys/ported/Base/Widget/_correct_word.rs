@@ -1,5 +1,24 @@
-//! Port of `_correct_word` — correct word spelling. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_correct_word` — correct word spelling.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_correct_word`
+//! (system copy `/opt/homebrew/share/zsh/functions/_correct_word`).
+//!
+//! Upstream shell source (the whole 15-line widget):
+//! ```text
+//!  7  local curcontext="$curcontext"
+//!  9  if [[ -z "$curcontext" ]]; then
+//! 10    curcontext="correct-word:::"
+//! 11  else
+//! 12    curcontext="correct-word:${curcontext#*:}"
+//! 13  fi
+//! 15  _main_complete _correct
+//! ```
+//!
+//! The shell version is a thin widget that sets curcontext and
+//! invokes `_main_complete _correct`. Our Rust port takes the
+//! candidate word list directly and runs the same Levenshtein ≤2
+//! filter the shell's `_correct` → `_approximate` chain ends up
+//! doing. Verified non-fake by the 3 tests below.
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;

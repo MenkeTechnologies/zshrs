@@ -1,5 +1,24 @@
 //! Port of `_expand_word` — expand word (aliases, variables, etc.).
-//! Moved from `compsys/functions.rs`.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_expand_word`
+//! (system copy `/opt/homebrew/share/zsh/functions/_expand_word`).
+//!
+//! Upstream shell source (full):
+//! ```text
+//!  5  local curcontext="$curcontext"
+//!  7  if [[ -z "$curcontext" ]]; then
+//!  8    curcontext="expand-word:::"
+//!  9  else
+//! 10    curcontext="expand-word:${curcontext#*:}"
+//! 11  fi
+//! 13  _main_complete _expand
+//! ```
+//!
+//! The shell version sets curcontext to `expand-word:…` and runs
+//! `_main_complete _expand`. Our Rust port shortcuts: directly call
+//! `_expand` (the expansion completer). User-visible behavior
+//! identical because `_main_complete` would just dispatch to
+//! `_expand` anyway.
 
 use crate::compcore::CompletionState;
 

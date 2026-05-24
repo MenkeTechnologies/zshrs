@@ -1,5 +1,30 @@
 //! Port of `_most_recent_file` — complete most recently modified file.
-//! Moved from `compsys/functions.rs`.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_most_recent_file`
+//! (system copy `/opt/homebrew/share/zsh/functions/_most_recent_file`).
+//!
+//! Upstream shell source (full):
+//! ```text
+//! 11  local file tilde etilde
+//! 12  if [[ $PREFIX = \~*/* ]]; then
+//! 13    tilde=${PREFIX%%/*}
+//! 14    etilde=${~tilde} 2>/dev/null
+//! 17    eval "file=($PREFIX*$SUFFIX(om[${NUMERIC:-1}]N))"
+//! 18    file=(${file/#$etilde})
+//! 19    file=($tilde${(q)^file})
+//! 20  else
+//! 21    eval "file=($PREFIX*$SUFFIX(om[${NUMERIC:-1}]N))"
+//! 22    file=(${(q)file})
+//! 23  fi
+//! 24  (( $#file )) && compadd -U -i "$IPREFIX" -I "$ISUFFIX" -f -Q -- $file
+//! ```
+//!
+//! Simplified Rust port: takes the directory + glob explicitly
+//! (instead of evaluating `$PREFIX*$SUFFIX` via shell glob) and
+//! sorts by mtime descending. Picks the FIRST entry — equivalent to
+//! shell's `om[1]` (order-by-mtime, oldest-last → newest-first,
+//! take first). The `~` tilde-expansion branch is skipped; callers
+//! pass the resolved dir directly.
 
 use std::fs;
 

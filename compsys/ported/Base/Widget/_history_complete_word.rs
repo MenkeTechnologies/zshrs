@@ -1,5 +1,25 @@
 //! Port of `_history_complete_word` — complete word from history.
-//! Moved from `compsys/functions.rs`.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_history_complete_word`
+//! (system copy `/opt/homebrew/share/zsh/functions/_history_complete_word`).
+//!
+//! Upstream shell source (header — full impl is ~100 lines):
+//! ```text
+//!  1  #compdef -K _history-complete-older complete-word \e/ \
+//!                _history-complete-newer complete-word \e,
+//! 17  _history_complete_word () {
+//! 18    eval "$_comp_setup"
+//! 20    local expl direction stop curcontext="$curcontext"
+//! ```
+//!
+//! The upstream version honors styles like `range`, `sort`, `stop`,
+//! `list`, `remove-all-dups` and walks the global $history array
+//! with cycling/wrap semantics.
+//!
+//! Simplified Rust port: takes the history array directly and walks
+//! forward/backward by `direction` (-1 = backward, 1 = forward),
+//! returning the first matching word that is NOT identical to the
+//! current prefix (matches shell's `word != prefix` filter).
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;

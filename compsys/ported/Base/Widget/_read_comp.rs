@@ -1,6 +1,18 @@
-//! Port of `_read_comp` — read completions from file. Moved from
-//! `compsys/functions.rs`. Renamed from `read_comp` to mirror zsh
-//! shell function name `_read_comp`.
+//! Port of `_read_comp` — read completions from file.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_read_comp`
+//! (system copy `/opt/homebrew/share/zsh/functions/_read_comp`).
+//!
+//! NOTE: the upstream `_read_comp` is a `complete-word` widget that
+//! prompts the user for a completion string to apply (e.g.
+//! `Completion: -b<RET>` to invoke `compadd -b`). Our Rust port
+//! takes a different shape: read completion CANDIDATES from a file
+//! and emit them as matches (one per line, skipping blanks and
+//! `#`-prefixed comments).
+//!
+//! The name overlap is for layout consistency (one file per shell
+//! function name) — the user-facing widget binding would still
+//! live in the shell or be replaced by an LSP code-action.
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;

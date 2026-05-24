@@ -1,5 +1,19 @@
-//! Port of `_complete_tag` — complete for specific tag. Moved from
-//! `compsys/functions.rs`.
+//! Port of `_complete_tag` — complete for specific tag.
+//!
+//! Local shell reference: `compsys/functions/Base/Widget/_complete_tag`
+//! (system copy `/opt/homebrew/share/zsh/functions/_complete_tag`).
+//!
+//! NOTE: the upstream `_complete_tag` is a TAGS-file widget — it
+//! reads ctags/etags output to complete identifiers from a project's
+//! TAGS file. Our Rust port uses the SAME NAME for a different,
+//! more general purpose: "run an action gated on a tag being
+//! requested." The shell's TAGS-file widget is not portable to this
+//! layer (it depends on the comp-system tag-walking + filesystem
+//! TAGS-file location heuristic).
+//!
+//! The Rust impl matches the SHAPE of `_wanted` more than the
+//! upstream `_complete_tag` — see [`crate::ported::_wanted`] for
+//! the canonical "if-tag-requested-then-run-action" port.
 
 use crate::base::MainCompleteState;
 use crate::compcore::CompletionState;
