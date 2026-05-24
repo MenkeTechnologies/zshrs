@@ -11,6 +11,7 @@ pub mod call_program;
 pub mod command_names;
 pub mod completers;
 pub mod dir_list;
+pub mod sequence;
 pub(crate) mod shared;
 pub mod widgets;
 
@@ -18,4 +19,5 @@ pub use call_program::{call_program, CallProgramOpts, CallProgramResult};
 pub use command_names::{command_names, command_names_with_ctx, ShellInventory};
 pub use completers::{completers, CANONICAL_COMPLETER_NAMES};
 pub use dir_list::{dir_list, DirListOpts};
+pub use sequence::{sequence, SequenceOpts};
 pub use widgets::widgets;
