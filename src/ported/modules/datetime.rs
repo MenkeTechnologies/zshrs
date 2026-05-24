@@ -686,4 +686,84 @@ mod tests {
         assert_eq!(enables_(m, &mut enables), 0);
         assert!(enables.is_some(), "enables must be Some after enables_");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // getcurrentsecs / getcurrentrealtime / getcurrenttime — back the
+    // $EPOCHSECONDS / $EPOCHREALTIME / $epochtime parameters. Test that
+    // they return monotonic / sane values and the right structure.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// getcurrentsecs returns a positive epoch time (after year 2020).
+    #[test]
+    fn getcurrentsecs_returns_post_2020_epoch() {
+        let _g = crate::test_util::global_state_lock();
+        let s = getcurrentsecs();
+        // Year 2020-01-01 = epoch 1577836800. Any current time is > this.
+        assert!(s > 1_577_836_800, "epoch must be after 2020-01-01; got {s}");
+        // And < year 2100 (4102444800) — sanity bound.
+        assert!(s < 4_102_444_800, "epoch must be before 2100-01-01; got {s}");
+    }
+
+    /// Two successive calls must be monotonically non-decreasing.
+    #[test]
+    fn getcurrentsecs_is_monotonic_non_decreasing() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getcurrentsecs();
+        let b = getcurrentsecs();
+        assert!(b >= a, "time went backwards: {a} → {b}");
+    }
+
+    /// getcurrentrealtime returns a positive f64 with sub-second precision.
+    #[test]
+    fn getcurrentrealtime_returns_positive_float() {
+        let _g = crate::test_util::global_state_lock();
+        let t = getcurrentrealtime();
+        assert!(t > 1_577_836_800.0, "realtime must be after 2020; got {t}");
+    }
+
+    /// getcurrentrealtime is close to getcurrentsecs (within 1 second).
+    #[test]
+    fn getcurrentrealtime_matches_getcurrentsecs_within_a_second() {
+        let _g = crate::test_util::global_state_lock();
+        let secs = getcurrentsecs() as f64;
+        let real = getcurrentrealtime();
+        let diff = (real - secs).abs();
+        assert!(diff < 2.0, "realtime/secs diverge by {diff} seconds");
+    }
+
+    /// getcurrenttime returns a 2-element array [secs, nanos].
+    #[test]
+    fn getcurrenttime_returns_two_element_array() {
+        let _g = crate::test_util::global_state_lock();
+        let arr = getcurrenttime();
+        assert_eq!(arr.len(), 2, "must be exactly 2 elements [secs, nanos]");
+    }
+
+    /// First element of getcurrenttime is the epoch seconds (parseable).
+    #[test]
+    fn getcurrenttime_first_element_is_parseable_epoch_seconds() {
+        let _g = crate::test_util::global_state_lock();
+        let arr = getcurrenttime();
+        let secs: i64 = arr[0].parse().expect("element 0 must be valid i64");
+        assert!(secs > 1_577_836_800, "secs must be post-2020");
+    }
+
+    /// Second element of getcurrenttime is nanoseconds (0..1_000_000_000).
+    #[test]
+    fn getcurrenttime_second_element_is_valid_nanoseconds() {
+        let _g = crate::test_util::global_state_lock();
+        let arr = getcurrenttime();
+        let nanos: i64 = arr[1].parse().expect("element 1 must be valid i64");
+        assert!(nanos >= 0, "nanos must be non-negative");
+        assert!(nanos < 1_000_000_000, "nanos must be < 1e9; got {nanos}");
+    }
+
+    /// Successive getcurrenttime calls have non-decreasing secs.
+    #[test]
+    fn getcurrenttime_monotonic_seconds() {
+        let _g = crate::test_util::global_state_lock();
+        let a: i64 = getcurrenttime()[0].parse().unwrap();
+        let b: i64 = getcurrenttime()[0].parse().unwrap();
+        assert!(b >= a, "time went backwards: {a} → {b}");
+    }
 }
