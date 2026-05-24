@@ -85,16 +85,23 @@ pub fn completecall(args: &[String]) -> i32 {
     docomplete(COMP_COMPLETE)
 }
 
-/// Port of `completeword(char **args)` from Src/Zle/zle_tricky.c:216.
+/// Port of `int completeword(char **args)` from
+/// `Src/Zle/zle_tricky.c:216`.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
 pub fn completeword() -> i32 {
     // c:216
     USEMENU.store(0, Ordering::SeqCst); // c:218
     USEGLOB.store(1, Ordering::SeqCst); // c:219
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:220
-                                            // c:221-222 — `if (lastchar == '\t' && usetab()) return selfinsert()`.
-                                            //              No live key state here; fall through to docomplete.
-    docomplete(COMP_COMPLETE).max(COMP_LIST_COMPLETE - COMP_LIST_COMPLETE)
+    // c:221-222 — `if (lastchar == '\t' && usetab()) return selfinsert(args)`.
+    // When TAB is pressed at line indent (only whitespace to BOL),
+    // insert a literal tab instead of completing.
+    let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
+    if lastch == b'\t' as i32 && usetab(&[b'\t']) != 0 {
+        // c:222 — `return selfinsert(args)`.
+        return crate::ported::zle::zle_misc::selfinsert();
+    }
+    docomplete(COMP_COMPLETE) // c:225
 }
 
 /// Port of `menucomplete(char **args)` from Src/Zle/zle_tricky.c:238.

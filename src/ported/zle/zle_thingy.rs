@@ -767,12 +767,7 @@ pub fn bin_zle_list(_name: &str, args: &[String], _ops: &options, _func: i32) ->
 /// zle_refresh.rs reading the file-scope ZLE statics. To keep this
 /// bin_zle_refresh path lightweight (and to drop work to the next
 /// zlecore tick when it's available), we set the `ZLE_RESET_NEEDED`
-/// flag instead of calling `zrefresh()` directly — same observable
-/// effect as the C direct call.
 /// Port of `bin_zle_refresh(UNUSED(char *name), char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:418`.
-/// Rust idiom replacement: arming `ZLE_RESET_NEEDED` flag covers
-/// the C direct `zrefresh()` call; the next zlecore tick picks it
-/// up — same observable behaviour without re-entering refresh here.
 pub fn bin_zle_refresh(_name: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:418
     // c:420-421 — `char *s = statusline; int ocl = clearlist;`. Save
