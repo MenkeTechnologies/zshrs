@@ -122,14 +122,17 @@ private class ZshrsReflectionPanel(private val project: Project) : SimpleToolWin
     }
 
     private fun prettyName(name: String): String = when (name) {
-        "builtins" -> "Builtins"
-        "keywords" -> "Keywords"
-        "options" -> "Options"
-        "parameters" -> "Parameters"
+        "all"          -> "All"
+        "builtins"     -> "Builtins"
+        "keywords"     -> "Keywords"
+        "options"      -> "Options"
+        "parameters"   -> "Parameters"
         "special_vars" -> "Special vars"
-        "param_flags" -> "Param flags"
-        "redirects" -> "Redirects"
-        "aliases" -> "Aliases"
+        "param_flags"  -> "Param flags"
+        "redirects"    -> "Redirects"
+        "aliases"      -> "Aliases"
+        "compsys"      -> "Compsys"
+        "extensions"   -> "Extensions"
         else -> name.replaceFirstChar { it.titlecase() }
     }
 
