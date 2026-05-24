@@ -17,6 +17,7 @@ class ZshrsColorSettingsPage : ColorSettingsPage {
         AttributesDescriptor("Strings//Command substitution backtick (`…`)", ZshrsColors.BACKTICK),
         AttributesDescriptor("Strings//Heredoc", ZshrsColors.HEREDOC),
         AttributesDescriptor("Strings//String escape", ZshrsColors.STRING_ESCAPE),
+        AttributesDescriptor("Strings//Printf format specifier (%d %s %10.2f)", ZshrsColors.STRING_FORMAT),
         AttributesDescriptor("Numbers//Integer / float", ZshrsColors.NUMBER),
 
         AttributesDescriptor("Keywords//Keyword (generic)", ZshrsColors.KEYWORD),

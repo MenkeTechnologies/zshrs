@@ -203,6 +203,54 @@ class ZshrsLexerTest {
         assertEquals("\"hello world\"", strings.joinToString("") { it.second })
     }
 
+    @Test fun `printf format specs in dq string emit STRING_FORMAT tokens`() {
+        // Mirror of strykelang's STRING_FORMAT handling. Inside a
+        // `"..."` body, each `%d` / `%s` / `%10.2f` / `%%` etc gets
+        // its OWN token type so the IDE can color it distinctly
+        // from the surrounding literal text.
+        val toks = nonWs("printf \"%d %s %10.2f\\n\" 42 hi 3.14")
+        val formats = toks.filter { it.first == ZshrsTokenTypes.STRING_FORMAT }
+        val labels = formats.map { it.second }
+        assertTrue(
+            "expected %d in format tokens: $labels",
+            labels.any { it == "%d" },
+        )
+        assertTrue(
+            "expected %s in format tokens: $labels",
+            labels.any { it == "%s" },
+        )
+        assertTrue(
+            "expected %10.2f in format tokens: $labels",
+            labels.any { it == "%10.2f" },
+        )
+    }
+
+    @Test fun `double-percent emits one STRING_FORMAT token`() {
+        // `%%` is the printf literal-percent escape. Highlight as a
+        // single format token (2 chars) so it stands out from prose.
+        val toks = nonWs("printf \"50%% done\"")
+        val formats = toks.filter { it.first == ZshrsTokenTypes.STRING_FORMAT }
+        assertEquals(
+            "expected one %% token, got ${formats.map { it.second }}",
+            1,
+            formats.size,
+        )
+        assertEquals("%%", formats[0].second)
+    }
+
+    @Test fun `percent followed by non-conv-char is literal not a format spec`() {
+        // `%` followed by chars that can never end in a conversion
+        // letter is literal text. Use `%!` — `!` is not a flag/length/
+        // conv char so printfFormatLen returns 0.
+        val toks = nonWs("echo \"go %! away\"")
+        val formats = toks.filter { it.first == ZshrsTokenTypes.STRING_FORMAT }
+        assertEquals(
+            "lone % followed by `!` should NOT be a format spec: ${formats.map { it.second }}",
+            0,
+            formats.size,
+        )
+    }
+
     @Test fun `double-quoted string with dollar var splits into segments`() {
         // Regression: `"hello $foo world"` used to lex as a single
         // STRING_DQ token, which made `ZshrsQuoteHandler.isInsideLiteral`

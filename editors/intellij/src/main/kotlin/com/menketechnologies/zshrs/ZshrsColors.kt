@@ -20,6 +20,12 @@ object ZshrsColors {
     @JvmField val BACKTICK = mk("ZSHRS_BACKTICK", Defaults.STRING)
     @JvmField val HEREDOC = mk("ZSHRS_HEREDOC", Defaults.STRING)
     @JvmField val STRING_ESCAPE = mk("ZSHRS_STRING_ESCAPE", Defaults.VALID_STRING_ESCAPE)
+    /// Printf-style format spec inside a dq-string — `%d` / `%s` /
+    /// `%10.2f` / `%-15s` / `%%`. Colored distinctly from the
+    /// surrounding string literal so `printf "%d %s\n" 42 hi` shows
+    /// the format placeholders standing out from the prose. Mirrors
+    /// strykelang's STRING_FORMAT color slot.
+    @JvmField val STRING_FORMAT = mk("ZSHRS_STRING_FORMAT", Defaults.VALID_STRING_ESCAPE)
     @JvmField val NUMBER = mk("ZSHRS_NUMBER", Defaults.NUMBER)
 
     @JvmField val KEYWORD = mk("ZSHRS_KEYWORD", Defaults.KEYWORD)

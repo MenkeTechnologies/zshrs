@@ -45,6 +45,12 @@ class ZshrsLexer : LexerBase() {
     // grammar, not string content); resuming string-content mode too
     // early would treat `HOME:-/tmp}y"` as a single string segment.
     private var pendingStringResumeState = STATE_NORMAL
+    /// When STATE_DQ_FORMAT / STATE_BT_FORMAT is set, this is the
+    /// pre-computed byte length of the printf format spec starting
+    /// at the current pos. The next advance() emits exactly that
+    /// many chars as STRING_FORMAT, then flips back to the
+    /// matching string-resume state.
+    private var pendingFormatLen = 0
 
     override fun start(buffer: CharSequence, startOffset: Int, endOffset: Int, initialState: Int) {
         buf = buffer
@@ -86,6 +92,28 @@ class ZshrsLexer : LexerBase() {
             STATE_DQ_RESUME -> { state = STATE_NORMAL; consumeStringContent('"', ZshrsTokenTypes.STRING_DQ); return }
             STATE_BT_INTERP -> { consumeStringInterpolation('`'); return }
             STATE_BT_RESUME -> { state = STATE_NORMAL; consumeStringContent('`', ZshrsTokenTypes.BACKTICK); return }
+            // Pre-computed printf format spec — emit the cached span
+            // as ONE STRING_FORMAT token, then flip back to the
+            // corresponding string-resume state so the next advance()
+            // picks up scanning the rest of the string body.
+            STATE_DQ_FORMAT -> {
+                tokenStart = pos
+                tokenEnd = pos + pendingFormatLen
+                pos = tokenEnd
+                tokenType = ZshrsTokenTypes.STRING_FORMAT
+                pendingFormatLen = 0
+                state = STATE_DQ_RESUME
+                return
+            }
+            STATE_BT_FORMAT -> {
+                tokenStart = pos
+                tokenEnd = pos + pendingFormatLen
+                pos = tokenEnd
+                tokenType = ZshrsTokenTypes.STRING_FORMAT
+                pendingFormatLen = 0
+                state = STATE_BT_RESUME
+                return
+            }
         }
         val c = buf[pos]
         when {
@@ -266,18 +294,39 @@ class ZshrsLexer : LexerBase() {
             }
             if (c == '$' && p + 1 < endOffset && isInterpStart(buf, p + 1)) {
                 if (p > pos) {
-                    // Emit the literal prefix; next advance() steps into
-                    // interpolation mode at the `$`.
                     tokenEnd = p; pos = p
                     state = if (quote == '"') STATE_DQ_INTERP else STATE_BT_INTERP
                     tokenType = tt
                     return
                 }
-                // Already at the `$` (empty prefix — interpolation runs
-                // back-to-back with the opening quote or with a prior
-                // interpolation). Handle directly without re-entry.
                 consumeStringInterpolation(quote)
                 return
+            }
+            // printf format specifier `%d` / `%10.2f` / `%-15s` /
+            // `%%` etc. Mirror of strykelang's STRING_FORMAT
+            // handling: emit the literal prefix as STRING first, set
+            // the FORMAT state so the next advance() emits the
+            // format-spec span as STRING_FORMAT, then resumes
+            // string-content scanning.
+            if (c == '%') {
+                val flen = printfFormatLen(p)
+                if (flen > 0) {
+                    if (p > pos) {
+                        tokenEnd = p; pos = p
+                        state = if (quote == '"') STATE_DQ_FORMAT else STATE_BT_FORMAT
+                        pendingFormatLen = flen
+                        tokenType = tt
+                        return
+                    }
+                    // Empty literal prefix — emit the format spec
+                    // directly and flip to resume state.
+                    tokenStart = p
+                    tokenEnd = p + flen
+                    pos = tokenEnd
+                    tokenType = ZshrsTokenTypes.STRING_FORMAT
+                    state = if (quote == '"') STATE_DQ_RESUME else STATE_BT_RESUME
+                    return
+                }
             }
             p++
         }
@@ -286,6 +335,33 @@ class ZshrsLexer : LexerBase() {
         tokenEnd = p; pos = p
         state = STATE_NORMAL
         tokenType = tt
+    }
+
+    /// Length of the printf format spec starting at `start` (which
+    /// must point at `%`), or 0 if the chars after `%` don't form a
+    /// valid spec. Grammar:
+    ///   `%` [flags `-+0 #'`]* [width digits]?
+    ///       (`.` [precision digits]+)?
+    ///       [length `l`/`h`/`L`/`q`/`z`/`j`/`t`]?
+    ///       conversion `diouxXeEfgGsScCpnb%`
+    /// `%%` is a literal-percent — also returned as length 2 so it
+    /// gets the format-spec color (visually distinct from prose `%`).
+    private fun printfFormatLen(start: Int): Int {
+        if (start >= endOffset || buf[start] != '%') return 0
+        var p = start + 1
+        if (p >= endOffset) return 0
+        if (buf[p] == '%') return 2
+        while (p < endOffset && buf[p] in FORMAT_FLAGS) p++
+        while (p < endOffset && buf[p].isDigit()) p++
+        if (p < endOffset && buf[p] == '.') {
+            p++
+            while (p < endOffset && buf[p].isDigit()) p++
+        }
+        while (p < endOffset && buf[p] in FORMAT_LENGTH) p++
+        if (p < endOffset && buf[p] in FORMAT_CONV) {
+            return (p - start) + 1
+        }
+        return 0
     }
 
     /// Handle one `$`-interpolation inside an open `"..."` / `` `...` ``
@@ -590,6 +666,19 @@ class ZshrsLexer : LexerBase() {
         const val STATE_DQ_RESUME = 2     // just lexed `$…`; resume "..." content
         const val STATE_BT_INTERP = 3     // about to lex `$…` inside `...`
         const val STATE_BT_RESUME = 4     // just lexed `$…`; resume `...` content
+        const val STATE_DQ_FORMAT = 5     // about to emit one `%d`/`%s`/etc format-spec token inside "..."
+        const val STATE_BT_FORMAT = 6     // same inside `...` backtick
+
+        // printf format-spec character classes. Mirrors
+        // strykelang's FORMAT_FLAGS / FORMAT_LENGTH / FORMAT_CONV.
+        // Conversion chars cover the POSIX set plus zsh's
+        // `printf %b` (backslash-escape interpretation).
+        private val FORMAT_FLAGS = setOf('-', '+', '0', ' ', '#', '\'')
+        private val FORMAT_LENGTH = setOf('l', 'h', 'L', 'q', 'z', 'j', 't')
+        private val FORMAT_CONV = setOf(
+            'd', 'i', 'o', 'u', 'x', 'X', 'e', 'E', 'f', 'g', 'G',
+            's', 'c', 'b', 'p', 'n', '%',
+        )
 
         /// True if the char after a `$` would START a real interpolation
         /// (rather than being a literal `$`). Letter / underscore for

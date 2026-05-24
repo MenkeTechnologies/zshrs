@@ -23,6 +23,7 @@ class ZshrsSyntaxHighlighter : SyntaxHighlighterBase() {
             ZshrsTokenTypes.BACKTICK -> ZshrsColors.BACKTICK
             ZshrsTokenTypes.HEREDOC -> ZshrsColors.HEREDOC
             ZshrsTokenTypes.STRING_ESCAPE -> ZshrsColors.STRING_ESCAPE
+            ZshrsTokenTypes.STRING_FORMAT -> ZshrsColors.STRING_FORMAT
             ZshrsTokenTypes.NUMBER -> ZshrsColors.NUMBER
 
             ZshrsTokenTypes.KEYWORD -> ZshrsColors.KEYWORD
