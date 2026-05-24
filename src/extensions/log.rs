@@ -9,11 +9,15 @@
 //! goes here instead of stderr.
 //!
 //! **Logging** (always on):
-//!   - File: `$HOME/.zshrs/{binary}.log` — three separate files so the
-//!     three processes don't interleave their tracing output:
-//!       - `zshrs.log`           (the shell — thin clients)
+//!   - File: `$HOME/.zshrs/{binary}.log` — five separate files so the
+//!     processes don't interleave their tracing output:
+//!       - `zshrs.log`           (the shell — interactive / scripted)
+//!       - `zshrs-lsp.log`       (`zshrs --lsp` — IDE language server)
+//!       - `zshrs-dap.log`       (`zshrs --dap` — IDE debug adapter)
 //!       - `zshrs-daemon.log`    (daemon, set up via daemon/log.rs)
 //!       - `zshrs-recorder.log`  (single-shot recorder runs)
+//!     The IDE plugin side has its own `zshrs-plugin.log` written by
+//!     `editors/intellij/.../ZshrsDebugLog.kt`.
 //!   - Level: ZSHRS_LOG env var (default: info)
 //!   - Structured key=value fields, ISO timestamps, thread names, module paths
 //!

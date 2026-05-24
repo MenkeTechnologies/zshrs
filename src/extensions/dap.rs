@@ -29,25 +29,40 @@ use std::time::Duration;
 ///
 /// Called from `bins/zshrs.rs` when `--dap HOST:PORT` is detected.
 pub fn run_dap(addr: &str) -> i32 {
+    tracing::info!(
+        target: "zshrs::dap",
+        pid = std::process::id(),
+        %addr,
+        "starting --dap",
+    );
     let stream = match TcpStream::connect(addr) {
         Ok(s) => s,
         Err(e) => {
+            tracing::error!(target: "zshrs::dap", %addr, %e, "tcp connect failed");
             eprintln!("zshrs: --dap: connect {} failed: {}", addr, e);
             return 1;
         }
     };
     if let Err(e) = stream.set_nodelay(true) {
+        tracing::warn!(target: "zshrs::dap", %e, "TCP_NODELAY failed (non-fatal)");
         eprintln!("zshrs: --dap: TCP_NODELAY: {}", e);
     }
     let stream2 = match stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
+            tracing::error!(target: "zshrs::dap", %e, "tcp clone failed");
             eprintln!("zshrs: --dap: clone socket: {}", e);
             return 1;
         }
     };
+    tracing::info!(target: "zshrs::dap", %addr, "connected, entering serve loop");
     let mut server = DapServer::new(stream, stream2);
-    let _ = server.serve();
+    let serve_result = server.serve();
+    tracing::info!(
+        target: "zshrs::dap",
+        result = ?serve_result,
+        "serve loop exited",
+    );
     0
 }
 
@@ -94,12 +109,24 @@ impl DapServer {
         loop {
             let msg = match read_message(&mut self.reader) {
                 Ok(Some(m)) => m,
-                Ok(None) => break,
-                Err(_) => break,
+                Ok(None) => {
+                    tracing::info!(target: "zshrs::dap", "client disconnected (EOF)");
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!(target: "zshrs::dap", %e, "read error, breaking serve loop");
+                    break;
+                }
             };
             let cmd = msg.get("command").and_then(|v| v.as_str()).unwrap_or("");
             let req_seq = msg.get("seq").and_then(|v| v.as_i64()).unwrap_or(0);
             let args = msg.get("arguments").cloned().unwrap_or(Value::Null);
+            tracing::trace!(
+                target: "zshrs::dap::recv",
+                seq = req_seq,
+                %cmd,
+                "request received",
+            );
 
             match cmd {
                 "initialize" => {

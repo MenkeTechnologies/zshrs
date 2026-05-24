@@ -880,8 +880,27 @@ pub fn zshrs_main() {
         zsh::overlay_snapshot::enumerate_all_overlays,
     );
 
+    // Per-mode log file so the three server processes don't interleave
+    // their tracing output in `zshrs.log`:
+    //   * `zshrs --lsp` (spawned by IDE plugin) → `zshrs-lsp.log`
+    //   * `zshrs --dap HOST:PORT` (spawned per debug session) → `zshrs-dap.log`
+    //   * everything else (interactive shell, --version, --docs, …) → `zshrs.log`
+    // The plugin side has its own `zshrs-plugin.log` (ZshrsDebugLog).
+    // Daemon already routes through `zshrs-daemon.log` via daemon/log.rs.
+    // OnceLock semantics mean only the first init() call wins — must
+    // scan args BEFORE calling init so the right filename is picked.
     // Default level: info. Override with ZSHRS_LOG=debug or ZSHRS_LOG=trace.
-    zsh::log::init();
+    let log_name = {
+        let raw_args: Vec<String> = env::args().collect();
+        if raw_args.iter().any(|a| a == "--lsp") {
+            "zshrs-lsp.log"
+        } else if raw_args.iter().any(|a| a == "--dap") {
+            "zshrs-dap.log"
+        } else {
+            "zshrs.log"
+        }
+    };
+    zsh::log::init_named(log_name);
 
     // Single-shot daemon-presence probe. Honors `[daemon].enabled` in
     // ~/.config/zshrs/zshrs.toml (auto / off / require). After this,
