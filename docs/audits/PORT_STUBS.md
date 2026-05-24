@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T21:38:56.404506+00:00
+Generated: 2026-05-24T21:41:39.873750+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 172 stubs across 48 files
+## Summary: 171 stubs across 48 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -36,11 +36,11 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/init.rs` | 4 | `init_term` (9 / 91) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
-| `src/ported/zle/zle_move.rs` | 4 | `backwardmetafiedchar` (3 / 75) |
 | `src/ported/zle/zle_vi.rs` | 4 | `getvirange` (4 / 82) |
 | `src/ported/glob.rs` | 3 | `get_match_ret` (5 / 71) |
 | `src/ported/modules/db_gdbm.rs` | 3 | `gdbmhashsetfn` (7 / 47) |
 | `src/ported/pattern.rs` | 3 | `patmatch` (4 / 575) |
+| `src/ported/zle/zle_move.rs` | 3 | `backwardmetafiedchar` (3 / 75) |
 | `src/ported/builtin.rs` | 2 | `bin_print` (202 / 812) |
 | `src/ported/compat.rs` | 2 | `zgettime_monotonic_if_available` (23 / 404) |
 | `src/ported/exec.rs` | 2 | `namedpipe` (24 / 1076) |
@@ -270,15 +270,6 @@ python3 scripts/gen_port_stubs.py
 | 438 | `parsecolorchar` | 3 | 24 | 12% |
 | 2511 | `match_highlight` | 10 | 75 | 13% |
 
-### `src/ported/zle/zle_move.rs` — 4 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 134 | `backwardmetafiedchar` | 3 | 75 | 4% |
-| 36 | `alignmultiwordleft` | 1 | 16 | 6% |
-| 47 | `alignmultiwordright` | 1 | 13 | 7% |
-| 238 | `beginningoflinehist` | 7 | 32 | 21% |
-
 ### `src/ported/zle/zle_vi.rs` — 4 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -311,6 +302,14 @@ python3 scripts/gen_port_stubs.py
 | 1965 | `patmatch` | 4 | 575 | 0% |
 | 1888 | `pattryrefs` | 41 | 202 | 20% |
 | 2002 | `patmatchrange` | 26 | 113 | 23% |
+
+### `src/ported/zle/zle_move.rs` — 3 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 134 | `backwardmetafiedchar` | 3 | 75 | 4% |
+| 36 | `alignmultiwordleft` | 1 | 16 | 6% |
+| 47 | `alignmultiwordright` | 1 | 13 | 7% |
 
 ### `src/ported/builtin.rs` — 2 stubs
 

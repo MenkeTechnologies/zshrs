@@ -235,19 +235,66 @@ pub fn endofline() -> i32 {
 }
 
 /// Port of `beginningoflinehist(char **args)` from Src/Zle/zle_move.c:360.
+///
+/// Direct line-by-line port. Walks the buffer backward `zmult` lines,
+/// stopping at each `\n` boundary. If we still have remaining count
+/// when we hit BOL, redirect into [`uphistory`] for the leftover.
+/// On `zmult < 0` redirects to [`endoflinehist`] with the absolute
+/// count and restores zmult on return.
 pub fn beginningoflinehist() -> i32 {
-    // c:360
-    // C body (c:362-398): same as beginningofline but if we hit
-    //                    bol with positive count remaining, jump up
-    //                    in history.
-    let r = beginningofline();
-    if ZLECS.load(Ordering::SeqCst) == 0 && ZMOD.lock().unwrap().mult > 1 {
-        // C calls uphistory() here; substrate available via History.
-        if let Some(_e) = history().lock().unwrap().up() {
-            ZLECS.store(0, Ordering::SeqCst);
-        }
+    use crate::ported::zle::zle_hist::uphistory;
+
+    // c:362 — `int n = zmult;`
+    let mut n = ZMOD.lock().unwrap().mult;
+
+    // c:364-369 — zmult<0 redirect.
+    if n < 0 {
+        let saved = n;
+        ZMOD.lock().unwrap().mult = -n;
+        let ret = endoflinehist();
+        ZMOD.lock().unwrap().mult = saved;
+        return ret;
     }
-    r
+
+    // c:370-389 — walk back `n` lines via \n boundaries.
+    while n > 0 {
+        let cs = ZLECS.load(Ordering::SeqCst);
+        if cs == 0 {
+            break; // c:373
+        }
+        // c:375-376 — `pos = zlecs; DECPOS(pos);`
+        let pos = cs - 1;
+        let at = ZLELINE.lock().unwrap().get(pos).copied();
+        if at == Some('\n') {
+            ZLECS.store(pos, Ordering::SeqCst); // c:378
+            if pos == 0 {
+                break; // c:380
+            }
+        }
+        // c:384-385 — `while (zlecs && zleline[zlecs - 1] != '\n') zlecs--;`
+        loop {
+            let cs = ZLECS.load(Ordering::SeqCst);
+            if cs == 0 {
+                break;
+            }
+            if ZLELINE.lock().unwrap().get(cs - 1).copied() == Some('\n') {
+                break;
+            }
+            ZLECS.fetch_sub(1, Ordering::SeqCst);
+        }
+        n -= 1; // c:386
+    }
+
+    // c:388-394 — leftover count → uphistory + zlecs=0.
+    if n > 0 {
+        let m = ZMOD.lock().unwrap().mult;
+        ZMOD.lock().unwrap().mult = n;
+        let ret = uphistory();
+        ZMOD.lock().unwrap().mult = m;
+        ZLECS.store(0, Ordering::SeqCst);
+        return ret;
+    }
+    0 // c:395
 }
 
 /// Port of `endoflinehist(char **args)` from Src/Zle/zle_move.c:403.
