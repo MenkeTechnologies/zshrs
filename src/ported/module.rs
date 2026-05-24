@@ -36,21 +36,124 @@ pub fn freemodulenode(hn: module) {
     // Rust Drop handles this
 }
 
-/// Print module node (from module.c printmodulenode)
-/// Format a module entry for `zmodload -L` listing.
-/// Port of `printmodulenode(HashNode hn, int flags)` from Src/module.c:154.
-pub fn printmodulenode(hn: &str, m: &module) -> String {
-    // C inspects `m->node.flags` — `MOD_ALIAS`/`MOD_UNLOAD`/`MOD_LINKED`.
-    let state = if (m.node.flags & MOD_ALIAS) != 0 {
-        "alias"
-    } else if (m.node.flags & MOD_UNLOAD) != 0 {
-        "unloaded"
-    } else if (m.node.flags & MOD_LINKED) != 0 {
-        "loaded"
-    } else {
-        "autoloaded"
-    };
-    format!("{} ({})", hn, state)
+/// `PRINTMOD_LIST` from `Src/module.c:136`. Long-form (`zmodload -L`)
+/// output.
+pub const PRINTMOD_LIST: i32 = 0x0001; // c:136
+/// `PRINTMOD_EXIST` from `Src/module.c:138`. Print only when the
+/// module exists.
+pub const PRINTMOD_EXIST: i32 = 0x0002; // c:138
+/// `PRINTMOD_ALIAS` from `Src/module.c:140`. Resolve aliases when
+/// emitting under `PRINTMOD_EXIST`.
+pub const PRINTMOD_ALIAS: i32 = 0x0004; // c:140
+/// `PRINTMOD_DEPS` from `Src/module.c:142`. Emit the dependency list
+/// (`zmodload -d`).
+pub const PRINTMOD_DEPS: i32 = 0x0008; // c:142
+/// `PRINTMOD_FEATURES` from `Src/module.c:144`. Emit feature flags
+/// (`zmodload -F`).
+pub const PRINTMOD_FEATURES: i32 = 0x0010; // c:144
+/// `PRINTMOD_LISTALL` from `Src/module.c:146`. Include disabled
+/// features (`zmodload -lL`).
+pub const PRINTMOD_LISTALL: i32 = 0x0020; // c:146
+/// `PRINTMOD_AUTO` from `Src/module.c:148`. Emit autoloads
+/// (`zmodload -a`).
+pub const PRINTMOD_AUTO: i32 = 0x0040; // c:148
+
+/// Direct port of `void printmodulenode(HashNode hn, int flags)` from
+/// `Src/module.c:154`.
+///
+/// Formats one module entry for the various `zmodload -L`/`-a`/
+/// `-d`/`-F` listings. C writes to stdout; Rust returns the
+/// formatted string so call sites can route to the right output fd
+/// without depending on stdio. Dispatches on `flags`:
+///
+///   - `PRINTMOD_DEPS`: emit dep list (`zmodload -d MOD: dep1 dep2`
+///     under PRINTMOD_LIST, else `MOD: dep1 dep2`) — c:163-194
+///   - `PRINTMOD_EXIST`: emit just the module name when loaded
+///     (resolving alias when PRINTMOD_ALIAS set) — c:195-201
+///   - alias module: under PRINTMOD_LIST emit
+///     `zmodload -A MOD=ALIAS`, else `MOD -> ALIAS` — c:202-217
+///   - loaded module: under PRINTMOD_LIST emit `zmodload [-Fa] MOD`,
+///     else just the name — c:218-241
+pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
+    let modname = hn;
+    let mut out = String::new();
+
+    // c:163-194 — PRINTMOD_DEPS branch.
+    if flags & PRINTMOD_DEPS != 0 {
+        let deps = match m.deps.as_ref() {
+            Some(d) if !d.is_empty() => d,
+            _ => return out,
+        };
+        if flags & PRINTMOD_LIST != 0 {
+            out.push_str("zmodload -d ");
+            if modname.starts_with('-') {
+                out.push_str("-- ");
+            }
+            out.push_str(modname);
+        } else {
+            out.push_str(modname);
+            out.push(':');
+        }
+        for dep in deps.iter() {
+            out.push(' ');
+            out.push_str(dep);
+        }
+        return out;
+    }
+
+    // c:195-201 — PRINTMOD_EXIST branch.
+    if flags & PRINTMOD_EXIST != 0 {
+        if (m.node.flags & MOD_ALIAS) != 0
+            && (flags & PRINTMOD_ALIAS == 0 || m.alias.is_none())
+        {
+            return out;
+        }
+        if m.node.flags & MOD_UNLOAD != 0 {
+            return out;
+        }
+        out.push_str(modname);
+        return out;
+    }
+
+    // c:202-217 — alias module branch.
+    if m.node.flags & MOD_ALIAS != 0 {
+        let alias = m.alias.as_deref().unwrap_or("");
+        if flags & PRINTMOD_LIST != 0 {
+            out.push_str("zmodload -A ");
+            if modname.starts_with('-') {
+                out.push_str("-- ");
+            }
+            out.push_str(modname);
+            out.push('=');
+            out.push_str(alias);
+        } else {
+            out.push_str(modname);
+            out.push_str(" -> ");
+            out.push_str(alias);
+        }
+        return out;
+    }
+
+    // c:218-241 — loaded module branch (linked or autoloaded).
+    let loaded = (m.node.flags & MOD_LINKED) != 0 && (m.node.flags & MOD_UNLOAD) == 0;
+    let auto = flags & PRINTMOD_AUTO != 0;
+    if loaded || auto {
+        if flags & PRINTMOD_LIST != 0 {
+            out.push_str("zmodload ");
+            if auto {
+                out.push_str("-Fa ");
+            } else if flags & PRINTMOD_FEATURES != 0 {
+                out.push_str("-F ");
+            }
+            if modname.starts_with('-') {
+                out.push_str("-- ");
+            }
+            out.push_str(modname);
+        } else {
+            out.push_str(modname);
+        }
+    }
+    out
 }
 
 /// Create new module table (from module.c newmoduletable)
@@ -3930,9 +4033,13 @@ mod tests {
     fn test_printmodulenode() {
         let _g = crate::test_util::global_state_lock();
         let module = module::new("zsh/test");
-        let output = printmodulenode("zsh/test", &module);
-        assert!(output.contains("zsh/test"));
-        assert!(output.contains("loaded"));
+        // Loaded module (MOD_LINKED set by `module::new`), no flags →
+        // emit just the module name (c:240 nicezputs(modname)).
+        let output = printmodulenode("zsh/test", &module, 0);
+        assert_eq!(output, "zsh/test");
+        // Under PRINTMOD_LIST the loaded branch emits `zmodload MOD`.
+        let listed = printmodulenode("zsh/test", &module, PRINTMOD_LIST);
+        assert_eq!(listed, "zmodload zsh/test");
     }
 
     // ===== Tests for the `addmathfunc` / `removemathfunc` /
