@@ -318,9 +318,10 @@ impl History {
         }
     }
 
-    /// Search history for the most recent entry containing `pattern`.
-    /// Substring-match equivalent of `historysearchbackward()` from
-    /// Src/Zle/zle_hist.c:484 (without the glob/HIST_PATTERN branch).
+    /// Search history backward for the most recent entry whose line
+    /// starts with `pattern`. Matches C `historysearchbackward()` at
+    /// Src/Zle/zle_hist.c:484 — uses `zlinecmp` < 0 (prefix match)
+    /// not substring containment.
     pub fn search_backward(&mut self, pattern: &str) -> Option<&HistEntry> {
         let start = if self.cursor > 0 {
             self.cursor - 1
@@ -328,7 +329,9 @@ impl History {
             return None;
         };
         for i in (0..=start).rev() {
-            if self.entries[i].line.contains(pattern) {
+            // c:495 — `zlinecmp(zt, str) < 0`: prefix match (zt starts
+            // with str, OR zt is shorter prefix of str).
+            if self.entries[i].line.starts_with(pattern) {
                 self.cursor = i;
                 return self.entries.get(i);
             }
@@ -336,12 +339,12 @@ impl History {
         None
     }
 
-    /// Search history forward for the next entry containing
-    /// `pattern`. Mirror of `search_backward` against
+    /// Search history forward for the next entry whose line starts
+    /// with `pattern`. Mirror of `search_backward` against
     /// `historysearchforward()` at Src/Zle/zle_hist.c:541.
     pub fn search_forward(&mut self, pattern: &str) -> Option<&HistEntry> {
         for i in (self.cursor + 1)..self.entries.len() {
-            if self.entries[i].line.contains(pattern) {
+            if self.entries[i].line.starts_with(pattern) {
                 self.cursor = i;
                 return self.entries.get(i);
             }
