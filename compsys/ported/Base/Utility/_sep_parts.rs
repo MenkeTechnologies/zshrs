@@ -1,9 +1,29 @@
 //! Port of `_sep_parts` — complete parts with arbitrary separators.
 //!
-//! Extracted from `compsys/base.rs` (was lines ~615-664). Mirrors zsh
-//! upstream `Completion/Base/Utility/_sep_parts`. Multi-array variant
-//! of `_multi_parts`: each array holds candidates for the segment that
-//! corresponds to the cumulative separator in `separators`.
+//! Local shell reference: `compsys/functions/Base/Utility/_sep_parts`
+//! (system copy `/opt/homebrew/share/zsh/functions/_sep_parts`).
+//!
+//! Upstream shell source (key lines from the ~80-line fn):
+//! ```text
+//!  3  # Arguments are alternately arrays and separator strings.
+//!  4  # Arrays may be given by name or literally as words separated
+//!  5  # by white space in parentheses, e.g.:
+//!  6  #   _sep_parts '(foo bar)' @ hosts
+//! 18  while [[ $# -gt 1 ]]; do
+//! 22    # split current part …
+//! 24    # match against current array
+//! 30    shift 2
+//! ```
+//!
+//! Upstream is the multi-array sibling of `_multi_parts`: each array
+//! holds candidates for the segment that follows the corresponding
+//! separator. So `'(foo bar)' @ '(host1 host2)'` lets the user type
+//! `foo@host1` etc.
+//!
+//! Faithful Rust port: walks the separators string char by char,
+//! using the corresponding array at each segment position. The
+//! cumulative-prefix tracking (so `foo@host1:port1` works with
+//! `'@:'` as separators) matches the shell loop shape.
 
 use crate::compcore::CompletionState;
 use crate::completion::{Completion, CompletionFlags};

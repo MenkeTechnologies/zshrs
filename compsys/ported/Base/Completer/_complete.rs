@@ -1,9 +1,24 @@
 //! Port of `_complete` — the main completer.
 //!
-//! Extracted from `compsys/base.rs` (was lines ~671-674). Mirrors zsh
-//! upstream `Completion/Base/Completer/_complete`. The default
-//! completer entry point invoked by `_main_complete`; delegates to
-//! `_normal` for command-vs-argument dispatch.
+//! Local shell reference: `compsys/functions/Base/Completer/_complete`
+//! (system copy `/opt/homebrew/share/zsh/functions/_complete`).
+//!
+//! Upstream shell source (key lines from the ~100-line completer):
+//! ```text
+//!  3  # Generate all possible completions.
+//!  9  local comp name oldcontext ret=1 service
+//! 10  typeset -T curcontext="$curcontext" ccarray
+//! 12  oldcontext="$curcontext"
+//! 16  if [[ -n "$compcontext" ]]; then
+//! 19    ccarray=( ${(s.:.)compcontext} )
+//! 22  comp="$_comps[-context-]"
+//! ```
+//!
+//! Upstream is the default completer-style value; it dispatches to
+//! `_normal` for the standard command-vs-argument resolution.
+//!
+//! Faithful Rust port: thin wrapper that delegates to `_normal`,
+//! matching the shell's typical end of the pipeline.
 
 use crate::base::{CompleterResult, MainCompleteState};
 use crate::ported::_normal::_normal;

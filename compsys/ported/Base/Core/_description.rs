@@ -1,10 +1,23 @@
 //! Port of `_description` — set up description for a tag.
 //!
-//! Extracted from `compsys/base.rs` (was lines ~751-784). Mirrors zsh
-//! upstream `Completion/Base/Core/_description`. Honors the `format`,
-//! `hidden`, and per-tag descriptions styles, returning the formatted
-//! description string (`%d` → description, `%%` → `%`). Returns `None`
-//! when the `hidden` style is `all`.
+//! Local shell reference: `compsys/functions/Base/Core/_description`
+//! (system copy `/opt/homebrew/share/zsh/functions/_description`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  9  opts=()
+//! 11  xopt=(-X)
+//! 13  zparseopts -K -D -a nopt 1 2 V=gropt J=ign x=xopt
+//! 15  3="${${3##[[:blank:]]#}%%[[:blank:]]#}"
+//! 16  [[ -n "$3" ]] && _lastdescr=( "$_lastdescr[@]" "$3" )
+//! 25  if zstyle -s ":completion:${context}:descriptions" format format; then
+//! 30  if zstyle -s ":completion:${context}:descriptions" hidden hidden; then
+//! ```
+//!
+//! Faithful Rust port: honors `format`, `hidden`, and per-tag
+//! description styles. Returns the formatted description string
+//! (`%d` → description, `%%` → `%`). Returns `None` when the
+//! `hidden` style is `all`.
 
 use crate::compcore::CompletionState;
 use crate::zstyle::ZStyleStore;

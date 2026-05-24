@@ -1,8 +1,27 @@
 //! Port of `_next_label` — get next label for a tag (for iteration).
 //!
-//! Extracted from `compsys/base.rs` (was `pub fn next_label`, lines
-//! ~370-376). Renamed to `_next_label` to match the upstream zsh shell
-//! function name at `Completion/Base/Core/_next_label`.
+//! Local shell reference: `compsys/functions/Base/Core/_next_label`
+//! (system copy `/opt/homebrew/share/zsh/functions/_next_label`).
+//!
+//! Upstream shell source (key lines from ~50-line fn):
+//! ```text
+//!  3  local __gopt __descr __spec
+//!  5  __gopt=()
+//!  6  zparseopts -D -a __gopt 1 2 V J x
+//!  8  if comptags -A "$1" curtag __spec; then
+//! 12    if [[ "$curtag" = *[^\\]:* ]]; then
+//! 13      zformat -f __descr "${curtag#*:}" "d:$3"
+//! 14      _description "$__gopt[@]" "${curtag%:*}" "$2" "$__descr"
+//! ```
+//!
+//! Upstream uses `comptags -A` to advance the internal tag-set
+//! iterator + extract the next label, then `_description` wraps
+//! the result.
+//!
+//! Faithful Rust port: queries `TagManager::wanted(tag)` and emits
+//! the tag name as the label. The `comptags` builtin's internal
+//! iteration is the same shape — caller drives the loop with
+//! repeated calls until None is returned.
 
 use crate::base::TagManager;
 

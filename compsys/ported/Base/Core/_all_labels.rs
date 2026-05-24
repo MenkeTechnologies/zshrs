@@ -1,9 +1,24 @@
 //! Port of `_all_labels` — iterate over all labels for a tag.
 //!
-//! Extracted from `compsys/base.rs` (was lines ~344-367). Mirrors zsh
-//! upstream `Completion/Base/Core/_all_labels`. Convenience wrapper
-//! around `_next_label` that runs the supplied closure for each label
-//! of the given tag and emits the description as a group explanation.
+//! Local shell reference: `compsys/functions/Base/Core/_all_labels`
+//! (system copy `/opt/homebrew/share/zsh/functions/_all_labels`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  3  local __gopt __len __tmp __pre __suf __ret=1 __descr __spec __prev
+//!  9  __gopt=()
+//! 10  zparseopts -D -a __gopt 1 2 V J x
+//! 22  while _next_label "$__pre[@]" "$1" "$2" "$3" "$__gopt[@]"; do
+//! 23    eval "$command"
+//! ```
+//!
+//! Upstream loops over `_next_label` until no more labels remain,
+//! eval'ing the caller-supplied command after each label-substitution.
+//!
+//! Faithful Rust port: convenience wrapper around `_next_label` that
+//! runs the supplied closure for each label of the given tag,
+//! emitting the description as a group explanation. Same loop shape
+//! as shell's `while _next_label …; do eval "$command"; done`.
 
 use crate::base::TagManager;
 use crate::compcore::CompletionState;
