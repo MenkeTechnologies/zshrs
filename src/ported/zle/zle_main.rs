@@ -1231,19 +1231,16 @@ pub fn resetprompt() {
 /// if (zleactive)
 ///     redisplay(NULL);
 /// ```
-/// Triggers a prompt re-expansion + redraw. C's globals are
-/// `lpromptbuf`/`rpromptbuf` + the live terminal. Rust port sets
-/// the `ZLE_RESET_NEEDED` flag so the next `zlecore` tick
-/// reads it and triggers `reexpandprompt + redisplay`.
+/// Triggers a prompt re-expansion + redraw.
 pub fn zle_resetprompt() {
     // c:2058
-    // c:2060 — `reexpandprompt()`. Flag drives the deferred re-expand
-    // in zlecore (reads ZLE_RESET_NEEDED + clears it).
+    reexpandprompt(); // c:2060
+    // Flag for deferred-redisplay observers that still consult it
+    // (zlecore reads ZLE_RESET_NEEDED to know a redraw happened).
     ZLE_RESET_NEEDED.store(1, SeqCst);
     if zleactive.load(Ordering::Relaxed) != 0 {
-        // c:2062 — `redisplay(NULL)`. The next zlecore tick observes
-        // ZLE_RESET_NEEDED and invokes redisplay against the
-        // file-scope ZLE statics.
+        // c:2061-2062 — `if (zleactive) redisplay(NULL);`
+        crate::ported::zle::zle_refresh::redisplay(); // c:2062
         SHOWINGLIST.store(-2, SeqCst);
     }
 }
