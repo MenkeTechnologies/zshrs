@@ -18,3 +18,31 @@ pub fn _as_if(
     state.ctx.context = old_context;
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_swapped_during_action_restored_after() {
+        let mut state = MainCompleteState::new("", 0);
+        state.ctx.context = ":complete::orig:".into();
+        let observed = std::cell::Cell::new(String::new());
+        _as_if(&mut state, ":complete::shadow:", |s| {
+            observed.set(s.ctx.context.clone());
+            true
+        });
+        assert_eq!(observed.into_inner(), ":complete::shadow:");
+        assert_eq!(
+            state.ctx.context, ":complete::orig:",
+            "context must be restored after action"
+        );
+    }
+
+    #[test]
+    fn propagates_action_return_value() {
+        let mut state = MainCompleteState::new("", 0);
+        assert!(_as_if(&mut state, "x", |_| true));
+        assert!(!_as_if(&mut state, "x", |_| false));
+    }
+}

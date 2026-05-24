@@ -16,3 +16,26 @@ pub fn _guard(state: &MainCompleteState, pattern: &str) -> bool {
         prefix.starts_with(pattern)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glob_pattern_matches_extension() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "foo.txt".into();
+        assert!(_guard(&state, "*.txt"));
+        state.comp.params.prefix = "foo.rs".into();
+        assert!(!_guard(&state, "*.txt"));
+    }
+
+    #[test]
+    fn literal_pattern_uses_starts_with() {
+        let mut state = MainCompleteState::new("", 0);
+        state.comp.params.prefix = "git-status".into();
+        assert!(_guard(&state, "git-"));
+        state.comp.params.prefix = "ls".into();
+        assert!(!_guard(&state, "git-"));
+    }
+}

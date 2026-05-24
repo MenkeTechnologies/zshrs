@@ -12,3 +12,15 @@ pub fn _shadow(
     // Shadow mechanism - run action in isolated context
     action(state)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delegates_to_action() {
+        let mut state = CompletionState::new();
+        assert!(_shadow(&mut state, "x", |_| true));
+        assert!(!_shadow(&mut state, "x", |_| false));
+    }
+}
