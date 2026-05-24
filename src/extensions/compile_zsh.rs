@@ -3591,7 +3591,33 @@ impl ZshCompiler {
         let count_slot = self.next_slot;
         self.next_slot += 1;
 
-        self.compile_arith_str(&r.count);
+        // c:Src/loop.c — `repeat $((expr))` counts iterations from the
+        // inner arith. The lexer tokenizes `$((2+3))` as
+        // `<Stringg><Inparmath>(2+3)<Outparmath>` — Stringg=0x85,
+        // Inparmath=0x89, Outparmath=0x8b (zsh.h). compile_arith_str
+        // expects bare arith, so untokenize → "$((2+3))" doesn't
+        // parse. Strip the outer arith-sub wrapping so the inner
+        // "2+3" reaches the arith compiler. Bare numeric count
+        // (`repeat 5`) and parameter count (`repeat $N`) pass
+        // through unchanged.
+        let count_str = {
+            let s = r.count.as_str();
+            // Match `Stringg Inparmath (...) Outparmath` (with optional
+            // outer parens already consumed by the tokenizer's
+            // Inparmath/Outparmath sentinels).
+            if let Some(rest) = s.strip_prefix("\u{85}\u{89}") {
+                if let Some(inner) = rest.strip_suffix("\u{8b}") {
+                    // Inner is `(2+3)` — strip the parens too.
+                    let inner = inner.trim_matches(|c| c == '(' || c == ')');
+                    inner.to_string()
+                } else {
+                    r.count.clone()
+                }
+            } else {
+                r.count.clone()
+            }
+        };
+        self.compile_arith_str(&count_str);
         self.builder.emit(Op::SetSlot(count_slot), 0);
 
         self.builder.emit(Op::LoadInt(0), 0);

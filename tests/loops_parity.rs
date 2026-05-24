@@ -166,7 +166,6 @@ mod repeat_loop {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: repeat $((expr)) count fails to iterate; zsh runs N times"]
     fn repeat_with_arithmetic_count() {
         assert_parity("repeat $((2+3)) do echo x; done");
     }
