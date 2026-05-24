@@ -3734,7 +3734,28 @@ pub fn paramsubst(
                     } else {
                         String::new()
                     }
-                } else if let Ok(idx_n) = sub.parse::<i64>() {
+                } else if let Some(idx_n) = sub
+                    .parse::<i64>()
+                    .ok()
+                    .or_else(|| {
+                        // c:Src/params.c:1411-1430 — paren-wrapped subscript
+                        // expression. When the content inside the outermost
+                        // parens isn't a recognized flag-block (handled
+                        // above), C falls through to getindex's arith
+                        // evaluation path so `${arr[(-1)]}` evaluates `(-1)`
+                        // as math and returns last element. zshrs's bare
+                        // sub.parse::<i64>() couldn't handle the leading
+                        // `(`, returning empty. Strip a balanced outermost
+                        // paren pair and retry the integer parse — covers
+                        // `(N)`, `(-N)`, `(+N)`.
+                        let s = sub.trim();
+                        if s.starts_with('(') && s.ends_with(')') && s.len() >= 2 {
+                            s[1..s.len() - 1].trim().parse::<i64>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                {
                     // c:2926 (numeric index)
                     let len = arr.len() as i64;
                     // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
@@ -10414,7 +10435,6 @@ mod tests {
     /// `${arr[(-1)]}` — paren-wrapped negative index → last element.
     /// zsh: arr=(a b c d e) → "e"
     #[test]
-    #[ignore = "ZSHRS BUG: ${arr[(N)]} paren-wrapped subscript returns empty; zsh: indexed element"]
     fn paramsubst_arr_paren_negative_one_is_last_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
@@ -10428,7 +10448,6 @@ mod tests {
     /// `${arr[(1)]}` — paren-wrapped positive index → first.
     /// zsh: arr=(a b c d e) → "a"
     #[test]
-    #[ignore = "ZSHRS BUG: ${arr[(N)]} paren-wrapped subscript returns empty; zsh: indexed element"]
     fn paramsubst_arr_paren_positive_one_is_first_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
