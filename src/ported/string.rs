@@ -571,4 +571,169 @@ mod tests {
         assert_eq!(ztrduppfx("", 5), "");
         assert_eq!(ztrduppfx("abc", 2), "ab");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Concatenation helpers — `tricat`, `bicat`, `dyncat`, `dupstring`,
+    // `appstr`. Each pinned against direct string equality. Empty-arg
+    // edge cases pinned explicitly so a regression that drops empties
+    // surfaces immediately.
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── tricat: 3-string concatenation ───────────────────────────────
+    /// Plain 3-string concat.
+    #[test]
+    fn tricat_three_non_empty_strings() {
+        assert_eq!(tricat("foo", "bar", "baz"), "foobarbaz");
+    }
+
+    /// First arg empty — others stay.
+    #[test]
+    fn tricat_empty_first_keeps_others() {
+        assert_eq!(tricat("", "bar", "baz"), "barbaz");
+    }
+
+    /// Middle arg empty.
+    #[test]
+    fn tricat_empty_middle_keeps_others() {
+        assert_eq!(tricat("foo", "", "baz"), "foobaz");
+    }
+
+    /// Last arg empty.
+    #[test]
+    fn tricat_empty_last_keeps_others() {
+        assert_eq!(tricat("foo", "bar", ""), "foobar");
+    }
+
+    /// All empty → empty.
+    #[test]
+    fn tricat_all_empty_yields_empty() {
+        assert_eq!(tricat("", "", ""), "");
+    }
+
+    /// Multi-byte UTF-8 across all three positions.
+    #[test]
+    fn tricat_multibyte_utf8_concatenates_correctly() {
+        assert_eq!(tricat("日", "本", "語"), "日本語");
+    }
+
+    // ── bicat: 2-string concatenation ────────────────────────────────
+    /// Plain bicat.
+    #[test]
+    fn bicat_two_non_empty_strings() {
+        assert_eq!(bicat("hello", " world"), "hello world");
+    }
+
+    /// First empty.
+    #[test]
+    fn bicat_empty_first_returns_second() {
+        assert_eq!(bicat("", "world"), "world");
+    }
+
+    /// Second empty.
+    #[test]
+    fn bicat_empty_second_returns_first() {
+        assert_eq!(bicat("hello", ""), "hello");
+    }
+
+    /// Both empty.
+    #[test]
+    fn bicat_both_empty_yields_empty() {
+        assert_eq!(bicat("", ""), "");
+    }
+
+    // ── dyncat: dynamic concat (same as bicat for our purposes) ─────
+    /// dyncat plain.
+    #[test]
+    fn dyncat_two_strings() {
+        assert_eq!(dyncat("abc", "xyz"), "abcxyz");
+    }
+
+    /// dyncat with empties.
+    #[test]
+    fn dyncat_empties() {
+        assert_eq!(dyncat("", "x"), "x");
+        assert_eq!(dyncat("x", ""), "x");
+        assert_eq!(dyncat("", ""), "");
+    }
+
+    // ── appstr: in-place append ─────────────────────────────────────
+    /// appstr appends to existing buffer.
+    #[test]
+    fn appstr_appends_to_existing_string() {
+        let mut s = String::from("hello");
+        appstr(&mut s, " world");
+        assert_eq!(s, "hello world");
+    }
+
+    /// appstr to empty buffer.
+    #[test]
+    fn appstr_to_empty_buffer_yields_argument() {
+        let mut s = String::new();
+        appstr(&mut s, "value");
+        assert_eq!(s, "value");
+    }
+
+    /// appstr of empty is no-op.
+    #[test]
+    fn appstr_empty_argument_is_noop() {
+        let mut s = String::from("preserved");
+        appstr(&mut s, "");
+        assert_eq!(s, "preserved");
+    }
+
+    /// appstr multiple times accumulates.
+    #[test]
+    fn appstr_repeated_calls_accumulate() {
+        let mut s = String::new();
+        appstr(&mut s, "a");
+        appstr(&mut s, "b");
+        appstr(&mut s, "c");
+        assert_eq!(s, "abc");
+    }
+
+    // ── strend: slice from last codepoint ───────────────────────────
+    // NOTE: zshrs's strend() returns the slice STARTING at the last
+    // codepoint, NOT a past-the-end pointer like C's strend.
+    // Pin the actual observed contract.
+
+    /// `strend("hello")` returns `"o"` (last codepoint).
+    #[test]
+    fn strend_returns_slice_starting_at_last_codepoint() {
+        assert_eq!(strend("hello"), "o");
+    }
+
+    /// `strend("")` returns empty.
+    #[test]
+    fn strend_empty_input_returns_empty() {
+        assert_eq!(strend(""), "");
+    }
+
+    /// `strend("a")` returns `"a"` (single char IS the last codepoint).
+    #[test]
+    fn strend_single_char_returns_self() {
+        assert_eq!(strend("a"), "a");
+    }
+
+    /// Multi-byte: `strend("日本")` returns just `"本"` (last codepoint
+    /// regardless of byte width).
+    #[test]
+    fn strend_multibyte_returns_last_codepoint_only() {
+        assert_eq!(strend("日本"), "本");
+    }
+
+    // ── ztrdup / dupstring: identity copy ───────────────────────────
+    /// dupstring is value-equal to input.
+    #[test]
+    fn dupstring_returns_identical_content() {
+        assert_eq!(dupstring("hello world"), "hello world");
+        assert_eq!(dupstring(""), "");
+        assert_eq!(dupstring("日本語"), "日本語");
+    }
+
+    /// ztrdup mirrors dupstring for ASCII (and UTF-8 in zshrs's port).
+    #[test]
+    fn ztrdup_identity_for_ascii_and_utf8() {
+        assert_eq!(ztrdup("hello"), "hello");
+        assert_eq!(ztrdup(""), "");
+    }
 }

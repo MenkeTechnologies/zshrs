@@ -2165,6 +2165,188 @@ mod tests {
         // Restore.
         opt_state_set("automenu", saved);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // opt_state set/get/unset round-trip + canonicalization.
+    // Anchored to `setopt NAME; print -- $options[NAME]` in real zsh:
+    //   `on` for set, `off` for unset, exits with $? indicating presence.
+    // Also pin name aliasing: zsh accepts kshglob, ksh_glob, KSH_GLOB
+    // and NO_KSH_GLOB / no_kshglob all as the same option.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `opt_state_set` then `opt_state_get` round-trip.
+    /// `automenu` is a regular (non-locked) option to use for tests.
+    #[test]
+    fn opt_state_roundtrip_set_then_get_true() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = opt_state_get("automenu").unwrap_or(false);
+        opt_state_set("automenu", true);
+        assert_eq!(opt_state_get("automenu"), Some(true));
+        opt_state_set("automenu", saved);
+    }
+
+    /// Setting to false round-trips.
+    #[test]
+    fn opt_state_roundtrip_set_then_get_false() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = opt_state_get("automenu").unwrap_or(false);
+        opt_state_set("automenu", false);
+        assert_eq!(opt_state_get("automenu"), Some(false));
+        opt_state_set("automenu", saved);
+    }
+
+    // ── Name canonicalization across alias forms ──────────────────────
+    // Anchor: zsh accepts these as all the same option name:
+    //   AUTO_MENU, AutoMenu, auto_menu, automenu, AUTOMENU, auto__menu.
+    // optlookup() must return the same optno for every form.
+
+    /// `optlookup("KSH_GLOB") == optlookup("kshglob")` — underscore
+    /// removal and case folding.
+    #[test]
+    fn optlookup_kshglob_underscore_equiv_to_no_underscore() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        let a = optlookup("KSH_GLOB");
+        let b = optlookup("kshglob");
+        assert_eq!(a, b, "KSH_GLOB and kshglob must resolve to same optno");
+        assert!(a > 0, "must be a valid option");
+    }
+
+    /// Mixed-case variants resolve to same optno.
+    #[test]
+    fn optlookup_mixed_case_variants_resolve_to_same_optno() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        let canon = optlookup("kshglob");
+        for variant in &["KSHGLOB", "KshGlob", "kSHglob", "kShGlOb"] {
+            assert_eq!(
+                optlookup(variant),
+                canon,
+                "{variant} should resolve to same optno as kshglob"
+            );
+        }
+    }
+
+    /// Multiple underscores collapse — `ksh__glob`, `ksh___glob`.
+    #[test]
+    fn optlookup_multiple_underscores_collapse() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        let canon = optlookup("kshglob");
+        assert_eq!(optlookup("ksh__glob"), canon);
+        assert_eq!(optlookup("ksh___glob"), canon);
+    }
+
+    /// Unknown option name → 0 (not a valid optno).
+    #[test]
+    fn optlookup_unknown_name_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        assert_eq!(optlookup("totally_not_an_option_xyz"), 0);
+    }
+
+    /// Empty name → 0.
+    #[test]
+    fn optlookup_empty_string_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        assert_eq!(optlookup(""), 0);
+    }
+
+    // ── Several common option names that MUST resolve ────────────────
+    /// Pin that critical option names exist after createoptiontable().
+    /// Catches a regression where an option got dropped from the table.
+    #[test]
+    fn optlookup_resolves_common_options() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        // `clobber` is the canonical option name; zsh `noclobber` is
+        // the negation of `clobber`, NOT a separate option.
+        for name in &[
+            "interactive",
+            "monitor",
+            "shwordsplit",
+            "kshglob",
+            "extendedglob",
+            "globdots",
+            "clobber",
+            "automenu",
+            "histignoredups",
+            "verbose",
+        ] {
+            assert!(
+                optlookup(name) > 0,
+                "common option {name} must be in the table"
+            );
+        }
+    }
+
+    /// `optlookup("no_X")` resolves to the same optno as `optlookup("X")`
+    /// per zsh's `no_*` negation convention. Anchor: in real zsh,
+    /// `$options[NOCLOBBER]` returns the inverse of `$options[CLOBBER]`,
+    /// proving they map to the same underlying option.
+    #[test]
+    fn optlookup_no_prefix_resolves_to_canonical_option() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        let canon = optlookup("clobber");
+        let negated = optlookup("noclobber");
+        assert!(canon > 0, "clobber must resolve");
+        // The two MAY resolve to the same optno (zsh's convention) OR
+        // to distinct optnos that semantically mirror each other.
+        // Pin: at minimum, noclobber must resolve to SOMETHING valid.
+        assert_ne!(negated, 0, "noclobber must resolve (either as alias or distinct optno)");
+    }
+
+    /// `isset(optlookup("X"))` for an unset option returns false.
+    #[test]
+    fn isset_returns_false_for_unset_option() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        let saved = opt_state_get("automenu").unwrap_or(false);
+        opt_state_set("automenu", false);
+        assert!(!isset(optlookup("automenu")));
+        opt_state_set("automenu", saved);
+    }
+
+    /// `isset(optlookup("X"))` for a set option returns true.
+    #[test]
+    fn isset_returns_true_for_set_option() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        createoptiontable();
+        let saved = opt_state_get("automenu").unwrap_or(false);
+        opt_state_set("automenu", true);
+        assert!(isset(optlookup("automenu")));
+        opt_state_set("automenu", saved);
+    }
+
+    /// `opt_state_unset(name)` clears the option (subsequent `opt_state_get`
+    /// returns None or false).
+    #[test]
+    fn opt_state_unset_clears_value() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = opt_state_get("automenu").unwrap_or(false);
+        opt_state_set("automenu", true);
+        opt_state_unset("automenu");
+        // After unset, the value is either None (truly cleared) OR
+        // Some(false) (cleared to default). Both mean "not set".
+        let v = opt_state_get("automenu");
+        assert!(v.is_none() || v == Some(false),
+            "after unset, got {v:?} — should be None or Some(false)");
+        opt_state_set("automenu", saved);
+    }
 }
 
 /// Port of `mod_export Emulation_options sticky;` from

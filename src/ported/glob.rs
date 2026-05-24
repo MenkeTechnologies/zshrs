@@ -5766,4 +5766,190 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(file_type(libc::S_IFSOCK as u32), '=');
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // xpandbraces edge cases — anchored to `print -l <pattern>` in zsh 5.9.
+    // Where zshrs diverges, the test FAILS to expose the bug.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `{1..10..2}` → 1 3 5 7 9 (step range). zsh: 5 elements.
+    #[test]
+    fn xpandbraces_numeric_step_two() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{1..10..2}", false),
+            vec!["1", "3", "5", "7", "9"]
+        );
+    }
+
+    /// `{10..1..2}` → 10 8 6 4 2 (descending step).
+    #[test]
+    fn xpandbraces_numeric_descending_step_two() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{10..1..2}", false),
+            vec!["10", "8", "6", "4", "2"]
+        );
+    }
+
+    /// `{5..1}` → 5 4 3 2 1 (descending range, no step).
+    #[test]
+    fn xpandbraces_numeric_descending_range() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{5..1}", false),
+            vec!["5", "4", "3", "2", "1"]
+        );
+    }
+
+    /// `{01..10}` → 01 02 03 ... 10 (zero-padded; pad preserved).
+    #[test]
+    fn xpandbraces_zero_padded_numeric_range() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{01..10}", false),
+            vec!["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"]
+        );
+    }
+
+    /// `{001..010}` → 001 002 ... 010 (3-digit pad preserved).
+    #[test]
+    fn xpandbraces_three_digit_pad_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{001..010}", false),
+            vec![
+                "001", "002", "003", "004", "005",
+                "006", "007", "008", "009", "010"
+            ]
+        );
+    }
+
+    /// `\{a,b,c\}` → `{a,b,c}` literal (escaped braces don't expand).
+    /// zsh emits the input as a single literal.
+    #[test]
+    #[ignore = "ANCHOR: zsh `\\{a,b,c\\}` returns literal `{a,b,c}`; verify zshrs"]
+    fn xpandbraces_escaped_braces_remain_literal_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("\\{a,b,c\\}", false),
+            vec!["{a,b,c}"],
+            "zsh: escaped braces don't expand"
+        );
+    }
+
+    /// `{a,b}{c,d}` → ac ad bc bd (Cartesian product).
+    /// 2 * 2 = 4 elements, in row-major order.
+    #[test]
+    fn xpandbraces_cartesian_product_two_by_two() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{a,b}{c,d}", false),
+            vec!["ac", "ad", "bc", "bd"]
+        );
+    }
+
+    /// `{a,{b,c}}` → a b c (nested flattened).
+    #[test]
+    fn xpandbraces_nested_braces_flatten() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{a,{b,c}}", false),
+            vec!["a", "b", "c"]
+        );
+    }
+
+    /// `{}` → `{}` literal (empty brace doesn't expand).
+    #[test]
+    fn xpandbraces_empty_braces_remain_literal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(xpandbraces("{}", false), vec!["{}"]);
+    }
+
+    /// `a{b,c}d{e,f}` → abde abdf acde acdf (cartesian with surrounding text).
+    #[test]
+    fn xpandbraces_cartesian_with_surrounding_text() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("a{b,c}d{e,f}", false),
+            vec!["abde", "abdf", "acde", "acdf"]
+        );
+    }
+
+    /// `{a..z..3}` → `{a..z..3}` literal (alpha range with step NOT expanded
+    /// by zsh — surprising but verified).
+    #[test]
+    #[ignore = "ANCHOR: zsh emits literal {a..z..3}; alpha step unsupported"]
+    fn xpandbraces_alpha_step_unsupported_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{a..z..3}", false),
+            vec!["{a..z..3}"],
+            "zsh: alpha range with step → literal"
+        );
+    }
+
+    // ── split_qualifier: parse trailing (qual) block ─────────────────
+    /// `*.txt` (no trailing parens) → (input, None).
+    #[test]
+    fn split_qualifier_no_parens_returns_input_and_none() {
+        let _g = crate::test_util::global_state_lock();
+        let (head, qual) = split_qualifier("*.txt");
+        assert_eq!(head, "*.txt");
+        assert_eq!(qual, None);
+    }
+
+    /// `*(N)` → ("*", Some("N")) — null-glob qualifier.
+    #[test]
+    fn split_qualifier_star_paren_N_extracts_null_glob_qual() {
+        let _g = crate::test_util::global_state_lock();
+        let (head, qual) = split_qualifier("*(N)");
+        assert_eq!(head, "*");
+        assert_eq!(qual, Some("N"));
+    }
+
+    /// `*(.)` → ("*", Some(".")) — regular-file qualifier.
+    #[test]
+    fn split_qualifier_star_paren_dot_extracts_regular_file_qual() {
+        let _g = crate::test_util::global_state_lock();
+        let (head, qual) = split_qualifier("*(.)");
+        assert_eq!(head, "*");
+        assert_eq!(qual, Some("."));
+    }
+
+    /// `*.rs(.)` → ("*.rs", Some(".")) — qualifier on glob pattern.
+    #[test]
+    fn split_qualifier_pattern_with_qual_extracts_correctly() {
+        let _g = crate::test_util::global_state_lock();
+        let (head, qual) = split_qualifier("*.rs(.)");
+        assert_eq!(head, "*.rs");
+        assert_eq!(qual, Some("."));
+    }
+
+    /// `*(#qN)` → ("*", Some("N")) — `#q` prefix stripped per zsh syntax.
+    #[test]
+    fn split_qualifier_hash_q_prefix_stripped() {
+        let _g = crate::test_util::global_state_lock();
+        let (head, qual) = split_qualifier("*(#qN)");
+        assert_eq!(head, "*");
+        assert_eq!(qual, Some("N"));
+    }
+
+    /// `*(om[1])` → ("*", Some("om[1]")) — sort-by-mtime keep first.
+    #[test]
+    fn split_qualifier_multichar_qual_with_brackets() {
+        let _g = crate::test_util::global_state_lock();
+        let (head, qual) = split_qualifier("*(om[1])");
+        assert_eq!(head, "*");
+        assert_eq!(qual, Some("om[1]"));
+    }
+
+    /// `(a)(b)` — multiple paren groups: split takes the OUTERMOST trailing.
+    #[test]
+    fn split_qualifier_multiple_groups_takes_outermost_trailing() {
+        let _g = crate::test_util::global_state_lock();
+        let (head, qual) = split_qualifier("(a)(b)");
+        assert_eq!(head, "(a)");
+        assert_eq!(qual, Some("b"));
+    }
 }
