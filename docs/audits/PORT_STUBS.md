@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:23:33.334685+00:00
+Generated: 2026-05-24T22:24:26.979872+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 155 stubs across 47 files
+## Summary: 154 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -34,11 +34,11 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/zle_keymap.rs` | 5 | `newkeytab` (1 / 15) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
-| `src/ported/zle/complist.rs` | 4 | `menuselect_bindings` (1 / 25) |
 | `src/ported/glob.rs` | 3 | `get_match_ret` (5 / 71) |
 | `src/ported/init.rs` | 3 | `init_shout` (4 / 23) |
 | `src/ported/modules/db_gdbm.rs` | 3 | `gdbmhashsetfn` (7 / 47) |
 | `src/ported/pattern.rs` | 3 | `patmatch` (4 / 575) |
+| `src/ported/zle/complist.rs` | 3 | `boot_` (2 / 15) |
 | `src/ported/zle/zle_move.rs` | 3 | `backwardmetafiedchar` (3 / 75) |
 | `src/ported/builtin.rs` | 2 | `bin_print` (202 / 812) |
 | `src/ported/compat.rs` | 2 | `zgettime_monotonic_if_available` (23 / 404) |
@@ -240,15 +240,6 @@ python3 scripts/gen_port_stubs.py
 | 438 | `parsecolorchar` | 3 | 24 | 12% |
 | 2511 | `match_highlight` | 10 | 75 | 13% |
 
-### `src/ported/zle/complist.rs` — 4 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 3049 | `menuselect_bindings` | 1 | 25 | 4% |
-| 3063 | `boot_` | 2 | 15 | 13% |
-| 2812 | `domenuselect` | 129 | 925 | 13% |
-| 734 | `clnicezputs` | 24 | 107 | 22% |
-
 ### `src/ported/glob.rs` — 3 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -280,6 +271,14 @@ python3 scripts/gen_port_stubs.py
 | 1965 | `patmatch` | 4 | 575 | 0% |
 | 1888 | `pattryrefs` | 41 | 202 | 20% |
 | 2002 | `patmatchrange` | 26 | 113 | 23% |
+
+### `src/ported/zle/complist.rs` — 3 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 3097 | `boot_` | 2 | 15 | 13% |
+| 2812 | `domenuselect` | 129 | 925 | 13% |
+| 734 | `clnicezputs` | 24 | 107 | 22% |
 
 ### `src/ported/zle/zle_move.rs` — 3 stubs
 
