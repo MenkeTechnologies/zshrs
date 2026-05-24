@@ -1295,13 +1295,6 @@ pub fn digitcount() -> i32 {
 ///     hbegin(dohist);
 ///     lexinit();
 ///     init_parse_status();
-///
-/// The previous Rust port called only `strin++` and `hbegin` —
-/// missing the `lexinit()` and `init_parse_status()` calls. Effect:
-/// a fresh string-input scope inherited stale lexer state (token
-/// classification tables, current-token buffers) AND stale parser
-/// status (incomplete-expression flags), so subsequent strinbeg-
-/// driven parses could misbehave with state from a prior parse.
 pub fn strinbeg(dohist: i32) {
     // c:1033
     strin.fetch_add(1, SeqCst); // c:1035
@@ -1506,14 +1499,9 @@ pub fn hbegin(dohist: i32) {
         && strin.load(SeqCst) == 0
     {
         histactive.store(HA_ACTIVE, SeqCst); // c:1164
-                                                       // c:1165 — `attachtty(mypgrp);` reclaims the controlling
-                                                       // terminal for the shell's pgrp at the start of a fresh
-                                                       // history-recording line. The previous Rust port left this
-                                                       // as a comment-only stub claiming "TTY infra not ported"
-                                                       // — but `utils::attachtty` AND the `MYPGRP` global ARE
-                                                       // both ported (utils.rs:3593, jobs.rs:2585). Wire the
-                                                       // call so the shell actually grabs the tty during
-                                                       // interactive history sessions, matching C behavior.
+        // c:1165 — `attachtty(mypgrp);` reclaims the controlling
+        // terminal for the shell's pgrp at the start of a fresh
+        // history-recording line.
         let mypgrp = *crate::ported::jobs::MYPGRP
             .get_or_init(|| Mutex::new(0))
             .lock()

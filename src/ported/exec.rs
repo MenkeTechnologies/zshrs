@@ -684,13 +684,9 @@ pub fn getfpfunc(
 /// ```
 ///
 /// WARNING: zshrs's builtin table is the static `BUILTINS` array in
-/// `src/ported/builtin.rs`. Module autoload (`ensurefeature` from
-/// `Src/module.c`) is not yet wired through the same code path; the
-/// helper exists today as `crate::ported::module::ensurefeature` for
-/// the few sites that touch it. Until module-autoload is hooked up,
-/// this port is the identity for builtins with a registered
-/// `handlerfunc` and returns `None` for unresolved stubs (matching
-/// the C return-NULL-on-failure contract).
+/// `src/ported/builtin.rs`. Module autoload routes through
+/// `module::ensurefeature(MODULESTAB, modname, "b:", Some(cmdarg))`;
+/// after the module loads the handler should be wired into BUILTINS.
 pub fn resolvebuiltin<'a>(
     cmdarg: &str, // c:2703 (Src/exec.c)
     hn: &'a builtin,
@@ -699,10 +695,20 @@ pub fn resolvebuiltin<'a>(
     if hn.handlerfunc.is_none() {
         // c:2706 — `modname = dupstring(((Builtin)hn)->optstr)`.
         let modname = hn.optstr.clone().unwrap_or_default();
-        // c:2712-2714 — `ensurefeature(modname, "b:", ...)`. The Rust
-        // module-autoload path is not yet wired; treat missing
-        // handlerfunc as unresolvable.
-        // c:2715-2721 — re-lookup, fail with `lastval=1` + zerr.
+        // c:2712 — `ensurefeature(modname, "b:", cmdarg)`.
+        let _ = {
+            let mut t = crate::ported::module::MODULESTAB.lock().unwrap();
+            crate::ported::module::ensurefeature(&mut t, &modname, "b:", Some(cmdarg))
+        };
+        // c:2715-2716 — re-lookup the now-(hopefully)-resolved builtin.
+        if let Some(re) =
+            crate::ported::builtin::BUILTINS.iter().find(|b| b.node.nam == cmdarg)
+        {
+            if re.handlerfunc.is_some() {
+                return Some(re); // c:2723
+            }
+        }
+        // c:2717-2721 — `lastval = 1; zerr(...)` + return NULL.
         zerr(&format!(
             "autoloading module {} failed to define builtin: {}",
             modname, cmdarg

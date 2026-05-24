@@ -554,10 +554,6 @@ extern "C" fn zhandler(sig: libc::c_int) {
 /// if (killed) zwarn("warning: %d jobs SIGHUPed", killed);
 /// ```
 ///
-/// The previous Rust port was a `let _ = from_signal;` no-op
-/// stub. That meant `exit` from an interactive shell with
-/// running jobs would NOT SIGHUP them — the jobs would survive
-/// the parent shell and become orphans (or daemons).
 #[cfg(unix)]
 pub fn killrunjobs(from_signal: i32) {
     // c:506
@@ -1432,9 +1428,7 @@ pub fn dotrap(sig: i32) -> i32 {
     intrap.store(1, Ordering::SeqCst);
     // c:1270 — `dont_queue_signals()`. C disables signal queueing for
     // the duration of the trap dispatch so signals delivered while
-    // the trap is running run inline (not queued for later). Previously
-    // missing — trap callbacks ran with queueing still on, deferring
-    // any nested signals until after the trap returned.
+    // the trap is running run inline (not queued for later).
     crate::ported::signals_h::dont_queue_signals(); // c:1270
 
     // c:1272-1273 — `if (sig == SIGEXIT) ++in_exit_trap;` (counter,
