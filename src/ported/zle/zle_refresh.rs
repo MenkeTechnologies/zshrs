@@ -518,38 +518,147 @@ pub fn zwcwrite(s: &str) {
 /// Number of words to allocate in one go for the multiword buffers.
 pub const DEF_MWBUF_ALLOC: usize = 32; // c:697
 
-/// Port of `freevideo()` from Src/Zle/zle_refresh.c:700.
-/// Rust idiom replacement: Vec drop cascade replaces the C
-/// `zfree(REFRESH_STRING)` per-row loop; clearing the Options
-/// triggers the same teardown explicitly for parity.
+/// Direct port of `void freevideo(void)` from
+/// `Src/Zle/zle_refresh.c:700`.
+///
+/// Drops the new/old video buffers and (under MULTIBYTE_SUPPORT) the
+/// multi-codepoint cluster pools. C body's per-row zfree loop
+/// collapses to Rust's Vec drop cascade; the cluster pools live on
+/// VideoBuffer cells, so dropping the buffers releases them too.
+/// Resets `winw_alloc`/`winh_alloc` to 0 so the next [`resetvideo`]
+/// pass reallocates fresh buffers.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
 pub fn freevideo(state: &mut RefreshState) {
-    // c:freevideo
-    // C body: walk nbuf/obuf rows; zfree each REFRESH_STRING; zfree
-    // the row arrays. Rust drop cascade handles all freeing when
-    // the VideoBuffer's Vecs go out of scope; explicitly clear them
-    // here for parity.
+    // c:702-718 — C body walks nbuf/obuf rows calling zfree on each
+    //              REFRESH_STRING, then frees the row arrays
+    //              themselves. Rust drop cascade subsumes both:
+    //              setting the Options to None drops every nested
+    //              Vec atomically.
     state.old_video = None;
     state.new_video = None;
+    // c:720-724 — `winw_alloc = winh_alloc = -1;`. Stored on
+    //              RefreshState.columns/lines so the next resetvideo
+    //              comparison forces re-allocation regardless of the
+    //              actual terminal size on next paint.
+    state.columns = 0;
+    state.lines = 0;
 }
 
 /// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725.
 /// Rust idiom replacement: `VideoBuffer::new(cols, rows)` covers
 /// the C `zrealloc(nbuf/obuf, (winh+1) * sizeof(...))` + memset-zero
 /// pair; geometry pulled from the canonical adjustcolumns/lines.
+/// Direct port of `void resetvideo(void)` from
+/// `Src/Zle/zle_refresh.c:725`.
+///
+/// Re-initialises the new/old video buffers + cursor + lprompt/
+/// rprompt widths at the start of every refresh cycle. Mirrors the
+/// C body's TERM_SHORT branch (winh=1 on dumb terms), lazy
+/// reallocation gated on winw_alloc/winh_alloc change, per-row
+/// zero-fill, then countprompt for both prompts and the
+/// lprompth wraparound bump when lpromptwof crosses winw.
+///
+/// **Signature note:** takes the RefreshState (which owns the
+/// VideoBuffers + the prompt cache) rather than the C file-statics.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn resetvideo(state: &mut RefreshState) {
-    // c:resetvideo
-    // C body: `winw = zterm_columns; nbuf/obuf rows realloced for
-    // (winh+1) lines; cleared via memset.` zshrs uses
-    // VideoBuffer::clear/resize for the same effect. Pull the new
-    // term geometry from the existing helpers.
+pub fn resetvideo(state: &mut RefreshState) { // c:725
+    use crate::ported::params::TERMFLAGS;
+    use crate::ported::zsh_h::TERM_SHORT;
+    use crate::ported::prompt::countprompt;
+
+    // c:729 — `winw = zterm_columns;`
     let cols = adjustcolumns();
-    let rows = adjustlines();
     state.columns = cols;
+    WINW.store(cols as i32, Ordering::Relaxed);
+
+    // c:730-733 — TERM_SHORT clamps to 1 row, else clamp ≥ 24.
+    let real_lines = adjustlines();
+    let rows = if TERMFLAGS.load(Ordering::Relaxed) & TERM_SHORT != 0 {
+        1
+    } else if real_lines < 2 {
+        24
+    } else {
+        real_lines
+    };
     state.lines = rows;
-    state.old_video = Some(VideoBuffer::new(cols, rows));
-    state.new_video = Some(VideoBuffer::new(cols, rows));
+    WINH.store(rows as i32, Ordering::Relaxed);
+    RWINH.store(real_lines as i32, Ordering::Relaxed); // c:734
+
+    // c:735 — `vln = vmaxln = winprompt = 0;`
+    VLN.store(0, Ordering::Relaxed);
+    VMAXLN.store(0, Ordering::Relaxed);
+    WINPROMPT.store(0, Ordering::Relaxed);
+    // c:736 — `winpos = -1;`
+    WINPOS.store(-1, Ordering::Relaxed);
+
+    // c:737-755 — re-alloc the video buffers (winw/winh changed).
+    //              Rust always rebuilds since VideoBuffer::new is cheap
+    //              and the realloc-on-change check is a no-op
+    //              optimisation in C land.
+    state.old_video = Some(VideoBuffer::new(cols, rows + 1));
+    state.new_video = Some(VideoBuffer::new(cols, rows + 1));
+
+    // c:757-767 — `for (ln = 0; ln <= winh; ln++) { nbuf[ln][0] = nl;
+    //              nbuf[ln][1] = '\0'; ... }`. VideoBuffer::new
+    //              already zero-fills.
+
+    // c:770-774 — `countprompt(lpromptbuf, &lpromptwof, &lprompth, 1);
+    //              countprompt(rpromptbuf, &rpromptw, &rprompth, 0);`
+    let mut lpromptwof_v = 0i32;
+    let mut lprompth_v = 0i32;
+    let mut rpromptw_v = 0i32;
+    let mut rprompth_v = 0i32;
+    countprompt(&state.lpromptbuf, &mut lpromptwof_v, &mut lprompth_v, 1);
+    countprompt(&state.rpromptbuf, &mut rpromptw_v, &mut rprompth_v, 0);
+
+    // c:775-779 — `if (lpromptwof != winw) lpromptw = lpromptwof;
+    //              else { lpromptw = 0; lprompth++; }`
+    let lpromptw_v = if lpromptwof_v != cols as i32 {
+        lpromptwof_v
+    } else {
+        lprompth_v += 1;
+        0
+    };
+    state.lpromptw = lpromptw_v as usize;
+    state.rpromptw = rpromptw_v as usize;
+    LPROMPTW.store(lpromptw_v, Ordering::Relaxed);
+    LPROMPTH.store(lprompth_v, Ordering::Relaxed);
+    LPROMPTWOF.store(lpromptwof_v, Ordering::Relaxed);
+    RPROMPTW.store(rpromptw_v, Ordering::Relaxed);
+    RPROMPTH.store(rprompth_v, Ordering::Relaxed);
+
+    // c:782-787 — pre-fill nbuf[0]/obuf[0] with `lpromptw` spaces so the
+    //              first row's prompt area is reserved.
+    if lpromptw_v > 0 {
+        let spaces = lpromptw_v as usize;
+        if let Some(v) = state.new_video.as_mut() {
+            if let Some(row) = v.lines.get_mut(0) {
+                for cell in row.iter_mut().take(spaces) {
+                    cell.chr = ' ';
+                }
+            }
+        }
+        if let Some(v) = state.old_video.as_mut() {
+            if let Some(row) = v.lines.get_mut(0) {
+                for cell in row.iter_mut().take(spaces) {
+                    cell.chr = ' ';
+                }
+            }
+        }
+    }
+
+    // c:790-794 — `vcs = lpromptw; olnct = nlnct = 0;
+    //              if (showinglist > 0) showinglist = -2;
+    //              trashedzle = 0;`
+    state.vcs = lpromptw_v as usize;
+    VCS.store(lpromptw_v, Ordering::Relaxed);
+    OLNCT.store(0, Ordering::Relaxed);
+    NLNCT.store(0, Ordering::Relaxed);
+    if SHOWINGLIST.load(Ordering::Relaxed) > 0 {
+        SHOWINGLIST.store(-2, Ordering::Relaxed);
+    }
+    TRASHEDZLE.store(0, Ordering::Relaxed);
+
     state.need_full_redraw = true;
 }
 
@@ -2736,6 +2845,50 @@ pub static LISTSHOWN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI3
 /// Length of the previous listing (separate from `listshown` because
 /// the listing might be paginated).
 pub static LASTLISTLEN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:176
+
+/// Port of `static int vmaxln` from `Src/Zle/zle_refresh.c:680`.
+/// Maximum line index reached during this refresh — used to decide
+/// how much of the prior frame to clear.
+pub static VMAXLN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:680
+
+/// Port of `static int winprompt` from `Src/Zle/zle_refresh.c:680`.
+/// Number of physical lines the prompt occupies on screen.
+pub static WINPROMPT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:680
+
+/// Port of `static int winpos` from `Src/Zle/zle_refresh.c:680`.
+/// Horizontal scroll offset when the buffer is wider than winw.
+pub static WINPOS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1); // c:680
+
+/// Port of `static int rwinh` from `Src/Zle/zle_refresh.c:682`.
+/// Real terminal-line count (vs the TERM_SHORT-clamped `winh`).
+pub static RWINH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(24); // c:682
+
+/// Port of `static int lpromptwof` from `Src/Zle/zle_refresh.c:676`.
+/// Left prompt's pre-wrap visible width (`lpromptw` may differ when
+/// the prompt fills the line exactly and forces an extra row).
+pub static LPROMPTWOF: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:676
+
+/// Port of `static int lprompth` from `Src/Zle/zle_refresh.c:676`.
+/// Left prompt's height in rows.
+pub static LPROMPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:676
+
+/// Port of `static int rpromptw` from `Src/Zle/zle_refresh.c:676`.
+/// Right prompt's on-screen width.
+pub static RPROMPTW: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:676
+
+/// Port of `static int rprompth` from `Src/Zle/zle_refresh.c:676`.
+/// Right prompt's height in rows.
+pub static RPROMPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:676
+
+/// Port of `static int olnct` from `Src/Zle/zle_refresh.c:157`.
+/// Number of lines in the previous refresh — caller diff renders
+/// against this.
+pub static OLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:157
+
+/// Port of `mod_export int trashedzle` from `Src/Zle/zle_refresh.c:181`.
+/// Set when the on-screen line was wiped (by `trashzle`); next refresh
+/// must do a full redraw.
+pub static TRASHEDZLE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:181
 
 /// Port of `mod_export int clearflag` from `Src/Zle/zle_refresh.c:183`.
 /// Request a full screen-clear on next refresh (set by `clear-screen`
