@@ -485,7 +485,14 @@ fn handle_initialize(id: Option<Value>, _params: &Value) -> Value {
             "capabilities": {
                 "textDocumentSync": { "openClose": true, "change": 1, "save": true },
                 "completionProvider": {
-                    "triggerCharacters": ["$", "{", "-", ":"],
+                    // Auto-open popup on these chars. The list covers
+                    // every context-aware surface: `$`/`{` (param/var),
+                    // `(` (glob qualifier / param flag / pattern mod /
+                    // subscript flag / math fn), `[` (subscript), `#`
+                    // (pattern modifier `(#i)`), `*`/`?` (glob meta
+                    // before `(`), `!` (history designator), `-`
+                    // (typeset flag), `:` (param/history modifier).
+                    "triggerCharacters": ["$", "{", "(", "[", "#", "*", "?", "!", "-", ":"],
                     "resolveProvider": false,
                 },
                 "hoverProvider": true,
@@ -773,73 +780,62 @@ fn completion(state: &State, params: &Value) -> Value {
     // expansion flags; `*(…)` / `?(…)` / `](…)` → glob qualifiers.
     // These OVERRIDE the normal builtin/keyword/option flow because
     // in those positions nothing else is syntactically valid.
+    //
+    // `ctx_item` builds an LSP CompletionItem with explicit
+    // `filterText` + `insertText` so IntelliJ's prefix matcher
+    // doesn't reject single-char non-alphanumeric labels (`/`, `.`,
+    // `@`, `*`, etc.). Without this, the IDE would silently drop
+    // them from the popup even though the LSP returned the items
+    // correctly.
+    fn ctx_item(label: &str, detail: &str, doc_md: &str) -> Value {
+        json!({
+            "label": label,
+            "kind": 14, // Constant
+            "detail": detail,
+            // filterText="" → match against any user-typed prefix
+            // (the IDE's matcher accepts empty-filter items
+            // unconditionally). insertText=label → insert exactly
+            // the label text when the user picks it.
+            "filterText": label,
+            "insertText": label,
+            "sortText": format!("0_{}", label),
+            "documentation": {
+                "kind": "markdown",
+                "value": doc_md,
+            },
+        })
+    }
     if let Some(l) = line {
         match lsp_completion_context(l, col) {
             LspCompletionContext::ParamFlag => {
                 let items: Vec<Value> = PARAM_FLAG_DOCS
                     .iter()
-                    .map(|(flag, doc)| {
-                        json!({
-                            "label": flag,
-                            "kind": 14, // Constant
-                            "detail": *doc,
-                            "documentation": {
-                                "kind": "markdown",
-                                "value": format!("**`(`{}`)`** — {}\n\n_zsh parameter expansion flag — `${{(FLAGS)var}}`_", flag, doc),
-                            },
-                        })
-                    })
+                    .map(|(flag, doc)| ctx_item(flag, *doc,
+                        &format!("**`(`{}`)`** — {}\n\n_zsh parameter expansion flag — `${{(FLAGS)var}}`_", flag, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::GlobQualifier => {
                 let items: Vec<Value> = GLOB_QUALIFIER_DOCS
                     .iter()
-                    .map(|(q, doc)| {
-                        json!({
-                            "label": q,
-                            "kind": 14, // Constant
-                            "detail": *doc,
-                            "documentation": {
-                                "kind": "markdown",
-                                "value": format!("**`(`{}`)`** — {}\n\n_zsh glob qualifier — `*(QUALIFIERS)`_", q, doc),
-                            },
-                        })
-                    })
+                    .map(|(q, doc)| ctx_item(q, *doc,
+                        &format!("**`(`{}`)`** — {}\n\n_zsh glob qualifier — `*(QUALIFIERS)`_", q, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::HistoryDesignator => {
                 let items: Vec<Value> = HISTORY_DESIGNATOR_DOCS
                     .iter()
-                    .map(|(d, doc)| {
-                        json!({
-                            "label": d,
-                            "kind": 14, // Constant
-                            "detail": *doc,
-                            "documentation": {
-                                "kind": "markdown",
-                                "value": format!("**`!{}`** — {}\n\n_zsh history event designator_", d, doc),
-                            },
-                        })
-                    })
+                    .map(|(d, doc)| ctx_item(d, *doc,
+                        &format!("**`!{}`** — {}\n\n_zsh history event designator_", d, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::ParamColonModifier => {
                 let items: Vec<Value> = PARAM_MODIFIER_DOCS
                     .iter()
-                    .map(|(m, doc)| {
-                        json!({
-                            "label": m,
-                            "kind": 14, // Constant
-                            "detail": *doc,
-                            "documentation": {
-                                "kind": "markdown",
-                                "value": format!("**`:{}`** — {}\n\n_zsh modifier — `${{var:MOD}}` / `!event:MOD`_", m, doc),
-                            },
-                        })
-                    })
+                    .map(|(m, doc)| ctx_item(m, *doc,
+                        &format!("**`:{}`** — {}\n\n_zsh modifier — `${{var:MOD}}` / `!event:MOD`_", m, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
@@ -858,87 +854,53 @@ fn completion(state: &State, params: &Value) -> Value {
             LspCompletionContext::SignalName => {
                 let items: Vec<Value> = SIGNAL_NAMES
                     .iter()
-                    .map(|(n, doc)| json!({
-                        "label": n,
-                        "kind": 14,
-                        "detail": *doc,
-                        "documentation": {
-                            "kind": "markdown",
-                            "value": format!("**SIG{}** — {}\n\n_signal name — `kill -{}` / `trap … {}`_", n, doc, n, n),
-                        },
-                    }))
+                    .map(|(n, doc)| ctx_item(n, *doc,
+                        &format!("**SIG{}** — {}\n\n_signal name — `kill -{}` / `trap … {}`_", n, doc, n, n)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::ModuleName => {
                 let items: Vec<Value> = ZSH_MODULE_NAMES
                     .iter()
-                    .map(|(n, doc)| json!({
-                        "label": n,
-                        "kind": 9, // Module
-                        "detail": *doc,
-                        "documentation": {
-                            "kind": "markdown",
-                            "value": format!("**`{}`** — {}\n\n_zsh module — `zmodload {}`_", n, doc, n),
-                        },
-                    }))
+                    .map(|(n, doc)| ctx_item(n, *doc,
+                        &format!("**`{}`** — {}\n\n_zsh module — `zmodload {}`_", n, doc, n)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::KeymapName => {
                 let items: Vec<Value> = KEYMAP_NAMES
                     .iter()
-                    .map(|(n, doc)| json!({
-                        "label": n,
-                        "kind": 14,
-                        "detail": *doc,
-                    }))
+                    .map(|(n, doc)| ctx_item(n, *doc, &format!("**`{}`** — {}", n, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::WidgetName => {
                 let items: Vec<Value> = ZLE_WIDGET_NAMES
                     .iter()
-                    .map(|(n, doc)| json!({
-                        "label": n,
-                        "kind": 3, // Function
-                        "detail": *doc,
-                    }))
+                    .map(|(n, doc)| ctx_item(n, *doc, &format!("**`{}`** — {}\n\n_ZLE widget_", n, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::TypesetFlag => {
                 let items: Vec<Value> = TYPESET_FLAGS
                     .iter()
-                    .map(|(f, doc)| json!({
-                        "label": f,
-                        "kind": 14,
-                        "detail": *doc,
-                    }))
+                    .map(|(f, doc)| ctx_item(f, *doc,
+                        &format!("**`{}`** — {}\n\n_typeset / declare / local / readonly flag_", f, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::ZstyleContext => {
                 let items: Vec<Value> = ZSTYLE_CONTEXTS
                     .iter()
-                    .map(|(c, doc)| json!({
-                        "label": c,
-                        "kind": 14,
-                        "detail": *doc,
-                    }))
+                    .map(|(c, doc)| ctx_item(c, *doc, &format!("**`{}`** — {}\n\n_zstyle context pattern_", c, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::CompdefFn => {
-                // compdef takes a completion function (`_*`) as its
-                // first arg. Surface canonical `_…` names.
                 let mut items = Vec::new();
                 for n in compsys::COMPSYS_FN_NAMES {
-                    items.push(json!({
-                        "label": n,
-                        "kind": 3,
-                        "detail": "compsys completion function",
-                    }));
+                    items.push(ctx_item(n, "compsys completion function",
+                        &format!("**`{}`** — compsys completion function", n)));
                 }
                 return json!({ "isIncomplete": false, "items": items });
             }
@@ -946,60 +908,32 @@ fn completion(state: &State, params: &Value) -> Value {
             LspCompletionContext::TestOperator => {
                 let items: Vec<Value> = TEST_OPERATORS
                     .iter()
-                    .map(|(op, doc)| json!({
-                        "label": op,
-                        "kind": 24, // Operator
-                        "detail": *doc,
-                        "documentation": {
-                            "kind": "markdown",
-                            "value": format!("**`{}`** — {}\n\n_inside `[[ … ]]` conditional_", op, doc),
-                        },
-                    }))
+                    .map(|(op, doc)| ctx_item(op, *doc,
+                        &format!("**`{}`** — {}\n\n_inside `[[ … ]]` conditional_", op, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::MathFunction => {
                 let items: Vec<Value> = MATH_FUNCTIONS
                     .iter()
-                    .map(|(n, doc)| json!({
-                        "label": n,
-                        "kind": 3,
-                        "detail": *doc,
-                        "documentation": {
-                            "kind": "markdown",
-                            "value": format!("**`{}(…)`** — {}\n\n_math function — inside `((…))` / `$((…))` (most require `zmodload zsh/mathfunc`)_", n, doc),
-                        },
-                    }))
+                    .map(|(n, doc)| ctx_item(n, *doc,
+                        &format!("**`{}(…)`** — {}\n\n_math function — inside `((…))` / `$((…))` (most require `zmodload zsh/mathfunc`)_", n, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::PatternModifier => {
                 let items: Vec<Value> = PATTERN_MODIFIERS
                     .iter()
-                    .map(|(m, doc)| json!({
-                        "label": m,
-                        "kind": 14,
-                        "detail": *doc,
-                        "documentation": {
-                            "kind": "markdown",
-                            "value": format!("**`(#{})`** — {}\n\n_extended-glob pattern modifier (needs `EXTENDED_GLOB`)_", m, doc),
-                        },
-                    }))
+                    .map(|(m, doc)| ctx_item(m, *doc,
+                        &format!("**`(#{})`** — {}\n\n_extended-glob pattern modifier (needs `EXTENDED_GLOB`)_", m, doc)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::SubscriptFlag => {
                 let items: Vec<Value> = SUBSCRIPT_FLAGS
                     .iter()
-                    .map(|(f, doc)| json!({
-                        "label": f,
-                        "kind": 14,
-                        "detail": *doc,
-                        "documentation": {
-                            "kind": "markdown",
-                            "value": format!("**`({})`** — {}\n\n_array subscript flag — `${{arr[({})pattern]}}`_", f, doc, f),
-                        },
-                    }))
+                    .map(|(f, doc)| ctx_item(f, *doc,
+                        &format!("**`({})`** — {}\n\n_array subscript flag — `${{arr[({})pattern]}}`_", f, doc, f)))
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
