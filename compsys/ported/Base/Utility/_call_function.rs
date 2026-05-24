@@ -1,6 +1,25 @@
 //! Port of `_call_function` — call a completion function by name.
-//! Moved from `compsys/functions.rs`. Renamed from `call_function` to
-//! mirror zsh shell function name `_call_function`.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_call_function`
+//! (system copy `/opt/homebrew/share/zsh/functions/_call_function`).
+//!
+//! Upstream shell source (key lines from the 32-line fn):
+//! ```text
+//!  4  # Usage: _call_function <return> <name> [ <args> ... ]
+//! 15  local _name _ret
+//! 17  [[ "$1" != (|-) ]] && _name="$1"
+//! 18  shift
+//! 22  if (( ${+functions[$2]} )); then
+//! 24    $2 "$@"
+//! ```
+//!
+//! Upstream resolves a shell function by name (from `$functions`
+//! associative array) and invokes it.
+//!
+//! Rust port: returns false. Resolving a Rust fn by string name
+//! would require either a runtime fn-pointer registry (which we
+//! don't have at the leaf) or shell integration. Caller-side
+//! wiring would map names to Rust fn pointers and invoke directly.
 
 use crate::base::MainCompleteState;
 

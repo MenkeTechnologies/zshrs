@@ -1,6 +1,31 @@
-//! Port of `_complete_help_generic` — generic help completion. Moved
-//! from `compsys/functions.rs`. Renamed from `complete_help_generic`
-//! to mirror zsh shell function name `_complete_help_generic`.
+//! Port of `_complete_help_generic` — generic help completion.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_complete_help_generic`
+//! (system copy `/opt/homebrew/share/zsh/functions/_complete_help_generic`).
+//!
+//! Upstream shell source (full 17-line widget):
+//! ```text
+//!  6  [[ $WIDGET = *noread* ]] || local ZSH_TRACE_GENERIC_WIDGET
+//!  8  if [[ $WIDGET = *debug* ]]; then
+//!  9    ZSH_TRACE_GENERIC_WIDGET=_complete_debug
+//! 10  else
+//! 11    ZSH_TRACE_GENERIC_WIDGET=_complete_help
+//! 12  fi
+//! 14  if [[ $WIDGET != *noread* ]]; then
+//! 15    zle read-command && zle $REPLY -w
+//! 16  fi
+//! ```
+//!
+//! Upstream is a `zle` widget that reads ANOTHER widget name from
+//! the user via `read-command`, then runs it with
+//! `ZSH_TRACE_GENERIC_WIDGET` set so `_generic` knows to call
+//! `_complete_help` (or `_complete_debug`) on it.
+//!
+//! Simplified Rust port: takes the `--help`-style text directly and
+//! parses dash-prefixed option lines, emitting them as completions
+//! with `option -- description` disp format. Skips the zle widget
+//! interaction entirely — this is the "give me the parsed options"
+//! API that callers actually need.
 
 use crate::compcore::CompletionState;
 use crate::completion::Completion;

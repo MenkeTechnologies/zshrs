@@ -1,6 +1,26 @@
-//! Port of `_set_command` — set the command being completed. Moved
-//! from `compsys/functions.rs`. Renamed from `set_command` to mirror
-//! zsh shell function name `_set_command`.
+//! Port of `_set_command` — set the command being completed.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_set_command`
+//! (system copy `/opt/homebrew/share/zsh/functions/_set_command`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  3  # Sets parameters _comp_command1, _comp_command2 and _comp_command
+//!  9  command="$words[1]"
+//! 13  if (( $+builtins[$command] + $+functions[$command] )); then
+//! 14    _comp_command1="$command"
+//! 15    _comp_command="$_comp_command1"
+//! 16  elif [[ "$command[1]" = '=' ]]; then
+//! 17    eval _comp_command2\=$command
+//! ```
+//!
+//! Upstream sets THREE parameters (_comp_command, _comp_command1,
+//! _comp_command2) using slightly different rules per command shape.
+//!
+//! Simplified Rust port: records just `lastcomp[command] = words[0]`
+//! — sufficient for the common single-command lookup; the dual-form
+//! _comp_command1/2 distinction was used by legacy compctl
+//! callsites that we don't carry.
 
 use crate::base::MainCompleteState;
 

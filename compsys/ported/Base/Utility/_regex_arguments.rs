@@ -1,5 +1,28 @@
 //! Port of `_regex_arguments` — complete using regex-based argument
-//! specs. Moved from `compsys/functions.rs`.
+//! specs.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_regex_arguments`
+//! (system copy `/opt/homebrew/share/zsh/functions/_regex_arguments`).
+//!
+//! Upstream is an 86-line spec-parser that turns a function-name +
+//! list-of-pat→action-tuples into a callable state-machine. Key
+//! lines:
+//! ```text
+//!  3  _regex_arguments() {
+//!  6    local name=$1
+//!  7    shift
+//!  9    local spec specs all_descr i
+//! 24    eval "$name() {
+//! 25      local i offset=\$CURRENT \$#words match mbegin mend
+//! ```
+//!
+//! Upstream compiles the patterns into a generated shell fn.
+//!
+//! Simplified Rust port: takes the patterns directly and walks
+//! them at completion-time (no compile step). First pattern that
+//! matches `current_word()` wins; emits the description as the
+//! group explanation. Uses `regex_lite` so patterns are real PCRE,
+//! not zsh extended-globs.
 
 use crate::compcore::CompletionState;
 

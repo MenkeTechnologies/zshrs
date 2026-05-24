@@ -1,5 +1,22 @@
 //! Port of `_cmdstring` — complete a command string (for eval, etc.).
-//! Moved from `compsys/library.rs`.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_cmdstring`
+//! (system copy `/opt/homebrew/share/zsh/functions/_cmdstring`).
+//!
+//! Upstream shell source (full 6 lines):
+//! ```text
+//!  4  compset -q
+//!  5  _normal
+//! ```
+//!
+//! Upstream calls `compset -q` to treat the current word as a
+//! quoted shell argument, then dispatches to `_normal` (which
+//! handles command-vs-argument selection).
+//!
+//! Simplified Rust port: skips the `compset -q` quote-stripping
+//! (handled at the ZLE layer) and dispatches to `_command_names`
+//! in full mode — equivalent user behavior for the most common
+//! eval-arg case.
 
 use crate::compcore::CompletionState;
 

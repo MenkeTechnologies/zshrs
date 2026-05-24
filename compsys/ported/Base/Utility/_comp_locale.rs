@@ -1,6 +1,31 @@
-//! Port of `_comp_locale` — set locale for completion. Moved from
-//! `compsys/functions.rs`. Renamed from `comp_locale` to mirror zsh
-//! shell function name `_comp_locale`.
+//! Port of `_comp_locale` — set locale for completion.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_comp_locale`
+//! (system copy `/opt/homebrew/share/zsh/functions/_comp_locale`).
+//!
+//! Upstream shell source (the whole 20-line fn):
+//! ```text
+//! 11  if ctype=${${(f)"$(locale 2>/dev/null)"}:#^LC_CTYPE=*}; then
+//! 12      unset -m LC_\*
+//! 13      [[ -n $ctype ]] && eval export $ctype
+//! 14  else
+//! 15      ctype=${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}
+//! 16      unset -m LC_\*
+//! 17      export LC_CTYPE=$ctype
+//! 18  fi
+//! 19  export LANG=C
+//! ```
+//!
+//! Upstream sets a C-locale env for sane completion-tool output
+//! while keeping LC_CTYPE for filename byte interpretation. The
+//! comment says it MUST be run in a subshell (changes calling
+//! shell's env).
+//!
+//! Rust port: deliberate no-op. Our equivalent lives in
+//! `compsys::ported::_call_program` via `CallProgramOpts::skip_locale`
+//! — the locale env vars (LC_ALL=C, LANG=C, LC_MESSAGES=C) are set
+//! per-exec on the Command, not via process-global mutation. Pin
+//! that no env is touched.
 
 /// _comp_locale - Set locale for completion
 pub fn _comp_locale() {

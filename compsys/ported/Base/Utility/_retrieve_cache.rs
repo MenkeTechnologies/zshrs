@@ -1,5 +1,26 @@
 //! Port of `_retrieve_cache` — retrieve completion data from cache.
-//! Moved from `compsys/functions.rs`.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_retrieve_cache`
+//! (system copy `/opt/homebrew/share/zsh/functions/_retrieve_cache`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  7  if zstyle -t ":completion:${curcontext}:" use-cache; then
+//!  9    zstyle -s ":completion:${curcontext}:" cache-path _cache_dir
+//! 10    : ${_cache_dir:=${ZDOTDIR:-$HOME}/.zcompcache}
+//! 11    if [[ ! -d "$_cache_dir" ]]; then
+//! 16    _cache_path="$_cache_dir/$_cache_ident"
+//! 18    if [[ -e "$_cache_path" ]]; then
+//! 19      builtin . "$_cache_path"
+//! ```
+//!
+//! Upstream `builtin . "$_cache_path"` SOURCES the cache file
+//! (which is a shell script that sets shell-side parameters).
+//!
+//! Simplified Rust port: reads the cache file as plain text and
+//! returns one entry per line. Loses the "sourced parameter
+//! assignments" semantic but covers the common case where the
+//! cache file is a wordlist (one candidate per line).
 
 use crate::base::MainCompleteState;
 

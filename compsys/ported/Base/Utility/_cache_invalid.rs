@@ -1,5 +1,27 @@
 //! Port of `_cache_invalid` — check if completion cache is invalid.
-//! Moved from `compsys/functions.rs`.
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_cache_invalid`
+//! (system copy `/opt/homebrew/share/zsh/functions/_cache_invalid`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  9  zstyle -t ":completion:${curcontext}:" use-cache || return 1
+//! 11  zstyle -s ":completion:${curcontext}:" cache-path _cache_dir
+//! 12  : ${_cache_dir:=${ZDOTDIR:-$HOME}/.zcompcache}
+//! 13  _cache_path="$_cache_dir/$_cache_ident"
+//! 16  zstyle -s ":completion:${curcontext}:" cache-policy _cache_policy
+//! 17  [[ -n "$_cache_policy" ]] && "$_cache_policy" "$_cache_path" && return 0
+//! 19  return 1
+//! ```
+//!
+//! Upstream gates on the `use-cache` zstyle (no-cache → always
+//! treat as VALID so we don't bother re-querying), and otherwise
+//! consults the `cache-policy` user-defined function.
+//!
+//! Simplified Rust port: returns true (invalid) when
+//! `use-cache=no/false/off/0` is set, OR when no `cache-path`
+//! style is set, OR when the cache file doesn't exist. Drops the
+//! `cache-policy` user-fn callout (no shell-fn-invoke at the leaf).
 
 use std::path::Path;
 

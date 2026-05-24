@@ -1,6 +1,24 @@
-//! Port of `_default` — default completion (files). Moved from
-//! `compsys/library.rs`. Renamed from `default_complete` to mirror zsh
-//! shell function name `_default`.
+//! Port of `_default` — default completion (files).
+//!
+//! Local shell reference: `compsys/functions/Base/Utility/_default`
+//! (system copy `/opt/homebrew/share/zsh/functions/_default`).
+//!
+//! Upstream shell source (key lines):
+//! ```text
+//!  5  if { zstyle -s ":completion:${curcontext}:" use-compctl ctl ||
+//!  6       zmodload -e zsh/compctl } && [[ "$ctl" != (no|false|0|off) ]]; then
+//! 11    compcall "$opt[@]" || return 0
+//! 14  _files "$@" && return 0
+//! 17  # magicequalsubst allows arguments like <any-old-stuff>=~/foo …
+//! ```
+//!
+//! Upstream first tries `compcall` (legacy compctl fallback) if the
+//! `use-compctl` zstyle is set; then falls back to `_files`.
+//!
+//! Simplified Rust port: skips the compctl fallback (legacy
+//! compatibility shim we don't need) and just calls `files_execute`
+//! with default opts. The user-visible default-completion behavior
+//! IS `_files` for the modern compsys.
 
 use crate::compcore::CompletionState;
 
