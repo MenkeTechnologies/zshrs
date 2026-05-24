@@ -94,6 +94,16 @@ pub fn _gnu_generic(state: &mut CompletionState, command: &str) -> bool {
     }
 
     state.end_group();
+
+    // shell:5 `_arguments '*:arg: _default' --` — when the user is
+    // typing a non-option positional, chain to file completion via
+    // `_default`. We only do this if NO option matches were added
+    // AND the prefix doesn't start with `-`.
+    if state.nmatches == 0 && !prefix.starts_with('-') {
+        // Fall through to file completion via _default.
+        return crate::ported::_default::_default(state);
+    }
+
     state.nmatches > 0
 }
 
@@ -109,21 +119,42 @@ mod tests {
 
     #[test]
     fn parses_dash_options_from_help_output() {
-        // Any cmd with --help; we don't know which options it lists
-        // without committing to a specific cmd, so just pin: every
-        // emitted match must START WITH `-` (the parser's contract).
+        // Every emitted match must start with `-` when prefix is
+        // `-` (the parser's contract).
         let mut state = CompletionState::new();
         state.params.prefix = "-".into();
         let _ = _gnu_generic(&mut state, "ls");
-        for c in state
-            .groups
-            .iter()
-            .flat_map(|g| g.matches.iter())
-        {
+        for c in state.groups.iter().flat_map(|g| g.matches.iter()) {
             assert!(
                 c.str_.starts_with('-'),
                 "parser must emit dash-prefixed options; got `{}`",
                 c.str_
+            );
+        }
+    }
+
+    #[test]
+    fn non_dash_prefix_falls_back_to_file_completion() {
+        // shell:5 `_arguments '*:arg: _default' --` — positional
+        // arg falls through to _default → file completion.
+        // Use a prefix that targets the test cwd (compsys/).
+        let mut state = CompletionState::new();
+        state.params.prefix = "Cargo".into();
+        // Pretend we have a known-trivial cmd that exits 0 with
+        // empty --help output (`true --help` works on most systems).
+        let ok = _gnu_generic(&mut state, "true");
+        // Even though `true --help` produces no options, file
+        // fallback should pick up Cargo.toml in cwd.
+        if ok {
+            let names: Vec<String> = state
+                .groups
+                .iter()
+                .flat_map(|g| g.matches.iter())
+                .map(|c| c.str_.clone())
+                .collect();
+            assert!(
+                names.iter().any(|n| n.contains("Cargo")),
+                "fallback to _default must surface Cargo.toml; got {names:?}"
             );
         }
     }

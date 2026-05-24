@@ -34,10 +34,20 @@ pub struct PathFilesOpts {
     pub ignore: Option<String>,
     pub prefix: Option<String>,
     pub suffix: Option<String>,
+    /// `-W` flag — search in these dirs instead of cwd.
     pub search_dirs: Option<Vec<String>>,
     pub dirs_only: bool,
     pub files_only: bool,
     pub tag: Option<String>,
+    /// `cdpath` integration — when set AND the user-typed PREFIX
+    /// is a bare name (no `/`), also search each cdpath dir.
+    /// Mirrors shell's `_path_files` consultation of $cdpath when
+    /// completing arguments to `cd`.
+    pub use_cdpath: bool,
+    /// The cdpath directory list — caller pulls from $cdpath
+    /// (compsys is a leaf and can't reach the parent crate's
+    /// shell-variable table directly).
+    pub cdpath: Vec<String>,
 }
 
 /// _path_files - Complete files with path handling
@@ -51,9 +61,20 @@ pub fn _path_files(state: &mut CompletionState, opts: &PathFilesOpts) -> bool {
         (".".to_string(), prefix.as_str())
     };
 
-    // Handle -W (search in specific directories)
-    let search_dirs = if let Some(ref dirs) = opts.search_dirs {
+    // Handle -W (search in specific directories) and cdpath
+    // integration (when no path-sep in prefix AND use_cdpath).
+    let search_dirs: Vec<String> = if let Some(ref dirs) = opts.search_dirs {
         dirs.clone()
+    } else if opts.use_cdpath && !prefix.contains('/') {
+        let mut dirs = vec![dir.clone()];
+        // Append each cdpath entry so the user can `cd <Tab>` and
+        // find dirs reachable via $cdpath.
+        for d in &opts.cdpath {
+            if !dirs.contains(d) {
+                dirs.push(d.clone());
+            }
+        }
+        dirs
     } else {
         vec![dir.clone()]
     };
@@ -181,5 +202,117 @@ mod tests {
                 m.str_
             );
         }
+    }
+
+    #[test]
+    fn glob_filter_keeps_matches_only() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "C".into();
+        let opts = PathFilesOpts {
+            glob: Some("*.toml".into()),
+            ..Default::default()
+        };
+        let _ = _path_files(&mut state, &opts);
+        for m in state.groups.iter().flat_map(|g| g.matches.iter()) {
+            // Either *.toml or a dir (dirs pass the glob filter).
+            assert!(
+                m.str_.ends_with(".toml") || m.suf.as_deref() == Some("/"),
+                "glob filter must enforce *.toml on files; got `{}`",
+                m.str_
+            );
+        }
+    }
+
+    #[test]
+    fn cdpath_search_adds_dirs_when_no_slash_in_prefix() {
+        // Set up a tmpdir with a subdir 'project'; treat tmpdir as
+        // cdpath. Then complete `pro` and expect `project/` to show.
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_pf_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("project")).unwrap();
+
+        let mut state = CompletionState::new();
+        state.params.prefix = "pro".into();
+        let opts = PathFilesOpts {
+            use_cdpath: true,
+            cdpath: vec![tmp.to_string_lossy().to_string()],
+            ..Default::default()
+        };
+        let _ = _path_files(&mut state, &opts);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n.contains("project")),
+            "cdpath scan must find project/ — got {names:?}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn cdpath_disabled_by_default() {
+        // No use_cdpath flag → cdpath is ignored even if populated.
+        let mut state = CompletionState::new();
+        state.params.prefix = "definitely-not-in-cwd-xyz".into();
+        let opts = PathFilesOpts {
+            cdpath: vec!["/tmp".into()],
+            // use_cdpath defaults to false
+            ..Default::default()
+        };
+        let _ = _path_files(&mut state, &opts);
+        assert_eq!(
+            state.nmatches, 0,
+            "cdpath must NOT be scanned when use_cdpath is false"
+        );
+    }
+
+    #[test]
+    fn files_only_excludes_dirs() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "Cargo".into();
+        let opts = PathFilesOpts {
+            files_only: true,
+            ..Default::default()
+        };
+        let _ = _path_files(&mut state, &opts);
+        for m in state.groups.iter().flat_map(|g| g.matches.iter()) {
+            assert_ne!(
+                m.suf.as_deref(),
+                Some("/"),
+                "files_only must skip directories; got `{}`",
+                m.str_
+            );
+        }
+    }
+
+    #[test]
+    fn ignore_pattern_filters_matches() {
+        // ignore=`Cargo.toml` → drop matches starting with Cargo.toml.
+        let mut state = CompletionState::new();
+        state.params.prefix = "Cargo".into();
+        let opts = PathFilesOpts {
+            ignore: Some("Cargo.toml".into()),
+            ..Default::default()
+        };
+        let _ = _path_files(&mut state, &opts);
+        let names: Vec<String> = state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.clone())
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "Cargo.toml"),
+            "ignore pattern must drop Cargo.toml; got {names:?}"
+        );
     }
 }

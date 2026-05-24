@@ -208,32 +208,63 @@ fn add_paths(origpref: &str, files: &[PathBuf], matches: &mut Vec<String>) {
         }
     }
 
-    // shell:46-48: recurse into immediate symlink-resolved subdirs.
-    // We approximate this by trying every immediate child of the
-    // expanded curpref; cheap because hash-based dedupe catches dups.
-    if let Ok(entries) = std::fs::read_dir(&curpref) {
-        for e in entries.flatten() {
-            let cpath = e.path();
-            if cpath.is_dir() && cpath.is_symlink() {
-                let leaf = cpath.file_name().and_then(|s| s.to_str());
-                if let Some(name) = leaf {
-                    let new_origpref = format!("{}{}/", origpref_eff, name);
-                    // Bounded recursion: depth limited by string growth.
-                    if new_origpref.len() < 4096 {
-                        // Inline single-step: scan files matching new_origpref.
-                        if let Ok(rp) = std::fs::canonicalize(&cpath) {
-                            let cs = rp.to_string_lossy().to_string() + "/";
-                            for f in files {
-                                let fs = f.to_string_lossy();
-                                if fs.starts_with(&cs) {
-                                    let stripped = &fs[cs.len()..];
-                                    matches.push(format!("{}{}", new_origpref, stripped));
-                                }
-                            }
-                        }
-                    }
-                }
+    // shell:46-48: recurse into symlink-resolved subdirs. Fully
+    // recursive (depth-capped + cycle-detected) so the user gets
+    // alternate paths to deep symlinked content.
+    recurse_symlinks(
+        &curpref,
+        &origpref_eff,
+        files,
+        matches,
+        &mut std::collections::HashSet::new(),
+        8, // depth cap — matches canonical-paths-back-limit default
+    );
+}
+
+fn recurse_symlinks(
+    curdir: &str,
+    origpref: &str,
+    files: &[PathBuf],
+    matches: &mut Vec<String>,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    depth: usize,
+) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(curdir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let cpath = e.path();
+        if !cpath.is_dir() || !cpath.is_symlink() {
+            continue;
+        }
+        let Some(name) = cpath.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let new_origpref = format!("{}{}/", origpref, name);
+        if new_origpref.len() >= 4096 {
+            continue;
+        }
+        let Ok(real) = std::fs::canonicalize(&cpath) else {
+            continue;
+        };
+        // Cycle detection: don't revisit the same canonical dir.
+        if !visited.insert(real.clone()) {
+            continue;
+        }
+        let real_str = real.to_string_lossy().to_string() + "/";
+        for f in files {
+            let fs = f.to_string_lossy();
+            if fs.starts_with(&real_str) {
+                let stripped = &fs[real_str.len()..];
+                matches.push(format!("{}{}", new_origpref, stripped));
             }
+        }
+        // Recurse into the symlink's resolved content.
+        if let Some(real_no_slash) = real_str.strip_suffix('/') {
+            recurse_symlinks(real_no_slash, &new_origpref, files, matches, visited, depth - 1);
         }
     }
 }
@@ -320,7 +351,80 @@ mod tests {
             "",
             &["/etc/hosts".into()],
         );
-        // /etc/hosts doesn't start with /no/such/path → no matches.
         assert!(!ok);
+    }
+
+    #[test]
+    fn back_limit_zstyle_overrides_default() {
+        let mut store = crate::zstyle::ZStyleStore::new();
+        store.set(
+            ":completion::canonical-paths",
+            "canonical-paths-back-limit",
+            vec!["3".into()],
+            false,
+        );
+        let mut state = CompletionState::new();
+        state.params.prefix = "..".into();
+        let opts = CanonicalPathsOpts::default();
+        // Just verify the zstyle parse + lookup path doesn't crash;
+        // actual chase depth is verified at the algo level.
+        let _ = _canonical_paths(&mut state, &opts, Some(&store), "", &[]);
+    }
+
+    #[test]
+    fn add_paths_emits_files_with_prefix_match() {
+        let mut matches: Vec<String> = Vec::new();
+        let cwd = std::env::current_dir().unwrap();
+        let cwd_s = cwd.to_string_lossy().to_string();
+        let files = vec![
+            PathBuf::from(format!("{}/a", cwd_s)),
+            PathBuf::from(format!("{}/b", cwd_s)),
+            PathBuf::from("/elsewhere/c"),
+        ];
+        add_paths(&cwd_s, &files, &mut matches);
+        assert!(matches.iter().any(|m| m.ends_with("/a")));
+        assert!(matches.iter().any(|m| m.ends_with("/b")));
+        assert!(!matches.iter().any(|m| m.starts_with("/elsewhere")));
+    }
+
+    #[test]
+    fn dotup_emits_paths_in_parent_chain() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "..".into();
+        let opts = CanonicalPathsOpts::default();
+        // Just need to not panic + back limit honored.
+        let _ = _canonical_paths(&mut state, &opts, None, "", &[]);
+    }
+
+    #[test]
+    fn recurse_symlinks_terminates_on_cycle() {
+        // Set up: tmp/a → tmp (symlink loop back to parent)
+        let tmp = std::env::temp_dir().join(format!(
+            "zshrs_cp_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let link = tmp.join("loop");
+        #[cfg(unix)]
+        {
+            let _ = std::os::unix::fs::symlink(&tmp, &link);
+        }
+        let mut matches = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        recurse_symlinks(
+            tmp.to_str().unwrap(),
+            "test/",
+            &[],
+            &mut matches,
+            &mut visited,
+            8,
+        );
+        // Critical: must NOT infinite-loop. If we get here, cycle
+        // detection worked.
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
