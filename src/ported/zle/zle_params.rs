@@ -1026,14 +1026,11 @@ pub fn is_insert_mode() -> bool {
     (INSMODE.load(Ordering::SeqCst) != 0)
 }
 
-/// `$REGION_ACTIVE` accessor — non-zero when a visual selection
-/// is active.
-/// Port of `get_region_active(UNUSED(Param pm))` from Src/Zle/zle_params.c. The
-/// C source returns 1/2 (charwise/linewise); our simplified
-/// boolean compares mark vs cursor.
+/// `$REGION_ACTIVE` predicate — true iff the visual region flag is
+/// set (charwise=1 or linewise=2). Snake-cased Rust helper wrapping
+/// the canonical `get_region_active()` (C value 0/1/2) into a bool.
 pub fn is_region_active() -> bool {
-    MARK.load(Ordering::SeqCst)
-        != ZLECS.load(Ordering::SeqCst)
+    REGION_ACTIVE.load(Ordering::SeqCst) != 0
 }
 
 #[cfg(test)]
