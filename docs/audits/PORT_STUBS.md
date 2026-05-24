@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T22:02:35.704941+00:00
+Generated: 2026-05-24T22:03:53.271989+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 163 stubs across 47 files
+## Summary: 162 stubs across 47 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -33,10 +33,10 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
 | `src/ported/module.rs` | 5 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 5 | `map_opt_desc` (1 / 16) |
-| `src/ported/init.rs` | 4 | `init_term` (9 / 91) |
 | `src/ported/parse.rs` | 4 | `build_dump` (2 / 75) |
 | `src/ported/prompt.rs` | 4 | `addbufspc` (1 / 15) |
 | `src/ported/glob.rs` | 3 | `get_match_ret` (5 / 71) |
+| `src/ported/init.rs` | 3 | `init_shout` (4 / 23) |
 | `src/ported/modules/db_gdbm.rs` | 3 | `gdbmhashsetfn` (7 / 47) |
 | `src/ported/pattern.rs` | 3 | `patmatch` (4 / 575) |
 | `src/ported/zle/zle_move.rs` | 3 | `backwardmetafiedchar` (3 / 75) |
@@ -238,15 +238,6 @@ python3 scripts/gen_port_stubs.py
 | 694 | `setstypat` | 6 | 58 | 10% |
 | 148 | `freestylenode` | 2 | 10 | 20% |
 
-### `src/ported/init.rs` — 4 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 473 | `init_term` | 9 | 91 | 9% |
-| 444 | `init_shout` | 4 | 23 | 17% |
-| 1003 | `source` | 18 | 97 | 18% |
-| 284 | `parseopts` | 36 | 144 | 25% |
-
 ### `src/ported/parse.rs` — 4 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -272,6 +263,14 @@ python3 scripts/gen_port_stubs.py
 | 1655 | `get_match_ret` | 5 | 71 | 7% |
 | 1296 | `zglob` | 44 | 612 | 7% |
 | 579 | `scanner` | 17 | 162 | 10% |
+
+### `src/ported/init.rs` — 3 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 444 | `init_shout` | 4 | 23 | 17% |
+| 1074 | `source` | 18 | 97 | 18% |
+| 284 | `parseopts` | 36 | 144 | 25% |
 
 ### `src/ported/modules/db_gdbm.rs` — 3 stubs
 
