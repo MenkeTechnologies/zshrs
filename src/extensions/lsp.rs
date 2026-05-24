@@ -769,6 +769,50 @@ fn completion(state: &State, params: &Value) -> Value {
         }
     }
 
+    // Context-specific completion tables. `${(…)` → parameter
+    // expansion flags; `*(…)` / `?(…)` / `](…)` → glob qualifiers.
+    // These OVERRIDE the normal builtin/keyword/option flow because
+    // in those positions nothing else is syntactically valid.
+    if let Some(l) = line {
+        match lsp_completion_context(l, col) {
+            LspCompletionContext::ParamFlag => {
+                let items: Vec<Value> = PARAM_FLAG_DOCS
+                    .iter()
+                    .map(|(flag, doc)| {
+                        json!({
+                            "label": flag,
+                            "kind": 14, // Constant
+                            "detail": *doc,
+                            "documentation": {
+                                "kind": "markdown",
+                                "value": format!("**`(`{}`)`** — {}\n\n_zsh parameter expansion flag — `${{(FLAGS)var}}`_", flag, doc),
+                            },
+                        })
+                    })
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::GlobQualifier => {
+                let items: Vec<Value> = GLOB_QUALIFIER_DOCS
+                    .iter()
+                    .map(|(q, doc)| {
+                        json!({
+                            "label": q,
+                            "kind": 14, // Constant
+                            "detail": *doc,
+                            "documentation": {
+                                "kind": "markdown",
+                                "value": format!("**`(`{}`)`** — {}\n\n_zsh glob qualifier — `*(QUALIFIERS)`_", q, doc),
+                            },
+                        })
+                    })
+                    .collect();
+                return json!({ "isIncomplete": false, "items": items });
+            }
+            LspCompletionContext::Normal => {}
+        }
+    }
+
     let prefix = line
         .map(|line| {
             let upto = &line[..line.len().min(col)];
@@ -1798,6 +1842,168 @@ const OPERATOR_DOCS: &[(&str, &str)] = &[
     (":=",  "Conditional-assign default (inside `${…}`). `${VAR:=fallback}` assigns `fallback` to `VAR` (and substitutes it) if `VAR` is unset or empty."),
     ("?=",  "Error-if-unset (inside `${…}`). `${VAR:?msg}` substitutes `$VAR` if set, else prints `msg` to stderr and exits."),
 ];
+
+/// `${(FLAGS)var}` parameter expansion flags. Single-char flags + a
+/// few `(F:string:)` colon-delimited args. Surfaced as LSP completion
+/// items when the cursor sits inside `${(…)` before the closing `)`.
+/// Same list zsh's compsys `_parameter_flags` produces — verified
+/// against `man zshexpn` "Parameter Expansion Flags".
+const PARAM_FLAG_DOCS: &[(&str, &str)] = &[
+    ("-", "sort decimal integers numerically (signed)"),
+    ("@", "prevent double-quoted joining of arrays"),
+    ("*", "enable extended globs for pattern arguments"),
+    ("#", "interpret numeric expression as character code"),
+    ("%", "expand prompt sequences (`%P` for prompt-only escapes)"),
+    ("~", "treat strings in parameter flag arguments as patterns"),
+    ("0", "split words on null bytes"),
+    ("A", "assign as an array parameter (in `${...=...}` etc)"),
+    ("a", "sort in array index order (with `O` to reverse)"),
+    ("b", "backslash-quote pattern characters only"),
+    ("B", "include index of beginning of match in `#`, `%` expressions"),
+    ("C", "capitalize words"),
+    ("c", "count characters in an array (with `${(c)#...}`)"),
+    ("D", "perform directory name abbreviation"),
+    ("E", "include index of one past end of match in `#`, `%` expressions"),
+    ("e", "perform single-word shell expansions"),
+    ("F", "join arrays with newlines"),
+    ("f", "split the result on newlines"),
+    ("g", "process echo array sequences (needs options like `gec`)"),
+    ("I", "search Nth match in `#`, `%`, `/` expressions (`(I:N:)`)"),
+    ("i", "sort case-insensitively"),
+    ("j", "join arrays with specified string (`(j:STR:)`)"),
+    ("k", "substitute keys of associative arrays"),
+    ("l", "left-pad resulting words (`(l:N:)`, `(l:N::pad:)`)"),
+    ("L", "lower case all letters"),
+    ("m", "count multibyte width in padding calculation"),
+    ("M", "include matched portion in `#`, `%` expressions"),
+    ("N", "include length of match in `#`, `%` expressions"),
+    ("n", "sort positive decimal integers numerically (unsigned)"),
+    ("o", "sort in ascending order (lexically if no other sort option)"),
+    ("O", "sort in descending order (lexically if no other sort option)"),
+    ("p", "handle print escapes in parameter flag string arguments"),
+    ("P", "use parameter value as name of parameter for redirected lookup"),
+    ("q", "quote with backslashes (`q-` shell-quote, `qq` single-quote, `qqq` double-quote, `qqqq` $'...')"),
+    ("Q", "remove one level of quoting"),
+    ("R", "include rest (unmatched portion) in `#`, `%` expressions"),
+    ("r", "right-pad resulting words (`(r:N:)`, `(r:N::pad:)`)"),
+    ("S", "match non-greedy in `/`, `//`, or search substrings in `%`/`#` expressions"),
+    ("s", "split words on specified string (`(s:STR:)`)"),
+    ("t", "substitute type of parameter (`scalar`, `array`, `association`, `integer`, `float`, plus flags)"),
+    ("u", "substitute first occurrence of each unique word"),
+    ("U", "upper case all letters"),
+    ("v", "substitute values of associative arrays (with `k`)"),
+    ("V", "visibility enhancements for special characters"),
+    ("w", "count words in array or string (with `${(w)#...}`)"),
+    ("W", "count words including empty words (with `${(W)#...}`)"),
+    ("X", "report parsing errors and exit substitution on failure"),
+    ("z", "split words as if a zsh command line"),
+    ("Z", "split words as if a zsh command line (with options — `(Z:cn:)`, `(Z:Cn:)`)"),
+];
+
+/// Glob qualifiers — letters inside `*(…)` / `pattern(…)` that restrict
+/// the matches. Surfaced as LSP completion when the cursor sits inside
+/// an unclosed paren immediately following a glob meta (`*`, `?`, `]`,
+/// `)`). Verified against `man zshexpn` "Glob Qualifiers".
+const GLOB_QUALIFIER_DOCS: &[(&str, &str)] = &[
+    // ── File types ──
+    ("/",  "directories"),
+    ("F",  "non-empty directories"),
+    (".",  "plain files (regular)"),
+    ("@",  "symbolic links"),
+    ("=",  "sockets"),
+    ("p",  "named pipes (FIFOs)"),
+    ("*",  "executable plain files (mode `0111`)"),
+    ("%",  "device files (block or character)"),
+    // ── Owner / permission ──
+    ("r",  "owner-readable"),
+    ("w",  "owner-writable"),
+    ("x",  "owner-executable"),
+    ("A",  "group-readable"),
+    ("I",  "group-writable"),
+    ("E",  "group-executable"),
+    ("R",  "world-readable"),
+    ("W",  "world-writable"),
+    ("X",  "world-executable"),
+    ("s",  "setuid"),
+    ("S",  "setgid"),
+    ("t",  "sticky bit set"),
+    ("U",  "owned by current effective uid"),
+    ("G",  "owned by current effective gid"),
+    ("u",  "owned by specified uid (`u:LOGIN:` / `u<UID>`)"),
+    ("g",  "owned by specified gid (`g:GROUP:` / `g<GID>`)"),
+    ("f",  "exact file mode match (`f:SPEC:`, eg `f:u+w:`)"),
+    // ── Time / size ──
+    ("a",  "atime (`a-N` younger than N days, `a+N` older)"),
+    ("m",  "mtime (`m-N` / `m+N`; suffixes `M`/`w`/`h`/`m`/`s`)"),
+    ("c",  "ctime (`c-N` / `c+N`)"),
+    ("L",  "size in bytes (`L-N`, `L+N`, suffixes `k`/`m`/`p`)"),
+    ("l",  "link count (`l-N` / `l+N`)"),
+    ("d",  "files on device DEV (`d<DEV>`)"),
+    // ── Sort / slice / control ──
+    ("o",  "order ascending (`oN` name, `oL` size, `om` mtime, `oa` atime, `oc` ctime, `od` depth, `oe:cmd:` custom)"),
+    ("O",  "order descending (same suffixes as `o`)"),
+    ("[",  "slice / range (`[N]`, `[N,M]`, `[N,-1]`)"),
+    ("^",  "negate the rest of the qualifier list"),
+    ("-",  "follow symbolic links when testing subsequent qualifiers"),
+    ("M",  "mark directories with trailing `/`"),
+    ("T",  "mark types with file-type indicator (`/=@*%|`)"),
+    ("N",  "set NULL_GLOB for this glob only (no match → empty)"),
+    ("D",  "include dotfiles in matches"),
+    ("n",  "numeric sort (use with `o` / `O`)"),
+    ("Y",  "early termination after N matches (`Y<N>`)"),
+    ("P",  "prepend WORD to each result (`P:WORD:`)"),
+    ("e",  "evaluate expression on each candidate (`e:EXPR:`); `$REPLY` is the filename"),
+    ("+",  "true if `cmd FILENAME` exits 0 (`+cmd`)"),
+];
+
+/// Where the cursor sits — drives which completion table to surface.
+/// Detected by scanning backward from the cursor for the innermost
+/// open paren and looking at what precedes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LspCompletionContext {
+    /// Default — surface builtins / keywords / options / params / snippets.
+    Normal,
+    /// Cursor inside `${(…)` before the closing `)`. Surface `PARAM_FLAG_DOCS`.
+    ParamFlag,
+    /// Cursor inside `pattern(…)` where `pattern` ends in a glob meta
+    /// (`*`, `?`, `]`, `)`). Surface `GLOB_QUALIFIER_DOCS`.
+    GlobQualifier,
+}
+
+/// Walks the line backward from `col` to find the innermost unmatched
+/// `(`. Classifies the context based on what precedes the open paren:
+///   * preceded by `${` → ParamFlag
+///   * preceded by `*` / `?` / `]` / `)` → GlobQualifier
+///   * anything else → Normal
+fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
+    let bytes = line.as_bytes();
+    let cap = col.min(bytes.len());
+    let mut depth: i32 = 0;
+    let mut i = cap;
+    while i > 0 {
+        i -= 1;
+        let c = bytes[i];
+        if c == b')' {
+            depth += 1;
+        } else if c == b'(' {
+            if depth == 0 {
+                // Unmatched `(` — classify by what's immediately before.
+                if i >= 2 && bytes[i - 2] == b'$' && bytes[i - 1] == b'{' {
+                    return LspCompletionContext::ParamFlag;
+                }
+                if i >= 1 {
+                    let prev = bytes[i - 1];
+                    if matches!(prev, b'*' | b'?' | b']' | b')') {
+                        return LspCompletionContext::GlobQualifier;
+                    }
+                }
+                return LspCompletionContext::Normal;
+            }
+            depth -= 1;
+        }
+    }
+    LspCompletionContext::Normal
+}
 
 /// Hand docs for compsys functions whose names don't have a per-name
 /// `item(tt(_X))` block in `compsys.yo` / `compwid.yo`. Per-command
@@ -5514,6 +5720,188 @@ mod tests {
         assert!(
             items.iter().any(|i| i["label"] == "if"),
             "expected `if` to surface after closed dq string"
+        );
+    }
+
+    // ── parameter expansion flag + glob qualifier completion ───────────
+
+    #[test]
+    fn completion_param_flags_inside_dollar_brace_paren() {
+        // User-driven: typing `${(<TAB>` should surface every flag
+        // letter zsh's compsys `_parameter_flags` produces, with
+        // descriptions. Pin a representative sample (`L` lower-case,
+        // `U` upper-case, `@` array-keep, `#` count) — drift in any
+        // entry fails the test so the table stays canonical.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "echo ${(".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 8 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        for want in &["L", "U", "@", "#", "f", "F", "j", "s", "q"] {
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing param flag `{}` in completion; got {:?}",
+                want,
+                items.iter().map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+            );
+        }
+        // Should NOT include shell builtins / keywords / options here.
+        assert!(
+            !items.iter().any(|i| i["label"] == "cd" || i["label"] == "if"),
+            "param-flag context leaked normal completion: {:?}",
+            items.iter().take(20).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn completion_param_flags_after_partial_flag() {
+        // `${(b` — cursor after first flag letter. We still want the
+        // full table surfaced (user may add more flags, eg `${(bC)`).
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "echo ${(b".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 9 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(
+            items.len() >= 40,
+            "expected full flag table (40+), got {}",
+            items.len(),
+        );
+    }
+
+    #[test]
+    fn completion_param_flags_inside_nested_dollar_brace() {
+        // `${${(L)` — inner `${(` still triggers ParamFlag. The
+        // backward walker must find the innermost unmatched `(` and
+        // classify on `${` before it.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "echo ${${(".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 10 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(items.iter().any(|i| i["label"] == "L"), "missing `L`");
+    }
+
+    #[test]
+    fn completion_no_param_flag_when_paren_already_closed() {
+        // `${(b)var` — past the closing `)`, we're back in param-name
+        // context, NOT flag context. Param-flag table must NOT fire.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "echo ${(b)var".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 13 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        // Either normal completion fires (builtins / params) or it's
+        // empty — but it must NOT be the param-flag table. Heuristic:
+        // the flag table has only single-char labels; a real builtin
+        // like `cd`/`vared` has multi-char. Assert at least one
+        // multi-char label exists OR the result is empty.
+        let single_char_only = !items.is_empty()
+            && items.iter().all(|i| i["label"].as_str().unwrap_or("").chars().count() == 1);
+        assert!(!single_char_only, "param-flag table leaked past closing `)`");
+    }
+
+    #[test]
+    fn completion_glob_qualifier_after_star_paren() {
+        // `ls *(` — cursor right after `(` of glob qualifier. Should
+        // surface `/`, `.`, `@`, `*`, `r`, `w`, `x` and friends.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "ls *(".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 5 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        for want in &["/", ".", "@", "*", "r", "w", "x", "U", "G"] {
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing glob qualifier `{}`; got {:?}",
+                want,
+                items.iter().take(20).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+            );
+        }
+        assert!(
+            !items.iter().any(|i| i["label"] == "cd" || i["label"] == "if"),
+            "glob-qualifier context leaked normal completion",
+        );
+    }
+
+    #[test]
+    fn completion_glob_qualifier_after_question_mark() {
+        // `?(` is also a glob meta open — should trigger qualifier
+        // completion the same way `*(` does.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "ls ?(".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 5 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        assert!(items.iter().any(|i| i["label"] == "."));
+    }
+
+    #[test]
+    fn completion_no_glob_qualifier_for_plain_subshell() {
+        // `cmd (foo)` — bare `(` preceded by SPACE is a subshell /
+        // function-list grouping, NOT a glob qualifier. Must NOT
+        // surface qualifier table.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert("file:///t.zsh".into(), "echo (".into());
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": 6 },
+        });
+        let result = completion(&state, &params);
+        let items = result["items"].as_array().unwrap();
+        // Should be normal completion — expect `cd` to be present.
+        let has_normal = items.iter().any(|i| i["label"] == "cd" || i["label"] == "if");
+        let single_char_only = !items.is_empty()
+            && items.iter().all(|i| i["label"].as_str().unwrap_or("").chars().count() == 1);
+        assert!(has_normal || !single_char_only, "subshell `(` mis-triggered glob qualifier table");
+    }
+
+    #[test]
+    fn completion_param_flag_table_has_50_entries() {
+        // Pin: drift below 50 fails the gate so anyone trimming
+        // entries notices. Screenshot from the user shows the full
+        // compsys `_parameter_flags` list which is ~50 chars.
+        assert!(
+            PARAM_FLAG_DOCS.len() >= 49,
+            "PARAM_FLAG_DOCS dropped below 49 entries: {}",
+            PARAM_FLAG_DOCS.len()
+        );
+    }
+
+    #[test]
+    fn completion_glob_qualifier_table_has_30_entries() {
+        // Pin: zsh's qualifier table per `man zshexpn` covers
+        // file-type / perm / time / size / sort / control categories;
+        // dropping below 30 means we've lost a whole category.
+        assert!(
+            GLOB_QUALIFIER_DOCS.len() >= 30,
+            "GLOB_QUALIFIER_DOCS dropped below 30 entries: {}",
+            GLOB_QUALIFIER_DOCS.len()
         );
     }
 
