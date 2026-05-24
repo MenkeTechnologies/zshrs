@@ -9163,10 +9163,12 @@ fn dontimport(flags: i32) -> i32 {
     0 // c:809
 }
 
-/// Minimal `pattry()` shim — exact-match fallback until the pattern
-/// engine in `Src/pattern.c` is wired.
+/// `pattry()` wrapper that compiles `prog` then matches against `s`.
+/// Routes through `crate::ported::pattern::patmatch` (compile + try
+/// in one call) so the local-fn signature here stays `(&str, &str)`
+/// while the underlying matcher uses the canonical pattern engine.
 fn pattry(prog: &str, s: &str) -> bool {
-    prog == s
+    crate::ported::pattern::patmatch(prog, s)
 }
 
 // ===========================================================
