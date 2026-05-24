@@ -1,6 +1,25 @@
-//! Port of `_wanted` — check if tag is wanted and complete. Moved from
-//! `compsys/functions.rs`. Renamed from `wanted` to mirror zsh shell
-//! function name `_wanted`.
+//! Port of `_wanted` — check if tag is wanted and complete.
+//!
+//! Local shell reference: `compsys/functions/Base/Core/_wanted`
+//! (system copy `/opt/homebrew/share/zsh/functions/_wanted`).
+//!
+//! Upstream shell source (the whole 13-line fn):
+//! ```text
+//!  3  local -a __targs __gopt
+//!  5  zparseopts -D -a __gopt 1 2 V J x C:=__targs
+//!  7  _tags "$__targs[@]" "$1"
+//!  9  while _tags; do
+//! 10    _all_labels "$__gopt[@]" "$@" && return 0
+//! 11  done
+//! 13  return 1
+//! ```
+//!
+//! Simplified Rust port: skips the `-C context` / -1 / -2 / -V / -J
+//! / -x compadd flag-parsing (`__gopt` accumulator) because the Rust
+//! port takes an action closure instead of a compadd command line.
+//! The user-visible contract — "if tag is requested, begin its group
+//! + run action + close group + return action's result" — IS
+//! preserved.
 
 use crate::base::MainCompleteState;
 use crate::compcore::CompletionState;
@@ -12,10 +31,14 @@ pub fn _wanted(
     description: &str,
     action: impl FnOnce(&mut CompletionState) -> bool,
 ) -> bool {
+    // shell:7 — `_tags "$__targs[@]" "$1"` then shell:9 `while _tags;`
+    // gates execution on `tag` being in the requested set.
     if !state.tags.requested(tag) {
         return false;
     }
 
+    // shell:10 — `_all_labels "$@"` would compadd into a tag-named
+    // group; we begin the group ourselves so the action can populate.
     state.comp.begin_group(tag, true);
     if !description.is_empty() {
         state
@@ -26,6 +49,8 @@ pub fn _wanted(
     let result = action(&mut state.comp);
 
     state.comp.end_group();
+    // shell:10 `&& return 0` / shell:13 `return 1` — propagate the
+    // action's bool outcome.
     result
 }
 
