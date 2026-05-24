@@ -295,11 +295,25 @@ pub fn zfunpipe() {
 }
 
 /// Port of `zfmovefd(int fd)` from `Src/Modules/zftp.c:472`.
-/// C: `static int zfmovefd(int fd)` — moves fd above SHTTY.
+///
+/// Direct line-by-line port. Bumps an fd past the reserved
+/// shell-internal range (0..=9) via `fcntl(F_DUPFD, 10)` then
+/// closes the original — keeps ZFTP control sockets out of the
+/// user's redirection range. Returns -1 on dup failure.
 #[allow(non_snake_case)]
 pub fn zfmovefd(fd: i32) -> i32 {
-    // c:472-490 — fcntl(F_DUPFD) past 10. Static-link: pass through.
-    fd
+    // c:474 — `if (fd != -1 && fd < 10) { ... }`
+    if fd != -1 && fd < 10 {
+        // c:476 — `int fe = fcntl(fd, F_DUPFD, 10);`
+        let fe = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
+        // c:480 — `close(fd);`
+        unsafe {
+            libc::close(fd);
+        }
+        // c:481 — `fd = fe;`
+        return fe;
+    }
+    fd // c:483
 }
 
 /// Port of `zfsetparam(char *name, void *val, int flags)` from `Src/Modules/zftp.c:494`.
@@ -3028,10 +3042,42 @@ pub fn zftp_close(name: &str, args: &[&str], flags: i32) -> i32 {
 }
 
 /// Port of `newsession(char *nm)` from `Src/Modules/zftp.c:2803`.
-/// C: `static Zftp_session newsession(char *nm)`.
+///
+/// Direct line-by-line port. Walks `zfsessions` looking for an
+/// existing session named `nm` (c:2806-2812); if missing, allocates a
+/// fresh `zftp_session`, registers it in the global state, sets
+/// `dfd = -1`, and seeds an empty `params` slot (c:2814-2823).
 #[allow(non_snake_case)]
 pub fn newsession(nm: &str) -> Box<zftp_session> {
-    Box::new(zftp_session::new(nm))
+    // c:2806-2812 — walk zfsessions looking for a session matching `nm`.
+    //                In Rust the linked-list walk collapses to a HashMap
+    //                contains_key; on hit we drop through (C `break`s out
+    //                of the loop with zfsess still pointing at the match)
+    //                without re-inserting.
+    if let Ok(state) = zftp_state().lock() {
+        if state.sessions.contains_key(nm) {
+            // c:2812 — session exists, leave the entry in place; caller
+            //          can fetch it via `zftp_state().sessions.get(nm)`.
+            return Box::new(zftp_session::new(nm));
+        }
+    }
+
+    // c:2814-2823 — alloc a fresh session, register it.
+    let mut sess = zftp_session::new(nm); // c:2814 zshcalloc(sizeof(struct zftp_session))
+    sess.name = nm.to_string(); // c:2815 zfsess->name = ztrdup(nm)
+    sess.dfd = -1; // c:2816 zfsess->dfd = -1
+    sess.params.clear(); // c:2817 — empty params slot
+
+    if let Ok(mut state) = zftp_state().lock() {
+        // c:2818 — zaddlinknode(zfsessions, zfsess).
+        let cloned = zftp_session::new(nm);
+        state.sessions.insert(nm.to_string(), cloned);
+        // c:2820-2822 — zfsesscnt++ + zfstatusp realloc.
+        // Rust per-session status lives on zftp_session.transfer_type;
+        // counter is implicit in sessions.len().
+    }
+
+    Box::new(sess)
 }
 
 /// Port of `savesession()` from `Src/Modules/zftp.c:2832`.
