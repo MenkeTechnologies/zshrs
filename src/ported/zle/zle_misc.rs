@@ -2728,20 +2728,9 @@ pub fn processcmd(_args: &[String]) -> i32 {
     crate::ported::zle::zle_tricky::processcmd()
 }
 
-/// Port of `zgetline(UNUSED(char **args))` from
-/// `Src/Zle/zle_hist.c:846`. Push current line onto the buffer
-/// stack and restore the next saved line into the editor buffer
-/// (or clear the buffer when the stack is empty). Bound to
-/// `get-line` widget per iwidgets.list.
-pub fn zgetline(_args: &[String]) -> i32 {
-    // c:zle_hist.c:846
-    // C body pops `buf_stack` (the saved-line stack) and copies
-    // the saved bytes into the editor buffer. `buf_stack` is a
-    // file-scope `LinkList` in zle_hist.c. The full stack
-    // mechanism is part of `push-line` / `push-line-or-edit`;
-    // returns 0 matching the C source.
-    0
-}
+// `zgetline` lives at its canonical C location (zle_hist.c:898) →
+// `crate::ported::zle::zle_hist::zgetline`. The duplicate that
+// used to live here returned a bare 0 with no bufstack pop.
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ─── RUST-ONLY ACCESSORS ───

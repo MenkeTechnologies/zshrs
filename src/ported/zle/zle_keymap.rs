@@ -1587,20 +1587,107 @@ pub fn ungetkeycmd() {
     ungetbytes_unmeta(&buf);
 }
 
-/// Port of `getkeycmd()` from Src/Zle/zle_keymap.c:1768.
-/// Reads one input key via the keymap-driven dispatch loop and
-/// returns the matched Thingy's index (or -1 for EOF). Driven by
-/// `getkeymapcmd()` against the current main keymap.
-pub fn getkeycmd() -> i32 {
+/// Port of `mod_export Thingy getkeycmd(void)` from
+/// Src/Zle/zle_keymap.c:1768. Reads one input sequence via
+/// `getkeymapcmd` (the byte-by-byte keymap walk), then handles:
+///   - empty `seq` → return None (EOF);
+///   - `func == NULL` (string-insert binding) → push str back to
+///     input and retry; cap at 20 hops to prevent string-insert
+///     infinite loops (c:1777-1786);
+///   - `func == z_executenamedcmd` → call `executenamedcommand`
+///     for interactive widget-name resolution (c:1788-1796);
+///   - `func == z_executelastnamedcmd` → return cached `lastnamed`
+///     (c:1798).
+pub fn getkeycmd() -> Option<super::zle_thingy::Thingy> {
     // c:1768
-    // c:1770 — Thingy func = getkeymapcmd(curkeymap, &func, &str).
-    // The Rust dispatch entry runs through `execute_widget()` in
-    // `zle_main.rs`, which calls `get_key_cmd()` (lowercase
-    // underscore variant) that owns the real byte-input loop.
-    // This top-level wrapper exists for C-ABI parity; it returns
-    // EOF when no input substrate is attached. Callers in Rust
-    // use `zle_main::get_key_cmd()` directly.
-    -1
+    use super::zle_main::get_key_cmd;
+    let mut hops = 0; // c:1772
+    // c:1774 — `sentstring:` retry label.
+    loop {
+        // c:1775 — `seq = getkeymapcmd(curkeymap, &func, &str);`
+        let func = get_key_cmd(); // c:1775 underlying byte-loop
+        if func.is_none() {
+            // c:1776 `if (!*seq) return NULL;`
+            return None;
+        }
+        let func = func.unwrap();
+        // c:1777-1786 — string-insert (func==NULL in C, modeled as
+        // Thingy with empty nam in Rust thingytab). When the binding
+        // is a string-replacement, ungetbytes the str and re-walk.
+        if func.nam.is_empty() {
+            // c:1777 `if (!func)`
+            hops += 1; // c:1778
+            if hops == 20 {
+                // c:1779 hop-cap
+                crate::ported::utils::zerr(
+                    // c:1781
+                    "string inserting another one too many times",
+                );
+                return None; // c:1783
+            }
+            // c:1785 `ungetbytes_unmeta(str, strlen(str))` — no widget
+            // string was bound on this branch in Rust (get_key_cmd
+            // routes string-replacements before returning), so this
+            // arm only fires when the keymap entry has an empty `nam`
+            // sentinel. Loop to retry.
+            continue; // c:1786 `goto sentstring;`
+        }
+        // c:1788 — `func == Th(z_executenamedcmd)` check. zsh uses
+        // pointer equality on the global Thingy table; Rust uses
+        // name equality against the canonical widget name.
+        if func.nam == "execute-named-command" {
+            // c:1788
+            // c:1789-1790 — drive `executenamedcommand("execute: ")`
+            // until it returns a non-named-command result.
+            let mut resolved: Option<super::zle_thingy::Thingy> = None;
+            loop {
+                let name =
+                    crate::ported::zle::zle_misc::executenamedcommand("execute: "); // c:1791
+                match name {
+                    Some(n) if n == "execute-named-command" => continue, // c:1790 loop
+                    Some(n) => {
+                        // c:1792 — `func != z_executenamedcmd`
+                        let lookup =
+                            super::zle_thingy::thingytab().lock().unwrap().get(&n).cloned();
+                        resolved = lookup;
+                        break;
+                    }
+                    None => {
+                        // c:1793 `if (!func) func = t_undefinedkey;`
+                        let undef = super::zle_thingy::thingytab()
+                            .lock()
+                            .unwrap()
+                            .get("undefined-key")
+                            .cloned();
+                        resolved = undef;
+                        break;
+                    }
+                }
+            }
+            // c:1794-1796 — record `lastnamed = refthingy(func)` for
+            // future `executelastnamedcmd` lookups, unless `func`
+            // itself is `executelastnamedcmd`.
+            if let Some(ref f) = resolved {
+                if f.nam != "execute-last-named-cmd" {
+                    // c:1795
+                    *crate::ported::zle::zle_keymap::lastnamed
+                        .lock()
+                        .unwrap() = Some(f.clone()); // c:1796
+                }
+            }
+            return resolved;
+        }
+        // c:1798 — `func == Th(z_executelastnamedcmd)` → return
+        // the cached `lastnamed` Thingy.
+        if func.nam == "execute-last-named-cmd" {
+            // c:1798
+            return crate::ported::zle::zle_keymap::lastnamed
+                .lock()
+                .unwrap()
+                .clone();
+        }
+        return Some(func); // c:1800
+    }
 }
 
 /// Port of `zlesetkeymap(int mode)` from Src/Zle/zle_keymap.c:1804.

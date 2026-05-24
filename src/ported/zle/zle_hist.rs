@@ -919,22 +919,51 @@ pub fn pushinput() -> i32 {
     0
 }
 
-/// Port of `zgetline(UNUSED(char **args))` from Src/Zle/zle_hist.c:898.
+/// Port of `int zgetline(UNUSED(char **args))` from
+/// Src/Zle/zle_hist.c:898. Pops one entry off the C file-static
+/// `bufstack` linked list (saved-line stack populated by
+/// `push-line` and friends) and inserts the bytes into the editor
+/// buffer at the cursor — NOT reading history.
 pub fn zgetline() -> i32 {
     // c:898
-    // C body (c:898-930): fetch next bufstack entry into zleline,
-    //                    cursor at end. Returns 1 if stack empty.
-    let entry = match history().lock().unwrap().entries.pop() {
-        Some(e) => e.line,
+    // c:900 — `char *s = getlinknode(bufstack);`
+    let s = {
+        let mut bs = BUFSTACK.lock().unwrap();
+        if bs.is_empty() {
+            None
+        } else {
+            Some(bs.remove(0))
+        }
+    };
+    let s = match s {
+        // c:902 `if (!s) return 1;`
+        Some(v) => v,
         None => return 1,
     };
-    ZLELINE.lock().unwrap().clear();
-    ZLELINE.lock().unwrap().extend(entry.chars());
-    ZLECS.store(
-        ZLELINE.lock().unwrap().len(),
-        Ordering::SeqCst,
-    );
-    0
+    // c:905 — `lineadd = stringaszleline(s, 0, &cc, NULL, NULL);`
+    let lineadd: Vec<char> = s.chars().collect();
+    let cc = lineadd.len();
+    // c:907 — `spaceinline(cc);` — open `cc` slots at `zlecs`.
+    spaceinline(cc as i32);
+    // c:908 — `ZS_memcpy(zleline + zlecs, lineadd, cc);` — write
+    // the bytes into the new gap.
+    {
+        let cs = ZLECS.load(Ordering::SeqCst);
+        let mut zline = ZLELINE.lock().unwrap();
+        for (i, ch) in lineadd.iter().enumerate() {
+            if cs + i < zline.len() {
+                zline[cs + i] = *ch;
+            }
+        }
+    }
+    // c:909 — `zlecs += cc;`
+    ZLECS.fetch_add(cc, Ordering::SeqCst);
+    // c:912 — `clearlist = 1;`
+    CLEARLIST.store(1, Ordering::SeqCst);
+    // c:914 — `stackhist = -1;` — bufstack entry is being inserted
+    // into the current line, NOT restoring an older history pos.
+    STACKHIST.store(-1, Ordering::SeqCst);
+    0 // c:916
 }
 
 /// Port of `historyincrementalsearchbackward(char **args)` from Src/Zle/zle_hist.c:922.

@@ -1551,9 +1551,7 @@ pub fn paste_from_buffer(buf: usize, after: bool) {
 /// Direct port of `mod_export void cuttext(ZLE_STRING_T line, int len,
 /// int flags)` from `Src/Zle/zle_utils.c:946`. Stages a slice of the
 /// edit line into the cut buffer / kill ring, honouring the
-/// CUT_FRONT / CUT_REPLACE / CUT_RAW flag bits. The previous Rust
-/// placeholder used a fake `CutDirection` enum (Front/Back) that
-/// had no C counterpart; we now use `i32 flags` matching C.
+/// CUT_FRONT / CUT_REPLACE / CUT_RAW flag bits.
 
 /// Snapshot the current line into `last_line` for the undo system.
 /// Port of `setlastline()` from Src/Zle/zle_utils.c:1587. Routes to
