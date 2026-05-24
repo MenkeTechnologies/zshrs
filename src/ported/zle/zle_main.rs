@@ -63,23 +63,55 @@ use crate::ported::zle::{
 /// fetchttyinfo/attachtty save state remain on the host side.
 pub fn zsetterm() -> io::Result<()> {
     // c:210
-    // termios::FromRawFd is not used directly here — the path goes
-    // through termios::Termios::from_fd which already opens the fd.
     let mut termios = termios::Termios::from_fd(
         TTYFD.load(SeqCst),
     )?;
 
-    // Capture VEOF before we mask it — zlecore checks lastchar
-    // against eofchar for the empty-line EOF branch (zle_main.c:1139).
+    // c:240 — disable canonical + echo + flusho.
+    termios.c_lflag &= !(termios::ICANON | termios::ECHO);
+
+    // c:280 — capture VEOF before VMIN/VTIME overrides it. zlecore at
+    // c:1139 compares lastchar against EOFCHAR for the empty-line EOF
+    // path.
     let veof = termios.c_cc[termios::VEOF];
     if veof != 0 {
-        EOFCHAR.store((veof) as i32, SeqCst);
+        EOFCHAR.store(veof as i32, SeqCst);
     }
 
-    // Disable canonical line input + echo so we receive raw keys.
-    termios.c_lflag &= !(termios::ICANON | termios::ECHO);
+    // c:238-239 — `if (unset(FLOWCONTROL)) ti.tio.c_iflag &= ~IXON;`.
+    // termios crate doesn't re-export IXON/INLCR/ICRNL/ONLCR/VQUIT
+    // etc.; route through libc directly.
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::FLOWCONTROL) {
+        termios.c_iflag &= !(libc::IXON as libc::tcflag_t);
+    }
+
+    // c:256-258 — `ti.tio.c_oflag |= ONLCR;` translate \n to \r\n on
+    // output so prompt/error writes land cleanly.
+    termios.c_oflag |= libc::ONLCR as libc::tcflag_t;
+
+    // c:259-275 — disable VQUIT (^\), VSUSP (^Z), VDISCARD (^O),
+    // VLNEXT (^V) — zsh handles them itself via the key buffer.
+    let vdisable: libc::cc_t = {
+        let v = unsafe { libc::fpathconf(0, libc::_PC_VDISABLE) };
+        if v >= 0 { v as libc::cc_t } else { 0xff }
+    };
+    termios.c_cc[libc::VQUIT] = vdisable;
+    termios.c_cc[libc::VDISCARD] = vdisable;
+    termios.c_cc[libc::VSUSP] = vdisable;
+    termios.c_cc[libc::VLNEXT] = vdisable;
+    // c:276-278 — when nflowcontrol, also disable VSTART/VSTOP (^Q/^S).
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::FLOWCONTROL) {
+        termios.c_cc[libc::VSTART] = vdisable;
+        termios.c_cc[libc::VSTOP] = vdisable;
+    }
+
+    // c:281-282 — raw-mode VMIN=1 / VTIME=0.
     termios.c_cc[termios::VMIN] = 1;
     termios.c_cc[termios::VTIME] = 0;
+
+    // c:283 — INLCR|ICRNL: swap \n/\r on input. getbyte at c:382
+    // reverses the swap so the net effect inside zsh is none.
+    termios.c_iflag |= (libc::INLCR | libc::ICRNL) as libc::tcflag_t;
 
     termios::tcsetattr(
         TTYFD.load(SeqCst),
@@ -521,10 +553,30 @@ pub fn getrestchar(inchar: i32) -> i32 {
 /// ("If anything here needs changing, see also redrawhook()") is the
 /// reason this matches `zle_call_hook`'s queueing approach exactly.
 pub fn redrawhook() {
-    PENDING_HOOKS
-        .lock()
-        .unwrap()
-        .push(("zle-line-pre-redraw".to_string(), None));
+    // c:1066
+    // c:1069 — `if ((initthingy = rthingy_nocreate("zle-line-pre-redraw")))`.
+    let hook_name = "zle-line-pre-redraw";
+    if !crate::ported::zle::zle_thingy::rthingy_nocreate(hook_name) {
+        return; // c:1069 no hook registered
+    }
+    // c:1071-1077 — save errflag/retflag/lastcmd/incompfunc/viinrepeat
+    // around the call so a hook-side return doesn't leak.
+    let saverrflag = errflag.load(Ordering::Relaxed);
+    let savretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
+    // c:1080 — args = [name].
+    let args = vec![hook_name.to_string()];
+    // c:1087 — `execzlefunc(initthingy, args, 1, 0)`.
+    let _ = execzlefunc(hook_name, &args, 1, 0);
+    // c:1092 — restore errflag (preserving any ERRFLAG_INT bit).
+    let cur_errflag = errflag.load(Ordering::Relaxed);
+    errflag.store(
+        saverrflag | (cur_errflag & crate::ported::zsh_h::ERRFLAG_INT),
+        Ordering::Relaxed,
+    );
+    // c:1093 — restore retflag.
+    crate::ported::builtin::RETFLAG.store(savretflag, Ordering::Relaxed);
+    // c:1095 — `unrefthingy(initthingy)` — Drop on the Thingy returned
+    // by rthingy_nocreate handles the refcount automatically.
 }
 
 /// Core ZLE loop.

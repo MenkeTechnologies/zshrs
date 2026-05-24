@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-05-24T20:56:16.770928+00:00
+Generated: 2026-05-24T21:13:16.676197+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 181 stubs across 48 files
+## Summary: 179 stubs across 48 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -27,10 +27,10 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/zle_refresh.rs` | 10 | `addmultiword` (1 / 14) |
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 182) |
 | `src/ported/zle/zle_keymap.rs` | 8 | `getrestchar_keybuf` (2 / 39) |
-| `src/ported/zle/zle_main.rs` | 8 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_utils.rs` | 8 | `showmsg` (4 / 72) |
 | `src/ported/zle/zle_hist.rs` | 7 | `doisearch` (19 / 462) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (19 / 746) |
+| `src/ported/zle/zle_main.rs` | 6 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_tricky.rs` | 6 | `doexpansion` (1 / 58) |
 | `src/ported/module.rs` | 5 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 5 | `map_opt_desc` (1 / 16) |
@@ -177,19 +177,6 @@ python3 scripts/gen_port_stubs.py
 | 1488 | `default_bindings` | 24 | 121 | 19% |
 | 1225 | `bin_bindkey_meta` | 4 | 19 | 21% |
 
-### `src/ported/zle/zle_main.rs` — 8 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1022 | `describekeybriefly` | 2 | 28 | 7% |
-| 382 | `getbyte` | 11 | 76 | 14% |
-| 64 | `zsetterm` | 16 | 104 | 15% |
-| 633 | `zleread` | 20 | 127 | 15% |
-| 523 | `redrawhook` | 4 | 25 | 16% |
-| 712 | `execzlefunc` | 27 | 149 | 18% |
-| 1261 | `trashzle` | 4 | 22 | 18% |
-| 289 | `raw_getbyte` | 50 | 242 | 20% |
-
 ### `src/ported/zle/zle_utils.rs` — 8 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -225,6 +212,17 @@ python3 scripts/gen_port_stubs.py
 | 92 | `createcompctltable` | 4 | 14 | 28% |
 | 2280 | `makecomplistext` | 43 | 150 | 28% |
 | 242 | `freecompcond` | 11 | 37 | 29% |
+
+### `src/ported/zle/zle_main.rs` — 6 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1074 | `describekeybriefly` | 2 | 28 | 7% |
+| 414 | `getbyte` | 11 | 76 | 14% |
+| 685 | `zleread` | 20 | 127 | 15% |
+| 764 | `execzlefunc` | 27 | 149 | 18% |
+| 1313 | `trashzle` | 4 | 22 | 18% |
+| 321 | `raw_getbyte` | 50 | 242 | 20% |
 
 ### `src/ported/zle/zle_tricky.rs` — 6 stubs
 
