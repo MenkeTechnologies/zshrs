@@ -4170,9 +4170,19 @@ pub fn paramsubst(
                 } else {
                     None
                 };
-            let is_array_source = arrays_contains(&var_name)
+            // c:Src/params.c:2915 — `v->scanflags ? 1 : 0`. A
+            // single-slot subscript (`[N]`, `[name]`) clears isarr;
+            // subsequent length-op runs on the picked SCALAR (`${#arr[1]}`
+            // = chars in arr[1]). Only `[@]`/`[*]`/range `[N,M]` keep
+            // array shape (SCANPM_ISVAR_AT at c:2027-2029), feeding the
+            // c:3853 element-count path.
+            let single_slot_subscript = subscript
+                .as_deref()
+                .map_or(false, |s| s != "@" && s != "*" && !s.contains(','));
+            let is_array_source = (arrays_contains(&var_name)
                 || assoc_contains(&var_name)
-                || magic_keys.is_some();
+                || magic_keys.is_some())
+                && !single_slot_subscript;
             let n: usize = if is_array_source {
                 // c:3849 if (isarr)
                 if getlen == 1 {
@@ -4577,9 +4587,19 @@ pub fn paramsubst(
                                   // is cleared at line 2915 (`v->scanflags ? 1 : 0`) and
                                   // the C source falls through to getmatch on `val`
                                   // (line 3451). Mirror that here: when subscript was
-                                  // applied, treat raw_value as the scalar `val` and
-                                  // skip the per-element arr loop.
-                let has_subscript = subscript.is_some();
+                                  // applied AND it picks a single slot, treat raw_value
+                                  // as the scalar `val` and skip the per-element arr
+                                  // loop. For `[@]`/`[*]` and range `[N,M]`, isarr stays
+                                  // set (SCANPM_ISVAR_AT path at c:2027-2029) so the
+                                  // array iteration MUST fire — `\${arr[@]:#pat}` filters
+                                  // the elements, not the joined scalar.
+                let is_array_subscript = matches!(
+                    subscript.as_deref(),
+                    Some("@") | Some("*")
+                ) || subscript
+                    .as_deref()
+                    .map_or(false, |s| s.contains(','));
+                let has_subscript = subscript.is_some() && !is_array_subscript;
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript) {
                     let kept: Vec<String> = arr
                         .into_iter() // c:3540
@@ -5435,8 +5455,20 @@ pub fn paramsubst(
                     // result like filter/sort) → state.arrays → joined
                     // value. Direct port of zsh's getarrvalue → slice
                     // dispatch which uses aval if isarr is set.
-                    let array_source: Option<Vec<String>> =
-                        split_parts.clone().or_else(|| arrays_get(&var_name));
+                    //
+                    // c:Src/params.c:2915 — single-slot subscript (`[N]`,
+                    // `[name]`) clears isarr; the substring then runs on
+                    // the picked SCALAR (`${arr[1]:0:3}` = first 3 chars
+                    // of arr[1]). Only `[@]`/`[*]`/range `[N,M]` keep the
+                    // array shape that drives the slice path.
+                    let single_slot_subscript = subscript
+                        .as_deref()
+                        .map_or(false, |s| s != "@" && s != "*" && !s.contains(','));
+                    let array_source: Option<Vec<String>> = if single_slot_subscript {
+                        None // c:2915 (scalar picked → substring on val)
+                    } else {
+                        split_parts.clone().or_else(|| arrays_get(&var_name))
+                    };
                     if let Some(mut arr) = array_source {
                         // Positional-param slice (`@`/`*`/`argv`) — zsh
                         // counts offset 0 as $0 (script/function name),
@@ -5816,7 +5848,16 @@ pub fn paramsubst(
         // splat block is INSIDE this gate. Scalar shape (isarr=0)
         // after DQ sepjoin at c:3034 means no sort applies. C does
         // not have a separate "sort the joined string" path.
-        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) {
+        //
+        // sep.is_none() guard: C's sepjoin at c:3906 runs BEFORE c:4245
+        // and clears isarr=0 when (j)/(F) flag was set, so the sort
+        // block at c:4245 is gated out by `if (isarr)`. zshrs's port
+        // ordering inverts that (sort here at 5819, sep below at 5924),
+        // so explicitly skip sort when sep is set to mirror C's
+        // join-collapses-first behavior. `${(oj/-/)arr}` for
+        // (charlie alpha bravo) returns "charlie-alpha-bravo" in zsh —
+        // the o flag is a no-op because j collapsed shape first.
+        if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none() {
             // c:4245 + c:4290
             // Sort/unique source: prefer split_parts (any prior
             // operator result like :# filter, (s::) split, or
@@ -5922,27 +5963,38 @@ pub fn paramsubst(
             // matching zsh's `"${(s. .)str}"` per-word output.
             isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
         } else if let Some(ref sp) = sep {
-            // c:3963 (j with no s)
-            // (j:STR:) — join an array with STR. Source priority:
+            // c:3906-3907 — `val = sepjoin(aval, sep, 1); isarr = 0;`
+            // (j:STR:) / (F) — join an array with STR. Source priority:
             // split_parts (operator result) → state.arrays →
             // assoc-values → whitespace-split fallback. Direct
-            // port of subst.c:3963 sepjoin which reads aval.
+            // port of subst.c:3906 sepjoin which reads aval.
+            //
+            // CRITICAL: clear isarr to 0 after the join (c:3907) so the
+            // auto_splat block at c:4245 (subst.rs:6789) doesn't re-
+            // fetch the unjoined array and splat element-by-element,
+            // dropping the joined string. Without isarr=0 the j/F flag
+            // returns only arr[0]. The auto_splat third clause is also
+            // gated on `sep.is_none()` to skip the arrays_contains
+            // fallback for the same reason.
+            let mut joined = false;
             if let Some(parts) = split_parts.clone() {
-                value = parts.join(sp); // c:3963
-                                        // Join collapses array shape → reset split_parts
-                                        // so auto_splat emits one scalar node, not the
-                                        // joined-then-1-elem-splat.
-                split_parts = None; // c:3963
+                value = parts.join(sp); // c:3906
+                split_parts = None; // c:3906 (sepjoin collapses to scalar)
+                joined = true;
             } else if let Some(arr) = arrays_get(&var_name) {
-                // c:3963
-                value = arr.join(sp); // c:3963
+                value = arr.join(sp); // c:3906
+                joined = true;
             } else if let Some(map) = assoc_get(&var_name) {
-                // c:3963
                 let vals: Vec<String> = map.values().cloned().collect();
-                value = vals.join(sp); // c:3963
+                value = vals.join(sp); // c:3906
+                joined = true;
             } else if value.contains(' ') || value.contains('\n') {
                 let parts: Vec<&str> = value.split_whitespace().collect();
                 value = parts.join(sp);
+                joined = true;
+            }
+            if joined {
+                isarr = 0; // c:3907
             }
         }
 
@@ -6521,6 +6573,12 @@ pub fn paramsubst(
             // c:4030
             if quotetype == QT_SINGLE_OPTIONAL {
                 // c:2245 (q-)
+                // c:Src/utils.c:6190 — QT_SINGLE_OPTIONAL sets shownull=1
+                // so empty string always quotes as `''`. Without this the
+                // q- flag emitted bare empty instead of zsh's `''`.
+                if s.is_empty() {
+                    return "''".to_string(); // c:utils.c:6253-6256
+                }
                 let needs = s.chars().any(|c| {
                     // c:2245
                     c.is_whitespace()                                         // c:2245
@@ -6553,8 +6611,14 @@ pub fn paramsubst(
                     s.to_string() // c:2245
                 } // c:2245
             } else if quotetype == QT_QUOTEDZPUTS {
-                // c:2245 (q+)
-                quotestring(s, QT_DOLLARS) // c:2245
+                // c:4063-4064 — `for (; *ap; ap++) *ap = quotedzputs(*ap,
+                // NULL);` and scalar c:4109 `val = quotedzputs(val, NULL);`.
+                // Previously called quotestring(s, QT_DOLLARS) which
+                // unconditionally wraps in `$'…'`; quotedzputs only
+                // does so for nice-formatted (non-printable) strings,
+                // otherwise picks single-quote form. zsh: `${(q+)"hi
+                // there"}` → `'hi there'` (shortest valid quoting).
+                crate::ported::utils::quotedzputs(s) // c:4063
             } else if quotemod > 0 {
                 // c:4033 if (quotemod > 0)
                 // c:2252 — quotemod++ and quotetype++ cascade for
@@ -6781,6 +6845,7 @@ pub fn paramsubst(
             && pf_flags & PREFORK_SINGLE == 0         // c:3950 (multsub context)
             && rest.is_empty()                               // c:3950 (no operator subverted shape)
             && !scripted_scalar                              // c:3950 (single-elem pick is scalar)
+            && sep.is_none()                                 // c:3906-3907 (j/F flag already sepjoin'd → scalar)
             && (arrays_contains(&var_name)         // c:3950
                 || split_parts.is_some())); // c:3950 ((s::) made an array)
         if (nojoin == 2) || auto_splat {
@@ -9741,17 +9806,16 @@ mod tests {
     }
 
     // ── Join flag ───────────────────────────────────────────────────
-    // KNOWN ZSHRS BUG (surfaced 2026-05-23): the (j/x/), (j::), and
-    // (F) join flags on array parameters drop all elements except the
-    // first. Real zsh `print -r -- "${(j/_/)arr}"` produces
-    // `alpha_beta_gamma_delta`; zshrs returns just `alpha`. Marked
-    // #[ignore] so CI stays green; run `cargo test --ignored` to verify
-    // the bug or to confirm a fix. Remove the #[ignore] once paramsubst
-    // honors the join flag against array parameters.
+    // FIXED 2026-05-23 (subst.rs:5924/6788): the (j/x/), (j::), and (F)
+    // join flags on array parameters now correctly join all elements.
+    // Root cause: after `sep` was applied (c:3906 sepjoin), the port
+    // left `isarr` at 1 and the auto_splat block (c:4245) re-fetched
+    // the unjoined array from paramtab, splatting element-by-element
+    // and returning only arr[0]. Fix mirrors C's `isarr = 0` at c:3907
+    // and gates the auto_splat fallback on `sep.is_none()`.
 
     /// `${(j/_/)arr}` → `alpha_beta_gamma_delta` (explicit underscore join)
     #[test]
-    #[ignore = "ZSHRS BUG: (j/_/)arr drops all but first element; zsh joins"]
     fn paramsubst_arr_join_underscore_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
@@ -9767,7 +9831,6 @@ mod tests {
 
     /// `${(j::)arr}` → `alphabetagammadelta` (empty-string join)
     #[test]
-    #[ignore = "ZSHRS BUG: (j::)arr drops all but first element; zsh joins"]
     fn paramsubst_arr_join_empty_string_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
@@ -9784,7 +9847,6 @@ mod tests {
     // ── F-flag (newline join) ──────────────────────────────────────
     /// `${(F)arr}` → `alpha\nbeta\ngamma\ndelta` (newline-join, same bug class)
     #[test]
-    #[ignore = "ZSHRS BUG: (F)arr drops all but first element; zsh newline-joins"]
     fn paramsubst_arr_F_flag_joins_with_newlines_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
@@ -9859,7 +9921,6 @@ mod tests {
     /// `${mix[@]:#bar}` where mix=(foo bar baz qux) → `foo baz qux`
     /// (the matched element "bar" is REMOVED, not kept).
     #[test]
-    #[ignore = "ZSHRS BUG: :#pat array filter not implemented; returns unfiltered"]
     fn paramsubst_arr_filter_hash_removes_matching_literal_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, multi) = psubst_arr(
@@ -9880,7 +9941,6 @@ mod tests {
     /// `${mix[@]:#ba*}` where mix=(foo bar baz qux) → `foo qux`
     /// (glob pattern: removes everything starting with "ba")
     #[test]
-    #[ignore = "ZSHRS BUG: :#pat array filter (glob form) not implemented"]
     fn paramsubst_arr_filter_hash_removes_matching_glob_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, multi) = psubst_arr(
@@ -9934,7 +9994,6 @@ mod tests {
     /// `${#arr[1]}` is the BYTE LENGTH of arr[1], NOT 1 (element count).
     /// zsh: arr=(hello world); ${#arr[1]} → 5 (chars in "hello").
     #[test]
-    #[ignore = "ZSHRS BUG: ${#arr[1]} returns wrong value; zsh: string-length of arr[1]"]
     fn paramsubst_arr_length_of_indexed_element_is_string_length_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr("PSD5", &["hello", "world"], "${#PSD5[1]}");
@@ -9944,7 +10003,6 @@ mod tests {
     /// Substring of indexed element: `${arr[1]:0:3}` → first 3 chars.
     /// zsh: arr=(hello world); ${arr[1]:0:3} → "hel".
     #[test]
-    #[ignore = "ZSHRS BUG: ${arr[N]:0:M} substring of indexed element broken — returns full array string"]
     fn paramsubst_arr_substring_of_indexed_element_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) =
@@ -9959,14 +10017,22 @@ mod tests {
     /// If zshrs sorts here, that's a divergence (zshrs is sorting
     /// when zsh wouldn't).
     #[test]
-    #[ignore = "ANCHOR: zsh ${(o)arr} in scalar context does NOT sort; verify zshrs matches"]
     fn paramsubst_arr_sort_scalar_context_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSD7", &["charlie", "alpha", "bravo"], "${(o)PSD7}");
+        // Set the array directly, then call paramsubst with qt=true
+        // (DQ context). zsh: `"${(o)arr}"` does NOT sort because the
+        // DQ-sepjoin at c:3034 clears isarr=0 BEFORE the c:4245 sort
+        // block can fire. Verified: /bin/zsh -c 'arr=(charlie alpha
+        // bravo); print -r -- "${(o)arr}"' → "charlie alpha bravo".
+        errflag.store(0, Ordering::Relaxed);
+        let _ = crate::ported::params::setaparam(
+            "PSD7",
+            ["charlie", "alpha", "bravo"].iter().map(|s| (*s).to_string()).collect(),
+        );
+        let (out, _, _) = paramsubst("${(o)PSD7}", 0, true, 0, &mut 0);
         assert_eq!(
             out, "charlie alpha bravo",
-            "zsh: scalar-context (o) does NOT sort; got {out:?}"
+            "zsh: scalar (DQ) context (o) does NOT sort; got {out:?}"
         );
     }
 
@@ -9977,7 +10043,6 @@ mod tests {
     /// Pin zsh's observed behavior; mark #[ignore] since the behavior
     /// itself is counter-intuitive and we want to flag it explicitly.
     #[test]
-    #[ignore = "ANCHOR: zsh ${(oj/-/)arr} returns charlie-alpha-bravo (NOT sorted); verify zshrs"]
     fn paramsubst_arr_compound_oj_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) = psubst_arr(
@@ -9994,7 +10059,6 @@ mod tests {
     // ── (Fo) compound: newline-join, NOT sorted in zsh scalar ─────
     /// `${(Fo)arr}` in zsh: joined by newline, NOT sorted.
     #[test]
-    #[ignore = "ANCHOR: zsh ${(Fo)arr} → newline-join unsorted; verify zshrs"]
     fn paramsubst_arr_compound_Fo_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let (out, _) =
@@ -10028,7 +10092,6 @@ mod tests {
     // ── (q-) quote variants ────────────────────────────────────────
     /// `${(q-)x}` for x="" (empty) — zsh emits `''` (empty single quotes).
     #[test]
-    #[ignore = "ZSHRS BUG: (q-) on empty string returns empty; zsh: ''"]
     fn paramsubst_flag_qdash_on_empty_string_emits_empty_quotes_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let out = psubst_one("PSD_QE", "", "${(q-)PSD_QE}");
@@ -10040,9 +10103,13 @@ mod tests {
     /// zshrs returns `$'hi there'` (ANSI-C form) — divergence from zsh's
     /// shortest-form pick.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: (q+) picks $'...' form; zsh picks shortest = '...'"]
     fn paramsubst_flag_qplus_picks_shortest_quoting_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
+        // quotedzputs reads the ISPECIAL typtab to decide whether a char
+        // needs quoting. Tests don't auto-init typtab (init happens at
+        // shell startup in C); without this call typtab is all-zero and
+        // hasspecial() returns false even for space → bare unquoted.
+        crate::ported::utils::inittyptab();
         let out = psubst_one("PSD_QP", "hi there", "${(q+)PSD_QP}");
         assert_eq!(
             out, "'hi there'",
