@@ -3520,7 +3520,7 @@ pub fn bin_suspend(
 ///
 /// Internal helper uses passed table to avoid re-locking.
 /// WARNING: param names don't match C — Rust=(s, jobtab, maxjob, thisjob) vs C=(s)
-fn findjobnam(s: &str, jobtab: &[job], maxjob: i32, thisjob: i32) -> Option<i32> {
+pub(crate) fn findjobnam(s: &str, jobtab: &[job], maxjob: i32, thisjob: i32) -> Option<i32> {
     let mut jobnum = maxjob; // c:2037
     while jobnum >= 0 {
         // c:2037
