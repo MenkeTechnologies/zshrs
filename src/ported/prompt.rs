@@ -947,6 +947,12 @@ pub fn treplaceattrs(newattrs: zattr) {
 /// came from escape sequences the prompt parser didn't recognise.
 pub static txtunknownattrs: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:46
 
+/// Port of `mod_export zattr memo_term_color` from `Src/prompt.c:51`.
+/// Caches the terminal's reported default fg/bg colors (24-bit
+/// packed via TXT_ATTR_FG_24BIT / TXT_ATTR_BG_24BIT) so prompts can
+/// fall back to them when the user didn't pin a specific attr.
+pub static memo_term_color: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:51
+
 /// Set text attributes (full apply).
 /// Port of `tsetattrs(zattr newattrs)` from Src/prompt.c:1737.
 ///

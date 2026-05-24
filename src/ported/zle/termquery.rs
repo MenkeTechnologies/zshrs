@@ -214,13 +214,68 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
     }
 }
 
-/// Port of `handle_color(int bg, int red, int green, int blue)` from Src/Zle/termquery.c:438.
-/// WARNING: param names don't match C — Rust=(_seq) vs C=(bg, red, green, blue)
-pub fn handle_color(_seq: &str) -> i32 {
+/// Port of `static unsigned memo_cursor` at `Src/Zle/termquery.c:435`.
+/// Caches the terminal's reported default cursor color (packed
+/// 24-bit RGB) so `cursor_form` can restore it when the user-bound
+/// cursor color clears.
+pub static memo_cursor: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0); // c:435
+
+/// Port of `static char *COLORVAR[]` at `Src/Zle/termquery.c:135`.
+/// Per-channel param name for terminal default colors.
+const COLORVAR: [&str; 3] = [".term.fg", ".term.bg", ".term.cursor"]; // c:135
+
+/// Port of `static char *MODEVAR` at `Src/Zle/termquery.c:136`.
+const MODEVAR: &str = ".term.mode"; // c:136
+
+/// Direct port of `static void handle_color(int bg, int red, int
+/// green, int blue)` from `Src/Zle/termquery.c:438`. Caches the
+/// terminal-reported default color into `memo_term_color`
+/// (fg/bg) or `memo_cursor` (case 2), then assigns the
+/// corresponding `$.term.fg`/`.bg`/`.cursor` param to the RGB
+/// hex string and (for bg) sets `$.term.mode` to `light`/`dark`
+/// based on Rec.709 lightness.
+pub fn handle_color(bg: i32, red: i32, green: i32, blue: i32) -> i32 {
     // c:438
-    // C body c:440-593 — parses iTerm2 OSC 4;<idx>;rgb response,
-    //                    populates terminal color cache. Without
-    //                    iTerm2 dispatch: 0.
+    use crate::ported::zsh_h::{
+        TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK,
+        TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK,
+    };
+    let packed = (((red as u64) << 8) + green as u64) << 8 | blue as u64;
+    let memo_tc = &crate::ported::prompt::memo_term_color;
+    match bg {
+        0 => {
+            // c:443 — foreground.
+            let mut v = memo_tc.load(std::sync::atomic::Ordering::Relaxed);
+            v &= !TXT_ATTR_FG_MASK; // c:444
+            v |= TXT_ATTR_FG_24BIT | (packed << TXT_ATTR_FG_COL_SHIFT); // c:445
+            memo_tc.store(v, std::sync::atomic::Ordering::Relaxed);
+        }
+        1 => {
+            // c:448 — background.
+            let mut v = memo_tc.load(std::sync::atomic::Ordering::Relaxed);
+            v &= !TXT_ATTR_BG_MASK; // c:449
+            v |= TXT_ATTR_BG_24BIT | (packed << TXT_ATTR_BG_COL_SHIFT); // c:450
+            memo_tc.store(v, std::sync::atomic::Ordering::Relaxed);
+            // c:453-455 — Rec.709 lightness threshold → "dark"/"light".
+            let lightness =
+                0.2126_f32 * red as f32 + 0.7152_f32 * green as f32 + 0.0722_f32 * blue as f32;
+            let mode = if lightness <= 127.0 { "dark" } else { "light" }; // c:454
+            let _ = crate::ported::params::assignsparam(MODEVAR, mode, 0); // c:453
+        }
+        2 => {
+            // c:457 — cursor color (packed 24-bit RGB).
+            let v = ((red as u32) << 24) | ((green as u32) << 16) | ((blue as u32) << 8); // c:458
+            memo_cursor.store(v, std::sync::atomic::Ordering::Relaxed);
+        }
+        _ => return 0,
+    }
+    // c:463 — `sprintf(colour, "#%02x%02x%02x", red, green, blue)`.
+    let colour = format!("#{:02x}{:02x}{:02x}", red, green, blue); // c:463
+    // c:464 — `assignsparam(COLORVAR[bg], colour, 0)`.
+    if let Some(name) = COLORVAR.get(bg as usize) {
+        let _ = crate::ported::params::assignsparam(name, &colour, 0); // c:464
+    }
     0
 }
 
@@ -251,11 +306,9 @@ pub fn handle_query(sequence: i32, numbers: &[i32], capture: &str) {
         1 => {
             // c:484 default colour
             if numbers.len() == 4 {
-                // c:485
-                handle_color(&format!(
-                    "{};{};{};{}", // c:486 handle_color(...)
-                    numbers[0], numbers[1], numbers[2], numbers[3]
-                ));
+                // c:485 — `handle_color(numbers[0], numbers[1],
+                //                       numbers[2], numbers[3])`.
+                handle_color(numbers[0], numbers[1], numbers[2], numbers[3]); // c:486
             }
         }
         2 => {
