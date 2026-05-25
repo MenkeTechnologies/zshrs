@@ -1794,13 +1794,13 @@ impl ShellExecutor {
                 crate::recorder::emit_compdef(func, &cmds, ctx);
             }
         }
-        if let Some(cache) = &mut self.compsys_cache {
-            crate::compsys::compdef::compdef_execute(cache, args)
-        } else {
-            // No cache - defer for cdreplay (zinit turbo mode)
-            self.deferred_compdefs.push(args.to_vec());
-            0
-        }
+        // The runtime `compdef` entry point lives in `compinit.rs`
+        // and owns a process-wide `CompdefState` published back into
+        // the shell-side `_comps` / `_services` / `_patcomps` /
+        // `_postpatcomps` / `_compautos` arrays. The legacy
+        // `compsys_cache` SQLite path is no longer the source of
+        // truth.
+        crate::compsys::ported::compinit::compdef(args)
     }
 
     /// compinit - initialize the completion system
@@ -2106,10 +2106,8 @@ impl ShellExecutor {
         let deferred = std::mem::take(&mut self.deferred_compdefs);
         let count = deferred.len();
 
-        if let Some(cache) = &mut self.compsys_cache {
-            for compdef_args in deferred {
-                crate::compsys::compdef::compdef_execute(cache, &compdef_args);
-            }
+        for compdef_args in deferred {
+            crate::compsys::ported::compinit::compdef(&compdef_args);
         }
 
         if !quiet {

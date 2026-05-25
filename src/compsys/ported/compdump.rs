@@ -149,101 +149,158 @@
 
 use rayon::prelude::*;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use super::compinit::{CompFileDef, CompInitResult};
 
-/// Dump the compinit state to a cache file
+/// Dump compinit state to `dump_path` using the upstream zsh
+/// `.zcompdump` format so a zshrs-generated dump is consumable by
+/// real zsh and vice versa.
+///
+/// Faithful to upstream `Completion/compdump` (sh:1-141):
+///   * sh:21-24  write to a `.HOST.PID` temp file then `mv -f` to
+///                the final path for crash-safe replacement
+///   * sh:37     header: `#files: N\tversion: V`
+///   * sh:43-72  emit `_comps`, `_services`, `_patcomps`,
+///                `_postpatcomps`, `_compautos` with sorted keys and
+///                `${(qq)}` double-quote escaping
+///   * sh:108-130 autoload-list dump (one name per line, plus
+///                `_compautos` re-emission with their options)
+///
+/// Returns the path actually written (the final `dump_path`).
 pub fn compdump(
     result: &CompInitResult,
     dump_path: &Path,
     zsh_version: &str,
-) -> std::io::Result<()> {
-    use std::io::Write;
+) -> std::io::Result<PathBuf> {
+    // sh:21-23  temp file: `${dump_path}.${HOST}.${PID}` for crash-safe
+    //   rename. Avoid touching the live dump until we've fully
+    //   written + flushed.
+    let host = hostname();
+    let pid = std::process::id();
+    let tmp = dump_path
+        .with_file_name(format!(
+            "{}.{}.{}",
+            dump_path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            host,
+            pid
+        ));
+    {
+        let mut file = File::create(&tmp)?;
 
-    let mut file = File::create(dump_path)?;
-
-    // Header line: #compdump <num_files> . <zsh_version>
-    writeln!(file, "#compdump {} . {}", result.files_scanned, zsh_version)?;
-
-    // Dump _comps
-    writeln!(
-        file,
-        "typeset -gHA _comps _services _patcomps _postpatcomps _compautos"
-    )?;
-    writeln!(file, "_comps=(")?;
-    for (cmd, func) in &result.comps {
+        // sh:37  header — TAB-separated key:value pairs
         writeln!(
             file,
-            "  '{}' '{}'",
-            escape_zsh_string(cmd),
-            escape_zsh_string(func)
+            "#files: {}\tversion: {}",
+            result.files_scanned, zsh_version
         )?;
-    }
-    writeln!(file, ")")?;
 
-    // Dump _services
-    writeln!(file, "_services=(")?;
-    for (cmd, svc) in &result.services {
-        writeln!(
-            file,
-            "  '{}' '{}'",
-            escape_zsh_string(cmd),
-            escape_zsh_string(svc)
-        )?;
-    }
-    writeln!(file, ")")?;
+        // sh:43-72  the five hash dumps, all sorted-by-key and
+        //   double-quote-escaped per `${(qq)}` semantics.
+        write_assoc_dump(&mut file, "_comps", &result.comps)?;
+        write_assoc_dump(&mut file, "_services", &result.services)?;
+        write_assoc_dump(&mut file, "_patcomps", &result.patcomps)?;
+        write_assoc_dump(&mut file, "_postpatcomps", &result.postpatcomps)?;
+        write_assoc_dump(&mut file, "_compautos", &result.compautos)?;
 
-    // Dump _patcomps
-    writeln!(file, "_patcomps=(")?;
-    for (pat, func) in &result.patcomps {
-        writeln!(
-            file,
-            "  '{}' '{}'",
-            escape_zsh_string(pat),
-            escape_zsh_string(func)
-        )?;
-    }
-    writeln!(file, ")")?;
-
-    // Dump _postpatcomps
-    writeln!(file, "_postpatcomps=(")?;
-    for (pat, func) in &result.postpatcomps {
-        writeln!(
-            file,
-            "  '{}' '{}'",
-            escape_zsh_string(pat),
-            escape_zsh_string(func)
-        )?;
-    }
-    writeln!(file, ")")?;
-
-    // Dump _compautos
-    writeln!(file, "_compautos=(")?;
-    for (name, opts) in &result.compautos {
-        writeln!(
-            file,
-            "  '{}' '{}'",
-            escape_zsh_string(name),
-            escape_zsh_string(opts)
-        )?;
-    }
-    writeln!(file, ")")?;
-
-    // Autoload all completion functions
-    writeln!(file, "autoload -Uz \\")?;
-    for file_info in &result.files {
-        if matches!(file_info.def, CompFileDef::CompDef(_)) {
-            writeln!(file, "  {} \\", file_info.name)?;
+        // sh:108-130  autoload-list: one `_*` fn per line (sorted),
+        //   then `_compautos` re-emission with each fn's captured
+        //   `autoload` options applied.
+        let mut autoload_names: Vec<String> = result
+            .files
+            .iter()
+            .filter_map(|f| match &f.def {
+                CompFileDef::CompDef(_) => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect();
+        autoload_names.sort();
+        autoload_names.dedup();
+        if !autoload_names.is_empty() {
+            writeln!(file, "autoload -Uz \\")?;
+            for (i, name) in autoload_names.iter().enumerate() {
+                let cont = if i + 1 < autoload_names.len() { " \\" } else { "" };
+                writeln!(file, "  {}{}", name, cont)?;
+            }
         }
+        // sh:127-130 — re-emit each `_compautos` entry with its
+        //   captured options (e.g. `+X`) so `autoload +X foo` is
+        //   restored verbatim. The shell writes one `autoload ${opts}
+        //   ${name}` line per entry.
+        let mut compautos_sorted: Vec<(&String, &String)> =
+            result.compautos.iter().collect();
+        compautos_sorted.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, opts) in &compautos_sorted {
+            let opt_str = if opts.is_empty() {
+                "-Uz".to_string()
+            } else {
+                opts.to_string()
+            };
+            writeln!(file, "autoload {} {}", opt_str, name)?;
+        }
+        file.sync_all()?;
     }
-    writeln!(file)?;
 
+    // sh:138  atomic rename
+    fs::rename(&tmp, dump_path)?;
+    Ok(dump_path.to_path_buf())
+}
+
+/// sh:43-72 — emit one `name=( 'key1' 'val1' 'key2' 'val2' …)`
+/// assoc-array block with sorted keys and `${(qq)}` quoting. Calls
+/// `typeset -gHA name` before the assignment.
+fn write_assoc_dump<W: Write>(
+    w: &mut W,
+    name: &str,
+    entries: &std::collections::HashMap<String, String>,
+) -> std::io::Result<()> {
+    writeln!(w, "typeset -gHA {}", name)?;
+    if entries.is_empty() {
+        writeln!(w, "{}=(\n)", name)?;
+        return Ok(());
+    }
+    // sh:44  `${(ok)X}` — ordered keys. Sort by key.
+    let mut sorted: Vec<(&String, &String)> = entries.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    writeln!(w, "{}=(", name)?;
+    for (k, v) in &sorted {
+        // sh:46  `${(qq)key} ${(qq)val}` — double-quote-escaped form.
+        //   zsh's `(qq)` wraps in `'…'` with embedded `'` rewritten
+        //   as `'\''`. Match exactly.
+        writeln!(w, "  {} {}", qq(k), qq(v))?;
+    }
+    writeln!(w, ")")?;
     Ok(())
 }
 
-/// Check if dump file is valid and can be used
+/// `${(qq)s}` — wrap `s` in single quotes, escaping embedded `'`
+/// as `'\''` (the safest portable form, what upstream emits).
+pub(super) fn qq(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    out.push_str(&s.replace('\'', "'\\''"));
+    out.push('\'');
+    out
+}
+
+/// sh:21 — `$HOST` lookup with reasonable fallback.
+fn hostname() -> String {
+    std::env::var("HOST")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "localhost".to_string())
+}
+
+/// Check if dump file is valid and can be used.
+///
+/// Reads the upstream header `#files: N\tversion: V` and compares
+/// `N` against the count of `_*` files in `fpath`, and `V` against
+/// the supplied zsh version string.
 pub fn check_dump(dump_path: &Path, fpath: &[PathBuf], zsh_version: &str) -> bool {
     let file = match File::open(dump_path) {
         Ok(f) => f,
@@ -255,21 +312,26 @@ pub fn check_dump(dump_path: &Path, fpath: &[PathBuf], zsh_version: &str) -> boo
     if reader.read_line(&mut first_line).is_err() {
         return false;
     }
+    let line = first_line.trim_end_matches('\n');
 
-    // Parse header: #compdump <num_files> . <version>
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
-    if parts.len() < 4 || parts[0] != "#compdump" {
-        return false;
-    }
-
-    let stored_count: usize = match parts[1].parse() {
+    // sh:37 — `#files: N\tversion: V`
+    let stripped = match line.strip_prefix("#files:") {
+        Some(s) => s.trim_start(),
+        None => return false,
+    };
+    let mut parts = stripped.splitn(2, '\t');
+    let n_str = parts.next().unwrap_or("").trim();
+    let version_part = parts.next().unwrap_or("");
+    let stored_version = match version_part.strip_prefix("version:") {
+        Some(s) => s.trim(),
+        None => return false,
+    };
+    let stored_count: usize = match n_str.parse() {
         Ok(n) => n,
         Err(_) => return false,
     };
 
-    let stored_version = parts[3];
-
-    // Quick count of files in fpath
+    // sh:38 — count `_*` files in fpath
     let current_count: usize = fpath
         .par_iter()
         .filter(|dir| dir.as_os_str() != "." && dir.exists())
@@ -288,7 +350,7 @@ pub fn check_dump(dump_path: &Path, fpath: &[PathBuf], zsh_version: &str) -> boo
     stored_count == current_count && stored_version == zsh_version
 }
 
-/// Escape a string for zsh single quotes
+/// Escape a string for zsh single quotes (legacy public helper).
 pub(super) fn escape_zsh_string(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
@@ -296,10 +358,118 @@ pub(super) fn escape_zsh_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_escape_zsh_string() {
         assert_eq!(escape_zsh_string("hello"), "hello");
         assert_eq!(escape_zsh_string("it's"), "it'\\''s");
+    }
+
+    #[test]
+    fn qq_wraps_in_single_quotes_and_escapes() {
+        assert_eq!(qq("plain"), "'plain'");
+        assert_eq!(qq("it's"), "'it'\\''s'");
+        assert_eq!(qq(""), "''");
+    }
+
+    fn empty_result() -> CompInitResult {
+        CompInitResult {
+            files_scanned: 3,
+            dirs_scanned: 0,
+            scan_time_ms: 0,
+            files: Vec::new(),
+            comps: HashMap::new(),
+            services: HashMap::new(),
+            patcomps: HashMap::new(),
+            postpatcomps: HashMap::new(),
+            compautos: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn header_matches_upstream_format() {
+        // sh:37 — `#files: N\tversion: V`. Critical for interop with
+        //   a real zsh-generated .zcompdump.
+        let mut r = empty_result();
+        r.files_scanned = 42;
+        let tmp = std::env::temp_dir().join("zshrs_compdump_header_test");
+        let _ = std::fs::remove_file(&tmp);
+        let _ = compdump(&r, &tmp, "5.9").unwrap();
+        let content = std::fs::read_to_string(&tmp).unwrap();
+        let first_line = content.lines().next().unwrap();
+        assert_eq!(first_line, "#files: 42\tversion: 5.9");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn check_dump_accepts_upstream_header() {
+        // Synthesize the exact line format an upstream `compdump` writes
+        let tmp = std::env::temp_dir().join("zshrs_check_dump_upstream");
+        std::fs::write(
+            &tmp,
+            "#files: 0\tversion: 5.9\ntypeset -gHA _comps\n_comps=(\n)\n",
+        )
+        .unwrap();
+        // No `_*` files in an empty fpath → current_count = 0 → match.
+        assert!(check_dump(&tmp, &[], "5.9"));
+        // Wrong version → mismatch
+        assert!(!check_dump(&tmp, &[], "5.10"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn check_dump_rejects_old_zshrs_format() {
+        // The pre-fix format `#compdump N . V` must NOT be accepted by
+        //   the new reader — that was the interop-breaking bug.
+        let tmp = std::env::temp_dir().join("zshrs_check_dump_old_format");
+        std::fs::write(&tmp, "#compdump 0 . 5.9\n").unwrap();
+        assert!(!check_dump(&tmp, &[], "5.9"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn assoc_dump_sorts_keys_deterministically() {
+        // sh:44 — `${(ok)X}` sorted-key emission. HashMap iteration
+        //   order in Rust is nondeterministic; we must sort.
+        let mut r = empty_result();
+        r.comps.insert("zfoo".to_string(), "_z".to_string());
+        r.comps.insert("alpha".to_string(), "_a".to_string());
+        r.comps.insert("mike".to_string(), "_m".to_string());
+        let tmp = std::env::temp_dir().join("zshrs_compdump_sort_test");
+        let _ = std::fs::remove_file(&tmp);
+        let _ = compdump(&r, &tmp, "5.9").unwrap();
+        let content = std::fs::read_to_string(&tmp).unwrap();
+        let comps_pos = content.find("_comps=(").unwrap();
+        let after = &content[comps_pos..];
+        let alpha_pos = after.find("'alpha'").unwrap();
+        let mike_pos = after.find("'mike'").unwrap();
+        let zfoo_pos = after.find("'zfoo'").unwrap();
+        assert!(alpha_pos < mike_pos, "alpha must precede mike");
+        assert!(mike_pos < zfoo_pos, "mike must precede zfoo");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn rename_replaces_existing_dump_atomically() {
+        // sh:21-23 + sh:138 — write to `.HOST.PID` then `mv -f`.
+        //   After compdump returns, the temp file must not linger.
+        let tmp = std::env::temp_dir().join("zshrs_compdump_atomic_test");
+        let _ = std::fs::remove_file(&tmp);
+        let _ = compdump(&empty_result(), &tmp, "5.9").unwrap();
+        assert!(tmp.exists());
+        // Leftover temp files would be named like
+        //   `<tmp>.<host>.<pid>` in the same parent dir.
+        let parent = tmp.parent().unwrap();
+        let stray: Vec<_> = std::fs::read_dir(parent)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.starts_with("zshrs_compdump_atomic_test.") && n != "zshrs_compdump_atomic_test"
+            })
+            .collect();
+        assert!(stray.is_empty(), "temp file leaked: {:?}", stray);
+        let _ = std::fs::remove_file(&tmp);
     }
 }

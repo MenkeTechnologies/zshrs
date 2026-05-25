@@ -23,9 +23,11 @@
 //! search, and special-dirs handling are TODOs (sh:200-700 of
 //! the original).
 
-use crate::ported::params::{getsparam, setaparam};
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::modules::zutil::lookupstyle;
+use crate::ported::params::{getsparam, setaparam, setsparam};
 use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zle::complete::{bin_compadd, bin_compset};
 use crate::ported::zsh_h::{options, MAX_OPS};
 use std::fs;
 use std::path::Path;
@@ -98,12 +100,128 @@ fn parse_args(args: &[String]) -> PathArgs {
     p
 }
 
+/// sh:22-41 — `_have_glob_qual` dispatch. When the cursor sits
+/// inside an unclosed `(...)` glob qualifier, hand off to
+/// `_globquals` / `_globflags`.
+fn handle_glob_qualifier() -> Option<i32> {
+    let prefix = getsparam("PREFIX").unwrap_or_default();
+    // Match a trailing `(` with an even (incl. 0) count of escapes
+    //   in front. Approximation: detect bare `(` anywhere in PREFIX
+    //   not preceded by `\`.
+    let mut depth: i32 = 0;
+    let mut last_open: Option<usize> = None;
+    let bytes = prefix.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\\' {
+            continue;
+        }
+        if b == b'(' && (i == 0 || bytes[i - 1] != b'\\') {
+            depth += 1;
+            last_open = Some(i);
+        } else if b == b')' && (i == 0 || bytes[i - 1] != b'\\') {
+            depth -= 1;
+        }
+    }
+    if depth <= 0 {
+        return None;
+    }
+    let open_at = last_open?;
+    // Trim PREFIX up to the `(`
+    let _ = bin_compset(
+        "compset",
+        &["-p".to_string(), open_at.to_string()],
+        &make_ops(),
+        0,
+    );
+    let _ = bin_compset(
+        "compset",
+        &["-S".to_string(), "[^\\)\\|\\~]#(|\\))".to_string()],
+        &make_ops(),
+        0,
+    );
+    // Check for `#` introducing glob flags
+    if bin_compset(
+        "compset",
+        &["-P".to_string(), "\\#".to_string()],
+        &make_ops(),
+        0,
+    ) == 0
+    {
+        return Some(dispatch_function_call("_globflags", &[]).unwrap_or(1));
+    }
+    Some(dispatch_function_call("_globquals", &[]).unwrap_or(1))
+}
+
+/// sh:200 partial-path expansion — `/u/l/b<TAB>` → `/usr/local/bin/`.
+/// For each `dir/` segment of the prefix, if exactly one directory
+/// matches the segment prefix, accept it and walk down.
+fn expand_partial_path(prefix: &str) -> String {
+    if !prefix.contains('/') {
+        return prefix.to_string();
+    }
+    let parts: Vec<&str> = prefix.split('/').collect();
+    let mut walked = String::new();
+    if parts[0].is_empty() {
+        walked.push('/');
+    }
+    for (i, seg) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            // Last segment — don't expand (that's what the completion
+            //   itself will offer)
+            walked.push_str(seg);
+            break;
+        }
+        if seg.is_empty() {
+            continue;
+        }
+        // Find unique dir under `walked` whose name starts with `seg`.
+        let search_dir = if walked.is_empty() { "." } else { &walked };
+        let matches: Vec<String> = std::fs::read_dir(std::path::Path::new(search_dir))
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter_map(|e| {
+                        let n = e.file_name().to_string_lossy().into_owned();
+                        if n.starts_with(seg) {
+                            if let Ok(meta) = e.metadata() {
+                                if meta.is_dir() {
+                                    return Some(n);
+                                }
+                            }
+                        }
+                        None
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // Only expand on exact-1 match
+        let chosen = if matches.len() == 1 {
+            matches[0].clone()
+        } else {
+            seg.to_string()
+        };
+        walked.push_str(&chosen);
+        walked.push('/');
+    }
+    walked
+}
+
 /// `_path_files` — file/directory completion.
 pub fn _path_files(args: &[String]) -> i32 {
+    // sh:22-41 — glob-qualifier dispatch before any path resolution.
+    if let Some(rc) = handle_glob_qualifier() {
+        return rc;
+    }
+
     let p = parse_args(args);
 
-    let prefix = getsparam("PREFIX").unwrap_or_default();
+    let prefix_raw = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();
+    // sh:200 — partial-path expansion (`/u/l/b` → `/usr/local/bin`).
+    let prefix = expand_partial_path(&prefix_raw);
+    if prefix != prefix_raw {
+        let _ = setsparam("PREFIX", &prefix);
+    }
     let combined = format!("{}{}", prefix, suffix);
 
     // Split into directory part + filename part
@@ -137,6 +255,28 @@ pub fn _path_files(args: &[String]) -> i32 {
     let glob_pat = p.glob.clone().unwrap_or_else(|| "*".to_string());
     let glob_prog = patcompile(&glob_pat, 0, None);
 
+    // sh:500 — ignored-patterns + ignored-suffixes filtering.
+    let curcontext = getsparam("curcontext").unwrap_or_default();
+    let ignored_patterns: Vec<Box<dyn Fn(&str) -> bool>> =
+        lookupstyle(&format!(":completion:{}:", curcontext), "ignored-patterns")
+            .into_iter()
+            .filter_map(|pat| {
+                patcompile(&pat, 0, None).map(|prog| {
+                    Box::new(move |name: &str| pattry(&prog, name))
+                        as Box<dyn Fn(&str) -> bool>
+                })
+            })
+            .collect();
+    let ignored_suffixes: Vec<String> =
+        lookupstyle(&format!(":completion:{}:", curcontext), "ignored-suffixes");
+    let special_dirs_style =
+        lookupstyle(&format!(":completion:{}:", curcontext), "special-dirs")
+            .first()
+            .cloned()
+            .unwrap_or_default();
+    let special_dirs_on =
+        matches!(special_dirs_style.as_str(), "yes" | "true" | "1" | "on" | ".." | "true ..");
+
     let entries = match fs::read_dir(Path::new(&scan_root)) {
         Ok(e) => e,
         Err(_) => return 1,
@@ -145,12 +285,27 @@ pub fn _path_files(args: &[String]) -> i32 {
     let mut matches: Vec<String> = Vec::new();
     for ent in entries.flatten() {
         let name = ent.file_name().to_string_lossy().to_string();
-        // Skip dotfiles unless the prefix explicitly asks for them
+        // Skip dotfiles unless the prefix explicitly asks for them.
+        //   `.` and `..` are only emitted when `special-dirs` is set.
         if name.starts_with('.') && !name_part.starts_with('.') {
-            continue;
+            if special_dirs_on && (name == "." || name == "..") {
+                // fall through
+            } else {
+                continue;
+            }
         }
         // Filename prefix-match
         if !name.starts_with(&name_part) {
+            continue;
+        }
+        // sh:500 — ignored-patterns + ignored-suffixes
+        if ignored_patterns.iter().any(|f| f(&name)) {
+            continue;
+        }
+        if ignored_suffixes
+            .iter()
+            .any(|suf| name.ends_with(suf as &str))
+        {
             continue;
         }
         // dirs_only / files_only filter

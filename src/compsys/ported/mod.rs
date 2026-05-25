@@ -166,6 +166,10 @@ pub mod compinit;
 /// out of `compinit.rs` to mirror upstream `Completion/compdump`.
 pub mod compdump;
 
+/// `compaudit` — fpath security check. Faithful port of
+/// `Completion/compaudit` (sh:1-176). Lives in its own file per
+/// upstream's layout.
+pub mod compaudit;
 // ── Public re-exports ─────────────────────────────────────────────────
 // Items with richer export shapes (Opts structs, consts, etc.):
 

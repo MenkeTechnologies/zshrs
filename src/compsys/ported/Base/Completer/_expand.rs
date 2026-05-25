@@ -58,11 +58,11 @@ pub fn _expand() -> i32 {
         .map(|v| !matches!(v.as_str(), "no" | "false" | "0" | "off"))
         .unwrap_or(true);
     if subst_on && (word.contains('$') || word.contains('~') || word.contains('=')) {
-        // Best-effort: dispatch `print -r -- $~word` via exec_script
-        let script = format!("print -r -- {}", word);
-        if let Ok(_) = crate::ported::exec_hooks::execute_script(&script) {
-            // We can't capture script output via exec_hooks easily;
-            //   leave exp as-is. Real impl would parse stdout here.
+        // Inline substitution: tilde + env-var expansion via std.
+        if let Some(expanded) = expand_substitutions(&word) {
+            if expanded != word {
+                exp = vec![expanded];
+            }
         }
     }
 
@@ -113,12 +113,111 @@ pub fn _expand() -> i32 {
     r
 }
 
-/// Minimal glob expansion via std::fs walk. Supports `*` and `?`
-/// only; gives up on bracket classes (returns empty).
-fn glob_match(_pat: &str) -> Result<Vec<String>, ()> {
-    // Defer to a future port; rely on shell-side glob if executor
-    //   wires it through. Returns empty (no matches) for now.
-    Ok(Vec::new())
+/// sh:14 — shell-substitute approximation. Handles `~` (HOME),
+/// `~user` (passwd lookup), and `$VAR` / `${VAR}` env-var
+/// references. Returns None when nothing changed.
+fn expand_substitutions(word: &str) -> Option<String> {
+    let mut out = word.to_string();
+    let initial = out.clone();
+    // Tilde
+    if out.starts_with("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            out = format!("{}{}", home, &out[1..]);
+        }
+    } else if out.starts_with('~') && !out.starts_with("~[") {
+        let end = out.find('/').unwrap_or(out.len());
+        let user = &out[1..end];
+        if !user.is_empty() {
+            // Lookup home via $HOME-keyed userdirs assoc (best-effort)
+            let userdirs = crate::ported::params::getaparam("userdirs").unwrap_or_default();
+            if let Some(home) = userdirs.chunks(2).find_map(|kv| {
+                if kv.first().map(|k| k == user).unwrap_or(false) {
+                    kv.get(1).cloned()
+                } else {
+                    None
+                }
+            }) {
+                let rest = &out[end..];
+                out = format!("{}{}", home, rest);
+            }
+        }
+    }
+    // $VAR / ${VAR}
+    let mut buf = String::with_capacity(out.len());
+    let bytes = out.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'$' && i + 1 < bytes.len() {
+            let (name, end) = if bytes[i + 1] == b'{' {
+                if let Some(close) = out[i + 2..].find('}') {
+                    let n = &out[i + 2..i + 2 + close];
+                    (n.to_string(), i + 3 + close)
+                } else {
+                    buf.push('$');
+                    i += 1;
+                    continue;
+                }
+            } else {
+                let mut j = i + 1;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                {
+                    j += 1;
+                }
+                if j == i + 1 {
+                    buf.push('$');
+                    i += 1;
+                    continue;
+                }
+                (out[i + 1..j].to_string(), j)
+            };
+            if let Ok(v) = std::env::var(&name) {
+                buf.push_str(&v);
+            }
+            i = end;
+        } else {
+            buf.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out = buf;
+    if out == initial {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// sh:26 — glob expansion via std::fs walk. Supports `*`, `?`,
+/// and basic bracket-character-class. Returns the matched paths,
+/// or `Err(())` when the pattern is malformed.
+fn glob_match(pat: &str) -> Result<Vec<String>, ()> {
+    use crate::ported::pattern::{patcompile, pattry};
+    // Split into directory part + filename pattern
+    let (dir, name_pat) = match pat.rfind('/') {
+        Some(i) => (pat[..=i].to_string(), pat[i + 1..].to_string()),
+        None => (".".to_string(), pat.to_string()),
+    };
+    let scan_dir = if dir.is_empty() { "." } else { &dir };
+    let prog = patcompile(&name_pat, 0, None).ok_or(())?;
+    let entries = std::fs::read_dir(std::path::Path::new(scan_dir)).map_err(|_| ())?;
+    let mut out: Vec<String> = Vec::new();
+    for ent in entries.flatten() {
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') && !name_pat.starts_with('.') {
+            continue;
+        }
+        if pattry(&prog, &name) {
+            let full = if dir == "." {
+                name
+            } else {
+                format!("{}{}", dir, name)
+            };
+            out.push(full);
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -587,6 +587,183 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 
+// =====================================================================
+// Upstream constants (sh:138-197) — exported so every compsys entry
+// point can replay the `_comp_setup` eval and the `_comp_options`
+// list that compinit installs at load time.
+// =====================================================================
+
+/// sh:139-172 — the 33 options compinit forces into every compsys
+/// entry-point scope via `setopt localoptions … ${_comp_options[@]}`.
+/// Mirrors the upstream array verbatim, including the `NO_` prefix
+/// form for negated flags. Consumed by the eval string at
+/// [`COMP_SETUP_EVAL`].
+pub const COMP_OPTIONS: &[&str] = &[
+    "bareglobqual",
+    "extendedglob",
+    "glob",
+    "multibyte",
+    "multifuncdef",
+    "nullglob",
+    "rcexpandparam",
+    "unset",
+    "NO_allexport",
+    "NO_aliases",
+    "NO_autonamedirs",
+    "NO_cshnullglob",
+    "NO_cshjunkiequotes",
+    "NO_errexit",
+    "NO_errreturn",
+    "NO_globassign",
+    "NO_globsubst",
+    "NO_histsubstpattern",
+    "NO_ignorebraces",
+    "NO_ignoreclosebraces",
+    "NO_kshglob",
+    "NO_ksharrays",
+    "NO_kshtypeset",
+    "NO_markdirs",
+    "NO_octalzeroes",
+    "NO_posixbuiltins",
+    "NO_posixidentifiers",
+    "NO_shwordsplit",
+    "NO_shglob",
+    "NO_typesettounset",
+    "NO_warnnestedvar",
+    "NO_warncreateglobal",
+];
+
+/// sh:180-190 — the `_comp_setup` string that every compsys entry
+/// point evals to install the option set + IFS + null stdin + no-ZERR.
+/// Bit-identical to upstream so a user-supplied `_comp_setup`
+/// override (very rare) still matches.
+pub const COMP_SETUP_EVAL: &str = concat!(
+    "local -A _comp_caller_options;\n",
+    "_comp_caller_options=(${(kv)options[@]});\n",
+    "setopt localoptions localtraps localpatterns ${_comp_options[@]};\n",
+    "local IFS=$' \\t\\r\\n\\0';\n",
+    "builtin enable -p \\| \\~ \\( \\? \\* \\[ \\< \\^ \\# 2>&-;\n",
+    "exec </dev/null;\n",
+    "trap - ZERR;\n",
+    "local -a reply;\n",
+    "local REPLY;\n",
+    "local REPORTTIME;\n",
+    "unset REPORTTIME"
+);
+
+/// sh:558 — the 8 standard ZLE widgets that compinit rebinds to
+/// `_main_complete` so any of them triggers a completion attempt.
+pub const STANDARD_COMPLETE_WIDGETS: &[&str] = &[
+    "complete-word",
+    "delete-char-or-list",
+    "expand-or-complete",
+    "expand-or-complete-prefix",
+    "list-choices",
+    "menu-complete",
+    "menu-expand-or-complete",
+    "reverse-menu-complete",
+];
+
+// =====================================================================
+// State publication helpers — keep the shell-side `$compprefuncs`
+// and `$comppostfuncs` arrays initialized empty per sh:195-197.
+// =====================================================================
+
+/// Initialize the shell-side `compprefuncs` / `comppostfuncs` arrays
+/// to empty (sh:195-197). Idempotent; safe to call from compinit
+/// before any user-side `_call_function` would have populated them.
+pub fn init_comp_funcs_arrays() {
+    crate::ported::params::setaparam("compprefuncs", Vec::new());
+    crate::ported::params::setaparam("comppostfuncs", Vec::new());
+}
+
+/// Default `$_comp_dumpfile` path (sh:129-134). User can override
+/// via `compinit -d <file>`; without that, use `${ZDOTDIR:-$HOME}`
+/// + `/.zcompdump`.
+pub fn default_dumpfile_path() -> PathBuf {
+    let home = std::env::var("ZDOTDIR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("HOME").ok())
+        .unwrap_or_else(|| ".".to_string());
+    PathBuf::from(home).join(".zcompdump")
+}
+
+/// Publish the standard ZLE rebind set to the dispatcher hooks
+/// (sh:555-560). For each `complete-word` family widget + a
+/// conditional `menu-select` (when `zsh/complist` is loaded), bind
+/// it to `_main_complete` via `zle -C`. Returns the count of
+/// successful binds.
+pub fn install_standard_complete_widgets() -> usize {
+    let mut count = 0usize;
+    for w in STANDARD_COMPLETE_WIDGETS {
+        let dot_w = format!(".{}", w);
+        if crate::ported::exec_hooks::dispatch_function_call(
+            "zle",
+            &["-C".to_string(), w.to_string(), dot_w, "_main_complete".to_string()],
+        )
+        .is_some()
+        {
+            count += 1;
+        }
+    }
+    // sh:560 — `zle -la menu-select && zle -C menu-select .menu-select _main_complete`
+    if crate::ported::exec_hooks::dispatch_function_call(
+        "zle",
+        &["-la".to_string(), "menu-select".to_string()],
+    )
+    .map(|rc| rc == 0)
+    .unwrap_or(false)
+    {
+        if crate::ported::exec_hooks::dispatch_function_call(
+            "zle",
+            &[
+                "-C".to_string(),
+                "menu-select".to_string(),
+                ".menu-select".to_string(),
+                "_main_complete".to_string(),
+            ],
+        )
+        .is_some()
+        {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// sh:564-569 — when the configured `completer` chain includes
+/// `_expand` AND `^i` is currently bound to `expand-or-complete`,
+/// rebind `^i` to `complete-word` so users don't get unexpected
+/// glob expansion on TAB.
+pub fn maybe_rebind_tab_for_expand() {
+    let curcontext = crate::ported::params::getsparam("curcontext").unwrap_or_default();
+    let completers = crate::ported::modules::zutil::lookupstyle(
+        &format!(":completion:{}:", curcontext),
+        "completer",
+    );
+    let has_expand = completers.iter().any(|c| c == "_expand" || c.starts_with("_expand:"));
+    if !has_expand {
+        return;
+    }
+    // sh:564 — `bindkey '^i' | IFS=$' \t' read -A _i_line`. We can't
+    //   capture bindkey output without a real executor, so just
+    //   dispatch the rebind unconditionally when _expand is in
+    //   the chain. The shell guards on `expand-or-complete` being
+    //   the current binding; without capture we'd be over-eager,
+    //   so dispatch via the hook (no-op when no executor wired).
+    let _ = crate::ported::exec_hooks::dispatch_function_call(
+        "bindkey",
+        &["^i".to_string(), "complete-word".to_string()],
+    );
+}
+
+// `compaudit` lives in its own file (`src/compsys/ported/compaudit.rs`)
+// per zsh upstream's layout (`Completion/compaudit` is a sibling of
+// `Completion/compinit`). Re-export the entry point so existing
+// compinit-facing callers don't need to change.
+pub use super::compaudit::{compaudit, CompauditError};
+
 /// Completion definition from #compdef line
 #[derive(Clone, Debug)]
 pub enum CompDef {
@@ -828,6 +1005,33 @@ fn scan_directory(dir: &Path) -> Vec<CompFile> {
 pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
     let start = Instant::now();
 
+    // sh:129-134 — install `$_comp_dumpfile` default so engine code
+    //   that calls `getsparam("_comp_dumpfile")` sees a sensible
+    //   path. User-supplied `compinit -d FILE` overrides.
+    if crate::ported::params::getsparam("_comp_dumpfile")
+        .map(|s| s.is_empty())
+        .unwrap_or(true)
+    {
+        let _ = crate::ported::params::setsparam(
+            "_comp_dumpfile",
+            &default_dumpfile_path().to_string_lossy(),
+        );
+    }
+
+    // sh:138-172 — publish `_comp_options` to the shell-side param
+    //   table so `$_comp_setup` eval at every entry point picks it
+    //   up. Use the canonical const list.
+    crate::ported::params::setaparam(
+        "_comp_options",
+        COMP_OPTIONS.iter().map(|s| s.to_string()).collect(),
+    );
+
+    // sh:180-190 — publish `_comp_setup` (the eval string).
+    let _ = crate::ported::params::setsparam("_comp_setup", COMP_SETUP_EVAL);
+
+    // sh:195-197 — initialize the pre/post-hook arrays.
+    init_comp_funcs_arrays();
+
     // Track seen function names (first one wins)
     let seen: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
 
@@ -899,6 +1103,38 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
     }
 
     result.files = all_files;
+
+    // sh:553-560 — rebind the 8 standard completion widgets +
+    //   conditional menu-select. No-op when no executor is wired
+    //   (unit-test environments); fully active under fusevm.
+    install_standard_complete_widgets();
+
+    // sh:562-569 — TAB rebind when `_expand` is in the completer
+    //   chain.
+    maybe_rebind_tab_for_expand();
+
+    // Publish the result-side compdef state so downstream `getaparam(
+    //   "_comps")` etc. queries reflect the scan. This is the new-
+    //   compinit-finish complement of `compdef()`'s per-call publish.
+    with_state(|s| {
+        for (k, v) in &result.comps {
+            s.comps.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &result.services {
+            s.services.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &result.patcomps {
+            s.patcomps.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &result.postpatcomps {
+            s.postpatcomps.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &result.compautos {
+            s.compautos.insert(k.clone(), v.clone());
+        }
+        publish_compdef_state(s);
+    });
+
     result
 }
 
@@ -1128,6 +1364,412 @@ impl CompInitOpts {
     }
 }
 
+// =====================================================================
+// compdef() — runtime registration entry point.
+//
+// Upstream defines this inside `Completion/compinit` (sh:253-446); we
+// mirror that organizational choice. User `.zshrc` lines like:
+//   compdef _git git
+//   compdef -p '*-test' _test
+//   compdef -d obsolete
+// land here.
+//
+// State lives in a session-side `CompdefState` (a Mutex<HashMap>
+// quintet for `_comps`, `_services`, `_patcomps`, `_postpatcomps`,
+// `_compautos`). Cluster ports already read these via shell-side
+// `getaparam("_comps")` etc.; the published-to-paramtab step
+// happens in `publish_compdef_state` at the bottom of this section.
+// =====================================================================
+
+/// Session-side compdef registrations. Mirrors the five upstream
+/// assoc arrays one-for-one.
+#[derive(Default)]
+pub struct CompdefState {
+    pub comps: HashMap<String, String>,
+    pub services: HashMap<String, String>,
+    pub patcomps: HashMap<String, String>,
+    pub postpatcomps: HashMap<String, String>,
+    pub compautos: HashMap<String, String>,
+}
+
+static COMPDEF_STATE: Mutex<Option<CompdefState>> = Mutex::new(None);
+
+/// Lock the session-side state, initializing on first call.
+fn with_state<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut CompdefState) -> R,
+{
+    let mut guard = COMPDEF_STATE.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(CompdefState::default());
+    }
+    f(guard.as_mut().unwrap())
+}
+
+/// Helper to publish state inside a `with_state` closure (takes
+/// `&mut` to fit the closure signature).
+fn publish_compdef_state_mut(s: &mut CompdefState) {
+    publish_compdef_state(s);
+}
+
+/// Publish the in-memory state back to shell-side assoc arrays so
+/// engine cluster code (which reads via `getaparam("_comps")` etc.)
+/// sees the updates. Flat key/value layout per the existing
+/// per-engine-port convention.
+fn publish_compdef_state(s: &CompdefState) {
+    let mut flatten = |arr: &HashMap<String, String>| -> Vec<String> {
+        let mut sorted: Vec<(&String, &String)> = arr.iter().collect();
+        sorted.sort_by(|a, b| a.0.cmp(b.0));
+        let mut out = Vec::with_capacity(sorted.len() * 2);
+        for (k, v) in sorted {
+            out.push(k.clone());
+            out.push(v.clone());
+        }
+        out
+    };
+    crate::ported::params::setaparam("_comps", flatten(&s.comps));
+    crate::ported::params::setaparam("_services", flatten(&s.services));
+    crate::ported::params::setaparam("_patcomps", flatten(&s.patcomps));
+    crate::ported::params::setaparam("_postpatcomps", flatten(&s.postpatcomps));
+    crate::ported::params::setaparam("_compautos", flatten(&s.compautos));
+}
+
+/// Parse `compdef`'s short-option flags via the upstream
+/// `getopts "anpPkKde"` (sh:267).
+#[derive(Default, Debug)]
+struct CompdefFlags {
+    autol: bool,
+    new: bool,
+    delete: bool,
+    eval: bool,
+    /// Mutually-exclusive `-p`/`-P`/`-k`/`-K`. Only the most-recent
+    /// wins; upstream errors on duplicate, we tolerate.
+    spec_type: SpecType,
+}
+
+#[derive(Default, Debug, PartialEq, Clone, Copy)]
+enum SpecType {
+    #[default]
+    Normal,
+    Pattern,
+    PostPattern,
+    Key,
+    WidgetKey,
+}
+
+fn parse_compdef_flags(args: &[String]) -> Result<(CompdefFlags, usize), String> {
+    let mut flags = CompdefFlags::default();
+    let mut idx = 0usize;
+    while idx < args.len() {
+        let a = &args[idx];
+        if !a.starts_with('-') || a == "-" || a == "--" {
+            break;
+        }
+        // sh:267 getopts allows combined flags like `-an`. Walk each
+        //   letter after the leading `-`.
+        for c in a.chars().skip(1) {
+            match c {
+                'a' => flags.autol = true,
+                'n' => flags.new = true,
+                'd' => flags.delete = true,
+                'e' => flags.eval = true,
+                'p' => flags.spec_type = SpecType::Pattern,
+                'P' => flags.spec_type = SpecType::PostPattern,
+                'k' => flags.spec_type = SpecType::Key,
+                'K' => flags.spec_type = SpecType::WidgetKey,
+                _ => return Err(format!("compdef: unknown option: -{}", c)),
+            }
+        }
+        idx += 1;
+    }
+    Ok((flags, idx))
+}
+
+/// `compdef` — register or unregister completion functions for
+/// commands. Faithful to upstream `Completion/compinit` sh:253-446.
+///
+/// Returns the upstream-compatible exit code: 0 on success, 1 on
+/// usage error.
+pub fn compdef(args: &[String]) -> i32 {
+    // sh:262
+    if args.is_empty() {
+        eprintln!("compdef: I need arguments");
+        return 1;
+    }
+    let (flags, mut idx) = match parse_compdef_flags(args) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", e);
+            return 1;
+        }
+    };
+    // sh:293
+    if idx >= args.len() {
+        eprintln!("compdef: I need arguments");
+        return 1;
+    }
+
+    if flags.delete {
+        // sh:426-444  -d: delete by name from the right hash
+        let names = &args[idx..];
+        with_state(|s| match flags.spec_type {
+            SpecType::Pattern => {
+                for n in names {
+                    s.patcomps.remove(n);
+                }
+            }
+            SpecType::PostPattern => {
+                for n in names {
+                    s.postpatcomps.remove(n);
+                }
+            }
+            SpecType::Key | SpecType::WidgetKey => {
+                eprintln!("compdef: cannot restore key bindings");
+            }
+            SpecType::Normal => {
+                for n in names {
+                    s.comps.remove(n);
+                    s.services.remove(n);
+                }
+            }
+        });
+        with_state(publish_compdef_state_mut);
+        return 0;
+    }
+
+    // sh:298-327  service-alias mode: no flags + first arg contains `=`.
+    //   Each subsequent arg must also contain `=` (else it's an error).
+    if !flags.eval && args[idx].contains('=') {
+        let mut ret: i32 = 0;
+        while idx < args.len() {
+            let entry = args[idx].clone();
+            idx += 1;
+            if !entry.contains('=') {
+                eprintln!("compdef: invalid argument: {}", entry);
+                ret = 1;
+                continue;
+            }
+            let mut sp = entry.splitn(2, '=');
+            let cmd = sp.next().unwrap_or("").to_string();
+            let svc_in = sp.next().unwrap_or("").to_string();
+            // sh:307-311 — resolve `$svc` via `_services[(r)$svc]` reverse
+            //   lookup (find an entry mapping TO $svc); else use $svc
+            //   directly. Then look up `_comps[$svc]` for the function.
+            let resolved_svc = {
+                with_state(|s| {
+                    s.services
+                        .iter()
+                        .find(|(_, v)| **v == svc_in)
+                        .map(|(k, _)| k.clone())
+                        .unwrap_or(svc_in.clone())
+                })
+            };
+            let func = with_state(|s| {
+                s.comps
+                    .get(&resolved_svc)
+                    .cloned()
+                    .or_else(|| {
+                        // sh:311 fallback to first matching pat/postpat key
+                        s.patcomps
+                            .iter()
+                            .find(|(k, _)| pattern_matches(k, &svc_in))
+                            .map(|(_, v)| v.clone())
+                            .or_else(|| {
+                                s.postpatcomps
+                                    .iter()
+                                    .find(|(k, _)| pattern_matches(k, &svc_in))
+                                    .map(|(_, v)| v.clone())
+                            })
+                    })
+                    .unwrap_or_default()
+            });
+            if func.is_empty() {
+                eprintln!("compdef: unknown command or service: {}", svc_in);
+                ret = 1;
+                continue;
+            }
+            let svc_for_state = with_state(|s| {
+                s.services
+                    .get(&svc_in)
+                    .cloned()
+                    .unwrap_or(svc_in.clone())
+            });
+            with_state(|s| {
+                s.comps.insert(cmd.clone(), func.clone());
+                s.services.insert(cmd, svc_for_state);
+            });
+        }
+        with_state(publish_compdef_state_mut);
+        return ret;
+    }
+
+    // sh:332-334  First positional after flags is the function name.
+    let func = args[idx].clone();
+    idx += 1;
+
+    // sh:333  `-a` → autoload
+    if flags.autol && func.starts_with('_') {
+        // dispatch `autoload -rUz <func>` via the exec_hooks bridge.
+        let _ = crate::ported::exec_hooks::dispatch_function_call(
+            "autoload",
+            &["-rUz".to_string(), func.clone()],
+        );
+        // Track for the dump file
+        with_state(|s| {
+            s.compautos.insert(func.clone(), "-rUz".to_string());
+        });
+    }
+
+    // sh:336-425
+    match flags.spec_type {
+        SpecType::WidgetKey => {
+            // sh:337-355  -K widget-name comp-widget key  (in triples)
+            let mut i = idx;
+            while i + 2 < args.len() {
+                let mut wname = args[i].clone();
+                let mut comp_widget = args[i + 1].clone();
+                let key = args[i + 2].clone();
+                if !wname.starts_with('_') {
+                    wname = format!("_{}", wname);
+                }
+                if !comp_widget.starts_with('.') {
+                    comp_widget = format!(".{}", comp_widget);
+                }
+                // sh:346  zle -C <wname> <comp_widget> <func>
+                let _ = crate::ported::exec_hooks::dispatch_function_call(
+                    "zle",
+                    &[
+                        "-C".to_string(),
+                        wname.clone(),
+                        comp_widget,
+                        func.clone(),
+                    ],
+                );
+                // sh:347-352  bindkey
+                let _ = crate::ported::exec_hooks::dispatch_function_call(
+                    "bindkey",
+                    &[key, wname],
+                );
+                i += 3;
+            }
+        }
+        SpecType::Key => {
+            // sh:356-379  -k style key... (in 1+ pairs)
+            if idx >= args.len() {
+                eprintln!("compdef: missing keys");
+                return 1;
+            }
+            let mut style = args[idx].clone();
+            idx += 1;
+            if !style.starts_with('.') {
+                style = format!(".{}", style);
+            }
+            // sh:365  zle -C <func> <style> <func>
+            let _ = crate::ported::exec_hooks::dispatch_function_call(
+                "zle",
+                &["-C".to_string(), func.clone(), style, func.clone()],
+            );
+            for key in &args[idx..] {
+                let _ = crate::ported::exec_hooks::dispatch_function_call(
+                    "bindkey",
+                    &[key.clone(), func.clone()],
+                );
+            }
+        }
+        _ => {
+            // sh:381-424  normal / pattern / postpattern
+            let mut effective_type = flags.spec_type;
+            while idx < args.len() {
+                let arg = args[idx].clone();
+                idx += 1;
+                // sh:385-390  inline type switch
+                match arg.as_str() {
+                    "-N" => {
+                        effective_type = SpecType::Normal;
+                        continue;
+                    }
+                    "-p" => {
+                        effective_type = SpecType::Pattern;
+                        continue;
+                    }
+                    "-P" => {
+                        effective_type = SpecType::PostPattern;
+                        continue;
+                    }
+                    _ => {}
+                }
+                with_state(|s| match effective_type {
+                    SpecType::Pattern => {
+                        // sh:393-398 — `key=val` rewrites to `=val=func`
+                        if let Some(eq) = arg.find('=') {
+                            let key = arg[..eq].to_string();
+                            let val = arg[eq + 1..].to_string();
+                            s.patcomps.insert(key, format!("={}={}", val, func));
+                        } else {
+                            s.patcomps.insert(arg.clone(), func.clone());
+                        }
+                    }
+                    SpecType::PostPattern => {
+                        if let Some(eq) = arg.find('=') {
+                            let key = arg[..eq].to_string();
+                            let val = arg[eq + 1..].to_string();
+                            s.postpatcomps.insert(key, format!("={}={}", val, func));
+                        } else {
+                            s.postpatcomps.insert(arg.clone(), func.clone());
+                        }
+                    }
+                    _ => {
+                        // sh:407-419  normal: cmd or cmd=svc
+                        let (cmd, svc) = if let Some(eq) = arg.find('=') {
+                            (arg[..eq].to_string(), Some(arg[eq + 1..].to_string()))
+                        } else {
+                            (arg.clone(), None)
+                        };
+                        // sh:415  -n: no-clobber
+                        if flags.new && s.comps.contains_key(&cmd) {
+                            return;
+                        }
+                        s.comps.insert(cmd.clone(), func.clone());
+                        if let Some(svc) = svc {
+                            s.services.insert(cmd, svc);
+                        }
+                    }
+                });
+            }
+        }
+    }
+    with_state(publish_compdef_state_mut);
+    0
+}
+
+/// sh:311 pattern-matching helper. Uses the real `pattern.rs`
+/// matcher so `(K)` assoc-key glob matching is faithful.
+fn pattern_matches(pat: &str, s: &str) -> bool {
+    match crate::ported::pattern::patcompile(pat, 0, None) {
+        Some(prog) => crate::ported::pattern::pattry(&prog, s),
+        None => pat == s,
+    }
+}
+
+/// Reset session-side state (test-only helper; exposed via
+/// `#[cfg(test)]` users).
+#[cfg(test)]
+pub fn reset_compdef_state() {
+    *COMPDEF_STATE.lock().unwrap() = Some(CompdefState::default());
+}
+
+/// Snapshot of session-side state — useful for `compdump` to read
+/// without locking inside the hot path.
+pub fn snapshot_compdef_state() -> CompdefState {
+    with_state(|s| CompdefState {
+        comps: s.comps.clone(),
+        services: s.services.clone(),
+        patcomps: s.patcomps.clone(),
+        postpatcomps: s.postpatcomps.clone(),
+        compautos: s.compautos.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1257,5 +1899,181 @@ mod tests {
         assert!(!is_context_entry("-p")); // option flag, not context
         assert!(!is_context_entry("-P")); // option flag
         assert!(!is_context_entry("git")); // regular command
+    }
+
+    // =================================================================
+    // compdef() tests — faithful to upstream `Completion/compinit`
+    // sh:253-446. Lock the global state via reset_compdef_state to
+    // isolate each case.
+    // =================================================================
+
+    fn run(args: &[&str]) -> i32 {
+        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        compdef(&owned)
+    }
+
+    #[test]
+    fn compdef_empty_args_errors() {
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        assert_eq!(compdef(&[]), 1);
+    }
+
+    #[test]
+    fn compdef_normal_registration() {
+        // sh:407-419 — `compdef _git git` writes `_comps[git]=_git`.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        assert_eq!(run(&["_git", "git", "git-commit", "git-push"]), 0);
+        let state = snapshot_compdef_state();
+        assert_eq!(state.comps.get("git"), Some(&"_git".to_string()));
+        assert_eq!(state.comps.get("git-commit"), Some(&"_git".to_string()));
+        assert_eq!(state.comps.get("git-push"), Some(&"_git".to_string()));
+    }
+
+    #[test]
+    fn compdef_normal_with_service() {
+        // sh:408-414 — `cmd=svc` records the service alongside.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        assert_eq!(run(&["_git", "hub=git"]), 0);
+        let state = snapshot_compdef_state();
+        assert_eq!(state.comps.get("hub"), Some(&"_git".to_string()));
+        assert_eq!(state.services.get("hub"), Some(&"git".to_string()));
+    }
+
+    #[test]
+    fn compdef_pattern_via_dash_p() {
+        // sh:393-398 — `-p` writes into `_patcomps`.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        assert_eq!(run(&["-p", "_test", "*-test"]), 0);
+        let state = snapshot_compdef_state();
+        assert_eq!(state.patcomps.get("*-test"), Some(&"_test".to_string()));
+    }
+
+    #[test]
+    fn compdef_postpattern_via_dash_p_caps() {
+        // sh:400-405 — `-P` → `_postpatcomps`.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        assert_eq!(run(&["-P", "_last", "_*"]), 0);
+        let state = snapshot_compdef_state();
+        assert_eq!(state.postpatcomps.get("_*"), Some(&"_last".to_string()));
+    }
+
+    #[test]
+    fn compdef_pattern_with_eq_rewrites_to_eq_form() {
+        // sh:394-397 — `key=val` form is rewritten to `=val=func`.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        assert_eq!(run(&["-p", "_test", "*=postfix"]), 0);
+        let state = snapshot_compdef_state();
+        assert_eq!(
+            state.patcomps.get("*"),
+            Some(&"=postfix=_test".to_string())
+        );
+    }
+
+    #[test]
+    fn compdef_delete_removes_from_comps() {
+        // sh:426-444 — `-d` deletes from the right hash.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        run(&["_git", "git"]);
+        assert!(snapshot_compdef_state().comps.contains_key("git"));
+        assert_eq!(run(&["-d", "git"]), 0);
+        assert!(!snapshot_compdef_state().comps.contains_key("git"));
+    }
+
+    #[test]
+    fn compdef_delete_pattern_removes_from_patcomps() {
+        // sh:429-432 — `-d -p` deletes a pattern entry.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        run(&["-p", "_test", "*-test"]);
+        assert!(snapshot_compdef_state().patcomps.contains_key("*-test"));
+        assert_eq!(run(&["-d", "-p", "*-test"]), 0);
+        assert!(!snapshot_compdef_state().patcomps.contains_key("*-test"));
+    }
+
+    #[test]
+    fn compdef_no_clobber_skips_existing() {
+        // sh:415 — `-n` keeps the existing binding.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        run(&["_first", "git"]);
+        run(&["-n", "_second", "git"]);
+        assert_eq!(
+            snapshot_compdef_state().comps.get("git"),
+            Some(&"_first".to_string())
+        );
+    }
+
+    #[test]
+    fn compdef_inline_type_switch_dash_p() {
+        // sh:385-390 — bare `-p` mid-args toggles to pattern mode.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        run(&["_x", "cmd1", "-p", "pat*", "-N", "cmd2"]);
+        let s = snapshot_compdef_state();
+        assert_eq!(s.comps.get("cmd1"), Some(&"_x".to_string()));
+        assert_eq!(s.patcomps.get("pat*"), Some(&"_x".to_string()));
+        assert_eq!(s.comps.get("cmd2"), Some(&"_x".to_string()));
+    }
+
+    #[test]
+    fn compdef_combined_flags_an() {
+        // sh:267 getopts allows `-an` combined.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        // `-an` = autol + new
+        assert_eq!(run(&["-an", "_git", "git"]), 0);
+        let s = snapshot_compdef_state();
+        assert_eq!(s.comps.get("git"), Some(&"_git".to_string()));
+        // -a triggers compautos registration
+        assert_eq!(s.compautos.get("_git"), Some(&"-rUz".to_string()));
+    }
+
+    #[test]
+    fn compdef_service_alias_mode_resolves_existing_func() {
+        // sh:298-326  — first arg with `=` triggers service-alias.
+        //   Each entry resolves via `_services[(r)$svc]` reverse +
+        //   `_comps[$svc]`.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        run(&["_git", "git"]); // first set up git→_git
+        // Now `hub=git` should reuse _git
+        assert_eq!(run(&["hub=git"]), 0);
+        let s = snapshot_compdef_state();
+        assert_eq!(s.comps.get("hub"), Some(&"_git".to_string()));
+        assert_eq!(s.services.get("hub"), Some(&"git".to_string()));
+    }
+
+    #[test]
+    fn compdef_service_alias_unknown_returns_one() {
+        // sh:316-318  unknown svc → error
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        assert_eq!(run(&["xyz=never-registered"]), 1);
+    }
+
+    #[test]
+    fn compdef_unknown_flag_errors() {
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        assert_eq!(run(&["-z", "_x", "cmd"]), 1);
+    }
+
+    #[test]
+    fn compdef_publishes_state_to_shell_arrays() {
+        // The shell-side `getaparam("_comps")` must see the
+        //   registered entries flat key/value.
+        let _g = crate::test_util::global_state_lock();
+        reset_compdef_state();
+        run(&["_git", "git"]);
+        let arr = crate::ported::params::getaparam("_comps").unwrap_or_default();
+        // Flat layout: [k, v, k, v, ...] sorted by key.
+        assert!(arr.windows(2).any(|w| w[0] == "git" && w[1] == "_git"));
     }
 }

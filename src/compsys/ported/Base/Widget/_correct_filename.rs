@@ -106,8 +106,112 @@ pub fn _correct_filename(args: &[String]) -> i32 {
         return 0;
     }
 
-    // sh:56-64  approximate-match loop — TODO without (#aN) glob
-    1
+    // sh:56-64  approximate-match loop. `(#a$N)` is zsh's
+    //   Levenshtein-≤N glob qualifier; we mirror by computing
+    //   edit-distance against every candidate in the dir (file
+    //   mode) or every executable basename (cmd mode), accepting
+    //   the closest one within `max_approx` errors.
+    let max_approx: usize = if in_widget {
+        let numeric = getiparam("NUMERIC");
+        if numeric > 1 {
+            numeric as usize
+        } else {
+            6
+        }
+    } else {
+        6
+    };
+    let candidates = if testcmd {
+        path_basenames()
+    } else {
+        directory_basenames(&file)
+    };
+    let target = std::path::Path::new(&file)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file.clone());
+    let mut best: Option<(usize, String)> = None;
+    for c in &candidates {
+        let d = crate::compsys::ported::shared::edit_distance(&target, c);
+        if d == 0 || d > max_approx {
+            continue;
+        }
+        if best.as_ref().map(|(bd, _)| d < *bd).unwrap_or(true) {
+            best = Some((d, c.clone()));
+        }
+    }
+    let corrected = match best {
+        Some((_, name)) => name,
+        None => return 1,
+    };
+    let corrected_full = if testcmd {
+        which(&corrected).unwrap_or(corrected)
+    } else if let Some(slash) = file.rfind('/') {
+        format!("{}/{}", &file[..slash], corrected)
+    } else {
+        corrected
+    };
+    if in_widget {
+        let argv: Vec<String> = vec![
+            "-QUf".to_string(),
+            "-i".to_string(),
+            iprefix.clone(),
+            "-I".to_string(),
+            getsparam("ISUFFIX").unwrap_or_default(),
+            corrected_full,
+        ];
+        let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
+        let cur_insert =
+            crate::ported::zle::compcore::get_compstate_str("insert")
+                .unwrap_or_default();
+        if !cur_insert.is_empty() {
+            set_compstate_str("insert", "menu");
+        }
+    } else {
+        println!("{}", corrected_full);
+    }
+    0
+}
+
+/// Enumerate every basename in `file`'s parent directory (file
+/// approximate-match mode).
+fn directory_basenames(file: &str) -> Vec<String> {
+    let dir = match file.rfind('/') {
+        Some(i) => file[..=i].to_string(),
+        None => ".".to_string(),
+    };
+    let scan = if dir.is_empty() { ".".to_string() } else { dir };
+    std::fs::read_dir(Path::new(&scan))
+        .map(|e| {
+            e.flatten()
+                .map(|ent| ent.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Enumerate every executable basename across `$PATH` (cmd mode).
+fn path_basenames() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in path.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for ent in entries.flatten() {
+                    if let Ok(meta) = ent.metadata() {
+                        if meta.is_file() {
+                            out.push(ent.file_name().to_string_lossy().into_owned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// `whence` substitute — search $PATH for `file`.

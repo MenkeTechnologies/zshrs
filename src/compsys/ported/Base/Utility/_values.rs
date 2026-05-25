@@ -19,8 +19,8 @@ use crate::ported::params::{getsparam, setsparam};
 
 /// `_values` — generic value-completion entry. `-s SEP` enables
 /// comma/sep-separated list, `-S =` enables `name=val` syntax,
-/// remaining args are `name[:descr]:action` specs forwarded to
-/// `_alternative`.
+/// remaining args are `name[desc]=:msg:action` (full form) or
+/// `name[:descr]:action` (simple form) specs.
 pub fn _values(args: &[String]) -> i32 {
     let mut sep: Option<String> = None;
     let mut subsep: Option<String> = None;
@@ -41,15 +41,11 @@ pub fn _values(args: &[String]) -> i32 {
             "-O" if idx + 1 < args.len() => idx += 2,
             "-C" if idx + 1 < args.len() => idx += 2,
             "-w" => idx += 1,
-            s if s.starts_with('-') && !s.starts_with("--") => {
-                // Single-dash flag w/o known handling — skip
-                idx += 1;
-            }
+            s if s.starts_with('-') && !s.starts_with("--") => idx += 1,
             _ => break,
         }
     }
 
-    // First positional after flags is the description
     if idx >= args.len() {
         return 1;
     }
@@ -61,29 +57,119 @@ pub fn _values(args: &[String]) -> i32 {
         return 1;
     }
 
-    // Build _alternative defs: each spec like `name[:descr]:action`
-    //   maps directly to alternative syntax.
-    let alts: Vec<String> = specs
-        .iter()
-        .map(|s| {
-            // If spec has fewer than 2 colons, treat as bare value
-            //   with no action (delegate via _files).
-            if s.matches(':').count() < 2 {
-                format!("values:{}:({})", descr, s)
+    // Determine which value the user is currently typing (after the
+    //   last separator) and which preceding values to dedupe out.
+    let (active_val, prior_vals, completed_prefix) = if let Some(s) = sep.as_deref() {
+        let prefix = crate::ported::params::getsparam("PREFIX").unwrap_or_default();
+        let parts: Vec<&str> = prefix.split(s).collect();
+        let active = parts.last().copied().unwrap_or("").to_string();
+        let prior: Vec<String> = parts[..parts.len().saturating_sub(1)]
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+        let completed = if prior.is_empty() {
+            String::new()
+        } else {
+            format!("{}{}", prior.join(s), s)
+        };
+        (active, prior, completed)
+    } else {
+        (
+            crate::ported::params::getsparam("PREFIX").unwrap_or_default(),
+            Vec::new(),
+            String::new(),
+        )
+    };
+
+    // Build the alternative-spec list. Each `_values` spec maps to
+    //   one alternative entry, with name-only specs becoming a
+    //   literal-list of self-described values.
+    let mut alts: Vec<String> = Vec::new();
+    let mut name_only: Vec<String> = Vec::new();
+    for s in &specs {
+        // Strip optional `name[desc]` brace prefix (sh:30-40)
+        let (head, action_part) = if let Some(open) = s.find('[') {
+            if let Some(close) = s[open..].find(']') {
+                let after = &s[open + close + 1..];
+                (s[..open].to_string(), after)
             } else {
-                s.clone()
+                (s.clone(), "")
             }
-        })
-        .collect();
+        } else {
+            (s.clone(), "")
+        };
+        // `name=:msg:action` form (subsep present)
+        let bare_name = head
+            .strip_suffix('=')
+            .unwrap_or(&head)
+            .to_string();
+        if prior_vals.iter().any(|p| {
+            // dedupe: strip `subsep VALUE` if -S given
+            let key = if let Some(ss) = subsep.as_deref() {
+                p.split(ss).next().unwrap_or(p)
+            } else {
+                p.as_str()
+            };
+            key == bare_name
+        }) {
+            continue;
+        }
+        if action_part.is_empty() {
+            // name-only — accumulate into a literal list
+            name_only.push(bare_name);
+        } else {
+            // full form: `:msg:action`
+            let body = action_part.trim_start_matches(':');
+            alts.push(format!("values:{}:{}", descr, body));
+        }
+    }
+    if !name_only.is_empty() {
+        alts.push(format!("values:{}:({})", descr, name_only.join(" ")));
+    }
+    if alts.is_empty() {
+        return 1;
+    }
 
-    let _ = sep;
-    let _ = subsep;
+    // Use compset to trim the leading prior-values prefix so the
+    //   downstream completer matches against `active_val` only.
+    if !completed_prefix.is_empty() {
+        let _ = crate::ported::zle::complete::bin_compset(
+            "compset",
+            &[
+                "-P".to_string(),
+                glob_escape(&completed_prefix),
+            ],
+            &crate::ported::zsh_h::options {
+                ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+                args: Vec::new(),
+                argscount: 0,
+                argsalloc: 0,
+            },
+            0,
+        );
+    }
+    let _ = active_val;
 
-    // sh:155 — delegate to _alternative
     let saved_curcontext = getsparam("curcontext").unwrap_or_default();
     let r = _alternative(&alts);
     let _ = setsparam("curcontext", &saved_curcontext);
     r
+}
+
+/// Backslash-escape regex/pattern metacharacters so `bin_compset
+/// -P <prefix>` treats the string literally.
+fn glob_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for c in s.chars() {
+        if matches!(
+            c,
+            '(' | ')' | '|' | '*' | '?' | '[' | ']' | '#' | '~' | '^' | '\\'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]

@@ -34,6 +34,17 @@ use crate::ported::exec_hooks::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setsparam};
 
 /// Helper: assoc lookup in flat key/value layout.
+/// sh:26 — zsh `(K)pat` key-pattern match. Uses the real
+/// `crate::ported::pattern` engine (`patcompile` + `pattry`).
+/// Falls back to literal equality when the key isn't a valid
+/// glob pattern.
+fn pattern_match(pat: &str, s: &str) -> bool {
+    match crate::ported::pattern::patcompile(pat, 0, None) {
+        Some(prog) => crate::ported::pattern::pattry(&prog, s),
+        None => pat == s,
+    }
+}
+
 fn assoc_get(name: &str, key: &str) -> Option<String> {
     let arr = getaparam(name)?;
     arr.chunks(2)
@@ -90,11 +101,13 @@ pub fn _dispatch(args: &[String]) -> i32 {
             let _ = setsparam("service", &service);
             let patcomps = getaparam("_patcomps").unwrap_or_default();
             for i in patcomps.chunks(2) {
-                if let (Some(_pat), Some(action)) = (i.first(), i.get(1)) {
-                    // The shell uses `(K)$str` to match the key pattern
-                    //   against `$str`; we approximate by literal
-                    //   equality for now.
-                    if i.first().map(|k| k == str_arg).unwrap_or(false) {
+                if let (Some(pat), Some(action)) = (i.first(), i.get(1)) {
+                    // sh:26 — `(K)$str` matches the key (a zsh pattern)
+                    //   against `$str`. Compile via the real pattern
+                    //   engine; fall back to literal equality on a
+                    //   malformed pattern.
+                    let matched = pattern_match(pat, str_arg);
+                    if matched {
                         let parts: Vec<String> = action
                             .split_whitespace()
                             .map(|s| s.to_string())
@@ -168,7 +181,7 @@ pub fn _dispatch(args: &[String]) -> i32 {
             let _ = setsparam("service", &service);
             let pp = getaparam("_postpatcomps").unwrap_or_default();
             for i in pp.chunks(2) {
-                if i.first().map(|k| k == str_arg).unwrap_or(false) {
+                if i.first().map(|k| pattern_match(k, str_arg)).unwrap_or(false) {
                     if let Some(action) = i.get(1) {
                         let _ = setsparam("_compskip", "default");
                         let parts: Vec<String> = action

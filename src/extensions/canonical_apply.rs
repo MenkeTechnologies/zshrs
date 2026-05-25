@@ -247,48 +247,26 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     }
 
     // compdef: each (function, "cmd1 cmd2 ...") row replays through
-    // the same compdef builtin install path
-    // (crate::compsys::compdef::compdef_execute) that runtime `compdef _git
-    // git` would have used. Recorder captures with format
-    // `name=function value="cmd1 cmd2 …"` (per `builtin_compdef` in
-    // src/vm_helper).
+    // the ported runtime `compdef()` entry point in
+    // `crate::compsys::ported::compinit::compdef` — matches what an
+    // interactive `compdef _git git` call would land at. Recorder
+    // captures format: `name=function value="cmd1 cmd2 …"` (per
+    // `builtin_compdef` in src/vm_helper). State lives in the
+    // process-wide `CompdefState` published into the shell-side
+    // param table; the legacy `CompsysCache` path is no longer
+    // used here.
     if !shard.compdef.is_empty() {
-        // Executor's constructor only opens compsys_cache if the
-        // .db file already exists (cold start = None). Open it
-        // lazily here so the apply path is self-sufficient: first
-        // recorder ingest creates the cache; subsequent shells see
-        // it and apply normally.
-        if executor.compsys_cache.is_none() {
-            let cache_path = crate::compsys::cache::default_cache_path();
-            if let Some(parent) = cache_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+        for (function, cmds_joined) in shard.compdef {
+            let mut args: Vec<String> = Vec::with_capacity(8);
+            args.push(function);
+            for cmd in cmds_joined.split_whitespace() {
+                args.push(cmd.to_string());
             }
-            match crate::compsys::cache::CompsysCache::open(&cache_path) {
-                Ok(c) => {
-                    tracing::info!(
-                        path = %cache_path.display(),
-                        "compsys cache lazily created for canonical compdef apply"
-                    );
-                    executor.compsys_cache = Some(c);
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "compsys cache open failed; compdef rows skipped");
-                }
+            if args.len() < 2 {
+                continue; // recorder dropped the cmd list — can't replay
             }
-        }
-        if let Some(cache) = executor.compsys_cache.as_mut() {
-            for (function, cmds_joined) in shard.compdef {
-                let mut args: Vec<String> = Vec::with_capacity(8);
-                args.push(function);
-                for cmd in cmds_joined.split_whitespace() {
-                    args.push(cmd.to_string());
-                }
-                if args.len() < 2 {
-                    continue; // recorder dropped the cmd list — can't replay
-                }
-                let _rc = crate::compsys::compdef::compdef_execute(cache, &args);
-                total += 1;
-            }
+            let _rc = crate::compsys::ported::compinit::compdef(&args);
+            total += 1;
         }
     }
 
