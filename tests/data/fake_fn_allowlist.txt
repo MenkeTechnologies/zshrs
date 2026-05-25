@@ -1556,6 +1556,7 @@ right_prompt_padding
 runhookdef_compcore
 runhookdef_compctlmake
 set_compstate_str
+get_compstate_str
 shfunc_call
 skip_cond_separators
 skip_separators

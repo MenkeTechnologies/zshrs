@@ -2391,13 +2391,22 @@ pub fn bin_zparseopts(
         name: String,
         flags: i32,
         arr_name: Option<String>,
-        vals: Vec<Val>, // collected values
+        vals: Vec<Val>, // collected values, tagged with argv-order seq
     }
     #[derive(Clone)]
     struct Val {
         name: String,        // option name as it appeared
         arg: Option<String>, // arg if any
+        // sh-C semantic (c:2076 `for (v = a->vals; v; v = v->next)`):
+        //   the C `a->vals` is a linked list appended to in argv
+        //   order across ALL specs that point at the same array.
+        //   We mirror this by tagging each push with a monotonic
+        //   sequence; the emit phase sorts by seq to produce the
+        //   correct argv-order output regardless of which Desc the
+        //   val lives under.
+        seq: usize,
     }
+    let mut val_seq: usize = 0;
 
     let mut del = false; // c:1742
     let mut flags_map = 0i32; // c:1742
@@ -2668,12 +2677,14 @@ pub fn bin_zparseopts(
                     descs[idx].vals.push(Val {
                         name: o_raw.clone(),
                         arg: Some(arg),
+                        seq: { let _s = val_seq; val_seq += 1; _s },
                     });
                 } else if !e.is_empty() {
                     // c:2038
                     descs[idx].vals.push(Val {
                         name: o_raw.clone(),
                         arg: Some(e.to_string()),
+                        seq: { let _s = val_seq; val_seq += 1; _s },
                     });
                 } else if (dflags & ZOF_OPT) == 0
                     || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
@@ -2690,19 +2701,22 @@ pub fn bin_zparseopts(
                     descs[idx].vals.push(Val {
                         name: o_raw.clone(),
                         arg: Some(arg),
+                        seq: { let _s = val_seq; val_seq += 1; _s },
                     });
                 } else {
                     // c:2055
                     descs[idx].vals.push(Val {
                         name: o_raw.clone(),
                         arg: None,
+                        seq: { let _s = val_seq; val_seq += 1; _s },
                     });
                 }
             } else {
                 descs[idx].vals.push(Val {
                     name: o_raw.clone(),
                     arg: None,
-                });
+                        seq: { let _s = val_seq; val_seq += 1; _s },
+                    });
             }
             pi += 1;
             continue;
@@ -2739,6 +2753,7 @@ pub fn bin_zparseopts(
                     descs[idx].vals.push(Val {
                         name: format!("-{}", ch),
                         arg: Some(arg),
+                        seq: { let _s = val_seq; val_seq += 1; _s },
                     });
                     break;
                 } else if (dflags & ZOF_OPT) == 0
@@ -2755,17 +2770,20 @@ pub fn bin_zparseopts(
                     descs[idx].vals.push(Val {
                         name: format!("-{}", ch),
                         arg: Some(arg),
+                        seq: { let _s = val_seq; val_seq += 1; _s },
                     });
                 } else {
                     descs[idx].vals.push(Val {
                         name: format!("-{}", ch),
                         arg: None,
+                        seq: { let _s = val_seq; val_seq += 1; _s },
                     });
                 }
             } else {
                 descs[idx].vals.push(Val {
                     name: format!("-{}", ch),
                     arg: None,
+                    seq: { let _s = val_seq; val_seq += 1; _s },
                 });
             }
             ci += 1;
@@ -2797,23 +2815,35 @@ pub fn bin_zparseopts(
     }
 
     // Phase 5: emit per-array results. c:2073-2088.
-    // Group descs by arr_name → array of [name, arg, name, arg, ...].
-    let mut arr_outputs: std::collections::BTreeMap<String, Vec<String>> =
-        std::collections::BTreeMap::new();
+    //   C iterates `a->vals` — a single linked list per array that
+    //   was appended to in argv-encounter order across ALL specs
+    //   pointing at the same array. We mirror by collecting (seq,
+    //   name, arg) across all descs that share a target array,
+    //   sorting by seq, and flattening into [name, arg?, name,
+    //   arg?, …] form.
+    let mut arr_buckets: std::collections::BTreeMap<
+        String,
+        Vec<(usize, String, Option<String>)>,
+    > = std::collections::BTreeMap::new();
     for d in &descs {
         let target = d.arr_name.clone().or_else(|| defarr.clone());
         let Some(tgt) = target else { continue };
-        let entry = arr_outputs.entry(tgt).or_default();
+        let entry = arr_buckets.entry(tgt).or_default();
         for v in &d.vals {
-            entry.push(v.name.clone());
-            if let Some(a) = &v.arg {
-                entry.push(a.clone());
-            }
+            entry.push((v.seq, v.name.clone(), v.arg.clone()));
         }
     }
-    for (name, vals) in arr_outputs {
-        if !keep || !vals.is_empty() {
-            setaparam(&name, vals);
+    for (name, mut bucket) in arr_buckets {
+        bucket.sort_by_key(|t| t.0);
+        let mut out: Vec<String> = Vec::with_capacity(bucket.len() * 2);
+        for (_seq, n, a) in bucket {
+            out.push(n);
+            if let Some(av) = a {
+                out.push(av);
+            }
+        }
+        if !keep || !out.is_empty() {
+            setaparam(&name, out);
         }
     }
 
@@ -2838,19 +2868,31 @@ pub fn bin_zparseopts(
         }
     }
 
-    // c:2124-2131 — write back consumed argv when -D was given.
+    // c:2124-2131 — write back when `-D` was given.
+    //   extract (`-E`)   → `np` (collected non-flag args)
+    //   non-extract      → `pp` (remainder of original args from the
+    //                            stop point onward)
     if del {
+        let write_back: Vec<String> = if extract {
+            new_params.clone()
+        } else {
+            // pi points at the arg that stopped the parse (or past
+            // the end if we consumed everything cleanly). Everything
+            // from pi onward is the unprocessed tail = `pp` in C.
+            params.iter().skip(pi).cloned().collect()
+        };
         if params_src == "argv" {
-            crate::ported::exec_hooks::set_pparams(new_params.clone());
-            if let Ok(mut pp) = PPARAMS.lock() {
-                *pp = new_params;
+            crate::ported::exec_hooks::set_pparams(write_back.clone());
+            if let Ok(mut pp_lock) = PPARAMS.lock() {
+                *pp_lock = write_back;
             }
         } else {
-            setaparam(&params_src, new_params);
+            setaparam(&params_src, write_back);
         }
     } else {
         let _ = params;
     }
+    let _ = stopped; // value already encoded in pi position
 
     0
 }

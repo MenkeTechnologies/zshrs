@@ -3829,10 +3829,47 @@ pub fn shfunc_call(name: &str) -> i32 {
 }
 /// Real call into `setsparam(&format!("compstate[{key}]"), val)` — the
 /// canonical paramtab write. Mirrors C's `setsparam` at params.c:3350.
-fn set_compstate_str(key: &str, val: &str) {
-    // params.c:3350
+///
+/// Now `pub` so compsys engine ports can write `$compstate[KEY]`
+/// directly. Also dual-writes to `paramtab_hashed_storage()` under
+/// the "compstate" key so subscript lookups via the hash-param
+/// machinery see the same value — `$compstate` IS a PM_HASHED param
+/// (created by `makecompparams` at `complete.rs:1499`), and shell
+/// scripts read it as such.
+pub fn set_compstate_str(key: &str, val: &str) {
+    // params.c:3350 — flat bracketed-param write (preserves the
+    // pre-existing access path used by `set_compstate_str` callers).
     let pname = format!("compstate[{}]", key);
     let _ = setsparam(&pname, val);
+
+    // Hash-storage write: dual-store under the `compstate` hash so
+    // `${compstate[KEY]}` shell reads (via the hashparam machinery)
+    // and any direct `paramtab_hashed_storage()` consumer see the
+    // same value.
+    if let Ok(mut tab) = paramtab_hashed_storage().lock() {
+        tab.entry("compstate".to_string())
+            .or_default()
+            .insert(key.to_string(), val.to_string());
+    }
+}
+
+/// Read `$compstate[KEY]`. Returns `None` when the key was never set.
+///
+/// Prefers the hash-storage view (the canonical home for a PM_HASHED
+/// param); falls back to the legacy flat `compstate[KEY]` bracketed
+/// param for entries that some code wrote via raw `setsparam` without
+/// going through [`set_compstate_str`].
+pub fn get_compstate_str(key: &str) -> Option<String> {
+    if let Ok(tab) = paramtab_hashed_storage().lock() {
+        if let Some(hash) = tab.get("compstate") {
+            if let Some(v) = hash.get(key) {
+                return Some(v.clone());
+            }
+        }
+    }
+    // Fallback: pre-existing callers wrote via raw `setsparam` only.
+    let pname = format!("compstate[{}]", key);
+    getsparam(&pname)
 }
 
 /// Local helper: position before-the-current char (handles UTF-8).
