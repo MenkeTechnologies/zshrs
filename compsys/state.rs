@@ -1,6 +1,7 @@
 //! Completion state management - the $compstate hash and special parameters
 
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 /// Completion context type (compstate\[context\])
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -443,6 +444,328 @@ fn parse_command_line(line: &str, cursor: usize) -> (Vec<String>, usize, String,
 
     let current_idx = cursor_in_word.map(|i| i + 1).unwrap_or(1);
     (words, current_idx, prefix, suffix)
+}
+
+// ── Shell-parameter registries ────────────────────────────────────────
+//
+// `_comp_caller_options` and `_comp_priv_prefix` are shell PARAMETERS
+// (not shell functions) referenced by compsys completers. Upstream:
+//
+//   `_main_complete`:    `local _comp_priv_prefix; unset _comp_priv_prefix`
+//   `_main_complete`:    `typeset -gA _comp_caller_options`
+//                        `_comp_caller_options=( "${(@kv)options}" )`
+//   `_sudo`/`_doas`/…:   `local -a _comp_priv_prefix=( sudo )`
+//   `_call_program`:     `if (( $#_comp_priv_prefix )); then …`
+//   `_path_files`/…:     `if [[ $_comp_caller_options[extendedglob] == on ]]`
+//
+// They live here (engine state) rather than under `ported/` because
+// `ported/` mirrors the upstream shell-FUNCTION tree and these names
+// have no shell-function file.
+//
+// `comp_caller_options` mirrors `typeset -gA` (one global table).
+// `comp_priv_prefix` mirrors `local +h _comp_priv_prefix=(…)` — a
+// scoped stack so push/pop matches the shell's locally-scoped semantic.
+
+fn caller_options_registry() -> &'static Mutex<HashMap<String, bool>> {
+    static REG: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Wholesale replace the `_comp_caller_options` snapshot. Used by
+/// `_main_complete` on every compsys entry to record the current
+/// shell-side options.
+pub fn comp_caller_options_set(snapshot: HashMap<String, bool>) {
+    if let Ok(mut g) = caller_options_registry().lock() {
+        *g = snapshot;
+    }
+}
+
+/// Set a single option in the `_comp_caller_options` snapshot.
+pub fn comp_caller_options_set_one(name: impl Into<String>, on: bool) {
+    if let Ok(mut g) = caller_options_registry().lock() {
+        g.insert(name.into(), on);
+    }
+}
+
+/// Look up one option from the `_comp_caller_options` snapshot.
+pub fn comp_caller_options_get(name: &str) -> Option<bool> {
+    caller_options_registry()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(name).copied())
+}
+
+/// Clear the `_comp_caller_options` snapshot — used by tests and by
+/// the runtime when exiting compsys.
+pub fn comp_caller_options_clear() {
+    if let Ok(mut g) = caller_options_registry().lock() {
+        g.clear();
+    }
+}
+
+/// Return a clone of the `_comp_caller_options` snapshot. Mirrors
+/// `${(kv)_comp_caller_options}`.
+pub fn comp_caller_options() -> HashMap<String, bool> {
+    caller_options_registry()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+fn priv_prefix_stack() -> &'static Mutex<Vec<Vec<String>>> {
+    static S: OnceLock<Mutex<Vec<Vec<String>>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Push a new `_comp_priv_prefix` scope. Returned guard pops on drop —
+/// mirrors shell's `local +h _comp_priv_prefix=( ... )` scope.
+pub fn comp_priv_prefix_push_scope(prefix: Vec<String>) -> PrivPrefixGuard {
+    if let Ok(mut s) = priv_prefix_stack().lock() {
+        s.push(prefix);
+    }
+    PrivPrefixGuard { _private: () }
+}
+
+/// RAII guard returned by [`comp_priv_prefix_push_scope`]. Pops the
+/// scope on drop.
+pub struct PrivPrefixGuard {
+    _private: (),
+}
+
+impl Drop for PrivPrefixGuard {
+    fn drop(&mut self) {
+        if let Ok(mut s) = priv_prefix_stack().lock() {
+            s.pop();
+        }
+    }
+}
+
+/// Return the active `_comp_priv_prefix` value (innermost scope wins).
+/// Empty Vec when no scope is active.
+pub fn comp_priv_prefix() -> Vec<String> {
+    priv_prefix_stack()
+        .lock()
+        .ok()
+        .and_then(|s| s.last().cloned())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod param_registries_tests {
+    use super::*;
+
+    fn caller_options_lock() -> std::sync::MutexGuard<'static, ()> {
+        static L: OnceLock<Mutex<()>> = OnceLock::new();
+        L.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn priv_prefix_lock() -> std::sync::MutexGuard<'static, ()> {
+        static L: OnceLock<Mutex<()>> = OnceLock::new();
+        L.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn caller_options_empty_before_any_set() {
+        let _g = caller_options_lock();
+        comp_caller_options_clear();
+        assert!(comp_caller_options().is_empty());
+    }
+
+    #[test]
+    fn caller_options_set_and_get_round_trip() {
+        let _g = caller_options_lock();
+        comp_caller_options_clear();
+        let mut snap = HashMap::new();
+        snap.insert("EXTENDED_GLOB".into(), true);
+        snap.insert("NULL_GLOB".into(), false);
+        comp_caller_options_set(snap.clone());
+        assert_eq!(comp_caller_options(), snap);
+        assert_eq!(comp_caller_options_get("EXTENDED_GLOB"), Some(true));
+        assert_eq!(comp_caller_options_get("NULL_GLOB"), Some(false));
+        assert_eq!(comp_caller_options_get("NOT_PRESENT"), None);
+        comp_caller_options_clear();
+    }
+
+    #[test]
+    fn caller_options_set_one_modifies_in_place_without_clearing_others() {
+        let _g = caller_options_lock();
+        comp_caller_options_clear();
+        comp_caller_options_set_one("A", true);
+        comp_caller_options_set_one("B", false);
+        assert_eq!(comp_caller_options_get("A"), Some(true));
+        assert_eq!(comp_caller_options_get("B"), Some(false));
+        comp_caller_options_set_one("A", false);
+        assert_eq!(comp_caller_options_get("A"), Some(false));
+        assert_eq!(
+            comp_caller_options_get("B"),
+            Some(false),
+            "B must be untouched"
+        );
+        comp_caller_options_clear();
+    }
+
+    #[test]
+    fn caller_options_clear_wipes_snapshot() {
+        let _g = caller_options_lock();
+        comp_caller_options_set_one("X", true);
+        comp_caller_options_clear();
+        assert!(comp_caller_options().is_empty());
+        assert_eq!(comp_caller_options_get("X"), None);
+    }
+
+    #[test]
+    fn caller_options_set_wholesale_replaces_existing() {
+        let _g = caller_options_lock();
+        comp_caller_options_clear();
+        comp_caller_options_set_one("OLD", true);
+        let mut snap = HashMap::new();
+        snap.insert("NEW".into(), false);
+        comp_caller_options_set(snap);
+        assert_eq!(comp_caller_options_get("OLD"), None);
+        assert_eq!(comp_caller_options_get("NEW"), Some(false));
+        comp_caller_options_clear();
+    }
+
+    #[test]
+    fn caller_options_snapshot_is_a_clone_not_a_reference() {
+        let _g = caller_options_lock();
+        comp_caller_options_clear();
+        comp_caller_options_set_one("Z", true);
+        let mut snap = comp_caller_options();
+        snap.insert("Z".into(), false);
+        snap.insert("INJECTED".into(), true);
+        assert_eq!(
+            comp_caller_options_get("Z"),
+            Some(true),
+            "registry must not see external mutations"
+        );
+        assert_eq!(comp_caller_options_get("INJECTED"), None);
+        comp_caller_options_clear();
+    }
+
+    #[test]
+    fn caller_options_case_sensitive_key_lookup() {
+        let _g = caller_options_lock();
+        comp_caller_options_clear();
+        comp_caller_options_set_one("EXTENDED_GLOB", true);
+        assert_eq!(comp_caller_options_get("EXTENDED_GLOB"), Some(true));
+        assert_eq!(comp_caller_options_get("extended_glob"), None);
+        assert_eq!(comp_caller_options_get("Extended_Glob"), None);
+        comp_caller_options_clear();
+    }
+
+    #[test]
+    fn caller_options_empty_string_key_supported() {
+        let _g = caller_options_lock();
+        comp_caller_options_clear();
+        comp_caller_options_set_one("", true);
+        assert_eq!(comp_caller_options_get(""), Some(true));
+        comp_caller_options_clear();
+    }
+
+    #[test]
+    fn priv_prefix_empty_outside_any_scope() {
+        let _g = priv_prefix_lock();
+        assert!(comp_priv_prefix().is_empty());
+    }
+
+    #[test]
+    fn priv_prefix_scope_visible_during_lifetime() {
+        let _g = priv_prefix_lock();
+        {
+            let _guard = comp_priv_prefix_push_scope(vec!["sudo".into()]);
+            assert_eq!(comp_priv_prefix(), vec!["sudo".to_string()]);
+        }
+        assert!(comp_priv_prefix().is_empty(), "scope popped on drop");
+    }
+
+    #[test]
+    fn priv_prefix_nested_scopes_innermost_wins_and_restores() {
+        let _g = priv_prefix_lock();
+        let _outer = comp_priv_prefix_push_scope(vec!["sudo".into()]);
+        assert_eq!(comp_priv_prefix(), vec!["sudo".to_string()]);
+        {
+            let _inner = comp_priv_prefix_push_scope(vec![
+                "doas".into(),
+                "-u".into(),
+                "root".into(),
+            ]);
+            assert_eq!(
+                comp_priv_prefix(),
+                vec!["doas".to_string(), "-u".into(), "root".into()]
+            );
+        }
+        assert_eq!(comp_priv_prefix(), vec!["sudo".to_string()]);
+    }
+
+    #[test]
+    fn priv_prefix_drop_order_is_lifo() {
+        let _g = priv_prefix_lock();
+        let a = comp_priv_prefix_push_scope(vec!["A".into()]);
+        let b = comp_priv_prefix_push_scope(vec!["B".into()]);
+        let c = comp_priv_prefix_push_scope(vec!["C".into()]);
+        assert_eq!(comp_priv_prefix(), vec!["C".to_string()]);
+        drop(c);
+        assert_eq!(comp_priv_prefix(), vec!["B".to_string()]);
+        drop(b);
+        assert_eq!(comp_priv_prefix(), vec!["A".to_string()]);
+        drop(a);
+        assert!(comp_priv_prefix().is_empty());
+    }
+
+    #[test]
+    fn priv_prefix_empty_in_scope_is_distinct_from_no_scope() {
+        let _g = priv_prefix_lock();
+        assert!(comp_priv_prefix().is_empty());
+        {
+            let _guard = comp_priv_prefix_push_scope(vec![]);
+            assert!(comp_priv_prefix().is_empty());
+        }
+    }
+
+    #[test]
+    fn priv_prefix_multi_arg_preserved_in_order() {
+        let _g = priv_prefix_lock();
+        let _guard = comp_priv_prefix_push_scope(vec![
+            "doas".into(),
+            "-u".into(),
+            "root".into(),
+            "--".into(),
+        ]);
+        assert_eq!(
+            comp_priv_prefix(),
+            vec![
+                "doas".to_string(),
+                "-u".into(),
+                "root".into(),
+                "--".into()
+            ]
+        );
+    }
+
+    #[test]
+    fn priv_prefix_returned_vec_is_clone_not_reference() {
+        let _g = priv_prefix_lock();
+        let _guard = comp_priv_prefix_push_scope(vec!["sudo".into()]);
+        let mut v = comp_priv_prefix();
+        v.push("INJECTED".into());
+        v.clear();
+        assert_eq!(comp_priv_prefix(), vec!["sudo".to_string()]);
+    }
+
+    #[test]
+    fn priv_prefix_same_command_can_be_pushed_twice() {
+        let _g = priv_prefix_lock();
+        let _g1 = comp_priv_prefix_push_scope(vec!["sudo".into()]);
+        let _g2 = comp_priv_prefix_push_scope(vec!["sudo".into()]);
+        assert_eq!(comp_priv_prefix(), vec!["sudo".to_string()]);
+        drop(_g2);
+        assert_eq!(comp_priv_prefix(), vec!["sudo".to_string()]);
+    }
 }
 
 #[cfg(test)]
