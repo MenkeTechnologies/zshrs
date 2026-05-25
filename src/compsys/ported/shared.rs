@@ -155,15 +155,11 @@ pub fn is_ignored(s: &str, patterns: &[String]) -> bool {
     false
 }
 
-/// `get_ignored_patterns(state, context)` — collect `ignored-patterns`
-/// zstyle values for `context`. STUB 2026-05-24: the real lookup goes
-/// through `bin_zstyle` / `lookupstyle` from `src/ported/modules/zutil.rs`;
-/// pending re-port, this returns an empty list.
-pub fn get_ignored_patterns(
-    _state: &crate::compsys::base::MainCompleteState,
-    _context: &str,
-) -> Vec<String> {
-    Vec::new()
+/// `get_ignored_patterns(context)` — collect `ignored-patterns`
+/// zstyle values for `context` via the real `lookupstyle` in
+/// `src/ported/modules/zutil.rs`.
+pub fn get_ignored_patterns(context: &str) -> Vec<String> {
+    crate::ported::modules::zutil::lookupstyle(context, "ignored-patterns")
 }
 
 #[cfg(test)]

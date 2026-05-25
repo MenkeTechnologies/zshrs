@@ -3666,7 +3666,7 @@ const COMPSYS_FN_FLAG_DOCS: &[(&str, &[(&str, &str)])] = &[
 const COMPSYS_FN_DOCS: &[(&str, &str)] = &[
     (
         "_main_complete",
-        "Top-level entry the compsys dispatcher calls for every completion attempt. Walks the configured completer list (`_complete` / `_approximate` / `_match` / …), invoking each until one returns matches. Sets `$compstate[insert]` based on the result. Rust impl in `crate::compsys::base::main_complete`.",
+        "Top-level entry the compsys dispatcher calls for every completion attempt. Walks the configured completer list (`_complete` / `_approximate` / `_match` / …), invoking each until one returns matches. Sets `$compstate[insert]` based on the result. Rust impl in `crate::compsys::ported::_main_complete::_main_complete`.",
     ),
     (
         "_directories",

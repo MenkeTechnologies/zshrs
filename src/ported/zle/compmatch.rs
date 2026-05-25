@@ -16,7 +16,8 @@
 //! - comp_match        → crate::compsys::matching::comp_match()
 //! - pattern_match_equivalence → crate::compsys::matching (inline)
 //! - add_match_str/part/sub    → crate::compsys::matching (inline)
-//! - cline_* (match line ops)  → crate::compsys::base::CompletionLine
+//! - cline_* (match line ops)  → inline below; the compsys::base
+//!                                `CompletionLine` shim was deleted.
 
 // CompMatcher / MatchFlags / CompLine deleted — Rust-invented structs
 // with no C counterpart. The legit C types `Cmatcher` (comp.h:153),

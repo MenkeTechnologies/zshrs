@@ -111,14 +111,17 @@ pub const COMPSYS_FN_NAMES: &[&str] = &[
     "_widgets",
 ];
 
-pub mod base;
+// base.rs deleted — the type stubs (MainCompleteState /
+// CompletionContext / CompleterResult / Value / CompleterFn) were
+// never wired through the real engine ports. State flows through
+// the shell-side param table via getsparam/setsparam directly; tag
+// accounting goes through `bin_comptags` / `_tags` / `_requested`
+// in `src/ported/zle/computil.rs` + `src/compsys/ported/Base/Core/`.
 // builtin_bridge.rs deleted — middleman wrappers around bin_compadd/
 // bin_zstyle/etc. Callers invoke `crate::ported::zle::complete::bin_*`,
 // `crate::ported::modules::zutil::bin_*`, `lookupstyle`, `testforstyle`
 // directly.
 pub mod cache;
-// compcore.rs deleted — dup of src/ported/zle/compcore.rs.
-pub mod compdef;
 // completion.rs deleted — Completion/CompletionFlags/CompletionGroup
 // are dups of Cmatch/Cmgroup types in src/ported/zle/comp_h.rs.
 // menu.rs deleted — was a stub of what used to be a 3567-LOC dup of
@@ -142,19 +145,10 @@ pub mod ported;
 // on the deleted Completion/CompletionReceiver types.
 pub mod zpwr_colors;
 
-pub use base::{
-    // Tag/spec types (still defined in base.rs)
-    CompleterResult,
-    CompletionContext as BaseCompletionContext,
-    MainCompleteState,
-    Value
-};
-// TagManager removed — dup of comptags machinery in
-// src/ported/zle/computil.rs::bin_comptags.
-// Engine-port re-exports gutted alongside compcore.rs deletion — every
-// `_<name>` port body was stubbed because its body depended on the
-// deleted `CompletionState`. Re-add as ports are properly migrated to
-// use `crate::ported::zle::compcore::addmatch` against shell-side state.
+// base::{CompleterResult, BaseCompletionContext, MainCompleteState,
+// Value} re-exports deleted alongside base.rs — those types were
+// never load-bearing in any active engine port. Engine ports use
+// shell-side state via getsparam/setsparam directly.
 pub use ported::compinit::{
     build_cache_from_fpath, cache_entry_count, cache_is_valid, check_dump, compdump, compinit,
     compinit_lazy, get_system_fpath, load_from_cache, CompDef, CompFile, CompFileDef, CompInitOpts,

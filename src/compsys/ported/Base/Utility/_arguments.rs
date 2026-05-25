@@ -35,15 +35,23 @@ enum Spec {
     /// `-flag[desc]:msg:action` or bare `-flag[desc]`
     Option {
         flag: String,
+        /// `--long` GNU-style flag (vs `-short`)
+        gnu_long: bool,
         desc: String,
         msg: Option<String>,
         action: Option<String>,
+        /// `-flag::msg::action` — value optional
+        optional_arg: bool,
+        /// `*-flag[desc]:msg:action` — option may repeat
+        repeatable: bool,
     },
     /// `N:msg:action` — N is a positional index (1-based)
     Positional {
         idx: usize,
         msg: String,
         action: String,
+        /// `N::msg:action` — positional is optional
+        optional: bool,
     },
     /// `*:msg:action` — rest
     Rest { msg: String, action: String },
@@ -51,52 +59,93 @@ enum Spec {
 
 /// Parse one spec string into a `Spec` enum.
 fn parse_spec(s: &str) -> Option<Spec> {
-    if let Some(rest) = s.strip_prefix('-') {
-        // Option spec. Look for `[desc]` brace.
-        let (flag, rest2) = if let Some(open) = rest.find('[') {
-            let close = rest[open..].rfind(']').map(|c| c + open)?;
-            let flag = rest[..open].to_string();
-            let desc_part = &rest[open + 1..close];
-            (flag, &rest[close + 1..])
+    // `*-flag…` — repeatable-option marker. `*:` is the rest-spec.
+    let (repeatable, body) = if let Some(rest) = s.strip_prefix('*') {
+        if rest.starts_with(':') {
+            let body = rest.trim_start_matches(':');
+            let mut parts = body.splitn(2, ':');
+            let msg = parts.next().unwrap_or("").to_string();
+            let action = parts.next().unwrap_or("").to_string();
+            return Some(Spec::Rest { msg, action });
+        }
+        (true, rest)
+    } else {
+        (false, s)
+    };
+
+    if let Some(rest) = body.strip_prefix('-') {
+        // Detect `--` GNU long-option leading
+        let (flag_prefix, body2): (&str, &str) = if let Some(stripped) = rest.strip_prefix('-') {
+            ("--", stripped)
         } else {
-            // bare `-flag`
-            let end = rest.find(':').unwrap_or(rest.len());
-            (rest[..end].to_string(), &rest[end..])
+            ("-", rest)
         };
-        // After `[desc]`, look for `:msg:action`
+        // Option spec. Look for `[desc]` brace.
+        let (flag, rest2) = if let Some(open) = body2.find('[') {
+            let close = body2[open..].rfind(']').map(|c| c + open)?;
+            let flag = body2[..open].to_string();
+            (flag, &body2[close + 1..])
+        } else {
+            let end = body2.find(':').unwrap_or(body2.len());
+            (body2[..end].to_string(), &body2[end..])
+        };
         let after_brace = rest2;
         if after_brace.is_empty() {
             return Some(Spec::Option {
-                flag: format!("-{}", flag),
+                flag: format!("{}{}", flag_prefix, flag),
+                gnu_long: flag_prefix == "--",
                 desc: String::new(),
                 msg: None,
                 action: None,
+                optional_arg: false,
+                repeatable,
             });
         }
-        let mut parts = after_brace.trim_start_matches(':').splitn(2, ':');
+        // `::` → optional-arg form
+        let (optional_arg, body3) = if after_brace.starts_with("::") {
+            (true, &after_brace[2..])
+        } else {
+            (false, after_brace.trim_start_matches(':'))
+        };
+        let mut parts = body3.splitn(2, ':');
         let msg = parts.next().map(|s| s.to_string());
         let action = parts.next().map(|s| s.to_string());
         return Some(Spec::Option {
-            flag: format!("-{}", flag),
+            flag: format!("{}{}", flag_prefix, flag),
+            gnu_long: flag_prefix == "--",
             desc: String::new(),
             msg,
             action,
+            optional_arg,
+            repeatable,
         });
     }
-    if let Some(rest) = s.strip_prefix('*') {
-        let body = rest.trim_start_matches(':');
-        let mut parts = body.splitn(2, ':');
-        let msg = parts.next().unwrap_or("").to_string();
-        let action = parts.next().unwrap_or("").to_string();
-        return Some(Spec::Rest { msg, action });
+    // `N:msg:action` / `N::msg:action`
+    let idx_end = body
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(body.len());
+    if idx_end == 0 {
+        return None;
     }
-    // N:msg:action
-    let mut parts = s.splitn(3, ':');
-    let idx_str = parts.next().unwrap_or("");
-    let idx: usize = idx_str.parse().ok()?;
+    let idx: usize = body[..idx_end].parse().ok()?;
+    let rest = &body[idx_end..];
+    if !rest.starts_with(':') {
+        return None;
+    }
+    let (optional, body2) = if rest.starts_with("::") {
+        (true, &rest[2..])
+    } else {
+        (false, &rest[1..])
+    };
+    let mut parts = body2.splitn(2, ':');
     let msg = parts.next().unwrap_or("").to_string();
     let action = parts.next().unwrap_or("").to_string();
-    Some(Spec::Positional { idx, msg, action })
+    Some(Spec::Positional {
+        idx,
+        msg,
+        action,
+        optional,
+    })
 }
 
 /// Dispatch the action portion of a spec.
@@ -206,17 +255,62 @@ pub fn _arguments(args: &[String]) -> i32 {
         String::new()
     };
 
+    // Track which positional options have already been consumed
+    //   so optional/repeatable accounting works.
+    let mut consumed_opts: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for w in &words {
+        if w.starts_with('-') {
+            // Account for `--flag=val` GNU form
+            let bare = if w.starts_with("--") {
+                w.splitn(2, '=').next().unwrap_or(w).to_string()
+            } else {
+                w.clone()
+            };
+            consumed_opts.insert(bare);
+        }
+    }
+
     // sh:300 — if current word starts with `-`, dispatch option-spec
     if curword.starts_with('-') {
-        // First emit the option catalog via _describe-style; or
-        //   when curword fully matches a flag, dispatch its action.
         let mut option_strs: Vec<String> = Vec::new();
-        let mut matched_action: Option<(String, String)> = None;
+        let mut matched_action: Option<(String, String, bool)> = None;
+        // Check `--flag=val` GNU long-option (cursor on the value
+        //   half — dispatch the action with the pre-`=` flag matched).
+        let (cur_flag, has_eq_val) = if curword.starts_with("--") {
+            let mut sp = curword.splitn(2, '=');
+            let flag = sp.next().unwrap_or("").to_string();
+            let val = sp.next();
+            (flag, val.is_some())
+        } else {
+            (curword.clone(), false)
+        };
+
         for s in &specs {
-            if let Spec::Option { flag, msg, action, .. } = s {
-                if curword == *flag {
+            if let Spec::Option {
+                flag,
+                msg,
+                action,
+                optional_arg,
+                repeatable,
+                gnu_long,
+                ..
+            } = s
+            {
+                // Skip already-consumed non-repeatable options
+                if !repeatable && consumed_opts.contains(flag) && flag != &cur_flag {
+                    continue;
+                }
+                if cur_flag == *flag {
                     if let (Some(m), Some(a)) = (msg.as_ref(), action.as_ref()) {
-                        matched_action = Some((m.clone(), a.clone()));
+                        matched_action = Some((m.clone(), a.clone(), *optional_arg));
+                    }
+                    if has_eq_val && *gnu_long {
+                        // GNU `--flag=val` — dispatch action for the
+                        //   value side now.
+                        if let Some((m, a, _opt)) = matched_action.clone() {
+                            return dispatch_action(&a, &m);
+                        }
                     }
                     break;
                 }
@@ -227,7 +321,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                 ));
             }
         }
-        if let Some((m, a)) = matched_action {
+        if let Some((m, a, _opt)) = matched_action {
             return dispatch_action(&a, &m);
         }
         if !option_strs.is_empty() {
@@ -244,7 +338,7 @@ pub fn _arguments(args: &[String]) -> i32 {
     let pos = if current > 1 { current - 1 } else { 1 };
     for s in &specs {
         match s {
-            Spec::Positional { idx: i, msg, action } if *i == pos => {
+            Spec::Positional { idx: i, msg, action, .. } if *i == pos => {
                 return dispatch_action(action, msg);
             }
             _ => {}
@@ -283,12 +377,61 @@ mod tests {
     fn parses_positional_spec() {
         let s = parse_spec("1:filename:_files").unwrap();
         match s {
-            Spec::Positional { idx, msg, action } => {
+            Spec::Positional { idx, msg, action, optional } => {
                 assert_eq!(idx, 1);
                 assert_eq!(msg, "filename");
                 assert_eq!(action, "_files");
+                assert!(!optional);
             }
             _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parses_optional_positional() {
+        let s = parse_spec("2::optional-file:_files").unwrap();
+        match s {
+            Spec::Positional { idx, optional, .. } => {
+                assert_eq!(idx, 2);
+                assert!(optional);
+            }
+            _ => panic!("expected Positional"),
+        }
+    }
+
+    #[test]
+    fn parses_gnu_long_option() {
+        let s = parse_spec("--verbose[verbose mode]").unwrap();
+        match s {
+            Spec::Option { flag, gnu_long, .. } => {
+                assert_eq!(flag, "--verbose");
+                assert!(gnu_long);
+            }
+            _ => panic!("expected Option"),
+        }
+    }
+
+    #[test]
+    fn parses_repeatable_option() {
+        let s = parse_spec("*-v[verbose, repeatable]").unwrap();
+        match s {
+            Spec::Option { flag, repeatable, .. } => {
+                assert_eq!(flag, "-v");
+                assert!(repeatable);
+            }
+            _ => panic!("expected Option"),
+        }
+    }
+
+    #[test]
+    fn parses_optional_arg_option() {
+        let s = parse_spec("-X[debug]::level:_files").unwrap();
+        match s {
+            Spec::Option { flag, optional_arg, .. } => {
+                assert_eq!(flag, "-X");
+                assert!(optional_arg);
+            }
+            _ => panic!("expected Option"),
         }
     }
 

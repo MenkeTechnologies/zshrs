@@ -26,8 +26,8 @@
 
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::modules::zutil::testforstyle;
-use crate::ported::params::{getaparam, getsparam, setaparam};
+use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::ported::params::{getaparam, getiparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
@@ -96,6 +96,34 @@ pub fn _describe(args: &[String]) -> i32 {
     let descr = args[idx].clone();
     idx += 1;
 
+    // sh:42-48  per-tag styles: verbose, list-separator, max-matches-width
+    let curcontext = getsparam("curcontext").unwrap_or_default();
+    let style_ctx = format!(":completion:{}:{}", curcontext, typ);
+    let showd_default_on = lookupstyle(&style_ctx, "verbose")
+        .first()
+        .map(|v| !matches!(v.as_str(), "no" | "false" | "0" | "off"))
+        .unwrap_or(true);
+    let sep = lookupstyle(&style_ctx, "list-separator")
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "--".to_string());
+    let max_width: usize = lookupstyle(&style_ctx, "max-matches-width")
+        .first()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| {
+            // Default: COLUMNS/2 per sh:48
+            let cols = getiparam("COLUMNS");
+            if cols > 0 {
+                (cols as usize) / 2
+            } else {
+                40
+            }
+        });
+    let list_grouped = lookupstyle(&style_ctx, "list-grouped")
+        .first()
+        .map(|v| !matches!(v.as_str(), "no" | "false" | "0" | "off"))
+        .unwrap_or(true);
+
     // sh:58
     let _ = _tags(&[typ.clone()]);
 
@@ -117,16 +145,36 @@ pub fn _describe(args: &[String]) -> i32 {
                 break;
             }
 
-            // For each named array, read it and emit values + descs
+            // For each named array, read it and emit values + descs.
+            //   sh:65-130 — when list-grouped is set AND we have a
+            //   description column, build per-value display lines
+            //   aligned to `max-matches-width` and joined by `sep`.
             for arr_name in &arrays {
                 let arr = getaparam(arr_name).unwrap_or_default();
+                // Width for value column when grouping
+                let val_width = if list_grouped && showd_default_on {
+                    arr.iter()
+                        .map(|e| e.splitn(2, ':').next().unwrap_or("").len())
+                        .max()
+                        .unwrap_or(0)
+                        .min(max_width)
+                } else {
+                    0
+                };
                 let (strs, disp): (Vec<String>, Vec<String>) = arr
                     .iter()
                     .map(|entry| {
                         let mut parts = entry.splitn(2, ':');
                         let v = parts.next().unwrap_or("").to_string();
                         let d = parts.next().unwrap_or("").to_string();
-                        (v.clone(), if d.is_empty() { v } else { format!("{} -- {}", entry.splitn(2, ':').next().unwrap_or(""), d) })
+                        let display = if d.is_empty() {
+                            v.clone()
+                        } else if list_grouped && val_width > 0 {
+                            format!("{:>w$} {} {}", v, sep, d, w = val_width)
+                        } else {
+                            format!("{} -- {}", v, d)
+                        };
+                        (v, display)
                     })
                     .unzip();
                 if strs.is_empty() {

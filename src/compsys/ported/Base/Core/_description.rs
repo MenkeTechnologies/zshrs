@@ -412,9 +412,33 @@ pub fn _description(args: &[String]) -> i32 {
         format.clear();
     } else if !format.is_empty() {
         // sh:82
+        let mut extra_args: Vec<String> = Vec::new();
         if argv.get(1).map(|s| s.is_empty()).unwrap_or(true) {
-            // sh:83-86 — TODO: pattern.rs lacks (#b)-capture support;
-            //   leave the description un-enriched.
+            // sh:83-86 — extract `m:`/`r:`/`o:` capture groups from
+            //   the description string via `extract_description_parts`
+            //   below. The shell pattern is:
+            //     `${1%%( ##\((#b)([^\)]#[^0-9-][^\)]#)(#B)\)|)
+            //               ( ##\((#b)([0-9-]##)(#B)\)|)
+            //               ( ##\[(#b)([^\]]##)(#B)\]|)}`
+            //   i.e. strip trailing ` (msg)(num)[opts]` triplet from
+            //   $1 (any combination present), pushing the captured
+            //   parts into the zformat argv as `m:msg r:num o:opts`.
+            if let Some(d) = argv.first().cloned() {
+                let (stripped, m_msg, r_num, o_opts) =
+                    extract_description_parts(&d);
+                if !m_msg.is_empty() || !r_num.is_empty() || !o_opts.is_empty() {
+                    argv[0] = stripped;
+                    if !m_msg.is_empty() {
+                        extra_args.push(format!("m:{}", m_msg));
+                    }
+                    if !r_num.is_empty() {
+                        extra_args.push(format!("r:{}", r_num));
+                    }
+                    if !o_opts.is_empty() {
+                        extra_args.push(format!("o:{}", o_opts));
+                    }
+                }
+            }
         }
 
         // sh:89  zformat -F format "$format" "d:$1" "${(@)argv[2,-1]}"
@@ -425,6 +449,7 @@ pub fn _description(args: &[String]) -> i32 {
             format.clone(),
             format!("d:{}", descr_val),
         ];
+        zfmt_argv.extend(extra_args);
         if argv.len() > 2 {
             zfmt_argv.extend(argv[2..].iter().cloned());
         }
@@ -528,6 +553,79 @@ pub fn _description(args: &[String]) -> i32 {
 
 /// sh:57 — `${words//(#m)[\[\]()\\*?#<>~\^\|]/\\$MATCH}` —
 /// backslash-escape glob/quote metachars in `s`.
+/// sh:83-86 — strip trailing ` (msg)(num)[opts]` triplet from a
+/// description string, returning `(stripped, m_msg, r_num, o_opts)`.
+///
+/// The upstream pattern uses three independent `(#b)` capture
+/// groups; we mirror the same independence — each of the three
+/// trailing forms is optional and can appear in any subset (the
+/// only ordering constraint is that they appear at the END of the
+/// string, separated by optional whitespace, in some order).
+///
+/// Examples:
+///   `"file (123)[opts]"`  → ("file", "", "123", "opts")
+///   `"file (msg) (123)"`  → ("file", "msg", "123", "")
+///   `"plain"`             → ("plain", "", "", "")
+///   `"file [opts]"`       → ("file", "", "", "opts")
+fn extract_description_parts(s: &str) -> (String, String, String, String) {
+    let mut rest = s.trim_end().to_string();
+    let mut m_msg = String::new();
+    let mut r_num = String::new();
+    let mut o_opts = String::new();
+    // Try to peel up to three trailing groups in any order. Loop
+    //   until none of the three peels succeeds.
+    loop {
+        let trimmed = rest.trim_end().to_string();
+        if trimmed.is_empty() {
+            break;
+        }
+        // [opts]
+        if o_opts.is_empty() && trimmed.ends_with(']') {
+            if let Some(open) = trimmed.rfind('[') {
+                if open + 1 < trimmed.len() - 1 {
+                    let body = &trimmed[open + 1..trimmed.len() - 1];
+                    if !body.contains(']') {
+                        o_opts = body.to_string();
+                        rest = trimmed[..open].trim_end().to_string();
+                        continue;
+                    }
+                }
+            }
+        }
+        // (123) — digits-only and optional minus
+        if r_num.is_empty() && trimmed.ends_with(')') {
+            if let Some(open) = trimmed.rfind('(') {
+                let body = &trimmed[open + 1..trimmed.len() - 1];
+                if !body.is_empty()
+                    && body
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || c == '-')
+                {
+                    r_num = body.to_string();
+                    rest = trimmed[..open].trim_end().to_string();
+                    continue;
+                }
+            }
+        }
+        // (msg) — at least one non-digit/non-dash char
+        if m_msg.is_empty() && trimmed.ends_with(')') {
+            if let Some(open) = trimmed.rfind('(') {
+                let body = &trimmed[open + 1..trimmed.len() - 1];
+                if !body.is_empty()
+                    && body.chars().any(|c| !c.is_ascii_digit() && c != '-')
+                    && !body.contains(')')
+                {
+                    m_msg = body.to_string();
+                    rest = trimmed[..open].trim_end().to_string();
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+    (rest, m_msg, r_num, o_opts)
+}
+
 fn glob_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
     for c in s.chars() {
@@ -662,5 +760,56 @@ mod tests {
         assert_eq!(glob_escape("a*b"), "a\\*b");
         assert_eq!(glob_escape("foo[1]"), "foo\\[1\\]");
         assert_eq!(glob_escape("clean"), "clean");
+    }
+
+    #[test]
+    fn extract_description_parts_all_three() {
+        // sh:83-86 — full triplet
+        let (stripped, m, r, o) =
+            extract_description_parts("file (msg) (123)[opts]");
+        assert_eq!(stripped, "file");
+        assert_eq!(m, "msg");
+        assert_eq!(r, "123");
+        assert_eq!(o, "opts");
+    }
+
+    #[test]
+    fn extract_description_parts_plain() {
+        // No trailing groups → empty captures
+        let (stripped, m, r, o) = extract_description_parts("plain text");
+        assert_eq!(stripped, "plain text");
+        assert!(m.is_empty() && r.is_empty() && o.is_empty());
+    }
+
+    #[test]
+    fn extract_description_parts_brackets_only() {
+        let (stripped, m, r, o) = extract_description_parts("file [extopts]");
+        assert_eq!(stripped, "file");
+        assert!(m.is_empty() && r.is_empty());
+        assert_eq!(o, "extopts");
+    }
+
+    #[test]
+    fn extract_description_parts_numeric_paren_only() {
+        let (stripped, m, r, o) = extract_description_parts("name (42)");
+        assert_eq!(stripped, "name");
+        assert!(m.is_empty() && o.is_empty());
+        assert_eq!(r, "42");
+    }
+
+    #[test]
+    fn extract_description_parts_message_only() {
+        let (stripped, m, r, o) = extract_description_parts("foo (a long message)");
+        assert_eq!(stripped, "foo");
+        assert_eq!(m, "a long message");
+        assert!(r.is_empty() && o.is_empty());
+    }
+
+    #[test]
+    fn extract_description_parts_negative_number_is_numeric() {
+        // sh:83 `[0-9-]##` allows leading minus.
+        let (stripped, _m, r, _o) = extract_description_parts("seek (-10)");
+        assert_eq!(stripped, "seek");
+        assert_eq!(r, "-10");
     }
 }

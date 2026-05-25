@@ -18,16 +18,39 @@
 //! ```
 //!
 //! `_main_complete` is the primary entry-point invoked by every
-//! completion widget. This port covers the essential structural
-//! skeleton: curcontext floor → completer-chain iteration →
-//! state snapshot/restore. Edge-case handling (GLOB_COMPLETE,
-//! pending-tab, equals/`~[` context, post-funcs) is left as a
-//! TODO for follow-on work.
+//! completion widget. Ported behaviors (sh:N → impl-line):
+//!   * sh:52    curcontext `:::` floor
+//!   * sh:60-68 pending-tab short-circuit (`insert-tab=pending`)
+//!   * sh:70-79 tab-init handling (consume `tab` from `compstate[insert]`)
+//!   * sh:83-89 GLOB_COMPLETE second-attempt PREFIX/SUFFIX split
+//!   * sh:91-106 special-context dispatch: `=`, `~[`, `~user`
+//!   * sh:110   `_setup default`
+//!   * sh:122-133 list-prompt / select-prompt / select-scroll styles
+//!   * sh:137-151 completer-chain `-`/call-mode form
+//!   * sh:170-340 matcher-list × completer-fn nested loop
+//!   * sh:350-371 warnings-format emission when nm==0
+//!   * sh:373-378 ambiguous-color injection into `_comp_colors`
+//!   * sh:380-382 force-list dispatch
+//!   * sh:399-405 post-funcs (`comppostfuncs`)
+//!   * sh:407-417 `_lastcomp` snapshot
+//!   * sh:384-396 ZLS_COLORS save/restore
 
+use crate::compsys::ported::_setup::_setup;
 use crate::ported::exec_hooks::dispatch_function_call;
-use crate::ported::modules::zutil::lookupstyle;
-use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
+use crate::ported::modules::zutil::{bin_zformat, lookupstyle, testforstyle};
+use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
+use crate::ported::zle::complete::{bin_compadd, bin_compset};
+use crate::ported::zsh_h::{isset, options, EQUALSOPT, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
 
 /// `_main_complete` — primary completion-dispatch entry. Args
 /// (when non-empty) override the configured `completer` style with
@@ -40,6 +63,8 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let saved_lastprompt = get_compstate_str("last_prompt").unwrap_or_default();
     let saved_list = get_compstate_str("list").unwrap_or_default();
     let saved_insert = get_compstate_str("insert").unwrap_or_default();
+    let saved_colors = getsparam("ZLS_COLORS").unwrap_or_default();
+    let saved_colors_set = getsparam("ZLS_COLORS").is_some();
     let _ = setsparam("_saved_exact", &saved_exact);
     let _ = setsparam("_saved_lastprompt", &saved_lastprompt);
     let _ = setsparam("_saved_list", &saved_list);
@@ -53,6 +78,135 @@ pub fn _main_complete(args: &[String]) -> i32 {
     }
     let mut curcontext = getsparam("curcontext").unwrap_or_default();
 
+    // sh:60-68  pending-tab short-circuit
+    let insert_tab = lookupstyle(
+        &format!(":completion:{}:", curcontext),
+        "insert-tab",
+    )
+    .first()
+    .cloned()
+    .unwrap_or_else(|| "yes".to_string());
+    let pending = getiparam("PENDING");
+    let pending_match = if insert_tab.contains("pending") {
+        if let Some(eq_pos) = insert_tab.find("pending=") {
+            let tail = &insert_tab[eq_pos + 8..];
+            let n: i64 = tail
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse()
+                .unwrap_or(1);
+            pending >= n
+        } else {
+            pending > 0
+        }
+    } else {
+        false
+    };
+    if pending_match {
+        set_compstate_str("insert", "tab");
+        return 0;
+    }
+
+    // sh:70-79  tab-init handling — if the user pressed TAB and
+    //   insert-tab is on for non-vared context, exit immediately.
+    let cur_insert = get_compstate_str("insert").unwrap_or_default();
+    if cur_insert.starts_with("tab") {
+        let on_tab = matches!(insert_tab.trim(), "yes" | "true" | "on" | "1")
+            || insert_tab.starts_with("yes ")
+            || insert_tab.starts_with("true ")
+            || insert_tab.starts_with("on ")
+            || insert_tab.starts_with("1 ");
+        let vared = get_compstate_str("vared").unwrap_or_default();
+        if on_tab
+            && (!curcontext.starts_with(':') || vared.is_empty()
+                || testforstyle(&format!(":completion:vared{}:", curcontext), "insert-tab") == 0)
+        {
+            return 0;
+        }
+        // Strip the leading `tab` from compstate[insert]
+        let stripped = cur_insert.replace("tab ", "");
+        set_compstate_str("insert", &stripped);
+    }
+
+    // sh:83-89  GLOB_COMPLETE second-attempt: split PREFIX at the
+    //   prior `_lastcomp[unambiguous_cursor]` so the user's typed
+    //   characters split into a fresh PREFIX/SUFFIX pair.
+    if get_compstate_str("pattern_match").as_deref() == Some("*") {
+        let last_prefix = lastcomp_get("unambiguous").unwrap_or_default();
+        let prefix = getsparam("PREFIX").unwrap_or_default();
+        if last_prefix == prefix {
+            if let Some(upos_str) = lastcomp_get("unambiguous_cursor") {
+                if let Ok(upos) = upos_str.parse::<usize>() {
+                    if upos > 0 && upos <= prefix.len() {
+                        let suffix = getsparam("SUFFIX").unwrap_or_default();
+                        let new_prefix = &prefix[..upos - 1];
+                        let new_suffix = format!("{}{}", &prefix[upos - 1..], suffix);
+                        let _ = setsparam("PREFIX", new_prefix);
+                        let _ = setsparam("SUFFIX", &new_suffix);
+                    }
+                }
+            }
+        }
+    }
+
+    // sh:91-106  Special-context dispatch: `=`, `~[`, `~user`.
+    let quote = get_compstate_str("quote").unwrap_or_default();
+    if quote.is_empty() {
+        let prefix = getsparam("PREFIX").unwrap_or_default();
+        // sh:94 — `equals` option + leading `=`
+        if isset(EQUALSOPT)
+            && bin_compset(
+                "compset",
+                &["-P".to_string(), "1".to_string(), "=".to_string()],
+                &make_ops(),
+                0,
+            ) == 0
+        {
+            set_compstate_str("context", "equal");
+        } else if prefix.starts_with("~[") {
+            // sh:96  Inside ~[...] → subscript context.
+            let _ = bin_compset(
+                "compset",
+                &["-p".to_string(), "2".to_string()],
+                &make_ops(),
+                0,
+            );
+            let _ = bin_compset(
+                "compset",
+                &["-S".to_string(), "\\]*".to_string()],
+                &make_ops(),
+                0,
+            );
+            set_compstate_str("context", "subscript");
+        } else if prefix.starts_with('~') && !prefix.contains('/') {
+            // sh:102  ~user
+            let _ = bin_compset(
+                "compset",
+                &["-p".to_string(), "1".to_string()],
+                &make_ops(),
+                0,
+            );
+            set_compstate_str("context", "tilde");
+        }
+    }
+
+    // sh:110  _setup default — propagate the default-tag styles
+    //   (list-packed, accept-exact, …) into compstate.
+    let _ = _setup(&["default".to_string()]);
+
+    // sh:122-133  list-prompt / select-prompt / select-scroll styles
+    let ctx_default = format!(":completion:{}:default", curcontext);
+    if let Some(v) = lookupstyle(&ctx_default, "list-prompt").first() {
+        let _ = setsparam("LISTPROMPT", v);
+    }
+    if let Some(v) = lookupstyle(&ctx_default, "select-prompt").first() {
+        let _ = setsparam("MENUPROMPT", v);
+    }
+    if let Some(v) = lookupstyle(&ctx_default, "select-scroll").first() {
+        let _ = setsparam("MENUSCROLL", v);
+    }
+
     // sh:31-33  global tag-tracking state init
     let _ = setsparam("_tags_level", "0");
     let _ = setsparam("_comp_tags", "");
@@ -61,9 +215,20 @@ pub fn _main_complete(args: &[String]) -> i32 {
     setaparam("_comp_ignore", Vec::new());
     setaparam("_comp_colors", Vec::new());
 
-    // sh:120  completer chain
+    // sh:137-151  completer chain
+    //   `-` as first arg + ≥3 args → run only argv[1] (call mode)
+    //   else when args non-empty → use args verbatim
+    //   else read `completer` style, default `(_complete _ignored)`
     let chain: Vec<String> = if !args.is_empty() {
-        args.to_vec()
+        if args[0] == "-" {
+            if args.len() < 3 {
+                Vec::new()
+            } else {
+                vec![args[1].clone()]
+            }
+        } else {
+            args.to_vec()
+        }
     } else {
         let style_chain = lookupstyle(
             &format!(":completion:{}:", curcontext),
@@ -72,8 +237,8 @@ pub fn _main_complete(args: &[String]) -> i32 {
         if !style_chain.is_empty() {
             style_chain
         } else {
-            // Default: complete then expand then approximate
-            vec!["_complete".to_string(), "_approximate".to_string()]
+            // sh:150 default
+            vec!["_complete".to_string(), "_ignored".to_string()]
         }
     };
 
@@ -134,12 +299,148 @@ pub fn _main_complete(args: &[String]) -> i32 {
         completer_num += 1;
     }
 
-    // sh:380  post-funcs
+    // Snapshot for the warnings/format branch
+    let nm: i64 = get_compstate_str("nmatches")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let comp_mesg = getsparam("_comp_mesg").unwrap_or_default();
+    let old_list = get_compstate_str("old_list").unwrap_or_default();
+
+    // sh:350-352 — no matches but a message was set: list it
+    if nm < 1 && !comp_mesg.is_empty() {
+        set_compstate_str("insert", "");
+        set_compstate_str("list", "list force");
+    } else if nm == 0
+        && comp_mesg.is_empty()
+        && old_list != "keep"
+    {
+        // sh:353-371  warnings format emission
+        let lastdescr = getaparam("_lastdescr").unwrap_or_default();
+        let warn_format = lookupstyle(
+            &format!(":completion:{}:warnings", curcontext),
+            "format",
+        )
+        .first()
+        .cloned()
+        .unwrap_or_default();
+        if !lastdescr.is_empty() && !warn_format.is_empty() {
+            set_compstate_str("list", "list force");
+            set_compstate_str("insert", "");
+            let quoted: Vec<String> =
+                lastdescr.iter().map(|d| format!("`{}'", d)).collect();
+            let str_msg = match quoted.len() {
+                1 => quoted[0].clone(),
+                2 => format!("{} or {}", quoted[0], quoted[1]),
+                _ => {
+                    let init = quoted[..quoted.len() - 1].join(", ");
+                    format!("{}, or {}", init, quoted[quoted.len() - 1])
+                }
+            };
+            let _ = _setup(&["warnings".to_string()]);
+            let zf_argv = vec![
+                "-f".to_string(),
+                "mesg".to_string(),
+                warn_format.clone(),
+                format!("d:{}", str_msg),
+                format!("D:{}", lastdescr.join("\n")),
+            ];
+            let _ = setsparam("mesg", "");
+            let _ = bin_zformat("zformat", &zf_argv, &make_ops(), 0);
+            let mesg = getsparam("mesg").unwrap_or_else(|| warn_format.clone());
+            let _ = bin_compadd(
+                "compadd",
+                &["-x".to_string(), mesg],
+                &make_ops(),
+                0,
+            );
+        }
+    }
+
+    // sh:373-378  ambiguous-color injection
+    let ambig_color = getsparam("_ambiguous_color").unwrap_or_default();
+    if !ambig_color.is_empty() {
+        let unambig = get_compstate_str("unambiguous").unwrap_or_default();
+        let upos: usize = get_compstate_str("unambiguous_cursor")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if upos > 0 && upos <= unambig.len() + 1 {
+            let prefix_chars = &unambig[..upos.saturating_sub(1)];
+            if !prefix_chars.is_empty() {
+                let mut colors = getaparam("_comp_colors").unwrap_or_default();
+                colors.push(format!(
+                    "=(#i){}*=={}",
+                    glob_escape(prefix_chars),
+                    ambig_color
+                ));
+                setaparam("_comp_colors", colors);
+            }
+        }
+    }
+
+    // sh:380-382  force-list when style says so
+    let force_list = getsparam("_comp_force_list").unwrap_or_default();
+    let force_at: i64 = force_list.parse().unwrap_or(0);
+    if force_list == "always" || (!force_list.is_empty() && nm >= force_at) {
+        let mut list_val = get_compstate_str("list").unwrap_or_default();
+        list_val = list_val.replace("messages", "");
+        if !list_val.contains("force") {
+            list_val = format!("{} force", list_val.trim());
+        }
+        set_compstate_str("list", list_val.trim());
+    }
+
+    // sh:399-405  post-funcs (snapshot + clear so we don't loop)
     let postfuncs = getaparam("comppostfuncs").unwrap_or_default();
+    setaparam("comppostfuncs", Vec::new());
     for pf in &postfuncs {
         let _ = dispatch_function_call(pf, &[]);
     }
-    setaparam("comppostfuncs", Vec::new());
+
+    // sh:407-417  _lastcomp snapshot — flat key/value array
+    let mut lastcomp: Vec<String> = Vec::new();
+    lastcomp.push("nmatches".to_string());
+    lastcomp.push(nm.to_string());
+    lastcomp.push("completer".to_string());
+    lastcomp.push(getsparam("_completer").unwrap_or_default());
+    lastcomp.push("prefix".to_string());
+    lastcomp.push(getsparam("PREFIX").unwrap_or_default());
+    lastcomp.push("suffix".to_string());
+    lastcomp.push(getsparam("SUFFIX").unwrap_or_default());
+    lastcomp.push("iprefix".to_string());
+    lastcomp.push(getsparam("IPREFIX").unwrap_or_default());
+    lastcomp.push("isuffix".to_string());
+    lastcomp.push(getsparam("ISUFFIX").unwrap_or_default());
+    lastcomp.push("qiprefix".to_string());
+    lastcomp.push(getsparam("QIPREFIX").unwrap_or_default());
+    lastcomp.push("qisuffix".to_string());
+    lastcomp.push(getsparam("QISUFFIX").unwrap_or_default());
+    lastcomp.push("tags".to_string());
+    lastcomp.push(getsparam("_comp_tags").unwrap_or_default());
+    lastcomp.push("insert".to_string());
+    lastcomp.push(get_compstate_str("insert").unwrap_or_default());
+    lastcomp.push("unambiguous".to_string());
+    lastcomp.push(get_compstate_str("unambiguous").unwrap_or_default());
+    lastcomp.push("unambiguous_cursor".to_string());
+    lastcomp.push(
+        get_compstate_str("unambiguous_cursor").unwrap_or_default(),
+    );
+    setaparam("_lastcomp", lastcomp);
+
+    // sh:384-396  always-block: ZLS_COLORS save/restore.
+    if get_compstate_str("old_list").as_deref() == Some("keep") {
+        if saved_colors_set {
+            let _ = setsparam("ZLS_COLORS", &saved_colors);
+        } else {
+            unsetparam("ZLS_COLORS");
+        }
+    } else {
+        let comp_colors = getaparam("_comp_colors").unwrap_or_default();
+        if !comp_colors.is_empty() {
+            let _ = setsparam("ZLS_COLORS", &comp_colors.join(":"));
+        } else {
+            unsetparam("ZLS_COLORS");
+        }
+    }
 
     // sh:400  restore compstate snapshots
     set_compstate_str("exact", &saved_exact);
@@ -149,6 +450,31 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let _ = setsparam("curcontext", &saved_curcontext);
     let _ = setsparam("_compskip", &saved_compskip);
     ret
+}
+
+/// Glob-escape regex metacharacters for the ambiguous-color
+/// injection (sh:373's `_comp_colors` entry needs the prefix
+/// quoted so the regex matcher treats it literally).
+fn glob_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for c in s.chars() {
+        if matches!(
+            c,
+            '=' | '(' | ')' | '|' | '~' | '^' | '?' | '*' | '[' | ']' | '#' | '<' | '>'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `_lastcomp[key]` lookup (`_lastcomp` is the prior-call snapshot).
+fn lastcomp_get(key: &str) -> Option<String> {
+    let arr = getaparam("_lastcomp")?;
+    arr.chunks(2)
+        .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
+        .and_then(|kv| kv.get(1).cloned())
 }
 
 /// sh:175 — replace the middle `:`-field of `curcontext` with the
