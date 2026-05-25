@@ -1,8 +1,8 @@
 //! Background compinit pre-warm — extension; no zsh C counterpart.
 #[allow(unused_imports)]
 use crate::ported::vm_helper::ShellExecutor;
-use compsys::cache::CompsysCache;
-use compsys::CompInitResult;
+use crate::compsys::cache::CompsysCache;
+use crate::compsys::CompInitResult;
 #[allow(unused_imports)]
 use std::{collections::HashMap, env, path::PathBuf};
 
@@ -78,7 +78,7 @@ impl crate::ported::vm_helper::ShellExecutor {
         // -C: Try to use existing .zcompdump if valid
         if use_cache
             && dump_path.exists()
-            && compsys::check_dump(&dump_path, &self.fpath, "zshrs-0.1.0")
+            && crate::compsys::check_dump(&dump_path, &self.fpath, "zshrs-0.1.0")
         {
             // Valid dump - source it to load _comps
             // For now, just rescan (proper impl would source the dump file)
@@ -88,7 +88,7 @@ impl crate::ported::vm_helper::ShellExecutor {
         }
 
         // Full fpath scan (traditional zsh algorithm)
-        let result = compsys::compinit(&self.fpath);
+        let result = crate::compsys::compinit(&self.fpath);
 
         if !quiet {
             tracing::info!(
@@ -102,7 +102,7 @@ impl crate::ported::vm_helper::ShellExecutor {
 
         // Write .zcompdump unless -D
         if !no_dump {
-            let _ = compsys::compdump(&result, &dump_path, "zshrs-0.1.0");
+            let _ = crate::compsys::compdump(&result, &dump_path, "zshrs-0.1.0");
         }
 
         // Set up _comps associative array

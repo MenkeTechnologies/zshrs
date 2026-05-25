@@ -59,8 +59,8 @@ use crate::ported::zsh_h::PM_UNDEFINED;
 use crate::ported::zsh_h::{options, MAX_OPS};
 use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_INTEGER, PM_READONLY};
 use crate::ported::zsh_h::WC_SIMPLE;
-use compsys::cache::CompsysCache;
-use compsys::CompInitResult;
+use crate::compsys::cache::CompsysCache;
+use crate::compsys::CompInitResult;
 use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::ffi::CStr;
@@ -758,7 +758,7 @@ impl ShellExecutor {
             in_scalar_assign: 0,
             profiling_enabled: false,
             compsys_cache: {
-                let cache_path = compsys::cache::default_cache_path();
+                let cache_path = crate::compsys::cache::default_cache_path();
                 if cache_path.exists() {
                     let db_size = fs::metadata(&cache_path).map(|m| m.len()).unwrap_or(0);
                     match CompsysCache::open(&cache_path) {

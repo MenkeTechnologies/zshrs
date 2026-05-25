@@ -388,7 +388,7 @@ impl ShellExecutor {
             dim("daemon-maintained; not read on cache lookup / hot path")
         );
         if let Some(ref cache) = self.compsys_cache {
-            let count = compsys::cache_entry_count(cache);
+            let count = crate::compsys::cache_entry_count(cache);
             println!("  compsys:     {} completions  {}", count, dim("mirror"));
         } else {
             println!("  compsys:     {}", yellow("no mirror"));
@@ -1795,7 +1795,7 @@ impl ShellExecutor {
             }
         }
         if let Some(cache) = &mut self.compsys_cache {
-            compsys::compdef::compdef_execute(cache, args)
+            crate::compsys::compdef::compdef_execute(cache, args)
         } else {
             // No cache - defer for cdreplay (zinit turbo mode)
             self.deferred_compdefs.push(args.to_vec());
@@ -1881,9 +1881,9 @@ impl ShellExecutor {
         // Try to use existing cache if -C and cache is valid
         if use_cache {
             if let Some(cache) = &self.compsys_cache {
-                if compsys::cache_is_valid(cache) {
+                if crate::compsys::cache_is_valid(cache) {
                     // Load from cache instead of rescanning
-                    if let Ok(result) = compsys::load_from_cache(cache) {
+                    if let Ok(result) = crate::compsys::load_from_cache(cache) {
                         if !quiet {
                             tracing::info!(
                                 comps = result.comps.len(),
@@ -1915,10 +1915,10 @@ impl ShellExecutor {
                                         count = missing,
                                         "compinit: backfilling bytecode blobs on worker pool"
                                     );
-                                    let cache_path = compsys::cache::default_cache_path();
+                                    let cache_path = crate::compsys::cache::default_cache_path();
                                     let total_missing = missing;
                                     self.worker_pool.submit(move || {
-                                        let cache = match compsys::cache::CompsysCache::open(&cache_path) {
+                                        let cache = match crate::compsys::cache::CompsysCache::open(&cache_path) {
                                             Ok(c) => c,
                                             Err(_) => return,
                                         };
@@ -1994,7 +1994,7 @@ impl ShellExecutor {
         );
         self.worker_pool.submit(move || {
             tracing::debug!("compinit-bg: thread started");
-            let cache_path = compsys::cache::default_cache_path();
+            let cache_path = crate::compsys::cache::default_cache_path();
             if let Some(parent) = cache_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -2003,7 +2003,7 @@ impl ShellExecutor {
             let _ = std::fs::remove_file(format!("{}-shm", cache_path.display()));
             let _ = std::fs::remove_file(format!("{}-wal", cache_path.display()));
 
-            let mut cache = match compsys::cache::CompsysCache::open(&cache_path) {
+            let mut cache = match crate::compsys::cache::CompsysCache::open(&cache_path) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::error!("compinit: failed to create cache: {}", e);
@@ -2011,7 +2011,7 @@ impl ShellExecutor {
                 }
             };
 
-            let result = match compsys::build_cache_from_fpath(&fpath, &mut cache) {
+            let result = match crate::compsys::build_cache_from_fpath(&fpath, &mut cache) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!("compinit: scan failed: {}", e);
@@ -2108,7 +2108,7 @@ impl ShellExecutor {
 
         if let Some(cache) = &mut self.compsys_cache {
             for compdef_args in deferred {
-                compsys::compdef::compdef_execute(cache, &compdef_args);
+                crate::compsys::compdef::compdef_execute(cache, &compdef_args);
             }
         }
 

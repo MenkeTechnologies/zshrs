@@ -13,12 +13,12 @@
 //! matches in columns with colors, scrolling, and selection.
 //!
 //! Key C functions and their Rust locations:
-//! - compprintlist    → compsys::menu::MenuState::render()
-//! - compprintfmt     → compsys::menu::format_group()
-//! - clprintm         → compsys::menu::print_match()
-//! - asklistscroll    → compsys::menu::handle_scroll()
-//! - getcols/filecol  → compsys::zpwr_colors (LS_COLORS parsing)
-//! - initiscol        → compsys::zpwr_colors::init_colors()
+//! - compprintlist    → crate::compsys::menu::MenuState::render()
+//! - compprintfmt     → crate::compsys::menu::format_group()
+//! - clprintm         → crate::compsys::menu::print_match()
+//! - asklistscroll    → crate::compsys::menu::handle_scroll()
+//! - getcols/filecol  → crate::compsys::zpwr_colors (LS_COLORS parsing)
+//! - initiscol        → crate::compsys::zpwr_colors::init_colors()
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
