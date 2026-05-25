@@ -73,7 +73,8 @@ use crate::ported::math::mathevali;
 use crate::ported::modules::parameter::*;
 use crate::ported::options::{opt_state_set, ZSH_OPTIONS_SET};
 use crate::ported::params::{assignsparam, convbase_underscore, convfloat_underscore, getarrvalue, getsparam, lookup_special_var, paramtab, paramtab_hashed_storage, setsparam};
-use crate::ported::pattern::patmatch;
+use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::prompt::promptexpand;
 use crate::ported::string::{dupstring, dyncat};
 use crate::ported::utils::{errflag, getkeystring, quotestring, xsymlinks, zerr, GETKEY_CTRL, GETKEY_EMACS, GETKEY_OCTAL_ESC};
@@ -3662,7 +3663,7 @@ pub fn paramsubst(
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        let matched = if exact { hay == pat.as_str() } else { patmatch(&pat, hay) };
+                        let matched = if exact { hay == pat.as_str() } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, hay)) };
                         if matched {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all {
@@ -3716,7 +3717,7 @@ pub fn paramsubst(
                         Box::new(arr.iter().enumerate())
                     };
                     for (idx, elem) in iter {
-                        let matched = if exact { elem == &pat } else { patmatch(&pat, elem) };
+                        let matched = if exact { elem == &pat } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, elem)) };
                         if matched {
                             found_idx = Some(idx);
                             break;
@@ -3901,7 +3902,7 @@ pub fn paramsubst(
                             } else {
                                 crate::vm_helper::partab_get(&var_name, k).unwrap_or_default()
                             };
-                            let matched = if exact { hay == pat } else { patmatch(&pat, &hay) };
+                            let matched = if exact { hay == pat } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &hay)) };
                             if matched {
                                 out.push(if by_key {
                                     k.clone()
@@ -3961,7 +3962,7 @@ pub fn paramsubst(
                         };
                         for len in lengths {
                             let cand: String = s_chars[start..start + len].iter().collect();
-                            let matched = if exact { cand == pat } else { patmatch(&pat, &cand) };
+                            let matched = if exact { cand == pat } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) };
                             if matched {
                                 found = Some((start, start + len));
                                 if !want_last {
@@ -3976,7 +3977,7 @@ pub fn paramsubst(
                         for start in (0..=n).rev() {
                             for len in 1..=(n - start) {
                                 let cand: String = s_chars[start..start + len].iter().collect();
-                                if patmatch(&pat, &cand) {
+                                if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
                                     found = Some((start, start + len));
                                     break;
                                 }
@@ -4670,7 +4671,7 @@ pub fn paramsubst(
                         .into_iter() // c:3540
                         .filter(|elem| {
                             // c:3540
-                            let m = patmatch(&p, elem); // c:3540
+                            let m = patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, elem)); // c:3540
                             if invert {
                                 m
                             } else {
@@ -4686,7 +4687,7 @@ pub fn paramsubst(
                     split_parts = Some(kept); // c:3540
                 } else {
                     // c:3540
-                    let m = patmatch(&p, &raw_value); // c:3540
+                    let m = patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &raw_value)); // c:3540
                     value = if invert {
                         // c:3540
                         if m {
@@ -4876,7 +4877,7 @@ pub fn paramsubst(
                     let new_arr: Vec<String> = arr
                         .into_iter()
                         .map(|elem| {
-                            if patmatch(&pat, &elem) {
+                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &elem)) {
                                 repl.clone()
                             } else {
                                 elem
@@ -4885,7 +4886,7 @@ pub fn paramsubst(
                         .collect();
                     value = new_arr.join(" "); // c:3870
                     split_parts = Some(new_arr); // c:3870
-                } else if patmatch(&pat, &raw_value) {
+                } else if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &raw_value)) {
                     value = repl; // c:3870
                 } else {
                     value = raw_value.clone(); // c:3870
@@ -4971,7 +4972,7 @@ pub fn paramsubst(
                         let mut m: Option<usize> = None;
                         for e in (q + 1..=nn).rev() {
                             let c: String = cv[q..e].iter().collect();
-                            if patmatch(&pat, &c) {
+                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &c)) {
                                 m = Some(e);
                                 break;
                             }
@@ -5032,7 +5033,7 @@ pub fn paramsubst(
                         for end in (p + 1..=n).rev() {
                             // c:3870
                             let cand: String = chars_v[p..end].iter().collect(); // c:3870
-                            if patmatch(&pat, &cand) {
+                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
                                 // c:3870
                                 matched = Some(end); // c:3870
                                 break; // c:3870
@@ -5128,7 +5129,7 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for end in (0..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
-                            if patmatch(anchor_pat, &cand) {
+                            if patcompile(anchor_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
                                 return format!("{}{}", repl, cv[end..].iter().collect::<String>());
                             }
                         }
@@ -5138,7 +5139,7 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if patmatch(anchor_pat, &cand) {
+                            if patcompile(anchor_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
                                 return format!(
                                     "{}{}",
                                     cv[..start].iter().collect::<String>(),
@@ -5153,7 +5154,7 @@ pub fn paramsubst(
                         for start in 0..nn {
                             for end in (start + 1..=nn).rev() {
                                 let cand: String = cv[start..end].iter().collect();
-                                if patmatch(&pat, &cand) {
+                                if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
                                     let mut out = String::with_capacity(val.len());
                                     out.extend(cv[..start].iter());
                                     out.push_str(&repl);
@@ -5229,7 +5230,7 @@ pub fn paramsubst(
                             let mut k = nn;
                             loop {
                                 let prefix: String = cv[..k].iter().collect();
-                                if patmatch(&p, &prefix) {
+                                if patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &prefix)) {
                                     if match_only {
                                         return prefix;
                                     }
@@ -5275,7 +5276,7 @@ pub fn paramsubst(
                     let total = cv.len();
                     for k in 0..=total {
                         let prefix: String = cv[..k].iter().collect();
-                        if patmatch(&p, &prefix) {
+                        if patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &prefix)) {
                             if match_only {
                                 return prefix;
                             }
@@ -5323,7 +5324,7 @@ pub fn paramsubst(
                     let mut k = total;
                     loop {
                         let suffix: String = cv[total - k..].iter().collect();
-                        if patmatch(&p, &suffix) {
+                        if patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &suffix)) {
                             if match_only {
                                 return suffix;
                             }
@@ -5364,7 +5365,7 @@ pub fn paramsubst(
                     let total = cv.len();
                     for k in 0..=total {
                         let suffix: String = cv[total - k..].iter().collect();
-                        if patmatch(&p, &suffix) {
+                        if patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &suffix)) {
                             if match_only {
                                 return suffix;
                             }
@@ -7159,7 +7160,7 @@ pub fn paramsubst(
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        let matched = if exact { hay == pat.as_str() } else { patmatch(&pat, hay) };
+                        let matched = if exact { hay == pat.as_str() } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, hay)) };
                         if matched {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all {
@@ -7198,7 +7199,7 @@ pub fn paramsubst(
                     let return_all = flags.contains('I') || flags.contains('R');
                     let mut out: Vec<String> = Vec::new();
                     for (idx, elem) in arr.iter().enumerate() {
-                        if patmatch(&pat, elem) {
+                        if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, elem)) {
                             if return_index {
                                 out.push((idx + 1).to_string());
                             } else {
@@ -7950,7 +7951,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     for start in 0..=n {
                         for end in start..=n {
                             let span: String = cv[start..end].iter().collect();
-                            if patmatch(&eff_pat, &span) {
+                            if patcompile(&eff_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &span)) {
                                 // Convert char positions to byte positions.
                                 let bs: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
                                 let be: usize =
@@ -7972,7 +7973,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     let mut found: Option<usize> = None;
                     for end in 0..=n {
                         let span: String = cv[..end].iter().collect();
-                        if patmatch(&eff_pat, &span) {
+                        if patcompile(&eff_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &span)) {
                             found = Some(cv[..end].iter().map(|c| c.len_utf8()).sum());
                             break;
                         }
@@ -7996,7 +7997,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     let mut found: Option<usize> = None;
                     for start in 0..=n {
                         let span: String = cv[start..].iter().collect();
-                        if patmatch(&eff_pat, &span) {
+                        if patcompile(&eff_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &span)) {
                             found = Some(cv[..start].iter().map(|c| c.len_utf8()).sum());
                             break;
                         }

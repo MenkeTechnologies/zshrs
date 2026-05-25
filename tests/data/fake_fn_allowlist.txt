@@ -1022,13 +1022,6 @@ fixup_offsets_after_insert
 # place. Architectural helper, no C analog.
 advance_past_instr
 
-# Rust port renamed C's static `patmatch` interpreter (pattern.c:2694)
-# to free the `patmatch` name for the public convenience entry. The
-# interpreter signature differs from C's `int patmatch(Upat prog)`
-# because Rust threads input/state through args rather than C's
-# per-thread file-statics.
-patmatch_internal
-
 # Byte-offset bytecode compile helpers — C does these inline via Upat
 # pointer arithmetic + macros; Rust factors them so byte-offset
 # bookkeeping isn't duplicated at every callsite.

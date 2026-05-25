@@ -197,6 +197,19 @@ pub struct MainCompleteState {
     pub prefuncs: Vec<String>,
     /// Post-completion functions
     pub postfuncs: Vec<String>,
+    /// `$compcontext` shell variable — user-supplied context override
+    /// read by `_complete` (`Completion/Base/Completer/_complete:14`).
+    /// Empty string means unset.
+    pub compcontext: String,
+    /// `${(t)compcontext}` type marker — set to "array" or
+    /// "association" by callers that wired `compcontext` to a typed
+    /// value (matches shell:16 `[[ "${(t)compcontext}" = *array* ]]`
+    /// and shell:21 `*assoc*` branches).
+    pub compcontext_type: String,
+    /// When `compcontext_type == "array"`, the array elements.
+    pub compcontext_array: Vec<String>,
+    /// When `compcontext_type == "association"`, the assoc keys/values.
+    pub compcontext_assoc: Vec<(String, String)>,
     /// Return value
     pub ret: i32,
 }
@@ -212,6 +225,10 @@ impl MainCompleteState {
             lastcomp: HashMap::new(),
             prefuncs: Vec::new(),
             postfuncs: Vec::new(),
+            compcontext: String::new(),
+            compcontext_type: String::new(),
+            compcontext_array: Vec::new(),
+            compcontext_assoc: Vec::new(),
             ret: 1,
         }
     }

@@ -34,7 +34,8 @@ use crate::ported::modules::parameter::FUNCSTACK;
 #[allow(unused_imports)]
 use crate::ported::options::{opt_state_get, opt_state_set, optlookup};
 use crate::ported::patchlevel::{ZSH_PATCHLEVEL, ZSH_VERSION};
-use crate::ported::pattern::patmatch;
+use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::zsh_h::PAT_HEAPDUP;
 #[allow(unused_imports)]
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::signals_h::SIGS;
@@ -1203,7 +1204,9 @@ pub fn scanparamvals(
         // patcompile(pm.node.nam) + pattry(prog, scanstr)
         let scanstr = scanstr_lock().lock().unwrap().clone();
         if let Some(s) = scanstr {
-            if !pattry(&pm.node.nam, &s) {
+            let matched = patcompile(&pm.node.nam, PAT_HEAPDUP as i32, None)
+                .map_or(false, |p| pattry(&p, &s));
+            if !matched {
                 return;
             }
         } else {
@@ -1212,7 +1215,9 @@ pub fn scanparamvals(
     } else if (f & SCANPM_MATCHKEY) != 0 {
         let prog = scanprog_lock().lock().unwrap().clone();
         if let Some(p) = prog {
-            if !pattry(&p, &pm.node.nam) {
+            let matched = patcompile(&p, PAT_HEAPDUP as i32, None)
+                .map_or(false, |prog| pattry(&prog, &pm.node.nam));
+            if !matched {
                 return;
             }
         } else {
@@ -1244,7 +1249,9 @@ pub fn scanparamvals(
     let _ = vbuf;
     if (f & SCANPM_MATCHVAL) != 0 {
         let prog = scanprog_lock().lock().unwrap().clone();
-        let matched = prog.map(|p| pattry(&p, &s)).unwrap_or(false);
+        let matched = prog
+            .and_then(|p| patcompile(&p, PAT_HEAPDUP as i32, None))
+            .map_or(false, |prog| pattry(&prog, &s));
         if matched {
             paramvals_lock().lock().unwrap().push(s);
             let inc = if (f & SCANPM_WANTVALS) != 0 {
@@ -2512,7 +2519,8 @@ pub(crate) fn getarg<'a>(
             } else if exact {
                 target == pat
             } else {
-                patmatch(pat, target)
+                patcompile(pat, PAT_HEAPDUP as i32, None)
+                    .map_or(false, |p| pattry(&p, target))
             }
         };
         if return_all {
@@ -2669,7 +2677,8 @@ pub(crate) fn getarg<'a>(
             let hit = if exact {
                 s == pat
             } else {
-                patmatch(pat_used, s)
+                patcompile(pat_used, PAT_HEAPDUP as i32, None)
+                    .map_or(false, |p| pattry(&p, s))
             };
             if hit {
                 remaining -= 1;
@@ -2783,7 +2792,8 @@ pub(crate) fn getarg<'a>(
                     let hit = if flags.contains('e') {
                         cand == pat
                     } else {
-                        patmatch(pat, &cand)
+                        patcompile(pat, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |p| pattry(&p, &cand))
                     };
                     if hit {
                         remaining -= 1;
@@ -5945,7 +5955,6 @@ pub fn arrvargetfn(pm: &param) -> Vec<String> {
 ///   4. `pm->ename` set + null x + `*dptr == path` → invalidate
 ///      pathchecked so the next path resolution re-walks (was
 ///      missing).
-/// WARNING: param names don't match C — Rust=(pm, x) vs C=(pm, x)
 pub fn arrvarsetfn(pm: &mut param, x: Option<Vec<String>>) {
     // c:4296 `char ***dptr = (char ***)pm->u.data;`
     // c:4298-4299 — `if (*dptr != x) freearray(*dptr);` Rust Vec drop
@@ -9156,14 +9165,6 @@ fn dontimport(flags: i32) -> i32 {
         return 1; // c:806
     }
     0 // c:809
-}
-
-/// `pattry()` wrapper that compiles `prog` then matches against `s`.
-/// Routes through `crate::ported::pattern::patmatch` (compile + try
-/// in one call) so the local-fn signature here stays `(&str, &str)`
-/// while the underlying matcher uses the canonical pattern engine.
-fn pattry(prog: &str, s: &str) -> bool {
-    crate::ported::pattern::patmatch(prog, s)
 }
 
 // ===========================================================

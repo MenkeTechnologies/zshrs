@@ -22,7 +22,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::os::unix::fs::PermissionsExt;
 use crate::ported::builtin::findcmd;
-use crate::ported::pattern::patmatch;
+use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::utils::errflag;
 use crate::ported::zle::comp_h::{Aminfo, Cmlist};
 use crate::ported::zle::compctl_h::{
@@ -2383,12 +2384,15 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
     let pats = PATCOMPS.read().unwrap().clone();
     for (pat, cc) in &pats {
         // c:2542
-        // c:2543 patcompile(pc->pat) — Rust patmatch compiles inline.
-        // c:2544-2545 — pattry(pat, cmdstr) || (s && pattry(pat, s)).
-        let matches = patmatch(pat, &cmdstr)         // c:2544
-            || s_resolved.as_deref()
-                .map(|sr| patmatch(pat, sr))         // c:2545
-                .unwrap_or(false);
+        // c:2543 — patcompile(pc->pat) compiles the pattern once.
+        // c:2544-2545 — pattry(prog, cmdstr) || (s && pattry(prog, s)).
+        let matches = patcompile(pat, PAT_HEAPDUP as i32, None)
+            .map_or(false, |prog| {
+                pattry(&prog, &cmdstr)             // c:2544
+                    || s_resolved.as_deref()
+                        .map(|sr| pattry(&prog, sr)) // c:2545
+                        .unwrap_or(false)
+            });
         if matches {
             makecomplistcc(cc, os, incmd); // c:2546
             ret |= 2; // c:2547

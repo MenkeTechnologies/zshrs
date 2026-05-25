@@ -13,6 +13,7 @@
 use crate::ported::options::opt_state_get;
 use crate::ported::sort::zstrcmp;
 use crate::ported::builtin::LASTVAL;
+use crate::ported::pattern::haswilds;
 use crate::ported::signals::unqueue_signals;
 use crate::ported::string::dyncat;
 use crate::ported::utils::{zerr, errflag, init_dirsav, lchdir, restoredir};
@@ -4179,35 +4180,12 @@ fn apply_selection(state: &mut globdata) {
     }
 }
 
-/// Check if string has glob wildcards
-/// Quick predicate for `does this string contain wildcards?`.
-/// Port of the `haswilds()` macro inline in Src/glob.c —
-/// short-circuits `zglob()` so plain literal paths skip the
-/// scanner.
-pub fn haswilds(s: &str) -> bool {
-    // c:4306
-    let mut in_bracket = false;
-    let mut escape = false;
-
-    for c in s.chars() {
-        if escape {
-            escape = false;
-            continue;
-        }
-        match c {
-            '\\' => escape = true,
-            '[' => {
-                in_bracket = true;
-                return true; // brackets themselves are wildcards
-            }
-            ']' => in_bracket = false,
-            '*' | '?' if !in_bracket => return true,
-            '#' | '^' | '~' if !in_bracket => return true,
-            _ => {}
-        }
-    }
-    false
-}
+// `haswilds()` is defined in `Src/pattern.c:4306`, not glob.c — the
+// canonical Rust port lives at `crate::ported::pattern::haswilds`.
+// This file previously carried a divergent re-implementation tracking
+// bracket/escape state instead of the token-aware `zpc_disables[]` /
+// SHGLOB / KSHGLOB / EXTENDEDGLOB checks the C source actually does.
+// Drift deleted; glob.rs callers route through the canonical port.
 
 #[cfg(test)]
 mod gs_tt_tests {
@@ -5280,15 +5258,29 @@ mod tests {
         assert!(!haswilds("file.txt"));
     }
 
-    /// c:4306 — `#` `^` `~` are zsh EXTENDED_GLOB wildcards (matched
-    /// only outside brackets). Regression dropping any of these
-    /// breaks every script using extended-glob.
+    /// c:4363-4371 — `#` and `^` are recognised as wildcards by
+    /// `haswilds` **only when `EXTENDEDGLOB` is set**, matching the C
+    /// source's `isset(EXTENDEDGLOB)` gate at pattern.c:4364/4369. `~`
+    /// is **not** a filename-generation wildcard (zsh handles it as
+    /// tilde expansion in a separate pipeline stage); a prior
+    /// glob.rs-local `haswilds` impl returned true for `~`, which
+    /// caused zglob to mis-classify tilde-prefixed args as needing
+    /// filename generation. Pin the corrected behavior.
     #[test]
     fn haswilds_extended_glob_chars_recognised() {
         let _g = crate::test_util::global_state_lock();
+        // EXTENDEDGLOB off → `#` and `^` are not wild.
+        crate::ported::options::opt_state_set("extendedglob", false);
+        assert!(!haswilds("foo#bar"), "# not wild without EXTENDEDGLOB");
+        assert!(!haswilds("foo^bar"), "^ not wild without EXTENDEDGLOB");
+        // EXTENDEDGLOB on → `#` and `^` are wild (c:4364, c:4369).
+        crate::ported::options::opt_state_set("extendedglob", true);
         assert!(haswilds("foo#bar"), "# is extglob wild");
         assert!(haswilds("foo^bar"), "^ is extglob wild");
-        assert!(haswilds("~/file"), "~ is extglob wild");
+        crate::ported::options::opt_state_set("extendedglob", false);
+        // `~` is NOT in haswilds' switch (c:4324-4373) — tilde expansion
+        // is a separate pipeline stage.
+        assert!(!haswilds("~/file"), "~ is NOT a filename-generation wildcard");
     }
 
     /// c:2514 — `matchpat` returns true for exact match. Sanity check

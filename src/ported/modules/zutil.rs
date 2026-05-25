@@ -9,7 +9,8 @@
 
 use crate::ported::options::opt_state_set;
 use crate::ported::params::{assignaparam, getaparam, getsparam, paramtab, setaparam, sethparam, setsparam, unsetparam};
-use crate::ported::pattern::{patcompile, patmatch, pattry};
+use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{errflag, zwarnnam};
 use crate::ported::zsh_h::{eprog, features, hashnode, isset, module, opt_name, options, param, Eprog, HashNode, Param, Patprog, ERRFLAG_INT, EXTENDEDGLOB, OPT_ISSET, PAT_STATIC, PM_ARRAY};
@@ -282,7 +283,8 @@ impl style_table {
                     if p.pat == "*" {
                         true
                     } else {
-                        patmatch(&p.pat, context)
+                        patcompile(&p.pat, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |prog| pattry(&prog, context))
                     }
                 })
                 .map(|p| p.vals.as_slice())
@@ -328,7 +330,8 @@ impl style_table {
                     let matches = if pat.pat == "*" {
                         true
                     } else {
-                        patmatch(&pat.pat, ctx)
+                        patcompile(&pat.pat, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |prog| pattry(&prog, ctx))
                     };
                     if !matches {
                         continue;

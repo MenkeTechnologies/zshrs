@@ -2028,7 +2028,6 @@ pub fn adjustcolumns() -> usize {
 ///     if (interact && resetzle) zleentry(ZLE_CMD_REFRESH);
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(from) vs C=(from)
 pub fn adjustwinsize(from: i32) -> (usize, usize) {
     // c:1889
 
@@ -5662,7 +5661,6 @@ pub fn unmetafy(s: &mut Vec<u8>) -> usize {
 /// Previously the Rust port had INVERTED semantics: looped while
 /// `i < len` byte-walk, returned char count. That's the reverse
 /// operation. Pin the correct C contract.
-/// WARNING: param names don't match C — Rust=(s, len) vs C=(s, len)
 pub fn metalen(s: &str, len: usize) -> usize {
     // c:4972
     let bytes = s.as_bytes();

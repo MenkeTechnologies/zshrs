@@ -30,16 +30,27 @@
 //!      `charsub`, `metacharinc`, `clear_shiftstate`)
 //!  13. Matcher entry points (`pattry`, `pattrylen`, `pattryrefs`)
 //!  14. `patmatch` interpreter — pattern.c:2694
-//!  15. Range matching (`patmatchrange`, `patmatchindex`,
-//!      `mb_patmatchrange`, `mb_patmatchindex`)
+//!  15. (Section removed — formerly held Rust-only entries
+//!      `patmatchrange(&[char], char, igncase)`,
+//!      `patmatchindex(&[char], idx)`, `mb_patmatchrange`,
+//!      `mb_patmatchindex`. All deleted as Rule B / semantic
+//!      deviations; see comments at the deletion sites for the
+//!      faithful-port plan. The Cpattern-byte-stream walker in
+//!      `zle/compmatch.rs::patmatchrange` is the production matcher
+//!      pending a Rule C relocation to pattern.rs.)
 //!  16. String pre-processing (`patmungestring`, `patallocstr`,
 //!      `pattrystart`)
 //!  17. Module-loader / disable mgmt (`startpatternscope`,
 //!      `endpatternscope`, `savepatterndisables`,
 //!      `restorepatterndisables`, `clearpatterndisables`,
 //!      `freepatprog`, `pat_enables`)
-//!  18. Convenience entry points for in-tree callers (`patmatch`,
-//!      `patmatchlen`, `patrepeat`, `haswilds`)
+//!  18. (Section removed — formerly held Rust-only convenience entries
+//!      `patmatch(pat, text)`, `patmatchlen(prog, string)`, `patrepeat(
+//!      prog, s, max)`, `mb_patmatchrange`, `mb_patmatchindex`. All
+//!      deleted: `patmatch` got renamed to the C-faithful bytecode-
+//!      walker name; the others had zero Rust callers + Rule S1
+//!      signature deviations. `haswilds` is a real C name — port lives
+//!      in section 4 helpers.)
 //!
 //! See `docs/PORT.md` Rules A/B/C/D/E.
 
@@ -57,7 +68,7 @@ use crate::ported::params::{paramtab, paramtab_hashed_storage};
 use crate::ported::utils::ztrsub;
 use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
 use crate::utils::zerrnam;
-use crate::zsh_h::{Marker, Meta, Nularg,
+use crate::zsh_h::{Bang, Bar, Hat, Inang, Inbrack, Inpar, Marker, Meta, Nularg, Outbrack, Pound, Quest, Star,
                    isset, patprog, BASHAUTOLIST, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB,
                    MULTIBYTE, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, RCQUOTES, SHGLOB, SORTIT_IGNORING_BACKSLASHES,
                    SORTIT_NUMERICALLY, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH,
@@ -892,12 +903,16 @@ pub fn patgetglobflags(s: &str) -> Option<(i32, i64, usize)> {
 /// Port of `range_type(char *start, int len)` from `Src/pattern.c:1148`. Looks up the
 /// integer code for a POSIX character class name (e.g. "alpha" → 1).
 /// Returns None for unknown names.
-/// WARNING: param names don't match C — Rust=(name) vs C=(start, len)
-pub fn range_type(name: &str) -> Option<usize> {
+///
+/// C signature takes a `(char *start, int len)` non-NUL-terminated
+/// substring; Rust's `&str` carries the length implicitly, so the
+/// two-arg C shape collapses to a single arg. Param name `start`
+/// matches C verbatim (Rule E).
+pub fn range_type(start: &str) -> Option<usize> {
     // c:1148
     POSIX_CLASS_NAMES
         .iter()
-        .position(|n| *n == name)
+        .position(|n| *n == start)
         .map(|i| i + 1)
 }
 
@@ -1903,7 +1918,7 @@ pub fn pattryrefs(
         &string[..stringlen as usize]
     };
     let mut state = rpat::new();
-    let match_result = patmatch_internal(&prog.1, 0, trial, 0, &mut state, prog.0.flags);
+    let match_result = patmatch(&prog.1, 0, trial, 0, &mut state, prog.0.flags);
     let ok = match match_result {
         Some(end_pos) => {
             // c:2438 — `if (matched && !(prog->flags & (PAT_NOANCH|PAT_NOTEND))) ...`
@@ -1941,122 +1956,54 @@ pub fn pattryrefs(
     ok
 }
 
-/// Port of `patmatchlen()` from `Src/pattern.c:2649`. Returns the
-/// length of a successful match, or None.
-/// WARNING: param names don't match C — Rust=(prog, string) vs C=()
-pub fn patmatchlen(prog: &Patprog, string: &str) -> Option<usize> {
-    // c:2649
-    let mut state = rpat::new();
-    patmatch_internal(&prog.1, 0, string, 0, &mut state, prog.0.flags)
-}
-
-// =====================================================================
-// 18. Convenience entry points — used by in-tree callers
-// =====================================================================
-
-/// Compile + match in one call. Convenience wrapper used by in-tree
-/// callers (params.rs / subst.rs / options.rs / zutil.rs) that don't
-/// keep a compiled Patprog around. Signature differs from C's
-/// `int patmatch(Upat prog)` (which takes a bytecode pointer and
-/// reads input/captures from file-statics) — Rust takes both pattern
-/// and text explicitly. Allowlisted as architectural convenience.
-/// Port of `patmatch(Upat prog)` from `Src/pattern.c:2694`.
-/// WARNING: param names don't match C — Rust=(pattern, text) vs C=(prog)
-pub fn patmatch(pattern: &str, text: &str) -> bool {
-    match patcompile(pattern, PAT_HEAPDUP as i32, None) {
-        Some(prog) => pattry(&prog, text),
-        None => false,
-    }
-}
-
-/// Port of `mb_patmatchrange(...)` from Src/pattern.c:3610. Multibyte
-/// variant — delegates to `patmatchrange` since Rust `&[char]` is
-/// already UTF-32, so the MULTIBYTE_SUPPORT split disappears.
-/// WARNING: param names don't match C — Rust=(range, ch, igncase) vs C=(range, ch, zmb_ind, indptr, mtp)
-pub fn mb_patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {
-    // c:3610
-    patmatchrange(range, ch, igncase)
-}
-
-/// Port of `mb_patmatchindex(...)` from Src/pattern.c:3767. Delegates
-/// to `patmatchindex` (same UTF-32 reason as `mb_patmatchrange`).
-/// WARNING: param names don't match C — Rust=(range, idx) vs C=(range, ind, chr, mtp)
-pub fn mb_patmatchindex(range: &[char], idx: usize) -> Option<char> {
-    // c:3767
-    patmatchindex(range, idx)
-}
-
 // =====================================================================
 // 15. Range matching — pattern.c:3856, :4004, :3610, :3767
 // =====================================================================
+//
+// `patmatchlen()` (C: pattern.c:2649 — `int patmatchlen(void)` reading
+// the file-static `patinput`/`patinstart`) had a Rust-only wrapper
+// `pub fn patmatchlen(prog: &Patprog, string: &str)` that compiled
+// the prog and ran `patmatch` to derive a length. Zero Rust callers,
+// Rule S1 deviation. Deleted; reintroduce as a faithful port once the
+// `patinput`/`patinstart` file-statics are bucket-1 thread_locals.
+//
+// `mb_patmatchrange()` / `mb_patmatchindex()` (C: pattern.c:3610 / :3767
+// — MULTIBYTE_SUPPORT variants of `patmatchrange` / `patmatchindex`)
+// had Rust-only thin delegates because `&[char]` is already UTF-32
+// per codepoint. Zero Rust callers; deleted. Callers that need the
+// MB variant should call `patmatchrange` / `patmatchindex` directly
+// — the non-MB code paths in pattern.c are reachable in the Rust
+// port too.
 
-/// Port of `patmatchrange(char *range, int ch, int *indptr, int *mtp)` from `Src/pattern.c:3856`. Test whether
-/// `ch` matches the bracket-range expression `range`.
-///
-/// `range` is the bytes between `[...]` in the original pattern.
-/// Rust idiom replacement: `&[char]` slice walk with `range[i+1] == '-'`
-/// branch covers the C `PP_*` opcode table (PP_RANGE/PP_INCLASS/etc.);
-/// the C `indptr`/`mtp` out-args drop since callers in zshrs only
-/// need the bool match decision.
-/// WARNING: param names don't match C — Rust=(range, ch, igncase) vs C=(range, ch, indptr, mtp)
-pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool {
-    // c:3856
-    let test = |c: char| {
-        if igncase {
-            c.to_ascii_lowercase() == ch.to_ascii_lowercase()
-        } else {
-            c == ch
-        }
-    };
-    let mut i = 0;
-    while i < range.len() {
-        if i + 2 < range.len() && range[i + 1] == '-' {
-            let lo = range[i];
-            let hi = range[i + 2];
-            let c = if igncase { ch.to_ascii_lowercase() } else { ch };
-            let lo2 = if igncase { lo.to_ascii_lowercase() } else { lo };
-            let hi2 = if igncase { hi.to_ascii_lowercase() } else { hi };
-            if c >= lo2 && c <= hi2 {
-                return true;
-            }
-            i += 3;
-        } else if test(range[i]) {
-            return true;
-        } else {
-            i += 1;
-        }
-    }
-    false
-}
-
-/// Port of `patmatchindex(char *range, int ind, int *chr, int *mtp)` from `Src/pattern.c:4004`. Return the
-/// `idx`-th character that matches `range` (used by `${arr:#pat}`).
-/// WARNING: param names don't match C — Rust=(range, idx) vs C=(range, ind, chr, mtp)
-pub fn patmatchindex(range: &[char], idx: usize) -> Option<char> {
-    // c:4004
-    let mut n = 0;
-    let mut i = 0;
-    while i < range.len() {
-        if i + 2 < range.len() && range[i + 1] == '-' {
-            let lo = range[i] as u32;
-            let hi = range[i + 2] as u32;
-            for c in lo..=hi {
-                if n == idx {
-                    return char::from_u32(c);
-                }
-                n += 1;
-            }
-            i += 3;
-        } else {
-            if n == idx {
-                return Some(range[i]);
-            }
-            n += 1;
-            i += 1;
-        }
-    }
-    None
-}
+// `patmatchrange(char *range, int ch, int *indptr, int *mtp)` (C:
+// pattern.c:3856) and `patmatchindex(char *range, int ind, int *chr,
+// int *mtp)` (C: pattern.c:4004) both walk the *compiled* (metafied,
+// PP_*-encoded) byte stream that the pattern compiler emits — not a
+// runtime "a-zA-Z" syntax string. Prior Rust ports here:
+//
+//   pub fn patmatchrange(range: &[char], ch: char, igncase: bool) -> bool
+//   pub fn patmatchindex(range: &[char], idx: usize) -> Option<char>
+//
+// took `&[char]` *runtime* range syntax (`"a-zA-Z"` parsed live) and
+// dropped the C `indptr`/`mtp` out-params. Both Rule B and semantic
+// violations:
+//   - C takes `char *range` (metafied bytes, NULL-passable, with
+//     `Meta+PP_*` markers); Rust took already-decoded char slices.
+//   - C dispatches over 15 PP_* classes (ALPHA, ALNUM, ASCII, BLANK,
+//     CNTRL, DIGIT, GRAPH, LOWER, PRINT, PUNCT, SPACE, UPPER, XDIGIT,
+//     IDENT, IFS, IFSSPACE, WORD, RANGE, INCOMPLETE, INVALID, UNKWN);
+//     Rust did a 2-arm runtime parse (lo-DASH-hi vs literal).
+//   - Rust's `igncase` param was threaded as state; C reads
+//     `patglobflags & GF_IGNCASE` at the relevant call sites.
+//
+// Deleted. `patmatchindex` had zero callers anywhere; `patmatchrange`
+// had only test callers in this file (deleted with it). The
+// closer-to-C implementation in `src/ported/zle/compmatch.rs:3928`
+// (Cpattern.str byte-stream walker with `indp`/`mtp` out-params) is
+// the production matcher used by compmatch; per PORT.md Rule C its
+// canonical home is also pattern.rs, but moving it requires the
+// metafied-byte substrate (encoding-parity between the compile and
+// match sides) which is a separate substrate work item.
 
 /// Port of `freepatprog(Patprog prog)` from `Src/pattern.c:4161`. Frees a Patprog.
 /// Rust's `Drop` on `Box<patprog>` handles this; the explicit fn
@@ -2070,7 +2017,6 @@ pub fn freepatprog(prog: Patprog) {} // c:4161
 /// `!enable`) tokens by walking `zpc_strings[]`/`zpc_disables[]` in
 /// lockstep. Otherwise toggles each named token's `zpc_disables[i]`
 /// slot, emitting `invalid pattern: NAME` for misses.
-/// WARNING: param names don't match C — Rust=(cmd, patp, enable) vs C=(cmd, patp, enable)
 pub fn pat_enables(cmd: &str, patp: &[&str], enable: bool) -> i32 {
     // c:4171
     let mut ret: i32 = 0; // c:4173
@@ -2255,12 +2201,120 @@ pub fn clearpatterndisables() {
     patterndisables.lock().unwrap().clear();
 }
 
-/// Port of `haswilds(char *str)` from `Src/pattern.c:4306`. Quick check whether
-/// `s` contains any wildcard characters.
+/// Port of `haswilds(char *str)` from `Src/pattern.c:4306`.
+///
+/// Check whether `str` is eligible for filename generation.
+///
+/// **Rust-port adaptation.** The C body scans a *tokenized* byte
+/// stream and matches against `Inpar`/`Star`/`Inbrack`/…
+/// token bytes (0x84–0x9c) assigned by the tokenizer; backslash
+/// escapes have already been resolved by the lexer before
+/// `haswilds` runs. zshrs callers in `src/ported/{glob.rs, exec.rs,
+/// zle/compcore.rs, zle/computil.rs}` pass *un-tokenized* `&str`
+/// values where `\*` is literal `\` + `*`, so the C-faithful
+/// token-only check would miss every wildcard from those sites.
+/// This Rust port therefore accepts **both** the literal ASCII
+/// metachars (`*`, `?`, `[`, `(`, `|`, `<`, `#`, `^`) and the
+/// matching token bytes, and tracks `\\<x>` escapes inline so that
+/// un-tokenized patterns like `r"\*.txt"` correctly report no
+/// wildcards. All option- and `zpc_disables[]`-gated decisions
+/// mirror the C source verbatim (SHGLOB/KSHGLOB on `(`, EXTENDEDGLOB
+/// on `#`/`^`, per-token `ZPC_*` mask checks).
+///
+/// The C source's `%?foo` job-ref special case (c:4317-4318), which
+/// mutates `str[1]` in place to demote the `?`, becomes a "skip
+/// position 1" scan adjustment here since `&str` is immutable.
+///
+/// The C source's single-byte `[` / `]` exception (c:4310-4312) is
+/// dropped: it targets tokenized input where bare `Inbrack` is
+/// pathological; Rust callers pass un-tokenized `[abc]` patterns
+/// where bare `[` is still the start of a char-class wildcard.
 pub fn haswilds(str: &str) -> bool {
     // c:4306
-    str.chars()
-        .any(|c| matches!(c, '*' | '?' | '[' | '\\' | '(' | '|' | '<' | '#' | '^'))
+    let bytes = str.as_bytes();                                              // c:4324
+    let len = bytes.len();
+    if len == 0 {
+        return false;
+    }
+
+    // c:4317-4318 — `%?foo` job-ref: skip position 1 if it's a `?` or
+    // `Quest` immediately after a leading `%`.
+    let skip_pos_1 = len >= 2
+        && bytes[0] == b'%'
+        && (bytes[1] == b'?' || bytes[1] == Quest as u8);
+
+    let disp = zpc_disables.lock().unwrap();                                 // c:read zpc_disables[]
+
+    let mut escape = false;
+    // c:4323-4373 — main scan. Each metachar checked in both literal
+    // and tokenized form (see Rust-port adaptation note above).
+    for i in 0..len {
+        if skip_pos_1 && i == 1 {
+            continue;
+        }
+        let b = bytes[i];
+        if escape {
+            // Backslash-escape from the previous iteration — current
+            // byte is literal, regardless of whether it is also a
+            // metachar or token. (C doesn't do this because escapes
+            // are pre-resolved by the tokenizer.)
+            escape = false;
+            continue;
+        }
+        if b == b'\\' {
+            escape = true;
+            continue;
+        }
+        let prev: u8 = if i > 0 { bytes[i - 1] } else { 0 };
+
+        // c:4326-4335 — Inpar / literal `(`: wild unless SHGLOB is set,
+        // OR under KSHGLOB when preceded by `?/*/+/!/Bang/@`.
+        if b == Inpar as u8 || b == b'(' {
+            if (!isset(SHGLOB) && disp[ZPC_INPAR as usize] == 0)
+                || (i > 0
+                    && isset(KSHGLOB)
+                    && (((prev == Quest as u8 || prev == b'?')
+                            && disp[ZPC_KSH_QUEST as usize] == 0)
+                        || ((prev == Star as u8 || prev == b'*')
+                            && disp[ZPC_KSH_STAR as usize] == 0)
+                        || (prev == b'+' && disp[ZPC_KSH_PLUS as usize] == 0)
+                        || (prev == Bang as u8 && disp[ZPC_KSH_BANG as usize] == 0)
+                        || (prev == b'!' && disp[ZPC_KSH_BANG2 as usize] == 0)
+                        || (prev == b'@' && disp[ZPC_KSH_AT as usize] == 0)))
+            {
+                return true;                                                 // c:4335
+            }
+        } else if b == Bar as u8 || b == b'|' {
+            if disp[ZPC_BAR as usize] == 0 {
+                return true;                                                 // c:4340
+            }
+        } else if b == Star as u8 || b == b'*' {
+            if disp[ZPC_STAR as usize] == 0 {
+                return true;                                                 // c:4345
+            }
+        } else if b == Inbrack as u8 || b == b'[' {
+            if disp[ZPC_INBRACK as usize] == 0 {
+                return true;                                                 // c:4350
+            }
+        } else if b == Inang as u8 || b == b'<' {
+            if disp[ZPC_INANG as usize] == 0 {
+                return true;                                                 // c:4355
+            }
+        } else if b == Quest as u8 || b == b'?' {
+            if disp[ZPC_QUEST as usize] == 0 {
+                return true;                                                 // c:4360
+            }
+        } else if b == Pound as u8 || b == b'#' {
+            if isset(EXTENDEDGLOB) && disp[ZPC_HASH as usize] == 0 {
+                return true;                                                 // c:4365
+            }
+        } else if b == Hat as u8 || b == b'^' {
+            if isset(EXTENDEDGLOB) && disp[ZPC_HAT as usize] == 0 {
+                return true;                                                 // c:4370
+            }
+        }
+    }
+    false                                                                    // c:4374
 }
 
 // =====================================================================
@@ -2313,7 +2367,7 @@ const I_BODY: usize = 5; // payload starts here
 /// `style_table::get` via `crate::ported::pattern::patmatch`, params.rs,
 /// subst.rs, options.rs) can invoke `patcompile` from concurrent test
 /// threads, so the lock restores the single-writer invariant. Held
-/// only for the compile phase; the matcher (`pattry`/`patmatch_internal`)
+/// only for the compile phase; the matcher (`pattry`/`patmatch`)
 /// operates on the returned `Patprog.code` and touches no globals.
 static PATCOMPILE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -2507,13 +2561,13 @@ fn chain_branches_to(starter: usize, target: usize) {
 /// in `string` where match ended), `None` on no-match. The state
 /// param tracks captures.
 ///
-/// Rust port renamed to `patmatch_internal` so the C-name `patmatch`
-/// remains free for the convenience entry below (`patmatch(pat, text)`
-/// — used by in-tree callers like params.rs and subst.rs). The
-/// interpreter signature differs from C's `int patmatch(Upat prog)`
-/// because Rust threads input/captures through args rather than
-/// C's per-thread file-statics. Allowlisted as architectural.
-fn patmatch_internal(
+/// Rust signature differs from C's `int patmatch(Upat prog)`: input
+/// bytecode, current input position, captures, and glob flags are
+/// threaded through args rather than C's per-thread file-statics
+/// (`patinput`, `patinstart`, `patbeginp`/`patendp`, `patglobflags`).
+/// Rule S1 deviation justified by zshrs's threading model — see
+/// PORT_PLAN.md Bucket 1.
+fn patmatch(
     code: &[u8],
     prog_off: usize,
     string: &str,
@@ -2681,7 +2735,7 @@ fn patmatch_internal(
                 let mut consumed = max;
                 loop {
                     let mut sub_state = state.clone();
-                    if let Some(end) = patmatch_internal(
+                    if let Some(end) = patmatch(
                         code,
                         next,
                         string,
@@ -2714,7 +2768,7 @@ fn patmatch_internal(
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
                     if let Some(new_pos) =
-                        patmatch_internal(code, operand, string, cur, &mut sub_state, glob_flags)
+                        patmatch(code, operand, string, cur, &mut sub_state, glob_flags)
                     {
                         if new_pos == cur {
                             break;
@@ -2733,7 +2787,7 @@ fn patmatch_internal(
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
                     if let Some(end) =
-                        patmatch_internal(code, next, string, cur, &mut sub_state, glob_flags)
+                        patmatch(code, next, string, cur, &mut sub_state, glob_flags)
                     {
                         *state = sub_state;
                         return Some(end);
@@ -2768,7 +2822,7 @@ fn patmatch_internal(
                 {
                     let operand = scan + I_BODY + operand_off_extra;
                     let mut asserted_state = state.clone();
-                    let asserted_end = patmatch_internal(
+                    let asserted_end = patmatch(
                         code, operand, string, s_off, &mut asserted_state, glob_flags,
                     );
                     if asserted_end.is_none() {
@@ -2787,7 +2841,7 @@ fn patmatch_internal(
                         let excl_operand = excl + I_BODY + 8;
                         let truncated = &string[..end];
                         let mut e_state = state.clone();
-                        if let Some(em) = patmatch_internal(
+                        if let Some(em) = patmatch(
                             code, excl_operand, truncated, s_off, &mut e_state, glob_flags,
                         ) {
                             if em == end {
@@ -2819,7 +2873,7 @@ fn patmatch_internal(
                                 let excl_operand = excl2 + I_BODY + 8;
                                 let truncated = &string[..end];
                                 let mut e_state = state.clone();
-                                if let Some(em) = patmatch_internal(
+                                if let Some(em) = patmatch(
                                     code,
                                     excl_operand,
                                     truncated,
@@ -2870,7 +2924,7 @@ fn patmatch_internal(
                     let operand = br + I_BODY + br_extra;
                     let mut sub_state = state.clone();
                     if let Some(end) =
-                        patmatch_internal(code, operand, string, s_off, &mut sub_state, glob_flags)
+                        patmatch(code, operand, string, s_off, &mut sub_state, glob_flags)
                     {
                         *state = sub_state;
                         return Some(end);
@@ -2996,7 +3050,7 @@ fn patmatch_internal(
                     }
                     let mut sub_state = state.clone();
                     if let Some(new_pos) =
-                        patmatch_internal(code, operand, string, cur, &mut sub_state, glob_flags)
+                        patmatch(code, operand, string, cur, &mut sub_state, glob_flags)
                     {
                         if new_pos == cur {
                             break;
@@ -3015,7 +3069,7 @@ fn patmatch_internal(
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
                     if let Some(end) =
-                        patmatch_internal(code, next, string, cur, &mut sub_state, glob_flags)
+                        patmatch(code, next, string, cur, &mut sub_state, glob_flags)
                     {
                         *state = sub_state;
                         return Some(end);
@@ -3210,26 +3264,14 @@ pub fn patallocstr(
     None                                                                     // c:2218 return patstralloc->alloced (NULL)
 }
 
-/// Port of `patrepeat(Upat p, char *charstart)` from `Src/pattern.c:4096`. Counts how many
-/// times the pattern matches consecutively at the start of `s`.
-/// WARNING: param names don't match C — Rust=(prog, s, max) vs C=(p, charstart)
-pub fn patrepeat(prog: &Patprog, s: &str, max: Option<usize>) -> usize {
-    // c:4096
-    let mut pos = 0;
-    let mut count = 0;
-    let max = max.unwrap_or(usize::MAX);
-    while pos < s.len() && count < max {
-        let mut state = rpat::new();
-        match patmatch_internal(&prog.1, 0, s, pos, &mut state, prog.0.flags) {
-            Some(new_pos) if new_pos > pos => {
-                pos = new_pos;
-                count += 1;
-            }
-            _ => break,
-        }
-    }
-    count
-}
+// `patrepeat(Upat p, char *charstart)` (C: pattern.c:4096 — `static int`
+// helper called from the bytecode walker at pattern.c:3321 for greedy
+// `*` matches) had a Rust-only wrapper `pub fn patrepeat(prog: &Patprog,
+// s: &str, max: Option<usize>)`. Zero Rust callers (the bytecode walker
+// inlines its own greedy loop instead of calling out to patrepeat),
+// Rule S1 deviation (extra `max` param, takes whole prog instead of a
+// Upat into the bytecode). Deleted; reintroduce as a faithful port when
+// the bytecode walker is refactored to use it.
 
 // =====================================================================
 // Transitional aliases — older callers still use `PatProg` (camel-case
@@ -3346,6 +3388,21 @@ mod tests {
     fn compile(p: &str) -> Patprog {
         let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         patcompile(p, PAT_HEAPDUP as i32, None).expect("compile failed")
+    }
+
+    /// Test-only `patcompile + pattry` pair (Rule 3 exempt — `#[cfg(test)]`).
+    /// Mirrors the pattern most tests want: "does this pattern match
+    /// this string?" without dragging compile boilerplate into every
+    /// assertion. Does NOT acquire `TEST_MUTEX` — callers already hold
+    /// it (or hold the broader `global_state_lock()` from `test_util`)
+    /// when serialisation against `patcompile`'s file-statics matters.
+    /// Acquiring it here too would deadlock on the non-reentrant
+    /// `Mutex<()>` (e.g. `convenience_patmatch` holds TEST_MUTEX before
+    /// calling, `patcompile_concurrent_safe` exercises 8 threads that
+    /// would serialise via this fn instead of through the real engine).
+    fn patmatch(pat: &str, text: &str) -> bool {
+        patcompile(pat, PAT_HEAPDUP as i32, None)
+            .map_or(false, |prog| pattry(&prog, text))
     }
 
     #[test]
@@ -3510,15 +3567,6 @@ mod tests {
         assert!(haswilds("foo?"));
         assert!(haswilds("[abc]"));
         assert!(!haswilds("plain"));
-    }
-
-    #[test]
-    fn patmatchrange_basic() {
-        let _g = crate::test_util::global_state_lock();
-        let r: Vec<char> = "a-zA-Z".chars().collect();
-        assert!(patmatchrange(&r, 'm', false));
-        assert!(patmatchrange(&r, 'X', false));
-        assert!(!patmatchrange(&r, '5', false));
     }
 
     #[test]
@@ -3832,7 +3880,7 @@ mod tests {
             eprintln!("  [{:3}] {:#04x}", i, b);
         }
         let mut state = rpat::new();
-        let r = patmatch_internal(&prog.1, 0, "b", 0, &mut state, prog.0.flags);
+        let r = super::patmatch(&prog.1, 0, "b", 0, &mut state, prog.0.flags);
         eprintln!("match result: {:?}", r);
         assert!(pattry(&prog, "b"));
     }
@@ -4352,24 +4400,6 @@ mod tests {
         assert!(haswilds("["));
         assert!(!haswilds(""));
         assert!(!haswilds("plain.txt"));
-    }
-
-    // ── patmatchrange: char-in-set primitive ─────────────────────────
-    #[test]
-    fn patmatchrange_single_char() {
-        let _g = crate::test_util::global_state_lock();
-        let r: Vec<char> = "abc".chars().collect();
-        assert!(patmatchrange(&r, 'a', false));
-        assert!(patmatchrange(&r, 'b', false));
-        assert!(!patmatchrange(&r, 'd', false));
-    }
-
-    #[test]
-    fn patmatchrange_case_insensitive_flag() {
-        let _g = crate::test_util::global_state_lock();
-        let r: Vec<char> = "a-z".chars().collect();
-        assert!(patmatchrange(&r, 'A', true));
-        assert!(!patmatchrange(&r, 'A', false));
     }
 
     // ── range_type: POSIX class name lookup ──────────────────────────

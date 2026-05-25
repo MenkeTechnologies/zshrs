@@ -2209,10 +2209,13 @@ impl ShellExecutor {
     }
 }
 
-/// Thin (text, pattern) → bool wrapper over canonical
-/// `patmatch(pattern, text)` (port of `Src/pattern.c::patmatch`).
-/// Argument order flipped so callers read naturally.
+/// Thin (text, pattern) → bool wrapper over the canonical
+/// `patcompile()` + `pattry()` pair from `Src/pattern.c`. Argument
+/// order is flipped so callers read naturally. Lives in vm_helper.rs
+/// (non-port file) as the public convenience entry for extensions
+/// and the VM bridge; `src/ported/*` files inline the compile+match
+/// idiom directly to preserve PORT.md Rule 1 faithfulness.
 pub fn glob_match_static(s: &str, pattern: &str) -> bool {
-    patmatch(pattern, s)
+    patcompile(pattern, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, s))
 }
 
