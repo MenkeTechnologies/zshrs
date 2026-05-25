@@ -13,6 +13,9 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_params::*,
     zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
+use crate::ported::zsh_h::{isset, COMBININGCHARS};
+use crate::zsh_h::{IS_BASECHAR, IS_COMBINING};
+
 /// Move cursor to the start of the current logical line.
 /// Port of `findbol()` from Src/Zle/zle_utils.c:1158 — same scan,
 /// just mutates zlecs in-place instead of returning the index.
@@ -22,31 +25,126 @@ use crate::ported::zle::{
 #[allow(unused_imports)]
 #[allow(unused_imports)]
 
-/// Port of `alignmultiwordleft(int *pos, int setpos)` from Src/Zle/zle_move.c:49.
+/// Port of `int alignmultiwordleft(int *pos, int setpos)` from
+/// `Src/Zle/zle_move.c:49-78`. If `*pos` lands inside a combining-
+/// char cluster (`COMBININGCHARS` set + char at `*pos` is combining),
+/// walks left until hitting the cluster's base char and (when
+/// `setpos != 0`) writes that index back through `*pos`. Returns 1
+/// on successful re-align, 0 if not on a combining char or if the
+/// scan ran off the buffer start.
 ///
-/// C walks back over a zero-width combining-character cluster to
-/// land `*pos` on the cluster's base character; returns 1 on
-/// successful re-align, 0 if not on a combining char.
-/// Rust drops the cluster-collapse logic because `Vec<char>` indexes
-/// one codepoint per slot and we don't materialise multi-codepoint
-/// clusters; the no-op port returns 0 (no cluster), which makes
-/// every cursor move treat each codepoint as a base char.
-/// Rust idiom replacement for the C multi-codepoint cluster walk.
-#[allow(unused_variables)]
+/// ```c
+/// int alignmultiwordleft(int *pos, int setpos) {
+///     int loccs = *pos;
+///     if (!isset(COMBININGCHARS) || loccs == zlell || loccs == 0)
+///         return 0;                                              // c:54-55
+///     if (!IS_COMBINING(zleline[loccs]))
+///         return 0;                                              // c:58-59
+///     loccs--;                                                   // c:62
+///     for (;;) {
+///         if (IS_BASECHAR(zleline[loccs])) {
+///             if (setpos) *pos = loccs;
+///             return 1;                                          // c:67-69
+///         } else if (!IS_COMBINING(zleline[loccs])) {
+///             return 0;                                          // c:70-72
+///         }
+///         if (loccs-- == 0)
+///             return 0;                                          // c:75-76
+///     }
+/// }
+/// ```
 pub fn alignmultiwordleft(pos: &mut usize, setpos: i32) -> i32 {
     // c:49
-    0
+    let mut loccs = *pos;
+    let zlell = ZLELL.load(Ordering::SeqCst) as usize;
+    // c:54-55 — gate on COMBININGCHARS + boundary checks.
+    if !isset(COMBININGCHARS)
+        || loccs == zlell
+        || loccs == 0
+    {
+        return 0;
+    }
+    let zleline = ZLELINE.lock().unwrap();
+    // c:58-59 — current pos must be on a combining char.
+    if loccs >= zleline.len() || !IS_COMBINING(zleline[loccs]) {
+        return 0;
+    }
+    // c:62 — step back one cell.
+    loccs -= 1;
+    // c:63-77 — scan back until base char (return 1) or non-combining
+    // non-base (return 0) or buffer start.
+    loop {
+        if loccs >= zleline.len() {
+            return 0;
+        }
+        if IS_BASECHAR(zleline[loccs]) {
+            if setpos != 0 {
+                *pos = loccs;                                              // c:68
+            }
+            return 1;                                                      // c:69
+        } else if !IS_COMBINING(zleline[loccs]) {
+            return 0;                                                      // c:71
+        }
+        // c:75 — `if (loccs-- == 0) return 0;` post-decrement: returns
+        // 0 BEFORE decrementing past 0 (so we never read at -1).
+        if loccs == 0 {
+            return 0;
+        }
+        loccs -= 1;
+    }
 }
 
-/// Port of `alignmultiwordright(int *pos, int setpos)` from Src/Zle/zle_move.c:89.
+/// Port of `int alignmultiwordright(int *pos, int setpos)` from
+/// `Src/Zle/zle_move.c:89-115`. First runs `alignmultiwordleft(pos, 0)`
+/// to test if `*pos` is on a combining char; if not, returns 0. If
+/// yes, scans FORWARD from `*pos + 1` until the next non-combining
+/// char (or end-of-buffer), and (when `setpos != 0`) sets `*pos`
+/// to that index.
 ///
-/// Forward variant of `alignmultiwordleft`. Same architectural
-/// reason — `Vec<char>` codepoint storage; the cluster-aware path
-/// has no Rust analog. Rust idiom replacement.
-#[allow(unused_variables)]
+/// ```c
+/// int alignmultiwordright(int *pos, int setpos) {
+///     int loccs;
+///     if (!alignmultiwordleft(pos, 0))                           // c:96
+///         return 0;
+///     loccs = *pos + 1;                                          // c:100
+///     while (loccs < zlell) {
+///         if (!IS_COMBINING(zleline[loccs])) {
+///             if (setpos) *pos = loccs;
+///             return 1;                                          // c:104-107
+///         }
+///         loccs++;
+///     }
+///     if (setpos) *pos = loccs;
+///     return 1;                                                  // c:112-114
+/// }
+/// ```
 pub fn alignmultiwordright(pos: &mut usize, setpos: i32) -> i32 {
     // c:89
-    0
+    // c:96 — probe via left-align to confirm we're on a combining char.
+    if alignmultiwordleft(pos, 0) == 0 {
+        return 0;
+    }
+    let mut loccs = *pos + 1;                                              // c:100
+    let zlell = ZLELL.load(Ordering::SeqCst) as usize;
+    let zleline = ZLELINE.lock().unwrap();
+    // c:102-110 — scan forward through the cluster.
+    while loccs < zlell {
+        if loccs >= zleline.len() {
+            break;
+        }
+        if !IS_COMBINING(zleline[loccs]) {
+            if setpos != 0 {
+                *pos = loccs;                                              // c:106
+            }
+            return 1;                                                      // c:107
+        }
+        loccs += 1;
+    }
+    // c:112-114 — ran off the end; pin `*pos` at end and report success.
+    if setpos != 0 {
+        *pos = loccs;
+    }
+    1
 }
 
 /// Port of `inccs()` from `Src/Zle/zle_move.c:122`.
@@ -55,17 +153,19 @@ pub fn alignmultiwordright(pos: &mut usize, setpos: i32) -> i32 {
 /// inccs(void)
 /// {
 ///     zlecs++;
-///     alignmultiwordright(&zlecs, 1);
+///     alignmultiwordright(&zlecs, 1);                        // c:125
 /// }
 /// ```
-/// Increment the cursor, skipping combining-char clusters.
-/// In zshrs `zleline` is `Vec<char>` (one codepoint per slot), so
-/// the C alignmultiwordright path is a no-op — just `zlecs++`.
-/// WARNING: param names don't match C — Rust=(zle) vs C=()
+/// Increment the cursor, then realign past any combining-mark cluster
+/// at the new position.
 pub fn inccs() {
     // c:122
-    ZLECS.fetch_add(1, Ordering::SeqCst); // c:122
-                                                             // c:125 — `alignmultiwordright(&zlecs, 1)`. No-op for Vec<char>.
+    let new_cs = ZLECS.fetch_add(1, Ordering::SeqCst) + 1;                 // c:122
+    let mut p = new_cs;
+    alignmultiwordright(&mut p, 1);                                        // c:125
+    if p != new_cs {
+        ZLECS.store(p, Ordering::SeqCst);
+    }
 }
 
 /// Port of `deccs()` from `Src/Zle/zle_move.c:133`.
@@ -78,14 +178,17 @@ pub fn inccs() {
 /// }
 /// ```
 /// Decrement the cursor, skipping combining-char clusters.
-/// In zshrs `zleline` is `Vec<char>` (one codepoint per slot), so
-/// the C alignmultiwordleft path is a no-op — just `zlecs--`.
-/// WARNING: param names don't match C — Rust=(zle) vs C=()
+/// Decrement the cursor, then realign back over any combining-mark
+/// cluster at the new position to land on the cluster's base char.
 pub fn deccs() {
     // c:133
-    ZLECS.fetch_sub(1, Ordering::SeqCst); // c:133
-                                                             // c:136 — `alignmultiwordleft(&zlecs, 1)`. Vec<char> indexes
-                                                             // one codepoint per slot, so no realignment needed.
+    let prev = ZLECS.fetch_sub(1, Ordering::SeqCst);                       // c:133
+    let new_cs = prev.saturating_sub(1);
+    let mut p = new_cs;
+    alignmultiwordleft(&mut p, 1);                                          // c:136
+    if p != new_cs {
+        ZLECS.store(p, Ordering::SeqCst);
+    }
 }
 
 /// Port of `incpos(int *pos)` from `Src/Zle/zle_move.c:143`.
@@ -1254,6 +1357,162 @@ pub fn count_lines() -> usize {
         .filter(|&&c| c == '\n')
         .count()
         + 1
+}
+
+#[cfg(test)]
+mod alignmultiword_tests {
+    use super::*;
+
+    /// Common test setup: install `zleline` with a string and length,
+    /// enable `COMBININGCHARS`. Caller passes the chars + cursor pos.
+    fn setup_combining(chars: &[char]) {
+        crate::ported::options::opt_state_set("combiningchars", true);
+        let mut line = ZLELINE.lock().unwrap();
+        line.clear();
+        line.extend_from_slice(chars);
+        ZLELL.store(chars.len(), Ordering::SeqCst);
+    }
+
+    fn teardown_combining() {
+        crate::ported::options::opt_state_set("combiningchars", false);
+        ZLELINE.lock().unwrap().clear();
+        ZLELL.store(0, Ordering::SeqCst);
+    }
+
+    /// `Src/Zle/zle_move.c:54-55` — without `COMBININGCHARS`, returns 0
+    /// immediately regardless of cursor position.
+    #[test]
+    fn alignmultiwordleft_returns_zero_without_combiningchars_option() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        crate::ported::options::opt_state_set("combiningchars", false);
+        let mut line = ZLELINE.lock().unwrap();
+        line.clear();
+        line.extend_from_slice(&['e', '\u{0301}']); // e + combining acute
+        ZLELL.store(2, Ordering::SeqCst);
+        drop(line);
+        let mut pos = 1usize;
+        assert_eq!(alignmultiwordleft(&mut pos, 1), 0,
+            "c:54 — !isset(COMBININGCHARS) short-circuits to 0");
+        assert_eq!(pos, 1, "pos unchanged");
+        teardown_combining();
+    }
+
+    /// `Src/Zle/zle_move.c:54` — at the end of buffer (loccs == zlell),
+    /// returns 0 without advancing.
+    #[test]
+    fn alignmultiwordleft_at_zlell_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        setup_combining(&['a', 'b']);
+        let mut pos = 2usize; // == zlell
+        assert_eq!(alignmultiwordleft(&mut pos, 1), 0, "c:54 — at zlell, return 0");
+        teardown_combining();
+    }
+
+    /// `Src/Zle/zle_move.c:54` — at start of buffer (loccs == 0),
+    /// returns 0 (nowhere to step back).
+    #[test]
+    fn alignmultiwordleft_at_zero_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        setup_combining(&['\u{0301}', 'b']); // combining at start
+        let mut pos = 0usize;
+        assert_eq!(alignmultiwordleft(&mut pos, 1), 0, "c:54 — loccs==0, return 0");
+        teardown_combining();
+    }
+
+    /// `Src/Zle/zle_move.c:58-59` — if current cell is NOT a combining
+    /// char, returns 0 without realign. Pin the IS_COMBINING gate.
+    #[test]
+    fn alignmultiwordleft_returns_zero_when_not_on_combining_char() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        setup_combining(&['a', 'b', 'c']); // all base chars
+        let mut pos = 1usize; // on 'b' (base char)
+        assert_eq!(alignmultiwordleft(&mut pos, 1), 0,
+            "c:58 — !IS_COMBINING(curr) → return 0");
+        assert_eq!(pos, 1, "pos unchanged");
+        teardown_combining();
+    }
+
+    /// `Src/Zle/zle_move.c:62-77` — pointer on a combining char walks
+    /// back to the cluster's base, returns 1, writes pos when setpos≠0.
+    #[test]
+    fn alignmultiwordleft_walks_back_to_base() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        // 'a' (base) + 2 combining marks: 0301 (acute), 0303 (tilde).
+        setup_combining(&['a', '\u{0301}', '\u{0303}']);
+        // Sanity: option + width prerequisites for the test to be valid.
+        assert!(crate::ported::zsh_h::isset(crate::ported::zsh_h::COMBININGCHARS),
+            "setup precondition: isset(COMBININGCHARS) must be true");
+        assert_eq!(crate::ported::compat::u9_wcwidth('\u{0303}'), 0,
+            "setup precondition: U+0303 must have width 0 for IS_COMBINING");
+        let mut pos = 2usize; // on second combining mark
+        assert_eq!(alignmultiwordleft(&mut pos, 1), 1,
+            "c:69 — found base char, return 1");
+        assert_eq!(pos, 0, "c:68 — pos set to base char index");
+        teardown_combining();
+    }
+
+    /// `Src/Zle/zle_move.c:67-69` — `setpos == 0` returns success but
+    /// does NOT mutate pos.
+    #[test]
+    fn alignmultiwordleft_setpos_zero_does_not_mutate() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        setup_combining(&['a', '\u{0301}']);
+        let mut pos = 1usize;
+        assert_eq!(alignmultiwordleft(&mut pos, 0), 1, "found base");
+        assert_eq!(pos, 1, "c:67 — setpos==0 skips assignment");
+        teardown_combining();
+    }
+
+    /// `Src/Zle/zle_move.c:89-115` — forward variant: probe via
+    /// alignmultiwordleft, then scan forward over combining marks.
+    /// Returns 1 + sets pos to the FIRST non-combining char (or end).
+    #[test]
+    fn alignmultiwordright_walks_forward_over_combining() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        // 'a' (base) + 2 combining marks + 'b' (next base).
+        setup_combining(&['a', '\u{0301}', '\u{0303}', 'b']);
+        let mut pos = 2usize; // on second combining mark
+        assert_eq!(alignmultiwordright(&mut pos, 1), 1,
+            "c:107 — found non-combining char, return 1");
+        assert_eq!(pos, 3, "c:106 — pos set to next base char index");
+        teardown_combining();
+    }
+
+    /// `Src/Zle/zle_move.c:96` — alignmultiwordright returns 0 when
+    /// alignmultiwordleft would have returned 0 (not on a cluster).
+    #[test]
+    fn alignmultiwordright_returns_zero_when_not_in_cluster() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        setup_combining(&['a', 'b']); // no combining chars
+        let mut pos = 1usize;
+        assert_eq!(alignmultiwordright(&mut pos, 1), 0,
+            "c:96 — left-align failed → return 0");
+        assert_eq!(pos, 1, "pos unchanged");
+        teardown_combining();
+    }
+
+    /// `Src/Zle/zle_move.c:112-114` — when scan runs off end-of-buffer
+    /// while in a cluster, sets pos to end and STILL returns 1.
+    #[test]
+    fn alignmultiwordright_runs_off_end_returns_one_with_end_pos() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        // 'a' + 2 combining marks; cluster extends to end.
+        setup_combining(&['a', '\u{0301}', '\u{0303}']);
+        let mut pos = 1usize;
+        assert_eq!(alignmultiwordright(&mut pos, 1), 1,
+            "c:114 — fell off end, still return 1");
+        assert_eq!(pos, 3, "c:113 — pos set to zlell (end-of-buffer)");
+        teardown_combining();
+    }
 }
 
 #[cfg(test)]

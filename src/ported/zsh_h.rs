@@ -3693,39 +3693,24 @@ pub fn MB_CHARLENCONV(s: &[u8], len: usize) -> (usize, Option<char>) {
 }
 
 /// Port of `WCWIDTH(wc)` from `Src/zsh.h:3300`. Display width of a
-/// wide character. Rust uses `unicode-width`-equivalent simple rule:
-/// 0 for control/combining, 2 for ranges typically wide (CJK), 1
-/// otherwise.
+/// wide character: 0 for combining marks / control chars, 2 for
+/// CJK-wide / emoji, 1 otherwise.
+///
+/// Delegates to the `unicode-width` crate (the same data path
+/// `crate::ported::compat::u9_wcwidth` uses) so combining-mark
+/// detection comes from the latest UCD. The previous inline
+/// CJK-only rule returned 1 for combining marks (e.g. U+0301
+/// combining-acute), which broke `IS_COMBINING(wc)` =
+/// `WCWIDTH(wc) == 0` and silently disabled every cluster-walk
+/// codepath that depended on it (alignmultiwordleft / right,
+/// inccs / deccs realign).
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCWIDTH(wc: char) -> i32 {
     // c:3300
-    if wc as u32 == 0 {
-        return 0;
-    }
-    if wc.is_control() {
-        return 0;
-    }
-    let cp = wc as u32;
-    // Rough CJK-wide ranges.
-    if (0x1100..=0x115F).contains(&cp)
-        || (0x2E80..=0x303E).contains(&cp)
-        || (0x3041..=0x33FF).contains(&cp)
-        || (0x3400..=0x4DBF).contains(&cp)
-        || (0x4E00..=0x9FFF).contains(&cp)
-        || (0xA000..=0xA4CF).contains(&cp)
-        || (0xAC00..=0xD7A3).contains(&cp)
-        || (0xF900..=0xFAFF).contains(&cp)
-        || (0xFE30..=0xFE4F).contains(&cp)
-        || (0xFF00..=0xFF60).contains(&cp)
-        || (0xFFE0..=0xFFE6).contains(&cp)
-        || (0x20000..=0x2FFFD).contains(&cp)
-        || (0x30000..=0x3FFFD).contains(&cp)
-    {
-        2
-    } else {
-        1
-    }
+    unicode_width::UnicodeWidthChar::width(wc)
+        .map(|w| w as i32)
+        .unwrap_or_else(|| if wc.is_control() { 0 } else { 1 })
 }
 
 /// Port of `WCWIDTH_WINT(wc)` from `Src/zsh.h:3311/3369`. Always
