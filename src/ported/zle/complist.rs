@@ -996,7 +996,6 @@ pub fn compprintnl(ml: i32) -> i32 {
 ///     return cc;
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(fmt, n, dopr, doesc, ml, stop) vs C=(fmt, n, dopr, doesc, ml, stop)
 pub fn compprintfmt(
     // c:1072
     fmt: &str,
@@ -2488,7 +2487,6 @@ pub const MAX_STATUS: usize = 128; // c:2200
 ///     return ret;
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(status, sline, sll, scs, csp, llp, lenp) vs C=(status, sline, sll, scs, csp, llp, lenp)
 pub fn setmstatus(
     // c:2203
     status: &mut String,

@@ -1777,7 +1777,6 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
 /// Rust signature: `(signame: &str) -> Option<i32>` — `None`
 /// matches C's `0` sentinel. Uses `libc::SIGRTMIN()` /
 /// `libc::SIGRTMAX()` for canonical bounds.
-/// WARNING: param names don't match C — Rust takes &str directly
 pub fn rtsigno(signame: &str) -> Option<i32> {
     // c:1291
     #[cfg(target_os = "linux")]

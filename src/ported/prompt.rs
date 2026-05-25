@@ -184,18 +184,20 @@ pub struct buf_vars {
     host: String,
     host_short: String,
     tty: String,
-    lastval: i32,
-    histnum: i64,
-    shlvl: i32,
-    num_jobs: i32,
-    is_root: bool,
+    // `lastval` / `histnum` / `shlvl` / `num_jobs` / `is_root` / `term_width`
+    // / `lineno` field copies deleted — they aggregated unrelated C globals
+    // (builtin.c lastval, hist.c curhist, params.c shlvl, etc.) onto a struct
+    // whose canonical C definition has none of them. Rule D bag-of-globals.
+    // Callers route through prompt_tls thread_locals directly.
     cmd_stack: Vec<u8>,
     psvar: Vec<String>,
-    term_width: usize,
-    lineno: i64,
-    scriptname: Option<String>,
-    scriptfilename: Option<String>,
-    argzero: String,
+    // `scriptname` / `scriptfilename` / `argzero` field copies deleted —
+    // they aggregated three unrelated C file-statics (init.c `scriptname`,
+    // init.c `scriptfilename`, init.c `argzero`) onto a struct that C's
+    // `buf_vars` (prompt.c:76-121) does NOT have those fields on. PORT.md
+    // Rule D bag-of-globals. Callers route through the per-prompt
+    // snapshot thread_locals `prompt_tls::SCRIPTNAME / SCRIPTFILENAME /
+    // ARGEXTRA` (hydrated from `utils::scriptname_get()` etc.) directly.
     func_line_base: Option<i64>,
     funcstack_filename: Option<String>,
     pub buf: Vec<u8>,
@@ -537,7 +539,6 @@ pub fn stradd(buf: &mut String, s: &str) {
 ///     }
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(cap, flags) vs C=(cap, flags)
 pub fn tsetcap(cap: i32, flags: i32) -> String {
     // c:1083
 
@@ -600,22 +601,15 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
     out
 }
 
-/// Port of `int putstr(int d)` from `Src/prompt.c:1121`. tputs
-/// per-byte output callback: emit `d` into the prompt-buffer via
-/// `pputc`. Used by `tsetcap(cap, TSC_PROMPT)` to capture termcap
-/// emissions into bv->buf.
-/// ```c
-/// int putstr(int d) { pputc(d); return 0; }
-/// ```
-/// WARNING: param names don't match C — Rust=(d) vs C=(d)
-pub fn putstr(d: &str) -> String {
-    // c:1121
-    // c:1123 — `pputc(d); return 0;` Output goes into the prompt buf.
-    // Caller-supplied string is returned for the buf_vars dispatch to
-    // append; this mirrors the C pputc-then-return-0 semantic since
-    // Rust has no shared bv->bp cursor at this layer.
-    d.to_string()
-}
+// `putstr(int d)` (C: prompt.c:1121 — `int putstr(int d) { pputc(d);
+// return 0; }`) had a Rust port `pub fn putstr(d: &str) -> String { d
+// .to_string() }`. Both signature and body wrong: C is a `tputs(3)`
+// per-byte output callback taking ONE byte, returning 0; the Rust
+// port took a whole string and returned its clone — that's a string-
+// dup helper, not the per-byte `tputs` callback. Zero Rust callers
+// (the prompt-emit path uses pputc directly). Deleted; reintroduce
+// as a faithful port when tsetcap()'s tputs(3) invocation lands and
+// needs the per-byte callback.
 
 /// Handle `%>...>` / `%<...<` / `%[truncchar string]` truncation.
 /// Port of `prompttrunc(int arg, int truncchar, int doprint, int endchar)` from Src/prompt.c:1276.
@@ -1319,18 +1313,12 @@ impl buf_vars {
             host: prompt_tls::HOST.with(|c| c.borrow().clone()),
             host_short: prompt_tls::HOST_SHORT.with(|c| c.borrow().clone()),
             tty: prompt_tls::TTY.with(|c| c.borrow().clone()),
-            lastval: prompt_tls::LASTVAL.with(|c| *c.borrow()),
-            histnum: prompt_tls::HISTNUM.with(|c| *c.borrow()),
-            shlvl: prompt_tls::SHLVL.with(|c| *c.borrow()),
-            num_jobs: prompt_tls::NUM_JOBS.with(|c| *c.borrow()),
-            is_root: prompt_tls::IS_ROOT.with(|c| *c.borrow()),
+            // lastval / histnum / shlvl / num_jobs / is_root / term_width
+            // / lineno — see struct def comment.
             cmd_stack: prompt_tls::CMDSTACK.with(|c| c.borrow().clone()),
             psvar: prompt_tls::PSVAR.with(|c| c.borrow().clone()),
-            term_width: prompt_tls::TERM_WIDTH.with(|c| *c.borrow()),
-            lineno: prompt_tls::LINENO.with(|c| *c.borrow()),
-            scriptname: prompt_tls::SCRIPTNAME.with(|c| c.borrow().clone()),
-            scriptfilename: prompt_tls::SCRIPTFILENAME.with(|c| c.borrow().clone()),
-            argzero: prompt_tls::ARGEXTRA.with(|c| c.borrow().clone()),
+            // scriptname / scriptfilename / argzero fields removed — see
+            // struct def comment.
             func_line_base: prompt_tls::FUNC_LINE_BASE.with(|c| *c.borrow()),
             funcstack_filename: prompt_tls::FUNCSTACK_FILENAME.with(|c| c.borrow().clone()),
             buf: vec![0u8; 256],
@@ -1370,18 +1358,12 @@ impl buf_vars {
             host: self.host.clone(),
             host_short: self.host_short.clone(),
             tty: self.tty.clone(),
-            lastval: self.lastval,
-            histnum: self.histnum,
-            shlvl: self.shlvl,
-            num_jobs: self.num_jobs,
-            is_root: self.is_root,
+            // lastval / histnum / shlvl / num_jobs / is_root / term_width
+            // / lineno — see struct def comment.
             cmd_stack: self.cmd_stack.clone(),
             psvar: self.psvar.clone(),
-            term_width: self.term_width,
-            lineno: self.lineno,
-            scriptname: self.scriptname.clone(),
-            scriptfilename: self.scriptfilename.clone(),
-            argzero: self.argzero.clone(),
+            // scriptname / scriptfilename / argzero fields removed — see
+            // struct def comment.
             func_line_base: self.func_line_base,
             funcstack_filename: self.funcstack_filename.clone(),
             buf: Vec::new(),
@@ -1543,7 +1525,7 @@ impl buf_vars {
                         self.advance();
                         self.out_char('!');
                     } else {
-                        self.out_str(&self.histnum.to_string());
+                        self.out_str(&prompt_tls::HISTNUM.with(|c| *c.borrow()).to_string());
                     }
                 } else {
                     self.advance();
@@ -1759,13 +1741,13 @@ impl buf_vars {
                     depth >= arg
                 }
             }
-            '?' => self.lastval == arg,
+            '?' => prompt_tls::LASTVAL.with(|c| *c.borrow()) == arg,
             '#' => {
                 let euid = unsafe { libc::geteuid() };
                 euid == arg as u32
             }
-            'L' => self.shlvl >= arg,
-            'j' => self.num_jobs >= arg,
+            'L' => prompt_tls::SHLVL.with(|c| *c.borrow()) >= arg,
+            'j' => prompt_tls::NUM_JOBS.with(|c| *c.borrow()) >= arg,
             'v' => (arg as usize) <= self.psvar.len(),
             'V' => {
                 if arg <= 0 || (arg as usize) > self.psvar.len() {
@@ -1786,7 +1768,7 @@ impl buf_vars {
                     _ => false,
                 }
             }
-            '!' => self.is_root,
+            '!' => prompt_tls::IS_ROOT.with(|c| *c.borrow()),
             _ => false,
         };
 
@@ -1958,10 +1940,9 @@ impl buf_vars {
             // ? scriptname : argzero, arg, 0)`. The `arg` selects N
             // trailing path components (0 = full path).
             'N' => {
-                let name = self
-                    .scriptname
-                    .clone()
-                    .unwrap_or_else(|| self.argzero.clone());
+                let name = prompt_tls::SCRIPTNAME
+                    .with(|c| c.borrow().clone())
+                    .unwrap_or_else(|| prompt_tls::ARGEXTRA.with(|c| c.borrow().clone()));
                 let n = if arg <= 0 {
                     0
                 } else {
@@ -2022,30 +2003,33 @@ impl buf_vars {
             }
 
             // Status
-            '?' => self.out_str(&self.lastval.to_string()),
-            '#' => self.out_char(if self.is_root { '#' } else { '%' }),
+            '?' => self.out_str(&prompt_tls::LASTVAL.with(|c| *c.borrow()).to_string()),
+            '#' => self.out_char(
+                if prompt_tls::IS_ROOT.with(|c| *c.borrow()) { '#' } else { '%' }
+            ),
 
             // History
-            'h' | '!' => self.out_str(&self.histnum.to_string()),
+            'h' | '!' => self.out_str(&prompt_tls::HISTNUM.with(|c| *c.borrow()).to_string()),
 
             // Jobs
-            'j' => self.out_str(&self.num_jobs.to_string()),
+            'j' => self.out_str(&prompt_tls::NUM_JOBS.with(|c| *c.borrow()).to_string()),
 
             // Shell level
-            'L' => self.out_str(&self.shlvl.to_string()),
+            'L' => self.out_str(&prompt_tls::SHLVL.with(|c| *c.borrow()).to_string()),
 
             // Line number (`%i`) — Src/prompt.c:923-929 after optional `%I` block.
-            'i' => self.out_str(&self.lineno.to_string()),
+            'i' => self.out_str(&prompt_tls::LINENO.with(|c| *c.borrow()).to_string()),
 
             // `%I` — Src/prompt.c:901-920: inside `funcstack` (not SOURCE,
             // not `IN_EVAL_TRAP`), file line is `lineno + funcstack->flineno`.
             // zshrs stores the addend as `func_line_base` (`first_body_line - 1`
             // at registration). `FS_EVAL` / trap nuances not wired yet.
             'I' => {
+                let lineno = prompt_tls::LINENO.with(|c| *c.borrow());
                 let n = if let Some(base) = self.func_line_base {
-                    self.lineno.saturating_add(base)
+                    lineno.saturating_add(base)
                 } else {
-                    self.lineno
+                    lineno
                 };
                 self.out_str(&n.to_string());
             }
@@ -2068,11 +2052,10 @@ impl buf_vars {
                         self.out_str(&tail);
                     }
                 } else {
-                    let name = self
-                        .scriptfilename
-                        .clone()
-                        .or_else(|| self.scriptname.clone())
-                        .unwrap_or_else(|| self.argzero.clone());
+                    let name = prompt_tls::SCRIPTFILENAME
+                        .with(|c| c.borrow().clone())
+                        .or_else(|| prompt_tls::SCRIPTNAME.with(|c| c.borrow().clone()))
+                        .unwrap_or_else(|| prompt_tls::ARGEXTRA.with(|c| c.borrow().clone()));
                     if n == 0 {
                         self.out_str(&name);
                     } else {

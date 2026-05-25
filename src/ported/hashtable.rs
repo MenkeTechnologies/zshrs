@@ -2548,7 +2548,15 @@ pub fn shfunctab_lock() -> &'static std::sync::RwLock<shfunc_table> {
 /// extended-glob set silently fell through. Now uses the
 /// canonical engine.
 fn simple_glob_match(pattern: &str, name: &str) -> bool {
-    crate::ported::pattern::patmatch(pattern, name) // c:hashtable.c:412
+    // c:hashtable.c:412 — `scanmatchtable` callers pass a compiled
+    // `Patprog`; this helper inlines the compile+match since callers
+    // here have only the raw pattern string.
+    crate::ported::pattern::patcompile(
+        pattern,
+        crate::ported::zsh_h::PAT_HEAPDUP as i32,
+        None,
+    )
+    .map_or(false, |p| crate::ported::pattern::pattry(&p, name))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

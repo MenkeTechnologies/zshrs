@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 use crate::ported::init::SHTTY;
 use crate::ported::jobs::{acquire_pgrp, ORIGPGRP};
 use crate::ported::params::{keyboardhacksetfn, paramtab};
-use crate::ported::pattern::{patcompile, patmatch};
+use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
     interact, isset, opt_name, options, APPENDHISTORY, BANGHIST, CHASELINKS, EMACSMODE,
@@ -530,10 +530,12 @@ pub fn bin_setopt(
             // setoption, !isun): the `setoption` static at c:572 calls
             // `dosetopt(optname->optno, !isun, 0, opts)` on each match.
             let v = (isun == 0) as i32;
-            for opt_name in ZSH_OPTIONS_SET.iter() {
-                // c:676
-                if patmatch(&normalized, opt_name) {
-                    let _ = setoption(opt_name, v); // c:572 setoption
+            if let Some(prog) = patcompile(&normalized, PAT_HEAPDUP as i32, None) {
+                for opt_name in ZSH_OPTIONS_SET.iter() {
+                    // c:676
+                    if pattry(&prog, opt_name) {
+                        let _ = setoption(opt_name, v); // c:572 setoption
+                    }
                 }
             }
         }

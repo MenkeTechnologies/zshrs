@@ -2618,7 +2618,6 @@ pub fn fcedit(ename: &str, fn_: &str) -> i32 {
 ///     return &asg;
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(argvp, assigns) vs C=(argvp, assigns)
 pub fn getasg(
     argvp: &mut Vec<String>, // c:1908
     assigns: &mut Vec<(String, String)>,
