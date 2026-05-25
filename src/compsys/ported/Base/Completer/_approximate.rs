@@ -40,7 +40,9 @@ use crate::compsys::ported::_tags::_tags;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
-use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zle::complete::{
+    bin_compadd, clear_compadd_prefix_injector, set_compadd_prefix_injector,
+};
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 fn make_ops() -> options {
@@ -142,7 +144,17 @@ pub fn _approximate(args: &[String]) -> i32 {
             format!("o:{}{}", prefix, suffix),
         ]);
 
-        if _complete() == 0 {
+        // sh:57-72  inner `compadd()` override body — for every
+        //   `compadd` call during this pass, prepend `(#a$n)` to
+        //   PREFIX so the match engine accepts up to `n` errors.
+        //   Implemented via process-wide injector hook on
+        //   `bin_compadd` (no shell-fn install needed).
+        set_compadd_prefix_injector(&format!("(#a{})", comp_correct));
+
+        let comp_ret = _complete();
+        clear_compadd_prefix_injector();
+
+        if comp_ret == 0 {
             // sh:85  insert-unambiguous?
             let unambig = get_compstate_str("unambiguous").unwrap_or_default();
             let pre_suf = format!("{}{}", prefix, suffix);

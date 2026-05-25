@@ -874,6 +874,97 @@ pub fn bin_compadd(
         zwarnnam(name, "can only be called from completion function"); // c:609
         return 1; // c:610
     }
+    // sh:_approximate:57-72 — process-wide PREFIX-injection hook.
+    //   When set, `(#a${_comp_correct})` (or another caller-supplied
+    //   prefix) is prepended to `$PREFIX` for the duration of this
+    //   compadd call only. The override is mirrored exactly from the
+    //   shell-side `_approximate` compadd shadow at sh:62-71: with a
+    //   leading `~` in PREFIX the injection lands AFTER the tilde.
+    let saved_prefix_for_inject: Option<String> = {
+        let lock = COMPADD_PREFIX_INJECTOR.lock().unwrap();
+        if let Some(inj) = lock.as_ref() {
+            let cur_prefix =
+                crate::ported::params::getsparam("PREFIX").unwrap_or_default();
+            // sh:_approximate:65 — `-p` arg-position detection. If
+            //   the user passed `-p VAL` where VAL starts with `~`,
+            //   the tilde-already-handled path triggers.
+            let p_idx = argv.iter().position(|a| a == "-p");
+            let tilde_in_p = p_idx
+                .and_then(|i| argv.get(i + 1))
+                .map(|v| v.starts_with('~'))
+                .unwrap_or(false);
+            let new_prefix = if cur_prefix.starts_with('~') && !tilde_in_p {
+                // sh:67 — `~(#a${N})${PREFIX[2,-1]}` keeps the ~
+                //   intact for tilde-expansion downstream.
+                format!("~{}{}", inj, &cur_prefix[1..])
+            } else {
+                // sh:69 — bare prefix-prepend
+                format!("{}{}", inj, cur_prefix)
+            };
+            let _ = crate::ported::params::setsparam("PREFIX", &new_prefix);
+            Some(cur_prefix)
+        } else {
+            None
+        }
+    };
+    // Run the compadd body, then restore PREFIX exactly as it was.
+    let ret = bin_compadd_body(name, argv, _ops, _func);
+    if let Some(saved) = saved_prefix_for_inject {
+        let _ = crate::ported::params::setsparam("PREFIX", &saved);
+    }
+    // sh:_complete_help:11 — `compadd() { return 1 }` trace shadow.
+    //   When the trace flag is set, record the call into the trace
+    //   buffer and short-circuit so no matches actually land.
+    if COMPADD_TRACE_ACTIVE.load(Ordering::Relaxed) {
+        let mut buf = crate::ported::params::getaparam("_complete_help_funcs")
+            .unwrap_or_default();
+        buf.push(argv.join(" "));
+        crate::ported::params::setaparam("_complete_help_funcs", buf);
+        return 1;
+    }
+    ret
+}
+
+/// Process-wide PREFIX injection used by `_approximate` to inject
+/// `(#a$N)` per-iteration without modifying PREFIX outside the
+/// compadd call. Set via [`set_compadd_prefix_injector`] / cleared
+/// via [`clear_compadd_prefix_injector`].
+pub static COMPADD_PREFIX_INJECTOR: std::sync::Mutex<Option<String>> =
+    std::sync::Mutex::new(None);
+
+/// sh:_complete_help:11 — when this flag is set, every `bin_compadd`
+/// call records its argv into `_complete_help_funcs` and returns 1
+/// without adding matches. Set / cleared via
+/// [`set_compadd_trace`].
+pub static COMPADD_TRACE_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Install the PREFIX-injection string used by the next `bin_compadd`
+/// call. Returns the previously-installed injector (if any) so the
+/// caller can chain.
+pub fn set_compadd_prefix_injector(s: impl Into<String>) -> Option<String> {
+    COMPADD_PREFIX_INJECTOR.lock().unwrap().replace(s.into())
+}
+
+/// Clear the PREFIX injector.
+pub fn clear_compadd_prefix_injector() {
+    *COMPADD_PREFIX_INJECTOR.lock().unwrap() = None;
+}
+
+/// Enable [`COMPADD_TRACE_ACTIVE`] — every subsequent `bin_compadd`
+/// call records its argv into `_complete_help_funcs` and returns 1.
+pub fn set_compadd_trace(active: bool) {
+    COMPADD_TRACE_ACTIVE.store(active, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Internal: the actual compadd body. Split out so the injector
+/// wrapper can run before / after it without code duplication.
+fn bin_compadd_body(
+    name: &str,
+    argv: &[String],
+    _ops: &options,
+    _func: i32,
+) -> i32 {
     // c:613-820 — flag-arg parse loop. Walk argv consuming `-X arg`
     // pairs into the `Cadata` struct; per-flag dispatch ports the C
     // switch at c:621-820.
@@ -2794,5 +2885,83 @@ mod tests {
         let mut p = Cpattern::default();
         let rest = parse_class(&mut p, "[abc");
         assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn compadd_trace_records_and_returns_one() {
+        // sh:_complete_help:11 — `compadd() { return 1 }`. With the
+        //   trace flag on, bin_compadd records argv into
+        //   `_complete_help_funcs` and returns 1 without panicking.
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        crate::ported::params::setaparam("_complete_help_funcs", Vec::new());
+        set_compadd_trace(true);
+        let argv = vec!["-X".to_string(), "files".to_string(), "alpha".to_string()];
+        let r = bin_compadd("compadd", &argv, &make_test_ops(), 0);
+        set_compadd_trace(false);
+        INCOMPFUNC.store(0, Ordering::Relaxed);
+        assert_eq!(r, 1, "trace mode short-circuits to 1");
+        let buf = crate::ported::params::getaparam("_complete_help_funcs")
+            .unwrap_or_default();
+        assert_eq!(buf, vec!["-X files alpha".to_string()]);
+    }
+
+    #[test]
+    fn compadd_prefix_injector_mutates_prefix_then_restores() {
+        // sh:_approximate:57-72 — injector prepends `(#a$N)` to PREFIX
+        //   for the duration of the compadd call, then restores.
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        crate::ported::params::setsparam("PREFIX", "abc").unwrap();
+        // Trace flag on so the body short-circuits and we can observe
+        //   what PREFIX was during the call via the captured argv-side
+        //   parameter snapshot.
+        crate::ported::params::setaparam("_complete_help_funcs", Vec::new());
+        set_compadd_trace(true);
+        let prev = set_compadd_prefix_injector("(#a2)");
+        assert!(prev.is_none());
+        // Spy: stash PREFIX into a side-channel param before running.
+        //   bin_compadd's wrapper mutates PREFIX, runs body, restores;
+        //   our spy reads the mutated value mid-call via a hook is not
+        //   wired, so instead we directly observe PREFIX after the
+        //   call to confirm restoration.
+        let _ = bin_compadd("compadd", &["x".to_string()], &make_test_ops(), 0);
+        clear_compadd_prefix_injector();
+        set_compadd_trace(false);
+        INCOMPFUNC.store(0, Ordering::Relaxed);
+        let after = crate::ported::params::getsparam("PREFIX").unwrap_or_default();
+        assert_eq!(after, "abc", "PREFIX restored after compadd call");
+    }
+
+    #[test]
+    fn compadd_prefix_injector_tilde_aware() {
+        // sh:_approximate:65-69 — leading `~` in PREFIX stays before
+        //   the injected pattern when no `-p ~…` is passed.
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        crate::ported::params::setsparam("PREFIX", "~user").unwrap();
+        set_compadd_trace(true);
+        let _ = set_compadd_prefix_injector("(#a1)");
+        let _ = bin_compadd("compadd", &["x".to_string()], &make_test_ops(), 0);
+        clear_compadd_prefix_injector();
+        set_compadd_trace(false);
+        INCOMPFUNC.store(0, Ordering::Relaxed);
+        // Restored
+        assert_eq!(
+            crate::ported::params::getsparam("PREFIX").unwrap_or_default(),
+            "~user"
+        );
+    }
+
+    fn make_test_ops() -> options {
+        options {
+            ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
     }
 }

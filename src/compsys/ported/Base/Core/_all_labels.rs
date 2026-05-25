@@ -229,6 +229,17 @@ pub fn _all_labels(args: &[String]) -> i32 {
         let _ = setsparam("_tags_level", &cur_depth.to_string());
 
         let spec = getsparam("__spec").unwrap_or_default();
+        // sh:_next_tags:39 — `[[ "$_next_tags_not" = *\ ${__spec}\ * ]] &&
+        //   continue`. When the `_next_tags` shadow is active, skip any
+        //   spec already on the not-list. Empty `_next_tags_not` makes
+        //   this a no-op, matching the unshadowed body.
+        let not = getsparam("_next_tags_not").unwrap_or_default();
+        if !not.is_empty() && !spec.is_empty() {
+            let needle = format!(" {} ", spec);
+            if not.contains(&needle) {
+                continue;
+            }
+        }
         let mut comp_tags = getsparam("_comp_tags").unwrap_or_default();
         comp_tags.push_str(&format!(" {} ", spec));
         let _ = setsparam("_comp_tags", &comp_tags);
@@ -420,5 +431,21 @@ mod tests {
         assert!(has_unescaped_colon("foo:bar"));
         assert!(!has_unescaped_colon("foo\\:bar"));
         assert!(!has_unescaped_colon("plain"));
+    }
+
+    #[test]
+    fn next_tags_not_filter_with_empty_is_noop() {
+        // sh:_next_tags:39 — empty `_next_tags_not` keeps the
+        //   filter branch dead; unregistered tag still returns 1.
+        let r = with_incompfunc(|| {
+            setsparam("_next_tags_not", "").unwrap();
+            _all_labels(&[
+                "unregistered_tag".to_string(),
+                "name".to_string(),
+                "descr".to_string(),
+                "compadd".to_string(),
+            ])
+        });
+        assert_eq!(r, 1);
     }
 }
