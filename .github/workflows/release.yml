@@ -34,12 +34,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        # --features zd is required to build the `zd` binary (required-features
-        # gate in Cargo.toml keeps ureq+base64 out of the default zshrs build).
-        run: cargo build --release --locked --features zd --bin zshrs --bin zd --target ${{ matrix.target }}
+      - name: Build (zshrs + zd + recorder)
+        # recorder feature implies daemon (per Cargo.toml). zd has its own
+        # required-features gate. One pass builds all three zshrs-crate bins.
+        run: cargo build --release --locked --features recorder,zd --bin zshrs --bin zshrs-recorder --bin zd --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Build (zshrs-daemon binary)
+        # zshrs-daemon lives in a separate workspace crate; needs its own -p.
+        run: cargo build --release --locked -p zshrs-daemon --bin zshrs-daemon --target ${{ matrix.target }}
+
+      - name: Package zshrs (basic)
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
@@ -49,10 +53,25 @@ jobs:
           tar czf ../../../zshrs-${{ github.ref_name }}-${{ matrix.target }}.tar.gz zshrs zd
           cd ../../..
 
+      - name: Package zshrs-all (basic + recorder + daemon)
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          for b in zshrs zd zshrs-recorder zshrs-daemon; do
+            strip "$b" 2>/dev/null || true
+          done
+          tar czf ../../../zshrs-all-${{ github.ref_name }}-${{ matrix.target }}.tar.gz zshrs zd zshrs-recorder zshrs-daemon
+          cd ../../..
+
       - uses: actions/upload-artifact@v4
         with:
           name: zshrs-${{ matrix.target }}
           path: zshrs-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zshrs-all-${{ matrix.target }}
+          path: zshrs-all-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
 
   plugin:
     name: Build IntelliJ plugin
@@ -138,8 +157,13 @@ jobs:
           for f in artifacts/*.tar.gz; do
             base=$(basename "$f")
             sum=$(sha256sum "$f" | awk '{print $1}')
-            # e.g. zshrs-vX.Y.Z-aarch64-apple-darwin.tar.gz → aarch64_apple_darwin
-            key=$(echo "$base" | sed 's/zshrs-v[^-]*-//; s/\.tar\.gz//; s/-/_/g; s/\./_/g')
+            # zshrs-all-vX.Y.Z-target.tar.gz → all_<target>
+            # zshrs-vX.Y.Z-target.tar.gz     → <target>
+            if [[ "$base" == zshrs-all-* ]]; then
+              key="all_$(echo "$base" | sed 's/zshrs-all-v[^-]*-//; s/\.tar\.gz//; s/-/_/g')"
+            else
+              key=$(echo "$base" | sed 's/zshrs-v[^-]*-//; s/\.tar\.gz//; s/-/_/g')
+            fi
             echo "${key}=${sum}" >> "$GITHUB_OUTPUT"
           done
 
@@ -195,15 +219,65 @@ jobs:
           end
           EOF
 
+      - name: Update zshrs-all formula
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          cd tap
+          cat > Formula/zshrs-all.rb <<'FORMULA_HEAD'
+          class ZshrsAll < Formula
+            desc "Full zshrs install — shell + zd client + recorder + daemon"
+            homepage "https://github.com/MenkeTechnologies/zshrs"
+            license "MIT"
+            conflicts_with "zshrs", because: "both install zshrs and zd"
+          FORMULA_HEAD
+          cat >> Formula/zshrs-all.rb <<EOF
+            version "${VERSION}"
+
+            on_macos do
+            on_arm do
+              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-all-v${VERSION}-aarch64-apple-darwin.tar.gz"
+              sha256 "${{ steps.sha.outputs.all_aarch64_apple_darwin }}"
+            end
+            on_intel do
+              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-all-v${VERSION}-x86_64-apple-darwin.tar.gz"
+              sha256 "${{ steps.sha.outputs.all_x86_64_apple_darwin }}"
+            end
+            end
+
+            on_linux do
+            on_intel do
+              url "https://github.com/MenkeTechnologies/zshrs/releases/download/v${VERSION}/zshrs-all-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+              sha256 "${{ steps.sha.outputs.all_x86_64_unknown_linux_gnu }}"
+            end
+            end
+
+            def install
+            bin.install "zshrs"
+            bin.install "zd"
+            bin.install "zshrs-recorder"
+            bin.install "zshrs-daemon"
+            end
+
+            test do
+              assert_match "hi", shell_output("#{bin}/zshrs -c \'echo hi\'")
+              assert_predicate bin/"zshrs-recorder", :exist?
+              assert_predicate bin/"zshrs-daemon", :exist?
+            end
+          end
+          EOF
+
       - name: Push formula update
         run: |
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/zshrs.rb
+          git add Formula/zshrs.rb Formula/zshrs-all.rb
           if git diff --cached --quiet; then
-            echo "no changes — formula already up to date"
+            echo "no changes — formulas already up to date"
             exit 0
           fi
-          git commit -m "zshrs: bump to ${{ github.ref_name }}"
+          git commit -m "zshrs: bump zshrs + zshrs-all to ${{ github.ref_name }}"
           git push
