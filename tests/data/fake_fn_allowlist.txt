@@ -1645,3 +1645,11 @@ run_command_substitution
 pparams
 set_pparams
 unregister_function
+
+# Approximate-match `(#aN)` inner walker for P_EXACTLY arms (pattern.c
+# inlines the edit-operation backtracking into the P_EXACTLY case at
+# c:2737-2779). Rust port factors the per-byte walk + sub/ins/del
+# recursive trials into a helper so the linear patmatch loop body
+# stays readable. WARNING marker on the fn cites the C inline-logic
+# location.
+approx_match_exactly

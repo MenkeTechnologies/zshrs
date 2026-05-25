@@ -406,19 +406,68 @@ pub fn evalcond(
                             b2i(lm.dev() == rm.dev() && lm.ino() == rm.ino())
                         }
                         c if c == COND_REGEX => {
-                            #[cfg(feature = "regex")]
-                            {
-                                match regex::Regex::new(&right) {
-                                    Ok(re) => b2i(re.is_match(&left)),
-                                    Err(_) => 2,
+                            // `[[ str =~ pat ]]` — POSIX regex match.
+                            // C dispatches to the `zsh/regex` module
+                            // (Src/cond.c:113-119); that module sets
+                            // `$MATCH` (the whole match) plus
+                            // `$match[N]`/`$mbegin[N]`/`$mend[N]`
+                            // arrays for each capture group (see
+                            // Src/Modules/regex.c). The Rust port
+                            // routes through the `regex` crate directly
+                            // (it's a hard dep, not a feature-gated
+                            // module) and populates the same arrays
+                            // so downstream `[[ str =~ pat ]] &&
+                            // var=$match[1]` idioms work without a
+                            // module dispatch.
+                            match regex::Regex::new(&right) {
+                                Ok(re) => {
+                                    if let Some(caps) = re.captures(&left) {
+                                        // Whole-match: $MATCH.
+                                        let m0 = caps.get(0).unwrap();
+                                        crate::ported::params::setsparam(
+                                            "MATCH",
+                                            m0.as_str(),
+                                        );
+                                        // Capture groups → $match[1..N].
+                                        // zsh's regex module emits the
+                                        // unnamed groups as $match[1..N]
+                                        // — the 0th group (whole match)
+                                        // lives in $MATCH, NOT $match[].
+                                        let mut match_arr: Vec<String> = Vec::new();
+                                        let mut begin_arr: Vec<String> = Vec::new();
+                                        let mut end_arr: Vec<String> = Vec::new();
+                                        for i in 1..caps.len() {
+                                            let s = caps
+                                                .get(i)
+                                                .map(|m| m.as_str().to_string())
+                                                .unwrap_or_default();
+                                            let b = caps
+                                                .get(i)
+                                                .map(|m| (m.start() + 1).to_string())
+                                                .unwrap_or_else(|| "0".into());
+                                            let e = caps
+                                                .get(i)
+                                                .map(|m| m.end().to_string())
+                                                .unwrap_or_else(|| "0".into());
+                                            match_arr.push(s);
+                                            begin_arr.push(b);
+                                            end_arr.push(e);
+                                        }
+                                        crate::ported::params::setaparam(
+                                            "match", match_arr,
+                                        );
+                                        crate::ported::params::setaparam(
+                                            "mbegin", begin_arr,
+                                        );
+                                        crate::ported::params::setaparam(
+                                            "mend", end_arr,
+                                        );
+                                        b2i(true)
+                                    } else {
+                                        b2i(false)
+                                    }
                                 }
-                            }
-                            #[cfg(not(feature = "regex"))]
-                            {
-                                // Same option-state read as strpat above.
-                                let extended = isset(EXTENDEDGLOB);
-                                let case_sensitive = isset(CASEGLOB);
-                                b2i(matchpat(&right, &left, extended, case_sensitive))
+                                Err(_) => 2,
                             }
                         }
                         _ => 2,
@@ -724,6 +773,77 @@ mod tests {
 
     fn empty_maps() -> (HashMap<String, bool>, HashMap<String, String>) {
         (HashMap::new(), HashMap::new())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // `=~` capture-group wire-up — Src/cond.c:113-119 dispatches to
+    // zsh/regex module which sets $MATCH / $match[N] / $mbegin[N] /
+    // $mend[N]. Rust port uses the `regex` crate directly and writes
+    // the same arrays. Tests pin the canonical zsh observable shape.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Src/cond.c:113 + Modules/regex.c $MATCH` — a successful
+    /// `[[ str =~ pat ]]` sets `$MATCH` to the whole-match substring.
+    #[test]
+    fn cond_regex_sets_match_to_whole_match() {
+        let _g = crate::test_util::global_state_lock();
+        let opts = HashMap::new();
+        let vars = HashMap::new();
+        let r = evalcond(&["abc123", "=~", "[a-z]+[0-9]+"], &opts, &vars, false);
+        assert_eq!(r, 0, "match succeeded");
+        assert_eq!(
+            crate::ported::params::getsparam("MATCH").as_deref(),
+            Some("abc123"),
+            "$MATCH = whole-match per Modules/regex.c"
+        );
+    }
+
+    /// `Src/Modules/regex.c` — capture groups populate `$match[1..N]`.
+    /// `[[ "abc123" =~ '([a-z]+)([0-9]+)' ]]` → $match[1]="abc", $match[2]="123".
+    #[test]
+    fn cond_regex_sets_match_array_from_capture_groups() {
+        let _g = crate::test_util::global_state_lock();
+        let opts = HashMap::new();
+        let vars = HashMap::new();
+        let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false);
+        assert_eq!(r, 0);
+        let m = crate::ported::params::getaparam("match");
+        assert_eq!(
+            m.as_deref(),
+            Some(&["abc".to_string(), "123".to_string()][..]),
+            "$match[1..N] populated from capture groups",
+        );
+    }
+
+    /// `Src/Modules/regex.c $mbegin / $mend` — capture-group byte offsets.
+    /// $mbegin is 1-based (zsh convention without KSHARRAYS) for the start,
+    /// $mend is the inclusive end position.
+    #[test]
+    fn cond_regex_sets_mbegin_and_mend_arrays() {
+        let _g = crate::test_util::global_state_lock();
+        let opts = HashMap::new();
+        let vars = HashMap::new();
+        let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false);
+        assert_eq!(r, 0);
+        let b = crate::ported::params::getaparam("mbegin");
+        let e = crate::ported::params::getaparam("mend");
+        // Group 1: "abc" at bytes 0..3 → mbegin[1] = "1" (1-based), mend[1] = "3".
+        assert_eq!(b.as_deref().and_then(|v| v.first().cloned()), Some("1".to_string()));
+        assert_eq!(e.as_deref().and_then(|v| v.first().cloned()), Some("3".to_string()));
+        // Group 2: "123" at bytes 3..6 → mbegin[2] = "4", mend[2] = "6".
+        assert_eq!(b.as_deref().and_then(|v| v.get(1).cloned()), Some("4".to_string()));
+        assert_eq!(e.as_deref().and_then(|v| v.get(1).cloned()), Some("6".to_string()));
+    }
+
+    /// Failed match: returns 1 (false). $match/etc not asserted here
+    /// since prior tests' state may persist.
+    #[test]
+    fn cond_regex_returns_one_on_no_match() {
+        let _g = crate::test_util::global_state_lock();
+        let opts = HashMap::new();
+        let vars = HashMap::new();
+        let r = evalcond(&["xyz", "=~", "[0-9]+"], &opts, &vars, false);
+        assert_eq!(r, 1, "no digits in 'xyz' → false");
     }
 
     #[test]
