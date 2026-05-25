@@ -39,17 +39,17 @@
 /// don't hit the slow shell-function autoload path.
 ///
 /// Sources:
-///   * Core dispatcher / completers: [`base`] (main_complete, normal,
+///   * Core dispatcher / completers: `base` (main_complete, normal,
 ///     dispatch, alternative, values, complete/ignored/approximate/
 ///     correct/expand/history/match/menu/prefix, description, message,
 ///     requested, wanted, all_labels, next_label, sep_parts)
-///   * Arg-spec engine: [`_arguments`] (`_arguments`)
-///   * Description rendering: [`_describe`] / [`computil`] (`_describe`)
-///   * File / path completers: [`_files`] / [`library`] (`_files`,
-///     `_directories`, `_path_files`, `_tilde_files`)
-///   * Per-command completers wired in `main` (`_git`, `_docker`,
+///   * Arg-spec engine: `_arguments`
+///   * Description rendering: `_describe` (in `computil`)
+///   * File / path completers: `_files`, `_directories`,
+///     `_path_files`, `_tilde_files`
+///   * Per-command completers wired in `main`: `_git`, `_docker`,
 ///     `_cargo`, `_kubectl`, `_terraform`, plus `_ls` / `_cd` / `_cp`
-///     / `_mv` / `_rm` / `_cat` / `_grep` baseline stubs).
+///     / `_mv` / `_rm` / `_cat` / `_grep` baseline stubs.
 ///
 /// Used by `lsp::dump_reflection_json` to populate the IntelliJ tool
 /// window "Compsys" tab and by `lsp::dump_reference_html` for the
