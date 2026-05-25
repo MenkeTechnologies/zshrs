@@ -60,16 +60,9 @@ name = "zd"
 path = "bins/zd.rs"
 required-features = ["zd"]
 
-# Folded-in compsys binaries (compsys was merged into this crate;
-# see commit "fold compsys into main").
-[[bin]]
-name = "compsys-test"
-path = "bins/compsys-test.rs"
-
-[[bin]]
-name = "menu-demo"
-path = "bins/menu-demo.rs"
-
+# Folded-in compsys binary (compsys was merged into this crate;
+# see commit "fold compsys into main"). `compsys-test` and `menu-demo`
+# were deleted alongside the dup builtin modules they exercised.
 [[bin]]
 name = "bench-autoload"
 path = "bins/bench-autoload.rs"

@@ -112,92 +112,61 @@ pub const COMPSYS_FN_NAMES: &[&str] = &[
 ];
 
 pub mod base;
+// builtin_bridge.rs deleted — middleman wrappers around bin_compadd/
+// bin_zstyle/etc. Callers invoke `crate::ported::zle::complete::bin_*`,
+// `crate::ported::modules::zutil::bin_*`, `lookupstyle`, `testforstyle`
+// directly.
 pub mod cache;
-pub mod compadd;
-pub mod compcore;
+// compcore.rs deleted — dup of src/ported/zle/compcore.rs.
 pub mod compdef;
-pub mod completion;
-pub mod compset;
-pub mod computil;
+// completion.rs deleted — Completion/CompletionFlags/CompletionGroup
+// are dups of Cmatch/Cmgroup types in src/ported/zle/comp_h.rs.
+// menu.rs deleted — was a stub of what used to be a 3567-LOC dup of
+// src/ported/zle/complist.rs.
 pub mod ported;
-// `compsys/functions.rs` + `compsys/library.rs` — DELETED.
-// All per-fn ports live under `compsys/ported/Base/{Completer,Core,
-// Utility,Widget}/` (and `Unix/Type/` / `Zsh/Type/`). Callers use
-// `compsys::ported::_NAME` directly. No more shim layer.
-pub mod generate;
-pub mod matching;
-pub mod menu;
-pub mod shell_runner;
-pub mod state;
-pub mod system;
-pub mod zle;
+// state.rs deleted — dup of shell parameter table for completion
+// (PREFIX/SUFFIX/IPREFIX/ISUFFIX/QIPREFIX/QISUFFIX/CURRENT/words/
+// compstate) ported in src/ported/zle/complete.rs + accessed via
+// getsparam/setsparam/getiparam/setiparam from src/ported/params.rs.
+// `zstyle.rs` (the () facade) deleted as middleman.
+// Engine ports call `crate::ported::modules::zutil::lookupstyle`
+// / `testforstyle` directly inline.
+// Deleted shell-builtin dups: compadd, compset, computil, zstyle (in
+// src/ported/zle/{complete,computil}.rs + src/ported/modules/zutil.rs),
+// compcore + completion + matching (in src/ported/zle/{compcore,
+// comp_h,compmatch}.rs), menu (in src/ported/zle/complist.rs),
+// state (shell-side globals in src/ported/zle/compcore.rs), zle (in
+// src/ported/zle/zle_*.rs). Callers route through the real
+// `bin_*`/state in `crate::ported::*`.
+// system.rs deleted — dup of completion-extension code that depended
+// on the deleted Completion/CompletionReceiver types.
 pub mod zpwr_colors;
-pub mod zstyle;
 
-pub use ported::_arguments::{
-    arguments_analyze, arguments_execute, parse_action, ActionType, ArgRequirement,
-    ArgumentsAnalysis, ArgumentsSpec, ArgumentsState, OptSpec, OptType,
-};
 pub use base::{
     // Tag/spec types (still defined in base.rs)
-    Alternative,
     CompleterResult,
     CompletionContext as BaseCompletionContext,
     MainCompleteState,
-    TagManager,
-    Value,
+    Value
 };
-// Per-fn ports — these moved to `compsys/ported/Base/{Core,Completer,Utility}/`
-// and base.rs re-exports them, but pull them straight from `ported::` for
-// downstream callers that want the canonical path.
-pub use ported::{
-    _all_labels, _alternative, _approximate, _complete, _description as base_description,
-    _dispatch, _ignored, _main_complete, _message, _multi_parts, _next_label, _normal, _sep_parts,
-    _values, _wanted, get_ignored_patterns, is_ignored,
-};
-pub use compadd::{compadd_execute, CompadOpts};
-pub use compcore::{
-    do_completion, sort_and_prioritize, AmbiguousInfo, CompletionMode, CompletionRequestOptions,
-    CompletionState, MenuInfo,
-};
+// TagManager removed — dup of comptags machinery in
+// src/ported/zle/computil.rs::bin_comptags.
+// Engine-port re-exports gutted alongside compcore.rs deletion — every
+// `_<name>` port body was stubbed because its body depended on the
+// deleted `CompletionState`. Re-add as ports are properly migrated to
+// use `crate::ported::zle::compcore::addmatch` against shell-side state.
 pub use ported::compinit::{
     build_cache_from_fpath, cache_entry_count, cache_is_valid, check_dump, compdump, compinit,
     compinit_lazy, get_system_fpath, load_from_cache, CompDef, CompFile, CompFileDef, CompInitOpts,
     CompInitResult,
 };
-pub use completion::{
-    Completion, CompletionFlags, CompletionGroup, CompletionReceiver, GroupFlags,
-};
-pub use compset::{
-    compcall_execute, compquote_execute, compset_execute, CompcallOpts, CompquoteOpts, CompsetOp,
-};
-pub use computil::{
-    describe_execute, ArgSpec as UtilArgSpec, CompArguments, CompDescribe, CompFiles,
-    CompGroupConfig, CompGroups, CompTags, CompValues, ValueSpec,
-};
-pub use ported::_describe::{describe_execute as native_describe, parse_items, DescribeItem, DescribeOpts};
-pub use ported::_files::{directories_execute, files_execute, FilesOpts};
-use ported::{_arguments, _describe, _files};
-pub use generate::{
-    complete_builtins, complete_commands_from_cache, complete_files, complete_from_cache_function,
-    complete_parameters, complete_shell_functions, detect_completion_context, generate_completions,
-    CompContext,
-};
-pub use menu::{
-    default_menuselect_bindings, parse_bindkey_output, GroupLayout, KeySequence, MenuAction,
-    MenuColors, MenuItem, MenuKeymap, MenuLine, MenuMotion, MenuRendering, MenuResult, MenuState,
-    SearchDirection, GROUP_COLORS,
-};
-pub use shell_runner::{
-    call_program, BuiltinDispatcher, CompletionResult, CompletionRunner, ShellCompletionContext,
-};
-pub use state::{CompParams, CompState, CompletionContext};
-pub use system::{groups, hosts, net_interfaces, pids, ports, signals, urls, users};
-pub use zle::{ZleAction, ZleCompletionState, ZleWidgets};
+
+// completion::* re-exports removed alongside completion.rs deletion.
+// Engine ports must use `crate::ported::zle::comp_h::{Cmatch, Cmgroup}`.
+// state::* re-exports removed alongside state.rs deletion.
+// menu::* re-exports removed alongside menu.rs deletion.
+
 pub use zpwr_colors::{
     load_zpwr_config, parse_zstyles_from_config, parse_zstyles_from_content, zpwr_list_colors,
     HeaderColors, ParsedZstyle, ZstyleColors, DEFAULT_PREFIX_COLOR, MENU_SELECTION_COLOR,
-};
-pub use zstyle::{
-    ZStyle, ZStyleLookup, ZStyleStore, STANDARD_COMPLETERS, STANDARD_STYLES, STANDARD_TAGS,
 };

@@ -23,10 +23,7 @@
 //!     `compsys::base::{…}` re-exports in `compsys/lib.rs`) continue
 //!     to resolve.
 
-use crate::compsys::compcore::CompletionState;
 use std::collections::{HashMap, HashSet};
-
-use crate::compsys::zstyle::ZStyleStore;
 
 // =============================================================================
 // Core context / state types
@@ -47,122 +44,11 @@ pub struct CompletionContext {
     pub matcher_num: usize,
 }
 
-/// Tag set management for completion
-#[derive(Clone, Debug, Default)]
-pub struct TagManager {
-    /// All offered tags for this completion
-    offered: Vec<String>,
-    /// Tag sets to try, in order
-    try_sets: Vec<Vec<String>>,
-    /// Current try index
-    current_try: usize,
-    /// Tags currently being tried
-    current_tags: HashSet<String>,
-    /// Tags that have been requested
-    requested: HashSet<String>,
-}
-
-impl TagManager {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Initialize tags (_tags with arguments)
-    /// Called at start of completion to declare available tags
-    pub fn init(&mut self, tags: &[String]) {
-        self.offered = tags.to_vec();
-        self.try_sets.clear();
-        self.current_try = 0;
-        self.current_tags.clear();
-        self.requested.clear();
-    }
-
-    /// Configure tag order from zstyle 'tag-order'
-    /// Format: Each value is a space-separated list of tags to try together
-    /// Special: "-" means don't try remaining tags
-    /// Example: "files directories" "arguments" "-"
-    pub fn configure_from_style(&mut self, tag_order: &[String]) {
-        self.try_sets.clear();
-
-        for group in tag_order {
-            if group == "-" {
-                break;
-            }
-
-            let tags: Vec<String> = group
-                .split_whitespace()
-                .filter(|t| self.offered.contains(&t.to_string()))
-                .map(|s| s.to_string())
-                .collect();
-
-            if !tags.is_empty() {
-                self.try_sets.push(tags);
-            }
-        }
-
-        // If no tag-order or all filtered, use default (all offered at once)
-        if self.try_sets.is_empty() {
-            self.try_sets.push(self.offered.clone());
-        }
-    }
-
-    /// Add a tag set to try (comptry)
-    pub fn add_try(&mut self, tags: &[String]) {
-        let available: Vec<String> = tags
-            .iter()
-            .filter(|t| self.offered.contains(t))
-            .cloned()
-            .collect();
-        if !available.is_empty() {
-            self.try_sets.push(available);
-        }
-    }
-
-    /// Start trying tags - returns true if there are tags to try
-    pub fn start(&mut self) -> bool {
-        self.current_try = 0;
-        self.load_current_set();
-        !self.current_tags.is_empty()
-    }
-
-    /// Move to next tag set (_tags with no arguments)
-    /// Returns true if there are more tags
-    #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> bool {
-        self.current_try += 1;
-        self.load_current_set();
-        !self.current_tags.is_empty()
-    }
-
-    fn load_current_set(&mut self) {
-        self.current_tags.clear();
-        if self.current_try < self.try_sets.len() {
-            for tag in &self.try_sets[self.current_try] {
-                self.current_tags.insert(tag.clone());
-            }
-        }
-    }
-
-    /// Check if a tag is being tried (_requested)
-    pub fn requested(&mut self, tag: &str) -> bool {
-        if self.current_tags.contains(tag) {
-            self.requested.insert(tag.to_string());
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Check if a tag was requested without marking it (_wanted)
-    pub fn wanted(&self, tag: &str) -> bool {
-        self.current_tags.contains(tag)
-    }
-
-    /// Get all currently active tags
-    pub fn current(&self) -> &HashSet<String> {
-        &self.current_tags
-    }
-}
+// TagManager deleted — dup of zsh's tag-set machinery exposed via
+// `bin_comptags` at `src/ported/zle/computil.rs:6364`. Engine ports
+// that need tag-order accounting should call
+// `crate::ported::zle::computil::bin_comptags("comptags", &argv, &ops, 0)`
+// directly.
 
 /// Result from a completer function
 #[derive(Clone, Debug)]
@@ -181,12 +67,11 @@ pub type CompleterFn = fn(&mut MainCompleteState) -> CompleterResult;
 /// State for _main_complete
 #[derive(Debug)]
 pub struct MainCompleteState {
-    /// Completion state
-    pub comp: CompletionState,
-    /// Style store
-    pub styles: ZStyleStore,
-    /// Tag manager
-    pub tags: TagManager,
+    // `comp: CompletionState` field removed alongside compcore.rs
+    // deletion. Engine ports must now read/write shell-side state in
+    // `src/ported/zle/compcore.rs` directly.
+    // `tags: TagManager` field removed alongside TagManager deletion.
+    // Engine ports call bin_comptags directly.
     /// Context
     pub ctx: CompletionContext,
     /// Completers to use
@@ -215,11 +100,8 @@ pub struct MainCompleteState {
 }
 
 impl MainCompleteState {
-    pub fn new(line: &str, cursor: usize) -> Self {
+    pub fn new(_line: &str, _cursor: usize) -> Self {
         Self {
-            comp: CompletionState::from_line(line, cursor),
-            styles: ZStyleStore::new(),
-            tags: TagManager::new(),
             ctx: CompletionContext::default(),
             completers: vec!["_complete".to_string(), "_ignored".to_string()],
             lastcomp: HashMap::new(),
@@ -242,30 +124,6 @@ impl MainCompleteState {
 // =============================================================================
 // Spec types used by _alternative / _values
 // =============================================================================
-
-/// Alternative specification — parses "tag:description:action".
-#[derive(Clone, Debug)]
-pub struct Alternative {
-    pub tag: String,
-    pub description: String,
-    pub action: String,
-}
-
-impl Alternative {
-    /// Parse "tag:description:action" format
-    pub fn parse(spec: &str) -> Option<Self> {
-        let parts: Vec<&str> = spec.splitn(3, ':').collect();
-        if parts.len() < 3 {
-            return None;
-        }
-        Some(Self {
-            tag: parts[0].to_string(),
-            description: parts[1].to_string(),
-            action: parts[2].to_string(),
-        })
-    }
-}
-
 /// Value with optional argument for _values
 #[derive(Clone, Debug)]
 pub struct Value {
@@ -343,130 +201,6 @@ pub use crate::compsys::ported::{
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_tag_manager() {
-        let mut tags = TagManager::new();
-        tags.init(&[
-            "files".to_string(),
-            "directories".to_string(),
-            "commands".to_string(),
-        ]);
-
-        tags.add_try(&["files".to_string(), "directories".to_string()]);
-        tags.add_try(&["commands".to_string()]);
-
-        assert!(tags.start());
-        assert!(tags.wanted("files"));
-        assert!(tags.wanted("directories"));
-        assert!(!tags.wanted("commands"));
-
-        assert!(tags.next());
-        assert!(!tags.wanted("files"));
-        assert!(tags.wanted("commands"));
-
-        assert!(!tags.next());
-    }
-
-    #[test]
-    fn test_tag_manager_configure_from_style() {
-        let mut tags = TagManager::new();
-        tags.init(&[
-            "files".to_string(),
-            "directories".to_string(),
-            "commands".to_string(),
-            "options".to_string(),
-        ]);
-
-        // Configure with tag-order style values
-        tags.configure_from_style(&[
-            "commands options".to_string(),
-            "files directories".to_string(),
-        ]);
-
-        assert!(tags.start());
-        assert!(tags.wanted("commands"));
-        assert!(tags.wanted("options"));
-        assert!(!tags.wanted("files"));
-
-        assert!(tags.next());
-        assert!(tags.wanted("files"));
-        assert!(tags.wanted("directories"));
-        assert!(!tags.wanted("commands"));
-
-        assert!(!tags.next());
-    }
-
-    #[test]
-    fn test_tag_manager_configure_with_dash_stop() {
-        let mut tags = TagManager::new();
-        tags.init(&[
-            "files".to_string(),
-            "directories".to_string(),
-            "commands".to_string(),
-        ]);
-
-        // "-" should stop processing remaining tag groups
-        tags.configure_from_style(&[
-            "files".to_string(),
-            "-".to_string(),
-            "commands".to_string(), // Should be ignored
-        ]);
-
-        assert!(tags.start());
-        assert!(tags.wanted("files"));
-        assert!(!tags.wanted("commands"));
-
-        assert!(!tags.next()); // No more groups
-    }
-
-    #[test]
-    fn test_tag_manager_requested_marks_tag() {
-        let mut tags = TagManager::new();
-        tags.init(&["files".to_string(), "commands".to_string()]);
-        tags.add_try(&["files".to_string(), "commands".to_string()]);
-        tags.start();
-
-        // wanted() doesn't mark as requested
-        assert!(tags.wanted("files"));
-        assert!(!tags.requested.contains("files"));
-
-        // requested() marks as requested
-        assert!(tags.requested("files"));
-        assert!(tags.requested.contains("files"));
-    }
-
-    #[test]
-    fn test_alternative_parse() {
-        let alt = Alternative::parse("files:file:_files").unwrap();
-        assert_eq!(alt.tag, "files");
-        assert_eq!(alt.description, "file");
-        assert_eq!(alt.action, "_files");
-    }
-
-    #[test]
-    fn test_alternative_parse_with_special_chars() {
-        let alt = Alternative::parse("urls:URL:_urls -f").unwrap();
-        assert_eq!(alt.tag, "urls");
-        assert_eq!(alt.description, "URL");
-        assert_eq!(alt.action, "_urls -f");
-    }
-
-    #[test]
-    fn test_alternative_parse_empty_description() {
-        let alt = Alternative::parse("files::_files").unwrap();
-        assert_eq!(alt.tag, "files");
-        assert_eq!(alt.description, "");
-        assert_eq!(alt.action, "_files");
-    }
-
-    #[test]
-    fn test_alternative_parse_invalid() {
-        assert!(Alternative::parse("invalid").is_none());
-        assert!(Alternative::parse("only:two").is_none());
-        assert!(Alternative::parse("").is_none());
-    }
-
     #[test]
     fn test_value_parse() {
         let val = Value::parse("debug[enable debugging]").unwrap();
@@ -499,25 +233,6 @@ mod tests {
     }
 
     #[test]
-    fn test_main_complete_state() {
-        let state = MainCompleteState::new("git checkout", 12);
-        assert_eq!(state.comp.params.prefix, "checkout");
-    }
-
-    #[test]
-    fn test_main_complete_state_empty() {
-        let state = MainCompleteState::new("", 0);
-        assert_eq!(state.comp.params.prefix, "");
-        assert_eq!(state.comp.params.current, 1);
-    }
-
-    #[test]
-    fn test_main_complete_state_mid_word() {
-        let state = MainCompleteState::new("git che", 7);
-        assert_eq!(state.comp.params.prefix, "che");
-    }
-
-    #[test]
     fn test_context_string() {
         let mut state = MainCompleteState::new("git checkout", 12);
         state.ctx.context = "complete".to_string();
@@ -547,59 +262,6 @@ mod tests {
         assert!(!is_ignored("anything", &patterns));
     }
 
-    #[test]
-    fn test_description_basic() {
-        let mut state = CompletionState::new();
-        let styles = ZStyleStore::new();
-
-        let result = _description(&mut state, &styles, ":completion:", "files", "file");
-        assert_eq!(result, Some("file".to_string())); // Default format is %d
-    }
-
-    #[test]
-    fn test_description_with_format() {
-        let mut state = CompletionState::new();
-        let mut styles = ZStyleStore::new();
-        styles.set(
-            ":completion::files",
-            "format",
-            vec!["-- %d --".to_string()],
-            false,
-        );
-
-        let result = _description(&mut state, &styles, ":completion:", "files", "file");
-        assert_eq!(result, Some("-- file --".to_string()));
-    }
-
-    #[test]
-    fn test_description_with_hidden_all() {
-        let mut state = CompletionState::new();
-        let mut styles = ZStyleStore::new();
-        styles.set(
-            ":completion::files",
-            "hidden",
-            vec!["all".to_string()],
-            false,
-        );
-
-        let result = _description(&mut state, &styles, ":completion:", "files", "file");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_description_percent_escape() {
-        let mut state = CompletionState::new();
-        let mut styles = ZStyleStore::new();
-        styles.set(
-            ":completion::files",
-            "format",
-            vec!["100%% %d".to_string()],
-            false,
-        );
-
-        let result = _description(&mut state, &styles, ":completion:", "files", "complete");
-        assert_eq!(result, Some("100% complete".to_string()));
-    }
 
     #[test]
     fn test_completer_result_variants() {

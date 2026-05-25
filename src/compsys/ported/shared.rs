@@ -3,8 +3,6 @@
 
 use std::path::Path;
 
-use crate::compsys::zstyle::ZStyleStore;
-
 pub fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -101,7 +99,7 @@ fn glob_helper(pat: &[char], txt: &[char]) -> bool {
 /// were spelled `functions::glob_match(...)`, distinct from
 /// `glob_matches` above (which the `library.rs`/`ported/_path_files`
 /// code used). Both share semantics; the duplicate is intentional for
-/// API-shape compat with both call-site styles.
+/// API-shape compat with both call-site ()/* styles */.
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     glob_matches(pattern, text)
 }
@@ -145,18 +143,6 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
     dp[m][n]
 }
 
-/// Get ignored-patterns for a context/tag. Extracted from
-/// `compsys/base.rs::get_ignored_patterns` (was a free helper, not a
-/// shell function). Shared by `_description`/`_message` and any
-/// caller that needs to consult the `ignored-patterns` zstyle.
-pub fn get_ignored_patterns(styles: &ZStyleStore, context: &str, tag: &str) -> Vec<String> {
-    let ctx = format!("{}:{}", context, tag);
-    styles
-        .lookup_values(&ctx, "ignored-patterns")
-        .map(|v| v.to_vec())
-        .unwrap_or_default()
-}
-
 /// Check if a string matches any ignored pattern. Extracted from
 /// `compsys/base.rs::is_ignored`. Uses the same `glob_match` helper
 /// as the rest of the per-fn ports.
@@ -167,6 +153,17 @@ pub fn is_ignored(s: &str, patterns: &[String]) -> bool {
         }
     }
     false
+}
+
+/// `get_ignored_patterns(state, context)` — collect `ignored-patterns`
+/// zstyle values for `context`. STUB 2026-05-24: the real lookup goes
+/// through `bin_zstyle` / `lookupstyle` from `src/ported/modules/zutil.rs`;
+/// pending re-port, this returns an empty list.
+pub fn get_ignored_patterns(
+    _state: &crate::compsys::base::MainCompleteState,
+    _context: &str,
+) -> Vec<String> {
+    Vec::new()
 }
 
 #[cfg(test)]
