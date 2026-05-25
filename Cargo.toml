@@ -60,12 +60,25 @@ name = "zd"
 path = "bins/zd.rs"
 required-features = ["zd"]
 
+# Folded-in compsys binaries (compsys was merged into this crate;
+# see commit "fold compsys into main").
+[[bin]]
+name = "compsys-test"
+path = "bins/compsys-test.rs"
+
+[[bin]]
+name = "menu-demo"
+path = "bins/menu-demo.rs"
+
+[[bin]]
+name = "bench-autoload"
+path = "bins/bench-autoload.rs"
+
 [dependencies]
 ctrlc = "3"
 atty = "0.2"
 reedline = "0.47.0"
 nu-ansi-term = "0.50"
-compsys.workspace = true
 zshrs-daemon = { workspace = true, optional = true }
 fusevm = "0.12.1"
 regex = "1.11"
@@ -75,7 +88,8 @@ indexmap = "2"
 parking_lot = "0.12"
 thiserror = "2"
 nix = { version = "0.29", features = ["signal", "process", "term", "fs"] }
-rusqlite = "0.32"
+rusqlite = { version = "0.32", features = ["bundled"] }
+regex-lite = "0.1"
 dirs = "5"
 bitflags = "2"
 tempfile = "3"
@@ -159,7 +173,7 @@ ureq = { version = "2", default-features = false, features = ["json"] }
 base64 = "0.22"
 
 [workspace]
-members = [".", "compsys", "daemon"]
+members = [".", "daemon"]
 
 
 # Single source of truth for inter-crate path-dep versions. Updated by
@@ -167,7 +181,6 @@ members = [".", "compsys", "daemon"]
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-compsys = { path = "compsys", version = "0.11.13" }
 zshrs-daemon = { path = "daemon", version = "0.11.13" }
 
 [profile.release]

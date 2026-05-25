@@ -248,7 +248,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
 
     // compdef: each (function, "cmd1 cmd2 ...") row replays through
     // the same compdef builtin install path
-    // (compsys::compdef::compdef_execute) that runtime `compdef _git
+    // (crate::compsys::compdef::compdef_execute) that runtime `compdef _git
     // git` would have used. Recorder captures with format
     // `name=function value="cmd1 cmd2 …"` (per `builtin_compdef` in
     // src/vm_helper).
@@ -259,11 +259,11 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         // recorder ingest creates the cache; subsequent shells see
         // it and apply normally.
         if executor.compsys_cache.is_none() {
-            let cache_path = compsys::cache::default_cache_path();
+            let cache_path = crate::compsys::cache::default_cache_path();
             if let Some(parent) = cache_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            match compsys::cache::CompsysCache::open(&cache_path) {
+            match crate::compsys::cache::CompsysCache::open(&cache_path) {
                 Ok(c) => {
                     tracing::info!(
                         path = %cache_path.display(),
@@ -286,7 +286,7 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
                 if args.len() < 2 {
                     continue; // recorder dropped the cmd list — can't replay
                 }
-                let _rc = compsys::compdef::compdef_execute(cache, &args);
+                let _rc = crate::compsys::compdef::compdef_execute(cache, &args);
                 total += 1;
             }
         }

@@ -172,10 +172,10 @@ fn every_operator_has_real_doc() {
 
 #[test]
 fn every_compsys_fn_has_real_doc() {
-    // Rust-native compsys functions (`compsys::COMPSYS_FN_NAMES`).
+    // Rust-native compsys functions (`zsh::compsys::COMPSYS_FN_NAMES`).
     // Most resolve via the yodl-derived BUILTIN_DOCS table (compsys.yo
     // / compwid.yo) — anything missing needs a hand fallback.
-    let mut names: Vec<&'static str> = compsys::COMPSYS_FN_NAMES.iter().copied().collect();
+    let mut names: Vec<&'static str> = zsh::compsys::COMPSYS_FN_NAMES.iter().copied().collect();
     names.sort();
     let m = audit("compsys", &names);
     assert!(m.is_empty(), "{} compsys fns have placeholder docs: {:?}", m.len(), m);

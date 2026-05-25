@@ -37,6 +37,7 @@
 // crate-wide.
 #![allow(clippy::all)]
 
+pub mod compsys;
 pub mod exec_jobs;
 pub mod extensions;
 pub mod ported;

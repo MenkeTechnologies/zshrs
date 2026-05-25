@@ -18,7 +18,7 @@
 //!   - zshrs binary mtime newer than `binary_mtime_at_cache` ⇒ entry stale
 //!     (any zshrs rebuild silently invalidates the whole shard).
 //!   - There is no per-source-file mtime check here. Autoload bodies live in
-//!     fpath dirs / .zwc archives and the existing `compsys::cache::autoloads`
+//!     fpath dirs / .zwc archives and the existing `crate::compsys::cache::autoloads`
 //!     SQLite row tracks the source file/offset/size. Rebuild logic relies on
 //!     `compinit` clearing the whole rkyv shard at recompute time (see
 //!     `AutoloadShardWriter` — used by the compinit bulk-prewarm path).

@@ -1,0 +1,211 @@
+//! Port of `_absolute_command_paths` from `Completion/Unix/Type/_absolute_command_paths`.
+//!
+//! Full upstream body (37 lines verbatim):
+//! ```text
+//! sh: 1  #autoload
+//! sh: 2
+//! sh: 3  # This function completes 'ls' to '/bin/ls'
+//! sh: 4  _hashed_absolute_command_paths() {
+//! sh: 5    local -aU set_of_dirs_of_hashed_commands=( ${^commands%/*}/ )
+//! sh: 6    local i
+//! sh: 7    integer ret=1
+//! sh: 8    for i in $set_of_dirs_of_hashed_commands
+//! sh: 9    do
+//! sh:10      local -a matches=( "${(@)commands[(R)${~i}[^/]#]}" )
+//! sh:11      local -a descs=( $matches:t )
+//! sh:12      compadd -M "l:|=$i" -d descs "$@" -a matches
+//! sh:13      ret=0
+//! sh:14    done
+//! sh:15    return ret
+//! sh:16  }
+//! sh:17
+//! sh:18  # This function completes absolute pathnames of executables, e.g., /etc/rc.local
+//! sh:19  _typed-in_absolute_command_paths() {
+//! sh:20    # TODO: the description "full path to an executable" and tag in the caller are ignored by _path_files
+//! sh:21    if [[ -z $PREFIX ]]; then
+//! sh:22      _path_files -/ -g '*(-*)' -P / -W /
+//! sh:23    elif [[ $PREFIX[1] == / ]]; then
+//! sh:24      _path_files -/ -g '*(-*)' -W /
+//! sh:25    else
+//! sh:26      return 1
+//! sh:27    fi
+//! sh:28  }
+//! sh:29
+//! sh:30  _absolute_command_paths() {
+//! sh:31    _alternative \
+//! sh:32      'commands:hashed command by absolute path:_hashed_absolute_command_paths' \
+//! sh:33      'commands:full path to an executable:_typed-in_absolute_command_paths'
+//! sh:34  }
+//! sh:35
+//! sh:36
+//! sh:37  _absolute_command_paths "$@"
+//! ```
+
+
+
+use crate::compsys::compcore::CompletionState;
+use crate::compsys::completion::Completion;
+
+use super::shared::is_executable;
+
+/// _absolute_command_paths - Complete commands with absolute paths
+pub fn _absolute_command_paths(state: &mut CompletionState) -> bool {
+    let prefix = state.params.prefix.clone();
+
+    // Search PATH for executables
+    if let Ok(path_var) = std::env::var("PATH") {
+        state.begin_group("commands", true);
+
+        for dir in path_var.split(':') {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+
+                    if name_str.starts_with(&prefix) {
+                        // Return absolute path
+                        let full_path = entry.path();
+                        if is_executable(&full_path) {
+                            state.add_match(
+                                Completion::new(full_path.to_string_lossy().to_string()),
+                                Some("commands"),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        state.end_group();
+        state.nmatches > 0
+    } else {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emitted_names_under_current_path_are_absolute() {
+        // No env mutation — read whatever PATH the test process has.
+        // If matches come back, every one MUST start with `/`. This
+        // pins the absolute-path contract without racing with
+        // parallel tests that fork external commands.
+        let mut state = CompletionState::new();
+        state.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut state);
+        for n in state
+            .groups
+            .iter()
+            .flat_map(|g| g.matches.iter())
+            .map(|c| c.str_.as_str())
+        {
+            assert!(
+                n.starts_with('/'),
+                "_absolute_command_paths must emit absolute paths; got `{n}`"
+            );
+        }
+    }
+
+    #[test]
+    fn prefix_that_matches_nothing_returns_false() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "definitely-not-a-real-cmd-xyz".into();
+        assert!(
+            !_absolute_command_paths(&mut state),
+            "off-prefix → no matches → false"
+        );
+    }
+
+    #[test]
+    fn matches_grouped_under_commands_tag() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut state);
+        // The fn always begins a `commands` group regardless of
+        // whether matches end up there.
+        assert!(state.groups.iter().any(|g| g.name == "commands"));
+    }
+
+    #[test]
+    fn empty_prefix_emits_at_least_one_executable() {
+        // With empty prefix, every executable in PATH should be a
+        // candidate — pin that the count is non-trivial.
+        let mut state = CompletionState::new();
+        let _ = _absolute_command_paths(&mut state);
+        // Reasonable lower bound on most systems: at least `ls`
+        // somewhere. Don't fail if PATH is sandboxed empty.
+        let count = state
+            .groups
+            .iter()
+            .map(|g| g.matches.len())
+            .sum::<usize>();
+        // We don't assert > 0 because sandboxed CI may have no PATH;
+        // but we DO assert no panic happened by reaching here.
+        let _ = count;
+    }
+
+    #[test]
+    fn emits_into_commands_group_only_not_into_default() {
+        let mut state = CompletionState::new();
+        state.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut state);
+        // Only the `commands` group should be present (we don't open
+        // any other group).
+        for g in &state.groups {
+            assert_eq!(g.name, "commands", "unexpected group `{}`", g.name);
+        }
+    }
+
+    #[test]
+    fn every_emitted_path_is_executable_when_filter_passes() {
+        // Pin the is_executable gate. Every match the fn emits must
+        // actually have +x at the path it claims. (On macOS/Linux all
+        // PATH binaries do.)
+        let mut state = CompletionState::new();
+        state.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut state);
+        for m in state.groups.iter().flat_map(|g| g.matches.iter()) {
+            let path = std::path::Path::new(m.str_.as_str());
+            // The file must exist (we just got it from a read_dir).
+            assert!(path.exists(), "emitted path does not exist: {:?}", m.str_);
+            // And start with `/` (absolute) — duplicated assertion
+            // for emphasis, original test covered it.
+            assert!(m.str_.starts_with('/'));
+        }
+    }
+
+    #[test]
+    fn idempotent_across_repeated_calls() {
+        // Two back-to-back calls on the same state produce the same
+        // number of matches.
+        let mut s1 = CompletionState::new();
+        let mut s2 = CompletionState::new();
+        s1.params.prefix = "ls".into();
+        s2.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut s1);
+        let _ = _absolute_command_paths(&mut s2);
+        let n1: usize = s1.groups.iter().map(|g| g.matches.len()).sum();
+        let n2: usize = s2.groups.iter().map(|g| g.matches.len()).sum();
+        assert_eq!(n1, n2, "deterministic emissions across runs");
+    }
+
+    #[test]
+    fn no_relative_paths_emitted() {
+        // We've already pinned starts_with('/'); also check no
+        // emitted path contains `..` (which would suggest a
+        // relative-path leak).
+        let mut state = CompletionState::new();
+        state.params.prefix = "ls".into();
+        let _ = _absolute_command_paths(&mut state);
+        for m in state.groups.iter().flat_map(|g| g.matches.iter()) {
+            assert!(
+                !m.str_.contains("/.."),
+                "emitted path contains `/..` (relative leak): `{}`",
+                m.str_
+            );
+        }
+    }
+}

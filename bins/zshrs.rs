@@ -29,7 +29,7 @@ use zsh::history::HistoryEngine;
 use zsh::vm_helper::ShellExecutor;
 use zsh::zwc;
 
-use compsys::{
+use zsh::compsys::{
     build_cache_from_fpath, cache::CompsysCache, compinit_lazy, completion::CompletionGroup,
     do_completion, get_system_fpath, menu::MenuState, Completion as CompsysCompletion,
     CompletionState,
@@ -1863,14 +1863,14 @@ fn run_doctor() {
         dim("daemon-maintained; not read on cache lookup / hot path")
     );
 
-    let compsys_path = compsys::cache::default_cache_path();
+    let compsys_path = zsh::compsys::cache::default_cache_path();
     if compsys_path.exists() {
         let size = std::fs::metadata(&compsys_path)
             .map(|m| m.len())
             .unwrap_or(0);
         let count = CompsysCache::open(&compsys_path)
             .ok()
-            .map(|c| compsys::cache_entry_count(&c))
+            .map(|c| zsh::compsys::cache_entry_count(&c))
             .unwrap_or(0);
         println!(
             "  compsys.db:  {} completions, {}  {}",
@@ -3086,7 +3086,7 @@ impl ZshMenuSelect {
         }
 
         // Group suggestions by their extra[0] tag (e.g. "command", "file", "option")
-        let mut groups: std::collections::HashMap<String, Vec<compsys::Completion>> =
+        let mut groups: std::collections::HashMap<String, Vec<zsh::compsys::Completion>> =
             std::collections::HashMap::new();
 
         for sugg in &self.values {
@@ -3097,7 +3097,7 @@ impl ZshMenuSelect {
                 .cloned()
                 .unwrap_or_else(|| "completions".to_string());
 
-            let mut comp = compsys::Completion::new(&sugg.value);
+            let mut comp = zsh::compsys::Completion::new(&sugg.value);
             if let Some(ref desc) = sugg.description {
                 comp.desc = Some(desc.clone());
             }
@@ -3205,35 +3205,35 @@ impl ReedlineMenuTrait for ZshMenuSelect {
                 }
                 MenuEvent::NextElement => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(compsys::MenuAction::Next);
+                    let _ = self.state.process_action(zsh::compsys::MenuAction::Next);
                 }
                 MenuEvent::PreviousElement => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(compsys::MenuAction::Prev);
+                    let _ = self.state.process_action(zsh::compsys::MenuAction::Prev);
                 }
                 MenuEvent::MoveUp => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(compsys::MenuAction::Up);
+                    let _ = self.state.process_action(zsh::compsys::MenuAction::Up);
                 }
                 MenuEvent::MoveDown => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(compsys::MenuAction::Down);
+                    let _ = self.state.process_action(zsh::compsys::MenuAction::Down);
                 }
                 MenuEvent::MoveLeft => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(compsys::MenuAction::Left);
+                    let _ = self.state.process_action(zsh::compsys::MenuAction::Left);
                 }
                 MenuEvent::MoveRight => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(compsys::MenuAction::Right);
+                    let _ = self.state.process_action(zsh::compsys::MenuAction::Right);
                 }
                 MenuEvent::NextPage => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(compsys::MenuAction::PageDown);
+                    let _ = self.state.process_action(zsh::compsys::MenuAction::PageDown);
                 }
                 MenuEvent::PreviousPage => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(compsys::MenuAction::PageUp);
+                    let _ = self.state.process_action(zsh::compsys::MenuAction::PageUp);
                 }
             }
         }
@@ -3456,7 +3456,7 @@ impl Completer for ZshrsCompleter {
             let prefix_exec = prefix.clone();
             let exec_handle = std::thread::spawn(move || -> Vec<Suggestion> {
                 let mut results = Vec::new();
-                if let Ok(cache) = compsys::cache::CompsysCache::open(&cache_path) {
+                if let Ok(cache) = zsh::compsys::cache::CompsysCache::open(&cache_path) {
                     if let Ok(executables) = cache.get_executables_prefix_fts(&prefix_exec) {
                         for (name, path) in executables.into_iter().take(100) {
                             results.push(Suggestion {
@@ -3583,7 +3583,7 @@ impl Completer for ZshrsCompleter {
             let prefix_func = prefix.clone();
             let func_handle = std::thread::spawn(move || -> Vec<Suggestion> {
                 let mut results = Vec::new();
-                if let Ok(cache) = compsys::cache::CompsysCache::open(&cache_path2) {
+                if let Ok(cache) = zsh::compsys::cache::CompsysCache::open(&cache_path2) {
                     if let Ok(funcs) = cache.get_shell_functions_prefix(&prefix_func) {
                         for (name, source) in funcs.into_iter().take(50) {
                             results.push(Suggestion {

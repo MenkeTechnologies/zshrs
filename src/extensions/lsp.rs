@@ -928,7 +928,7 @@ fn completion(state: &State, params: &Value) -> Value {
             }
             LspCompletionContext::CompdefFn => {
                 let mut items = Vec::new();
-                for n in compsys::COMPSYS_FN_NAMES {
+                for n in crate::compsys::COMPSYS_FN_NAMES {
                     items.push(ctx_item(n, "compsys completion function",
                         &format!("**`{}`** — compsys completion function", n)));
                 }
@@ -1125,7 +1125,7 @@ fn completion(state: &State, params: &Value) -> Value {
     // Compsys functions — `_arguments`, `_files`, `_describe`, the
     // per-command completers (`_git` / `_docker` / `_cargo` / etc.).
     // Useful when authoring completion-spec files.
-    for n in compsys::COMPSYS_FN_NAMES {
+    for n in crate::compsys::COMPSYS_FN_NAMES {
         if want(n) {
             push(&mut items, n, 3, "compsys function");
         }
@@ -3305,7 +3305,7 @@ fn is_known_builtin_with_flag_docs(name: &str) -> bool {
     // call_program in shell_runner.rs, widgets in library.rs, etc.)
     // so they all live in `COMPSYS_FN_NAMES`. Flag completion routes
     // through the per-fn `COMPSYS_FN_FLAG_DOCS` table.
-    let is_compsys = compsys::COMPSYS_FN_NAMES.contains(&name);
+    let is_compsys = crate::compsys::COMPSYS_FN_NAMES.contains(&name);
     if !is_compat && !is_ext && !is_compsys {
         return false;
     }
@@ -3666,11 +3666,11 @@ const COMPSYS_FN_FLAG_DOCS: &[(&str, &[(&str, &str)])] = &[
 const COMPSYS_FN_DOCS: &[(&str, &str)] = &[
     (
         "_main_complete",
-        "Top-level entry the compsys dispatcher calls for every completion attempt. Walks the configured completer list (`_complete` / `_approximate` / `_match` / …), invoking each until one returns matches. Sets `$compstate[insert]` based on the result. Rust impl in `compsys::base::main_complete`.",
+        "Top-level entry the compsys dispatcher calls for every completion attempt. Walks the configured completer list (`_complete` / `_approximate` / `_match` / …), invoking each until one returns matches. Sets `$compstate[insert]` based on the result. Rust impl in `crate::compsys::base::main_complete`.",
     ),
     (
         "_directories",
-        "Complete directory names only. Equivalent to `_files -/`. Honors `path-files` zstyle and respects `GLOB_DOTS`. Rust impl in `compsys::files::directories_execute`.",
+        "Complete directory names only. Equivalent to `_files -/`. Honors `path-files` zstyle and respects `GLOB_DOTS`. Rust impl in `crate::compsys::files::directories_execute`.",
     ),
     (
         "_cargo",
@@ -5018,7 +5018,7 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                     || crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.contains(&w)
                 {
                     12
-                } else if compsys::COMPSYS_FN_NAMES.contains(&w) {
+                } else if crate::compsys::COMPSYS_FN_NAMES.contains(&w) {
                     13
                 } else if BUILTINS.contains(&w) {
                     5
@@ -6246,9 +6246,9 @@ pub fn dump_reflection_json() -> String {
     // ── Compsys completion functions ────────────────────────────────
     // The `_arguments` / `_files` / `_describe` family — Rust-native
     // implementations from the `compsys` crate. Sourced from
-    // `compsys::COMPSYS_FN_NAMES`.
+    // `crate::compsys::COMPSYS_FN_NAMES`.
     let mut compsys = serde_json::Map::new();
-    for n in compsys::COMPSYS_FN_NAMES {
+    for n in crate::compsys::COMPSYS_FN_NAMES {
         compsys.insert((*n).to_string(), Value::String("compsys".into()));
         all.insert((*n).to_string(), Value::String("compsys".into()));
     }
@@ -6331,7 +6331,7 @@ pub fn all_canonical_names() -> Vec<String> {
             set.insert((*name).to_string());
         }
     }
-    for n in compsys::COMPSYS_FN_NAMES {
+    for n in crate::compsys::COMPSYS_FN_NAMES {
         set.insert((*n).to_string());
     }
     for n in crate::ext_builtins::EXT_BUILTIN_NAMES {
@@ -6515,9 +6515,9 @@ pub fn dump_reference_html() -> String {
         "special",
     );
 
-    // ── compsys functions (`compsys::COMPSYS_FN_NAMES`) ──────────────
+    // ── compsys functions (`crate::compsys::COMPSYS_FN_NAMES`) ──────────────
     let mut compsys_names: Vec<String> =
-        compsys::COMPSYS_FN_NAMES.iter().map(|s| s.to_string()).collect();
+        crate::compsys::COMPSYS_FN_NAMES.iter().map(|s| s.to_string()).collect();
     compsys_names.sort();
     write_chapter(
         &mut out,
@@ -6880,7 +6880,7 @@ mod tests {
             "_widgets",
         ] {
             assert!(
-                compsys::COMPSYS_FN_NAMES.contains(&name),
+                crate::compsys::COMPSYS_FN_NAMES.contains(&name),
                 "{name}: missing from COMPSYS_FN_NAMES inventory",
             );
         }

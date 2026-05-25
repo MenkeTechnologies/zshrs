@@ -11,12 +11,12 @@
 //! match line construction used during completion.
 //!
 //! Key C functions and their Rust locations:
-//! - match_str         → compsys::matching::match_str()
-//! - match_parts       → compsys::matching::match_parts()
-//! - comp_match        → compsys::matching::comp_match()
-//! - pattern_match_equivalence → compsys::matching (inline)
-//! - add_match_str/part/sub    → compsys::matching (inline)
-//! - cline_* (match line ops)  → compsys::base::CompletionLine
+//! - match_str         → crate::compsys::matching::match_str()
+//! - match_parts       → crate::compsys::matching::match_parts()
+//! - comp_match        → crate::compsys::matching::comp_match()
+//! - pattern_match_equivalence → crate::compsys::matching (inline)
+//! - add_match_str/part/sub    → crate::compsys::matching (inline)
+//! - cline_* (match line ops)  → crate::compsys::base::CompletionLine
 
 // CompMatcher / MatchFlags / CompLine deleted — Rust-invented structs
 // with no C counterpart. The legit C types `Cmatcher` (comp.h:153),

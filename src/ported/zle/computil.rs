@@ -10,11 +10,11 @@
 //! and the compdescribe/comparguments/compvalues builtins.
 //!
 //! Key C functions and their Rust locations:
-//! - bin_compdescribe  → compsys::describe::describe()
-//! - bin_comparguments → compsys::arguments (full _arguments)
-//! - bin_compvalues    → compsys::computil::compvalues()
-//! - bin_comptags      → compsys::state::comptags()
-//! - bin_comptry       → compsys::state::comptry()
+//! - bin_compdescribe  → crate::compsys::describe::describe()
+//! - bin_comparguments → crate::compsys::arguments (full _arguments)
+//! - bin_compvalues    → crate::compsys::computil::compvalues()
+//! - bin_comptags      → crate::compsys::state::comptags()
+//! - bin_comptry       → crate::compsys::state::comptry()
 
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::Ordering;

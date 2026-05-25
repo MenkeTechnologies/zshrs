@@ -292,18 +292,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "compsys"
-version = "0.11.16"
-dependencies = [
- "dirs",
- "libc",
- "rayon",
- "regex-lite",
- "rusqlite",
- "unicode-width",
-]
-
-[[package]]
 name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3325,7 +3313,6 @@ dependencies = [
  "bitflags 2.11.1",
  "byteorder",
  "chrono",
- "compsys",
  "crossbeam-channel",
  "crossterm 0.27.0",
  "ctrlc",
@@ -3351,6 +3338,7 @@ dependencies = [
  "rayon",
  "reedline",
  "regex",
+ "regex-lite",
  "rkyv",
  "rusqlite",
  "serde",
