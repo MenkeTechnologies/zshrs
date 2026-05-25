@@ -21,7 +21,7 @@
 //! sh:43      compadd -M "r:|/=* r:|=*" -f -a dirs
 //! ```
 //!
-//! Scans peer-zsh `cwd` per-OS. Linux uses /proc/<pid>/cwd; other
+//! Scans peer-zsh `cwd` per-OS. Linux uses `/proc/<pid>/cwd`; other
 //! UNIX falls back to `lsof -d cwd -c zsh -F n` parse.
 
 use crate::compsys::ported::_wanted::_wanted;
