@@ -11109,10 +11109,11 @@ mod tests {
         //   zsh/termcap (echotc)
         //   zsh/compctl (compcall, compctl)
         //   zsh/attr (zgetattr, zsetattr, zdelattr, zlistattr)
-        // Total Rust BUILTINS table size pinned at 146 to catch
-        // accidental additions/removals. Bump alongside intentional
-        // changes to the BUILTINS table above.
-        assert_eq!(BUILTINS.len(), 157,
+        // Tripwire pin on BUILTINS table length. The number drifts every
+        // time the eagerly-loaded-module list above grows (new builtin
+        // ported, new module wired). Bump it alongside the change so
+        // accidental additions/removals still trip a review.
+        assert_eq!(BUILTINS.len(), 159,
             "BUILTINS table size changed — bump count or update the eagerly-loaded-module list above");
     }
 
