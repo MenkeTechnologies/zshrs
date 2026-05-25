@@ -1,0 +1,91 @@
+#compdef readelf eu-readelf
+
+local variant args sections
+
+sections=( .bss .data .dynamic .dynsym .got .interp .shstrtab .symtab .text )
+_pick_variant -r variant elftoolchain=elftoolchain elfutils=elfutils binutils --version
+
+args=(
+  '(-a --all)'{-a,--all}'[show all tables]'
+  '(-g --section-groups)'{-g,--section-groups}'[show section groups]'
+  '(-h --file-header)'{-h,--file-header}'[show file header]'
+  '(-l --program-headers --segments)'{-l,--program-headers,--segments}'[show program headers]'
+  '(-S --section-headers --sections)'{-S,--section-headers,--sections}'[show sections header]'
+  '(-r --relocs)'{-r,--relocs}'[show relocations (if present)]'
+  '(-d --dynamic)'{-d,--dynamic}'[show dynamic section (if present)]'
+  '(-V --version-info)'{-V,--version-info}'[show version sections (if present)]'
+  '(-A --arch-specific)'{-A,--arch-specific}'[show architecture specific information (if any)]'
+  '(-c --archive-index)'{-c,--archive-index}'[show symbol/file index in an archive]'
+  '(-D --use-dynamic)'{-D,--use-dynamic}'[use dynamic section info when showing symbols]'
+  \*{-x,--hex-dump=}"[dump contents of specified section as bytes]:section:($sections)"
+  \*{-p,--string-dump=}"[dump contents of specified section as strings]:section:($sections)"
+  '*-w+[show the contents of DWARF2 debug sections]::debug section:(a A r c f F g i k K N D E l L m o O p r R s t T u U)'
+  '*--debug-dump=[show the contents of DWARF2 debug sections]::section:(abbrev addr cu_index frames frames-interp gdb_index info links follow-links no-follow-links use-debuginfod do-not-use-debuginfod rawline decodedline macro loc str-offsets pubnames aranges Ranges str pubtype trace_aranges trace_abbrev trace_info)'
+  '(-P --process-links)'{-P,--process-links}'[display the contents of non-debug sections in separate debuginfo files]'
+  '(-I --histogram)'{-I,--histogram}'[show histogram of bucket list lengths]'
+  '(-W --wide)'{-W,--wide}'[allow output width to exceed 80 characters]'
+  '(- *)'{-H,--help}'[display help information]'
+  '(- *)'{-v,--version}'[display version information]'
+  "*:elf file:_object_files"
+)
+
+case $variant in
+  elftoolchain|binutils)
+    args+=(
+      '(-t --section-details)'{-t,--section-details}'[show section details]'
+      '(-e --headers)'{-e,--headers}'[show file, program and sections headers]'
+      '(-s --syms --symbols)'{-s,--syms,--symbols}'[show symbol table]'
+      '(-n --notes)'{-n,--notes}'[show core notes (if present)]'
+      '(-u --unwind)'{-u,--unwind}'[show unwind info (if present)]'
+    )
+  ;|
+  elfutils|binutils)
+    args+=(
+      '--dyn-syms[show dynamic symbol table]'
+    )
+  ;|
+  elfutils|elftoolchain)
+    args+=(
+      '(-z --decompress)'{-z,--decompress}'[show compression information; decompress before dumping data]'
+    )
+  ;|
+  binutils)
+    args+=(
+      '--sym-base=[force base for symbol sizes]:base:(0 8 10 16)'
+      '!(-C --demangle)--no-demangle'
+      '(--demangle)-C[decode symbol names]'
+      '(-C)--demangle=-[decode symbol names]::style [auto]:(none auto gnu-v3 java gnat dlang rust)'
+      '!(--no-recurse-limit)--recurse-limit'
+      '--no-recurse-limit[disable demangling recursion limit]'
+      '-U+[specify how to display unicode characters]:method:(d l e x h i)'
+      '--unicode=[specify how to display unicode characters]:method:(default locale escape hex highlight invalid)'
+      '(-X --extra-sym-info)'{-X,--extra-sym-info}'[display extra information when showing symbols]'
+      '!(-X --extra-sym-info)--no-extra-sym-info'
+      '(-L --lint --enable-checks)'{-L,--lint,--enable-checks}'[display warning messages for possible problems]'
+      \*{-R,--relocated-dump=}"[dump contents of specified section as relocated bytes]:section:($sections)"
+      \*{-j,--display-section=}'[display contents of specified section]:section'
+      "--dwarf-depth=[don't show DIEs at greater than specified depth]:depth"
+      '--dwarf-start=[show DIEs starting at specified depth or deeper]:depth'
+      '--ctf=[display compact C type format info from section]:section'
+      '--ctf-parent=[use specified section as the CTF parent]:section'
+      '--ctf-symbols=[use specified section as the CTF external symbol table]:section'
+      '--ctf-strings=[use specified section as the CTF external string table]:section'
+      '--sframe=-[display SFrame info from section]::section name [.sframe]'
+      '(-T --silent-truncation)'{-T,--silent-truncation}"[if a symbol name is truncated, don't add ... suffix]"
+    )
+  ;;
+  elfutils)
+    args+=(
+      '--dwarf-skeleton=[find skeleton compile units (with -w)]:file:_files'
+      '--elf-section[used specified section as ELF input data]::section'
+      '(-e --exception)'{-e,--exception}'[show sections for exception handling]'
+      '(-N --numeric-addresses)'{-N,--numeric-addresses}"[don't find symbol names for addresses in DWARF data]"
+      '(--symbols)-s[show symbol table]'
+      '(-s)--symbols=-[show symbol table]::section:(.dynsym .symtab)'
+      '(--notes)-n[show core notes (if present)]'
+      '(-n)--notes=-[show core notes (if present)]::section'
+    )
+  ;;
+esac
+
+_arguments -s "$args[@]"

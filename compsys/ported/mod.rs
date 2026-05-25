@@ -33,8 +33,9 @@
 
 // ── Base/Core/ ────────────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_all_labels.rs"] pub mod _all_labels;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_comp_caller_options.rs"] pub mod _comp_caller_options;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_comp_priv_prefix.rs"] pub mod _comp_priv_prefix;
+// `_comp_caller_options` and `_comp_priv_prefix` are shell PARAMETERS,
+// not shell functions — their registry-state lives in `compsys/state.rs`
+// (see `comp_caller_options*` / `comp_priv_prefix*`).
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_description.rs"] pub mod _description;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_dispatch.rs"] pub mod _dispatch;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Core/_main_complete.rs"] pub mod _main_complete;
@@ -54,13 +55,12 @@
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_cache_invalid.rs"] pub mod _cache_invalid;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_call_function.rs"] pub mod _call_function;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_call_program.rs"] pub mod _call_program;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_cmdambivalent.rs"] pub mod _cmdambivalent;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_cmdstring.rs"] pub mod _cmdstring;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_cmdambivalent.rs"] pub mod _cmdambivalent;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_cmdstring.rs"] pub mod _cmdstring;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_combination.rs"] pub mod _combination;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_comp_locale.rs"] pub mod _comp_locale;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_complete_help_generic.rs"] pub mod _complete_help_generic;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_completers.rs"] pub mod _completers;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_default.rs"] pub mod _default;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_completers.rs"] pub mod _completers;
 #[path = "Base/Utility/_describe.rs"] pub mod _describe;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_guard.rs"] pub mod _guard;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Base/Utility/_multi_parts.rs"] pub mod _multi_parts;
@@ -95,15 +95,15 @@
 // ── Unix/Type/ ────────────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_absolute_command_paths.rs"] pub mod _absolute_command_paths;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_canonical_paths.rs"] pub mod _canonical_paths;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_command_names.rs"] pub mod _command_names;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Type/_command_names.rs"] pub mod _command_names;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_dir_list.rs"] pub mod _dir_list;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_directories.rs"] pub mod _directories;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_email_addresses.rs"] pub mod _email_addresses;
 #[path = "Unix/Type/_files.rs"] pub mod _files;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_gnu_generic.rs"] pub mod _gnu_generic;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Command/_gnu_generic.rs"] pub mod _gnu_generic;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_path_commands.rs"] pub mod _path_commands;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_path_files.rs"] pub mod _path_files;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_precommand.rs"] pub mod _precommand;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Command/_precommand.rs"] pub mod _precommand;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Unix/Type/_tilde_files.rs"] pub mod _tilde_files;
 
 // ── Zsh/Command/ ──────────────────────────────────────────────────────
@@ -114,7 +114,7 @@
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_autocd.rs"] pub mod _autocd;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_brace_parameter.rs"] pub mod _brace_parameter;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_condition.rs"] pub mod _condition;
-#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_default.rs"] pub mod _context_default;
+#[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_default.rs"] pub mod _default;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_dynamic_directory_name.rs"] pub mod _dynamic_directory_name;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_equal.rs"] pub mod _equal;
 #[allow(non_snake_case, non_camel_case_types)] #[path = "Zsh/Context/_first.rs"] pub mod _first;
@@ -162,6 +162,10 @@ pub mod shared;
 /// front-end, not a `_NAME` completion fn).
 pub mod compinit;
 
+/// `compdump` — `.zcompdump` cache writer / staleness checker. Split
+/// out of `compinit.rs` to mirror upstream `Completion/compdump`.
+pub mod compdump;
+
 // ── Public re-exports ─────────────────────────────────────────────────
 // Items with richer export shapes (Opts structs, consts, etc.):
 pub use _arg_compile::{_arg_compile, CompiledArgSpec};
@@ -206,7 +210,6 @@ pub use _assign::_assign;
 pub use _autocd::_autocd;
 pub use _brace_parameter::_brace_parameter;
 pub use _condition::_condition;
-pub use _context_default::_default as _context_default;
 pub use _dynamic_directory_name::_dynamic_directory_name;
 pub use _equal::_equal;
 pub use _first::_first;
@@ -239,9 +242,7 @@ pub use _call_function::_call_function;
 pub use _cmdambivalent::_cmdambivalent;
 pub use _cmdstring::_cmdstring;
 pub use _command::{CommandStage, _command};
-pub use _comp_caller_options::_comp_caller_options;
 pub use _comp_locale::_comp_locale;
-pub use _comp_priv_prefix::_comp_priv_prefix;
 pub use _complete::_complete;
 pub use _complete_debug::_complete_debug;
 pub use _complete_help::_complete_help;

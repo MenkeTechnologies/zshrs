@@ -1,0 +1,16 @@
+#compdef system_profiler
+
+typeset -A opt_args
+local context state state_descr line
+local -a _data_types
+
+_data_types=( ${${(f)"$(_call_program data-types system_profiler -listDataTypes 2>/dev/null)"}[2,-1]} )
+
+_arguments \
+  '(- *)-usage' \
+  '(- *)-listDataTypes[lists the available datatypes]' \
+  '(-listDataTypes -usage -json)-xml[generate xml output]' \
+  '(-listDataTypes -usage -xml)-json[generate json output]' \
+  '(-listDataTypes -usage)-detailLevel[level of detail for the report]:detail level:(mini basic full)' \
+  '(-listDataTypes -usage)-timeout+[maximum time to wait in seconds(0 means no timeout)]:timeout seconds' \
+  '(-listDataTypes -usage)*:data type:'"($_data_types)"
