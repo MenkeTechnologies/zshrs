@@ -546,37 +546,23 @@ pub fn getrestchar(inchar: i32) -> i32 {
 }
 
 /// Run the registered redraw hook (`zle-line-pre-redraw` in zsh).
-/// Port of `redrawhook()` from Src/Zle/zle_main.c — the C version looks
-/// up `Th(z_redrawhook)` and executes via `execzlefunc`. This Rust port
-/// queues the hook name on `pending_hooks` for the host to dispatch
-/// after the ZLE call returns; the comment at zle_utils.c:1764
-/// ("If anything here needs changing, see also redrawhook()") is the
-/// reason this matches `zle_call_hook`'s queueing approach exactly.
+/// Port of `redrawhook()` from Src/Zle/zle_main.c:1066.
+///
+/// C dispatches inline via `Th(z_redrawhook)` + `execzlefunc`; this
+/// Rust port appends the hook name onto `pending_hooks` for the host
+/// to dispatch after the ZLE call returns. This matches the queueing
+/// pattern used by every other in-process ZLE hook caller
+/// (`call_hook("zle-line-init", …)`, `call_hook("zle-keymap-select",
+/// …)`, `call_hook("handle-suffix", …)` — see zle_utils.rs:757-758,
+/// 1775). The host's `errflag` / `retflag` save+restore mirrors the
+/// `saverrflag`/`savretflag` block at zle_main.c:1071-1093.
 pub fn redrawhook() {
     // c:1066
-    // c:1069 — `if ((initthingy = rthingy_nocreate("zle-line-pre-redraw")))`.
-    let hook_name = "zle-line-pre-redraw";
-    if !crate::ported::zle::zle_thingy::rthingy_nocreate(hook_name) {
-        return; // c:1069 no hook registered
-    }
-    // c:1071-1077 — save errflag/retflag/lastcmd/incompfunc/viinrepeat
-    // around the call so a hook-side return doesn't leak.
-    let saverrflag = errflag.load(Ordering::Relaxed);
-    let savretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
-    // c:1080 — args = [name].
-    let args = vec![hook_name.to_string()];
-    // c:1087 — `execzlefunc(initthingy, args, 1, 0)`.
-    let _ = execzlefunc(hook_name, &args, 1, 0);
-    // c:1092 — restore errflag (preserving any ERRFLAG_INT bit).
-    let cur_errflag = errflag.load(Ordering::Relaxed);
-    errflag.store(
-        saverrflag | (cur_errflag & crate::ported::zsh_h::ERRFLAG_INT),
-        Ordering::Relaxed,
-    );
-    // c:1093 — restore retflag.
-    crate::ported::builtin::RETFLAG.store(savretflag, Ordering::Relaxed);
-    // c:1095 — `unrefthingy(initthingy)` — Drop on the Thingy returned
-    // by rthingy_nocreate handles the refcount automatically.
+    // c:1069 — C gates on `rthingy_nocreate("zle-line-pre-redraw")`;
+    // Rust queues unconditionally and lets the host's drain loop skip
+    // when no widget is registered (consistent with the other
+    // `call_hook` sites — see zle_utils.rs:757-758 / :1775).
+    crate::ported::zle::zle_utils::call_hook("zle-line-pre-redraw", None);
 }
 
 /// Core ZLE loop.

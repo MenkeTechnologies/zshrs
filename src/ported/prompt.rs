@@ -178,28 +178,16 @@ pub(crate) mod prompt_tls {
 #[allow(non_camel_case_types)]
 pub struct buf_vars {
     // c:Src/prompt.c:76
-    pwd: String,
-    home: String,
-    user: String,
-    host: String,
-    host_short: String,
-    tty: String,
-    // `lastval` / `histnum` / `shlvl` / `num_jobs` / `is_root` / `term_width`
-    // / `lineno` field copies deleted — they aggregated unrelated C globals
-    // (builtin.c lastval, hist.c curhist, params.c shlvl, etc.) onto a struct
-    // whose canonical C definition has none of them. Rule D bag-of-globals.
-    // Callers route through prompt_tls thread_locals directly.
-    cmd_stack: Vec<u8>,
-    psvar: Vec<String>,
-    // `scriptname` / `scriptfilename` / `argzero` field copies deleted —
-    // they aggregated three unrelated C file-statics (init.c `scriptname`,
-    // init.c `scriptfilename`, init.c `argzero`) onto a struct that C's
-    // `buf_vars` (prompt.c:76-121) does NOT have those fields on. PORT.md
-    // Rule D bag-of-globals. Callers route through the per-prompt
-    // snapshot thread_locals `prompt_tls::SCRIPTNAME / SCRIPTFILENAME /
-    // ARGEXTRA` (hydrated from `utils::scriptname_get()` etc.) directly.
-    func_line_base: Option<i64>,
-    funcstack_filename: Option<String>,
+    // Rust-port bag-of-globals dissolution (Rule D / PORT_PLAN.md
+    // Anti-pattern 1). C `struct buf_vars` (prompt.c:76-121) has 9
+    // fields; previous Rust ports aggregated ~25 unrelated C file-
+    // statics here (pwd / home / user / host / host_short / tty /
+    // lastval / histnum / shlvl / num_jobs / is_root / cmd_stack /
+    // psvar / term_width / lineno / scriptname / scriptfilename /
+    // argzero / func_line_base / funcstack_filename). All deleted;
+    // callers route through `prompt_tls::*` per-prompt thread_local
+    // snapshots (hydrated from the canonical statics in utils.rs /
+    // builtin.rs / hist.rs).
     pub buf: Vec<u8>,
     pub bufspc: usize,
     pub bp: usize,
@@ -1307,20 +1295,7 @@ pub fn truecolor_terminal() -> bool {
 impl buf_vars {
     pub fn new(input: &str) -> Self {
         Self {
-            pwd: prompt_tls::PWD.with(|c| c.borrow().clone()),
-            home: prompt_tls::HOME.with(|c| c.borrow().clone()),
-            user: prompt_tls::USER.with(|c| c.borrow().clone()),
-            host: prompt_tls::HOST.with(|c| c.borrow().clone()),
-            host_short: prompt_tls::HOST_SHORT.with(|c| c.borrow().clone()),
-            tty: prompt_tls::TTY.with(|c| c.borrow().clone()),
-            // lastval / histnum / shlvl / num_jobs / is_root / term_width
-            // / lineno — see struct def comment.
-            cmd_stack: prompt_tls::CMDSTACK.with(|c| c.borrow().clone()),
-            psvar: prompt_tls::PSVAR.with(|c| c.borrow().clone()),
-            // scriptname / scriptfilename / argzero fields removed — see
-            // struct def comment.
-            func_line_base: prompt_tls::FUNC_LINE_BASE.with(|c| *c.borrow()),
-            funcstack_filename: prompt_tls::FUNCSTACK_FILENAME.with(|c| c.borrow().clone()),
+            // Bag-of-globals fields removed — see struct def comment.
             buf: vec![0u8; 256],
             bufspc: 256,
             bp: 0,
@@ -1352,20 +1327,7 @@ impl buf_vars {
 
     fn fork_snapshot(&self, input: String) -> buf_vars {
         buf_vars {
-            pwd: self.pwd.clone(),
-            home: self.home.clone(),
-            user: self.user.clone(),
-            host: self.host.clone(),
-            host_short: self.host_short.clone(),
-            tty: self.tty.clone(),
-            // lastval / histnum / shlvl / num_jobs / is_root / term_width
-            // / lineno — see struct def comment.
-            cmd_stack: self.cmd_stack.clone(),
-            psvar: self.psvar.clone(),
-            // scriptname / scriptfilename / argzero fields removed — see
-            // struct def comment.
-            func_line_base: self.func_line_base,
-            funcstack_filename: self.funcstack_filename.clone(),
+            // Bag-of-globals fields removed — see struct def comment.
             buf: Vec::new(),
             bufspc: 0,
             bp: 0,
@@ -1611,8 +1573,9 @@ impl buf_vars {
 
     /// Get path with tilde substitution
     fn path_with_tilde(&self, path: &str) -> String {
-        if !self.home.is_empty() && path.starts_with(&self.home) {
-            format!("~{}", &path[self.home.len()..])
+        let home = prompt_tls::HOME.with(|c| c.borrow().clone());
+        if !home.is_empty() && path.starts_with(&home) {
+            format!("~{}", &path[home.len()..])
         } else {
             path.to_string()
         }
@@ -1733,7 +1696,8 @@ impl buf_vars {
         let test = match cond_char {
             '/' | 'c' | '.' | '~' | 'C' => {
                 // Directory depth test
-                let path = self.path_with_tilde(&self.pwd);
+                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
+                let path = self.path_with_tilde(&pwd);
                 let depth = path.matches('/').count() as i32;
                 if arg == 0 {
                     depth > 0
@@ -1748,15 +1712,18 @@ impl buf_vars {
             }
             'L' => prompt_tls::SHLVL.with(|c| *c.borrow()) >= arg,
             'j' => prompt_tls::NUM_JOBS.with(|c| *c.borrow()) >= arg,
-            'v' => (arg as usize) <= self.psvar.len(),
+            'v' => (arg as usize) <= prompt_tls::PSVAR.with(|c| c.borrow().len()),
             'V' => {
-                if arg <= 0 || (arg as usize) > self.psvar.len() {
+                if arg <= 0 {
                     false
                 } else {
-                    !self.psvar[arg as usize - 1].is_empty()
+                    prompt_tls::PSVAR.with(|c| {
+                        let v = c.borrow();
+                        (arg as usize) <= v.len() && !v[arg as usize - 1].is_empty()
+                    })
                 }
             }
-            '_' => self.cmd_stack.len() >= arg as usize,
+            '_' => prompt_tls::CMDSTACK.with(|c| c.borrow().len()) >= arg as usize,
             't' | 'T' | 'd' | 'D' | 'w' => {
                 let now = chrono::Local::now();
                 match cond_char {
@@ -1897,22 +1864,24 @@ impl buf_vars {
         match c {
             // Directory
             '~' => {
+                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
                 let path = if arg == 0 {
-                    self.path_with_tilde(&self.pwd)
+                    self.path_with_tilde(&pwd)
                 } else if arg > 0 {
-                    self.trailing_path(&self.pwd, arg as usize, true)
+                    self.trailing_path(&pwd, arg as usize, true)
                 } else {
-                    self.leading_path(&self.path_with_tilde(&self.pwd), (-arg) as usize)
+                    self.leading_path(&self.path_with_tilde(&pwd), (-arg) as usize)
                 };
                 self.out_str(&path);
             }
             'd' | '/' => {
+                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
                 let path = if arg == 0 {
-                    self.pwd.clone()
+                    pwd
                 } else if arg > 0 {
-                    self.trailing_path(&self.pwd, arg as usize, false)
+                    self.trailing_path(&pwd, arg as usize, false)
                 } else {
-                    self.leading_path(&self.pwd, (-arg) as usize)
+                    self.leading_path(&pwd, (-arg) as usize)
                 };
                 self.out_str(&path);
             }
@@ -1922,7 +1891,8 @@ impl buf_vars {
                 } else {
                     arg.unsigned_abs() as usize
                 };
-                let path = self.trailing_path(&self.pwd, n, true);
+                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
+                let path = self.trailing_path(&pwd, n, true);
                 self.out_str(&path);
             }
             'C' => {
@@ -1931,7 +1901,8 @@ impl buf_vars {
                 } else {
                     arg.unsigned_abs() as usize
                 };
-                let path = self.trailing_path(&self.pwd, n, false);
+                let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
+                let path = self.trailing_path(&pwd, n, false);
                 self.out_str(&path);
             }
 
@@ -1957,21 +1928,22 @@ impl buf_vars {
             }
             // User/host
             'n' => {
-                let u = self.user.clone();
+                let u = prompt_tls::USER.with(|c| c.borrow().clone());
                 self.out_str(&u);
             }
             'M' => {
-                let h = self.host.clone();
+                let h = prompt_tls::HOST.with(|c| c.borrow().clone());
                 self.out_str(&h);
             }
             'm' => {
                 let n = if arg == 0 { 1 } else { arg };
+                let host = prompt_tls::HOST.with(|c| c.borrow().clone());
                 if n > 0 {
-                    let parts: Vec<&str> = self.host.split('.').collect();
+                    let parts: Vec<&str> = host.split('.').collect();
                     let take = (n as usize).min(parts.len());
                     self.out_str(&parts[..take].join("."));
                 } else {
-                    let parts: Vec<&str> = self.host.split('.').collect();
+                    let parts: Vec<&str> = host.split('.').collect();
                     let skip = ((-n) as usize).min(parts.len());
                     self.out_str(&parts[skip..].join("."));
                 }
@@ -1979,10 +1951,11 @@ impl buf_vars {
 
             // TTY
             'l' => {
-                let tty = if self.tty.starts_with("/dev/tty") {
-                    self.tty[8..].to_string()
-                } else if self.tty.starts_with("/dev/") {
-                    self.tty[5..].to_string()
+                let t = prompt_tls::TTY.with(|c| c.borrow().clone());
+                let tty = if t.starts_with("/dev/tty") {
+                    t[8..].to_string()
+                } else if t.starts_with("/dev/") {
+                    t[5..].to_string()
                 } else {
                     "()".to_string()
                 };
@@ -1992,12 +1965,13 @@ impl buf_vars {
                 // zsh: `%y` is the tty short name (without `/dev/`).
                 // When not connected to a tty (e.g. in `-c` mode or
                 // a pipe), zsh outputs `()` matching the `%l` form.
-                let tty = if self.tty.is_empty() {
+                let t = prompt_tls::TTY.with(|c| c.borrow().clone());
+                let tty = if t.is_empty() {
                     "()".to_string()
-                } else if self.tty.starts_with("/dev/") {
-                    self.tty[5..].to_string()
+                } else if t.starts_with("/dev/") {
+                    t[5..].to_string()
                 } else {
-                    self.tty.clone()
+                    t
                 };
                 self.out_str(&tty);
             }
@@ -2026,7 +2000,7 @@ impl buf_vars {
             // at registration). `FS_EVAL` / trap nuances not wired yet.
             'I' => {
                 let lineno = prompt_tls::LINENO.with(|c| *c.borrow());
-                let n = if let Some(base) = self.func_line_base {
+                let n = if let Some(base) = prompt_tls::FUNC_LINE_BASE.with(|c| *c.borrow()) {
                     lineno.saturating_add(base)
                 } else {
                     lineno
@@ -2043,8 +2017,10 @@ impl buf_vars {
                 } else {
                     arg.unsigned_abs() as usize
                 };
-                if self.func_line_base.is_some() {
-                    let path = self.funcstack_filename.clone().unwrap_or_default();
+                if prompt_tls::FUNC_LINE_BASE.with(|c| c.borrow().is_some()) {
+                    let path = prompt_tls::FUNCSTACK_FILENAME
+                        .with(|c| c.borrow().clone())
+                        .unwrap_or_default();
                     if n == 0 {
                         self.out_str(&path);
                     } else {
@@ -2287,8 +2263,15 @@ impl buf_vars {
             // psvar
             'v' => {
                 let idx = if arg == 0 { 1 } else { arg };
-                if idx > 0 && (idx as usize) <= self.psvar.len() {
-                    let s = self.psvar[idx as usize - 1].clone();
+                let s_opt = prompt_tls::PSVAR.with(|c| {
+                    let v = c.borrow();
+                    if idx > 0 && (idx as usize) <= v.len() {
+                        Some(v[idx as usize - 1].clone())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(s) = s_opt {
                     self.out_str(&s);
                 }
             }
@@ -2298,7 +2281,8 @@ impl buf_vars {
             // BOTTOM-UP (oldest first). arg < 0 prints the BOTTOM
             // `-arg` elements bottom-up. arg == 0 prints all.
             '_' => {
-                let cmdsp = self.cmd_stack.len();
+                let cmd_stack = prompt_tls::CMDSTACK.with(|c| c.borrow().clone());
+                let cmdsp = cmd_stack.len();
                 if cmdsp > 0 {
                     let names: Vec<&str> = if arg >= 0 {
                         let mut n = if arg == 0 { cmdsp } else { arg as usize };
@@ -2307,7 +2291,7 @@ impl buf_vars {
                         }
                         // Walk forward from `cmdsp - n` to top.
                         // c:Src/prompt.c:835 — `cmdnames[cmdstack[t0]]`
-                        self.cmd_stack
+                        cmd_stack
                             .iter()
                             .skip(cmdsp - n)
                             .filter_map(|b| CMDNAMES.get(*b as usize).copied())
@@ -2319,7 +2303,7 @@ impl buf_vars {
                         }
                         // Walk forward from 0 to `n`.
                         // c:Src/prompt.c:872 — `cmdnames[cmdstack[t0]]`
-                        self.cmd_stack
+                        cmd_stack
                             .iter()
                             .take(n)
                             .filter_map(|b| CMDNAMES.get(*b as usize).copied())
