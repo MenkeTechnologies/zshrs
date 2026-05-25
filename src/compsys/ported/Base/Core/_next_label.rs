@@ -22,25 +22,253 @@
 //! sh:18      _description "$__gopt[@]" "$curtag" "$2" "$3"
 //! sh:19      set -A $2 "${(@)argv[4,-1]}" "${(P@)2}"
 //! sh:20    fi
-//! sh:21
 //! sh:22    return 0
 //! sh:23  fi
-//! sh:24
 //! sh:25  return 1
 //! ```
 //!
-//! Upstream uses `comptags -A` to advance the internal tag-set
-//! iterator + extract the next label, then `_description` wraps
-//! the result.
-//!
-//! Faithful Rust port: queries `TagManager::wanted(tag)` and emits
-//! the tag name as the label. The `comptags` builtin's internal
-//! iteration is the same shape — caller drives the loop with
-//! repeated calls until None is returned.
+//! Calls real `bin_comptags` + `bin_zformat` + `bin_zparseopts` and
+//! reads `FUNCSTACK` for the `(( $#funcstack > _tags_level ))` guard.
+//! Delegates to `super::_description::_description` for the per-spec
+//! format step.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use super::_description::_description;
+use crate::ported::modules::parameter::FUNCSTACK;
+use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts};
+use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
+use crate::ported::zle::computil::bin_comptags;
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// sh:6 — bridge to real `bin_zparseopts -D -a __gopt 1 2 V J x` via
+/// the `-v <name>` flag (named array source) so we don't depend on
+/// the pparams hook being installed.
+fn run_gopt(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let src = "__compsys_argv";
+    setaparam(src, args.to_vec());
+    setaparam("__gopt", Vec::new());
+    let _ = bin_zparseopts(
+        "zparseopts",
+        &[
+            "-D".to_string(),
+            "-v".to_string(),
+            src.to_string(),
+            "-a".to_string(),
+            "__gopt".to_string(),
+            "1".to_string(),
+            "2".to_string(),
+            "V".to_string(),
+            "J".to_string(),
+            "x".to_string(),
+        ],
+        &make_ops(),
+        0,
+    );
+    let gopt = getaparam("__gopt").unwrap_or_default();
+    let remaining = getaparam(src).unwrap_or_default();
+    (remaining, gopt)
+}
+
+/// `$#funcstack` — the call-depth counter. Reads the real
+/// `crate::ported::modules::parameter::FUNCSTACK` mutex (the same
+/// global the C `funcstack` linked list maps to).
+fn funcstack_depth() -> usize {
+    FUNCSTACK.lock().map(|s| s.len()).unwrap_or(0)
+}
+
+/// `_next_label` — advance to the next tag-spec in the current
+/// `_tags` round, format its description, and call `_description`
+/// to emit the per-tag option array. Returns 0 on advance, 1 when
+/// no specs remain.
+pub fn _next_label(args: &[String]) -> i32 {
+    // sh:3-6
+    let (argv, gopt) = run_gopt(args);
+
+    // sh:8  comptags -A "$1" curtag __spec
+    let arg1 = argv.first().cloned().unwrap_or_default();
+    let comptags_argv = vec![
+        "-A".to_string(),
+        arg1,
+        "curtag".to_string(),
+        "__spec".to_string(),
+    ];
+    if bin_comptags("comptags", &comptags_argv, &make_ops(), 0) != 0 {
+        return 1; // sh:25
+    }
+
+    // sh:9  (( $#funcstack > _tags_level )) && _comp_tags="${_comp_tags% * }"
+    //   When we're deeper in the call stack than the recorded level,
+    //   strip the trailing tag-spec word and re-add the new spec.
+    let cur_depth = funcstack_depth();
+    let prev_level = getsparam("_tags_level")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    if cur_depth > prev_level {
+        let comp_tags = getsparam("_comp_tags").unwrap_or_default();
+        // `${_comp_tags% * }` — strip the longest suffix matching
+        //   " <something> " (the trailing tag-spec word + trailing
+        //   space). Implemented as: trim trailing space, drop last
+        //   space-separated token, re-pad with trailing space.
+        let trimmed = comp_tags.trim_end_matches(' ');
+        let last_sp = trimmed.rfind(' ');
+        let kept = match last_sp {
+            Some(i) => &trimmed[..i],
+            None => "",
+        };
+        let mut rebuilt = String::from(kept);
+        if !rebuilt.is_empty() {
+            rebuilt.push(' ');
+        }
+        let _ = setsparam("_comp_tags", &rebuilt);
+    }
+
+    // sh:10  _tags_level=$#funcstack
+    let _ = setsparam("_tags_level", &cur_depth.to_string());
+
+    // sh:11
+    let spec = getsparam("__spec").unwrap_or_default();
+    let mut comp_tags = getsparam("_comp_tags").unwrap_or_default();
+    comp_tags.push_str(&format!(" {} ", spec));
+    let _ = setsparam("_comp_tags", &comp_tags);
+
+    // sh:12
+    let curtag = getsparam("curtag").unwrap_or_default();
+    let name = argv.get(1).cloned().unwrap_or_default();
+    let descr_arg = argv.get(2).cloned().unwrap_or_default();
+    let extras: Vec<String> = if argv.len() > 3 {
+        argv[3..].to_vec()
+    } else {
+        Vec::new()
+    };
+
+    if has_unescaped_colon(&curtag) {
+        // sh:13  zformat -f __descr "${curtag#*:}" "d:$3"
+        let after_colon = curtag.splitn(2, ':').nth(1).unwrap_or("").to_string();
+        let _ = setsparam("__descr", "");
+        let zfmt_argv = vec![
+            "-f".to_string(),
+            "__descr".to_string(),
+            after_colon,
+            format!("d:{}", descr_arg),
+        ];
+        let _ = bin_zformat("zformat", &zfmt_argv, &make_ops(), 0);
+        let descr = getsparam("__descr").unwrap_or_default();
+
+        // sh:14  _description "$__gopt[@]" "${curtag%:*}" "$2" "$__descr"
+        let tag_lhs = curtag
+            .rsplitn(2, ':')
+            .nth(1)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| curtag.clone());
+        let mut desc_argv = gopt.clone();
+        desc_argv.push(tag_lhs);
+        desc_argv.push(name.clone());
+        desc_argv.push(descr);
+        let _ = _description(&desc_argv);
+
+        // sh:16  set -A $2 "${(P@)2}" "${(@)argv[4,-1]}"
+        let mut prev = getaparam(&name).unwrap_or_default();
+        prev.extend(extras);
+        setaparam(&name, prev);
+    } else {
+        // sh:18  _description "$__gopt[@]" "$curtag" "$2" "$3"
+        let mut desc_argv = gopt.clone();
+        desc_argv.push(curtag);
+        desc_argv.push(name.clone());
+        desc_argv.push(descr_arg);
+        let _ = _description(&desc_argv);
+
+        // sh:19  set -A $2 "${(@)argv[4,-1]}" "${(P@)2}"
+        let mut new_arr = extras;
+        new_arr.extend(getaparam(&name).unwrap_or_default());
+        setaparam(&name, new_arr);
+    }
+
+    0 // sh:22
+}
+
+/// sh:12 — `*[^\\]:*` test (mirrors helper in `_description`).
+fn has_unescaped_colon(s: &str) -> bool {
+    let b = s.as_bytes();
+    for i in 0..b.len() {
+        if b[i] == b':' && (i == 0 || b[i - 1] != b'\\') {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    use std::sync::atomic::Ordering;
+
+    fn with_incompfunc<F: FnOnce() -> i32>(f: F) -> i32 {
+        let _g = crate::test_util::global_state_lock();
+        let prev = INCOMPFUNC.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        let r = f();
+        INCOMPFUNC.store(prev, Ordering::Relaxed);
+        r
+    }
+
+    #[test]
+    fn run_gopt_extracts_boolean_flags_in_argv_order() {
+        // sh:6 — `1 2 V J x` are all boolean. `bin_zparseopts` -D
+        //   strips them from argv and accumulates into the gopt
+        //   array preserving argv encounter order (matches C's
+        //   `a->vals` linked-list semantics at zutil.c:2076).
+        let _g = crate::test_util::global_state_lock();
+        let (rem, gopt) = run_gopt(&[
+            "-V".to_string(),
+            "-1".to_string(),
+            "-x".to_string(),
+            "tag".to_string(),
+            "name".to_string(),
+            "descr".to_string(),
+        ]);
+        assert_eq!(gopt, vec!["-V", "-1", "-x"]);
+        assert_eq!(rem, vec!["tag", "name", "descr"]);
+    }
+
+    #[test]
+    fn funcstack_depth_reads_real_funcstack_global() {
+        // The function should compile and read the real FUNCSTACK
+        // mutex without panicking. Depth at test time (no
+        // shfunc_call wrapping) is whatever the test harness has
+        // already pushed; typically 0.
+        let _g = crate::test_util::global_state_lock();
+        let d = funcstack_depth();
+        let _ = d; // just confirm no panic
+    }
+
+    #[test]
+    fn no_more_specs_returns_one() {
+        // sh:8 — comptags -A on an unregistered tag returns non-zero
+        //   → _next_label returns 1 (sh:25).
+        let r = with_incompfunc(|| {
+            _next_label(&[
+                "unregistered_tag".to_string(),
+                "name".to_string(),
+                "descr".to_string(),
+            ])
+        });
+        assert_eq!(r, 1);
+    }
+
+    #[test]
+    fn has_unescaped_colon_works() {
+        assert!(has_unescaped_colon("foo:bar"));
+        assert!(!has_unescaped_colon("foo\\:bar"));
+        assert!(!has_unescaped_colon("plain"));
+    }
+}

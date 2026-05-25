@@ -1,0 +1,29 @@
+#autoload
+local -a dirfuncs=(
+    ${(k)functions[zsh_directory_name]}
+    $zsh_directory_name_functions
+)
+local descr='dynamically named directory'
+
+if (( $#dirfuncs )); then
+  local -a expl
+  local -i ret
+  local func suf tag=dynamically-named-directories
+
+  [[ $ISUFFIX != \]* ]] &&
+      suf=-S]
+
+  _tags "$tag"
+  while _tags; do
+    while _next_label "$tag" expl "$descr" $suf; do
+      for func in $dirfuncs; do
+        $func c && ret=0
+      done
+    done
+    (( ret )) || break
+  done
+  return ret
+
+else
+  _message "${descr}: implement as zsh_directory_name c"
+fi

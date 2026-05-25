@@ -94,7 +94,16 @@ pub fn install_unregister_function(f: UnregisterFunctionFn) {
 }
 
 pub fn array(name: &str) -> Option<Vec<String>> {
-    ARRAY_GET.get().and_then(|f| f(name))
+    // Hook path (fusevm executor) when installed; otherwise fall
+    // through to the direct param table at `params::getaparam` so
+    // compsys/unit-test environments without an executor still see
+    // shell-side arrays.
+    if let Some(f) = ARRAY_GET.get() {
+        if let Some(v) = f(name) {
+            return Some(v);
+        }
+    }
+    crate::ported::params::getaparam(name)
 }
 pub fn assoc(name: &str) -> Option<IndexMap<String, String>> {
     ASSOC_GET.get().and_then(|f| f(name))
