@@ -23,89 +23,9 @@
 //! identical because `_main_complete` would just dispatch to
 //! `_expand` anyway.
 
-
-
-use crate::compsys::compcore::CompletionState;
-
-use super::_expand::_expand;
-
-/// _expand_word - Expand word (aliases, variables, etc.)
-pub fn _expand_word(state: &mut CompletionState) -> bool {
-    _expand(state)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn delegates_to_expand_for_tilde() {
-        let mut state = CompletionState::new();
-        state.params.prefix = "~/foo".into();
-        // _expand_word IS _expand; both must succeed on tilde.
-        assert!(_expand_word(&mut state));
-    }
-
-    #[test]
-    fn delegates_for_no_expansion_returns_false() {
-        let mut state = CompletionState::new();
-        state.params.prefix = "plain".into();
-        assert!(!_expand_word(&mut state));
-    }
-
-    #[test]
-    fn dollar_var_expansion_succeeds() {
-        std::env::set_var("ZSHRS_TEST_EXP_VAR", "expanded");
-        let mut state = CompletionState::new();
-        state.params.prefix = "$ZSHRS_TEST_EXP_VAR/bin".into();
-        assert!(_expand_word(&mut state));
-        std::env::remove_var("ZSHRS_TEST_EXP_VAR");
-    }
-
-    #[test]
-    fn brace_expansion_succeeds() {
-        let mut state = CompletionState::new();
-        state.params.prefix = "{a,b}{1,2}".into();
-        assert!(_expand_word(&mut state));
-        let names: std::collections::HashSet<String> = state
-            .groups
-            .iter()
-            .flat_map(|g| g.matches.iter())
-            .map(|c| c.str_.clone())
-            .collect();
-        assert!(names.contains("a1"));
-        assert!(names.contains("b2"));
-    }
-
-    #[test]
-    fn empty_prefix_returns_false() {
-        let mut state = CompletionState::new();
-        // Nothing to expand on empty prefix.
-        assert!(!_expand_word(&mut state));
-    }
-
-    #[test]
-    fn delegation_result_matches_expand_directly() {
-        // Pin _expand_word IS _expand verbatim.
-        let mut s1 = CompletionState::new();
-        let mut s2 = CompletionState::new();
-        s1.params.prefix = "{x,y}".into();
-        s2.params.prefix = "{x,y}".into();
-        assert_eq!(_expand_word(&mut s1), _expand(&mut s2));
-    }
-
-    #[test]
-    fn tilde_user_expansion_resolves_to_home() {
-        // If we can read /etc/passwd, find any user and assert that
-        // `~user/` expansion produces an absolute-path completion.
-        let mut state = CompletionState::new();
-        let me = std::env::var("USER").unwrap_or_default();
-        if me.is_empty() {
-            return;
-        }
-        state.params.prefix = format!("~{}/", me);
-        // No assertion on success — `~user/` may not be supported by
-        // every _expand impl variant. Just pin no panic.
-        let _ = _expand_word(&mut state);
-    }
-}
+// GUTTED 2026-05-24 — body removed.
+// Previously depended on `crate::compsys::compcore::CompletionState`
+// and friends, which were deleted as duplicates of the real shell-side
+// state in `src/ported/zle/compcore.rs`. Engine port body must be
+// re-implemented to call into `crate::ported::zle::compcore::addmatch`
+// against shell-side globals (PREFIX/SUFFIX/matches/etc.).

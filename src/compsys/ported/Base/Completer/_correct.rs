@@ -28,89 +28,9 @@
 //! [pattern_match]='-' trick prevents pattern-match acceptance,
 //! leaving only Levenshtein-1 matches).
 
-
-
-use crate::compsys::base::{CompleterResult, MainCompleteState};
-
-use super::_approximate::_approximate;
-
-/// _correct - Spelling correction
-pub fn _correct(state: &mut MainCompleteState) -> CompleterResult {
-    // Same as approximate with error=1
-    _approximate(state, 1)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::compsys::completion::Completion;
-
-    #[test]
-    fn one_typo_corrected() {
-        let mut state = MainCompleteState::new("", 0);
-        state.comp.params.prefix = "comit".into();
-        state.comp.add_match(Completion::new("commit"), None);
-        assert!(matches!(_correct(&mut state), CompleterResult::Matched));
-    }
-
-    #[test]
-    fn two_typos_not_corrected() {
-        let mut state = MainCompleteState::new("", 0);
-        state.comp.params.prefix = "comit".into();
-        state.comp.add_match(Completion::new("checkout"), None);
-        assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
-    }
-
-    #[test]
-    fn exact_match_passes_max_errors_1() {
-        let mut state = MainCompleteState::new("", 0);
-        state.comp.params.prefix = "commit".into();
-        state.comp.add_match(Completion::new("commit"), None);
-        assert!(matches!(_correct(&mut state), CompleterResult::Matched));
-    }
-
-    #[test]
-    fn empty_candidates_returns_no_match() {
-        let mut state = MainCompleteState::new("", 0);
-        state.comp.params.prefix = "anything".into();
-        assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
-    }
-
-    #[test]
-    fn single_char_prefix_bails_like_approximate() {
-        // _approximate gates on `|PREFIX+SUFFIX| > 1`. Since
-        // _correct delegates, the same gate applies.
-        let mut state = MainCompleteState::new("", 0);
-        state.comp.params.prefix = "g".into();
-        state.comp.add_match(Completion::new("git"), None);
-        assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
-    }
-
-    #[test]
-    fn delegates_max_errors_1_not_higher() {
-        // Pin: _correct accepts dist-1 but NOT dist-2 typos. If the
-        // delegation were `_approximate(2)`, "xyz" would match "abc"
-        // (dist 3) too — we want max_errors=1 strict.
-        let mut state = MainCompleteState::new("", 0);
-        state.comp.params.prefix = "ab".into();
-        state.comp.add_match(Completion::new("xy"), None);
-        // dist("ab", "xy") = 2 → out of max_errors=1.
-        assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
-    }
-
-    #[test]
-    fn correct_does_not_emit_from_pattern_match_path() {
-        // The upstream uses compstate[pattern_match]='-' to suppress
-        // glob acceptance. We can't directly assert that property
-        // at the Rust layer, but we CAN pin that a candidate that
-        // would only have matched via pattern (not Levenshtein) is
-        // not surfaced. Use a glob char in the prefix: with dist=1
-        // it has to match a candidate within 1 edit of literally
-        // the chars "f*" — only "fa", "fb" etc. would qualify.
-        let mut state = MainCompleteState::new("", 0);
-        state.comp.params.prefix = "f*".into();
-        state.comp.add_match(Completion::new("file"), None);
-        // edit_distance("f*", "file") = 3 → too far for _correct.
-        assert!(matches!(_correct(&mut state), CompleterResult::NoMatch));
-    }
-}
+// GUTTED 2026-05-24 — body removed.
+// Previously depended on `crate::compsys::compcore::CompletionState`
+// and friends, which were deleted as duplicates of the real shell-side
+// state in `src/ported/zle/compcore.rs`. Engine port body must be
+// re-implemented to call into `crate::ported::zle::compcore::addmatch`
+// against shell-side globals (PREFIX/SUFFIX/matches/etc.).

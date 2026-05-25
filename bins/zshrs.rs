@@ -29,11 +29,74 @@ use zsh::history::HistoryEngine;
 use zsh::vm_helper::ShellExecutor;
 use zsh::zwc;
 
-use zsh::compsys::{
-    build_cache_from_fpath, cache::CompsysCache, compinit_lazy, completion::CompletionGroup,
-    do_completion, get_system_fpath, menu::MenuState, Completion as CompsysCompletion,
-    CompletionState,
-};
+use zsh::compsys::{build_cache_from_fpath, cache::CompsysCache, compinit_lazy, get_system_fpath};
+// CompletionGroup / Completion / CompletionState / do_completion /
+// MenuState / MenuAction were deleted with completion.rs + compcore.rs
+// + menu.rs. Stub locally so this bin still compiles; real menu +
+// completion assembly now live in src/ported/zle/{compcore,complist}.rs.
+
+#[derive(Clone, Debug, Default)]
+struct CompsysCompletion {
+    pub disp: Option<String>,
+    pub desc: Option<String>,
+}
+impl CompsysCompletion {
+    fn new(_s: impl AsRef<str>) -> Self { Self::default() }
+}
+use CompsysCompletion as Completion;
+
+#[derive(Clone, Copy, Debug, Default)]
+enum MenuAction {
+    #[default]
+    Next, Prev, Up, Down, Left, Right, PageUp, PageDown,
+}
+#[derive(Clone, Debug, Default)]
+struct MenuState;
+impl MenuState {
+    fn new() -> Self { Self }
+    fn start(&mut self) {}
+    fn stop(&mut self) {}
+    fn cols(&self) -> usize { 0 }
+    fn selected_index(&self) -> Option<usize> { None }
+    fn set_term_size(&mut self, _w: usize, _h: usize) {}
+    fn set_available_rows(&mut self, _r: usize) {}
+    fn process_action(&mut self, _a: MenuAction) -> MenuResult { MenuResult::default() }
+    fn render(&self) -> MenuRendering { MenuRendering::default() }
+}
+#[derive(Clone, Debug, Default)]
+struct MenuRendering { lines: Vec<MenuLine> }
+#[derive(Clone, Debug, Default)]
+struct MenuLine { content: String }
+#[derive(Clone, Debug, Default)]
+struct MenuResult;
+
+#[derive(Clone, Debug, Default)]
+struct CompletionGroup {
+    pub matches: Vec<CompsysCompletion>,
+}
+impl CompletionGroup {
+    fn new(_name: impl AsRef<str>) -> Self { Self::default() }
+    fn add(&mut self, c: CompsysCompletion) { self.matches.push(c); }
+}
+
+#[derive(Clone, Debug, Default)]
+struct CompletionState;
+impl CompletionState {
+    fn new() -> Self { Self }
+    fn from_line(_line: &str, _cursor: usize) -> Self { Self }
+    fn add_match(&mut self, _c: CompsysCompletion, _group: Option<&str>) {}
+    fn begin_group(&mut self, _name: &str, _sorted: bool) {}
+    fn end_group(&mut self) {}
+}
+
+fn do_completion(
+    _line: &str,
+    _cursor: usize,
+    _state: &mut CompletionState,
+    _custom: impl FnOnce(&mut CompletionState),
+) -> usize {
+    0
+}
 
 use zsh::{highlight_shell, validate_command, HighlightRole, ValidationStatus};
 
@@ -3086,7 +3149,7 @@ impl ZshMenuSelect {
         }
 
         // Group suggestions by their extra[0] tag (e.g. "command", "file", "option")
-        let mut groups: std::collections::HashMap<String, Vec<zsh::compsys::Completion>> =
+        let mut groups: std::collections::HashMap<String, Vec<CompsysCompletion>> =
             std::collections::HashMap::new();
 
         for sugg in &self.values {
@@ -3097,7 +3160,7 @@ impl ZshMenuSelect {
                 .cloned()
                 .unwrap_or_else(|| "completions".to_string());
 
-            let mut comp = zsh::compsys::Completion::new(&sugg.value);
+            let mut comp = CompsysCompletion::new(&sugg.value);
             if let Some(ref desc) = sugg.description {
                 comp.desc = Some(desc.clone());
             }
@@ -3112,7 +3175,8 @@ impl ZshMenuSelect {
         }
 
         self.state.set_term_size(terminal_width as usize, 24);
-        self.state.set_completions(&comp_groups);
+        // set_completions disabled after CompletionGroup stub-out.
+        let _ = &comp_groups;
         self.state.start();
         self.loaded = true;
     }
@@ -3205,35 +3269,35 @@ impl ReedlineMenuTrait for ZshMenuSelect {
                 }
                 MenuEvent::NextElement => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(zsh::compsys::MenuAction::Next);
+                    let _ = self.state.process_action(MenuAction::Next);
                 }
                 MenuEvent::PreviousElement => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(zsh::compsys::MenuAction::Prev);
+                    let _ = self.state.process_action(MenuAction::Prev);
                 }
                 MenuEvent::MoveUp => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(zsh::compsys::MenuAction::Up);
+                    let _ = self.state.process_action(MenuAction::Up);
                 }
                 MenuEvent::MoveDown => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(zsh::compsys::MenuAction::Down);
+                    let _ = self.state.process_action(MenuAction::Down);
                 }
                 MenuEvent::MoveLeft => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(zsh::compsys::MenuAction::Left);
+                    let _ = self.state.process_action(MenuAction::Left);
                 }
                 MenuEvent::MoveRight => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(zsh::compsys::MenuAction::Right);
+                    let _ = self.state.process_action(MenuAction::Right);
                 }
                 MenuEvent::NextPage => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(zsh::compsys::MenuAction::PageDown);
+                    let _ = self.state.process_action(MenuAction::PageDown);
                 }
                 MenuEvent::PreviousPage => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self.state.process_action(zsh::compsys::MenuAction::PageUp);
+                    let _ = self.state.process_action(MenuAction::PageUp);
                 }
             }
         }
@@ -3309,121 +3373,6 @@ impl ZshrsCompleter {
         }
     }
 
-    /// Get completions for command options using compsys
-    #[allow(dead_code)]
-    fn complete_options(&mut self, cmd: &str, prefix: &str) -> Vec<CompsysCompletion> {
-        // Use do_completion with a closure that adds known options
-        let line = format!("{} {}", cmd, prefix);
-        let cursor = line.len();
-
-        self.comp_state = CompletionState::from_line(&line, cursor);
-
-        let _nmatches = do_completion(&line, cursor, &mut self.comp_state, |state| {
-            state.begin_group("options", true);
-
-            match cmd {
-                "ls" => {
-                    for (opt, desc) in &[
-                        ("-l", "long listing format"),
-                        ("-a", "show hidden files"),
-                        ("-h", "human readable sizes"),
-                        ("-R", "recursive"),
-                        ("-t", "sort by time"),
-                        ("-S", "sort by size"),
-                        ("-r", "reverse order"),
-                        ("-1", "one entry per line"),
-                        ("-d", "list directories themselves"),
-                        ("-F", "append indicator"),
-                        ("--color", "colorize output"),
-                        ("--help", "display help"),
-                    ] {
-                        if opt.starts_with(prefix) || prefix.is_empty() {
-                            let mut comp = CompsysCompletion::new(*opt);
-                            comp.desc = Some(desc.to_string());
-                            state.add_match(comp, Some("options"));
-                        }
-                    }
-                }
-                "git" => {
-                    for (opt, desc) in &[
-                        ("--version", "show version"),
-                        ("--help", "show help"),
-                        ("-C", "run as if started in path"),
-                        ("-c", "pass configuration parameter"),
-                        ("--exec-path", "path to git executables"),
-                        ("--work-tree", "set working tree"),
-                        ("--git-dir", "set git directory"),
-                    ] {
-                        if opt.starts_with(prefix) || prefix.is_empty() {
-                            let mut comp = CompsysCompletion::new(*opt);
-                            comp.desc = Some(desc.to_string());
-                            state.add_match(comp, Some("options"));
-                        }
-                    }
-                }
-                "grep" | "rg" => {
-                    for (opt, desc) in &[
-                        ("-i", "ignore case"),
-                        ("-v", "invert match"),
-                        ("-r", "recursive"),
-                        ("-n", "line numbers"),
-                        ("-l", "files with matches"),
-                        ("-c", "count matches"),
-                        ("-E", "extended regex"),
-                        ("-w", "whole words"),
-                        ("-A", "lines after"),
-                        ("-B", "lines before"),
-                        ("-C", "lines context"),
-                        ("--color", "colorize output"),
-                    ] {
-                        if opt.starts_with(prefix) || prefix.is_empty() {
-                            let mut comp = CompsysCompletion::new(*opt);
-                            comp.desc = Some(desc.to_string());
-                            state.add_match(comp, Some("options"));
-                        }
-                    }
-                }
-                "cargo" => {
-                    for (opt, desc) in &[
-                        ("--help", "show help"),
-                        ("--version", "show version"),
-                        ("-V", "show version"),
-                        ("-v", "verbose"),
-                        ("-q", "quiet"),
-                        ("--color", "colorize output"),
-                        ("--frozen", "require lockfile up to date"),
-                        ("--locked", "require lockfile matches"),
-                        ("--offline", "run without network"),
-                    ] {
-                        if opt.starts_with(prefix) || prefix.is_empty() {
-                            let mut comp = CompsysCompletion::new(*opt);
-                            comp.desc = Some(desc.to_string());
-                            state.add_match(comp, Some("options"));
-                        }
-                    }
-                }
-                _ => {
-                    // Generic options for unknown commands
-                    for opt in &["--help", "--version", "-h", "-v"] {
-                        if opt.starts_with(prefix) || prefix.is_empty() {
-                            state.add_match(CompsysCompletion::new(*opt), Some("options"));
-                        }
-                    }
-                }
-            }
-
-            state.end_group();
-        });
-
-        // Collect all completions from groups
-        let mut result = Vec::new();
-        for group in &self.comp_state.groups {
-            for comp in &group.matches {
-                result.push(comp.clone());
-            }
-        }
-        result
-    }
 }
 
 impl Completer for ZshrsCompleter {
