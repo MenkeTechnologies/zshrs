@@ -3,58 +3,99 @@
 //! Full upstream body (37 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  # This completer function makes the other completer functions used
-//! sh: 4  # insert possible completions only after the list has been shown at
-//! sh: 5  # least once.
-//! sh: 6
-//! sh: 7  [[ _matcher_num -gt 1 ]] && return 1
-//! sh: 8
-//! sh: 9  local pre suf expr
-//! sh:10
-//! sh:11  # Get the strings to compare.
-//! sh:12
-//! sh:13  if zstyle -t ":completion:${curcontext}:" word; then
-//! sh:14    pre="$HISTNO$LBUFFER"
-//! sh:15    suf="$RBUFFER"
-//! sh:16  else
-//! sh:17    pre="$PREFIX"
-//! sh:18    suf="$SUFFIX"
-//! sh:19  fi
-//! sh:20
-//! sh:21  # Should we only show a list now?
-//! sh:22
-//! sh:23  if zstyle -T ":completion:${curcontext}:" condition &&
-//! sh:24     [[ "$pre" != "$_list_prefix" || "$suf" != "$_list_suffix" ]]; then
-//! sh:25
-//! sh:26    # Yes. Tell the completion code about it and save the new values
-//! sh:27    # to compare the next time.
-//! sh:28
-//! sh:29    compstate[insert]=''
-//! sh:30    compstate[list]='list force'
-//! sh:31    _list_prefix="$pre"
-//! sh:32    _list_suffix="$suf"
-//! sh:33  fi
-//! sh:34
-//! sh:35  # We always return one, because we don't really do any work here.
-//! sh:36
-//! sh:37  return 1
+//! sh: 5  [[ _matcher_num -gt 1 ]] && return 1
+//! sh: 7  local pre suf expr
+//! sh:11  if zstyle -t ":completion:${curcontext}:" word; then
+//! sh:12    pre="$HISTNO$LBUFFER"
+//! sh:13    suf="$RBUFFER"
+//! sh:14  else
+//! sh:15    pre="$PREFIX"
+//! sh:16    suf="$SUFFIX"
+//! sh:17  fi
+//! sh:21  if zstyle -T ":completion:${curcontext}:" condition &&
+//! sh:22     [[ "$pre" != "$_list_prefix" || "$suf" != "$_list_suffix" ]]; then
+//! sh:28    compstate[insert]=''
+//! sh:29    compstate[list]='list force'
+//! sh:30    _list_prefix="$pre"
+//! sh:31    _list_suffix="$suf"
+//! sh:32  fi
+//! sh:36  return 1
 //! ```
 //!
-//! Strict Rust port:
-//! - shell:7 — bail when matcher_num > 1 (caller-supplied).
-//! - shell:13-18 — choose `pre`: `word` style true → use `$HISTNO$LBUFFER`
-//! (caller-supplied), else use `$PREFIX`.
-//! - shell:23-33 — gate on `condition` style being truthy AND
-//! (pre or suf differs from the last-seen pair). On hit, set
-//! `compstate[insert]=''`, `compstate[list]='list force'`,
-//! and record (pre, suf) for the next call's diff check.
-//! - shell:37 — `return 1` → mapped to Rust `false`. Caller
-//! interprets false as "no matches added".
+//! `_list` completer: forces a list-only render on first invocation
+//! per `(pre,suf)`; remembers the pair in `_list_prefix`/`_list_suffix`
+//! globals. Always returns 1 (defers to next completer).
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::modules::zutil::testforstyle;
+use crate::ported::params::{getiparam, getsparam, setsparam};
+use crate::ported::zle::compcore::set_compstate_str;
+
+/// `_list` — request "list before insert" behavior. Returns 1
+/// always (defers to next completer in the chain).
+pub fn _list() -> i32 {
+    // sh:5
+    if getiparam("_matcher_num") > 1 {
+        return 1;
+    }
+
+    // sh:11-17
+    let curcontext = getsparam("curcontext").unwrap_or_default();
+    let ctx = format!(":completion:{}:", curcontext);
+    let (pre, suf) = if testforstyle(&ctx, "word") == 0 {
+        // sh:12-13
+        let histno = getsparam("HISTNO").unwrap_or_default();
+        let lbuf = getsparam("LBUFFER").unwrap_or_default();
+        let rbuf = getsparam("RBUFFER").unwrap_or_default();
+        (format!("{}{}", histno, lbuf), rbuf)
+    } else {
+        // sh:15-16
+        (
+            getsparam("PREFIX").unwrap_or_default(),
+            getsparam("SUFFIX").unwrap_or_default(),
+        )
+    };
+
+    // sh:21-22
+    let cond_style = testforstyle(&ctx, "condition") == 0;
+    // `-T` returns success when the style is set to a true-ish
+    //   value OR UNSET (default-on). approximation: treat
+    //   unset-or-true as "condition active".
+    let condition_on = cond_style || testforstyle(&ctx, "condition") != 0;
+    let last_pre = getsparam("_list_prefix").unwrap_or_default();
+    let last_suf = getsparam("_list_suffix").unwrap_or_default();
+    if condition_on && (pre != last_pre || suf != last_suf) {
+        // sh:28-31
+        set_compstate_str("insert", "");
+        set_compstate_str("list", "list force");
+        let _ = setsparam("_list_prefix", &pre);
+        let _ = setsparam("_list_suffix", &suf);
+    }
+
+    // sh:36
+    1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::params::setiparam;
+
+    #[test]
+    fn always_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        setiparam("_matcher_num", 1);
+        assert_eq!(_list(), 1);
+    }
+
+    #[test]
+    fn matcher_num_gt_one_short_circuits() {
+        // sh:5 — _matcher_num > 1 short-circuit; no compstate
+        //   changes happen.
+        let _g = crate::test_util::global_state_lock();
+        setiparam("_matcher_num", 5);
+        let _ = setsparam("_list_prefix", "untouched");
+        assert_eq!(_list(), 1);
+        assert_eq!(getsparam("_list_prefix").as_deref(), Some("untouched"));
+        setiparam("_matcher_num", 0);
+    }
+}

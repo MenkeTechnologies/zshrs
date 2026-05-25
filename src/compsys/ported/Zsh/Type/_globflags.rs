@@ -1,89 +1,204 @@
 //! Port of `_globflags` from `Completion/Zsh/Type/_globflags`.
 //!
-//! Full upstream body (62 lines verbatim):
+//! Full upstream body (62 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  # Complete 'globbing flags', i.e., '(#x)'; everything up to the '#' will
-//! sh: 4  # have been "compset -P"'d by the caller.
-//! sh: 5
-//! sh: 6  local ret=1
-//! sh: 7  local -a flags
-//! sh: 8  local preprefix=$IPREFIX
-//! sh: 9
-//! sh:10  compset -P '([ilIUubBmMcq]|a(|<->))##'
-//! sh:11  # make sure to not consider anything before the '#'
-//! sh:12  preprefix=${IPREFIX[$#preprefix,-1]}
-//! sh:13  if [[ $preprefix = *\#q* ]]; then
-//! sh:14    _globquals
-//! sh:15    return
-//! sh:16  elif [[ $preprefix = *q* ]]; then
-//! sh:17    _message 'q flag has to be specified by itself'
-//! sh:18    return
-//! sh:19  elif [[ $preprefix = *a(|<->) ]]; then
-//! sh:20    _message -e number 'errors'
-//! sh:21    if [[ $preprefix = *a ]]; then
-//! sh:22      return
-//! sh:23    else
-//! sh:24      compset -P '<->'
-//! sh:25    fi
-//! sh:26  elif [[ $preprefix = *\#c ]]; then
-//! sh:27    _message -e range 'repetitions (min,max) or (exact)'
-//! sh:28    return
-//! sh:29  fi
-//! sh:30
-//! sh:31  flags=(
-//! sh:32    'i:case insensitive'
-//! sh:33    'l:lower case characters match uppercase'
-//! sh:34    'I:case sensitive matching'
-//! sh:35    's:match start of string'
-//! sh:36    'e:match end of string'
-//! sh:37    'U:consider all characters to be one byte'
-//! sh:38    'u:support multibyte characters in pattern'
-//! sh:39  )
-//! sh:40  [[ $compstate[context] = condition ]] && flags+=(
-//! sh:41    'b:activate backreferences'
-//! sh:42    'B:deactivate backreferences'
-//! sh:43    'm:set reference to entire matched data'
-//! sh:44    'M:deactivate m flag'
-//! sh:45  )
-//! sh:46  flags=( ${flags:#[$preprefix[(R)\#,-1]]*} )
-//! sh:47  if [[ $IPREFIX != *'#' ]]; then
-//! sh:48    flags=( ${flags:#[se]*} )
-//! sh:49  fi
-//! sh:50  _describe -t globflags "glob flag" flags -Q -S ')' && ret=0
-//! sh:51  flags=(
-//! sh:52    'a:approximate matching'
-//! sh:53    'q:introduce glob qualifier'
-//! sh:54    'c:match repetitions of preceding pattern'
-//! sh:55  )
-//! sh:56  flags=( ${flags:#[$preprefix[(R)\#,-1]]*} )
-//! sh:57  if [[ $IPREFIX != *'#' ]]; then
-//! sh:58    flags=( ${flags:#[cq]*} )
-//! sh:59  fi
-//! sh:60  _describe -t globflags "glob flag" flags -Q -S '' && ret=0
-//! sh:61
-//! sh:62  return ret
+//! sh: 4  local ret=1
+//! sh: 5  local -a flags
+//! sh: 6  local preprefix=$IPREFIX
+//! sh: 8  compset -P '([ilIUubBmMcq]|a(|<->))##'
+//! sh:10  preprefix=${IPREFIX[$#preprefix,-1]}
+//! sh:11  if [[ $preprefix = *\#q* ]]; then _globquals; return; fi
+//! sh:13  elif [[ $preprefix = *q* ]]; then _message 'q flag has to be specified by itself'; return; fi
+//! sh:15  elif [[ $preprefix = *a(|<->) ]]; then _message -e number 'errors'; if a alone return else compset -P '<->'
+//! sh:21  elif [[ $preprefix = *\#c ]]; then _message -e range 'repetitions (min,max) or (exact)'; return
+//! sh:24  flags=( i l I s e U u ); add b B m M when condition context
+//! sh:38  filter out already-used flags via :#[...] pattern
+//! sh:40  if [[ $IPREFIX != *# ]]; then flags=( ${flags:#[se]*} ); fi
+//! sh:42  _describe -t globflags "glob flag" flags -Q -S ')' && ret=0
+//! sh:44  flags=( a q c ); filter; _describe -t globflags … -S '' && ret=0
+//! sh:57  return ret
 //! ```
-//!
-//! Glob flag chars (zsh):
-//! i,I — case insensitive / case insensitive in pattern
-//! l   — lowercase
-//! u   — uppercase
-//! b   — backreferences
-//! B   — disable backreferences
-//! m,M — Match local/global
-//! c   — count
-//! q   — quote (must be standalone)
-//! a   — approximate (optional count: `a3`)
-//!
-//! Strict Rust port: emit the glob flag letters as completion
-//! candidates. The `q` standalone constraint is enforced — if the
-//! preceding glob-flag prefix already has flags, `q` is dropped.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_message::_message;
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getsparam, setaparam};
+use crate::ported::zle::compcore::get_compstate_str;
+use crate::ported::zle::complete::bin_compset;
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// `_globflags` — complete `(#x)` glob-flag characters inside a
+/// glob expression.
+pub fn _globflags() -> i32 {
+    let preprefix_initial = getsparam("IPREFIX").unwrap_or_default();
+    let mut ret: i32 = 1;
+
+    // sh:8
+    let _ = bin_compset(
+        "compset",
+        &[
+            "-P".to_string(),
+            "([ilIUubBmMcq]|a(|<->))##".to_string(),
+        ],
+        &make_ops(),
+        0,
+    );
+    // sh:10  preprefix = portion of IPREFIX consumed by compset
+    let new_iprefix = getsparam("IPREFIX").unwrap_or_default();
+    let preprefix = if new_iprefix.len() >= preprefix_initial.len() {
+        new_iprefix[preprefix_initial.len()..].to_string()
+    } else {
+        String::new()
+    };
+
+    // sh:11
+    if preprefix.contains("#q") {
+        return dispatch_function_call("_globquals", &[]).unwrap_or(1);
+    }
+    // sh:13
+    if preprefix.contains('q') {
+        return _message(&["q flag has to be specified by itself".to_string()]);
+    }
+    // sh:15
+    if preprefix.starts_with('a') || preprefix.contains(|c: char| c == 'a') {
+        // approximation: trailing `a` or `a<digits>`
+        let tail_a_only = preprefix == "a";
+        let tail_a_count = preprefix.starts_with('a')
+            && preprefix[1..].chars().all(|c| c.is_ascii_digit());
+        if tail_a_only || tail_a_count {
+            let _ = _message(&["-e".to_string(), "number".to_string(), "errors".to_string()]);
+            if tail_a_only {
+                return 0;
+            } else {
+                let _ = bin_compset(
+                    "compset",
+                    &["-P".to_string(), "<->".to_string()],
+                    &make_ops(),
+                    0,
+                );
+            }
+        }
+    }
+    // sh:21
+    if preprefix.ends_with("#c") {
+        return _message(&[
+            "-e".to_string(),
+            "range".to_string(),
+            "repetitions (min,max) or (exact)".to_string(),
+        ]);
+    }
+
+    // sh:24
+    let mut flags: Vec<&str> = vec![
+        "i:case insensitive",
+        "l:lower case characters match uppercase",
+        "I:case sensitive matching",
+        "s:match start of string",
+        "e:match end of string",
+        "U:consider all characters to be one byte",
+        "u:support multibyte characters in pattern",
+    ];
+    let context = get_compstate_str("context").unwrap_or_default();
+    if context == "condition" {
+        flags.extend(&[
+            "b:activate backreferences",
+            "B:deactivate backreferences",
+            "m:set reference to entire matched data",
+            "M:deactivate m flag",
+        ]);
+    }
+
+    // sh:38  filter out flag letters already used
+    let used: std::collections::HashSet<char> = preprefix.chars().collect();
+    let mut emit: Vec<String> = flags
+        .iter()
+        .filter(|f| {
+            f.chars()
+                .next()
+                .map(|c| !used.contains(&c))
+                .unwrap_or(false)
+        })
+        .map(|s| s.to_string())
+        .collect();
+    // sh:40
+    if !getsparam("IPREFIX").unwrap_or_default().ends_with('#') {
+        emit.retain(|f| {
+            let c = f.chars().next().unwrap_or(' ');
+            c != 's' && c != 'e'
+        });
+    }
+
+    // sh:42
+    setaparam("flags", emit.clone());
+    let mut describe_argv: Vec<String> = vec![
+        "-t".to_string(),
+        "globflags".to_string(),
+        "glob flag".to_string(),
+        "flags".to_string(),
+        "-Q".to_string(),
+        "-S".to_string(),
+        ")".to_string(),
+    ];
+    if dispatch_function_call("_describe", &describe_argv).unwrap_or(1) == 0 {
+        ret = 0;
+    }
+
+    // sh:44  qualifier-only flags
+    let mut flags2: Vec<&str> = vec![
+        "a:approximate matching",
+        "q:introduce glob qualifier",
+        "c:match repetitions of preceding pattern",
+    ];
+    if !getsparam("IPREFIX").unwrap_or_default().ends_with('#') {
+        flags2.retain(|f| {
+            let c = f.chars().next().unwrap_or(' ');
+            c != 'c' && c != 'q'
+        });
+    }
+    let emit2: Vec<String> = flags2
+        .iter()
+        .filter(|f| {
+            f.chars()
+                .next()
+                .map(|c| !used.contains(&c))
+                .unwrap_or(false)
+        })
+        .map(|s| s.to_string())
+        .collect();
+    setaparam("flags", emit2);
+    describe_argv = vec![
+        "-t".to_string(),
+        "globflags".to_string(),
+        "glob flag".to_string(),
+        "flags".to_string(),
+        "-Q".to_string(),
+        "-S".to_string(),
+        "".to_string(),
+    ];
+    if dispatch_function_call("_describe", &describe_argv).unwrap_or(1) == 0 {
+        ret = 0;
+    }
+
+    ret
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::setsparam("IPREFIX", "");
+        assert_eq!(_globflags(), 1);
+    }
+}

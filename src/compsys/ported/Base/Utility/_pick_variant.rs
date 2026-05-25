@@ -1,44 +1,30 @@
-//! Port of `_pick_variant` from `Completion/Base/Utility/_pick_variant`.
+//! Port of `_pick_variant` from
+//! `Completion/Base/Utility/_pick_variant`.
 //!
 //! Full upstream body (49 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  local output cmd pat pre
-//! sh: 4  local -a var
-//! sh: 5  local -A opts
-//! sh: 6
-//! sh: 7  (( $+_cmd_variant )) || typeset -gA _cmd_variant
-//! sh: 8
-//! sh: 9  zparseopts -D -A opts b: c: r:
-//! sh:10  : ${opts[-c]:=$words[1]}
-//! sh:11
-//! sh:12  while [[ $1 = *=* ]]; do
-//! sh:13    var+=( "${1%%\=*}" "${1#*=}" )
-//! sh:14    shift
-//! sh:15  done
-//! sh:16
-//! sh:17  if (( ${#precommands:|builtin_precommands} )); then
-//! sh:18    pre=command
-//! sh:19  elif (( $+opts[-b] && ( $precommands[(I)builtin] || $+builtins[$opts[-c]] ) )); then
-//! sh:20    (( $+opts[-r] )) && : ${(P)opts[-r]::=$opts[-b]}
+//! sh: 7  zparseopts -D -A opts b: c: r:
+//! sh: 8  : ${opts[-c]:=$words[1]}
+//! sh:10  while [[ $1 = *=* ]]; do
+//! sh:11    var+=( "${1%%\=*}" "${1#*=}" )
+//! sh:12    shift
+//! sh:13  done
+//! sh:15  if (( ${#precommands:|builtin_precommands} )); then
+//! sh:16    pre=command
+//! sh:17  elif (( $+opts[-b] && (...) )); then
 //! sh:21    return 0
 //! sh:22  elif (( $precommands[(I)builtin] )); then
 //! sh:23    pre=builtin
 //! sh:24  else
-//! sh:25    # Neither builtin nor command-forcing precommand specified,
-//! sh:26    # so no prefix is needed.
-//! sh:27    pre=
-//! sh:28  fi
-//! sh:29
+//! sh:26    pre=
+//! sh:27  fi
 //! sh:30  if [[ $pre != builtin ]] && (( $+_cmd_variant[$opts[-c]] )); then
 //! sh:31    (( $+opts[-r] )) && : ${(P)opts[-r]::=${_cmd_variant[$opts[-c]]}}
 //! sh:32    [[ $_cmd_variant[$opts[-c]] = "$1" ]] && return 1
 //! sh:33    return 0
 //! sh:34  fi
-//! sh:35
 //! sh:36  output="$(_call_program variant $pre $opts[-c] "${@[2,-1]}" </dev/null 2>&1)"
-//! sh:37
 //! sh:38  for cmd pat in "$var[@]"; do
 //! sh:39    if [[ $output = *$~pat* ]]; then
 //! sh:40      (( $+opts[-r] )) && : ${(P)opts[-r]::=$cmd}
@@ -46,16 +32,152 @@
 //! sh:42      return 0
 //! sh:43    fi
 //! sh:44  done
-//! sh:45
-//! sh:46  (( $+opts[-r] )) && : ${(P)opts[-r]::=$1}
-//! sh:47  [[ $pre != builtin ]] && _cmd_variant[$opts[-c]]="$1"
-//! sh:48
-//! sh:49  return 1
+//! sh:47  return 1
 //! ```
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_call_program::_call_program;
+use crate::ported::modules::zutil::bin_zparseopts;
+use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
+use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// sh:7 — `zparseopts -D -A opts b: c: r:`. `-A` makes opts an
+/// assoc; we use the flat key/value layout.
+fn run_zparseopts_pick_variant(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let src = "__compsys_argv";
+    setaparam(src, args.to_vec());
+    setaparam("opts_flat", Vec::new());
+    let _ = bin_zparseopts(
+        "zparseopts",
+        &[
+            "-D".to_string(),
+            "-v".to_string(),
+            src.to_string(),
+            "-a".to_string(),
+            "opts_flat".to_string(),
+            "b:".to_string(),
+            "c:".to_string(),
+            "r:".to_string(),
+        ],
+        &make_ops(),
+        0,
+    );
+    let opts_flat = getaparam("opts_flat").unwrap_or_default();
+    let remaining = getaparam(src).unwrap_or_default();
+    (remaining, opts_flat)
+}
+
+/// Look up `key` in a flat [k, v, k, v, ...] options array.
+fn opt(opts_flat: &[String], key: &str) -> Option<String> {
+    let mut i = 0;
+    while i + 1 < opts_flat.len() {
+        if opts_flat[i] == key {
+            return Some(opts_flat[i + 1].clone());
+        }
+        i += 2;
+    }
+    None
+}
+
+/// `_pick_variant` — detect which variant of a command is installed
+/// by running it (cached in `$_cmd_variant`) and matching its output
+/// against caller-supplied `name=pattern` specs.
+pub fn _pick_variant(args: &[String]) -> i32 {
+    // sh:7
+    let (argv, opts_flat) = run_zparseopts_pick_variant(args);
+
+    // sh:8 — opts[-c] defaults to $words[1]
+    let cmd_name = match opt(&opts_flat, "-c") {
+        Some(v) => v,
+        None => getaparam("words").unwrap_or_default().first().cloned().unwrap_or_default(),
+    };
+
+    // sh:10-13 — extract `name=pattern` pairs from argv head
+    let mut var: Vec<(String, String)> = Vec::new();
+    let mut argv = argv;
+    while let Some(first) = argv.first() {
+        if let Some(eq) = first.find('=') {
+            let (n, p) = first.split_at(eq);
+            var.push((n.to_string(), p[1..].to_string()));
+            argv.remove(0);
+        } else {
+            break;
+        }
+    }
+
+    // sh:30  cached?
+    let cmd_variant_arr = getaparam("_cmd_variant").unwrap_or_default();
+    let cached: Option<String> = cmd_variant_arr
+        .chunks(2)
+        .find(|kv| kv.first().map(|k| k == &cmd_name).unwrap_or(false))
+        .and_then(|kv| kv.get(1).cloned());
+    if let Some(cached_v) = cached {
+        if let Some(r) = opt(&opts_flat, "-r") {
+            let _ = setsparam(&r, &cached_v);
+        }
+        let dflt = argv.first().cloned().unwrap_or_default();
+        if cached_v == dflt {
+            return 1;
+        }
+        return 0;
+    }
+
+    // sh:36 — _call_program variant <cmd> <extra args>
+    let mut call_args: Vec<String> = vec!["variant".to_string(), cmd_name.clone()];
+    if argv.len() > 1 {
+        call_args.extend(argv[1..].iter().cloned());
+    }
+    let _ = _call_program(&call_args);
+    let output = getsparam("REPLY").unwrap_or_default();
+
+    // sh:38-43 — for each (name, pattern), test output match
+    for (name, pat) in &var {
+        let matched = match patcompile(pat, 0, None) {
+            Some(prog) => pattry(&prog, &output),
+            None => output.contains(pat),
+        };
+        if matched {
+            if let Some(r) = opt(&opts_flat, "-r") {
+                let _ = setsparam(&r, name);
+            }
+            // Append to _cmd_variant
+            let mut arr = getaparam("_cmd_variant").unwrap_or_default();
+            arr.push(cmd_name.clone());
+            arr.push(name.clone());
+            setaparam("_cmd_variant", arr);
+            return 0;
+        }
+    }
+
+    // sh:46-47
+    let dflt = argv.first().cloned().unwrap_or_default();
+    if let Some(r) = opt(&opts_flat, "-r") {
+        let _ = setsparam(&r, &dflt);
+    }
+    let mut arr = getaparam("_cmd_variant").unwrap_or_default();
+    arr.push(cmd_name);
+    arr.push(dflt);
+    setaparam("_cmd_variant", arr);
+    1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        setaparam("_cmd_variant", Vec::new());
+        assert_eq!(_pick_variant(&[]), 1);
+    }
+}

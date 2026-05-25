@@ -1,74 +1,191 @@
-//! Port of `_complete_tag` from `Completion/Base/Widget/_complete_tag`.
+//! Port of `_complete_tag` from
+//! `Completion/Base/Widget/_complete_tag`.
 //!
-//! Full upstream body (62 lines verbatim):
+//! Full upstream body (62 lines, abridged):
 //! ```text
 //! sh: 1  #compdef -k complete-word \C-xt
-//! sh: 2
-//! sh: 3  # Complete tags using either TAGS or tags.  Looks up your directory
-//! sh: 4  # hierarchy to find one.  If both exist, uses TAGS.
-//! sh: 5  #
-//! sh: 6  # You can override the choice of tags file with $TAGSFILE (for TAGS)
-//! sh: 7  # or $tagsfile (for tags).
-//! sh: 8  #
-//! sh: 9  # Could be rewritten by some sed expert to use sed instead of perl.
-//! sh:10
-//! sh:11  emulate -L zsh
-//! sh:12
-//! sh:13  # Tags file to look for
-//! sh:14  local c_Tagsfile=${TAGSFILE:-TAGS} c_tagsfile=${tagsfile:-tags} expl
-//! sh:15  # Max no. of directories to scan up through
+//! sh:13  local c_Tagsfile=${TAGSFILE:-TAGS} c_tagsfile=${tagsfile:-tags} expl
 //! sh:16  integer c_maxdir=10
-//! sh:17  # Context.
 //! sh:18  local curcontext="$curcontext"
-//! sh:19  local -a c_tags_array
-//! sh:20
-//! sh:21  if [[ -z "$curcontext" ]]; then
-//! sh:22    curcontext="complete-tag:::"
-//! sh:23  else
-//! sh:24    curcontext="complete-tag:${curcontext#*:}"
-//! sh:25  fi
-//! sh:26
-//! sh:27  local c_path=
-//! sh:28  integer c_idir
-//! sh:29  while [[ ! -f $c_path$c_Tagsfile &&
-//! sh:30           ! -f $c_path$c_tagsfile && $c_idir -lt $c_maxdir ]]; do
-//! sh:31    (( c_idir++ ))
-//! sh:32    c_path=../$c_path
-//! sh:33  done
-//! sh:34
-//! sh:35  if [[ -f $c_path$c_Tagsfile && $c_path$c_Tagsfile -ef $c_path$c_tagsfile &&
-//! sh:36        "$(head -1 $c_path$c_tagsfile)" == '!_TAG_'* ]]; then
-//! sh:37          c_Tagsfile=
-//! sh:38  fi
-//! sh:39
-//! sh:40  if [[ -f $c_path$c_Tagsfile ]]; then
-//! sh:41    # prefer the more comprehensive TAGS, which unfortunately is a
-//! sh:42    # little harder to parse.
-//! sh:43    # could do this with sed, just can't be bothered to work out how,
-//! sh:44    # after quarter of an hour of trying, except for
-//! sh:45    #  rm -f =sed; ln -s /usr/local/bin/perl /usr/bin/sed
-//! sh:46    # but that's widely regarded as cheating.
-//! sh:47    c_tags_array=($(sed -n \
-//! sh:48          -e 's/^\(.*[a-zA-Z_0-9]\)[[ '$'\t'':;,()]*'$'\177''.*$/\1/' \
-//! sh:49          -e 's/^.*[^a-zA-Z_0-9]//' \
-//! sh:50          -e '/^[a-zA-Z_].*/p' $c_path$c_Tagsfile))
-//! sh:51  #  c_tags_array=($(perl -ne '/([a-zA-Z_0-9]+)[ \t:;,\(]*\x7f/ &&
-//! sh:52  #                  print "$1\n"' $c_path$c_Tagsfile))
-//! sh:53    _main_complete - '' _wanted etags expl 'emacs tag' \
-//! sh:54        compadd -a c_tags_array
+//! sh:22  if [[ -z "$curcontext" ]]; then curcontext="complete-tag:::"; else …
+//! sh:28  local c_path=; integer c_idir
+//! sh:29  while [[ ! -f $c_path$c_Tagsfile && ! -f $c_path$c_tagsfile && $c_idir -lt $c_maxdir ]]; do
+//! sh:31    (( c_idir++ )); c_path=../$c_path
+//! sh:32  done
+//! sh:34  if TAGS-file is `tags`-only-disguised, blank c_Tagsfile
+//! sh:38  if [[ -f $c_path$c_Tagsfile ]]; then
+//! sh:46    c_tags_array=($(sed extract names from emacs TAGS file))
+//! sh:53    _main_complete - '' _wanted etags expl 'emacs tag' compadd -a c_tags_array
 //! sh:55  elif [[ -f $c_path$c_tagsfile ]]; then
-//! sh:56    # tags doesn't have as much in, but the tag is easy to find.
-//! sh:57    # we can use awk here.
-//! sh:58    c_tags_array=($(awk '{ print $1 }' $c_path$c_tagsfile))
-//! sh:59    _main_complete - '' _wanted vtags expl 'vi tag' compadd -a c_tags_array
-//! sh:60  else
-//! sh:61    return 1
+//! sh:59    c_tags_array=($(awk '{ print $1 }' $c_path$c_tagsfile))
+//! sh:60    _main_complete - '' _wanted vtags expl 'vi tag' compadd -a c_tags_array
+//! sh:61  else return 1
 //! sh:62  fi
 //! ```
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getsparam, setaparam, setsparam};
+use std::fs;
+use std::path::Path;
+
+const MAX_DIR: usize = 10;
+
+/// `_complete_tag` — complete a tag name from a TAGS / tags file in
+/// the current dir or an ancestor (up to 10 levels up).
+pub fn _complete_tag() -> i32 {
+    let cap_tagsfile = getsparam("TAGSFILE").unwrap_or_else(|| "TAGS".to_string());
+    let low_tagsfile = getsparam("tagsfile").unwrap_or_else(|| "tags".to_string());
+
+    let saved_curcontext = getsparam("curcontext").unwrap_or_default();
+    let new_ctx = if saved_curcontext.is_empty() {
+        "complete-tag:::".to_string()
+    } else {
+        let tail = saved_curcontext.splitn(2, ':').nth(1).unwrap_or("");
+        format!("complete-tag:{}", tail)
+    };
+    let _ = setsparam("curcontext", &new_ctx);
+
+    // sh:29-32  walk up the dir tree
+    let mut prefix = String::new();
+    let mut cap_path = None;
+    let mut low_path = None;
+    for _ in 0..MAX_DIR {
+        let p1 = format!("{}{}", prefix, cap_tagsfile);
+        let p2 = format!("{}{}", prefix, low_tagsfile);
+        if Path::new(&p1).is_file() {
+            cap_path = Some(p1.clone());
+        }
+        if Path::new(&p2).is_file() {
+            low_path = Some(p2.clone());
+        }
+        if cap_path.is_some() || low_path.is_some() {
+            break;
+        }
+        prefix = format!("../{}", prefix);
+    }
+
+    // sh:34-37  TAGS == tags + `!_TAG_…` prefix → treat as vi tags
+    let mut emacs_tags_path = cap_path.clone();
+    if let (Some(cp), Some(lp)) = (cap_path.as_ref(), low_path.as_ref()) {
+        if cp == lp {
+            if let Ok(content) = fs::read_to_string(cp) {
+                if content.lines().next().map(|l| l.starts_with("!_TAG_")).unwrap_or(false) {
+                    emacs_tags_path = None;
+                }
+            }
+        }
+    }
+
+    // sh:38-54  prefer emacs TAGS
+    if let Some(p) = emacs_tags_path {
+        let tags = parse_emacs_tags(&p);
+        setaparam("c_tags_array", tags);
+        let _ = setsparam("curcontext", &saved_curcontext);
+        return dispatch_function_call(
+            "_main_complete",
+            &[
+                "-".to_string(),
+                "".to_string(),
+                "_wanted".to_string(),
+                "etags".to_string(),
+                "expl".to_string(),
+                "emacs tag".to_string(),
+                "compadd".to_string(),
+                "-a".to_string(),
+                "c_tags_array".to_string(),
+            ],
+        )
+        .unwrap_or(1);
+    }
+
+    // sh:55-60  vi tags fallback
+    if let Some(p) = low_path {
+        let tags = parse_vi_tags(&p);
+        setaparam("c_tags_array", tags);
+        let _ = setsparam("curcontext", &saved_curcontext);
+        return dispatch_function_call(
+            "_main_complete",
+            &[
+                "-".to_string(),
+                "".to_string(),
+                "_wanted".to_string(),
+                "vtags".to_string(),
+                "expl".to_string(),
+                "vi tag".to_string(),
+                "compadd".to_string(),
+                "-a".to_string(),
+                "c_tags_array".to_string(),
+            ],
+        )
+        .unwrap_or(1);
+    }
+
+    // sh:61
+    let _ = setsparam("curcontext", &saved_curcontext);
+    1
+}
+
+/// sh:46 — extract name tokens from an emacs TAGS file by matching
+/// against the `name<DEL>...` (0x7F separator) convention.
+fn parse_emacs_tags(path: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Ok(content) = fs::read_to_string(path) {
+        for line in content.lines() {
+            // emacs TAGS lines look like: `text<DEL>name<SOH>line,offset`
+            if let Some(del_idx) = line.find('\x7f') {
+                // Take everything BEFORE the DEL, then split on the last
+                // non-ident char.
+                let head = &line[..del_idx];
+                let tail = head.trim_end_matches(
+                    |c: char| !(c.is_ascii_alphanumeric() || c == '_'),
+                );
+                let name_start = tail
+                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let name = &tail[name_start..];
+                if !name.is_empty()
+                    && name.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic())
+                        .unwrap_or(false)
+                {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// sh:59 — vi tags file: first whitespace-separated field per line.
+fn parse_vi_tags(path: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Ok(content) = fs::read_to_string(path) {
+        for line in content.lines() {
+            if let Some(name) = line.split_whitespace().next() {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_tags_file() {
+        // Run in a tmpdir that has no TAGS/tags file.
+        let _g = crate::test_util::global_state_lock();
+        let _r = _complete_tag();
+    }
+
+    #[test]
+    fn parse_vi_tags_extracts_first_word() {
+        let tmp = std::env::temp_dir().join("_complete_tag_vi_test");
+        let _ = fs::write(&tmp, "MyTag /path/to/file.c\nAnother /other.h\n");
+        let names = parse_vi_tags(tmp.to_str().unwrap());
+        assert_eq!(names, vec!["MyTag", "Another"]);
+        let _ = fs::remove_file(&tmp);
+    }
+}

@@ -21,27 +21,132 @@
 //! sh:17  fi
 //! ```
 //!
-//! Three-clause dispatcher:
-//! - With 1 positional arg → bare "is this tag wanted?" check (the
-//! mode used by callers like `_files` and `_arguments` when they
-//! just want the gate without emitting matches).
-//! - With 2-3 positional args → call `_description` (gate + describe).
-//! - With ≥4 positional args → call `_all_labels` (gate + emit via
-//! the all-labels loop, which fans out across `tag-order` labels).
-//!
-//! Flag passthrough: `-1`, `-2`, `-V`, `-J`, `-x` are zparseopts'd
-//! into `__gopt` and forwarded to `_all_labels` / `_description`. This
-//! port mirrors that — parsed flags are returned alongside the gate
-//! result so callers can forward them.
-//!
-//! The core "is tag wanted" decision is already implemented by
-//! [`crate::compsys::base::TagManager::requested`] (see `compsys/base.rs:147`);
-//! this port wraps it with the documented flag-parse + arg-count
-//! dispatch semantics.
+//! Calls real `bin_comptags -R` + real `bin_zparseopts`. Delegates
+//! to sibling ports `_all_labels::_all_labels` and
+//! `_description::_description` for the dispatch arms.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use super::_all_labels::_all_labels;
+use super::_description::_description;
+use crate::ported::modules::zutil::bin_zparseopts;
+use crate::ported::params::{getaparam, setaparam};
+use crate::ported::zle::computil::bin_comptags;
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// sh:6 — bridge to real `bin_zparseopts -D -a __gopt 1 2 V J x`
+/// via `-v <name>`.
+fn run_gopt(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let src = "__compsys_argv";
+    setaparam(src, args.to_vec());
+    setaparam("__gopt", Vec::new());
+    let _ = bin_zparseopts(
+        "zparseopts",
+        &[
+            "-D".to_string(),
+            "-v".to_string(),
+            src.to_string(),
+            "-a".to_string(),
+            "__gopt".to_string(),
+            "1".to_string(),
+            "2".to_string(),
+            "V".to_string(),
+            "J".to_string(),
+            "x".to_string(),
+        ],
+        &make_ops(),
+        0,
+    );
+    let gopt = getaparam("__gopt").unwrap_or_default();
+    let remaining = getaparam(src).unwrap_or_default();
+    (remaining, gopt)
+}
+
+/// `_requested` — check if tag `$1` was requested by the current
+/// completion context. Returns 0 when requested (after dispatching
+/// to `_all_labels` or `_description` as appropriate), 1 otherwise.
+pub fn _requested(args: &[String]) -> i32 {
+    // sh:5-6
+    let (argv, gopt) = run_gopt(args);
+
+    // sh:8  comptags -R "$1"
+    let arg1 = argv.first().cloned().unwrap_or_default();
+    if bin_comptags(
+        "comptags",
+        &["-R".to_string(), arg1],
+        &make_ops(),
+        0,
+    ) != 0
+    {
+        // sh:16
+        return 1;
+    }
+
+    // sh:9
+    if argv.len() > 3 {
+        // sh:10  _all_labels - "$__gopt[@]" "$@" || return 1
+        let mut all_args: Vec<String> = vec!["-".to_string()];
+        all_args.extend(gopt.iter().cloned());
+        all_args.extend(argv.iter().cloned());
+        if _all_labels(&all_args) != 0 {
+            return 1;
+        }
+    } else if argv.len() > 1 {
+        // sh:12  _description "$__gopt[@]" "$@"
+        let mut desc_args: Vec<String> = gopt;
+        desc_args.extend(argv);
+        let _ = _description(&desc_args);
+    }
+    // sh:14
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    use std::sync::atomic::Ordering;
+
+    fn with_incompfunc<T, F: FnOnce() -> T>(f: F) -> T {
+        let _g = crate::test_util::global_state_lock();
+        let prev = INCOMPFUNC.load(Ordering::Relaxed);
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        let r = f();
+        INCOMPFUNC.store(prev, Ordering::Relaxed);
+        r
+    }
+
+    #[test]
+    fn unrequested_tag_returns_one() {
+        // sh:16 — comptags -R fails for tags never registered.
+        let r = with_incompfunc(|| {
+            _requested(&[
+                "unregistered_tag".to_string(),
+                "name".to_string(),
+                "descr".to_string(),
+            ])
+        });
+        assert_eq!(r, 1);
+    }
+
+    #[test]
+    fn parses_gopt_via_zparseopts() {
+        // sh:6 — `-V` is boolean, strips from argv into gopt.
+        let _g = crate::test_util::global_state_lock();
+        let (rem, gopt) = run_gopt(&[
+            "-V".to_string(),
+            "mytag".to_string(),
+            "n".to_string(),
+            "d".to_string(),
+        ]);
+        assert_eq!(gopt, vec!["-V"]);
+        assert_eq!(rem, vec!["mytag", "n", "d"]);
+    }
+}

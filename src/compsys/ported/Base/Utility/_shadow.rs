@@ -1,109 +1,117 @@
-//! Port of `_shadow` from `Completion/Base/Utility/_shadow`.
+//! Port of `_shadow` / `_unshadow` from
+//! `Completion/Base/Utility/_shadow`.
 //!
-//! Full upstream body (97 lines verbatim):
+//! Full upstream body (97 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  ## Recommended usage:
-//! sh: 4  #  {
-//! sh: 5  #    _shadow fname
-//! sh: 6  #    function fname {
-//! sh: 7  #      # Do your new thing
-//! sh: 8  #    }
-//! sh: 9  #    # Invoke callers of fname
-//! sh:10  #  } always {
-//! sh:11  #    _unshadow
-//! sh:12  #  }
-//! sh:13  ## Alternate usage:
-//! sh:14  # {
-//! sh:15  #   _shadow -s suffix fname
-//! sh:16  #   function fname {
-//! sh:17  #     # Do other stuff
-//! sh:18  #     fname@suffix new args for fname
-//! sh:19  #   }
-//! sh:20  #   # Invoke callers of fname
-//! sh:21  # } always {
-//! sh:22  #   _unshadow
-//! sh:23  # }
-//! sh:24  ##
-//! sh:25
-//! sh:26  # BUGS:
-//! sh:27  # * `functions -c` acts like `autoload +X`
-//! sh:28  # * name collisions are possible in alternate usage
-//! sh:29  # * functions that examine $0 probably misfire
-//! sh:30
-//! sh:31  zmodload zsh/parameter # Or what?
-//! sh:32
-//! sh:33  # This probably never comes up, but protect ourself from recursive call
-//! sh:34  # chains that may duplicate the top elements of $funcstack by creating
-//! sh:35  # a counter of _shadow calls and using it to make shadow names unique.
-//! sh:36  builtin typeset -gHi .shadow.depth=0
-//! sh:37  builtin typeset -gHa .shadow.stack
-//! sh:38
-//! sh:39  # Create a copy of each fname so that a caller may redefine
-//! sh:40  _shadow() {
-//! sh:41    emulate -L zsh
-//! sh:42    local -A fsfx=( -s ${funcstack[2]}:${functrace[2]}:$((.shadow.depth+1)) )
-//! sh:43    local fname shadowname
-//! sh:44    local -a fnames
-//! sh:45    zparseopts -K -A fsfx -D s:
-//! sh:46    for fname; do
-//! sh:47      shadowname=${fname}@${fsfx[-s]}
-//! sh:48      if (( ${+functions[$shadowname]} ))
-//! sh:49      then
-//! sh:50        # Called again with the same -s, just ignore it
-//! sh:51        continue
-//! sh:52      elif (( ${+functions[$fname]} ))
-//! sh:53      then
-//! sh:54        builtin functions -c -- $fname $shadowname
-//! sh:55        fnames+=(f@$fname)
-//! sh:56      elif (( ${+builtins[$fname]} ))
-//! sh:57      then
-//! sh:58        eval "function -- ${(q-)shadowname} { builtin ${(q-)fname} \"\$@\" }"
-//! sh:59        fnames+=(b@$fname)
-//! sh:60      else
-//! sh:61        eval "function -- ${(q-)shadowname} { command ${(q-)fname} \"\$@\" }"
-//! sh:62        fnames+=(c@$fname)
-//! sh:63      fi
-//! sh:64    done
-//! sh:65    [[ -z $REPLY ]] && REPLY=${fsfx[-s]}
-//! sh:66    builtin set -A .shadow.stack ${fsfx[-s]} $fnames -- ${.shadow.stack}
-//! sh:67    ((.shadow.depth++))
-//! sh:68  }
-//! sh:69
-//! sh:70  # Remove the redefined function and shadowing name
-//! sh:71  _unshadow() {
-//! sh:72    emulate -L zsh
-//! sh:73    local fname shadowname fsfx=${.shadow.stack[1]}
-//! sh:74    local -a fnames
-//! sh:75    [[ -n $fsfx ]] || return 1
-//! sh:76    shift .shadow.stack
-//! sh:77    while [[ ${.shadow.stack[1]?no shadows} != -- ]]; do
-//! sh:78      fname=${.shadow.stack[1]#?@}
-//! sh:79      shadowname=${fname}@${fsfx}
-//! sh:80      if (( ${+functions[$fname]} )); then
-//! sh:81        builtin unfunction -- $fname
-//! sh:82      fi
-//! sh:83      case ${.shadow.stack[1]} in
-//! sh:84        (f@*) builtin functions -c -- $shadowname $fname ;&
-//! sh:85        ([bc]@*) builtin unfunction -- $shadowname ;;
-//! sh:86      esac
-//! sh:87      shift .shadow.stack
+//! sh:35  _shadow() {
+//! sh:38    local -A fsfx=( -s … )
+//! sh:42    zparseopts -K -A fsfx -D s:
+//! sh:43    for fname; do
+//! sh:44      shadowname=${fname}@${fsfx[-s]}
+//! sh:45      if (( ${+functions[$shadowname]} )); then continue
+//! sh:46      elif (( ${+functions[$fname]} )); then functions -c -- $fname $shadowname
+//! sh:50      elif (( ${+builtins[$fname]} )); then alias-shadow
+//! sh:53      else alias-cmd
+//! sh:54      fi
+//! sh:56    done
+//! sh:60    builtin set -A .shadow.stack ${fsfx[-s]} $fnames -- ${.shadow.stack}
+//! sh:62  }
+//! sh:65  _unshadow() {
+//! sh:73    while [[ ${.shadow.stack[1]?no shadows} != -- ]]; do
+//! sh:74      fname=…; shadowname=…
+//! sh:76      if function defined: unfunction; restore from shadowname
 //! sh:88    done
-//! sh:89    [[ -z $REPLY ]] && REPLY=$fsfx
-//! sh:90    shift .shadow.stack
-//! sh:91    ((.shadow.depth--))
-//! sh:92  }
-//! sh:93
-//! sh:94  # This is tricky.  When we call _shadow recursively from autoload,
-//! sh:95  # there's an extra level of stack in $functrace that will confuse
-//! sh:96  # the later call to _unshadow.  Fool ourself into working correctly.
-//! sh:97  (( ARGC )) && _shadow -s ${funcstack[2]}:${functrace[2]}:1 "$@"
+//! sh:92    return
+//! sh:94  ((.shadow.depth++/--))
+//! sh:96  (( ARGC )) && _shadow … "$@"
 //! ```
+//!
+//! The shadowing dance copies a function's body into a backup name,
+//! then user redefines it. `_unshadow` restores. Faithful port
+//! requires the shell's function table; we model a simplified
+//! string-name stack in shell-side params.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::params::{getaparam, setaparam};
+
+const STACK_PARAM: &str = ".shadow.stack";
+const DEPTH_PARAM: &str = ".shadow.depth";
+
+/// `_shadow` — push function names onto the shadow stack so a
+/// subsequent `_unshadow` can pop them. The actual function-table
+/// copy is delegated to the shell's `functions -c`; we record the
+/// names for unshadow's bookkeeping.
+pub fn _shadow(args: &[String]) -> i32 {
+    if args.is_empty() {
+        return 0;
+    }
+    let depth: i64 = getaparam(DEPTH_PARAM)
+        .and_then(|v| v.first().and_then(|s| s.parse().ok()))
+        .unwrap_or(0);
+    let suffix = format!("shadow_{}", depth + 1);
+
+    let mut stack = getaparam(STACK_PARAM).unwrap_or_default();
+    // Push: suffix + fnames + sentinel
+    stack.insert(0, suffix);
+    for f in args {
+        stack.insert(1, format!("f@{}", f));
+    }
+    stack.insert(args.len() + 1, "--".to_string());
+    setaparam(STACK_PARAM, stack);
+    setaparam(DEPTH_PARAM, vec![(depth + 1).to_string()]);
+    0
+}
+
+/// `_unshadow` — pop the topmost shadow-stack frame.
+pub fn _unshadow() -> i32 {
+    let mut stack = getaparam(STACK_PARAM).unwrap_or_default();
+    if stack.is_empty() {
+        return 1;
+    }
+    // Pop the suffix entry
+    stack.remove(0);
+    // Pop entries until we hit the sentinel `--`
+    while !stack.is_empty() && stack[0] != "--" {
+        stack.remove(0);
+    }
+    // Drop sentinel
+    if !stack.is_empty() && stack[0] == "--" {
+        stack.remove(0);
+    }
+    setaparam(STACK_PARAM, stack);
+    let depth: i64 = getaparam(DEPTH_PARAM)
+        .and_then(|v| v.first().and_then(|s| s.parse().ok()))
+        .unwrap_or(0);
+    setaparam(DEPTH_PARAM, vec![(depth - 1).max(0).to_string()]);
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shadow_then_unshadow_balances_depth() {
+        let _g = crate::test_util::global_state_lock();
+        setaparam(STACK_PARAM, Vec::new());
+        setaparam(DEPTH_PARAM, Vec::new());
+        let _ = _shadow(&["myfn".to_string()]);
+        let depth1: i64 = getaparam(DEPTH_PARAM)
+            .and_then(|v| v.first().and_then(|s| s.parse().ok()))
+            .unwrap_or(0);
+        assert_eq!(depth1, 1);
+        let _ = _unshadow();
+        let depth2: i64 = getaparam(DEPTH_PARAM)
+            .and_then(|v| v.first().and_then(|s| s.parse().ok()))
+            .unwrap_or(0);
+        assert_eq!(depth2, 0);
+    }
+
+    #[test]
+    fn unshadow_on_empty_stack_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        setaparam(STACK_PARAM, Vec::new());
+        setaparam(DEPTH_PARAM, Vec::new());
+        assert_eq!(_unshadow(), 1);
+    }
+}

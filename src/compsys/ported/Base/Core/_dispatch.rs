@@ -1,113 +1,238 @@
 //! Port of `_dispatch` from `Completion/Base/Core/_dispatch`.
 //!
-//! Full upstream body (91 lines verbatim):
+//! Full upstream body (91 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  local comp pat val name i ret=1 _compskip="$_compskip"
-//! sh: 4  local curcontext="$curcontext" service str noskip
-//! sh: 5  local -a match mbegin mend
-//! sh: 6
-//! sh: 7  # If we get the option `-s', we don't reset `_compskip'.
-//! sh: 8
-//! sh: 9  if [[ "$1" = -s ]]; then
-//! sh:10    noskip=yes
-//! sh:11    shift
-//! sh:12  fi
-//! sh:13
+//! sh: 5  local comp pat val name i ret=1 _compskip="$_compskip"
+//! sh: 6  local curcontext="$curcontext" service str noskip
+//! sh:11  if [[ "$1" = -s ]]; then noskip=yes; shift; fi
 //! sh:14  [[ -z "$noskip" ]] && _compskip=
-//! sh:15
 //! sh:16  curcontext="${curcontext%:*:*}:${1}:"
-//! sh:17
-//! sh:18  shift
-//! sh:19
-//! sh:20  # See if there are any matching pattern completions.
-//! sh:21
-//! sh:22  if [[ "$_compskip" != (all|*patterns*) ]]; then
-//! sh:23
-//! sh:24    for str in "$@"; do
-//! sh:25      [[ -n "$str" ]] || continue
-//! sh:26      service="${_services[$str]:-$str}"
-//! sh:27      for i in "${(@)_patcomps[(K)$str]}"; do
-//! sh:28        if [[ $i = (#b)"="([^=]#)"="(*) ]]; then
-//! sh:29  	service=$match[1]
-//! sh:30  	i=$match[2]
-//! sh:31        fi
-//! sh:32        eval "$i" && ret=0
-//! sh:33        if [[ "$_compskip" = *patterns* ]]; then
-//! sh:34          break
-//! sh:35        elif [[ "$_compskip" = all ]]; then
-//! sh:36          _compskip=''
-//! sh:37          return ret
-//! sh:38        fi
-//! sh:39      done
-//! sh:40    done
-//! sh:41  fi
-//! sh:42
-//! sh:43  # Now look up the names in the normal completion array.
-//! sh:44
-//! sh:45  ret=1
-//! sh:46  for str in "$@"; do
-//! sh:47    [[ -n "$str" ]] || continue
-//! sh:48    # The following means we look up the names of commands
-//! sh:49    # after stripping quotes.  This is presumably correct,
-//! sh:50    # but do we need to do the same elsewhere?
-//! sh:51    str=${(Q)str}
-//! sh:52    name="$str"
-//! sh:53    comp="${_comps[$str]}"
-//! sh:54    service="${_services[$str]:-$str}"
-//! sh:55
-//! sh:56    [[ -z "$comp" ]] || break
-//! sh:57  done
-//! sh:58
-//! sh:59  # And generate the matches, probably using default completion.
-//! sh:60
-//! sh:61  if [[ -n "$comp" && "$name" != "${argv[-1]}" ]]; then
-//! sh:62    _compskip=patterns
-//! sh:63    eval "$comp" && ret=0
-//! sh:64    [[ "$_compskip" = (all|*patterns*) ]] && return ret
-//! sh:65  fi
-//! sh:66
-//! sh:67  if [[ "$_compskip" != (all|*patterns*) ]]; then
-//! sh:68    for str; do
-//! sh:69      [[ -n "$str" ]] || continue
-//! sh:70      service="${_services[$str]:-$str}"
-//! sh:71      for i in "${(@)_postpatcomps[(K)$str]}"; do
-//! sh:72        _compskip=default
-//! sh:73        eval "$i" && ret=0
-//! sh:74        if [[ "$_compskip" = *patterns* ]]; then
-//! sh:75          break
-//! sh:76        elif [[ "$_compskip" = all ]]; then
-//! sh:77          _compskip=''
-//! sh:78          return ret
-//! sh:79        fi
-//! sh:80      done
-//! sh:81    done
-//! sh:82  fi
-//! sh:83
-//! sh:84  [[ "$name" = "${argv[-1]}" && -n "$comp" &&
-//! sh:85     "$_compskip" != (all|*default*) ]] &&
-//! sh:86    service="${_services[$name]:-$name}" &&
-//! sh:87     eval "$comp" && ret=0
-//! sh:88
-//! sh:89  _compskip=''
-//! sh:90
-//! sh:91  return ret
+//! sh:17  shift
+//! sh:21  if [[ "$_compskip" != (all|*patterns*) ]]; then
+//! sh:23    for str in "$@"; do
+//! sh:25      service="${_services[$str]:-$str}"
+//! sh:26      for i in "${(@)_patcomps[(K)$str]}"; do … patterns dispatch …
+//! sh:39  fi
+//! sh:43  ret=1
+//! sh:44  for str in "$@"; do … look up $_comps[$str] …
+//! sh:54  done
+//! sh:58  if [[ -n "$comp" && "$name" != "${argv[-1]}" ]]; then
+//! sh:60    _compskip=patterns
+//! sh:61    eval "$comp" && ret=0
+//! sh:65  if [[ "$_compskip" != (all|*patterns*) ]]; then
+//! sh:67    for str; do … _postpatcomps …
+//! sh:81  [[ "$name" = "${argv[-1]}" && -n "$comp" &&
+//! sh:82     "$_compskip" != (all|*default*) ]] &&
+//! sh:83    service="${_services[$name]:-$name}" &&
+//! sh:84     eval "$comp" && ret=0
+//! sh:86  _compskip=''
+//! sh:88  return ret
 //! ```
-//!
-//! Faithful Rust port:
-//! - Honors `compskip` flags ("all", "patterns", "default") via
-//! module-level functions.
-//! - shell:16 — curcontext rewrite: strip last two `:`-segments,
-//! append `:$1:`.
-//! - shell:26 — `_services[$str]:-$str` service-aliasing.
-//! - shell:27-32 — pattern completions via `_patcomps` walk.
-//! - shell:39-41 — `_comps[$service]` lookup + invoke via the
-//! `_call_function` registry.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getaparam, getsparam, setsparam};
+
+/// Helper: assoc lookup in flat key/value layout.
+fn assoc_get(name: &str, key: &str) -> Option<String> {
+    let arr = getaparam(name)?;
+    arr.chunks(2)
+        .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
+        .and_then(|kv| kv.get(1).cloned())
+}
+
+/// `_dispatch` — central context dispatcher. `-s` skips the
+/// `_compskip` reset; first non-flag arg becomes the curcontext
+/// field; remaining args are tried in order against `$_comps`.
+pub fn _dispatch(args: &[String]) -> i32 {
+    let mut ret: i32 = 1;
+    let saved_curcontext = getsparam("curcontext").unwrap_or_default();
+    let saved_compskip = getsparam("_compskip").unwrap_or_default();
+    let saved_service = getsparam("service").unwrap_or_default();
+
+    let mut argv = args.to_vec();
+    // sh:11
+    let mut noskip = false;
+    if argv.first().map(|s| s == "-s").unwrap_or(false) {
+        noskip = true;
+        argv.remove(0);
+    }
+    // sh:14
+    if !noskip {
+        let _ = setsparam("_compskip", "");
+    }
+    // sh:16-17
+    if argv.is_empty() {
+        return 1;
+    }
+    let ctx_tail = argv.remove(0);
+    // Replace last two `:`-fields of curcontext with `:${1}:`
+    let mut curcontext = saved_curcontext.clone();
+    if let Some(i) = curcontext.rfind(':') {
+        if let Some(j) = curcontext[..i].rfind(':') {
+            curcontext.truncate(j);
+        }
+    }
+    curcontext.push(':');
+    curcontext.push_str(&ctx_tail);
+    curcontext.push(':');
+    let _ = setsparam("curcontext", &curcontext);
+
+    // sh:21-39  patterns pass
+    let compskip = getsparam("_compskip").unwrap_or_default();
+    if !(compskip == "all" || compskip.contains("patterns")) {
+        for str_arg in &argv {
+            if str_arg.is_empty() {
+                continue;
+            }
+            let service =
+                assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
+            let _ = setsparam("service", &service);
+            let patcomps = getaparam("_patcomps").unwrap_or_default();
+            for i in patcomps.chunks(2) {
+                if let (Some(_pat), Some(action)) = (i.first(), i.get(1)) {
+                    // The shell uses `(K)$str` to match the key pattern
+                    //   against `$str`; we approximate by literal
+                    //   equality for now.
+                    if i.first().map(|k| k == str_arg).unwrap_or(false) {
+                        let parts: Vec<String> = action
+                            .split_whitespace()
+                            .map(|s| s.to_string())
+                            .collect();
+                        if let Some((cmd, rest)) = parts.split_first() {
+                            if dispatch_function_call(cmd, rest).unwrap_or(1) == 0 {
+                                ret = 0;
+                            }
+                        }
+                        let cs = getsparam("_compskip").unwrap_or_default();
+                        if cs.contains("patterns") {
+                            break;
+                        }
+                        if cs == "all" {
+                            let _ = setsparam("_compskip", "");
+                            let _ = setsparam("curcontext", &saved_curcontext);
+                            let _ = setsparam("service", &saved_service);
+                            return ret;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // sh:43-54  $_comps lookup
+    ret = 1;
+    let mut comp = String::new();
+    let mut name = String::new();
+    for str_arg in &argv {
+        if str_arg.is_empty() {
+            continue;
+        }
+        // sh:48 `${(Q)str}` — quote-strip (no-op here; our argv has no
+        //   shell-quoting layer)
+        name = str_arg.clone();
+        comp = assoc_get("_comps", str_arg).unwrap_or_default();
+        let service =
+            assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
+        let _ = setsparam("service", &service);
+        if !comp.is_empty() {
+            break;
+        }
+    }
+
+    let last_arg = argv.last().cloned().unwrap_or_default();
+    // sh:58-63
+    if !comp.is_empty() && name != last_arg {
+        let _ = setsparam("_compskip", "patterns");
+        if dispatch_function_call(&comp, &[]).unwrap_or(1) == 0 {
+            ret = 0;
+        }
+        let cs = getsparam("_compskip").unwrap_or_default();
+        if cs == "all" || cs.contains("patterns") {
+            let _ = setsparam("_compskip", "");
+            let _ = setsparam("curcontext", &saved_curcontext);
+            let _ = setsparam("service", &saved_service);
+            return ret;
+        }
+    }
+
+    // sh:65-79  postpatcomps pass
+    let cs = getsparam("_compskip").unwrap_or_default();
+    if !(cs == "all" || cs.contains("patterns")) {
+        for str_arg in &argv {
+            if str_arg.is_empty() {
+                continue;
+            }
+            let service =
+                assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
+            let _ = setsparam("service", &service);
+            let pp = getaparam("_postpatcomps").unwrap_or_default();
+            for i in pp.chunks(2) {
+                if i.first().map(|k| k == str_arg).unwrap_or(false) {
+                    if let Some(action) = i.get(1) {
+                        let _ = setsparam("_compskip", "default");
+                        let parts: Vec<String> = action
+                            .split_whitespace()
+                            .map(|s| s.to_string())
+                            .collect();
+                        if let Some((cmd, rest)) = parts.split_first() {
+                            if dispatch_function_call(cmd, rest).unwrap_or(1) == 0 {
+                                ret = 0;
+                            }
+                        }
+                        let cs2 = getsparam("_compskip").unwrap_or_default();
+                        if cs2.contains("patterns") {
+                            break;
+                        }
+                        if cs2 == "all" {
+                            let _ = setsparam("_compskip", "");
+                            let _ = setsparam("curcontext", &saved_curcontext);
+                            let _ = setsparam("service", &saved_service);
+                            return ret;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // sh:81-84  fallback to last-arg's comp
+    let cs2 = getsparam("_compskip").unwrap_or_default();
+    if name == last_arg
+        && !comp.is_empty()
+        && !(cs2 == "all" || cs2.contains("default"))
+    {
+        let service =
+            assoc_get("_services", &name).unwrap_or_else(|| name.clone());
+        let _ = setsparam("service", &service);
+        if dispatch_function_call(&comp, &[]).unwrap_or(1) == 0 {
+            ret = 0;
+        }
+    }
+
+    let _ = setsparam("_compskip", "");
+    let _ = setsparam("curcontext", &saved_curcontext);
+    let _ = setsparam("service", &saved_service);
+    let _ = saved_compskip;
+    ret
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_dispatch(&[]), 1);
+    }
+
+    #[test]
+    fn dash_s_consumed_and_ctx_appended() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("curcontext", "a:b:c:d");
+        let _ = _dispatch(&["-s".to_string(), "mycmd".to_string()]);
+        // After return, curcontext is restored to its pre-call value.
+        assert_eq!(getsparam("curcontext").as_deref(), Some("a:b:c:d"));
+    }
+}

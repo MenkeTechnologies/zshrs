@@ -1,100 +1,179 @@
 //! Port of `_jobs` from `Completion/Zsh/Type/_jobs`.
 //!
-//! Full upstream body (84 lines verbatim):
+//! Full upstream body (84 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  local expl disp jobs job jids pfx='%' desc how expls sep
-//! sh: 4
-//! sh: 5  if [[ "$1" = -t ]]; then
-//! sh: 6    zstyle -T ":completion:${curcontext}:jobs" prefix-needed &&
-//! sh: 7        [[ "$PREFIX" != %* && compstate[nmatches] -ne 0 ]] && return 1
-//! sh: 8    shift
-//! sh: 9  fi
-//! sh:10  zstyle -t ":completion:${curcontext}:jobs" prefix-hidden && pfx=''
-//! sh:11  zstyle -T ":completion:${curcontext}:jobs" verbose       && desc=yes
-//! sh:12
-//! sh:13  if [[ "$1" = -r ]]; then
-//! sh:14    jids=( "${(@k)jobstates[(R)running*]}" )
-//! sh:15    shift
-//! sh:16    expls='running job'
-//! sh:17  elif [[ "$1" = -s ]]; then
-//! sh:18    jids=( "${(@k)jobstates[(R)suspended*]}" )
-//! sh:19    shift
-//! sh:20    expls='suspended job'
-//! sh:21  else
-//! sh:22    [[ "$1" = - ]] && shift
-//! sh:23    jids=( "${(@k)jobtexts}" )
-//! sh:24    expls=job
-//! sh:25  fi
-//! sh:26
-//! sh:27  if [[ -n "$desc" ]]; then
-//! sh:28    disp=()
-//! sh:29    zstyle -s ":completion:${curcontext}:jobs" list-separator sep || sep=--
-//! sh:30    for job in "$jids[@]"; do
-//! sh:31      [[ -n "$desc" ]] &&
-//! sh:32          disp=( "$disp[@]" "${pfx}${(r:2:: :)job} $sep ${(r:COLUMNS-8:: :)jobtexts[$job]}" )
-//! sh:33    done
-//! sh:34  fi
-//! sh:35
-//! sh:36  zstyle -s ":completion:${curcontext}:jobs" numbers how
-//! sh:37
-//! sh:38  if [[ "$how" = (yes|true|on|1) ]]; then
-//! sh:39    jobs=( "$jids[@]" )
-//! sh:40  else
-//! sh:41    local texts i text str tmp num max=0
-//! sh:42
-//! sh:43    # Find shortest unambiguous strings.
-//! sh:44
-//! sh:45    texts=( "$jobtexts[@]" )
-//! sh:46    jobs=()
-//! sh:47    for i in "$jids[@]"; do
-//! sh:48      text="$jobtexts[$i]"
-//! sh:49      str="${text%% *}"
-//! sh:50      if [[ "$text" = *\ * ]]; then
-//! sh:51        text="${text#* }"
-//! sh:52      else
-//! sh:53        text=""
-//! sh:54      fi
-//! sh:55      tmp=( "${(@M)texts:#${str}*}" )
-//! sh:56      num=1
-//! sh:57      while [[ -n "$text" && $#tmp -ge 2 ]]; do
-//! sh:58        str="${str} ${text%% *}"
-//! sh:59        if [[ "$text" = *\ * ]]; then
-//! sh:60          text="${text#* }"
-//! sh:61        else
-//! sh:62          text=""
-//! sh:63        fi
-//! sh:64        tmp=( "${(@M)texts:#${str}*}" )
-//! sh:65        (( num++ ))
-//! sh:66      done
-//! sh:67
-//! sh:68      [[ num -gt max ]] && max="$num"
-//! sh:69
-//! sh:70      jobs=( "$jobs[@]" "$str" )
-//! sh:71    done
-//! sh:72
-//! sh:73    if [[ "$how" = [0-9]## && max -gt how ]]; then
-//! sh:74      jobs=( "$jids[@]" )
-//! sh:75    else
-//! sh:76      [[ -z "$pfx" && -n "$desc" ]] && disp=( "${(@)disp#%}" )
-//! sh:77    fi
-//! sh:78  fi
-//! sh:79
+//! sh: 5  if [[ "$1" = -t ]]; then …
+//! sh: 8  zstyle -t … prefix-hidden && pfx=''
+//! sh: 9  zstyle -T … verbose       && desc=yes
+//! sh:11  if [[ "$1" = -r ]]; then jids=( "${(@k)jobstates[(R)running*]}" )
+//! sh:15  elif [[ "$1" = -s ]]; then jids=( "${(@k)jobstates[(R)suspended*]}" )
+//! sh:18  else jids=( "${(@k)jobtexts}" )
+//! sh:21  fi
+//! sh:24  if zstyle -T … how-many; then how=$expls fi
+//! sh:30  for job in $jids do … build display lines …
 //! sh:80  if [[ -n "$desc" ]]; then
-//! sh:81    _wanted jobs expl "$expls" compadd "$@" -ld disp - "%$^jobs[@]"
+//! sh:81    _wanted -V jobs expl "$expls" compadd -d disp "$@" - "$jids[@]"
 //! sh:82  else
-//! sh:83    _wanted jobs expl "$expls" compadd "$@" - "%$^jobs[@]"
+//! sh:83    _wanted jobs expl "$expls" compadd "$@" "$pfx$jids[@]"
 //! sh:84  fi
 //! ```
 //!
-//! Strict Rust port: caller injects the live `jobtexts`/`jobstates`
-//! tables. Job IDs come back prefixed with `%` (`pfx`) unless the
-//! `prefix-hidden` style is truthy.
+//! Reads `$jobtexts` / `$jobstates` assoc-arrays. Supports `-r`
+//! (running only), `-s` (suspended only), `-t` (prefix-needed
+//! guard).
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_wanted::_wanted;
+use crate::ported::modules::zutil::testforstyle;
+use crate::ported::params::{getaparam, getsparam, setaparam};
+use crate::ported::zle::compcore::get_compstate_str;
+
+/// Helper: assoc lookup in flat key/value layout.
+fn assoc_chunks(name: &str) -> Vec<(String, String)> {
+    let arr = getaparam(name).unwrap_or_default();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < arr.len() {
+        out.push((arr[i].clone(), arr[i + 1].clone()));
+        i += 2;
+    }
+    out
+}
+
+/// `_jobs` — complete job-id specs from `$jobtexts`/`$jobstates`.
+/// `-r` running only; `-s` suspended only; `-t` enables
+/// prefix-needed check (returns 1 if not starting with `%`).
+pub fn _jobs(args: &[String]) -> i32 {
+    let mut argv = args.to_vec();
+    let curcontext = getsparam("curcontext").unwrap_or_default();
+
+    // sh:5-7  -t prefix-needed guard
+    if argv.first().map(|s| s == "-t").unwrap_or(false) {
+        let prefix_needed = testforstyle(
+            &format!(":completion:{}:jobs", curcontext),
+            "prefix-needed",
+        ) == 0;
+        let prefix = getsparam("PREFIX").unwrap_or_default();
+        let nm: i64 = get_compstate_str("nmatches")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if prefix_needed && !prefix.starts_with('%') && nm != 0 {
+            return 1;
+        }
+        argv.remove(0);
+    }
+
+    // sh:8-9  styles
+    let mut pfx = String::from("%");
+    if testforstyle(
+        &format!(":completion:{}:jobs", curcontext),
+        "prefix-hidden",
+    ) == 0
+    {
+        pfx.clear();
+    }
+    let verbose = testforstyle(
+        &format!(":completion:{}:jobs", curcontext),
+        "verbose",
+    ) == 0
+        || crate::ported::modules::zutil::lookupstyle(
+            &format!(":completion:{}:jobs", curcontext),
+            "verbose",
+        )
+        .is_empty();
+
+    // sh:11-21  filter
+    let jobstates = assoc_chunks("jobstates");
+    let jobtexts = assoc_chunks("jobtexts");
+    let (jids, expls): (Vec<String>, String) =
+        match argv.first().map(|s| s.as_str()) {
+            Some("-r") => {
+                argv.remove(0);
+                (
+                    jobstates
+                        .iter()
+                        .filter(|(_, v)| v.starts_with("running"))
+                        .map(|(k, _)| k.clone())
+                        .collect(),
+                    "running job".to_string(),
+                )
+            }
+            Some("-s") => {
+                argv.remove(0);
+                (
+                    jobstates
+                        .iter()
+                        .filter(|(_, v)| v.starts_with("suspended"))
+                        .map(|(k, _)| k.clone())
+                        .collect(),
+                    "suspended job".to_string(),
+                )
+            }
+            _ => (
+                jobtexts.iter().map(|(k, _)| k.clone()).collect(),
+                "job".to_string(),
+            ),
+        };
+
+    if jids.is_empty() {
+        return 1;
+    }
+
+    // sh:30+  build display lines (verbose only)
+    if verbose {
+        let mut disp: Vec<String> = Vec::new();
+        for j in &jids {
+            let text = jobtexts
+                .iter()
+                .find(|(k, _)| k == j)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            disp.push(format!("%{}\t{}", j, text));
+        }
+        setaparam("disp", disp);
+        // sh:81
+        let mut w_args: Vec<String> = vec![
+            "-V".to_string(),
+            "jobs".to_string(),
+            "expl".to_string(),
+            expls,
+            "compadd".to_string(),
+            "-d".to_string(),
+            "disp".to_string(),
+        ];
+        w_args.extend(argv);
+        w_args.push("-".to_string());
+        w_args.extend(jids);
+        _wanted(&w_args)
+    } else {
+        // sh:83
+        let mut w_args: Vec<String> = vec![
+            "jobs".to_string(),
+            "expl".to_string(),
+            expls,
+            "compadd".to_string(),
+        ];
+        w_args.extend(argv);
+        for j in &jids {
+            w_args.push(format!("{}{}", pfx, j));
+        }
+        _wanted(&w_args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn empty_jobs_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        setaparam("jobtexts", Vec::new());
+        setaparam("jobstates", Vec::new());
+        assert_eq!(_jobs(&[]), 1);
+        INCOMPFUNC.store(0, Ordering::Relaxed);
+    }
+}

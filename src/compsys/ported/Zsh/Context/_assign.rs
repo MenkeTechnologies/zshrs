@@ -2,25 +2,39 @@
 //!
 //! Full upstream body (3 lines verbatim):
 //! ```text
-//! sh: 1  #compdef -assign-parameter-
-//! sh: 2
-//! sh: 3  _parameters -g "^*readonly*" -S ''
+//! sh:1  #compdef -assign-parameter-
+//! sh:2
+//! sh:3  _parameters -g "^*readonly*" -S ''
 //! ```
 //!
-//! The shell function has no `local` declarations and no positional
-//! parameters — it dispatches a single `_parameters` call with
-//! `-g <pattern>` (extended-glob exclusion of read-only params) and
-//! `-S ''` (empty auto-suffix, suppressing the default space).
-//!
-//! Signature divergence (`// rust:`): shell `_assign` takes no args
-//! and reads `$words` / `$compstate` globals; Rust port threads
-//! `state` + `params` (the hash of `$parameters`) explicitly because
-//! compsys-Rust has no process-global equivalent of zsh's
-//! `(P)$parameters`.
+//! Delegates to `_parameters` (sibling shell fn outside the engine
+//! cluster) via `exec_hooks::dispatch_function_call`. Returns 1
+//! when no executor is wired.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+
+/// `_assign` — `-assign-parameter-` context completion: list
+/// writable (non-readonly) parameters with no suffix.
+pub fn _assign() -> i32 {
+    dispatch_function_call(
+        "_parameters",
+        &[
+            "-g".to_string(),
+            "^*readonly*".to_string(),
+            "-S".to_string(),
+            "".to_string(),
+        ],
+    )
+    .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_assign(), 1);
+    }
+}

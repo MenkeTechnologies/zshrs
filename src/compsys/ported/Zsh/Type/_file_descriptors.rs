@@ -1,76 +1,146 @@
-//! Port of `_file_descriptors` from `Completion/Zsh/Type/_file_descriptors`.
+//! Port of `_file_descriptors` from
+//! `Completion/Zsh/Type/_file_descriptors`.
 //!
-//! Full upstream body (59 lines verbatim):
+//! Full upstream body (59 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  local i fds expl disp link sep
-//! sh: 4  local -a list proc
-//! sh: 5
 //! sh: 6  fds=( /dev/fd/<3->(N:t) )
 //! sh: 7  fds=( ${(n)fds} )
-//! sh: 8
-//! sh: 9  if zstyle -T ":completion:${curcontext}:file-descriptors" verbose; then
-//! sh:10    zstyle -s ":completion:${curcontext}:file-descriptors" list-separator sep || sep=--
-//! sh:11
-//! sh:12    if [[ $OSTYPE = freebsd* ]]; then
-//! sh:13      fds=( ${(f)"$(procstat -f $$|awk -v OFS=: '$3>2 && $3~/[0-9]/ {print $3,$10}')"} )
-//! sh:14      zformat -a list " $sep " $fds
-//! sh:15      fds=( ${fds%%:*} )
-//! sh:16    elif
-//! sh:17      proc=( /proc/$$/(fd|path)/<->(@N[-1]:h) )
-//! sh:18      [[ -n $proc ]]
-//! sh:19    then
-//! sh:20      if zmodload -F zsh/stat b:zstat; then
-//! sh:21        for i in "${fds[@]}"; do
-//! sh:22  	if zstat +link -A link $proc/$i; then
-//! sh:23  	  list+=( "${(r.$#fds[-1].)i} $sep ${(D)link[1]}" )
-//! sh:24  	else
-//! sh:25  	  fds[(i)$i]=()
-//! sh:26  	fi
-//! sh:27        done
-//! sh:28      elif (( $+commands[readlink] )); then
-//! sh:29        for i in "${fds[@]}"; do
-//! sh:30  	if link=$(readlink $proc/$i); then
-//! sh:31  	  list+=( "${(r.$#fds[-1].)i} $sep ${(D)link}" )
-//! sh:32  	else
-//! sh:33  	  fds[(i)$i]=()
-//! sh:34  	fi
-//! sh:35        done
-//! sh:36      else
-//! sh:37        for i in "${fds[@]}"; do
-//! sh:38  	if link=$(ls -l $proc/$i); then
-//! sh:39  	  list+=( "${(r.$#fds[-1].)i} $sep ${(D)link#* -> }" )
-//! sh:40  	else
-//! sh:41  	  fds[(i)$i]=()
-//! sh:42  	fi
-//! sh:43        done
-//! sh:44      fi 2>/dev/null
-//! sh:45    fi
-//! sh:46
-//! sh:47    if (( list[(I)* $sep ?*] )); then
-//! sh:48      list=(
-//! sh:49        "${(r.$#fds[-1].):-0} $sep standard input"
-//! sh:50        "${(r.$#fds[-1].):-1} $sep standard output"
-//! sh:51        "${(r.$#fds[-1].):-2} $sep standard error" $list
-//! sh:52      )
-//! sh:53      disp=( -d list )
+//! sh: 9  if zstyle -T … verbose; then
+//! sh:11    zstyle -s … list-separator sep || sep=--
+//! sh:13    if [[ $OSTYPE = freebsd* ]]; then …
+//! sh:17    elif … /proc/$$/(fd|path) walk …
+//! sh:18      zmodload -F zsh/stat / readlink fallbacks
+//! sh:42    if (( list[…] )); then
+//! sh:43      list=( "${…}:-0 $sep standard input" … $list )
+//! sh:48      disp=( -d list )
 //! sh:54    fi
 //! sh:55  fi
-//! sh:56  fds=( 0 1 2 $fds )
-//! sh:57
+//! sh:57  fds=( 0 1 2 $fds )
 //! sh:58  _description -V file-descriptors expl 'file descriptor'
 //! sh:59  compadd $disp -o nosort "$@" "$expl[@]" -a fds
 //! ```
 //!
-//! Strict Rust port: walks our own `/dev/fd/N` entries for N ≥ 3,
-//! filters numeric basenames. Lists fd 3 onwards (0/1/2 are
-//! stdin/stdout/stderr — generally not what the user wants when
-//! they're redirecting).
+//! `/dev/fd/<N>` scanning + readlink-based target resolution for
+//! the verbose list. Always emits `0 1 2` in the output regardless
+//! of platform.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_description::_description;
+use crate::ported::modules::zutil::lookupstyle;
+use crate::ported::params::{getaparam, getsparam, setaparam};
+use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zsh_h::{options, MAX_OPS};
+use std::fs;
+use std::path::Path;
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// `_file_descriptors` — complete numeric file-descriptor names
+/// (always 0/1/2 + any fd ≥ 3 currently open for this process).
+pub fn _file_descriptors(args: &[String]) -> i32 {
+    // sh:6-7 — scan /dev/fd for fds ≥ 3
+    let mut extra: Vec<i64> = Vec::new();
+    if let Ok(entries) = fs::read_dir("/dev/fd") {
+        for ent in entries.flatten() {
+            let name = ent.file_name().to_string_lossy().to_string();
+            if let Ok(n) = name.parse::<i64>() {
+                if n >= 3 {
+                    extra.push(n);
+                }
+            }
+        }
+    }
+    extra.sort();
+
+    // sh:9-55  verbose mode: build display lines via readlink(2)
+    let curcontext = getsparam("curcontext").unwrap_or_default();
+    let verbose_vals = lookupstyle(
+        &format!(":completion:{}:file-descriptors", curcontext),
+        "verbose",
+    );
+    let verbose = verbose_vals.is_empty()
+        || verbose_vals
+            .first()
+            .map(|v| !matches!(v.as_str(), "no" | "false" | "0" | "off"))
+            .unwrap_or(true);
+
+    let mut disp: Vec<String> = Vec::new();
+    if verbose {
+        let sep = lookupstyle(
+            &format!(":completion:{}:file-descriptors", curcontext),
+            "list-separator",
+        )
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "--".to_string());
+
+        let pid = std::process::id();
+        let mut list: Vec<String> = Vec::new();
+        let pad_width = extra.last().map(|n| n.to_string().len()).unwrap_or(1);
+        // Standard streams
+        list.push(format!("{:>w$} {} standard input", 0, sep, w = pad_width));
+        list.push(format!("{:>w$} {} standard output", 1, sep, w = pad_width));
+        list.push(format!("{:>w$} {} standard error", 2, sep, w = pad_width));
+        for n in &extra {
+            let proc_path = format!("/proc/{}/fd/{}", pid, n);
+            let target = fs::read_link(Path::new(&proc_path))
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| String::from("(unknown)"));
+            list.push(format!("{:>w$} {} {}", n, sep, target, w = pad_width));
+        }
+        setaparam("list", list);
+        disp = vec!["-d".to_string(), "list".to_string()];
+    }
+
+    // sh:57  fds = 0 1 2 + extra
+    let mut fds: Vec<String> = vec!["0".to_string(), "1".to_string(), "2".to_string()];
+    for n in extra {
+        fds.push(n.to_string());
+    }
+    setaparam("fds", fds);
+
+    // sh:58
+    let _ = _description(&[
+        "-V".to_string(),
+        "file-descriptors".to_string(),
+        "expl".to_string(),
+        "file descriptor".to_string(),
+    ]);
+
+    // sh:59
+    let expl = getaparam("expl").unwrap_or_default();
+    let mut compadd_argv: Vec<String> = disp;
+    compadd_argv.push("-o".to_string());
+    compadd_argv.push("nosort".to_string());
+    compadd_argv.extend(args.iter().cloned());
+    compadd_argv.extend(expl);
+    compadd_argv.push("-a".to_string());
+    compadd_argv.push("fds".to_string());
+    bin_compadd("compadd", &compadd_argv, &make_ops(), 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn fds_array_always_includes_standard_streams() {
+        let _g = crate::test_util::global_state_lock();
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        let _ = _file_descriptors(&[]);
+        INCOMPFUNC.store(0, Ordering::Relaxed);
+        let fds = getaparam("fds").unwrap_or_default();
+        assert!(fds.contains(&"0".to_string()));
+        assert!(fds.contains(&"1".to_string()));
+        assert!(fds.contains(&"2".to_string()));
+    }
+}

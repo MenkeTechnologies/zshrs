@@ -22,15 +22,47 @@
 //! sh:18
 //! sh:19  return ret
 //! ```
-//!
-//! Faithful Rust port: `_approximate(state, 1)` — pinning max_errors
-//! to 1 mirrors shell's "only corrections" semantic (the compstate
-//! [pattern_match]='-' trick prevents pattern-match acceptance,
-//! leaving only Levenshtein-1 matches).
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
+
+/// `_correct` — spelling-correction completer: wraps `_approximate`
+/// with `compstate[pattern_match]` swapped to `-` for the duration.
+pub fn _correct() -> i32 {
+    // sh:11
+    let mut ret: i32 = 1;
+    let opm = get_compstate_str("pattern_match").unwrap_or_default();
+    // sh:13
+    set_compstate_str("pattern_match", "-");
+    // sh:15
+    if dispatch_function_call("_approximate", &[]).unwrap_or(1) == 0 {
+        ret = 0;
+    }
+    // sh:17
+    set_compstate_str("pattern_match", &opm);
+    // sh:19
+    ret
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_correct(), 1);
+    }
+
+    #[test]
+    fn restores_pattern_match_after_run() {
+        // sh:17 — original compstate[pattern_match] must be put back.
+        let _g = crate::test_util::global_state_lock();
+        set_compstate_str("pattern_match", "original");
+        let _ = _correct();
+        assert_eq!(
+            get_compstate_str("pattern_match").as_deref(),
+            Some("original")
+        );
+    }
+}

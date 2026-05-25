@@ -20,20 +20,56 @@
 //! sh:16    _normal
 //! sh:17  fi
 //! ```
-//!
-//! Strict Rust port: ports the full 5-way branch:
-//! 1. `current==1 && #words==1` + word has space    → `_cmdstring`
-//! 2. `current==1 && #words==1` + word is quoted   → `_cmdstring`
-//! 3. `current==1 && #words==1` + bare             → `_command_names -e`
-//! 4. `current==1` (other)                          → `_command_names -e`
-//! 5. else (argument position)                      → `_normal`
-//!
-//! Caller supplies `WordKind` describing the user's first word so
-//! the leaf layer doesn't have to inspect raw quote state.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_cmdstring::_cmdstring;
+use crate::compsys::ported::_command_names::_command_names;
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getaparam, getsparam};
+use crate::ported::zle::compcore::get_compstate_str;
+
+/// `_cmdambivalent` — choose between cmdstring/command-names/normal
+/// completion based on cursor position and quoting state.
+pub fn _cmdambivalent() -> i32 {
+    let current: usize = getsparam("CURRENT")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let words = getaparam("words").unwrap_or_default();
+
+    // sh:3
+    if current == 1 && words.len() == 1 {
+        // sh:6  $words[CURRENT] contains a space
+        let curword = words.first().cloned().unwrap_or_default();
+        if curword.contains(' ') {
+            return _cmdstring();
+        }
+        // sh:8  compstate[all_quotes][1] is `'` or `"`
+        let all_quotes = get_compstate_str("all_quotes").unwrap_or_default();
+        if all_quotes.starts_with('\'') || all_quotes.starts_with('"') {
+            return _cmdstring();
+        }
+        // sh:11
+        return _command_names(&["-e".to_string()]);
+    }
+    // sh:13
+    if current == 1 {
+        return _command_names(&["-e".to_string()]);
+    }
+    // sh:16
+    dispatch_function_call("_normal", &[]).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::params::{setaparam, setsparam};
+
+    #[test]
+    fn current_gt_one_dispatches_normal() {
+        // sh:16 — when CURRENT > 1, defer to _normal (returns 1
+        //   without executor).
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("CURRENT", "3");
+        setaparam("words", vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(_cmdambivalent(), 1);
+    }
+}

@@ -2,17 +2,31 @@
 //!
 //! Full upstream body (3 lines verbatim):
 //! ```text
-//! sh: 1  #compdef bg
-//! sh: 2
-//! sh: 3  _jobs -s "$@"
+//! sh:1  #compdef bg
+//! sh:2
+//! sh:3  _jobs -s "$@"
 //! ```
 //!
-//! Strict Rust port: thin alias for `_jobs(..., JobsFilter::Suspended,
-//! false)`. Suspended jobs are the only valid `bg` targets.
+//! Pure delegation to `_jobs` (a shell function not in the engine
+//! cluster). Routes through `exec_hooks::dispatch_function_call`.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+
+/// `_jobs_bg` — `bg` command completion: stopped jobs only via
+/// `_jobs -s`. Exit code = `_jobs` exit (1 when uncallable).
+pub fn _jobs_bg(args: &[String]) -> i32 {
+    let mut argv: Vec<String> = vec!["-s".to_string()];
+    argv.extend(args.iter().cloned());
+    dispatch_function_call("_jobs", &argv).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_jobs_bg(&[]), 1);
+    }
+}

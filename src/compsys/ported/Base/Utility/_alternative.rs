@@ -1,103 +1,269 @@
-//! Port of `_alternative` from `Completion/Base/Utility/_alternative`.
+//! Port of `_alternative` from
+//! `Completion/Base/Utility/_alternative`.
 //!
-//! Full upstream body (83 lines verbatim):
+//! Full upstream body (83 lines verbatim, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  local tags def expl descr action mesgs nm="$compstate[nmatches]" subopts
-//! sh: 4  local opt ws curcontext="$curcontext"
-//! sh: 5
-//! sh: 6  subopts=()
+//! sh: 3  local tags def expl descr action mesgs nm subopts
 //! sh: 7  while getopts 'O:C:' opt; do
 //! sh: 8    case "$opt" in
 //! sh: 9    O) subopts=( "${(@P)OPTARG}" ) ;;
 //! sh:10    C) curcontext="${curcontext%:*}:$OPTARG" ;;
-//! sh:11    esac
-//! sh:12  done
-//! sh:13
 //! sh:14  shift OPTIND-1
-//! sh:15
 //! sh:16  [[ "$1" = -(|-) ]] && shift
-//! sh:17
 //! sh:18  mesgs=()
-//! sh:19
 //! sh:20  _tags "${(@)argv%%:*}"
-//! sh:21
 //! sh:22  while _tags; do
 //! sh:23    for def; do
 //! sh:24      if _requested "${def%%:*}"; then
 //! sh:25        descr="${${def#*:}%%:*}"
 //! sh:26        action="${def#*:*:}"
-//! sh:27
 //! sh:28        _description "${def%%:*}" expl "$descr"
-//! sh:29
-//! sh:30        if [[ "$action" = \ # ]]; then
-//! sh:31
-//! sh:32          # An empty action means that we should just display a message.
-//! sh:33
-//! sh:34          mesgs=( "$mesgs[@]" "${def%%:*}:$descr")
-//! sh:35        elif [[ "$action" = \(\(*\)\) ]]; then
-//! sh:36
-//! sh:37          # ((...)) contains literal strings with descriptions.
-//! sh:38
-//! sh:39          eval ws\=\( "${action[3,-3]}" \)
-//! sh:40
-//! sh:41          _describe -t "${def%%:*}" "$descr" ws -M 'r:|[_-]=* r:|=*' "$subopts[@]"
-//! sh:42        elif [[ "$action" = \(*\) ]]; then
-//! sh:43
-//! sh:44          # Anything inside `(...)' is added directly.
-//! sh:45
-//! sh:46          eval ws\=\( "${action[2,-2]}" \)
-//! sh:47
-//! sh:48          _all_labels "${def%%:*}" expl "$descr" \
-//! sh:49              compadd "$subopts[@]" -a - ws
-//! sh:50        elif [[ "$action" = \{*\} ]]; then
-//! sh:51
-//! sh:52          # A string in braces is evaluated.
-//! sh:53
-//! sh:54          while _next_label "${def%%:*}" expl "$descr"; do
-//! sh:55            eval "$action[2,-2]"
-//! sh:56          done
-//! sh:57        elif [[ "$action" = \ * ]]; then
-//! sh:58
-//! sh:59          # If the action starts with a space, we just call it.
-//! sh:60
-//! sh:61          eval "action=( $action )"
-//! sh:62          while _next_label "${def%%:*}" expl "$descr"; do
-//! sh:63            "$action[@]"
-//! sh:64          done
-//! sh:65        else
-//! sh:66
-//! sh:67          # Otherwise we call it with the description-arguments built above.
-//! sh:68
-//! sh:69          eval "action=( $action )"
-//! sh:70  	while _next_label "${def%%:*}" expl "$descr"; do
-//! sh:71            "$action[1]" "$subopts[@]" "$expl[@]" "${(@)action[2,-1]}"
-//! sh:72          done
-//! sh:73        fi
-//! sh:74      fi
-//! sh:75    done
-//! sh:76    [[ nm -ne compstate[nmatches] ]] && return 0
-//! sh:77  done
-//! sh:78
-//! sh:79  for descr in "$mesgs[@]"; do
-//! sh:80    _message -e "${descr%%:*}" "${descr#*:}"
-//! sh:81  done
-//! sh:82
-//! sh:83  return 1
+//! sh:30        if [[ "$action" = \ # ]]; then  # empty action → mesgs
+//! sh:35        elif [[ "$action" = \(\(*\)\) ]]; then  # describe-style
+//! sh:43        elif [[ "$action" = \(*\) ]]; then  # compadd literal list
+//! sh:51        elif [[ "$action" = \{*\} ]]; then  # eval body
+//! sh:57        elif [[ "$action" = \ * ]]; then  # bare-call ` cmd args`
+//! sh:64        else  # action with description-args
+//! sh:65          while _next_label …; do "$action[1]" …; done
+//! sh:73    [[ nm -ne compstate[nmatches] ]] && return 0
+//! sh:74  done
+//! sh:77  for descr in "$mesgs[@]"; do
+//! sh:78    _message -e "${descr%%:*}" "${descr#*:}"
+//! sh:79  done
+//! sh:81  return 1
 //! ```
 //!
-//! Upstream walks `tag:description:action` specs; for each tag in
-//! the active set, dispatches the action.
-//!
-//! Faithful Rust port: parses specs via `Alternative::parse`, calls
-//! `TagManager` to drive the iteration (matching shell's
-//! `while _tags`), and invokes the caller-supplied `action_handler`
-//! once per requested alternative.
+//! Dispatches a list of `tag:description:action` specs, building
+//! per-tag completion via `_description` + `_next_label` + the
+//! action. Five action forms: empty (message-only), `((…))`
+//! describe-style, `(…)` literal list, `{…}` eval-body, bare `…`
+//! command, and `cmd args…` with desc passthrough.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_description::_description;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_next_label::_next_label;
+use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_tags::_tags;
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
+use crate::ported::zle::compcore::get_compstate_str;
+use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// `_alternative` — try each `tag:descr:action` spec until one
+/// produces matches. Returns 0 on first success, 1 if none match.
+pub fn _alternative(args: &[String]) -> i32 {
+    // sh:5
+    let saved_curcontext = getsparam("curcontext").unwrap_or_default();
+    let mut subopts: Vec<String> = Vec::new();
+    let mut curcontext = saved_curcontext.clone();
+    let mut idx = 0usize;
+
+    // sh:7-13  getopts O:/C:
+    while idx < args.len() {
+        let a = &args[idx];
+        if a == "-O" && idx + 1 < args.len() {
+            // Read the named array `${(@P)OPTARG}`
+            subopts = getaparam(&args[idx + 1]).unwrap_or_default();
+            idx += 2;
+        } else if a == "-C" && idx + 1 < args.len() {
+            // Replace last `:`-field of curcontext
+            if let Some(i) = curcontext.rfind(':') {
+                curcontext.truncate(i);
+            }
+            curcontext.push(':');
+            curcontext.push_str(&args[idx + 1]);
+            let _ = setsparam("curcontext", &curcontext);
+            idx += 2;
+        } else if a.starts_with('-') && a != "-" && a != "--" {
+            // Unknown option terminator
+            break;
+        } else {
+            break;
+        }
+    }
+
+    // sh:16
+    if idx < args.len() && (args[idx] == "-" || args[idx] == "--") {
+        idx += 1;
+    }
+
+    let defs: Vec<String> = args[idx..].to_vec();
+    let mut mesgs: Vec<String> = Vec::new();
+
+    // sh:20  _tags "${(@)argv%%:*}"
+    let tag_names: Vec<String> = defs
+        .iter()
+        .map(|d| d.splitn(2, ':').next().unwrap_or("").to_string())
+        .collect();
+    let _ = _tags(&tag_names);
+
+    let nm_initial: i64 = get_compstate_str("nmatches")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    // sh:22  while _tags …
+    loop {
+        if _tags(&[]) != 0 {
+            break;
+        }
+
+        // sh:23
+        for def in &defs {
+            let mut parts = def.splitn(3, ':');
+            let tag = parts.next().unwrap_or("").to_string();
+            let descr = parts.next().unwrap_or("").to_string();
+            let action = parts.next().unwrap_or("").to_string();
+
+            // sh:24
+            if _requested(&[tag.clone()]) != 0 {
+                continue;
+            }
+
+            // sh:28
+            let _ = _description(&[tag.clone(), "expl".to_string(), descr.clone()]);
+
+            // sh:30 action dispatch
+            if action.trim().is_empty() {
+                // sh:30  Empty action → defer to messages collection.
+                mesgs.push(format!("{}:{}", tag, descr));
+            } else if action.starts_with("((") && action.ends_with("))") {
+                // sh:35  ((value:desc value:desc …)) → describe-style
+                let body = &action[2..action.len() - 2];
+                let items: Vec<String> =
+                    body.split_whitespace().map(|s| s.to_string()).collect();
+                setaparam("ws", items);
+                let mut describe_argv: Vec<String> = vec![
+                    "-t".to_string(),
+                    tag.clone(),
+                    descr.clone(),
+                    "ws".to_string(),
+                    "-M".to_string(),
+                    "r:|[_-]=* r:|=*".to_string(),
+                ];
+                describe_argv.extend(subopts.iter().cloned());
+                let _ = dispatch_function_call("_describe", &describe_argv);
+            } else if action.starts_with('(') && action.ends_with(')') {
+                // sh:43  (literal list) → compadd direct
+                let body = &action[1..action.len() - 1];
+                let items: Vec<String> =
+                    body.split_whitespace().map(|s| s.to_string()).collect();
+                setaparam("ws", items);
+                loop {
+                    let mut nl =
+                        vec![tag.clone(), "expl".to_string(), descr.clone()];
+                    if _next_label(&nl) != 0 {
+                        break;
+                    }
+                    nl.clear();
+                    let expl = getaparam("expl").unwrap_or_default();
+                    let mut compadd_argv: Vec<String> = subopts.clone();
+                    compadd_argv.extend(expl);
+                    compadd_argv.push("-a".to_string());
+                    compadd_argv.push("-".to_string());
+                    compadd_argv.push("ws".to_string());
+                    let _ = bin_compadd("compadd", &compadd_argv, &make_ops(), 0);
+                }
+            } else if action.starts_with('{') && action.ends_with('}') {
+                // sh:51  {body} → eval body. Dispatch via execute_script
+                //   hook (returns Ok(0) when no executor wired).
+                let body = &action[1..action.len() - 1];
+                loop {
+                    let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
+                    if _next_label(&nl) != 0 {
+                        break;
+                    }
+                    let _ = crate::ported::exec_hooks::execute_script(body);
+                }
+            } else if action.starts_with(' ') {
+                // sh:57   bare-call form
+                let parts: Vec<String> = action
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect();
+                loop {
+                    let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
+                    if _next_label(&nl) != 0 {
+                        break;
+                    }
+                    if let Some(cmd) = parts.first() {
+                        let rest: Vec<String> = parts[1..].to_vec();
+                        let _ = dispatch_function_call(cmd, &rest);
+                    }
+                }
+            } else {
+                // sh:64  cmd args with descriptions
+                let parts: Vec<String> = action
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect();
+                if let Some((cmd, rest)) = parts.split_first() {
+                    loop {
+                        let nl =
+                            vec![tag.clone(), "expl".to_string(), descr.clone()];
+                        if _next_label(&nl) != 0 {
+                            break;
+                        }
+                        let expl = getaparam("expl").unwrap_or_default();
+                        let mut call_argv: Vec<String> = subopts.clone();
+                        call_argv.extend(expl);
+                        call_argv.extend(rest.iter().cloned());
+                        let _ = if cmd == "compadd" {
+                            bin_compadd("compadd", &call_argv, &make_ops(), 0)
+                        } else {
+                            dispatch_function_call(cmd, &call_argv).unwrap_or(1)
+                        };
+                    }
+                }
+            }
+        }
+        // sh:73  nm != $compstate[nmatches] → success
+        let nm_now: i64 = get_compstate_str("nmatches")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if nm_now != nm_initial {
+            // Restore + return success
+            let _ = setsparam("curcontext", &saved_curcontext);
+            return 0;
+        }
+    }
+
+    // sh:77
+    for d in &mesgs {
+        let mut parts = d.splitn(2, ':');
+        let tag = parts.next().unwrap_or("").to_string();
+        let desc = parts.next().unwrap_or("").to_string();
+        let _ = _message(&["-e".to_string(), tag, desc]);
+    }
+
+    // sh:81 restore + fail
+    let _ = setsparam("curcontext", &saved_curcontext);
+    1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_for_empty_specs() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_alternative(&[]), 1);
+    }
+
+    #[test]
+    fn returns_one_when_no_tag_requested() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_alternative(&["foo:desc:_files".to_string()]), 1);
+    }
+}

@@ -16,16 +16,49 @@
 //! sh:12
 //! sh:13  _main_complete _expand
 //! ```
-//!
-//! The shell version sets curcontext to `expand-word:…` and runs
-//! `_main_complete _expand`. Our Rust port shortcuts: directly call
-//! `_expand` (the expansion completer). User-visible behavior
-//! identical because `_main_complete` would just dispatch to
-//! `_expand` anyway.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getsparam, setsparam};
+
+/// `_expand_word` — front-end widget: set context to `expand-word`
+/// and dispatch `_main_complete _expand`.
+pub fn _expand_word() -> i32 {
+    // sh:5 snapshot for shell-local restore
+    let saved = getsparam("curcontext").unwrap_or_default();
+
+    // sh:7-11
+    let new_ctx = if saved.is_empty() {
+        "expand-word:::".to_string()
+    } else {
+        let tail = saved.splitn(2, ':').nth(1).unwrap_or("");
+        format!("expand-word:{}", tail)
+    };
+    let _ = setsparam("curcontext", &new_ctx);
+
+    // sh:13
+    let r =
+        dispatch_function_call("_main_complete", &["_expand".to_string()]).unwrap_or(1);
+
+    // Restore shell-local scoping
+    let _ = setsparam("curcontext", &saved);
+    r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_expand_word(), 1);
+    }
+
+    #[test]
+    fn restores_curcontext_after_call() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("curcontext", "original:ctx:foo:bar");
+        let _ = _expand_word();
+        assert_eq!(getsparam("curcontext").as_deref(), Some("original:ctx:foo:bar"));
+    }
+}

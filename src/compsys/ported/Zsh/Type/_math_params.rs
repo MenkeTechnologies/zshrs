@@ -2,19 +2,41 @@
 //!
 //! Full upstream body (3 lines verbatim):
 //! ```text
-//! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  _parameters -g '(integer|float)*' || _parameters
+//! sh:1  #autoload
+//! sh:2
+//! sh:3  _parameters -g '(integer|float)*' || _parameters
 //! ```
 //!
-//! Strict Rust port: faithful 1:1 — calls our ported
-//! [`_parameters_with_opts`] with the exact pattern shell uses;
-//! on `false` falls back to [`_parameters`] no-filter, matching
-//! the shell `||` operator.
+//! `_parameters` is a sibling shell function (not engine cluster);
+//! dispatch via `exec_hooks`. The shell `|| _parameters` retry runs
+//! the unfiltered call when the filtered one finds nothing.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+
+/// `_math_params` — complete parameter names usable in math contexts
+/// (integer/float typed). Falls back to unfiltered `_parameters` if
+/// the filtered call yields nothing.
+pub fn _math_params() -> i32 {
+    // sh:3  _parameters -g '(integer|float)*'
+    let r = dispatch_function_call(
+        "_parameters",
+        &["-g".to_string(), "(integer|float)*".to_string()],
+    )
+    .unwrap_or(1);
+    if r == 0 {
+        return 0;
+    }
+    // sh:3 tail  || _parameters
+    dispatch_function_call("_parameters", &[]).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_math_params(), 1);
+    }
+}

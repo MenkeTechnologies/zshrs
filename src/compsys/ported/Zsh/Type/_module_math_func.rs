@@ -1,4 +1,5 @@
-//! Port of `_module_math_func` from `Completion/Zsh/Type/_module_math_func`.
+//! Port of `_module_math_func` from
+//! `Completion/Zsh/Type/_module_math_func`.
 //!
 //! Full upstream body (12 lines verbatim):
 //! ```text
@@ -16,15 +17,42 @@
 //! sh:12  _alternative $alts
 //! ```
 //!
-//! Strict Rust port: faithful 1:1 — builds the alternatives list
-//! per upstream verbatim, then dispatches via [`_alternative`].
-//! The action string carries the literal `compadd -S '(' fn1 fn2
-//! …` invocation; the handler closure parses it and emits each
-//! `fn` with `(` suffix + NOSPACE (the `-S '('` semantic).
+//! `zmodload -Fl zsh/$mod` lists features in module `zsh/$mod` —
+//! `+f:NAME` entries are math functions. Parsing skipped (would
+//! require executing zmodload); we emit empty `funcs` for each
+//! module — `_alternative` still receives the four group specs but
+//! with no candidates to add. Production zsh-side `_alternative`
+//! handles empty groups gracefully.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+
+const MODULES: &[&str] = &["example", "mathfunc", "system", "random"];
+
+/// `_module_math_func` — complete math functions from
+/// `zsh/{example,mathfunc,system,random}` modules.
+pub fn _module_math_func() -> i32 {
+    // sh:7-10
+    let alts: Vec<String> = MODULES
+        .iter()
+        .map(|m| {
+            format!(
+                "module-math-functions.{}:math function from zsh/{}:compadd -S '('",
+                m, m
+            )
+        })
+        .collect();
+
+    // sh:12
+    dispatch_function_call("_alternative", &alts).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_module_math_func(), 1);
+    }
+}

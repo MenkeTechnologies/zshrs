@@ -3,16 +3,11 @@
 //! Full upstream body (20 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
 //! sh: 3  # Arrange that LC_CTYPE retains the current setting so characters in
-//! sh: 4  # file names are handled properly, but other locales are set to C so
-//! sh: 5  # that the completion system can process output without surprises.
-//! sh: 6
+//! sh: 4  # file names are handled properly, but other locales are set to C
 //! sh: 7  # This exports new locale settings, so should only
 //! sh: 8  # be run in a subshell.  A typical use is in a $(...).
-//! sh: 9
 //! sh:10  local ctype
-//! sh:11
 //! sh:12  if ctype=${${(f)"$(locale 2>/dev/null)"}:#^LC_CTYPE=*}; then
 //! sh:13      unset -m LC_\*
 //! sh:14      [[ -n $ctype ]] && eval export $ctype
@@ -24,29 +19,60 @@
 //! sh:20  export LANG=C
 //! ```
 //!
-//! Upstream sets a C-locale env for sane completion-tool output
-//! while keeping LC_CTYPE for filename byte interpretation. The
-//! comment says it MUST be run in a subshell (changes calling
-//! shell's env).
-//!
-//! Faithful Rust port: actually performs the env mutation, mirroring
-//! the shell exactly:
-//! - shell:12 / 16 `unset -m LC_\*` — unset every LC_* env var
-//! - shell:11-13 — preserve the system locale's LC_CTYPE setting
-//! (read via `locale` command, mirroring the shell's command-
-//! substitution-style read)
-//! - shell:15-17 fallback — when `locale` fails, build LC_CTYPE
-//! from `${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}`
-//! - shell:19 — `export LANG=C`
-//!
-//! Returns the LC_CTYPE value that was set, so callers can verify.
-//! Callers should run this in a forked subprocess (matching shell's
-//! "should only be run in a subshell" comment) to avoid mutating
-//! the parent's env permanently.
+//! sh:8 doc: "should only be run in a subshell". The fork happens in
+//! `$(...)` substitution. In the Rust port we manipulate the
+//! process-level env directly; callers MUST run this in a
+//! short-lived child (e.g. via command substitution) to avoid
+//! polluting the parent shell's locale.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use std::env;
+
+/// `_comp_locale` — reset all LC_* vars to C except LC_CTYPE
+/// (preserved from the current process env), and set LANG=C.
+pub fn _comp_locale() -> i32 {
+    // sh:12 — derive LC_CTYPE preference (process-level env, since
+    //   `$(locale)` would just dump our own env).
+    let ctype = env::var("LC_ALL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| env::var("LC_CTYPE").ok().filter(|s| !s.is_empty()))
+        .or_else(|| env::var("LANG").ok().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "C".to_string());
+
+    // sh:13 / sh:17  unset -m LC_*
+    let lc_vars: Vec<String> = env::vars()
+        .filter_map(|(k, _)| if k.starts_with("LC_") { Some(k) } else { None })
+        .collect();
+    for k in lc_vars {
+        env::remove_var(&k);
+    }
+
+    // sh:18
+    env::set_var("LC_CTYPE", ctype);
+    // sh:20
+    env::set_var("LANG", "C");
+
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sets_lang_to_c() {
+        let _g = crate::test_util::global_state_lock();
+        env::set_var("LANG", "en_US.UTF-8");
+        let _ = _comp_locale();
+        assert_eq!(env::var("LANG").as_deref(), Ok("C"));
+    }
+
+    #[test]
+    fn preserves_lc_ctype_from_pre_existing_var() {
+        let _g = crate::test_util::global_state_lock();
+        env::set_var("LC_CTYPE", "en_US.UTF-8");
+        env::remove_var("LC_ALL");
+        let _ = _comp_locale();
+        assert_eq!(env::var("LC_CTYPE").as_deref(), Ok("en_US.UTF-8"));
+    }
+}
