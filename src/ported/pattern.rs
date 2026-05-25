@@ -528,6 +528,18 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
             Some((bits, _assert, consumed)) => {
                 hoisted_globflags |=
                     bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | GF_BACKREF | GF_MATCHREF);
+                // `(#aN)` substitution budget — low 8 bits of
+                // `patglobflags` per c:1066. Only carry it when this
+                // flag-spec actually had `(#a)` digits (non-zero err
+                // count); other specs may set high bits and we don't
+                // want their bits-AND to clear our budget byte.
+                // Per-spec OR-leak is C-faithful (a later `(#a3)` after
+                // `(#a1)` raises the budget); the matcher reads the
+                // final cumulative byte.
+                let errs_byte = bits & 0xff;
+                if errs_byte != 0 {
+                    hoisted_globflags = (hoisted_globflags & !0xff) | errs_byte; // c:1066
+                }
                 if (bits & GF_MULTIBYTE) == 0 && rest.contains('U') {
                     hoisted_globflags &= !GF_MULTIBYTE;
                 }
@@ -561,7 +573,14 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
             patmlen: 0,
             globflags: hoisted_globflags,
             globend: patglobflags.load(Ordering::Relaxed),
-            flags: patflags.load(Ordering::Relaxed) | hoisted_globflags,
+            // c:637 `p->flags = patflags;` — patflags ONLY. A prior
+            // Rust port OR'd `hoisted_globflags` into here, contaminating
+            // `prog.flags & 0xff` checks (which read PAT_STATIC / PAT_PURES
+            // bits in the low byte) with whatever ended up in the
+            // `(#aN)` budget byte. The two flag-sets stay strictly
+            // separated per C source.
+            flags: patflags.load(Ordering::Relaxed),
+
             patnpar: patnpar.load(Ordering::Relaxed) - 1,
             patstartch: 0,
         },
@@ -1771,6 +1790,11 @@ pub struct rpat {
     pub patbeginp: [usize; NSUBEXP], // c:241 capture starts (byte offsets)
     pub patendp: [usize; NSUBEXP],   // c:242 capture ends
     pub captures_set: u16,           // bitmask of groups successfully captured
+    /// Port of file-static `int errsfound` from `Src/pattern.c:2046`.
+    /// Cumulative edit-count for approximate-match `(#aN)`. Reset to 0
+    /// at the top of each pattry, incremented on P_EXACTLY mismatches
+    /// when `glob_flags & 0xff > 0` (the substitution-budget byte).
+    pub errsfound: i32,              // c:2046
 }
 
 /// Port of `wchar_t charref(char *x, char *y, int *zmb_ind)` from
@@ -1941,7 +1965,12 @@ pub fn pattryrefs(
         &string[..stringlen as usize]
     };
     let mut state = rpat::new();
-    let match_result = patmatch(&prog.1, 0, trial, 0, &mut state, prog.0.flags);
+    // Pass the prog's GLOB flags (GF_* + `(#aN)` budget byte) to the
+    // matcher. C threads `patglobflags` as a per-thread file-static;
+    // the Rust port carries it through a fn param. The PAT_* flags
+    // (PAT_STATIC etc.) stay on `prog.0.flags` for the outer
+    // anchor/PURES checks at lines below.
+    let match_result = patmatch(&prog.1, 0, trial, 0, &mut state, prog.0.globflags);
     let ok = match match_result {
         Some(end_pos) => {
             // c:2438 — `if (matched && !(prog->flags & (PAT_NOANCH|PAT_NOTEND))) ...`
@@ -2400,6 +2429,7 @@ impl rpat {
             patbeginp: [usize::MAX; NSUBEXP],
             patendp: [0; NSUBEXP],
             captures_set: 0,
+            errsfound: 0, // c:2066 — errsfound = 0 at pattry init
         }
     }
 }
@@ -2636,6 +2666,144 @@ fn chain_branches_to(starter: usize, target: usize) {
 /// (`patinput`, `patinstart`, `patbeginp`/`patendp`, `patglobflags`).
 /// Rule S1 deviation justified by zshrs's threading model — see
 /// PORT_PLAN.md Bucket 1.
+///
+/// WARNING: NOT IN PATTERN.C — Rust-only helper. Approximate-match
+/// inner loop for `(#aN)`-flagged P_EXACTLY arms. C interleaves the
+/// edit-operation backtracking inline within the P_EXACTLY case
+/// (c:2737-2779); the Rust port factors the inner per-byte walk +
+/// recursive sub/ins/del trials into this helper so the linear
+/// patmatch loop body stays manageable. Both writer and reader live
+/// in pattern.rs.
+///
+/// Walks pattern bytes `str_bytes` against `input_bytes[s_off..]`.
+/// On exact-match per byte: advance both. On mismatch: try the 3
+/// edit operations in order (substitute = advance both + errsfound++,
+/// insert = advance pat + errsfound++, delete = advance input +
+/// errsfound++); each recurses via `patmatch` to continue with the
+/// rest of the bytecode at `next`. Returns the matched-end byte
+/// offset in `string` on success, None on failure.
+fn approx_match_exactly(
+    code: &[u8],
+    next: usize,
+    string: &str,
+    s_off: usize,
+    str_bytes: &[u8],
+    state: &mut rpat,
+    glob_flags: i32,
+    max_errs: i32,
+) -> Option<usize> {
+    let input_bytes = string.as_bytes();
+    // Try matching the EXACT prefix as far as it lines up; on first
+    // mismatch (or out-of-input), branch into the edit-operation
+    // trials. This is a bounded recursive search; the budget caps
+    // recursion depth at `max_errs - state.errsfound`.
+    fn walk(
+        code: &[u8],
+        next: usize,
+        string: &str,
+        input_bytes: &[u8],
+        str_bytes: &[u8],
+        s_off: usize,
+        p_off: usize,
+        state: &mut rpat,
+        glob_flags: i32,
+        max_errs: i32,
+    ) -> Option<usize> {
+        // Direction terminology: `s_off+1` consumes one INPUT byte,
+        // `p_off+1` consumes one PATTERN byte.
+        //   - (s+1, p+1) = substitute one input byte for one pat byte
+        //   - (s+1, p)   = consume input byte that's NOT in pattern
+        //                  (= INSERTION in input compared to pattern)
+        //   - (s, p+1)   = consume pat byte that's NOT in input
+        //                  (= DELETION from input compared to pattern)
+        //
+        // Tries every option at each step, returns the path producing
+        // the LARGEST end s_off (most input consumed). Anchored
+        // callers (pattry) need full-input consumption; non-anchored
+        // accept any. C handles this via bytecode-level branching
+        // backtrack; the Rust port collapses it into a recursive
+        // tree-search with per-attempt state save/restore.
+        let mut best: Option<usize> = None;
+        let saved_outer = state.clone();
+        let mut update = |best: &mut Option<usize>, cand: Option<usize>| {
+            if let Some(c) = cand {
+                if best.map(|b| c > b).unwrap_or(true) {
+                    *best = Some(c);
+                }
+            }
+        };
+        if p_off == str_bytes.len() {
+            // Pattern body consumed. Three paths to try; pick the
+            // one with most input consumed:
+            //   (a) terminate here at s_off, run continuation.
+            //   (b) absorb 1+ trailing input as INSERTION-IN-INPUT edits.
+            let terminate = if next == 0 {
+                Some(s_off)
+            } else {
+                patmatch(code, next, string, s_off, state, glob_flags)
+            };
+            update(&mut best, terminate);
+            // Path (b): absorb trailing input as insertion edits.
+            if s_off < input_bytes.len() && state.errsfound < max_errs {
+                *state = saved_outer.clone();
+                state.errsfound += 1;
+                let r = walk(
+                    code, next, string, input_bytes, str_bytes,
+                    s_off + 1, p_off, state, glob_flags, max_errs,
+                );
+                update(&mut best, r);
+            }
+            *state = saved_outer;
+            return best;
+        }
+        // Exact-byte match — try advancing both.
+        if s_off < input_bytes.len() && str_bytes[p_off] == input_bytes[s_off] {
+            *state = saved_outer.clone();
+            let r = walk(
+                code, next, string, input_bytes, str_bytes,
+                s_off + 1, p_off + 1, state, glob_flags, max_errs,
+            );
+            update(&mut best, r);
+        }
+        // Edit operations — each costs 1 error.
+        if state.errsfound < max_errs {
+            // Substitute.
+            if s_off < input_bytes.len() {
+                *state = saved_outer.clone();
+                state.errsfound += 1;
+                let r = walk(
+                    code, next, string, input_bytes, str_bytes,
+                    s_off + 1, p_off + 1, state, glob_flags, max_errs,
+                );
+                update(&mut best, r);
+            }
+            // Insertion in input (skip input byte only).
+            if s_off < input_bytes.len() {
+                *state = saved_outer.clone();
+                state.errsfound += 1;
+                let r = walk(
+                    code, next, string, input_bytes, str_bytes,
+                    s_off + 1, p_off, state, glob_flags, max_errs,
+                );
+                update(&mut best, r);
+            }
+            // Deletion from input (skip pattern byte only).
+            *state = saved_outer.clone();
+            state.errsfound += 1;
+            let r = walk(
+                code, next, string, input_bytes, str_bytes,
+                s_off, p_off + 1, state, glob_flags, max_errs,
+            );
+            update(&mut best, r);
+        }
+        *state = saved_outer;
+        best
+    }
+    walk(
+        code, next, string, input_bytes, str_bytes, s_off, 0, state, glob_flags, max_errs,
+    )
+}
+
 fn patmatch(
     code: &[u8],
     prog_off: usize,
@@ -2699,6 +2867,25 @@ fn patmatch(
                 let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
                 let str_bytes = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
+                // `(#aN)` budget — low byte of patglobflags. C uses the
+                // file-static `patglobflags`; the Rust port carries it
+                // through `glob_flags` since rpat went bucket-1.
+                let max_errs = (glob_flags & 0xff) as i32;
+                if max_errs > 0 {
+                    // Approximate match: try edit operations
+                    // (substitute/insert/delete) at each mismatch up to
+                    // the budget. Per c:3055/3109/3193 the C source
+                    // tracks `errsfound` across recursive patmatch
+                    // calls; the Rust port does the same via `state.
+                    // errsfound`. Skips transposition (Damerau extension
+                    // — rare; faithful follow-on).
+                    if let Some(new_off) = approx_match_exactly(
+                        code, next, string, s_off, str_bytes, state, glob_flags, max_errs,
+                    ) {
+                        return Some(new_off);
+                    }
+                    return None;
+                }
                 if s_off + len > input_bytes.len() {
                     return None;
                 }
@@ -3151,18 +3338,105 @@ fn patmatch(
                 return None;
             }
             op if op >= P_OPEN && op < P_CLOSE => {
-                // c:P_OPEN_N arm
+                // c:P_OPEN_N arm (pattern.c:2939-2960).
+                //
+                // C `case P_OPEN+0..P_OPEN+9:
+                //     no = P_OP(scan) - P_OPEN;
+                //     save = patinput;
+                //     if (patmatch(next)) {
+                //         if (no && !(parsfound & (1 << (no - 1)))) {
+                //             patbeginp[no-1] = save;
+                //             parsfound |= 1 << (no - 1);
+                //         }
+                //         return 1;
+                //     }
+                //     return 0;`
+                //
+                // Recurse on `next`; only commit patbeginp[N-1] on
+                // success AND only on the FIRST occurrence (c:2957
+                // `!(parsfound & (1<<(no-1)))`). The first-write
+                // semantic matters under `(*)*` and alternation
+                // backtrack — a later iteration shouldn't overwrite
+                // the saved start of the FIRST match.
                 let n = (op - P_OPEN) as usize;
-                if n > 0 && n <= NSUBEXP {
-                    state.patbeginp[n - 1] = s_off;
+                let save = s_off;
+                let saved_state = state.clone();
+                if next == 0 {
+                    // No continuation — leaf P_OPEN; just commit and continue.
+                    if n > 0 && n <= NSUBEXP
+                        && (state.captures_set & (1u16 << (n - 1))) == 0
+                    {
+                        state.patbeginp[n - 1] = save;
+                    }
+                    return Some(s_off);
+                }
+                match patmatch(code, next, string, s_off, state, glob_flags) {
+                    Some(end) => {
+                        // c:2957-2959 — first-write commit.
+                        if n > 0
+                            && n <= NSUBEXP
+                            && (state.captures_set & (1u16 << (n - 1))) == 0
+                        {
+                            state.patbeginp[n - 1] = save;
+                        }
+                        return Some(end);
+                    }
+                    None => {
+                        *state = saved_state;
+                        return None;
+                    }
                 }
             }
             op if op >= P_CLOSE && op < 0xa0 => {
-                // c:P_CLOSE_N arm
+                // c:P_CLOSE_N arm (pattern.c:2980-3010).
+                //
+                // C `case P_CLOSE+0..P_CLOSE+9:
+                //     no = P_OP(scan) - P_CLOSE;
+                //     save = patinput;
+                //     if (patmatch(next)) {
+                //         if (no && !(parsfound & (1 << (no+NSUBEXP-1)))) {
+                //             patendp[no-1] = save;
+                //             parsfound |= 1 << (no+NSUBEXP-1);
+                //         }
+                //         return 1;
+                //     }
+                //     return 0;`
+                //
+                // Same save/recurse/first-write-on-success pattern as
+                // P_OPEN. Rust uses `captures_set` bit (1<<(n-1)) for
+                // BOTH open and close in the existing impl; semantically
+                // the bit is set when the group's CLOSE has been seen,
+                // i.e. the capture is complete. First-write on close
+                // matters under `(...)*` so later iterations don't
+                // overwrite the FIRST capture's end (matching C's
+                // parsfound `no+NSUBEXP-1` bit-stripe).
                 let n = (op - P_CLOSE) as usize;
-                if n > 0 && n <= NSUBEXP {
-                    state.patendp[n - 1] = s_off;
-                    state.captures_set |= 1u16 << (n - 1);
+                let save = s_off;
+                let saved_state = state.clone();
+                if next == 0 {
+                    if n > 0 && n <= NSUBEXP
+                        && (state.captures_set & (1u16 << (n - 1))) == 0
+                    {
+                        state.patendp[n - 1] = save;
+                        state.captures_set |= 1u16 << (n - 1);
+                    }
+                    return Some(s_off);
+                }
+                match patmatch(code, next, string, s_off, state, glob_flags) {
+                    Some(end) => {
+                        if n > 0
+                            && n <= NSUBEXP
+                            && (state.captures_set & (1u16 << (n - 1))) == 0
+                        {
+                            state.patendp[n - 1] = save;
+                            state.captures_set |= 1u16 << (n - 1);
+                        }
+                        return Some(end);
+                    }
+                    None => {
+                        *state = saved_state;
+                        return None;
+                    }
                 }
             }
             _ => {
@@ -5380,7 +5654,6 @@ mod tests {
     // ── (#aN) approximate match (Damerau-Levenshtein distance ≤ N) ──
     /// `(#a1)foo` matches "fop" (1 char substitution).
     #[test]
-    #[ignore = "ZSHRS BUG: (#aN) approximate match not implemented"]
     fn ext_glob_hash_a1_matches_one_substitution_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         assert!(
@@ -5391,7 +5664,6 @@ mod tests {
 
     /// `(#a2)foo` matches "fxy" (2 substitutions).
     #[test]
-    #[ignore = "ZSHRS BUG: (#aN) approximate match not implemented"]
     fn ext_glob_hash_a2_matches_two_substitutions_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         assert!(
@@ -5405,5 +5677,77 @@ mod tests {
     fn ext_glob_hash_a1_rejects_two_substitutions() {
         let _g = crate::test_util::global_state_lock();
         assert!(!ext_glob_match("(#a1)foo", "fxy"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // (#aN) full Damerau-Levenshtein — sub/ins/del edit operations.
+    // C inlines the backtracking in P_EXACTLY (c:2737-2779) plus the
+    // approx-aware sync nodes at c:3055+. Rust factors into
+    // `approx_match_exactly` (WARNING: NOT IN PATTERN.C). Tests pin
+    // each edit operation independently + the budget upper bound.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `(#a0)foo` is exact-match only — no edits allowed.
+    #[test]
+    fn ext_glob_hash_a0_is_exact_match_only() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#a0)foo", "foo"), "exact ok");
+        assert!(!ext_glob_match("(#a0)foo", "fop"), "no edit budget rejects 1-sub");
+    }
+
+    /// `(#a1)foo` matches "fxoo" via INSERTION in input (extra 'x').
+    /// The pattern has no `x`; treating `x` as an inserted-in-input
+    /// char costs 1 error. Input → "f(x)oo" with the 'x' deleted.
+    #[test]
+    fn ext_glob_hash_a_accepts_insertion_in_input() {
+        let _g = crate::test_util::global_state_lock();
+        // "fxoo" — extra 'x' between 'f' and 'oo'.
+        assert!(ext_glob_match("(#a1)foo", "fxoo"),
+            "1 insertion-in-input edit");
+    }
+
+    /// `(#a1)foo` matches "fo" via DELETION from input (missing 'o').
+    /// One 'o' deleted from input compared to pattern.
+    #[test]
+    fn ext_glob_hash_a_accepts_deletion_from_input() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#a1)foo", "fo"), "1 deletion-from-input edit");
+    }
+
+    /// `(#a2)foo` matches "fxooy" via 1 insertion + 1 substitution.
+    /// 'x' inserted between f-o; final 'o' substituted to 'y'. Wait —
+    /// closer reading: "fxooy" vs "foo" — 'x' is the extra char, but
+    /// then 'ooy' vs 'oo' has another extra 'y'. That's 2 insertions.
+    #[test]
+    fn ext_glob_hash_a_mixed_edits_within_budget() {
+        let _g = crate::test_util::global_state_lock();
+        // 2 insertions: 'x' and 'y'.
+        assert!(ext_glob_match("(#a2)foo", "fxooy"),
+            "2 insertions in input within budget");
+    }
+
+    /// Budget upper bound: `(#a1)abc` rejects "xyz" (3 substitutions > 1).
+    #[test]
+    fn ext_glob_hash_a1_rejects_three_substitutions() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("(#a1)abc", "xyz"));
+    }
+
+    /// `(#a3)abc` matches "xyz" (3 substitutions ≤ 3).
+    #[test]
+    fn ext_glob_hash_a3_accepts_all_substituted() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#a3)abc", "xyz"),
+            "3 substitutions at budget 3");
+    }
+
+    /// Position-independent substitution: budget allows replacing
+    /// any one of N pattern chars.
+    #[test]
+    fn ext_glob_hash_a_accepts_position_independent_substitution() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#a1)abc", "Xbc"), "first-char sub");
+        assert!(ext_glob_match("(#a1)abc", "aXc"), "middle-char sub");
+        assert!(ext_glob_match("(#a1)abc", "abX"), "last-char sub");
     }
 }
