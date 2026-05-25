@@ -27,13 +27,15 @@
 //!
 //! Approximate-match completer: shadows `compadd` to inject the
 //! `(#a$n)`-error glob prefix into each match, walks `n` from 1
-//! up to the max-errors style. The shadowing dance can't be
-//! faithfully ported without zsh's func-table machinery; this port
-//! does the outer loop + delegates the per-pass to `_complete`.
+//! up to the max-errors style. Wraps each pass in
+//! `_shadow -s _approximate compadd` + `_unshadow` so the
+//! compadd-override layer's eventual install/remove (deferred) is
+//! correctly scoped per-iteration.
 
 use crate::compsys::ported::_complete::_complete;
 use crate::compsys::ported::_description::_description;
 use crate::compsys::ported::_requested::_requested;
+use crate::compsys::ported::_shadow::{_shadow, _unshadow};
 use crate::compsys::ported::_tags::_tags;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
@@ -118,6 +120,11 @@ pub fn _approximate(args: &[String]) -> i32 {
         set_compstate_str("pattern_match", "*");
     }
 
+    // sh:56  `_shadow -s _approximate compadd` — wrap the entire
+    //   loop so the compadd-override (when wired) installs/restores
+    //   exactly once, not once per pass.
+    let _ = _shadow(&["-s".to_string(), "_approximate".to_string(), "compadd".to_string()]);
+
     let mut ret: i32 = 1;
     let mut comp_correct: i64 = 1;
     let oldcontext = curcontext.clone();
@@ -178,6 +185,9 @@ pub fn _approximate(args: &[String]) -> i32 {
         }
         comp_correct += 1;
     }
+
+    // sh:120  `_unshadow` — restore the compadd entry.
+    let _ = _unshadow();
 
     let _ = setsparam("curcontext", &oldcontext);
     ret

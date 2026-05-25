@@ -22,12 +22,14 @@
 //! sh:140  }
 //! ```
 //!
-//! Cycles through alternate tag sets on repeated `\C-xn`. The
-//! function-shadowing of `_all_labels`/`_next_label` would need a
-//! real shell function table to port faithfully; this version
-//! tracks the rolling `$_next_tags_not` exclusion list and
-//! dispatches `_main_complete`.
+//! Cycles through alternate tag sets on repeated `\C-xn`. Wraps
+//! the dispatch in `_shadow _all_labels _next_label` so the
+//! caller-side filter overrides install/restore against the real
+//! `shfunctab` (the override bodies themselves stay in shell
+//! until the inner-fn rewrite layer exists; the shadow scoping is
+//! already correct).
 
+use crate::compsys::ported::_shadow::{_shadow, _unshadow};
 use crate::ported::exec_hooks::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
@@ -55,8 +57,21 @@ pub fn _next_tags() -> i32 {
         setaparam("_next_tags_not", Vec::new());
     }
 
+    // sh:9 — `unfunction _all_labels _next_label`. We model this
+    //   as `_shadow` on both names: snapshot the prior shfunctab
+    //   entries (so `_unshadow` restores them), letting any
+    //   subsequent override land safely.
+    let _ = _shadow(&[
+        "_all_labels".to_string(),
+        "_next_label".to_string(),
+    ]);
+
     // sh:111
     let ret = dispatch_function_call("_main_complete", &[]).unwrap_or(1);
+
+    // sh:118 — `_unshadow _all_labels _next_label` (implicit via
+    //   the shell `local -h` scoping). Single pop covers both.
+    let _ = _unshadow();
 
     // sh:120
     let old_insert = get_compstate_str("old_insert").unwrap_or_default();

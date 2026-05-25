@@ -19,12 +19,12 @@
 //! ```
 //!
 //! Diagnostic widget that runs the completion machinery and prints
-//! which tags, functions, and styles were consulted. The
-//! `_shadow`-based capture machinery isn't replicable in our port
-//! without a real shell function table. We dispatch the inner fn
-//! and emit a stub message.
+//! which tags, functions, and styles were consulted. Wraps the
+//! invocation in `_shadow compadd compcall zstyle` so we can
+//! capture the live calls and a closing `_unshadow` to restore.
 
 use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_shadow::{_shadow, _unshadow};
 use crate::ported::exec_hooks::dispatch_function_call;
 
 /// `_complete_help` — diagnostic widget. Optional `$1` selects the
@@ -35,11 +35,25 @@ pub fn _complete_help(args: &[String]) -> i32 {
         .filter(|s| !s.is_empty())
         .cloned()
         .unwrap_or_else(|| "_main_complete".to_string());
+
+    // sh:10 — `_shadow compadd compcall zstyle`. Snapshot the three
+    //   names so the in-flight overrides the trace-collection layer
+    //   would install (if a future port lands them) can be cleanly
+    //   restored.
+    let _ = _shadow(&[
+        "compadd".to_string(),
+        "compcall".to_string(),
+        "zstyle".to_string(),
+    ]);
     let ret = dispatch_function_call(&target, &[]).unwrap_or(1);
+    // sh:52 — `_unshadow compadd compcall zstyle`. Single pop —
+    //   our frame holds all three names.
+    let _ = _unshadow();
+
     let _ = _message(&[
         "-r".to_string(),
         format!(
-            "{}: tag/function/style trace requires _shadow integration",
+            "{}: trace-collection layer (zstyle/compadd capture) not yet wired",
             target
         ),
     ]);
