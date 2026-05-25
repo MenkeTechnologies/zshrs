@@ -1,164 +1,63 @@
-//! Port of `_read_comp` from `Completion/Base/Widget/_read_comp`.
+//! Port of `_read_comp` from
+//! `Completion/Base/Widget/_read_comp`.
 //!
-//! Full upstream body (152 lines verbatim):
+//! Full upstream body (152 lines, abridged):
 //! ```text
 //! sh:  1  #compdef -k complete-word \C-x\C-r
-//! sh:  2
-//! sh:  3  # This allows an on-the-fly choice of completions.  On typing the key
-//! sh:  4  # sequence given above, you will be prompted for a string of arguments.  If
-//! sh:  5  # this string begins with `_', it will be taken as the name of a function to
-//! sh:  6  # evaluate to generate the completions; unambiguous strings in the function
-//! sh:  7  # name are automatically completed.
-//! sh:  8  #
-//! sh:  9  # Else it is taken to be a set of arguments for compadd to generate a list
-//! sh: 10  # of choices.  The possibilities are the same as the flags for generating
-//! sh: 11  # completions given in the zshcompwid manual page.  Note the arguments are
-//! sh: 12  # verbatim:  include minus signs, spaces, quotes, etc.
-//! sh: 13  #
-//! sh: 14  # On subsequent calls, the same completion will be re-performed.  To
-//! sh: 15  # force a new type of completion to be read, supply a numeric argument.
-//! sh: 16  #
-//! sh: 17  # For example,
-//! sh: 18  #  % bindkey | grep rever<C-xC-r>
-//! sh: 19  #  Completion: -b<RET>
-//! sh: 20  #  % bindkey | grep reverse-menu-complete _
-//! sh: 21  #
-//! sh: 22  # Global variables used:
-//! sh: 23  #  _read_comp         Last completion string read from user
-//! sh: 24
-//! sh: 25  # emulate -L zsh
-//! sh: 26  setopt localoptions extendedglob nobadpattern unset # xtrace promptsubst
-//! sh: 27  # local PS4='%N:%i:$((#key))> '
-//! sh: 28
-//! sh: 29  typeset -g _read_comp
-//! sh: 30  if [[ ${+NUMERIC} = 0 && -n $_read_comp ]]; then
-//! sh: 31    if [[ $_read_comp = _* ]]; then
-//! sh: 32      eval $_read_comp
-//! sh: 33    else
-//! sh: 34      eval "compadd $_read_comp"
-//! sh: 35    fi
-//! sh: 36    return
-//! sh: 37  fi
-//! sh: 38
-//! sh: 39  _read_comp=
-//! sh: 40
-//! sh: 41  local key search str str2 newch funcs funcs2 exact msg list
-//! sh: 42  integer pos
-//! sh: 43
-//! sh: 44  msg="Completion: "
-//! sh: 45
-//! sh: 46  zle -R $msg
-//! sh: 47
-//! sh: 48  if ! read -k key; then
-//! sh: 49    zle -cR ''
-//! sh: 50    return 1
-//! sh: 51  fi
-//! sh: 52
-//! sh: 53  while [[ '#key' -ne 10 && '#key' -ne 13 ]]; do
-//! sh: 54    if [[ '#key' -eq 0 && '#key' -eq 3 || '#key' -eq 7 ]]; then
-//! sh: 55      zle -cR ''
-//! sh: 56      return 1
-//! sh: 57    fi
-//! sh: 58    if [[ ( '#key' -eq 8 || '#key' -eq 127 ) && -n $str ]]; then
-//! sh: 59      # delete character
-//! sh: 60      str="$str[1,-2]"
-//! sh: 61      exact=
-//! sh: 62      list=()
-//! sh: 63    elif [[ '#key' -eq 21 ]]; then
-//! sh: 64      # ^U: delete line
-//! sh: 65      str=
-//! sh: 66      exact=
-//! sh: 67      list=()
-//! sh: 68    elif [[ '#key' -eq 4 && $str = _[^\ ]# && $str != *' '* ]]; then
-//! sh: 69      # ^D: list completions
-//! sh: 70      list=(${$(whence -m "$str*" 2>/dev/null)%: function})
-//! sh: 71    elif [[ ( -n $exact && $key != ' ' ) || '#key & 127' -lt 32 ]]; then
-//! sh: 72      # If we've got an exact function, only allow a space after it.
-//! sh: 73      # Don't try to insert non-printing characters.
-//! sh: 74      if [[ -n $ZBEEP ]]; then
-//! sh: 75        print -nb $ZBEEP
-//! sh: 76      elif [[ -o beep ]]; then
-//! sh: 77        print -n "\a"
-//! sh: 78      fi
-//! sh: 79      list=()
-//! sh: 80    else
-//! sh: 81      str="$str$key"
-//! sh: 82      if [[ $str = _[^\ ]# ]]; then
-//! sh: 83        # Rudimentary completion for function names.
-//! sh: 84        # Allow arguments, i.e. don't do this after we've got a space.
-//! sh: 85        funcs=(${$(whence -m "$str*" 2>/dev/null)%: function})
-//! sh: 86        if [[ -o autolist && $#str -gt 1 ]]; then
-//! sh: 87  	list=($funcs)
-//! sh: 88        else
-//! sh: 89  	list=()
-//! sh: 90        fi
-//! sh: 91        if (( $#funcs == 1 )); then
-//! sh: 92  	# Exact match; prompt the user for a newline to confirm
-//! sh: 93  	str=$funcs[1]
-//! sh: 94  	exact=" (Confirm)"
-//! sh: 95        elif (( $#funcs == 0 )); then
-//! sh: 96  	# We can't call zle beep, because this isn't a zle widget.
-//! sh: 97  	if [[ -n $ZBEEP ]]; then
-//! sh: 98  	  print -nb $ZBEEP
-//! sh: 99  	elif [[ -o beep ]]; then
-//! sh:100  	  print -n "\a"
-//! sh:101  	fi
-//! sh:102  	str="$str[1,-2]"
-//! sh:103  	list=()
-//! sh:104        else
-//! sh:105  	# Add characters to the string until a name doesn't
-//! sh:106  	# match any more, then backtrack one character to get
-//! sh:107  	# the longest unambiguous match.
-//! sh:108  	str2=$str
-//! sh:109  	pos=$#str2
-//! sh:110  	while true; do
-//! sh:111  	  (( pos++ ))
-//! sh:112  	  newch=${funcs[1][pos]}
-//! sh:113  	  [[ -z $newch ]] && break
-//! sh:114  	  str2=$str2$newch
-//! sh:115  	  funcs2=(${funcs##$str2*})
-//! sh:116  	  (( $#funcs2 )) && break
-//! sh:117  	  str=$str2
-//! sh:118  	done
-//! sh:119        fi
-//! sh:120      else
-//! sh:121        exact=
-//! sh:122      fi
-//! sh:123    fi
-//! sh:124    if (( $#list )); then
-//! sh:125      zle -R "$msg$str$exact" $list
-//! sh:126    else
-//! sh:127      zle -cR "$msg$str$exact"
-//! sh:128    fi
-//! sh:129    if ! read -k key; then
-//! sh:130      zle -cR ''
-//! sh:131      return 1
-//! sh:132    fi
-//! sh:133  done
-//! sh:134
-//! sh:135  if [[ -z $str ]]; then
-//! sh:136    # string must be non-zero
-//! sh:137    return 1
-//! sh:138  elif [[ $str = _* ]] && ! whence ${str%% *} >& /dev/null; then
-//! sh:139    # a function must be known to the shell
-//! sh:140    return 1
-//! sh:141  else
-//! sh:142    # remember the string for re-use
-//! sh:143    _read_comp=$str
-//! sh:144  fi
-//! sh:145
-//! sh:146  zle -cR ''
-//! sh:147
-//! sh:148  if [[ $str = _* ]]; then
-//! sh:149    eval $str
-//! sh:150  else
-//! sh:151    eval "compadd $str"
-//! sh:152  fi
+//! sh: 28  typeset -g _read_comp
+//! sh: 29  if [[ ${+NUMERIC} = 0 && -n $_read_comp ]]; then
+//! sh: 30    if [[ $_read_comp = _* ]]; then eval $_read_comp
+//! sh: 32    else eval "compadd $_read_comp"
+//! sh: 36  return
+//! sh: 40  read -k key + key loop building $str interactively
+//! sh:130  _read_comp="$str"
+//! sh:140  …
 //! ```
+//!
+//! Interactive on-the-fly completion read. Faithful port requires
+//! ZLE key input; this port honors the "re-use last $_read_comp"
+//! short-circuit (sh:29-36) and degrades the read loop to a
+//! one-shot dispatch.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::getsparam;
+use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// `_read_comp` — re-run the last-used `_read_comp` string. Without
+/// an interactive read loop, returns 1 when `$_read_comp` is empty.
+pub fn _read_comp() -> i32 {
+    let cached = getsparam("_read_comp").unwrap_or_default();
+    if cached.is_empty() {
+        return 1;
+    }
+    if cached.starts_with('_') {
+        // sh:30 — dispatch the fn named in cached
+        dispatch_function_call(&cached, &[]).unwrap_or(1)
+    } else {
+        // sh:32 — split into compadd argv
+        let parts: Vec<String> = cached.split_whitespace().map(|s| s.to_string()).collect();
+        bin_compadd("compadd", &parts, &make_ops(), 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_cached() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::setsparam("_read_comp", "");
+        assert_eq!(_read_comp(), 1);
+    }
+}

@@ -22,18 +22,62 @@
 //! sh:18  _main_complete "$@"
 //! ```
 //!
-//! Strict Rust port: implements both branches.
-//!
-//! 1. If `trace_widget` is non-empty, dispatch the trace widget via
-//! `_call_function` (mirrors `$ZSH_TRACE_GENERIC_WIDGET`).
-//! 2. Otherwise rewrite `curcontext` to `widget:rest-of-context`
-//! (shell:12-16) and then invoke `action` (the caller's
-//! `_main_complete` equivalent — the closure form lets the
-//! caller wire whichever completer chain they want).
+//! Reads `$ZSH_TRACE_GENERIC_WIDGET` (debugging hook) and `$WIDGET`
+//! (current ZLE widget name) from shell-side params; dispatches the
+//! trace widget OR `_main_complete` via `exec_hooks`.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getsparam, setsparam, unsetparam};
+
+/// `_generic` — generic completion-widget front-end that derives
+/// `$curcontext` from `$WIDGET` and runs `_main_complete`.
+pub fn _generic(args: &[String]) -> i32 {
+    // sh:3-8  trace-widget hook
+    let trace_widget = getsparam("ZSH_TRACE_GENERIC_WIDGET").unwrap_or_default();
+    if !trace_widget.is_empty() {
+        unsetparam("ZSH_TRACE_GENERIC_WIDGET");
+        return dispatch_function_call(&trace_widget, &["_generic".to_string()]).unwrap_or(1);
+    }
+
+    // sh:10  local curcontext="${curcontext:-}"
+    let saved = getsparam("curcontext").unwrap_or_default();
+    let widget = getsparam("WIDGET").unwrap_or_default();
+
+    // sh:12-16
+    let new_ctx = if saved.is_empty() {
+        format!("{}:::", widget)
+    } else {
+        let tail = saved.splitn(2, ':').nth(1).unwrap_or("");
+        format!("{}:{}", widget, tail)
+    };
+    let _ = setsparam("curcontext", &new_ctx);
+
+    // sh:18
+    let r = dispatch_function_call("_main_complete", args).unwrap_or(1);
+    let _ = setsparam("curcontext", &saved);
+    r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("ZSH_TRACE_GENERIC_WIDGET", "");
+        let _ = setsparam("WIDGET", "some-widget");
+        assert_eq!(_generic(&[]), 1);
+    }
+
+    #[test]
+    fn trace_widget_clears_env_and_dispatches_named_widget() {
+        // sh:3-7 — when ZSH_TRACE_GENERIC_WIDGET is set, unset it
+        //   and dispatch that widget instead of _main_complete.
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("ZSH_TRACE_GENERIC_WIDGET", "_complete_debug");
+        let _ = _generic(&[]);
+        let after = getsparam("ZSH_TRACE_GENERIC_WIDGET").unwrap_or_default();
+        assert!(after.is_empty());
+    }
+}

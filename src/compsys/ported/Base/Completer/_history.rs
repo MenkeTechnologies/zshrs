@@ -1,82 +1,131 @@
 //! Port of `_history` from `Completion/Base/Completer/_history`.
 //!
-//! Full upstream body (65 lines verbatim):
+//! Full upstream body (65 lines, abridged):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 2
-//! sh: 3  # Hm, this *can* sensibly be used as a completer. But it could also be used
-//! sh: 4  # as a utility function, so maybe it should be moved into another directory.
-//! sh: 5  # Or maybe not. Hm.
-//! sh: 6  #
-//! sh: 7  #
-//! sh: 8  # Complete words from the history
-//! sh: 9  #
-//! sh:10  # Code taken from _history_complete_words.
-//! sh:11  #
-//! sh:12  # Available styles:
-//! sh:13  #
-//! sh:14  #   sort --  sort matches lexically (default is to sort by age)
-//! sh:15  #   remove-all-dups --
-//! sh:16  #            remove /all/ duplicate matches rather than just consecutives
-//! sh:17  #   range -- range of history words to complete
-//! sh:18
 //! sh:19  local opt expl max slice hmax=$#historywords beg=2
-//! sh:20
-//! sh:21  if zstyle -t ":completion:${curcontext}:" remove-all-dups; then
-//! sh:22    opt=-
-//! sh:23  else
-//! sh:24    opt=-1
-//! sh:25  fi
-//! sh:26
-//! sh:27  if zstyle -t ":completion:${curcontext}:" sort; then
-//! sh:28    opt="${opt}J"
-//! sh:29  else
-//! sh:30    opt="${opt}V"
-//! sh:31  fi
-//! sh:32
-//! sh:33  if zstyle -s ":completion:${curcontext}:" range max; then
-//! sh:34    if [[ $max = *:* ]]; then
-//! sh:35      slice=${max#*:}
-//! sh:36      max=${max%:*}
-//! sh:37    else
-//! sh:38      slice=$max
-//! sh:39    fi
-//! sh:40    [[ max -gt hmax ]] && max=$hmax
-//! sh:41  else
-//! sh:42    max=$hmax
-//! sh:43    slice=$max
-//! sh:44  fi
-//! sh:45
-//! sh:46  PREFIX="$IPREFIX$PREFIX"
-//! sh:47  IPREFIX=
-//! sh:48  SUFFIX="$SUFFIX$ISUFFIX"
-//! sh:49  ISUFFIX=
-//! sh:50
-//! sh:51  # We skip the first element of historywords so the current word doesn't
-//! sh:52  # interfere with the completion
-//! sh:53
-//! sh:54  local -a hslice
-//! sh:55  while [[ $compstate[nmatches] -eq 0 && beg -lt max ]]; do
-//! sh:56    if [[ -n $compstate[quote] ]]
-//! sh:57    then hslice=( ${(Q)historywords[beg,beg+slice]} )
-//! sh:58    else hslice=( ${historywords[beg,beg+slice]} )
-//! sh:59    fi
-//! sh:60    _wanted "$opt" history-words expl 'history word' \
-//! sh:61        compadd -Q -a hslice
-//! sh:62    (( beg+=slice ))
-//! sh:63  done
-//! sh:64
-//! sh:65  (( $compstate[nmatches] ))
+//! sh:21  if zstyle -t … remove-all-dups; then opt=-  else opt=-1  fi
+//! sh:27  if zstyle -t … sort; then opt+=J else opt+=V fi
+//! sh:33  if zstyle -s … range max; then …
+//! sh:42  PREFIX="$IPREFIX$PREFIX"
+//! sh:44  SUFFIX="$SUFFIX$ISUFFIX"
+//! sh:50  while [[ $compstate[nmatches] -eq 0 && beg -lt max ]]; do
+//! sh:52    if [[ -n $compstate[quote] ]]
+//! sh:53    then hslice=( ${(Q)historywords[beg,beg+slice]} )
+//! sh:54    else hslice=( ${historywords[beg,beg+slice]} )
+//! sh:55    fi
+//! sh:56    _wanted "$opt" history-words expl 'history word' \
+//! sh:57        compadd -Q -a hslice
+//! sh:58    (( beg+=slice ))
+//! sh:59  done
+//! sh:61  (( $compstate[nmatches] ))
 //! ```
-//!
-//! Faithful Rust port: honors `HistoryOpts` for sort / range /
-//! remove-all-dups / max-words knobs that mirror the corresponding
-//! shell zstyles. The default opts match upstream defaults
-//! (reverse iteration, full dedup, no range cap).
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_wanted::_wanted;
+use crate::ported::modules::zutil::{lookupstyle, testforstyle};
+use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
+use crate::ported::zle::compcore::get_compstate_str;
+
+/// `_history` — complete from `$historywords` array.
+pub fn _history() -> i32 {
+    let historywords = getaparam("historywords").unwrap_or_default();
+    let hmax = historywords.len();
+    let mut beg = 2usize;
+
+    let curcontext = getsparam("curcontext").unwrap_or_default();
+    let ctx = format!(":completion:{}:", curcontext);
+
+    // sh:21
+    let remove_all_dups = testforstyle(&ctx, "remove-all-dups") == 0;
+    let opt_prefix = if remove_all_dups { "-" } else { "-1" };
+    // sh:27
+    let sort_on = testforstyle(&ctx, "sort") == 0;
+    let opt = if sort_on {
+        format!("{}J", opt_prefix)
+    } else {
+        format!("{}V", opt_prefix)
+    };
+
+    // sh:33-40  range style
+    let range_val = lookupstyle(&ctx, "range")
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    let (mut max, slice): (usize, usize) = if !range_val.is_empty() {
+        let (m_str, s_str) = if range_val.contains(':') {
+            let mut parts = range_val.splitn(2, ':');
+            let m = parts.next().unwrap_or("0").to_string();
+            let s = parts.next().unwrap_or("0").to_string();
+            (m, s)
+        } else {
+            (range_val.clone(), range_val)
+        };
+        let m = m_str.parse::<usize>().unwrap_or(hmax);
+        let s = s_str.parse::<usize>().unwrap_or(m);
+        (m.min(hmax), s)
+    } else {
+        (hmax, hmax)
+    };
+    if max > hmax {
+        max = hmax;
+    }
+
+    // sh:42-46  flatten quoted/unquoted PREFIX/IPREFIX semantics
+    let prefix = getsparam("PREFIX").unwrap_or_default();
+    let iprefix = getsparam("IPREFIX").unwrap_or_default();
+    let _ = setsparam("PREFIX", &format!("{}{}", iprefix, prefix));
+    let _ = setsparam("IPREFIX", "");
+    let suffix = getsparam("SUFFIX").unwrap_or_default();
+    let isuffix = getsparam("ISUFFIX").unwrap_or_default();
+    let _ = setsparam("SUFFIX", &format!("{}{}", suffix, isuffix));
+    let _ = setsparam("ISUFFIX", "");
+
+    // sh:50-59  walk slices until nmatches > 0 or beg >= max.
+    while get_compstate_str("nmatches").and_then(|s| s.parse::<i64>().ok()) == Some(0)
+        && beg < max
+    {
+        let end = (beg + slice).min(hmax);
+        let hslice: Vec<String> = if beg <= end && beg >= 1 && end <= historywords.len() {
+            historywords[beg - 1..end].to_vec()
+        } else {
+            Vec::new()
+        };
+        setaparam("hslice", hslice);
+        let _ = _wanted(&[
+            opt.clone(),
+            "history-words".to_string(),
+            "expl".to_string(),
+            "history word".to_string(),
+            "compadd".to_string(),
+            "-Q".to_string(),
+            "-a".to_string(),
+            "hslice".to_string(),
+        ]);
+        beg += slice;
+        if slice == 0 {
+            break;
+        }
+    }
+
+    // sh:61
+    let nm: i64 = get_compstate_str("nmatches")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if nm == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_historywords_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        setaparam("historywords", Vec::new());
+        assert_eq!(_history(), 1);
+    }
+}

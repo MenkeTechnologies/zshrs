@@ -17,16 +17,83 @@
 //! sh:13      'user-math-functions:user math function: _user_math_func' \
 //! sh:14      'module-math-functions:math function from zsh/mathfunc: _module_math_func'
 //! ```
-//!
-//! Strict Rust port: faithful 1:1 — strips non-identifier chars
-//! from PREFIX/SUFFIX (rewriting into IPREFIX/ISUFFIX), then
-//! dispatches via [`_alternative`] with the exact three specs
-//! upstream uses. Caller injects the data the three Zsh/Type
-//! helpers need (params, user math fns, module math fns).
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getsparam, setsparam};
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// `_math` — `(( … ))` math-context completion: trim non-ident
+/// chars from PREFIX/SUFFIX into IPREFIX/ISUFFIX, then offer math
+/// param + math-fn alternatives.
+pub fn _math() -> i32 {
+    // sh:3-6  PREFIX has non-ident → split off the trailing ident
+    //         portion as the new PREFIX; the leading part joins
+    //         IPREFIX.
+    let prefix = getsparam("PREFIX").unwrap_or_default();
+    if prefix.chars().any(|c| !is_ident_char(c)) {
+        let trail_start = prefix
+            .rfind(|c: char| !is_ident_char(c))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let head = &prefix[..trail_start];
+        let tail = &prefix[trail_start..];
+        let ipref = getsparam("IPREFIX").unwrap_or_default();
+        let _ = setsparam("IPREFIX", &format!("{}{}", ipref, head));
+        let _ = setsparam("PREFIX", tail);
+    }
+
+    // sh:7-10  symmetric for SUFFIX
+    let suffix = getsparam("SUFFIX").unwrap_or_default();
+    if suffix.chars().any(|c| !is_ident_char(c)) {
+        let lead_end = suffix
+            .find(|c: char| !is_ident_char(c))
+            .unwrap_or(suffix.len());
+        let head = &suffix[..lead_end];
+        let tail = &suffix[lead_end..];
+        let isuf = getsparam("ISUFFIX").unwrap_or_default();
+        let _ = setsparam("ISUFFIX", &format!("{}{}", tail, isuf));
+        let _ = setsparam("SUFFIX", head);
+    }
+
+    // sh:12-14
+    dispatch_function_call(
+        "_alternative",
+        &[
+            "math-parameters:math parameter: _math_params".to_string(),
+            "user-math-functions:user math function: _user_math_func".to_string(),
+            "module-math-functions:math function from zsh/mathfunc: _module_math_func"
+                .to_string(),
+        ],
+    )
+    .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("PREFIX", "ident");
+        let _ = setsparam("SUFFIX", "");
+        assert_eq!(_math(), 1);
+    }
+
+    #[test]
+    fn splits_prefix_non_ident_into_iprefix() {
+        // sh:3-6 — PREFIX with leading non-ident chars: trailing
+        //   ident portion stays as PREFIX, non-ident head moves to
+        //   IPREFIX.
+        let _g = crate::test_util::global_state_lock();
+        let _ = setsparam("PREFIX", "a+b");
+        let _ = setsparam("IPREFIX", "");
+        let _ = setsparam("SUFFIX", "");
+        let _ = _math();
+        assert_eq!(getsparam("PREFIX").as_deref(), Some("b"));
+        assert_eq!(getsparam("IPREFIX").as_deref(), Some("a+"));
+    }
+}

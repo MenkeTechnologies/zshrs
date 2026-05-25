@@ -15,12 +15,63 @@
 //! sh:11  fi
 //! ```
 //!
-//! Strict Rust port: faithful 1:1 — delegates to our ported
-//! [`_path_commands`].
+//! `_have_glob_qual`, `_globquals`, `_path_commands` are sibling
+//! shell fns — dispatch via `exec_hooks`. `compset` calls go to the
+//! real builtin.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getaparam, getsparam};
+use crate::ported::zle::complete::bin_compset;
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// `_equal` — `=cmd` / `=(...)` context completion: glob-qualifier
+/// expansion if `_have_glob_qual` matches, otherwise path-command
+/// completion.
+pub fn _equal() -> i32 {
+    let prefix = getsparam("PREFIX").unwrap_or_default();
+
+    // sh:5  if _have_glob_qual $PREFIX
+    if dispatch_function_call("_have_glob_qual", &[prefix]).unwrap_or(1) == 0 {
+        // sh:6  compset -p ${#match[1]}
+        let match_arr = getaparam("match").unwrap_or_default();
+        let match1_len = match_arr.first().map(|s| s.len()).unwrap_or(0);
+        let _ = bin_compset(
+            "compset",
+            &["-p".to_string(), match1_len.to_string()],
+            &make_ops(),
+            0,
+        );
+        // sh:7  compset -S '[^\)\|\~]#(|\))'
+        let _ = bin_compset(
+            "compset",
+            &["-S".to_string(), "[^\\)\\|\\~]#(|\\))".to_string()],
+            &make_ops(),
+            0,
+        );
+        // sh:8
+        dispatch_function_call("_globquals", &[]).unwrap_or(1)
+    } else {
+        // sh:10
+        dispatch_function_call("_path_commands", &[]).unwrap_or(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_equal(), 1);
+    }
+}

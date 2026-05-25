@@ -2,18 +2,26 @@
 //!
 //! Full upstream body (3 lines verbatim):
 //! ```text
-//! sh: 1  #compdef disown fg
-//! sh: 2
-//! sh: 3  _jobs "$@"
+//! sh:1  #compdef disown fg
+//! sh:2
+//! sh:3  _jobs "$@"
 //! ```
-//!
-//! Strict Rust port: alias for `_jobs(..., JobsFilter::All, false)`.
-//! `fg` and `disown` accept any job (running OR suspended) — no
-//! filter applied.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+
+/// `_jobs_fg` — `fg` / `disown` completion: all jobs via plain
+/// `_jobs`. Exit code = `_jobs` exit (1 when uncallable).
+pub fn _jobs_fg(args: &[String]) -> i32 {
+    dispatch_function_call("_jobs", args).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_jobs_fg(&[]), 1);
+    }
+}

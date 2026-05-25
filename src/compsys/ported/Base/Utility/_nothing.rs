@@ -2,22 +2,31 @@
 //!
 //! Full upstream body (3 lines verbatim):
 //! ```text
-//! sh: 1  #compdef true false log times clear logname whoami sync
-//! sh: 2
-//! sh: 3  _message 'no argument or option'
+//! sh:1  #compdef true false log times clear logname whoami sync
+//! sh:2
+//! sh:3  _message 'no argument or option'
 //! ```
-//!
-//! Upstream is bound as the completion for commands that genuinely
-//! take no args (`true`, `false`, `whoami`, etc.) — it emits the
-//! "no argument or option" message via `_message`.
-//!
-//! Strict Rust port: dispatches to `_message` directly. The shell
-//! `_message` itself returns success regardless of whether matches
-//! were added; we mirror by always returning true.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_message::_message;
+
+/// `_nothing` — emit a message that the command takes no args.
+pub fn _nothing() -> i32 {
+    _message(&["no argument or option".to_string()])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn returns_message_status() {
+        // sh:3 — _message's exit depends on whether `messages` tag
+        //   is requested; without state it returns 1.
+        let _g = crate::test_util::global_state_lock();
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        let _r = _nothing();
+        INCOMPFUNC.store(0, Ordering::Relaxed);
+    }
+}

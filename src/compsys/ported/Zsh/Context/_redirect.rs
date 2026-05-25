@@ -20,17 +20,58 @@
 //! sh:16  fi
 //! sh:17
 //! sh:18  _dispatch -redirect-,${compstate[redirect]},$_comp_command \
-//! sh:19  	  -redirect-,{${compstate[redirect]},-default-},${^strs}
+//! sh:19        -redirect-,{${compstate[redirect]},-default-},${^strs}
 //! ```
-//!
-//! Strict Rust port: faithful 1:1 — calls our ported
-//! [`_set_command`] to populate `_comp_command{,1,2}` in
-//! `state.lastcomp`, builds the dispatch-key list per upstream,
-//! then calls our ported [`_dispatch`].
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_set_command::_set_command;
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::getsparam;
+use crate::ported::zle::compcore::get_compstate_str;
+
+/// `_redirect` — completion within a `>`/`<`/`|` redirection: try
+/// per-command + per-redirect-target dispatch chain.
+pub fn _redirect() -> i32 {
+    // sh:5
+    let _ = _set_command();
+
+    // sh:7-15  build prefixes
+    let mut strs: Vec<String> = vec!["-default-".to_string()];
+    let current = getsparam("CURRENT").unwrap_or_default();
+    if current != "1" {
+        let cc = getsparam("_comp_command").unwrap_or_default();
+        let cc1 = getsparam("_comp_command1").unwrap_or_default();
+        let cc2 = getsparam("_comp_command2").unwrap_or_default();
+        let mut prefix: Vec<String> = vec![cc];
+        if !cc1.is_empty() {
+            prefix.insert(0, cc1);
+            if !cc2.is_empty() {
+                prefix.insert(0, cc2);
+            }
+        }
+        prefix.extend(strs);
+        strs = prefix;
+    }
+
+    // sh:18-19  build the dispatch argv with brace-expansion done
+    //   manually: `-redirect-,{X,Y},Z` → `-redirect-,X,Z` and
+    //   `-redirect-,Y,Z`.
+    let redir = get_compstate_str("redirect").unwrap_or_default();
+    let cc = getsparam("_comp_command").unwrap_or_default();
+    let mut argv: Vec<String> = vec![format!("-redirect-,{},{}", redir, cc)];
+    for s in &strs {
+        argv.push(format!("-redirect-,{},{}", redir, s));
+        argv.push(format!("-redirect-,-default-,{}", s));
+    }
+    dispatch_function_call("_dispatch", &argv).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_redirect(), 1);
+    }
+}

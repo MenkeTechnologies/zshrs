@@ -19,13 +19,76 @@
 //! sh:15    _message delimiter
 //! sh:16  fi
 //! ```
-//!
-//! Strict Rust port: takes the `tag` (used in the style lookup
-//! key); falls back to the upstream default list `: + / - %`.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_wanted::_wanted;
+use crate::ported::modules::zutil::lookupstyle;
+use crate::ported::params::{getsparam, setaparam};
+
+/// `_delimiters` — offer the delimiter chars used in modifiers /
+/// qualifiers. Reads the `delimiters` style for the caller's tag
+/// (arg 0); falls back to `: + / - %`.
+pub fn _delimiters(args: &[String]) -> i32 {
+    // sh:6-7  locals
+    let tag = args.first().cloned().unwrap_or_default();
+    let curcontext = getsparam("curcontext").unwrap_or_default();
+
+    // sh:9-10
+    let ctx = format!(":completion:{}:{}", curcontext, tag);
+    let mut list = lookupstyle(&ctx, "delimiters");
+    if list.is_empty() {
+        list = vec![
+            ":".to_string(),
+            "+".to_string(),
+            "/".to_string(),
+            "-".to_string(),
+            "%".to_string(),
+        ];
+    }
+
+    // sh:12-16
+    if !list.is_empty() {
+        // sh:13  _wanted delimiters expl delimiter compadd -S '' -a list
+        //   The `-a list` flag tells compadd to read from a shell
+        //   array named `list`; publish ours under that name.
+        setaparam("list", list);
+        _wanted(&[
+            "delimiters".to_string(),
+            "expl".to_string(),
+            "delimiter".to_string(),
+            "compadd".to_string(),
+            "-S".to_string(),
+            "".to_string(),
+            "-a".to_string(),
+            "list".to_string(),
+        ])
+    } else {
+        // sh:15  _message delimiter
+        _message(&["delimiter".to_string()])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ported::zle::complete::INCOMPFUNC;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn falls_back_to_default_list_when_style_unset() {
+        // sh:10 — when delimiters style is unset, falls back to
+        //   `: + / - %`. We can't observe the list contents from
+        //   here (it's published into `list` shell array), but we
+        //   can verify the function publishes a non-empty array and
+        //   takes the _wanted path (which returns 1 when no tags
+        //   are registered, matching shell semantics).
+        let _g = crate::test_util::global_state_lock();
+        INCOMPFUNC.store(1, Ordering::Relaxed);
+        let r = _delimiters(&["mytag".to_string()]);
+        INCOMPFUNC.store(0, Ordering::Relaxed);
+        assert_eq!(r, 1);
+        // Verify the default list was published.
+        let list = crate::ported::params::getaparam("list").unwrap_or_default();
+        assert_eq!(list, vec![":", "+", "/", "-", "%"]);
+    }
+}

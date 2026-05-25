@@ -2,31 +2,40 @@
 //!
 //! Full upstream body (7 lines verbatim):
 //! ```text
-//! sh: 1  #compdef command
-//! sh: 2
-//! sh: 3  _arguments \
-//! sh: 4    '-v[indicate result of command search]:*:command:_path_commands' \
-//! sh: 5    '-V[show result of command search in verbose form]:*:command:_path_commands' \
-//! sh: 6    '(-)-p[use default PATH to find command]' \
-//! sh: 7    '*:: : _normal -p $service'
+//! sh:1  #compdef command
+//! sh:2
+//! sh:3  _arguments \
+//! sh:4    '-v[indicate result of command search]:*:command:_path_commands' \
+//! sh:5    '-V[show result of command search in verbose form]:*:command:_path_commands' \
+//! sh:6    '(-)-p[use default PATH to find command]' \
+//! sh:7    '*:: : _normal -p $service'
 //! ```
-//!
-//! Completion for the POSIX `command` builtin. Three optspecs and a
-//! catch-all that dispatches the rest of the line to `_normal` with the
-//! `-p` flag (which tells `_normal` to treat the next word as the
-//! effective command name for arg-completion lookup).
-//!
-//! Faithful port: parses out which `command` flag is being completed
-//! and what action the caller should take. compsys is a leaf crate
-//! and can't itself invoke `_path_commands` or `_normal` (those need
-//! the parent shell's path/cmdnam tables), so this port surfaces the
-//! decision in a structured `CommandStage` enum and lets the caller
-//! dispatch. `_arguments` itself isn't re-run here — we directly model
-//! the four-clause _arguments table since it's tiny and immutable.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+
+/// `_command` — `command` builtin completion: pure `_arguments`
+/// dispatch (sibling shell fn). Returns 1 without an executor.
+pub fn _command() -> i32 {
+    dispatch_function_call(
+        "_arguments",
+        &[
+            "-v[indicate result of command search]:*:command:_path_commands".to_string(),
+            "-V[show result of command search in verbose form]:*:command:_path_commands"
+                .to_string(),
+            "(-)-p[use default PATH to find command]".to_string(),
+            "*:: : _normal -p $service".to_string(),
+        ],
+    )
+    .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_command(), 1);
+    }
+}

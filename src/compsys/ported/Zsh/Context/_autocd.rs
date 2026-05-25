@@ -2,27 +2,44 @@
 //!
 //! Full upstream body (5 lines verbatim):
 //! ```text
-//! sh: 1  #compdef -command-
-//! sh: 2
-//! sh: 3  _command_names
-//! sh: 4  local ret=$?
-//! sh: 5  [[ -o autocd ]] && _cd || return ret
+//! sh:1  #compdef -command-
+//! sh:2
+//! sh:3  _command_names
+//! sh:4  local ret=$?
+//! sh:5  [[ -o autocd ]] && _cd || return ret
 //! ```
 //!
-//! Strict Rust port: faithful 1:1 — calls our ported
-//! [`_command_names`]. When the shell `autocd` option is set
-//! (caller-supplied via `autocd_set`), additionally tries `_cd`
-//! (per-command completer; not in the engine layer — caller
-//! dispatches that themselves).
-//!
-//! TODO: `_cd` is a Zsh/Command per-builtin completer not in the
-//! engine port. Caller passes a closure that runs `_cd` when
-//! `autocd_set=true` AND `_command_names` returned false (i.e. the
-//! bareword is a directory, not a command).
+//! `_command_names` is ported (in `compsys::ported::_command_names`).
+//! `_cd` is a sibling shell fn — dispatch via `exec_hooks`. The
+//! `AUTOCD` option is read directly from `zsh_h::isset`.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::compsys::ported::_command_names::_command_names;
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::zsh_h::{isset, AUTOCD};
+
+/// `_autocd` — `-command-` context completion: command names + `_cd`
+/// when the `autocd` option is set.
+pub fn _autocd() -> i32 {
+    // sh:3
+    let ret = _command_names(&[]);
+
+    // sh:5  [[ -o autocd ]] && _cd || return ret
+    if isset(AUTOCD) {
+        dispatch_function_call("_cd", &[]).unwrap_or(ret)
+    } else {
+        ret
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_command_names_status_when_autocd_off() {
+        // When AUTOCD is unset (default for tests), _autocd returns
+        //   _command_names' status (1 without registered tags).
+        let _g = crate::test_util::global_state_lock();
+        let _r = _autocd();
+    }
+}

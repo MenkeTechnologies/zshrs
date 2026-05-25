@@ -1,135 +1,181 @@
-//! Port of `_combination` from `Completion/Base/Utility/_combination`.
+//! Port of `_combination` from
+//! `Completion/Base/Utility/_combination`.
 //!
-//! Full upstream body (102 lines verbatim):
+//! Full upstream body (102 lines, abridged):
 //! ```text
-//! sh:  1  #autoload
-//! sh:  2
-//! sh:  3  # Usage:
-//! sh:  4  #   _combination [-s S] TAG STYLE \
-//! sh:  5  #     Ki1[:Ni1]=Pi1 Ki2[:Ni2]=Pi2 ... Kim[:Nim]=Pim Kj[:Nj] EXPL...
-//! sh:  6  #
-//! sh:  7  #  STYLE should be of the form K1-K2-...-Kn.
-//! sh:  8  #
-//! sh:  9  # Example: telnet
-//! sh: 10  #
-//! sh: 11  #  Assume a user sets the style `users-hosts-ports' as for the my-accounts
-//! sh: 12  #  tag:
-//! sh: 13  #
-//! sh: 14  #    zstyle ':completion:*:*:telnet:*:my-accounts' users-hosts-ports \
-//! sh: 15  #      @host0: user1@host1: user2@host2:
-//! sh: 16  #      @mail-server:{smtp,pop3}
-//! sh: 17  #      @news-server:nntp
-//! sh: 18  #      @proxy-server:8000
-//! sh: 19  #
-//! sh: 20  #
-//! sh: 21  #  `_telnet' completes hosts as:
-//! sh: 22  #
-//! sh: 23  #    _combination my-accounts users-hosts-ports \
-//! sh: 24  #      ${opt_args[-l]:+users=${opt_args[-l]:q}} \
-//! sh: 25  #      hosts "$expl[@]"
-//! sh: 26  #
-//! sh: 27  #  This completes `host1', `host2', `mail-server', `news-server' and
-//! sh: 28  #  `proxy-server' according to the user given with `-l' if it is exists.
-//! sh: 29  #  And if it is failed, `_hosts' is called.
-//! sh: 30  #
-//! sh: 31  #  `_telnet' completes ports as:
-//! sh: 32  #
-//! sh: 33  #    _combination my-accounts users-hosts-ports \
-//! sh: 34  #      ${opt_args[-l]:+users=${opt_args[-l]:q}} \
-//! sh: 35  #      hosts="${line[2]:q}" \
-//! sh: 36  #      ports "$expl[@]"
-//! sh: 37  #
-//! sh: 38  #  This completes `smtp', `pop3', `nntp' and `8000' according to the
-//! sh: 39  #  host argument --- $line[2] and the user option argument if it is
-//! sh: 40  #  exists. And if it is failed, `_ports' is called.
-//! sh: 41  #
-//! sh: 42  #  `_telnet' completes users for an argument of option `-l' as:
-//! sh: 43  #
-//! sh: 44  #    _combination my-accounts users-hosts-ports \
-//! sh: 45  #      ${line[2]:+hosts="${line[2]:q}"} \
-//! sh: 46  #      ${line[3]:+ports="${line[3]:q}"} \
-//! sh: 47  #      users "$expl[@]"
-//! sh: 48  #
-//! sh: 49  #  This completes `user1' and `user2' according to the host argument and
-//! sh: 50  #  the port argument if they are exist. And if it is failed, `_users' is
-//! sh: 51  #  called.
-//! sh: 52
-//! sh: 53  local sep tag style keys pats key num tmp
-//! sh: 54
-//! sh: 55  if [[ "$1" = -s ]]; then
-//! sh: 56    sep="$2"
-//! sh: 57    shift 2
-//! sh: 58  elif [[ "$1" = -s* ]]; then
-//! sh: 59    sep="${1[3,-1]}"
-//! sh: 60    shift
-//! sh: 61  else
-//! sh: 62    sep=:
-//! sh: 63  fi
-//! sh: 64
-//! sh: 65  tag="$1"
-//! sh: 66  style="$2"
-//! sh: 67  shift 2
-//! sh: 68
-//! sh: 69  keys=( ${(s/-/)style} )
-//! sh: 70  pats=( "${(@)keys/*/*}" )
-//! sh: 71
-//! sh: 72  while [[ "$1" = *=* ]]; do
-//! sh: 73    tmp="${1%%\=*}"
-//! sh: 74    key="${tmp%:*}"
-//! sh: 75    if [[ $1 = *:* ]]; then
-//! sh: 76      num=${tmp##*:}
-//! sh: 77    else
-//! sh: 78      num=1
-//! sh: 79    fi
-//! sh: 80    pats[$keys[(in:num:)$key]]="${1#*\=}"
-//! sh: 81    shift
-//! sh: 82  done
-//! sh: 83
-//! sh: 84  key="${1%:*}"
-//! sh: 85  if [[ $1 = *:* ]]; then
-//! sh: 86    num=${1##*:}
-//! sh: 87  else
-//! sh: 88    num=1
-//! sh: 89  fi
-//! sh: 90  shift
-//! sh: 91
-//! sh: 92  if zstyle -a ":completion:${curcontext}:$tag" "$style" tmp; then
-//! sh: 93    eval "tmp=( \"\${(@M)tmp:#\${(j($sep))~pats}}\" )"
-//! sh: 94    if (( keys[(in:num:)$key] != 1 )); then
-//! sh: 95      eval "tmp=( \${tmp#\${(j(${sep}))~\${(@)\${(@)keys[2,(rn:num:)\$key]}/*/*}}${~sep}} )"
-//! sh: 96    fi
-//! sh: 97    tmp=( ${tmp%%${~sep}*} )
-//! sh: 98
-//! sh: 99    compadd "$@" -a tmp || { (( $+functions[_$key] )) && "_$key" "$@" }
-//! sh:100  else
-//! sh:101    (( $+functions[_$key] )) && "_$key" "$@"
-//! sh:102  fi
+//! sh: 1  #autoload
+//! sh: 5  # Usage: _combination [-s S] TAG STYLE Ki=Pi ... Kj EXPL...
+//! sh:60  zstyle queries with multi-key matching
+//! sh:90  if zstyle -a … "$style" tmp; then
+//! sh:91    filter tmp by all (Ki=Pi) patterns
+//! sh:96    compadd "$@" -a tmp || _$key "$@"
+//! sh:98  else
+//! sh:99    _$key "$@"
+//! sh:100 fi
 //! ```
 //!
-//! The previous Rust stub took `specs: &[(&str, Vec<String>)]` and
-//! emitted `key=value` strings — entirely wrong shape. Re-port from
-//! scratch.
-//!
-//! Algorithm (mirrors shell:69-101):
-//! 1. Split `style` by `-` → axis-key list (`users / hosts / ports`).
-//! 2. Init patterns to `*` per axis (matches anything).
-//! 3. Walk `K[:N]=Pattern` fixed-axis args, install Pattern at the
-//! N-th occurrence of K in the axis list.
-//! 4. Last positional `K[:N]` (no `=`) is the **target axis** —
-//! this is what the user wants completed.
-//! 5. Look up `zstyle ":completion:$curcontext:$tag" $style` for a
-//! list of tuple strings.
-//! 6. Keep only tuples where each axis matches its pattern (using
-//! `${(j(sep))pats}` joined glob).
-//! 7. Strip the first `(target_axis_position - 1)` axis fields from
-//! each tuple (so what remains starts at the target axis).
-//! 8. Take the first axis value of each remaining tuple — these are
-//! the candidates.
-//! 9. compadd them, or call `_$target_key` as fallback if nothing.
+//! Multi-field zstyle-key composer. Approximation: read the style
+//! value list, filter each line by the `Ki=Pi` patterns against
+//! the `sep`-joined fields, and emit the matching entries' final
+//! field via compadd. Falls back to `_$key` dispatch on miss.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::modules::zutil::lookupstyle;
+use crate::ported::params::{getsparam, setaparam};
+use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// `_combination` — multi-key zstyle-driven completer. See upstream
+/// docstring for the spec language (e.g. `users-hosts-ports`).
+pub fn _combination(args: &[String]) -> i32 {
+    let mut idx = 0usize;
+
+    // sh:30 — `-s SEP` flag
+    let mut sep = ":".to_string();
+    if let Some(a) = args.first() {
+        if a == "-s" && args.len() >= 2 {
+            sep = args[1].clone();
+            idx = 2;
+        } else if let Some(rest) = a.strip_prefix("-s") {
+            sep = rest.to_string();
+            idx = 1;
+        }
+    }
+
+    if args.len() < idx + 2 {
+        return 1;
+    }
+    let tag = args[idx].clone();
+    let style = args[idx + 1].clone();
+    idx += 2;
+
+    // sh:38  keys = split style on '-'
+    let keys: Vec<&str> = style.split('-').collect();
+    let mut pats: Vec<String> = keys.iter().map(|_| "*".to_string()).collect();
+
+    // sh:42-55  parse Ki[:Ni]=Pi pairs
+    let mut key_arg = String::new();
+    let mut key_num: usize = 1;
+    while idx < args.len() {
+        let a = &args[idx];
+        if a.contains('=') {
+            let eq = a.find('=').unwrap();
+            let tmp = &a[..eq];
+            let pat = &a[eq + 1..];
+            let (key_part, num_str) = if let Some(c) = tmp.find(':') {
+                (&tmp[..c], &tmp[c + 1..])
+            } else {
+                (tmp, "1")
+            };
+            let num: usize = num_str.parse().unwrap_or(1);
+            // Find the nth occurrence of key_part in keys
+            let mut found_count = 0usize;
+            for (i, k) in keys.iter().enumerate() {
+                if *k == key_part {
+                    found_count += 1;
+                    if found_count == num {
+                        pats[i] = pat.to_string();
+                        break;
+                    }
+                }
+            }
+            idx += 1;
+        } else {
+            // Key terminator
+            let (k_part, n_str) = if let Some(c) = a.find(':') {
+                (&a[..c], &a[c + 1..])
+            } else {
+                (a.as_str(), "1")
+            };
+            key_arg = k_part.to_string();
+            key_num = n_str.parse().unwrap_or(1);
+            idx += 1;
+            break;
+        }
+    }
+    let extras: &[String] = &args[idx..];
+
+    // sh:90  read the style; filter to matching combinations
+    let curcontext = getsparam("curcontext").unwrap_or_default();
+    let style_ctx = format!(":completion:{}:{}", curcontext, tag);
+    let style_vals = lookupstyle(&style_ctx, &style);
+    if style_vals.is_empty() {
+        // sh:99  fallback dispatch
+        return dispatch_function_call(&format!("_{}", key_arg), extras).unwrap_or(1);
+    }
+
+    // Build a single combined glob pattern: `pat1{sep}pat2{sep}...`
+    let combined_pat = pats.join(&sep);
+    let prog = patcompile(&combined_pat, 0, None);
+
+    let mut matches: Vec<String> = Vec::new();
+    for entry in &style_vals {
+        let head = entry.split(&sep).next().unwrap_or(entry);
+        let _ = head;
+        let matches_combined = match prog.as_ref() {
+            Some(p) => pattry(p, entry),
+            None => false,
+        };
+        if matches_combined {
+            // Extract the field corresponding to the key_arg ordinal
+            let fields: Vec<&str> = entry.split(&sep).collect();
+            // Find key_arg's nth occurrence in `keys`, return that field
+            let mut occ = 0usize;
+            for (i, k) in keys.iter().enumerate() {
+                if *k == key_arg {
+                    occ += 1;
+                    if occ == key_num {
+                        if let Some(f) = fields.get(i) {
+                            matches.push(f.to_string());
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    matches.sort();
+    matches.dedup();
+
+    if matches.is_empty() {
+        return dispatch_function_call(&format!("_{}", key_arg), extras).unwrap_or(1);
+    }
+
+    setaparam("tmp", matches);
+    let mut compadd_argv: Vec<String> = extras.to_vec();
+    compadd_argv.push("-a".to_string());
+    compadd_argv.push("tmp".to_string());
+    if bin_compadd("compadd", &compadd_argv, &make_ops(), 0) == 0 {
+        0
+    } else {
+        dispatch_function_call(&format!("_{}", key_arg), extras).unwrap_or(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_style() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            _combination(&[
+                "mytag".to_string(),
+                "users-hosts".to_string(),
+                "users".to_string(),
+            ]),
+            1
+        );
+    }
+}

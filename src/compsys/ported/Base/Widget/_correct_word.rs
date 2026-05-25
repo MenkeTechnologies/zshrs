@@ -18,16 +18,36 @@
 //! sh:14
 //! sh:15  _main_complete _correct
 //! ```
-//!
-//! The shell version is a thin widget that sets curcontext and
-//! invokes `_main_complete _correct`. Our Rust port takes the
-//! candidate word list directly and runs the same Levenshtein ≤2
-//! filter the shell's `_correct` → `_approximate` chain ends up
-//! doing. Verified non-fake by the 3 tests below.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::params::{getsparam, setsparam};
+
+/// `_correct_word` — front-end widget for spell-correction
+/// completion via `_main_complete _correct`.
+pub fn _correct_word() -> i32 {
+    let saved = getsparam("curcontext").unwrap_or_default();
+    let new_ctx = if saved.is_empty() {
+        "correct-word:::".to_string()
+    } else {
+        let tail = saved.splitn(2, ':').nth(1).unwrap_or("");
+        format!("correct-word:{}", tail)
+    };
+    let _ = setsparam("curcontext", &new_ctx);
+
+    let r =
+        dispatch_function_call("_main_complete", &["_correct".to_string()]).unwrap_or(1);
+
+    let _ = setsparam("curcontext", &saved);
+    r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_correct_word(), 1);
+    }
+}

@@ -2,28 +2,56 @@
 //!
 //! Full upstream body (8 lines verbatim):
 //! ```text
-//! sh: 1  #compdef -parameter-
-//! sh: 2
-//! sh: 3  if compset -P '*:'; then
-//! sh: 4    _history_modifiers p
-//! sh: 5    return
-//! sh: 6  fi
-//! sh: 7
-//! sh: 8  _parameters -e
+//! sh:1  #compdef -parameter-
+//! sh:2
+//! sh:3  if compset -P '*:'; then
+//! sh:4    _history_modifiers p
+//! sh:5    return
+//! sh:6  fi
+//! sh:7
+//! sh:8  _parameters -e
 //! ```
 //!
-//! `_parameters` upstream parses ONLY `-g` via `zparseopts`; every
-//! other arg is forwarded to `compadd "$@"` as a passthrough. The
-//! `-e` flag has no documented compadd meaning in current zsh and
-//! is silently absorbed there; the user-visible behavior of
-//! `_parameter` is therefore identical to bare `_parameters`.
-//!
-//! Strict Rust port: faithful 1:1 — single-line delegate to
-//! [`_parameters`].
+//! `compset -P '*:'` shifts past a leading `prefix:` match. When
+//! present, dispatch `_history_modifiers p`; else `_parameters -e`.
 
-// GUTTED 2026-05-24 — body removed.
-// Previously depended on `crate::compsys::compcore::CompletionState`
-// and friends, which were deleted as duplicates of the real shell-side
-// state in `src/ported/zle/compcore.rs`. Engine port body must be
-// re-implemented to call into `crate::ported::zle::compcore::addmatch`
-// against shell-side globals (PREFIX/SUFFIX/matches/etc.).
+use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::zle::complete::bin_compset;
+use crate::ported::zsh_h::{options, MAX_OPS};
+
+fn make_ops() -> options {
+    options {
+        ind: [0u8; MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    }
+}
+
+/// `_parameter` — `${...}` parameter-expansion context completion.
+pub fn _parameter() -> i32 {
+    // sh:3  if compset -P '*:'
+    if bin_compset(
+        "compset",
+        &["-P".to_string(), "*:".to_string()],
+        &make_ops(),
+        0,
+    ) == 0
+    {
+        // sh:4-5
+        return dispatch_function_call("_history_modifiers", &["p".to_string()]).unwrap_or(1);
+    }
+    // sh:8
+    dispatch_function_call("_parameters", &["-e".to_string()]).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_one_without_executor() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(_parameter(), 1);
+    }
+}
