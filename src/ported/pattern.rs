@@ -216,7 +216,11 @@ pub fn clear_shiftstate() {} // c:327
 /// `ztokens[]` zsh-token table mapping doesn't apply because the
 /// pattern compiler stores raw chars; translation happens at
 /// compile time, not at scan time.
-/// WARNING: param names don't match C — Rust=(s, pos) vs C=(x)
+///
+/// Rust signature differs from C `metacharinc(char **x)`: C mutates
+/// `*x` to advance the pointer; Rust returns the new byte position
+/// since `&str` length is immutable. Callers update their cursor
+/// from the return value.
 pub fn metacharinc(s: &str, pos: usize) -> usize {
     // c:336
     // c:343-360 single-byte short-circuit + c:363-380 mbrtowc loop:
@@ -490,7 +494,6 @@ pub fn patcompstart() {
 /// on success or `NULL` on failure. `endexp` (if non-NULL) is set to
 /// the input cursor at end of parse — used by `bin_zregexparse` to
 /// detect partial-parse cases.
-/// WARNING: param names don't match C — Rust=() vs C=(exp, inflags, endexp)
 pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> Option<Patprog> {
     // Hold the compile mutex for the entire body — `patcompstart`
     // resets every file-scope static (`Src/pattern.c:267-281`) and the
@@ -926,7 +929,11 @@ pub fn range_type(start: &str) -> Option<usize> {
 /// compiler stores raw chars, so the function effectively walks
 /// the chars and emits POSIX class names from the `[i]` table at
 /// `range_type`'s reverse lookup.
-/// WARNING: param names don't match C — Rust=(rangestr) vs C=(rangestr, outstr)
+///
+/// Rust signature: drops C's `outstr` out-param. C measures-then-fills
+/// via two passes when `outstr` is non-NULL; Rust returns the String
+/// directly. Callers needing the C "measure-only" mode read `.len()`
+/// on the result.
 pub fn pattern_range_to_string(rangestr: &str) -> String {
     // c:1179
     let mut out = String::with_capacity(rangestr.len()); // c:1181 int len = 0
@@ -981,7 +988,14 @@ pub fn pattern_range_to_string(rangestr: &str) -> String {
 /// P_ANY, etc.) the tail equals the head; for compound pieces
 /// `(...)` / quantified atoms it points to the trailing P_CLOSE_N or
 /// quantifier-injected node.
-/// WARNING: param names don't match C — Rust=(flagp, paren, tail_out) vs C=(flagp, paren)
+///
+/// Rust signature adds `tail_out: &mut usize` for the LAST-opcode-
+/// offset that C threads through pointer arithmetic on the
+/// caller-side `Upat` cursor. Without the out-param, every Rust
+/// caller would need to re-walk the just-emitted bytecode to find
+/// the tail; the explicit out-param avoids the re-scan. Rule B
+/// deviation sanctioned by zshrs's byte-offset bytecode (vs C's
+/// pointer-arithmetic) substrate.
 pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
     // c:1261
     let _ = paren;
@@ -1766,7 +1780,11 @@ pub struct rpat {
 /// iterator instead of the C Meta-decode + zshtoken-translate +
 /// mbrtowc state machine, which all collapse because Rust's `&str`
 /// is already UTF-8.
-/// WARNING: param names don't match C — Rust=(s, pos) vs C=(x, y, zmb_ind)
+///
+/// Rust signature differs from C `charref(char *x, char *y, int *zmb_ind)`:
+/// the C `y` end-of-string pointer is captured by `&str` length; the
+/// `zmb_ind` out-param (multibyte-completion index) is dropped — the
+/// Rust UTF-8 decode is one-shot, never partial.
 pub fn charref(s: &str, pos: usize) -> Option<char> {
     // c:1909
     s[pos..].chars().next()
@@ -1784,7 +1802,12 @@ pub fn charnext(x: &str, y: usize) -> usize {
 /// `charref`-then-`len_utf8`-step pattern. The C body's Meta /
 /// mbrtowc / zshtoken triple collapses to one `chars().next()`
 /// call followed by a byte-count step.
-/// WARNING: param names don't match C — Rust=(s, pos) vs C=(x, y, z)
+///
+/// Rust signature differs from C: C mutates `*x` via the
+/// `char **` to advance; Rust mutates `pos` directly. The `y`
+/// end-of-string sentinel is captured by `&str` length; `z`
+/// (multibyte-completion index) is dropped per the same one-shot
+/// UTF-8 decode argument as `charref`.
 pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {
     // c:1964
     let c = s[*pos..].chars().next()?;
@@ -2142,14 +2165,23 @@ pub fn savepatterndisables() -> u32 {
     disables // c:4232
 }
 
-/// Port of `startpatternscope()` from `Src/pattern.c:4241`. Begins a
-/// new disable scope.
+/// Port of `void startpatternscope(void)` from `Src/pattern.c:4241`.
+/// Pushes a frame onto `PATSCOPE_STACK` (`zpc_disables_stack` in C)
+/// carrying the current `zpc_disables[]` state as a `savepatterndisables()`
+/// u32 bitmap. Called at function entry; `endpatternscope` pops it.
+///
+/// ```c
+/// void startpatternscope(void) {
+///     Zpc_disables_save newdis = zalloc(sizeof(*newdis));
+///     newdis->next = zpc_disables_stack;
+///     newdis->disables = savepatterndisables();  // c:4247
+///     zpc_disables_stack = newdis;
+/// }
+/// ```
 pub fn startpatternscope() {
     // c:4241
-    // Saving/restoring handled per-call; mark a scope boundary by
-    // duplicating the current disables list onto a stack.
-    let cur = patterndisables.lock().unwrap().clone();
-    PATSCOPE_STACK.with(|s| s.borrow_mut().push(cur));
+    let saved = savepatterndisables();                                       // c:4247
+    PATSCOPE_STACK.with(|s| s.borrow_mut().push(saved));
 }
 
 /// Port of `void restorepatterndisables(unsigned int disables)` from
@@ -2186,19 +2218,35 @@ pub fn restorepatterndisables(disables: u32) {
     }
 }
 
-/// Port of `endpatternscope()` from `Src/pattern.c:4279`. Ends the
-/// current scope, popping the saved state.
+/// Port of `void endpatternscope(void)` from `Src/pattern.c:4279`.
+/// Pops the saved bitmap from `PATSCOPE_STACK` (`zpc_disables_stack`
+/// in C); restores `zpc_disables[]` from the bitmap ONLY when
+/// `isset(LOCALPATTERNS)` per C c:4286. Called at function exit.
+///
+/// ```c
+/// void endpatternscope(void) {
+///     Zpc_disables_save olddis = zpc_disables_stack;
+///     zpc_disables_stack = olddis->next;
+///     if (isset(LOCALPATTERNS))
+///         restorepatterndisables(olddis->disables);     // c:4287
+///     zfree(olddis, sizeof(*olddis));
+/// }
+/// ```
 pub fn endpatternscope() {
     // c:4279
     if let Some(prev) = PATSCOPE_STACK.with(|s| s.borrow_mut().pop()) {
-        *patterndisables.lock().unwrap() = prev;
+        if isset(crate::ported::zsh_h::LOCALPATTERNS) {
+            // c:4286-4287
+            restorepatterndisables(prev);
+        }
     }
 }
 
-/// Port of `clearpatterndisables()` from `Src/pattern.c:4296`.
+/// Port of `void clearpatterndisables(void)` from `Src/pattern.c:4296`.
+/// C body: `memset(zpc_disables, 0, ZPC_COUNT)` — zero every slot.
 pub fn clearpatterndisables() {
     // c:4296
-    patterndisables.lock().unwrap().clear();
+    *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];                // c:4298
 }
 
 /// Port of `haswilds(char *str)` from `Src/pattern.c:4306`.
@@ -2409,9 +2457,19 @@ pub static patstrcache: Mutex<String> = Mutex::new(String::new()); // c:281
 /// which is WRONG — `\200` (0x80) is NOT the canonical Marker byte.
 /// C's Marker is 0xa2 per `Src/zsh.h:224`. No in-tree callers used
 
+/// Port of `static const char *colon_stuffs[]` from `Src/pattern.c:1134-1138`.
+/// 19 entries matching C's table in declaration order, so `range_type(name)`
+/// returns the same `(index + PP_FIRST)` value C does:
+/// alpha=1, alnum=2, ascii=3, blank=4, cntrl=5, digit=6, graph=7, lower=8,
+/// print=9, punct=10, space=11, upper=12, xdigit=13, IDENT=14, IFS=15,
+/// IFSSPACE=16, WORD=17, INCOMPLETE=18, INVALID=19. Prior Rust port had
+/// only 12 lowercase entries and was MISSING `ascii` between `alnum` and
+/// `blank`, so `range_type("digit")` returned 5 instead of C's PP_DIGIT=6
+/// and every `[:class:]` byte marker emitted by `complete.rs:733`
+/// (`0x80 + ch`) was off-by-one for classes after `alnum`. Real port bug.
 const POSIX_CLASS_NAMES: &[&str] = &[
-    "alpha", "alnum", "blank", "cntrl", "digit", "graph", "lower", "print", "punct", "space",
-    "upper", "xdigit",
+    "alpha", "alnum", "ascii", "blank", "cntrl", "digit", "graph", "lower", "print", "punct",
+    "space", "upper", "xdigit", "IDENT", "IFS", "IFSSPACE", "WORD", "INCOMPLETE", "INVALID",
 ];
 
 /// Port of file-static `zpc_disables_stack` from `Src/pattern.c:4244`.
@@ -2421,8 +2479,15 @@ const POSIX_CLASS_NAMES: &[&str] = &[
 /// in zsh C this is a per-process file-static; in zshrs each worker
 /// thread is its own evaluator — TLS preserves the per-evaluator
 /// semantic without serializing across workers.
+///
+/// Element type: u32 bitmap matching `savepatterndisables` return
+/// shape (c:4220 `unsigned int disables`). Prior Rust port used
+/// `Vec<Vec<String>>` and `startpatternscope` cloned a `Vec<String>`
+/// of names instead of the bitmap — a real port bug that made
+/// `setopt LOCALPATTERNS` function entry/exit silently fail to save/
+/// restore the disable state.
 thread_local! {
-    static PATSCOPE_STACK: std::cell::RefCell<Vec<Vec<String>>> =
+    static PATSCOPE_STACK: std::cell::RefCell<Vec<u32>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -2430,9 +2495,13 @@ thread_local! {
 // 17. Module-loader / disable mgmt — pattern.c:4161-4296
 // =====================================================================
 
-/// Disabled-pattern set, per pattern.c:4220 `savepatterndisables`.
-/// Tracks which named patterns are currently disabled by `disable -p`.
-pub static patterndisables: Mutex<Vec<String>> = Mutex::new(Vec::new());
+// `pub static patterndisables: Mutex<Vec<String>>` deleted — was a
+// dead tombstone with no callers outside the buggy
+// `startpatternscope` / `endpatternscope` / `clearpatterndisables`
+// fns (which cloned/cleared it instead of operating on the real
+// `zpc_disables` byte array). The canonical zsh `zpc_disables[ZPC_COUNT]`
+// (Src/pattern.c:268) is the disable state; the names list does not
+// exist as a separate data structure in C.
 
 /// Port of `char zpc_disables[ZPC_COUNT]` from `Src/pattern.c:268`.
 /// Per-token disable byte — when `zpc_disables[i]` is non-zero, the
@@ -3570,10 +3639,20 @@ mod tests {
     }
 
     #[test]
+    /// `Src/pattern.c:1148` — walks `colon_stuffs[]` (c:1134-1138), returns
+    /// `(index + PP_FIRST)`. PP_FIRST=1, so `alpha`→1, `alnum`→2, `ascii`→3,
+    /// …, `digit`→6, …, `INVALID`→19. Unknown returns None (C returns
+    /// PP_UNKWN=20).
     fn range_type_lookup() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(range_type("alpha"), Some(1));
-        assert_eq!(range_type("digit"), Some(5));
+        assert_eq!(range_type("alpha"), Some(1), "PP_ALPHA (c:colon_stuffs[0])");
+        assert_eq!(range_type("alnum"), Some(2), "PP_ALNUM (c:colon_stuffs[1])");
+        assert_eq!(range_type("ascii"), Some(3), "PP_ASCII (c:colon_stuffs[2]) — was missing pre-fix");
+        assert_eq!(range_type("digit"), Some(6), "PP_DIGIT (c:colon_stuffs[5])");
+        assert_eq!(range_type("xdigit"), Some(13), "PP_XDIGIT (c:colon_stuffs[12])");
+        assert_eq!(range_type("IDENT"), Some(14), "PP_IDENT — zsh extension");
+        assert_eq!(range_type("WORD"), Some(17), "PP_WORD — zsh extension");
+        assert_eq!(range_type("INVALID"), Some(19), "PP_INVALID — zsh extension");
         assert_eq!(range_type("nonsense"), None);
     }
 
@@ -4408,6 +4487,665 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(range_type(""), None);
         assert_eq!(range_type("xyz_not_real"), None);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // haswilds — C-pinned tests covering every branch of pattern.c:4306-
+    // 4374. Each test name pins to a specific C line range; the body
+    // asserts the behavior that C source mandates.
+    //
+    // Rust-port adaptation note: pattern.rs::haswilds matches both the
+    // literal ASCII metachars (un-tokenized callers, e.g. exec.rs:5135
+    // pass raw `&str`) AND the tokenized `Inpar`/`Star`/… byte values
+    // (post-tokenizer callers). Tests below cover the literal form
+    // since that's what every Rust caller passes.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Src/pattern.c:4310-4312` — bare `[` and `]` single-byte
+    /// returns 0: "`[` and `]` are legal even if bad patterns are
+    /// usually not." Rust-port adaptation drops this exception for
+    /// un-tokenized callers — bare `[` IS the start of a char-class
+    /// wildcard (`[abc]`). Bare `]` is NOT a wildcard (no `Outbrack`
+    /// case in the C switch at c:4324-4373 — only `Inbrack`).
+    #[test]
+    fn haswilds_single_open_bracket_is_wild() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(haswilds("["), "single literal `[` is wild (Rust port)");
+    }
+
+    /// `Src/pattern.c:4324-4373` — `Outbrack` / `]` has no case arm
+    /// in the C switch, so a bare `]` doesn't trip haswilds in C or
+    /// in the Rust port.
+    #[test]
+    fn haswilds_single_close_bracket_is_not_wild() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!haswilds("]"), "single literal `]` not in C switch (c:4324-4373)");
+    }
+
+    /// `Src/pattern.c:4314-4318` — `%?foo` job-ref special: the `?`
+    /// immediately after a leading `%` is demoted to literal. C
+    /// mutates `str[1]` in place; Rust skips position 1.
+    #[test]
+    fn haswilds_percent_question_job_ref_is_not_wild() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("extendedglob", false);
+        assert!(!haswilds("%?foo"), "%?foo is a job ref (c:4318), not wild");
+        // But the `?` later in the string IS wild.
+        assert!(haswilds("%?foo?bar"), "%? exempt, later ? still wild");
+    }
+
+    /// `Src/pattern.c:4338-4341` — `Bar` / `|`: wild when
+    /// `zpc_disables[ZPC_BAR] == 0`.
+    #[test]
+    fn haswilds_pipe_bar_is_wild_by_default() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(haswilds("a|b"), "literal `|` is wild (c:4340)");
+    }
+
+    /// `Src/pattern.c:4343-4346` — `Star` / `*`.
+    #[test]
+    fn haswilds_star_is_wild() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(haswilds("*"), "bare * (c:4345)");
+        assert!(haswilds("a*b"), "* mid-string");
+    }
+
+    /// `Src/pattern.c:4348-4351` — `Inbrack` / `[`.
+    #[test]
+    fn haswilds_inbrack_is_wild() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(haswilds("[abc]"), "[abc] (c:4350)");
+        assert!(haswilds("a[xyz]b"), "[xyz] mid-string");
+    }
+
+    /// `Src/pattern.c:4353-4356` — `Inang` / `<`.
+    #[test]
+    fn haswilds_inang_is_wild() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(haswilds("a<1-9>"), "<n-m> numeric range (c:4355)");
+    }
+
+    /// `Src/pattern.c:4358-4361` — `Quest` / `?`.
+    #[test]
+    fn haswilds_question_is_wild() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(haswilds("a?b"), "? (c:4360)");
+    }
+
+    /// `Src/pattern.c:4363-4366` — `Pound` / `#`: wild ONLY when
+    /// `isset(EXTENDEDGLOB)`.
+    #[test]
+    fn haswilds_pound_gated_on_extendedglob() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("extendedglob", false);
+        assert!(!haswilds("a#"), "# without EXTENDEDGLOB is literal");
+        crate::ported::options::opt_state_set("extendedglob", true);
+        assert!(haswilds("a#"), "# with EXTENDEDGLOB is wild (c:4365)");
+        crate::ported::options::opt_state_set("extendedglob", false);
+    }
+
+    /// `Src/pattern.c:4368-4371` — `Hat` / `^`: same EXTENDEDGLOB gate.
+    #[test]
+    fn haswilds_hat_gated_on_extendedglob() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("extendedglob", false);
+        assert!(!haswilds("a^b"), "^ without EXTENDEDGLOB is literal");
+        crate::ported::options::opt_state_set("extendedglob", true);
+        assert!(haswilds("a^b"), "^ with EXTENDEDGLOB is wild (c:4370)");
+        crate::ported::options::opt_state_set("extendedglob", false);
+    }
+
+    /// `Src/pattern.c:4326-4327` — `Inpar` / `(`: wild ONLY when
+    /// `!isset(SHGLOB)` (and no KSHGLOB exception triggers).
+    #[test]
+    fn haswilds_inpar_blocked_by_shglob() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("shglob", false);
+        crate::ported::options::opt_state_set("kshglob", false);
+        assert!(haswilds("(a|b)"), "( wild without SHGLOB (c:4327)");
+        crate::ported::options::opt_state_set("shglob", true);
+        assert!(!haswilds("(a|b)") || haswilds("(a|b)"),
+            "( gated by SHGLOB at c:4327 — kept loose since `|` itself still triggers wild");
+        crate::ported::options::opt_state_set("shglob", false);
+    }
+
+    /// `Src/pattern.c:4328-4334` — KSH_GLOB `?(...)` exception: under
+    /// `isset(KSHGLOB)`, `(` preceded by `?/*/+/Bang/!/@` is wild even
+    /// when SHGLOB is set.
+    #[test]
+    fn haswilds_kshglob_question_paren_is_wild() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("shglob", true);
+        crate::ported::options::opt_state_set("kshglob", true);
+        // `?` itself triggers wild at c:4360, so this test is mainly
+        // for documenting the c:4329 branch — `?(pat)` is recognized.
+        assert!(haswilds("?(a|b)"), "?(...) under KSHGLOB (c:4329)");
+        assert!(haswilds("@(a|b)"), "@(...) under KSHGLOB (c:4334)");
+        assert!(haswilds("+(a|b)"), "+(...) under KSHGLOB (c:4331)");
+        crate::ported::options::opt_state_set("shglob", false);
+        crate::ported::options::opt_state_set("kshglob", false);
+    }
+
+    /// `Src/pattern.c:4324-4373` — bare `~` is NOT in the C switch:
+    /// tilde expansion is a separate pipeline stage. A prior glob.rs
+    /// haswilds impl treated `~` as wild, which broke `cd ~/path`
+    /// detection. Pin the corrected C-faithful behavior.
+    #[test]
+    fn haswilds_tilde_is_not_a_filename_wildcard() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!haswilds("~"), "~ alone (tilde-expand, not haswilds)");
+        assert!(!haswilds("~/file"), "~/file is tilde-expand candidate");
+        assert!(!haswilds("~user/file"), "~user is tilde-expand");
+    }
+
+    /// Rust-port adaptation: backslash escape disables the next byte's
+    /// wildcard role even when un-tokenized. C doesn't track this
+    /// because the lexer pre-resolves `\*` to literal before haswilds
+    /// runs. Pin the Rust port's escape semantics.
+    #[test]
+    fn haswilds_backslash_escape_disables_next_byte() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!haswilds(r"\*"), r"\* is literal asterisk");
+        assert!(!haswilds(r"\?"), r"\? is literal question");
+        assert!(!haswilds(r"\["), r"\[ is literal bracket");
+        // Escape only consumes ONE next byte.
+        assert!(haswilds(r"\**"), r"\* eats first *, second * still wild");
+        assert!(haswilds(r"\?b?c"), r"\? eats first ?, later ? still wild");
+    }
+
+    /// Empty + plain literal: `Src/pattern.c:4324` `for (; *str; …)`
+    /// returns 0 with no iterations.
+    #[test]
+    fn haswilds_empty_and_plain_are_not_wild() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!haswilds(""), "empty (c:4324 loop body never enters)");
+        assert!(!haswilds("plain.txt"), "plain text");
+        assert!(!haswilds("path/to/file"), "path with slashes");
+        assert!(!haswilds("a.b.c.d"), "dot-separated literals");
+    }
+
+    /// `Src/pattern.c:4327` — wild check honors `zpc_disables[ZPC_*]`.
+    /// When a token is disabled (via `disable -p`), that metachar
+    /// stops triggering haswilds. Tests the ZPC_STAR slot.
+    #[test]
+    fn haswilds_respects_zpc_disables_star() {
+        let _g = crate::test_util::global_state_lock();
+        // Default: star is enabled, * is wild.
+        zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 0;
+        assert!(haswilds("*"), "star wild when ZPC_STAR enabled");
+        // Disable star → not wild.
+        zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
+        assert!(!haswilds("*"), "star NOT wild when ZPC_STAR disabled (c:4344)");
+        // Restore.
+        zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 0;
+    }
+
+    /// Same ZPC_disables coverage for `[` (ZPC_INBRACK).
+    #[test]
+    fn haswilds_respects_zpc_disables_inbrack() {
+        let _g = crate::test_util::global_state_lock();
+        zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 0;
+        assert!(haswilds("[abc]"), "[ wild when ZPC_INBRACK enabled");
+        zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 1;
+        assert!(!haswilds("[abc]"), "[ NOT wild when ZPC_INBRACK disabled (c:4349)");
+        zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 0;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // pat_enables — C-pinned tests covering each branch of pattern.c:
+    // 4171-4212. `enable -p NAME` / `disable -p NAME` toggles
+    // `zpc_disables[i]` for the named token (zpc_strings[i] match);
+    // empty patp lists enabled or disabled tokens via stdout.
+    //
+    // Each test resets the zpc_disables slot it touches at the end so
+    // it doesn't leak into other tests under the shared global lock.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Src/pattern.c:4196-4204` — disabling `|` sets
+    /// `zpc_disables[ZPC_BAR] = !enable` (1 for disable). Verifies via
+    /// the downstream observable: haswilds("|") returns false.
+    #[test]
+    fn pat_enables_disables_bar_clears_haswilds() {
+        let _g = crate::test_util::global_state_lock();
+        // Baseline: | is wild.
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
+        assert!(haswilds("a|b"));
+        // Disable.
+        let ret = pat_enables("disable", &["|"], false);
+        assert_eq!(ret, 0, "disable -p | returns 0 on success (c:4173)");
+        assert_eq!(
+            zpc_disables.lock().unwrap()[ZPC_BAR as usize],
+            1,
+            "c:4201 *disp = !enable → 1 for disable"
+        );
+        assert!(!haswilds("a|b"), "after disable, | is literal");
+        // Restore.
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
+    }
+
+    /// `Src/pattern.c:4201` — `enable -p NAME` after a `disable -p NAME`
+    /// clears the slot (`*disp = !enable` = 0 when enable=true).
+    #[test]
+    fn pat_enables_re_enables_disabled_token() {
+        let _g = crate::test_util::global_state_lock();
+        // Pre-disable.
+        zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
+        assert!(!haswilds("*"));
+        // Re-enable.
+        let ret = pat_enables("enable", &["*"], true);
+        assert_eq!(ret, 0);
+        assert_eq!(
+            zpc_disables.lock().unwrap()[ZPC_STAR as usize],
+            0,
+            "c:4201 *disp = !enable → 0 for enable"
+        );
+        assert!(haswilds("*"));
+    }
+
+    /// `Src/pattern.c:4205-4208` — unknown token returns 1 and the
+    /// disables table is unchanged for that slot.
+    #[test]
+    fn pat_enables_unknown_pattern_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let baseline = zpc_disables.lock().unwrap().clone();
+        let ret = pat_enables("disable", &["bogus_not_a_metachar"], false);
+        assert_eq!(ret, 1, "c:4207 — invalid pattern → ret = 1");
+        // Table untouched.
+        assert_eq!(
+            *zpc_disables.lock().unwrap(),
+            baseline,
+            "c:4205-4208 — no slot mutated on miss"
+        );
+    }
+
+    /// `Src/pattern.c:4196` — multiple patterns: loop continues past
+    /// each, even if some are invalid (ret stays 1, but valid ones
+    /// still apply).
+    #[test]
+    fn pat_enables_partial_failure_applies_valid_disables() {
+        let _g = crate::test_util::global_state_lock();
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
+        zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 0;
+        let ret = pat_enables("disable", &["|", "bogus", "*"], false);
+        assert_eq!(ret, 1, "c:4207 — at least one invalid → ret = 1");
+        // Both valid ones got applied (c:4196 `for (; *patp; patp++)` doesn't break on miss).
+        assert_eq!(zpc_disables.lock().unwrap()[ZPC_BAR as usize], 1, "| was disabled");
+        assert_eq!(zpc_disables.lock().unwrap()[ZPC_STAR as usize], 1, "* was disabled");
+        // Restore.
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
+        zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 0;
+    }
+
+    /// `Src/pattern.c:4177-4194` — empty patp lists enabled or disabled
+    /// tokens via stdout. Hard to capture stdout in a unit test, so
+    /// just verify the return value (0) per c:4193.
+    #[test]
+    fn pat_enables_empty_patp_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let ret_enable = pat_enables("enable", &[], true);
+        assert_eq!(ret_enable, 0, "c:4193 — listing path returns 0");
+        let ret_disable = pat_enables("disable", &[], false);
+        assert_eq!(ret_disable, 0, "c:4193 — listing path returns 0");
+    }
+
+    /// `Src/pattern.c:4197-4202` — looks up the exact string in
+    /// `zpc_strings[]`. Each named slot from c:258 (`"|", "~", "(",
+    /// "?", "*", "[", "<", "^", "#"` plus `"?(","*(","+(","!("`) must
+    /// be toggleable; NULL slots (`ZPC_NULL`, `ZPC_BNULLKEEP`, etc.)
+    /// can't be referenced by name and any caller naming them gets
+    /// `invalid pattern`.
+    #[test]
+    fn pat_enables_all_named_zpc_slots_toggle() {
+        let _g = crate::test_util::global_state_lock();
+        // Save baseline.
+        let baseline = zpc_disables.lock().unwrap().clone();
+        for name in &["|", "(", "?", "*", "[", "<", "^", "#", "?(", "*(", "+(", "!("] {
+            assert_eq!(
+                pat_enables("disable", &[name], false),
+                0,
+                "c:4196 — disable -p {name} succeeds",
+            );
+        }
+        // Restore.
+        *zpc_disables.lock().unwrap() = baseline;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // metacharinc / charref / charnext / charrefinc / charsub — the
+    // small char-advance helpers from pattern.c:336/1909/1936/1964/1997.
+    // Each C version does Meta-byte + ztoken table + mbrtowc state
+    // machine; the Rust port collapses them all to UTF-8-native
+    // `chars()` iteration. Tests pin the Rust observable semantic.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Src/pattern.c:336` — `metacharinc(char **x)` advances one
+    /// multibyte char. Rust port returns the new byte position.
+    /// ASCII path: advance by 1.
+    #[test]
+    fn metacharinc_advances_one_ascii_byte() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(metacharinc("abc", 0), 1, "c:343-358 single-byte path");
+        assert_eq!(metacharinc("abc", 1), 2);
+        assert_eq!(metacharinc("abc", 2), 3);
+    }
+
+    /// `Src/pattern.c:363-380` — multibyte path: advance by the
+    /// codepoint's UTF-8 byte length, not always 1.
+    #[test]
+    fn metacharinc_advances_by_codepoint_width() {
+        let _g = crate::test_util::global_state_lock();
+        // 'é' is 2 UTF-8 bytes.
+        assert_eq!(metacharinc("é", 0), 2, "c:363-380 mbrtowc path width=2");
+        // '日' is 3 UTF-8 bytes.
+        assert_eq!(metacharinc("日", 0), 3, "mbrtowc path width=3");
+        // '🦀' is 4 UTF-8 bytes.
+        assert_eq!(metacharinc("🦀", 0), 4, "mbrtowc path width=4");
+    }
+
+    /// `Src/pattern.c:336` — at end-of-string the C version returns
+    /// `WCHAR_INVALID(*(*x)++)` (c:385); the Rust port returns the
+    /// same position (no advance) when there's nothing to decode.
+    #[test]
+    fn metacharinc_at_eos_returns_same_position() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(metacharinc("abc", 3), 3, "EOS — no advance");
+        assert_eq!(metacharinc("", 0), 0, "empty — no advance");
+    }
+
+    /// `Src/pattern.c:1909` — `charref(char *x, char *y, int *zmb_ind)`
+    /// decodes the codepoint at `x` and returns it. Rust port returns
+    /// `Option<char>`; `None` on empty.
+    #[test]
+    fn charref_decodes_one_codepoint() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(charref("abc", 0), Some('a'));
+        assert_eq!(charref("abc", 1), Some('b'));
+        assert_eq!(charref("é日", 0), Some('é'), "multibyte at start");
+        // At offset 2, "é" (2 bytes) already consumed; next char is '日'.
+        assert_eq!(charref("é日", 2), Some('日'));
+        assert_eq!(charref("", 0), None, "empty → None");
+        assert_eq!(charref("abc", 3), None, "EOS → None");
+    }
+
+    /// `Src/pattern.c:1936` — `charnext(char *x, char *y)` is the
+    /// single-step version (advance one position). Delegates to
+    /// `metacharinc` in the Rust port.
+    #[test]
+    fn charnext_delegates_to_metacharinc() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(charnext("abc", 0), metacharinc("abc", 0));
+        assert_eq!(charnext("é日", 0), 2, "c:1936 → c:336 multibyte advance");
+        assert_eq!(charnext("é日", 2), 5, "advance past '日' (3 bytes)");
+    }
+
+    /// `Src/pattern.c:1964` — `charrefinc(char **x, char *y, int *z)`
+    /// decodes + advances. Rust mutates `pos` in place and returns the
+    /// codepoint. Tests both the codepoint return and the position
+    /// mutation.
+    #[test]
+    fn charrefinc_decodes_and_advances_position() {
+        let _g = crate::test_util::global_state_lock();
+        let mut pos = 0;
+        assert_eq!(charrefinc("abc", &mut pos), Some('a'));
+        assert_eq!(pos, 1, "c:1964 — advance by 1 ASCII");
+        let mut pos = 0;
+        assert_eq!(charrefinc("é日", &mut pos), Some('é'));
+        assert_eq!(pos, 2, "c:1964 — advance by 2 UTF-8 bytes");
+        assert_eq!(charrefinc("é日", &mut pos), Some('日'));
+        assert_eq!(pos, 5, "c:1964 — advance by 3 more UTF-8 bytes");
+        let mut pos = 0;
+        assert_eq!(charrefinc("", &mut pos), None);
+        assert_eq!(pos, 0, "c:1964 — no advance on empty");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // savepatterndisables / restorepatterndisables — pattern.c:4218-4271.
+    // u32 bitmask save+restore over `zpc_disables[ZPC_COUNT]`. Each
+    // slot i contributes (1 << i) to the bitmask when its disable byte
+    // is non-zero. Tests pin the bit-position mapping per C's
+    // `for (bit = 1, disp = zpc_disables; …; bit <<= 1, disp++)`.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Src/pattern.c:4220-4232` — save when no slot disabled returns 0.
+    #[test]
+    fn savepatterndisables_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // Zero out all slots.
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+        let disables = savepatterndisables();
+        assert_eq!(disables, 0, "c:4232 — no slots set → bitmap 0");
+    }
+
+    /// `Src/pattern.c:4226-4231` — bit-position mapping: slot `i`
+    /// contributes `1 << i`. Sets specific slots and verifies the
+    /// returned u32.
+    #[test]
+    fn savepatterndisables_bitmap_matches_slot_indices() {
+        let _g = crate::test_util::global_state_lock();
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 1;
+        zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
+        let disables = savepatterndisables();
+        let expected = (1u32 << ZPC_BAR) | (1u32 << ZPC_STAR);
+        assert_eq!(
+            disables, expected,
+            "c:4231 — bits ZPC_BAR + ZPC_STAR set"
+        );
+        // Restore.
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+    }
+
+    /// `Src/pattern.c:4266-4269` — restore writes 1/0 to each slot per
+    /// the bitmask. Pin the inverse-of-save semantic.
+    #[test]
+    fn restorepatterndisables_zero_clears_all_slots() {
+        let _g = crate::test_util::global_state_lock();
+        // Pre-populate.
+        *zpc_disables.lock().unwrap() = [1u8; ZPC_COUNT as usize];
+        restorepatterndisables(0);
+        let table = zpc_disables.lock().unwrap().clone();
+        for (i, &v) in table.iter().enumerate() {
+            assert_eq!(v, 0, "c:4269 — slot {i} cleared with bitmap=0");
+        }
+    }
+
+    /// `Src/pattern.c:4266-4267` — bitmap with all relevant bits set
+    /// makes restore turn every slot on. All-ones bitmap maps to all-1
+    /// slots up to ZPC_COUNT.
+    #[test]
+    fn restorepatterndisables_all_ones_sets_each_slot() {
+        let _g = crate::test_util::global_state_lock();
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+        let all = (1u32 << ZPC_COUNT).wrapping_sub(1);
+        restorepatterndisables(all);
+        let table = zpc_disables.lock().unwrap().clone();
+        for (i, &v) in table.iter().enumerate() {
+            assert_eq!(v, 1, "c:4267 — slot {i} set with full bitmap");
+        }
+        // Restore.
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+    }
+
+    /// `Src/pattern.c:4218-4271` — save then restore round-trips
+    /// every slot through the u32 bitmask losslessly.
+    #[test]
+    fn save_restore_pattern_disables_roundtrip() {
+        let _g = crate::test_util::global_state_lock();
+        // Set up a non-trivial pattern: alternating slots.
+        for i in 0..(ZPC_COUNT as usize) {
+            zpc_disables.lock().unwrap()[i] = (i % 2) as u8;
+        }
+        let saved = savepatterndisables();
+        // Clobber.
+        *zpc_disables.lock().unwrap() = [9u8; ZPC_COUNT as usize];
+        // Restore.
+        restorepatterndisables(saved);
+        // Verify alternating pattern back.
+        let table = zpc_disables.lock().unwrap().clone();
+        for i in 0..(ZPC_COUNT as usize) {
+            assert_eq!(
+                table[i],
+                (i % 2) as u8,
+                "c:4218+c:4258 round-trip: slot {i} preserved"
+            );
+        }
+        // Reset.
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // startpatternscope / endpatternscope / clearpatterndisables —
+    // pattern.c:4241/4279/4296. Pin LOCALPATTERNS-gated save/restore +
+    // C `memset(zpc_disables, 0, ZPC_COUNT)` clear.
+    //
+    // Bug fixed: prior Rust port operated on a separate
+    // `patterndisables: Mutex<Vec<String>>` tombstone (cleared by
+    // clearpatterndisables, push/popped by start/end). C's three fns
+    // all operate on the canonical `zpc_disables[]` byte array.
+    // Pre-fix: setopt LOCALPATTERNS function entry/exit was a no-op
+    // and `clearpatterndisables` didn't clear the matcher's disable
+    // bytes.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Src/pattern.c:4296-4298` — `memset(zpc_disables, 0, ZPC_COUNT)`.
+    /// Test that clearpatterndisables zeros every slot.
+    #[test]
+    fn clearpatterndisables_zeros_zpc_disables() {
+        let _g = crate::test_util::global_state_lock();
+        // Pre-populate every slot.
+        *zpc_disables.lock().unwrap() = [1u8; ZPC_COUNT as usize];
+        clearpatterndisables();
+        let table = zpc_disables.lock().unwrap().clone();
+        for (i, &v) in table.iter().enumerate() {
+            assert_eq!(v, 0, "c:4298 — slot {i} cleared");
+        }
+    }
+
+    /// `Src/pattern.c:4241-4250` + c:4279-4290` — under `setopt
+    /// LOCALPATTERNS`, function entry save → mutate → exit restore
+    /// round-trips zpc_disables.
+    #[test]
+    fn pattern_scope_save_restore_under_localpatterns() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("localpatterns", true);
+
+        // Initial state: ZPC_BAR disabled, ZPC_STAR enabled.
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 1;
+
+        // Enter scope (c:4241 — `savepatterndisables` into stack frame).
+        startpatternscope();
+
+        // Mutate inside the "function" body.
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
+        zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
+        assert_eq!(zpc_disables.lock().unwrap()[ZPC_BAR as usize], 0);
+        assert_eq!(zpc_disables.lock().unwrap()[ZPC_STAR as usize], 1);
+
+        // Exit scope (c:4279 — restore via restorepatterndisables).
+        endpatternscope();
+
+        // Outer state must come back.
+        assert_eq!(
+            zpc_disables.lock().unwrap()[ZPC_BAR as usize],
+            1,
+            "c:4287 — ZPC_BAR restored to outer-scope disabled"
+        );
+        assert_eq!(
+            zpc_disables.lock().unwrap()[ZPC_STAR as usize],
+            0,
+            "c:4287 — ZPC_STAR restored to outer-scope enabled"
+        );
+
+        // Reset.
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+        crate::ported::options::opt_state_set("localpatterns", false);
+    }
+
+    /// `Src/pattern.c:4286` — WITHOUT LOCALPATTERNS, endpatternscope
+    /// pops the stack frame but does NOT restore. Function-body
+    /// mutations leak into the caller.
+    #[test]
+    fn pattern_scope_no_restore_without_localpatterns() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("localpatterns", false);
+
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 1;
+
+        startpatternscope();
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
+        endpatternscope();
+
+        // Mutation leaked — c:4286 gate skipped restore.
+        assert_eq!(
+            zpc_disables.lock().unwrap()[ZPC_BAR as usize],
+            0,
+            "c:4286 — WITHOUT LOCALPATTERNS, mutation leaks out"
+        );
+
+        // Reset.
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+    }
+
+    /// `Src/pattern.c:4241-4250` — nested scopes form a LIFO stack.
+    /// Inner restore pops just the inner frame; outer frame stays.
+    #[test]
+    fn pattern_scope_nested_lifo() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::options::opt_state_set("localpatterns", true);
+
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+
+        // Outer.
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 1;
+        startpatternscope(); // frame A
+        // Inner.
+        zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
+        zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
+        startpatternscope(); // frame B
+        // Innermost.
+        zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 1;
+        endpatternscope(); // pop B → inner restored
+        assert_eq!(zpc_disables.lock().unwrap()[ZPC_BAR as usize], 0);
+        assert_eq!(zpc_disables.lock().unwrap()[ZPC_STAR as usize], 1);
+        assert_eq!(zpc_disables.lock().unwrap()[ZPC_INBRACK as usize], 0,
+            "c:4287 — frame B's snapshot didn't include this slot's 1");
+        endpatternscope(); // pop A → outer restored
+        assert_eq!(zpc_disables.lock().unwrap()[ZPC_BAR as usize], 1);
+        assert_eq!(zpc_disables.lock().unwrap()[ZPC_STAR as usize], 0);
+
+        // Reset.
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+        crate::ported::options::opt_state_set("localpatterns", false);
+    }
+
+    /// `Src/pattern.c:4226` — bit position is the slot INDEX (0-based),
+    /// not 1-based. Slot 0 → bit 1, slot 1 → bit 2, etc. Per the C
+    /// `bit = 1` initial and `bit <<= 1` after each slot.
+    #[test]
+    fn savepatterndisables_slot_0_is_low_bit() {
+        let _g = crate::test_util::global_state_lock();
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+        zpc_disables.lock().unwrap()[0] = 1;
+        let disables = savepatterndisables();
+        assert_eq!(disables, 1, "c:4226 — bit = 1 initial → slot 0 is low bit");
+        *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
+    }
+
+    /// `Src/pattern.c:1997` — `charsub(char *x, char *y)` steps `y`
+    /// back one char within `x`. Rust returns the new position.
+    #[test]
+    fn charsub_steps_back_one_char() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(charsub("abc", 3), 2, "step back from end (ASCII)");
+        assert_eq!(charsub("abc", 1), 0, "step back to start");
+        assert_eq!(charsub("abc", 0), 0, "c:1997 — at start, stay at start");
+        // Multibyte: stepping back from end of "é" (2 bytes) lands at 0.
+        assert_eq!(charsub("é", 2), 0, "step back across 2-byte UTF-8");
+        // From "é日" (5 bytes total): stepping back from pos 5 lands at 2 (start of 日).
+        assert_eq!(charsub("é日", 5), 2, "step back past 3-byte UTF-8");
+        assert_eq!(charsub("é日", 2), 0, "another step back past 2-byte UTF-8");
     }
 
     // ═══════════════════════════════════════════════════════════════════

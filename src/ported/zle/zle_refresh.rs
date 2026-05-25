@@ -518,6 +518,45 @@ pub fn zwcwrite(s: &str) {
 /// Number of words to allocate in one go for the multiword buffers.
 pub const DEF_MWBUF_ALLOC: usize = 32; // c:697
 
+// =====================================================================
+// Multi-codepoint cluster buffers — `Src/Zle/zle_refresh.c:53-55, 688-691`.
+// Layout per the c:39-51 doc-comment: each entry is `[count, char0,
+// char1, …, char(count-1)]` (count + count chars = count+1 elements).
+// `nmw_ind` starts at 1 so the index stored in `base.chr` is never 0
+// (a zero-index slot would compare-equal to a NUL chr cell). C uses
+// REFRESH_CHAR (wint_t) entries; Rust uses u32 to match the wint_t
+// shape without round-tripping through `char`'s validity constraints.
+//
+// Bucket-1 thread_locals per PORT_PLAN.md: each ZLE evaluator walks
+// its own per-keystroke refresh, so per-thread state preserves the
+// per-evaluator semantic without serialising across workers.
+// =====================================================================
+
+thread_local! {
+    /// Port of `static REFRESH_CHAR *nmwbuf` from `Src/Zle/zle_refresh.c:55`.
+    pub static NMWBUF: std::cell::RefCell<Vec<u32>> = const {
+        std::cell::RefCell::new(Vec::new())                                  // c:55
+    };
+    /// Port of `static REFRESH_CHAR *omwbuf` from `Src/Zle/zle_refresh.c:54`.
+    pub static OMWBUF: std::cell::RefCell<Vec<u32>> = const {
+        std::cell::RefCell::new(Vec::new())                                  // c:54
+    };
+    /// Port of `static int nmw_ind` from `Src/Zle/zle_refresh.c:691`.
+    /// Init 1 per c:43 — "We initialise nmw_ind to 1 to avoid the
+    /// index stored in the character looking like a NULL."
+    pub static NMW_IND: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(1)                                              // c:691
+    };
+    /// Port of `static int nmw_size` from `Src/Zle/zle_refresh.c:690`.
+    pub static NMW_SIZE: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)                                              // c:690
+    };
+    /// Port of `static int omw_size` from `Src/Zle/zle_refresh.c:689`.
+    pub static OMW_SIZE: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)                                              // c:689
+    };
+}
+
 /// Direct port of `void freevideo(void)` from
 /// `Src/Zle/zle_refresh.c:700`.
 ///
@@ -810,27 +849,46 @@ pub fn snextline(
 ///                                          ZLE_STRING_T tptr, int ichars)`
 /// from `Src/Zle/zle_refresh.c:913`.
 ///
-/// C source pushes a multi-codepoint cluster (combining marks etc.)
-/// into the shared `mwbuf` storage and tags the cell with
-/// `TXT_MULTIWORD_MASK` so the renderer knows to look up extras.
-///
-/// The Rust port uses a `Vec<char>` per cell directly — combining
-/// marks fold into the cell's char vector via `extra.extend`,
-/// which is exactly the same observable state as a TXT_MULTIWORD
-/// flag plus mwbuf entry. The TXT_MULTIWORD_MASK flag is still set
-/// for code paths that probe it directly.
+/// Push the `ichars`-codepoint cluster `tptr[0..ichars]` into the
+/// shared `nmwbuf` storage, set the cell's `TXT_MULTIWORD_MASK`
+/// flag, and store the buffer entry's start index in `base.chr`.
+/// The renderer dispatches on the flag and reads `nmwbuf[base.chr]`
+/// (count) then `nmwbuf[base.chr+1..base.chr+1+count]` (cluster
+/// codepoints) — see C c:635-636 and the COMPARE macro at c:77.
 pub fn addmultiword(
     base: &mut REFRESH_ELEMENT, // c:913
-    _tptr: &[char],
-    _ichars: usize,
+    tptr: &[char],
+    ichars: usize,
 ) {
-    // c:917-920 — base->atr |= TXT_MULTIWORD_MASK so the renderer
-    // path that reads mwbuf knows to dereference. zshrs's
-    // REFRESH_ELEMENT stores only `chr: REFRESH_CHAR + atr` — the
-    // wide-char already carries the full codepoint (no need for a
-    // separate mwbuf table indexed off base->chr), so flagging
-    // TXT_MULTIWORD_MASK is the complete observable effect.
+    // c:917 — `int iadd = ichars + 1;` total slots needed (count + count chars).
+    let iadd = ichars + 1;
+    // c:920 — `base->atr |= TXT_MULTIWORD_MASK;`.
     base.atr |= TXT_MULTIWORD_MASK;
+    NMWBUF.with(|buf| {
+        let ind = NMW_IND.get();
+        let size = NMW_SIZE.get();
+        // c:921-927 — `if (nmw_ind + iadd > nmw_size) { … realloc … }`.
+        if ind + iadd > size {
+            let mw_more = if iadd > DEF_MWBUF_ALLOC { iadd } else { DEF_MWBUF_ALLOC }; // c:922-923
+            let new_size = size + mw_more;
+            buf.borrow_mut().resize(new_size, 0);                              // c:924-926
+            NMW_SIZE.set(new_size);                                            // c:925 nmw_size += mw_more
+        }
+        let mut b = buf.borrow_mut();
+        // c:929-932 — `nmwptr = nmwbuf + nmw_ind; *nmwptr++ = ichars; for(…) *nmwptr++ = tptr[icnt];`
+        b[ind] = ichars as u32;                                                // c:930
+        for icnt in 0..ichars {
+            b[ind + 1 + icnt] = tptr[icnt] as u32;                             // c:931-932
+        }
+    });
+    // c:934 — `base->chr = (wint_t)nmw_ind;`. Store the buffer index in
+    // the chr slot; downstream readers dispatch via TXT_MULTIWORD_MASK.
+    // char::from_u32 returns Some for any u32 ≤ 0x10FFFF excluding the
+    // surrogate range; realistic nmw_ind values are far below that.
+    let ind = NMW_IND.get();
+    base.chr = char::from_u32(ind as u32).unwrap_or('\0');
+    // c:935 — `nmw_ind += iadd;`.
+    NMW_IND.set(ind + iadd);
 }
 
 /// Port of `bufswap()` from Src/Zle/zle_refresh.c:946.
@@ -3224,6 +3282,118 @@ mod zr_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // addmultiword — C-pinned tests covering pattern.c:913-936 push path.
+    // Pin (1) `base.atr |= TXT_MULTIWORD_MASK`, (2) `nmwbuf[ind]` stores
+    // the cluster count, (3) `nmwbuf[ind+1..ind+1+count]` stores the
+    // cluster codepoints, (4) `base.chr` set to the buffer entry index,
+    // (5) `nmw_ind` advances by `count + 1`, (6) the `nmw_ind` init=1
+    // invariant from c:43 holds (entries never start at 0).
+    //
+    // Bug fixed: the prior body silently discarded `tptr`/`ichars`,
+    // setting only the flag. Every cluster of combining marks landed
+    // unstored in the buffer; readers dispatching on TXT_MULTIWORD_MASK
+    // got an uninitialised index.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Restore the post-resetvideo invariant (c:745-747):
+    /// `nmw_size = DEF_MWBUF_ALLOC; nmw_ind = 1`. C zsh always runs
+    /// `resetvideo` before any `addmultiword` call; the tests below
+    /// mirror that init so we exercise the same growth math the
+    /// C source guarantees correctness for.
+    fn reset_nmw_state() {
+        NMW_IND.with(|c| c.set(1));                                          // c:746
+        NMW_SIZE.with(|c| c.set(DEF_MWBUF_ALLOC));                           // c:745
+        NMWBUF.with(|b| {
+            let mut buf = b.borrow_mut();
+            buf.clear();
+            buf.resize(DEF_MWBUF_ALLOC, 0);                                  // c:747 zalloc(nmw_size)
+        });
+    }
+
+    /// `Src/Zle/zle_refresh.c:913-935` — basic single-cluster push:
+    /// flag set, buffer layout [count, c0, c1], chr = old nmw_ind,
+    /// nmw_ind advances by count+1.
+    #[test]
+    fn addmultiword_stores_cluster_and_sets_chr_index() {
+        let _g = crate::test_util::global_state_lock();
+        reset_nmw_state();
+
+        let mut base = REFRESH_ELEMENT { chr: '\0', atr: 0 };
+        // Cluster: 'a' + 1 combining-mark codepoint.
+        let cluster = ['a', '\u{0301}'];
+        addmultiword(&mut base, &cluster, 2);
+
+        // c:920 — TXT_MULTIWORD_MASK set.
+        assert_ne!(base.atr & TXT_MULTIWORD_MASK, 0, "c:920 flag set");
+        // c:934 — base.chr stores the buffer index (1 was the old NMW_IND init).
+        assert_eq!(base.chr as u32, 1, "c:934 base.chr = old nmw_ind");
+
+        NMWBUF.with(|b| {
+            let buf = b.borrow();
+            // c:930 — first slot: cluster count.
+            assert_eq!(buf[1], 2, "c:930 nmwbuf[ind] = ichars");
+            // c:931-932 — next `count` slots: the codepoints.
+            assert_eq!(buf[2], 'a' as u32, "c:932 nmwbuf[ind+1] = tptr[0]");
+            assert_eq!(buf[3], '\u{0301}' as u32, "c:932 nmwbuf[ind+2] = tptr[1]");
+        });
+        // c:935 — nmw_ind advanced by count + 1 = 3 (from 1 → 4).
+        assert_eq!(NMW_IND.get(), 4, "c:935 nmw_ind += iadd (1 + 2 + 1)");
+        reset_nmw_state();
+    }
+
+    /// `Src/Zle/zle_refresh.c:921-927` — buffer auto-grow only triggers
+    /// when `nmw_ind + iadd > nmw_size`. Post-resetvideo size=32 fits a
+    /// small cluster without growth.
+    #[test]
+    fn addmultiword_no_grow_when_capacity_fits() {
+        let _g = crate::test_util::global_state_lock();
+        reset_nmw_state();
+        let pre_size = NMW_SIZE.get();
+        let mut base = REFRESH_ELEMENT { chr: '\0', atr: 0 };
+        addmultiword(&mut base, &['x'], 1);
+        assert_eq!(NMW_SIZE.get(), pre_size, "c:921 — no grow needed (1+2 ≤ 32)");
+        reset_nmw_state();
+    }
+
+    /// `Src/Zle/zle_refresh.c:922-925` — large cluster (iadd > DEF_MWBUF_ALLOC)
+    /// triggers a grow of `iadd` slots instead of `DEF_MWBUF_ALLOC`.
+    #[test]
+    fn addmultiword_grows_by_iadd_for_large_cluster() {
+        let _g = crate::test_util::global_state_lock();
+        reset_nmw_state();
+        let pre_size = NMW_SIZE.get();
+        let mut base = REFRESH_ELEMENT { chr: '\0', atr: 0 };
+        // 40-codepoint cluster: iadd = 41 > DEF_MWBUF_ALLOC=32.
+        let cluster: Vec<char> = (0..40).map(|i| char::from_u32(0x300 + i as u32).unwrap()).collect();
+        addmultiword(&mut base, &cluster, 40);
+        // c:922 — mw_more = iadd = 41, nmw_size = pre_size + 41.
+        assert_eq!(NMW_SIZE.get(), pre_size + 41, "c:922 — grow = iadd, not DEF_MWBUF_ALLOC");
+        reset_nmw_state();
+    }
+
+    /// `Src/Zle/zle_refresh.c:43` — nmw_ind init = 1 invariant so a
+    /// zero-index slot never appears (would compare equal to NUL).
+    /// Two consecutive pushes land at indices 1 and 4 (1 + 1+2 for the
+    /// first 2-cluster push, then +3 for the second).
+    #[test]
+    fn addmultiword_consecutive_pushes_land_at_correct_indices() {
+        let _g = crate::test_util::global_state_lock();
+        reset_nmw_state();
+
+        let mut a = REFRESH_ELEMENT { chr: '\0', atr: 0 };
+        addmultiword(&mut a, &['e', '\u{0301}'], 2);
+        let mut b = REFRESH_ELEMENT { chr: '\0', atr: 0 };
+        addmultiword(&mut b, &['n', '\u{0303}'], 2);
+
+        // First push at nmw_ind=1; advanced to 4.
+        assert_eq!(a.chr as u32, 1, "first push index");
+        // Second push at nmw_ind=4; advanced to 7.
+        assert_eq!(b.chr as u32, 4, "second push index (c:43 invariant — never 0)");
+        assert_eq!(NMW_IND.get(), 7, "after two 2-clusters: 1 + 3 + 3 = 7");
+        reset_nmw_state();
+    }
 
     #[test]
     fn test_countprompt() {
