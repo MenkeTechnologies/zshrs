@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 use crate::DPUTS;
 use crate::ported::params::{paramtab, setaparam};
 use crate::ported::utils::{imeta_byte, strpfx};
-use crate::ported::zsh_h::{zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_ALL, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR};
+use crate::ported::zsh_h::{isset, zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, PROMPTBANG, PROMPTPERCENT, TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_ALL, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR};
 use crate::zsh_h::Meta;
 
 /// Thread-local mirrors of zsh globals read during `promptexpand()` (logical
@@ -200,10 +200,26 @@ pub struct buf_vars {
     pub trunccount: i32,
     pub rstring: Option<String>,
     pub Rstring: Option<String>,
+    // WARNING: NOT IN PROMPT.C — Rust-only expander state.
+    // C threads the current zattr inline as it emits SGR bytes into
+    // `bp` (no field on `struct buf_vars`); Rust caches the current
+    // attribute set on the buf_vars so apply_attrs() / reset_attrs()
+    // can emit incremental diffs instead of re-emitting the whole
+    // SGR every step.
     attrs: zattr,
+    // WARNING: NOT IN PROMPT.C — Rust-only readline `\x01`/`\x02`
+    // prompt-width-ignore glue. C zsh's `%{ %}` nesting is tracked
+    // by `dontcount` (which IS in C buf_vars, above). This separate
+    // bool covers the readline-style RL_PROMPT_*_IGNORE byte
+    // emissions that the host's readline-compat shim needs around
+    // any escape-sequence span.
     in_escape: bool,
-    prompt_percent: bool,
-    prompt_bang: bool,
+    // `prompt_percent` / `prompt_bang` field copies deleted — these
+    // are option-table flags in C (`isset(PROMPTPERCENT)` /
+    // `isset(PROMPTBANG)` at prompt.c:325 + checks per expander).
+    // Rule D bag-of-globals violation when carried as struct fields.
+    // Callers route through `isset(PROMPTPERCENT)` / `isset(PROMPTBANG)`
+    // directly.
 }
 
 // Note: there is no Rust helper for `cmdnames[cmdstack[t0]]` — C
@@ -1310,20 +1326,16 @@ impl buf_vars {
             Rstring: None,
             attrs: 0 as zattr, // c:zsh.h:2685 (zattr=0 == no attrs)
             in_escape: false,
-            prompt_percent: true, // c:325 (PROMPTPERCENT default)
-            prompt_bang: true,    // c:325 (PROMPTBANG default)
+            // prompt_percent / prompt_bang — removed; route through
+            // `isset(PROMPTPERCENT)` / `isset(PROMPTBANG)`.
         }
     }
 
-    pub fn with_prompt_percent(mut self, enable: bool) -> Self {
-        self.prompt_percent = enable;
-        self
-    }
-
-    pub fn with_prompt_bang(mut self, enable: bool) -> Self {
-        self.prompt_bang = enable;
-        self
-    }
+    // `with_prompt_percent` / `with_prompt_bang` builder methods removed
+    // — they configured Rust-only fields that no longer exist. zsh
+    // controls prompt-% / prompt-! interpretation via the canonical
+    // `setopt promptpercent` / `setopt promptbang` (option table), not
+    // a per-buf_vars override.
 
     fn fork_snapshot(&self, input: String) -> buf_vars {
         buf_vars {
@@ -1342,8 +1354,6 @@ impl buf_vars {
             Rstring: None,
             attrs: self.attrs,
             in_escape: false,
-            prompt_percent: self.prompt_percent,
-            prompt_bang: self.prompt_bang,
         }
     }
 
@@ -1477,10 +1487,10 @@ impl buf_vars {
                 None => return 0,
             };
 
-            if c == '%' && self.prompt_percent {
+            if c == '%' && isset(PROMPTPERCENT) {
                 self.advance();
                 self.process_percent(doprint);
-            } else if c == '!' && self.prompt_bang {
+            } else if c == '!' && isset(PROMPTBANG) {
                 if doprint != 0 {
                     self.advance();
                     if self.peek() == Some('!') {

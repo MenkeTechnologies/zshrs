@@ -41,5 +41,13 @@ pub fn global_state_lock() -> MutexGuard<'static, ()> {
     // here every test that calls a param-setter sees a no-op write.
     // Real shells enable EXECOPT at init via `parseargs` (init.c:404).
     crate::ported::options::opt_state_set("exec", true);
+    // `promptpercent` and `promptbang` are zsh-default-ON (Src/options.c
+    // default_opts[] — both enabled in PROMPTPERCENT/PROMPTBANG default
+    // state). The Rust port reads them via `isset(PROMPTPERCENT)` /
+    // `isset(PROMPTBANG)` in the prompt expander; without this the
+    // option table comes up clean and every `%X`/`!`-style expansion
+    // is silently disabled.
+    crate::ported::options::opt_state_set("promptpercent", true);
+    crate::ported::options::opt_state_set("promptbang", true);
     g
 }
