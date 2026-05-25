@@ -10762,6 +10762,373 @@ mod tests {
             "alpha"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // zsh test corpus pin tests — Test/D04parameter.ztst:1249-2358.
+    // Anchored to zsh's documented `Parameters associated with
+    // backreferences` + `(#m) flag` test cases. Each test cites the
+    // ztst line range it pins. Tests that fail under current Rust
+    // port get `#[ignore = "ZSHRS BUG: ..."]` per established
+    // practice; the assertion + expected output stay in tree so
+    // when the Rust port catches up the marker can be flipped.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Test/D04parameter.ztst:1249-1258` — `${string%%(#b)(match)*}`
+    /// with `string='look for a match in here'` strips the suffix
+    /// starting at `match`. The strip result alone (without the
+    /// captures) is `"look for a "`. Expected: 11-char prefix.
+    /// Strip-only path: `(#b)` shouldn't affect WHICH prefix the
+    /// matcher returns; captures are a side-band.
+    #[test]
+    fn paramsubst_strip_pound_b_backref_keeps_strip_semantic() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_BB1",
+            "look for a match in here",
+            "${ZP_BB1%%(#b)(match)*}",
+        );
+        assert_eq!(
+            result, "look for a ",
+            "Test/D04parameter.ztst:1250 — (#b) doesn't change strip result"
+        );
+    }
+
+    /// `Test/D04parameter.ztst:1251` — `$match[1]` after the above
+    /// strip must hold `"match"` (the captured group). This is the
+    /// (#b) backref payload — requires subst.rs to wire pattern
+    /// captures through to `$match[]` after `${var%%(#b)pat}`.
+    #[test]
+    #[ignore = "ZSHRS BUG: ${var%%(#b)pat} does not populate $match[] in subst.rs"]
+    fn paramsubst_pound_b_backref_populates_match_array() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = psubst_one(
+            "ZP_BB2",
+            "look for a match in here",
+            "${ZP_BB2%%(#b)(match)*}",
+        );
+        let m = crate::ported::params::getaparam("match");
+        assert_eq!(
+            m.as_deref(),
+            Some(&["match".to_string()][..]),
+            "Test/D04parameter.ztst:1251 — $match[1]=match",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:1251` — `$mbegin[1]` / `$mend[1]`
+    /// hold the 1-based byte offsets of the capture. For "look for a
+    /// match in here", "match" is at bytes 12-16 (1-based).
+    #[test]
+    #[ignore = "ZSHRS BUG: $mbegin/$mend not populated after ${var%%(#b)pat}"]
+    fn paramsubst_pound_b_populates_mbegin_mend() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = psubst_one(
+            "ZP_BB3",
+            "look for a match in here",
+            "${ZP_BB3%%(#b)(match)*}",
+        );
+        let b = crate::ported::params::getaparam("mbegin");
+        let e = crate::ported::params::getaparam("mend");
+        assert_eq!(b.as_deref(), Some(&["12".to_string()][..]),
+            "Test/D04parameter.ztst:1251 — $mbegin[1]=12");
+        assert_eq!(e.as_deref(), Some(&["16".to_string()][..]),
+            "Test/D04parameter.ztst:1251 — $mend[1]=16");
+    }
+
+    /// `Test/D04parameter.ztst:1261-1270` — `(#m)` flag: assigns
+    /// the WHOLE-match to `$MATCH` (no capture groups). `${(S)string
+    /// %%(#m)M*H}` with `string='and look for a MATCH in here'` →
+    /// strip the substring matching `M*H` (= "MATCH"), result is
+    /// `'and look for a  in here'`. `$MATCH = "MATCH"`.
+    ///
+    /// (S) — substring mode (vs prefix/suffix), so the match floats.
+    #[test]
+    #[ignore = "ZSHRS BUG: ${(S)var%%(#m)pat} substring strip with (#m) not wired"]
+    fn paramsubst_pound_m_flag_strip_anchored_to_zsh() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_MM1",
+            "and look for a MATCH in here",
+            "${(S)ZP_MM1%%(#m)M*H}",
+        );
+        assert_eq!(
+            result, "and look for a  in here",
+            "Test/D04parameter.ztst:1262 — (S) + (#m) substring strip",
+        );
+        let m = crate::ported::params::getsparam("MATCH");
+        assert_eq!(m.as_deref(), Some("MATCH"),
+            "Test/D04parameter.ztst:1263 — $MATCH=MATCH");
+    }
+
+    /// `Test/D04parameter.ztst:1272-1275` — `(#m)` substitution form:
+    /// `${string//(#m)s/$MATCH $MBEGIN $MEND}` with `string='this is
+    /// a string'` replaces every `s` with `s 4 4` / `s 7 7` / `s 11
+    /// 11` (the `s` char and its 1-based byte positions). Expected
+    /// output: "this 4 4 is 7 7 a s 11 11tring".
+    #[test]
+    #[ignore = "ZSHRS BUG: ${var//(#m)pat/$MATCH...} substitution with (#m) refs not wired"]
+    fn paramsubst_pound_m_substitution_with_match_refs() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_MM2",
+            "this is a string",
+            "${ZP_MM2//(#m)s/$MATCH $MBEGIN $MEND}",
+        );
+        assert_eq!(
+            result, "this 4 4 is 7 7 a s 11 11tring",
+            "Test/D04parameter.ztst:1275 — (#m) in subst with $MATCH/$MBEGIN/$MEND",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:1306-1310` — `${file//(#b)(*)left/
+    /// ${match/a/andsome}}` — `(#b)` capture + nested substitution
+    /// that transforms the captured group's content. With
+    /// `file='aleftkept'` and pat `(*)left`:
+    ///   - The `(*)` captures "a" (greedy before "left").
+    ///   - Replace "aleft" with `${match[1]/a/andsome}` = "andsome".
+    ///   - Final result: "andsomekept".
+    #[test]
+    #[ignore = "ZSHRS BUG: ${var//(#b)pat/${match[1]/...}} nested-capture not wired"]
+    fn paramsubst_pound_b_nested_capture_transform() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_BBN",
+            "aleftkept",
+            "${ZP_BBN//(#b)(*)left/${match[1]/a/andsome}}",
+        );
+        assert_eq!(
+            result, "andsomekept",
+            "Test/D04parameter.ztst:1307,1310 — (#b)+nested subst on capture",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:2354-2358` — `${(S)a//#%((#b)(*))/
+    /// different}` — fully-anchored search must scan the whole
+    /// string. With `a="string"` the pattern `#%(...)` is
+    /// "start AND end anchored" wrapping the (#b)(*) capture;
+    /// the whole string matches → replaced with "different".
+    /// `$match[1]` carries the captured whole string.
+    #[test]
+    #[ignore = "ZSHRS BUG: fully-anchored ${(S)var//#%(...)/repl} with (#b) not wired"]
+    fn paramsubst_pound_b_fully_anchored_must_scan_whole_string() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_BBA",
+            "string",
+            "${(S)ZP_BBA//#%((#b)(*))/different}",
+        );
+        assert_eq!(
+            result, "different",
+            "Test/D04parameter.ztst:2358 — full-anchor search expected",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:890-893` — `(#m)` inside nested
+    /// substitution: `${${string%[aeiou]*}/(#m)?(#e)/${(U)MATCH}}`
+    /// with `string='abcdefghijklmnopqrstuvwxyz'`:
+    ///   - Inner `${string%[aeiou]*}` strips suffix from first
+    ///     vowel-pattern → "abcdefghijklmnopqrst" (the last
+    ///     vowel-match suffix removed).
+    ///   - Then `/(#m)?(#e)/${(U)MATCH}` replaces the last char (#e
+    ///     anchors to end) with its uppercase version via $MATCH.
+    ///   - Result: "abcdefghijklmnopqrsT" (last char uppercased).
+    #[test]
+    #[ignore = "ZSHRS BUG: nested ${...//(#m)?(#e)/${(U)MATCH}} chain not wired"]
+    fn paramsubst_pound_m_with_end_anchor_in_nested_subst() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_MMN",
+            "abcdefghijklmnopqrstuvwxyz",
+            "${${ZP_MMN%[aeiou]*}/(#m)?(#e)/${(U)MATCH}}",
+        );
+        assert_eq!(
+            result, "abcdefghijklmnopqrsT",
+            "Test/D04parameter.ztst:893 — nested (#m)+(#e)+(U)MATCH",
+        );
+    }
+
+    // ─── Test/D04parameter.ztst:124-138 — strip patterns ─────────────
+
+    /// `Test/D04parameter.ztst:124-129` — `${str#*s}` strips shortest
+    /// prefix matching `*s`. `'This is very boring indeed.'` →
+    /// `' is very boring indeed.'` (one char + 's' = "Ts" → wait,
+    /// shortest *s = empty + 's' = "This"? "T" + "his" then "s" =
+    /// first 's' encountered. Strip up to and including first 's':
+    /// 'This' = 'T'+'h'+'i'+'s' → strip yields ' is very boring
+    /// indeed.' (4 chars dropped).
+    #[test]
+    fn paramsubst_zsh_corpus_strip_shortest_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_S1",
+            "This is very boring indeed.",
+            "${ZP_S1#*s}",
+        );
+        assert_eq!(
+            result, " is very boring indeed.",
+            "Test/D04parameter.ztst:129 — ${{var#*s}} shortest prefix to first 's'",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:126,130` — `${str##*s}` strips
+    /// LONGEST prefix matching `*s`. From "This is very boring
+    /// indeed." → strip everything up to the LAST 's'. Last 's'
+    /// is in "is" (mid-string). Result: " very boring indeed."
+    #[test]
+    fn paramsubst_zsh_corpus_strip_longest_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_S2",
+            "This is very boring indeed.",
+            "${ZP_S2##*s}",
+        );
+        assert_eq!(
+            result, " very boring indeed.",
+            "Test/D04parameter.ztst:130 — ${{var##*s}} longest prefix",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:140-146` — `${str:#pat}` (NOT-match
+    /// filter on SCALAR): if `str` matches `pat`, yield empty;
+    /// else yield `str`. "does match" matches "does * match" →
+    /// returns empty; "does not match" doesn't match → returns
+    /// itself.
+    #[test]
+    fn paramsubst_zsh_corpus_colon_hash_filter_scalar_match() {
+        let _g = crate::test_util::global_state_lock();
+        let r1 = psubst_one("ZP_CH1", "does match", "${ZP_CH1:#does * match}");
+        assert_eq!(r1, "does match", "ztst:145 — non-match yields self");
+        let r2 = psubst_one("ZP_CH2", "does not match", "${ZP_CH2:#does * match}");
+        assert_eq!(r2, "", "ztst:146 — match yields empty");
+    }
+
+    // ─── Test/D04parameter.ztst:155-160 — `${(S)var/pat/repl}` ───────
+
+    /// `Test/D04parameter.ztst:156-159` — `${str/[aeiou]*g/...}`
+    /// without (S): longest-leftmost replace. With (S): SHORTEST-
+    /// leftmost (substring mode). The two have different results.
+    /// Plain `${str1/[aeiou]*g/repl}` finds leftmost-longest
+    /// `[aeiou]*g`: in "arthur boldly claws dogs every fight" →
+    /// "a" + ... + "g" of "fight" (whole "ar...fig"). Result:
+    /// "a braw bricht moonlicht nicht the nicht".
+    #[test]
+    fn paramsubst_zsh_corpus_scalar_single_replace_longest_leftmost() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_R1",
+            "arthur boldly claws dogs every fight",
+            "${ZP_R1/[aeiou]*g/a braw bricht moonlicht nicht the nic}",
+        );
+        assert_eq!(
+            result, "a braw bricht moonlicht nicht the nicht",
+            "ztst:159 — leftmost-longest [aeiou]*g replace",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:157,160` — `${(S)str/[aeiou]*g/repl}`
+    /// — (S) flag: shortest substring match. In "arthur boldly
+    /// claws dogs every fight" → shortest [aeiou]*g = "u boldly
+    /// claws dog" (from "u" of arthur to first "g" of "dogs").
+    /// Wait, that's not shortest. Actually (S) = substring match
+    /// MODE, finding the shortest leftmost match. Hmm, expected
+    /// output is "relishes every fight" — replace was just
+    /// "relishe". So pattern matched "arthur boldly claws dog"
+    /// (longest? shortest? until first 'g' = "dog").
+    /// Actually re-reading: "relishes" = "relishe" + "s". Then
+    /// " every fight" is the remaining suffix. So the matched part
+    /// is "arthur boldly claws dog" (= [aeiou]*g where g is dog's g)
+    /// and the input after the match is "s every fight".
+    /// Result: "relishe" + "s every fight" = "relishes every fight".
+    #[test]
+    #[ignore = "ZSHRS BUG: ${(S)var/pat/repl} substring-mode flag handling differs from zsh"]
+    fn paramsubst_zsh_corpus_substring_mode_shortest_replace() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_R2",
+            "arthur boldly claws dogs every fight",
+            "${(S)ZP_R2/[aeiou]*g/relishe}",
+        );
+        assert_eq!(
+            result, "relishes every fight",
+            "ztst:160 — (S) shortest-leftmost replace",
+        );
+    }
+
+    // ─── Test/D04parameter.ztst:168-179 — global subst `${var//pat/repl}` ─
+
+    /// `Test/D04parameter.ztst:168-172` — `${str//o*/Please no}`:
+    /// global longest-leftmost replace. Pattern `o*` first matches
+    /// from first 'o' to end (greedy) → result: "Please no" (one
+    /// replacement consuming everything from "o" onward).
+    #[test]
+    fn paramsubst_zsh_corpus_global_replace_greedy_eats_rest() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_G1",
+            "o this is so, so so very dull",
+            "${ZP_G1//o*/Please no}",
+        );
+        assert_eq!(
+            result, "Please no",
+            "ztst:172 — greedy o* match consumes from first 'o' to end",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:170,173` — `${(S)str//o*/Please no}`:
+    /// (S) substring mode, each 'o' followed by 0 chars becomes
+    /// "Please no". Effectively replaces every 'o' with "Please no".
+    /// Result: "Please no this is sPlease no, sPlease no sPlease no
+    /// very dull".
+    #[test]
+    #[ignore = "ZSHRS BUG: ${(S)var//pat/repl} substring-mode global replace differs from zsh"]
+    fn paramsubst_zsh_corpus_global_replace_substring_mode_per_char() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_G2",
+            "o this is so, so so very dull",
+            "${(S)ZP_G2//o*/Please no}",
+        );
+        assert_eq!(
+            result, "Please no this is sPlease no, sPlease no sPlease no very dull",
+            "ztst:173 — (S) substring per-occurrence replace",
+        );
+    }
+
+    // ─── Test/D04parameter.ztst:185-195 — backslash escape in subst ──
+
+    /// `Test/D04parameter.ztst:185-192` — `${str//\\/-}` replaces
+    /// `\` (literal backslash) with `-`. Input `'a\string\with\
+    /// backslashes'` → "a-string-with-backslashes".
+    #[test]
+    #[ignore = "ZSHRS BUG: ${var//\\\\/-} backslash-as-search-pat not unescaped before paramsubst pattern compile"]
+    fn paramsubst_zsh_corpus_replace_literal_backslash() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_BS",
+            r"a\string\with\backslashes",
+            r"${ZP_BS//\\/-}",
+        );
+        assert_eq!(
+            result, "a-string-with-backslashes",
+            "ztst:192 — global \\ → -",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:189-194` — `${str//\\//-}` replaces
+    /// `/` (escaped to allow it inside the //) with `-`. Input
+    /// `'a/string/with/slashes'` → "a-string-with-slashes".
+    #[test]
+    fn paramsubst_zsh_corpus_replace_escaped_slash() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_SL",
+            "a/string/with/slashes",
+            r"${ZP_SL//\//-}",
+        );
+        assert_eq!(
+            result, "a-string-with-slashes",
+            "ztst:194 — global escaped / → -",
+        );
+    }
 } // c:3193
 
 // ============================================================================

@@ -5750,4 +5750,391 @@ mod tests {
         assert!(ext_glob_match("(#a1)abc", "aXc"), "middle-char sub");
         assert!(ext_glob_match("(#a1)abc", "abX"), "last-char sub");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // zsh test-corpus pins — direct anchors to Test/D02glob.ztst:25-80
+    // "zsh globbing" test list (zsh's authoritative regression suite).
+    // Each test cites the ztst line range it pins. Currently-failing
+    // tests get #[ignore = "ZSHRS BUG: ..."] markers; expected-output
+    // assertions stay in tree so the marker flips when the Rust port
+    // catches up.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Test/D02glob.ztst:26` — `[[ foo~ = foo~ ]]` exact match,
+    /// expected exit 0 (true).
+    #[test]
+    fn zsh_corpus_foo_tilde_exact_match() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("foo~", "foo~"), "ztst:26 — literal tilde matches");
+    }
+
+    /// `Test/D02glob.ztst:27` — `[[ foo~ = (foo~) ]]` parenthesised
+    /// single alternative.
+    #[test]
+    fn zsh_corpus_foo_tilde_in_parens() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(foo~)", "foo~"), "ztst:27 — (foo~) matches foo~");
+    }
+
+    /// `Test/D02glob.ztst:28` — `[[ foo~ = (foo~|) ]]` alternation
+    /// with empty alternative.
+    #[test]
+    fn zsh_corpus_alternation_with_empty_alt() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(foo~|)", "foo~"), "ztst:28 — empty alt accepted");
+    }
+
+    /// `Test/D02glob.ztst:29` — `[[ foo.c = *.c~boo* ]]` exclude
+    /// pattern: matches *.c BUT NOT boo*. `foo.c` matches *.c and
+    /// doesn't match boo*, so result is 0 (true).
+    #[test]
+    #[ignore = "ZSHRS BUG: extended-glob exclude pattern `pat~exclude` not implemented"]
+    fn zsh_corpus_exclude_pattern_basic() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("*.c~boo*", "foo.c"),
+            "ztst:29 — *.c~boo* matches foo.c");
+    }
+
+    /// `Test/D02glob.ztst:30` — `[[ foo.c = *.c~boo*~foo* ]]`
+    /// double-exclude: matches *.c but excludes both `boo*` and
+    /// `foo*`. `foo.c` matches `foo*` (excluded) → result 1 (false).
+    #[test]
+    #[ignore = "ZSHRS BUG: extended-glob exclude pattern `pat~exclude` not implemented"]
+    fn zsh_corpus_exclude_pattern_double() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("*.c~boo*~foo*", "foo.c"),
+            "ztst:30 — double exclude rejects foo.c");
+    }
+
+    /// `Test/D02glob.ztst:31` — `[[ fofo = (fo#)# ]]` — `#` is the
+    /// extended-glob "1+ repetitions" quantifier. `(fo#)#` matches
+    /// 1+ repetitions of "fo+".
+    #[test]
+    #[ignore = "ZSHRS BUG: nested `#` quantifier (fo#)# crashes patmatch with SIGABRT (stack overflow / unbounded recursion)"]
+    fn zsh_corpus_hash_repetition_double() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(fo#)#", "fofo"),
+            "ztst:31 — (fo#)# matches fofo");
+    }
+
+    /// `Test/D02glob.ztst:32` — `[[ ffo = (fo#)# ]]`. `fo#` means
+    /// `f` followed by 0+ `o`. `ffo` = `f` + `fo` (matches the
+    /// outer `#` repetition).
+    #[test]
+    #[ignore = "ZSHRS BUG: nested `#` quantifier (fo#)# crashes patmatch with SIGABRT (stack overflow / unbounded recursion)"]
+    fn zsh_corpus_hash_repetition_min_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(fo#)#", "ffo"),
+            "ztst:32 — (fo#)# matches ffo via 1-iter outer");
+    }
+
+    /// `Test/D02glob.ztst:36` — `[[ foooofof = (fo##)# ]]` —
+    /// `##` is "2+ repetitions". `fo##` = `f` + 2+ `o`'s. The
+    /// trailing `of` after `foooo` doesn't satisfy the trailing
+    /// outer `#`, so result is 1 (false).
+    #[test]
+    fn zsh_corpus_hash_hash_quantifier_min_two() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("(fo##)#", "foooofof"),
+            "ztst:36 — (fo##)# rejects foooofof");
+    }
+
+    /// `Test/D02glob.ztst:50` — `[[ aac = ((a))#a(c) ]]` —
+    /// `((a))#` is `0+ a`. `aac` = `aa` (= `((a))#`) + `c`. The
+    /// final `a(c)` requires literal `a` followed by capture `(c)`.
+    /// Wait — should be `aac` matches `((a))#a(c)`: outer `((a))#`
+    /// captures `a` repeated, then literal `a`, then `(c)`.
+    /// Actually re-reading: `((a))#` matches 0+ 'a'. `aac` =
+    /// `((a))#`("a") + `a`("a") + `(c)`("c"). So "aa" splits as
+    /// (a)("a") + a("a") + c("c"). Match.
+    #[test]
+    fn zsh_corpus_nested_paren_quantifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("((a))#a(c)", "aac"),
+            "ztst:50 — ((a))#a(c) matches aac");
+    }
+
+    /// `Test/D02glob.ztst:51` — `[[ ac = ((a))#a(c) ]]` — single
+    /// `a` matches `a(c)` after empty `((a))#` consumes zero.
+    #[test]
+    fn zsh_corpus_zero_iteration_quantifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("((a))#a(c)", "ac"),
+            "ztst:51 — ((a))# can be zero iters");
+    }
+
+    /// `Test/D02glob.ztst:52` — `[[ c = ((a))#a(c) ]]` — empty
+    /// `((a))#` + literal `a` requires at least one `a`. `c` has
+    /// no `a`, so result is 1 (false).
+    #[test]
+    fn zsh_corpus_required_literal_after_zero_quantifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("((a))#a(c)", "c"),
+            "ztst:52 — bare `c` lacks required `a`");
+    }
+
+    /// `Test/D02glob.ztst:73` — `[[ foo = ((^x)) ]]` — exclude
+    /// `x`. `foo` doesn't contain `x` as a single char (the
+    /// `((^x))` matches anything that's not just 'x' — `foo` is 3
+    /// chars, none is `x`).
+    #[test]
+    #[ignore = "ZSHRS BUG: extended-glob `^pat` negation not fully wired"]
+    fn zsh_corpus_caret_exclude_basic() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("((^x))", "foo"),
+            "ztst:73 — ((^x)) matches foo");
+    }
+
+    /// `Test/D02glob.ztst:75` — `[[ foo = ((^foo)) ]]` — `^foo`
+    /// rejects exact `foo`. `foo` matches `foo` literal, which the
+    /// `^` inverts. Result: 1 (false).
+    #[test]
+    #[ignore = "ZSHRS BUG: extended-glob `^pat` negation not fully wired"]
+    fn zsh_corpus_caret_exclude_exact_match_inverted() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("((^foo))", "foo"),
+            "ztst:75 — ((^foo)) rejects foo");
+    }
+
+    /// `Test/D02glob.ztst:79` — `[[ foot = z*~*x ]]` — `*` then
+    /// exclude `*x`. `foot` doesn't start with `z`, so doesn't
+    /// match `z*` at all → result 1 (false).
+    #[test]
+    fn zsh_corpus_star_exclude_no_z_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("z*~*x", "foot"),
+            "ztst:79 — foot doesn't start with z");
+    }
+
+    /// `Test/D02glob.ztst:80` — `[[ zoot = z*~*x ]]` — `zoot`
+    /// matches `z*` AND doesn't end in `x` → result 0 (true).
+    #[test]
+    #[ignore = "ZSHRS BUG: extended-glob `pat~exclude` not implemented"]
+    fn zsh_corpus_star_exclude_zoot() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("z*~*x", "zoot"),
+            "ztst:80 — zoot matches z* and not *x");
+    }
+
+    // ─── POSIX class brackets — Test/D02glob.ztst:111-118 ─────────────
+
+    /// `Test/D02glob.ztst:111` — `[[:alpha:][:punct:]]#[[:digit:]][^[:lower:]]`
+    /// over "a%1X": `a` matches alpha, `%` matches punct (1+ via `#`),
+    /// `1` matches digit, `X` matches NOT-lower.
+    #[test]
+    fn zsh_corpus_posix_class_alpha_punct_digit_notlower() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            ext_glob_match("[[:alpha:][:punct:]]#[[:digit:]][^[:lower:]]", "a%1X"),
+            "ztst:111 — alpha-punct-digit-notlower chain",
+        );
+    }
+
+    /// `Test/D02glob.ztst:112` — same pattern, "a%1" lacks the
+    /// 4th non-lower char → result 1 (false).
+    #[test]
+    fn zsh_corpus_posix_class_rejects_short_input() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            !ext_glob_match("[[:alpha:][:punct:]]#[[:digit:]][^[:lower:]]", "a%1"),
+            "ztst:112 — short input rejected",
+        );
+    }
+
+    /// `Test/D02glob.ztst:113` — `[[:` literal in char class:
+    /// `[[ [: = [[:]# ]]` — `[[:]` matches `[` OR `:`, `#` is 1+
+    /// repetitions. "[:" = `[` + `:` → matches.
+    #[test]
+    fn zsh_corpus_literal_brackets_in_class_with_repetition() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("[[:]#", "[:"),
+            "ztst:113 — [[:]# matches '[:'");
+    }
+
+    // ─── (#i) / (#l) case modifiers — Test/D02glob.ztst:119-132 ───────
+
+    /// `Test/D02glob.ztst:119` — `(#i)FOOXX` matches "fooxx"
+    /// (case-insensitive throughout).
+    #[test]
+    fn zsh_corpus_hash_i_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#i)FOOXX", "fooxx"),
+            "ztst:119 — (#i)FOOXX matches fooxx");
+    }
+
+    /// `Test/D02glob.ztst:120` — `(#l)FOOXX` requires pattern UPPER
+    /// chars to be the ONLY uppercase candidates; lowercase input
+    /// FAILS to match because pattern is all uppercase and `#l` only
+    /// matches the EXACT lowercase variant of the pattern char... actually
+    /// `(#l)` means "lowercase pattern chars match uppercase too" —
+    /// `(#l)FOOXX` has no lowercase chars so it stays a strict
+    /// uppercase match. "fooxx" doesn't match. Result 1 (false).
+    #[test]
+    fn zsh_corpus_hash_l_uppercase_pattern_with_lower_input_fails() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("(#l)FOOXX", "fooxx"),
+            "ztst:120 — (#l)FOOXX does NOT match fooxx");
+    }
+
+    /// `Test/D02glob.ztst:121` — `(#l)fooxx` (lowercase pattern) DOES
+    /// match "FOOXX" because `#l` is the asymmetric "lowercase pat
+    /// chars match upper-or-lower" rule.
+    #[test]
+    fn zsh_corpus_hash_l_lowercase_pattern_matches_uppercase_input() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#l)fooxx", "FOOXX"),
+            "ztst:121 — (#l)fooxx matches FOOXX (asymmetric upcasing)");
+    }
+
+    /// `Test/D02glob.ztst:122` — `(#i)FOO(#I)X(#i)X` mixes case
+    /// modes. `(#I)` cancels prior `(#i)`. So 4th char `X` requires
+    /// exact case. "fooxx" has lowercase `x` at that position → fail.
+    #[test]
+    #[ignore = "ZSHRS BUG: mid-pattern (#I) case-cancel modifier not wired"]
+    fn zsh_corpus_hash_capital_i_cancels_case_insensitive() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("(#i)FOO(#I)X(#i)X", "fooxx"),
+            "ztst:122 — (#I) cancels (#i), 4th char `X` requires upper");
+    }
+
+    /// `Test/D02glob.ztst:123` — same pattern with input "fooXx":
+    /// `(#i)FOO` matches "foo", `(#I)X` matches "X" exact-case,
+    /// `(#i)X` matches "x" insensitive → result 0 (true).
+    #[test]
+    #[ignore = "ZSHRS BUG: mid-pattern (#i)/(#I) toggle not wired"]
+    fn zsh_corpus_hash_i_capital_i_toggle_succeeds() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#i)FOO(#I)X(#i)X", "fooXx"),
+            "ztst:123 — mixed case modifiers succeed");
+    }
+
+    /// `Test/D02glob.ztst:128` — `(#i)*m*` matches "Modules"
+    /// case-insensitively.
+    #[test]
+    fn zsh_corpus_hash_i_with_star_glob() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#i)*m*", "Modules"),
+            "ztst:128 — (#i)*m* case-insensitive substring");
+    }
+
+    // ─── Numeric ranges `<n-m>` — Test/D02glob.ztst:133-137 ───────────
+
+    /// `Test/D02glob.ztst:133` — `<1-1000>33` matches "633" (the
+    /// "6" is in [1..1000], followed by literal "33"). Actually
+    /// the way zsh parses: `<1-1000>` matches ONE number from
+    /// 1-1000, then `33` is literal. "633" = `6`(in 1-1000 range) +
+    /// "33"(literal). So `<1-1000>33` matches "633".
+    #[test]
+    #[ignore = "ZSHRS BUG: numeric-range pattern `<n-m>` matcher doesn't accept partial prefix split"]
+    fn zsh_corpus_numeric_range_one_to_thousand() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("<1-1000>33", "633"),
+            "ztst:133 — <1-1000>33 matches 633");
+    }
+
+    /// `Test/D02glob.ztst:136` — `<->33` is the open-ended range
+    /// (any number) followed by 33. Matches "633".
+    #[test]
+    #[ignore = "ZSHRS BUG: open-ended `<->` numeric range doesn't accept partial prefix split"]
+    fn zsh_corpus_numeric_range_open_ended() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("<->33", "633"),
+            "ztst:136 — <->33 matches 633 (any number)");
+    }
+
+    // ─── (#a) approximate match details — Test/D02glob.ztst:147-164 ───
+
+    /// `Test/D02glob.ztst:147` — `(#a1)[b][b]` matches "bob" via
+    /// 1 substitution (middle `o` substituted in `[b][b]`'s gap).
+    /// Wait — `[b][b]` is two-char "bb". Match against "bob" requires
+    /// 1 edit. With (#a1), allowed.
+    #[test]
+    #[ignore = "ZSHRS BUG: (#a) approximate match doesn't span P_ANYOF (bracket class) opcodes"]
+    fn zsh_corpus_hash_a1_bracket_class_with_one_edit() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#a1)[b][b]", "bob"),
+            "ztst:147 — (#a1)[b][b] matches bob via 1 edit");
+    }
+
+    /// `Test/D02glob.ztst:151` — `(#a2)XbcX` matches "abcd" via
+    /// 2 substitutions (a↔X, d↔X).
+    #[test]
+    fn zsh_corpus_hash_a2_two_substitutions() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#a2)XbcX", "abcd"),
+            "ztst:151 — 2 substitutions allowed");
+    }
+
+    /// `Test/D02glob.ztst:152` — `(#a2)ad` matches "abcd" via
+    /// 2 INSERTIONS (b and c inserted into input vs pattern).
+    /// Pattern is "ad" (2 chars), input is "abcd" (4 chars).
+    /// Diff: 2 extra chars in input.
+    #[test]
+    fn zsh_corpus_hash_a2_two_insertions_in_input() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#a2)ad", "abcd"),
+            "ztst:152 — (#a2)ad matches abcd via 2 insertions in input");
+    }
+
+    /// `Test/D02glob.ztst:153` — `(#a2)abcd` matches "ad" via
+    /// 2 DELETIONS from input (b and c missing from input vs pattern).
+    #[test]
+    fn zsh_corpus_hash_a2_two_deletions_from_input() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#a2)abcd", "ad"),
+            "ztst:153 — (#a2)abcd matches ad via 2 deletions");
+    }
+
+    /// `Test/D02glob.ztst:158` — `(#a2)abcd` rejects "dcba" — 4
+    /// changes needed (full reverse) > budget 2.
+    #[test]
+    fn zsh_corpus_hash_a2_rejects_full_reverse() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!ext_glob_match("(#a2)abcd", "dcba"),
+            "ztst:158 — full reverse exceeds budget 2");
+    }
+
+    /// `Test/D02glob.ztst:159` — `(#a3)abcd` matches "dcba" via
+    /// 3 substitutions (positions 0,1,3 of input). Wait — actually
+    /// "dcba" vs "abcd" — 4 positions differ. But (#a3) allows
+    /// 3 errors. Hmm, but ztst says result is 0 (true). So zsh
+    /// accepts. Possibly via DAMERAU transposition (swap adjacent).
+    /// Without Damerau swap, this needs 4 subs → false. With
+    /// transposition, "dcba" → "cdba" → "dcab"... complicated.
+    /// Mark ignore — Damerau transposition isn't in the Rust port.
+    #[test]
+    #[ignore = "ZSHRS BUG: Damerau transposition operation not implemented (#a3 vs dcba/abcd needs swap)"]
+    fn zsh_corpus_hash_a3_reverse_via_transposition() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(#a3)abcd", "dcba"),
+            "ztst:159 — (#a3)abcd matches dcba via Damerau transpositions");
+    }
+
+    // ─── (#s) start / (#e) end anchors — Test/D02glob.ztst:168-179 ────
+
+    /// `Test/D02glob.ztst:168` — `*((#s)|/)test((#e)|/)*` matches
+    /// "test" — start-anchor (#s) at position 0, end-anchor (#e)
+    /// after "test".
+    #[test]
+    #[ignore = "ZSHRS BUG: (#s)/(#e) position anchors inside `(|/)` group not fully wired"]
+    fn zsh_corpus_hash_s_e_anchors_match_bare_test() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            ext_glob_match("*((#s)|/)test((#e)|/)*", "test"),
+            "ztst:168 — start/end anchors match bare 'test'",
+        );
+    }
+
+    /// `Test/D02glob.ztst:172` — `*((#s)|/)test((#e)|/)*` rejects
+    /// "atest" — `(#s)|/` requires position 0 OR a `/`, but `a`
+    /// is neither.
+    #[test]
+    #[ignore = "ZSHRS BUG: (#s) anchor inside alternation not wired"]
+    fn zsh_corpus_hash_s_anchor_rejects_a_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            !ext_glob_match("*((#s)|/)test((#e)|/)*", "atest"),
+            "ztst:172 — atest fails the (#s) start-or-slash anchor",
+        );
+    }
 }
