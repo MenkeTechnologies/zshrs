@@ -1653,3 +1653,15 @@ unregister_function
 # stays readable. WARNING marker on the fn cites the C inline-logic
 # location.
 approx_match_exactly
+
+# Rust-only singletons + extraction helpers for the bin_compadd
+# shadow-injection layer (sh:_approximate:57-72 +
+# sh:_complete_help:11). These have no C counterpart because the
+# upstream override mechanism is shell function shadowing via
+# `_shadow`/`_unshadow`; in Rust we implement equivalent semantics
+# via process-wide hooks plus a body-extraction helper so the
+# wrapper can run pre/post logic without code duplication.
+set_compadd_prefix_injector
+clear_compadd_prefix_injector
+bin_compadd_body
+set_compadd_trace
