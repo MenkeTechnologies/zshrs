@@ -185,4 +185,30 @@ mod tests {
         );
         assert_eq!(BIN_UNSETOPT, BIN_BG);
     }
+
+    // ─── zsh-corpus pins for BIN_* dispatch IDs ────────────────────
+
+    /// BIN_BREAK..BIN_RETURN canonical sequence c:40-43.
+    #[test]
+    fn hashtable_h_corpus_break_continue_exit_return_sequence() {
+        assert_eq!(BIN_BREAK, 6);
+        assert_eq!(BIN_CONTINUE, 7);
+        assert_eq!(BIN_EXIT, 8);
+        assert_eq!(BIN_RETURN, 9);
+    }
+
+    /// BIN_CD/POPD/PUSHD sequence c:44-46.
+    #[test]
+    fn hashtable_h_corpus_directory_sequence() {
+        assert_eq!(BIN_CD, 10);
+        assert_eq!(BIN_POPD, 11);
+        assert_eq!(BIN_PUSHD, 12);
+    }
+
+    /// BIN_PRINT/EVAL sequence c:47-48.
+    #[test]
+    fn hashtable_h_corpus_print_eval_sequence() {
+        assert_eq!(BIN_PRINT, 13);
+        assert_eq!(BIN_EVAL, 14);
+    }
 }

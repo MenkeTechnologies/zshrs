@@ -1749,4 +1749,58 @@ mod tests {
         assert_eq!(r, 0);
         assert_eq!(ZLECS.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
+
+    // ─── zsh-corpus pins for wordclass ─────────────────────────────
+
+    /// `wordclass(' ')` returns 0 (blank).
+    #[test]
+    fn zle_word_corpus_wordclass_space_is_blank() {
+        assert_eq!(wordclass(' '), 0);
+        assert_eq!(wordclass('\t'), 0);
+    }
+
+    /// `wordclass('a')` returns 1 (alnum).
+    #[test]
+    fn zle_word_corpus_wordclass_alpha_is_alnum() {
+        assert_eq!(wordclass('a'), 1);
+        assert_eq!(wordclass('Z'), 1);
+        assert_eq!(wordclass('0'), 1);
+        assert_eq!(wordclass('9'), 1);
+    }
+
+    /// `wordclass('_')` returns 1 — underscore counts as alnum word char.
+    #[test]
+    fn zle_word_corpus_wordclass_underscore_is_alnum() {
+        assert_eq!(wordclass('_'), 1,
+            "underscore is alnum per zsh word-class");
+    }
+
+    /// `wordclass('.')` returns 2 (punct).
+    #[test]
+    fn zle_word_corpus_wordclass_punct_is_two() {
+        assert_eq!(wordclass('.'), 2);
+        assert_eq!(wordclass('!'), 2);
+        assert_eq!(wordclass(';'), 2);
+        assert_eq!(wordclass(','), 2);
+    }
+
+    /// `wordclass` separates word/non-word classes (1 vs others).
+    #[test]
+    fn zle_word_corpus_wordclass_distinct_classes() {
+        let blank = wordclass(' ');
+        let alnum = wordclass('a');
+        let punct = wordclass('.');
+        // All three must be distinct.
+        assert_ne!(blank, alnum);
+        assert_ne!(alnum, punct);
+        assert_ne!(blank, punct);
+    }
+
+    /// `wordclass('\n')` returns 3 — newline is NOT `iblank` in zsh
+    /// (iblank covers space+tab only). It falls into class 3 (other).
+    #[test]
+    fn zle_word_corpus_wordclass_newline_is_other() {
+        assert_eq!(wordclass('\n'), 3,
+            "newline is NOT iblank (iblank = space/tab only) → class 3");
+    }
 }

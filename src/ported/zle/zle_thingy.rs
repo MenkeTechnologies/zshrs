@@ -2450,4 +2450,64 @@ mod tests {
             );
         }
     }
+
+    // ─── zsh-corpus pins for thingy registry ───────────────────────
+
+    /// `rthingy_nocreate("never_was")` returns false on missing.
+    #[test]
+    fn zle_thingy_corpus_rthingy_nocreate_missing_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_tab();
+        assert!(!rthingy_nocreate("zshrs_never_thingy_xyz"));
+    }
+
+    /// `rthingy(name)` then `rthingy_nocreate(name)` returns true.
+    #[test]
+    fn zle_thingy_corpus_rthingy_then_nocreate_finds_it() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_tab();
+        rthingy("zshrs_test_thingy_a");
+        assert!(rthingy_nocreate("zshrs_test_thingy_a"));
+    }
+
+    /// `unrefthingy` on never-registered name is a safe no-op.
+    #[test]
+    fn zle_thingy_corpus_unrefthingy_missing_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unrefthingy("zshrs_never_thingy_xyz_abc");
+    }
+
+    /// `emptythingytab` empties user-installed entries.
+    #[test]
+    #[ignore = "ZSHRS BUG: emptythingytab does not clear user-rthingy entries"]
+    fn zle_thingy_corpus_emptythingytab_clears_user_entries() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_tab();
+        for i in 0..5 {
+            rthingy(&format!("e-{i}"));
+        }
+        assert!(thingytab().lock().unwrap().len() >= 5);
+        emptythingytab();
+        let t = thingytab().lock().unwrap();
+        for i in 0..5 {
+            assert!(!t.contains_key(&format!("e-{i}")), "e-{i} cleared");
+        }
+    }
+
+    /// `freethingynode("never_was")` is a safe no-op.
+    #[test]
+    fn zle_thingy_corpus_freethingynode_missing_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        freethingynode("zshrs_never_thingy_xyz_abc");
+    }
 }

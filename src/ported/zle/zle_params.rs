@@ -1628,4 +1628,87 @@ mod widget_killring_tests {
             7
         );
     }
+
+    // ─── zsh-corpus pins for BUFFER / CURSOR / MARK round-trips ────
+
+    /// `set_buffer("hello")` then `get_buffer()` returns "hello".
+    #[test]
+    fn zle_params_corpus_buffer_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        set_buffer("hello");
+        assert_eq!(get_buffer(), "hello");
+    }
+
+    /// `set_buffer("")` empties the buffer.
+    #[test]
+    fn zle_params_corpus_buffer_set_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        set_buffer("anything");
+        set_buffer("");
+        assert_eq!(get_buffer(), "");
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 0);
+    }
+
+    /// `set_cursor(N)` clamps to ZLELL.
+    #[test]
+    fn zle_params_corpus_cursor_clamps_to_buffer_length() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        set_buffer("abc");  // len=3
+        set_cursor(99);
+        assert_eq!(get_cursor(), 3, "cursor clamped to buf len");
+    }
+
+    /// `set_cursor(2)` for buffer "abc" sets cursor at 2.
+    #[test]
+    fn zle_params_corpus_cursor_within_buffer() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        set_buffer("abc");
+        set_cursor(2);
+        assert_eq!(get_cursor(), 2);
+    }
+
+    /// `set_mark(0)` then `get_mark()` returns 0.
+    #[test]
+    fn zle_params_corpus_mark_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        set_buffer("abcdef");
+        set_mark(2);
+        assert_eq!(get_mark(), 2);
+    }
+
+    /// `set_region_active(1)` then `get_region_active()` returns 1.
+    #[test]
+    fn zle_params_corpus_region_active_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        set_region_active(1);
+        assert_eq!(get_region_active(), 1);
+        set_region_active(0);
+        assert_eq!(get_region_active(), 0);
+    }
+
+    /// `set_buffer` updates ZLELL.
+    #[test]
+    fn zle_params_corpus_set_buffer_updates_zlell() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        set_buffer("ab");
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 2);
+        set_buffer("abcdef");
+        assert_eq!(ZLELL.load(Ordering::SeqCst), 6);
+    }
+
+    /// `get_buffer()` on empty buffer returns "".
+    #[test]
+    fn zle_params_corpus_get_buffer_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        set_buffer("");
+        assert_eq!(get_buffer(), "");
+    }
 }

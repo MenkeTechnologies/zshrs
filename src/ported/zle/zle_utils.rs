@@ -2300,4 +2300,65 @@ mod findbol_findeol_tests {
             "flag bits must be disjoint for OR-composition"
         );
     }
+
+    // ─── zsh-corpus pins for zlelineasstring / stringaszleline ─────
+
+    /// `zlelineasstring([a,b,c], 3, 0)` returns "abc".
+    #[test]
+    fn zle_utils_corpus_zlelineasstring_basic() {
+        let _g = crate::test_util::global_state_lock();
+        let line: Vec<char> = vec!['a', 'b', 'c'];
+        assert_eq!(zlelineasstring(&line, 3, 0), "abc");
+    }
+
+    /// `zlelineasstring` honors ll param (truncates).
+    #[test]
+    fn zle_utils_corpus_zlelineasstring_ll_truncates() {
+        let _g = crate::test_util::global_state_lock();
+        let line: Vec<char> = vec!['a', 'b', 'c', 'd', 'e'];
+        assert_eq!(zlelineasstring(&line, 3, 0), "abc",
+            "ll=3 takes first 3 chars only");
+    }
+
+    /// `zlelineasstring` ll=0 → empty.
+    #[test]
+    fn zle_utils_corpus_zlelineasstring_zero_len_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let line: Vec<char> = vec!['a', 'b'];
+        assert_eq!(zlelineasstring(&line, 0, 0), "");
+    }
+
+    /// `zlelineasstring` empty slice → empty string.
+    #[test]
+    fn zle_utils_corpus_zlelineasstring_empty_slice() {
+        let _g = crate::test_util::global_state_lock();
+        let line: Vec<char> = vec![];
+        assert_eq!(zlelineasstring(&line, 0, 0), "");
+    }
+
+    /// `stringaszleline("hello")` returns Vec<char> matching ASCII.
+    #[test]
+    fn zle_utils_corpus_stringaszleline_ascii_passthrough() {
+        let _g = crate::test_util::global_state_lock();
+        let v = stringaszleline("hello");
+        let s: String = v.iter().collect();
+        assert_eq!(s, "hello");
+    }
+
+    /// `stringaszleline("")` returns empty Vec.
+    #[test]
+    fn zle_utils_corpus_stringaszleline_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(stringaszleline("").is_empty());
+    }
+
+    /// Round-trip: stringaszleline → zlelineasstring preserves ASCII.
+    #[test]
+    fn zle_utils_corpus_string_round_trip_ascii() {
+        let _g = crate::test_util::global_state_lock();
+        let input = "abc123";
+        let v = stringaszleline(input);
+        let s = zlelineasstring(&v, v.len(), 0);
+        assert_eq!(s, input);
+    }
 }

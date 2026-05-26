@@ -3605,4 +3605,69 @@ mod tests {
         let got: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(got, "3412");
     }
+
+    // ─── zsh-corpus pins for transpose_swap edge cases ─────────────
+
+    /// Single-char halves: "ab" with swap(0,1,2) → "ba".
+    #[test]
+    fn zle_misc_corpus_transpose_swap_single_chars() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        {
+            let mut z = ZLELINE.lock().unwrap();
+            *z = "ab".chars().collect();
+        }
+        ZLELL.store(2, SeqCst);
+        transpose_swap(0, 1, 2);
+        let got: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(got, "ba");
+    }
+
+    /// First half empty (start == middle): no-op.
+    #[test]
+    fn zle_misc_corpus_transpose_swap_empty_first_half() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        {
+            let mut z = ZLELINE.lock().unwrap();
+            *z = "abcd".chars().collect();
+        }
+        ZLELL.store(4, SeqCst);
+        transpose_swap(0, 0, 4);
+        let got: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(got, "abcd",
+            "empty first half = identity transform");
+    }
+
+    /// Second half empty (middle == end): no-op.
+    #[test]
+    fn zle_misc_corpus_transpose_swap_empty_second_half() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        {
+            let mut z = ZLELINE.lock().unwrap();
+            *z = "abcd".chars().collect();
+        }
+        ZLELL.store(4, SeqCst);
+        transpose_swap(0, 4, 4);
+        let got: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(got, "abcd",
+            "empty second half = identity transform");
+    }
+
+    /// Partial-buffer transpose: only middle bytes swapped, surrounds preserved.
+    #[test]
+    fn zle_misc_corpus_transpose_swap_partial_buffer() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        {
+            let mut z = ZLELINE.lock().unwrap();
+            *z = "XYabcdZW".chars().collect();
+        }
+        ZLELL.store(8, SeqCst);
+        transpose_swap(2, 4, 6);
+        let got: String = ZLELINE.lock().unwrap().iter().collect();
+        assert_eq!(got, "XYcdabZW",
+            "surrounding chars XY,ZW must be preserved");
+    }
 }

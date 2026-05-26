@@ -1184,4 +1184,85 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ─── zsh-corpus pins for zsh_inet_ntop / zsh_inet_pton ──────────
+
+    /// `zsh_inet_ntop(AF_INET, [127,0,0,1])` = "127.0.0.1".
+    #[test]
+    fn tcp_corpus_inet_ntop_loopback_v4() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zsh_inet_ntop(libc::AF_INET, &[127, 0, 0, 1]);
+        assert_eq!(r.as_deref(), Some("127.0.0.1"));
+    }
+
+    /// `zsh_inet_ntop(AF_INET, [0,0,0,0])` = "0.0.0.0".
+    #[test]
+    fn tcp_corpus_inet_ntop_any_v4() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zsh_inet_ntop(libc::AF_INET, &[0, 0, 0, 0]);
+        assert_eq!(r.as_deref(), Some("0.0.0.0"));
+    }
+
+    /// `zsh_inet_ntop` with short buffer returns None.
+    #[test]
+    fn tcp_corpus_inet_ntop_short_buffer_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zsh_inet_ntop(libc::AF_INET, &[1, 2]);
+        assert!(r.is_none());
+    }
+
+    /// `zsh_inet_ntop(99 unknown af)` returns None.
+    #[test]
+    fn tcp_corpus_inet_ntop_unknown_af_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zsh_inet_ntop(99, &[1, 2, 3, 4]);
+        assert!(r.is_none());
+    }
+
+    /// `zsh_inet_pton(AF_INET, "127.0.0.1")` parses to bytes [127,0,0,1].
+    #[test]
+    fn tcp_corpus_inet_pton_v4_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let mut dst = [0u8; 4];
+        let r = zsh_inet_pton(libc::AF_INET, "127.0.0.1", &mut dst);
+        assert_eq!(r, 1);
+        assert_eq!(dst, [127, 0, 0, 1]);
+    }
+
+    /// `zsh_inet_pton` on invalid input returns 0.
+    #[test]
+    fn tcp_corpus_inet_pton_invalid_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut dst = [0u8; 4];
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "not.an.ip", &mut dst), 0);
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "999.999.999.999", &mut dst), 0);
+    }
+
+    /// `zsh_inet_pton` on unknown af returns -1.
+    #[test]
+    fn tcp_corpus_inet_pton_unknown_af_returns_minus_one() {
+        let _g = crate::test_util::global_state_lock();
+        let mut dst = [0u8; 4];
+        assert_eq!(zsh_inet_pton(99, "127.0.0.1", &mut dst), -1);
+    }
+
+    /// `zsh_inet_pton` short dst buffer returns 0.
+    #[test]
+    fn tcp_corpus_inet_pton_short_dst_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut dst = [0u8; 2];
+        assert_eq!(zsh_inet_pton(libc::AF_INET, "127.0.0.1", &mut dst), 0);
+    }
+
+    /// IPv4 ntop/pton round-trip: known address survives.
+    #[test]
+    fn tcp_corpus_v4_ntop_pton_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let original = [192, 168, 1, 100];
+        let s = zsh_inet_ntop(libc::AF_INET, &original).unwrap();
+        let mut back = [0u8; 4];
+        let rc = zsh_inet_pton(libc::AF_INET, &s, &mut back);
+        assert_eq!(rc, 1);
+        assert_eq!(back, original);
+    }
 }

@@ -2717,4 +2717,47 @@ mod tests {
             );
         }
     }
+
+    // ─── zsh-corpus pins for newkeytab / openkeymap / selectkeymap ──
+
+    /// `newkeytab()` returns empty HashMap.
+    #[test]
+    fn zle_keymap_corpus_newkeytab_is_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let t = newkeytab();
+        assert!(t.is_empty());
+    }
+
+    /// `newkeymap(None, "myname")` returns an Arc.
+    #[test]
+    fn zle_keymap_corpus_newkeymap_returns_arc() {
+        let _g = crate::test_util::global_state_lock();
+        let km = newkeymap(None, "myname");
+        assert!(Arc::strong_count(&km) >= 1);
+    }
+
+    /// `openkeymap("never_was")` returns None.
+    #[test]
+    fn zle_keymap_corpus_openkeymap_unknown_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert!(openkeymap("zshrs_never_keymap_xyz").is_none());
+    }
+
+    /// `unlinkkeymap` on missing returns nonzero (error).
+    #[test]
+    fn zle_keymap_corpus_unlinkkeymap_missing_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_ne!(unlinkkeymap("never_keymap_xyz", 0), 0,
+            "unlinking nonexistent keymap = error");
+    }
+
+    /// `selectkeymap("never_was", 0)` returns nonzero.
+    #[test]
+    fn zle_keymap_corpus_selectkeymap_unknown_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        assert_ne!(selectkeymap("zshrs_never_keymap_xyz", 0), 0);
+    }
 }
