@@ -2374,6 +2374,16 @@ pub fn par_cond_2() -> i32 {
         condlex();
     }
     set_incond(incond() - 1);
+    // c:Src/parse.c:2598-2600 — `if (!n_testargs) dble = (s2 &&
+    // IS_DASH(*s2) && !s2[2]);` — RECOMPUTE dble based on s2 once
+    // it's been read, so `[[ A -X B ]]` is treated as a 2-arg cond
+    // `[ -X B ]` (par_cond_double) rather than a 3-arg triple. This
+    // is what routes `[[ "" -a "x" ]]` to par_cond_double("", "-a")
+    // → COND_ERROR "parse error: condition expected: ". Without
+    // this, the original `dble` from s1 stayed false, the parser
+    // grabbed s3 and built COND_MODI silently. parity bug #25.
+    let s2_chars: Vec<char> = s2.chars().collect();
+    let dble = !s2_chars.is_empty() && IS_DASH(s2_chars[0]) && s2_chars.len() == 2;
     if tok() == STRING_LEX && !dble {
         let s3 = tokstr().unwrap_or_default();
         condlex();
@@ -2406,7 +2416,21 @@ pub fn par_cond_double(a: &str, b: &str) -> i32 {
     // `\u{9b}z` (2 bytes). Walk by chars.
     let ac: Vec<char> = a.chars().collect();
     if ac.is_empty() || !IS_DASH(ac[0]) || ac.len() < 2 {
+        // c:Src/parse.c:2629 COND_ERROR macro expansion:
+        //   zwarn(...); herrflush(); errflag |= ERRFLAG_ERROR;
+        //   YYERROR(ecused) /* sets tok = LEXERR */
+        // The YYERROR portion is critical — without it the outer
+        // parser keeps walking the wordcode and execution proceeds
+        // (e.g. `[[ "" -a "x" ]] && echo m || echo n` runs the
+        // `|| echo n` branch). Setting LEXERR aborts the upper
+        // parse so the whole line is rejected, matching zsh's
+        // observable behavior of stdout="" on parse error.
         zerr(&format!("parse error: condition expected: {}", a));
+        errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR,
+            Ordering::SeqCst,
+        );
+        set_tok(LEXERR);
         return 1;
     }
     // c:2630 — `else if (!a[2] && strspn(a+1, "abcd...zhLONGS") == 1)`
@@ -8030,6 +8054,34 @@ fn parse_cond_primary() -> Option<ZshCond> {
     };
 
     skip_cond_separators();
+
+    // c:Src/parse.c:2601-2625 par_cond_2 — only the documented binary
+    // operators are accepted inside `[[ ... ]]`. zsh rejects ksh/bash
+    // forms `-a` (logical AND) and `-o` (logical OR) with a parse
+    // error ("condition expected") because they're not in the
+    // par_cond_2 binary-op set — zsh uses `&&` / `||` instead.
+    // Verified: `zsh -fc '[[ "" -a "x" ]]'` → exit 1, "parse error:
+    // condition expected: ...". Without this gate, zshrs silently
+    // built ZshCond::Binary("", "-a", "x") and ran an unknown-op
+    // path that always evaluated false.
+    // c:Src/parse.c:2601-2625 par_cond_2 — `-a` / `-o` n-ary chain
+    // operators are not valid binary operators inside `[[ ... ]]`
+    // (zsh uses `&&` / `||` instead). Match both the ASCII `-a`/
+    // `-o` form and the tokenized `Dash+a`/`Dash+o` form that the
+    // lexer emits inside cond bodies (Dash = \u{9b}, Src/zsh.h:182).
+    let op_chars: Vec<char> = op.chars().collect();
+    let is_dash_a_or_o = op_chars.len() == 2
+        && IS_DASH(op_chars[0])
+        && (op_chars[1] == 'a' || op_chars[1] == 'o');
+    if is_dash_a_or_o {
+        crate::ported::utils::zerr(&format!("parse error: condition expected: {}", s1));
+        crate::ported::utils::errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        set_tok(LEXERR);
+        return None;
+    }
 
     let s2 = match tok() {
         STRING_LEX => {

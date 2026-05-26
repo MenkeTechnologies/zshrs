@@ -6829,38 +6829,61 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         result.push('\'');
         result
     } else if quote_type == QT_SINGLE_OPTIONAL {
-        // Only add quotes where necessary (lines 6314-6363)
+        // c:Src/utils.c:6314-6385 QT_SINGLE_OPTIONAL — minimum
+        // quoting. Walks the string with two states:
+        //   quotesub=1 — not currently inside a quote span. Bare
+        //     apostrophes get `\'` (backslash form). Any OTHER
+        //     special char triggers back-filling: insert `'` at
+        //     `quotestart` (start of unquoted prefix), shifting
+        //     subsequent chars right, then push char, transition
+        //     to quotesub=2.
+        //   quotesub=2 — currently inside a `'…'` span. Bare
+        //     apostrophes break the span: push `'\\'`, transition
+        //     back to quotesub=1 with quotestart=position-after.
+        //     Other specials append in-place.
+        // End: if quotesub=2, close with `'`.
+        // For "hello world" this yields `'hello world'` (back-
+        // filled at start). For "it's" it yields `it\'s` (no quote
+        // span ever opens). The naive per-char approach without
+        // back-filling produced `hello' 'world` — parity bug.
         let needs_quoting = s.chars().any(ispecial);
         if !needs_quoting {
             return s.to_string();
         }
-        let mut result = String::with_capacity(s.len() + 4);
-        let mut in_quotes = false;
+        let mut result: Vec<char> = Vec::with_capacity(s.len() + 4);
+        let mut quotestart: usize = 0; // index in `result` where the next `'` would go
+        let mut quotesub: u8 = 1; // 1 = not quoting, 2 = inside `'…'`
         for c in s.chars() {
             if c == '\'' {
-                if in_quotes {
+                if quotesub == 2 {
+                    // close current quote span, then `\'`, then
+                    // mark that we may need to reopen on next special
                     result.push('\'');
-                    in_quotes = false;
+                    result.push('\\');
+                    result.push('\'');
+                    quotesub = 1;
+                    quotestart = result.len();
+                } else {
+                    result.push('\\');
+                    result.push('\'');
+                    quotestart = result.len();
                 }
-                result.push_str("\\'");
             } else if ispecial(c) {
-                if !in_quotes {
-                    result.push('\'');
-                    in_quotes = true;
+                if quotesub == 1 {
+                    // Back-fill: insert `'` at quotestart, shifting
+                    // everything after right by 1.
+                    result.insert(quotestart, '\'');
+                    quotesub = 2;
                 }
                 result.push(c);
             } else {
-                if in_quotes {
-                    result.push('\'');
-                    in_quotes = false;
-                }
                 result.push(c);
             }
         }
-        if in_quotes {
+        if quotesub == 2 {
             result.push('\'');
         }
-        result
+        result.into_iter().collect()
     } else if quote_type == QT_DOUBLE {
         // Double quote: "string" (lines 6272-6280, 6311-6312)
         let mut result = String::with_capacity(s.len() + 4);

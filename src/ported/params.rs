@@ -9405,43 +9405,19 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
                 .to_string();
             pparams_lock().lock().ok().map(|p| p.join(&sep))
         }
-        // $- : current option-letter set. zsh emits baseline "569X"
-        // prefix (internal letters always on) + user-toggled flags.
-        "-" => {
-            let mut letters = String::from("569X");
-            let opt = |n: &str| opt_state_get(n).unwrap_or(false);
-            if opt("errexit") {
-                letters.push('e');
-            }
-            if !opt("rcs") {
-                letters.push('f');
-            }
-            if opt("login") {
-                letters.push('l');
-            }
-            if opt("nounset") {
-                letters.push('u');
-            }
-            if opt("xtrace") {
-                letters.push('x');
-            }
-            if opt("verbose") {
-                letters.push('v');
-            }
-            // c:Src/params.c — `set -n` toggles \`exec\` OFF (default ON).
-            // The previous Rust port called \`opt(\"noexec\")\` which is
-            // not a real option name in zsh; the lookup always returned
-            // false, so \`$-\` never included 'n' even when \`set -n\` was
-            // active. Read the canonical \`exec\` option and push 'n'
-            // when UNSET.
-            if !opt("exec") {
-                letters.push('n');
-            }
-            if opt("hashall") {
-                letters.push('h');
-            }
-            Some(letters)
-        }
+        // $- : current option-letter set.
+        // c:Src/params.c:3262 (IPDEF) → dashparamgetfn in options.c:890.
+        // Canonical C body walks `zshletters[FIRST_OPT..=LAST_OPT]`
+        // (c:292-368) emitting each letter whose mapped option is
+        // active (XOR-ing with the c:295 negation prefix `-OPT`).
+        // The previous Rust port hand-rolled a hardcoded subset
+        // ("569X" + 8 ad-hoc letters) that diverged from C's table:
+        // letter 'h' wrongly mapped to `hashall` (c:271 ALIAS for
+        // HASHCMDS) instead of HISTIGNOREDUPS (c:349). Parity bug
+        // #32 — `$-` last char differed (zsh `f`, zshrs `fh`).
+        // Route through `dashgetfn` (options.rs:835) which is the
+        // direct port of `Src/options.c:890`.
+        "-" => Some(crate::ported::options::dashgetfn()),
         // Arrays — joined with space for scalar context.
         "pipestatus" => {
             let arr = pipestatgetfn();

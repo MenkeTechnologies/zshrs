@@ -1340,16 +1340,52 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
         BADCSHGLOB.fetch_or(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    // c:1846-1848 — NOMATCH path: when no matches and !nountok,
-    // re-untokenize and insert the original placeholder back.
+    // c:1872-1888 — `Deal with failures to match depending on options`.
+    // C body verbatim (c:1872-1888):
+    //   if (matchct)
+    //       badcshglob |= 2;
+    //   else if (!gf_nullglob) {
+    //       if (isset(CSHNULLGLOB)) {
+    //           badcshglob |= 1;
+    //       } else if (isset(NOMATCH)) {
+    //           zerr("no matches found: %s", ostr);
+    //           zfree(matchbuf, 0);
+    //           restore_globstate(saved);
+    //           return;
+    //       } else {
+    //           /* treat as an ordinary string */
+    //           untokenize(matchptr->name = dupstring(ostr));
+    //           matchptr++;
+    //           matchct = 1;
+    //       }
+    //   }
+    // gf_nullglob (c:212) is the per-glob nullglob bit toggled by
+    // qualifier `N`; here we approximate with the global option.
+    // Parity bug #13: previously this Rust arm fell through to the
+    // ordinary-literal path (c:1882-1887) unconditionally, making
+    // `echo /never/*` print the literal glob instead of erroring.
     if matches.is_empty() {
+        let nullglob = isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
+        let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
+        if !nullglob && !csh_nullglob && isset(crate::ported::zsh_h::NOMATCH) {
+            // c:1876-1880 — `else if (isset(NOMATCH)) { zerr; return; }`
+            crate::ported::utils::zerr(&format!(
+                "no matches found: {}",
+                ostr
+            ));
+            // c:1878 — `zfree(matchbuf, 0);` (Rust drop handles it)
+            // c:1879 — `restore_globstate(saved);` (handled by guard)
+            return; // c:1880
+        }
+        // c:1882-1887 — `treat as an ordinary string`. The matchptr++
+        // bookkeeping in C maps to our `list.insert`.
         let restored = if nountok == 0 {
-            crate::ported::lex::untokenize(&ostr)                            // c:1847
+            crate::ported::lex::untokenize(&ostr)                            // c:1884 untokenize(matchptr->name = dupstring(ostr))
         } else {
             ostr.clone()
         };
         let pos = if node > list.len() { list.len() } else { node };
-        list.insert(pos, restored);                                          // c:1848 `insertlinknode(list, node, ostr)`
+        list.insert(pos, restored);                                          // c:1885 matchptr++, c:1886 matchct = 1
         return;
     }
 
@@ -1545,7 +1581,57 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                         let content: String = chars[start + 1..i].iter().collect();
                         if let Some(dp) = dotdot_pos {
                             if comma_positions.is_empty() {
-                                return expand_range(&prefix, &content, dp, &suffix);
+                                if let Some(parts) = expand_range(&prefix, &content, dp, &suffix) {
+                                    return Some(parts);
+                                }
+                                // c:Src/glob.c:2476-2506 — when range
+                                // parsing fails INSIDE C's xpandbraces
+                                // (err != 0 set at c:2355/2360/2369/2371),
+                                // the function falls through to the
+                                // normal-comma-expansion path. With no
+                                // commas, that loop produces a single
+                                // `prefix + content + suffix` — i.e.
+                                // strips the outermost braces only.
+                                // BUT: C only reaches xpandbraces when
+                                // `hasbraces()` (c:2042) returned 1,
+                                // and hasbraces requires DIGITS in the
+                                // range endpoints (c:2076-2096) for the
+                                // numeric form. Patterns like
+                                // `{hello..world}` fail hasbraces and
+                                // never enter xpandbraces — they stay
+                                // as literal `{hello..world}`.
+                                //
+                                // Rust's hasbraces is more permissive
+                                // (accepts any `..` inside `{}`), so we
+                                // gate the strip-braces fallback on the
+                                // SAME shape C uses: at least one digit
+                                // must appear in the left or right
+                                // endpoint, mirroring c:2085 `idigit
+                                // (lbr[1]) || idigit(str[-1])`.
+                                let left = &content[..dp];
+                                let right = &content[dp + 2..];
+                                let strip_end = right
+                                    .find("..")
+                                    .map(|p| &right[..p])
+                                    .unwrap_or(right);
+                                let has_digit = left
+                                    .chars()
+                                    .any(|c| c.is_ascii_digit())
+                                    || strip_end
+                                        .chars()
+                                        .any(|c| c.is_ascii_digit());
+                                if has_digit {
+                                    // c:2495-2498 — strip braces.
+                                    return Some(vec![format!(
+                                        "{}{}{}",
+                                        prefix, content, suffix
+                                    )]);
+                                }
+                                // Non-digit `..` content (e.g.
+                                // `{hello..world}`) — C wouldn't have
+                                // entered xpandbraces. Preserve the
+                                // literal pattern intact.
+                                return None;
                             }
                         }
                         if !comma_positions.is_empty() {
@@ -3024,20 +3110,17 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         })
         .collect();
 
-    // Handle no matches — honor per-glob `(N)` nullglob qualifier too,
-    // not just the global NULLGLOB option. Direct port of zsh's
-    // c:1567-1569 `gf_nullglob` carrier: when the qualifier set
-    // includes `(N)`, the no-match path returns an empty result like
-    // `setopt nullglob` does globally.
-    let nullglob_per_qual = state
-        .qualifiers
-        .as_ref()
-        .map(|q| q.nullglob)
-        .unwrap_or(false);
-    if results.is_empty() && !glob_isset(NULLGLOB) && !nullglob_per_qual {
-        results.push(pattern.to_string());
-    }
-
+    // c:Src/glob.c:1872-1888 — no-match path. Return Vec::new() so
+    // the caller (vm_helper.rs::expand_glob) drives the
+    // NULLGLOB / NOMATCH / literal-fallback policy. Previously
+    // this pushed `pattern.to_string()` on no-match, which made
+    // `expand_glob` see a non-empty result and skip the NOMATCH
+    // check entirely. zsh's `setopt nomatch` is on by default, so
+    // `echo /never_real/*` should emit "no matches found" and
+    // exit 1 — not silently print the literal. Parity bug #13
+    // recurrence. Per-glob `(N)` qualifier (nullglob_per_qual)
+    // and global NULLGLOB are now consulted in expand_glob too.
+    let _ = state.qualifiers.as_ref().map(|q| q.nullglob);
     results
 }
 
@@ -4243,17 +4326,35 @@ fn expand_range(
 
     // Check for second `..` for `{N..M..S}` step form. Step may be
     // signed: negative-step REVERSES the natural direction sequence
-    // per zsh's brace expansion (Src/lex.c::brace_expand_range
-    // recursive iteration with sign tracking). Examples:
+    // per zsh's brace expansion (Src/glob.c::xpandbraces recursive
+    // iteration with sign tracking). Examples:
     //   {1..32..3}   →  1,4,7,…,31 (natural ascending)
     //   {1..32..-3}  → 31,28,…,1   (same set, reversed)
     //   {32..1..3}   → 32,29,…,2   (natural descending)
     //   {32..1..-3}  →  2,5,…,32   (same set, reversed)
+    //
+    // c:Src/glob.c:2365-2369 — `if (dotdot == 2 && *p == '.' &&`
+    //                         `    p[1] == '.') {`
+    //                         `    rincr = zstrtol(p+2, &p, 10);`
+    //                         `    wid3 = p - dots2 - 2;`
+    //                         `    if (p != str2 || !rincr)`
+    //                         `        err++;`
+    // The `!rincr` test (c:2368) rejects a zero step: when err > 0,
+    // the C code falls past the c:2374 `if (!err)` block, so the
+    // brace expansion is abandoned and the literal pattern is
+    // preserved. Parity bug #15: previously the Rust port silently
+    // clamped step to 1 via `.max(1)`, producing `1 2 3 4 5` for
+    // `{1..5..0}` instead of zsh's literal `1..5..0`.
     let (right, incr_abs, incr_sign_negative, step_text) =
         if let Some(pos) = content[right_start..].find("..") {
             let r = &content[right_start..right_start + pos];
             let s_text = &content[right_start + pos + 2..];
             let raw: i64 = s_text.parse().unwrap_or(1);
+            if raw == 0 {
+                // c:2368 — `!rincr` → err++ → no expansion. Return
+                // None so xpandbraces falls back to literal.
+                return None;
+            }
             (r, raw.unsigned_abs(), raw < 0, s_text)
         } else {
             (&content[right_start..], 1u64, false, "")
@@ -4816,21 +4917,21 @@ pub fn glob_path(pattern: &str) -> Vec<String> {
     let mut state = globdata::new();
     let matches = globdata_glob(&mut state, pattern);
     if matches.is_empty() {
-        // c:1567-1569 — per-glob `(N)` qualifier acts like setopt
-        // nullglob for THIS expression. globdata_glob's inner
-        // expand_glob parses the qualifier into state.qualifiers,
-        // but that state doesn't reach back here; re-parse the
-        // qualifier-set off the pattern to make the no-match
-        // decision. Mirrors the C path where `gf_nullglob` lives
-        // in the per-call globdata struct and the no-match arm
-        // at c:1846-1848 consults it.
-        let nullglob_per_qual = parse_qualifiers(pattern)
-            .1
-            .map(|q| q.nullglob)
-            .unwrap_or(false);
-        if !null_glob && !nullglob_per_qual {
-            return vec![pattern.to_string()];
-        }
+        // c:Src/glob.c:1872-1888 — `Deal with failures to match`.
+        // Returning empty Vec on no-match is the canonical
+        // contract; the caller (vm_helper.rs::expand_glob)
+        // decides NOMATCH vs nullglob vs literal-fallback. Per-
+        // qualifier (N) is parsed here for the legacy callers
+        // that still expect glob_path to honor it directly, but
+        // even without it we return Vec::new() so the NOMATCH
+        // path in expand_glob fires. Previously this returned
+        // `vec![pattern.to_string()]` (the literal pattern) on
+        // no-match, which made expand_glob's `if !expanded.
+        // is_empty()` shortcut bypass the NOMATCH check entirely
+        // — `echo /never/*` printed the literal pattern with
+        // exit 0 instead of raising "no matches found". Parity
+        // bug.
+        let _ = parse_qualifiers(pattern); // pre-parse for side-effects
         return Vec::new();
     }
     matches

@@ -203,6 +203,25 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     if redir_failed {
         return 1;
     }
+    // c:Src/glob.c:1876-1880 NOMATCH path — when expand_glob() failed
+    // on a no-match glob, zsh aborts the simple command after zerr()
+    // printed "no matches found". In C, this works because zerr()
+    // sets ERRFLAG_ERROR (Src/utils.c) and execcmd_exec()
+    // (Src/exec.c:3050+) checks errflag before invoking the builtin
+    // table. Rust's builtin dispatch doesn't sit on the same errflag
+    // gate, so we explicitly consume the per-command glob-fail cell
+    // and short-circuit with status 1. Mirrors the external-path
+    // guard at host_exec_external (line 5167). Without this:
+    // `echo /never/*` would print empty (silently rolled back to ""
+    // by the empty glob expansion). Parity bug #13.
+    let glob_failed = with_executor(|exec| {
+        let f = exec.current_command_glob_failed.get();
+        exec.current_command_glob_failed.set(false); // c:1879 cleanup
+        f
+    });
+    if glob_failed {
+        return 1; // c:1880 — command aborted, status 1
+    }
     if let Some(status) = try_user_fn_override(name, &args) {
         // c:Src/jobs.c:1748 waitonejob — canonical single-command
         // pipestats update via the no-procs else-branch.
@@ -1673,6 +1692,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 flags = rest.to_string();
             }
         }
+        // c:Src/subst.c:1942 — `${(flags)"literal"}` is a parse
+        // error in zsh ("bad substitution"). The flag block requires
+        // a parameter name or subexp form as operand; literal-quoted
+        // operands fail fetchvalue's first-char check. The compile
+        // fast path tags literal-operand reconstructions with `\u{01}`
+        // prefix (compile_zsh.rs:2290), so detect that here and emit
+        // the canonical error instead of silently expanding to the
+        // empty string. Verified: `zsh -fc 'echo ${(Q)"abc"}'` →
+        // exit 1 + "bad substitution".
+        if name.starts_with('\u{01}') {
+            crate::ported::utils::zerr("bad substitution");
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(1));
+            return Value::Array(Vec::new());
+        }
         let body = format!("${{({}){}}}", flags, name);
         paramsubst_to_value(&body)
     });
@@ -1749,11 +1786,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_BRACE_EXPAND, |vm, _argc| {
-        let s = vm.pop().to_str();
-        // Direct call to the canonical brace expander (port of
-        // Src/glob.c::xpandbraces at glob.rs:1678).
+        // c:Src/glob.c::xpandbraces — brace expansion runs per word.
+        // When the upstream produced an array (e.g. `${a:e}` splat),
+        // expand braces on each element separately so the splat
+        // survives. `pop().to_str()` would join with space and lose
+        // the array shape. Parity bug #28 cousin: the BRACE_EXPAND
+        // emit always fires for any word containing `{` (including
+        // `${...}` param-expansion braces), so its collapse hit even
+        // pure-paramsubst args.
+        let raw = vm.pop();
         let brace_ccl = opt_state_get("braceccl").unwrap_or(false);
-        nodes_to_value(crate::ported::glob::xpandbraces(&s, brace_ccl))
+        let inputs: Vec<String> = match raw {
+            Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
+            other => vec![other.to_str()],
+        };
+        let mut out: Vec<String> = Vec::with_capacity(inputs.len());
+        for s in inputs {
+            for w in crate::ported::glob::xpandbraces(&s, brace_ccl) {
+                out.push(w);
+            }
+        }
+        nodes_to_value(out)
     });
 
     // `*(qual)` glob qualifier filter. Stack: [pattern, qualifier].
@@ -1774,19 +1827,37 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Pop a scalar pattern, run expand_glob, push Value::Array. Used
     // by the segment-concat compile path for `$D/*`-style words.
     vm.register_builtin(BUILTIN_GLOB_EXPAND, |vm, _argc| {
-        let pattern = vm.pop().to_str();
-        let matches = with_executor(|exec| exec.expand_glob(&pattern));
-        if matches.is_empty() {
-            // expand_glob handles NOMATCH internally; if it returns
-            // empty here, nullglob was on. Yield empty array.
+        // c:Src/glob.c:1872 — `zglob` runs per-word in the argv
+        // pipeline. When the upstream EXPAND_TEXT returned an array
+        // (e.g. `${a:e}` splat → ["txt","md"]), we must glob each
+        // element separately, not collapse to a sepjoin'd scalar.
+        // Without this, `print -l ${a:e}` saw the array stringified
+        // by `pop().to_str()` and emitted one joined arg.
+        let raw = vm.pop();
+        let patterns: Vec<String> = match raw {
+            Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
+            other => vec![other.to_str()],
+        };
+        let mut out: Vec<String> = Vec::with_capacity(patterns.len());
+        for pattern in &patterns {
+            let matches = with_executor(|exec| exec.expand_glob(pattern));
+            if matches.is_empty() {
+                // c:1872 nullglob — drop this word, don't emit a hole
+                continue;
+            }
+            for m in matches {
+                out.push(m);
+            }
+        }
+        if out.is_empty() {
             return Value::Array(Vec::new());
         }
-        if matches.len() == 1 && matches[0] == pattern {
+        if patterns.len() == 1 && out.len() == 1 && out[0] == patterns[0] {
             // No real matches; expand_glob returned the literal. Pass
             // back as scalar so downstream ops don't re-flatten.
-            return Value::str(pattern);
+            return Value::str(out.into_iter().next().unwrap());
         }
-        Value::Array(matches.into_iter().map(Value::str).collect())
+        Value::Array(out.into_iter().map(Value::str).collect())
     });
 
     // `break`/`continue` from a sub-VM body. The compile path emits
@@ -3390,7 +3461,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if c == '\\' {
                         match chars.peek() {
                             Some('$') | Some('`') | Some('"') | Some('\\') => {
-                                prepped.push('\x00');
+                                // c:Src/zsh.h:195 — Bnull (\u{9f}) is
+                                // the canonical "escape next char as
+                                // literal" marker. stringsubst at
+                                // subst.rs:643 already strips Bnull
+                                // and keeps the next char verbatim;
+                                // emitting Bnull here routes through
+                                // that path. Previously emitted `\x00`
+                                // which stringsubst silently ignored,
+                                // letting `\$var` re-trigger param
+                                // expansion. Parity bug.
+                                prepped.push('\u{9f}');
                                 prepped.push(chars.next().unwrap());
                             }
                             _ => prepped.push(c),
@@ -3506,7 +3587,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if c == '\\' {
                         match it.peek() {
                             Some('$') | Some('`') | Some('"') | Some('\'') | Some('\\') => {
-                                prepped.push('\x00');
+                                // c:Src/zsh.h:195 — emit Bnull
+                                // (\u{9f}) so stringsubst's existing
+                                // Bnull-stripper (subst.rs:643) keeps
+                                // the escaped char as a literal. The
+                                // previous `\x00` marker was silently
+                                // ignored, letting `\$var` re-trigger
+                                // param expansion. Parity bug.
+                                prepped.push('\u{9f}');
                                 prepped.push(it.next().unwrap());
                             }
                             // Don't preprocess `\{` / `\}` here — the
@@ -3521,8 +3609,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         prepped.push(c);
                     }
                 }
-                let expanded = crate::ported::subst::singsub(&prepped);
-                let brace_expanded = vec![expanded.to_string()];
+                // c:Src/subst.c:544+ — `multsub(&prepped, 0)` is the
+                // unquoted-argv equivalent of zsh's `prefork(list,
+                // 0, NULL)` for a single-element list. Returns the
+                // post-expansion node list (Vec<String>) so array-
+                // shape results (e.g. `${a:e}`, `${a[@]}`,
+                // `${(s::)str}`) splat into multiple argv words.
+                // singsub() collapses to one string and discards the
+                // splat — parity bug #28 (whole-array modifier).
+                let (_first, nodes, _ms_ws, _ret) =
+                    crate::ported::subst::multsub(&prepped, 0);
+                let brace_expanded: Vec<String> = if nodes.is_empty() {
+                    vec![String::new()]
+                } else {
+                    nodes
+                };
                 // zsh stores the option as `glob` (default ON);
                 // `setopt noglob` writes `glob=false`. Honor either
                 // form so the dispatcher behaves the same as zsh.

@@ -1982,6 +1982,41 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: bare `$=NAME` — equivalent to `${=NAME}` (forced
+        // IFS word-split on the value, regardless of SH_WORD_SPLIT).
+        // Direct port of subst.c:2554-2566 `case '='` (spbreak=2) via
+        // the unbraced-shorthand path. Without this, `$=name` was
+        // emitted as literal text. Parity bug.
+        if !has_bnull && untoked.len() >= 3 && untoked.starts_with("$=") {
+            let rest = &untoked[2..];
+            // `$==NAME` toggles word-split OFF — emit bare GET_VAR.
+            let (do_split, name_part) = if let Some(after) = rest.strip_prefix('=') {
+                (false, after)
+            } else {
+                (true, rest)
+            };
+            let valid = !name_part.is_empty()
+                && name_part
+                    .chars()
+                    .next()
+                    .map(|c| c == '_' || c.is_ascii_alphabetic())
+                    .unwrap_or(false)
+                && name_part
+                    .chars()
+                    .all(|c| c == '_' || c.is_ascii_alphanumeric());
+            if valid {
+                let idx = self.builder.add_constant(Value::str(name_part));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+                if do_split {
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
+                }
+                return;
+            }
+        }
+
         // Fast path: bare `$~NAME` — equivalent to `${~NAME}` (forced
         // glob substitution on the value). zsh: `str=*.txt; print
         // $~str` expands to matching filenames just like the braced

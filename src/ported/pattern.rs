@@ -513,10 +513,22 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // emitting an opcode, hoist leading `(#...)` flag specifiers into
     // patprog.globflags so the matcher applies them globally for the
     // whole match. Full mid-pattern P_GFLAGS opcode still deferred.
-    // Start with GF_MULTIBYTE by default (mirrors C patcompstart at
-    // c:525 when MULTIBYTE_SUPPORT is defined). (#U) clears it.
-    let mut hoisted_globflags: i32 = GF_MULTIBYTE;
-    loop {
+    // c:525 — `patglobflags = isset(MULTIBYTE) ? GF_MULTIBYTE : 0`.
+    // (#U) inside the spec clears the bit per c:1116.
+    //
+    // c:953-957 — C gates the `(#...)` recognition on
+    //   `*patparse == zpc_special[ZPC_INPAR] &&`
+    //   `patparse[1] == zpc_special[ZPC_HASH]`.
+    // When EXTENDEDGLOB is off, patcompcharsset (c:480-483) masks
+    // ZPC_HASH to the Marker byte (c:476). The second-byte equality
+    // therefore fails and the parser falls through to "treat `(` as
+    // a literal group" (c:1020+). Previously this Rust hoist loop
+    // compared the raw byte `b'#'`, allowing `(#s)` / `(#e)` /
+    // `(#i)` to fire even without EXTENDEDGLOB (parity bugs #18/#19
+    // vs real zsh).
+    let mut hoisted_globflags: i32 = GF_MULTIBYTE; // c:525
+    let hash_char_pre = zpc_special.lock().unwrap()[ZPC_HASH as usize]; // c:957
+    while hash_char_pre == b'#' {
         let off = patparse_off.load(Ordering::Relaxed);
         let p = patparse.lock().unwrap();
         if off + 1 >= p.len() || &p.as_bytes()[off..off + 2] != b"(#" {
@@ -732,11 +744,25 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
             }
             // Malformed `(#c...)` — fall through to generic flag handler.
         }
-        // Mid-pattern `(#...)` glob flag specifier — emit P_GFLAGS
-        // opcode that mutates the matcher's running glob_flags var.
-        // Port of pattern.c patcompswitch's inline (#...) handling
-        // around c:850-900 (patgetglobflags integration).
-        if off + 1 < bytes.len() && bytes[off] == b'(' && bytes[off + 1] == b'#' {
+        // c:953-984 — mid-pattern `(#...)` glob-flag specifier. Emits
+        // P_GFLAGS in C to switch GF_IGNCASE / GF_LCMATCHUC /
+        // GF_MULTIBYTE / etc. mid-match. C body:
+        //   `if ((*patparse == zpc_special[ZPC_INPAR] &&`
+        //   `     patparse[1] == zpc_special[ZPC_HASH]) || ...)`
+        //   `    if (!patgetglobflags(&patparse, &assert, &ignore))`
+        //   `        return 0;`
+        // Both bytes must equal their zpc_special slots, which
+        // patcompcharsset (c:480-483) masks to Marker when
+        // EXTENDEDGLOB is off (c:476). Previously this Rust arm
+        // compared the raw byte `b'#'`, allowing `(#s)` / `(#e)` /
+        // `(#i)` to fire even without EXTENDEDGLOB. Parity bugs
+        // #18/#19 vs real zsh.
+        let hash_char = zpc_special.lock().unwrap()[ZPC_HASH as usize]; // c:957
+        if hash_char == b'#'
+            && off + 1 < bytes.len()
+            && bytes[off] == b'('
+            && bytes[off + 1] == b'#'
+        {
             let rest = std::str::from_utf8(&bytes[off..]).unwrap_or("").to_string();
             if let Some((bits, assertp, consumed)) = patgetglobflags(&rest) {
                 patparse_off.fetch_add(consumed, Ordering::Relaxed);
@@ -1455,7 +1481,20 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
     // its negation compiled by patcompnot inside the atom.
     let q_off = patparse_off.load(Ordering::Relaxed);
     let parse2 = patparse.lock().unwrap();
-    let has_hash = q_off < parse2.len() && parse2.as_bytes()[q_off] == b'#';
+    // c:1611-1620 — `if (*patparse == zpc_special[ZPC_HASH])` quantifier
+    // dispatch. The C source reads `zpc_special[ZPC_HASH]`, which
+    // patcompcharsset (c:480-483) sets to `'#'` only when
+    // EXTENDEDGLOB is on, else to the Marker byte (c:476). A literal
+    // '#' in the source pattern therefore does NOT trigger the
+    // quantifier path when EXTENDEDGLOB is off — the comparison
+    // `*patparse == Marker` fails. Previously this Rust check used
+    // a bare `b'#'` comparison instead of consulting zpc_special,
+    // making `(x)#` and `[a-z]##[0-9]##` match even with
+    // extendedglob OFF (parity bugs #5/#6 vs real zsh).
+    let hash_char = zpc_special.lock().unwrap()[ZPC_HASH as usize]; // c:1612
+    let has_hash = hash_char == b'#'
+        && q_off < parse2.len()
+        && parse2.as_bytes()[q_off] == b'#'; // c:1611-1614
     drop(parse2);
     if !has_hash && (kshchar == 0 || kshchar == b'@' || kshchar == b'!') {
         return atom; // c:1616-1617
@@ -2804,6 +2843,31 @@ fn approx_match_exactly(
     )
 }
 
+thread_local! {
+    /// Rust-only backstop counter (no C analogue) — gates `patmatch`
+    /// recursion at PATMATCH_MAX_DEPTH so misbehaving closures convert
+    /// would-be stack overflows into clean None returns. Documented in
+    /// `fake_fn_allowlist.txt` under the patmatch arc.
+    static PATMATCH_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Maximum patmatch recursion depth — Rust-only backstop, no C
+/// analogue. The C source's primary protection against
+/// closure-of-closure infinite recursion is the P_WBRANCH "must
+/// match at least 1 char" semantics described at pattern.c:108-144:
+///   `P_WBRANCH:  This works like a branch and is used in complex`
+///   `closures, but the match must be at least 1 char in length to`
+///   `avoid infinite loops.`
+/// (Implemented in C's patmatch() switch at c:3044, `case P_WBRANCH`,
+/// via the `errsfound`/`forceerrs` accounting at c:1059+.) The Rust
+/// port's P_WBRANCH arm has gaps in that propagation, so we keep
+/// this depth guard as a safety net to satisfy parity test
+/// `parity_closure_of_closure_overflow`. 512 is well above any
+/// legitimate pattern depth (zsh's Misc/globtests tops out around
+/// 30) and well below where macOS arm64's default 8 MB stack would
+/// overflow.
+const PATMATCH_MAX_DEPTH: u32 = 512;
+
 fn patmatch(
     code: &[u8],
     prog_off: usize,
@@ -2813,6 +2877,25 @@ fn patmatch(
     glob_flags: i32,
 ) -> Option<usize> {
     // c:2694
+    // Depth-guard: convert what would be a stack overflow into a
+    // clean None return (= no match). See PATMATCH_MAX_DEPTH doc.
+    let d = PATMATCH_DEPTH.with(|c| {
+        let cur = c.get();
+        c.set(cur + 1);
+        cur + 1
+    });
+    if d > PATMATCH_MAX_DEPTH {
+        PATMATCH_DEPTH.with(|c| c.set(c.get() - 1));
+        return None;
+    }
+    struct DepthGuard;
+    impl Drop for DepthGuard {
+        fn drop(&mut self) {
+            PATMATCH_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
+        }
+    }
+    let _depth_guard = DepthGuard;
+
     let mut scan = prog_off;
     let mut s_off = string_off;
     // Locally-mutable copy of glob_flags so mid-pattern P_GFLAGS can
@@ -3182,8 +3265,28 @@ fn patmatch(
                     if let Some(end) =
                         patmatch(code, operand, string, s_off, &mut sub_state, glob_flags)
                     {
-                        *state = sub_state;
-                        return Some(end);
+                        // c:108-144 (pattern.c header doc on P_WBRANCH):
+                        //   "P_WBRANCH:  This works like a branch and is
+                        //    used in complex closures, but the match must
+                        //    be at least 1 char in length to avoid
+                        //    infinite loops.  The test for length is
+                        //    done via the next pointer in the WBRANCH
+                        //    test in patmatch()."
+                        // C enforces this via the `errsfound`/`forceerrs`
+                        // accounting at c:1059+ inside patcompbranch.
+                        // The Rust walker checks end > s_off directly:
+                        // if the body consumed nothing, reject this
+                        // alternative and fall through to the next.
+                        // Without this guard, `(fo#)#` against any input
+                        // stack-overflows because the inner body (`fo#`)
+                        // can match the empty string repeatedly.
+                        if br_op == P_WBRANCH && end == s_off {
+                            // c:108 "at least 1 char" — fall through to
+                            // try the next alternative.
+                        } else {
+                            *state = sub_state;
+                            return Some(end);
+                        }
                     }
                     if br_next == 0 {
                         return None;
@@ -3849,19 +3952,26 @@ mod tests {
     #[test]
     fn hash_zero_or_more() {
         let _g = crate::test_util::global_state_lock();
+        // `#`/`##` quantifiers require EXTENDEDGLOB per zsh.
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("a#");
         assert!(pattry(&prog, ""));
         assert!(pattry(&prog, "a"));
         assert!(pattry(&prog, "aaa"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     #[test]
     fn double_hash_one_or_more() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("a##");
         assert!(!pattry(&prog, ""));
         assert!(pattry(&prog, "a"));
         assert!(pattry(&prog, "aaa"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     #[test]
@@ -4072,24 +4182,30 @@ mod tests {
         assert!(!pattry(&prog, "abc"));
     }
 
-    /// `(foo)#` — zero-or-more group repetition.
+    /// `(foo)#` — zero-or-more group repetition (extendedglob).
     #[test]
     fn group_with_hash_quantifier() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("(foo)#");
         assert!(pattry(&prog, ""));
         assert!(pattry(&prog, "foo"));
         assert!(pattry(&prog, "foofoofoo"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
-    /// `(a|b)##` — one-or-more group with alternation.
+    /// `(a|b)##` — one-or-more group with alternation (extendedglob).
     #[test]
     fn group_alt_with_double_hash() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("(a|b)##");
         assert!(!pattry(&prog, ""));
         assert!(pattry(&prog, "a"));
         assert!(pattry(&prog, "abab"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     /// Mixed numeric range and literal: `v<1-99>`.
@@ -4114,15 +4230,18 @@ mod tests {
         assert!(!pattry(&prog, "foo.txx"));
     }
 
-    /// Bracket with POSIX class.
+    /// Bracket with POSIX class (extendedglob for `##`).
     #[test]
     fn posix_alpha_class() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("[[:alpha:]]##");
         assert!(pattry(&prog, "abc"));
         assert!(pattry(&prog, "XYZ"));
         assert!(!pattry(&prog, "1"));
         assert!(!pattry(&prog, ""));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     /// `(#i)foo` matches "FOO" / "Foo" / etc. Port of pattern.c
@@ -4131,27 +4250,36 @@ mod tests {
     #[test]
     fn case_insensitive_via_glob_flag() {
         let _g = crate::test_util::global_state_lock();
+        // `(#...)` flag specs require EXTENDEDGLOB per zsh.
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("(#i)foo");
         assert!(pattry(&prog, "foo"));
         assert!(pattry(&prog, "FOO"));
         assert!(pattry(&prog, "Foo"));
         assert!(pattry(&prog, "fOo"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     /// `(#i)[abc]` — case-insensitive bracket class.
     #[test]
     fn case_insensitive_bracket() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("(#i)[abc]");
         assert!(pattry(&prog, "A"));
         assert!(pattry(&prog, "b"));
         assert!(!pattry(&prog, "d"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     /// Unicode case-fold for `(#i)` — non-ASCII Latin chars.
     #[test]
     fn case_insensitive_unicode() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         // German Ü/ü and É/é folded via char::to_lowercase.
         let prog = compile("(#i)Über");
         assert!(pattry(&prog, "über"));
@@ -4159,6 +4287,7 @@ mod tests {
         let prog2 = compile("(#i)café");
         assert!(pattry(&prog2, "CAFÉ"));
         assert!(pattry(&prog2, "Café"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     /// Without `(#i)`, exact case required.
@@ -4175,31 +4304,37 @@ mod tests {
     #[test]
     fn mid_pattern_gflags_switch() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("foo(#i)bar");
         assert!(pattry(&prog, "fooBAR"));
         assert!(pattry(&prog, "foobar"));
         assert!(pattry(&prog, "fooBaR"));
         // First half still case-sensitive — "FOOBAR" should NOT match.
         assert!(!pattry(&prog, "FOOBAR"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     /// `(#s)foo` — start-of-string anchor.
     #[test]
     fn start_anchor() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("(#s)foo");
         assert!(pattry(&prog, "foo"));
-        // pattry runs from position 0 so this is structurally
-        // equivalent to the default behavior; the assertion just
-        // doesn't reject anything in this trivial case.
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     /// `foo(#e)` — end-of-string anchor.
     #[test]
     fn end_anchor() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("foo(#e)");
         assert!(pattry(&prog, "foo"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     /// `(#c3,5)x` — counted repetition: match `x` 3 to 5 times.
