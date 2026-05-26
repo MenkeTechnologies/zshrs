@@ -3880,6 +3880,44 @@ pub fn bin_typeset(
                     setsparam(arg, val);
                 }
             }
+            // c:1973-1989 (Src/builtin.c, inside typeset_single):
+            //   if (arg) {
+            //       int base = zstrtol(arg, ..., 10);
+            //       pm->base = base;
+            //   }
+            // The precision arg from `-i N`, `-E N`, `-F N` (parsed
+            // by execbuiltin as `ops.args[<F-arg-slot>]`) lands on
+            // the param's `base` field, which `convfloat` (c:5689 in
+            // params.c) reads as the format-digit count. The
+            // `name=value` arm above (c:2009-2014 typeset_setwidth
+            // companion path) already stamps `pm.base`; this bare-
+            // declare arm was missing it, so `typeset -F 4 f` left
+            // pm.base=0 and `convfloat` rendered with the default
+            // 10-digit precision (parity bug #29). With this stamp
+            // a subsequent `(( f = ... ))` re-assignment preserves
+            // the `pm.base = 4` set here through `assignnparam`'s
+            // re-assign path (params.rs:5340-5374, c:2874-2878).
+            {
+                let prec_arg: Option<&str> =
+                    if (on & PM_INTEGER) != 0 && OPT_HASARG(&ops, b'i') {
+                        OPT_ARG(&ops, b'i') // c:1974 -i N
+                    } else if (on & PM_EFLOAT) != 0 && OPT_HASARG(&ops, b'E') {
+                        OPT_ARG(&ops, b'E') // c:1977 -E N
+                    } else if (on & PM_FFLOAT) != 0 && OPT_HASARG(&ops, b'F') {
+                        OPT_ARG(&ops, b'F') // c:1980 -F N
+                    } else {
+                        None
+                    };
+                if let Some(s) = prec_arg {
+                    if let Ok(b) = s.trim().parse::<i32>() { // c:1985 zstrtol
+                        if let Ok(mut tab) = paramtab().write() {
+                            if let Some(pm) = tab.get_mut(arg) {
+                                pm.base = b; // c:1987 pm->base = base
+                            }
+                        }
+                    }
+                }
+            }
             // c:2510+ — stamp post-assign attributes (PM_EXPORTED,
             // PM_READONLY, etc.) on the (possibly newly-created) pm.
             if post_assign_to_set != 0 {
@@ -6506,6 +6544,20 @@ pub fn bin_print(
         // c:4598-4600 — `-P` prompt-style percent expansion.
         for a in processed_args.iter_mut() {
             *a = crate::ported::prompt::expand_prompt(a); // c:Src/prompt.c:182
+            // c:Src/prompt.c:236-247 — `if (!ns) { ... chuck(Inpar/
+            // Outpar/Nularg); }`. When `ns=0` (non-stripping flag
+            // off), zsh REMOVES the Inpar/Outpar/Nularg marker bytes
+            // from the output. `print -P` calls promptexpand with
+            // `ns=0` per Src/builtin.c:4598, so the SGR-wrapping
+            // markers MUST NOT leak into stdout. The Rust port's
+            // expand_prompt uses ad-hoc `\x01`/`\x02` (readline
+            // RL_PROMPT_*_IGNORE) markers instead of canonical
+            // Inpar/Outpar, but the strip rule applies identically:
+            // for non-prompt-render callers, scrub them. Parity bug
+            // #17 — without this, `print -P "%F{red}red%f"` emitted
+            // `\x01\E[31m\x02red\x01\E[39m\x02` instead of zsh's
+            // `\E[31mred\E[39m`.
+            a.retain(|c| c != '\x01' && c != '\x02');
         }
     }
     // c:4799-4808 — `-o` / `-O` / `-i` sort flags.
@@ -8052,7 +8104,40 @@ pub fn bin_read(
     // var. zsh's read is stable on `print "a b c d" | read x y z`:
     // x="a", y="b", z="c d".
     if want_array {
-        let parts: Vec<String> = buf.split_whitespace().map(String::from).collect();
+        // c:Src/builtin.c:6685-6735 — `read -A arr` splits on $IFS
+        // (whitespace-IFS coalesces; non-whitespace-IFS each acts as
+        // a single delimiter). The previous port hardcoded
+        // split_whitespace(), which ignored custom IFS like `:` and
+        // produced a single-element array for `IFS=: read -A arr
+        // <<< "a:b:c"`. Mirror the multi-var path's IFS handling.
+        let ifs = getsparam("IFS").unwrap_or_else(|| " \t\n".to_string());
+        let is_ifs = |c: char| ifs.contains(c);
+        let trimmed = buf.trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace());
+        let trimmed = trimmed.trim_end_matches(|c: char| is_ifs(c) && c.is_whitespace());
+        let mut parts: Vec<String> = Vec::new();
+        let mut field = String::new();
+        let mut chars = trimmed.chars().peekable();
+        while let Some(c) = chars.next() {
+            if is_ifs(c) {
+                parts.push(std::mem::take(&mut field));
+                if c.is_whitespace() {
+                    // Coalesce consecutive whitespace-IFS into one
+                    // delimiter (zsh-style).
+                    while let Some(&n) = chars.peek() {
+                        if is_ifs(n) && n.is_whitespace() {
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                field.push(c);
+            }
+        }
+        if !field.is_empty() || !parts.is_empty() {
+            parts.push(field);
+        }
         setaparam(&reply, parts); // c:setaparam
     } else if argi < args.len() {
         // Multi-var: `read x y [z]`. First var = reply (already

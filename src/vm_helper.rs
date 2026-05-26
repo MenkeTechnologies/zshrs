@@ -1969,10 +1969,25 @@ impl ShellExecutor {
         }
         let nomatch = opt_state_get("nomatch").unwrap_or(true);
         if nomatch && Self::looks_like_glob(pattern) {
-            zerr(&format!("no matches found: {}", pattern));
-            errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+            // c:Src/glob.c:1876-1880 — `else if (isset(NOMATCH)) {`
+            //   `zerr("no matches found: %s", ostr);`
+            //   `zfree(matchbuf, 0);`
+            //   `restore_globstate(saved);`
+            //   `return;`
+            // `}`
+            // C aborts via ERRFLAG_ERROR set by zerr() at c:Src/utils.c
+            // and the matchbuf/state cleanup. The Rust port mirrors
+            // both: zerr() in utils.rs sets ERRFLAG_ERROR via
+            // `errflag.fetch_or(ERRFLAG_ERROR, ...)` already; we then
+            // re-set explicitly (defensive — historically this line
+            // had `fetch_and(!ERRFLAG_ERROR)` which CLEARED the flag
+            // immediately after zerr, making `echo /never/*` print
+            // the literal and exit 0 instead of erroring like zsh —
+            // parity bug #13).
+            zerr(&format!("no matches found: {}", pattern)); // c:1877
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:1877 (zerr side-effect)
             self.current_command_glob_failed.set(true);
-            return Vec::new();
+            return Vec::new(); // c:1880 return
         }
         // Pattern has no glob meta — pass through literally.
         vec![pattern.to_string()]

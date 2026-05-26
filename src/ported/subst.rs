@@ -947,7 +947,6 @@ fn stringsubst(
                     ret_flags, // c:237
                 ); // c:237
                 IN_PARAMSUBST_NEST.with(|c| c.set(c.get() - 1)); // c:237 paramsub_nest--
-
                 if errflag_set() {
                     // c:237
                     return None; // c:237
@@ -1168,14 +1167,54 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
         let expanded: Vec<String> = crate::ported::glob::glob_path(&data);
 
         if expanded.is_empty() {
-            // c:N/A (NOMATCH path)
-            // C zglob does its own NOMATCH/badcshglob accounting
-            // when nothing matches. Preserve the original entry on
-            // empty match (zsh default; NOMATCH option would zerr).
-            // The canonical NOMATCH error fires in
-            // vm_helper::ShellExecutor::expand_glob (the dispatch-layer
-            // entry) — globlist is the prefork-time pre-pass and only
-            // does NULLGLOB-style empty-result preservation.
+            // c:Src/glob.c:1872-1888 — `Deal with failures to match
+            // depending on options`. C body verbatim:
+            //   else if (!gf_nullglob) {
+            //       if (isset(CSHNULLGLOB)) {           c:1874
+            //           badcshglob |= 1;
+            //       } else if (isset(NOMATCH)) {        c:1876
+            //           zerr("no matches found: %s",    c:1877
+            //                ostr);
+            //           zfree(matchbuf, 0);             c:1878
+            //           restore_globstate(saved);       c:1879
+            //           return;                         c:1880
+            //       } else {                            c:1882
+            //           untokenize(matchptr->name =     c:1884
+            //               dupstring(ostr));
+            //           matchptr++;                     c:1885
+            //           matchct = 1;                    c:1886
+            //       }
+            //   }
+            // Parity bug #13: previously this arm always took the
+            // c:1882-1886 `treat as literal` branch unconditionally.
+            let nullglob = isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
+            let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
+            // c:Src/glob.c:1232 — `if (!haswilds(str))` test that
+            // bypasses zglob entirely. We mirror it here so plain
+            // literals like `echo foo` don't trip NOMATCH.
+            let has_glob_chars = data.chars().any(|c| matches!(c,
+                '*' | '?' | '[' | ']'
+            )) || crate::ported::pattern::haswilds(&data);
+            if has_glob_chars
+                && !nullglob
+                && !csh_nullglob
+                && isset(crate::ported::zsh_h::NOMATCH) // c:1876
+            {
+                crate::ported::utils::zerr(&format!(
+                    "no matches found: {}",
+                    data
+                )); // c:1877
+                crate::ported::utils::errflag.fetch_or(
+                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                ); // c:1877 (zerr side-effect)
+                // c:1880 `return` — drop the unmatched token from the list.
+                list.delete_node(node_idx);
+                continue;
+            }
+            // c:1882-1886 — `treat as an ordinary string`. The
+            // matchptr++ bookkeeping in C maps to leaving the node
+            // alone and advancing the index.
             node_idx += 1;
         } else if expanded.len() == 1 {
             // c:N/A
@@ -1649,18 +1688,28 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             let suffix: String = chars[1..].iter().collect();
             return Some(format!("{}{}", home, suffix));
         }
-        // `~+...` — current PWD (only if isend(str[2]))
-        if nx == '+' && chars.len() >= 3 && isend(chars[2]) {
-            // c:752
+        // c:751-753 — `} else if (str[1] == '+' && isend(str[2])) {`
+        //              `*namptr = dyncat(pwd, str + 2);`
+        //              `return 1;`
+        // C's `isend(c)` macro (subst.c:725) is `!c || c=='/' ||
+        // c==Inpar || (assign && c==':')`. The NUL test (`!c`) makes
+        // bare `~+` (no trailing char, equivalent to NUL-terminator
+        // in C's char* model) expand to `$PWD`. The previous Rust
+        // port required `chars.len() >= 3`, dropping the bare case
+        // and printing literal `~+`. Parity bug #26.
+        if nx == '+' && (chars.len() == 2 || isend(chars[2])) {
+            // c:752 — `*namptr = dyncat(pwd, str + 2);`
             let pwd = getsparam("PWD").unwrap_or_default();
             let suffix: String = chars[2..].iter().collect();
             return Some(format!("{}{}", pwd, suffix));
         }
-        // `~-...` — OLDPWD (only if isend(str[2]))
-        if nx == '-' && chars.len() >= 3 && isend(chars[2]) {
-            // c:755 — `~-` → $OLDPWD with $PWD fallback. Read both
-            //          via paramtab; OS env fallback removed (was a
-            //          fake: shell-internal $OLDPWD lives in paramtab).
+        // c:754-757 — `} else if (str[1] == '-' && isend(str[2])) {`
+        //              `*namptr = dyncat((tmp = oldpwd) ? tmp : pwd, str + 2);`
+        //              `return 1;`
+        // Same isend(NUL)-is-true semantics as ~+. Parity bug #27.
+        if nx == '-' && (chars.len() == 2 || isend(chars[2])) {
+            // c:755 — `(tmp = oldpwd) ? tmp : pwd`. Read both via
+            // paramtab so OLDPWD-not-yet-set falls back to PWD.
             let oldpwd = getsparam("OLDPWD")
                 .or_else(|| getsparam("PWD"))
                 .unwrap_or_default();
@@ -3561,7 +3610,7 @@ pub fn paramsubst(
             subexp_value = None;
         }
 
-        // ${arr[subscript]} — subscript loop. Port of subst.c:2862-3000.
+// ${arr[subscript]} — subscript loop. Port of subst.c:2862-3000.
         // Parse `[…]` after the var name, with brace-depth tracking
         // for nested `${arr[$other[1]]}`.
         let mut subscript: Option<String> = None; // c:2867
@@ -5446,16 +5495,42 @@ pub fn paramsubst(
                 split_parts = Some(zipped); // c:3540 (auto-splat)
                 isarr = 1; // c:3540 SUB_ZIP_LONG returns array shape
             } else if let Some(rhs) = r.strip_prefix(":^") {
-                // c:3540 (zip)
-                // ${arr:^other} — interleave two arrays element-by-elem.
-                let arr = arrays_get(&var_name).unwrap_or_default();
-                let other = arrays_get(rhs.trim()).unwrap_or_default();
-                let mut zipped: Vec<String> = Vec::with_capacity(arr.len() + other.len());
-                let n = arr.len().min(other.len());
-                for i in 0..n {
-                    zipped.push(arr[i].clone());
-                    zipped.push(other[i].clone());
-                }
+                // c:Src/subst.c:3540 (SUB_ZIP / SUB_ZIPN) — `${a:^b}`
+                // interleaves two arrays element-by-element. When one
+                // side is unset/empty, zsh returns the OTHER side's
+                // elements unchanged (no truncation to zero), so
+                // `${a:^b}` with b unset returns a's contents intact.
+                // Parity bug #23: previously the Rust port took
+                // `min(a, b) = 0` on missing-b, producing empty output.
+                let arr_opt = arrays_get(&var_name);
+                let other_opt = arrays_get(rhs.trim());
+                // c:Src/subst.c:3540 — unset-vs-empty distinction:
+                //   * If `b` is UNSET (arrays_get → None), zsh returns
+                //     `a`'s contents verbatim (no zip).
+                //   * If `b` is SET-BUT-EMPTY (e.g. `b=()`), zsh
+                //     truncates the zip to min(|a|, 0) = empty.
+                // The previous Rust port collapsed both to "set ∩ empty"
+                // = empty, so `${a:^b}` with b unset wrongly produced
+                // empty (parity bug #23).
+                let arr_unset = arr_opt.is_none();
+                let other_unset = other_opt.is_none();
+                let arr = arr_opt.unwrap_or_default();
+                let other = other_opt.unwrap_or_default();
+                let zipped: Vec<String> = if other_unset && !arr_unset {
+                    // b unset → return a verbatim.
+                    arr.clone()
+                } else if arr_unset && !other_unset {
+                    // a unset → return b verbatim.
+                    other.clone()
+                } else {
+                    let mut z: Vec<String> = Vec::with_capacity(arr.len() + other.len());
+                    let n = arr.len().min(other.len()); // c:3540 truncate to shorter
+                    for i in 0..n {
+                        z.push(arr[i].clone());
+                        z.push(other[i].clone());
+                    }
+                    z
+                };
                 value = zipped.join(" ");
                 split_parts = Some(zipped); // c:3540 (auto-splat)
                 isarr = 1; // c:3540 SUB_ZIP returns array shape
@@ -5488,11 +5563,46 @@ pub fn paramsubst(
                         | 'W'
                 );
                 if is_modifier {
-                    // c:4531
-                    // Per-element on arrays.
+                    // c:Src/subst.c:4531 modify() entry — apply
+                    // history-style modifier chain (`:h`, `:t`, `:r`,
+                    // `:e`, `:l`, `:u`, `:q`, `:Q`, etc.).
+                    //
+                    // c:Src/subst.c:4533-4540 — `if (isarr)` gates the
+                    // per-element dispatch. When a numeric subscript
+                    // has already narrowed the value to a single
+                    // element (e.g. `${arr[1]:t}`), C's `isarr` is 0
+                    // and modify runs on the scalar form. The
+                    // previous Rust port unconditionally re-fetched
+                    // the whole array via `arrays_get(&var_name)`
+                    // when split_parts was None, which made
+                    // `${arr[N]:modifier}` apply the modifier to
+                    // EVERY element. Parity bug #14.
                     let mod_str = format!(":{}", slice);
                     let mod_one = |s: &str| -> String { modify(s, &mod_str) };
-                    if let Some(parts) = split_parts.clone() {
+                    // c:Src/subst.c:3030-3034 — sepjoin under qt
+                    // clears isarr to 0 BEFORE the modify dispatch at
+                    // c:4531. In DQ, modify runs once on the joined
+                    // scalar (`${a:e}` of (file.txt readme.md) joins
+                    // to "file.txt readme.md" then :e → "md"). In
+                    // non-DQ with isarr=1, modify loops per-element
+                    // (c:4533). Without the qt gate, zshrs applied
+                    // :modifier per-element in DQ too, producing
+                    // "txt md" instead of "md". Parity bug #28.
+                    let sepjoined_for_qt = || -> String {
+                        if let Some(arr) = arrays_get(&var_name) {
+                            arr.join(" ") // c:3030 sepjoin via IFS
+                        } else {
+                            value.clone()
+                        }
+                    };
+                    if subscript.is_some() {
+                        // c:2859/2887 isarr=0 after subscript → scalar
+                        value = mod_one(&value);
+                    } else if qt && arrays_contains(&var_name) {
+                        // c:3030-3034 DQ sepjoin cleared isarr → scalar
+                        value = mod_one(&sepjoined_for_qt());
+                        split_parts = None;
+                    } else if let Some(parts) = split_parts.clone() {
                         let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
                         value = new_parts.join(" ");
                         split_parts = Some(new_parts);
@@ -5983,8 +6093,18 @@ pub fn paramsubst(
                         // c:4187 SORTIT_IGNORING_CASE
                         sorted.sort_by_key(|a| a.to_lowercase()); // c:4187
                     } else {
-                        // c:4180 (default)
-                        sorted.sort(); // c:4180
+                        // c:4180 — default `(o)` sort. C dispatches to
+                        // strmetasort() (sort.c:303) which calls
+                        // zstrcmp() (sort.c:191) whose final tie-break
+                        // is `strcoll(as, bs)` at sort.c:134. strcoll
+                        // is locale-aware: under UTF-8 locales it
+                        // produces case-insensitive ordering (`a` < `B`).
+                        // Previously this arm used raw byte `sort()`
+                        // (ASCII order: `B` < `a`), diverging from zsh.
+                        // Parity bug #31.
+                        sorted.sort_by(|a, b| {
+                            crate::ported::sort::zstrcmp(a, b, 0) // c:191
+                        });
                     } // c:4187
                 } // c:4292
                 if (sortit & SORTIT_BACKWARDS) != 0 {
@@ -6651,44 +6771,21 @@ pub fn paramsubst(
         let quote_one = |s: &str| -> String {
             // c:4030
             if quotetype == QT_SINGLE_OPTIONAL {
-                // c:2245 (q-)
-                // c:Src/utils.c:6190 — QT_SINGLE_OPTIONAL sets shownull=1
-                // so empty string always quotes as `''`. Without this the
-                // q- flag emitted bare empty instead of zsh's `''`.
+                // c:Src/utils.c:6181-6190 — QT_SINGLE_OPTIONAL sets
+                // shownull=1 so empty string always quotes as `''`.
                 if s.is_empty() {
                     return "''".to_string(); // c:utils.c:6253-6256
                 }
-                let needs = s.chars().any(|c| {
-                    // c:2245
-                    c.is_whitespace()                                         // c:2245
-                        || matches!(                                          // c:2245
-                            c,                                                // c:2245
-                            '*' | '?'                                         // c:2245
-                                | '['                                         // c:2245
-                                | ']'                                         // c:2245
-                                | '('                                         // c:2245
-                                | ')'                                         // c:2245
-                                | '|'                                         // c:2245
-                                | '&'                                         // c:2245
-                                | ';'                                         // c:2245
-                                | '<'                                         // c:2245
-                                | '>'                                         // c:2245
-                                | '$'                                         // c:2245
-                                | '`'                                         // c:2245
-                                | '\\'                                        // c:2245
-                                | '"'                                         // c:2245
-                                | '\''                                        // c:2245
-                                | '#'                                         // c:2245
-                                | '~'                                         // c:2245
-                        ) // c:2245
-                }); // c:2245
-                if needs {
-                    // c:2245
-                    quotestring(s, QT_SINGLE) // c:2245
-                } else {
-                    // c:2245
-                    s.to_string() // c:2245
-                } // c:2245
+                // c:Src/utils.c:6260+ QT_SINGLE_OPTIONAL — pick the
+                // minimum quoting per char: bare apostrophes get a
+                // backslash escape (`it's` → `it\'s`), other
+                // specials trigger single-quote span. The previous
+                // port called quotestring(s, QT_SINGLE) which
+                // wrapped the whole string in `'…'` and emitted
+                // `'\''` for inner apostrophes (`'it'\''s'`, 9
+                // chars instead of zsh's 5). Direct port of the
+                // walker at c:6266-6385. Parity bug.
+                quotestring(s, QT_SINGLE_OPTIONAL) // c:6266
             } else if quotetype == QT_QUOTEDZPUTS {
                 // c:4063-4064 — `for (; *ap; ap++) *ap = quotedzputs(*ap,
                 // NULL);` and scalar c:4109 `val = quotedzputs(val, NULL);`.
@@ -10782,11 +10879,18 @@ mod tests {
     #[test]
     fn paramsubst_strip_pound_b_backref_keeps_strip_semantic() {
         let _g = crate::test_util::global_state_lock();
+        // `(#b)` is a `(#...)` glob-flag spec — only active under
+        // EXTENDEDGLOB per Src/pattern.c:953-957. The previous Rust
+        // port treated `(#b)` as always-active, but the new
+        // option-aware gate requires setopt extendedglob.
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let result = psubst_one(
             "ZP_BB1",
             "look for a match in here",
             "${ZP_BB1%%(#b)(match)*}",
         );
+        crate::ported::options::opt_state_set("extendedglob", saved);
         assert_eq!(
             result, "look for a ",
             "Test/D04parameter.ztst:1250 — (#b) doesn't change strip result"
