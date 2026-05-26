@@ -1233,4 +1233,68 @@ mod tests {
         assert_eq!(ZLE_ISCOMP, 1 << 11, "c:217");
         assert_eq!(ZLE_NOLAST, 1 << 14, "c:220");
     }
+
+    // ─── zsh-corpus pins for ZLE constants invariants ──────────────
+
+    /// `ZLE_CHAR_SIZE` is 4 per c:34 (wide-char support).
+    #[test]
+    fn zle_h_corpus_zle_char_size_is_four() {
+        assert_eq!(ZLE_CHAR_SIZE, 4);
+    }
+
+    /// `ZLEEOF` is -1 (matches WEOF sentinel).
+    #[test]
+    fn zle_h_corpus_zleeof_is_minus_one() {
+        assert_eq!(ZLEEOF, -1);
+    }
+
+    /// WIDGET_INT / WIDGET_NCOMP / ZLE_MENUCMP bits are disjoint.
+    #[test]
+    fn zle_h_corpus_widget_flag_bits_disjoint() {
+        assert_eq!(WIDGET_INT & WIDGET_NCOMP, 0);
+        assert_eq!(WIDGET_INT & ZLE_MENUCMP, 0);
+        assert_eq!(WIDGET_NCOMP & ZLE_YANKAFTER, 0);
+    }
+
+    /// All ZLE_* / WIDGET_* flag bits are pairwise disjoint
+    /// (single-bit flags, OR-composable).
+    #[test]
+    fn zle_h_corpus_all_widget_flags_pairwise_distinct() {
+        let flags = [
+            WIDGET_INT,
+            WIDGET_NCOMP,
+            ZLE_MENUCMP,
+            ZLE_YANKAFTER,
+            ZLE_YANKBEFORE,
+            ZLE_LINEMOVE,
+            ZLE_VIOPER,
+            ZLE_LASTCOL,
+            ZLE_KILL,
+            ZLE_KEEPSUFFIX,
+            ZLE_NOTCOMMAND,
+            ZLE_ISCOMP,
+            WIDGET_INUSE,
+            WIDGET_FREE,
+            ZLE_NOLAST,
+        ];
+        for (i, a) in flags.iter().enumerate() {
+            for b in &flags[i + 1..] {
+                assert_eq!(a & b, 0,
+                    "flags {a:#x} and {b:#x} must be disjoint");
+            }
+        }
+    }
+
+    /// T_THINGY_NAMES is non-empty (canonical widget-name table).
+    #[test]
+    fn zle_h_corpus_thingy_names_table_nonempty() {
+        assert!(!T_THINGY_NAMES.is_empty(),
+            "thingy names table must list canonical widget names");
+    }
+
+    /// TH_IMMORTAL bit is 1<<1 per c:234.
+    #[test]
+    fn zle_h_corpus_th_immortal_value() {
+        assert_eq!(TH_IMMORTAL, 1 << 1);
+    }
 }

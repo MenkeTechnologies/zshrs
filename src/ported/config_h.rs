@@ -1448,4 +1448,66 @@ mod tests {
             "GETPGRP_VOID=0 means getpgrp(pid) — only ancient SysV uses that form"
         );
     }
+
+    // ─── zsh-corpus pins for config_h string constants ────────────
+
+    /// PASSWD_FILE is the canonical /etc/passwd path.
+    #[test]
+    fn config_h_corpus_passwd_file_default_path() {
+        assert_eq!(PASSWD_FILE, "/etc/passwd");
+    }
+
+    /// DEFAULT_FCEDIT is "vi" per ancient ksh-compat default.
+    #[test]
+    fn config_h_corpus_default_fcedit_is_vi() {
+        assert_eq!(DEFAULT_FCEDIT, "vi");
+    }
+
+    /// DEFAULT_TMPPREFIX starts with "/tmp/".
+    #[test]
+    fn config_h_corpus_default_tmpprefix_starts_with_tmp() {
+        assert!(DEFAULT_TMPPREFIX.starts_with("/tmp/"),
+            "tmp prefix in /tmp/ namespace, got {DEFAULT_TMPPREFIX:?}");
+    }
+
+    /// DEFAULT_PATH includes /usr/bin and /bin.
+    #[test]
+    fn config_h_corpus_default_path_has_usr_bin_and_bin() {
+        assert!(DEFAULT_PATH.contains("/usr/bin"));
+        assert!(DEFAULT_PATH.contains("/bin"));
+    }
+
+    /// DEFAULT_READNULLCMD is "more".
+    #[test]
+    fn config_h_corpus_default_readnullcmd_is_more() {
+        assert_eq!(DEFAULT_READNULLCMD, "more");
+    }
+
+    /// DL_EXT is a known shared-lib extension.
+    #[test]
+    fn config_h_corpus_dl_ext_is_known() {
+        assert!(
+            DL_EXT == "so" || DL_EXT == "dylib" || DL_EXT == "dll",
+            "DL_EXT must be a known shlib ext, got {DL_EXT:?}"
+        );
+    }
+
+    /// CACHE_USERNAMES is 1.
+    #[test]
+    fn config_h_corpus_cache_usernames_enabled() {
+        assert_eq!(CACHE_USERNAMES, 1);
+    }
+
+    /// JOB_CONTROL is 1.
+    #[test]
+    fn config_h_corpus_job_control_enabled() {
+        assert_eq!(JOB_CONTROL, 1);
+    }
+
+    /// DEFAULT_HISTSIZE is positive.
+    #[test]
+    fn config_h_corpus_default_histsize_positive() {
+        assert!(DEFAULT_HISTSIZE > 0,
+            "histsize must be positive, got {DEFAULT_HISTSIZE}");
+    }
 }

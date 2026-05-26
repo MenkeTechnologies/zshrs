@@ -1077,4 +1077,37 @@ mod tests {
         );
         assert_ne!(r, 0, "read from unknown pty must fail");
     }
+
+    // ─── zsh-corpus pins for getptycmd / deleteptycmd ──────────────
+
+    /// `getptycmd` on empty table returns None.
+    #[test]
+    fn zpty_corpus_getptycmd_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let cmds = HashMap::<String, ptycmd>::new();
+        assert!(getptycmd(&cmds, "anything").is_none());
+    }
+
+    /// `getptycmd` finds existing entry.
+    #[test]
+    fn zpty_corpus_getptycmd_finds_existing() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cmds = HashMap::<String, ptycmd>::new();
+        let p = ptycmd::new("stub", Vec::new(), -1, 0, false, false);
+        cmds.insert("my_session".to_string(), p);
+        assert!(getptycmd(&cmds, "my_session").is_some());
+    }
+
+    /// `deleteptycmd` on missing is a no-op (avoid touching real fds).
+    #[test]
+    fn zpty_corpus_deleteptycmd_missing_no_op() {
+        let _g = crate::test_util::global_state_lock();
+        let mut cmds = HashMap::<String, ptycmd>::new();
+        deleteptycmd(&mut cmds, "never_was");
+        assert!(cmds.is_empty(), "still empty");
+    }
+
+    // Note: deleteptycmd/deleteallptycmds with real entries can attempt
+    // to close fd -1 (or kill pid 0), which blocks under the test harness.
+    // Pin only the empty/no-op paths above.
 }

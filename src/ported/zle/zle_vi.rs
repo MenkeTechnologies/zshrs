@@ -2378,4 +2378,64 @@ mod tests {
         assert_eq!(virevrepeatfind(), 0);
         assert_eq!(ZLECS.load(SeqCst), 1);
     }
+
+    // ─── zsh-corpus pins for viaddnext / viaddeol / viinsert ───────
+
+    /// `viaddeol()` moves cursor to end-of-line and returns 0.
+    #[test]
+    fn zle_vi_corpus_viaddeol_moves_to_eol() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        zle_with("hello", 0);
+        let r = viaddeol();
+        assert_eq!(r, 0);
+        assert_eq!(ZLECS.load(SeqCst), 5,
+            "cursor at end-of-line after viaddeol");
+    }
+
+    /// `viinsert()` returns 0 and doesn't move cursor.
+    #[test]
+    fn zle_vi_corpus_viinsert_returns_zero_no_move() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        zle_with("hello", 2);
+        let r = viinsert();
+        assert_eq!(r, 0);
+        // viinsert just enters insert mode at current pos.
+        assert_eq!(ZLECS.load(SeqCst), 2,
+            "viinsert doesn't move cursor");
+    }
+
+    /// `viaddnext()` advances cursor by 1 when not at EOL.
+    #[test]
+    fn zle_vi_corpus_viaddnext_advances_when_not_at_eol() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        zle_with("hello", 0);
+        let r = viaddnext();
+        assert_eq!(r, 0);
+        assert_eq!(ZLECS.load(SeqCst), 1,
+            "viaddnext from pos 0 → pos 1");
+    }
+
+    /// `viaddnext()` at EOL doesn't advance (already at end).
+    #[test]
+    fn zle_vi_corpus_viaddnext_at_eol_stays() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        zle_with("hello", 5);
+        let r = viaddnext();
+        assert_eq!(r, 0);
+        assert_eq!(ZLECS.load(SeqCst), 5,
+            "viaddnext at EOL stays at EOL");
+    }
+
+    /// `viinsert_init` doesn't panic.
+    #[test]
+    fn zle_vi_corpus_viinsert_init_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        zle_with("test", 0);
+        viinsert_init();
+    }
 }

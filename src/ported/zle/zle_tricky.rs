@@ -1666,4 +1666,59 @@ mod tests {
         // c:264 — wouldinstab cleared.
         assert_eq!(WOULDINSTAB.load(Ordering::SeqCst), 0);
     }
+
+    // ─── zsh-corpus pins for usetab ────────────────────────────────
+
+    /// `usetab(b"\t")` after empty line returns 1 (insert literal tab).
+    #[test]
+    fn zle_tricky_corpus_usetab_at_bol_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        ZLECS.store(0, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = Vec::new();
+        ZLELL.store(0, Ordering::SeqCst);
+        assert_eq!(usetab(b"\t"), 1, "tab at BOL = literal");
+    }
+
+    /// `usetab` returns 0 when keybuf is not just `\t`.
+    #[test]
+    fn zle_tricky_corpus_usetab_non_tab_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        assert_eq!(usetab(b"a"), 0, "non-tab byte = 0");
+        assert_eq!(usetab(b""), 0, "empty buf = 0");
+    }
+
+    /// `usetab` returns 0 when keybuf has more than one byte.
+    #[test]
+    fn zle_tricky_corpus_usetab_multibyte_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        assert_eq!(usetab(b"\t\t"), 0, "more than one byte = 0");
+        assert_eq!(usetab(b"\tx"), 0);
+    }
+
+    /// `usetab` returns 0 when cursor follows a non-whitespace char.
+    #[test]
+    fn zle_tricky_corpus_usetab_after_word_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "abc".chars().collect();
+        ZLELL.store(3, Ordering::SeqCst);
+        ZLECS.store(3, Ordering::SeqCst);
+        assert_eq!(usetab(b"\t"), 0,
+            "cursor after non-WS char → no literal tab (need completion)");
+    }
+
+    /// `usetab` returns 1 when cursor follows only spaces/tabs at BOL.
+    #[test]
+    fn zle_tricky_corpus_usetab_after_indent_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "   ".chars().collect();
+        ZLELL.store(3, Ordering::SeqCst);
+        ZLECS.store(3, Ordering::SeqCst);
+        assert_eq!(usetab(b"\t"), 1,
+            "after pure-WS indent, tab = literal");
+    }
 }

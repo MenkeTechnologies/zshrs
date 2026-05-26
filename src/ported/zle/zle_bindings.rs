@@ -1011,4 +1011,69 @@ mod tests {
              unknowns must SUCCEED"
         );
     }
+
+    // ─── zsh-corpus pins for getkeystring escapes ──────────────────
+
+    /// `getkeystring("^A")` → [0x01] (control-char shorthand).
+    #[test]
+    fn zle_bindings_corpus_getkeystring_caret_A_is_ctrl_a() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring("^A"), vec![0x01]);
+    }
+
+    /// `getkeystring("^?")` → [0x7f] DEL.
+    #[test]
+    fn zle_bindings_corpus_getkeystring_caret_question_is_del() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring("^?"), vec![0x7f]);
+    }
+
+    /// `getkeystring("^[")` → [0x1b] ESC.
+    #[test]
+    fn zle_bindings_corpus_getkeystring_caret_bracket_is_esc() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring("^["), vec![0x1b]);
+    }
+
+    /// `getkeystring(r"\e")` → [0x1b].
+    #[test]
+    fn zle_bindings_corpus_getkeystring_backslash_e_is_esc() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\e"), vec![0x1b]);
+    }
+
+    /// `getkeystring(r"\t")` → [0x09] TAB.
+    #[test]
+    fn zle_bindings_corpus_getkeystring_backslash_t_is_tab() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\t"), vec![0x09]);
+    }
+
+    /// `getkeystring(r"\n")` → [0x0a] LF.
+    #[test]
+    fn zle_bindings_corpus_getkeystring_backslash_n_is_lf() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\n"), vec![0x0a]);
+    }
+
+    /// `getkeystring(r"\r")` → [0x0d] CR.
+    #[test]
+    fn zle_bindings_corpus_getkeystring_backslash_r_is_cr() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring(r"\r"), vec![0x0d]);
+    }
+
+    /// `getkeystring("")` is empty.
+    #[test]
+    fn zle_bindings_corpus_getkeystring_empty_is_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(getkeystring("").is_empty());
+    }
+
+    /// `getkeystring("abc")` (no escapes) is byte-identical.
+    #[test]
+    fn zle_bindings_corpus_getkeystring_plain_ascii_passthrough() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getkeystring("abc"), vec![b'a', b'b', b'c']);
+    }
 }
