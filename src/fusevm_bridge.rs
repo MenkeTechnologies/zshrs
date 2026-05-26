@@ -1269,8 +1269,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // backgrounded job's pid). zsh exposes this for any
                 // script that needs `wait $!`. Also register the
                 // bare-pid job so a no-args `wait` can synchronize.
+                // c:Src/jobs.c:73 — `lastpid = pid;` after a
+                // background fork. zshrs's `$!` getter
+                // (params.rs::lookup_special_var "!") reads from
+                // the same atomic, so a single store here is the
+                // canonical writer.
+                crate::ported::modules::clone::lastpid
+                    .store(pid, std::sync::atomic::Ordering::Relaxed);
                 with_executor(|exec| {
-                    exec.set_scalar("!".to_string(), pid.to_string());
                     exec.jobs
                         .add_pid_job(pid, String::new(), JobState::Running);
                 });
@@ -1663,10 +1669,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
         // Inner body of `${(...)...}` (already stripped of `${`/`}` by
-        // the caller). Re-wrap and route through paramsubst_to_value
-        // so the flag-loop + per-operator array semantics execute.
+        // the caller). The compiler optionally prefixes Qstring
+        // (\u{8c}) to signal "expanded in DQ context" — strip it
+        // here and bump in_dq_context for the paramsubst call so the
+        // SUB_ZIP and other qt-aware paths fire.
         let body = vm.pop().to_str();
-        paramsubst_to_value(&format!("${{{}}}", body))
+        let (dq, inner) = if let Some(rest) = body.strip_prefix('\u{8c}') {
+            (true, rest.to_string())
+        } else {
+            (false, body)
+        };
+        if dq {
+            with_executor(|exec| exec.in_dq_context += 1);
+        }
+        let v = paramsubst_to_value(&format!("${{{}}}", inner));
+        if dq {
+            with_executor(|exec| exec.in_dq_context -= 1);
+        }
+        v
     });
 
     // BUILTIN_PARAM_FLAG — `${(flags)name}` paramsubst dispatch.
@@ -1692,24 +1712,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 flags = rest.to_string();
             }
         }
-        // c:Src/subst.c:1942 — `${(flags)"literal"}` is a parse
-        // error in zsh ("bad substitution"). The flag block requires
-        // a parameter name or subexp form as operand; literal-quoted
-        // operands fail fetchvalue's first-char check. The compile
-        // fast path tags literal-operand reconstructions with `\u{01}`
-        // prefix (compile_zsh.rs:2290), so detect that here and emit
-        // the canonical error instead of silently expanding to the
-        // empty string. Verified: `zsh -fc 'echo ${(Q)"abc"}'` →
-        // exit 1 + "bad substitution".
-        if name.starts_with('\u{01}') {
-            crate::ported::utils::zerr("bad substitution");
-            crate::ported::utils::errflag.fetch_or(
-                crate::ported::zsh_h::ERRFLAG_ERROR,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            with_executor(|exec| exec.set_last_status(1));
-            return Value::Array(Vec::new());
-        }
+        // Bridge is a passthru: reconstruction goes straight to
+        // paramsubst, which now handles the `\u{01}` literal-operand
+        // sentinel internally (subst.rs paramsubst pre-name-walk
+        // branch). No bridge-side gating.
         let body = format!("${{({}){}}}", flags, name);
         paramsubst_to_value(&body)
     });
@@ -3455,31 +3461,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 } else {
                     text.as_str()
                 };
-                let mut prepped = String::with_capacity(inner.len());
-                let mut chars = inner.chars().peekable();
-                while let Some(c) = chars.next() {
-                    if c == '\\' {
-                        match chars.peek() {
-                            Some('$') | Some('`') | Some('"') | Some('\\') => {
-                                // c:Src/zsh.h:195 — Bnull (\u{9f}) is
-                                // the canonical "escape next char as
-                                // literal" marker. stringsubst at
-                                // subst.rs:643 already strips Bnull
-                                // and keeps the next char verbatim;
-                                // emitting Bnull here routes through
-                                // that path. Previously emitted `\x00`
-                                // which stringsubst silently ignored,
-                                // letting `\$var` re-trigger param
-                                // expansion. Parity bug.
-                                prepped.push('\u{9f}');
-                                prepped.push(chars.next().unwrap());
-                            }
-                            _ => prepped.push(c),
-                        }
-                    } else {
-                        prepped.push(c);
-                    }
-                }
+                // The lexer's dquote_parse (Src/lex.c) already tokenized
+                // DQ contents: `$` → Qstring (\u{8c}), `\$`/`\\`/`\"`/
+                // `` \` `` → Bnull (\u{9f}) + literal. Stringsubst /
+                // multsub recognize these markers natively. We pass
+                // `inner` through verbatim — no re-tokenization needed.
+                let prepped: String = inner.to_string();
                 // Tell parameter-flag application that we're inside
                 // double quotes — array-only flags ((o), (O), (n),
                 // (i), (M), (u)) must be no-ops here per zsh.
@@ -3572,42 +3559,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Value::str(crate::ported::subst::singsub(&text))
             }
             _ => {
-                // Default: full expansion pipeline.
-                // Pre-process backslash-escapes to the `\x00X` literal-
-                // marker form so expand_string suppresses variable
-                // expansion on escaped specials: `\$` → literal `$`,
-                // `\\` → literal `\`, `\`` → literal `` ` ``. Without
-                // this, `echo \$a` ran `\` literally then expanded
-                // `$a`, leaving a stray `\` that echo's escape
-                // interpreter then turned into form-feed when followed
-                // by `f`-like content.
-                let mut prepped = String::with_capacity(text.len());
-                let mut it = text.chars().peekable();
-                while let Some(c) = it.next() {
-                    if c == '\\' {
-                        match it.peek() {
-                            Some('$') | Some('`') | Some('"') | Some('\'') | Some('\\') => {
-                                // c:Src/zsh.h:195 — emit Bnull
-                                // (\u{9f}) so stringsubst's existing
-                                // Bnull-stripper (subst.rs:643) keeps
-                                // the escaped char as a literal. The
-                                // previous `\x00` marker was silently
-                                // ignored, letting `\$var` re-trigger
-                                // param expansion. Parity bug.
-                                prepped.push('\u{9f}');
-                                prepped.push(it.next().unwrap());
-                            }
-                            // Don't preprocess `\{` / `\}` here — the
-                            // brace-expansion stage has its own
-                            // has_balanced_escaped_braces detector that
-                            // strips the backslashes when both sides
-                            // are escaped. Touching them here would
-                            // hide them from that detector.
-                            _ => prepped.push(c),
-                        }
-                    } else {
-                        prepped.push(c);
-                    }
+                // Default (unquoted): the lexer's gettokstr already
+                // tokenized backslash-escapes (`\$` → Bnull+$, etc).
+                // Pass `text` through verbatim — multsub/stringsubst
+                // recognize the markers natively. No bridge-side
+                // re-tokenization needed.
+                let prepped: String = text.clone();
+                if std::env::var("ZSHRS_TRACE_DEFP").is_ok() {
+                    eprintln!("[TRACE_DEFP] text={:?} prepped={:?}", text, prepped);
                 }
                 // c:Src/subst.c:544+ — `multsub(&prepped, 0)` is the
                 // unquoted-argv equivalent of zsh's `prefork(list,
@@ -3857,9 +3816,18 @@ impl ZshrsHost {
 /// zsh uses LinkList everywhere; the conversion happens at the
 /// boundary back into the VM's stack.
 fn paramsubst_to_value(body: &str) -> Value {
+    // c:Src/subst.c:1625 paramsubst's `qt` flag is the C signal that
+    // the current expansion is inside `"…"`. The fast-path bridges
+    // (BUILTIN_PARAM_*, BUILTIN_BRIDGE_BRACE_ARRAY) used to hardcode
+    // qt=false, which silently broke DQ-only semantics inside
+    // `${arr:^other}` / `${arr:^^other}` (Src/subst.c:3456-3520).
+    // The executor's `in_dq_context` counter is bumped by EXPAND_TEXT
+    // mode 1 / mode 5 before the bridge fires, so reading it here
+    // propagates the DQ flag without changing every bridge call site.
+    let qt = with_executor(|exec| exec.in_dq_context > 0);
     let mut ret_flags: i32 = 0;
     let (_full, _pos, nodes) =
-        crate::ported::subst::paramsubst(body, 0, false, 0i32, &mut ret_flags);
+        crate::ported::subst::paramsubst(body, 0, qt, 0i32, &mut ret_flags);
     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         with_executor(|exec| exec.set_last_status(1));
     }
@@ -4435,40 +4403,74 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn process_sub_in(&mut self, sub: &fusevm::Chunk) -> String {
-        // Run the sub-chunk synchronously (in the current executor context),
-        // capture stdout into a temp file, return the path. Synchronous is
-        // simpler and avoids the thread-local-executor limitation that
-        // spawned threads can't see. Common consumers (`diff`, `cat`,
-        // `comm`) read the file once anyway.
-        let fifo_path = format!(
-            "/tmp/zshrs_psub_{}_{}",
-            std::process::id(),
-            with_executor(|e| {
-                let n = e.process_sub_counter;
-                e.process_sub_counter += 1;
-                n
-            })
-        );
-        let _ = fs::remove_file(&fifo_path);
-        let f = match fs::File::create(&fifo_path) {
-            Ok(f) => f,
-            Err(_) => return fifo_path,
-        };
-        let saved = unsafe { libc::dup(libc::STDOUT_FILENO) };
-        unsafe {
-            libc::dup2(f.as_raw_fd(), libc::STDOUT_FILENO);
+        // c:Src/exec.c::getproc — `<(cmd)` uses pipe + fork + the
+        // `/dev/fd/N` filesystem entry (where N is the read end of
+        // the pipe held open in the parent). Consumer opens
+        // `/dev/fd/N`, reads the cmd's stdout through the pipe.
+        // Both macOS and Linux expose `/dev/fd` for held-open file
+        // descriptors. Previous Rust port captured stdout into
+        // `/tmp/zshrs_psub_*` tempfiles synchronously — works for
+        // `diff <(a) <(b)` style readers that scan once but diverges
+        // from zsh's observable path string and breaks any consumer
+        // that introspects the path or expects a non-seekable pipe.
+        let mut fds: [libc::c_int; 2] = [-1, -1];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            // Pipe creation failed — fall back to tempfile so we at
+            // least return SOMETHING.
+            let fifo_path = format!(
+                "/tmp/zshrs_psub_fallback_{}_{}",
+                std::process::id(),
+                with_executor(|e| {
+                    let n = e.process_sub_counter;
+                    e.process_sub_counter += 1;
+                    n
+                })
+            );
+            let _ = fs::remove_file(&fifo_path);
+            return fifo_path;
         }
-        crate::fusevm_disasm::maybe_print_stdout("process_subst_in", sub);
-        let mut vm = fusevm::VM::new(sub.clone());
-        register_builtins(&mut vm);
-        vm.set_shell_host(Box::new(ZshrsHost));
-        let _ = vm.run();
-        let _ = std::io::stdout().flush();
-        unsafe {
-            libc::dup2(saved, libc::STDOUT_FILENO);
-            libc::close(saved);
+        let (read_end, write_end) = (fds[0], fds[1]);
+        let sub_for_child = sub.clone();
+        match unsafe { libc::fork() } {
+            -1 => {
+                unsafe {
+                    libc::close(read_end);
+                    libc::close(write_end);
+                }
+                return String::from("/dev/null");
+            }
+            0 => {
+                // Child: close read end, dup write end to stdout,
+                // run the sub-chunk, exit. The exit closes the
+                // write end automatically, so the parent's reader
+                // gets EOF when the cmd finishes.
+                unsafe {
+                    libc::close(read_end);
+                    libc::dup2(write_end, libc::STDOUT_FILENO);
+                    libc::close(write_end);
+                }
+                crate::fusevm_disasm::maybe_print_stdout("process_subst_in", &sub_for_child);
+                let mut vm = fusevm::VM::new(sub_for_child);
+                register_builtins(&mut vm);
+                vm.set_shell_host(Box::new(ZshrsHost));
+                let _ = vm.run();
+                let _ = std::io::stdout().flush();
+                unsafe { libc::_exit(0) };
+            }
+            _ => {
+                // Parent: close write end, keep read end open under
+                // the same fd value so `/dev/fd/N` resolves to the
+                // pipe's read side. NOTE: FD_CLOEXEC must STAY clear
+                // — consumers like `cat <(cmd)` and `diff <(a) <(b)`
+                // discover the fd via exec inheritance, so closing
+                // on exec defeats the whole point. C zsh's getproc
+                // (Src/exec.c:5045+) leaves the fd open across exec.
+                unsafe {
+                    libc::close(write_end);
+                }
+            }
         }
-        fifo_path
+        format!("/dev/fd/{}", read_end)
     }
 
     fn process_sub_out(&mut self, sub: &fusevm::Chunk) -> String {

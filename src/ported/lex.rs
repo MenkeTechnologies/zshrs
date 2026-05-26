@@ -2253,7 +2253,20 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                 if c == '\n' && in_brace_param == 0 && pct == 0 && brct == 0 {
                     break;
                 }
-                add(lextok2_get(c) as char);
+                // Multibyte UTF-8 codepoints (>= 256) pass through
+                // verbatim — lextok2 only maps the 256-entry byte
+                // table (C's `lextok2[STOUC(c)]` truncates to u8).
+                // Previously `lextok2_get(c) as char` truncated
+                // codepoint to low byte (日 U+65E5 → å U+00E5),
+                // mangling every unquoted multibyte assignment value
+                // (`a=日本; echo $a` printed "å,"). The table only
+                // matters for ASCII glob metacharacters; everything
+                // else is identity.
+                if (c as u32) >= 256 {
+                    add(c);
+                } else {
+                    add(lextok2_get(c) as char);
+                }
             }
 
             _ => {

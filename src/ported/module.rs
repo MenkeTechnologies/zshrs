@@ -1150,8 +1150,17 @@ impl modulestab {
             if (m.node.flags & MOD_UNLOAD) != 0 {
                 // c:2258
                 m.node.flags &= !MOD_UNLOAD; // c:2259
-            } else if (m.node.flags & MOD_LINKED) != 0 {
-                // c:2260
+            } else if (m.node.flags & MOD_LINKED) != 0 && (m.node.flags & MOD_INIT_B) != 0 {
+                // c:Src/module.c:2260 — already loaded (handle exists
+                // AND boot ran). For statically-linked builtin modules
+                // (registered with MOD_LINKED set at module::new),
+                // MOD_INIT_B is only set after this fn walks the
+                // setup/boot steps — so MOD_LINKED alone must NOT
+                // short-circuit. Previously the early-return fired on
+                // every `zmodload zsh/mathfunc` for builtin modules
+                // because they enter this fn with MOD_LINKED already
+                // set but MOD_INIT_B clear; the setup arms below were
+                // skipped, so MOD_INIT_B never got set. Parity bug.
                 unqueue_signals(); // c:2261
                 return true; // c:2262 return 0
             }
@@ -2437,6 +2446,30 @@ pub fn require_module(table: &mut modulestab, modname: &str, _features: Option<&
     if try_load_module(table, modname) == 0 {
         // Module not in static table — report failure.
         return 1;
+    }
+    // c:Src/module.c:2354-2356 — when the module is found but its
+    // handle is NULL OR MOD_UNLOAD is set, call `load_module` which
+    // walks MOD_BUSY → MOD_INIT_S → MOD_SETUP → MOD_INIT_B per
+    // c:2206-2322. Without this step, builtin modules stay at
+    // MOD_LINKED-only (set by `module::new` at zsh_h.rs:758) and
+    // every "is this module loaded?" check that reads MOD_INIT_B
+    // returns false even after the user's explicit `zmodload`. Fix
+    // affects math-function gating (`zmodload zsh/mathfunc; echo
+    // $((sqrt(4)))`), `zmodload -e` exit codes, and any other
+    // per-module load probe.
+    let needs_load = table
+        .modules
+        .get(modname)
+        .map(|m| {
+            let flags = m.node.flags;
+            (flags & crate::ported::zsh_h::MOD_INIT_B) == 0
+                || (flags & crate::ported::zsh_h::MOD_UNLOAD) != 0
+        })
+        .unwrap_or(true);
+    if needs_load {
+        if !table.load_module(modname) {
+            return 1;
+        }
     }
     0
 }
