@@ -494,4 +494,70 @@ mod tests {
         freenameddirnode(nd);
         // No panic = pass. Caller's `nd` is moved.
     }
+
+    // ─── zsh-corpus pins: nameddir add/get/remove ────────────────────
+
+    /// `addnameddirnode` then `removenameddirnode` round-trip.
+    #[test]
+    fn nameddir_corpus_add_then_remove() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("proj", make_nd("proj", "/home/u/proj", 0));
+        let removed = removenameddirnode("proj");
+        assert!(removed.is_some(), "removed value returned");
+        assert_eq!(removed.unwrap().dir, "/home/u/proj");
+        let t = nameddirtab().lock().unwrap();
+        assert!(!t.contains_key("proj"), "entry gone after remove");
+    }
+
+    /// `removenameddirnode` on missing returns None.
+    #[test]
+    fn nameddir_corpus_remove_missing_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        assert!(removenameddirnode("never_added").is_none());
+    }
+
+    /// `addnameddirnode` overwrites on duplicate name — last add wins.
+    #[test]
+    fn nameddir_corpus_add_duplicate_overwrites() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("d", make_nd("d", "/old/path", 0));
+        addnameddirnode("d", make_nd("d", "/new/path", 0));
+        let t = nameddirtab().lock().unwrap();
+        let nd = t.get("d").expect("entry present");
+        assert_eq!(nd.dir, "/new/path", "duplicate add overwrote");
+    }
+
+    /// `addnameddirnode` with single-char dir: diff = len(dir) - len(name).
+    /// `addnameddirnode("x", "/a")` → diff = 2 - 1 = 1.
+    #[test]
+    fn nameddir_corpus_diff_is_dir_minus_name_length() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("x", make_nd("x", "/a", 0));
+        let t = nameddirtab().lock().unwrap();
+        let nd = t.get("x").unwrap();
+        assert_eq!(nd.diff, 1, "diff = len('/a') - len('x') = 2 - 1 = 1");
+    }
+
+    /// `emptynameddirtable` clears all entries.
+    #[test]
+    fn nameddir_corpus_emptynameddirtable_clears() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = NAMEDDIR_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_table();
+        addnameddirnode("a", make_nd("a", "/a", 0));
+        addnameddirnode("b", make_nd("b", "/b", 0));
+        emptynameddirtable();
+        let t = nameddirtab().lock().unwrap();
+        // emptynameddirtable removes user entries; may keep internal defaults.
+        assert!(t.get("a").is_none(), "user entry a cleared");
+        assert!(t.get("b").is_none(), "user entry b cleared");
+    }
 }

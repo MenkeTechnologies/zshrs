@@ -5131,4 +5131,72 @@ mod tests {
             "c:1886 — index 0 (shell) must NOT be stamped"
         );
     }
+
+    // ─── zsh-corpus pins for printhhmmss / sigmsg edge cases ─────────
+
+    /// `printhhmmss(0.0)` returns "0.000".
+    #[test]
+    fn jobs_corpus_printhhmmss_zero_exact() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(printhhmmss(0.0), "0.000");
+    }
+
+    /// `printhhmmss(59.999)` is still in the sub-minute branch.
+    #[test]
+    fn jobs_corpus_printhhmmss_just_under_one_minute() {
+        let _g = crate::test_util::global_state_lock();
+        let s = printhhmmss(59.999);
+        // Sub-minute → "%.3f" → "59.999" (no colons).
+        assert!(!s.contains(':'), "sub-minute has no colon, got {s:?}");
+        assert!(s.starts_with("59.9"));
+    }
+
+    /// `printhhmmss(60.0)` enters the minutes branch → "1:00.00".
+    #[test]
+    fn jobs_corpus_printhhmmss_exactly_one_minute() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(printhhmmss(60.0), "1:00.00");
+    }
+
+    /// `printhhmmss(3600.0)` enters the hours branch → "1:00:00.00".
+    #[test]
+    fn jobs_corpus_printhhmmss_exactly_one_hour() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(printhhmmss(3600.0), "1:00:00.00");
+    }
+
+    /// `printhhmmss(86400.0)` → "24:00:00.00" (24h cleanly).
+    #[test]
+    fn jobs_corpus_printhhmmss_exactly_one_day() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(printhhmmss(86400.0), "24:00:00.00");
+    }
+
+    /// `sigmsg(SIGINT)` returns "interrupt" canonically.
+    #[test]
+    fn jobs_corpus_sigmsg_int_is_interrupt() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(sigmsg(libc::SIGINT), "interrupt");
+    }
+
+    /// `sigmsg(SIGTERM)` returns "terminated".
+    #[test]
+    fn jobs_corpus_sigmsg_term_is_terminated() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(sigmsg(libc::SIGTERM), "terminated");
+    }
+
+    /// `sigmsg(SIGSEGV)` returns "segmentation fault".
+    #[test]
+    fn jobs_corpus_sigmsg_segv_is_segfault() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(sigmsg(libc::SIGSEGV), "segmentation fault");
+    }
+
+    /// `sigmsg(SIGPIPE)` returns "broken pipe".
+    #[test]
+    fn jobs_corpus_sigmsg_pipe_is_broken_pipe() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(sigmsg(libc::SIGPIPE), "broken pipe");
+    }
 }

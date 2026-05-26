@@ -3887,4 +3887,48 @@ mod tests {
         assert_eq!(QT_DOLLARS, 4);
         assert_eq!(QT_BACKTICK, 5);
     }
+
+    // ─── zsh-corpus pins for inull / QT_* ──────────────────────────
+
+    /// `inull` recognises every null-token in the set.
+    #[test]
+    fn compctl_corpus_inull_recognises_null_tokens() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        assert!(inull(Snull));
+        assert!(inull(Dnull));
+        assert!(inull(Bnull));
+        assert!(inull(Stringg));
+        assert!(inull(QSTRING_TOK));
+    }
+
+    /// `inull` rejects ordinary printable chars.
+    #[test]
+    fn compctl_corpus_inull_rejects_printables() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        for c in ['a', 'Z', '0', ' ', '!', '~'] {
+            assert!(!inull(c), "{c:?} should NOT be inull");
+        }
+    }
+
+    /// All QT_* constants are pairwise distinct.
+    #[test]
+    fn compctl_corpus_qt_pairwise_distinct() {
+        let qs = [QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS, QT_BACKTICK];
+        for (i, a) in qs.iter().enumerate() {
+            for b in &qs[i+1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    /// All QT_* in [0, 5] range.
+    #[test]
+    fn compctl_corpus_qt_all_within_range() {
+        for q in [QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS, QT_BACKTICK] {
+            assert!((0..=5).contains(&q),
+                "QT_* value {q} out of [0,5]");
+        }
+    }
 }

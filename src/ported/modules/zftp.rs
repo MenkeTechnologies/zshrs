@@ -5239,4 +5239,50 @@ mod tests {
             "missing open paren → error"
         );
     }
+
+    // ─── zsh-corpus pins for ZFST_TYPE / ZFST_MODE macros ──────────
+
+    /// `ZFST_TYPE(x)` masks to the type bits.
+    #[test]
+    fn zftp_corpus_zfst_type_masks_type_bits() {
+        assert_eq!(ZFST_TYPE(ZFST_ASCI), ZFST_ASCI, "ASCI type bit");
+        assert_eq!(ZFST_TYPE(ZFST_IMAG), ZFST_IMAG, "IMAG type bit");
+    }
+
+    /// `ZFST_TYPE` ignores mode bits.
+    #[test]
+    fn zftp_corpus_zfst_type_ignores_mode_bits() {
+        let combined = ZFST_IMAG | ZFST_BLOC;
+        assert_eq!(ZFST_TYPE(combined), ZFST_IMAG,
+            "ZFST_TYPE strips mode bits");
+    }
+
+    /// `ZFST_MODE` masks mode bits.
+    #[test]
+    fn zftp_corpus_zfst_mode_masks_mode_bits() {
+        assert_eq!(ZFST_MODE(ZFST_STRE), ZFST_STRE, "stream mode");
+        assert_eq!(ZFST_MODE(ZFST_BLOC), ZFST_BLOC, "block mode");
+    }
+
+    /// `ZFST_MODE` ignores type bits.
+    #[test]
+    fn zftp_corpus_zfst_mode_ignores_type_bits() {
+        let combined = ZFST_IMAG | ZFST_BLOC;
+        assert_eq!(ZFST_MODE(combined), ZFST_BLOC,
+            "ZFST_MODE strips type bits");
+    }
+
+    /// `ZFST_TMSK` and `ZFST_MMSK` don't overlap.
+    #[test]
+    fn zftp_corpus_zfst_type_mode_masks_disjoint() {
+        assert_eq!(ZFST_TMSK & ZFST_MMSK, 0,
+            "type-mask and mode-mask must be disjoint");
+    }
+
+    /// `ZFST_TYPE(0)` and `ZFST_MODE(0)` both return 0.
+    #[test]
+    fn zftp_corpus_zfst_zero_input_returns_zero() {
+        assert_eq!(ZFST_TYPE(0), 0);
+        assert_eq!(ZFST_MODE(0), 0);
+    }
 }

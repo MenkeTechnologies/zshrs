@@ -1863,4 +1863,60 @@ mod tests {
             libc::close(fd);
         }
     }
+
+    // ─── zsh-corpus pins for getposint ──────────────────────────────
+
+    /// `getposint("42", "name")` returns 42.
+    #[test]
+    fn system_corpus_getposint_decimal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("42", "test"), 42);
+    }
+
+    /// `getposint("0", "name")` returns 0.
+    #[test]
+    fn system_corpus_getposint_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("0", "test"), 0);
+    }
+
+    /// `getposint("-5", "name")` returns -1 (error per c:51).
+    #[test]
+    fn system_corpus_getposint_negative_returns_error() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("-5", "test"), -1,
+            "negative input rejected per c:51");
+    }
+
+    /// `getposint("abc", "name")` returns -1 (non-integer).
+    #[test]
+    fn system_corpus_getposint_non_numeric_returns_error() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("abc", "test"), -1);
+    }
+
+    /// `getposint("42abc", "name")` returns -1 (trailing garbage).
+    #[test]
+    fn system_corpus_getposint_trailing_garbage_returns_error() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("42abc", "test"), -1,
+            "trailing non-digits rejected per c:51 eptr check");
+    }
+
+    /// `getposint("")` returns 0 (zstrtol parses empty as 0,
+    /// eptr is empty too, ret is 0, so neither error branch fires —
+    /// matches C behavior at system.c:51).
+    #[test]
+    fn system_corpus_getposint_empty_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("", "test"), 0,
+            "empty input: zstrtol returns 0, neither error branch hits");
+    }
+
+    /// `getposint("1000000", "name")` returns 1000000 (large positive).
+    #[test]
+    fn system_corpus_getposint_large_positive() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(getposint("1000000", "test"), 1_000_000);
+    }
 }

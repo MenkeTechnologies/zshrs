@@ -5908,6 +5908,237 @@ mod tests {
         );
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // zsh test-corpus pins — direct anchors to Test/D09brace.ztst.
+    // Tests verify brace expansion matches zsh's documented output.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Test/D09brace.ztst:10-12` — basic brace expansion with
+    /// nested range: `X{1,2,{3..6},7,8}Y` expands all 8 values.
+    #[test]
+    fn zsh_corpus_basic_brace_with_nested_range() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{1,2,{3..6},7,8}Y", false),
+            vec!["X1Y", "X2Y", "X3Y", "X4Y", "X5Y", "X6Y", "X7Y", "X8Y"],
+            "ztst:11 — basic brace expansion with nested range",
+        );
+    }
+
+    /// `Test/D09brace.ztst:30-32` — numeric range with leading zero
+    /// padding: `X{01..4}Y` → all 4 values 0-padded to 2 digits.
+    #[test]
+    fn zsh_corpus_numeric_range_zero_padding() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{01..4}Y", false),
+            vec!["X01Y", "X02Y", "X03Y", "X04Y"],
+            "ztst:32 — leading-zero padding propagates to all values",
+        );
+    }
+
+    /// `Test/D09brace.ztst:34-36` — padding comes from RHS too:
+    /// `X{1..04}Y` → 2-digit zero-padded.
+    #[test]
+    fn zsh_corpus_numeric_range_padding_from_rhs() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{1..04}Y", false),
+            vec!["X01Y", "X02Y", "X03Y", "X04Y"],
+            "ztst:36 — RHS padding `04` propagates",
+        );
+    }
+
+    /// `Test/D09brace.ztst:38-40` — unpadded range >9: `X{7..12}Y`
+    /// numbers stay unpadded.
+    #[test]
+    fn zsh_corpus_numeric_range_no_padding_when_unspecified() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{7..12}Y", false),
+            vec!["X7Y", "X8Y", "X9Y", "X10Y", "X11Y", "X12Y"],
+            "ztst:40 — no padding when neither end has leading zero",
+        );
+    }
+
+    /// `Test/D09brace.ztst:42-44` — `X{07..12}Y` → 2-digit padded.
+    #[test]
+    fn zsh_corpus_numeric_range_lhs_padding_propagates() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{07..12}Y", false),
+            vec!["X07Y", "X08Y", "X09Y", "X10Y", "X11Y", "X12Y"],
+            "ztst:44 — LHS padding `07` propagates",
+        );
+    }
+
+    /// `Test/D09brace.ztst:46-48` — wider RHS padding overrides:
+    /// `X{7..012}Y` → 3-digit padded.
+    #[test]
+    fn zsh_corpus_numeric_range_max_padding_width_wins() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{7..012}Y", false),
+            vec!["X007Y", "X008Y", "X009Y", "X010Y", "X011Y", "X012Y"],
+            "ztst:48 — widest padding width wins",
+        );
+    }
+
+    /// `Test/D09brace.ztst:50-52` — decreasing range: `X{4..1}Y` →
+    /// 4,3,2,1 (reversed).
+    #[test]
+    fn zsh_corpus_numeric_range_decreasing() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{4..1}Y", false),
+            vec!["X4Y", "X3Y", "X2Y", "X1Y"],
+            "ztst:52 — decreasing range emits in reverse",
+        );
+    }
+
+    /// `Test/D09brace.ztst:54-56` — combined braces: `X{1..4}{1..4}Y`
+    /// → 16-element cross product.
+    #[test]
+    fn zsh_corpus_combined_braces_cross_product() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{1..4}{1..4}Y", false),
+            vec![
+                "X11Y", "X12Y", "X13Y", "X14Y",
+                "X21Y", "X22Y", "X23Y", "X24Y",
+                "X31Y", "X32Y", "X33Y", "X34Y",
+                "X41Y", "X42Y", "X43Y", "X44Y",
+            ],
+            "ztst:56 — combined-brace cross product",
+        );
+    }
+
+    /// `Test/D09brace.ztst:58-60` — negative numbers in range:
+    /// `X{-4..4}Y` → `-4`..`4` (9 values including 0).
+    #[test]
+    fn zsh_corpus_negative_numbers_in_range() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{-4..4}Y", false),
+            vec![
+                "X-4Y", "X-3Y", "X-2Y", "X-1Y", "X0Y",
+                "X1Y", "X2Y", "X3Y", "X4Y",
+            ],
+            "ztst:60 — negative-to-positive range",
+        );
+    }
+
+    /// `Test/D09brace.ztst:62-64` — reverse-direction numeric range:
+    /// `X{4..-4}Y` walks from 4 to -4 descending.
+    #[test]
+    fn zsh_corpus_brace_descending_range_from_positive_to_negative() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{4..-4}Y", false),
+            vec![
+                "X4Y", "X3Y", "X2Y", "X1Y", "X0Y",
+                "X-1Y", "X-2Y", "X-3Y", "X-4Y",
+            ],
+            "ztst:64 — descending 4..-4 produces 9 values",
+        );
+    }
+
+    /// `Test/D09brace.ztst:66-68` — stepped padded range:
+    /// `X{004..-4..2}Y` = X004Y X002Y X000Y X-02Y X-04Y.
+    /// Padding width 3 from LHS; step is +2 (sign of step is ignored,
+    /// direction is from start to end).
+    #[test]
+    fn zsh_corpus_brace_stepped_padded_descending() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{004..-4..2}Y", false),
+            vec!["X004Y", "X002Y", "X000Y", "X-02Y", "X-04Y"],
+            "ztst:68 — stepped+padded descending",
+        );
+    }
+
+    /// `Test/D09brace.ztst:74-76` — step alignment 1: `X{1..32..3}Y`
+    /// = X1Y X4Y X7Y X10Y X13Y X16Y X19Y X22Y X25Y X28Y X31Y.
+    /// Step 3 starting from 1, capped at 32.
+    #[test]
+    fn zsh_corpus_brace_step_alignment_1_to_32_step_3() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("X{1..32..3}Y", false),
+            vec![
+                "X1Y", "X4Y", "X7Y", "X10Y", "X13Y", "X16Y",
+                "X19Y", "X22Y", "X25Y", "X28Y", "X31Y",
+            ],
+            "ztst:76 — {{1..32..3}} step alignment",
+        );
+    }
+
+    /// `Test/D09brace.ztst:100-102` — `hey{a..j}there` — char range.
+    #[test]
+    fn zsh_corpus_brace_char_range_simple() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("hey{a..j}there", false),
+            vec![
+                "heyathere", "heybthere", "heycthere", "heydthere",
+                "heyethere", "heyfthere", "heygthere", "heyhthere",
+                "heyithere", "heyjthere",
+            ],
+            "ztst:102 — char range a..j",
+        );
+    }
+
+    /// `Test/D09brace.ztst:108-110` — reverse char range:
+    /// `crumbs{y..p}ooh` walks down y → p (10 values).
+    #[test]
+    fn zsh_corpus_brace_char_range_reverse() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("crumbs{y..p}ooh", false),
+            vec![
+                "crumbsyooh", "crumbsxooh", "crumbswooh", "crumbsvooh",
+                "crumbsuooh", "crumbstooh", "crumbssooh", "crumbsrooh",
+                "crumbsqooh", "crumbspooh",
+            ],
+            "ztst:110 — char range y..p reverse",
+        );
+    }
+
+    /// `Test/D09brace.ztst:104-106` — nested brace: `gosh{1,{Z..a},2}cripes`
+    /// — inner `{Z..a}` is char range Z to a in ASCII order (10 chars).
+    /// Full output: gosh1cripes goshZcripes gosh[cripes gosh\cripes
+    /// gosh]cripes gosh^cripes gosh_cripes gosh`cripes goshacripes
+    /// gosh2cripes.
+    #[test]
+    fn zsh_corpus_brace_nested_with_char_range_ascii() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("gosh{1,{Z..a},2}cripes", false),
+            vec![
+                "gosh1cripes", "goshZcripes", "gosh[cripes", "gosh\\cripes",
+                "gosh]cripes", "gosh^cripes", "gosh_cripes", "gosh`cripes",
+                "goshacripes", "gosh2cripes",
+            ],
+            "ztst:106 — nested brace with ASCII char range",
+        );
+    }
+
+    /// `Test/D09brace.ztst:116-118` — unmatched closing brace after
+    /// matched braces stays literal: `{1..10}{..` → `1{.. 2{.. ...`.
+    #[test]
+    #[ignore = "ZSHRS BUG: unmatched trailing braces not preserved literally"]
+    fn zsh_corpus_brace_unmatched_after_matched_left_literal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            xpandbraces("{1..10}{..", false),
+            vec![
+                "1{..", "2{..", "3{..", "4{..", "5{..",
+                "6{..", "7{..", "8{..", "9{..", "10{..",
+            ],
+            "ztst:118 — unmatched trailing {{.. left literal",
+        );
+    }
+
     // ── split_qualifier: parse trailing (qual) block ─────────────────
     /// `*.txt` (no trailing parens) → (input, None).
     #[test]

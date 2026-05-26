@@ -1415,4 +1415,35 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ─── zsh-corpus pins for is_private ─────────────────────────────
+
+    /// `is_private(null)` returns 0 per c:204 null guard.
+    #[test]
+    fn param_private_corpus_is_private_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(is_private(std::ptr::null()), 0);
+    }
+
+    /// `setfn_error(null)` accepts null without panic.
+    #[test]
+    fn param_private_corpus_setfn_error_null_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        setfn_error(std::ptr::null_mut());
+    }
+
+    /// `pps_getfn(null)` returns empty string.
+    #[test]
+    fn param_private_corpus_pps_getfn_null_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let s = pps_getfn(std::ptr::null_mut());
+        assert!(s.is_empty(), "null pm → empty string, got {s:?}");
+    }
+
+    /// `ppi_getfn(null)` returns 0.
+    #[test]
+    fn param_private_corpus_ppi_getfn_null_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(ppi_getfn(std::ptr::null_mut()), 0);
+    }
 }

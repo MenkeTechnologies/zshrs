@@ -780,4 +780,95 @@ mod tests {
         assert_eq!(h, i);
         assert!(h.contains("\x1b[8m"));
     }
+
+    // ─── zsh-corpus pins for convertattr ───────────────────────────
+
+    /// "bold" → SGR 1.
+    #[test]
+    fn hlgroup_corpus_bold_is_sgr_1() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("bold", false);
+        assert!(s.contains("\x1b[1m"), "bold = SGR 1, got {s:?}");
+    }
+
+    /// "underline" → SGR 4.
+    #[test]
+    fn hlgroup_corpus_underline_is_sgr_4() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("underline", false);
+        assert!(s.contains("\x1b[4m"));
+    }
+
+    /// "italic" → SGR 3.
+    #[test]
+    fn hlgroup_corpus_italic_is_sgr_3() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("italic", false);
+        assert!(s.contains("\x1b[3m"));
+    }
+
+    /// "blink" → SGR 5.
+    #[test]
+    fn hlgroup_corpus_blink_is_sgr_5() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("blink", false);
+        assert!(s.contains("\x1b[5m"));
+    }
+
+    /// "strikethrough" → SGR 9.
+    #[test]
+    fn hlgroup_corpus_strikethrough_is_sgr_9() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("strikethrough", false);
+        assert!(s.contains("\x1b[9m"));
+    }
+
+    /// "fg=red" → SGR 31.
+    #[test]
+    fn hlgroup_corpus_fg_red_is_sgr_31() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("fg=red", false);
+        assert!(s.contains("\x1b[31m"), "fg=red = SGR 31, got {s:?}");
+    }
+
+    /// "bg=blue" → SGR 44.
+    #[test]
+    fn hlgroup_corpus_bg_blue_is_sgr_44() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("bg=blue", false);
+        assert!(s.contains("\x1b[44m"), "bg=blue = SGR 44, got {s:?}");
+    }
+
+    /// "fg=default" → SGR 39 (default fg).
+    #[test]
+    fn hlgroup_corpus_fg_default_is_sgr_39() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("fg=default", false);
+        assert!(s.contains("\x1b[39m"), "fg=default = SGR 39");
+    }
+
+    /// "bg=default" → SGR 49.
+    #[test]
+    fn hlgroup_corpus_bg_default_is_sgr_49() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("bg=default", false);
+        assert!(s.contains("\x1b[49m"));
+    }
+
+    /// Empty input is treated as "reset" (SGR 0).
+    #[test]
+    fn hlgroup_corpus_empty_is_reset() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("", false);
+        assert!(s.contains("\x1b[0m"), "empty = SGR 0 reset, got {s:?}");
+    }
+
+    /// "bold,fg=red" — comma-separated combined attrs.
+    #[test]
+    fn hlgroup_corpus_combined_attrs() {
+        let _g = crate::test_util::global_state_lock();
+        let s = convertattr("bold,fg=red", false);
+        assert!(s.contains("\x1b[1m"), "has bold");
+        assert!(s.contains("\x1b[31m"), "has fg=red");
+    }
 }

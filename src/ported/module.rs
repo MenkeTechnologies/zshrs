@@ -4689,4 +4689,68 @@ mod modname_tests {
         );
     }
 
+    // ─── zsh-corpus pins for module table ───────────────────────────
+
+    /// `register_module` returns true on first registration.
+    #[test]
+    fn module_corpus_register_new_returns_true() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        assert!(register_module(&mut t, "myfresh.module"));
+    }
+
+    /// `register_module` returns false on duplicate registration.
+    #[test]
+    fn module_corpus_register_duplicate_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        assert!(register_module(&mut t, "dup.module"));
+        assert!(!register_module(&mut t, "dup.module"),
+            "second registration of same name = false");
+    }
+
+    /// New modulestab is pre-seeded with built-in modules.
+    /// Pin: pre-seed count is positive and stable.
+    #[test]
+    fn module_corpus_new_table_has_builtin_modules() {
+        let _g = crate::test_util::global_state_lock();
+        let t = newmoduletable();
+        assert!(t.modules.len() >= 1, "fresh modulestab has built-ins, got {}", t.modules.len());
+    }
+
+    /// `register_module` with empty name does not panic.
+    #[test]
+    fn module_corpus_register_empty_name_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut t = newmoduletable();
+        let _ = register_module(&mut t, "");
+    }
+
+    /// Default callback `setup_` returns 0.
+    #[test]
+    fn module_corpus_setup_callback_default_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(setup_(std::ptr::null()), 0);
+    }
+
+    /// Default `boot_` returns 0.
+    #[test]
+    fn module_corpus_boot_callback_default_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// Default `cleanup_` returns 0.
+    #[test]
+    fn module_corpus_cleanup_callback_default_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(cleanup_(std::ptr::null()), 0);
+    }
+
+    /// Default `finish_` returns 0.
+    #[test]
+    fn module_corpus_finish_callback_default_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(finish_(std::ptr::null()), 0);
+    }
 }

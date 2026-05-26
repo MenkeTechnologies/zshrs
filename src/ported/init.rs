@@ -1819,4 +1819,60 @@ mod tests {
         let r = source("");
         assert_ne!(r, 0, "source of empty path must report failure");
     }
+
+    // ─── zsh-corpus pins for init helpers ───────────────────────────
+
+    /// `tccap_get_name(0)` returns a non-empty cap name.
+    #[test]
+    fn init_corpus_tccap_index_zero_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let name = tccap_get_name(0);
+        assert!(!name.is_empty(), "cap[0] has a name, got {name:?}");
+    }
+
+    /// `tccap_get_name` for index TC_COUNT or higher returns "".
+    #[test]
+    fn init_corpus_tccap_out_of_range_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(tccap_get_name(39), "", "TC_COUNT = empty");
+        assert_eq!(tccap_get_name(999), "", "way out of range = empty");
+    }
+
+    /// All cap indexes 0..TC_COUNT return non-empty distinct names.
+    #[test]
+    fn init_corpus_tccap_indexes_all_named() {
+        let _g = crate::test_util::global_state_lock();
+        for i in 0..39 {
+            let n = tccap_get_name(i);
+            assert!(!n.is_empty(), "cap {i} should have a name");
+        }
+    }
+
+    /// `source("/nonexistent/path/zshrs_test_xyz")` returns non-zero.
+    #[test]
+    fn init_corpus_source_nonexistent_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_ne!(source("/nonexistent/path/zshrs_test_xyz_zzz"), 0);
+    }
+
+    /// `noop_function()` doesn't panic.
+    #[test]
+    fn init_corpus_noop_function_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        noop_function();
+    }
+
+    /// `noop_function_int(0)` doesn't panic.
+    #[test]
+    fn init_corpus_noop_function_int_zero_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        noop_function_int(0);
+    }
+
+    /// `zleentry` with negative cmd code returns None.
+    #[test]
+    fn init_corpus_zleentry_negative_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(zleentry(-1).is_none());
+    }
 }

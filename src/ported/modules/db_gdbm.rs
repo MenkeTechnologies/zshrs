@@ -1427,4 +1427,55 @@ mod tests {
         );
         assert_ne!(r, 0, "zgdbmpath on untied param must error");
     }
+
+    // ─── zsh-corpus pins for db_gdbm helpers ───────────────────────
+
+    /// `bin_ztie` with no args returns nonzero (usage error).
+    #[test]
+    fn db_gdbm_corpus_bin_ztie_no_args_errors() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_ztie("ztie", &[], &ops, 0);
+        assert_ne!(r, 0, "ztie with no args = error");
+    }
+
+    /// `bin_zuntie` with no args returns 0 — the C body iterates over
+    /// `args` and untie's each in a loop. Zero args = empty loop body =
+    /// success (0). Pin this contract.
+    #[test]
+    fn db_gdbm_corpus_bin_zuntie_no_args_succeeds() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_zuntie("zuntie", &[], &ops, 0);
+        assert_eq!(r, 0, "zuntie with no args = 0 (empty loop is success)");
+    }
+
+    /// `gdbmgetfn` on untied param returns empty string.
+    #[test]
+    fn db_gdbm_corpus_gdbmgetfn_untied_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let s = gdbmgetfn("zshrs_never_tied_xyz", "any_key");
+        assert!(s.is_empty(), "untied param → empty, got {s:?}");
+    }
+
+    /// `getgdbmnode` on untied param returns false.
+    #[test]
+    fn db_gdbm_corpus_getgdbmnode_untied_returns_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!getgdbmnode("zshrs_never_tied_xyz", "any"));
+    }
+
+    /// `gdbmsetfn` on untied param doesn't panic.
+    #[test]
+    fn db_gdbm_corpus_gdbmsetfn_untied_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmsetfn("zshrs_never_tied_xyz", "key", Some("val"));
+    }
+
+    /// `gdbmunsetfn` on untied param doesn't panic.
+    #[test]
+    fn db_gdbm_corpus_gdbmunsetfn_untied_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        gdbmunsetfn("zshrs_never_tied_xyz", "key", 0);
+    }
 }

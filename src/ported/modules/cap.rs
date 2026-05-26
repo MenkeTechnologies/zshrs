@@ -529,4 +529,48 @@ mod tests {
         let r = bin_setcap("setcap", &["cap_net_admin+ep".into()], &ops, 0);
         assert_eq!(r, 1, "notavail stub must return 1 regardless of arg count");
     }
+
+    // ─── zsh-corpus pins for cap on non-libcap host ────────────────
+
+    /// On non-libcap host, `bin_cap` returns 1 (notavail).
+    #[test]
+    #[cfg(not(all(target_os = "linux", feature = "libcap")))]
+    fn cap_corpus_bin_cap_notavail_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_cap("cap", &[], &ops, 0);
+        assert_eq!(r, 1, "non-libcap host = notavail");
+    }
+
+    /// On non-libcap host, `bin_getcap` returns 1.
+    #[test]
+    #[cfg(not(all(target_os = "linux", feature = "libcap")))]
+    fn cap_corpus_bin_getcap_notavail_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_getcap("getcap", &[], &ops, 0);
+        assert_eq!(r, 1);
+    }
+
+    /// On non-libcap host, `bin_setcap` returns 1 even with full args.
+    #[test]
+    #[cfg(not(all(target_os = "linux", feature = "libcap")))]
+    fn cap_corpus_bin_setcap_notavail_returns_one_with_full_args() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_setcap("setcap",
+            &["cap_net_admin+ep".into(), "/bin/ls".into()], &ops, 0);
+        assert_eq!(r, 1);
+    }
+
+    /// Lifecycle shims all return 0.
+    #[test]
+    fn cap_corpus_lifecycle_all_return_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
 }

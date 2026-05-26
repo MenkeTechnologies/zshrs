@@ -766,4 +766,71 @@ mod tests {
         let b: i64 = getcurrenttime()[0].parse().unwrap();
         assert!(b >= a, "time went backwards: {a} → {b}");
     }
+
+    // ─── zsh-corpus pins for datetime helpers ──────────────────────
+
+    /// `getcurrentsecs` returns positive epoch seconds.
+    #[test]
+    fn datetime_corpus_getcurrentsecs_positive() {
+        let _g = crate::test_util::global_state_lock();
+        let s = getcurrentsecs();
+        assert!(s > 1_577_836_800, "post-2020 epoch, got {s}");
+    }
+
+    /// `getcurrentsecs` is monotonically non-decreasing across calls.
+    #[test]
+    fn datetime_corpus_getcurrentsecs_monotonic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getcurrentsecs();
+        let b = getcurrentsecs();
+        assert!(b >= a, "time went backwards: {a} → {b}");
+    }
+
+    /// `getcurrentrealtime` returns positive f64 in epoch seconds.
+    #[test]
+    fn datetime_corpus_getcurrentrealtime_positive() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getcurrentrealtime();
+        assert!(r > 1_577_836_800.0, "post-2020 epoch, got {r}");
+    }
+
+    /// `getcurrentrealtime` has sub-second precision (probably).
+    /// Pin: returns f64, not just integer-valued.
+    #[test]
+    fn datetime_corpus_getcurrentrealtime_returns_f64() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getcurrentrealtime();
+        // It's a valid float that's finite
+        assert!(r.is_finite(), "must be finite, got {r}");
+    }
+
+    /// `getcurrenttime` returns exactly 2 elements (secs, nanos).
+    #[test]
+    fn datetime_corpus_getcurrenttime_two_elements() {
+        let _g = crate::test_util::global_state_lock();
+        let arr = getcurrenttime();
+        assert_eq!(arr.len(), 2, "exactly 2 elements (secs, nanos)");
+    }
+
+    /// `getcurrenttime` element types: both parse as i64.
+    #[test]
+    fn datetime_corpus_getcurrenttime_both_parse_as_i64() {
+        let _g = crate::test_util::global_state_lock();
+        let arr = getcurrenttime();
+        let _: i64 = arr[0].parse().expect("secs parses");
+        let _: i64 = arr[1].parse().expect("nanos parses");
+    }
+
+    /// `getcurrentsecs` and `getcurrenttime[0]` agree within a couple seconds.
+    #[test]
+    fn datetime_corpus_getcurrentsecs_matches_getcurrenttime_secs() {
+        let _g = crate::test_util::global_state_lock();
+        let a = getcurrentsecs();
+        let b: i64 = getcurrenttime()[0].parse().unwrap();
+        // Should differ by at most a couple seconds.
+        assert!(
+            (a - b).abs() <= 2,
+            "getcurrentsecs={a} should match getcurrenttime[0]={b} within ~2s"
+        );
+    }
 }

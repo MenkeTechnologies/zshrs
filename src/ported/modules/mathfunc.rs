@@ -909,4 +909,87 @@ mod tests {
         assert_eq!(r.type_, MN_FLOAT);
         assert!((r.d - 4.0).abs() < 1e-9);
     }
+
+    // ─── zsh-corpus pins for math_func ─────────────────────────────
+
+    /// `abs(-5.0)` returns 5.0 as float.
+    #[test]
+    fn mathfunc_corpus_abs_negative_float() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("abs", 1, &[mn_float(-5.0)], MF_ABS);
+        assert!((r.d.abs() - 5.0).abs() < 1e-9, "|−5.0| = 5.0, got {:?}", r.d);
+    }
+
+    /// `cos(0)` = 1.0.
+    #[test]
+    fn mathfunc_corpus_cos_zero_is_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("cos", 1, &[mn_float(0.0)], MF_COS);
+        assert!((r.d - 1.0).abs() < 1e-9);
+    }
+
+    /// `sin(0)` = 0.0.
+    #[test]
+    fn mathfunc_corpus_sin_zero_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("sin", 1, &[mn_float(0.0)], MF_SIN);
+        assert!(r.d.abs() < 1e-9, "sin(0)=0, got {}", r.d);
+    }
+
+    /// `exp(0)` = 1.0.
+    #[test]
+    fn mathfunc_corpus_exp_zero_is_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("exp", 1, &[mn_float(0.0)], MF_EXP);
+        assert!((r.d - 1.0).abs() < 1e-9);
+    }
+
+    /// `ceil(2.3)` = 3.0.
+    #[test]
+    fn mathfunc_corpus_ceil_rounds_up() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("ceil", 1, &[mn_float(2.3)], MF_CEIL);
+        assert!((r.d - 3.0).abs() < 1e-9, "ceil(2.3)=3.0, got {}", r.d);
+    }
+
+    /// `floor(2.7)` = 2.0.
+    #[test]
+    fn mathfunc_corpus_floor_rounds_down() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("floor", 1, &[mn_float(2.7)], MF_FLOOR);
+        assert!((r.d - 2.0).abs() < 1e-9, "floor(2.7)=2.0, got {}", r.d);
+    }
+
+    /// `fabs(-7.5)` = 7.5.
+    #[test]
+    fn mathfunc_corpus_fabs_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("fabs", 1, &[mn_float(-7.5)], MF_FABS);
+        assert!((r.d - 7.5).abs() < 1e-9);
+    }
+
+    /// `int(3.7)` truncates toward zero.
+    #[test]
+    fn mathfunc_corpus_int_truncates_toward_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("int", 1, &[mn_float(3.7)], MF_INT);
+        assert_eq!(r.l, 3, "int(3.7) = 3, got {}", r.l);
+    }
+
+    /// `int(-3.7)` truncates toward zero → -3.
+    #[test]
+    fn mathfunc_corpus_int_truncates_negative_toward_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("int", 1, &[mn_float(-3.7)], MF_INT);
+        assert_eq!(r.l, -3, "int(-3.7) = -3, got {}", r.l);
+    }
+
+    /// `float(5)` converts int to 5.0 float.
+    #[test]
+    fn mathfunc_corpus_float_promotes_int() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_func("float", 1, &[mn_int(5)], MF_FLOAT);
+        assert_eq!(r.type_, MN_FLOAT, "result is float-typed");
+        assert!((r.d - 5.0).abs() < 1e-9);
+    }
 }

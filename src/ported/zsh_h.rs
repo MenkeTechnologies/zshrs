@@ -4421,4 +4421,73 @@ mod tests {
             "type-mask must include every REDIR_* up to OUTPIPE=17"
         );
     }
+
+    // ─── WCWIDTH / IS_COMBINING / IS_BASECHAR pin tests ──────────────
+
+    /// `WCWIDTH('a')` = 1 (basic ASCII single width).
+    #[test]
+    fn zshh_corpus_wcwidth_ascii_is_one() {
+        assert_eq!(WCWIDTH('a'), 1);
+        assert_eq!(WCWIDTH('Z'), 1);
+        assert_eq!(WCWIDTH('0'), 1);
+        assert_eq!(WCWIDTH(' '), 1);
+    }
+
+    /// `WCWIDTH` on common CJK char is 2 (East Asian Wide).
+    #[test]
+    fn zshh_corpus_wcwidth_cjk_is_two() {
+        // U+4E2D '中' (Chinese for middle) — wide.
+        assert_eq!(WCWIDTH('中'), 2);
+        // U+65E5 '日' (Japanese for day) — wide.
+        assert_eq!(WCWIDTH('日'), 2);
+    }
+
+    /// `WCWIDTH` on combining mark is 0.
+    /// U+0301 = COMBINING ACUTE ACCENT.
+    #[test]
+    fn zshh_corpus_wcwidth_combining_is_zero() {
+        assert_eq!(WCWIDTH('\u{0301}'), 0,
+            "combining acute accent has width 0");
+    }
+
+    /// `IS_COMBINING` true for combining accent codepoints.
+    #[test]
+    fn zshh_corpus_is_combining_true_for_accents() {
+        assert!(IS_COMBINING('\u{0301}'), "U+0301 COMBINING ACUTE");
+        assert!(IS_COMBINING('\u{0300}'), "U+0300 COMBINING GRAVE");
+    }
+
+    /// `IS_COMBINING` false for normal ASCII letters.
+    #[test]
+    fn zshh_corpus_is_combining_false_for_ascii() {
+        assert!(!IS_COMBINING('a'));
+        assert!(!IS_COMBINING('Z'));
+        assert!(!IS_COMBINING('0'));
+    }
+
+    /// `IS_BASECHAR` true for ordinary printable chars.
+    #[test]
+    fn zshh_corpus_is_basechar_true_for_letters() {
+        assert!(IS_BASECHAR('a'));
+        assert!(IS_BASECHAR('A'));
+        assert!(IS_BASECHAR('z'));
+        assert!(IS_BASECHAR('日'));
+    }
+
+    /// `IS_BASECHAR` false for combining marks.
+    #[test]
+    fn zshh_corpus_is_basechar_false_for_combining() {
+        assert!(!IS_BASECHAR('\u{0301}'),
+            "combining accent is not a base char");
+    }
+
+    /// Pound (lex marker) is in the imeta range 0x83..=0xa2.
+    #[test]
+    fn zshh_corpus_pound_marker_in_imeta_range() {
+        let p = Pound as u32;
+        assert!(
+            p >= 0x83 && p <= 0xa2,
+            "Pound = {:#x} must be in imeta range 0x83..=0xa2", p
+        );
+    }
 }

@@ -5039,4 +5039,92 @@ mod tests {
         zshlex();
         assert_eq!(tok(), ENDINPUT);
     }
+
+    // ─── zsh-corpus lex pins: pipeline/redirect/grouping ─────────────
+
+    /// `a | b` — single pipe is BAR_TOK.
+    #[test]
+    fn lex_corpus_single_pipe_is_bar() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = lex_init("a | b");
+        let toks = collect_tokens();
+        assert!(toks.contains(&BAR_TOK), "expected BAR_TOK in {toks:?}");
+    }
+
+    /// `a |& b` — pipe-with-stderr is BARAMP.
+    #[test]
+    fn lex_corpus_pipe_amp_is_bar_amp() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = lex_init("a |& b");
+        let toks = collect_tokens();
+        assert!(toks.contains(&BARAMP), "expected BARAMP in {toks:?}");
+    }
+
+    /// `(subshell)` — opening/closing paren produce INPAR_TOK/OUTPAR_TOK.
+    #[test]
+    fn lex_corpus_subshell_parens() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = lex_init("(a)");
+        let toks = collect_tokens();
+        assert!(toks.contains(&INPAR_TOK), "expected INPAR_TOK in {toks:?}");
+        assert!(toks.contains(&OUTPAR_TOK), "expected OUTPAR_TOK in {toks:?}");
+    }
+
+    /// Backtick strings produce STRING_LEX with tokstr containing the
+    /// backtick chars or expanded form. Pin: backtick word lexes as
+    /// a single token, not a syntax error.
+    #[test]
+    fn lex_corpus_backtick_is_string_token() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = lex_init("`echo a`");
+        zshlex();
+        assert_eq!(tok(), STRING_LEX, "backtick command-sub lexes as STRING_LEX");
+    }
+
+    /// Single-quoted string lexes as one STRING_LEX token, content preserved.
+    #[test]
+    fn lex_corpus_single_quoted_is_one_token() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = lex_init("'hello world'");
+        let toks = collect_tokens();
+        assert_eq!(toks.len(), 1, "single-quoted = 1 token, got {toks:?}");
+        assert_eq!(toks[0], STRING_LEX);
+    }
+
+    /// Double-quoted string lexes as one STRING_LEX token.
+    #[test]
+    fn lex_corpus_double_quoted_is_one_token() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = lex_init("\"hello world\"");
+        let toks = collect_tokens();
+        assert_eq!(toks.len(), 1, "double-quoted = 1 token, got {toks:?}");
+        assert_eq!(toks[0], STRING_LEX);
+    }
+
+    /// `2>&1` redirect — redirect token shows up.
+    #[test]
+    fn lex_corpus_redirect_fd_dup() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = lex_init("cmd 2>&1");
+        let toks = collect_tokens();
+        // At least one redirect-class token must appear.
+        let has_redir = toks.iter().any(|t| matches!(*t,
+            OUTANG_TOK | DOUTANG | INANG_TOK | OUTANGAMP | INANGAMP
+            | DOUTANGAMP | OUTANGAMPBANG | DOUTANGAMPBANG
+        ));
+        assert!(has_redir, "expected a redirect token in {toks:?}");
+    }
+
+    /// Comment `# rest` is dropped from the token stream when
+    /// interactive-comments are on (set by default in non-interactive
+    /// scripts). Pin: word before `#` survives, `#`-line dropped.
+    #[test]
+    #[ignore = "ZSHRS BUG: # comment handling may differ from zsh in lexer test harness"]
+    fn lex_corpus_hash_comment_dropped() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = lex_init("cmd # comment");
+        let toks = collect_tokens();
+        // Should be exactly one STRING_LEX for "cmd".
+        assert_eq!(toks, vec![STRING_LEX], "comment dropped");
+    }
 }

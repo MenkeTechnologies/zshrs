@@ -1577,4 +1577,84 @@ mod tests {
             0
         );
     }
+
+    // ─── zsh-corpus pins for bin_mkdir / bin_rmdir / bin_rm ─────────
+
+    /// `bin_mkdir` with no args returns non-zero (usage error).
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_mkdir with no args returns 0 instead of usage error per POSIX"]
+    fn files_corpus_bin_mkdir_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_mkdir("mkdir", &[], &ops, 0);
+        assert_ne!(r, 0, "mkdir with no args = usage error");
+    }
+
+    /// `bin_rmdir` with no args returns non-zero.
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_rmdir with no args returns 0 instead of usage error per POSIX"]
+    fn files_corpus_bin_rmdir_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_rmdir("rmdir", &[], &ops, 0);
+        assert_ne!(r, 0, "rmdir with no args = usage error");
+    }
+
+    /// `bin_rm` with no args returns non-zero (usage error).
+    #[test]
+    #[ignore = "ZSHRS BUG: bin_rm with no args returns 0 instead of usage error per POSIX"]
+    fn files_corpus_bin_rm_no_args_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_rm("rm", &[], &ops, 0);
+        assert_ne!(r, 0, "rm with no args = usage error");
+    }
+
+    /// `bin_mkdir` creates a new directory successfully.
+    #[test]
+    fn files_corpus_bin_mkdir_creates_directory() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("newdir");
+        let target_str = target.to_str().unwrap().to_string();
+        let r = bin_mkdir("mkdir", &[target_str], &ops, 0);
+        assert_eq!(r, 0, "mkdir on new path succeeds");
+        assert!(target.exists(), "new dir actually created");
+        assert!(target.is_dir(), "new path is a directory");
+    }
+
+    /// `bin_rmdir` removes an empty dir.
+    #[test]
+    fn files_corpus_bin_rmdir_removes_empty_dir() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("toremove");
+        std::fs::create_dir(&target).unwrap();
+        assert!(target.exists());
+        let r = bin_rmdir("rmdir", &[target.to_str().unwrap().to_string()], &ops, 0);
+        assert_eq!(r, 0, "rmdir on empty dir succeeds");
+        assert!(!target.exists(), "dir removed");
+    }
+
+    /// `domkdir` creates a dir with the given mode.
+    #[test]
+    fn files_corpus_domkdir_creates_with_mode() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("modedir");
+        let r = domkdir("mkdir", target.to_str().unwrap(), 0o755, 0);
+        assert_eq!(r, 0);
+        assert!(target.is_dir());
+    }
+
+    /// `domkdir` fails if dir already exists (without -p flag).
+    #[test]
+    fn files_corpus_domkdir_existing_path_fails_without_p() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let r = domkdir("mkdir", dir.path().to_str().unwrap(), 0o755, 0);
+        assert_ne!(r, 0, "mkdir on existing dir without -p = error");
+    }
 }

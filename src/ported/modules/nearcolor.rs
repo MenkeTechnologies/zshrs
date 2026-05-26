@@ -750,4 +750,74 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ─── zsh-corpus pins for nearcolor math ─────────────────────────
+
+    /// `mapRGBto256` for pure black (0,0,0) returns index 16.
+    #[test]
+    fn nearcolor_corpus_map256_black_is_16() {
+        let r = mapRGBto256(0, 0, 0);
+        assert_eq!(r, 16, "black = palette index 16");
+    }
+
+    /// `mapRGBto256` for pure white (255,255,255) returns index 231.
+    #[test]
+    fn nearcolor_corpus_map256_white_is_231() {
+        let r = mapRGBto256(255, 255, 255);
+        assert_eq!(r, 231, "white = palette index 231");
+    }
+
+    /// `mapRGBto256` is deterministic.
+    #[test]
+    fn nearcolor_corpus_map256_is_deterministic() {
+        let a = mapRGBto256(128, 64, 200);
+        let b = mapRGBto256(128, 64, 200);
+        assert_eq!(a, b);
+    }
+
+    /// `mapRGBto256` returns a valid palette index (16..=255).
+    #[test]
+    fn nearcolor_corpus_map256_within_palette_range() {
+        for r in [0, 64, 128, 192, 255] {
+            for g in [0, 128, 255] {
+                for b in [0, 128, 255] {
+                    let idx = mapRGBto256(r, g, b);
+                    assert!((16..=255).contains(&idx),
+                        "({r},{g},{b}) → {idx} out of [16,255]");
+                }
+            }
+        }
+    }
+
+    /// `mapRGBto88` returns valid 88-palette index for black.
+    #[test]
+    fn nearcolor_corpus_map88_black_in_palette() {
+        let r = mapRGBto88(0, 0, 0);
+        assert!(r >= 0 && r < 88, "88-palette index in [0,88), got {r}");
+    }
+
+    /// `mapRGBto88` returns valid 88-palette index for white.
+    #[test]
+    fn nearcolor_corpus_map88_white_in_palette() {
+        let r = mapRGBto88(255, 255, 255);
+        assert!(r >= 0 && r < 88, "88-palette index in [0,88), got {r}");
+    }
+
+    /// `deltae` of a color and itself is 0.
+    #[test]
+    fn nearcolor_corpus_deltae_self_is_zero() {
+        let lab = cielab { L: 50.0, a: 25.0, b: 30.0 };
+        let d = deltae(&lab, &lab);
+        assert!(d.abs() < 1e-9, "deltae(x,x)=0, got {d}");
+    }
+
+    /// `deltae` is symmetric.
+    #[test]
+    fn nearcolor_corpus_deltae_symmetric() {
+        let a = cielab { L: 50.0, a: 25.0, b: 30.0 };
+        let b = cielab { L: 60.0, a: 15.0, b: 35.0 };
+        let d1 = deltae(&a, &b);
+        let d2 = deltae(&b, &a);
+        assert!((d1 - d2).abs() < 1e-9);
+    }
 }

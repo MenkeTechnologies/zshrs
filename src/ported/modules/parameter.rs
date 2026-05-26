@@ -4687,4 +4687,90 @@ mod paramtypestr_table_tests {
         assert!(s.contains("-tied"));
         assert!(s.contains("-unique"));
     }
+
+    // ─── zsh-corpus pins for paramtypestr ───────────────────────────
+
+    /// PM_UNSET → empty string.
+    #[test]
+    fn parameter_corpus_paramtypestr_unset_is_empty() {
+        let pm = mk_pm(PM_UNSET, 0);
+        assert_eq!(paramtypestr(&pm), "");
+    }
+
+    /// PM_AUTOLOAD → "undefined".
+    #[test]
+    fn parameter_corpus_paramtypestr_autoload_is_undefined() {
+        let pm = mk_pm(PM_AUTOLOAD, 0);
+        assert_eq!(paramtypestr(&pm), "undefined");
+    }
+
+    /// PM_SCALAR → "scalar".
+    #[test]
+    fn parameter_corpus_paramtypestr_scalar() {
+        let pm = mk_pm(PM_SCALAR, 0);
+        assert_eq!(paramtypestr(&pm), "scalar");
+    }
+
+    /// PM_ARRAY → "array".
+    #[test]
+    fn parameter_corpus_paramtypestr_array() {
+        let pm = mk_pm(PM_ARRAY, 0);
+        assert_eq!(paramtypestr(&pm), "array");
+    }
+
+    /// PM_INTEGER → "integer".
+    #[test]
+    fn parameter_corpus_paramtypestr_integer() {
+        let pm = mk_pm(PM_INTEGER, 0);
+        assert_eq!(paramtypestr(&pm), "integer");
+    }
+
+    /// PM_EFLOAT → "float".
+    #[test]
+    fn parameter_corpus_paramtypestr_efloat() {
+        let pm = mk_pm(PM_EFLOAT, 0);
+        assert_eq!(paramtypestr(&pm), "float");
+    }
+
+    /// PM_FFLOAT → "float".
+    #[test]
+    fn parameter_corpus_paramtypestr_ffloat() {
+        let pm = mk_pm(PM_FFLOAT, 0);
+        assert_eq!(paramtypestr(&pm), "float");
+    }
+
+    /// PM_HASHED → "association".
+    #[test]
+    fn parameter_corpus_paramtypestr_hashed() {
+        let pm = mk_pm(PM_HASHED, 0);
+        assert_eq!(paramtypestr(&pm), "association");
+    }
+
+    /// PM_NAMEREF → "nameref".
+    #[test]
+    fn parameter_corpus_paramtypestr_nameref() {
+        let pm = mk_pm(PM_NAMEREF, 0);
+        assert_eq!(paramtypestr(&pm), "nameref");
+    }
+
+    /// PM_SCALAR + level=2 → "scalar-local".
+    #[test]
+    fn parameter_corpus_paramtypestr_scalar_local() {
+        let pm = mk_pm(PM_SCALAR, 2);
+        assert_eq!(paramtypestr(&pm), "scalar-local");
+    }
+
+    /// PM_SCALAR + PM_LEFT → "scalar-left".
+    #[test]
+    fn parameter_corpus_paramtypestr_scalar_left() {
+        let pm = mk_pm(PM_SCALAR | PM_LEFT, 0);
+        assert_eq!(paramtypestr(&pm), "scalar-left");
+    }
+
+    /// PM_INTEGER + PM_READONLY → "integer-readonly".
+    #[test]
+    fn parameter_corpus_paramtypestr_integer_readonly() {
+        let pm = mk_pm(PM_INTEGER | PM_READONLY, 0);
+        assert_eq!(paramtypestr(&pm), "integer-readonly");
+    }
 }

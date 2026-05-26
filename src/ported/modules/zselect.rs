@@ -584,4 +584,78 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ─── zsh-corpus pins for handle_digits ─────────────────────────
+
+    /// `handle_digits("0")` adds fd 0, advances fdmax to 1.
+    #[test]
+    fn zselect_corpus_handle_digits_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        let r = handle_digits("zselect", "0", &mut fdset, &mut fdmax);
+        assert_eq!(r, 0);
+        assert!(unsafe { libc::FD_ISSET(0, &fdset) },
+            "fd 0 must be set in fdset");
+        assert_eq!(fdmax, 1, "fdmax = fd+1 = 1");
+    }
+
+    /// `handle_digits("5")` adds fd 5, fdmax becomes 6.
+    #[test]
+    fn zselect_corpus_handle_digits_five() {
+        let _g = crate::test_util::global_state_lock();
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        let r = handle_digits("zselect", "5", &mut fdset, &mut fdmax);
+        assert_eq!(r, 0);
+        assert!(unsafe { libc::FD_ISSET(5, &fdset) });
+        assert_eq!(fdmax, 6);
+    }
+
+    /// `handle_digits` keeps higher fdmax when new fd is lower.
+    #[test]
+    fn zselect_corpus_handle_digits_does_not_lower_fdmax() {
+        let _g = crate::test_util::global_state_lock();
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 10;
+        let r = handle_digits("zselect", "3", &mut fdset, &mut fdmax);
+        assert_eq!(r, 0);
+        assert_eq!(fdmax, 10, "fdmax stays at 10 when new fd is lower");
+    }
+
+    /// `handle_digits` rejects non-digit prefix.
+    #[test]
+    fn zselect_corpus_handle_digits_rejects_letter_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        let r = handle_digits("zselect", "a5", &mut fdset, &mut fdmax);
+        assert_eq!(r, 1, "non-digit start rejected");
+    }
+
+    /// `handle_digits` rejects trailing non-digit garbage.
+    #[test]
+    fn zselect_corpus_handle_digits_rejects_trailing_garbage() {
+        let _g = crate::test_util::global_state_lock();
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        let r = handle_digits("zselect", "5abc", &mut fdset, &mut fdmax);
+        assert_eq!(r, 1, "trailing garbage rejected");
+    }
+
+    /// `handle_digits` rejects negative fd.
+    #[test]
+    fn zselect_corpus_handle_digits_rejects_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_ZERO(&mut fdset); }
+        let mut fdmax: libc::c_int = 0;
+        let r = handle_digits("zselect", "-3", &mut fdset, &mut fdmax);
+        assert_eq!(r, 1, "leading minus not a digit");
+    }
 }

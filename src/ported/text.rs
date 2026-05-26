@@ -1707,4 +1707,55 @@ mod tests {
         );
         TEXT_EXPAND_TABS.store(saved, Ordering::Relaxed);
     }
+
+    // ─── zsh-corpus pins for is_cond_binary_op ─────────────────────
+
+    /// Equality ops `=`, `==`, `!=`, `=~` are all binary cond ops.
+    #[test]
+    fn text_corpus_is_cond_binary_op_equality() {
+        assert_eq!(is_cond_binary_op("="), 1);
+        assert_eq!(is_cond_binary_op("=="), 1);
+        assert_eq!(is_cond_binary_op("!="), 1);
+        assert_eq!(is_cond_binary_op("=~"), 1);
+    }
+
+    /// String compare ops `<`, `>` are binary cond ops.
+    #[test]
+    fn text_corpus_is_cond_binary_op_lex_compare() {
+        assert_eq!(is_cond_binary_op("<"), 1);
+        assert_eq!(is_cond_binary_op(">"), 1);
+    }
+
+    /// File-time ops `-nt`, `-ot`, `-ef` are binary cond ops.
+    #[test]
+    fn text_corpus_is_cond_binary_op_file_time() {
+        assert_eq!(is_cond_binary_op("-nt"), 1);
+        assert_eq!(is_cond_binary_op("-ot"), 1);
+        assert_eq!(is_cond_binary_op("-ef"), 1);
+    }
+
+    /// Numeric compare ops -eq/-ne/-lt/-gt/-le/-ge are binary.
+    #[test]
+    fn text_corpus_is_cond_binary_op_numeric() {
+        for op in ["-eq", "-ne", "-lt", "-gt", "-le", "-ge"] {
+            assert_eq!(is_cond_binary_op(op), 1, "op '{op}' should be binary");
+        }
+    }
+
+    /// Unary-only ops are NOT binary: `-z`, `-n`, `-e`, `-f`, `-d`.
+    #[test]
+    fn text_corpus_is_cond_binary_op_rejects_unary() {
+        for op in ["-z", "-n", "-e", "-f", "-d", "-r", "-w", "-x", "!"] {
+            assert_eq!(is_cond_binary_op(op), 0, "op '{op}' should NOT be binary");
+        }
+    }
+
+    /// Random strings are not binary cond ops.
+    #[test]
+    fn text_corpus_is_cond_binary_op_rejects_arbitrary() {
+        assert_eq!(is_cond_binary_op("hello"), 0);
+        assert_eq!(is_cond_binary_op(""), 0);
+        assert_eq!(is_cond_binary_op("=="), 1); // sanity that the list still works
+        assert_eq!(is_cond_binary_op("==="), 0, "triple-eq not in list");
+    }
 }

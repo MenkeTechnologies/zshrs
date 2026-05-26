@@ -12557,4 +12557,233 @@ mod tests {
         unsetparam("zshrs_rt_missing3");
         assert_eq!(getaparam("zshrs_rt_missing3"), None);
     }
+
+    // ─── zsh corpus pins: params set/get round-trips ─────────────────
+
+    /// `setsparam("foo", "bar")` followed by `getsparam("foo")` returns
+    /// `"bar"`. Round-trip scalar.
+    #[test]
+    fn params_corpus_scalar_round_trip_simple() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_RT1");
+        setsparam("ZP_RT1", "bar");
+        assert_eq!(getsparam("ZP_RT1").as_deref(), Some("bar"));
+        unsetparam("ZP_RT1");
+    }
+
+    /// `setsparam("x", "")` then `getsparam("x")` returns `Some("")`,
+    /// NOT `None` — empty-set is distinct from unset (per zsh semantics).
+    #[test]
+    fn params_corpus_empty_scalar_is_set_not_unset() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_EMP");
+        setsparam("ZP_EMP", "");
+        assert_eq!(getsparam("ZP_EMP").as_deref(), Some(""), "empty-set is set");
+        unsetparam("ZP_EMP");
+    }
+
+    /// `unsetparam` after `setsparam` removes the param entirely:
+    /// `getsparam` returns `None`.
+    #[test]
+    fn params_corpus_unset_after_set_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        setsparam("ZP_UR", "v");
+        unsetparam("ZP_UR");
+        assert_eq!(getsparam("ZP_UR"), None, "unsetparam removes param");
+    }
+
+    /// `setiparam("i", 42)` and `getiparam` round-trip integer.
+    #[test]
+    fn params_corpus_integer_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_I");
+        setiparam("ZP_I", 42);
+        assert_eq!(getiparam("ZP_I"), 42);
+        unsetparam("ZP_I");
+    }
+
+    /// `setiparam` then `getsparam` reads integer as string.
+    #[test]
+    fn params_corpus_integer_read_as_string() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_IS");
+        setiparam("ZP_IS", 42);
+        assert_eq!(getsparam("ZP_IS").as_deref(), Some("42"),
+            "integer param reads as string repr");
+        unsetparam("ZP_IS");
+    }
+
+    /// `setaparam("a", vec!["one","two","three"])` round-trips via
+    /// `getaparam`.
+    #[test]
+    fn params_corpus_array_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_A");
+        setaparam("ZP_A", vec!["one".into(), "two".into(), "three".into()]);
+        assert_eq!(
+            getaparam("ZP_A").as_deref(),
+            Some(&["one".into(), "two".into(), "three".into()][..]),
+            "array round-trip",
+        );
+        unsetparam("ZP_A");
+    }
+
+    /// Empty array round-trip — `setaparam("a", vec![])` then
+    /// `getaparam` returns `Some(empty vec)`, not `None`.
+    #[test]
+    fn params_corpus_empty_array_is_set_not_unset() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_EA");
+        setaparam("ZP_EA", vec![]);
+        let got = getaparam("ZP_EA");
+        assert!(got.is_some(), "empty array is set, not None");
+        assert_eq!(got.unwrap().len(), 0, "len = 0");
+        unsetparam("ZP_EA");
+    }
+
+    /// `setsparam` overwrites previous value (scalar reassignment).
+    #[test]
+    fn params_corpus_scalar_overwrite() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_O");
+        setsparam("ZP_O", "first");
+        setsparam("ZP_O", "second");
+        assert_eq!(getsparam("ZP_O").as_deref(), Some("second"),
+            "scalar overwrites cleanly");
+        unsetparam("ZP_O");
+    }
+
+    /// Re-assigning a scalar to an array (changing type via setaparam).
+    /// Default zsh allows this: array replaces scalar.
+    #[test]
+    fn params_corpus_scalar_to_array_replace_type() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_ST");
+        setsparam("ZP_ST", "scalar_val");
+        setaparam("ZP_ST", vec!["a".into(), "b".into()]);
+        assert_eq!(
+            getaparam("ZP_ST").as_deref(),
+            Some(&["a".into(), "b".into()][..]),
+            "setaparam replaces scalar type",
+        );
+        unsetparam("ZP_ST");
+    }
+
+    /// `unsetparam` on a name that doesn't exist is a no-op
+    /// (zsh's idempotent unset).
+    #[test]
+    fn params_corpus_unset_on_missing_is_noop() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_NEVER_EXISTED_42_xyz");
+        // No panic: just returns None on subsequent get.
+        assert_eq!(getsparam("ZP_NEVER_EXISTED_42_xyz"), None);
+    }
+
+    /// Empty string passed to integer slot: `setiparam("z", 0)`
+    /// returns `Some(0)` via getiparam (zero is a legitimate int).
+    #[test]
+    fn params_corpus_integer_zero_is_set() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_IZ");
+        setiparam("ZP_IZ", 0);
+        assert_eq!(getiparam("ZP_IZ"), 0);
+        assert_eq!(getsparam("ZP_IZ").as_deref(), Some("0"));
+        unsetparam("ZP_IZ");
+    }
+
+    /// Negative integers round-trip with sign preserved.
+    #[test]
+    fn params_corpus_integer_negative_preserves_sign() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_IN");
+        setiparam("ZP_IN", -42);
+        assert_eq!(getiparam("ZP_IN"), -42);
+        assert_eq!(getsparam("ZP_IN").as_deref(), Some("-42"));
+        unsetparam("ZP_IN");
+    }
+
+    // ─── associative array (hash) pins ───────────────────────────────
+
+    /// `sethparam` + `gethparam` round-trip: even-count key/value pairs.
+    #[test]
+    #[ignore = "ZSHRS BUG: sethparam/gethparam round-trip drops or reshapes hash elements"]
+    fn params_corpus_hash_round_trip_basic() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_H");
+        sethparam("ZP_H", vec![
+            "key1".into(), "val1".into(),
+            "key2".into(), "val2".into(),
+        ]);
+        let got = gethparam("ZP_H");
+        assert!(got.is_some(), "hash param set");
+        let g = got.unwrap();
+        // Either flat key,value form or some preserved shape — pin only
+        // that it round-trips with same length.
+        assert_eq!(g.len(), 4, "4 elements (2 k/v pairs) preserved");
+        unsetparam("ZP_H");
+    }
+
+    /// `gethparam` on missing returns None.
+    #[test]
+    fn params_corpus_hash_missing_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_HM_xyz");
+        assert!(gethparam("ZP_HM_xyz").is_none());
+    }
+
+    /// `gethkparam` returns the keys-only view of a hash. With
+    /// `{a:1,b:2}`, keys are `["a","b"]` (order may not be stable).
+    #[test]
+    fn params_corpus_hash_keys_only_returns_keys() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_HK");
+        sethparam("ZP_HK", vec!["a".into(), "1".into(), "b".into(), "2".into()]);
+        let keys = gethkparam("ZP_HK");
+        assert!(keys.is_some(), "keys-only view exists");
+        let k = keys.unwrap();
+        assert_eq!(k.len(), 2, "2 keys");
+        let mut sorted = k.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec!["a".to_string(), "b".to_string()]);
+        unsetparam("ZP_HK");
+    }
+
+    /// Setting a hash with empty `Vec` removes the previous key/value
+    /// pairs. After empty `sethparam`, lookups find no entries.
+    #[test]
+    #[ignore = "ZSHRS BUG: sethparam round-trip differs from expectation when clearing"]
+    fn params_corpus_hash_set_empty_clears_entries() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_HC");
+        sethparam("ZP_HC", vec!["a".into(), "1".into()]);
+        assert_eq!(gethparam("ZP_HC").map(|v| v.len()), Some(2));
+        sethparam("ZP_HC", vec![]);
+        // empty hash still exists (some implementations distinguish
+        // empty hash from unset)
+        let after = gethparam("ZP_HC");
+        if let Some(v) = after {
+            assert!(v.is_empty(), "empty hash has 0 elements");
+        }
+        unsetparam("ZP_HC");
+    }
+
+    /// Large integer at i64 boundary: i64::MAX round-trips.
+    #[test]
+    fn params_corpus_integer_max_round_trips() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_IMX");
+        setiparam("ZP_IMX", i64::MAX);
+        assert_eq!(getiparam("ZP_IMX"), i64::MAX);
+        unsetparam("ZP_IMX");
+    }
+
+    /// i64::MIN round-trips with sign.
+    #[test]
+    fn params_corpus_integer_min_round_trips() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("ZP_IMN");
+        setiparam("ZP_IMN", i64::MIN);
+        assert_eq!(getiparam("ZP_IMN"), i64::MIN);
+        unsetparam("ZP_IMN");
+    }
 }

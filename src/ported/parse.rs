@@ -9206,4 +9206,104 @@ esac"#;
             other => panic!("expected Simple, got {other:?}"),
         }
     }
+
+    // ─── zsh-corpus pins for parser: structural shapes ────────────────
+
+    /// Empty input — parse succeeds, lists may be empty.
+    #[test]
+    fn parse_corpus_empty_input_no_error() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("").unwrap();
+        assert!(prog.lists.is_empty() || prog.lists.len() <= 1,
+            "empty input → 0 or 1 list, got {}", prog.lists.len());
+    }
+
+    /// Comment-only input parses as empty.
+    #[test]
+    fn parse_corpus_comment_only_no_error() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("# just a comment");
+        assert!(r.is_ok(), "comment-only parse should succeed");
+    }
+
+    /// `cmd1; cmd2` — two top-level lists or two sublists.
+    #[test]
+    fn parse_corpus_semicolon_separates_commands() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = parse("echo a; echo b").unwrap();
+        // We pin: parse produces > 0 lists/sublists; details vary.
+        assert!(!prog.lists.is_empty(), "non-empty parse");
+    }
+
+    /// `a && b` — DAMPER joins into a sublist chain.
+    #[test]
+    fn parse_corpus_logical_and_parses() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("true && false");
+        assert!(r.is_ok(), "`a && b` parses cleanly");
+    }
+
+    /// `a || b` — DBAR.
+    #[test]
+    fn parse_corpus_logical_or_parses() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("false || true");
+        assert!(r.is_ok(), "`a || b` parses cleanly");
+    }
+
+    /// `a | b` pipeline.
+    #[test]
+    fn parse_corpus_pipeline_parses() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("echo hi | cat");
+        assert!(r.is_ok(), "`a | b` parses");
+    }
+
+    /// `if true; then echo x; fi` — basic if-then-fi block.
+    #[test]
+    fn parse_corpus_if_then_fi_parses() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("if true; then echo x; fi");
+        assert!(r.is_ok(), "if/then/fi parses cleanly");
+    }
+
+    /// `for i in 1 2 3; do echo $i; done`.
+    #[test]
+    fn parse_corpus_for_do_done_parses() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("for i in 1 2 3; do echo $i; done");
+        assert!(r.is_ok(), "for/do/done parses cleanly");
+    }
+
+    /// `while true; do break; done`.
+    #[test]
+    fn parse_corpus_while_do_done_parses() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("while true; do break; done");
+        assert!(r.is_ok(), "while/do/done parses cleanly");
+    }
+
+    /// `case x in (a) echo A;; esac` — case statement.
+    #[test]
+    fn parse_corpus_case_esac_parses() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("case x in (a) echo A;; esac");
+        assert!(r.is_ok(), "case/esac parses cleanly");
+    }
+
+    /// Function definition `f() { echo x }`.
+    #[test]
+    fn parse_corpus_function_def_parses() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("f() { echo x }");
+        assert!(r.is_ok(), "f() {{ ... }} parses cleanly");
+    }
+
+    /// `(subshell echo a)` — subshell.
+    #[test]
+    fn parse_corpus_subshell_parens_parses() {
+        let _g = crate::test_util::global_state_lock();
+        let r = parse("( echo a )");
+        assert!(r.is_ok(), "subshell parses cleanly");
+    }
 }

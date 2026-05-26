@@ -9511,4 +9511,69 @@ mod tests {
         assert_eq!(by_name["b"], 1, "untouched val stays active");
         assert_eq!(by_name["c"], 0);
     }
+
+    // ─── zsh-corpus pins for cd_arrcat / cd_arrdup ──────────────────
+
+    /// `cd_arrcat` concatenates two arrays.
+    #[test]
+    fn computil_corpus_cd_arrcat_concatenates() {
+        let a = vec!["a".to_string(), "b".to_string()];
+        let b = vec!["c".to_string(), "d".to_string()];
+        let r = cd_arrcat(&a, &b);
+        assert_eq!(r, vec!["a", "b", "c", "d"]);
+    }
+
+    /// `cd_arrcat` with empty left side returns copy of right side.
+    #[test]
+    fn computil_corpus_cd_arrcat_empty_left() {
+        let a: Vec<String> = Vec::new();
+        let b = vec!["x".to_string(), "y".to_string()];
+        let r = cd_arrcat(&a, &b);
+        assert_eq!(r, vec!["x", "y"]);
+    }
+
+    /// `cd_arrcat` with empty right side returns copy of left side.
+    #[test]
+    fn computil_corpus_cd_arrcat_empty_right() {
+        let a = vec!["p".to_string(), "q".to_string()];
+        let b: Vec<String> = Vec::new();
+        let r = cd_arrcat(&a, &b);
+        assert_eq!(r, vec!["p", "q"]);
+    }
+
+    /// `cd_arrcat` with both empty returns empty.
+    #[test]
+    fn computil_corpus_cd_arrcat_both_empty() {
+        let a: Vec<String> = Vec::new();
+        let b: Vec<String> = Vec::new();
+        let r = cd_arrcat(&a, &b);
+        assert!(r.is_empty());
+    }
+
+    /// `cd_arrdup` is identity for valid input.
+    #[test]
+    fn computil_corpus_cd_arrdup_round_trips() {
+        let a = vec!["one".to_string(), "two".to_string(), "three".to_string()];
+        let r = cd_arrdup(&a);
+        assert_eq!(r, a);
+    }
+
+    /// `cd_arrdup` on empty returns empty.
+    #[test]
+    fn computil_corpus_cd_arrdup_empty() {
+        let a: Vec<String> = Vec::new();
+        let r = cd_arrdup(&a);
+        assert!(r.is_empty());
+    }
+
+    /// `cd_arrdup` returns a deep copy (modifying result doesn't
+    /// affect input).
+    #[test]
+    fn computil_corpus_cd_arrdup_independent_copy() {
+        let a = vec!["alpha".to_string()];
+        let mut r = cd_arrdup(&a);
+        r[0].push('!');
+        assert_eq!(a[0], "alpha", "original unchanged");
+        assert_eq!(r[0], "alpha!", "copy mutated independently");
+    }
 }

@@ -1182,4 +1182,68 @@ mod tests {
         assert_eq!(c, Some('日'));
         assert_eq!(ingetc(), None);
     }
+
+    // ─── zsh-corpus pins for input buffer behavior ─────────────────
+
+    /// Reading all of "abc" returns characters in order then None.
+    #[test]
+    fn input_corpus_ascii_returns_chars_in_order() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("abc", 0);
+        assert_eq!(ingetc(), Some('a'));
+        assert_eq!(ingetc(), Some('b'));
+        assert_eq!(ingetc(), Some('c'));
+        assert_eq!(ingetc(), None);
+    }
+
+    /// `inungetc` when `inbufpos > 0` just rewinds position — the
+    /// passed char is IGNORED in favor of the buffer content at
+    /// `pos - 1`. Per `Src/input.c:546-555`, zsh assumes callers
+    /// unget the char they just got. Pin this quirk.
+    #[test]
+    fn input_corpus_inungetc_after_read_rewinds_to_buf_char() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("xy", 0);
+        let _ = ingetc(); // consume 'x' → pos=1
+        inungetc('Z');     // pos→0; 'Z' silently dropped per C contract
+        assert_eq!(ingetc(), Some('x'), "buf[pos-1] returned, NOT the unget char");
+        assert_eq!(ingetc(), Some('y'));
+    }
+
+    /// `inungetc` of multiple chars: LIFO order.
+    #[test]
+    fn input_corpus_inungetc_multiple_lifo() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("end", 0);
+        inungetc('1');
+        inungetc('2');
+        inungetc('3');
+        assert_eq!(ingetc(), Some('3'), "last-pushed first");
+        assert_eq!(ingetc(), Some('2'));
+        assert_eq!(ingetc(), Some('1'));
+        assert_eq!(ingetc(), Some('e'), "then original buffer");
+    }
+
+    /// Empty inputsetline → ingetc returns None immediately.
+    #[test]
+    fn input_corpus_empty_line_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("", 0);
+        assert_eq!(ingetc(), None);
+    }
+
+    /// Multi-codepoint UTF-8 string: each codepoint returned once.
+    #[test]
+    fn input_corpus_multibyte_two_codepoints() {
+        let _g = crate::test_util::global_state_lock();
+        reset_input();
+        inputsetline("日本", 0);
+        assert_eq!(ingetc(), Some('日'));
+        assert_eq!(ingetc(), Some('本'));
+        assert_eq!(ingetc(), None);
+    }
 }

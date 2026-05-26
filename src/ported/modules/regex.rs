@@ -467,4 +467,86 @@ mod tests {
         assert_eq!(zcond_regex_match(&["foo", "f.o"], ZREGEX_EXTENDED), 1);
         assert_eq!(zcond_regex_match(&["fXo", "f.o"], ZREGEX_EXTENDED), 1);
     }
+
+    // ─── zsh-corpus pins for zcond_regex_match ────────────────────
+
+    /// `[[ "abc123" =~ "[a-z]+[0-9]+" ]]` matches.
+    #[test]
+    fn regex_corpus_charclass_plus_quantifier_matches() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            zcond_regex_match(&["abc123", "[a-z]+[0-9]+"], ZREGEX_EXTENDED),
+            1,
+        );
+    }
+
+    /// `[[ "abc" =~ "^abc$" ]]` anchored full match.
+    #[test]
+    fn regex_corpus_anchored_full_match() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            zcond_regex_match(&["abc", "^abc$"], ZREGEX_EXTENDED),
+            1,
+        );
+    }
+
+    /// `[[ "xabcy" =~ "^abc$" ]]` rejects because of anchors.
+    #[test]
+    fn regex_corpus_anchored_rejects_extra_chars() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            zcond_regex_match(&["xabcy", "^abc$"], ZREGEX_EXTENDED),
+            0,
+        );
+    }
+
+    /// Empty regex matches empty string.
+    #[test]
+    fn regex_corpus_empty_pattern_matches_empty_input() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["", ""], ZREGEX_EXTENDED), 1);
+    }
+
+    /// `*` greedy quantifier matches zero+ chars.
+    #[test]
+    fn regex_corpus_star_quantifier() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcond_regex_match(&["aaa", "a*"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["", "a*"], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["b", "a*"], ZREGEX_EXTENDED), 1,
+            "a* matches empty prefix of 'b'");
+    }
+
+    /// Invalid regex returns 0 (compile failure).
+    #[test]
+    fn regex_corpus_invalid_pattern_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // Unterminated `[` is an invalid regex.
+        assert_eq!(
+            zcond_regex_match(&["abc", "[unterminated"], ZREGEX_EXTENDED),
+            0,
+            "invalid regex returns 0 (no match + warn)",
+        );
+    }
+
+    /// Wrong id returns 0 (only ZREGEX_EXTENDED supported).
+    #[test]
+    fn regex_corpus_wrong_id_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            zcond_regex_match(&["abc", "abc"], 99),
+            0,
+            "unsupported id = 0",
+        );
+    }
+
+    /// Too few args returns 0.
+    #[test]
+    fn regex_corpus_one_arg_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            zcond_regex_match(&["only_one"], ZREGEX_EXTENDED),
+            0,
+        );
+    }
 }

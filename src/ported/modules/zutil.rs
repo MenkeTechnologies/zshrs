@@ -3852,4 +3852,51 @@ mod tests {
             "c:60 — None snapshot must unsetparam(\"match\")"
         );
     }
+
+    // ─── zsh-corpus pins for zstyle helpers ──────────────────────────
+
+    /// `lookupstyle` on missing context returns empty Vec.
+    #[test]
+    fn zutil_corpus_lookupstyle_missing_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = lookupstyle(":zshrs:test:nonexistent_zxyz", "style_nope");
+        assert!(r.is_empty(), "missing zstyle context returns empty");
+    }
+
+    /// `testforstyle` on missing context returns 1 (not found).
+    #[test]
+    fn zutil_corpus_testforstyle_missing_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let r = testforstyle(":zshrs:test:never_set_xyz", "style");
+        assert_eq!(r, 1, "missing = 1 per c:485 return !found");
+    }
+
+    /// `addstyle` on new name returns Some(style).
+    #[test]
+    fn zutil_corpus_addstyle_new_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let s = addstyle("zshrs_test_new_style");
+        assert!(s.is_some(), "addstyle for new name returns Some");
+    }
+
+    /// `addstyle` returning Some on existing name (idempotent).
+    #[test]
+    fn zutil_corpus_addstyle_existing_returns_some() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = addstyle("zshrs_test_dup_style");
+        let s = addstyle("zshrs_test_dup_style");
+        assert!(s.is_some(),
+            "addstyle on existing name still returns Some");
+    }
+
+    /// `newzstyletable` returns None per current stub (no
+    /// HashNode-allocating impl yet).
+    #[test]
+    fn zutil_corpus_newzstyletable_current_impl_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let t = newzstyletable(64, "test_tab");
+        // Current impl is a stub returning None — pin the contract.
+        assert!(t.is_none(),
+            "newzstyletable stub returns None; pin until ported");
+    }
 }

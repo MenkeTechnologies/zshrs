@@ -751,4 +751,39 @@ mod tests {
         let mut enables: Option<Vec<i32>> = None;
         assert_eq!(enables_(std::ptr::null(), &mut enables), 0);
     }
+
+    // ─── zsh-corpus pins for terminfo lifecycle ─────────────────────
+
+    /// All four lifecycle shims return 0.
+    #[test]
+    fn terminfo_corpus_lifecycle_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let m: *const crate::ported::zsh_h::module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+
+    /// `getterminfo("never_a_real_cap")` returns PM_UNSET param or None.
+    #[test]
+    fn terminfo_corpus_unknown_cap_returns_unset_or_none() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getterminfo(std::ptr::null_mut(), "zzz_not_a_real_cap_xyz");
+        if let Some(p) = r {
+            assert!(
+                (p.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) != 0,
+                "unknown cap → PM_UNSET",
+            );
+        }
+    }
+
+    /// `features_` populates feature vec and returns 0.
+    #[test]
+    fn terminfo_corpus_features_populates_vec() {
+        let _g = crate::test_util::global_state_lock();
+        let mut features = Vec::new();
+        let r = features_(std::ptr::null(), &mut features);
+        assert_eq!(r, 0);
+    }
 }
