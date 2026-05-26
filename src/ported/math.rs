@@ -1874,6 +1874,55 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // Parse function name and args
     let paren = call.find('(').unwrap_or(call.len());
     let name = &call[..paren];
+    // c:Src/math.c:1037 — `callmathfunc` looks up `name` in the
+    // global `mathfuncs` table. The table is empty until
+    // `zmodload zsh/mathfunc` (Src/Modules/mathfunc.c mtab[]) is
+    // loaded. Without it, every named call fails with "unknown
+    // function: NAME" (Src/math.c:1066). The previous Rust port
+    // unconditionally dispatched against the built-in match arms,
+    // auto-loading the module's contents — `zsh -fc 'echo
+    // $((sqrt(4)))'` should exit 1, not silently return `2.`.
+    let is_module_func = matches!(
+        name,
+        "abs" | "acos" | "acosh" | "asin" | "asinh" | "atan" | "atan2"
+        | "atanh" | "cbrt" | "ceil" | "cos" | "cosh" | "erf" | "erfc"
+        | "exp" | "expm1" | "fabs" | "float" | "floor" | "gamma"
+        | "hypot" | "ilogb" | "int" | "j0" | "j1" | "lgamma" | "log"
+        | "log10" | "log1p" | "log2" | "logb" | "max" | "min"
+        | "nextafter" | "pow" | "rand" | "round" | "sin" | "sinh"
+        | "sqrt" | "tan" | "tanh" | "trunc" | "y0" | "y1"
+    );
+    // c:Src/module.c:2206-2322 `load_module` — the post-init flag
+    // signaling "this module's setup/boot ran" is MOD_INIT_B (set
+    // at c:2322 after do_boot_module). MOD_LINKED alone is just
+    // "statically linkable" and is pre-set for every builtin
+    // module at registration time in modulestab::init_builtin
+    // (zsh_h.rs:758) — so it's true even before any `zmodload`.
+    // Gate on MOD_INIT_B to mirror C's "the module's mtab[] is
+    // currently in the global mathfuncs table".
+    let module_loaded = crate::ported::module::MODULESTAB
+        .lock()
+        .ok()
+        .and_then(|tab| {
+            tab.modules.get("zsh/mathfunc").map(|m| {
+                let flags = m.node.flags;
+                (flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                    && (flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
+            })
+        })
+        .unwrap_or(false);
+    if is_module_func && !module_loaded {
+        crate::ported::utils::zerr(&format!("unknown function: {}", name));
+        crate::ported::utils::errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        return mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
+    }
     let args_str = if paren < call.len() {
         &call[paren + 1..call.len() - 1]
     } else {
@@ -4171,6 +4220,16 @@ mod tests {
     #[test]
     fn test_functions() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/math.c:1037 — `callmathfunc` requires `zsh/mathfunc`
+        // to be in the loaded-modules table. zsh -fc returns
+        // "unknown function: sqrt" without `zmodload zsh/mathfunc`
+        // — the same gating now applies in zshrs. Boot the module
+        // here so the unit test exercises the math-function bodies
+        // not the missing-module guard.
+        crate::ported::module::MODULESTAB
+            .lock()
+            .unwrap()
+            .load_module("zsh/mathfunc");
         assert!(
             (matheval("sqrt(4)")
                 .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))

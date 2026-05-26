@@ -8238,12 +8238,25 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
     }
     let t = PM_TYPE(p.node.flags as u32);
     if t == PM_SCALAR || t == PM_NAMEREF {
-        let s = strgetfn(p);
-        // c:6053 — `quotedzputs(t, stdout)`. The previous Rust port
-        // used `print!("{}", s)` (raw), losing the shell-quoting
-        // that `typeset -p VAR` expects. Without quoting, `eval
-        // "$(typeset -p VAR)"` round-trip is BROKEN for any value
-        // with spaces, special chars, or shell metacharacters.
+        // c:Src/params.c:6052 — `t = pm->gsu.s->getfn(pm)` then
+        // quotedzputs. For SPECIAL params, the gsu_s vtable returns
+        // the live value (HOME/PATH/IFS from globals or env). Direct
+        // dispatch avoids the deadlock that getsparam would hit if
+        // the caller holds paramtab write lock. Fallback chain:
+        //   gsu_s.getfn(pm) → pm.u_str → env::var(name)
+        // The env fallback covers exported scalars whose gsu_s wasn't
+        // wired (vm_helper bootstrap path doesn't run createparam for
+        // every special).
+        let mut s = if let Some(gsu) = &p.gsu_s {
+            (gsu.getfn)(p)
+        } else {
+            strgetfn(p)
+        };
+        if s.is_empty() && (p.node.flags as u32 & PM_EXPORTED) != 0 {
+            if let Ok(v) = std::env::var(&p.node.nam) {
+                s = v;
+            }
+        }
         print!("{}", quotedzputs(&s)); // c:6053
     } else if t == PM_INTEGER {
         print!("{}", intgetfn(p));
@@ -9383,14 +9396,17 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         }
         "$" => Some(std::process::id().to_string()),
         "!" => {
-            // Last-backgrounded job PID. Stored in paramtab `!` slot;
-            // default to 0 to match zsh fresh-shell behaviour.
-            let tab = paramtab().read().ok()?;
-            Some(
-                tab.get("!")
-                    .and_then(|pm| pm.u_str.clone())
-                    .unwrap_or_else(|| "0".to_string()),
-            )
+            // c:Src/params.c:345 IPDEF4("!", &lastpid) — `$!` reads
+            // directly from the `lastpid` atomic (Src/jobs.c:73).
+            // The previous Rust port read from paramtab["!"].u_str,
+            // which only had a value if something wrote to it via
+            // setsparam/assignsparam — and `"!"` is not a valid
+            // identifier (isident("!") == 0 per params.c:1288), so
+            // those calls failed loudly. Read directly from the
+            // canonical store like the C getter does.
+            let pid = crate::ported::modules::clone::lastpid
+                .load(std::sync::atomic::Ordering::Relaxed);
+            Some(pid.to_string())
         }
         // $* / $@ join positional params via IFS first char.
         "*" | "@" => {

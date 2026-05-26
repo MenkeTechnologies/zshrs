@@ -984,6 +984,59 @@ impl ShellExecutor {
                     // correct flags. No cross-stamping needed.
                     let _ = entry.tied_name;
                 }
+                // c:Src/params.c:893-924 environment-import loop —
+                // every env var gets either a fresh exported paramtab
+                // entry OR (when the entry pre-exists from
+                // special_params) PM_EXPORTED OR'd onto its flags.
+                // Without this, `declare -p PATH` printed `typeset -T
+                // PATH=''` and `declare -p USER` printed nothing at
+                // all because USER was never in paramtab.
+                use crate::ported::zsh_h::{PM_EXPORTED, PM_SCALAR};
+                use crate::ported::zsh_h::hashnode as _hn;
+                for (env_name, env_value) in std::env::vars() {
+                    if env_name.is_empty() || env_name.contains('[') {
+                        continue;
+                    }
+                    if env_name.as_bytes()[0].is_ascii_digit() {
+                        continue;
+                    }
+                    if !crate::ported::params::isident(&env_name) {
+                        continue;
+                    }
+                    if let Some(pm) = tab.get_mut(&env_name) {
+                        pm.node.flags |= PM_EXPORTED as i32;
+                    } else {
+                        // Fresh entry — PM_SCALAR + PM_EXPORTED, value
+                        // taken from env. Mirrors C zsh's c:907-908
+                        // `assignsparam(..., ASSPM_ENV_IMPORT)` for
+                        // names not already in the special table.
+                        let pm: crate::ported::zsh_h::Param = Box::new(param {
+                            node: _hn {
+                                next: None,
+                                nam: env_name.clone(),
+                                flags: (PM_SCALAR | PM_EXPORTED) as i32,
+                            },
+                            u_data: 0,
+                            u_arr: None,
+                            u_str: Some(env_value.clone()),
+                            u_val: 0,
+                            u_dval: 0.0,
+                            u_hash: None,
+                            gsu_s: None,
+                            gsu_i: None,
+                            gsu_f: None,
+                            gsu_a: None,
+                            gsu_h: None,
+                            base: 0,
+                            width: 0,
+                            env: Some(format!("{}={}", env_name, env_value)),
+                            ename: None,
+                            old: None,
+                            level: 0,
+                        });
+                        tab.insert(env_name, pm);
+                    }
+                }
             }
         }
         // Populate paramtab with PM_SPECIAL placeholder Params for
@@ -1963,7 +2016,16 @@ impl ShellExecutor {
         // No matches. Mirror zsh's `setopt nullglob` / `nomatch`
         // dispatch (Src/glob.c:1873-1886) here because glob_path
         // returns an empty Vec without knowing executor state.
-        let nullglob = opt_state_get("nullglob").unwrap_or(false);
+        // c:Src/glob.c:1567-1569 `gf_nullglob` per-glob — the `(N)`
+        // qualifier acts like `setopt nullglob` for this expression
+        // alone. parse_qualifiers detects the suffix `(...)` block;
+        // the resulting `qualifiers.nullglob` mirrors C's gf_nullglob
+        // carrier.
+        let per_glob_nullglob = crate::ported::glob::parse_qualifiers(pattern)
+            .1
+            .map(|q| q.nullglob)
+            .unwrap_or(false);
+        let nullglob = opt_state_get("nullglob").unwrap_or(false) || per_glob_nullglob;
         if nullglob {
             return Vec::new();
         }

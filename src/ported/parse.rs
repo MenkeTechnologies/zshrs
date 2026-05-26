@@ -1237,6 +1237,17 @@ fn par_for() -> Option<ZshCommand> {
     } else if tok() == STRING_LEX {
         let s = tokstr();
         if s.map(|s| s == "in").unwrap_or(false) {
+            // c:Src/parse.c:1147-1154 — after consuming `in`, the
+            // for-list reads in WORD position, not command position.
+            // Reset incmdpos=false so the lexer's LX2_INBRACE arm
+            // (lex.rs:1791) treats a leading `{` as the brace-
+            // expansion marker (`bct++; add(Inbrace)`) instead of
+            // returning STRING("{") + promoting to INBRACE_TOK.
+            // Without this, `for i in {1..3}` saw `{` as the body-
+            // opener brace, so the word-collection loop got an
+            // empty word list and the loop body silently ran 0
+            // iterations.
+            set_incmdpos(false);
             zshlex();
             let mut words = Vec::new();
             while tok() == STRING_LEX {
@@ -1246,6 +1257,10 @@ fn par_for() -> Option<ZshCommand> {
                 }
                 zshlex();
             }
+            // c:Src/parse.c:1162 — `incmdpos = 1;` after the
+            // wordlist + SEPER are consumed, so the next token
+            // (`do` / `{` body opener) lexes at command position.
+            set_incmdpos(true);
             ForList::Words(words)
         } else {
             ForList::Positional

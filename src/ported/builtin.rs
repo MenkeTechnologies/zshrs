@@ -3361,6 +3361,65 @@ pub fn bin_typeset(
     let _ = (off, returnval);
     let is_hashed = (on & PM_HASHED) != 0; // c:2655 `-A`
     let is_array = (on & PM_ARRAY) != 0; // c:2655 `-a`
+    // c:Src/builtin.c typeset_single — when the array RHS comes from
+    // an unquoted `$@` / `${arr[@]}` splat (e.g. `typeset -a opts=
+    // ("$@")`), the upstream prefork has already split the value
+    // into separate argv entries: `["opts=(a", "b", "c)"]`. C zsh's
+    // parser captures the entire `name=(... )` shape as one ENVARRAY
+    // token by walking paren depth at parse time so the splat fills
+    // the array's element list. zshrs's compile path emits the
+    // synthetic word `opts=("$@")` then runtime DQ-strip + splat
+    // separates it. Reconstruct the single arg here: when one entry
+    // starts with `NAME=(` and a later entry ends with `)`, rejoin
+    // the run with spaces between elements.
+    let argv: Vec<String> = {
+        let mut out: Vec<String> = Vec::with_capacity(argv.len());
+        let mut i = 0;
+        while i < argv.len() {
+            let arg = &argv[i];
+            let open = arg.find("=(");
+            let is_open = open.is_some()
+                && arg.as_bytes().first().is_some_and(|b| {
+                    b.is_ascii_alphabetic() || *b == b'_'
+                })
+                && !arg.ends_with(')');
+            if is_open {
+                // Find the matching `)` — scan forward through argv
+                // tracking paren depth (the parser's `(` was just `(`
+                // in the source). Each arg may have additional `(`
+                // and `)` chars from quoted content.
+                let mut depth: i32 = 0;
+                for c in arg.chars() {
+                    if c == '(' {
+                        depth += 1;
+                    } else if c == ')' {
+                        depth -= 1;
+                    }
+                }
+                let mut buf = arg.clone();
+                let mut j = i + 1;
+                while depth > 0 && j < argv.len() {
+                    buf.push(' ');
+                    buf.push_str(&argv[j]);
+                    for c in argv[j].chars() {
+                        if c == '(' {
+                            depth += 1;
+                        } else if c == ')' {
+                            depth -= 1;
+                        }
+                    }
+                    j += 1;
+                }
+                out.push(buf);
+                i = j;
+            } else {
+                out.push(arg.clone());
+                i += 1;
+            }
+        }
+        out
+    };
+    let argv = argv.as_slice();
     for arg in argv {
         // c:Src/builtin.c typeset_single — when PM_LOCAL is in
         // flags, createparam first to install pm.old chain at

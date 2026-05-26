@@ -283,9 +283,28 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
         if let Some(data) = list.getdata(node_idx) {
             // c:100
             if !data.is_empty() {
-                // c:100
-                // remnulargs
-                let data = data.replace('\0', ""); // c:100
+                // c:Src/subst.c:170 — `remnulargs(getdata(node));`
+                // strips inull sentinels (Snull/Dnull/Bnull/Bnullkeep/
+                // Nularg). Empty arrays elements arrive here as the
+                // single Nularg byte (`\u{a1}`) — a sentinel emitted
+                // by `(s./.)` split + auto-splat (and other empty-
+                // emitting paths) so they don't get deleted by the
+                // else-branch below. Strip Nularg-only nodes to true
+                // empty AFTER the if-test that gates deletion has
+                // already passed; this preserves the empty argument
+                // shape (`${(@s./.)X}` with leading empty yields a
+                // 3-element array in DQ) without polluting consumers
+                // with the raw sentinel byte. C zsh's downstream
+                // consumers handle Nularg via per-builtin inull
+                // checks; the Rust port collapses it here so plain
+                // string consumers (print, echo, assignment) see
+                // proper empty.
+                let mut s = data.to_string();
+                crate::ported::glob::remnulargs(&mut s);
+                if s == "\u{a1}" {
+                    s.clear();
+                }
+                let data = s;
                 list.setdata(node_idx, data.clone()); // c:100
 
                 // Brace expansion. C: `while (hasbraces(getdata(node)))
@@ -1646,18 +1665,15 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
     let first = chars[0]; // c:737
 
     // c:741 — `if (*str == Tilde && str[1] != '=' && str[1] != Equals)`.
-    // Should STRICTLY match Tilde TOKEN (Src/zsh.h:189 Tilde=0x98)
-    // per C — but our lexer flow ends up untokenizing Tilde back to
-    // ASCII `~` before filesub runs, so unquoted `~` becomes ASCII
-    // `~` by the time we see it. Accepting both keeps unquoted
-    // `echo ~` working at the cost of one parity bug:
-    // `short="~/foo"; echo "$short"` wrongly tilde-expands.
-    // The proper fix lives upstream in the lexer (LX2_TILDE arm
-    // should preserve Tilde token through untokenize until filesub)
-    // or in the dquote path (currently inside dquote_parse the `~`
-    // stays ASCII — but the OUTER untokenize collapses Tilde to `~`
-    // before the quoted-context distinction is preserved).
-    if first == '~' || first == '\u{98}' /* Tilde token */ {
+    // STRICTLY matches Tilde TOKEN (Src/zsh.h:189 Tilde=0x98) per C.
+    // ASCII `~` is REJECTED — those arrive from substitution results
+    // (`${var/foo/\~}`), DQ-quoted source (`"~/foo"`), and other
+    // contexts where zsh treats `~` as a literal character. The
+    // unquoted `echo ~` path reaches here with Tilde TOKEN
+    // preserved by the EXPAND_TEXT emit's untokenize loop
+    // (compile_zsh.rs:3048+) so this strict check still fires for
+    // legitimate tilde expansions.
+    if first == '\u{98}' /* Tilde token */ {
         // c:741
         if chars.len() == 1 {
             // c:748 — bare ~
@@ -1769,7 +1785,13 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         while p < chars.len() && (chars[p].is_ascii_alphanumeric() || chars[p] == '_') {
             p += 1;
         }
-        if p > 1 && p < chars.len() && isend(chars[p]) {
+        // c:Src/subst.c isend macro treats string terminator `\0`
+        // as end-of-string. Rust's char-slice has no NUL sentinel;
+        // `p == chars.len()` is the equivalent. Without this clause
+        // bare `~root` fell through without expanding because the
+        // identifier walk consumed every char and the final isend
+        // check ran against an out-of-bounds index.
+        if p > 1 && (p == chars.len() || isend(chars[p])) {
             let user: String = chars[1..p].iter().collect();
             let suffix: String = chars[p..].iter().collect();
             // Named-dir lookup FIRST — `hash -d name=path` registered
@@ -3572,6 +3594,21 @@ pub fn paramsubst(
         // never hit the prefix-strip arm — the outer became a no-op.
         // Skip the name-walk entirely when subexp_value is in flight.
         let name_start = idx;
+        // c:Src/subst.c:1942 — `${(flags)"literal"}` is a parse
+        // error in zsh ("bad substitution"). The compile fast path
+        // at extensions/compile_zsh.rs:2290 tags literal-operand
+        // reconstructions with `\u{01}` prefix so paramsubst (this
+        // function) can recognize them and emit the canonical error.
+        // Previously this gate lived in the bridge; per the bridge-
+        // is-passthru contract it moved here.
+        if idx < body_chars.len() && body_chars[idx] == '\u{01}' {
+            zerr("bad substitution");
+            errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                Ordering::Relaxed,
+            );
+            return (String::new(), idx + 1, Vec::new());
+        }
         if subexp_value.is_none() {
             while idx < body_chars.len() {
                 let bc = body_chars[idx];
@@ -5136,6 +5173,9 @@ pub fn paramsubst(
                 // split-walk above for the "match this literal X"
                 // form).
                 let pat = singsub(&raw_pat);
+                if std::env::var("ZSHRS_TRACE_REPL2").is_ok() {
+                    eprintln!("[TRACE_REPL2] rep={:?} raw_pat={:?} pat={:?} raw_repl={:?}", rep, raw_pat, pat, raw_repl);
+                }
                 // Replacement: per Src/glob.c::compgetmatch:2687-2688,
                 // C runs `singsub(replstrp); untokenize(*replstrp);`.
                 // The C untokenize drops Bnull markers (the lexer's
@@ -5147,7 +5187,18 @@ pub fn paramsubst(
                 // so the existing untokenize call still handles any
                 // surviving meta-tokens).
                 let repl = {
-                    let s = untokenize(&singsub(&raw_repl));
+                    // c:Src/subst.c around line 3354 — `prefork(replstr,
+                    // SUB_FLAG|SKIP_FILESUB)`. The replacement string
+                    // must NOT undergo file/tilde expansion: `${p/x/\~}`
+                    // yields a literal `~`, not the user's home. Match
+                    // the canonical `//` arm at subst.rs:5018 which
+                    // already sets SKIP_FILESUB around singsub; the
+                    // single-replace `/` arm was missing this gate.
+                    let saved_skip = SKIP_FILESUB.with(|c| c.get());
+                    SKIP_FILESUB.with(|c| c.set(true));
+                    let s_singsub = singsub(&raw_repl);
+                    SKIP_FILESUB.with(|c| c.set(saved_skip));
+                    let s = untokenize(&s_singsub);
                     let mut out = String::with_capacity(s.len());
                     let mut it = s.chars().peekable();
                     while let Some(c) = it.next() {
@@ -5159,7 +5210,7 @@ pub fn paramsubst(
                                     it.next();
                                     continue;
                                 }
-                                // `\X` → `X` for any other X
+                                // `\X` → `X` for any other X.
                                 out.push(nx);
                                 it.next();
                                 continue;
@@ -5478,40 +5529,57 @@ pub fn paramsubst(
                 split_parts = Some(kept); // c:3540 (auto-splat)
                 isarr = 1; // c:3548 SUB_INTERSECT returns array shape
             } else if let Some(rhs) = r.strip_prefix(":^^") {
-                // c:3540 (zip-long)
-                // ${arr:^^other} — interleave two arrays, continuing
-                // past the shorter one with empty strings (vs `:^`
-                // which stops at the shorter). Direct port of the
-                // SUB_ZIP_LONG variant in subst.c:3540.
+                // c:Src/subst.c:3456-3520 SUB_ZIP_LONG — `${a:^^b}`.
+                // In DQ context (`"${a:^^b}"`), zsh collapses the FIRST
+                // operand to a single sepjoin'd string BEFORE the zip
+                // pattern walks, producing pairs of (joined-a, b[i %
+                // blen]) for outlen = max(1, blen) iterations. Direct
+                // port of the prefork-collapse-then-zip path observed
+                // via:
+                //   a=(1 2); b=(x y z) → "${a:^^b}" =
+                //   ['1 2','x','1 2','y','1 2','z']
                 let arr = arrays_get(&var_name).unwrap_or_default();
                 let other = arrays_get(rhs.trim()).unwrap_or_default();
-                let n = arr.len().max(other.len());
-                let mut zipped: Vec<String> = Vec::with_capacity(n * 2);
-                for i in 0..n {
-                    zipped.push(arr.get(i).cloned().unwrap_or_default());
-                    zipped.push(other.get(i).cloned().unwrap_or_default());
-                }
+                let zipped: Vec<String> = if qt {
+                    let ifs0 = vars_get("IFS")
+                        .unwrap_or_else(|| " \t\n\0".to_string())
+                        .chars()
+                        .next()
+                        .map(String::from)
+                        .unwrap_or_default();
+                    let joined = arr.join(&ifs0);
+                    let n = other.len().max(1);
+                    let mut z: Vec<String> = Vec::with_capacity(n * 2);
+                    for i in 0..n {
+                        z.push(joined.clone());
+                        z.push(other.get(i).cloned().unwrap_or_default());
+                    }
+                    z
+                } else {
+                    let n = arr.len().max(other.len());
+                    let mut z: Vec<String> = Vec::with_capacity(n * 2);
+                    for i in 0..n {
+                        z.push(arr.get(i).cloned().unwrap_or_default());
+                        z.push(other.get(i).cloned().unwrap_or_default());
+                    }
+                    z
+                };
                 value = zipped.join(" ");
                 split_parts = Some(zipped); // c:3540 (auto-splat)
                 isarr = 1; // c:3540 SUB_ZIP_LONG returns array shape
             } else if let Some(rhs) = r.strip_prefix(":^") {
-                // c:Src/subst.c:3540 (SUB_ZIP / SUB_ZIPN) — `${a:^b}`
-                // interleaves two arrays element-by-element. When one
-                // side is unset/empty, zsh returns the OTHER side's
-                // elements unchanged (no truncation to zero), so
-                // `${a:^b}` with b unset returns a's contents intact.
-                // Parity bug #23: previously the Rust port took
-                // `min(a, b) = 0` on missing-b, producing empty output.
+                // c:Src/subst.c:3456-3520 SUB_ZIP — `${a:^b}` short-
+                // zip. Outlen = min(alen, blen) when shortest=1. In
+                // DQ context, zsh collapses the FIRST operand to a
+                // single sepjoin'd string before zipping, then takes
+                // outlen = min(1, blen) = 1 (or 0 if blen=0),
+                // producing exactly 2 elements:
+                //   [sepjoin(a), b[0]]
+                // Unset-vs-empty: `${a:^b}` with b unset returns a
+                // verbatim (no zip); a unset returns b verbatim.
+                // Parity bug #24 (DQ joining) + #23 (unset operand).
                 let arr_opt = arrays_get(&var_name);
                 let other_opt = arrays_get(rhs.trim());
-                // c:Src/subst.c:3540 — unset-vs-empty distinction:
-                //   * If `b` is UNSET (arrays_get → None), zsh returns
-                //     `a`'s contents verbatim (no zip).
-                //   * If `b` is SET-BUT-EMPTY (e.g. `b=()`), zsh
-                //     truncates the zip to min(|a|, 0) = empty.
-                // The previous Rust port collapsed both to "set ∩ empty"
-                // = empty, so `${a:^b}` with b unset wrongly produced
-                // empty (parity bug #23).
                 let arr_unset = arr_opt.is_none();
                 let other_unset = other_opt.is_none();
                 let arr = arr_opt.unwrap_or_default();
@@ -5522,6 +5590,20 @@ pub fn paramsubst(
                 } else if arr_unset && !other_unset {
                     // a unset → return b verbatim.
                     other.clone()
+                } else if qt {
+                    let ifs0 = vars_get("IFS")
+                        .unwrap_or_else(|| " \t\n\0".to_string())
+                        .chars()
+                        .next()
+                        .map(String::from)
+                        .unwrap_or_default();
+                    let joined = arr.join(&ifs0);
+                    // outlen = min(1, blen). When blen=0 → 0 elements.
+                    if other.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![joined, other[0].clone()]
+                    }
                 } else {
                     let mut z: Vec<String> = Vec::with_capacity(arr.len() + other.len());
                     let n = arr.len().min(other.len()); // c:3540 truncate to shorter
@@ -5708,6 +5790,21 @@ pub fn paramsubst(
                         };
                     }
                 } // close is_modifier else
+            } else if r.starts_with('^') || r.starts_with(',') {
+                // c:Src/subst.c — `${var^^}`, `${var^}`, `${var,,}`,
+                // `${var,}` are bash case-conversion operators that
+                // zsh does NOT implement. zsh emits "bad
+                // substitution" and exits 1; zsh-native case mods
+                // are `${(U)var}` / `${(L)var}` / `${(C)var}`.
+                // Without this gate, paramsubst silently ignored the
+                // unknown operator and returned the variable's
+                // value unchanged.
+                zerr("bad substitution");
+                errflag.fetch_or(
+                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                value = String::new();
             }
         }
         // Apply post-processing flags to the substituted value.
@@ -7078,16 +7175,35 @@ pub fn paramsubst(
             // Build per-node strings: prefix + element + suffix.
             // First node carries prefix; last carries suffix; middle
             // nodes are bare elements.
+            //
+            // c:Src/subst.c:36 `nulstring[] = {Nularg, '\0'};` — zsh
+            // emits the Nularg sentinel (single `\u{a1}` byte) for
+            // empty array elements so the prefork's empty-node-delete
+            // pass at subst.c:184-187 (`else if (!keep) uremnode`)
+            // doesn't drop them. The subsequent `remnulargs` (called
+            // from prefork at c:170 for each non-empty node) strips
+            // the Nularg back to true empty before downstream
+            // consumers see the value. Without this, `${(@s./.)X}`
+            // with leading empty in DQ context lost the leading
+            // element. Parity bug.
+            let nul_str = "\u{a1}";
+            let emit_part = |s: &str| -> String {
+                if s.is_empty() {
+                    nul_str.to_string()
+                } else {
+                    s.to_string()
+                }
+            };
             let mut nodes: Vec<String> = Vec::with_capacity(parts.len());
             for (i, part) in parts.iter().enumerate() {
                 let s = if parts.len() == 1 {
-                    format!("{}{}{}", prefix, part, suffix)
+                    format!("{}{}{}", prefix, emit_part(part), suffix)
                 } else if i == 0 {
-                    format!("{}{}", prefix, part)
+                    format!("{}{}", prefix, emit_part(part))
                 } else if i == parts.len() - 1 {
-                    format!("{}{}", part, suffix)
+                    format!("{}{}", emit_part(part), suffix)
                 } else {
-                    part.clone()
+                    emit_part(part)
                 };
                 nodes.push(s);
             }
@@ -9339,18 +9455,36 @@ mod tests {
     }
 
     /// c:737 — `~` with no following path or user-name resolves to
-    /// $HOME directly.
+    /// $HOME directly. filesubstr requires the Tilde TOKEN
+    /// (Src/zsh.h:189, `\u{98}`) per `*str == Tilde` at c:741. ASCII
+    /// `~` is rejected — substitution results and DQ-quoted source
+    /// carry ASCII `~` and zsh does not tilde-expand those.
     #[test]
     fn filesubstr_bare_tilde_resolves_to_home() {
         let _g = crate::test_util::global_state_lock();
         if let Ok(home) = std::env::var("HOME") {
-            let r = filesubstr("~", false);
+            let r = filesubstr("\u{98}", false);
             assert_eq!(
                 r.as_deref(),
                 Some(home.as_str()),
-                "`~` must expand to $HOME"
+                "Tilde TOKEN `\\u{{98}}` must expand to $HOME"
             );
         }
+    }
+
+    /// c:741 — ASCII `~` is NOT tilde-expanded; only the Tilde
+    /// TOKEN form (lexer-emitted) triggers expansion. This pins the
+    /// behavior that fixes `${var/pat/\~}` (replacement is literal)
+    /// and DQ-quoted `"~/foo"` (no expansion inside double quotes).
+    #[test]
+    fn filesubstr_ascii_tilde_does_not_expand() {
+        let _g = crate::test_util::global_state_lock();
+        let r = filesubstr("~", false);
+        assert!(
+            r.is_none(),
+            "ASCII `~` must not tilde-expand (got {:?})",
+            r
+        );
     }
 
     /// c:4531 — `modify(s, ":h")` is the dirname modifier — `${var:h}`

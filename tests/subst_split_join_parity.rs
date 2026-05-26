@@ -39,9 +39,14 @@ fn assert_parity(s: &str) {
 mod split {
     use super::*;
 
-    /// `${(s./.)PATH}` split on /.
+    /// `${(s./.)PATH}` split on /. Fixed: paramsubst's split + auto-
+    /// splat now emits a Nularg sentinel (`\u{a1}`) for empty
+    /// elements per c:Src/subst.c:36 `nulstring[]`, and prefork's
+    /// remnulargs at c:Src/subst.c:170 strips it back to empty AFTER
+    /// the empty-delete branch has already passed. Without that
+    /// sentinel, the leading empty element of "/usr/local/bin" got
+    /// deleted by prefork's `else if (!keep) uremnode` arm.
     #[test]
-    #[ignore = "ZSHRS BUG: ${(s./.)X} drops empty leading field; zsh keeps the empty field before first /"]
     fn split_on_slash() {
         assert_parity(r#"X="/usr/local/bin"; print -l "${(@s./.)X}""#);
     }
@@ -64,9 +69,9 @@ mod split {
         assert_parity(r#"X="a,,b,,c"; print -l "${(@s.,,.)X}""#);
     }
 
-    /// Empty intermediate fields kept.
+    /// Empty intermediate fields kept. Same Nularg fix as
+    /// `split_on_slash`.
     #[test]
-    #[ignore = "ZSHRS BUG: ${(s.,.)X} drops empty intermediate fields; zsh keeps them"]
     fn split_keeps_empty_fields() {
         assert_parity(r#"X="a,,b"; print -l "${(@s.,.)X}""#);
     }

@@ -2168,8 +2168,20 @@ impl ZshCompiler {
                     // expand_glob (filesystem matching), pushes
                     // Value::Array (or single-element on no-match
                     // depending on NOMATCH option).
-                    self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_EXPAND, 0), 0);
+                    //
+                    // Skip in DQ / cond context — inside `[[ ... ==
+                    // ${~P} ]]` the `~` flag promotes the value to a
+                    // PATTERN (for `==` to match against), not a path
+                    // glob. compile_cond bumps `dq_context_depth` for
+                    // the RHS of pattern ops (compile_zsh.rs:4079);
+                    // gating off the filesystem-glob emit here lets
+                    // the raw pattern reach the test runtime. Without
+                    // this, `P="foo*"; [[ foobar == ${~P} ]]` ran
+                    // `glob_path("foo*")`, hit NOMATCH, and failed.
+                    if self.dq_context_depth == 0 {
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_EXPAND, 0), 0);
+                    }
                     return;
                 }
             }
@@ -2639,14 +2651,73 @@ impl ZshCompiler {
         // through paramsubst via BUILTIN_BRIDGE_BRACE_ARRAY. Direct
         // port of subst.c:3522 SUB_DIFFERENCE / 3540 SUB_INTERSECT /
         // 3548 SUB_ZIP returning array results.
+        //
+        // DQ context skip: when this word lives inside `"…"`,
+        // BRIDGE_BRACE_ARRAY doesn't see the DQ flag (the executor's
+        // in_dq_context counter is only bumped by EXPAND_TEXT mode 1)
+        // — so the qt-aware sub-paths inside paramsubst (notably
+        // SUB_ZIP's collapse-to-2-elements at c:Src/subst.c:3456-3520)
+        // don't fire. Fall through to the EXPAND_TEXT bridge for DQ
+        // words; it bumps in_dq_context, paramsubst_to_value reads
+        // that, and qt propagates correctly.
+        // c:Src/subst.c:3456-3520 — DQ context flips SUB_ZIP and
+        // SUB_ZIPN semantics: short-zip collapses to 2 elements
+        // ([sepjoin(a), b[0]]) and long-zip emits pairs of
+        // (sepjoin(a), b[i]). The fast path still applies — pass
+        // DQ flag through so paramsubst_to_value flips qt on.
+        let raw_dq_word_zip = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+        let in_dq = raw_dq_word_zip || self.dq_context_depth > 0;
+        // Verify the `${...}` spans the WHOLE word (i.e. there's no
+        // trailing text after the matching close brace). For multi-
+        // segment DQ words like `"${(j:|:)a}::${(j:.:)b}"`, the naive
+        // strip_prefix("${") + strip_suffix("}") matches the OUTER
+        // `${` and the LAST `}` even when separated by literal text,
+        // making the fast path treat the whole word as one paramsubst.
+        // Symptom: the second `${(j:.:)b}` survives literally.
+        fn whole_word_brace(untoked: &str) -> Option<&str> {
+            let rest = untoked.strip_prefix("${")?;
+            let bytes = rest.as_bytes();
+            let mut depth = 1i32;
+            let mut i = 0usize;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            // Matching close found — only the fast
+                            // path if there's nothing after it.
+                            if i + 1 == bytes.len() {
+                                return Some(&rest[..i]);
+                            }
+                            return None;
+                        }
+                    }
+                    b'\\' => i += 1, // skip escaped char
+                    _ => {}
+                }
+                i += 1;
+            }
+            None
+        }
         if !has_bnull {
-            if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+            if let Some(inner) = whole_word_brace(&untoked) {
                 let has_array_op = inner.contains(":|")
                     || inner.contains(":*")
                     || inner.contains(":^^")
                     || inner.contains(":^");
                 if has_array_op {
-                    let body_const = self.builder.add_constant(Value::str(inner));
+                    // Prefix with Qstring (\u{8c}) to signal DQ to
+                    // paramsubst_to_value via the body's leading
+                    // marker; the bridge strips it before
+                    // reconstruction. Mirrors how stringsubst at
+                    // subst.rs:692 derives qt from `c == Qstring`.
+                    let body_text = if in_dq {
+                        format!("\u{8c}{}", inner)
+                    } else {
+                        inner.to_string()
+                    };
+                    let body_const = self.builder.add_constant(Value::str(body_text));
                     self.builder.emit(Op::LoadConst(body_const), 0);
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
@@ -2974,7 +3045,62 @@ impl ZshCompiler {
         // - Backquote-wrapped (`` `…` ``) → AltBackquote, runs as
         //   command substitution.
         // - Else → Default, full expand_string + braces + glob.
-        let preserved = crate::lex::untokenize_preserve_quotes(s);
+        // Untokenize the lexer's word form, preserving the three
+        // markers `subst.rs` consumes natively:
+        //   - Tilde (\u{98})   — filesubstr's strict TOKEN check
+        //   - Qstring (\u{8c}) — stringsubst DQ qt derivation
+        //   - Bnull (\u{9f})   — escape marker ("next char literal")
+        // Other ITOK chars untokenize to their ASCII forms because
+        // downstream multsub / stringsubst / xpandbraces expect
+        // ASCII for those.
+        let preserved: String = {
+            use crate::ported::zsh_h::{
+                Bang, Bar, Bnull, Comma, Dash, Dnull, Equals, Hat, Inang, Inbrace, Inbrack,
+                Inpar, Inparmath, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath,
+                Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
+            };
+            let mut result = String::with_capacity(s.len() + 4);
+            for c in s.chars() {
+                if c == Tilde || c == Qstring || c == Bnull {
+                    result.push(c);
+                    continue;
+                }
+                let cu = c as u32;
+                if (0x84..=0xa1).contains(&cu) {
+                    match c {
+                        c if c == Pound => result.push('#'),
+                        c if c == Stringg => result.push('$'),
+                        c if c == Hat => result.push('^'),
+                        c if c == Star => result.push('*'),
+                        c if c == Inpar => result.push('('),
+                        c if c == Outpar => result.push(')'),
+                        c if c == Inparmath => result.push('('),
+                        c if c == Outparmath => result.push(')'),
+                        c if c == Equals => result.push('='),
+                        c if c == Bar => result.push('|'),
+                        c if c == Inbrace => result.push('{'),
+                        c if c == Outbrace => result.push('}'),
+                        c if c == Inbrack => result.push('['),
+                        c if c == Outbrack => result.push(']'),
+                        c if c == Tick => result.push('`'),
+                        c if c == Inang => result.push('<'),
+                        c if c == Outang => result.push('>'),
+                        c if c == OutangProc => result.push('>'),
+                        c if c == Quest => result.push('?'),
+                        c if c == Qtick => result.push('`'),
+                        c if c == Comma => result.push(','),
+                        c if c == Dash => result.push('-'),
+                        c if c == Bang => result.push('!'),
+                        c if c == Snull => result.push('\''),
+                        c if c == Dnull => result.push('"'),
+                        _ => result.push(c),
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            result
+        };
         // If we're recursing inside a DQ-wrapped parent (tracked via
         // `dq_context_depth`), force mode 1 so child expansions
         // suppress array-only flags like the outer DQ does.

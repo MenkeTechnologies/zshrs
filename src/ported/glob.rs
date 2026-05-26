@@ -1460,11 +1460,12 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
         // c:Src/lex.c:3587-3600 — backslash escape converts the next
         // char into a tokenized literal (Bnull/Bnullkeep). xpandbraces
         // sees the tokenized form so `\{` never enters the brace
-        // walk. The Rust helper accepts raw backslash-escaped input
-        // (no prior tokenization step in tests / direct callers), so
-        // mirror C's tokenizer by skipping the escaped char here:
-        // `\{` and `\}` MUST NOT count as brace delimiters.
-        if chars[i] == '\\' && i + 1 < len {
+        // walk. Accept both the canonical Bnull (`\u{9f}`,
+        // Src/zsh.h:195) and ASCII `\` so direct callers (tests,
+        // utility paths) and pipeline callers (bridge → multsub →
+        // xpandbraces with Bnull markers from gettokstr) both behave
+        // the same: skip the escape marker plus the next char.
+        if (chars[i] == '\\' || chars[i] == '\u{9f}') && i + 1 < len {
             i += 2; // c:3591 — skip Bnull/Bnullkeep + escaped char
             continue;
         }
@@ -3288,7 +3289,7 @@ pub struct imatchdata {
 /// **RUST-ONLY** — C glob.c handles qualifier parsing inline in
 /// `parsepat` (c:791) as it builds the Complist. Move to that
 /// shape when porting parsepat for real.
-fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
+pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
     // RUST-ONLY
     if !pattern.ends_with(')') {
         return (pattern.to_string(), None);
