@@ -1466,4 +1466,110 @@ mod tests {
             "POSIX — plain integers compare normally"
         );
     }
+
+    // ─── Test/C02cond.ztst:175-193 — string/numeric cond pins ─────────
+
+    /// `Test/C02cond.ztst:175-176` — `[[ '' = '' ]]`, `[[ a == a ]]`,
+    /// `[[ x != y ]]` — equality operators.
+    #[test]
+    fn cond_corpus_equality_operators() {
+        let _g = crate::test_util::global_state_lock();
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["", "=", ""], &opts, &vars, false), 0, "= empty=empty");
+        assert_eq!(evalcond(&["a", "==", "a"], &opts, &vars, false), 0, "== equal");
+        assert_eq!(evalcond(&["x", "!=", "y"], &opts, &vars, false), 0, "!= unequal");
+        assert_eq!(evalcond(&["x", "==", "y"], &opts, &vars, false), 1, "== unequal false");
+    }
+
+    /// `Test/C02cond.ztst:177-178` — `[[ bar < foo && foo > bar ]]`
+    /// lexical < and > for strings.
+    #[test]
+    fn cond_corpus_lexical_less_greater() {
+        let _g = crate::test_util::global_state_lock();
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["bar", "<", "foo"], &opts, &vars, false), 0, "bar < foo");
+        assert_eq!(evalcond(&["foo", ">", "bar"], &opts, &vars, false), 0, "foo > bar");
+        assert_eq!(evalcond(&["foo", "<", "bar"], &opts, &vars, false), 1, "foo < bar false");
+    }
+
+    /// `Test/C02cond.ztst:180-181` — `[[ 7 -eq 0x07 ]]` — hex constants
+    /// in `-eq` comparisons via mathevali.
+    #[test]
+    fn cond_corpus_eq_hex_constant() {
+        let _g = crate::test_util::global_state_lock();
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["7", "-eq", "0x07"], &opts, &vars, false), 0, "7 -eq 0x07");
+        assert_eq!(evalcond(&["10", "-ne", "0x10"], &opts, &vars, false), 0, "10 -ne 0x10 (16)");
+        assert_eq!(evalcond(&["16", "-eq", "0x10"], &opts, &vars, false), 0, "16 -eq 0x10");
+    }
+
+    /// `Test/C02cond.ztst:183-184` — `[[ 3 -lt 04 ]]` — leading-zero
+    /// numerics treated as octal under mathevali (04 = 4 decimal).
+    #[test]
+    fn cond_corpus_lt_gt_with_leading_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["3", "-lt", "04"], &opts, &vars, false), 0, "3 -lt 4");
+        assert_eq!(evalcond(&["05", "-gt", "2"], &opts, &vars, false), 0, "5 -gt 2");
+    }
+
+    /// `Test/C02cond.ztst:186-187` — `[[ 3 -le 3 && ! (4 -le 3) ]]`
+    /// equal/lesser boundary + negation.
+    #[test]
+    fn cond_corpus_le_equal_boundary() {
+        let _g = crate::test_util::global_state_lock();
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["3", "-le", "3"], &opts, &vars, false), 0, "3 -le 3");
+        assert_eq!(evalcond(&["4", "-le", "3"], &opts, &vars, false), 1, "4 -le 3 false");
+    }
+
+    /// `Test/C02cond.ztst:189-190` — `[[ 3 -ge 3 && ! (3 -ge 4) ]]`.
+    #[test]
+    fn cond_corpus_ge_equal_boundary() {
+        let _g = crate::test_util::global_state_lock();
+        let (opts, vars) = empty_maps();
+        assert_eq!(evalcond(&["3", "-ge", "3"], &opts, &vars, false), 0, "3 -ge 3");
+        assert_eq!(evalcond(&["3", "-ge", "4"], &opts, &vars, false), 1, "3 -ge 4 false");
+    }
+
+    /// `Test/C02cond.ztst:128` — `[[ -x file ]]` — true when file has
+    /// execute permission for current user.
+    #[test]
+    fn cond_corpus_minus_x_executable() {
+        let _g = crate::test_util::global_state_lock();
+        let (opts, vars) = empty_maps();
+        let dir = TempDir::new().unwrap();
+        let exe = dir.path().join("exe");
+        File::create(&exe).unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            evalcond(&["-x", exe.to_str().unwrap()], &opts, &vars, false),
+            0,
+            "ztst:128 — -x true for 0755 file",
+        );
+        let noexe = dir.path().join("noexe");
+        File::create(&noexe).unwrap();
+        std::fs::set_permissions(&noexe, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            evalcond(&["-x", noexe.to_str().unwrap()], &opts, &vars, false),
+            1,
+            "ztst:128 — -x false for 0644 file",
+        );
+    }
+
+    /// `Test/C02cond.ztst:117` — `[[ -r file ]]` — true when file is readable.
+    #[test]
+    fn cond_corpus_minus_r_readable() {
+        let _g = crate::test_util::global_state_lock();
+        let (opts, vars) = empty_maps();
+        let dir = TempDir::new().unwrap();
+        let readable = dir.path().join("r");
+        File::create(&readable).unwrap();
+        std::fs::set_permissions(&readable, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            evalcond(&["-r", readable.to_str().unwrap()], &opts, &vars, false),
+            0,
+            "ztst:117 — -r true for 0644 file",
+        );
+    }
 }

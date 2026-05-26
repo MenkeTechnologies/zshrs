@@ -207,4 +207,58 @@ mod tests {
         assert_eq!(cleanup_(std::ptr::null()), 0);
         assert_eq!(finish_(std::ptr::null()), 0);
     }
+
+    // ─── zsh-corpus pins for check_dotfile / boot_ ─────────────────
+
+    /// `check_dotfile` returns 0 (success) for an existing file.
+    #[test]
+    fn newuser_corpus_check_dotfile_existing_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join(".zshrc");
+        std::fs::File::create(&p).unwrap();
+        assert_eq!(check_dotfile(dir.path().to_str().unwrap(), ".zshrc"), 0,
+            "existing file = 0 per c:62");
+    }
+
+    /// `check_dotfile` returns -1 for a missing file in an existing dir.
+    #[test]
+    fn newuser_corpus_check_dotfile_missing_in_existing_dir() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        // Dir exists but file does not.
+        assert_eq!(
+            check_dotfile(dir.path().to_str().unwrap(), "zshrs_no_such_file_xyz"),
+            -1,
+            "missing file = -1",
+        );
+    }
+
+    /// `check_dotfile` returns -1 for a missing dir.
+    #[test]
+    fn newuser_corpus_check_dotfile_missing_dir_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            check_dotfile("/never/exists/zshrs_xyz", ".zshrc"),
+            -1,
+        );
+    }
+
+    /// `boot_` returns 0 regardless of state.
+    #[test]
+    fn newuser_corpus_boot_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(boot_(std::ptr::null()), 0);
+    }
+
+    /// `features_` returns 1 — newuser module has no advertised
+    /// features (zsh source: `Src/Modules/newuser.c:50-54` returns 1
+    /// when feature list is empty).
+    #[test]
+    fn newuser_corpus_features_returns_one_no_features() {
+        let _g = crate::test_util::global_state_lock();
+        let mut features = Vec::new();
+        assert_eq!(features_(std::ptr::null(), &mut features), 1,
+            "newuser has no advertised features");
+    }
 }

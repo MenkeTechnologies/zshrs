@@ -12086,4 +12086,117 @@ mod tests {
         assert_eq!(cd_able_vars("/path/to/foo"), None);
         opt_state_set("cdablevars", saved_opt);
     }
+
+    // ─── zsh-corpus pins for fixed-return builtins ──────────────────
+
+    fn empty_opts_for_corpus() -> options {
+        options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+    }
+
+    /// `Src/builtin.c:4550` — `bin_true` always returns 0 regardless of
+    /// argv / opts / func. Matches `:` / `true` semantics.
+    #[test]
+    fn builtin_corpus_bin_true_always_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        assert_eq!(bin_true("true", &[], &o, 0), 0, "bin_true no args = 0");
+        assert_eq!(
+            bin_true("true", &["x".into(), "y".into()], &o, 0),
+            0,
+            "bin_true with args = 0",
+        );
+    }
+
+    /// `Src/builtin.c:4559` — `bin_false` always returns 1.
+    #[test]
+    fn builtin_corpus_bin_false_always_one() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        assert_eq!(bin_false("false", &[], &o, 0), 1, "bin_false no args = 1");
+        assert_eq!(
+            bin_false("false", &["any".into()], &o, 0),
+            1,
+            "bin_false with args = 1",
+        );
+    }
+
+    /// `Src/builtin.c` — `bin_shift` with no positional params and no
+    /// argv → 0 (zsh's POSIX-conforming "shift past end" semantics
+    /// when no $@/argv to shift, plus no count argument).
+    #[test]
+    fn builtin_corpus_bin_shift_empty_positional_returns_zero_or_one() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        // No positional params, no arg → either zero (no-op) or one
+        // (POSIX error). Both are acceptable per the spec language —
+        // we pin only that it doesn't panic and returns 0 or 1.
+        let r = bin_shift("shift", &[], &o, 0);
+        assert!(r == 0 || r == 1, "shift on empty positional, got {r}");
+    }
+
+    /// `Src/builtin.c` — `bin_let` with no math arg returns 1
+    /// (no expression to evaluate).
+    #[test]
+    fn builtin_corpus_bin_let_no_args_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let r = bin_let("let", &[], &o, 0);
+        assert_eq!(r, 1, "let with no args = 1");
+    }
+
+    /// `bin_let "x=5"` evaluates math and assigns; success returns 0
+    /// since the result (5) is non-zero. let returns 0 iff last expr
+    /// was non-zero.
+    #[test]
+    fn builtin_corpus_bin_let_nonzero_expr_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        crate::ported::params::unsetparam("ZL_X");
+        let r = bin_let("let", &["ZL_X=5".into()], &o, 0);
+        assert_eq!(r, 0, "let 'x=5' assigns and returns 0 (nonzero result)");
+        assert_eq!(crate::ported::params::getiparam("ZL_X"), 5);
+        crate::ported::params::unsetparam("ZL_X");
+    }
+
+    /// `bin_let "x=0"` returns 1 since last expression evaluates to 0.
+    #[test]
+    fn builtin_corpus_bin_let_zero_expr_returns_one() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        crate::ported::params::unsetparam("ZL_Y");
+        let r = bin_let("let", &["ZL_Y=0".into()], &o, 0);
+        assert_eq!(r, 1, "let 'x=0' returns 1 (zero result)");
+        assert_eq!(crate::ported::params::getiparam("ZL_Y"), 0);
+        crate::ported::params::unsetparam("ZL_Y");
+    }
+
+    /// `bin_let` walks multiple expressions, exit status from last.
+    #[test]
+    fn builtin_corpus_bin_let_multi_expr_last_wins() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        crate::ported::params::unsetparam("ZL_A");
+        crate::ported::params::unsetparam("ZL_B");
+        let r = bin_let(
+            "let",
+            &["ZL_A=1".into(), "ZL_B=7".into()],
+            &o,
+            0,
+        );
+        assert_eq!(r, 0, "last expr non-zero → 0");
+        assert_eq!(crate::ported::params::getiparam("ZL_A"), 1);
+        assert_eq!(crate::ported::params::getiparam("ZL_B"), 7);
+        crate::ported::params::unsetparam("ZL_A");
+        crate::ported::params::unsetparam("ZL_B");
+    }
+
+    /// `bin_pwd` returns 0 on success — even without -P/-L, it should
+    /// produce the current dir and return zero.
+    #[test]
+    fn builtin_corpus_bin_pwd_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let o = empty_opts_for_corpus();
+        let r = bin_pwd("pwd", &[], &o, 0);
+        assert_eq!(r, 0, "pwd returns 0 on success");
+    }
 }

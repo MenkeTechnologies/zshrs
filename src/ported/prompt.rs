@@ -3729,4 +3729,90 @@ mod tests {
             eprintln!("expand({s:?}) = {out:?}");
         }
     }
+
+    // ─── promptexpand zsh-corpus pins ───────────────────────────────
+
+    /// `%%` → literal `%`. Doc: zshmisc(1) "EXPANSION OF PROMPT SEQUENCES".
+    #[test]
+    fn promptexpand_corpus_percent_percent_yields_literal() {
+        let out = expand("%%");
+        assert_eq!(out, "%", "%% → literal %");
+    }
+
+    /// `%n` → username. We can't pin the exact name (varies by env)
+    /// but it must not be empty and must not contain `%`.
+    #[test]
+    fn promptexpand_corpus_percent_n_yields_nonempty_username() {
+        let out = expand("%n");
+        assert!(!out.is_empty(), "%n must produce a username");
+        assert!(!out.contains('%'), "%n must not leave a literal %");
+    }
+
+    /// `%(?..)` ternary: `%(?.X.Y)` chooses X if `$?==0`, else Y.
+    /// Zero is the default at start. Skip explicit value-setting.
+    #[test]
+    #[ignore = "ZSHRS BUG: %(?..) ternary requires $? state plumbing"]
+    fn promptexpand_corpus_ternary_question_zero_branch() {
+        let out = expand("%(?.OK.FAIL)");
+        assert_eq!(out, "OK", "default $?=0 chooses OK branch");
+    }
+
+    /// `%U` / `%u` — underline on / off. Should produce SGR ANSI
+    /// (escape sequence with `[4m`/`[24m`).
+    #[test]
+    fn promptexpand_corpus_underline_emits_sgr() {
+        let out = expand("%Utext%u");
+        assert!(
+            out.contains("\x1b[4m") || out.contains("\x1b[04m"),
+            "%U should emit SGR underline-on, got {out:?}",
+        );
+        assert!(
+            out.contains("\x1b[24m") || out.contains("\x1b[0m"),
+            "%u should emit SGR underline-off / reset, got {out:?}",
+        );
+    }
+
+    /// `%S` / `%s` — standout / reverse. Should produce SGR `[7m`/`[27m`.
+    /// (Per terminfo `smso` = reverse video; zsh emits SGR 7.)
+    #[test]
+    #[ignore = "ZSHRS BUG: %S emits SGR italic (\\e[3m) instead of standout/reverse (\\e[7m)"]
+    fn promptexpand_corpus_standout_emits_sgr() {
+        let out = expand("%Stext%s");
+        assert!(
+            out.contains("\x1b[7m") || out.contains("\x1b[07m"),
+            "%S should emit SGR standout-on, got {out:?}",
+        );
+    }
+
+    /// `%{...%}` literal-escape brackets: content goes through but
+    /// width-tracking sees zero. Plain text inside should pass.
+    #[test]
+    fn promptexpand_corpus_zero_width_brackets_preserve_text() {
+        let out = expand("%{ESC%}abc");
+        assert!(out.contains("ESC"), "literal content survives %{{...%}}");
+        assert!(out.ends_with("abc"), "trailing text after %{{...%}}");
+    }
+
+    /// Multiple plain percent escapes don't drop characters.
+    #[test]
+    fn promptexpand_corpus_plain_text_with_escapes_preserves_letters() {
+        let out = expand("abc%Bdef%bxyz");
+        let plain: String = out.chars().filter(|c| !c.is_ascii_control() && *c != '[').collect();
+        assert!(plain.contains("abc"), "starts with abc, got {out:?}");
+        assert!(plain.contains("def"), "middle has def, got {out:?}");
+        assert!(plain.contains("xyz"), "ends with xyz, got {out:?}");
+    }
+
+    /// `%d` / `%/` — current working directory. Must be non-empty
+    /// and look path-like.
+    #[test]
+    fn promptexpand_corpus_pwd_escape_yields_path() {
+        let out = expand("%d");
+        assert!(!out.is_empty(), "%d must produce a path");
+        // CWD typically starts with `/` or `~`.
+        assert!(
+            out.starts_with('/') || out.starts_with('~') || out.contains(std::path::MAIN_SEPARATOR),
+            "%d should look path-like, got {out:?}",
+        );
+    }
 }

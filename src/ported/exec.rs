@@ -10134,3 +10134,86 @@ fn dispatch_execfuncs(state: &mut estate, typ: i32, do_exec: i32) -> i32 {
         _ => 0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── zsh-corpus pins for pure exec helpers ─────────────────────
+
+    /// `Src/exec.c:996-1010` — `isrelative` returns 1 for empty.
+    #[test]
+    fn exec_corpus_isrelative_empty_is_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative(""), 1, "empty path is relative");
+    }
+
+    /// `isrelative("foo")` = 1 (no leading slash).
+    #[test]
+    fn exec_corpus_isrelative_bare_name_is_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("foo"), 1);
+        assert_eq!(isrelative("bin/cmd"), 1);
+    }
+
+    /// `isrelative("/foo")` = 0 (absolute, no `./` / `../`).
+    #[test]
+    fn exec_corpus_isrelative_absolute_clean_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("/foo"), 0, "/foo is absolute");
+        assert_eq!(isrelative("/bin/ls"), 0);
+        assert_eq!(isrelative("/"), 0, "root is absolute");
+    }
+
+    /// `isrelative("/foo/../bar")` = 1 (contains `../` component).
+    #[test]
+    fn exec_corpus_isrelative_absolute_with_dotdot_is_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("/foo/../bar"), 1,
+            "absolute path with ../ is still 'relative' per zsh");
+    }
+
+    /// `isrelative("/foo/./bar")` = 1 (contains `./` component).
+    #[test]
+    fn exec_corpus_isrelative_absolute_with_dot_is_one() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(isrelative("/./x"), 1,
+            "absolute with ./ component reported relative");
+    }
+
+    /// `Src/exec.c:5300` — `is_anonymous_function_name("(anon)")` = 1.
+    #[test]
+    fn exec_corpus_is_anonymous_function_name_matches_sentinel() {
+        assert_eq!(is_anonymous_function_name("(anon)"), 1);
+    }
+
+    /// `is_anonymous_function_name("regular_name")` = 0.
+    #[test]
+    fn exec_corpus_is_anonymous_function_name_rejects_normal() {
+        assert_eq!(is_anonymous_function_name("regular_name"), 0);
+        assert_eq!(is_anonymous_function_name(""), 0);
+        assert_eq!(is_anonymous_function_name("anon"), 0,
+            "plain 'anon' (no parens) is NOT the sentinel");
+    }
+
+    /// `iscom("/nonexistent/never_a_path")` = false.
+    #[test]
+    fn exec_corpus_iscom_missing_path_false() {
+        assert!(!iscom("/this/path/does/not/exist/zshrs_xyz"));
+    }
+
+    /// `iscom("/tmp")` is a directory not a regular file → false.
+    #[test]
+    fn exec_corpus_iscom_directory_false() {
+        assert!(!iscom("/tmp"), "/tmp is a dir, not a regular command");
+    }
+
+    /// `iscom("/bin/sh")` is true on POSIX systems.
+    #[test]
+    fn exec_corpus_iscom_known_binary_true() {
+        // /bin/sh exists on all POSIX systems with X perms.
+        if std::path::Path::new("/bin/sh").exists() {
+            assert!(iscom("/bin/sh"), "/bin/sh is a real executable");
+        }
+    }
+}

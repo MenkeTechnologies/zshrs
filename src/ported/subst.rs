@@ -11129,6 +11129,692 @@ mod tests {
             "ztst:194 — global escaped / → -",
         );
     }
+
+    // ─── Test/D04parameter.ztst:410-421 — case-modifier flags ────────
+
+    /// `Test/D04parameter.ztst:412,415` — `${(L)foo}` lowercases a
+    /// scalar. "yOU KNOW, THE ONE WITH wILLIAM dALRYMPLE" → all-lower.
+    #[test]
+    fn paramsubst_zsh_corpus_lowercase_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_LC",
+            "yOU KNOW, THE ONE WITH wILLIAM dALRYMPLE",
+            "${(L)ZP_LC}",
+        );
+        assert_eq!(
+            result, "you know, the one with william dalrymple",
+            "ztst:415 — (L) lowercases all chars",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:413,416` — `${(U)bar}` uppercases.
+    #[test]
+    fn paramsubst_zsh_corpus_uppercase_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_UC",
+            "doing that tour of India.",
+            "${(U)ZP_UC}",
+        );
+        assert_eq!(
+            result, "DOING THAT TOUR OF INDIA.",
+            "ztst:416 — (U) uppercases all chars",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:418-421` — `${(C)foo}` capitalizes
+    /// each word (Title Case). "instead here I am stuck by the
+    /// computer" → "Instead Here I Am Stuck By The Computer".
+    #[test]
+    fn paramsubst_zsh_corpus_capitalize_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_CAP",
+            "instead here I am stuck by the computer",
+            "${(C)ZP_CAP}",
+        );
+        assert_eq!(
+            result, "Instead Here I Am Stuck By The Computer",
+            "ztst:421 — (C) Title Case",
+        );
+    }
+
+    // ─── Test/D04parameter.ztst:1281+ — (#m) with tokenized input ────
+
+    /// `Test/D04parameter.ztst:1277-1279` — `(#m)` with tokenized
+    /// `*` input. `${${~:-*}//(#m)*/$MATCH=$MATCH}`:
+    ///   - `${~:-*}` produces literal `*` (tokenized glob).
+    ///   - `//(#m)*/...` replaces the whole match with `$MATCH=$MATCH`.
+    ///   - $MATCH is `*`, so replacement is `*=*`.
+    #[test]
+    #[ignore = "ZSHRS BUG: (#m) on tokenized `${~:-*}` chain not wired"]
+    fn paramsubst_zsh_corpus_pound_m_with_tokenized_glob_input() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_TKM",
+            "",
+            "${${~:-*}//(#m)*/$MATCH=$MATCH}",
+        );
+        assert_eq!(
+            result, "*=*",
+            "ztst:1279 — tokenized * passed through (#m)",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:1306-1311` — `${file//(#b)(*)left/
+    /// ${match//a/andsome}}` — `(#b)` capture used in nested //
+    /// substitution. With `file='aleftkept'`:
+    ///   - `(*)left` captures "a", strips "aleft".
+    ///   - `${match//a/andsome}` replaces every 'a' in capture with
+    ///     "andsome" → "andsome".
+    ///   - Final: "andsome" + "kept" = "andsomekept".
+    #[test]
+    #[ignore = "ZSHRS BUG: (#b) + nested ${match//pat/repl} in replacement not wired"]
+    fn paramsubst_zsh_corpus_pound_b_with_nested_global_subst_on_capture() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZP_BBG",
+            "aleftkept",
+            "${ZP_BBG//(#b)(*)left/${match//a/andsome}}",
+        );
+        assert_eq!(
+            result, "andsomekept",
+            "ztst:1310 — (#b) capture used in nested // subst",
+        );
+    }
+
+    // ─── Test/D05array.ztst:12-62 — array indexing/slicing pins ──────
+
+    /// `Test/D05array.ztst:12-14` — `${foo[1]}` returns first element.
+    /// foo=(a b c d e f g) → `${foo[1]}` = "a" (1-based default).
+    #[test]
+    fn paramsubst_zsh_corpus_array_first_element() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, _) = psubst_arr("ZA_F", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_F[1]}");
+        assert_eq!(s, "a", "ztst:14 — 1-based first element");
+    }
+
+    /// `Test/D05array.ztst:16-18` — `${foo[1,4]}` returns slice 1..=4
+    /// → "a b c d".
+    #[test]
+    fn paramsubst_zsh_corpus_array_slice_one_to_four() {
+        let _g = crate::test_util::global_state_lock();
+        let (_, v) = psubst_arr("ZA_S", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_S[1,4]}");
+        assert_eq!(v.join(" "), "a b c d", "ztst:18 — [1,4] slice");
+    }
+
+    /// `Test/D05array.ztst:20-22` — `${foo[1,0]}` is empty (end < start).
+    #[test]
+    fn paramsubst_zsh_corpus_array_slice_empty_when_end_before_start() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, _) = psubst_arr("ZA_E1", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_E1[1,0]}");
+        assert_eq!(s, "", "ztst:22 — [1,0] empty");
+    }
+
+    /// `Test/D05array.ztst:32-34` — `${foo[0]}` returns empty
+    /// (zsh's 1-based convention: index 0 is "before-first").
+    #[test]
+    fn paramsubst_zsh_corpus_array_index_zero_is_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, _) = psubst_arr("ZA_Z", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_Z[0]}");
+        assert_eq!(s, "", "ztst:34 — [0] empty in 1-based zsh");
+    }
+
+    /// `Test/D05array.ztst:36-38` — `${foo[0,0]}` also empty.
+    #[test]
+    fn paramsubst_zsh_corpus_array_slice_zero_to_zero_is_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, _) = psubst_arr("ZA_ZZ", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_ZZ[0,0]}");
+        assert_eq!(s, "", "ztst:38 — [0,0] empty");
+    }
+
+    /// `Test/D05array.ztst:40-42` — `${foo[0,1]}` returns first element
+    /// (zsh interprets [0,1] = [1,1]).
+    #[test]
+    fn paramsubst_zsh_corpus_array_slice_zero_to_one_yields_first() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, _) = psubst_arr("ZA_OZ", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_OZ[0,1]}");
+        assert_eq!(s, "a", "ztst:42 — [0,1] yields first element");
+    }
+
+    /// `Test/D05array.ztst:44-46` — `${foo[3]}` returns "c".
+    #[test]
+    fn paramsubst_zsh_corpus_array_inner_element() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, _) = psubst_arr("ZA_I", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_I[3]}");
+        assert_eq!(s, "c", "ztst:46 — [3] returns third element");
+    }
+
+    /// `Test/D05array.ztst:52-54` — `${foo[2,-4]}` negative end:
+    /// foo=(a b c d e f g), -4 = index 4 (len-3=4) → [2..4] = "b c d".
+    #[test]
+    fn paramsubst_zsh_corpus_array_slice_negative_end() {
+        let _g = crate::test_util::global_state_lock();
+        let (_, v) = psubst_arr("ZA_NE", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_NE[2,-4]}");
+        assert_eq!(v.join(" "), "b c d", "ztst:54 — [2,-4] slice");
+    }
+
+    /// `Test/D05array.ztst:56-58` — `${foo[-4,5]}` negative start:
+    /// -4 = index 4 (len=7, -4 → 4) → [4..5] = "d e".
+    #[test]
+    fn paramsubst_zsh_corpus_array_slice_negative_start() {
+        let _g = crate::test_util::global_state_lock();
+        let (_, v) = psubst_arr("ZA_NS", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_NS[-4,5]}");
+        assert_eq!(v.join(" "), "d e", "ztst:58 — [-4,5] slice");
+    }
+
+    /// `Test/D05array.ztst:60-62` — `${foo[-6,-2]}` both negative:
+    /// -6 = index 2, -2 = index 6 → "b c d e f".
+    #[test]
+    fn paramsubst_zsh_corpus_array_slice_both_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let (_, v) = psubst_arr("ZA_NN", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_NN[-6,-2]}");
+        assert_eq!(v.join(" "), "b c d e f", "ztst:62 — [-6,-2] slice");
+    }
+
+    /// `Test/D05array.ztst:24-26` — `${foo[4,1]}` empty (end < start, both positive).
+    #[test]
+    fn paramsubst_zsh_corpus_array_slice_reversed_indices_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, _) = psubst_arr("ZA_R", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_R[4,1]}");
+        assert_eq!(s, "", "ztst:26 — [4,1] reversed empty");
+    }
+
+    // ─── Test/D06subscript.ztst:200-241 — string/array subscript edges ──
+
+    /// `Test/D06subscript.ztst:201-203` — `$array[0]` empty when
+    /// KSH_ZERO_SUBSCRIPT is off (default). `array=(one two three four)`
+    /// → `$array[0]` = "" (and length 0).
+    #[test]
+    #[ignore = "ZSHRS BUG: ${arr[0]} concatenated with literal text via paramsubst returns PID"]
+    fn paramsubst_zsh_corpus_array_index_zero_no_ksh_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let (s, _) = psubst_arr("ZA_KZ0", &["one", "two", "three", "four"], "X${ZA_KZ0[0]}X");
+        assert_eq!(s, "XX", "ztst:203 — array[0] empty without KSH_ZERO_SUBSCRIPT");
+    }
+
+    /// `Test/D06subscript.ztst:233-236` — string subscripts.
+    /// `string="Why, if it isn't Officer Dibble"`
+    /// `[${string[0]}][${string[1]}][${string[0,3]}]` = `[][W][Why]`.
+    #[test]
+    fn paramsubst_zsh_corpus_string_subscript_zero_one_and_slice() {
+        let _g = crate::test_util::global_state_lock();
+        let s0 = psubst_one("ZS_W", "Why, if it isn't Officer Dibble", "${ZS_W[0]}");
+        let s1 = psubst_one("ZS_W", "Why, if it isn't Officer Dibble", "${ZS_W[1]}");
+        let s03 = psubst_one("ZS_W", "Why, if it isn't Officer Dibble", "${ZS_W[0,3]}");
+        assert_eq!(
+            format!("[{s0}][{s1}][{s03}]"),
+            "[][W][Why]",
+            "ztst:236 — string subscripts [0]/[1]/[0,3]",
+        );
+    }
+
+    /// `Test/D06subscript.ztst:5,12-14` — scalar (i) flag returns first
+    /// index of a substring match.
+    #[test]
+    #[ignore = "ZSHRS BUG: scalar pattern subscript (i)/(I) flag not implemented"]
+    fn paramsubst_zsh_corpus_scalar_subscript_i_flag_first_match() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZS_T",
+            "Twinkle, twinkle, little *, [how] I [wonder] what?  You are!",
+            "${ZS_T[(i)winkle]}",
+        );
+        assert_eq!(result, "2", "ztst:14 — (i) flag returns first index");
+    }
+
+    /// `Test/D06subscript.ztst:31-32` — `s[(i)x]` returns `len(s)+1` for
+    /// no-match.
+    #[test]
+    #[ignore = "ZSHRS BUG: scalar pattern subscript (i) flag not implemented"]
+    fn paramsubst_zsh_corpus_scalar_subscript_i_no_match_returns_len_plus_one() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZS_NM",
+            "Twinkle, twinkle, little *, [how] I [wonder] what?  You are!",
+            "${ZS_NM[(i)x]}",
+        );
+        assert_eq!(result, "61", "ztst:32 — (i) no-match returns len+1");
+    }
+
+    // ─── Length and case-modifier pins ────────────────────────────────
+
+    /// `${#var}` returns length in characters.  `var=hello` → "5".
+    #[test]
+    fn paramsubst_zsh_corpus_hash_prefix_returns_length() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZL_L", "hello", "${#ZL_L}");
+        assert_eq!(result, "5", "${{#var}} returns char length");
+    }
+
+    /// `${#var}` on empty returns "0".
+    #[test]
+    fn paramsubst_zsh_corpus_hash_prefix_empty_string_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZL_E", "", "${#ZL_E}");
+        assert_eq!(result, "0", "${{#var}} empty returns 0");
+    }
+
+    /// `${#var}` on multibyte content counts code points.
+    #[test]
+    fn paramsubst_zsh_corpus_hash_prefix_multibyte_codepoints() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZL_M", "héllo", "${#ZL_M}");
+        assert_eq!(result, "5", "${{#var}} multibyte counts codepoints");
+    }
+
+    /// `${(L)var}` lowercases entire scalar.
+    #[test]
+    fn paramsubst_zsh_corpus_l_flag_lowercases_scalar() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZL_C", "HELLO WORLD", "${(L)ZL_C}");
+        assert_eq!(result, "hello world", "(L) flag lowercases");
+    }
+
+    /// `${(U)var}` uppercases entire scalar.
+    #[test]
+    fn paramsubst_zsh_corpus_u_flag_uppercases_scalar() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZU_C", "hello world", "${(U)ZU_C}");
+        assert_eq!(result, "HELLO WORLD", "(U) flag uppercases");
+    }
+
+    /// `${(C)var}` capitalizes first letter of each word.
+    #[test]
+    fn paramsubst_zsh_corpus_c_flag_capitalizes_words() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZC_S", "hello world foo bar", "${(C)ZC_S}");
+        assert_eq!(result, "Hello World Foo Bar", "(C) flag capitalizes words");
+    }
+
+    // ─── Test/D04parameter.ztst:464-472 — (Q) dequoting flag ─────────
+
+    /// `Test/D04parameter.ztst:464-467` — `${(Q)foo}` strips quotes and
+    /// backslash escapes. foo=`'and now' "even the pubs" \a\r\e shut.`
+    /// → `and now even the pubs are shut.`
+    #[test]
+    #[ignore = "ZSHRS BUG: (Q) flag dequote not implemented in paramsubst"]
+    fn paramsubst_zsh_corpus_q_flag_dequotes_scalar() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one(
+            "ZQ_S",
+            r#"'and now' "even the pubs" \a\r\e shut."#,
+            "${(Q)ZQ_S}",
+        );
+        assert_eq!(
+            result, "and now even the pubs are shut.",
+            "ztst:467 — (Q) strips quotes + backslashes",
+        );
+    }
+
+    /// `Test/D04parameter.ztst:452-458` — `${(q-)foo}` minimal single
+    /// quoting: foo='foo' → `foo` (no quotes needed for plain word).
+    #[test]
+    #[ignore = "ZSHRS BUG: (q-) minimal quoting flag not implemented"]
+    fn paramsubst_zsh_corpus_q_minus_flag_no_quote_needed() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZQM_P", "foo", "${(q-)ZQM_P}");
+        assert_eq!(result, "foo", "ztst:458 — (q-) on plain word no quotes");
+    }
+
+    /// `Test/D04parameter.ztst:453-459` — `${(q-)foo}` with space:
+    /// foo='foo bar' → `'foo bar'`.
+    #[test]
+    #[ignore = "ZSHRS BUG: (q-) minimal quoting flag not implemented"]
+    fn paramsubst_zsh_corpus_q_minus_flag_space_gets_quoted() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZQM_SP", "foo bar", "${(q-)ZQM_SP}");
+        assert_eq!(result, "'foo bar'", "ztst:459 — (q-) quotes when space present");
+    }
+
+    /// `Test/D04parameter.ztst:454-460` — `${(q-)foo}` with glob chars:
+    /// foo='*(.)' → `'*(.)'`.
+    #[test]
+    #[ignore = "ZSHRS BUG: (q-) minimal quoting flag not implemented"]
+    fn paramsubst_zsh_corpus_q_minus_flag_glob_chars_quoted() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZQM_G", "*(.)", "${(q-)ZQM_G}");
+        assert_eq!(result, "'*(.)'", "ztst:460 — (q-) quotes glob chars");
+    }
+
+    // ─── Test/D04parameter.ztst:1301-1304 — empty-string substitution ─
+
+    /// `Test/D04parameter.ztst:1301-1304` — `${${foo}/?*/replacement}` on
+    /// empty `foo`: nothing to replace, result is empty string.
+    #[test]
+    fn paramsubst_zsh_corpus_quoted_zero_length_in_subst() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZZL_F", "", "${${ZZL_F}/?*/replacement}");
+        assert_eq!(result, "", "ztst:1304 — empty var stays empty through nested /");
+    }
+
+    // ─── More ${var:-default} / ${var:+alt} / ${var:?err} pins ────────
+
+    /// `${var:-default}` returns default when var is unset/empty.
+    #[test]
+    fn paramsubst_zsh_corpus_colon_minus_empty_uses_default() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZCM_E", "", "${ZCM_E:-fallback}");
+        assert_eq!(result, "fallback", "${{var:-d}} empty uses default");
+    }
+
+    /// `${var:-default}` returns var value when set and non-empty.
+    #[test]
+    fn paramsubst_zsh_corpus_colon_minus_set_uses_var() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZCM_S", "real", "${ZCM_S:-fallback}");
+        assert_eq!(result, "real", "${{var:-d}} non-empty returns var");
+    }
+
+    /// `${var:+alt}` returns alt when var is set and non-empty.
+    #[test]
+    fn paramsubst_zsh_corpus_colon_plus_set_uses_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZCP_S", "yes", "${ZCP_S:+alt}");
+        assert_eq!(result, "alt", "${{var:+a}} non-empty returns alt");
+    }
+
+    /// `${var:+alt}` returns empty when var is empty/unset.
+    #[test]
+    fn paramsubst_zsh_corpus_colon_plus_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZCP_E", "", "${ZCP_E:+alt}");
+        assert_eq!(result, "", "${{var:+a}} empty returns empty");
+    }
+
+    /// `${var-default}` (no colon) — default only when var is unset.
+    /// Set-but-empty gets the empty string, not the default.
+    #[test]
+    fn paramsubst_zsh_corpus_dash_only_empty_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZD_E", "", "${ZD_E-fallback}");
+        assert_eq!(result, "", "${{var-d}} set-but-empty returns empty (not default)");
+    }
+
+    // ─── String trim flags: # ## % %% pins ──────────────────────────
+
+    /// `${var#pattern}` strips shortest prefix match.
+    /// var=hellohello, pattern=hello → "hello" (remove one prefix).
+    #[test]
+    fn paramsubst_zsh_corpus_hash_strip_shortest_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZP_S", "hellohello", "${ZP_S#hello}");
+        assert_eq!(result, "hello", "${{var#pat}} strips shortest prefix");
+    }
+
+    /// `${var##pattern}` strips longest prefix match.
+    /// var=hellohello, pattern=h* → "" (greedy match).
+    #[test]
+    fn paramsubst_zsh_corpus_double_hash_strip_longest_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZP_L", "hellohello", "${ZP_L##h*}");
+        assert_eq!(result, "", "${{var##pat}} strips longest prefix");
+    }
+
+    /// `${var%pattern}` strips shortest suffix match.
+    /// var=hellohello, pattern=hello → "hello".
+    #[test]
+    fn paramsubst_zsh_corpus_percent_strip_shortest_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZS_S", "hellohello", "${ZS_S%hello}");
+        assert_eq!(result, "hello", "${{var%pat}} strips shortest suffix");
+    }
+
+    /// `${var%%pattern}` strips longest suffix match.
+    /// var=hellohello, pattern=l* → "he".
+    #[test]
+    fn paramsubst_zsh_corpus_double_percent_strip_longest_suffix() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZS_L", "hellohello", "${ZS_L%%l*}");
+        assert_eq!(result, "he", "${{var%%pat}} strips longest suffix");
+    }
+
+    // ─── Test/D07multibyte.ztst:130-136 — case modification, multibyte ─
+
+    /// `Test/D07multibyte.ztst:131-133` — `${(U)a}` uppercases multibyte.
+    /// `a=ténébreux` → `TÉNÉBREUX`.
+    #[test]
+    fn paramsubst_zsh_corpus_u_flag_uppercases_multibyte() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZUM", "ténébreux", "${(U)ZUM}");
+        assert_eq!(result, "TÉNÉBREUX", "ztst:133 — (U) on accented chars");
+    }
+
+    /// `Test/D07multibyte.ztst:131-134` — `${(L)var}` lowercases multibyte.
+    /// `a=TÉNÉBREUX` → `ténébreux`.
+    #[test]
+    fn paramsubst_zsh_corpus_l_flag_lowercases_multibyte() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZLM", "TÉNÉBREUX", "${(L)ZLM}");
+        assert_eq!(result, "ténébreux", "ztst:134 — (L) on accented chars");
+    }
+
+    /// `Test/D07multibyte.ztst:135` — `${(C)var}` capitalizes multibyte words.
+    /// `l'état c'est moi` → `L'État C'Est Moi` (per zsh, capital after `'`
+    /// since apostrophe is non-alphanumeric word separator).
+    #[test]
+    #[ignore = "ZSHRS BUG: (C) capitalization treats ' as alphanumeric, doesn't restart word boundary"]
+    fn paramsubst_zsh_corpus_c_flag_capitalizes_multibyte_with_apostrophe() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZCM", "l'état c'est moi", "${(C)ZCM}");
+        assert_eq!(result, "L'État C'Est Moi", "ztst:136 — (C) restarts word after '");
+    }
+
+    // ─── Subscript on multibyte string ────────────────────────────────
+
+    /// `Test/D07multibyte.ztst:13-21` — `${a[1]}` returns first codepoint
+    /// (not first byte). `a=ténébreux` → `${a[1]}` = "t".
+    #[test]
+    fn paramsubst_zsh_corpus_multibyte_subscript_first() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZMS", "ténébreux", "${ZMS[1]}");
+        assert_eq!(result, "t", "ztst:21 — [1] is first codepoint, not byte");
+    }
+
+    /// `Test/D07multibyte.ztst:14-22` — `${a[2]}` returns 2nd codepoint.
+    /// `a=ténébreux` → `${a[2]}` = "é" (one codepoint, 2 bytes).
+    #[test]
+    fn paramsubst_zsh_corpus_multibyte_subscript_accented() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZMS2", "ténébreux", "${ZMS2[2]}");
+        assert_eq!(result, "é", "ztst:22 — [2] is 'é' (multibyte codepoint, not byte)");
+    }
+
+    /// `Test/D07multibyte.ztst` — `${a[1,3]}` slice spans 3 codepoints.
+    /// `a=ténébreux` → "tén".
+    #[test]
+    fn paramsubst_zsh_corpus_multibyte_slice_first_three() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZMSL", "ténébreux", "${ZMSL[1,3]}");
+        assert_eq!(result, "tén", "ztst:22 — [1,3] = first 3 codepoints");
+    }
+
+    // ─── Pattern subst with multibyte ─────────────────────────────────
+
+    /// Multibyte pattern in `/`: `${var/é/X}` should replace one codepoint.
+    /// `var=téX` → "tXX"? Let me think — var=ténébreux, /é/X → "tXnébreux".
+    #[test]
+    fn paramsubst_zsh_corpus_multibyte_pattern_replace_first() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZMR", "ténébreux", "${ZMR/é/X}");
+        assert_eq!(result, "tXnébreux", "first / replaces first é");
+    }
+
+    /// Multibyte `//` replaces all occurrences. `ténébreux`, é→X
+    /// → "tXnXbreux".
+    #[test]
+    fn paramsubst_zsh_corpus_multibyte_pattern_replace_all() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZMRG", "ténébreux", "${ZMRG//é/X}");
+        assert_eq!(result, "tXnXbreux", "// replaces all é");
+    }
+
+    // ─── ${name:offset:length} substring (bash-style) pins ─────────────
+
+    /// `${var:offset}` returns substring from offset to end.
+    /// var=hello, offset=2 → "llo".
+    #[test]
+    fn paramsubst_zsh_corpus_substring_offset_only() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZSS_O", "hello", "${ZSS_O:2}");
+        assert_eq!(result, "llo", "${{var:2}} skips first 2");
+    }
+
+    /// `${var:offset:length}` returns substring of given length.
+    /// var=hello, offset=1, length=3 → "ell".
+    #[test]
+    fn paramsubst_zsh_corpus_substring_offset_length() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZSS_OL", "hello", "${ZSS_OL:1:3}");
+        assert_eq!(result, "ell", "${{var:1:3}} 3 chars from offset 1");
+    }
+
+    /// `${var:0}` — offset 0 = entire string.
+    #[test]
+    fn paramsubst_zsh_corpus_substring_offset_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZSS_Z", "hello", "${ZSS_Z:0}");
+        assert_eq!(result, "hello", "${{var:0}} = entire string");
+    }
+
+    /// `${var:0:0}` — zero length = empty string.
+    #[test]
+    fn paramsubst_zsh_corpus_substring_zero_length() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZSS_E", "hello", "${ZSS_E:0:0}");
+        assert_eq!(result, "", "${{var:0:0}} = empty");
+    }
+
+    /// `${var:offset}` with offset past end = empty.
+    /// var=hi, offset=10 → "".
+    #[test]
+    fn paramsubst_zsh_corpus_substring_offset_past_end() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZSS_P", "hi", "${ZSS_P:10}");
+        assert_eq!(result, "", "${{var:past_end}} = empty");
+    }
+
+    /// `${var:-offset}` with NEGATIVE offset from end.
+    /// var=hello, offset=-2 → "lo" (last 2 chars).
+    /// Note: needs space after colon to disambiguate from `${var:-default}`.
+    #[test]
+    fn paramsubst_zsh_corpus_substring_negative_offset() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZSS_N", "hello", "${ZSS_N: -2}");
+        assert_eq!(result, "lo", "${{var: -2}} = last 2 chars");
+    }
+
+    // ─── $(( ... )) arithmetic substitution corpus pins ──────────────
+
+    /// `$((1+2))` returns "3" string.
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses $((...)) arith-subst dispatch"]
+    fn paramsubst_zsh_corpus_arith_simple_add() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZAR_A", "ignored", "$((1+2))");
+        assert_eq!(result, "3", "$((1+2)) = '3'");
+    }
+
+    /// `$((10*5))` returns "50".
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
+    fn paramsubst_zsh_corpus_arith_multiply() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZAR_M", "ignored", "$((10*5))");
+        assert_eq!(result, "50");
+    }
+
+    /// `$((1 << 4))` returns "16" (left shift).
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
+    fn paramsubst_zsh_corpus_arith_left_shift() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZAR_LS", "ignored", "$((1 << 4))");
+        assert_eq!(result, "16");
+    }
+
+    /// `$((0xff))` returns "255" (hex literal).
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
+    fn paramsubst_zsh_corpus_arith_hex_literal() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZAR_H", "ignored", "$((0xff))");
+        assert_eq!(result, "255");
+    }
+
+    /// `$((-5))` returns "-5" (unary minus).
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
+    fn paramsubst_zsh_corpus_arith_unary_minus() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZAR_N", "ignored", "$((-5))");
+        assert_eq!(result, "-5");
+    }
+
+    /// `$((100/3))` integer division returns "33".
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
+    fn paramsubst_zsh_corpus_arith_integer_division() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZAR_D", "ignored", "$((100/3))");
+        assert_eq!(result, "33");
+    }
+
+    /// `$((10%3))` modulo returns "1".
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
+    fn paramsubst_zsh_corpus_arith_modulo() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZAR_MOD", "ignored", "$((10%3))");
+        assert_eq!(result, "1");
+    }
+
+    /// `$((2**8))` exponentiation returns "256".
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
+    fn paramsubst_zsh_corpus_arith_power() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZAR_P", "ignored", "$((2**8))");
+        assert_eq!(result, "256");
+    }
+
+    /// `$(( var * 2 ))` with var=21 → "42".
+    #[test]
+    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
+    fn paramsubst_zsh_corpus_arith_with_variable() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("ZAR_V");
+        crate::ported::params::setiparam("ZAR_V", 21);
+        let result = psubst_one("ZAR_V_IGNORE", "ignored",
+            "$(( ZAR_V * 2 ))");
+        assert_eq!(result, "42");
+        crate::ported::params::unsetparam("ZAR_V");
+    }
+
+    // ─── ${(t)var} type-query pins ────────────────────────────────────
+
+    /// `${(t)var}` on scalar returns "scalar".
+    #[test]
+    fn paramsubst_zsh_corpus_type_query_scalar() {
+        let _g = crate::test_util::global_state_lock();
+        let result = psubst_one("ZT_S", "hello", "${(t)ZT_S}");
+        assert!(
+            result.starts_with("scalar"),
+            "${{(t)var}} on scalar starts with 'scalar', got: {result:?}",
+        );
+    }
+
+    /// `${(t)var}` on array returns "array" (with possible scope suffix).
+    #[test]
+    fn paramsubst_zsh_corpus_type_query_array() {
+        let _g = crate::test_util::global_state_lock();
+        let (result, _) = psubst_arr("ZT_A", &["a", "b"], "${(t)ZT_A}");
+        assert!(
+            result.starts_with("array"),
+            "${{(t)var}} on array starts with 'array', got: {result:?}",
+        );
+    }
 } // c:3193
 
 // ============================================================================

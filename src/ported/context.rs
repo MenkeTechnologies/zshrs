@@ -320,4 +320,45 @@ mod tests {
         }
         assert!(cstack.lock().unwrap().is_none());
     }
+
+    // ─── zsh-corpus pins for context save/restore ───────────────────
+
+    /// `zcontext_save` then `zcontext_restore` leaves the stack empty.
+    #[test]
+    fn context_corpus_save_then_restore_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save();
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_none(),
+            "save+restore leaves no stack");
+    }
+
+    /// Nested save/restore is correctly LIFO.
+    #[test]
+    fn context_corpus_nested_save_restore_lifo() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save();
+        zcontext_save();
+        zcontext_save();
+        zcontext_restore();
+        zcontext_restore();
+        zcontext_restore();
+        assert!(cstack.lock().unwrap().is_none(),
+            "all 3 levels drained");
+    }
+
+    /// `zcontext_save_partial(1)` + `zcontext_restore_partial(1)`
+    /// round-trips without panic.
+    #[test]
+    fn context_corpus_save_partial_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        reset_cstack();
+        lex_init("");
+        zcontext_save_partial(1);
+        zcontext_restore_partial(1);
+    }
 }

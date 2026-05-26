@@ -431,4 +431,57 @@ mod tests {
             "every random_64bit returned the failure sentinel — getrandom broken?"
         );
     }
+
+    // ─── zsh-corpus pins for random_real helpers ────────────────────
+
+    /// `clz64(0)` returns 64 (all bits zero).
+    #[test]
+    fn random_real_corpus_clz64_zero_is_64() {
+        assert_eq!(clz64(0), 64);
+        assert_eq!(_zclz64(0), 64);
+    }
+
+    /// `clz64(1)` returns 63 (only the lowest bit set).
+    #[test]
+    fn random_real_corpus_clz64_one_is_63() {
+        assert_eq!(clz64(1), 63);
+    }
+
+    /// `clz64(0x8000_0000_0000_0000)` returns 0 (high bit set).
+    #[test]
+    fn random_real_corpus_clz64_high_bit_is_zero() {
+        assert_eq!(clz64(0x8000_0000_0000_0000), 0);
+    }
+
+    /// `clz64` is monotonic in the inverse: larger value, smaller clz.
+    #[test]
+    fn random_real_corpus_clz64_monotonic_with_msb() {
+        // 0xff = 8 bits. clz = 64 - 8 = 56.
+        assert_eq!(clz64(0xff), 56);
+        // 0xffff = 16 bits. clz = 64 - 16 = 48.
+        assert_eq!(clz64(0xffff), 48);
+        // 0xff_ffff = 24 bits. clz = 40.
+        assert_eq!(clz64(0xff_ffff), 40);
+    }
+
+    /// `random_real()` is in [0.0, 1.0).
+    #[test]
+    fn random_real_corpus_random_real_unit_interval() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..20 {
+            let v = random_real();
+            assert!((0.0..1.0).contains(&v), "random_real out of [0,1): {v}");
+        }
+    }
+
+    /// `random_real` produces different values across calls.
+    #[test]
+    fn random_real_corpus_random_real_varies() {
+        let _g = crate::test_util::global_state_lock();
+        let a = random_real();
+        let b = random_real();
+        let c = random_real();
+        assert!(a != b || b != c || a != c,
+            "3 random_real calls all same: {a} {b} {c}");
+    }
 }

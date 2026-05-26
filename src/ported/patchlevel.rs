@@ -66,4 +66,49 @@ mod tests {
             "ZSH_VERSION must start with numeric MAJOR (got {ZSH_VERSION:?})"
         );
     }
+
+    // ─── zsh-corpus pins for version constants ──────────────────────
+
+    /// `ZSH_PATCHLEVEL` is non-empty.
+    #[test]
+    fn patchlevel_corpus_nonempty() {
+        assert!(!ZSH_PATCHLEVEL.is_empty());
+    }
+
+    /// `ZSH_PATCHLEVEL` starts with "zsh-" prefix.
+    #[test]
+    fn patchlevel_corpus_zsh_prefix() {
+        assert!(ZSH_PATCHLEVEL.starts_with("zsh-"),
+            "patchlevel must start with `zsh-`, got {ZSH_PATCHLEVEL:?}");
+    }
+
+    /// `ZSH_VERSION` follows MAJOR.MINOR format with at least one dot.
+    #[test]
+    fn patchlevel_corpus_version_has_dot() {
+        assert!(ZSH_VERSION.contains('.'),
+            "ZSH_VERSION must contain a dot (MAJOR.MINOR), got {ZSH_VERSION:?}");
+    }
+
+    /// `ZSH_VERSION` MAJOR is "5" (current zsh series).
+    #[test]
+    fn patchlevel_corpus_version_major_is_five() {
+        let major = ZSH_VERSION.split('.').next().unwrap();
+        assert_eq!(major, "5", "current zsh is in the 5.x series");
+    }
+
+    /// `ZSH_VERSION` MINOR is parseable as integer.
+    #[test]
+    fn patchlevel_corpus_version_minor_parses() {
+        let parts: Vec<&str> = ZSH_VERSION.split('.').collect();
+        assert!(parts.len() >= 2, "must have MAJOR.MINOR");
+        let minor: Result<i32, _> = parts[1].parse();
+        assert!(minor.is_ok(), "MINOR must parse: {parts:?}");
+    }
+
+    /// Constants are distinct (patchlevel != version since patchlevel
+    /// has the `-N-gHASH` tail).
+    #[test]
+    fn patchlevel_corpus_patchlevel_differs_from_version() {
+        assert_ne!(ZSH_PATCHLEVEL, ZSH_VERSION);
+    }
 }

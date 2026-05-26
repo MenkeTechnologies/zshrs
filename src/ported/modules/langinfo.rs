@@ -515,4 +515,56 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ─── zsh-corpus pins ────────────────────────────────────────────
+
+    /// `liitem("CODESET")` returns Some (POSIX `nl_item` standard key).
+    #[test]
+    fn langinfo_corpus_codeset_is_known() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("CODESET").is_some(),
+            "CODESET is a POSIX-standard nl_item key");
+    }
+
+    /// `liitem("DAY_1")` returns Some (POSIX day name).
+    #[test]
+    fn langinfo_corpus_day_1_is_known() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("DAY_1").is_some(),
+            "DAY_1 is a POSIX-standard nl_item key");
+    }
+
+    /// `liitem("RADIXCHAR")` is known.
+    #[test]
+    fn langinfo_corpus_radixchar_is_known() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("RADIXCHAR").is_some());
+    }
+
+    /// `liitem("BOGUS_NOT_REAL_KEY")` returns None.
+    #[test]
+    fn langinfo_corpus_unknown_key_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(liitem("BOGUS_NOT_REAL_KEY").is_none());
+        assert!(liitem("").is_none());
+    }
+
+    /// `getlanginfo("CODESET")` returns a non-empty string (system locale).
+    #[test]
+    fn langinfo_corpus_getlanginfo_codeset_nonempty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = getlanginfo("CODESET");
+        assert!(r.is_some(), "CODESET resolves to a string");
+        let s = r.unwrap();
+        assert!(!s.is_empty(), "CODESET non-empty (e.g. 'UTF-8'), got {s:?}");
+    }
+
+    /// `scanlanginfo` returns non-empty list (system has known keys).
+    #[test]
+    fn langinfo_corpus_scanlanginfo_returns_entries() {
+        let _g = crate::test_util::global_state_lock();
+        let entries = scanlanginfo();
+        assert!(!entries.is_empty(),
+            "scanlanginfo should return some entries");
+    }
 }

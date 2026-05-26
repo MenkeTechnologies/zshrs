@@ -1219,4 +1219,63 @@ mod tests {
             "cmpsfuncs (self_time) and cmptfuncs (time) must differ when fields disagree"
         );
     }
+
+    // ─── zsh-corpus pins for zprof helpers ────────────────────────
+
+    /// `cmpsfuncs` sorts higher self_time first.
+    #[test]
+    fn zprof_corpus_cmpsfuncs_higher_self_time_first() {
+        let _g = crate::test_util::global_state_lock();
+        let high = Pfunc { name: "high".into(), self_time: 100.0, ..Default::default() };
+        let low  = Pfunc { name: "low".into(),  self_time: 1.0,   ..Default::default() };
+        assert_eq!(cmpsfuncs(&high, &low), std::cmp::Ordering::Less,
+            "higher self_time sorts first");
+    }
+
+    /// `cmptfuncs` sorts higher total time first.
+    #[test]
+    fn zprof_corpus_cmptfuncs_higher_time_first() {
+        let _g = crate::test_util::global_state_lock();
+        let high = Pfunc { name: "high".into(), time: 100.0, ..Default::default() };
+        let low  = Pfunc { name: "low".into(),  time: 1.0,   ..Default::default() };
+        assert_eq!(cmptfuncs(&high, &low), std::cmp::Ordering::Less,
+            "higher total time sorts first");
+    }
+
+    /// `cmpsfuncs` equal self_time → Equal.
+    #[test]
+    fn zprof_corpus_cmpsfuncs_equal_self_time() {
+        let _g = crate::test_util::global_state_lock();
+        let a = Pfunc { name: "a".into(), self_time: 5.0, ..Default::default() };
+        let b = Pfunc { name: "b".into(), self_time: 5.0, ..Default::default() };
+        // Equal self_time may or may not tie-break by name; pin: not Greater
+        let o = cmpsfuncs(&a, &b);
+        assert_ne!(o, std::cmp::Ordering::Greater);
+    }
+
+    /// `findpfunc` on empty list returns None.
+    #[test]
+    fn zprof_corpus_findpfunc_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(findpfunc("__never_seen_function__").is_none());
+    }
+
+    /// `findparc` with arbitrary indexes returns None on empty arcs.
+    #[test]
+    fn zprof_corpus_findparc_empty_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(findparc(usize::MAX, usize::MAX).is_none());
+    }
+
+    /// `name_for_anonymous_function("(anon)")` includes the input name
+    /// and bracket form `[filename:lineno]`.
+    #[test]
+    fn zprof_corpus_name_for_anonymous_function_format() {
+        let _g = crate::test_util::global_state_lock();
+        let s = name_for_anonymous_function("(anon)");
+        assert!(s.starts_with("(anon)"), "starts with name, got {s:?}");
+        assert!(s.contains('['), "has opening bracket");
+        assert!(s.contains(']'), "has closing bracket");
+        assert!(s.contains(':'), "has line-number separator");
+    }
 }

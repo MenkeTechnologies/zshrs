@@ -2335,6 +2335,106 @@ mod tests {
             "after unset, got {v:?} — should be None or Some(false)");
         opt_state_set("automenu", saved);
     }
+
+    // ─── zsh-corpus option pins: set/get round-trips per name ─────────
+
+    /// `Src/options.c:optns` — `extendedglob` toggles ext-glob mode.
+    /// Set true → reads true; set false → reads false.
+    #[test]
+    fn options_corpus_extendedglob_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("extendedglob");
+        opt_state_set("extendedglob", true);
+        assert_eq!(opt_state_get("extendedglob"), Some(true));
+        opt_state_set("extendedglob", false);
+        assert_eq!(opt_state_get("extendedglob"), Some(false));
+        if let Some(s) = saved { opt_state_set("extendedglob", s); }
+    }
+
+    /// `Src/options.c:optns` — `nounset` flag (errors on unset var
+    /// reference). Round-trip set/clear.
+    #[test]
+    fn options_corpus_nounset_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("nounset");
+        opt_state_set("nounset", true);
+        assert_eq!(opt_state_get("nounset"), Some(true));
+        opt_state_set("nounset", false);
+        assert_eq!(opt_state_get("nounset"), Some(false));
+        if let Some(s) = saved { opt_state_set("nounset", s); }
+    }
+
+    /// `errexit` — exit on error (set -e). Round-trip.
+    #[test]
+    fn options_corpus_errexit_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("errexit");
+        opt_state_set("errexit", true);
+        assert_eq!(opt_state_get("errexit"), Some(true));
+        opt_state_set("errexit", false);
+        assert_eq!(opt_state_get("errexit"), Some(false));
+        if let Some(s) = saved { opt_state_set("errexit", s); }
+    }
+
+    /// `xtrace` — trace mode (set -x). Round-trip.
+    #[test]
+    fn options_corpus_xtrace_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("xtrace");
+        opt_state_set("xtrace", true);
+        assert_eq!(opt_state_get("xtrace"), Some(true));
+        opt_state_set("xtrace", false);
+        assert_eq!(opt_state_get("xtrace"), Some(false));
+        if let Some(s) = saved { opt_state_set("xtrace", s); }
+    }
+
+    /// `kshglob` — enables `?(...)/+(...)/!(...)/@(...)` ksh-style globs.
+    #[test]
+    fn options_corpus_kshglob_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("kshglob");
+        opt_state_set("kshglob", true);
+        assert_eq!(opt_state_get("kshglob"), Some(true));
+        opt_state_set("kshglob", false);
+        assert_eq!(opt_state_get("kshglob"), Some(false));
+        if let Some(s) = saved { opt_state_set("kshglob", s); }
+    }
+
+    /// `nullglob` — silently expand unmatched globs to nothing.
+    #[test]
+    fn options_corpus_nullglob_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("nullglob");
+        opt_state_set("nullglob", true);
+        assert_eq!(opt_state_get("nullglob"), Some(true));
+        opt_state_set("nullglob", false);
+        assert_eq!(opt_state_get("nullglob"), Some(false));
+        if let Some(s) = saved { opt_state_set("nullglob", s); }
+    }
+
+    /// `kshzerosubscript` — subscript [0] returns element 1 (ksh-style).
+    #[test]
+    fn options_corpus_kshzerosubscript_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("kshzerosubscript");
+        opt_state_set("kshzerosubscript", true);
+        assert_eq!(opt_state_get("kshzerosubscript"), Some(true));
+        opt_state_set("kshzerosubscript", false);
+        assert_eq!(opt_state_get("kshzerosubscript"), Some(false));
+        if let Some(s) = saved { opt_state_set("kshzerosubscript", s); }
+    }
+
+    /// `kshtypeset` — typeset arrays via ksh subscripting.
+    #[test]
+    fn options_corpus_kshtypeset_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = opt_state_get("kshtypeset");
+        opt_state_set("kshtypeset", true);
+        assert_eq!(opt_state_get("kshtypeset"), Some(true));
+        opt_state_set("kshtypeset", false);
+        assert_eq!(opt_state_get("kshtypeset"), Some(false));
+        if let Some(s) = saved { opt_state_set("kshtypeset", s); }
+    }
 }
 
 /// Port of `mod_export Emulation_options sticky;` from

@@ -898,4 +898,34 @@ mod tests {
         edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
         edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
     }
+
+    // ─── zsh-corpus pins for ksh93 ─────────────────────────────────
+
+    /// `matchgetfn(null)` returns empty vec without panic.
+    #[test]
+    fn ksh93_corpus_matchgetfn_null_returns_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = matchgetfn(std::ptr::null_mut());
+        assert!(r.is_empty(), "null pm → empty vec, got {r:?}");
+    }
+
+    /// All four lifecycle shims return 0.
+    #[test]
+    fn ksh93_corpus_lifecycle_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let m: *const module = std::ptr::null();
+        assert_eq!(setup_(m), 0);
+        assert_eq!(boot_(m), 0);
+        assert_eq!(cleanup_(m), 0);
+        assert_eq!(finish_(m), 0);
+    }
+
+    /// `edcharsetfn` cycling null calls remains stable.
+    #[test]
+    fn ksh93_corpus_edcharsetfn_repeated_null_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..100 {
+            edcharsetfn(std::ptr::null_mut(), std::ptr::null_mut());
+        }
+    }
 }

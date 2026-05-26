@@ -2964,4 +2964,58 @@ mod tests {
             argsalloc: 0,
         }
     }
+
+    // ─── zsh-corpus pins for parse_ordering ────────────────────────
+
+    /// `parse_ordering("")` returns -1 — empty CSV token is not a
+    /// valid orderopts name. Pin the actual zsh contract.
+    #[test]
+    fn complete_corpus_parse_ordering_empty_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut flags: Option<i32> = Some(0);
+        let r = parse_ordering("", &mut flags);
+        assert_eq!(r, -1, "empty token is not a valid orderopts name");
+    }
+
+    /// `parse_ordering("invalid_xyz")` returns -1 (unknown option).
+    #[test]
+    fn complete_corpus_parse_ordering_unknown_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut flags: Option<i32> = Some(0);
+        let r = parse_ordering("zzz_not_a_real_ordering_xyz", &mut flags);
+        assert_eq!(r, -1, "unknown ordering name = -1");
+    }
+
+    /// `parse_ordering("match")` recognises a real orderopts name.
+    #[test]
+    fn complete_corpus_parse_ordering_match_recognised() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut flags: Option<i32> = Some(0);
+        let r = parse_ordering("match", &mut flags);
+        assert_eq!(r, 0, "match is a valid orderopts name");
+    }
+
+    /// `parse_ordering` accepts comma-separated valid names.
+    #[test]
+    fn complete_corpus_parse_ordering_csv_all_valid() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut flags: Option<i32> = Some(0);
+        let r = parse_ordering("match,reverse", &mut flags);
+        // match + reverse are both valid → 0.
+        assert_eq!(r, 0);
+    }
+
+    /// `parse_ordering` rejects when any csv token is invalid.
+    #[test]
+    fn complete_corpus_parse_ordering_csv_with_invalid_returns_neg_one() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mut flags: Option<i32> = Some(0);
+        let r = parse_ordering("match,zzz_bogus", &mut flags);
+        assert_eq!(r, -1, "any invalid token = -1");
+    }
 }

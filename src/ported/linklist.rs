@@ -921,4 +921,65 @@ mod tests {
         assert_eq!(getlinknode(&mut list), Some(3));
         assert_eq!(getlinknode(&mut list), None, "empty → None");
     }
+
+    // ─── zsh-corpus pins ────────────────────────────────────────────
+
+    /// `newlinklist()` returns empty list with countlinknodes = 0.
+    #[test]
+    fn linklist_corpus_new_is_empty() {
+        let l = newlinklist();
+        assert_eq!(countlinknodes(&l), 0);
+        assert!(l.is_empty());
+    }
+
+    /// Push many items, count matches.
+    #[test]
+    fn linklist_corpus_count_after_many_pushes() {
+        let mut l = LinkList::<i32>::new();
+        for i in 0..50 {
+            l.push_back(i);
+        }
+        assert_eq!(countlinknodes(&l), 50);
+        assert_eq!(l.len(), 50);
+    }
+
+    /// `joinlists` concatenates: first grows, second empties.
+    #[test]
+    fn linklist_corpus_joinlists_concatenates() {
+        let mut a = LinkList::<i32>::new();
+        let mut b = LinkList::<i32>::new();
+        a.push_back(1); a.push_back(2);
+        b.push_back(3); b.push_back(4);
+        joinlists(&mut a, &mut b);
+        assert_eq!(a.len(), 4, "first holds union");
+        assert!(b.is_empty(), "second emptied");
+    }
+
+    /// `getlinknode` on empty returns None.
+    #[test]
+    fn linklist_corpus_getlinknode_empty_returns_none() {
+        let mut l = LinkList::<i32>::new();
+        assert_eq!(getlinknode(&mut l), None);
+    }
+
+    /// `getlinknode` empties list element by element until None.
+    #[test]
+    fn linklist_corpus_getlinknode_drains_in_fifo_order() {
+        let mut l = LinkList::<&'static str>::new();
+        l.push_back("a"); l.push_back("b"); l.push_back("c");
+        assert_eq!(getlinknode(&mut l), Some("a"));
+        assert_eq!(getlinknode(&mut l), Some("b"));
+        assert_eq!(getlinknode(&mut l), Some("c"));
+        assert_eq!(getlinknode(&mut l), None);
+        assert!(l.is_empty());
+    }
+
+    /// `linknodebydatum` finds element by value.
+    #[test]
+    fn linklist_corpus_linknodebydatum_finds_value() {
+        let mut l = LinkList::<i32>::new();
+        l.push_back(10); l.push_back(20); l.push_back(30);
+        assert_eq!(linknodebydatum(&l, &20), Some(1));
+        assert_eq!(linknodebydatum(&l, &99), None);
+    }
 }

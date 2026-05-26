@@ -768,4 +768,91 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ─── zsh-corpus pins for math_sum / math_length ────────────────
+
+    /// `math_sum` of zero args returns integer 0.
+    #[test]
+    fn example_corpus_math_sum_empty_is_zero_integer() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_sum("sum", 0, &[], 0);
+        assert_eq!(r.l, 0);
+        assert_eq!(r.type_, MN_INTEGER, "empty sum stays integer-typed");
+    }
+
+    /// `math_sum` of three integers stays integer-typed.
+    #[test]
+    fn example_corpus_math_sum_int_args_stay_integer() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec![
+            mnumber { l: 1, d: 0.0, type_: MN_INTEGER },
+            mnumber { l: 2, d: 0.0, type_: MN_INTEGER },
+            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
+        ];
+        let r = math_sum("sum", 3, &args, 0);
+        assert_eq!(r.l, 6, "1+2+3=6");
+        assert_eq!(r.type_, MN_INTEGER);
+    }
+
+    /// `math_sum` mixing int + float promotes to float per c:121.
+    #[test]
+    fn example_corpus_math_sum_mixed_promotes_to_float() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec![
+            mnumber { l: 2, d: 0.0, type_: MN_INTEGER },
+            mnumber { l: 0, d: 1.5, type_: MN_FLOAT },
+        ];
+        let r = math_sum("sum", 2, &args, 0);
+        assert_eq!(r.type_, MN_FLOAT, "int+float → float");
+        assert!((r.d - 3.5).abs() < 1e-9);
+    }
+
+    /// `math_sum` of two floats stays float-typed.
+    #[test]
+    fn example_corpus_math_sum_two_floats() {
+        let _g = crate::test_util::global_state_lock();
+        let args = vec![
+            mnumber { l: 0, d: 1.25, type_: MN_FLOAT },
+            mnumber { l: 0, d: 2.75, type_: MN_FLOAT },
+        ];
+        let r = math_sum("sum", 2, &args, 0);
+        assert_eq!(r.type_, MN_FLOAT);
+        assert!((r.d - 4.0).abs() < 1e-9);
+    }
+
+    /// `math_length("hello")` returns 5 as integer.
+    #[test]
+    fn example_corpus_math_length_ascii_byte_count() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_length("length", "hello", 0);
+        assert_eq!(r.l, 5);
+        assert_eq!(r.type_, MN_INTEGER);
+    }
+
+    /// `math_length("")` returns 0.
+    #[test]
+    fn example_corpus_math_length_empty_is_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = math_length("length", "", 0);
+        assert_eq!(r.l, 0);
+    }
+
+    /// `math_length` counts UTF-8 BYTES not codepoints (per C strlen).
+    #[test]
+    fn example_corpus_math_length_multibyte_byte_count() {
+        let _g = crate::test_util::global_state_lock();
+        // '日' is 3 bytes in UTF-8.
+        let r = math_length("length", "日", 0);
+        assert_eq!(r.l, 3, "C strlen-style byte count for UTF-8");
+    }
+
+    /// `cond_p_len(["abc"], 0)` returns 0 (the demo cond is len-3 check).
+    /// Pin existing behavior — `cond_p_len` evaluates len == 3 → "false"
+    /// (per zsh's cond return convention: 0 = true, 1 = false).
+    #[test]
+    fn example_corpus_cond_p_len_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = cond_p_len(&["abc".to_string()], 0);
+        // Just pin: no panic.
+    }
 }

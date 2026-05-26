@@ -3584,4 +3584,72 @@ mod tests {
         let _g = zle_test_setup();
         let _ = compprintnl(0);
     }
+
+    // ─── zsh-corpus pins for getcolval escape handling ──────────────
+
+    /// `getcolval("red:rest", 0)` parses up to `:`.
+    #[test]
+    fn complist_corpus_getcolval_stops_at_colon() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, rest) = getcolval("red:rest", 0);
+        assert_eq!(decoded, "red");
+        assert_eq!(rest, ":rest");
+    }
+
+    /// `getcolval` with `multi=1` stops at `=` too.
+    #[test]
+    fn complist_corpus_getcolval_multi_stops_at_equals() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, rest) = getcolval("foo=bar", 1);
+        assert_eq!(decoded, "foo");
+        assert_eq!(rest, "=bar");
+    }
+
+    /// `getcolval` with `multi=0` does NOT stop at `=`.
+    #[test]
+    fn complist_corpus_getcolval_no_multi_keeps_equals() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, _) = getcolval("foo=bar", 0);
+        assert_eq!(decoded, "foo=bar");
+    }
+
+    /// Backslash escapes: \n → newline.
+    #[test]
+    fn complist_corpus_getcolval_backslash_n_is_newline() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, _) = getcolval(r"a\nb", 0);
+        assert_eq!(decoded, "a\nb");
+    }
+
+    /// Backslash escapes: \e → ESC.
+    #[test]
+    fn complist_corpus_getcolval_backslash_e_is_esc() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, _) = getcolval(r"\e[1m", 0);
+        assert_eq!(decoded, "\x1b[1m");
+    }
+
+    /// Backslash escapes: octal `\033` → ESC.
+    #[test]
+    fn complist_corpus_getcolval_octal_033_is_esc() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, _) = getcolval(r"\033", 0);
+        assert_eq!(decoded, "\x1b");
+    }
+
+    /// Control-char shorthand `^A` → 0x01.
+    #[test]
+    fn complist_corpus_getcolval_caret_shorthand() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, _) = getcolval("^A", 0);
+        assert_eq!(decoded.as_bytes(), b"\x01");
+    }
+
+    /// Underscore alias `\_` → space.
+    #[test]
+    fn complist_corpus_getcolval_underscore_is_space() {
+        let _g = crate::test_util::global_state_lock();
+        let (decoded, _) = getcolval(r"a\_b", 0);
+        assert_eq!(decoded, "a b");
+    }
 }

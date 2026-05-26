@@ -1028,4 +1028,104 @@ mod tests {
             "no chdir side-effect on non-recoverable failure"
         );
     }
+
+    // ─── zsh-corpus pins for compat helpers ────────────────────────
+
+    /// `output64(0)` returns "0".
+    #[test]
+    fn compat_corpus_output64_zero() {
+        assert_eq!(output64(0), "0");
+    }
+
+    /// `output64(positive)` returns decimal string.
+    #[test]
+    fn compat_corpus_output64_positive() {
+        assert_eq!(output64(42), "42");
+        assert_eq!(output64(1234567890), "1234567890");
+    }
+
+    /// `output64(i64::MAX)` returns full max value as string.
+    #[test]
+    fn compat_corpus_output64_int_max() {
+        assert_eq!(output64(i64::MAX), i64::MAX.to_string());
+    }
+
+    /// `output64(negative)` includes leading `-`.
+    #[test]
+    fn compat_corpus_output64_negative() {
+        assert_eq!(output64(-42), "-42");
+        assert_eq!(output64(i64::MIN), i64::MIN.to_string());
+    }
+
+    /// `strstr("hello world", "world")` returns Some(6) (byte offset).
+    #[test]
+    fn compat_corpus_strstr_finds_substring() {
+        assert_eq!(strstr("hello world", "world"), Some(6));
+    }
+
+    /// `strstr` empty needle returns Some(0).
+    #[test]
+    fn compat_corpus_strstr_empty_needle() {
+        let r = strstr("hello", "");
+        assert_eq!(r, Some(0), "empty needle matches at position 0");
+    }
+
+    /// `strstr` on missing returns None.
+    #[test]
+    fn compat_corpus_strstr_missing_returns_none() {
+        assert_eq!(strstr("hello world", "zzz"), None);
+    }
+
+    /// `strtoul("42", 10)` parses 42 with full-string consumption.
+    #[test]
+    fn compat_corpus_strtoul_decimal() {
+        let (val, consumed) = strtoul("42", 10);
+        assert_eq!(val, 42);
+        assert_eq!(consumed, 2, "consumed 2 chars");
+    }
+
+    /// `strtoul("ff", 16)` parses 255 hex.
+    #[test]
+    fn compat_corpus_strtoul_hex() {
+        let (val, _) = strtoul("ff", 16);
+        assert_eq!(val, 255);
+    }
+
+    /// `strtoul("123abc", 10)` parses 123 stopping at 'a'.
+    #[test]
+    fn compat_corpus_strtoul_stops_at_nondigit() {
+        let (val, consumed) = strtoul("123abc", 10);
+        assert_eq!(val, 123);
+        assert_eq!(consumed, 3, "stopped at non-digit");
+    }
+
+    /// `difftime(t2, t1) = (t2 - t1) as f64`.
+    #[test]
+    fn compat_corpus_difftime_positive() {
+        let d = difftime(100, 60);
+        assert!((d - 40.0).abs() < 1e-9, "100 - 60 = 40, got {d}");
+    }
+
+    /// `difftime` negative when t2 < t1.
+    #[test]
+    fn compat_corpus_difftime_negative() {
+        let d = difftime(60, 100);
+        assert!((d + 40.0).abs() < 1e-9, "60 - 100 = -40, got {d}");
+    }
+
+    /// `isprint_ascii` returns true for letters and digits.
+    #[test]
+    fn compat_corpus_isprint_ascii_visible() {
+        for c in ['a', 'Z', '0', '9', ' ', '~'] {
+            assert!(isprint_ascii(c), "{c:?} should be printable");
+        }
+    }
+
+    /// `isprint_ascii` returns false for control chars.
+    #[test]
+    fn compat_corpus_isprint_ascii_rejects_controls() {
+        for c in ['\0', '\n', '\r', '\t', '\x1b'] {
+            assert!(!isprint_ascii(c), "{c:?} should NOT be printable");
+        }
+    }
 }

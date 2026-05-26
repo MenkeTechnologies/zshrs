@@ -4900,4 +4900,49 @@ mod tests {
         }
         assert_eq!(tildequote("", 0), "");
     }
+
+    // ─── zsh-corpus pins for rembslash ─────────────────────────────
+
+    /// `rembslash("\\a\\b\\c")` strips backslashes → "abc".
+    #[test]
+    fn compcore_corpus_rembslash_strips_escapes() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rembslash(r"\a\b\c"), "abc");
+    }
+
+    /// `rembslash` with no backslashes is identity.
+    #[test]
+    fn compcore_corpus_rembslash_no_escapes_identity() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rembslash("hello"), "hello");
+    }
+
+    /// `rembslash("")` returns empty string.
+    #[test]
+    fn compcore_corpus_rembslash_empty_is_empty() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rembslash(""), "");
+    }
+
+    /// `rembslash("\\\\")` (escaped backslash) returns "\\".
+    #[test]
+    fn compcore_corpus_rembslash_escaped_backslash() {
+        let _g = crate::test_util::global_state_lock();
+        // r"\\" in Rust is the 2-char string "\\\\"  → one literal backslash + one literal backslash
+        assert_eq!(rembslash(r"\\"), r"\");
+    }
+
+    /// `rembslash` mid-string escape preserves surroundings.
+    #[test]
+    fn compcore_corpus_rembslash_preserves_context() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rembslash(r"hello\ world"), "hello world");
+    }
+
+    /// Trailing single backslash is consumed (no char after).
+    #[test]
+    fn compcore_corpus_rembslash_trailing_backslash_consumed() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(rembslash(r"abc\"), "abc");
+    }
 }

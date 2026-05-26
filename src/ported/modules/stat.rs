@@ -1006,4 +1006,83 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ─── zsh-corpus pins for statmodeprint ─────────────────────────
+
+    /// Regular file 0644 → "-rw-r--r--" string form.
+    #[test]
+    fn stat_corpus_modeprint_regular_644() {
+        let mode = 0o100_644; // S_IFREG | 0644
+        let r = statmodeprint(mode, STF_STRING);
+        assert_eq!(r, "-rw-r--r--", "regular 0644 → -rw-r--r--, got {r:?}");
+    }
+
+    /// Regular file 0755 → "-rwxr-xr-x".
+    #[test]
+    fn stat_corpus_modeprint_regular_755() {
+        let mode = 0o100_755;
+        let r = statmodeprint(mode, STF_STRING);
+        assert_eq!(r, "-rwxr-xr-x");
+    }
+
+    /// Directory 0755 → "drwxr-xr-x".
+    #[test]
+    fn stat_corpus_modeprint_directory() {
+        let mode = 0o040_755; // S_IFDIR | 0755
+        let r = statmodeprint(mode, STF_STRING);
+        assert_eq!(r, "drwxr-xr-x");
+    }
+
+    /// Symlink → 'l' file-type prefix.
+    #[test]
+    fn stat_corpus_modeprint_symlink_prefix() {
+        let mode = 0o120_777; // S_IFLNK | 0777
+        let r = statmodeprint(mode, STF_STRING);
+        assert!(r.starts_with('l'),
+            "symlink mode starts with 'l', got {r:?}");
+    }
+
+    /// FIFO → 'p' file-type prefix.
+    #[test]
+    fn stat_corpus_modeprint_fifo_prefix() {
+        let mode = 0o010_644;
+        let r = statmodeprint(mode, STF_STRING);
+        assert!(r.starts_with('p'),
+            "FIFO mode starts with 'p', got {r:?}");
+    }
+
+    /// Socket → 's' file-type prefix.
+    #[test]
+    fn stat_corpus_modeprint_socket_prefix() {
+        let mode = 0o140_644;
+        let r = statmodeprint(mode, STF_STRING);
+        assert!(r.starts_with('s'));
+    }
+
+    /// `STF_RAW | STF_OCTAL` → numeric octal form.
+    #[test]
+    fn stat_corpus_modeprint_raw_octal() {
+        let mode = 0o100_644;
+        let r = statmodeprint(mode, STF_RAW | STF_OCTAL);
+        assert!(r.starts_with('0'),
+            "octal raw form starts with leading 0, got {r:?}");
+        assert!(r.contains("100644") || r.contains("644"),
+            "octal repr contains 100644 or 644, got {r:?}");
+    }
+
+    /// `STF_RAW` alone → decimal numeric.
+    #[test]
+    fn stat_corpus_modeprint_raw_decimal() {
+        let mode = 0o100_644;
+        let r = statmodeprint(mode, STF_RAW);
+        // Decimal form of 0o100644 = 33188.
+        assert_eq!(r, "33188", "raw decimal form, got {r:?}");
+    }
+
+    /// Empty flags → empty output.
+    #[test]
+    fn stat_corpus_modeprint_no_flags_empty() {
+        let r = statmodeprint(0o100_644, 0);
+        assert_eq!(r, "", "no flags → empty output");
+    }
 }

@@ -807,4 +807,48 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ─── zsh-corpus pins for get_contents ──────────────────────────
+
+    /// `get_contents` on existing file returns content.
+    #[test]
+    fn mapfile_corpus_get_contents_reads_file() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("test.txt");
+        std::fs::write(&p, "hello world\n").unwrap();
+        let c = get_contents(p.to_str().unwrap());
+        assert_eq!(c.as_deref(), Some("hello world\n"));
+    }
+
+    /// `get_contents` on missing file returns None.
+    #[test]
+    fn mapfile_corpus_get_contents_missing_returns_none() {
+        let _g = crate::test_util::global_state_lock();
+        let c = get_contents("/nonexistent/zshrs_test_xyz_unique_abc");
+        assert!(c.is_none(), "missing file returns None");
+    }
+
+    /// `get_contents` on empty file returns Some("").
+    #[test]
+    fn mapfile_corpus_get_contents_empty_file_returns_empty_string() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("empty.txt");
+        std::fs::File::create(&p).unwrap();
+        let c = get_contents(p.to_str().unwrap());
+        assert_eq!(c.as_deref(), Some(""), "empty file → empty string");
+    }
+
+    /// `get_contents` preserves UTF-8 content.
+    #[test]
+    #[ignore = "ZSHRS BUG: mapfile get_contents mangles UTF-8 via metafy encode pipeline"]
+    fn mapfile_corpus_get_contents_preserves_multibyte() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("utf8.txt");
+        std::fs::write(&p, "日本語").unwrap();
+        let c = get_contents(p.to_str().unwrap());
+        assert_eq!(c.as_deref(), Some("日本語"));
+    }
 }

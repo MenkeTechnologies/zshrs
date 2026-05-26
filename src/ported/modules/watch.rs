@@ -1423,4 +1423,55 @@ mod tests {
         assert_eq!(cleanup_(m), 0);
         assert_eq!(finish_(m), 0);
     }
+
+    // ─── zsh-corpus pins for watchlog_match ────────────────────────
+
+    /// Exact match returns true.
+    #[test]
+    fn watch_corpus_watchlog_match_exact() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(watchlog_match("alice", "alice"));
+    }
+
+    /// Different strings without glob chars → false.
+    #[test]
+    fn watch_corpus_watchlog_match_different_strings_false() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!watchlog_match("alice", "bob"));
+    }
+
+    /// Glob `*` matches.
+    #[test]
+    fn watch_corpus_watchlog_match_star_glob_matches() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(watchlog_match("user*", "username"));
+        assert!(watchlog_match("*lice", "alice"));
+        assert!(watchlog_match("*", "anything"));
+    }
+
+    /// Glob `?` matches single char.
+    #[test]
+    fn watch_corpus_watchlog_match_question_glob_matches() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(watchlog_match("a?c", "abc"));
+        assert!(watchlog_match("a?c", "axc"));
+        assert!(!watchlog_match("a?c", "abbc"),
+            "? matches exactly one char, not multiple");
+    }
+
+    /// Pattern without glob and value differs → false (no implicit substring match).
+    #[test]
+    fn watch_corpus_watchlog_match_no_glob_no_substring_match() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!watchlog_match("ice", "alice"),
+            "without glob, no substring matching");
+    }
+
+    /// Empty pattern matches only empty value (exact match).
+    #[test]
+    fn watch_corpus_watchlog_match_empty_exact() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(watchlog_match("", ""));
+        assert!(!watchlog_match("", "x"));
+    }
 }

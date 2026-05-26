@@ -2673,4 +2673,62 @@ mod tests {
             vec!["child".to_string()]
         );
     }
+
+    // ─── zsh-corpus pins for zcurses_strerror ──────────────────────
+
+    /// `zcurses_strerror(0)` returns "unknown error" (out-of-range maps to idx 0).
+    #[test]
+    fn curses_corpus_strerror_zero_unknown() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcurses_strerror(0), "unknown error");
+    }
+
+    /// `zcurses_strerror(1)` returns "window name invalid".
+    #[test]
+    fn curses_corpus_strerror_one_invalid_name() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcurses_strerror(1), "window name invalid");
+    }
+
+    /// `zcurses_strerror(2)` returns "window already defined".
+    #[test]
+    fn curses_corpus_strerror_two_already_defined() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcurses_strerror(2), "window already defined");
+    }
+
+    /// `zcurses_strerror(3)` returns "window undefined".
+    #[test]
+    fn curses_corpus_strerror_three_undefined() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcurses_strerror(3), "window undefined");
+    }
+
+    /// `zcurses_strerror(99)` clamps to "unknown error" (out of range).
+    #[test]
+    fn curses_corpus_strerror_out_of_range_clamps_to_unknown() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(zcurses_strerror(99), "unknown error");
+        assert_eq!(zcurses_strerror(-1), "unknown error");
+        assert_eq!(zcurses_strerror(i32::MAX), "unknown error");
+    }
+
+    /// `zcurses_pairs_to_array` returns names from a zcurses_namenumberpair slice.
+    #[test]
+    fn curses_corpus_pairs_to_array_extracts_names() {
+        let pairs = [
+            zcurses_namenumberpair { name: "alpha", number: 1 },
+            zcurses_namenumberpair { name: "beta",  number: 2 },
+            zcurses_namenumberpair { name: "gamma", number: 3 },
+        ];
+        let v = zcurses_pairs_to_array(&pairs);
+        assert_eq!(v, vec!["alpha", "beta", "gamma"]);
+    }
+
+    /// `zcurses_pairs_to_array` on empty input returns empty Vec.
+    #[test]
+    fn curses_corpus_pairs_to_array_empty_input() {
+        let v = zcurses_pairs_to_array(&[]);
+        assert!(v.is_empty());
+    }
 }

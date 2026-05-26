@@ -6137,4 +6137,107 @@ mod tests {
             "ztst:172 — atest fails the (#s) start-or-slash anchor",
         );
     }
+
+    // ─── Misc/globtests pins — `~` exclusion and `^` negation ─────────
+
+    /// `Misc/globtests` — `[[ foo~ = foo~ ]]` — bare tilde is literal.
+    #[test]
+    fn zsh_corpus_literal_tilde_in_pattern() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("foo~", "foo~"), "literal ~ in non-extglob position");
+    }
+
+    /// `Misc/globtests` — `[[ foo.c = *.c~boo* ]]` — extended-glob
+    /// exclusion: `*.c` minus things matching `boo*`. "foo.c" doesn't
+    /// match "boo*", so it stays.
+    #[test]
+    #[ignore = "ZSHRS BUG: extendedglob `~` exclusion operator not implemented"]
+    fn zsh_corpus_exclusion_keeps_non_excluded() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("*.c~boo*", "foo.c"), "exclusion keeps foo.c");
+    }
+
+    /// `Misc/globtests` — `[[ foo.c = *.c~boo*~foo* ]]` — chained
+    /// exclusions: `*.c` minus `boo*` minus `foo*`. "foo.c" matches
+    /// `foo*`, so excluded.
+    #[test]
+    fn zsh_corpus_chained_exclusion_removes_match() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            !ext_glob_match("*.c~boo*~foo*", "foo.c"),
+            "chained exclusion excludes foo.c",
+        );
+    }
+
+    /// `Misc/globtests` — `[[ fofo = (fo#)# ]]` — outer `(...)#` is
+    /// zero-or-more closure over `fo#` (one f followed by zero+ o).
+    #[test]
+    #[ignore = "ZSHRS BUG: (fo#)# closure-of-closure causes stack overflow"]
+    fn zsh_corpus_closure_of_closure_matches_repeated_fo() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(fo#)#", "fofo"), "(fo#)# matches fofo");
+    }
+
+    /// `Misc/globtests` — `[[ ffo = (fo#)# ]]` — "ffo" = "f"+"fo".
+    #[test]
+    #[ignore = "ZSHRS BUG: (fo#)# closure-of-closure causes stack overflow"]
+    fn zsh_corpus_closure_matches_ffo() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("(fo#)#", "ffo"), "(fo#)# matches ffo");
+    }
+
+    /// `Misc/globtests` — `[[ xfoooofof = (fo#)# ]]` — leading "x"
+    /// breaks the pattern.
+    #[test]
+    #[ignore = "ZSHRS BUG: (fo#)# closure-of-closure causes stack overflow"]
+    fn zsh_corpus_closure_rejects_leading_x() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            !ext_glob_match("(fo#)#", "xfoooofof"),
+            "(fo#)# rejects leading x",
+        );
+    }
+
+    /// `Misc/globtests` — `[[ foo = ((^x)) ]]` — `(^x)` matches one
+    /// char that isn't 'x'. "foo" has 'f' first, so matches.
+    /// Note: zsh's `(^x)` is exactly-one-not-x with extendedglob.
+    #[test]
+    #[ignore = "ZSHRS BUG: (^pat) extendedglob negation not implemented"]
+    fn zsh_corpus_negation_caret_matches_non_x_start() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(ext_glob_match("((^x)*)", "foo"), "(^x)* matches foo");
+    }
+
+    /// `Misc/globtests` — `[[ foo = ((^foo)) ]]` — `(^foo)` is "not foo",
+    /// "foo" matches `foo`, so excluded → false.
+    #[test]
+    #[ignore = "ZSHRS BUG: (^pat) negation against full string not implemented"]
+    fn zsh_corpus_negation_caret_rejects_full_match() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            !ext_glob_match("((^foo))", "foo"),
+            "(^foo) rejects 'foo' itself",
+        );
+    }
+
+    /// `Misc/globtests` — `[[ abcd = ?(a|b)c#d ]]` — `?(a|b)` is
+    /// "zero-or-one of a|b", `c#d` is "zero+ c then d". "abcd" = a + b? no, ?
+    /// is single char or alternation. Let me re-read: `?(a|b)` matches
+    /// one char which is `a` OR `b`. So "abcd": ?=a, then needs `c#d`
+    /// = (c)*d, matches "bcd" if first char then need cd. Hmm.
+    /// Actually: `?(a|b)` = `?` then `(a|b)` as separate? More likely
+    /// `?(a|b)` is ksh-style "0-or-1 of a|b" only with KSH_GLOB.
+    /// In zsh native (extendedglob) `?` is single char, `(a|b)` is
+    /// alternation. So `?(a|b)c#d` = anychar (a|b) c* d. "abcd" =
+    /// a + b + (zero c) + ... fails. The ztst says it MATCHES.
+    /// Conclusion: requires KSH_GLOB which we may not enable.
+    #[test]
+    #[ignore = "ZSHRS BUG: ?(...) ksh-glob syntax requires KSH_GLOB option"]
+    fn zsh_corpus_ksh_question_alternation() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(
+            ext_glob_match("?(a|b)c#d", "abcd"),
+            "?(a|b)c#d matches abcd",
+        );
+    }
 }

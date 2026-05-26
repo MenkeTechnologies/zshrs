@@ -1086,4 +1086,67 @@ mod tests {
             arr
         );
     }
+
+    // ─── zsh-corpus pins for bin_sched ─────────────────────────────
+
+    /// `sched` with no args returns 0 and prints empty list.
+    #[test]
+    fn sched_corpus_bin_sched_no_args_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        *schedcmds_lock().lock().unwrap() = None;
+        let ops = empty_ops();
+        let r = bin_sched("sched", &[], &ops, 0);
+        assert_eq!(r, 0, "sched with no args lists schedule, returns 0");
+    }
+
+    /// `sched -1` with no schedule returns non-zero.
+    #[test]
+    fn sched_corpus_bin_sched_minus_one_empty_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        *schedcmds_lock().lock().unwrap() = None;
+        let ops = empty_ops();
+        let r = bin_sched("sched", &[s("-1")], &ops, 0);
+        assert_ne!(r, 0, "sched -1 on empty schedule = error");
+    }
+
+    /// `sched +60 cmd` adds an entry.
+    #[test]
+    fn sched_corpus_bin_sched_relative_time_adds_entry() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        *schedcmds_lock().lock().unwrap() = None;
+        let ops = empty_ops();
+        bin_sched("sched", &[s("+60"), s("my_cmd")], &ops, 0);
+        let head = schedcmds_lock().lock().unwrap();
+        assert!(head.is_some(), "entry added to schedule");
+        assert_eq!(head.as_ref().unwrap().cmd, "my_cmd");
+    }
+
+    /// `schedgetfn` on a 1-entry schedule returns 1-element Vec.
+    #[test]
+    fn sched_corpus_schedgetfn_after_single_add() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        *schedcmds_lock().lock().unwrap() = None;
+        let ops = empty_ops();
+        bin_sched("sched", &[s("+60"), s("only")], &ops, 0);
+        let arr = schedgetfn(std::ptr::null());
+        assert_eq!(arr.len(), 1, "1 entry after 1 add, got {arr:?}");
+    }
+
+    /// Three sched entries → schedgetfn returns 3.
+    #[test]
+    fn sched_corpus_schedgetfn_after_three_adds() {
+        let _g = crate::test_util::global_state_lock();
+        let _serial = reset_with_lock();
+        *schedcmds_lock().lock().unwrap() = None;
+        let ops = empty_ops();
+        bin_sched("sched", &[s("+10"), s("a")], &ops, 0);
+        bin_sched("sched", &[s("+20"), s("b")], &ops, 0);
+        bin_sched("sched", &[s("+30"), s("c")], &ops, 0);
+        let arr = schedgetfn(std::ptr::null());
+        assert_eq!(arr.len(), 3, "3 entries after 3 adds, got {arr:?}");
+    }
 }

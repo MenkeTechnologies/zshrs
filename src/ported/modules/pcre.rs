@@ -1148,4 +1148,77 @@ mod tests {
             "c:312-325 — empty input → 0 (no error)"
         );
     }
+
+    // ─── zsh-corpus pins for cond_pcre_match ──────────────────────
+
+    /// `[[ "abc123" -pcre-match "[a-z]+[0-9]+" ]]` → 1 (match).
+    #[test]
+    fn pcre_corpus_cond_match_charclass_quantifier() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_pcre_match(
+            &["abc123".to_string(), "[a-z]+[0-9]+".to_string()], 0);
+        assert_eq!(r, 1, "regex match succeeds");
+    }
+
+    /// `[[ "xyz" -pcre-match "[0-9]+" ]]` → 0 (no match).
+    #[test]
+    fn pcre_corpus_cond_match_no_digits() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_pcre_match(
+            &["xyz".to_string(), "[0-9]+".to_string()], 0);
+        assert_eq!(r, 0, "no digits in 'xyz' = false");
+    }
+
+    /// Empty pattern matches empty string.
+    #[test]
+    fn pcre_corpus_cond_match_empty_pattern_matches_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_pcre_match(
+            &["".to_string(), "".to_string()], 0);
+        assert_eq!(r, 1);
+    }
+
+    /// PCRE match populates `$MATCH` to the full match.
+    #[test]
+    fn pcre_corpus_cond_match_sets_MATCH() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = cond_pcre_match(
+            &["abc123".to_string(), "[a-z]+[0-9]+".to_string()], 0);
+        assert_eq!(
+            crate::ported::params::getsparam("MATCH").as_deref(),
+            Some("abc123"),
+            "$MATCH = whole-match",
+        );
+    }
+
+    /// PCRE match captures populate `$match[N]`.
+    #[test]
+    fn pcre_corpus_cond_match_sets_match_array() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = cond_pcre_match(
+            &["abc123".to_string(), "([a-z]+)([0-9]+)".to_string()], 0);
+        let m = crate::ported::params::getaparam("match");
+        assert_eq!(
+            m.as_deref(),
+            Some(&["abc".to_string(), "123".to_string()][..]),
+            "$match[1..N] populated from capture groups",
+        );
+    }
+
+    /// Too few args returns 0.
+    #[test]
+    fn pcre_corpus_cond_match_one_arg_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_pcre_match(&["only".to_string()], 0);
+        assert_eq!(r, 0);
+    }
+
+    /// Invalid regex returns 0 (compile failure).
+    #[test]
+    fn pcre_corpus_cond_match_invalid_pattern_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = cond_pcre_match(
+            &["abc".to_string(), "[unterminated".to_string()], 0);
+        assert_eq!(r, 0, "invalid pattern = no match");
+    }
 }

@@ -636,4 +636,68 @@ mod tests {
         getrandom_buffer(&mut b).unwrap();
         assert_ne!(a, b, "two random reads must differ (or RNG is broken)");
     }
+
+    // ─── zsh-corpus pins for random helpers ────────────────────────
+
+    /// `get_srandom` returns u32 with variance across calls.
+    #[test]
+    fn random_corpus_get_srandom_varies() {
+        let _g = crate::test_util::global_state_lock();
+        let a = get_srandom();
+        let b = get_srandom();
+        let c = get_srandom();
+        assert!(
+            a != b || b != c || a != c,
+            "3 srandom calls all returned same value: {a} {b} {c}"
+        );
+    }
+
+    /// `math_zrand_float` always in [0.0, 1.0).
+    #[test]
+    fn random_corpus_math_zrand_float_unit_interval() {
+        let _g = crate::test_util::global_state_lock();
+        for _ in 0..50 {
+            let v = math_zrand_float();
+            assert!((0.0..1.0).contains(&v),
+                "value {v} out of [0.0, 1.0)");
+        }
+    }
+
+    /// `get_bound_random_buffer` with max=100 fills with values < 100.
+    #[test]
+    fn random_corpus_bound_random_under_max() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u32; 50];
+        get_bound_random_buffer(&mut buf, 100);
+        for &v in &buf {
+            assert!(v < 100, "{v} should be < 100");
+        }
+    }
+
+    /// `get_bound_random_buffer` with max=1 fills with all zeros.
+    #[test]
+    fn random_corpus_bound_random_max_one_all_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u32; 20];
+        get_bound_random_buffer(&mut buf, 1);
+        for &v in &buf {
+            assert_eq!(v, 0, "max=1 → all values 0, got {v}");
+        }
+    }
+
+    /// `getrandom_buffer` with empty slice doesn't panic.
+    #[test]
+    fn random_corpus_getrandom_empty_buffer_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut empty: [u8; 0] = [];
+        getrandom_buffer(&mut empty).unwrap();
+    }
+
+    /// `getrandom_buffer` fills 1-byte buffer.
+    #[test]
+    fn random_corpus_getrandom_single_byte() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 1];
+        getrandom_buffer(&mut buf).unwrap();
+    }
 }

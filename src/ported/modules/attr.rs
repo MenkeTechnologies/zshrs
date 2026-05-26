@@ -832,4 +832,41 @@ mod tests {
         let r = xsetxattr("/__nonexistent__", "user.foo", b"v", 0, 0);
         assert_ne!(r, 0, "xsetxattr on bogus path must surface error");
     }
+
+    // ─── zsh-corpus pins for xlistxattr / xremovexattr / builtins ────
+
+    /// `xlistxattr` on nonexistent path returns negative.
+    #[test]
+    fn attr_corpus_xlistxattr_nonexistent_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let mut buf = [0u8; 128];
+        let r = xlistxattr("/__never_exists_zshrs_xyz__", &mut buf, 0);
+        assert!(r < 0, "missing path → negative, got {r}");
+    }
+
+    /// `xremovexattr` on nonexistent path returns nonzero error.
+    #[test]
+    fn attr_corpus_xremovexattr_nonexistent_returns_nonzero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = xremovexattr("/__never_exists_zshrs_xyz__", "user.foo", 0);
+        assert_ne!(r, 0, "missing path → error");
+    }
+
+    /// `bin_getattr` with no args returns nonzero (usage error).
+    #[test]
+    fn attr_corpus_bin_getattr_no_args_errors() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_getattr("zgetattr", &[], &ops, 0);
+        assert_ne!(r, 0);
+    }
+
+    /// `bin_setattr` with no args returns nonzero.
+    #[test]
+    fn attr_corpus_bin_setattr_no_args_errors() {
+        let _g = crate::test_util::global_state_lock();
+        let ops = empty_ops();
+        let r = bin_setattr("zsetattr", &[], &ops, 0);
+        assert_ne!(r, 0);
+    }
 }

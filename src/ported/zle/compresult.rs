@@ -2019,4 +2019,71 @@ mod tests {
         // c:1486-1487 — disp + (DISPLINE|HIDE) → skip.
         assert_eq!(skipnolist(&v, 0), 1);
     }
+
+    // ─── zsh-corpus pins for unambig_data / build_pos_string ────────
+
+    /// `unambig_data([])` is empty string (no matches).
+    #[test]
+    fn compresult_corpus_unambig_data_empty_input_empty_output() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(unambig_data(&[]), "");
+    }
+
+    /// `unambig_data([single])` returns the single match.
+    #[test]
+    fn compresult_corpus_unambig_data_single_input_returns_it() {
+        let _g = crate::test_util::global_state_lock();
+        let matches = vec!["only_one".to_string()];
+        assert_eq!(unambig_data(&matches), "only_one");
+    }
+
+    /// `unambig_data` returns longest common prefix.
+    #[test]
+    fn compresult_corpus_unambig_data_returns_lcp() {
+        let _g = crate::test_util::global_state_lock();
+        let matches = vec![
+            "prefix_alpha".to_string(),
+            "prefix_beta".to_string(),
+            "prefix_gamma".to_string(),
+        ];
+        assert_eq!(unambig_data(&matches), "prefix_");
+    }
+
+    /// `unambig_data` with no shared prefix returns empty.
+    #[test]
+    fn compresult_corpus_unambig_data_no_shared_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let matches = vec![
+            "alpha".to_string(),
+            "beta".to_string(),
+            "gamma".to_string(),
+        ];
+        assert_eq!(unambig_data(&matches), "");
+    }
+
+    /// `unambig_data` where one match is a prefix of another → returns shorter.
+    #[test]
+    fn compresult_corpus_unambig_data_one_is_prefix_of_other() {
+        let _g = crate::test_util::global_state_lock();
+        let matches = vec!["abc".to_string(), "abcdef".to_string()];
+        assert_eq!(unambig_data(&matches), "abc");
+    }
+
+    /// `build_pos_string(0, 5)` produces "1/5" (1-indexed).
+    #[test]
+    fn compresult_corpus_build_pos_string_one_indexed() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(build_pos_string(0, 5), "1/5");
+        assert_eq!(build_pos_string(4, 5), "5/5");
+        assert_eq!(build_pos_string(99, 100), "100/100");
+    }
+
+    /// `build_pos_string` format is "current+1/total".
+    #[test]
+    fn compresult_corpus_build_pos_string_includes_slash() {
+        let _g = crate::test_util::global_state_lock();
+        let s = build_pos_string(2, 10);
+        assert!(s.contains('/'));
+        assert_eq!(s, "3/10");
+    }
 }

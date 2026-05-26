@@ -1030,4 +1030,70 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a, "hello");
     }
+
+    // ─── zsh-corpus pins for mem helpers ─────────────────────────────
+
+    /// `arrlen(&empty_slice)` returns 0.
+    #[test]
+    fn mem_corpus_arrlen_empty_zero() {
+        let v: Vec<String> = Vec::new();
+        assert_eq!(arrlen(&v), 0);
+    }
+
+    /// `arrlen` matches Vec::len.
+    #[test]
+    fn mem_corpus_arrlen_matches_len() {
+        let v: Vec<i32> = (0..7).collect();
+        assert_eq!(arrlen(&v), 7);
+    }
+
+    /// `dupstring("")` returns empty string.
+    #[test]
+    fn mem_corpus_dupstring_empty() {
+        assert_eq!(dupstring(""), "");
+    }
+
+    /// `dupstring` preserves UTF-8 multibyte content.
+    #[test]
+    fn mem_corpus_dupstring_multibyte_preserved() {
+        let s = dupstring("日本語");
+        assert_eq!(s, "日本語");
+    }
+
+    /// `dupstring_wlen` with len=0 returns empty string.
+    #[test]
+    fn mem_corpus_dupstring_wlen_zero_yields_empty() {
+        assert_eq!(dupstring_wlen("hello", 0), "");
+    }
+
+    /// `arrlen_lt` strict boundary: 3 < 3 is false.
+    #[test]
+    fn mem_corpus_arrlen_lt_strict_at_boundary() {
+        let _g = crate::test_util::global_state_lock();
+        let v: Vec<i32> = vec![1, 2, 3];
+        assert!(!arrlen_lt(&v, 3), "3 < 3 is false (strict)");
+        assert!(arrlen_lt(&v, 4), "3 < 4 is true");
+    }
+
+    /// `pushheap` then `popheap` round-trips without panicking.
+    #[test]
+    fn mem_corpus_pushheap_popheap_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        pushheap();
+        popheap();
+    }
+
+    /// `hcalloc(0)` doesn't panic (zero-byte alloc).
+    #[test]
+    fn mem_corpus_hcalloc_zero_size_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = hcalloc(0);
+    }
+
+    /// `zhalloc(0)` doesn't panic.
+    #[test]
+    fn mem_corpus_zhalloc_zero_size_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = zhalloc(0);
+    }
 }

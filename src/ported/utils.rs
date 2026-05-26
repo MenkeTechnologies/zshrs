@@ -12518,4 +12518,85 @@ mod tests {
         let result = String::from_utf8(bytes).expect("valid utf-8");
         assert_eq!(result, s, "UTF-8 round-trip must preserve content");
     }
+
+    // ─── zsh-corpus pins for quotestring per quote_type ─────────────
+
+    /// `quotestring(QT_NONE)` is identity on any input.
+    #[test]
+    fn quotestring_corpus_qt_none_is_identity() {
+        let s = "anything `goes` $here";
+        assert_eq!(quotestring(s, QT_NONE), s);
+    }
+
+    /// `quotestring(QT_SINGLE)` on plain word wraps in single quotes.
+    #[test]
+    fn quotestring_corpus_qt_single_wraps_plain_word() {
+        let out = quotestring("hello", QT_SINGLE);
+        assert!(out.starts_with('\'') && out.ends_with('\''),
+            "single-quoted = wraps with ', got {out:?}");
+        assert!(out.contains("hello"), "content preserved");
+    }
+
+    /// `quotestring(QT_DOUBLE)` on plain word wraps in double quotes.
+    #[test]
+    fn quotestring_corpus_qt_double_wraps_plain_word() {
+        let out = quotestring("hello", QT_DOUBLE);
+        assert!(out.starts_with('"') && out.ends_with('"'),
+            "double-quoted = wraps with \", got {out:?}");
+    }
+
+    /// `quotestring(QT_SINGLE)` on string with apostrophe escapes the
+    /// apostrophe by closing+escape+reopen: `it's` → `'it'\''s'`.
+    #[test]
+    fn quotestring_corpus_qt_single_escapes_apostrophe() {
+        let out = quotestring("it's", QT_SINGLE);
+        assert!(
+            out.contains("\\'") || out.contains("'\\''"),
+            "apostrophe gets escaped in single-quote form, got {out:?}",
+        );
+    }
+
+    /// `quotestring(QT_BACKSLASH)` escapes shell special chars.
+    /// Pattern chars like `*`, `?`, `$`, `(`, `)` should be backslashed.
+    #[test]
+    fn quotestring_corpus_qt_backslash_escapes_glob_chars() {
+        let out = quotestring("a*b?c", QT_BACKSLASH);
+        assert!(out.contains("\\*"), "* gets backslashed, got {out:?}");
+        assert!(out.contains("\\?"), "? gets backslashed, got {out:?}");
+    }
+
+    /// `quotestring("", QT_DOUBLE)` returns `""` literal.
+    #[test]
+    fn quotestring_corpus_qt_double_empty_yields_double_quotes() {
+        let out = quotestring("", QT_DOUBLE);
+        assert_eq!(out, "\"\"", "empty double-quoted = \"\"");
+    }
+
+    /// `quotestring("", QT_SINGLE)` returns `''` literal.
+    #[test]
+    fn quotestring_corpus_qt_single_empty_yields_single_quotes() {
+        let out = quotestring("", QT_SINGLE);
+        assert_eq!(out, "''", "empty single-quoted = ''");
+    }
+
+    /// `quotestring(QT_BACKSLASH)` on plain alphanumeric is identity.
+    /// "abc123" should round-trip with no backslashes added.
+    #[test]
+    fn quotestring_corpus_qt_backslash_plain_word_unchanged() {
+        let out = quotestring("abc123", QT_BACKSLASH);
+        assert_eq!(out, "abc123",
+            "plain alphanumeric needs no escape, got {out:?}");
+    }
+
+    /// `ztrlen("hello")` = 5 (no meta chars).
+    #[test]
+    fn ztrlen_corpus_plain_ascii_byte_count() {
+        assert_eq!(ztrlen("hello"), 5);
+    }
+
+    /// `ztrlen("")` = 0.
+    #[test]
+    fn ztrlen_corpus_empty_is_zero() {
+        assert_eq!(ztrlen(""), 0);
+    }
 }

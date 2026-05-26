@@ -843,4 +843,83 @@ mod tests {
         assert_ne!(SIGZERR, SIGEXIT);
         assert_ne!(SIGDEBUG, SIGEXIT);
     }
+
+    // ─── zsh-corpus pins: sigs_name / sigs_number round-trip ─────────
+
+    /// `sigs_number("INT")` returns SIGINT.
+    #[test]
+    fn signals_corpus_sigs_number_int_returns_sigint() {
+        let n = sigs_number("INT");
+        assert_eq!(n, Some(libc::SIGINT), "INT → SIGINT");
+    }
+
+    /// `sigs_number("TERM")` returns SIGTERM.
+    #[test]
+    fn signals_corpus_sigs_number_term_returns_sigterm() {
+        let n = sigs_number("TERM");
+        assert_eq!(n, Some(libc::SIGTERM), "TERM → SIGTERM");
+    }
+
+    /// `sigs_number("HUP")` returns SIGHUP.
+    #[test]
+    fn signals_corpus_sigs_number_hup_returns_sighup() {
+        let n = sigs_number("HUP");
+        assert_eq!(n, Some(libc::SIGHUP), "HUP → SIGHUP");
+    }
+
+    /// `sigs_number("KILL")` returns SIGKILL.
+    #[test]
+    fn signals_corpus_sigs_number_kill_returns_sigkill() {
+        let n = sigs_number("KILL");
+        assert_eq!(n, Some(libc::SIGKILL), "KILL → SIGKILL");
+    }
+
+    /// `sigs_number("BOGUS_NEVER")` returns None.
+    #[test]
+    fn signals_corpus_sigs_number_unknown_returns_none() {
+        assert!(sigs_number("BOGUS_NEVER").is_none());
+        assert!(sigs_number("").is_none());
+    }
+
+    /// `sigs_name(SIGINT)` returns Some("INT") (canonical short form).
+    #[test]
+    fn signals_corpus_sigs_name_int_returns_short_form() {
+        let n = sigs_name(libc::SIGINT);
+        assert!(n.is_some(), "SIGINT must have a name");
+        assert_eq!(n.unwrap(), "INT", "short form, not 'SIGINT'");
+    }
+
+    /// `sigs_name(SIGTERM)` returns Some("TERM").
+    #[test]
+    fn signals_corpus_sigs_name_term_returns_short_form() {
+        assert_eq!(sigs_name(libc::SIGTERM), Some("TERM"));
+    }
+
+    /// `sigs_name(0)` doesn't panic regardless of return.
+    #[test]
+    fn signals_corpus_sigs_name_zero_does_not_panic() {
+        let _ = sigs_name(0);
+    }
+
+    /// Round-trip: name → number → name preserves canonical form.
+    #[test]
+    fn signals_corpus_round_trip_int() {
+        let n = sigs_number("INT").expect("INT exists");
+        let back = sigs_name(n).expect("name for SIGINT");
+        assert_eq!(back, "INT", "round-trip preserves canonical name");
+    }
+
+    /// Various signals have distinct numbers (sanity).
+    #[test]
+    fn signals_corpus_distinct_numbers() {
+        let i = sigs_number("INT").unwrap();
+        let t = sigs_number("TERM").unwrap();
+        let h = sigs_number("HUP").unwrap();
+        let k = sigs_number("KILL").unwrap();
+        let q = sigs_number("QUIT").unwrap();
+        assert_ne!(i, t);
+        assert_ne!(i, h);
+        assert_ne!(t, h);
+        assert_ne!(k, q);
+    }
 }

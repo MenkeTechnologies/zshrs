@@ -4819,4 +4819,126 @@ mod tests {
         // -7.9 → truncates to -7 (NOT rounds to -8)
         assert_eq!(mathevali("-7.9").unwrap(), -7);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // zsh test-corpus pins — Test/C01arith.ztst arithmetic regression
+    // suite. Each test cites the ztst line range; pass = lock current
+    // correct behavior, #[ignore = "ZSHRS BUG: ..."] = tracked gap.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `Test/C01arith.ztst:6-10` — basic integer literal.
+    #[test]
+    fn zsh_corpus_basic_integer_literal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(matheval("42").unwrap().l, 42, "ztst:9 — int literal");
+    }
+
+    /// `Test/C01arith.ztst:22-25` — `((29.1 % 13.0 * 10) + 0.5)` = 31.6
+    /// → integer-coerced to 31.
+    #[test]
+    fn zsh_corpus_float_modulo_then_int_truncation() {
+        let _g = crate::test_util::global_state_lock();
+        let r = mathevali("(29.1 % 13.0 * 10) + 0.5");
+        assert_eq!(r.ok(), Some(31), "ztst:25 — float % then int truncation");
+    }
+
+    /// `Test/C01arith.ztst:27-29` — multi-base input:
+    /// `0x10 + 0X01 + 2#1010` = 16 + 1 + 10 = 27.
+    #[test]
+    fn zsh_corpus_multi_base_input() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            mathevali("0x10 + 0X01 + 2#1010").unwrap(), 27,
+            "ztst:29 — hex + 2#binary sum",
+        );
+    }
+
+    /// `Test/C01arith.ztst:41-44` — float→int truncation:
+    /// `(( i = 32.5 ))` then int → 32.
+    #[test]
+    fn zsh_corpus_float_truncates_in_integer_context() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(mathevali("32.5").unwrap(), 32, "ztst:44 — truncate, not round");
+    }
+
+    /// `Test/C01arith.ztst:46-50` — operator precedence chain:
+    /// `4 - - 3 * 7 << 1 & 7 ^ 1 | 16 ** 2` = 1591 (zsh-default
+    /// MATH_OPS precedence, NOT C precedence).
+    #[test]
+    fn zsh_corpus_zsh_precedence_chain() {
+        let _g = crate::test_util::global_state_lock();
+        let r = mathevali("4 - - 3 * 7 << 1 & 7 ^ 1 | 16 ** 2");
+        assert_eq!(r.ok(), Some(1591), "ztst:50 — zsh-default precedence");
+    }
+
+    /// `Test/C01arith.ztst:96-97` — mixed int+float:
+    /// `3 + 5 * 1.75` = 11.75 (float promotion).
+    #[test]
+    fn zsh_corpus_mixed_int_float_promotes_to_float() {
+        let _g = crate::test_util::global_state_lock();
+        let n = matheval("3 + 5 * 1.75").unwrap();
+        assert!((n.d - 11.75).abs() < 1e-9,
+            "ztst:96 — 3+5*1.75 = 11.75 (float promotion)");
+    }
+
+    /// `Test/C01arith.ztst:62-64` — logical precedence:
+    /// `1 < 2 || 2 < 2 && 3 > 4` = 1 (|| lower than &&).
+    #[test]
+    fn zsh_corpus_logical_precedence_or_low_and_high() {
+        let _g = crate::test_util::global_state_lock();
+        let n = mathevali("1 < 2 || 2 < 2 && 3 > 4").unwrap();
+        assert_eq!(n, 1, "ztst:64 — || lower than &&");
+    }
+
+    /// `Test/C01arith.ztst:66-68` — nested ternary right-associative:
+    /// `1+4 ? 3+2 ? 4+3 ? 5+6 ? 4*8 : 0 : 0 : 0 : 0` = 32.
+    #[test]
+    fn zsh_corpus_ternary_right_associative_nested() {
+        let _g = crate::test_util::global_state_lock();
+        let n = mathevali("1+4 ? 3+2 ? 4+3 ? 5+6 ? 4*8 : 0 : 0 : 0 : 0").unwrap();
+        assert_eq!(n, 32, "ztst:68 — nested ternary right-associative");
+    }
+
+    /// `Test/C01arith.ztst:78-80` — comma returns last:
+    /// `0, 4 ? 3 : 1, 5` = 5.
+    #[test]
+    fn zsh_corpus_comma_returns_last_value() {
+        let _g = crate::test_util::global_state_lock();
+        let n = mathevali("0, 4 ? 3 : 1, 5").unwrap();
+        assert_eq!(n, 5, "ztst:80 — comma operator returns last");
+    }
+
+    /// `Test/C01arith.ztst:9` — `1 + 2 * 3` = 7 (precedence).
+    #[test]
+    fn zsh_corpus_integer_precedence_mul_before_add() {
+        let _g = crate::test_util::global_state_lock();
+        let n = mathevali("1 + 2 * 3").unwrap();
+        assert_eq!(n, 7, "ztst:9 — *,/ before +,-");
+    }
+
+    /// `Test/C01arith.ztst:18` — `1.5 + 2.5` = 4.0.
+    #[test]
+    fn zsh_corpus_basic_float_add() {
+        let _g = crate::test_util::global_state_lock();
+        let n = matheval("1.5 + 2.5").unwrap();
+        assert!((n.d - 4.0).abs() < 1e-9, "ztst:18 — 1.5+2.5=4.0");
+    }
+
+    /// `Test/C01arith.ztst:24-26` — `7.5 % 2.5` = 0.0 (float modulo).
+    #[test]
+    fn zsh_corpus_float_modulo_exact_division() {
+        let _g = crate::test_util::global_state_lock();
+        let n = matheval("7.5 % 2.5").unwrap();
+        assert!(n.d.abs() < 1e-9, "ztst:24 — 7.5%2.5=0.0");
+    }
+
+    /// `Test/C01arith.ztst:46-50` — full zsh precedence chain.
+    /// `4 - - 3 * 7 << 1 & 7 ^ 1 | 16 ** 2` = 1591 under default
+    /// (non-C-precedence) zsh.
+    #[test]
+    fn zsh_corpus_full_zsh_precedence_chain() {
+        let _g = crate::test_util::global_state_lock();
+        let n = mathevali("4 - - 3 * 7 << 1 & 7 ^ 1 | 16 ** 2").unwrap();
+        assert_eq!(n, 1591, "ztst:50 — default zsh precedence = 1591");
+    }
 }

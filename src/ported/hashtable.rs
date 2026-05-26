@@ -3149,6 +3149,59 @@ mod tests {
         assert_eq!(a.node.nam, "ls-color");
     }
 
+    // ─── alias-creation zsh-corpus pins ────────────────────────────
+
+    /// `createaliasnode` round-trips name+text+flags=0 (regular alias).
+    #[test]
+    fn alias_corpus_create_regular_alias() {
+        let _g = crate::test_util::global_state_lock();
+        let a = createaliasnode("ll", "ls -la", 0);
+        assert_eq!(a.node.nam, "ll");
+        assert_eq!(a.text, "ls -la");
+        // Regular alias = no GLOBAL/SUFFIX flags.
+        let f = a.node.flags as i32;
+        assert_eq!(f & (crate::ported::zsh_h::ALIAS_GLOBAL | crate::ported::zsh_h::ALIAS_SUFFIX), 0,
+            "regular alias has no GLOBAL/SUFFIX bits");
+    }
+
+    /// `createaliasnode` with ALIAS_GLOBAL flag sets the global bit.
+    #[test]
+    fn alias_corpus_create_global_alias_carries_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let a = createaliasnode("G", "global text",
+            crate::ported::zsh_h::ALIAS_GLOBAL as u32);
+        let f = a.node.flags as i32;
+        assert_ne!(f & crate::ported::zsh_h::ALIAS_GLOBAL, 0,
+            "ALIAS_GLOBAL set");
+    }
+
+    /// `createaliasnode` with ALIAS_SUFFIX flag sets the suffix bit.
+    #[test]
+    fn alias_corpus_create_suffix_alias_carries_flag() {
+        let _g = crate::test_util::global_state_lock();
+        let a = createaliasnode("S", "suffix text",
+            crate::ported::zsh_h::ALIAS_SUFFIX as u32);
+        let f = a.node.flags as i32;
+        assert_ne!(f & crate::ported::zsh_h::ALIAS_SUFFIX, 0,
+            "ALIAS_SUFFIX set");
+    }
+
+    /// Empty text is preserved (zsh allows zero-length alias expansion).
+    #[test]
+    fn alias_corpus_create_empty_text_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        let a = createaliasnode("noop", "", 0);
+        assert_eq!(a.text, "");
+    }
+
+    /// Alias text may contain spaces — preserved as-is.
+    #[test]
+    fn alias_corpus_create_multi_word_text_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        let a = createaliasnode("rmf", "rm -rf --no-preserve-root", 0);
+        assert_eq!(a.text, "rm -rf --no-preserve-root");
+    }
+
     /// `aliastab_lock` initialises with the two default aliases
     /// `run-help` and `which-command` per hashtable.c:1215-1216.
     /// A regression here breaks zsh's documented default behaviour
@@ -3293,5 +3346,62 @@ mod tests {
         let len_before = h.len();
         assert!(removehashnode(&mut h, "missing").is_none());
         assert_eq!(h.len(), len_before, "missing-key remove must not mutate");
+    }
+
+    // ─── zsh-corpus pins: hashtable add/get/remove ──────────────────
+
+    /// `addhashnode2` returns None on first insert.
+    #[test]
+    fn hashtable_corpus_add_new_returns_none() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        assert!(addhashnode2(&mut h, "fresh", 7).is_none());
+        assert_eq!(gethashnode2(&h, "fresh"), Some(&7));
+    }
+
+    /// `addhashnode2` on an existing key returns the OLD value.
+    #[test]
+    fn hashtable_corpus_add_existing_returns_previous_value() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        addhashnode2(&mut h, "k", 1);
+        let prev = addhashnode2(&mut h, "k", 2);
+        assert_eq!(prev, Some(1), "old value returned on replace");
+        assert_eq!(gethashnode2(&h, "k"), Some(&2), "new value installed");
+    }
+
+    /// `gethashnode2` on missing key returns None.
+    #[test]
+    fn hashtable_corpus_get_missing_returns_none() {
+        let h: HashMap<String, i32> = HashMap::new();
+        assert!(gethashnode2(&h, "anything").is_none());
+    }
+
+    /// `newhashtable` returns (name, size); name preserved.
+    #[test]
+    fn hashtable_corpus_newhashtable_preserves_name() {
+        let (name, sz) = newhashtable(64, "myht");
+        assert_eq!(name, "myht");
+        assert!(sz > 0, "size positive, got {sz}");
+    }
+
+    /// Round-trip with many distinct keys.
+    #[test]
+    fn hashtable_corpus_many_keys_round_trip() {
+        let mut h: HashMap<String, i32> = HashMap::new();
+        for i in 0..100 {
+            addhashnode(&mut h, &format!("k{i}"), i);
+        }
+        for i in 0..100 {
+            assert_eq!(gethashnode2(&h, &format!("k{i}")), Some(&i));
+        }
+        assert_eq!(h.len(), 100);
+    }
+
+    /// `removehashnode` followed by `gethashnode2` shows missing.
+    #[test]
+    fn hashtable_corpus_remove_then_get_is_none() {
+        let mut h: HashMap<String, String> = HashMap::new();
+        addhashnode(&mut h, "x", "value".into());
+        let _ = removehashnode(&mut h, "x");
+        assert!(gethashnode2(&h, "x").is_none());
     }
 }

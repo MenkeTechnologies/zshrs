@@ -6614,4 +6614,66 @@ mod subst_modifier_tests {
             }
         }
     }
+
+    // ─── zsh-corpus pins for histreduceblanks ─────────────────────
+
+    /// Empty input → empty output.
+    #[test]
+    fn hist_corpus_histreduceblanks_empty_is_empty() {
+        assert_eq!(histreduceblanks(""), "");
+    }
+
+    /// All-spaces input collapses to nothing (trimmed).
+    #[test]
+    fn hist_corpus_histreduceblanks_all_spaces_to_empty() {
+        assert_eq!(histreduceblanks("     "), "");
+        assert_eq!(histreduceblanks("\t\t\t"), "");
+        assert_eq!(histreduceblanks(" \t \t "), "");
+    }
+
+    /// Single non-space char passes through.
+    #[test]
+    fn hist_corpus_histreduceblanks_single_char() {
+        assert_eq!(histreduceblanks("x"), "x");
+    }
+
+    /// Tab counts as inblank; mixed space+tab runs collapse to one space.
+    #[test]
+    fn hist_corpus_histreduceblanks_mixed_space_tab() {
+        assert_eq!(histreduceblanks("a \t \t b"), "a b");
+    }
+
+    /// Multibyte characters pass through unchanged.
+    #[test]
+    fn hist_corpus_histreduceblanks_multibyte_passthrough() {
+        assert_eq!(histreduceblanks("日 本"), "日 本");
+        assert_eq!(histreduceblanks("日   本"), "日 本");
+    }
+
+    /// Newlines preserved with exact count (not in inblank class).
+    #[test]
+    fn hist_corpus_histreduceblanks_newlines_exact_count() {
+        assert_eq!(histreduceblanks("a\n\n\nb"), "a\n\n\nb");
+    }
+
+    /// `hist_is_in_word` round-trips with `hist_in_word`.
+    #[test]
+    fn hist_corpus_in_word_round_trip() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = hist_is_in_word();
+        hist_in_word(1);
+        assert_eq!(hist_is_in_word(), 1);
+        hist_in_word(0);
+        assert_eq!(hist_is_in_word(), 0);
+        hist_in_word(saved);
+    }
+
+    /// `substfailed` returns an i32 (zsh stores -1 when no subst
+    /// has happened yet, 0 on success, 1 on fail). Pin: returns
+    /// without panic.
+    #[test]
+    fn hist_corpus_substfailed_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = substfailed();
+    }
 }
