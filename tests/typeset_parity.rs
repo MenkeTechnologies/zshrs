@@ -122,7 +122,6 @@ mod readonly {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: readonly reassignment exit-code / value-preservation differs"]
     fn readonly_reassignment_fails() {
         assert_parity("typeset -r X=value; X=other 2>/dev/null; echo $X; echo $?");
     }

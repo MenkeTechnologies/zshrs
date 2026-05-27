@@ -3551,17 +3551,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // side at `emit_errexit_check` pairs this with a JumpIfTrue
         // → return_patches pattern so the caller can short-circuit.
         //
-        // Three triggers:
+        // Four triggers:
         //   1. RETFLAG set by a nested `return` / `exit` (eval,
         //      sourced file, called function). Unwind THIS scope so
         //      the flag propagates outward until something clears it.
         //   2. EXIT_PENDING set (mostly subshell-context exits). Same
         //      propagation logic.
         //   3. `set -e` + nonzero status — the classic errexit path.
+        //   4. errflag set in non-interactive mode — readonly
+        //      reassign, bad redirect, parse error mid-expansion etc.
+        //      Aborts the script (c:Src/init.c loop()).
         use std::sync::atomic::Ordering;
         let retflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
         let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
         if retflag != 0 || exit_pending != 0 {
+            return Value::Int(1);
+        }
+        let errflag_set = (crate::ported::utils::errflag.load(Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0;
+        if errflag_set
+            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+        {
+            // Clear errflag so the abort doesn't keep re-triggering;
+            // the script-end last_status gives the caller the
+            // failing status. Update BOTH executor's last_status
+            // (LASTVAL) AND the VM's last_status so run_chunk's
+            // post-script sync sees the failing value.
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::zsh_h::ERRFLAG_ERROR,
+                Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(1));
+            vm.last_status = 1;
             return Value::Int(1);
         }
         let last = vm.last_status;

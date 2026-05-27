@@ -131,14 +131,12 @@ mod readonly_basic {
 
     /// Reassigning a readonly var errors (and may exit on some shells).
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: readonly reassign exit code / value preservation differs"]
     fn readonly_reassign_errors() {
         assert_parity(r#"readonly X=value; X=new 2>/dev/null; echo "[$X]"; echo "exit=$?""#);
     }
 
     /// `unset` of readonly var errors.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: unset on readonly behavior differs from zsh"]
     fn unset_readonly_errors() {
         assert_parity(r#"readonly X=value; unset X 2>/dev/null; echo "[$X]"; echo "exit=$?""#);
     }
