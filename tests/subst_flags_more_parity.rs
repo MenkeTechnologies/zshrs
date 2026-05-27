@@ -153,14 +153,12 @@ mod kv_keys_values {
 
     /// `${(k)arr}` for indexed array — gives the numeric indices.
     #[test]
-    #[ignore = "ZSHRS BUG: ${(k)arr[@]} on indexed array returns empty; zsh returns the values"]
     fn k_on_array_returns_indices() {
         assert_parity(r#"arr=(a b c); echo "${(k)arr[@]}""#);
     }
 
     /// `${(v)arr}` on indexed array — returns the values (same as @).
     #[test]
-    #[ignore = "ZSHRS BUG: ${(v)arr[@]} on indexed array returns empty; zsh returns the values"]
     fn v_on_array_returns_values() {
         assert_parity(r#"arr=(a b c); echo "${(v)arr[@]}""#);
     }

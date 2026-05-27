@@ -4705,9 +4705,20 @@ pub fn paramsubst(
                         keys.sort();
                         keys
                     }),
-                });
+                })
+                // c:Src/subst.c — on an indexed array, `(k)` is a no-
+                // op and returns the array's values (zsh quirk; verified
+                // via `arr=(a b c); ${(k)arr}` → "a b c"). The assoc
+                // and magic-assoc lookups above already failed; fall
+                // back to the array's values via array_get.
+                .or_else(|| crate::ported::exec_hooks::array(&var_name));
             value = assoc_get(&var_name) // c:2247
                 .map(|m| m.keys().cloned().collect::<Vec<_>>().join(" ")) // c:2247
+                .or_else(|| {
+                    // Indexed-array fallback for (k) — see comment on
+                    // magic_assoc_array above. Return joined values.
+                    crate::ported::exec_hooks::array(&var_name).map(|a| a.join(" "))
+                })
                 .or_else(|| {
                     // c:2247
                     // c:2247 — magic-assoc {aliases,functions,commands}
@@ -4796,7 +4807,10 @@ pub fn paramsubst(
                                 .collect()
                         })
                     })
-                });
+                })
+                // c:Src/subst.c — indexed array fallback for (v).
+                // `arr=(a b c); ${(v)arr}` → "a b c" (the values).
+                .or_else(|| crate::ported::exec_hooks::array(&var_name));
             value = magic_assoc_array
                 .as_ref()
                 .map(|v| v.join(" "))
