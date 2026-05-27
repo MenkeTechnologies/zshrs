@@ -4611,12 +4611,28 @@ fn expand_range(
         // then zero-pad the remaining digits (`-02`, not `0-2`).
         // Direct port of Src/lex.c::dobrace_pad logic which detects
         // pad mode per the textual form of all three fields.
+        // zsh's pad-detection: pad fires when any of the three
+        // textual fields (left / right / step) is a multi-digit
+        // form with a leading zero (e.g. "01", "00", "003"), with
+        // ONE exception: when the LEFT endpoint is exactly "0"
+        // (bare single zero, possibly signed), pad is suppressed
+        // regardless of right's form. Empirical zsh:
+        //   {0..-5}    → 0 -1 -2 -3 -4 -5    (left=0 → no pad)
+        //   {0..03}    → 0 1 2 3              (left=0 → no pad)
+        //   {00..-5}   → 00 -1 -2 -3 -4 -5    (left=00 → pad w=2)
+        //   {1..03}    → 01 02 03             (right=03 → pad w=2)
+        //   {1..-03}   → 001 000 -01 -02 -03  (right=-03 → pad w=3)
         let lstrip = left.trim_start_matches(['+', '-']);
         let rstrip = right.trim_start_matches(['+', '-']);
         let sstrip = step_text.trim_start_matches(['+', '-']);
-        let pad = lstrip.starts_with('0')
-            || rstrip.starts_with('0')
-            || (!step_text.is_empty() && sstrip.starts_with('0'));
+        let is_padded_field = |stripped: &str| stripped.len() >= 2 && stripped.starts_with('0');
+        // Suppress pad ONLY when LEFT is exactly the single-char "0"
+        // (no sign, no extra digits). "-0" or "00" both pad.
+        let left_is_bare_zero = left == "0";
+        let pad = !left_is_bare_zero
+            && (is_padded_field(lstrip)
+                || is_padded_field(rstrip)
+                || (!step_text.is_empty() && is_padded_field(sstrip)));
         let width = left.len().max(right.len()).max(step_text.len());
 
         for v in vals {
