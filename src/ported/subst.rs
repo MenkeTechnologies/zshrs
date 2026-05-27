@@ -3413,9 +3413,21 @@ pub fn paramsubst(
                             return (String::new(), new_pos, vec![]);
                         }
                         let del = body_chars[idx]; // c:2303 (get_strarg del)
+                        // c:Src/subst.c:1366-1391 get_strarg — paired
+                        // delimiters: `(…)`, `[…]`, `{…}`, `<…>` use
+                        // matching close brackets instead of repeated
+                        // open. Previously `${(j[, ])arr}` errored
+                        // because the loop searched for another `[`.
+                        let close_del = match del {
+                            '(' => ')',
+                            '[' => ']',
+                            '{' => '}',
+                            '<' => '>',
+                            other => other,
+                        };
                         idx += 1; // c:2303
                         let s_start = idx;
-                        while idx < body_chars.len() && body_chars[idx] != del {
+                        while idx < body_chars.len() && body_chars[idx] != close_del {
                             idx += 1;
                         }
                         if idx >= body_chars.len() {
