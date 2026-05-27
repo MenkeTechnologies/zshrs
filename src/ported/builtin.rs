@@ -6726,16 +6726,27 @@ pub fn bin_print(
     let suppress_escapes = OPT_ISSET(ops, b'R')
         || OPT_ISSET(ops, b'r')
         || (echo_mode && OPT_ISSET(ops, b'E'));
+    let mut backslash_c_truncated = false;
     if !suppress_escapes || dash_e {
         let escape_how: u32 = if !echo_mode && !dash_e {
             GETKEYS_PRINT // c:4758
         } else {
             GETKEYS_ECHO // c:4760
         };
-        for a in processed_args.iter_mut() {
+        // Clear any stale TLS flag before the loop.
+        let _ = crate::ported::utils::getkey_truncated_take();
+        let mut new_args: Vec<String> = Vec::with_capacity(processed_args.len());
+        for a in processed_args.iter() {
             let (s, _) = getkeystring_with(a, escape_how);
-            *a = s;
+            new_args.push(s);
+            if crate::ported::utils::getkey_truncated_take() {
+                // c:utils.c:7045 — `\c` truncated; drop remaining
+                // args entirely AND suppress trailing newline.
+                backslash_c_truncated = true;
+                break;
+            }
         }
+        processed_args = new_args;
     }
     // c:Src/builtin.c:4930-4958 — `-C N` column-grid output. Layout
     // N args per row (nr = ceil(argc/nc) rows), each cell padded
@@ -6810,8 +6821,10 @@ pub fn bin_print(
         setsparam(v, &body);
     } else {
         // c:5130-5132 — final terminator: `-n` suppresses; `-N` emits
-        // NUL instead of newline; else newline.
-        let final_term: &[u8] = if nonewline {
+        // NUL instead of newline; else newline. `\c` truncation
+        // (c:utils.c:7045) also suppresses — matches zsh's
+        // `echo "a\cb"; echo END` → `aEND`.
+        let final_term: &[u8] = if nonewline || backslash_c_truncated {
             b""
         } else if nul_sep {
             b"\0"

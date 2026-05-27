@@ -28,7 +28,39 @@ fn run_zshrs_in(d: &Path, s: &str) -> R {
 }
 fn assert_parity_in(d: &Path, s: &str) {
     if !zsh_available() { return; }
+    // Snapshot file contents so zsh + zshrs each start from the same
+    // dir state (the second-run sees the first-run's appends
+    // otherwise). Same fix as noclobber_parity.
+    fn snapshot(d: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(d) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Ok(data) = std::fs::read(&path) {
+                        out.push((path, data));
+                    }
+                }
+            }
+        }
+        out
+    }
+    fn restore(d: &Path, snap: &[(std::path::PathBuf, Vec<u8>)]) {
+        if let Ok(entries) = std::fs::read_dir(d) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && !snap.iter().any(|(p, _)| p == &path) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+        for (path, data) in snap {
+            let _ = std::fs::write(path, data);
+        }
+    }
+    let snap = snapshot(d);
     let z = run_zsh_in(d, s);
+    restore(d, &snap);
     let r = run_zshrs_in(d, s);
     assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
     assert_eq!(z.exit, r.exit);
@@ -55,7 +87,6 @@ mod exec_open {
 
     /// `exec 3>>file` opens for append.
     #[test]
-    #[ignore = "ZSHRS BUG: exec 3>>file (append mode) doesn't preserve original content"]
     fn exec_open_fd_for_append() {
         let d = tdir();
         std::fs::write(d.path().join("out.txt"), "first\n").unwrap();
@@ -89,7 +120,6 @@ mod dup_fd {
 
     /// `&>>` shortcut: append both.
     #[test]
-    #[ignore = "ZSHRS BUG: &>> duplicates output (both stdout and stderr written twice)"]
     fn ampersand_append_both() {
         let d = tdir();
         std::fs::write(d.path().join("c.txt"), "first\n").unwrap();

@@ -102,7 +102,6 @@ mod escapes_default_on {
 
     /// `\c` truncates (no newline + stop processing).
     #[test]
-    #[ignore = "ZSHRS BUG: echo \\c escape doesn't truncate output; zsh stops at \\c, zshrs prints literal"]
     fn echo_backslash_c_truncates() {
         assert_parity(r#"echo 'a\cb'; echo END"#);
     }
