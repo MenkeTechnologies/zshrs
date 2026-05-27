@@ -817,14 +817,24 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
             }
         }
     }
-    // c:744 — locate the option name whose FNV hash matches idx.
-    let name = ZSH_OPTIONS_SET.iter().find(|n| optlookup(n) == idx);
-    let ret = match name {
-        Some(n) => {
-            opt_state_set(n, value != 0);
-            0
-        } // c:760 opts[optno] = value
-        None => -1, // c:758
+    // c:744 — write the canonical opt_name(idx) slot so the
+    // matching isset(idx) → opt_state_get(opt_name(idx)) read
+    // sees the same key. The previous `iter().find(...)` walk
+    // returned the FIRST ZSH_OPTIONS_SET entry whose optlookup
+    // matched — but that set includes BASH/KSH-compat aliases
+    // (e.g. `dotglob` → GLOBDOTS), and HashSet iteration order
+    // is arbitrary, so `setopt globdots` could write under the
+    // alias name. isset(GLOBDOTS) then read the canonical
+    // `globdots` slot which stayed at its default `false`.
+    // Symptom: \`setopt globdots; [[ -o globdots ]]\` returned
+    // "off" because the alias and canonical names live in
+    // separate buckets of OPTS_LIVE.
+    let canonical = crate::ported::zsh_h::opt_name(idx);
+    let ret = if !canonical.is_empty() {
+        opt_state_set(canonical, value != 0);
+        0
+    } else {
+        -1
     };
     // c:877-884 — `if (optno == MULTIBYTE || BANGHIST || SHINSTDIN)
     //                  inittyptab();`. These options change which
