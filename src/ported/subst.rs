@@ -5960,8 +5960,14 @@ pub fn paramsubst(
                 // via:
                 //   a=(1 2); b=(x y z) → "${a:^^b}" =
                 //   ['1 2','x','1 2','y','1 2','z']
-                let arr = arrays_get(&var_name).unwrap_or_default();
-                let other = arrays_get(rhs.trim()).unwrap_or_default();
+                // Scalar operands wrap to 1-element array (same as :^).
+                let arr = arrays_get(&var_name)
+                    .or_else(|| vars_get(&var_name).map(|s| vec![s]))
+                    .unwrap_or_default();
+                let other_name = rhs.trim();
+                let other = arrays_get(other_name)
+                    .or_else(|| vars_get(other_name).map(|s| vec![s]))
+                    .unwrap_or_default();
                 let zipped: Vec<String> = if qt {
                     let ifs0 = vars_get("IFS")
                         .unwrap_or_else(|| " \t\n\0".to_string())
@@ -6015,8 +6021,19 @@ pub fn paramsubst(
                 // Unset-vs-empty: `${a:^b}` with b unset returns a
                 // verbatim (no zip); a unset returns b verbatim.
                 // Parity bug #24 (DQ joining) + #23 (unset operand).
-                let arr_opt = arrays_get(&var_name);
-                let other_opt = arrays_get(rhs.trim());
+                //
+                // SCALAR operands are treated as 1-element arrays —
+                // C zsh's getarrvalue auto-wraps a scalar param into
+                // a `char *aval[2] = { scalar, NULL }` for zip. Parity
+                // bug: zshrs's arrays_get returns None for scalars,
+                // so `${a:^a}` with scalar `a=hello` was both-unset →
+                // empty result. Fall back to vars_get for the scalar
+                // single-element case.
+                let arr_opt = arrays_get(&var_name)
+                    .or_else(|| vars_get(&var_name).map(|s| vec![s]));
+                let other_name = rhs.trim();
+                let other_opt = arrays_get(other_name)
+                    .or_else(|| vars_get(other_name).map(|s| vec![s]));
                 let arr_unset = arr_opt.is_none();
                 let other_unset = other_opt.is_none();
                 let arr = arr_opt.unwrap_or_default();
