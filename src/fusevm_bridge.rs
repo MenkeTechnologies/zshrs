@@ -2527,7 +2527,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     Ordering::Relaxed,
                 );
             } else {
-                exec.set_scalar("TRY_BLOCK_ERROR".to_string(), "-1".to_string());
+                // c:Src/Modules/parameter.c — TRY_BLOCK_ERROR reads
+                // as 0 inside an always-arm when no error fired
+                // (per zsh's PM_INTEGER default-zero). The previous
+                // port set -1 (the C internal "no try yet" sentinel)
+                // which leaked to user-visible reads.
+                exec.set_scalar("TRY_BLOCK_ERROR".to_string(), "0".to_string());
             }
         });
         Value::Status(0)
@@ -2578,28 +2583,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // exit status is discarded for the construct.
     vm.register_builtin(BUILTIN_RESTORE_TRY_BLOCK_STATUS, |_vm, _argc| {
         // c:Src/exec.c — the entire `{try} always {…}` construct's
-        // exit status is the try-block's status unless the always
-        // arm reset TRY_BLOCK_ERROR to 0 (which "swallows" the
-        // error and the construct exits 0). Read the saved try
-        // status from the scratch scalar; if TRY_BLOCK_ERROR is 0
-        // after the always block ran, the user swallowed the
-        // error → return 0.
-        let (saved, tbe) = with_executor(|exec| {
-            let s = exec
-                .scalar("__zshrs_try_block_saved_status")
+        // exit status is the try-block's last status. Per zsh
+        // semantics this carries through regardless of what the
+        // always-arm did (including reads/writes of TRY_BLOCK_ERROR
+        // — those affect later commands' visible value but don't
+        // override the construct's exit). The "swallow" idiom in
+        // C is gated on errflag state at always-arm exit, not on
+        // TBE's literal value; full fidelity needs more state and
+        // is deferred.
+        let saved = with_executor(|exec| {
+            exec.scalar("__zshrs_try_block_saved_status")
                 .and_then(|s| s.parse::<i32>().ok())
-                .unwrap_or(0);
-            let t = exec
-                .scalar("TRY_BLOCK_ERROR")
-                .and_then(|s| s.parse::<i32>().ok())
-                .unwrap_or(-1);
-            (s, t)
+                .unwrap_or(0)
         });
-        // If TRY_BLOCK_ERROR was set to 0 by the always-arm (the
-        // "swallow" idiom), the construct succeeds. Otherwise the
-        // saved try-block status wins.
-        let final_status = if tbe == 0 { 0 } else { saved };
-        Value::Status(final_status)
+        Value::Status(saved)
     });
 
     vm.register_builtin(BUILTIN_IS_TTY, |vm, _argc| {

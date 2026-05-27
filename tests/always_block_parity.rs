@@ -85,7 +85,6 @@ echo "after exit=$?"
 
     /// Reading TRY_BLOCK_ERROR inside always reflects try-block exit.
     #[test]
-    #[ignore = "ZSHRS BUG: $TRY_BLOCK_ERROR not exposed in always-clause"]
     fn read_try_block_error_in_always() {
         assert_parity(r#"
 { false } always { echo tbe=$TRY_BLOCK_ERROR }
