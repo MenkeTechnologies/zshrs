@@ -919,7 +919,18 @@ pub fn dashgetfn() -> String {
 /// registry) and reads each option's live state via opt_state_get.
 pub fn printoptionstates(hadplus: bool) {
     // c:909
-    let mut names: Vec<&'static str> = ZSH_OPTIONS_SET.iter().copied().collect();
+    // c:Src/builtin.c:910 — `scanhashtable(optiontab, 1, 0,
+    // OPT_ALIAS, printoptionnodestate, hadplus)`. The 4th arg
+    // OPT_ALIAS is a skip-mask: entries with the OPT_ALIAS bit
+    // are filtered out. The Rust port previously walked every
+    // ZSH_OPTIONS_SET entry, emitting both canonical names AND
+    // the bash/ksh-compat aliases — 12 extra lines in the output
+    // versus zsh's count. Match C by excluding ZSH_OPTION_ALIASES.
+    let mut names: Vec<&'static str> = ZSH_OPTIONS_SET
+        .iter()
+        .copied()
+        .filter(|n| !ZSH_OPTION_ALIASES.contains(n))
+        .collect();
     names.sort();
     for n in names {
         // c:910 scanhashtable

@@ -939,6 +939,24 @@ pub fn is_zsh_compat() -> bool {
 }
 
 fn main() {
+    // Restore default SIGPIPE behavior before anything writes to
+    // stdout/stderr. Rust runtime installs SIG_IGN on SIGPIPE in
+    // some Linux builds and ignores it on macOS — either way,
+    // writes to a closed pipe yield an EPIPE error that bubbles
+    // up and panics the println!/writeln! callers in any builtin
+    // emitting multi-line output (\`set -o\`, \`setopt\`,
+    // \`functions\`, etc.).
+    //
+    // zsh-the-program writes are bare write() syscalls with no
+    // EPIPE recovery, so the C process dies silently with status
+    // 141 on SIGPIPE. Match that: install SIG_DFL so we terminate
+    // on broken pipe instead of panicking. Test: \`set -o | head -3\`
+    // exited 1 with a panic stack trace; with SIG_DFL it exits 141
+    // and emits only the head'd lines.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     zshrs_main();
 }
 
