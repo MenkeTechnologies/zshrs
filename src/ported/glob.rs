@@ -1113,11 +1113,18 @@ pub fn gmatchcmp(
                 },
             )
         } else if key_unshifted == GS_DEPTH {
-            // c:949
-            a.path
+            // c:949 — empirically zsh sorts DEEPEST first under
+            // `od`. The C code reads `r = slasha - slashb` where
+            // slasha=1 iff path has more `/` after the common
+            // prefix; in practice this resolves to deepest first
+            // (the C qsort-cmp interpretation matches zsh 5.9's
+            // output for our test files). Mirror by comparing
+            // b.depth.cmp(a.depth) so the deepest paths come
+            // first; `Od` reverses to shallowest-first.
+            b.path
                 .components()
                 .count()
-                .cmp(&b.path.components().count())
+                .cmp(&a.path.components().count())
         } else if key_unshifted == GS_SIZE {
             // c:985
             if follow {
