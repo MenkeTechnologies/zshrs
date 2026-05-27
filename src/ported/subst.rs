@@ -4142,7 +4142,7 @@ pub fn paramsubst(
                         String::new()
                     }
                 } else if let Some((start_s, end_s)) = sub.split_once(',') {
-                    // c:2944 (slice)
+                    // c:2944 (slice) — Src/params.c:2548 getarrvalue.
                     // Clone arr first to release the borrow, since
                     // singsub needs &mut state.
                     let arr_clone = arr.clone();
@@ -4151,20 +4151,36 @@ pub fn paramsubst(
                     let end_str = end_s.to_string();
                     let start: i64 = singsub(&start_str).parse().unwrap_or(1);
                     let end: i64 = singsub(&end_str).parse().unwrap_or(len);
-                    let s = if start < 0 {
-                        (len + start).max(0)
-                    } else {
-                        (start - 1).max(0)
-                    } as usize;
-                    let e = if end < 0 {
-                        (len + end + 1).max(0)
-                    } else {
-                        end.min(len)
-                    } as usize;
-                    if s < arr_clone.len() && s < e {
-                        arr_clone[s..e.min(arr_clone.len())].join(" ")
-                    } else {
+                    // c:Src/params.c:2567-2570 — negative-index resolve.
+                    // For negative `start`, raw position = len + start
+                    // (0-based). For negative `end`, raw = len + end +
+                    // 1 (1-based exclusive). After resolving, if the
+                    // start is STILL negative (subscript pointed
+                    // before the array start), C zsh's c:2576-2578
+                    // returns an empty result — NOT a clamp to 0.
+                    // Previously zshrs clamped, so `arr[-99,99]` over a
+                    // 3-element array returned all 3 elements; zsh
+                    // returns empty.
+                    // c:Src/params.c:2567-2570 — negative-index resolve.
+                    // For a NEGATIVE start, if `len + start < 0` the
+                    // subscript still points before the array begin —
+                    // C zsh returns empty at c:2576-2578. For positive
+                    // or zero start, clamp `start - 1` to 0 (zsh treats
+                    // `arr[0,N]` like `arr[1,N]`).
+                    let start_oob_neg = start < 0 && (len + start) < 0;
+                    let s_raw: i64 = if start < 0 { len + start } else { start - 1 };
+                    let e_raw: i64 = if end < 0 { len + end + 1 } else { end.min(len) };
+                    if start_oob_neg {
+                        // c:2576 — start still negative → empty.
                         String::new()
+                    } else {
+                        let s = s_raw.max(0) as usize;
+                        let e = e_raw.max(0) as usize;
+                        if s < arr_clone.len() && s < e {
+                            arr_clone[s..e.min(arr_clone.len())].join(" ")
+                        } else {
+                            String::new()
+                        }
                     }
                 } else {
                     String::new()
