@@ -8809,7 +8809,18 @@ pub fn bin_trap(
                 .to_uppercase()
         };
         if let Ok(mut t) = traps_table().lock() {
-            t.insert(canonical, arg.clone()); // c:7448 (effective)
+            t.insert(canonical.clone(), arg.clone()); // c:7448 (effective)
+        }
+        // c:Src/signals.c settrap — register both the libc signal
+        // handler AND the sigtrapped[idx] flag. Without setting
+        // sigtrapped, handletrap() early-returns 0 (sees the slot
+        // as "not trapped") and the dotrap dispatch never fires.
+        // The traps_table entry alone isn't enough — handletrap
+        // gates on sigtrapped[idx] != 0.
+        if sig > 0 && sig <= crate::ported::signals_h::SIGCOUNT
+            && sig != libc::SIGCHLD as i32
+        {
+            crate::ported::signals::settrap(sig, None, ZSIG_FUNC);
         }
     }
     0
