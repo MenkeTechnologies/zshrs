@@ -4104,7 +4104,16 @@ pub fn paramsubst(
                         // subscript (`${a[1+1]}`, `${a[i+1]}`, `${a[n]}`
                         // where n is a numeric var) evaluate properly.
                         // Parity bug: integer-only parse missed these.
-                        crate::ported::math::mathevali(sub).ok()
+                        // Skip when sub contains a top-level comma —
+                        // that's a slice form `[lo,hi]`, handled by
+                        // the downstream split_once arm. mathevali
+                        // would evaluate the comma as the C-style
+                        // sequence operator and mask the slice.
+                        if sub.contains(',') {
+                            None
+                        } else {
+                            crate::ported::math::mathevali(sub).ok()
+                        }
                     })
                 {
                     // c:2926 (numeric index)
@@ -4319,7 +4328,36 @@ pub fn paramsubst(
                         }
                         (None, false) => String::new(),
                     }
-                } else if let Ok(idx_n) = sub.parse::<i64>() {
+                } else if let Some(idx_n) = sub
+                    .parse::<i64>()
+                    .ok()
+                    .or_else(|| {
+                        // c:Src/params.c:1411-1430 — paren-wrapped
+                        // subscript expression (`${x[(-1)]}`) evaluates
+                        // via mathevali. Mirror the array path's
+                        // fallback so scalar char-indexing accepts
+                        // paren-wrapped negatives.
+                        let s = sub.trim();
+                        if s.starts_with('(') && s.ends_with(')') && s.len() >= 2 {
+                            s[1..s.len() - 1].trim().parse::<i64>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| {
+                        // mathevali fallback for arith subscripts like
+                        // `${x[1+1]}`. NOTE: skip when the expression
+                        // contains a top-level comma — that's a slice
+                        // `${x[lo,hi]}`, NOT a math comma-operator.
+                        // mathevali would evaluate "2,4" → 4 and
+                        // mask the slice.
+                        if sub.contains(',') {
+                            None
+                        } else {
+                            crate::ported::math::mathevali(sub).ok()
+                        }
+                    })
+                {
                     let len = s_chars.len() as i64;
                     // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
                     // non-strict mode: `s[0]` → first char.
