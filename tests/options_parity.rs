@@ -101,7 +101,6 @@ mod set_dash_flags {
 
     /// `set -n` parses but doesn't execute — `echo` produces nothing.
     #[test]
-    #[ignore = "ZSHRS BUG: set -n doesn't prevent execution; echo still runs"]
     fn set_n_skips_execution() {
         assert_parity(r#"(set -n; echo never); echo $?"#);
     }
