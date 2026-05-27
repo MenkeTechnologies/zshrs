@@ -2490,10 +2490,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //   - recorder emission (PFA-SMR)
     //   - vm.last_status propagation for `a=$(cmd)` exit-code chaining
     vm.register_builtin(BUILTIN_SET_VAR, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let mut iter = args.into_iter();
-        let name = iter.next().unwrap_or_default();
-        let value = iter.next().unwrap_or_default();
+        // Snapshot the raw Values BEFORE pop_args's to_str
+        // flattening — needed to distinguish Int (arith assignment,
+        // integer-typed param) from Str (scalar assignment).
+        let mut raw_values: Vec<fusevm::Value> = Vec::with_capacity(argc as usize);
+        for _ in 0..argc {
+            raw_values.push(vm.pop());
+        }
+        raw_values.reverse();
+        let name = raw_values
+            .first()
+            .map(|v| v.to_str())
+            .unwrap_or_default();
+        let value_raw = raw_values.get(1).cloned();
+        let value = value_raw
+            .as_ref()
+            .map(|v| v.to_str())
+            .unwrap_or_default();
+        // c:Src/params.c — when the bytecode hands us an Int value
+        // (only the arith assignment paths emit this — `(( X = N ))`
+        // is the canonical site), route through setiparam so the
+        // param ends up PM_INTEGER + inherits the math layer's
+        // `lastbase` for display formatting (`(( X = 16#ff ));
+        // echo \$X` → `16#FF`). Scalar `X=val` and `$((expr))`
+        // assignments still take the setsparam path below.
+        let int_assign = matches!(value_raw, Some(fusevm::Value::Int(_)));
         with_executor(|exec| {
             // Inline-assignment frame tracking (`X=foo cmd` reverts on
             // command return).
@@ -2507,8 +2528,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 env::set_var(&name, &value);
             }
             // Canonical setsparam handles readonly, integer math, case
-            // fold, GSU dispatch.
-            crate::ported::params::setsparam(&name, &value);
+            // fold, GSU dispatch. For Int values (arith assigns) route
+            // through setiparam so the param is PM_INTEGER + inherits
+            // the math layer's lastbase for display formatting.
+            if int_assign {
+                if let Some(fusevm::Value::Int(i)) = value_raw {
+                    crate::ported::params::setiparam(&name, i);
+                } else {
+                    crate::ported::params::setsparam(&name, &value);
+                }
+            } else {
+                crate::ported::params::setsparam(&name, &value);
+            }
             // PM_EXPORTED / allexport env mirror — read AFTER setsparam
             // so the flag bit reflects any GSU setfn side-effects.
             let allexport =

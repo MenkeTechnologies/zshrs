@@ -5455,6 +5455,18 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
         } else {
             PM_INTEGER // c:3688
         };
+        // c:Src/params.c:3690 — newly created PM_INTEGER param
+        // inherits the source numeric base from `lastbase` (set by
+        // the math parser when consuming a `N#NNN` or `0x..` literal).
+        // Mirror the assignstrvalue path at c:3714 so `(( X = 16#ff ))`
+        // creates X as `typeset -i16 X=255` (displays as `16#FF`)
+        // rather than naked decimal `255`.
+        let inherited_base = if val.type_ == MN_FLOAT {
+            0
+        } else {
+            let lb = crate::ported::math::lastbase();
+            if lb > 0 { lb } else { 0 }
+        };
         let pm: Param = Box::new(param {
             node: hashnode {
                 next: None,
@@ -5474,7 +5486,7 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
             gsu_f: None,
             gsu_a: None,
             gsu_h: None,
-            base: 0,
+            base: inherited_base,
             width: 0,
             env: None,
             ename: None,

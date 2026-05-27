@@ -1671,3 +1671,4 @@ bin_compadd_body
 set_compadd_trace
 getkey_truncated_take
 zattr_fg_palette
+set_lastbase

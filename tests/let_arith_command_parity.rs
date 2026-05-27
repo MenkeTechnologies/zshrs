@@ -290,7 +290,6 @@ mod base_literals {
 
     /// 0x hex literal.
     #[test]
-    #[ignore = "ZSHRS BUG: integer param doesn't preserve base-notation; zsh prints '16#FF', zshrs prints '255'"]
     fn hex_literal() {
         assert_parity(r#"(( X = 0xff )); echo $X"#);
     }
@@ -303,19 +302,16 @@ mod base_literals {
 
     /// Base#NNN — zsh-specific.
     #[test]
-    #[ignore = "ZSHRS BUG: 2#1010 base-notation gives 2 instead of 10; base# literal parser broken"]
     fn base_2_binary() {
         assert_parity(r#"(( X = 2#1010 )); echo $X"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: 16#ff base-notation gives 16 instead of 255; base# parser broken"]
     fn base_16_hex() {
         assert_parity(r#"(( X = 16#ff )); echo $X"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: 36#z base-notation gives 36 instead of 35; base# parser broken"]
     fn base_36_alphanumeric() {
         assert_parity(r#"(( X = 36#z )); echo $X"#);
     }
