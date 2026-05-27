@@ -8159,7 +8159,14 @@ pub fn bin_read(
         // DELIM (zsh uses only first char of arg). EOF mid-record
         // returns what was read so far, exit 1 like the default path.
         let arg = OPT_ARG(ops, b'd').unwrap_or("");
-        let delim = arg.as_bytes().first().copied().unwrap_or(b'\n');
+        // c:Src/builtin.c:6418 — empty `-d` arg means NUL delimiter.
+        // zsh's `STOUC(*OPT_ARG(ops, 'd'))` reads the first byte of
+        // the arg buffer; for an empty arg the buffer is a single NUL
+        // terminator, so STOUC yields 0x00. The Rust port's
+        // `.first().copied()` returns None for empty strings, which
+        // we have to map to NUL explicitly (matches `read -d '' x`
+        // reading until \0, used by `find -print0 | while read -d ''`).
+        let delim = arg.as_bytes().first().copied().unwrap_or(b'\0');
         let mut buf_bytes = Vec::<u8>::new();
         let mut got_any = false;
         loop {

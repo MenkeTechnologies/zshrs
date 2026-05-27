@@ -3784,6 +3784,32 @@ pub fn paramsubst(
                 raw
             }
         };
+        // c:Src/subst.c — bash's `${!var}` indirect form is NOT
+        // supported in zsh. The name walk above stops on `!` after
+        // one char (single-char special $!), so `${!Y}` /
+        // `${!FOO_*}` / `${!BAR_@}` parse leaves a stray identifier-
+        // start char in the "rest" position where only modifier
+        // operators (`:`, `#`, `%`, `/`, `^`, `~`, `,`, `+`, `-`,
+        // `=`, `?`, `[`, `(`) are valid. zsh's paramsubst at
+        // subst.c:2147+ rejects this combination with
+        // "bad substitution"; mirror that here so $? matches.
+        if (var_name == "!" || var_name == "\u{96}")
+            && idx < body_chars.len()
+        {
+            let nx = body_chars[idx];
+            if nx.is_ascii_alphanumeric()
+                || nx == '_'
+                || nx == '@' || nx == '*' || nx == '\u{87}'
+                || nx == '!' || nx == '\u{96}'
+            {
+                zerr("bad substitution");
+                errflag.fetch_or(
+                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                    Ordering::Relaxed,
+                );
+                return (String::new(), new_pos, Vec::new());
+            }
+        }
         // If the subexp produced an array (multsub path above), bind
         // var_name to the temp slot in state.arrays so the rest of
         // paramsubst — splat, subscript, filter, replace — operates

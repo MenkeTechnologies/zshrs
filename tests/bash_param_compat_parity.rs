@@ -83,7 +83,6 @@ mod indirect {
     /// In zsh this only works in KSH_ARRAYS / sh / bash emulation.
     /// Pin actual behavior.
     #[test]
-    #[ignore = "ZSHRS BUG: ${!Y} indirect echoes blank line; zsh produces zero output (parse rejection)"]
     fn indirect_basic_zsh_behavior() {
         // Without bash emul, `${!V}` triggers parameter-name-matching
         // behavior in zsh. Verify both shells behave the same.
@@ -92,14 +91,12 @@ mod indirect {
 
     /// `${!prefix*}` lists var names with prefix.
     #[test]
-    #[ignore = "ZSHRS BUG: ${!FOO_*} prefix-name list emits blank line; zsh produces zero output"]
     fn indirect_prefix_star_list_names() {
         assert_parity(r#"FOO_a=1; FOO_b=2; FOO_c=3; echo "${!FOO_*}""#);
     }
 
     /// `${!prefix@}` lists with quoting.
     #[test]
-    #[ignore = "ZSHRS BUG: ${!BAR_@} prefix-name list emits blank line; zsh produces zero output"]
     fn indirect_prefix_at_list_names() {
         assert_parity(r#"BAR_x=1; BAR_y=2; print -l ${(o)${!BAR_@}}"#);
     }
