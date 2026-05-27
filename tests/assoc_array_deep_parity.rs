@@ -241,7 +241,6 @@ mod assoc_in_function {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: typeset -A inside function leaks to outer scope; should be local"]
     fn assoc_inside_function_local() {
         assert_parity(r#"
 f() {

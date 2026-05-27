@@ -8218,19 +8218,40 @@ pub fn endparamscope() {
     // is wired) and apply scanendscope's `pm->level > locallevel`
     // filter, restoring the `pm.old` chain or removing the entry.
     if let Ok(mut tab) = paramtab().write() {
-        let stale: Vec<String> = tab
+        let stale: Vec<(String, bool)> = tab
             .iter()
-            .filter_map(|(k, pm)| if pm.level > ll { Some(k.clone()) } else { None })
+            .filter_map(|(k, pm)| {
+                if pm.level > ll {
+                    Some((k.clone(), (pm.node.flags as u32 & PM_HASHED) != 0))
+                } else {
+                    None
+                }
+            })
             .collect();
-        for n in stale {
+        for (n, was_assoc) in stale {
             // c:scanendscope:5903 — non-special path: restore pm.old
             // (or remove if no outer binding existed).
             if let Some(pm) = tab.remove(&n) {
+                let had_outer = pm.old.is_some();
                 if let Some(prev) = pm.old {
                     // c:scanendscope:5933 pm->old = tpm->old
-                    tab.insert(n, prev); // restore outer binding (Box<param>)
+                    tab.insert(n.clone(), prev); // restore outer binding (Box<param>)
                 }
                 // else: c:5966 unsetparam_pm — name unset entirely
+                // RUST-ONLY: the assoc-storage shadow lives in a
+                // parallel `paramtab_hashed_storage` map keyed by name;
+                // endparamscope's pm removal must also clear that
+                // shadow when no outer binding remains. Without this,
+                // `f() { typeset -A H; H[x]=v; }; f` leaves H's data
+                // in the shadow map even after the local pm is gone,
+                // so `${H[x]}` outside reads "v" instead of empty.
+                if was_assoc && !had_outer {
+                    let _ = paramtab_hashed_storage()
+                        .lock()
+                        .ok()
+                        .as_deref_mut()
+                        .map(|m| m.remove(&n));
+                }
             }
         }
     }
