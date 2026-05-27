@@ -106,6 +106,14 @@ pub struct ZshCompiler {
     /// BUILTIN_RESTORE_TRY_BLOCK_STATUS). Without this the escape
     /// is invisible to the always-arm and the loop doesn't unwind.
     pub try_block_depth: u32,
+    /// Set by compile_assign each call to communicate whether the
+    /// just-compiled scalar assignment's RHS could update $? via
+    /// command substitution. compile_simple aggregates across the
+    /// assigns chain to decide whether to emit the post-assignment
+    /// `$? = 0` reset (only in the assignment-only path, only when
+    /// no assign in the chain had cmd-subst — matches C zsh's
+    /// addvars + `lastval = cmdoutval` at Src/exec.c:3395).
+    pub last_assign_had_cmd_subst: bool,
 }
 
 impl Default for ZshCompiler {
@@ -131,6 +139,7 @@ impl ZshCompiler {
             lineno_addend: 0,
             cmd_stack_depth: 0,
             try_block_depth: 0,
+            last_assign_had_cmd_subst: false,
         }
     }
 
@@ -893,12 +902,32 @@ impl ZshCompiler {
 
         // ── Assignments ───────────────────────────────────────────────
         // ZshAssign{ name, value: Scalar(String)|Array(Vec<String>), append }
+        // Aggregate whether ANY assign in the chain had a cmd-subst RHS
+        // — controls the post-chain `$? = 0` reset below. C zsh's
+        // addvars walks all WC_ASSIGN entries with lastval preserved at
+        // old_lastval (so every `$?` in every RHS sees the same value),
+        // then after the walk `lastval = cmdoutval` — which is 0 unless
+        // a `$()` in any RHS overwrote it. Mirror by leaving last_status
+        // untouched per-assign and resetting once at the end.
+        let mut chain_had_cmd_subst = false;
         for assign in &simple.assigns {
+            self.last_assign_had_cmd_subst = false;
             self.compile_assign(assign);
+            if self.last_assign_had_cmd_subst {
+                chain_had_cmd_subst = true;
+            }
         }
 
         // ── If no words: bare assignment, done ────────────────────────
         if simple.words.is_empty() {
+            // c:Src/exec.c:3395-3396 — `lastval = cmdoutval;`
+            // For the assignment-only path: if no $() ran in any RHS
+            // the post-assignment $? is 0; if any did, last_status
+            // already holds that subst's exit.
+            if !chain_had_cmd_subst {
+                self.builder.emit(Op::LoadInt(0), 0);
+                self.builder.emit(Op::SetStatus, 0);
+            }
             // xtrace: emit the trailing `\n` + flush iff a prior
             // BUILTIN_XTRACE_ASSIGN this line emitted PS4. Mirrors
             // C's `fputc('\n', xtrerr); fflush(xtrerr);` at
@@ -1449,18 +1478,23 @@ impl ZshCompiler {
                 // zsh status semantics for assignments:
                 //   `false; a=plain; echo $?`     → 0 (assignment resets)
                 //   `a=$(false); echo $?`         → 1 (cmd-subst propagates)
-                //   `false; echo a; foo=plain; echo $?`  → 0 (resets again)
+                //   `false; x=$?; echo $x; echo $?` → 1 then 0
+                //     (RHS sees pre-assignment $?, post-assignment $?=0)
                 //
-                // The bytecode trick: clear status to 0 BEFORE the RHS
-                // is evaluated. Then compile_word_str runs — for a
-                // literal value it has no side effect on last_status,
-                // for a `$(cmd)` value run_command_substitution updates
-                // last_status to the subst's exit. SET_VAR captures
-                // whatever last_status reads at that point and we
-                // SetStatus from it. Plain assignments end up at 0;
-                // cmd-subst assignments propagate.
-                self.builder.emit(Op::LoadInt(0), 0);
-                self.builder.emit(Op::SetStatus, 0);
+                // C zsh (Src/exec.c:3387-3396): cmdoutval starts at the
+                // pre-assignment lastval, lastval is preserved across
+                // addvars's RHS expansion (so `$?` in the RHS sees the
+                // original value), and AFTER addvars `lastval = cmdoutval`
+                // — which is 0 unless a `$()` in the RHS overwrote it.
+                //
+                // Bytecode mirror: DO NOT clear status before the RHS
+                // (clobbers `$?` for `x=$?`). compile_word_str runs with
+                // last_status holding the pre-assignment value. A `$()`
+                // inside the RHS calls run_command_substitution which
+                // updates last_status to the subst's exit. After the RHS,
+                // if no cmd-subst could have run, force status to 0;
+                // otherwise leave last_status as the cmd-subst's exit.
+                let rhs_has_cmd_subst = scalar_rhs_has_cmd_subst(s);
 
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
@@ -1517,11 +1551,16 @@ impl ZshCompiler {
                 self.builder.emit(Op::CallBuiltin(bid, 2), 0);
                 // Propagate the assignment's status to $?. SET_VAR
                 // returns Value::Status(last_status read at call
-                // time) — which is 0 for plain assignments (we
-                // pre-zeroed) or the cmd-subst's exit for
-                // `a=$(cmd)` (the subst overwrote last_status during
-                // RHS evaluation).
+                // time). For cmd-subst RHS the subst already wrote
+                // last_status to its exit; for plain RHS last_status
+                // still holds the pre-assignment value (so subsequent
+                // assigns' `$?` in the same simple cmd see the same
+                // old value, matching C zsh's addvars walk). The
+                // post-assignment reset to 0 (assignment-only path,
+                // no cmd-subst anywhere in the chain) is emitted ONCE
+                // by compile_simple after the assigns loop.
                 self.builder.emit(Op::SetStatus, 0);
+                self.last_assign_had_cmd_subst = rhs_has_cmd_subst;
             }
             ZshAssignValue::Array(elements) => {
                 // Subscripted-array assign: `a[i]=(elements)`,
@@ -5476,6 +5515,50 @@ fn strip_arith_subst(s: &str) -> Option<String> {
         return None;
     }
     Some(inner.to_string())
+}
+
+/// Does an assignment-RHS source string contain a construct that
+/// would update last_status during expansion? Used by compile_assign
+/// to decide whether to force `$? = 0` after the RHS (no cmd-subst,
+/// plain literal/expansion) or leave the cmd-subst's exit in place.
+/// Only `$(…)` and backtick cmd-substs touch last_status; `$((…))`
+/// arithmetic and `${var…}` parameter expansion do not.
+///
+/// Detects both raw-source form (`$(`, backtick) and the tokenized
+/// form produced by ported::lex (Stringg+Inpar = `\u{85}\u{88}`, Tick
+/// = `\u{93}`, Qtick = `\u{99}`). The Stringg+Inparmath sequence
+/// (`\u{85}\u{89}`) is `$((` arithmetic — skip.
+fn scalar_rhs_has_cmd_subst(s: &str) -> bool {
+    use crate::ported::zsh_h::{Inpar, Inparmath, Qtick, Stringg, Tick};
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        // Tokenized `$(`: Stringg followed by Inpar.
+        if c == Stringg && i + 1 < chars.len() {
+            let nxt = chars[i + 1];
+            if nxt == Inparmath {
+                i += 2; // `$((` arithmetic
+                continue;
+            }
+            if nxt == Inpar {
+                return true; // `$(cmd)` tokenized
+            }
+        }
+        // Raw-source `$(`: ASCII `$` then `(` — but skip `$((`.
+        if c == '$' && i + 1 < chars.len() && chars[i + 1] == '(' {
+            if i + 2 < chars.len() && chars[i + 2] == '(' {
+                i += 3;
+                continue;
+            }
+            return true;
+        }
+        if c == '`' || c == Tick || c == Qtick {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// If `s` is exactly `$(cmd)` (un-tokenized form), return the inner
