@@ -2151,20 +2151,41 @@ impl buf_vars {
             // apply_attrs would re-emit all active attrs every call,
             // producing duplicate codes.
             'B' => {
+                // c:Src/prompt.c — zsh re-emits the currently-active
+                // FG color after `\e[1m` so the bold sequence preserves
+                // the color (some terminals reset other SGR state when
+                // a new attribute lands; the re-emit is defensive).
+                let fg_palette = zattr_fg_palette(self.attrs);
                 self.attrs |= TXTBOLDFACE; // c:zsh.h:2694
                 self.start_escape();
                 self.out_str("\x1b[1m");
                 self.end_escape();
+                if let Some(c) = fg_palette {
+                    self.start_escape();
+                    self.out_str(&color_to_ansi(c as Color, true));
+                    self.end_escape();
+                }
             }
             'b' => {
                 // zsh's %b emits a full SGR reset `\e[0m` (matches the
                 // raw bytes mainline zsh produces). The incremental
                 // SGR-22 (bold off) would also work but zsh chose the
                 // full reset.
+                //
+                // c:Src/prompt.c — after the full reset, zsh re-emits
+                // the currently-active FG color so a `%F{red}%B...%b`
+                // sequence keeps the red after bold is turned off
+                // (otherwise `\e[0m` would clear the color too).
+                let fg_palette = zattr_fg_palette(self.attrs);
                 self.attrs &= !TXTBOLDFACE; // c:zsh.h:2694
                 self.start_escape();
                 self.out_str("\x1b[0m");
                 self.end_escape();
+                if let Some(c) = fg_palette {
+                    self.start_escape();
+                    self.out_str(&color_to_ansi(c as Color, true));
+                    self.end_escape();
+                }
             }
             'U' => {
                 self.attrs |= TXTUNDERLINE; // c:zsh.h:2697
@@ -2881,6 +2902,18 @@ fn color_from_name(name: &str) -> Option<Color> {
 fn zattr_set_fg_palette(attrs: zattr, idx: u8) -> zattr {
     let cleared = attrs & !TXT_ATTR_FG_MASK;
     cleared | TXTFGCOLOUR | ((idx as zattr) << TXT_ATTR_FG_COL_SHIFT)
+}
+
+/// Return the currently-active palette FG color, if any. Used by
+/// `%b` (bold off) to re-emit the FG color after the full
+/// `\e[0m` reset that zsh emits. Returns None for 24-bit RGB
+/// colors (those need a different re-emit path that's deferred)
+/// or when no FG color is set.
+fn zattr_fg_palette(attrs: zattr) -> Option<u8> {
+    if (attrs & TXTFGCOLOUR) == 0 || (attrs & TXT_ATTR_FG_24BIT) != 0 {
+        return None;
+    }
+    Some(((attrs >> TXT_ATTR_FG_COL_SHIFT) & 0xff) as u8)
 }
 
 fn zattr_set_fg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {

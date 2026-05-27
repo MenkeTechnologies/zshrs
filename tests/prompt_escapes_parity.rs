@@ -180,7 +180,6 @@ mod text_around_escape {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P nested color+attribute wrap differs"]
     fn nested_color_then_attribute() {
         assert_parity(r#"print -P '%F{red}%BHIGHLIGHT%b%f' | cat -v"#);
     }
