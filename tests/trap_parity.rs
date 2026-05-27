@@ -132,7 +132,6 @@ mod debug_trap {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap DEBUG doesn't fire before commands"]
     fn trap_debug_fires_before_command() {
         assert_parity(r#"trap 'echo dbg' DEBUG; echo cmd"#);
     }

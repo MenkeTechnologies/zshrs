@@ -97,6 +97,12 @@ thread_local! {
     /// pair around the always-arm.
     static TRY_ESCAPE_SAVE: RefCell<Vec<(i32, i32, i32, i32)>> =
         const { RefCell::new(Vec::new()) };
+    /// Re-entry guard for BUILTIN_DEBUG_TRAP. While the DEBUG trap
+    /// body is running, the per-statement DEBUG_TRAP dispatch in the
+    /// trap body must NOT re-fire (otherwise infinite recursion +
+    /// stack overflow). zsh's in_trap counter at Src/signals.c
+    /// serves the same purpose.
+    static DEBUG_TRAP_REENTRY: Cell<bool> = const { Cell::new(false) };
 }
 
 // Thread-local pointer to the current ShellExecutor.
@@ -3475,6 +3481,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Int(0)
         }
     });
+    vm.register_builtin(BUILTIN_DEBUG_TRAP, |_vm, _argc| {
+        // c:Src/signals.c:1245 dotrap(SIGDEBUG) — fires the DEBUG
+        // trap body once per statement. The body sees the parent
+        // shell's $? (LASTVAL). Guard against re-entry: commands
+        // inside the DEBUG trap body would otherwise trigger
+        // DEBUG_TRAP recursively → stack overflow. zsh guards via
+        // its in_trap counter; we mirror with a thread-local Cell.
+        DEBUG_TRAP_REENTRY.with(|c| {
+            if c.get() {
+                return Value::Status(0);
+            }
+            c.set(true);
+            let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGDEBUG);
+            c.set(false);
+            Value::Status(0)
+        })
+    });
 
     vm.register_builtin(BUILTIN_ERREXIT_CHECK, |vm, _argc| {
         // Returns Value::Int(1) when the caller should jump to the
@@ -4471,6 +4494,12 @@ pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
 pub const BUILTIN_RETFLAG_CHECK: u16 = 600;
 pub const BUILTIN_BREAKS_CHECK: u16 = 601;
 pub const BUILTIN_CONTFLAG_CHECK: u16 = 602;
+/// Fire the DEBUG trap (SIGDEBUG) before each statement.
+/// c:Src/exec.c:1357-1500 DEBUGBEFORECMD — when a "DEBUG" entry is
+/// installed via `trap '...' DEBUG`, run the body just before the
+/// next command. Cheap when no DEBUG trap is set (one hashmap lookup
+/// returns None and we early-out).
+pub const BUILTIN_DEBUG_TRAP: u16 = 603;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
