@@ -8625,6 +8625,15 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
             // set, drop the backslash; otherwise keep `\<char>`.
             Some(c) => {
                 consumed += 1;
+                // c:utils.c:7045 — `\c` under GETKEY_BACKSLASH_C
+                // means TRUNCATE: drop the rest of the input,
+                // suppress the trailing newline. Used by `echo`
+                // (and `print` without -r). Set TLS flag so the
+                // caller can detect + suppress the newline.
+                if c == 'c' && (how & GETKEY_BACKSLASH_C) != 0 {
+                    GETKEY_TRUNCATED.with(|cell| cell.set(true));
+                    break;
+                }
                 if (how & GETKEY_EMACS) == 0 {
                     result.push('\\');
                 }
@@ -8636,6 +8645,27 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
         }
     }
     (result, consumed)
+}
+
+thread_local! {
+    /// Sticky flag set by `getkeystring_with` when a `\c` escape
+    /// truncates the input under `GETKEY_BACKSLASH_C`. The caller
+    /// (bin_print / bin_echo) reads + clears via `getkey_truncated_take()`
+    /// to suppress the trailing newline and skip any subsequent args
+    /// in the print pass.
+    pub static GETKEY_TRUNCATED: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// Read + clear the `\c`-truncated flag set by the previous
+/// `getkeystring_with` call. Returns true once after a truncation
+/// fires, false otherwise.
+pub fn getkey_truncated_take() -> bool {
+    GETKEY_TRUNCATED.with(|c| {
+        let v = c.get();
+        c.set(false);
+        v
+    })
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Equivalent to
