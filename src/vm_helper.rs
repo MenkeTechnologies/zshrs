@@ -1350,6 +1350,16 @@ impl ShellExecutor {
                         let wrapped = format!("{name}() {{\n{body}\n}}");
                         let _ = self.execute_script_zsh_pipeline(&wrapped);
                     }
+                } else if let Some(body) = stub.body.clone() {
+                    // c:Src/Modules/parameter.c::setpmfunction — function
+                    // registered via `functions[name]=body` lives in
+                    // shfunctab with `body` set but `functions_compiled`
+                    // empty (the canonical port stores the parsed eprog,
+                    // not a fusevm Chunk). Lazy-compile here by feeding
+                    // the body through the standard funcdef pipeline so
+                    // the next CallFunction op finds the chunk.
+                    let wrapped = format!("{name}() {{\n{body}\n}}");
+                    let _ = self.execute_script_zsh_pipeline(&wrapped);
                 }
             }
         }

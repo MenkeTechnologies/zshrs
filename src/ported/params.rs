@@ -4607,6 +4607,155 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         None => (s, None),
     };
 
+    // c:Src/Modules/parameter.c — magic associative-array assignment
+    // forms: `functions[name]=body`, `aliases[name]=value`,
+    // `dis_functions[name]=body`, `saliases[name]=value`,
+    // `galiases[name]=value`, `dis_aliases[name]=value`, etc.
+    // These reach assignsparam as `name[key]=value` shape and must
+    // dispatch to the canonical setpmfunction / setpmalias hooks
+    // BEFORE the generic paramtab subscript store. Without this
+    // route, the assignment lands in paramtab_hashed_storage as
+    // a normal assoc element and the corresponding function/alias
+    // is never actually defined in shfunctab/aliastab.
+    if let Some(key) = subscript {
+        match name {
+            "functions" => {
+                use crate::ported::zsh_h::param as ParamStruct;
+                use crate::ported::zsh_h::hashnode;
+                let pm: Box<ParamStruct> = Box::new(ParamStruct {
+                    node: hashnode {
+                        next: None,
+                        nam: key.to_string(),
+                        flags: 0,
+                    },
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                });
+                crate::ported::modules::parameter::setpmfunction(pm.clone(), val.to_string());
+                unqueue_signals();
+                return Some(pm);
+            }
+            "dis_functions" => {
+                use crate::ported::zsh_h::param as ParamStruct;
+                use crate::ported::zsh_h::hashnode;
+                let pm: Box<ParamStruct> = Box::new(ParamStruct {
+                    node: hashnode {
+                        next: None,
+                        nam: key.to_string(),
+                        flags: 0,
+                    },
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                });
+                crate::ported::modules::parameter::setpmdisfunction(pm.clone(), val.to_string());
+                unqueue_signals();
+                return Some(pm);
+            }
+            "aliases" => {
+                // c:Src/Modules/parameter.c — install a regular
+                // alias via canonical aliastab. Use createaliasnode
+                // with default flags (no ALIAS_GLOBAL / ALIAS_SUFFIX).
+                if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
+                    let node = crate::ported::hashtable::createaliasnode(
+                        key,
+                        val,
+                        0u32,
+                    );
+                    tab.add(node);
+                }
+                unqueue_signals();
+                return Some(Box::new(crate::ported::zsh_h::param {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: key.to_string(),
+                        flags: 0,
+                    },
+                    u_data: 0, u_arr: None, u_str: Some(val.to_string()),
+                    u_val: 0, u_dval: 0.0, u_hash: None,
+                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                }));
+            }
+            "galiases" => {
+                // c:Src/Modules/parameter.c — global alias.
+                if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
+                    let node = crate::ported::hashtable::createaliasnode(
+                        key,
+                        val,
+                        crate::ported::zsh_h::ALIAS_GLOBAL as u32,
+                    );
+                    tab.add(node);
+                }
+                unqueue_signals();
+                return Some(Box::new(crate::ported::zsh_h::param {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: key.to_string(),
+                        flags: 0,
+                    },
+                    u_data: 0, u_arr: None, u_str: Some(val.to_string()),
+                    u_val: 0, u_dval: 0.0, u_hash: None,
+                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                }));
+            }
+            "saliases" => {
+                // c:Src/Modules/parameter.c — suffix alias.
+                if let Ok(mut tab) = crate::ported::hashtable::sufaliastab_lock().write() {
+                    let node = crate::ported::hashtable::createaliasnode(
+                        key,
+                        val,
+                        crate::ported::zsh_h::ALIAS_SUFFIX as u32,
+                    );
+                    tab.add(node);
+                }
+                unqueue_signals();
+                return Some(Box::new(crate::ported::zsh_h::param {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: key.to_string(),
+                        flags: 0,
+                    },
+                    u_data: 0, u_arr: None, u_str: Some(val.to_string()),
+                    u_val: 0, u_dval: 0.0, u_hash: None,
+                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
+                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                }));
+            }
+            _ => {}
+        }
+    }
+
     // Subscripted path (c:3210-3231).
     if let Some(key) = subscript {
         let mut tab = paramtab().write().unwrap();
