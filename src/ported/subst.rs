@@ -4123,9 +4123,16 @@ pub fn paramsubst(
                 {
                     // c:2926 (numeric index)
                     let len = arr.len() as i64;
-                    // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
-                    // non-strict mode: `a[0]` → first element.
-                    let i = if idx_n == 0 {
+                    // c:Src/params.c:2110-2150 — KSH_ARRAYS uses 0-based
+                    // indexing (arr[0] = first). Without the option,
+                    // indexing is 1-based and `arr[0]` falls through to
+                    // KSHZEROSUBSCRIPT semantics (returns first element
+                    // when that option is set, else empty).
+                    let ksh_arrays =
+                        crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+                    let i = if ksh_arrays {
+                        if idx_n < 0 { len + idx_n } else { idx_n }
+                    } else if idx_n == 0 {
                         if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
                             0 // c:2140
                         } else {
