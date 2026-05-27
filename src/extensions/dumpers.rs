@@ -250,3 +250,141 @@ pub fn dump_wordcode(src: &str) -> String {
     }
     buf
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{esc_bytes, tok_name, wc_name};
+    use crate::tokens::{
+        AMPER, AMPERBANG, BAR_TOK, CASE, ENDINPUT, ESAC, FI, FOR, IF, LEXERR, NEWLIN, SEMI,
+        STRING_LEX, THEN, WHILE,
+    };
+
+    // ─── tok_name: canonical-name lookup matches C-side toknames ──────
+
+    #[test]
+    fn tok_name_basic_separators() {
+        assert_eq!(tok_name(NEWLIN), "NEWLIN");
+        assert_eq!(tok_name(SEMI), "SEMI");
+        assert_eq!(tok_name(AMPER), "AMPER");
+    }
+
+    #[test]
+    fn tok_name_string_and_terminators() {
+        assert_eq!(tok_name(STRING_LEX), "STRING");
+        assert_eq!(tok_name(ENDINPUT), "ENDINPUT");
+        assert_eq!(tok_name(LEXERR), "LEXERR");
+    }
+
+    #[test]
+    fn tok_name_logical_ops() {
+        assert_eq!(tok_name(BAR_TOK), "BAR");
+        assert_eq!(tok_name(AMPERBANG), "AMPERBANG");
+    }
+
+    #[test]
+    fn tok_name_control_keywords() {
+        assert_eq!(tok_name(IF), "IF");
+        assert_eq!(tok_name(THEN), "THEN");
+        assert_eq!(tok_name(FI), "FI");
+        assert_eq!(tok_name(FOR), "FOR");
+        assert_eq!(tok_name(WHILE), "WHILE");
+        assert_eq!(tok_name(CASE), "CASE");
+        assert_eq!(tok_name(ESAC), "ESAC");
+    }
+
+    #[test]
+    fn tok_name_unknown_falls_back_to_literal() {
+        // Synthetic out-of-range lextok value should land in the wildcard arm.
+        let bogus: super::lextok = i32::MAX;
+        assert_eq!(tok_name(bogus), "UNKNOWN");
+    }
+
+    // ─── wc_name: WCNAMES table lookup with overflow guard ────────────
+
+    #[test]
+    fn wc_name_inside_range_returns_table_entry() {
+        // kind=0 is always within the static WCNAMES table.
+        assert!(!wc_name(0).is_empty(), "0 must hit the static table");
+    }
+
+    #[test]
+    fn wc_name_overflow_falls_back() {
+        // u32::MAX cast to usize indexes way past WCNAMES → "WC_?".
+        assert_eq!(wc_name(u32::MAX), "WC_?");
+    }
+
+    // ─── esc_bytes: matches C-side zsh escape table ───────────────────
+
+    fn esc(bytes: &[u8]) -> String {
+        let mut s = String::new();
+        esc_bytes(&mut s, bytes);
+        s
+    }
+
+    #[test]
+    fn esc_newline() {
+        assert_eq!(esc(b"\n"), "\\n");
+    }
+
+    #[test]
+    fn esc_tab() {
+        assert_eq!(esc(b"\t"), "\\t");
+    }
+
+    #[test]
+    fn esc_backslash_doubles() {
+        assert_eq!(esc(b"\\"), "\\\\");
+    }
+
+    #[test]
+    fn esc_double_quote() {
+        assert_eq!(esc(b"\""), "\\\"");
+    }
+
+    #[test]
+    fn esc_nul_byte() {
+        assert_eq!(esc(b"\0"), "\\0");
+    }
+
+    #[test]
+    fn esc_printable_ascii_passes_through() {
+        // 0x20..=0x7e: passed through unmodified.
+        assert_eq!(esc(b"hello world"), "hello world");
+        assert_eq!(esc(b"!#$%&'()*+,-./0123456789"), "!#$%&'()*+,-./0123456789");
+    }
+
+    #[test]
+    fn esc_low_control_uses_hex() {
+        // 0x01..=0x1f (excluding the explicit cases above) → \xHH.
+        assert_eq!(esc(&[0x01]), "\\x01");
+        assert_eq!(esc(&[0x1f]), "\\x1f");
+    }
+
+    #[test]
+    fn esc_high_bit_uses_hex() {
+        // 0x7f and 0x80..=0xff → \xHH.
+        assert_eq!(esc(&[0x7f]), "\\x7f");
+        assert_eq!(esc(&[0xff]), "\\xff");
+        assert_eq!(esc(&[0x80]), "\\x80");
+    }
+
+    #[test]
+    fn esc_mixed_buffer_preserves_order() {
+        assert_eq!(esc(b"a\nb\tc"), "a\\nb\\tc");
+        assert_eq!(esc(b"x\0y"), "x\\0y");
+        assert_eq!(esc(b"\"hi\""), "\\\"hi\\\"");
+    }
+
+    #[test]
+    fn esc_appends_to_existing_buffer() {
+        // esc_bytes is "write into provided String" — must append, not replace.
+        let mut buf = String::from("prefix:");
+        esc_bytes(&mut buf, b"\n");
+        assert_eq!(buf, "prefix:\\n");
+    }
+
+    #[test]
+    fn esc_empty_input_yields_empty_output() {
+        assert_eq!(esc(b""), "");
+    }
+}
