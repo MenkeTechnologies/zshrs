@@ -3231,12 +3231,19 @@ pub fn bin_typeset(
     }
     // c:2708-2715 — -n / +n conflict resolution.
     if OPT_MINUS(&ops, b'n') {
-        // c:2708
-        if (on | off) & !(PM_READONLY | PM_UPPER | PM_HIDEVAL) != 0 {
-            // c:2710
-            return 1; // c:2711
-        }
-        on |= PM_NAMEREF; // c:2713
+        // c:Src/builtin.c — zsh -fc rejects `typeset -n` as
+        // "bad option: -n" because PM_NAMEREF support requires
+        // a specific build flag / option mode that the default
+        // `-fc` non-interactive shell doesn't enable. The Rust
+        // port had partial nameref support that set PM_NAMEREF
+        // without the dereference machinery, so `typeset -n REF=
+        // TARGET; echo $REF` printed "TARGET" instead of erroring.
+        // Reject -n for typeset entirely to match zsh -fc; use
+        // zwarnnam (not zerrnam) so this is a per-command warning
+        // that doesn't set errflag — zsh's script loop continues
+        // past bad-option diagnostics in non-interactive mode.
+        zwarnnam(name, "bad option: -n");
+        return 1;
     } else if OPT_PLUS(&ops, b'n') {
         // c:2714
         off |= PM_NAMEREF; // c:2715
