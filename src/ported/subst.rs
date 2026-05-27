@@ -8967,6 +8967,13 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
             return Some(d.clone());
         }
     }
+    // c:Src/signals.c:signals — read-only array of signal names
+    // populated at startup. signals[1] = "EXIT", signals[2] = "HUP",
+    // etc. zsh exposes this as a special parameter via PM_ARRAY
+    // (Src/Modules/parameter.c).
+    if name == "signals" {
+        return Some(crate::ported::jobs::sig_names_for_signals_param());
+    }
     // c:Src/Modules/parameter.c — `funcstack` PM_SPECIAL array
     // reads the canonical FUNCSTACK Vec via getfn. Same routing
     // as dirstack above so `$#funcstack` returns the call-depth.
@@ -8985,6 +8992,14 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
 fn arrays_contains(name: &str) -> bool {
     // c:Src/params.c:3262 IPDEF9 — pparams is the @/argv array.
     if name == "@" || name == "*" || name == "argv" {
+        return true;
+    }
+    // c:Src/Modules/parameter.c — special PM_ARRAY params backed by
+    // ad-hoc storage (DIRSTACK list, signal-names table, etc.). The
+    // matching arrays_get arm above synthesizes the Vec on each
+    // call; mirror the "exists" bit here so `${#dirstack}` /
+    // `${#signals}` length-op picks up an array source.
+    if name == "dirstack" || name == "signals" {
         return true;
     }
     // c:Src/params.c:425-434 — tied-array IPDEF9 lowercase partners

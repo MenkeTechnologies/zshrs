@@ -10791,23 +10791,23 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
                 }
                 Some('x') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n: i64 = a.parse().unwrap_or(0);
+                    let n: u64 = a.parse::<i64>().map(|v| v as u64).unwrap_or(0);
                     spec.push('x');
-                    out.push_str(&format!("{:x}", n));
+                    out.push_str(&format_spec_radix(&spec, n, 'x'));
                     arg_i += 1;
                 }
                 Some('X') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n: i64 = a.parse().unwrap_or(0);
+                    let n: u64 = a.parse::<i64>().map(|v| v as u64).unwrap_or(0);
                     spec.push('X');
-                    out.push_str(&format!("{:X}", n));
+                    out.push_str(&format_spec_radix(&spec, n, 'X'));
                     arg_i += 1;
                 }
                 Some('o') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n: i64 = a.parse().unwrap_or(0);
+                    let n: u64 = a.parse::<i64>().map(|v| v as u64).unwrap_or(0);
                     spec.push('o');
-                    out.push_str(&format!("{:o}", n));
+                    out.push_str(&format_spec_radix(&spec, n, 'o'));
                     arg_i += 1;
                 }
                 Some(conv @ ('f' | 'F' | 'g' | 'G' | 'e' | 'E')) => {
@@ -10903,15 +10903,80 @@ fn format_spec_str(spec: &str, s: &str) -> String {
 fn format_spec_int(spec: &str, n: i64) -> String {
     let (left_align, width, _prec) = parse_width_prec(spec);
     let zero_pad = spec.contains('0') && !left_align;
-    let body = n.to_string();
+    // c:Src/builtin.c — `+` flag: prefix positive numbers with `+`.
+    // ` ` flag: prefix positive numbers with a space (mutually
+    // exclusive with `+` per POSIX; `+` wins when both set).
+    let plus_flag = spec.contains('+');
+    let space_flag = spec.contains(' ') && !plus_flag;
+    let body = if n >= 0 && plus_flag {
+        format!("+{}", n)
+    } else if n >= 0 && space_flag {
+        format!(" {}", n)
+    } else {
+        n.to_string()
+    };
     let pad = width.saturating_sub(body.chars().count());
     if pad == 0 {
         body
     } else if left_align {
         format!("{}{}", body, " ".repeat(pad))
     } else if zero_pad {
-        if let Some(rest) = body.strip_prefix('-') {
-            format!("-{}{}", "0".repeat(pad), rest)
+        // Zero-pad: sign/prefix char (`-`, `+`, ` `) stays at the
+        // left, zeros pad between it and the digits.
+        if let Some(rest) = body
+            .strip_prefix('-')
+            .or_else(|| body.strip_prefix('+'))
+            .or_else(|| body.strip_prefix(' '))
+        {
+            let sign = body.chars().next().unwrap();
+            format!("{}{}{}", sign, "0".repeat(pad), rest)
+        } else {
+            format!("{}{}", "0".repeat(pad), body)
+        }
+    } else {
+        format!("{}{}", " ".repeat(pad), body)
+    }
+}
+
+/// printf %x / %X / %o with full flag support: `#` prefix, zero pad,
+/// width, left-align. Matches libc printf semantics.
+fn format_spec_radix(spec: &str, n: u64, conv: char) -> String {
+    let (left_align, width, _prec) = parse_width_prec(spec);
+    let zero_pad = spec.contains('0') && !left_align;
+    let hash_flag = spec.contains('#');
+    let body = match conv {
+        'x' => format!("{:x}", n),
+        'X' => format!("{:X}", n),
+        'o' => format!("{:o}", n),
+        _ => n.to_string(),
+    };
+    // c:Src/builtin.c — `#` flag: prefix with `0x`/`0X` for hex (only
+    // when value non-zero), `0` for octal (always, even zero, which
+    // libc handles by emitting "0" anyway).
+    let body = if hash_flag {
+        match conv {
+            'x' if n != 0 => format!("0x{}", body),
+            'X' if n != 0 => format!("0X{}", body),
+            'o' if !body.starts_with('0') => format!("0{}", body),
+            _ => body,
+        }
+    } else {
+        body
+    };
+    let pad = width.saturating_sub(body.chars().count());
+    if pad == 0 {
+        body
+    } else if left_align {
+        format!("{}{}", body, " ".repeat(pad))
+    } else if zero_pad {
+        // For `%#04x` with value 15: body = "0xf" (3 chars), width=4,
+        // pad=1. Zero-pad after the `0x` prefix → "0x0f". Match libc.
+        if let Some(rest) = body
+            .strip_prefix("0x")
+            .or_else(|| body.strip_prefix("0X"))
+        {
+            let prefix = &body[..2];
+            format!("{}{}{}", prefix, "0".repeat(pad), rest)
         } else {
             format!("{}{}", "0".repeat(pad), body)
         }

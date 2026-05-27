@@ -151,6 +151,8 @@ format_spec_int
 format_spec_uint
 format_spec_float
 format_spec_float_conv
+format_spec_radix
+sig_names_for_signals_param
 parse_width_prec
 
 # optno_by_name (options.rs) — forward direction of the same
