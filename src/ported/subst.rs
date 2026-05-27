@@ -4406,6 +4406,13 @@ pub fn paramsubst(
         // -gA assoc with no key fired the "already set" branch and
         // skipped the assign.
         let is_set = if let Some(sub) = subscript.as_deref() {
+            // c:Src/subst.c getindex — for `@`/`*` (and slice
+            // `[lo,hi]`), is_set tracks whether the full array has
+            // any elements, not whether a named slot exists. Without
+            // this, `${arr[@]:-x}` always fired the default because
+            // the integer-parse path bailed on the non-numeric `@`.
+            let is_at_or_star = matches!(sub, "@" | "*");
+            let is_slice = sub.contains(',');
             used_subexp
                 || assoc_get(&var_name)
                     .map(|m| m.contains_key(sub))
@@ -4413,13 +4420,21 @@ pub fn paramsubst(
                 || arrays_get(&var_name)
                     .as_ref()
                     .map(|a| {
-                        sub.parse::<i64>().ok().is_some_and(|i| {
-                            let len = a.len() as i64;
-                            let real = if i < 0 { len + i } else { i - 1 };
-                            real >= 0 && (real as usize) < a.len()
-                        })
+                        if is_at_or_star || is_slice {
+                            !a.is_empty()
+                        } else {
+                            sub.parse::<i64>().ok().is_some_and(|i| {
+                                let len = a.len() as i64;
+                                let real = if i < 0 { len + i } else { i - 1 };
+                                real >= 0 && (real as usize) < a.len()
+                            })
+                        }
                     })
                     .unwrap_or(false)
+                // For `@`/`*` on a scalar var, treat is_set per the
+                // scalar's own existence — `${str[@]:-x}` is legal
+                // and `str` may be the only declared form.
+                || ((is_at_or_star || is_slice) && vars_contains(&var_name))
                 // c:Src/Modules/parameter.c — magic-assoc tables
                 // (`builtins`, `commands`, `functions`, `aliases`, etc.)
                 // dispatch through PARTAB. Without this fallback,
@@ -4992,6 +5007,18 @@ pub fn paramsubst(
                 // c:3193
                 if !is_set || raw_value.is_empty() {
                     value = singsub(default);
+                    // Parity bug: for `${arr[@]:-default}` with an
+                    // empty array, the operator computed the default
+                    // into `value`, but the downstream auto_splat
+                    // block re-fetches arrays_get(var_name) on the
+                    // [@] path and ignores `value`. Seed split_parts
+                    // with the default so the splat emits it. Mirror
+                    // C subst.c:3193 case '-' which stores the result
+                    // back into val/aval, making the c:4245 splat
+                    // see the substituted shape.
+                    if isarr != 0 && split_parts.is_none() {
+                        split_parts = Some(vec![value.clone()]);
+                    }
                 }
             } else if let Some(default) = r.strip_prefix('-') {
                 // c:3193
@@ -5105,12 +5132,25 @@ pub fn paramsubst(
                 } else {
                     value = String::new();
                 }
+                // Seed split_parts so the downstream c:4245 auto-splat
+                // sees the substituted scalar, not the original array.
+                // Parity bug: `${arr[@]:+yes}` on a populated array
+                // splat the array elements ("x y") instead of the
+                // alternate "yes" because auto_splat fell back to
+                // arrays_get(var_name). Mirror C subst.c:3296 which
+                // writes val back into the v->str/aval slot.
+                if isarr != 0 && split_parts.is_none() {
+                    split_parts = Some(vec![value.clone()]);
+                }
             } else if let Some(alt) = r.strip_prefix('+') {
                 // c:3296
                 if is_set {
                     value = singsub(alt);
                 } else {
                     value = String::new();
+                }
+                if isarr != 0 && split_parts.is_none() {
+                    split_parts = Some(vec![value.clone()]);
                 }
             } else if let Some(msg) = r.strip_prefix(":?") {
                 // c:3193 (:?msg)
@@ -5803,12 +5843,27 @@ pub fn paramsubst(
                         z.push(other.get(i).cloned().unwrap_or_default());
                     }
                     z
+                } else if arr.is_empty() {
+                    // One operand empty → return the other verbatim.
+                    // Mirror C: zsh skips the interleave when either
+                    // side has zero elements.
+                    other.clone()
+                } else if other.is_empty() {
+                    arr.clone()
                 } else {
+                    // c:Src/subst.c SUB_ZIP_LONG — the shorter array
+                    // CYCLES through its values to fill outlen =
+                    // max(alen, blen). Mirror via modular index:
+                    // `arr[i % alen]` / `other[i % blen]`. Without
+                    // this, the shorter array's overflow positions
+                    // received an empty string (visible as the
+                    // Nularg sentinel `¡` in output) instead of
+                    // wrapping back to element 0.
                     let n = arr.len().max(other.len());
                     let mut z: Vec<String> = Vec::with_capacity(n * 2);
                     for i in 0..n {
-                        z.push(arr.get(i).cloned().unwrap_or_default());
-                        z.push(other.get(i).cloned().unwrap_or_default());
+                        z.push(arr[i % arr.len()].clone());
+                        z.push(other[i % other.len()].clone());
                     }
                     z
                 };
@@ -5891,6 +5946,8 @@ pub fn paramsubst(
                         | 'g'
                         | 'w'
                         | 'W'
+                        | 'f'
+                        | 'F'
                 );
                 if is_modifier {
                     // c:Src/subst.c:4531 modify() entry — apply
@@ -8253,9 +8310,13 @@ pub fn modify(s: &str, modifiers: &str) -> String {
         let mut gbal = false; // c:4531
         let mut wall = false; // c:4531
         let mut sep: Option<String> = None; // c:4531
+        let mut fixed_point = false;
+        let mut max_iters: Option<u32> = None;
 
         // Parse modifier flags. `:g` is greedy/global, `:w` is
-        // word-by-word, `:W:sep` is word-by-word with custom sep.
+        // word-by-word, `:W:sep` is word-by-word with custom sep,
+        // `:f` is fixed-point (repeat until no more changes),
+        // `:FN` is bounded-iteration (repeat up to N times).
         loop {
             // c:4531
             match chars.peek() {
@@ -8282,6 +8343,28 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                         sep = Some(collected); // c:4531
                     } // c:4531
                 } // c:4531
+                // c:Src/subst.c modify() — `f` flag = repeat the
+                // following `:s`/`:&` until no more changes. `F N` =
+                // bounded-iteration variant. Both are zsh-specific
+                // (not POSIX); high-traffic in `${x:fs/.../...}`
+                // idioms used by zsh autoload helpers.
+                Some(&'f') => {
+                    fixed_point = true;
+                    chars.next();
+                }
+                Some(&'F') => {
+                    chars.next();
+                    let mut num = String::new();
+                    while let Some(&pc) = chars.peek() {
+                        if pc.is_ascii_digit() {
+                            num.push(pc);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    max_iters = num.parse().ok();
+                }
                 _ => break, // c:4531
             } // c:4531
         } // c:4531
@@ -8425,6 +8508,17 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     hay.find(eff_pat.as_str()).map(|s| (s, s + eff_pat.len()))
                 }
             };
+            // c:Src/subst.c modify() — `f`/`F N` repeat-until-no-change
+            // wrapper around the regular substitution. When neither flag
+            // is set, __limit=1 ⇒ the body runs once and breaks.
+            let __limit: u32 = max_iters.unwrap_or(if fixed_point { u32::MAX } else { 1 });
+            let mut __iters: u32 = 0;
+            loop {
+                let __prev_for_fp: Option<String> = if fixed_point || max_iters.is_some() {
+                    Some(result.clone())
+                } else {
+                    None
+                };
             result = if anchor_head {
                 // c:4665
                 if use_glob {
@@ -8513,6 +8607,18 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             } else {
                 result.replacen(eff_pat.as_str(), repl.as_str(), 1)
             };
+                __iters += 1;
+                if __iters >= __limit {
+                    break;
+                }
+                if let Some(p) = __prev_for_fp {
+                    if result == p {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
             // Record the post-anchor-strip form + anchor mode so a
             // subsequent `:&` can replay the same shape. Storing
             // `eff_pat` (not `pat`) avoids re-stripping `#`/`%` on

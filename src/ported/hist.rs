@@ -4645,16 +4645,36 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                     result = real.to_string_lossy().to_string();
                 }
             }
-            'g' | 's' | '&' => {
-                // c:3743 — `modify()` `:s/:g/:&` arm inlined here per
-                //          build.rs invariant. C uses one branch for
-                //          all three via `c == 's' || c == 'g' || c == '&'`.
-                //          We dispatch on (c, peek) to decide
-                //          single/global and parse-fresh/repeat-last.
+            'f' | 'F' | 'g' | 's' | '&' => {
+                // c:3743 — `modify()` `:s/:g/:&/:f/:F` arm inlined per
+                //          build.rs invariant.  `f` = repeat until no
+                //          more changes (fixed-point); `F N` = repeat
+                //          up to N times. zsh treats both as flags that
+                //          PREFIX the actual `s`/`&`/`g` modifier.
+                let mut fixed_point = false;
+                let mut max_iters: Option<u32> = None;
+                let mut c = c;
+                if c == 'f' {
+                    fixed_point = true;
+                    c = chars.next().unwrap_or(' ');
+                } else if c == 'F' {
+                    // F takes a numeric argument: F N
+                    let mut num = String::new();
+                    while let Some(&ch) = chars.peek() {
+                        if ch.is_ascii_digit() {
+                            num.push(ch);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    max_iters = num.parse().ok();
+                    c = chars.next().unwrap_or(' ');
+                }
                 let (global, do_parse) = match c {
                     's' => (false, true),
                     '&' => (false, false),
-                    _ => {
+                    'g' => {
                         // 'g'
                         match chars.next() {
                             Some('s') => (true, true),
@@ -4662,6 +4682,7 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                             _ => break,
                         }
                     }
+                    _ => break,
                 };
                 // c:3760 — read delimiter, parse old/new bracketed by it,
                 //          backslash-escapes for embedded delimiters.
@@ -4725,17 +4746,45 @@ pub fn apply_history_modifiers(val: &str, modifiers: &str) -> String {
                 };
                 if !pat.is_empty() {
                     // c:3830 — `subststr(s, &pat, &rep, gbal)`.
-                    result = if global {
-                        result.replace(&pat, &rep)
-                    } else {
-                        result.replacen(&pat, &rep, 1)
+                    let apply = |s: &str| -> String {
+                        if global {
+                            s.replace(&pat, &rep)
+                        } else {
+                            s.replacen(&pat, &rep, 1)
+                        }
                     };
+                    if fixed_point {
+                        // c:Src/hist.c — `:f` repeats until no more
+                        // changes. Cap at a generous safety bound to
+                        // avoid pathological growth on a replacement
+                        // that re-introduces the pattern.
+                        let cap: u32 = 10_000;
+                        for _ in 0..cap {
+                            let next = apply(&result);
+                            if next == result {
+                                break;
+                            }
+                            result = next;
+                        }
+                    } else if let Some(n) = max_iters {
+                        for _ in 0..n {
+                            let next = apply(&result);
+                            if next == result {
+                                break;
+                            }
+                            result = next;
+                        }
+                    } else {
+                        result = apply(&result);
+                    }
                 }
             }
             // Bash-only modifiers — zsh rejects with "unrecognized
             // modifier". Match that error format. Without these arms,
             // unknown modifiers silently terminated the loop and the
             // caller saw the previous-stage value (often empty).
+            // `F` is NOT in this set — zsh accepts `F N` as a
+            // bounded-iteration prefix for `:s` (handled above).
             'U' | 'L' | 'V' | 'X' => {
                 zerr(&format!("unrecognized modifier `{}'", c));
                 result = String::new();

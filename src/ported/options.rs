@@ -365,15 +365,31 @@ pub fn bin_setopt(
         // c:586
         // c:587 — scanhashtable(optiontab, 1, 0, OPT_ALIAS,
         // optiontab->printnode, !isun): walk every option in the
-        // table and emit each one whose current state matches !isun.
+        // table and pass each one to printnode with `!isun` as the
+        // `set` argument. printoptionnode (c:450) is the actual
+        // filter: it emits the option only when its current state
+        // differs from the default in the requested direction —
+        // i.e. `set == (isset(optno) ^ defset(on, emulation))`.
+        //
+        // Parity bug: the previous Rust port pre-filtered with
+        // `on == want_set`, which printed every option that was
+        // currently in the requested state regardless of whether
+        // that matched its default. Result: `setopt` (no args)
+        // listed all ON options (braceexpand, hashall, …) instead
+        // of just the diverged ones (e.g. `nohashdirs`, `norcs`).
         let want_set = isun == 0;
-        let mut names: Vec<String> = ZSH_OPTIONS_SET.iter().map(|s| s.to_string()).collect();
+        let mut names: Vec<String> = ZSH_OPTIONS_SET
+            .iter()
+            // c:587 — scanhashtable's `flags2 = OPT_ALIAS` mask
+            // skips bash/ksh-alias entries. ZSH_OPTION_ALIASES
+            // is the parallel set of OPT_ALIAS names per
+            // Src/options.c:269-280.
+            .filter(|n| !ZSH_OPTION_ALIASES.contains(*n))
+            .map(|s| s.to_string())
+            .collect();
         names.sort();
         for n in names {
-            let on = opt_state_get(&n).unwrap_or(false);
-            if on == want_set {
-                printoptionnode(&n, want_set); // c:587 printnode
-            }
+            printoptionnode(&n, want_set); // c:587 printnode
         }
         return 0; // c:589
     }
@@ -1298,6 +1314,31 @@ pub static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "onecmd",      // alias of `singlecommand`
         "physical",    // alias of `chaselinks`
         "promptvars",  // alias of `promptsubst`
+    ]
+    .into_iter()
+    .collect()
+});
+
+/// Names flagged `OPT_ALIAS` in `Src/options.c:269-280`. The
+/// no-arg `setopt` / `unsetopt` walk skips these (the C code
+/// passes `OPT_ALIAS` as the `flags2` mask to `scanhashtable`,
+/// excluding any node with that bit). They still accept
+/// `setopt <alias>` for bash/ksh script compat; this set only
+/// gates the OUTPUT enumeration.
+pub static ZSH_OPTION_ALIASES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    [
+        "braceexpand",
+        "dotglob",
+        "hashall",
+        "histappend",
+        "histexpand",
+        "log",
+        "mailwarn",
+        "onecmd",
+        "physical",
+        "promptvars",
+        "stdin",
+        "trackall",
     ]
     .into_iter()
     .collect()
