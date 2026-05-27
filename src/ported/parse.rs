@@ -787,14 +787,25 @@ pub fn parse_list() -> Option<eprog> {
     set_tok(ENDINPUT);
     init_parse();
     zshlex();
-    let _ = par_list();
+    // c:Src/parse.c:705 — `par_list(&c);` emits wordcode for the
+    // full multi-statement list (its goto-rec loop walks all
+    // SEPER-separated sublists). The Rust AST par_list() emits
+    // NOTHING to the wordcode buffer (only builds the AST), so
+    // bld_eprog returned an empty program AND tok stayed at
+    // SEPER, tripping the syntax-error check below for any
+    // \`cmd; cmd\` body.
+    //
+    // Route through par_event_wordcode (the wordcode emitter,
+    // lines 4395+) which mirrors C's par_list loop semantics
+    // and populates the wordcode buffer that bld_eprog reads.
+    let _start = par_event_wordcode();
     if tok() != ENDINPUT {
         clear_hdocs();
         set_tok(LEXERR);
         yyerror("syntax error");
         return None;
     }
-    Some(bld_eprog(true))
+    Some(bld_eprog(false))
 }
 
 /// Port of `parse_cond(void)` from `Src/parse.c:722`. Only used by
