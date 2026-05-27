@@ -3111,16 +3111,35 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         .map(|q| q.list_types)
         .unwrap_or(false);
     let colon_mods = state.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
+    // c:Src/glob.c — a pattern ending in `/` ("trailing slash" syntax)
+    // forces matches to be directories AND preserves the slash in the
+    // output. zsh's parsepat treats `pat/` as `pat` + an empty trailing
+    // component; the scanner restricts to directories and the emitter
+    // appends `/`. The Rust port's parser short-circuits the empty
+    // trailing component, so we filter + re-add the suffix here at emit
+    // time. `/` is never a glob metachar so a literal trailing-slash
+    // check on the raw pattern is sufficient.
+    let trailing_slash = pattern.ends_with('/') && pattern.len() > 1;
     let mut results: Vec<String> = state
         .matches
         .iter()
+        .filter(|m| {
+            !trailing_slash
+                || fs::metadata(&m.path).map(|md| md.is_dir()).unwrap_or(false)
+        })
         .map(|m| {
             let mut s = glob_emit_path(&m.path);
+            if trailing_slash && !s.ends_with('/') {
+                s.push('/');
+            }
             if mark_dirs || list_types {
                 if let Ok(meta) = fs::symlink_metadata(&m.path) {
                     let ch = file_type(meta.mode());
                     if list_types || (mark_dirs && ch == '/') {
-                        s.push(ch);
+                        // Don't double-stamp if trailing_slash already added one.
+                        if !s.ends_with(ch) {
+                            s.push(ch);
+                        }
                     }
                 }
             }

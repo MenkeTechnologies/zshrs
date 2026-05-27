@@ -11041,35 +11041,35 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
                 }
                 Some('d') | Some('i') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n: i64 = a.parse().unwrap_or(0);
+                    let n = parse_int_arg(&a);
                     spec.push('d');
                     out.push_str(&format_spec_int(&spec, n));
                     arg_i += 1;
                 }
                 Some('u') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n: u64 = a.parse().unwrap_or(0);
+                    let n = parse_int_arg(&a) as u64;
                     spec.push('u');
                     out.push_str(&format_spec_uint(&spec, n));
                     arg_i += 1;
                 }
                 Some('x') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n: u64 = a.parse::<i64>().map(|v| v as u64).unwrap_or(0);
+                    let n = parse_int_arg(&a) as u64;
                     spec.push('x');
                     out.push_str(&format_spec_radix(&spec, n, 'x'));
                     arg_i += 1;
                 }
                 Some('X') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n: u64 = a.parse::<i64>().map(|v| v as u64).unwrap_or(0);
+                    let n = parse_int_arg(&a) as u64;
                     spec.push('X');
                     out.push_str(&format_spec_radix(&spec, n, 'X'));
                     arg_i += 1;
                 }
                 Some('o') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n: u64 = a.parse::<i64>().map(|v| v as u64).unwrap_or(0);
+                    let n = parse_int_arg(&a) as u64;
                     spec.push('o');
                     out.push_str(&format_spec_radix(&spec, n, 'o'));
                     arg_i += 1;
@@ -11162,6 +11162,59 @@ fn format_spec_str(spec: &str, s: &str) -> String {
     } else {
         format!("{}{}", " ".repeat(pad), truncated)
     }
+}
+
+/// c:Src/builtin.c — printf integer-argument parser. zsh accepts:
+/// - Decimal (`42`, `-7`) — leading 0 stays decimal, NOT octal.
+/// - Hex (`0x10`, `0X10`)
+/// - Single character prefix `'A'` or `"A"` → ASCII code
+/// - `BASE#NNN` radix literal
+/// On parse failure zsh emits a warning + returns 0; we mirror with
+/// silent-0 (the warning path needs the printf cmd name + format
+/// position threaded through, which the current refactor scope
+/// doesn't justify).
+fn parse_int_arg(s: &str) -> i64 {
+    let t = s.trim();
+    if t.is_empty() {
+        return 0;
+    }
+    // Character literal: leading `'` or `"` followed by a char →
+    // the char's code point.
+    if let Some(rest) = t.strip_prefix('\'').or_else(|| t.strip_prefix('"')) {
+        return rest.chars().next().map(|c| c as i64).unwrap_or(0);
+    }
+    // Negative sign handled at the top so the inner branches don't
+    // each duplicate the prefix logic.
+    let (neg, body) = if let Some(b) = t.strip_prefix('-') {
+        (true, b)
+    } else if let Some(b) = t.strip_prefix('+') {
+        (false, b)
+    } else {
+        (false, t)
+    };
+    // Hex: 0x.. / 0X..
+    let parsed: i64 = if let Some(h) = body
+        .strip_prefix("0x")
+        .or_else(|| body.strip_prefix("0X"))
+    {
+        i64::from_str_radix(h, 16).unwrap_or(0)
+    // BASE#NNN
+    } else if let Some(idx) = body.find('#') {
+        let base_str = &body[..idx];
+        let digits = &body[idx + 1..];
+        if let Ok(base) = base_str.parse::<u32>() {
+            if (2..=36).contains(&base) {
+                i64::from_str_radix(digits, base).unwrap_or(0)
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    } else {
+        body.parse().unwrap_or(0)
+    };
+    if neg { -parsed } else { parsed }
 }
 
 fn format_spec_int(spec: &str, n: i64) -> String {
