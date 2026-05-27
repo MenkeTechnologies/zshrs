@@ -78,7 +78,6 @@ mod dash_r {
 
     /// Without -r, backslash is escape.
     #[test]
-    #[ignore = "ZSHRS BUG: read (no -r) of 'a\\nb' interprets \\n as newline; zsh strips \\ keeping literal 'n'"]
     fn no_dash_r_backslash_escape() {
         assert_parity_stdin(r#"read x; echo "[$x]""#, b"a\\nb\n");
     }
@@ -214,7 +213,6 @@ mod eof_handling {
 
     /// Partial line + EOF (no trailing newline).
     #[test]
-    #[ignore = "ZSHRS BUG: read of EOF-terminated partial line returns exit 0; zsh returns exit 1"]
     fn read_partial_line_eof() {
         assert_parity_stdin(r#"read x; echo "exit=$? value=[$x]""#, b"noeolEOF");
     }
@@ -236,7 +234,6 @@ mod escape_processing {
 
     /// Without -r, `\n` becomes literal n (continuation).
     #[test]
-    #[ignore = "ZSHRS BUG: read interprets \\b as backspace (U+0008); zsh strips \\ to literal 'b'"]
     fn no_r_backslash_n_becomes_n() {
         assert_parity_stdin(r#"read x; echo "[$x]""#, b"foo\\bar\n");
     }
