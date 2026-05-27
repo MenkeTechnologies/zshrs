@@ -8261,6 +8261,17 @@ pub fn bin_read(
             }
         }
         buf = String::from_utf8_lossy(&buf_bytes).into_owned();
+        // c:Src/builtin.c:6418 — `read -d ''` (NUL delimiter) strips
+        // trailing newlines from the captured content. This matches
+        // the `find -print0 | while read -d ''` idiom which expects
+        // path entries without trailing whitespace. zsh's read body
+        // applies this trim only for the empty-delim case; non-empty
+        // delimiters keep the raw bytes.
+        if arg.is_empty() {
+            while buf.ends_with('\n') {
+                buf.pop();
+            }
+        }
         if !got_any {
             return 1; // EOF without any input
         }
