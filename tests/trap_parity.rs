@@ -109,7 +109,6 @@ mod listing {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap listing output differs from zsh (count of EXIT lines)"]
     fn trap_no_args_lists_set_traps() {
         if !zsh_available() { return; }
         let script = r#"trap 'echo bye' EXIT; trap | grep -c EXIT"#;

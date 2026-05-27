@@ -1184,6 +1184,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     unsafe {
                         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
                     }
+                    // c:Src/exec.c — pipeline children are forked
+                    // subshells; their EXIT trap context is reset so
+                    // the parent's `trap '...' EXIT` doesn't fire when
+                    // the child exits. Mirror by dropping EXIT from
+                    // the inherited traps_table inside the child.
+                    if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                        t.remove("EXIT");
+                    }
                     // Child: wire stdin from previous pipe's read end
                     if i > 0 {
                         unsafe {
