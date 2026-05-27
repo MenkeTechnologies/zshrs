@@ -1747,11 +1747,20 @@ impl ShellExecutor {
         // command's exit" is the implicit success of "did nothing".
         // Without this branch, a prior command's non-zero status
         // leaked through the empty cmd-subst.
-        if let Some(status) = cmd_status {
-            self.set_last_status(status);
-        } else {
-            self.set_last_status(0);
-        }
+        let final_status = cmd_status.unwrap_or(0);
+        self.set_last_status(final_status);
+        // c:Src/exec.c:4775 — `getoutput` (the C cmd-subst path used by
+        // both `$(…)` and `` `…` ``) propagates the inner exit through
+        // `cmdoutval`, then the caller does `LASTVAL = cmdoutval`. Mirror
+        // by writing the cmd-subst's exit into the ported `cmdoutval`
+        // global so `getoutput()`'s post-call `LASTVAL = cmdoutval` (at
+        // exec.rs:559-562) and the C-equivalent `cmdoutval = lastval`
+        // bookkeeping in execcmd_exec's assignment paths both see the
+        // real exit. Without this, backtick assignments (`a=\`false\`;
+        // echo $?`) reported 0 because getoutput's caller path read a
+        // cmdoutval that was never updated by the in-process hook.
+        crate::ported::exec::cmdoutval
+            .store(final_status, std::sync::atomic::Ordering::Relaxed);
 
         // Flush any buffered Rust-side stdout so it reaches the pipe
         // before we restore.
