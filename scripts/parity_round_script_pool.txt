@@ -1,0 +1,323 @@
+true; print -r $?
+false; print -r $?
+print -r hello
+echo one two
+test 1 -eq 1; print -r $?
+[ 1 -eq 1 ]; print -r $?
+command true; print -r $?
+builtin true; print -r $?
+if true; then echo t; fi
+if false; then echo e; else echo f; fi
+for i in a b; do print -r $i; done
+i=0; while (( i < 2 )); do print -r $i; (( i++ )); done
+repeat 2; do print -r r; done
+case x in (x) echo ok ;; esac
+[[ 1 -eq 1 ]] && echo and || echo or
+[[ 1 -eq 2 ]] || echo orbranch
+{ echo a; echo b; }
+(echo sub)
+(( 1 )) || echo no
+(( 0 )) && echo no
+print -r $(( 1 + 2 ))
+print -r $(( 17 % 5 ))
+print -r $(( 2 ** 8 ))
+print -r $(( 1 && 0 || 2 ))
+print -r $(( !0 ))
+integer n=5; (( n += 2 )); print -r $n
+integer n=5; (( n -= 1 )); print -r $n
+integer n=5; (( n *= 2 )); print -r $n
+integer n=5; (( n |= 3 )); print -r $n
+integer n=5; (( n &= 3 )); print -r $n
+print -r $(( true ))
+print -r $(( false ))
+[[ -e / ]]; print -r $?
+[[ -d /tmp ]]; print -r $?
+[[ -f /etc/hosts ]]; print -r $?
+[[ -r /etc/hosts ]]; print -r $?
+[[ -w /tmp ]]; print -r $?
+[[ -x /bin/sh ]]; print -r $?
+[[ 42 = <-> ]]; print -r $?
+[[ abc = <-> ]]; print -r $?
+[[ host = ##host ]]; print -r $?
+[[ -v x ]]; print -r $?; x=1
+unset y; [[ -v y ]]; print -r $?
+setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?
+setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?
+[[ abc = a* ]]; print -r $?
+[[ abc =~ ^a ]]; print -r $?
+[[ -z '' ]]; print -r $?
+[[ -n abc ]]; print -r $?
+typeset -i n=10; print -r $n
+typeset -l n=AbC; print -r $n
+typeset -u n=xy; print -r $n
+typeset -Z5 n=7; print -r $n
+typeset -a a=(x y); print -r ${a[2]}
+arr=(1 2); arr+=3; print -r ${arr[@]}
+arr=(1); arr[1]+=2; print -r ${arr[1]}
+unset v; print -r ${v:-def}
+v=set; print -r ${v:+yes}
+unset v; : ${v::=def}; print -r $v
+print -r ${PWD:h}
+print -r ${PWD:t}
+true | true; print -r $?
+true | false; print -r $?
+print -r ${pipestatus[1]}; true | false
+print -r ${#pipestatus}; true | true | true
+set -- a b c; shift; print -r $1
+set -- a b c; shift 2; print -r $#
+fn(){ print -r $1; }; fn x
+fn(){ local x=2; print -r $x; }; fn
+fn(){ return 2; }; fn; print -r $?
+print -r ${(q)x}; x=hi
+print -r ${(qq)x}; x=hi
+x=hi; print -r ${(q-)x}
+x=hi; print -r ${(q+)x}
+print -r ${(w)w}; w=a b c
+print -r ${(u)a}; a=(a a b)
+print -r ${(o)a}; a=(c b a)
+print -r ${(j:,:)a}; a=(x y)
+print -r ${(s.:.)x}; x=a.b.c
+print -r ${(f)x}; x=$'a\nb'
+arr=(a b c); print -r ${arr[(I)b]}
+arr=(a b c); print -r ${arr[(R)b]}
+arr=(9 8 7); print -r ${arr[-2,-1]}
+typeset -A h; h=(k v); print -r ${(k)h}
+typeset -A h; h=(a 1 b 2); print -r ${(kv)h}
+print -r ${+options}
+print -r ${+parameters}
+print -r ${+aliases}
+print -r ${+functions}
+print -r $ZSH_NAME
+print -r ${ZSH_VERSION%%.*}
+whence -w print
+command -v true
+emulate -L zsh; print -r $?
+alias za='echo z'; za; unalias za 2>/dev/null
+read -r line <<< 'one two'; print -r $line
+cat <<< 'herestring'
+echo hello 2>/dev/null
+printf '%s\n' a b c | head -1
+true && echo yes
+false || echo yes
+(exit 3); print -r $?
+print -r ${status}; (exit 4)
+print -r $(( 1_000 + 1 ))
+print -r $(( 5#101 ))
+print -r $(( 0b1111 ))
+print -r $(( 2 ** 3 ** 2 ))
+float f=1.5; print -r $(( f * 2 ))
+typeset -F2 f=3.14; print -r $f
+[[ /etc/hosts -nt /tmp ]]; print -r $?
+[[ /tmp -ot /etc/hosts ]]; print -r $?
+[[ /etc/hosts -ef /etc/hosts ]]; print -r $?
+setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?
+print -r ${(L)${(U)m}}; m=aBc
+print -r ${#x}; x=hello
+print -r ${#a}; a=(a b c)
+print -r ${(c)#a}; a=(ab cd)
+print -r ${(b)x}; x=hi
+print -r ${(e):-2+2}
+print -r ${(P)r}; r=HOME
+print -r ${(on)n}; n=(10 2 1)
+print -r ${(eu)n}; n=(a A b)
+print -r ${(L@)n}; n=(a B)
+typeset -aU u=(a a b); print -r ${#u}
+typeset -h hv=1; print -r ${+hv}
+x=a1a2; p=a; print -r ${x//p/r}
+for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done
+while :; do break; print -r n; done; print -r after
+case w in (a|b) echo ab ;; *) echo star ;; esac
+if [[ -n '' ]]; then echo y; else echo n; fi
+print -r ${argv[1]}; set -- p q
+print -r $ARGC; set -- a b
+print -r ${dirstack[1]:-empty}
+print -r ${+pipestatus}
+print -r ${+history}
+print -r ${+commands}
+print -r ${+builtins}
+print -r ${+widgets}
+print -r ${+terminfo}
+print -r ${+modules}
+print -r ${+patchars}
+print -r ${+reswords}
+print -r ${+dis_aliases}
+print -r ${+dis_functions}
+print -r ${+parameters[(I)PATH]}
+arr=(a b c d); print -r ${arr[2,3]}
+arr=(1 2 3); print -r ${arr[1,-1]}
+print -r ${arr[(i)2]}; arr=(1 2 3)
+print -r ${arr[(Ie)2]}; arr=(1 2 3)
+s=barfooxyz; print -r ${s[(i)foo]}
+typeset -A h; h=(k v); print -r ${h[(R)v]}
+typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}
+print -r $(( 9 & 6 ^ 3 ))
+print -r $(( 128 >> 2 ))
+print -r $(( ~(255) & 0xff ))
+print -r $(( 3 <|> 5 ))
+print -r $(( 3 <> 5 ))
+(( 5#11 )); print -r $?
+integer n=5; (( n ^= 3 )); print -r $n
+integer n=5; (( n <<= 1 )); print -r $n
+integer n=5; (( n >>= 1 )); print -r $n
+integer n=5; (( n /= 2 )); print -r $n
+integer n=5; (( n %= 3 )); print -r $n
+typeset -i8 n=10; print -r $n
+typeset -i16 n=255; print -r $n
+typeset -E2 n=4000; print -r $n
+typeset -R4 n=hi; print -r $n
+typeset +L n=Ab; print -r $n
+typeset +U n=xy; print -r $n
+typeset +i n=4; print -r $n
+export EX=1; print -r $EX; unset EX
+readonly ro=5; print -r $ro
+print -r ${${v:-fb}}; unset v
+print -r ${${v:+set}:-unset}; unset v
+word=$'l1\nl2'; print -r ${(@f)word}
+word=  hi  ; print -r ${(W)word}
+print -r ${(z)word}; word=a b c
+print -r ${(F)x}; x=$'p\nq'
+print -r ${(A)x}; x=1 2
+print -r ${(aa)x}; x=(1 2)
+print -r ${(%)2}
+o=8; print -r ${(0)o}
+str=abc.def; print -r ${str:r}
+str=abc.def; print -r ${str:e}
+[[ -h /dev/stdin ]]; print -r $?
+[[ -p /dev/fd/0 ]]; print -r $?
+[[ -O /etc/hosts ]]; print -r $?
+[[ -G / ]]; print -r $?
+[[ -a /etc/hosts ]]; print -r $?
+[[ bee = *ee* ]]; print -r $?
+[[ 1 -eq 1 ]]; print -r $?
+[[ 1 -ne 2 ]]; print -r $?
+[[ 3 -lt 5 ]]; print -r $?
+[[ 5 -le 5 ]]; print -r $?
+[[ 5 -gt 3 ]]; print -r $?
+[[ 5 -ge 5 ]]; print -r $?
+[[ -o nullglob ]]; print -r $?
+unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?
+setopt extendedglob; [[ -o extendedglob ]]; print -r $?
+[[ -o no_extendedglob ]]; print -r $?
+print -r $(( 1 , 2 , 3 ))
+print -r $(( 3 < 5 ? 1 : 0 ))
+print -r $(( 0xff & 0x0f ))
+print -r $(( 1 << 4 ))
+print -r $(( 16 >> 2 ))
+print -r $(( -1 >> 1 ))
+print -r $(( 8#17 ))
+print -r $(( 16#ff ))
+print -r $(( 2#1010 ))
+print -r $(( 0b1010 ))
+typeset -F1 c=1.05; print -r $(( c > 1 ))
+print -r $(( 4 % 2 == 0 ))
+print -r $(( 0 - 1 == -1 ))
+print -r $(( 72 / 8 / 3 ))
+print -r $(( 24 % 5 % 3 ))
+print -r $(( 2 | 4 | 8 ))
+print -r $(( 15 ^ 9 ))
+print -r $(( 0 || 0 || 7 ))
+print -r $(( 1 || -1 ))
+print -r $(( (1>0) + (0>0) ))
+print -r $(( 3 > 2 > 1 ))
+print -r $(( (9>8)>>(1<0) ))
+print -r $(( 5 ** 2 % 7 ))
+print -r $(( 11 ** 2 % 50 ))
+print -r $(( 100 / 20 / 5 ))
+print -r $(( 2#101 & 2#010 ))
+print -r $(( 0x80 >> 4 ))
+print -r $(( 5 ** 0 ** 3 ))
+print -r $(( -(-(-5)) ))
+print -r $(( (1+2)*(3+4) ))
+v1=v1; [[ v1 -ef v1 ]]; print -r $?
+[[ "" != x ]]; print -r $?
+[[ -n /dev/null ]]; print -r $?
+setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?
+setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?
+setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?
+setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?
+[[ abc < abd ]]; print -r $?
+[[ abc > abb ]]; print -r $?
+[[ abc != def ]]; print -r $?
+[[ abc == abc ]]; print -r $?
+print -r ${(L)@}; set -- MIXED
+slice=abcdef; print -r $slice[3,5]
+typeset -aS ary=x y; print -r $ary[2]
+pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?
+builtin cd -q / 2>/dev/null; print -r $?
+cd /tmp 2>/dev/null; print -r ${PWD:t}
+hash -r 2>/dev/null; print -r $?
+autoload -Uz is-at-least 2>/dev/null; print -r $?
+whence -v print 2>/dev/null; print -r $?
+whence -p ls 2>/dev/null | head -1
+typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?
+functions fn 2>/dev/null; fn(){ :; }; print -r $?
+unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?
+print -r ${aliases[za]:-none}
+print -r ${(t)parameters[PATH]}
+print -r ${(k)parameters[(I)PATH]}
+print -r ${+parameters[PATH]}
+print -r ${+functions[fn]}; fn(){}
+print -r ${+commands[print]}
+print -r ${+zsh_eval_context}
+print -r ${+functrace}
+print -r ${+funcstack}
+print -r ${+funcfiletrace}
+print -r ${+jobstates}
+print -r ${+jobtexts}
+print -r ${+jobdirs}
+print -r ${+historywords}
+print -r ${+usergroups}
+print -r ${+dis_builtins}
+print -r ${+dis_widgets}
+print -r ${+dis_reswords}
+print -r ${+dis_patchars}
+print -r ${+dis_commands}
+print -r ${+module_path}
+print -r ${+functrace}
+true | true | false; print -r ${pipestatus[3]}
+{ true; false; }; print -r $?
+fn(){ typeset -a la=(x y); print -r ${#la}; }; fn
+print -r ${arr[@]:1:2}; arr=(a b c d)
+print -r ${(pj:,:)a}; a=(x y)
+print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)
+print -r ${(Mv)h}; typeset -A h; h=(x 1 y 2)
+print -r ${(oa)n}; n=(10 2 1)
+print -r ${(On)n}; n=(10 2 1)
+print -r ${(n)a}; a=(1 2 3)
+print -r ${(N)a}; a=(1 2 3)
+print -r ${(w)#w}; w=a b c
+print -r ${(t)x}; x=hello
+unset y; print -r ${+y}
+x=hello; print -r ${+x}
+print -r ${(q+)x}; x=hi
+x=foo; print -r ${x:s/foo/bar/}
+x=foofoo; print -r ${x//foo/bar}
+x=abc; print -r ${x/#a/z}
+x=abc; print -r ${x/%c/z}
+print -r ${(j::)a}; a=(x y)
+print -r ${(pj::)a}; a=(x y)
+print -r ${(ps:\n:)x}; x=$'a\nb'
+print -r ${(e)x}; x=$'2+2'
+integer co=0; : $(( co=6 )); print -r $co
+print -r $(( 1<<0 ))
+print -r $(( 1<<10 ))
+print -r $(( 0x7fffffff & 0 ))
+print -r $(( 1000003 % 97 ))
+print -r $(( 63 & 31 | 15 ))
+print -r $(( 0x10001 % 256 ))
+print -r $(( 2*2*2*2 ))
+print -r $(( (1==1)+(0==1) ))
+print -r $(( 1 && (0 || 1) ))
+[[ zero = <-> ]]; print -r $?
+[[ . = . ]]; print -r $?
+[[ a -lt b ]]; print -r $?
+[[ ABC = [A-Z]## ]]; print -r $?
+[[ AAA =~ ^A+ ]]; print -r $?
+[[ bot = *ot* ]]; print -r $?
+[[ -e /dev/null ]]; print -r $?
+[[ -s /dev/null ]]; print -r $?
+[[ -u /etc/hosts ]]; print -r $?
+[[ -g / ]]; print -r $?
+[[ -k /tmp ]]; print -r $?
+[[ -b /dev/null ]]; print -r $?
+[[ -c /dev/null ]]; print -r $?
