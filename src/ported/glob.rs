@@ -2965,6 +2965,11 @@ pub struct qualifier_set {
     ///   `gf_nullglob = !(sense & 1)` — set when `(N)` appears without
     ///   the `^` toggle.
     pub nullglob: bool,
+    /// `(D)` qualifier — include dotfiles in the glob result (override
+    /// the global `globdots`/`dotglob` option for this glob alone).
+    /// Direct port of zsh/Src/glob.c case 'D' which sets
+    /// `gf_glob.dots = 1` for the duration of this glob expansion.
+    pub globdots: bool,
 }
 
 /// Pattern component
@@ -3549,7 +3554,7 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // c:1567-1569 — `case 'N': gf_nullglob = !(sense & 1);`.
             // Per-glob nullglob: empty result on no-match, no error.
             'N' => qs.nullglob = !negated,
-            'D' => { /* dotglob handled elsewhere */ }
+            'D' => qs.globdots = !negated,
             'n' => { /* numsort handled elsewhere */ }
             // (M) / (T) — set per-qualifier-set flags. glob.c:1557-1566:
             //   case 'M': gf_markdirs = !(sense & 1);  break;
@@ -3872,13 +3877,21 @@ fn scan_pattern(
         Err(_) => return,
     };
 
+    // c:Src/glob.c — globdots is the GLOBAL `dotglob`/`globdots`
+    // option OR the per-glob `(D)` qualifier. The qualifier lives
+    // on state.qualifiers and is parsed BEFORE walking starts.
+    let qual_globdots = state
+        .qualifiers
+        .as_ref()
+        .map(|q| q.globdots)
+        .unwrap_or(false);
+    let no_glob_dots = !glob_isset(GLOBDOTS) && !qual_globdots;
     for entry in dir.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
 
         // Skip hidden files unless pattern starts with `.`. The bash
         // alias `dotglob` resolves to `globdots` in zsh (per
         // OPT_ALIAS entry at options.c:270); we read only the canonical name.
-        let no_glob_dots = !glob_isset(GLOBDOTS);
         if no_glob_dots && name.starts_with('.') && !pattern.starts_with('.') {
             continue;
         }
@@ -4007,12 +4020,22 @@ fn scan_recursive(
         Err(_) => return,
     };
 
+    // c:Src/glob.c — globdots is the GLOBAL `dotglob`/`globdots`
+    // option OR the per-glob `(D)` qualifier (`gf_glob.dots = 1`).
+    // The qualifier lives on state.qualifiers and is parsed BEFORE
+    // walking starts.
+    let qual_globdots = state
+        .qualifiers
+        .as_ref()
+        .map(|q| q.globdots)
+        .unwrap_or(false);
+    let include_dots = glob_isset(GLOBDOTS) || qual_globdots;
     for entry in dir.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
 
         // Skip hidden files (bash `dotglob` aliases to zsh
         // `globdots` per OPT_ALIAS entry at options.c:270).
-        if !glob_isset(GLOBDOTS) && name.starts_with('.') {
+        if !include_dots && name.starts_with('.') {
             continue;
         }
 
