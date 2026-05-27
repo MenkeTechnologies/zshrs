@@ -74,7 +74,6 @@ mod raw_mode {
 
     /// Without -r, backslash escapes are processed (line continuation).
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: read default backslash-space handling differs from zsh"]
     fn read_default_consumes_backslash() {
         assert_parity(r#"read X <<< 'a\ b'; echo "[$X]""#);
     }
