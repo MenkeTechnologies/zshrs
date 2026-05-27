@@ -891,6 +891,12 @@ impl ZshCompiler {
                 0,
             );
             self.builder.emit(Op::Pop, 0);
+            // c:Src/exec.c — bare assignment (no command word) still
+            // needs an errexit check so readonly-reassignment + other
+            // errflag-setting paths abort the script. Previously the
+            // path returned without checking, leaving the failed
+            // assignment as a no-op + the next statement ran.
+            self.emit_errexit_check();
             return;
         }
 
