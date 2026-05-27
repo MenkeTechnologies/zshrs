@@ -6723,9 +6723,15 @@ pub fn bin_print(
     // includes GETKEY_EMACS. zsh keeps the `\` (echo uses GETKEYS_ECHO,
     // no EMACS).
     let dash_e = OPT_ISSET(ops, b'e');
+    // c:Src/builtin.c:4754 — BSD_ECHO option flips echo's default:
+    // escape processing is OFF unless `-e` is explicitly passed.
+    // Without bsd_echo (the SysV default), escapes process unless
+    // `-E`/`-R`/`-r` is set.
+    let bsd_echo_active = echo_mode && isset(optlookup("bsdecho"));
     let suppress_escapes = OPT_ISSET(ops, b'R')
         || OPT_ISSET(ops, b'r')
-        || (echo_mode && OPT_ISSET(ops, b'E'));
+        || (echo_mode && OPT_ISSET(ops, b'E'))
+        || (bsd_echo_active && !dash_e);
     let mut backslash_c_truncated = false;
     if !suppress_escapes || dash_e {
         let escape_how: u32 = if !echo_mode && !dash_e {
