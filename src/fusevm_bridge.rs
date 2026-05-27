@@ -4663,7 +4663,7 @@ pub const BUILTIN_REDIRECT_FAILED_CHECK: u16 = 605;
 /// word path (`$cmd`, `$(cmd)`, `~/bin/foo`). Returns
 /// Value::Status(vm.last_status) when post-expansion argv is empty
 /// (preserves the inner cmd-subst's exit), Value::Status(126) with
-/// "permission denied" when argv[0] is empty, otherwise routes
+/// "permission denied" when `argv[0]` is empty, otherwise routes
 /// through executor.host_exec_external like Op::Exec did.
 pub const BUILTIN_EXEC_DYNAMIC: u16 = 606;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
