@@ -56,13 +56,11 @@ mod exit_trap {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap EXIT doesn't fire on explicit exit"]
     fn trap_exit_runs_with_explicit_exit() {
         assert_parity(r#"trap 'echo bye' EXIT; exit 0"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap EXIT body doesn't fire; $? not surfaced"]
     fn trap_exit_sees_exit_status() {
         assert_parity(r#"trap 'echo exit=$?' EXIT; (exit 7)"#);
     }

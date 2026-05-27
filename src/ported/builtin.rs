@@ -7552,6 +7552,24 @@ pub fn zexit(val: i32, from_where: i32) {
         BREAKS.store(LOOPS.load(Relaxed), Relaxed);
         return;
     }
+    // c:Src/builtin.c:6075-6079 — fire EXIT trap (SIGEXIT) before
+    // calling realexit. The trap body sees $? = val (carried via
+    // LASTVAL below) and runs in the shell process. Remove the
+    // entry from traps_table first so the trap body's own commands
+    // don't re-trigger it recursively.
+    let exit_trap = traps_table()
+        .lock()
+        .ok()
+        .and_then(|mut t| t.remove("EXIT"));
+    if let Some(body) = exit_trap {
+        // Set LASTVAL to the requested exit value so `$?` inside
+        // the trap body sees the right number (matches `(exit 7)`
+        // → trap body reads $?=7).
+        LASTVAL.store(val, Relaxed);
+        crate::ported::signals::in_exit_trap.store(1, Relaxed);
+        let _ = crate::ported::exec_hooks::execute_script(&body);
+        crate::ported::signals::in_exit_trap.store(0, Relaxed);
+    }
     realexit(); // c:6082
 }
 

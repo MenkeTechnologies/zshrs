@@ -1229,6 +1229,13 @@ impl ShellExecutor {
         crate::fusevm_disasm::maybe_print_stdout(label, &chunk);
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
+        // Seed vm.last_status with the executor's current LASTVAL so
+        // sub-VMs (EXIT trap bodies, eval, source) see the inherited
+        // `$?` from the caller's last command — matching C zsh where
+        // lastval is a process global. Without this, the new VM
+        // started at 0 and BUILTIN_GET_VAR's sync_status would write
+        // 0 back into LASTVAL on the first `$?` read.
+        vm.last_status = self.last_status();
         let _ctx = ExecutorContext::enter(self);
         match vm.run() {
             fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
@@ -1274,7 +1281,15 @@ impl ShellExecutor {
             .and_then(|mut t| t.remove("EXIT"));
         if let Some(action) = exit_body {
             tracing::debug!("firing EXIT trap (new pipeline)");
+            // c:Src/signals.c — the EXIT trap body sees $? at the
+            // value the script left off (so `trap 'echo $?' EXIT;
+            // (exit 7)` prints 7), but the SHELL's final exit code
+            // is still the pre-trap value (running `echo` inside
+            // the trap doesn't reset the script's exit status).
+            // Preserve `status` and re-apply it after the trap
+            // body returns.
             let _ = self.execute_script_zsh_pipeline(&action);
+            self.set_last_status(status);
         }
 
         let _ = status;
