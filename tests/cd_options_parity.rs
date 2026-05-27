@@ -92,7 +92,6 @@ mod cd_s_safe {
 
     /// `cd -s` refuses symlinks (zsh-specific).
     #[test]
-    #[ignore = "ZSHRS BUG: cd -s safe-mode (refuse symlinks) not implemented"]
     fn cd_dash_s_rejects_symlink() {
         let d = tdir();
         std::fs::create_dir(d.path().join("real")).unwrap();

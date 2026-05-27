@@ -1426,6 +1426,19 @@ pub fn bin_cd(
     }
     let dest_raw = dest.unwrap();
 
+    // c:Src/builtin.c:851 — `-s` safe mode: refuse to chdir into a
+    // symlink. Check via fs::symlink_metadata so we see the link
+    // itself, not its target.
+    if OPT_ISSET(ops, b's') {
+        if let Ok(meta) = fs::symlink_metadata(&dest_raw) {
+            if meta.file_type().is_symlink() {
+                zwarnnam(nam, &format!("{}: symbolic link", dest_raw));
+                unqueue_signals();
+                return 1;
+            }
+        }
+    }
+
     // c:Src/builtin.c:855 — route the resolved arg through
     // cd_do_chdir so CDPATH walk, leading `~`/`.` handling, and
     // CDABLEVARS expansion fire. cd_do_chdir performs the actual
