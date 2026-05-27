@@ -34,15 +34,20 @@ use zsh::compsys::{build_cache_from_fpath, cache::CompsysCache, compinit_lazy, g
 // MenuState / MenuAction were deleted with completion.rs + compcore.rs
 // + menu.rs. Stub locally so this bin still compiles; real menu +
 // completion assembly now live in src/ported/zle/{compcore,complist}.rs.
+// The stubs aren't reached by the live REPL code path — `dead_code`
+// is suppressed wholesale on the vestigial block.
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 struct CompsysCompletion {
     pub disp: Option<String>,
     pub desc: Option<String>,
 }
+#[allow(dead_code)]
 impl CompsysCompletion {
     fn new(_s: impl AsRef<str>) -> Self { Self::default() }
 }
+#[allow(unused_imports)]
 use CompsysCompletion as Completion;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -70,17 +75,21 @@ struct MenuLine { content: String }
 #[derive(Clone, Debug, Default)]
 struct MenuResult;
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 struct CompletionGroup {
     pub matches: Vec<CompsysCompletion>,
 }
+#[allow(dead_code)]
 impl CompletionGroup {
     fn new(_name: impl AsRef<str>) -> Self { Self::default() }
     fn add(&mut self, c: CompsysCompletion) { self.matches.push(c); }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 struct CompletionState;
+#[allow(dead_code)]
 impl CompletionState {
     fn new() -> Self { Self }
     fn from_line(_line: &str, _cursor: usize) -> Self { Self }
@@ -89,6 +98,7 @@ impl CompletionState {
     fn end_group(&mut self) {}
 }
 
+#[allow(dead_code)]
 fn do_completion(
     _line: &str,
     _cursor: usize,
