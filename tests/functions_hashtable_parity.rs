@@ -57,7 +57,6 @@ mod functions_hashtable {
 
     /// Setting $functions[name] = body defines a function.
     #[test]
-    #[ignore = "ZSHRS BUG: $functions[name]=body assignment doesn't define function"]
     fn functions_assignment_defines_function() {
         assert_parity(r#"functions[greet]='echo hello'; greet"#);
     }
@@ -86,7 +85,6 @@ mod aliases_hashtable {
 
     /// `aliases[name]=val` defines an alias.
     #[test]
-    #[ignore = "ZSHRS BUG: $aliases[name]=val assignment doesn't define alias"]
     fn aliases_assignment_defines() {
         assert_parity(r#"aliases[myhi]='echo hi'; alias myhi | head -1"#);
     }
