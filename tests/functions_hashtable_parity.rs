@@ -164,13 +164,11 @@ mod nameref {
     /// `typeset -n REF=TARGET` creates a name reference. $REF reads
     /// $TARGET. nameref shows in $parameters.
     #[test]
-    #[ignore = "ZSHRS BUG: typeset -n nameref doesn't dereference; $REF returns empty"]
     fn nameref_via_typeset_n() {
         assert_parity(r#"TARGET=value; typeset -n REF=TARGET; echo $REF"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: nameref doesn't show as 'nameref' type in $parameters"]
     fn nameref_in_parameters_hash() {
         assert_parity(r#"TARGET=value; typeset -n REF=TARGET; echo "${parameters[REF]}""#);
     }
