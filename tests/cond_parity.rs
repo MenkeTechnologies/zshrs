@@ -513,3 +513,27 @@ mod options {
         assert_parity(r#"setopt extendedglob; [[ -o no_extendedglob ]]; echo $?"#);
     }
 }
+
+mod round_pins {
+    use super::*;
+
+    #[test]
+    fn ef_missing_paths() {
+        assert_parity(r#"[[ a -ef b ]] || echo 1; print -r $?"#);
+    }
+
+    #[test]
+    fn nt_hosts_passwd() {
+        assert_parity(r#"[[ /etc/hosts -nt /etc/passwd ]]; print -r $?"#);
+    }
+
+    #[test]
+    fn symlink_tests() {
+        assert_parity(r#"[[ -h /tmp ]] || print -r 0"#);
+    }
+
+    #[test]
+    fn sticky_bit_tmp() {
+        assert_parity(r#"[[ -k /tmp ]]; print -r $?"#);
+    }
+}

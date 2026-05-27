@@ -229,6 +229,30 @@ mod here_string {
     }
 }
 
+mod round_pins {
+    use super::*;
+
+    #[test]
+    fn heredoc_unquoted_eof() {
+        assert_parity("cat <<EOF\nx\nEOF");
+    }
+
+    #[test]
+    fn heredoc_tab_stripped_marker() {
+        assert_parity("cat <<-EOF\n\tx\nEOF");
+    }
+
+    #[test]
+    fn heredoc_quoted_delim_no_expand() {
+        assert_parity("cat <<\\EOF\n$x\nEOF");
+    }
+
+    #[test]
+    fn here_string_unquoted_word() {
+        assert_parity("read -r x <<< word; print -r $x");
+    }
+}
+
 mod heredoc_pipeline {
     use super::*;
 

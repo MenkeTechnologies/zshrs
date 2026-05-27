@@ -310,6 +310,25 @@ mod loop_exit_status {
     }
 }
 
+mod round_pins {
+    use super::*;
+
+    #[test]
+    fn c_style_for_numeric() {
+        assert_parity("for ((i=1;i<=3;i++)); do print -r $i; done");
+    }
+
+    #[test]
+    fn until_once() {
+        assert_parity("i=0; until (( i >= 1 )); do print -r $i; (( i++ )); done");
+    }
+
+    #[test]
+    fn continue_skips_iteration() {
+        assert_parity("for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done");
+    }
+}
+
 mod fold_in_pipeline {
     use super::*;
 

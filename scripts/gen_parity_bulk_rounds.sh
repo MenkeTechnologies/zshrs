@@ -21,15 +21,14 @@ fi
 # round 11 -> av; round 101 -> eh; round 200 -> ic
 round_suffix() {
   round=$1
-  idx=$((round - 11))
-  if [ "$idx" -lt 5 ]; then
-    printf 'a%c' "$(printf '\\%03o' $((118 + idx)))"
-  else
-    pair=$((idx - 5))
-    g=$((pair / 26))
-    s=$((pair % 26))
-    printf '%c%c' "$(printf '\\%03o' $((98 + g)))" "$(printf '\\%03o' $((97 + s)))"
-  fi
+  awk -v r="$round" 'BEGIN {
+    idx = r - 11
+    if (idx < 5) { printf "a%c", 118 + idx; exit }
+    pair = idx - 5
+  g = int(pair / 26)
+  s = pair % 26
+  printf "%c%c", 98 + g, 97 + s
+  }'
 }
 
 probe_one() {
