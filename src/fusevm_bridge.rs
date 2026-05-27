@@ -2320,10 +2320,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             return Value::Array(items.into_iter().map(Value::str).collect());
         }
-        let (val, in_dq) = with_executor(|exec| {
+        let (val, in_dq, is_known) = with_executor(|exec| {
             sync_status(exec);
-            (exec.get_variable(&name), exec.in_dq_context > 0)
+            let v = exec.get_variable(&name);
+            // For nounset detection: a name is "known" when it has a
+            // paramtab/array/assoc/env entry. Special chars ($?, $#,
+            // $@ etc.) and pure-digit positional params always count
+            // as known regardless of value.
+            let known = !v.is_empty()
+                || name.is_empty()
+                || name.chars().next().map(|c|
+                    !c.is_alphabetic() && c != '_'
+                ).unwrap_or(true)
+                || crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .map(|t| t.contains_key(&name))
+                    .unwrap_or(false)
+                || env::var(&name).is_ok();
+            (v, exec.in_dq_context > 0, known)
         });
+        // c:Src/subst.c:1689 — NO_UNSET / nounset: reading an unset
+        // parameter fires "parameter not set" diagnostic and aborts
+        // the substitution. Direct port of the noerrs gate at c:1689
+        // (zerr + errflag). Matches `set -u` POSIX semantics.
+        if !is_known && opt_state_get("nounset").unwrap_or(false) {
+            crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(1));
+            return Value::str("");
+        }
         // Empty unquoted scalar → drop the arg (zsh "remove empty
         // unquoted words" rule). Returning empty Value::Array makes
         // pop_args contribute zero items. DQ context keeps the empty
