@@ -1698,6 +1698,42 @@ pub fn opt_state_restore(snap: std::collections::HashMap<String, bool>) {
     }
 }
 
+/// c:Src/options.c — `setopt name` / `unsetopt name` resolves `name`
+/// through `optlookup` first so negation aliases (`noglob` → flip
+/// `glob`, `nounset` → flip `unset`) write the canonical slot. Bare
+/// `opt_state_set("noglob", true)` would leave `glob=true` and
+/// `opt_state_get("noglob")` would still return `false` because its
+/// alias arm reads the canonical first. Routing through this helper
+/// keeps the two stores coherent. Returns true iff a known option
+/// (canonical or alias) was found.
+pub fn opt_state_set_via_alias(name: &str, on: bool) -> bool {
+    let optno = optlookup(name);
+    if optno == OPT_INVALID {
+        // Unknown name — fall back to raw set so callers that pass
+        // ad-hoc keys still work. Same end-state behaviour as the
+        // pre-helper SET_RAW_OPT path.
+        if on {
+            opt_state_set(name, true);
+        } else {
+            opt_state_unset(name);
+        }
+        return false;
+    }
+    let (target_optno, negate) = if optno < 0 { (-optno, true) } else { (optno, false) };
+    let target_name = opt_name(target_optno);
+    if target_name.is_empty() {
+        if on {
+            opt_state_set(name, true);
+        } else {
+            opt_state_unset(name);
+        }
+        return false;
+    }
+    let effective = if negate { !on } else { on };
+    opt_state_set(target_name, effective);
+    true
+}
+
 /// !!! RUST-ONLY HELPER — see WARNING block above. Number of entries
 /// currently in the option store (= count of options that have been
 /// touched by set/setopt/unset).
