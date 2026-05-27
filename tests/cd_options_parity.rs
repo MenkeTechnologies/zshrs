@@ -119,7 +119,6 @@ mod cdpath {
 
     /// CDPATH allows `cd name` to find `name` in CDPATH dirs.
     #[test]
-    #[ignore = "ZSHRS BUG: CDPATH search-path for cd not honored"]
     fn cdpath_search_finds_subdir() {
         let d = tdir();
         std::fs::create_dir(d.path().join("project")).unwrap();

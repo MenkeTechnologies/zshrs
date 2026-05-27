@@ -1424,18 +1424,27 @@ pub fn bin_cd(
         unqueue_signals(); // c:852
         return 1; // c:853
     }
-    let dest_path = dest.unwrap();
+    let dest_raw = dest.unwrap();
 
-    // c:856 — `cd_new_pwd(func, dir, OPT_ISSET(ops, 'q'));`
-    // Static-link path: do the actual chdir + PWD/OLDPWD env update.
+    // c:Src/builtin.c:855 — route the resolved arg through
+    // cd_do_chdir so CDPATH walk, leading `~`/`.` handling, and
+    // CDABLEVARS expansion fire. cd_do_chdir performs the actual
+    // lchdir + returns the LOGICAL path (the one to write to PWD).
+    // The previous Rust port called env::set_current_dir(dest_raw)
+    // directly which skipped all of CDPATH, so `CDPATH=/foo cd bar`
+    // would only resolve `./bar` even if `/foo/bar` existed.
+    let dest_path = match cd_do_chdir(nam, &dest_raw, OPT_ISSET(ops, b's') as i32) {
+        Some(p) => p,
+        None => {
+            unqueue_signals();
+            return 1;
+        }
+    };
+
     // c:1238 — `oldpwd = pwd;` snapshot pre-cd $PWD for $OLDPWD.
     //          Read from paramtab (the canonical zsh-side `pwd`
     //          global); was reading OS env which can lag behind.
     let old = getsparam("PWD");
-    if env::set_current_dir(&dest_path).is_err() {
-        unqueue_signals();
-        return 1;
-    }
     // c:Src/builtin.c:849 + cd_new_pwd dirstack maintenance —
     // collapsed into a single post-cd update here since the Rust
     // cd_get_dest returns a String rather than a LinkNode that
@@ -1675,8 +1684,16 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
     if !nocdpath {
         for pp in cdpath.iter() {
             if let Some(ret) = cd_try_chdir(pp, dest, hard) {
-                // c:1037-1040 — print resolved path when from CDPATH (non-".").
-                if !pp.is_empty() && *pp != "." {
+                // c:1037-1040 — print resolved path when from CDPATH
+                // (non-"."), gated on DOPRINTDIR > 0. zsh only prints
+                // the resolved path in interactive mode or when the
+                // shell explicitly set the flag (e.g. `cd -P`). Non-
+                // interactive `-fc` scripts skip the print.
+                if !pp.is_empty()
+                    && *pp != "."
+                    && DOPRINTDIR.load(Relaxed) > 0
+                    && isset(INTERACTIVE)
+                {
                     println!("{}", ret);
                 }
                 return Some(ret);
