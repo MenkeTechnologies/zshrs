@@ -138,7 +138,6 @@ mod timefmt {
 
     /// Custom `TIMEFMT='%J'` → output is just the command name.
     #[test]
-    #[ignore = "ZSHRS BUG: TIMEFMT not honored; zshrs prints default format regardless"]
     fn timefmt_J_just_command_name() {
         if !zsh_available() { return; }
         let z = run_zsh(r#"TIMEFMT='%J'; time true"#);
