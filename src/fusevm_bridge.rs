@@ -4700,6 +4700,9 @@ impl fusevm::ShellHost for ZshrsHost {
                     .lock()
                     .map(|t| t.clone())
                     .unwrap_or_default(),
+                // Snapshot option store so `(set -e)` /
+                // `(setopt extendedglob)` don't leak to parent.
+                opts: crate::ported::options::opt_state_snapshot(),
             });
             // Subshell starts with EXIT trap cleared so the parent's
             // EXIT handler doesn't fire when the subshell ends. zsh:
@@ -4807,6 +4810,11 @@ impl fusevm::ShellHost for ZshrsHost {
                 if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                     *t = snap.traps;
                 }
+                // Restore parent's option store so `(set -e)` /
+                // `(setopt extendedglob)` don't leak. zsh forks
+                // subshells so child option changes die with the
+                // child; we run in-process and must restore.
+                crate::ported::options::opt_state_restore(snap.opts);
             }
         });
         // Decrement SUBSHELL_DEPTH. If a deferred subshell exit

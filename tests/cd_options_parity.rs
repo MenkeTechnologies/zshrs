@@ -167,7 +167,6 @@ mod chase_links {
 
     /// CHASE_LINKS option = always resolve symlinks on cd.
     #[test]
-    #[ignore = "ZSHRS BUG: chase_links option not honored"]
     fn chase_links_resolves_symlink() {
         let d = tdir();
         std::fs::create_dir(d.path().join("real")).unwrap();

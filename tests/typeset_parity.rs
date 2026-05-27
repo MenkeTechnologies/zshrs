@@ -145,7 +145,6 @@ mod case_conversion {
 
     /// `-l` applies on subsequent reassignment too.
     #[test]
-    #[ignore = "ZSHRS BUG: `typeset -l X` then `X=MixedCase` doesn't lowercase on reassignment"]
     fn lowercase_reassignment_persists() {
         assert_parity("typeset -l X; X=MixedCase; echo $X");
     }

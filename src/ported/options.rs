@@ -1688,6 +1688,16 @@ pub fn opt_state_snapshot() -> std::collections::HashMap<String, bool> {
     m.read().map(|g| g.clone()).unwrap_or_default()
 }
 
+/// !!! RUST-ONLY HELPER. Replace the option store wholesale with a
+/// prior snapshot from `opt_state_snapshot`. Used by subshell exit to
+/// undo any `set -e` / `setopt …` modifications the subshell made.
+pub fn opt_state_restore(snap: std::collections::HashMap<String, bool>) {
+    let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    if let Ok(mut g) = m.write() {
+        *g = snap;
+    }
+}
+
 /// !!! RUST-ONLY HELPER — see WARNING block above. Number of entries
 /// currently in the option store (= count of options that have been
 /// touched by set/setopt/unset).
