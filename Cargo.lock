@@ -654,6 +654,8 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 [[package]]
 name = "fusevm"
 version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bddfc061df37c289725f2942d9e1c2ac60a39cd892bbc45b91b55ac16e56c495"
 dependencies = [
  "glob",
  "serde",
@@ -3303,7 +3305,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zshrs"
-version = "0.11.17"
+version = "0.11.18"
 dependencies = [
  "atty",
  "base64",
@@ -3360,7 +3362,7 @@ dependencies = [
 
 [[package]]
 name = "zshrs-daemon"
-version = "0.11.17"
+version = "0.11.18"
 dependencies = [
  "atty",
  "axum",
