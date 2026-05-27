@@ -579,6 +579,74 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::zsh_h::WC_SIMPLE,
         );
         let post = &full[dispatch.precmd_skip..];
+        // c:Src/builtin.c:4500 — `command -p` resets PATH for the
+        // exec to the POSIX-defined default (`getconf PATH`), so
+        // standard utilities resolve even when the caller has
+        // emptied $PATH. zsh restores the original PATH after the
+        // command returns. Mirror via a scoped env::set_var.
+        let dash_p = args.iter().any(|a| {
+            a == "-p" || a == "-pv" || a == "-pV"
+                || (a.starts_with('-') && a.contains('p') && !a.starts_with("--"))
+        });
+        // The post slice from execcmd_compile_head may still contain
+        // `-p` as the first element because precmd-modifier opt
+        // parsing isn't wired here. Strip it manually so the dispatch
+        // below sees the real command name.
+        let post: Vec<String> = if dash_p {
+            post.iter()
+                .filter(|a| {
+                    let s = a.as_str();
+                    !(s.starts_with('-') && s.len() >= 2 && s[1..].chars().all(|c| c == 'p' || c == 'v' || c == 'V'))
+                })
+                .cloned()
+                .collect()
+        } else {
+            post.to_vec()
+        };
+        let post = post.as_slice();
+        let _path_guard = if dash_p {
+            let saved = env::var("PATH").ok();
+            let default_path = std::process::Command::new("getconf")
+                .arg("PATH")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    "/usr/bin:/bin:/usr/sbin:/sbin".to_string()
+                });
+            env::set_var("PATH", &default_path);
+            crate::ported::params::setsparam("PATH", &default_path);
+            Some(saved)
+        } else {
+            None
+        };
+        struct PathGuard {
+            saved: Option<String>,
+            active: bool,
+        }
+        impl Drop for PathGuard {
+            fn drop(&mut self) {
+                if !self.active {
+                    return;
+                }
+                match self.saved.take() {
+                    Some(p) => {
+                        env::set_var("PATH", &p);
+                        crate::ported::params::setsparam("PATH", &p);
+                    }
+                    None => {
+                        env::remove_var("PATH");
+                        crate::ported::params::setsparam("PATH", "");
+                    }
+                }
+            }
+        }
+        let _restore = PathGuard {
+            saved: _path_guard.unwrap_or(None),
+            active: dash_p,
+        };
         if dispatch.has_command_vv {
             // `-v` / `-V` → bin_whence with BIN_COMMAND funcid.
             let mut ops = options {
@@ -3321,24 +3389,46 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_ERREXIT_CHECK, |vm, _argc| {
+        // Returns Value::Int(1) when the caller should jump to the
+        // current scope's return-patch landing (subshell-end / func-
+        // end / chunk-end). Returns Value::Int(0) otherwise. Emit
+        // side at `emit_errexit_check` pairs this with a JumpIfTrue
+        // → return_patches pattern so the caller can short-circuit.
         let last = vm.last_status;
         if last == 0 {
-            return Value::Status(0);
+            return Value::Int(0);
         }
         // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR trap
         // dispatch. Fires whenever a command exits non-zero.
         let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR);
-        let should_exit = with_executor(|exec| {
+        let (errexit_on, in_subshell) = with_executor(|exec| {
             let on_canonical = isset(ERREXIT);
             let on_legacy = opt_state_get("errexit").unwrap_or(false);
-            (on_canonical || on_legacy)
-                && exec.local_scope_depth == 0
-                && exec.subshell_snapshots.is_empty()
+            (
+                on_canonical || on_legacy,
+                !exec.subshell_snapshots.is_empty(),
+            )
         });
-        if should_exit {
-            std::process::exit(last);
+        if !errexit_on {
+            return Value::Int(0);
         }
-        Value::Status(last)
+        if in_subshell {
+            // c:Src/exec.c — `set -e` inside a subshell terminates
+            // the subshell (the forked child), and the parent shell
+            // sees `last` as the subshell's exit status. Set
+            // EXIT_PENDING + EXIT_VAL so subshell_end at the boundary
+            // promotes them into the parent's $?; the caller's
+            // JumpIfTrue will branch to the SubshellEnd landing so
+            // no further ops in the subshell body run.
+            use std::sync::atomic::Ordering;
+            crate::ported::builtin::EXIT_VAL.store(last, Ordering::Relaxed);
+            crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
+        }
+        // Function scope and top-level scope both branch to their
+        // respective return_patches; top-level lands at chunk-end,
+        // so execute_script returns `last` as the script's exit
+        // status (same observable behavior as a process::exit).
+        Value::Int(1)
     });
 
     // `${var:-default}` / `${var:=default}` / `${var:?error}` / `${var:+alt}`

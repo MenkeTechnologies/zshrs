@@ -168,6 +168,13 @@ base64 = "0.22"
 [workspace]
 members = [".", "daemon"]
 
+# Override the crates.io fusevm with the local checkout so unreleased
+# bridge-required additions (e.g. VM::request_halt) are picked up
+# without round-tripping a publish. Per project endgame docs, fusevm
+# is fully owned by MenkeTechnologies and lives next to zshrs.
+[patch.crates-io]
+fusevm = { path = "../fusevm" }
+
 
 # Single source of truth for inter-crate path-dep versions. Updated by
 # `scripts/bp.sh` together with `[workspace.package].version` above so a

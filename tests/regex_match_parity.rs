@@ -59,7 +59,6 @@ mod basic_match {
 
     /// Empty pattern matches anything.
     #[test]
-    #[ignore = "ZSHRS BUG: empty regex pattern '' returns no-match; zsh returns match (exit 0)"]
     fn empty_pattern_matches() {
         assert_parity(r#"[[ "hello" =~ "" ]]; echo $?"#);
     }

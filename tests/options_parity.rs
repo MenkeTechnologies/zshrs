@@ -81,7 +81,6 @@ mod set_dash_flags {
 
     /// `set -e` exits on first error.
     #[test]
-    #[ignore = "ZSHRS BUG: set -e doesn't trigger exit on false; zsh stops + nonzero"]
     fn set_e_exits_on_first_error() {
         // In subshell so the outer test doesn't terminate.
         assert_parity(r#"(set -e; false; echo never); echo $?"#);
@@ -113,7 +112,6 @@ mod set_o_long_form {
 
     /// `set -o errexit` is equivalent to `set -e`.
     #[test]
-    #[ignore = "ZSHRS BUG: set -o errexit doesn't trigger exit; same bug as set -e"]
     fn set_dash_o_errexit_equivalent_to_e() {
         assert_parity(r#"(set -o errexit; false; echo never); echo $?"#);
     }
