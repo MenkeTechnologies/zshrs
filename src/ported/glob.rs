@@ -1566,8 +1566,14 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
                     brace_open = None;
                 }
             }
-            '\u{9a}' if depth == 1 => has_comma = true,
-            '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' => has_dotdot = true,
+            // c:Src/glob.c:hasbraces — accept comma / `..` at ANY depth
+            // (was `depth == 1` only). Nested groups like `{{1,2}}`
+            // have the comma at depth 2; without this, hasbraces
+            // returned false and the outer xpandbraces never ran,
+            // leaving `{{1,2}}` literal instead of expanding to
+            // `{1} {2}` per zsh's nested-brace pass.
+            '\u{9a}' if depth > 0 => has_comma = true,
+            '.' if depth > 0 && i + 1 < len && chars[i + 1] == '.' => has_dotdot = true,
             _ => {}
         }
         i += 1;
@@ -1704,6 +1710,18 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                         }
                         if brace_ccl && !content.is_empty() {
                             return expand_ccl(&prefix, &content, &suffix);
+                        }
+                        // Outer brace has no comma/dotdot at depth 1,
+                        // but content may contain nested braces (e.g.
+                        // `{{1,2}}` → `{1} {2}` — outer braces become
+                        // literal, inner expands).
+                        if content.contains('\u{8f}') {
+                            let inner_expanded = xpandbraces(&content, brace_ccl);
+                            let mut out: Vec<String> = Vec::with_capacity(inner_expanded.len());
+                            for piece in inner_expanded {
+                                out.push(format!("{}{{{}}}{}", prefix, piece, suffix));
+                            }
+                            return Some(out);
                         }
                         return None;
                     }
