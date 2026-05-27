@@ -4454,10 +4454,27 @@ pub fn paramsubst(
                 // is_set was false even though the value is set.
                 || crate::vm_helper::partab_get(&var_name, sub).is_some_and(|v| !v.is_empty())
         } else {
+            // c:Src/params.c::getindex — positional parameters ($1,
+            // $2, …) live in `arrays["@"]`, not in the named-vars
+            // table. The is_set check must consult arrays["@"] when
+            // the var name parses as a positional index. Without
+            // this, `${1:-default}` always fired the default
+            // inside functions even when $1 was set.
+            let positional_set = !var_name.is_empty()
+                && var_name.chars().all(|c| c.is_ascii_digit())
+                && var_name.parse::<usize>().ok().is_some_and(|n| {
+                    if n == 0 {
+                        vars_get("0").is_some()
+                    } else {
+                        arrays_get("@")
+                            .map_or(false, |a| n <= a.len())
+                    }
+                });
             used_subexp
                 || vars_contains(&var_name)
                 || arrays_contains(&var_name)
                 || assoc_contains(&var_name)
+                || positional_set
         };
 
         // ${+name} short-circuit per subst.c:3600 — return "1"/"0".
