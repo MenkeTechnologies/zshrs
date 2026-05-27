@@ -1228,16 +1228,36 @@ fn par_for() -> Option<ZshCommand> {
             .unwrap_or(false)
     {
         let raw = tokstr().unwrap_or_default();
-        // Strip leading Inpar + trailing Outpar, then untokenize the
-        // inner content and split on whitespace for the word list.
+        // Strip leading Inpar + trailing Outpar. KEEP the inner
+        // content tokenized — `for x ({1..3}) …` has `{1..3}` as
+        // Inbrace+content+Outbrace markers, which compile_word_str
+        // needs to detect and brace-expand. Untokenizing here would
+        // collapse the markers to plain `{` `}` chars and the brace-
+        // expansion pass (which strictly requires Inbrace TOKEN per
+        // Src/glob.c:hasbraces) would skip the word entirely.
+        // Split only on UNTOKENIZED whitespace at the top level —
+        // tokenized characters (TOKEN range \u{84}..\u{a1}) are part
+        // of one word; bare ASCII spaces / tabs separate words.
         let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
             ..raw
                 .char_indices()
                 .last()
                 .map(|(i, _)| i)
                 .unwrap_or(raw.len())];
-        let cleaned = super::lex::untokenize(inner);
-        let words: Vec<String> = cleaned.split_whitespace().map(|s| s.to_string()).collect();
+        let mut words: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        for c in inner.chars() {
+            if c == ' ' || c == '\t' || c == '\n' {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+            } else {
+                cur.push(c);
+            }
+        }
+        if !cur.is_empty() {
+            words.push(cur);
+        }
         zshlex();
         ForList::Words(words)
     } else if tok() == STRING_LEX {
@@ -1272,7 +1292,14 @@ fn par_for() -> Option<ZshCommand> {
             ForList::Positional
         }
     } else if tok() == INPAR_TOK {
-        // for var (...)
+        // for var (...) — `for x ({1..3})`: inside the parens, the
+        // list is in WORD position so `{` must lex as the brace-
+        // expansion Inbrace marker, NOT as a body-opener INBRACE_TOK.
+        // Without resetting incmdpos before the next zshlex, the
+        // lexer's LX2_INBRACE arm promotes `{` to INBRACE_TOK and
+        // the word-collection loop exits empty, giving
+        // `for x ({1..3})` an empty iteration.
+        set_incmdpos(false);
         zshlex();
         let mut words = Vec::new();
         while tok() == STRING_LEX || tok() == SEPER {
