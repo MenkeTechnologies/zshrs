@@ -11226,19 +11226,35 @@ fn parse_int_arg(s: &str) -> i64 {
 }
 
 fn format_spec_int(spec: &str, n: i64) -> String {
-    let (left_align, width, _prec) = parse_width_prec(spec);
-    let zero_pad = spec.contains('0') && !left_align;
+    let (left_align, zero_pad_flag, width, prec) = parse_flags_width_prec(spec);
+    // c:libc printf %d — when precision is given, `0` flag is
+    // ignored (precision controls the digit padding instead).
+    let zero_pad = zero_pad_flag && !left_align && prec.is_none();
     // c:Src/builtin.c — `+` flag: prefix positive numbers with `+`.
     // ` ` flag: prefix positive numbers with a space (mutually
     // exclusive with `+` per POSIX; `+` wins when both set).
     let plus_flag = spec.contains('+');
     let space_flag = spec.contains(' ') && !plus_flag;
-    let body = if n >= 0 && plus_flag {
-        format!("+{}", n)
-    } else if n >= 0 && space_flag {
-        format!(" {}", n)
+    let digits = n.unsigned_abs().to_string();
+    // c:libc printf %d precision = minimum number of digits;
+    // zero-pad the body up to that count BEFORE the sign + width.
+    let digits = if let Some(p) = prec {
+        if digits.len() < p {
+            format!("{}{}", "0".repeat(p - digits.len()), digits)
+        } else {
+            digits
+        }
     } else {
-        n.to_string()
+        digits
+    };
+    let body = if n < 0 {
+        format!("-{}", digits)
+    } else if plus_flag {
+        format!("+{}", digits)
+    } else if space_flag {
+        format!(" {}", digits)
+    } else {
+        digits
     };
     let pad = width.saturating_sub(body.chars().count());
     if pad == 0 {
@@ -11266,8 +11282,8 @@ fn format_spec_int(spec: &str, n: i64) -> String {
 /// printf %x / %X / %o with full flag support: `#` prefix, zero pad,
 /// width, left-align. Matches libc printf semantics.
 fn format_spec_radix(spec: &str, n: u64, conv: char) -> String {
-    let (left_align, width, _prec) = parse_width_prec(spec);
-    let zero_pad = spec.contains('0') && !left_align;
+    let (left_align, zero_pad_flag, width, _prec) = parse_flags_width_prec(spec);
+    let zero_pad = zero_pad_flag && !left_align;
     let hash_flag = spec.contains('#');
     let body = match conv {
         'x' => format!("{:x}", n),
@@ -11416,13 +11432,26 @@ fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
 }
 
 fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
+    let (left_align, _zero_pad, width, prec) = parse_flags_width_prec(spec);
+    (left_align, width, prec)
+}
+
+/// Parse printf-format flags `-`, `+`, ` `, `#`, `0`, width digits,
+/// optional `.precision`. Returns (left_align, zero_pad, width, prec).
+/// Mirrors C `parsefmt()` in Src/builtin.c — the `0` flag is only a
+/// flag when it appears BEFORE any width digit; a `0` inside the
+/// width number (e.g. `%10d`) is just part of the width.
+fn parse_flags_width_prec(spec: &str) -> (bool, bool, usize, Option<usize>) {
     let s = spec.trim_start_matches('%');
     let mut i = 0;
     let bytes = s.as_bytes();
     let mut left_align = false;
+    let mut zero_pad = false;
     while i < bytes.len() && matches!(bytes[i], b'-' | b'+' | b' ' | b'#' | b'0') {
-        if bytes[i] == b'-' {
-            left_align = true;
+        match bytes[i] {
+            b'-' => left_align = true,
+            b'0' => zero_pad = true,
+            _ => {}
         }
         i += 1;
     }
@@ -11440,7 +11469,7 @@ fn parse_width_prec(spec: &str) -> (bool, usize, Option<usize>) {
         }
         prec = Some(s[p_start..i].parse().unwrap_or(0));
     }
-    (left_align, width, prec)
+    (left_align, zero_pad, width, prec)
 }
 
 // `findcmd` (Src/exec.c:897) — moved to its canonical home at
