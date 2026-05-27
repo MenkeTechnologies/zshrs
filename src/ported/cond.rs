@@ -736,7 +736,19 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
     // `matchpat(str, p, ...)` which passed text as pattern AND
     // pattern as text — silently mis-routing every `[[ a = pat ]]`
     // glob test against the wrong side. Pass in Rust order.
-    matchpat(&p, str, extended, case_sensitive) // c:557
+    let matched = matchpat(&p, str, extended, case_sensitive); // c:557
+    // c:Src/pattern.c GF_MATCHREF / GF_BACKREF — (#m) writes the
+    // matched substring to $MATCH; (#b) writes capture groups to
+    // $match[]. In `==` cond context the pattern matches the whole
+    // string, so on success $MATCH = str. Capture-group support
+    // (real (#b) parens) is deferred — (#m) covers the high-traffic
+    // case (zinit's plugin-name matching uses it).
+    if matched && extended && p.contains("(#m)") {
+        crate::ported::params::setsparam("MATCH", str);
+        crate::ported::params::setiparam("MBEGIN", 1);
+        crate::ported::params::setiparam("MEND", str.chars().count() as i64);
+    }
+    matched
 }
 
 /// Port of `tracemodcond(char *name, char **args, int inf)` from Src/cond.c:563 — `xtrace`-mode

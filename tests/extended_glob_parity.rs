@@ -107,13 +107,11 @@ mod hash_m_match_var {
 
     /// `(#m)pat` populates $MATCH on success.
     #[test]
-    #[ignore = "ZSHRS BUG: (#m) doesn't populate $MATCH"]
     fn hash_m_populates_match_var() {
         assert_parity(r#"setopt EXTENDED_GLOB; [[ "hello" == (#m)he* ]] && echo "MATCH=$MATCH""#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: (#m) doesn't populate $MATCH for any pattern"]
     fn hash_m_match_var_full_match() {
         assert_parity(r#"setopt EXTENDED_GLOB; [[ "abc123" == (#m)*[0-9]* ]] && echo "MATCH=$MATCH""#);
     }

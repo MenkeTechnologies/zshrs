@@ -2360,6 +2360,21 @@ impl ShellExecutor {
 /// and the VM bridge; `src/ported/*` files inline the compile+match
 /// idiom directly to preserve PORT.md Rule 1 faithfulness.
 pub fn glob_match_static(s: &str, pattern: &str) -> bool {
-    patcompile(pattern, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, s))
+    let matched = patcompile(pattern, PAT_HEAPDUP as i32, None)
+        .map_or(false, |p| pattry(&p, s));
+    // c:Src/pattern.c GF_MATCHREF — `(#m)pat` writes the matched
+    // substring to $MATCH on success. In `[[ str == pat ]]` cond
+    // context the pattern matches the whole string, so on success
+    // $MATCH = the input. Capture-group (#b) is deferred; (#m) is
+    // the high-traffic case (zinit plugin-name matching).
+    if matched && pattern.contains("(#m)") {
+        crate::ported::params::setsparam("MATCH", s);
+        crate::ported::params::setiparam("MBEGIN", 1);
+        crate::ported::params::setiparam(
+            "MEND",
+            s.chars().count() as i64,
+        );
+    }
+    matched
 }
 
