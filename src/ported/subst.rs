@@ -7595,28 +7595,34 @@ pub fn paramsubst(
 
         // Optional `[subscript]`. Per zsh, only valid for declared
         // arrays/assocs — for scalars the `[` stays literal.
+        // Accept both literal `[` and tokenized Inbrack (\u{91}) —
+        // the lexer-pre-tokenized form arrives via the bridge for
+        // `${name[sub]}` inside DQ, while bare-form input from
+        // direct calls (e.g. BUILTIN_ARRAY_INDEX) keeps ASCII `[`.
+        // Parity bug: `$h[$k]` (unbraced, var-in-subscript) lost
+        // the subscript walk because the bracket was already
+        // Inbrack-tokenized by the inner `$k` having been
+        // processed during outer expansion; the `[` -only check
+        // dropped through to scalar lookup, then `[a]` glob'd.
         let mut subscript_str: Option<String> = None; // c:1625
-        if chars.get(pos).copied() == Some('[') {
+        let opener = chars.get(pos).copied();
+        if opener == Some('[') || opener == Some(Inbrack) {
             // c:1625
-            // Collect until matching `]` (depth-tracked so
-            // `$arr[$other[1]]` works).
+            // Collect until matching `]` / Outbrack (depth-tracked
+            // so `$arr[$other[1]]` works).
             let mut depth = 1; // c:1625
             let mut q = pos + 1; // c:1625
             while q < chars.len() && depth > 0 {
                 // c:1625
-                match chars[q] {
-                    // c:1625
-                    '[' => depth += 1, // c:1625
-                    ']' => {
-                        // c:1625
-                        depth -= 1; // c:1625
-                        if depth == 0 {
-                            // c:1625
-                            break; // c:1625
-                        } // c:1625
-                    } // c:1625
-                    _ => {}            // c:1625
-                } // c:1625
+                let ch = chars[q];
+                if ch == '[' || ch == Inbrack {
+                    depth += 1;
+                } else if ch == ']' || ch == Outbrack {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
                 q += 1; // c:1625
             } // c:1625
             if depth == 0 {
