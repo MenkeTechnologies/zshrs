@@ -6826,11 +6826,13 @@ pub fn paramsubst(
                 let vals: Vec<String> = map.values().cloned().collect();
                 value = vals.join(sp); // c:3906
                 joined = true;
-            } else if value.contains(' ') || value.contains('\n') {
-                let parts: Vec<&str> = value.split_whitespace().collect();
-                value = parts.join(sp);
-                joined = true;
             }
+            // c:Src/subst.c:3903 — sepjoin is gated on `isarr ||
+            // quoted_array_with_offset`. For a plain scalar the (j:STR:)
+            // flag is a no-op; do NOT whitespace-split the scalar and
+            // rejoin with STR. Previously a fallback arm split scalars
+            // on whitespace which caused `"${(j:,:)$(echo a b c)}"` to
+            // produce "a,b,c" instead of zsh's "a b c".
             if joined {
                 isarr = 0; // c:3907
             }
