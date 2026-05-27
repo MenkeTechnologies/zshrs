@@ -5699,6 +5699,13 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
+                // c:Src/subst.c:3317 — under qt without @/*-subscript
+                // and without (@) flag, sepjoin first.
+                let is_at_star = matches!(
+                    subscript.as_deref(),
+                    Some("@") | Some("*")
+                );
+                let per_element_array = !has_scalar_sub && (!qt || is_at_star || nojoin == 2);
                 // Strip-one helper. op: 0=#, 1=##, 2=%, 3=%%.
                 // Direct port of subst.c:3540 patmatch dispatch.
                 // (M) handling per c:3176 — keep matched portion, discard rest.
@@ -5733,7 +5740,7 @@ pub fn paramsubst(
                         _ => val.to_string(),
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e, 1)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -5750,6 +5757,17 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
+                // c:Src/subst.c:3317 — under qt (DQ context) without
+                // an explicit @/* subscript AND without the (@) flag
+                // (nojoin != 2), the array sepjoins to scalar BEFORE
+                // strip applies. \`"\${a#pat}"\` strips the joined
+                // "a b c" once, not per element. Parity bug: zshrs
+                // applied per-element in DQ too.
+                let is_at_star = matches!(
+                    subscript.as_deref(),
+                    Some("@") | Some("*")
+                );
+                let per_element_array = !has_scalar_sub && (!qt || is_at_star || nojoin == 2);
                 // c:Src/subst.c:3176 — SUB_MATCH inverts strip semantics:
                 // default returns the rest (after the match); with (M)
                 // returns the matched prefix and discards the rest.
@@ -5784,7 +5802,7 @@ pub fn paramsubst(
                         val.to_string()
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -5801,6 +5819,11 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
+                let is_at_star = matches!(
+                    subscript.as_deref(),
+                    Some("@") | Some("*")
+                );
+                let per_element_array = !has_scalar_sub && (!qt || is_at_star || nojoin == 2);
                 // c:Src/subst.c:3176 — SUB_MATCH for `%%` (longest suffix).
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
                 let strip_one = |val: &str| -> String {
@@ -5828,7 +5851,7 @@ pub fn paramsubst(
                         val.to_string()
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -5845,6 +5868,11 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
+                let is_at_star = matches!(
+                    subscript.as_deref(),
+                    Some("@") | Some("*")
+                );
+                let per_element_array = !has_scalar_sub && (!qt || is_at_star || nojoin == 2);
                 // c:Src/subst.c:3176 — SUB_MATCH for `%` (shortest suffix).
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
                 let strip_one = |val: &str| -> String {
@@ -5867,7 +5895,7 @@ pub fn paramsubst(
                         val.to_string()
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_sub) {
+                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
