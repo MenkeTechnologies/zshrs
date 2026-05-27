@@ -3756,10 +3756,34 @@ pub fn bin_typeset(
             let is_paren_init = raw_v.starts_with('(') && raw_v.ends_with(')') && raw_v.len() >= 2;
             if is_paren_init {
                 let inner = &raw_v[1..raw_v.len() - 1]; // c:2950
-                let elems: Vec<String> = inner
+                let raw_elems: Vec<String> = inner
                     .split_whitespace() // c:2952
                     .map(String::from)
                     .collect();
+                // c:Src/exec.c addvars c:2546-2547 — array RHS goes
+                // through `prefork(vl, PREFORK_SINGLE|PREFORK_ASSIGN)`
+                // which does glob expansion (the SINGLE-flag suppresses
+                // word splitting but NOT globbing). Without this,
+                // \`local -a a=(/etc/h*)\` stored "/etc/h*" literally
+                // instead of expanding to ["/etc/hosts", …].
+                // Mirror by glob-expanding each element via globdata_glob
+                // when the element contains wildcards; unglobable
+                // elements pass through unchanged.
+                let mut elems: Vec<String> = Vec::with_capacity(raw_elems.len());
+                for re in raw_elems {
+                    if crate::ported::pattern::haswilds(&re) {
+                        let expanded = crate::ported::glob::glob_path(&re);
+                        if expanded.is_empty()
+                            || (expanded.len() == 1 && expanded[0] == re)
+                        {
+                            elems.push(re);
+                        } else {
+                            elems.extend(expanded);
+                        }
+                    } else {
+                        elems.push(re);
+                    }
+                }
                 if is_hashed {
                     // c:2960-2975 — `setdataparam(..., PM_HASHED, …)`.
                     // Two assoc-init shapes accepted by zsh:
