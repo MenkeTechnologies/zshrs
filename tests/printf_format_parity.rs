@@ -101,7 +101,6 @@ mod integer_format {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: printf %+d explicit-plus-sign flag not honored"]
     fn percent_d_explicit_plus_sign() {
         assert_parity(r#"printf "%+d\n" 42"#);
     }
@@ -131,7 +130,6 @@ mod hex_format {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: printf %#x doesn't emit 0x prefix"]
     fn percent_hash_x_prefix() {
         assert_parity(r#"printf "%#x\n" 255"#);
     }
@@ -142,7 +140,6 @@ mod hex_format {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: printf %0Nx zero-pad doesn't pad with zeros"]
     fn percent_x_width_zero_pad() {
         assert_parity(r#"printf "%04x\n" 15"#);
     }
@@ -162,7 +159,6 @@ mod octal_format {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: printf %#o doesn't emit leading 0"]
     fn percent_o_with_hash_prefix() {
         assert_parity(r#"printf "%#o\n" 8"#);
     }

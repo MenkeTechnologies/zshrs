@@ -3308,27 +3308,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(0);
         }
         // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR trap
-        // dispatch. Fires whenever a command exits non-zero. dotrap
-        // reads sigtrapped[SIGZERR] + the registered trap body and
-        // runs it; bridge is a passthru.
+        // dispatch. Fires whenever a command exits non-zero.
         let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR);
         let should_exit = with_executor(|exec| {
-            // zsh stores the option as `errexit` (default OFF). Honor
-            // both keys (`errexit=true` from `setopt errexit` /
-            // `set -o errexit`, and `set -e` which currently writes
-            // `errexit=true` too). Also suppress when inside a function
-            // call — zsh's errexit lets functions handle their own
-            // failures unless ERR_RETURN is also set. Also suppress
-            // when inside a subshell — the in-process snapshot/restore
-            // doesn't have a process-isolation boundary, so a real
-            // `process::exit` would tear down the parent shell. Match
-            // zsh's "errexit aborts the subshell only" by leaving the
-            // parent alive (subshell continues until natural end).
-            // errexit lives in two stores. `set -e` / `setopt errexit`
-            // write through bin_setopt → OPTS_LIVE (canonical
-            // `opts[ERREXIT]` per Src/options.c:46). Older paths still
-            // populate `exec.options`. Check both — agree when EITHER
-            // says on.
             let on_canonical = isset(ERREXIT);
             let on_legacy = opt_state_get("errexit").unwrap_or(false);
             (on_canonical || on_legacy)

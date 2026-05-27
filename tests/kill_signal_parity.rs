@@ -116,14 +116,12 @@ mod signals_array {
 
     /// $signals[1] should be EXIT in zsh.
     #[test]
-    #[ignore = "ZSHRS BUG: $signals array entirely empty; zsh populates with EXIT, HUP, INT, ..."]
     fn signals_array_first_is_exit() {
         assert_parity(r#"echo "${signals[1]}""#);
     }
 
     /// $signals should contain HUP, INT, TERM.
     #[test]
-    #[ignore = "ZSHRS BUG: $signals array empty; signal-name lookups all return :no"]
     fn signals_array_contains_common() {
         assert_parity(r#"
 for s in HUP INT TERM KILL; do
@@ -134,7 +132,6 @@ done
 
     /// ${#signals} > 0.
     #[test]
-    #[ignore = "ZSHRS BUG: ${#signals} == 0; zsh populates the array at startup"]
     fn signals_array_nonempty() {
         assert_parity(r#"(( ${#signals} > 0 )); echo $?"#);
     }

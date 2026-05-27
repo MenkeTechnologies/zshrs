@@ -3245,6 +3245,42 @@ pub fn bin_kill(
 ///     per c:3056-3058. Previously the Rust port accepted ANY
 ///     parse-able number including out-of-range values like "9999"
 ///     where C returns -1.
+/// Build the `$signals` special-array contents: zsh's PM_ARRAY at
+/// Src/Modules/parameter.c indexes signal names 1-based with slot
+/// 1 = "EXIT", 2 = "HUP", 3 = "INT", … up to SIGCOUNT real signals
+/// plus the two virtual slots (SIGZERR, SIGDEBUG) — but the canonical
+/// `$signals` array only carries the real OS signals (no virtual
+/// entries). Used by `arrays_get("signals")` in the subst path.
+pub fn sig_names_for_signals_param() -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(
+        crate::ported::signals_h::SIGCOUNT as usize + 1,
+    );
+    // Slot 0 → "EXIT".
+    if let Some(n) = crate::ported::signals_h::sigs_name(0) {
+        out.push(n.to_string());
+    }
+    // Slots 1..=SIGCOUNT → real signal names (HUP, INT, QUIT, …).
+    for s in 1..=crate::ported::signals_h::SIGCOUNT {
+        if let Some(n) = crate::ported::signals_h::sigs_name(s) {
+            out.push(n.to_string());
+        }
+    }
+    // Virtual signals ZERR / DEBUG occupy the tail (SIGCOUNT+1,
+    // SIGCOUNT+2) per c:Src/signames.c — zsh exposes them in
+    // `$signals` after the real OS signals.
+    if let Some(n) = crate::ported::signals_h::sigs_name(
+        crate::ported::signals_h::SIGZERR,
+    ) {
+        out.push(n.to_string());
+    }
+    if let Some(n) = crate::ported::signals_h::sigs_name(
+        crate::ported::signals_h::SIGDEBUG,
+    ) {
+        out.push(n.to_string());
+    }
+    out
+}
+
 pub fn getsigidx(s: &str) -> Option<i32> {
     // c:3052-3058 — numeric-input branch: bounded by VSIGCOUNT + RT range.
     if let Some(first) = s.chars().next() {
