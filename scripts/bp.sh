@@ -111,9 +111,9 @@ publish() {
     sleep 8
 }
 
-# zshrs-parse absorbed into runtime — no longer published separately
-publish compsys
+# zshrs-parse + compsys absorbed into runtime — no longer published
+# separately. Only zshrs-daemon and zshrs remain as standalone crates.
 publish zshrs-daemon
 publish zshrs
 
-echo "✓ bumped to v$NEW and published all 4 crates"
+echo "✓ bumped to v$NEW and published all crates"
