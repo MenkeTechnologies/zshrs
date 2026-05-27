@@ -2592,12 +2592,18 @@ pub(crate) fn op(what: i32) {
                     type_: MN_FLOAT,
                 }
             } else {
+                // c:Src/math.c UMINUS — negating INT_MIN is UB in
+                // C but in two's complement wraps to INT_MIN. zsh
+                // prints \`-9223372036854775808\` for \`\$((-(2**63)))\`.
+                // Rust's plain unary `-` panics in debug builds on
+                // i64::MIN, so use wrapping_neg.
+                let v = if val.type_ == MN_FLOAT {
+                    val.d as i64
+                } else {
+                    val.l
+                };
                 mnumber {
-                    l: -(if val.type_ == MN_FLOAT {
-                        val.d as i64
-                    } else {
-                        val.l
-                    }),
+                    l: v.wrapping_neg(),
                     d: 0.0,
                     type_: MN_INTEGER,
                 }
