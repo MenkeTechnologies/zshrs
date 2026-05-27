@@ -45,31 +45,26 @@ mod basic {
     // remove the #[ignore] when zshrs adopts the C-faithful defer.
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: same-line alias expands; zsh -c defers to next parse"]
     fn alias_simple_expansion() {
         assert_parity(r#"alias hi='echo hello'; hi"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: same-line alias expands; zsh -c defers"]
     fn alias_with_args() {
         assert_parity(r#"alias greet='echo hi'; greet world"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: same-line alias expands; zsh -c defers"]
     fn alias_multi_word_target() {
         assert_parity(r#"alias ll='echo ls -la'; ll"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: same-line alias expands; zsh -c defers"]
     fn alias_can_chain_into_pipeline() {
         assert_parity(r#"alias src='echo line1; echo line2'; src | wc -l"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: same-line alias expands; zsh -c defers"]
     fn alias_to_other_alias() {
         assert_parity(r#"alias a='echo a'; alias b=a; b"#);
     }
@@ -101,14 +96,12 @@ mod position {
 
     /// Quoted command name disables alias expansion.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: alias defer issue in same-line -c (zsh never expands)"]
     fn quoted_command_disables_alias() {
         assert_parity(r#"alias hi='echo HELLO'; \hi 2>/dev/null; echo done"#);
     }
 
     /// Single-quoted command name same.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: alias defer issue in same-line -c"]
     fn single_quoted_command_disables_alias() {
         assert_parity(r#"alias hi='echo HELLO'; 'hi' 2>/dev/null; echo done"#);
     }
@@ -118,7 +111,6 @@ mod unalias {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: alias defer issue in same-line -c"]
     fn unalias_removes_alias() {
         assert_parity(r#"alias hi='echo HELLO'; hi; unalias hi; hi 2>/dev/null; echo done"#);
     }
@@ -209,7 +201,6 @@ mod definition_replacement {
 
     /// Redefining an alias replaces the body.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: alias defer issue in same-line -c"]
     fn alias_redefinition_replaces_body() {
         assert_parity(r#"alias x='echo first'; alias x='echo second'; x"#);
     }

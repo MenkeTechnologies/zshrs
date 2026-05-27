@@ -5052,26 +5052,29 @@ impl fusevm::ShellHost for ZshrsHost {
             _ => {}
         }
 
-        // Alias check first: `alias g='echo hi'; g` rewrites to `echo hi`
-        // before normal function/external dispatch. The expansion is
-        // re-parsed + compiled + run on a nested VM with `args` appended.
-        // Without this branch, aliases would be silently ignored at
-        // run-time and `g` would fall through to "command not found".
-        // Skip when this alias is mid-expansion already — zsh's lexer
-        // disables an alias inside its own body (so `alias ls='ls -la'`
-        // works without recursion). We do the same via a HashSet guard
-        // since we expand at run time, not parse time.
-        // C uses the `alias.inuse` field on the alias node itself
-        // (`Src/zsh.h:1256` `struct alias { ... int inuse; }`) — the
-        // lexer bumps it before splicing the body and clears it after,
-        // so a recursive use within the body sees `inuse != 0` and
-        // refuses to re-expand. Mirror that here against the canonical
-        // `aliastab` instead of a side HashSet on ShellExecutor.
-        let already_expanding = crate::ported::hashtable::aliastab_lock()
-            .read()
-            .ok()
-            .and_then(|tab| tab.get(name).map(|a| a.inuse != 0))
-            .unwrap_or(false);
+        // c:Src/lex.c — alias expansion is a LEXER-TIME pass, not a
+        // run-time lookup. zsh parses the whole `-c` argument (or
+        // script) before executing, so aliases defined in the same
+        // parse unit don't apply to commands parsed earlier. Only at
+        // an INTERACTIVE prompt does each line parse separately with
+        // the latest aliastab visible.
+        //
+        // Gate the run-time alias-rewrite path on `interactive` so
+        // `alias hi='echo hello'; hi` in `-c` mode falls through to
+        // "command not found" (matching zsh) while interactive REPL
+        // input still re-parses with the live aliastab.
+        let interactive = crate::ported::zsh_h::isset(
+            crate::ported::zsh_h::INTERACTIVE,
+        );
+        let already_expanding = if interactive {
+            crate::ported::hashtable::aliastab_lock()
+                .read()
+                .ok()
+                .and_then(|tab| tab.get(name).map(|a| a.inuse != 0))
+                .unwrap_or(false)
+        } else {
+            true // suppress lookup entirely in non-interactive mode
+        };
         let alias_body = if already_expanding {
             None
         } else {
