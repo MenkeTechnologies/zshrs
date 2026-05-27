@@ -3448,6 +3448,71 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             's' => qs.qualifiers.push(qualifier::Setuid),
             'S' => qs.qualifiers.push(qualifier::Setgid),
             't' => qs.qualifiers.push(qualifier::Sticky),
+            // c:Src/glob.c case 'f' — file-mode qualifier accepts
+            // an octal mode (`f755`) or chmod-style symbolic spec
+            // (`fu+x`/`fg-w`/`fa=r`) and matches files whose mode
+            // bits agree. Multiple delimited specs can be chained
+            // by separator character. Direct port of qgetmodespec
+            // dispatch + mode-bit accumulator in qgetmodespec.
+            'f' => {
+                // Skip optional delimiter char (zsh allows `f:0755`
+                // or `f-0755` etc.; the delim is the next char).
+                let rest: String = chars.clone().collect();
+                let trimmed: &str = match rest.chars().next() {
+                    Some(d) if !d.is_alphanumeric() => {
+                        // consume delim and everything until matching
+                        // delim or end of qualifier
+                        for _ in 0..1 {
+                            chars.next();
+                        }
+                        let mut body = String::new();
+                        while let Some(&pc) = chars.peek() {
+                            if pc == d {
+                                chars.next();
+                                break;
+                            }
+                            body.push(pc);
+                            chars.next();
+                        }
+                        // body is the mode spec; we re-parse via
+                        // qgetmodespec which only needs the raw spec
+                        // string. Push into a stash on the qualifier
+                        // value so we don't re-borrow chars.
+                        let parsed = qgetmodespec(&body);
+                        if let Some((who, op, perm, _r)) = parsed {
+                            let _ = who; // qgetmodespec already
+                                         // collapsed who into perm
+                            let (yes, no) = match op {
+                                '=' => (perm, 0o7777 & !perm),
+                                '+' => (perm, 0),
+                                '-' => (0, perm),
+                                _ => (perm, 0),
+                            };
+                            qs.qualifiers.push(qualifier::Mode { yes, no });
+                        }
+                        ""
+                    }
+                    _ => {
+                        let parsed = qgetmodespec(&rest);
+                        if let Some((who, op, perm, r)) = parsed {
+                            let consumed = rest.len() - r.len();
+                            for _ in 0..consumed {
+                                chars.next();
+                            }
+                            let _ = who;
+                            let (yes, no) = match op {
+                                '=' => (perm, 0o7777 & !perm),
+                                '+' => (perm, 0),
+                                '-' => (0, perm),
+                                _ => (perm, 0),
+                            };
+                            qs.qualifiers.push(qualifier::Mode { yes, no });
+                        }
+                        ""
+                    }
+                };
+                let _ = trimmed;
+            }
             // Ownership
             'U' => qs.qualifiers.push(qualifier::OwnedByEuid),
             'G' => qs.qualifiers.push(qualifier::OwnedByEgid),
