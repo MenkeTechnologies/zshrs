@@ -159,7 +159,6 @@ mod common_options_behavior {
 
     /// `setopt no_unset` (nounset) → reading unset var errors.
     #[test]
-    #[ignore = "ZSHRS BUG: setopt nounset doesn't trigger error on unset var read"]
     fn nounset_errors_on_unset_var() {
         assert_parity(r#"(setopt nounset; echo "[$NONEXISTENT_XYZ]") 2>/dev/null; echo exit=$?"#);
     }
