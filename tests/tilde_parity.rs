@@ -134,7 +134,6 @@ mod equals_command_lookup {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: =unknown_cmd error behavior differs"]
     fn equals_unknown_cmd_stays_or_errors() {
         assert_parity(r#"setopt EQUALS; echo =nonexistent_xyz_42_zzz 2>/dev/null"#);
     }
