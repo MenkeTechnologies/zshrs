@@ -1470,13 +1470,19 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
             continue;
         }
         match chars[i] {
-            '{' => {
+            // c:Src/glob.c:hasbraces — Inbrace/Outbrace/Comma TOKEN
+            // strictly (\u{8f} / \u{90} / \u{9a}). The lexer emits
+            // TOKEN form for unescaped `{`/`,`/`}`; `\X` produces
+            // Bnull + ASCII X. After remnulargs strips Bnull, the
+            // ASCII X doesn't match the TOKEN check so escaped
+            // braces correctly bypass expansion.
+            '\u{8f}' => {
                 if depth == 0 {
                     brace_open = Some(i);
                 }
                 depth += 1;
             }
-            '}' if depth > 0 => {
+            '\u{90}' if depth > 0 => {
                 depth -= 1;
                 if depth == 0 {
                     if has_comma || has_dotdot {
@@ -1494,7 +1500,7 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
                     brace_open = None;
                 }
             }
-            ',' if depth == 1 => has_comma = true,
+            '\u{9a}' if depth == 1 => has_comma = true,
             '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' => has_dotdot = true,
             _ => {}
         }
@@ -1567,14 +1573,15 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
     let try_expand_one = |s: &str| -> Option<Vec<String>> {
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len();
-        let start = chars.iter().position(|&c| c == '{')?;
+        // c:Src/glob.c:xpandbraces — Inbrace TOKEN strict.
+        let start = chars.iter().position(|&c| c == '\u{8f}')?;
         let mut depth = 1;
         let mut comma_positions = Vec::new();
         let mut dotdot_pos = None;
         for i in (start + 1)..len {
             match chars[i] {
-                '{' => depth += 1,
-                '}' => {
+                '\u{8f}' => depth += 1,
+                '\u{90}' => {
                     depth -= 1;
                     if depth == 0 {
                         let prefix: String = chars[..start].iter().collect();
@@ -1644,7 +1651,7 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                         return None;
                     }
                 }
-                ',' if depth == 1 => comma_positions.push(i - start - 1),
+                '\u{9a}' if depth == 1 => comma_positions.push(i - start - 1),
                 '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' && dotdot_pos.is_none() => {
                     dotdot_pos = Some(i - start - 1);
                 }
@@ -4322,6 +4329,21 @@ fn expand_range(
     dotdot_pos: usize,
     suffix: &str,
 ) -> Option<Vec<String>> {
+    // c:Src/glob.c::xpandbraces parses brace-range endpoints via
+    // zstrtol, which is TOKEN-aware and treats Dash TOKEN (\u{9b})
+    // as ASCII `-`. Rust's i64::parse only accepts ASCII, so
+    // untokenize the content here before splitting/parsing — matches
+    // C semantics without weakening the strict-TOKEN gates above.
+    let owned: String;
+    let content: &str = if content.chars().any(|c| {
+        let cu = c as u32;
+        (0x84..=0xa1).contains(&cu) && c != '\u{8f}' && c != '\u{90}' && c != '\u{9a}'
+    }) {
+        owned = crate::lex::untokenize(content);
+        &owned
+    } else {
+        content
+    };
     let left = &content[..dotdot_pos];
     let right_start = dotdot_pos + 2;
 
@@ -4455,26 +4477,37 @@ fn expand_comma(
     positions: &[usize],
     suffix: &str,
 ) -> Option<Vec<String>> {
+    // positions are CHAR indices into `content` (per the xpandbraces
+    // walker above that builds them from `chars: Vec<char>`). Slice
+    // by char-index, not byte-index — `&content[last..pos]` would
+    // panic on multi-byte token chars like Comma TOKEN (`\u{9a}`,
+    // 2 UTF-8 bytes) and Inbrace (`\u{8f}`, 2 bytes).
+    let chars: Vec<char> = content.chars().collect();
     let mut results = Vec::new();
-    let mut last = 0;
-
+    let mut last: usize = 0;
     for &pos in positions {
-        let part = &content[last..pos];
+        let part: String = chars[last..pos].iter().collect();
         results.push(format!("{}{}{}", prefix, part, suffix));
         last = pos + 1;
     }
-    results.push(format!("{}{}{}", prefix, &content[last..], suffix));
-
+    let tail: String = chars[last..].iter().collect();
+    results.push(format!("{}{}{}", prefix, tail, suffix));
     Some(results)
 }
 
 fn expand_ccl(prefix: &str, content: &str, suffix: &str) -> Option<Vec<String>> {
+    // c:Src/glob.c:expand_ccl — char-class range expansion for the
+    // `setopt braceccl` brace shape `{m-o}` → m,n,o. Accept both
+    // ASCII `-` and Dash TOKEN (\u{9b}) as the range separator —
+    // the bridge passthru path delivers `{m-o}` with Dash TOKEN
+    // since the lexer tokenizes `-` to Dash inside word context.
     let mut chars_set = HashSet::new();
     let chars: Vec<char> = content.chars().collect();
     let mut i = 0;
 
     while i < chars.len() {
-        if i + 2 < chars.len() && chars[i + 1] == '-' {
+        let is_range = i + 2 < chars.len() && (chars[i + 1] == '-' || chars[i + 1] == '\u{9b}');
+        if is_range {
             let start = chars[i];
             let end = chars[i + 2];
             for c in start..=end {
@@ -4959,6 +4992,35 @@ mod tests {
     use crate::ported::options::{opt_state_set, opt_state_unset};
     use crate::ported::zsh_h::{redir, ERRFLAG_ERROR, REDIR_WRITE};
 
+    /// Convert ASCII brace-expansion source to the lexer-tokenized
+    /// form `hasbraces` / `xpandbraces` consume per c:Src/glob.c —
+    /// ASCII `{` → Inbrace (\u{8f}), `}` → Outbrace (\u{90}), `,` →
+    /// Comma (\u{9a}). Backslash-escaped variants (`\{`, `\}`, `\,`)
+    /// emit Bnull + literal so the canonical "escape via Bnull"
+    /// distinction reaches the brace walker. Used by every test in
+    /// this module that wants to drive the canonical TOKEN-strict
+    /// path with readable ASCII source.
+    fn tok(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => match chars.peek() {
+                    Some('{') | Some('}') | Some(',') => {
+                        out.push('\u{9f}');
+                        out.push(chars.next().unwrap());
+                    }
+                    _ => out.push(c),
+                },
+                '{' => out.push('\u{8f}'),
+                '}' => out.push('\u{90}'),
+                ',' => out.push('\u{9a}'),
+                _ => out.push(c),
+            }
+        }
+        out
+    }
+
     fn setup_test_dir() -> TempDir {
         let dir = TempDir::new().unwrap();
         let base = dir.path();
@@ -4999,16 +5061,16 @@ mod tests {
     #[test]
     fn test_brace_expansion() {
         let _g = crate::test_util::global_state_lock();
-        let result = xpandbraces("{a,b,c}", false);
+        let result = xpandbraces(&tok("{a,b,c}"), false);
         assert_eq!(result, vec!["a", "b", "c"]);
 
-        let result = xpandbraces("file{1,2,3}.txt", false);
+        let result = xpandbraces(&tok("file{1,2,3}.txt"), false);
         assert_eq!(result, vec!["file1.txt", "file2.txt", "file3.txt"]);
 
-        let result = xpandbraces("{1..5}", false);
+        let result = xpandbraces(&tok("{1..5}"), false);
         assert_eq!(result, vec!["1", "2", "3", "4", "5"]);
 
-        let result = xpandbraces("{a..e}", false);
+        let result = xpandbraces(&tok("{a..e}"), false);
         assert_eq!(result, vec!["a", "b", "c", "d", "e"]);
     }
 
@@ -5475,31 +5537,31 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Matched + comma → true.
         assert!(
-            hasbraces("a{b,c}d", false),
+            hasbraces(&tok("a{b,c}d"), false),
             "c:2127 — lbrace + comma + rbrace is a brace expansion"
         );
         // Matched + dotdot → true.
         assert!(
-            hasbraces("file{1..3}.txt", false),
+            hasbraces(&tok("file{1..3}.txt"), false),
             "c:2082 — N..M range is a brace expansion"
         );
         // Matched WITHOUT comma/dotdot → false (it's a literal).
         assert!(
-            !hasbraces("{abc}", false),
+            !hasbraces(&tok("{abc}"), false),
             "literal braces are NOT a brace expansion without comma or dotdot"
         );
         // Unmatched → false.
         assert!(
-            !hasbraces("{abc", false),
+            !hasbraces(&tok("{abc"), false),
             "lone lbrace without matching rbrace is not brace expansion"
         );
         assert!(
-            !hasbraces("abc}", false),
+            !hasbraces(&tok("abc}"), false),
             "lone rbrace is not brace expansion"
         );
         // No braces → false.
-        assert!(!hasbraces("plain", false));
-        assert!(!hasbraces("", false));
+        assert!(!hasbraces(&tok("plain"), false));
+        assert!(!hasbraces(&tok(""), false));
     }
 
     /// `Src/glob.c:2049-2063` — BRACECCL branch: when `isset(BRACECCL)`
@@ -5511,21 +5573,21 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:2049 — BRACECCL: non-empty pair is enough.
         assert!(
-            hasbraces("{abc}", true),
+            hasbraces(&tok("{abc}"), true),
             "c:2049 — BRACECCL: non-empty pair is char-class set"
         );
         assert!(
-            hasbraces("x{q}y", true),
+            hasbraces(&tok("x{q}y"), true),
             "c:2049 — single-char pair counts under BRACECCL"
         );
         // Empty pair shouldn't trigger.
         assert!(
-            !hasbraces("{}", true),
+            !hasbraces(&tok("{}"), true),
             "empty pair still not a brace expansion even under BRACECCL"
         );
         // Without BRACECCL, plain literal-letter pair is NOT a brace expansion.
         assert!(
-            !hasbraces("{abc}", false),
+            !hasbraces(&tok("{abc}"), false),
             "c:2049 — BRACECCL off → plain literal pair stays literal"
         );
     }
@@ -5538,7 +5600,7 @@ mod tests {
     fn hasbraces_depth_1_check_for_comma_dotdot() {
         let _g = crate::test_util::global_state_lock();
         assert!(
-            hasbraces("a{1,2}b{3,4}c", false),
+            hasbraces(&tok("a{1,2}b{3,4}c"), false),
             "two independent top-level pairs, first one matches at depth 1"
         );
     }
@@ -5793,14 +5855,14 @@ mod tests {
     #[test]
     fn xpandbraces_three_alternatives() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(xpandbraces("{a,b,c}", false), vec!["a", "b", "c"]);
+        assert_eq!(xpandbraces(&tok("{a,b,c}"), false), vec!["a", "b", "c"]);
     }
 
     #[test]
     fn xpandbraces_with_prefix_and_suffix() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("pre{x,y,z}post", false),
+            xpandbraces(&tok("pre{x,y,z}post"), false),
             vec!["prexpost", "preypost", "prezpost"]
         );
     }
@@ -5808,14 +5870,14 @@ mod tests {
     #[test]
     fn xpandbraces_numeric_range_ascending() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(xpandbraces("{1..5}", false), vec!["1", "2", "3", "4", "5"]);
+        assert_eq!(xpandbraces(&tok("{1..5}"), false), vec!["1", "2", "3", "4", "5"]);
     }
 
     #[test]
     fn xpandbraces_alpha_range_ascending() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{a..e}", false),
+            xpandbraces(&tok("{a..e}"), false),
             vec!["a", "b", "c", "d", "e"]
         );
     }
@@ -5824,11 +5886,13 @@ mod tests {
     fn xpandbraces_single_alternative_passes_through_literal() {
         // Real zsh 5.9 (`print -l {a}`) outputs `{a}` verbatim — no
         // expansion because there is no comma or range inside the
-        // braces. Pin the literal pass-through; if zshrs strips the
-        // braces, this fails and surfaces the divergence.
+        // braces. xpandbraces operates on TOKEN form throughout
+        // (c:Src/glob.c::xpandbraces); the eventual ASCII conversion
+        // happens later in untokenize. So unit-level pass-through
+        // preserves TOKEN bytes, not ASCII braces.
         let _g = crate::test_util::global_state_lock();
-        let out = xpandbraces("{a}", false);
-        assert_eq!(out, vec!["{a}"], "zsh 5.9 returns the input verbatim");
+        let out = xpandbraces(&tok("{a}"), false);
+        assert_eq!(out, vec![tok("{a}")], "zsh 5.9 returns the input verbatim (TOKEN form preserved at xpandbraces layer)");
     }
 
     #[test]
@@ -5836,7 +5900,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Pure literal has nothing to expand — should yield the input
         // as a single element (or empty for empty input).
-        let out = xpandbraces("plain", false);
+        let out = xpandbraces(&tok("plain"), false);
         assert_eq!(out, vec!["plain"]);
     }
 
@@ -5894,7 +5958,7 @@ mod tests {
     fn xpandbraces_numeric_step_two() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{1..10..2}", false),
+            xpandbraces(&tok("{1..10..2}"), false),
             vec!["1", "3", "5", "7", "9"]
         );
     }
@@ -5904,7 +5968,7 @@ mod tests {
     fn xpandbraces_numeric_descending_step_two() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{10..1..2}", false),
+            xpandbraces(&tok("{10..1..2}"), false),
             vec!["10", "8", "6", "4", "2"]
         );
     }
@@ -5914,7 +5978,7 @@ mod tests {
     fn xpandbraces_numeric_descending_range() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{5..1}", false),
+            xpandbraces(&tok("{5..1}"), false),
             vec!["5", "4", "3", "2", "1"]
         );
     }
@@ -5924,7 +5988,7 @@ mod tests {
     fn xpandbraces_zero_padded_numeric_range() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{01..10}", false),
+            xpandbraces(&tok("{01..10}"), false),
             vec!["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"]
         );
     }
@@ -5934,7 +5998,7 @@ mod tests {
     fn xpandbraces_three_digit_pad_preserved() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{001..010}", false),
+            xpandbraces(&tok("{001..010}"), false),
             vec![
                 "001", "002", "003", "004", "005",
                 "006", "007", "008", "009", "010"
@@ -5953,9 +6017,15 @@ mod tests {
     #[test]
     fn xpandbraces_escaped_braces_remain_literal_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
+        // tok() emits Bnull+ASCII `{` for `\{` and Bnull+ASCII `}` for
+        // `\}`, with Comma TOKEN for the unescaped commas inside.
+        // xpandbraces scans for Inbrace TOKEN only (per
+        // c:Src/glob.c::xpandbraces) — finds none here, so the
+        // string passes through unchanged at this layer. The Bnulls
+        // are stripped later by remnulargs in prefork.
         assert_eq!(
-            xpandbraces("\\{a,b,c\\}", false),
-            vec!["\\{a,b,c\\}"],
+            xpandbraces(&tok("\\{a,b,c\\}"), false),
+            vec![tok("\\{a,b,c\\}")],
             "xpandbraces unit: escaped braces survive without expansion (no per-element splat)"
         );
     }
@@ -5966,7 +6036,7 @@ mod tests {
     fn xpandbraces_cartesian_product_two_by_two() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{a,b}{c,d}", false),
+            xpandbraces(&tok("{a,b}{c,d}"), false),
             vec!["ac", "ad", "bc", "bd"]
         );
     }
@@ -5976,16 +6046,18 @@ mod tests {
     fn xpandbraces_nested_braces_flatten() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{a,{b,c}}", false),
+            xpandbraces(&tok("{a,{b,c}}"), false),
             vec!["a", "b", "c"]
         );
     }
 
-    /// `{}` → `{}` literal (empty brace doesn't expand).
+    /// `{}` → `{}` literal (empty brace doesn't expand). xpandbraces
+    /// preserves TOKEN form at this layer (c:Src/glob.c::xpandbraces);
+    /// ASCII conversion happens later in untokenize.
     #[test]
     fn xpandbraces_empty_braces_remain_literal() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(xpandbraces("{}", false), vec!["{}"]);
+        assert_eq!(xpandbraces(&tok("{}"), false), vec![tok("{}")]);
     }
 
     /// `a{b,c}d{e,f}` → abde abdf acde acdf (cartesian with surrounding text).
@@ -5993,20 +6065,21 @@ mod tests {
     fn xpandbraces_cartesian_with_surrounding_text() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("a{b,c}d{e,f}", false),
+            xpandbraces(&tok("a{b,c}d{e,f}"), false),
             vec!["abde", "abdf", "acde", "acdf"]
         );
     }
 
     /// `{a..z..3}` → `{a..z..3}` literal (alpha range with step NOT expanded
-    /// by zsh — surprising but verified).
+    /// by zsh — surprising but verified). xpandbraces preserves TOKEN form
+    /// at this layer; ASCII conversion happens later in untokenize.
     #[test]
     fn xpandbraces_alpha_step_unsupported_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{a..z..3}", false),
-            vec!["{a..z..3}"],
-            "zsh: alpha range with step → literal"
+            xpandbraces(&tok("{a..z..3}"), false),
+            vec![tok("{a..z..3}")],
+            "zsh: alpha range with step → literal (TOKEN form preserved at xpandbraces layer)"
         );
     }
 
@@ -6021,7 +6094,7 @@ mod tests {
     fn zsh_corpus_basic_brace_with_nested_range() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{1,2,{3..6},7,8}Y", false),
+            xpandbraces(&tok("X{1,2,{3..6},7,8}Y"), false),
             vec!["X1Y", "X2Y", "X3Y", "X4Y", "X5Y", "X6Y", "X7Y", "X8Y"],
             "ztst:11 — basic brace expansion with nested range",
         );
@@ -6033,7 +6106,7 @@ mod tests {
     fn zsh_corpus_numeric_range_zero_padding() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{01..4}Y", false),
+            xpandbraces(&tok("X{01..4}Y"), false),
             vec!["X01Y", "X02Y", "X03Y", "X04Y"],
             "ztst:32 — leading-zero padding propagates to all values",
         );
@@ -6045,7 +6118,7 @@ mod tests {
     fn zsh_corpus_numeric_range_padding_from_rhs() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{1..04}Y", false),
+            xpandbraces(&tok("X{1..04}Y"), false),
             vec!["X01Y", "X02Y", "X03Y", "X04Y"],
             "ztst:36 — RHS padding `04` propagates",
         );
@@ -6057,7 +6130,7 @@ mod tests {
     fn zsh_corpus_numeric_range_no_padding_when_unspecified() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{7..12}Y", false),
+            xpandbraces(&tok("X{7..12}Y"), false),
             vec!["X7Y", "X8Y", "X9Y", "X10Y", "X11Y", "X12Y"],
             "ztst:40 — no padding when neither end has leading zero",
         );
@@ -6068,7 +6141,7 @@ mod tests {
     fn zsh_corpus_numeric_range_lhs_padding_propagates() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{07..12}Y", false),
+            xpandbraces(&tok("X{07..12}Y"), false),
             vec!["X07Y", "X08Y", "X09Y", "X10Y", "X11Y", "X12Y"],
             "ztst:44 — LHS padding `07` propagates",
         );
@@ -6080,7 +6153,7 @@ mod tests {
     fn zsh_corpus_numeric_range_max_padding_width_wins() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{7..012}Y", false),
+            xpandbraces(&tok("X{7..012}Y"), false),
             vec!["X007Y", "X008Y", "X009Y", "X010Y", "X011Y", "X012Y"],
             "ztst:48 — widest padding width wins",
         );
@@ -6092,7 +6165,7 @@ mod tests {
     fn zsh_corpus_numeric_range_decreasing() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{4..1}Y", false),
+            xpandbraces(&tok("X{4..1}Y"), false),
             vec!["X4Y", "X3Y", "X2Y", "X1Y"],
             "ztst:52 — decreasing range emits in reverse",
         );
@@ -6104,7 +6177,7 @@ mod tests {
     fn zsh_corpus_combined_braces_cross_product() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{1..4}{1..4}Y", false),
+            xpandbraces(&tok("X{1..4}{1..4}Y"), false),
             vec![
                 "X11Y", "X12Y", "X13Y", "X14Y",
                 "X21Y", "X22Y", "X23Y", "X24Y",
@@ -6121,7 +6194,7 @@ mod tests {
     fn zsh_corpus_negative_numbers_in_range() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{-4..4}Y", false),
+            xpandbraces(&tok("X{-4..4}Y"), false),
             vec![
                 "X-4Y", "X-3Y", "X-2Y", "X-1Y", "X0Y",
                 "X1Y", "X2Y", "X3Y", "X4Y",
@@ -6136,7 +6209,7 @@ mod tests {
     fn zsh_corpus_brace_descending_range_from_positive_to_negative() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{4..-4}Y", false),
+            xpandbraces(&tok("X{4..-4}Y"), false),
             vec![
                 "X4Y", "X3Y", "X2Y", "X1Y", "X0Y",
                 "X-1Y", "X-2Y", "X-3Y", "X-4Y",
@@ -6153,7 +6226,7 @@ mod tests {
     fn zsh_corpus_brace_stepped_padded_descending() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{004..-4..2}Y", false),
+            xpandbraces(&tok("X{004..-4..2}Y"), false),
             vec!["X004Y", "X002Y", "X000Y", "X-02Y", "X-04Y"],
             "ztst:68 — stepped+padded descending",
         );
@@ -6166,7 +6239,7 @@ mod tests {
     fn zsh_corpus_brace_step_alignment_1_to_32_step_3() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("X{1..32..3}Y", false),
+            xpandbraces(&tok("X{1..32..3}Y"), false),
             vec![
                 "X1Y", "X4Y", "X7Y", "X10Y", "X13Y", "X16Y",
                 "X19Y", "X22Y", "X25Y", "X28Y", "X31Y",
@@ -6180,7 +6253,7 @@ mod tests {
     fn zsh_corpus_brace_char_range_simple() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("hey{a..j}there", false),
+            xpandbraces(&tok("hey{a..j}there"), false),
             vec![
                 "heyathere", "heybthere", "heycthere", "heydthere",
                 "heyethere", "heyfthere", "heygthere", "heyhthere",
@@ -6196,7 +6269,7 @@ mod tests {
     fn zsh_corpus_brace_char_range_reverse() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("crumbs{y..p}ooh", false),
+            xpandbraces(&tok("crumbs{y..p}ooh"), false),
             vec![
                 "crumbsyooh", "crumbsxooh", "crumbswooh", "crumbsvooh",
                 "crumbsuooh", "crumbstooh", "crumbssooh", "crumbsrooh",
@@ -6215,7 +6288,7 @@ mod tests {
     fn zsh_corpus_brace_nested_with_char_range_ascii() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("gosh{1,{Z..a},2}cripes", false),
+            xpandbraces(&tok("gosh{1,{Z..a},2}cripes"), false),
             vec![
                 "gosh1cripes", "goshZcripes", "gosh[cripes", "gosh\\cripes",
                 "gosh]cripes", "gosh^cripes", "gosh_cripes", "gosh`cripes",
@@ -6232,7 +6305,7 @@ mod tests {
     fn zsh_corpus_brace_unmatched_after_matched_left_literal() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            xpandbraces("{1..10}{..", false),
+            xpandbraces(&tok("{1..10}{.."), false),
             vec![
                 "1{..", "2{..", "3{..", "4{..", "5{..",
                 "6{..", "7{..", "8{..", "9{..", "10{..",

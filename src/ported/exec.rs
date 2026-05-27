@@ -5455,7 +5455,29 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     // ($1, $2, …) to the function's args, runs the body via
     // runshfunc, then restores. doshfunc itself isn't ported yet
     // so we do the swap-and-restore inline here.
-    if let Some(prog) = shf.funcdef.as_deref() {
+    // c:5580 — `doshfunc(shf, args, 0);`. The C path always has
+    // `funcdef` populated since C parses at definition time. zshrs
+    // compiles to fusevm chunks instead, so `funcdef` is None for
+    // user-defined functions; only `body` (source string) carries
+    // the definition. When that's the case, build a one-shot eprog
+    // whose `strs` carries the source so runshfunc's script-pipeline
+    // arm (execute_script_zsh_pipeline) executes the body.
+    let prog_owned: Option<crate::ported::zsh_h::eprog> = if shf.funcdef.is_some() {
+        None
+    } else if let Some(ref body) = shf.body {
+        Some(crate::ported::zsh_h::eprog {
+            strs: Some(body.clone()),
+            ..Default::default()
+        })
+    } else {
+        None
+    };
+    let prog_ref: Option<&crate::ported::zsh_h::eprog> = match (shf.funcdef.as_deref(), prog_owned.as_ref()) {
+        (Some(p), _) => Some(p),
+        (_, Some(p)) => Some(p),
+        _ => None,
+    };
+    if let Some(prog) = prog_ref {
         // Save old PPARAMS.
         let old_pparams: Vec<String> = crate::ported::builtin::PPARAMS
             .lock()

@@ -742,51 +742,96 @@ fn stringsubst(
                 || (next_c == Some('(') && chars.get(pos + 2).copied() == Some('('))
             // c:237
             {
-                // c:237
-                // Walk to matching `))`, depth-tracked for nested
-                // `$((a + (b * c)))`. Skip the leading `((`.
-                let start = pos + 3; // c:237 (past `$((`)
-                let mut depth = 2_i32; // c:237 (we've opened 2 parens)
-                let mut p = start; // c:237
-                let mut end_off: Option<usize> = None; // c:237
+                // c:237 — `$((expr))` arith form. The lexer has two
+                // shapes here depending on how DQ/word context tokenised
+                // the parens:
+                //
+                //   ASCII shape  : `$` `(` `(` … `)` `)`  (5+ chars)
+                //   TOKEN shape  : `$` Inparmath … Outparmath
+                //                  (Inparmath represents `((` as one
+                //                  char; Outparmath represents `))`)
+                //   Mixed shape  : `$` Inparmath `(` … `)` Outparmath
+                //                  (the lexer emits the outer pair as
+                //                  TOKEN and a duplicate inner pair too
+                //                  — observed for `"$((1+2))"`).
+                //
+                // For the TOKEN shape, the leading `((` collapses into
+                // a single Inparmath, so the expression begins at
+                // pos+2 and ends at the matching Outparmath. For the
+                // ASCII shape, classic depth-tracked `))` walk applies.
+                let token_shape = next_c == Some(Inparmath);
+                // Mixed shape: lexer emitted Inparmath for outer `((`
+                // AND a literal inner `(`/`)` pair. Detect by peeking
+                // — if chars[pos+2] is ASCII `(`, the inner paren is
+                // there too and the expression body starts at pos+3
+                // (and the matching inner `)` lands just before the
+                // Outparmath). Same depth bookkeeping as ASCII shape.
+                let mixed_shape = token_shape
+                    && chars.get(pos + 2).copied() == Some('(');
+                let start = if mixed_shape {
+                    pos + 3
+                } else if token_shape {
+                    pos + 2
+                } else {
+                    pos + 3
+                };
+                let mut depth = if token_shape && !mixed_shape { 1_i32 } else { 2_i32 };
+                let mut p = start;
+                let mut end_off: Option<usize> = None;
+                let mut end_outparmath = false;
                 while p < chars.len() {
-                    // c:237
-                    let ch = chars[p]; // c:237
-                    if ch == '(' || ch == Inpar {
+                    let ch = chars[p];
+                    if ch == Inparmath {
                         depth += 1;
-                    }
-                    // c:237
-                    else if ch == ')' || ch == Outpar {
-                        // c:237
-                        depth -= 1; // c:237
+                    } else if ch == Outparmath {
+                        depth -= 1;
                         if depth == 0 {
-                            // c:237
-                            end_off = Some(p); // c:237 (closing )) at p .. p+1)
-                            break; // c:237
-                        } // c:237
-                    } // c:237
-                    p += 1; // c:237
-                } // c:237
+                            end_off = Some(p);
+                            end_outparmath = true;
+                            break;
+                        }
+                    } else if ch == '(' || ch == Inpar {
+                        depth += 1;
+                    } else if ch == ')' || ch == Outpar {
+                        depth -= 1;
+                        if depth == 0 {
+                            end_off = Some(p);
+                            break;
+                        }
+                    }
+                    p += 1;
+                }
                 if let Some(end) = end_off {
-                    // c:237
-                    // Expression text is between start and end-1
-                    // (one inner `)` got consumed by depth=1; the
-                    // outer `)` closes us at depth=0).
-                    let expr: String = chars[start..end - 1].iter().collect(); // c:237
-                    let prefix: String = chars[..pos].iter().collect(); // c:237
-                    let suffix: String = if end + 1 < chars.len() {
-                        // c:237
-                        chars[end + 1..].iter().collect() // c:237
+                    // ASCII path: end points at outer `)`; inner `)`
+                    // was already consumed when depth dropped from 2→1.
+                    // TOKEN path: Outparmath is a single char for `))`,
+                    // expression is chars[start..end].
+                    // Mixed shape: Outparmath also covers an inner `)`
+                    // we walked past; expression still ends one char
+                    // before the Outparmath (the ASCII `)` we already
+                    // counted).
+                    let expr_end = if end_outparmath {
+                        let mut e = end;
+                        if e > start && chars[e - 1] == ')' {
+                            e -= 1;
+                        }
+                        e
                     } else {
-                        // c:237
-                        String::new() // c:237
-                    }; // c:237
-                    let result_only = arithsubst(&expr, "", ""); // c:237
-                    str3 = format!("{}{}{}", prefix, result_only, suffix); // c:237
-                    list.setdata(node_idx, str3.clone()); // c:237
-                    pos = prefix.chars().count() + result_only.chars().count(); // c:237
-                    continue; // c:237
-                } // c:237
+                        end - 1
+                    };
+                    let expr: String = chars[start..expr_end].iter().collect();
+                    let prefix: String = chars[..pos].iter().collect();
+                    let suffix: String = if end + 1 < chars.len() {
+                        chars[end + 1..].iter().collect()
+                    } else {
+                        String::new()
+                    };
+                    let result_only = arithsubst(&expr, "", "");
+                    str3 = format!("{}{}{}", prefix, result_only, suffix);
+                    list.setdata(node_idx, str3.clone());
+                    pos = prefix.chars().count() + result_only.chars().count();
+                    continue;
+                }
             } // c:237
 
             if next_is(Inpar, '(') || next_is(Inparmath, '\0') {
@@ -1533,7 +1578,10 @@ fn filesub(namptr: &str, assign: i32) -> String {
 
     // C: `ptr = *namptr; while ((sub = strchr(ptr, ':'))) { … }`
     // Walk `:`-separated path components, reapply filesubstr on each
-    // suffix that starts with `~` or `=`.
+    // suffix that starts with `~` or `=`. Accept both ASCII (`~`/`=`)
+    // and the lexer's TOKEN forms (Tilde \u{98} / Equals \u{8d}) —
+    // the bridge passthru path delivers TOKEN form for unquoted
+    // tildes in assignment RHS like `X=/usr/bin:~/bin`.
     let mut ptr_off = 0_usize; // c:689
     loop {
         // c:690
@@ -1552,11 +1600,17 @@ fn filesub(namptr: &str, assign: i32) -> String {
             Some(e) => sub > e, // c:693
             None => true,       // c:693
         }; // c:693
-        if past_eql                                         // c:693
-            && str_start < namptr.len()                     // c:694
-            && (namptr.as_bytes()[str_start] == b'~'
-                || namptr.as_bytes()[str_start] == b'=')
-        {
+        let starts_with_tilde_or_equals = if str_start < namptr.len() {
+            let suffix = &namptr[str_start..];
+            let first = suffix.chars().next();
+            matches!(
+                first,
+                Some('~') | Some('=') | Some('\u{98}') | Some(Equals)
+            )
+        } else {
+            false
+        };
+        if past_eql && starts_with_tilde_or_equals {
             // c:694
             let rhs = &namptr[str_start..]; // c:691
             if let Some(expanded) = filesubstr(rhs, true) {
@@ -1680,7 +1734,14 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             let home = getsparam("HOME").unwrap_or_default();
             return Some(home);
         }
-        let nx = chars[1]; // c:741
+        // c:Src/subst.c:743+ — the byte AFTER `~` selects the
+        // expansion form (`/`/`+`/`-`/digit/identifier/`=`). The
+        // Rust lexer emits Dash TOKEN (\u{9b}) for `-` and ASCII
+        // for the others, but the discriminator predicates here
+        // are written against ASCII. Normalise Dash → `-` so the
+        // `~-` (OLDPWD) and `~-N` (dirstack) arms below match.
+        let raw_nx = chars[1];
+        let nx = if raw_nx == '\u{9b}' { '-' } else { raw_nx };
         if nx == '=' {
             return None;
         } // c:741 — leave for =arm
@@ -1746,7 +1807,13 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             while p < chars.len() && chars[p].is_ascii_digit() {
                 p += 1;
             }
-            if p > dstart && p < chars.len() && isend(chars[p]) {
+            // c:Src/subst.c:771 — `isend(*ptr)` accepts the NUL
+            // terminator via the `!c` arm of the macro. In the
+            // Rust char-vec model, `p == chars.len()` is the
+            // equivalent. Without this clause `~0` (just digit, no
+            // trailing `/`) reached p==chars.len() and failed the
+            // `p < chars.len()` gate, leaving the literal in place.
+            if p > dstart && (p == chars.len() || isend(chars[p])) {
                 let val: i32 = chars[dstart..p]
                     .iter()
                     .collect::<String>()
@@ -1763,6 +1830,11 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                     .map(|d| d.clone())
                     .unwrap_or_default();
                 let pushdminus = isset(PUSHDMINUS); // c:4906
+                // c:Src/subst.c:786 — bare digit form `~N` without
+                // explicit `+`/`-` defaults to `+N` (top of stack at
+                // 0). When neg==false and we saw no sign char, fall
+                // through to `+` semantics; `dstackent` handles the
+                // 0-of-(empty-stack-with-only-pwd) case.
                 let entry = dstackent(
                     // c:4902
                     if neg { '-' } else { '+' }, // c:4902
@@ -1823,8 +1895,13 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                     }
                 }
             }
-            // Fall through — user not found, return None (caller
-            // decides whether to NOMATCH error).
+            // c:Src/subst.c:803 — `zerr("no such user or named
+            // directory: %s", str+1);` when neither nameddirtab nor
+            // getpwnam resolves. Caller keeps the literal (filesub's
+            // unwrap_or_else); zsh's exit-status fallout comes from
+            // errflag being set so the command exits non-zero.
+            zerr(&format!("no such user or named directory: {}", user));
+            errflag_set_error();
             return None;
         }
         return None;
@@ -1834,10 +1911,13 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
     // `if (*str == Equals && isset(Equals) && str[1] && str[1] != Inpar)`.
     // The previous Rust port had `\u{86}` labeled Equals (wrong — that's
     // Hat; Equals is \u{8d}) AND `\u{85}` labeled Inpar (wrong — that's
-    // Stringg; Inpar is \u{88}). Use canonical consts.
+    // Stringg; Inpar is \u{88}). Use canonical consts. The EQUALS
+    // option gate (c:715) must be honoured — without `setopt EQUALS`
+    // (default off) the `=cmd` form stays literal.
     if (first == '=' || first == Equals)
         && chars.len() > 1
         && chars[1] != Inpar
+        && crate::ported::zsh_h::isset(crate::ported::zsh_h::EQUALSOPT)
     {
         let cmd_part: String = chars[1..].iter().collect();
         // Split at `:` if assign, else take the whole thing.
@@ -2789,7 +2869,12 @@ pub fn paramsubst(
         // — NOT IN C. Set when `${(@)${(@)…}…}` outer (@) triggers
         // multsub on the inner; cleared at end of paramsubst.
         let mut subexp_array_temp: Option<String> = None; // c:N/A (Rust-only)
-        if body_chars.first() == Some(&'(') {
+        // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
+        // and Inpar TOKEN (\u{88}) — the lexer emits Inpar TOKEN for
+        // `${(flag)name}` in DQ context and in the new bridge passthru
+        // path where raw tokenized text reaches paramsubst without an
+        // intermediate untokenize pass.
+        if matches!(body_chars.first(), Some(&'(') | Some(&Inpar)) {
             // c:2147
             // `~` inside `(flags)` toggles tok_arg for untok_and_escape on
             // s/j/l/r flag args — subst.c:2157-2159 (not globsubst).
@@ -2800,7 +2885,7 @@ pub fn paramsubst(
                      // Direct port of zsh's flagerr label which calls zerr
                      // and aborts the substitution. Emit and bail rather than
                      // silently treating the entire body as flag chars.
-            if !body_chars.iter().skip(1).any(|c| *c == ')') {
+            if !body_chars.iter().skip(1).any(|c| *c == ')' || *c == Outpar) {
                 // c:2147
                 zerr("bad substitution"); // c:2147
                 errflag_set_error(); // c:2147
@@ -2811,10 +2896,10 @@ pub fn paramsubst(
                 let fc = body_chars[idx]; // c:2153
                 match fc {
                     // c:2153
-                    '(' => {
+                    c if c == '(' || c == Inpar => {
                         d += 1;
                     } // c:2147
-                    ')' => {
+                    c if c == ')' || c == Outpar => {
                         d -= 1;
                         if d == 0 {
                             idx += 1;
@@ -3355,8 +3440,13 @@ pub fn paramsubst(
                 Some(ch) => ch,
                 None => break,
             };
-            if c == '^' {
-                if body_chars.get(idx + 1).copied() == Some('^') {
+            if c == '^' || c == Hat {
+                // c:Src/subst.c:2587 — `case '^'` plan9-toggle. Accept
+                // both ASCII `^` and Hat TOKEN (\u{86}). The bridge
+                // passthru path delivers `^`/`^^` as Hat TOKEN since
+                // the lexer tokenizes `^` inside `${…}` to Hat.
+                let nxt = body_chars.get(idx + 1).copied();
+                if matches!(nxt, Some('^') | Some(Hat)) {
                     plan9 = false;
                     idx += 2;
                 } else {
@@ -3365,8 +3455,11 @@ pub fn paramsubst(
                 }
                 continue;
             }
-            if c == '=' {
-                if body_chars.get(idx + 1).copied() == Some('=') {
+            if c == '=' || c == Equals {
+                // c:Src/subst.c:2592 — `case '='` split toggle. Accept
+                // both ASCII `=` and Equals TOKEN (\u{8d}).
+                let nxt = body_chars.get(idx + 1).copied();
+                if matches!(nxt, Some('=') | Some(Equals)) {
                     suppress_split = true;
                     idx += 2;
                 } else {
@@ -3375,19 +3468,29 @@ pub fn paramsubst(
                 }
                 continue;
             }
-            if c == '#' {
+            if c == '#' || c == Pound {
                 // c:2570-2588 — `${}` ⇒ `inbrace`; `(inbrace || !POSIXIDENTIFIERS)` is satisfied.
+                // Accept both ASCII `#` and Pound TOKEN (\u{84}) — the
+                // bridge passthru path delivers `${#…}` length-op as
+                // Pound TOKEN since `#` is lexed inside `${…}` as a
+                // significant char.
                 let next = body_chars.get(idx + 1).copied();
                 let after_next = body_chars.get(idx + 2).copied();
+                // c:Src/subst.c:2570-2588 — `${#…}` length-op
+                // discrimination. Accept Dash TOKEN (\u{9b}) as
+                // equivalent to ASCII `-` in the `:-` peek so
+                // `${#:-foo}` (length of "foo" since `#` is unset)
+                // resolves correctly through the bridge passthru
+                // path where the lexer tokenizes `-` to Dash.
                 let next_is_name_start = match next {
                     Some(ch) if ch.is_ascii_alphanumeric() => true,
                     Some(ch) if matches!(ch, '_' | '@' | '*' | '?' | '!' | '$' | '-' | '0') => true,
-                    Some(':') if after_next == Some('-') => true,
-                    Some(ch) if ch == STRING || ch == Qstring => matches!(
+                    Some(':') if matches!(after_next, Some('-') | Some('\u{9b}')) => true,
+                    Some(ch) if ch == STRING || ch == Qstring || ch == Stringg => matches!(
                         body_chars.get(idx + 2).copied(),
                         Some(b) if b == Inbrace || b == '{' || b == Inpar || b == '('
                     ),
-                    Some('#') if after_next.is_none() => true,
+                    Some(ch) if (ch == '#' || ch == Pound) && after_next.is_none() => true,
                     _ => false,
                 };
                 if next_is_name_start {
@@ -3499,9 +3602,14 @@ pub fn paramsubst(
         // c:2649 — `isstring(*s)` matches both `$` (`Stringg`) and the
         // DQ-context `\u{8c}` (`Qstring`) per Src/zsh.h:167. Mirror
         // here so nested ${${x}} inside DQ — where the inner `$` is
-        // Qstring-tokenized — still detects the subexp.
+        // Qstring-tokenized — still detects the subexp. Bridge
+        // passthru: unquoted nested `${…}` also reaches paramsubst
+        // as `Stringg` (\u{85}) since the lexer emits Stringg for
+        // `$` inside braces; accept it too.
         let mut subexp_value: Option<String> = if idx < body_chars.len()
-            && (body_chars[idx] == '$' || body_chars[idx] == Qstring)
+            && (body_chars[idx] == '$'
+                || body_chars[idx] == Qstring
+                || body_chars[idx] == Stringg)
         // c:2649
         {
             // Walk just the nested $-form (depth-tracked over its
@@ -3512,9 +3620,21 @@ pub fn paramsubst(
             let mut p = idx + 1;
             if p < body_chars.len() {
                 let nx = body_chars[p];
-                let (open, close) = match nx {
+                // c:Src/subst.c:2655 — nested `${…}` or `$(…)` body
+                // boundary scan. Match both ASCII and TOKEN brace
+                // forms: the lexer emits Inbrace/Outbrace TOKEN
+                // (\u{8f}/\u{90}) for `${…}` in DQ context (see
+                // `${#${(z)X}}` — outer `${ }` braces tokenize).
+                // Without the TOKEN arm here, the depth scan
+                // falls through to the identifier-walk path and
+                // truncates the inner expansion to just the
+                // leading `$\u{8f}`, which then fails paramsubst
+                // with "closing brace missing".
+                let (open, close): (char, char) = match nx {
                     '{' => ('{', '}'),
                     '(' => ('(', ')'),
+                    Inbrace => (Inbrace, Outbrace),
+                    Inpar => (Inpar, Outpar),
                     _ => ('\0', '\0'),
                 };
                 if open != '\0' {
@@ -3613,12 +3733,21 @@ pub fn paramsubst(
             while idx < body_chars.len() {
                 let bc = body_chars[idx];
                 let allowed = if idx == name_start {
+                    // c:Src/subst.c:2697 — `${#}` / `${@}` / `${*}` /
+                    // `${?}` / `${0}` are the single-char special
+                    // parameters. The bridge passthru path delivers
+                    // their punctuation forms as TOKENs (Pound,
+                    // Star, Quest, Bang) since the lexer tokenizes
+                    // them inside `${…}` — accept both ASCII and
+                    // TOKEN here so e.g. `${(%)#}` (length of `$#`
+                    // after the prompt flag) resolves correctly.
                     bc.is_ascii_alphanumeric()
                         || bc == '_'
                         || bc == '@'
-                        || bc == '*'
-                        || bc == '#'
-                        || bc == '?'
+                        || bc == '*' || bc == '\u{87}' /* Star */
+                        || bc == '#' || bc == Pound
+                        || bc == '?' || bc == '\u{86}' /* Quest */
+                        || bc == '!' || bc == '\u{96}' /* Bang */
                         || bc == '0'
                 } else {
                     bc.is_ascii_alphanumeric() || bc == '_'
@@ -3626,8 +3755,13 @@ pub fn paramsubst(
                 if allowed {
                     idx += 1;
                     // Single-char specials stop after one char
+                    let first = body_chars[name_start];
                     if idx == name_start + 1
-                        && matches!(body_chars[name_start], '@' | '*' | '#' | '?' | '0')
+                        && (matches!(first, '@' | '*' | '#' | '?' | '0' | '!')
+                            || first == Pound
+                            || first == '\u{87}' /* Star */
+                            || first == '\u{86}' /* Quest */
+                            || first == '\u{96}' /* Bang */)
                     {
                         break;
                     }
@@ -3636,7 +3770,20 @@ pub fn paramsubst(
                 }
             }
         }
-        let mut var_name: String = body_chars[name_start..idx].iter().collect();
+        // c:Src/subst.c:2728 — the single-char specials referenced by
+        // name. Normalize TOKEN form to ASCII so the var-lookup path
+        // sees canonical names (`#`, `?`, `!`, `*`).
+        let mut var_name: String = {
+            let raw: String = body_chars[name_start..idx].iter().collect();
+            if raw.chars().any(|c| {
+                let cu = c as u32;
+                (0x84..=0xa1).contains(&cu)
+            }) {
+                crate::lex::untokenize(&raw)
+            } else {
+                raw
+            }
+        };
         // If the subexp produced an array (multsub path above), bind
         // var_name to the temp slot in state.arrays so the rest of
         // paramsubst — splat, subscript, filter, replace — operates
@@ -3649,9 +3796,12 @@ pub fn paramsubst(
 
 // ${arr[subscript]} — subscript loop. Port of subst.c:2862-3000.
         // Parse `[…]` after the var name, with brace-depth tracking
-        // for nested `${arr[$other[1]]}`.
+        // for nested `${arr[$other[1]]}`. Accept both ASCII `[` and
+        // Inbrack TOKEN (\u{91}) — the bridge passthru path delivers
+        // the subscript opener as Inbrack TOKEN since the lexer
+        // tokenizes `[`/`]` inside `${…}` to Inbrack/Outbrack.
         let mut subscript: Option<String> = None; // c:2867
-        if idx < body_chars.len() && body_chars[idx] == '[' {
+        if idx < body_chars.len() && (body_chars[idx] == '[' || body_chars[idx] == Inbrack) {
             // c:2867
             idx += 1; // c:2867
             let sub_start = idx;
@@ -3659,11 +3809,11 @@ pub fn paramsubst(
             while idx < body_chars.len() && depth > 0 {
                 // c:2867
                 let bc = body_chars[idx];
-                if bc == '[' {
+                if bc == '[' || bc == Inbrack {
                     depth += 1;
                 }
                 // c:2867
-                else if bc == ']' {
+                else if bc == ']' || bc == Outbrack {
                     // c:2867
                     depth -= 1;
                     if depth == 0 {
@@ -3683,7 +3833,25 @@ pub fn paramsubst(
             } // skip ]
         }
 
-        let rest: String = body_chars[idx..].iter().collect();
+        // c:Src/subst.c:2899+ — the remaining operator+pattern text
+        // after the name. The bridge passthru path delivers TOKEN-form
+        // bytes here (Pound \u{84} for `#`, Hat \u{8a}, Equals \u{86},
+        // Inbrack \u{91}, etc.). The downstream strip_prefix checks
+        // (`r.strip_prefix('#')`, `r.strip_prefix('%')` and friends)
+        // are ASCII-only — untokenize once so they match. patcompile
+        // also expects ASCII, so untokenizing the pattern text here
+        // is correct rather than a workaround.
+        let rest: String = {
+            let raw: String = body_chars[idx..].iter().collect();
+            if raw.chars().any(|c| {
+                let cu = c as u32;
+                (0x84..=0xa1).contains(&cu)
+            }) {
+                crate::lex::untokenize(&raw)
+            } else {
+                raw
+            }
+        };
 
         // (P) indirect: take the var name from somewhere — either
         // the value of a parameter (\${(P)x}) or the result of a

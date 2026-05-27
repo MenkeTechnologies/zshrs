@@ -3564,10 +3564,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // Pass `text` through verbatim — multsub/stringsubst
                 // recognize the markers natively. No bridge-side
                 // re-tokenization needed.
+                //
+                // Mode 6 = unquoted RHS in scalar-assign context.
+                // Pass PREFORK_ASSIGN so prefork's filesub colon-walk
+                // fires per c:Src/exec.c:2546.
                 let prepped: String = text.clone();
                 if std::env::var("ZSHRS_TRACE_DEFP").is_ok() {
-                    eprintln!("[TRACE_DEFP] text={:?} prepped={:?}", text, prepped);
+                    eprintln!("[TRACE_DEFP] text={:?} prepped={:?} mode={}", text, prepped, mode);
                 }
+                let pf_flags = if mode == 6 {
+                    crate::ported::zsh_h::PREFORK_ASSIGN
+                } else {
+                    0
+                };
                 // c:Src/subst.c:544+ — `multsub(&prepped, 0)` is the
                 // unquoted-argv equivalent of zsh's `prefork(list,
                 // 0, NULL)` for a single-element list. Returns the
@@ -3577,12 +3586,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // singsub() collapses to one string and discards the
                 // splat — parity bug #28 (whole-array modifier).
                 let (_first, nodes, _ms_ws, _ret) =
-                    crate::ported::subst::multsub(&prepped, 0);
-                let brace_expanded: Vec<String> = if nodes.is_empty() {
+                    crate::ported::subst::multsub(&prepped, pf_flags);
+                if std::env::var("ZSHRS_TRACE_MULTSUB").is_ok() {
+                    eprintln!("[TRACE_MULTSUB] prepped={:?} nodes={:?}", prepped, nodes);
+                }
+                // c:Src/subst.c:166 — xpandbraces runs AFTER prefork's
+                // substitution pass and BEFORE untokenize/glob. Per
+                // word, scan for Inbrace TOKEN and expand. Words that
+                // don't contain Inbrace TOKEN pass through unchanged.
+                // Brace expansion is done here (inside the bridge
+                // default arm) instead of via a post-EXPAND_TEXT
+                // BRACE_EXPAND emit because untokenize (line below)
+                // strips TOKEN bytes, after which the strict-TOKEN
+                // xpandbraces gate would no longer match.
+                let brace_ccl = opt_state_get("braceccl").unwrap_or(false);
+                let pre_brace: Vec<String> = if nodes.is_empty() {
                     vec![String::new()]
                 } else {
                     nodes
                 };
+                let brace_expanded: Vec<String> = pre_brace
+                    .into_iter()
+                    .flat_map(|w| {
+                        if w.contains('\u{8f}') {
+                            crate::ported::glob::xpandbraces(&w, brace_ccl)
+                        } else {
+                            vec![w]
+                        }
+                    })
+                    .collect();
                 // zsh stores the option as `glob` (default ON);
                 // `setopt noglob` writes `glob=false`. Honor either
                 // form so the dispatcher behaves the same as zsh.
@@ -4733,8 +4765,18 @@ impl fusevm::ShellHost for ZshrsHost {
         // `$match[]` / `$mbegin[]` / `$mend[]` (or `$BASH_REMATCH`
         // under BASHREMATCH). Direct delegation to the canonical
         // port at src/ported/modules/regex.rs:58.
+        //
+        // The bridge passthru path delivers TOKEN-form bytes here
+        // (Inbrack \u{91}, Outbrack \u{92}, Star \u{87}, Quest
+        // \u{86}, etc.) since the lexer tokenizes regex meta chars
+        // inside `[[ ]]`. The host regex engine expects ASCII, so
+        // untokenize the pattern (and subject, for safety) once at
+        // this boundary. zsh C reaches its POSIX-ERE engine through
+        // the same untokenize path inside zcond_regex_match.
+        let s_clean = crate::lex::untokenize(s);
+        let regex_clean = crate::lex::untokenize(regex);
         crate::ported::modules::regex::zcond_regex_match(
-            &[s, regex],
+            &[s_clean.as_str(), regex_clean.as_str()],
             crate::ported::modules::regex::ZREGEX_EXTENDED,
         ) != 0
     }

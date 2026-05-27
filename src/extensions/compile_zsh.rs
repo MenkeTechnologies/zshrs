@@ -1716,7 +1716,12 @@ impl ZshCompiler {
             // optional digits on either side outside a bracket-class.
             || has_numeric_range_glob(&untoked);
         let trigger_tilde =
-            untoked.starts_with('~') || untoked.contains(":~") || untoked.contains("=~");
+            untoked.starts_with('~') || untoked.contains(":~") || untoked.contains("=~")
+            // c:Src/subst.c:715 — `=cmd` (EQUALS option) routes
+            // through filesubstr's equalsubstr arm. Route the word
+            // through the bridge so filesub fires at runtime; the
+            // runtime checks `isset(EQUALS)` before expanding.
+            || untoked.starts_with('=');
         // Brace expansion: `{a,b,c}` and `{1..5}` need expansion. Detect
         // matched-brace forms with comma or `..` inside.
         let trigger_brace = looks_like_brace_expansion(&untoked);
@@ -2995,7 +3000,24 @@ impl ZshCompiler {
                 for (i, seg) in segs.iter().enumerate() {
                     match seg {
                         WordSegment::Literal(lit) => {
-                            let cleaned = crate::lex::untokenize(lit);
+                            // When a brace pattern straddles literal +
+                            // expansion segments (`"$X"{a,b,c}`), the
+                            // post-CONCAT BRACE_EXPAND emit relies on
+                            // Inbrace/Outbrace/Comma TOKEN bytes
+                            // (\u{8f}/\u{90}/\u{9a}) to detect the
+                            // brace structure. A full untokenize here
+                            // would erase them, so when needs_brace
+                            // fires we partial-untokenize: strip all
+                            // ITOK markers EXCEPT brace/comma so
+                            // xpandbraces still sees the structure.
+                            // c:Src/glob.c::xpandbraces runs on
+                            // TOKEN-form words; the final ASCII pass
+                            // is xpandbraces' own concatenation output.
+                            let cleaned = if needs_brace {
+                                untokenize_keep_braces(lit)
+                            } else {
+                                crate::lex::untokenize(lit)
+                            };
                             let stripped = strip_quote_markers(&cleaned);
                             let idx = self.builder.add_constant(Value::str(stripped.as_str()));
                             self.builder.emit(Op::LoadConst(idx), 0);
@@ -3036,7 +3058,7 @@ impl ZshCompiler {
 
         // Phase 2 step 2: text-based bridge replacement. Determine the
         // word's quoting mode from its raw zsh-tokenized form, push the
-        // preserved text + mode_byte, call BUILTIN_EXPAND_TEXT.
+        // raw tokenized text + mode_byte, call BUILTIN_EXPAND_TEXT.
         //
         // Mode detection:
         // - Whole-word Dnull-wrapped (`"…"`) and no inner unescaped
@@ -3045,62 +3067,12 @@ impl ZshCompiler {
         // - Backquote-wrapped (`` `…` ``) → AltBackquote, runs as
         //   command substitution.
         // - Else → Default, full expand_string + braces + glob.
-        // Untokenize the lexer's word form, preserving the three
-        // markers `subst.rs` consumes natively:
-        //   - Tilde (\u{98})   — filesubstr's strict TOKEN check
-        //   - Qstring (\u{8c}) — stringsubst DQ qt derivation
-        //   - Bnull (\u{9f})   — escape marker ("next char literal")
-        // Other ITOK chars untokenize to their ASCII forms because
-        // downstream multsub / stringsubst / xpandbraces expect
-        // ASCII for those.
-        let preserved: String = {
-            use crate::ported::zsh_h::{
-                Bang, Bar, Bnull, Comma, Dash, Dnull, Equals, Hat, Inang, Inbrace, Inbrack,
-                Inpar, Inparmath, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath,
-                Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
-            };
-            let mut result = String::with_capacity(s.len() + 4);
-            for c in s.chars() {
-                if c == Tilde || c == Qstring || c == Bnull {
-                    result.push(c);
-                    continue;
-                }
-                let cu = c as u32;
-                if (0x84..=0xa1).contains(&cu) {
-                    match c {
-                        c if c == Pound => result.push('#'),
-                        c if c == Stringg => result.push('$'),
-                        c if c == Hat => result.push('^'),
-                        c if c == Star => result.push('*'),
-                        c if c == Inpar => result.push('('),
-                        c if c == Outpar => result.push(')'),
-                        c if c == Inparmath => result.push('('),
-                        c if c == Outparmath => result.push(')'),
-                        c if c == Equals => result.push('='),
-                        c if c == Bar => result.push('|'),
-                        c if c == Inbrace => result.push('{'),
-                        c if c == Outbrace => result.push('}'),
-                        c if c == Inbrack => result.push('['),
-                        c if c == Outbrack => result.push(']'),
-                        c if c == Tick => result.push('`'),
-                        c if c == Inang => result.push('<'),
-                        c if c == Outang => result.push('>'),
-                        c if c == OutangProc => result.push('>'),
-                        c if c == Quest => result.push('?'),
-                        c if c == Qtick => result.push('`'),
-                        c if c == Comma => result.push(','),
-                        c if c == Dash => result.push('-'),
-                        c if c == Bang => result.push('!'),
-                        c if c == Snull => result.push('\''),
-                        c if c == Dnull => result.push('"'),
-                        _ => result.push(c),
-                    }
-                } else {
-                    result.push(c);
-                }
-            }
-            result
-        };
+        // c:Src/parse.c stores raw tokenized word strings; C's
+        // prefork processes them in TOKEN form throughout. We pass
+        // the raw tokenized string through unchanged — downstream
+        // consumers (hasbraces, xpandbraces, filesubstr, subst arms)
+        // now match the C source in checking TOKEN bytes strictly.
+        let preserved: String = s.to_string();
         // If we're recursing inside a DQ-wrapped parent (tracked via
         // `dq_context_depth`), force mode 1 so child expansions
         // suppress array-only flags like the outer DQ does.
@@ -3119,8 +3091,17 @@ impl ZshCompiler {
         // ORIGINAL scalar (preserves `\n` separators in
         // `y="${(f)x}"`) rather than splitting then re-joining
         // with IFS-first-char.
+        // Mode 6: "unquoted scalar-assignment RHS" — same as default
+        // mode 0 (Default) but signals PREFORK_ASSIGN to the bridge
+        // so prefork's `filesub` colon-walk fires (c:Src/exec.c:2546
+        // sets PREFORK_ASSIGN, which Src/subst.c:filesub:689 keys
+        // on to walk `:`-separated path components for `~`/`=`
+        // re-expansion). Without this, `X=/usr/bin:~/bin` left the
+        // `~/bin` literal because filesub was called with assign=0.
         let mode = if base_mode == 1 && self.scalar_assign_depth > 0 {
             5
+        } else if base_mode == 0 && self.scalar_assign_depth > 0 {
+            6
         } else {
             base_mode
         };
@@ -3137,9 +3118,15 @@ impl ZshCompiler {
         // brace expansion never runs and `print X{1,2,3}Y` returns
         // the literal text. Direct port of subst.c:166 where
         // xpandbraces fires AFTER prefork's expansion pass.
+        // c:Src/subst.c:166 — xpandbraces fires AFTER prefork's expansion
+        // pass. Trigger on Inbrace TOKEN (\u{8f}) only — escaped `\{`
+        // is Bnull+ASCII`{` which (post-remnulargs) is plain `{` and
+        // must NOT brace-expand. The Star TOKEN (\u{87}) tail is for
+        // pattern words that also need expand_glob to run from the
+        // brace-expand builtin (kept legacy-compatible).
         let preserved_str = preserved.as_str();
         if !preserved_str.is_empty()
-            && (preserved_str.contains('{') || preserved_str.contains('\u{87}'))
+            && (preserved_str.contains('\u{8f}') || preserved_str.contains('\u{87}'))
             && self.dq_context_depth == 0
         {
             self.builder.emit(
@@ -6598,6 +6585,41 @@ fn strip_quote_markers(s: &str) -> String {
         return s.to_string();
     }
     s.chars().filter(|c| *c != '\x00').collect()
+}
+
+/// Untokenize like `lex::untokenize`, but preserve the three brace TOKEN
+/// bytes (Inbrace \u{8f}, Outbrace \u{90}, Comma \u{9a}) so a subsequent
+/// `xpandbraces` call still sees the brace structure. Used by the
+/// segment-fast-path when a literal segment carries an in-flight brace
+/// pattern that crosses the segment boundary (e.g. `"$X"{a,b,c}`).
+///
+/// c:Src/glob.c::xpandbraces — C operates on TOKEN-form throughout the
+/// prefork pipeline; the ASCII materialization happens at the very end.
+/// The Rust port's segment-fast-path is a port-time optimization that
+/// breaks that invariant — this helper restores the brace half of it.
+fn untokenize_keep_braces(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut buf = String::new();
+    let mut group: Vec<char> = Vec::new();
+    for c in s.chars() {
+        if c == '\u{8f}' || c == '\u{90}' || c == '\u{9a}' {
+            if !group.is_empty() {
+                buf.clear();
+                buf.extend(group.iter());
+                out.push_str(&crate::lex::untokenize(&buf));
+                group.clear();
+            }
+            out.push(c);
+        } else {
+            group.push(c);
+        }
+    }
+    if !group.is_empty() {
+        buf.clear();
+        buf.extend(group.iter());
+        out.push_str(&crate::lex::untokenize(&buf));
+    }
+    out
 }
 
 /// Tiny base64 encoder for embedding bincode-serialized chunks inside

@@ -53,7 +53,6 @@ mod tilde_home {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: ~ inside double quotes — zsh expands, zshrs doesn't"]
     fn tilde_inside_double_quote_zsh_expands() {
         assert_parity(r#"echo "~""#);
     }
@@ -73,7 +72,6 @@ mod tilde_named_user {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: ~user named-user expansion broken"]
     fn tilde_root_user_expands() {
         if !zsh_available() { return; }
         let probe = run_zsh(r#"echo ~root"#);
@@ -84,7 +82,6 @@ mod tilde_named_user {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: ~nonexistent_user behavior differs"]
     fn tilde_unknown_user_stays_literal() {
         assert_parity(r#"echo ~nonexistent_user_xyz_zzz_42"#);
     }
@@ -94,19 +91,16 @@ mod tilde_plus_minus {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: ~+ doesn't expand to $PWD"]
     fn tilde_plus_is_pwd() {
         assert_parity(r#"cd /tmp; [[ "$(echo ~+)" == "$(pwd)" ]]; echo $?"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: ~- doesn't expand to $OLDPWD"]
     fn tilde_minus_is_oldpwd() {
         assert_parity(r#"cd /; cd /tmp; [[ "$(echo ~-)" == "/" ]] || [[ "$(echo ~-)" == "$OLDPWD" ]]; echo $?"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: ~0 dirstack-top expansion broken"]
     fn tilde_zero_is_top_of_dirstack() {
         assert_parity(r#"cd /tmp; [[ "$(echo ~0)" == "$(pwd)" ]]; echo $?"#);
     }
@@ -121,7 +115,6 @@ mod tilde_in_assignments {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: tilde after : in assignment doesn't expand"]
     fn tilde_after_colon_in_assignment() {
         assert_parity(r#"X=/usr/bin:~/bin; echo "$X""#);
     }
@@ -136,7 +129,6 @@ mod equals_command_lookup {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: =cmd EQUALS expansion doesn't resolve to path"]
     fn equals_resolves_to_full_path() {
         assert_parity(r#"setopt EQUALS; echo =ls"#);
     }
@@ -157,7 +149,6 @@ mod tilde_in_complex {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: tilde inside ${var:-default} doesn't expand"]
     fn tilde_in_default_expansion() {
         assert_parity(r#"echo "${UNSET:-~/x}""#);
     }
@@ -173,7 +164,6 @@ mod no_expand {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: \\~ escape output differs from zsh"]
     fn backslash_tilde_literal() {
         assert_parity(r#"echo \~"#);
     }
