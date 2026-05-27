@@ -238,7 +238,6 @@ mod return_in_eval {
 
     /// `return` inside eval inside function exits function.
     #[test]
-    #[ignore = "ZSHRS BUG: 'return N' inside eval inside function doesn't exit function (continues + exit 0)"]
     fn return_in_eval_exits_function() {
         assert_parity(r#"
 f() {

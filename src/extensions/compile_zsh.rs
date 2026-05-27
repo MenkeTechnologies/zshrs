@@ -96,6 +96,16 @@ pub struct ZshCompiler {
     /// `if then for if then for …` to depth 7+; without this drain,
     /// repeat invocations stack `for then` indefinitely).
     pub cmd_stack_depth: u32,
+    /// Nesting depth of `{ … } always { … }` try-blocks currently
+    /// being compiled (only the TRY arm is "inside" — the always
+    /// arm runs outside this gate). When > 0, `break` / `continue`
+    /// inside the try body emits SET_BREAK / SET_CONTINUE before
+    /// the Jump so the canonical BREAKS / CONTFLAG atomics carry
+    /// the escape kind across the always-arm's save/restore pair
+    /// (see fusevm_bridge.rs::BUILTIN_SET_TRY_BLOCK_ERROR /
+    /// BUILTIN_RESTORE_TRY_BLOCK_STATUS). Without this the escape
+    /// is invisible to the always-arm and the loop doesn't unwind.
+    pub try_block_depth: u32,
 }
 
 impl Default for ZshCompiler {
@@ -120,6 +130,7 @@ impl ZshCompiler {
             lineno_offset: 0,
             lineno_addend: 0,
             cmd_stack_depth: 0,
+            try_block_depth: 0,
         }
     }
 
@@ -669,9 +680,89 @@ impl ZshCompiler {
                 // The exit status of the whole construct is the LAST status
                 // set (matches zsh: try's status is preserved unless the
                 // finally block sets a different one).
+                //
+                // c:Src/exec.c TRY_BLOCK semantics: `return`/`break`/
+                // `continue`/`exit` inside the try-block MUST still run
+                // the always-arm before propagating. We save the
+                // surrounding scope's return_patches + break_patches +
+                // continue_patches, give the try-block fresh empty
+                // lists, then route every collected escape through the
+                // always-arm landing. After the always-arm runs we
+                // re-emit a Jump to the surrounding scope's matching
+                // list so the original short-circuit still happens.
+                let saved_return = std::mem::take(&mut self.return_patches);
+                let saved_breaks: Vec<Vec<usize>> =
+                    self.break_patches.iter().map(|v| std::mem::take(&mut v.clone())).collect();
+                let saved_continues: Vec<Vec<usize>> =
+                    self.continue_patches.iter().map(|v| std::mem::take(&mut v.clone())).collect();
+                // Replace the per-loop lists with fresh inner copies
+                // so escapes captured inside the try-block don't fire
+                // the outer loop's break/continue.
+                for v in self.break_patches.iter_mut() {
+                    v.clear();
+                }
+                for v in self.continue_patches.iter_mut() {
+                    v.clear();
+                }
+                self.try_block_depth += 1;
                 self.compile_program(&t.try_block);
-                // Capture try-block's exit status into $TRY_BLOCK_ERROR so
-                // the always arm can read it (zsh's documented semantics).
+                self.try_block_depth -= 1;
+                // After the try-block, snapshot the escape patches it
+                // accumulated. Their targets will be patched to land
+                // at the always-arm entry so the finally clause runs
+                // regardless of how the try-block left.
+                let inner_returns = std::mem::take(&mut self.return_patches);
+                let inner_breaks: Vec<Vec<usize>> = self
+                    .break_patches
+                    .iter_mut()
+                    .map(|v| std::mem::take(v))
+                    .collect();
+                let inner_continues: Vec<Vec<usize>> = self
+                    .continue_patches
+                    .iter_mut()
+                    .map(|v| std::mem::take(v))
+                    .collect();
+                // Track whether this try-block was escaped via
+                // return/break/continue so we know to re-jump after
+                // the always-arm. AtomicI32 flag in canonical
+                // RETFLAG / BREAKS won't survive the always-arm body
+                // (which can clobber both), so capture into a
+                // dedicated TLS slot via BUILTIN_TRY_ESCAPE_SAVE /
+                // BUILTIN_TRY_ESCAPE_RESTORE — see fusevm_bridge.rs.
+                let any_escape = !inner_returns.is_empty()
+                    || inner_breaks.iter().any(|v| !v.is_empty())
+                    || inner_continues.iter().any(|v| !v.is_empty());
+                // Patch all inner escapes to land at the always-arm
+                // entry.
+                let always_entry = self.builder.current_pos();
+                for p in &inner_returns {
+                    self.builder.patch_jump(*p, always_entry);
+                }
+                for vec in &inner_breaks {
+                    for p in vec {
+                        self.builder.patch_jump(*p, always_entry);
+                    }
+                }
+                for vec in &inner_continues {
+                    for p in vec {
+                        self.builder.patch_jump(*p, always_entry);
+                    }
+                }
+                // Restore the outer escape lists so any escapes the
+                // always-arm itself emits go to the surrounding scope.
+                self.return_patches = saved_return;
+                for (i, v) in saved_breaks.into_iter().enumerate() {
+                    if i < self.break_patches.len() {
+                        self.break_patches[i] = v;
+                    }
+                }
+                for (i, v) in saved_continues.into_iter().enumerate() {
+                    if i < self.continue_patches.len() {
+                        self.continue_patches[i] = v;
+                    }
+                }
+                // c:Src/exec.c — TRY_BLOCK_ERROR snapshot fires BEFORE
+                // the always-arm runs so the body can read it.
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_TRY_BLOCK_ERROR, 0),
                     0,
@@ -679,15 +770,78 @@ impl ZshCompiler {
                 self.builder.emit(Op::Pop, 0);
                 self.compile_program(&t.always);
                 // Whole-construct status: preserve the try block's
-                // status when the always arm exited cleanly. Without
-                // this, a `{ false } always { echo }` reported 0
-                // because the always arm overwrote last_status with
-                // its own success code.
+                // status when the always arm exited cleanly.
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_RESTORE_TRY_BLOCK_STATUS, 0),
                     0,
                 );
                 self.builder.emit(Op::SetStatus, 0);
+                // If the try-block fired a return/break/continue, the
+                // canonical RETFLAG / BREAKS / CONTFLAG atomics are
+                // restored by RESTORE_TRY_BLOCK_STATUS. Emit one
+                // conditional re-jump per escape kind so the outer
+                // construct (function / loop) sees the original
+                // semantic. Order matters: continue is distinguished
+                // from break by CONTFLAG (both set BREAKS via
+                // SET_CONTINUE), so check continue BEFORE break.
+                if !inner_returns.is_empty() {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_RETFLAG_CHECK, 0),
+                        0,
+                    );
+                    let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+                    self.emit_cmd_stack_drain();
+                    let j = self.builder.emit(Op::Jump(0), 0);
+                    self.return_patches.push(j);
+                    let after = self.builder.current_pos();
+                    self.builder.patch_jump(skip, after);
+                }
+                let any_continue = inner_continues.iter().any(|v| !v.is_empty());
+                if any_continue {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_CONTFLAG_CHECK, 0),
+                        0,
+                    );
+                    let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+                    // Find the innermost level that captured any
+                    // continue patches; route to that loop's
+                    // continue landing.
+                    let lvl = inner_continues
+                        .iter()
+                        .rposition(|v| !v.is_empty())
+                        .unwrap_or(0);
+                    self.emit_cmd_stack_drain();
+                    let j = self.builder.emit(Op::Jump(0), 0);
+                    if lvl < self.continue_patches.len() {
+                        self.continue_patches[lvl].push(j);
+                    } else {
+                        self.return_patches.push(j);
+                    }
+                    let after = self.builder.current_pos();
+                    self.builder.patch_jump(skip, after);
+                }
+                let any_break = inner_breaks.iter().any(|v| !v.is_empty());
+                if any_break {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_BREAKS_CHECK, 0),
+                        0,
+                    );
+                    let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+                    let lvl = inner_breaks
+                        .iter()
+                        .rposition(|v| !v.is_empty())
+                        .unwrap_or(0);
+                    self.emit_cmd_stack_drain();
+                    let j = self.builder.emit(Op::Jump(0), 0);
+                    if lvl < self.break_patches.len() {
+                        self.break_patches[lvl].push(j);
+                    } else {
+                        self.return_patches.push(j);
+                    }
+                    let after = self.builder.current_pos();
+                    self.builder.patch_jump(skip, after);
+                }
+                let _ = any_escape;
             }
         }
     }
@@ -865,6 +1019,16 @@ impl ZshCompiler {
             // the Then push leaks past the loop_exit.
             self.emit_cmd_stack_drain();
             if depth > 0 {
+                // Inside try-block: also bump BREAKS atomic so the
+                // always-arm post-restore can detect the escape and
+                // re-emit the loop-end jump.
+                if self.try_block_depth > 0 {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_BREAK, 0),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
+                }
                 let idx = depth.saturating_sub(levels);
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.break_patches[idx].push(j);
@@ -890,6 +1054,15 @@ impl ZshCompiler {
             // common case in zinit's mode-aware loop bodies.
             self.emit_cmd_stack_drain();
             if depth > 0 {
+                // Inside try-block: bump BREAKS + CONTFLAG so the
+                // always-arm post-restore can detect the escape.
+                if self.try_block_depth > 0 {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_CONTINUE, 0),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
+                }
                 // For `continue N`, jump to the N-th enclosing loop's
                 // continue target. If N>1, that's actually a BREAK out
                 // of inner loops and a continue at the outer — which
