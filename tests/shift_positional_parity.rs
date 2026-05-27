@@ -148,7 +148,6 @@ mod custom_ifs {
 
     /// Empty IFS → `$*` concatenates.
     #[test]
-    #[ignore = "ZSHRS BUG: IFS='' on \"$*\" still joins with space; zsh concatenates to 'abc'"]
     fn empty_ifs_concatenates() {
         assert_parity(r#"set -- a b c; IFS=""; echo "$*""#);
     }

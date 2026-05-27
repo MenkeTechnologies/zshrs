@@ -3337,7 +3337,13 @@ impl ZshCompiler {
         // RUN_SELECT pops sub_idx, name, then collects N words.
         let words: Vec<&str> = match &f.list {
             ForList::Words(ws) => ws.iter().map(|s| s.as_str()).collect(),
-            ForList::Positional => vec!["\"$@\""],
+            // c:Src/loop.c — `select x do ... done` without `in`
+            // iterates over the positional parameters as separate
+            // elements (same shape as `for x do ...`). Using `"$@"`
+            // here would DQ-collapse the positionals into a single
+            // joined word; unquoted `$@` splats them so RUN_SELECT
+            // sees one menu entry per positional.
+            ForList::Positional => vec!["$@"],
             ForList::CStyle { .. } => {
                 // C-style isn't valid for select; nothing to do.
                 return;
