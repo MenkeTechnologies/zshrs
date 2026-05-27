@@ -4938,7 +4938,7 @@ impl fusevm::ShellHost for ZshrsHost {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    fn subshell_end(&mut self) {
+    fn subshell_end(&mut self) -> Option<i32> {
         // Fire subshell's EXIT trap BEFORE restoring parent state so
         // the trap body sees the subshell's vars and exit status. zsh
         // forks for `(...)` so the trap runs in the child process,
@@ -5052,7 +5052,13 @@ impl fusevm::ShellHost for ZshrsHost {
             // since SubshellEnd doesn't propagate status into the
             // VM). Cleared as soon as the next sync_status sees it.
             SUBSHELL_EXIT_STATUS_PENDING.with(|c| c.set(true));
+            // Return the deferred-exit status so the VM updates its
+            // own `last_status`. Otherwise run_chunk's post-script
+            // `set_last_status(vm.last_status)` would clobber LASTVAL
+            // back to the stale pre-subshell value.
+            return Some(val);
         }
+        None
     }
 
     fn redirect(&mut self, fd: u8, op: u8, target: &str) {
