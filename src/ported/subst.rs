@@ -1938,6 +1938,13 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                 return Some(full);
             }
         }
+        // c:Src/subst.c:725 — `=cmd` lookup failed. zsh emits the
+        // "not found" diagnostic + sets errflag so the enclosing
+        // command exits non-zero. The previous Rust port silently
+        // returned None and filesub kept the literal `=cmd`,
+        // diverging from zsh's hard-fail behaviour.
+        zerr(&format!("{}: not found", cmd));
+        errflag_set_error();
     }
     None
 }
