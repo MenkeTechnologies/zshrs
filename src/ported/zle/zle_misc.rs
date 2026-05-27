@@ -1699,7 +1699,7 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
          * Remove suffix on uninsertable characters if `\-` was given
          * and the character class wasn't negated -- or vice versa.
          */
- // c:1661-1662
+        // c:1661-1662
         suffixnoinsrem.store(z ^ inv, std::sync::atomic::Ordering::Relaxed); // c:1663
         suffixlen.store(n, std::sync::atomic::Ordering::Relaxed); // c:1664
 

@@ -3667,13 +3667,13 @@ pub fn patallocstr(
      * path to exclude, so copy the path so far and append the
      * current test string.
      */
- // c:2142-2146
- // c:2147 — `needfullpath = (prog->flags & PAT_HAS_EXCLUDP) && pathpos;`
- // `pathpos` is the `gd_pathpos` field of `curglobdata` (c:Src/glob.c:166-170
- // struct globdata; c:197 static curglobdata; c:199-201 macros expand
- // `pathpos`→`curglobdata.gd_pathpos`). Read directly from the
- // shared CURGLOBDATA mutex — the canonical port surface for glob
- // state in zshrs.
+    // c:2142-2146
+    // c:2147 — `needfullpath = (prog->flags & PAT_HAS_EXCLUDP) && pathpos;`
+    // `pathpos` is the `gd_pathpos` field of `curglobdata` (c:Src/glob.c:166-170
+    // struct globdata; c:197 static curglobdata; c:199-201 macros expand
+    // `pathpos`→`curglobdata.gd_pathpos`). Read directly from the
+    // shared CURGLOBDATA mutex — the canonical port surface for glob
+    // state in zshrs.
     let pathpos: i32 = crate::ported::glob::CURGLOBDATA
         .lock()
         .map(|gd| gd.pathpos as i32)
@@ -3681,7 +3681,7 @@ pub fn patallocstr(
     needfullpath = (prog.0.flags & PAT_HAS_EXCLUDP as i32) != 0 && pathpos != 0; // c:2147
 
     /* Get the length of the full string when unmetafied. */
- // c:2149
+    // c:2149
     if unmetalen < 0 {
         // c:2150
         // c:2151 — `patstralloc->unmetalen = ztrsub(string + stringlen, string);`
@@ -3714,7 +3714,7 @@ pub fn patallocstr(
         patstralloc.unmetalenp = 0; // c:2159
     }
     /* Initialise cache area */
- // c:2161
+    // c:2161
     patstralloc.progstrunmeta = None; // c:2162
     patstralloc.progstrunmetalen = 0; // c:2163
 
@@ -3727,7 +3727,7 @@ pub fn patallocstr(
      * globbing, we don't unmetafy pure string patterns, and
      * there's no reason to if the pattern is just a *.
      */
- // c:2167-2171
+    // c:2167-2171
     let pures_or_any = (prog.0.flags & (PAT_PURES | PAT_ANY) as i32) != 0;
     if force != 0 || (!pures_or_any && (needfullpath || patstralloc.unmetalen != stringlen))
     // c:2172
@@ -3737,8 +3737,8 @@ pub fn patallocstr(
          * (in which case we copy both chunks), or if we have
          * Meta characters.
          */
- // c:2174-2178
- // c:2179 — `char *dst, *ptr; int i, icopy, ncopy;`
+        // c:2174-2178
+        // c:2179 — `char *dst, *ptr; int i, icopy, ncopy;`
         let total = (patstralloc.unmetalen + patstralloc.unmetalenp) as usize;
         let mut dst = String::with_capacity(total); // c:2182 zhalloc
 
@@ -3782,7 +3782,7 @@ pub fn patallocstr(
                 break; // c:2204
             }
             /* next time append test string to path so far */
- // c:2205
+            // c:2205
             ptr = string; // c:2207
             ncopy = patstralloc.unmetalen; // c:2208
             let _ = icopy;

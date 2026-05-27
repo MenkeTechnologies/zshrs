@@ -473,7 +473,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 /// mask catastrophic state corruption as "command produced no output",
 /// which is the failure mode the `subst.rs:496` warning block flags.
 /* $(...) */
- // c:4709
+// c:4709
 pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     // c:4713
     // c:4715 — `Eprog prog;`
@@ -506,7 +506,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     // c:4731 — `if ((s = simple_redir_name(prog, REDIR_READ)))` — `$(< word)`
     if let Some(red_name) = simple_redir_name(&prog, crate::ported::zsh_h::REDIR_READ) {
         /* $(< word) */
- // c:4732
+        // c:4732
         s = red_name;
         s = crate::ported::subst::singsub(&s); // c:4737
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {

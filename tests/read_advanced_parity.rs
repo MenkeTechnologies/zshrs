@@ -1,6 +1,8 @@
 //! `read` builtin advanced-flag parity:
 //! -r, -d delim, -n N, -A array, -k chars, -t timeout, prompt, REPLY.
 
+#![allow(non_snake_case)]
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

@@ -8,6 +8,8 @@
 //! impact: any zsh user using `print -P` for colored shell output or
 //! prompt rendering gets wrong output from zshrs.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

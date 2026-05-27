@@ -32,6 +32,7 @@ fn zsh_available() -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
+#[allow(dead_code)]
 struct R {
     stdout: String,
     stderr: String,

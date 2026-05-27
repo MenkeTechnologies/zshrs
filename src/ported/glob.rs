@@ -608,7 +608,7 @@ fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) 
 }
 
 /* This function tokenizes a zsh glob pattern */
- // c:706
+// c:706
 /// Port of `parsecomplist(char *instr)` from Src/glob.c:710.
 /// Tokenize a zsh glob path pattern into a `Complist` of path
 /// components, recursively. Returns `None` and sets `errflag |=
@@ -650,8 +650,8 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
         }; // c:720
         if cond_a || cond_b || cond_c {
             /* Match any number of directories. */
- // c:721
- /* with three stars, follow symbolic links */                    // c:724
+            // c:721
+            /* with three stars, follow symbolic links */                    // c:724
             let follow: i32 = if chars.get(2) == Some(&crate::ported::zsh_h::Star) {
                 1
             } else {
@@ -664,7 +664,7 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
             let advance: usize = (if shortglob != 0 { 1 } else { 3 }) + follow as usize; // c:730
 
             /* Now get the next path component if there is one. */
- // c:732
+            // c:732
             let next_instr: String = chars[advance..].iter().collect();
             // c:733 — `l1 = (Complist) zhalloc(sizeof *l1);`
             let next_l = parsecomplist(&next_instr); // c:734
@@ -691,7 +691,7 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
     }
 
     /* Parse repeated directories such as (dir/)# and (dir/)## */
- // c:745
+    // c:745
     let zpc = crate::ported::pattern::zpc_special
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -777,7 +777,7 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
         }
     } else {
         /* parse single path component */
- // c:769
+        // c:769
         let mut endexp = String::new();
         let p1_opt = crate::ported::pattern::patcompile(
             instr,
@@ -790,7 +790,7 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
         p1 = p1_opt.unwrap();
         let cursor: Vec<char> = endexp.chars().collect();
         /* then do the remaining path components */
- // c:772
+        // c:772
         let head = cursor.first().copied();
         if head == Some('/') || head.is_none() {
             // c:773
@@ -822,7 +822,7 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
 }
 
 /* turn a string into a Complist struct:  this has path components */
- // c:787
+// c:787
 /// Port of `parsepat(char *str)` from Src/glob.c:791.
 /// Top-level entry: strip leading `(#...)` flag block via
 /// `patgetglobflags`, then initialise `pathbuf`/`pathpos` per the
@@ -845,7 +845,7 @@ pub fn parsepat(s: &str) -> Option<Box<complist>> {
      * Check for initial globbing flags, so that they don't form
      * a bogus path component.
      */
- // c:797-800
+    // c:797-800
     let mut cursor: String = s.to_string();
     let first_is_inpar_hash = chars.first() == Some(&inpar_c) && chars.get(1) == Some(&hash_c); // c:801
     let first_is_ksh_at_inpar_hash = chars.first() == Some(&ksh_at_c)
@@ -867,7 +867,7 @@ pub fn parsepat(s: &str) -> Option<Box<complist>> {
     }
 
     /* Now there is no (#X) in front, we can check the path. */
- // c:809
+    // c:809
     {
         let mut gd = CURGLOBDATA.lock().unwrap_or_else(|e| e.into_inner());
         // c:810-811 — `if (!pathbuf) pathbuf = zalloc(pathbufsz = PATH_MAX+1);`
@@ -886,7 +886,7 @@ pub fn parsepat(s: &str) -> Option<Box<complist>> {
             gd.pathpos = 1; // c:816 `pathbuf[pathpos = 1] = '\0';`
         } else {
             /* pattern is relative to pwd */
- // c:817
+            // c:817
             gd.pathbuf.clear(); // c:818 `pathbuf[pathpos = 0] = '\0';`
             gd.pathpos = 0;
         }
@@ -1234,7 +1234,7 @@ pub fn glob_exec_string(s: &str, plus_form: bool) -> Option<(String, usize)> {
  * Insert a glob match.
  * If there were words to prepend given by the P glob qualifier, do so.
  */
- // c:1120-1123
+// c:1120-1123
 /// Port of `insert_glob_match(LinkList list, LinkNode next, char *data)`
 /// from Src/glob.c:1125. Inserts `data` at `next`, with optional
 /// `gf_pre_words` prefix and `gf_post_words` suffix injection from

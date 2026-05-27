@@ -1,5 +1,7 @@
 //! Brace-expansion parity tests — `{a,b,c}`, `{N..M}`, escaped, nested.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

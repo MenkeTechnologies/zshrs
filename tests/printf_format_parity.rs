@@ -1,5 +1,7 @@
 //! printf format-spec parity tests.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

@@ -601,7 +601,7 @@ pub fn killrunjobs(from_signal: i32) {
 }
 
 /* send a signal to a job (simply involves kill if monitoring is on) */
- // c:525
+// c:525
 /// Port of `killjb(Job jn, int sig)` from `Src/signals.c:529`.
 /// CALLER CONVENTION: Rust passes `jn_idx: usize` (JOBTAB index)
 /// instead of C `Job jn` (pointer); the body resolves the job via
@@ -674,7 +674,7 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
                  * subjob, i.e. the forked zsh that was originally
                  * list_pipe_pid...
                  */
- // c:542-547
+                // c:542-547
                 let n = procs_pids.len();
                 if n > 0 {
                     for pid in &procs_pids[..n - 1] {
@@ -690,7 +690,7 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
                      * ...we only continue that once the external processes
                      * currently associated with the subjob are finished.
                      */
- // c:552-555
+                    // c:552-555
                     if other_empty {
                         // c:556
                         let last = procs_pids[n - 1];
@@ -706,7 +706,7 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
                  * The following marks both the superjob and subjob
                  * as running, as done elsewhere.
                  */
- // c:560-569
+                // c:560-569
                 if err != -1 {
                     // c:570
                     let table = crate::ported::jobs::JOBTAB.get().unwrap();

@@ -2,6 +2,8 @@
 //! `${(k)H}`, `${(v)H}`, `${(kv)H}`, sorted iteration,
 //! `for k v in ${(kv)H}`, ${#H}, delete-key, nested.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

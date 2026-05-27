@@ -1,5 +1,7 @@
 //! More subst flags: (z), (e), (M), (R), (V), (i), (n), (#) parity.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

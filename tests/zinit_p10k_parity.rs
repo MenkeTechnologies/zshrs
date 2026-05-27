@@ -16,6 +16,9 @@
 //!   - Process substitution `< <(cmd)` (when supported)
 //!   - History-style modifier chain `${1:t:r}`
 
+#![allow(non_snake_case)]
+#![allow(clippy::doc_lazy_continuation)]
+
 use std::path::PathBuf;
 use std::process::Command;
 

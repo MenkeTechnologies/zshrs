@@ -2,6 +2,8 @@
 //! glob in both shells from inside, sorts output, and compares. Sort
 //! is needed because directory enumeration order is filesystem-dependent.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
