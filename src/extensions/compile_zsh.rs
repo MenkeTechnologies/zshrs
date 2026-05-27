@@ -6918,7 +6918,29 @@ fn decode_ansi_c(body: &str) -> String {
             Some('e') | Some('E') => out.push('\x1b'),
             Some('f') => out.push('\x0c'),
             Some('v') => out.push('\x0b'),
-            Some('0') => out.push('\0'),
+            // c:Src/utils.c:7156 — `\NNN` octal, up to 3 octal
+            // digits. `\033` is ESC (0o33=27), `\0` alone is NUL.
+            // Previously only `\0` was handled (push NUL), so
+            // `\033` decoded as NUL + literal "33" — `$'\033'` had
+            // 3 bytes instead of 1 (the ESC).
+            Some(d @ '0'..='7') => {
+                let mut val: u32 = d.to_digit(8).unwrap();
+                for _ in 0..2 {
+                    if let Some(&h) = chars.peek() {
+                        if let Some(n) = h.to_digit(8) {
+                            val = val * 8 + n;
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                if let Some(c) = char::from_u32(val) {
+                    out.push(c);
+                }
+            }
             Some('x') => {
                 let mut hex = String::new();
                 for _ in 0..2 {
@@ -6933,6 +6955,26 @@ fn decode_ansi_c(body: &str) -> String {
                 }
                 if let Ok(b) = u8::from_str_radix(&hex, 16) {
                     out.push(b as char);
+                }
+            }
+            Some('u') | Some('U') => {
+                let n = if c == 'u' { 4 } else { 8 };
+                let _ = c;
+                let mut val: u32 = 0;
+                for _ in 0..n {
+                    if let Some(&h) = chars.peek() {
+                        if let Some(d) = h.to_digit(16) {
+                            val = val * 16 + d;
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                if let Some(c) = char::from_u32(val) {
+                    out.push(c);
                 }
             }
             Some(other) => {
