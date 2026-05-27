@@ -86,6 +86,17 @@ thread_local! {
     /// instead of three. Reset to false by XTRACE_ARGS /
     /// XTRACE_NEWLINE after emitting the trailing `\n`.
     static XTRACE_DONE_PS4: Cell<bool> = const { Cell::new(false) };
+
+    /// Stack of (RETFLAG, BREAKS, CONTFLAG, EXIT_PENDING) tuples saved
+    /// at try-block exit so the always-arm body can run cleanly even
+    /// when the try-block fired `return` / `break` / `continue` /
+    /// `exit`. Restored right before the post-always re-jump so the
+    /// escape resumes propagation past the construct.
+    /// c:Src/exec.c WC_TRYBLOCK — zsh's wordcode walker handles this
+    /// inline; the zshrs port lifts it into a paired SET / RESTORE
+    /// pair around the always-arm.
+    static TRY_ESCAPE_SAVE: RefCell<Vec<(i32, i32, i32, i32)>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 // Thread-local pointer to the current ShellExecutor.
@@ -2573,6 +2584,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let errored = (crate::ported::utils::errflag.load(Ordering::Relaxed)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0;
+        // c:Src/exec.c WC_TRYBLOCK — the always-arm runs with a
+        // clean escape state. Snapshot RETFLAG / BREAKS / CONTFLAG /
+        // EXIT_PENDING here and clear them; RESTORE_TRY_BLOCK_STATUS
+        // re-applies them at always-arm exit so the propagation jump
+        // emitted by compile_zsh fires correctly.
+        let ret_save = crate::ported::builtin::RETFLAG.swap(0, Ordering::Relaxed);
+        let brk_save = crate::ported::builtin::BREAKS.swap(0, Ordering::Relaxed);
+        let cont_save = crate::ported::builtin::CONTFLAG.swap(0, Ordering::Relaxed);
+        let exit_save = crate::ported::builtin::EXIT_PENDING.swap(0, Ordering::Relaxed);
+        TRY_ESCAPE_SAVE.with(|s| {
+            s.borrow_mut().push((ret_save, brk_save, cont_save, exit_save));
+        });
         with_executor(|exec| {
             exec.set_scalar(
                 "__zshrs_try_block_saved_status".to_string(),
@@ -2650,6 +2673,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // restore TRY_BLOCK_ERROR unconditionally — the always-list's
     // exit status is discarded for the construct.
     vm.register_builtin(BUILTIN_RESTORE_TRY_BLOCK_STATUS, |_vm, _argc| {
+        use std::sync::atomic::Ordering;
         // c:Src/exec.c — the entire `{try} always {…}` construct's
         // exit status is the try-block's last status. Per zsh
         // semantics this carries through regardless of what the
@@ -2664,6 +2688,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(0)
         });
+        // Re-apply the escape flags captured by SET_TRY_BLOCK_ERROR.
+        // If the always-arm itself fired return/break/continue/exit,
+        // its handler already overwrote the canonical atomics; let
+        // those win — the always-arm's own escape always takes
+        // priority over the try-block's deferred one.
+        if let Some((ret, brk, cont, exit_p)) = TRY_ESCAPE_SAVE.with(|s| s.borrow_mut().pop()) {
+            if crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) == 0 {
+                crate::ported::builtin::RETFLAG.store(ret, Ordering::Relaxed);
+            }
+            if crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0 {
+                crate::ported::builtin::BREAKS.store(brk, Ordering::Relaxed);
+            }
+            if crate::ported::builtin::CONTFLAG.load(Ordering::Relaxed) == 0 {
+                crate::ported::builtin::CONTFLAG.store(cont, Ordering::Relaxed);
+            }
+            if crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0 {
+                crate::ported::builtin::EXIT_PENDING.store(exit_p, Ordering::Relaxed);
+            }
+        }
         Value::Status(saved)
     });
 
@@ -3388,12 +3431,71 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // c:Src/exec.c WC_TRYBLOCK — post-always re-jump probes. Each
+    // returns 1 + consumes the atomic when the corresponding
+    // escape flag is set; the try-block compile pairs each with
+    // a JumpIfFalse + Jump → outer scope's return / break /
+    // continue patches.
+    vm.register_builtin(BUILTIN_RETFLAG_CHECK, |_vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let r = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
+        if r != 0 {
+            // Don't clear here — doshfunc owns the clear at c:6047
+            // when the function unwinds. Leaving it set propagates
+            // through nested `eval`/`source` callers correctly.
+            Value::Int(1)
+        } else {
+            Value::Int(0)
+        }
+    });
+    vm.register_builtin(BUILTIN_BREAKS_CHECK, |_vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let b = crate::ported::builtin::BREAKS.load(Ordering::Relaxed);
+        let c = crate::ported::builtin::CONTFLAG.load(Ordering::Relaxed);
+        // `break` sets BREAKS but NOT CONTFLAG; `continue` sets both.
+        // Filter out the continue path here so the two checks are
+        // mutually exclusive.
+        if b != 0 && c == 0 {
+            // Consume BREAKS so the outer loop's break_patches
+            // landing doesn't double-decrement.
+            crate::ported::builtin::BREAKS.store(0, Ordering::Relaxed);
+            Value::Int(1)
+        } else {
+            Value::Int(0)
+        }
+    });
+    vm.register_builtin(BUILTIN_CONTFLAG_CHECK, |_vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let c = crate::ported::builtin::CONTFLAG.load(Ordering::Relaxed);
+        if c != 0 {
+            crate::ported::builtin::CONTFLAG.store(0, Ordering::Relaxed);
+            crate::ported::builtin::BREAKS.store(0, Ordering::Relaxed);
+            Value::Int(1)
+        } else {
+            Value::Int(0)
+        }
+    });
+
     vm.register_builtin(BUILTIN_ERREXIT_CHECK, |vm, _argc| {
         // Returns Value::Int(1) when the caller should jump to the
         // current scope's return-patch landing (subshell-end / func-
         // end / chunk-end). Returns Value::Int(0) otherwise. Emit
         // side at `emit_errexit_check` pairs this with a JumpIfTrue
         // → return_patches pattern so the caller can short-circuit.
+        //
+        // Three triggers:
+        //   1. RETFLAG set by a nested `return` / `exit` (eval,
+        //      sourced file, called function). Unwind THIS scope so
+        //      the flag propagates outward until something clears it.
+        //   2. EXIT_PENDING set (mostly subshell-context exits). Same
+        //      propagation logic.
+        //   3. `set -e` + nonzero status — the classic errexit path.
+        use std::sync::atomic::Ordering;
+        let retflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
+        let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
+        if retflag != 0 || exit_pending != 0 {
+            return Value::Int(1);
+        }
         let last = vm.last_status;
         if last == 0 {
             return Value::Int(0);
@@ -3420,7 +3522,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // promotes them into the parent's $?; the caller's
             // JumpIfTrue will branch to the SubshellEnd landing so
             // no further ops in the subshell body run.
-            use std::sync::atomic::Ordering;
             crate::ported::builtin::EXIT_VAL.store(last, Ordering::Relaxed);
             crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
         }
@@ -4361,6 +4462,15 @@ pub const BUILTIN_IS_FIFO: u16 = 334;
 /// `[[ -S path ]]` — socket.
 pub const BUILTIN_IS_SOCKET: u16 = 335;
 pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
+/// Post-`always`-arm checks for the canonical RETFLAG / BREAKS /
+/// CONTFLAG atomics that mark try-block escapes. Each returns
+/// Value::Int(1) when the corresponding atomic is set (and consumes
+/// it so the next escape doesn't re-fire) and Value::Int(0) otherwise.
+/// Paired with JumpIfFalse + Jump to outer return_patches /
+/// break_patches / continue_patches by compile_zsh's `Try` arm.
+pub const BUILTIN_RETFLAG_CHECK: u16 = 600;
+pub const BUILTIN_BREAKS_CHECK: u16 = 601;
+pub const BUILTIN_CONTFLAG_CHECK: u16 = 602;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;

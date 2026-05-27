@@ -59,7 +59,6 @@ echo exit=$?
 
     /// Always runs after exit attempt? In a function-scope, return triggers cleanup.
     #[test]
-    #[ignore = "ZSHRS BUG: 'return' inside try-block bypasses always-clause"]
     fn always_runs_after_explicit_false() {
         assert_parity(r#"
 f() {
@@ -126,7 +125,6 @@ mod with_break_continue {
 
     /// always runs even when try block triggers `break` from loop.
     #[test]
-    #[ignore = "ZSHRS BUG: 'break' inside try-block skips always-clause cleanup"]
     fn always_runs_after_break_in_loop() {
         assert_parity(r#"
 for i in 1 2 3; do
@@ -138,7 +136,6 @@ echo done
 
     /// always runs when try block triggers `continue`.
     #[test]
-    #[ignore = "ZSHRS BUG: 'continue' inside try-block skips always-clause cleanup"]
     fn always_runs_after_continue_in_loop() {
         assert_parity(r#"
 for i in 1 2 3; do
