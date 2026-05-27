@@ -202,7 +202,6 @@ mod select_in_positional {
 
     /// `select x` (no in-list) → iterates over positional params.
     #[test]
-    #[ignore = "ZSHRS BUG: select without 'in' should iterate positionals; zshrs returns empty"]
     fn select_positional_no_in_list() {
         assert_parity_with_stdin(
             r#"set -- alpha beta gamma; select x do echo "chose:$x"; break; done"#,

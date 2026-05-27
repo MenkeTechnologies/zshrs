@@ -231,7 +231,6 @@ mod reset_optind {
 
     /// Re-running getopts after OPTIND=1 reset works.
     #[test]
-    #[ignore = "ZSHRS BUG: OPTIND=1 reset doesn't enable re-parse; second pass empty"]
     fn reset_optind_and_re_parse() {
         assert_parity(r#"
 set -- -a

@@ -6962,14 +6962,34 @@ pub fn bin_getopts(
         PPARAMS.lock().map(|p| p.clone()).unwrap_or_default()
     };
 
+    // c:Src/builtin.c:5680 — at entry, re-sync the internal zoptind
+    // tracker against the user-visible $OPTIND param. zsh exposes
+    // OPTIND as a writable param so scripts can reset it to 1 to
+    // re-parse positionals; the Rust port had `ZOPTIND` as an atomic
+    // that was the AUTHORITY (writes to $OPTIND didn't propagate
+    // back), so `OPTIND=1` between two getopts loops left zoptind at
+    // the post-loop value and the second pass returned immediately.
+    let paramtab_oi = crate::ported::params::getiparam("OPTIND");
+    let mut zoptind = if paramtab_oi >= 1 {
+        paramtab_oi as i32
+    } else {
+        ZOPTIND.load(Relaxed)
+    };
     // c:5681-5685 — `if (zoptind < 1) { zoptind = 1; optcind = 0; }`
-    let mut zoptind = ZOPTIND.load(Relaxed);
     if zoptind < 1 {
         // c:5681
         zoptind = 1;
         OPTCIND.store(0, Relaxed);
     }
-    let mut optcind = OPTCIND.load(Relaxed);
+    // c:Src/builtin.c — when $OPTIND was just reset to 1 (i.e. the
+    // user-visible param disagrees with the previous internal
+    // pointer), reset optcind so the new pass starts at byte 0 of
+    // the first option arg.
+    let mut optcind = if paramtab_oi == 1 && ZOPTIND.load(Relaxed) != 1 {
+        0
+    } else {
+        OPTCIND.load(Relaxed)
+    };
 
     // c:5686-5688 — `if (arrlen_lt(args, zoptind)) return 1;`
     if (args.len() as i32) < zoptind {

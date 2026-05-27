@@ -1469,18 +1469,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // popped: [sub_idx, name, word_N, ..., word_1] (popping from top)
         let sub_idx_val = popped.remove(0);
         let name_val = popped.remove(0);
-        let mut words: Vec<String> = popped.into_iter().rev().map(|v| v.to_str()).collect();
-        // Flatten any Value::Array elements (e.g. `select x in $arr; ...`).
-        let mut flat = Vec::with_capacity(words.len());
-        for w in words.drain(..) {
-            // The pop above already to_str()'d, so Array splice is lost. Re-
-            // pop wouldn't help — the host receives flat strings here. This is
-            // OK for now since the compile path uses ARRAY_FLATTEN-equivalent
-            // reasoning before the call. If splice support is needed, the
-            // compile path should call BUILTIN_ARRAY_FLATTEN first.
-            flat.push(w);
+        // c:Src/loop.c — `select` flattens Array values (from `$@`,
+        // `${arr[@]}`, etc.) into the menu. Without per-element
+        // splice, `select x do ... done` (bare, iterating $@)
+        // collapsed all positionals into one joined entry.
+        let mut words: Vec<String> = Vec::new();
+        for v in popped.into_iter().rev() {
+            match v {
+                Value::Array(items) => {
+                    for item in items {
+                        words.push(item.to_str());
+                    }
+                }
+                other => words.push(other.to_str()),
+            }
         }
-        let words = flat;
 
         let sub_idx = sub_idx_val.to_int() as usize;
         let name = name_val.to_str();
@@ -1935,11 +1938,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_JOIN_STAR, |vm, _argc| {
         let name = vm.pop().to_str();
         let result = with_executor(|exec| {
-            let sep = exec
-                .scalar("IFS")
-                .and_then(|s| s.chars().next())
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| " ".to_string());
+            // c:Src/params.c — `"$*"` joins by IFS[0]. zsh
+            // distinguishes IFS=unset (→ default `" "`) from
+            // IFS="" (→ EMPTY separator → fields concatenate).
+            // chars().next() collapsed both into the default, so
+            // IFS="" was treated as IFS=" ".
+            let sep = match exec.scalar("IFS") {
+                Some(s) => s.chars().next().map(|c| c.to_string()).unwrap_or_default(),
+                None => " ".to_string(),
+            };
             if name == "@" || name == "*" || name == "argv" {
                 return exec.pparams().join(&sep);
             }
