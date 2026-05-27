@@ -3592,7 +3592,20 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
     let mut val = val;
     match PM_TYPE(pm.node.flags as u32) {
         t if t == PM_SCALAR || t == PM_NAMEREF => {
-            let v_str = val.take().unwrap_or_default();
+            let mut v_str = val.take().unwrap_or_default();
+            // c:Src/params.c — PM_LOWER / PM_UPPER case fold on
+            // assignment. zsh applies these flags both when writing
+            // the in-memory scalar and when exporting to env; the
+            // copyenvstr path handles the export side, but the
+            // scalar set path also needs to fold so `echo $X`
+            // reads the lowercased value. Without this, `typeset -l
+            // X; X=MixedCase; echo $X` printed "MixedCase".
+            let pf = pm.node.flags as u32;
+            if pf & PM_LOWER != 0 {
+                v_str = v_str.to_ascii_lowercase();
+            } else if pf & PM_UPPER != 0 {
+                v_str = v_str.to_ascii_uppercase();
+            }
             if v.start == 0 && v.end == -1 {
                 // c:2748 — `v->pm->gsu.s->setfn(v->pm, val);`. C
                 // dispatches through the param's GSU vtable so

@@ -237,7 +237,6 @@ mod option_persist_in_subshell {
 
     /// Options set in subshell don't leak out.
     #[test]
-    #[ignore = "ZSHRS BUG: setopt inside () leaks to parent scope; should not"]
     fn subshell_setopt_no_leak() {
         assert_parity(r#"(setopt extendedglob); [[ -o extendedglob ]]; echo $?"#);
     }

@@ -218,6 +218,11 @@ pub struct SubshellSnapshot {
     /// subshell's own EXIT trap (if any) has fired. Stores a snapshot
     /// of `crate::ported::builtin::traps_table()` (canonical).
     pub traps: HashMap<String, String>,
+    /// Parent's shell options at subshell entry. `(set -e)` /
+    /// `(setopt extendedglob)` mustn't leak; zsh forks the subshell
+    /// so child options die with the child. We run in-process, so we
+    /// must restore the option store on subshell_end.
+    pub opts: HashMap<String, bool>,
 }
 
 #[allow(unused_imports)]
@@ -1659,6 +1664,29 @@ impl ShellExecutor {
             let chunk = compiler.compile(&prog);
             if !chunk.ops.is_empty() {
                 crate::fusevm_disasm::maybe_print_stdout("run_command_substitution", &chunk);
+                // c:Src/exec.c:4783 — `$(...)` runs in a subshell, so
+                // assignments / setopt / cd / trap changes inside
+                // mustn't leak to the parent. zsh forks; we run
+                // in-process and snapshot/restore manually. Same
+                // snapshot shape used by host_subshell_begin/end for
+                // the `(...)` subshell form.
+                let paramtab_snap = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .map(|t| t.clone())
+                    .unwrap_or_default();
+                let paramtab_hashed_snap =
+                    crate::ported::params::paramtab_hashed_storage()
+                        .lock()
+                        .ok()
+                        .map(|m| m.clone())
+                        .unwrap_or_default();
+                let pparams_snap = self.pparams();
+                let opts_snap = crate::ported::options::opt_state_snapshot();
+                let traps_snap = crate::ported::builtin::traps_table()
+                    .lock()
+                    .map(|t| t.clone())
+                    .unwrap_or_default();
                 let mut vm = fusevm::VM::new(chunk);
                 register_builtins(&mut vm);
                 vm.set_shell_host(Box::new(ZshrsHost));
@@ -1674,6 +1702,20 @@ impl ShellExecutor {
                 let _ctx = ExecutorContext::enter(self);
                 let _ = vm.run();
                 cmd_status = Some(vm.last_status);
+                // Restore parent state. The inner cmd-subst's stdout
+                // (the captured pipe contents) is the only thing
+                // that leaks out.
+                if let Ok(mut t) = crate::ported::params::paramtab().write() {
+                    *t = paramtab_snap;
+                }
+                if let Ok(mut m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                    *m = paramtab_hashed_snap;
+                }
+                self.set_pparams(pparams_snap);
+                crate::ported::options::opt_state_restore(opts_snap);
+                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                    *t = traps_snap;
+                }
             }
         }
         // Restore LINENO so outer xtrace sees the outer line.

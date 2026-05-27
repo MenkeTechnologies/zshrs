@@ -72,7 +72,6 @@ mod set_e_isolation {
 
     /// `set -e` in subshell doesn't leak.
     #[test]
-    #[ignore = "ZSHRS BUG: set -e in subshell may leak (related to set -e bug class)"]
     fn set_e_in_subshell_isolated() {
         assert_parity(r#"(set -e); echo $?; false; echo "still here: $?""#);
     }
@@ -174,7 +173,6 @@ mod with_command_subst {
 
     /// `$( ... )` is itself a subshell.
     #[test]
-    #[ignore = "ZSHRS BUG: $(X=inside; ...) leaks X to outer scope (same as () subshell)"]
     fn cmdsubst_is_subshell_var_isolated() {
         assert_parity(r#"X=outer; Y=$(X=inside; echo $X); echo "Y=$Y X=$X""#);
     }
