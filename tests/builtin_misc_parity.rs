@@ -83,7 +83,6 @@ mod exit_builtin {
 
     /// exit with too-large code wraps to 0..255.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: exit 256 wrap-to-0 behavior differs from zsh"]
     fn exit_256_wraps_to_zero() {
         assert_parity("(exit 256); echo $?");
     }

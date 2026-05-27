@@ -4832,8 +4832,15 @@ impl fusevm::ShellHost for ZshrsHost {
         let exit_pending = crate::ported::builtin::EXIT_PENDING
             .load(std::sync::atomic::Ordering::Relaxed);
         if exit_pending != 0 {
-            let val = crate::ported::builtin::EXIT_VAL
+            // c:Src/builtin.c — `exit N` masks N to 8 bits because
+            // POSIX _exit takes the low byte as status. `(exit 256)`
+            // and `(exit 0)` are indistinguishable to the parent;
+            // `(exit 257)` exits with 1. Without the mask zshrs's
+            // in-process subshell propagated the full i32 (256) into
+            // the parent's $?, diverging from zsh.
+            let raw = crate::ported::builtin::EXIT_VAL
                 .load(std::sync::atomic::Ordering::Relaxed);
+            let val = raw & 0xFF;
             with_executor(|exec| exec.set_last_status(val));
             crate::ported::builtin::EXIT_PENDING
                 .store(0, std::sync::atomic::Ordering::Relaxed);

@@ -9003,7 +9003,29 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
     // FUNCSTACK holds funcstack structs; surface the .name field.
     if name == "funcstack" {
         if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
-            return Some(f.iter().map(|fs| fs.name.clone()).collect());
+            // c:Src/Modules/parameter.c — `$funcstack` exposes the
+            // call-stack in INNERMOST-first order (funcstack[1] is
+            // the most-recently-called function). zshrs's FUNCSTACK
+            // Vec stores in push order (oldest first), so reverse
+            // on read.
+            return Some(f.iter().rev().map(|fs| fs.name.clone()).collect());
+        }
+    }
+    if name == "funcfiletrace" || name == "funcsourcetrace" || name == "functrace" {
+        if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
+            // Sibling arrays — also innermost-first.
+            return Some(
+                f.iter()
+                    .rev()
+                    .map(|fs| {
+                        if name == "funcfiletrace" {
+                            fs.filename.clone().unwrap_or_default()
+                        } else {
+                            format!("{}:{}", fs.name, fs.lineno)
+                        }
+                    })
+                    .collect(),
+            );
         }
     }
     let tab = paramtab().read().ok()?;
