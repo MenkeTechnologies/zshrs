@@ -304,3 +304,37 @@ mod pipestatus {
         assert_parity(r#"true | false | true; echo "${pipestatus[@]}""#);
     }
 }
+
+mod plus_table_flags {
+    use super::*;
+
+    #[test]
+    fn plus_options() {
+        assert_parity(r#"print -r ${+options}"#);
+    }
+
+    #[test]
+    fn plus_parameters() {
+        assert_parity(r#"print -r ${+parameters}"#);
+    }
+
+    #[test]
+    fn plus_aliases() {
+        assert_parity(r#"print -r ${+aliases}"#);
+    }
+
+    #[test]
+    fn plus_builtins() {
+        assert_parity(r#"print -r ${+builtins}"#);
+    }
+
+    #[test]
+    fn plus_pipestatus() {
+        assert_parity(r#"print -r ${+pipestatus}"#);
+    }
+
+    #[test]
+    fn plus_dirstack() {
+        assert_parity(r#"print -r ${+dirstack}"#);
+    }
+}

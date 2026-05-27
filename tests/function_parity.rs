@@ -330,3 +330,27 @@ mod exit_status_propagation {
         assert_parity("f() { return 1; }; if f; then echo yes; else echo no; fi");
     }
 }
+
+mod round_ao_pins {
+    use super::*;
+
+    #[test]
+    fn unfunction_smoke() {
+        assert_parity(r#"f_ao(){ :; }; unfunction f_ao 2>/dev/null; echo $?"#);
+    }
+
+    #[test]
+    fn alias_then_unalias() {
+        assert_parity(r#"alias zt='echo z'; zt; unalias zt 2>/dev/null; echo $?"#);
+    }
+
+    #[test]
+    fn plus_functions_table() {
+        assert_parity(r#"print -r ${+functions}"#);
+    }
+
+    #[test]
+    fn whence_w_print() {
+        assert_parity("whence -w print");
+    }
+}
