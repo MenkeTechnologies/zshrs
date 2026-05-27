@@ -5640,29 +5640,49 @@ pub fn paramsubst(
                     })
                     .unwrap_or(false);
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript_one) {
-                    // c:Src/subst.c:3870 — single-`/` on array replaces
-                    // ONLY the first matching element (first hit
-                    // across the whole array, not per-element). Other
-                    // elements pass through unchanged. Tests on
-                    // `(ap b cp)/p/P` confirm zsh outputs `aP b cp`,
-                    // i.e. third element's `p` is NOT replaced.
-                    let mut done = false;
-                    let new_arr: Vec<String> = arr
-                        .iter()
-                        .map(|e| {
-                            if done {
-                                e.clone()
-                            } else {
-                                let replaced = replace_one(e);
-                                if replaced != *e {
-                                    done = true;
+                    // c:Src/subst.c:3870 — single-`/` semantics:
+                    //   bare `${a/p/P}` (no `[@]`, no `(@)`):
+                    //       first MATCH across whole array, others
+                    //       pass through unchanged. `(ap b cp)/p/P`
+                    //       → `aP b cp`.
+                    //   `${a[@]/p/P}` / `${(@)a/p/P}` (array-shape
+                    //   preserved): first match WITHIN EACH element.
+                    //       `(ap b cp)[@]/p/P` → `aP b cP`.
+                    //
+                    // Detect the array-shape variant via either the
+                    // explicit @/* subscript OR the (@) flag
+                    // (nojoin == 2 means the (@) flag set up the
+                    // word-array shape upstream at subst.c:1817).
+                    let is_at_star_subscript = matches!(
+                        subscript.as_deref(),
+                        Some("@") | Some("*")
+                    );
+                    let array_shape = is_at_star_subscript || nojoin == 2;
+                    if array_shape {
+                        let new_arr: Vec<String> =
+                            arr.iter().map(|e| replace_one(e)).collect();
+                        value = new_arr.join(" "); // c:3870 per-element
+                        split_parts = Some(new_arr);
+                    } else {
+                        // Bare array form: first match across whole.
+                        let mut done = false;
+                        let new_arr: Vec<String> = arr
+                            .iter()
+                            .map(|e| {
+                                if done {
+                                    e.clone()
+                                } else {
+                                    let replaced = replace_one(e);
+                                    if replaced != *e {
+                                        done = true;
+                                    }
+                                    replaced
                                 }
-                                replaced
-                            }
-                        })
-                        .collect();
-                    value = new_arr.join(" "); // c:3870
-                    split_parts = Some(new_arr); // c:3870
+                            })
+                            .collect();
+                        value = new_arr.join(" "); // c:3870
+                        split_parts = Some(new_arr); // c:3870
+                    }
                 } else {
                     value = replace_one(&raw_value); // c:3870
                 }
