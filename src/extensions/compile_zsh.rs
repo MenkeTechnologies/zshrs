@@ -236,6 +236,16 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
         self.builder.emit(Op::Pop, 0);
+        // c:Src/exec.c:1357-1500 DEBUGBEFORECMD — fire the DEBUG
+        // trap before each statement. Routes through canonical
+        // `dotrap(SIGDEBUG)` which checks the traps_table for a
+        // "DEBUG" entry and runs the body. Cheap no-op when no
+        // DEBUG trap is set (one hashmap lookup).
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_DEBUG_TRAP, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
 
         // ZshList = sublist + flags (async / disown).
         if list.flags.async_ {
