@@ -1037,6 +1037,15 @@ fn m_force_float_set(v: bool) {
 }
 #[inline]
 fn m_octal_zeroes() -> bool {
+    // c:Src/math.c:489 — `isset(OCTALZEROES)` is read directly at
+    // each integer-literal parse site, not snapshotted at math-eval
+    // entry. The thread-local cache here only honored a snapshot
+    // pushed by arith_compile (line 1205); freshly toggled
+    // `setopt octalzeroes` inside the same script never reached it.
+    // Mirror C by reading the option live.
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::OCTALZEROES) {
+        return true;
+    }
     M_OCTAL_ZEROES.with(|c| c.get())
 }
 #[inline]
