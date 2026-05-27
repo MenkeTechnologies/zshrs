@@ -209,14 +209,12 @@ mod sentinel_slash_pat_globally {
     /// `${X//#pat/repl}` — replace all anchored-at-start matches.
     /// (`#` anchor + `//` global doesn't make sense, but pin behavior.)
     #[test]
-    #[ignore = "ZSHRS BUG: ${X//#pat/repl} start-anchor in global-replace not honored"]
     fn double_slash_with_pound_anchor() {
         assert_parity(r#"X=foofoo; echo "${X//#foo/X}""#);
     }
 
     /// `${X//%pat/repl}` — replace all anchored-at-end.
     #[test]
-    #[ignore = "ZSHRS BUG: ${X//%pat/repl} end-anchor in global-replace not honored"]
     fn double_slash_with_percent_anchor() {
         assert_parity(r#"X=foofoo; echo "${X//%foo/X}""#);
     }
