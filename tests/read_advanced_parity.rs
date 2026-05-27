@@ -106,7 +106,6 @@ mod dash_d_delim {
 
     /// `read -d ''` reads until NUL.
     #[test]
-    #[ignore = "ZSHRS BUG: read -d '' (NUL delimiter) may not work the same as zsh"]
     fn dash_d_nul_delim() {
         assert_parity_stdin(r#"read -d '' x; echo "[$x]""#, b"all of this\nincluding newlines\0");
     }
