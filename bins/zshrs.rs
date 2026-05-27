@@ -65,7 +65,7 @@ impl MenuState {
     fn selected_index(&self) -> Option<usize> { None }
     fn set_term_size(&mut self, _w: usize, _h: usize) {}
     fn set_available_rows(&mut self, _r: usize) {}
-    fn process_action(&mut self, _a: MenuAction) -> MenuResult { MenuResult::default() }
+    fn process_action(&mut self, _a: MenuAction) -> MenuResult { MenuResult }
     fn render(&self) -> MenuRendering { MenuRendering::default() }
 }
 #[derive(Clone, Debug, Default)]
