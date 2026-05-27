@@ -125,7 +125,6 @@ echo "[$OUTER]"
 
     /// `local X; unset X` removes local — outer should be visible after fn.
     #[test]
-    #[ignore = "ZSHRS BUG: unset of local var leaks; outer var unreachable after function returns"]
     fn unset_local_in_function_uncovers_outer() {
         assert_parity(r#"
 OUTER=outer-val

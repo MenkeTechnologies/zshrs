@@ -210,7 +210,6 @@ mod special_keys {
 
     /// Empty string key.
     #[test]
-    #[ignore = "ZSHRS BUG: empty-string assoc key crashes/produces no output; zsh accepts and stores"]
     fn empty_string_key() {
         assert_parity(r#"typeset -A H; H[""]=emptykey; echo "[${H[""]}]""#);
     }

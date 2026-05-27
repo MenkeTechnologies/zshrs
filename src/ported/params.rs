@@ -5721,7 +5721,26 @@ pub fn unsetparam(name: &str) {
                 .write()
                 .unwrap()
                 .insert(name.to_string(), pm_owned);
+        } else if pm_owned.old.is_some() {
+            // c:Src/params.c:3892-3925 — when the unset'd pm is a
+            // local that shadowed an outer binding (chained via
+            // pm.old by `addparam` at c:1137), the local pm STAYS
+            // in paramtab with PM_UNSET set so the current scope's
+            // reads see "unset" (empty). The pm.old chain is
+            // preserved so endparamscope can uncover the outer
+            // when the local scope ends. Without this re-insert,
+            // either:
+            //   - the outer would be uncovered immediately (wrong:
+            //     zsh hides the outer until scope end), or
+            //   - pm.old would be dropped (wrong: outer never
+            //     comes back).
+            paramtab()
+                .write()
+                .unwrap()
+                .insert(name.to_string(), pm_owned);
         }
+        // No pm.old + no rejection → drop entirely (matches the
+        // C path at c:3935 where the node is removed from paramtab).
     }
     unqueue_signals(); // c:3832
 }

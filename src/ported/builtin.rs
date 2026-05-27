@@ -5231,14 +5231,24 @@ pub fn bin_unset(
             }
             None => {
                 // c:3900-3905 — whole-param unset.
-                crate::ported::exec_hooks::unset_scalar(nm);
-                crate::ported::exec_hooks::unset_array(nm);
-                crate::ported::exec_hooks::unset_assoc(nm);
-                let _ = paramtab()
-                    .write()
+                // Route through `unsetparam` (params.rs) so the
+                // canonical readonly-guard + pm.old uncover restore
+                // fires. Without this, `local x=inner; unset x`
+                // would erase the OUTER binding too (the local pm's
+                // pm.old chain dropped on the floor).
+                //
+                // Clear the parallel shadow storage that lives in
+                // ShellExecutor (paramtab_hashed_storage for assoc,
+                // and the per-executor arrays/assocs maps). These
+                // are NOT touched by params.rs::unsetparam so we
+                // wipe them directly here; using exec_hooks::unset_*
+                // would loop back into unsetparam.
+                crate::ported::params::unsetparam(nm);
+                let _ = crate::ported::params::paramtab_hashed_storage()
+                    .lock()
                     .ok()
                     .as_deref_mut()
-                    .map(|t| t.remove(nm)); // c:3900 paramtab removenode
+                    .map(|m| m.remove(nm));
                 env::remove_var(nm); // c:3905 delenv
             }
         }
