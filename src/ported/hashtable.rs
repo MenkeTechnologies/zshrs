@@ -1474,7 +1474,14 @@ where
 {
     let tab = shfunctab_lock().read().expect("shfunctab poisoned");
     let mut count = 0;
-    for (name, entry) in tab.iter() {
+    // c:Src/hashtable.c:1031 scanshfunc(sorted=1, …) — the `sorted`
+    // flag is set on every internal caller (bin_functions's no-arg
+    // listing, etc.), so scan walks entries in sorted order via
+    // hnamcmp (byte-wise ASCII compare). The HashMap iter order is
+    // arbitrary; collect + sort for parity.
+    let mut entries: Vec<_> = tab.iter().collect();
+    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    for (name, entry) in entries {
         let matches = match pattern {
             None => true,
             Some(p) => simple_glob_match(p, name),
