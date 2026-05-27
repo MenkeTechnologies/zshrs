@@ -8183,11 +8183,39 @@ pub fn bin_read(
         return compctlread(name, &args[argi..]);
     }
 
-    // Optional explicit input FD via -u.
-    let _ufd: i32 = if OPT_HASARG(ops, b'u') {
+    // Optional explicit input FD via -u. When unspecified, fall back
+    // to fd 0 (stdin). All read paths below route bytes through
+    // `read_byte_from_fd` so `read -u 3 var` after `exec 3< file`
+    // correctly pulls from the user fd.
+    let ufd: i32 = if OPT_HASARG(ops, b'u') {
         OPT_ARG(ops, b'u').and_then(|s| s.parse().ok()).unwrap_or(0)
     } else {
         0
+    };
+    // c:Src/builtin.c:6418 — single-byte reader bound to `ufd`.
+    // libc::read with len=1 keeps the file position advancing across
+    // successive calls (matches zsh's per-byte read loop). Returns
+    // Some(byte) on success, None on EOF, error sentinel on syscall
+    // failure (caller maps to return 2).
+    let read_byte = |fd: i32| -> std::io::Result<Option<u8>> {
+        let mut b = [0u8; 1];
+        loop {
+            let n = unsafe {
+                libc::read(fd, b.as_mut_ptr() as *mut libc::c_void, 1)
+            };
+            match n {
+                1 => return Ok(Some(b[0])),
+                0 => return Ok(None),
+                -1 => {
+                    let err = std::io::Error::last_os_error();
+                    if err.kind() == std::io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return Err(err);
+                }
+                _ => return Ok(None),
+            }
+        }
     };
 
     // c:6488-6515 — `-t TIMEOUT` poll(2) wait.
@@ -8228,10 +8256,9 @@ pub fn bin_read(
         let mut got = vec![0u8; nchars as usize];
         let mut bytes_read = 0;
         while bytes_read < nchars as usize {
-            let mut b = [0u8; 1];
-            match io::stdin().lock().read(&mut b) {
-                Ok(1) => {
-                    got[bytes_read] = b[0];
+            match read_byte(ufd) {
+                Ok(Some(b)) => {
+                    got[bytes_read] = b;
                     bytes_read += 1;
                 }
                 _ => break,
@@ -8254,17 +8281,16 @@ pub fn bin_read(
         let mut buf_bytes = Vec::<u8>::new();
         let mut got_any = false;
         loop {
-            let mut b = [0u8; 1];
-            match io::stdin().lock().read(&mut b) {
-                Ok(1) => {
+            match read_byte(ufd) {
+                Ok(Some(b)) => {
                     got_any = true;
-                    if b[0] == delim {
+                    if b == delim {
                         break;
                     }
-                    buf_bytes.push(b[0]);
+                    buf_bytes.push(b);
                 }
-                Ok(0) => break,
-                _ => return 2,
+                Ok(None) => break,
+                Err(_) => return 2,
             }
         }
         buf = String::from_utf8_lossy(&buf_bytes).into_owned();
@@ -8290,39 +8316,34 @@ pub fn bin_read(
         let mut buf_bytes = Vec::<u8>::new();
         let mut got_any = false;
         let mut saw_newline = false;
-        let stdin = io::stdin();
-        let mut guard = stdin.lock();
         loop {
-            let mut b = [0u8; 1];
-            let n = guard.read(&mut b);
-            match n {
-                Ok(1) => {
+            match read_byte(ufd) {
+                Ok(Some(b)) => {
                     got_any = true;
-                    if !raw_mode && b[0] == b'\\' {
-                        let mut nxt = [0u8; 1];
-                        match guard.read(&mut nxt) {
-                            Ok(1) => {
-                                if nxt[0] == b'\n' {
+                    if !raw_mode && b == b'\\' {
+                        match read_byte(ufd) {
+                            Ok(Some(nx)) => {
+                                if nx == b'\n' {
                                     // Line continuation — drop both.
                                     continue;
                                 }
-                                buf_bytes.push(nxt[0]);
+                                buf_bytes.push(nx);
                                 continue;
                             }
-                            Ok(_) => {
+                            Ok(None) => {
                                 buf_bytes.push(b'\\');
                                 break;
                             }
                             Err(_) => return 2,
                         }
                     }
-                    if b[0] == b'\n' {
+                    if b == b'\n' {
                         saw_newline = true;
                         break;
                     }
-                    buf_bytes.push(b[0]);
+                    buf_bytes.push(b);
                 }
-                Ok(_) => break,
+                Ok(None) => break,
                 Err(_) => return 2,
             }
         }

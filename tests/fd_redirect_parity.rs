@@ -155,7 +155,6 @@ mod read_from_fd {
 
     /// `read -u 3` reads from fd 3.
     #[test]
-    #[ignore = "ZSHRS BUG: read -u N from non-default fd reads empty; fd not connected to read"]
     fn read_dash_u_from_fd() {
         let d = tdir();
         std::fs::write(d.path().join("in.txt"), "first\nsecond\n").unwrap();
@@ -165,7 +164,6 @@ mod read_from_fd {
 
     /// `read -u 3` advances position.
     #[test]
-    #[ignore = "ZSHRS BUG: read -u N doesn't advance file position; sequential reads return empty"]
     fn read_dash_u_advances() {
         let d = tdir();
         std::fs::write(d.path().join("in.txt"), "one\ntwo\nthree\n").unwrap();
@@ -199,7 +197,6 @@ mod multiple_fds {
 
     /// Several fds open simultaneously.
     #[test]
-    #[ignore = "ZSHRS BUG: multiple exec N< opens don't allow read -u N to read; both empty"]
     fn three_fds_open_separately() {
         let d = tdir();
         std::fs::write(d.path().join("a.txt"), "data-a\n").unwrap();
