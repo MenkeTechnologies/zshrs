@@ -65,7 +65,10 @@ impl CompauditError {
     /// sh:144-149 — produce the `_i_q` token. Returned to the
     /// caller for diagnostic messages.
     pub fn discriminator(&self) -> &'static str {
-        match (self.insecure_dirs.is_empty(), self.insecure_files.is_empty()) {
+        match (
+            self.insecure_dirs.is_empty(),
+            self.insecure_files.is_empty(),
+        ) {
             (true, true) => "",
             (true, false) => "files",
             (false, true) => "directories",
@@ -105,10 +108,7 @@ pub fn compaudit(dirs: &[PathBuf]) -> Result<(), CompauditError> {
     };
 
     // Filter out `.` per sh:54 `${^~fpath:/.}` substitution
-    let fpath: Vec<PathBuf> = fpath
-        .into_iter()
-        .filter(|d| d.as_os_str() != ".")
-        .collect();
+    let fpath: Vec<PathBuf> = fpath.into_iter().filter(|d| d.as_os_str() != ".").collect();
 
     // sh:82-115 — build the trusted-owner set: root (0) + EUID +
     //   the owner of `/proc/$$/exe` (or `object/a.out`) if present
@@ -119,7 +119,11 @@ pub fn compaudit(dirs: &[PathBuf]) -> Result<(), CompauditError> {
     //   `/etc/debian_version` exists ⇒ allow `/usr/local/*` dirs
     //   where group == `staff` AND owner == root.
     let on_debian = Path::new("/etc/debian_version").exists();
-    let staff_gid = if on_debian { lookup_group_gid("staff") } else { None };
+    let staff_gid = if on_debian {
+        lookup_group_gid("staff")
+    } else {
+        None
+    };
 
     // sh:116-129 — RedHat per-user-group exemption: if user's
     //   primary group has only the user as a member, group-write
@@ -131,7 +135,14 @@ pub fn compaudit(dirs: &[PathBuf]) -> Result<(), CompauditError> {
 
     // sh:111-112 — fpath dirs + their parents
     for dir in &fpath {
-        check_directory(dir, &trusted_owners, on_debian, staff_gid, user_private_gid, &mut audit);
+        check_directory(
+            dir,
+            &trusted_owners,
+            on_debian,
+            staff_gid,
+            user_private_gid,
+            &mut audit,
+        );
         if let Some(parent) = dir.parent() {
             // Don't double-check if parent is itself in fpath
             if !fpath.iter().any(|p| p == parent) {
@@ -218,10 +229,7 @@ fn check_directory(
     //   is `staff` AND owner is root.
     if on_debian {
         if let Some(staff) = staff_gid {
-            if dir.starts_with("/usr/local/")
-                && meta.gid() == staff
-                && meta.uid() == 0
-            {
+            if dir.starts_with("/usr/local/") && meta.gid() == staff && meta.uid() == 0 {
                 return;
             }
         }
@@ -300,8 +308,7 @@ fn detect_user_private_group() -> Option<u32> {
             continue;
         }
         let members = cols[3];
-        let members_ok = members.is_empty()
-            || members.split(',').all(|m| m.trim() == user_name);
+        let members_ok = members.is_empty() || members.split(',').all(|m| m.trim() == user_name);
         if gname == user_name && members_ok && euid == unsafe { libc::getuid() } {
             return Some(gid);
         }

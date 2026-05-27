@@ -4,32 +4,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -168,7 +202,8 @@ mod recursion {
     /// Plain recursion — countdown.
     #[test]
     fn recursive_countdown() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 countdown() {
   local n=$1
   if (( n <= 0 )); then
@@ -179,13 +214,15 @@ countdown() {
   countdown $(( n - 1 ))
 }
 countdown 3
-"#);
+"#,
+        );
     }
 
     /// Factorial via recursion.
     #[test]
     fn recursive_factorial() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 fact() {
   if (( $1 <= 1 )); then
     echo 1
@@ -195,7 +232,8 @@ fact() {
   fi
 }
 fact 5
-"#);
+"#,
+        );
     }
 }
 
@@ -209,11 +247,13 @@ mod calling_other_fns {
 
     #[test]
     fn fn_calls_fn_with_args() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 greet() { echo "hi $1"; }
 both() { greet $1; greet $2; }
 both world friend
-"#);
+"#,
+        );
     }
 }
 
@@ -243,10 +283,12 @@ mod fn_in_pipeline {
 
     #[test]
     fn function_as_data_source_for_while_read() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 src() { echo a; echo b; echo c; }
 src | while read line; do echo got $line; done
-"#);
+"#,
+        );
     }
 }
 
@@ -256,13 +298,15 @@ mod nested_def {
     /// Nested function definitions — outer + inner.
     #[test]
     fn nested_function_def_inside_outer() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 outer() {
   inner() { echo from-inner; }
   inner
 }
 outer
-"#);
+"#,
+        );
     }
 }
 

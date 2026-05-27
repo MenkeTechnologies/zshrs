@@ -74,9 +74,7 @@ pub fn _store_cache(args: &[String]) -> i32 {
     let dir_path = Path::new(&cache_dir);
     if !dir_path.is_dir() {
         if dir_path.exists() {
-            let _ = _message(&[
-                "cache-dir style points to a non-directory!".to_string()
-            ]);
+            let _ = _message(&["cache-dir style points to a non-directory!".to_string()]);
             return 1;
         }
         if fs::create_dir_all(dir_path).is_err() {
@@ -87,18 +85,13 @@ pub fn _store_cache(args: &[String]) -> i32 {
 
     // sh:24-25  ident dirname
     let cache_path = format!("{}/{}", cache_dir, cache_ident);
-    let ident_dir = Path::new(&cache_path)
-        .parent()
-        .map(|p| p.to_path_buf());
+    let ident_dir = Path::new(&cache_path).parent().map(|p| p.to_path_buf());
 
     // sh:27-38
     if let Some(p) = ident_dir.as_ref() {
         if !p.exists() {
             if fs::create_dir_all(p).is_err() {
-                let _ = _message(&[format!(
-                    "couldn't create cache-ident_dir {}",
-                    p.display()
-                )]);
+                let _ = _message(&[format!("couldn't create cache-ident_dir {}", p.display())]);
                 return 1;
             }
         }
@@ -119,11 +112,7 @@ pub fn _store_cache(args: &[String]) -> i32 {
             serialized.push_str(")\n");
         } else if let Some(s) = getsparam(var) {
             // sh:55 — scalar form
-            serialized.push_str(&format!(
-                "{}='{}'\n",
-                var,
-                s.replace('\'', "'\\''")
-            ));
+            serialized.push_str(&format!("{}='{}'\n", var, s.replace('\'', "'\\''")));
         }
     }
 

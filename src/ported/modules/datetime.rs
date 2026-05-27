@@ -15,13 +15,13 @@
 //! Rust port calls `crate::ported::utils::ztrftime()` for the
 //! base format and adds %N extensions on top.
 
-use crate::ported::utils::{metafy, zwarnnam};
-use std::sync::{Mutex, OnceLock};
 use crate::ported::compat::zgettime;
 use crate::ported::params::{getsparam, isident, setiparam, setsparam};
+use crate::ported::utils::{metafy, zwarnnam};
+use crate::ported::zsh_h::{features, module, options, MAX_OPS, OPT_ARG, OPT_ISSET};
 use crate::ported::zsh_system_h::timespec;
-use crate::ported::zsh_h::{features, options, OPT_ARG, OPT_ISSET, MAX_OPS, module};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Port of `reverse_strftime(char *nam, char **argv, char *scalar, int quiet)` from `Src/Modules/datetime.c:42`.
@@ -241,10 +241,10 @@ pub fn bin_strftime(
     // `env::var("TZ")` which diverges from shell-internal TZ values
     // not yet exported. Same env-vs-paramtab family as recent fixes.
     let tz_saved = getsparam("TZ"); // c:191
-                                                           // c:193-198 — `startparamscope(); createparam("TZ", PM_LOCAL);
-                                                           //              setsparam("TZ", tz);`. The Rust port mirrors via
-                                                           // env::set_var so libc's strftime sees the locale-active TZ —
-                                                           // setsparam alone doesn't propagate to the libc-level zone.
+                                    // c:193-198 — `startparamscope(); createparam("TZ", PM_LOCAL);
+                                    //              setsparam("TZ", tz);`. The Rust port mirrors via
+                                    // env::set_var so libc's strftime sees the locale-active TZ —
+                                    // setsparam alone doesn't propagate to the libc-level zone.
     if let Some(ref tz) = tz_saved {
         std::env::set_var("TZ", tz); // c:198 setsparam
     }
@@ -252,7 +252,7 @@ pub fn bin_strftime(
     // takes the narrower view.
     let argv_views: Vec<&str> = argv.iter().map(String::as_str).collect();
     let result = output_strftime(nam, &argv_views, ops, func); // c:199
-                                                        // c:200 — `endparamscope();`. Restore the saved TZ.
+                                                               // c:200 — `endparamscope();`. Restore the saved TZ.
     if let Some(ref tz) = tz_saved {
         std::env::set_var("TZ", tz);
     }
@@ -303,18 +303,18 @@ pub fn getcurrentrealtime() -> f64 {
 pub fn getcurrenttime() -> Vec<String> {
     // c:220
     // c:222-224 — `char **arr; char buf[DIGBUFSIZE]; struct timespec now;`
-    let mut arr: Vec<String> = Vec::with_capacity(2);                        // c:228 zhalloc(3 * sizeof(*arr))
-    let mut now: timespec = unsafe { std::mem::zeroed() };                   // c:224
-    // c:226 — `zgettime(&now);`
+    let mut arr: Vec<String> = Vec::with_capacity(2); // c:228 zhalloc(3 * sizeof(*arr))
+    let mut now: timespec = unsafe { std::mem::zeroed() }; // c:224
+                                                           // c:226 — `zgettime(&now);`
     zgettime(&mut now);
     // c:229 — `sprintf(buf, "%ld", (long)now.tv_sec);`
     let buf = format!("{}", now.tv_sec as i64);
-    arr.push(buf);                                                           // c:230 arr[0] = dupstring(buf)
-    // c:231 — `sprintf(buf, "%ld", (long)now.tv_nsec);`
+    arr.push(buf); // c:230 arr[0] = dupstring(buf)
+                   // c:231 — `sprintf(buf, "%ld", (long)now.tv_nsec);`
     let buf = format!("{}", now.tv_nsec as i64);
-    arr.push(buf);                                                           // c:232 arr[1] = dupstring(buf)
-    // c:233 — `arr[2] = NULL;` (collapsed: Vec's length is the terminator)
-    arr                                                                      // c:235
+    arr.push(buf); // c:232 arr[1] = dupstring(buf)
+                   // c:233 — `arr[2] = NULL;` (collapsed: Vec's length is the terminator)
+    arr // c:235
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (datetime.c:255).
@@ -336,7 +336,6 @@ pub fn setup_(m: *const module) -> i32 {
 // static struct builtin bintab[]                                    c:255
 // static struct features module_features                            c:262
 // =====================================================================
-
 
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/datetime.c:277`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
@@ -404,11 +403,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 4]);
     }
@@ -701,7 +696,10 @@ mod tests {
         // Year 2020-01-01 = epoch 1577836800. Any current time is > this.
         assert!(s > 1_577_836_800, "epoch must be after 2020-01-01; got {s}");
         // And < year 2100 (4102444800) — sanity bound.
-        assert!(s < 4_102_444_800, "epoch must be before 2100-01-01; got {s}");
+        assert!(
+            s < 4_102_444_800,
+            "epoch must be before 2100-01-01; got {s}"
+        );
     }
 
     /// Two successive calls must be monotonically non-decreasing.

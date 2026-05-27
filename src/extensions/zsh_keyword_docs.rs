@@ -45,5 +45,8 @@ pub const KEYWORD_DOCS: &[(&str, &str)] = &[
 /// Resolve a keyword name (exact match) to its
 /// canonical name + markdown body.
 pub fn lookup_keyword_doc(name: &str) -> Option<(&'static str, &'static str)> {
-    KEYWORD_DOCS.iter().find(|(n, _)| *n == name).map(|&(n, d)| (n, d))
+    KEYWORD_DOCS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|&(n, d)| (n, d))
 }

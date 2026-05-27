@@ -7,19 +7,24 @@
 //!
 //! Provides zstyle, zformat, zparseopts builtins.
 
+use crate::ported::builtin::PPARAMS;
+use crate::ported::mem::{popheap, pushheap};
 use crate::ported::options::opt_state_set;
-use crate::ported::params::{assignaparam, getaparam, getsparam, paramtab, setaparam, sethparam, setsparam, unsetparam};
+use crate::ported::params::{
+    assignaparam, getaparam, getsparam, paramtab, setaparam, sethparam, setsparam, unsetparam,
+};
 use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{errflag, zwarnnam};
-use crate::ported::zsh_h::{eprog, features, hashnode, isset, module, opt_name, options, param, Eprog, HashNode, Param, Patprog, ERRFLAG_INT, EXTENDEDGLOB, OPT_ISSET, PAT_STATIC, PM_ARRAY};
+use crate::ported::zsh_h::PAT_HEAPDUP;
+use crate::ported::zsh_h::{
+    eprog, features, hashnode, isset, module, opt_name, options, param, Eprog, HashNode, Param,
+    Patprog, ERRFLAG_INT, EXTENDEDGLOB, OPT_ISSET, PAT_STATIC, PM_ARRAY,
+};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
-use crate::ported::builtin::PPARAMS;
-use crate::ported::mem::{popheap, pushheap};
 
 /// Port of `savematch(MatchData *m)` from Src/Modules/zutil.c:40.
 /// C: `static void savematch(MatchData *m)` — snapshot $match/$mbegin/
@@ -28,11 +33,11 @@ use crate::ported::mem::{popheap, pushheap};
 pub fn savematch(m: &mut MatchData) {
     // c:40
     queue_signals(); // c:44
-                                               // c:45-50 — three `a = getaparam("X"); m->X = a ? zarrdup(a) : NULL`
-                                               // captures. The previous Rust port hardcoded `a = None` for all
-                                               // three because the fabricated `getaparam(Option<&mut value>)` sig
-                                               // couldn't take a name string. Now that `getaparam(&str)` matches
-                                               // C, real reads from paramtab work end-to-end.
+                     // c:45-50 — three `a = getaparam("X"); m->X = a ? zarrdup(a) : NULL`
+                     // captures. The previous Rust port hardcoded `a = None` for all
+                     // three because the fabricated `getaparam(Option<&mut value>)` sig
+                     // couldn't take a name string. Now that `getaparam(&str)` matches
+                     // C, real reads from paramtab work end-to-end.
     m.r#match = getaparam("match"); // c:45-46
     m.mbegin = getaparam("mbegin"); // c:47-48
     m.mend = getaparam("mend"); // c:49-50
@@ -102,20 +107,20 @@ pub fn freematch(m: &mut MatchData) {
 /// `Stypat` mirroring Src/Modules/zutil.c:97-104.
 #[allow(non_camel_case_types)]
 pub struct stypat {
-    pub next: Option<Box<stypat>>,                   // c:98 Stypat next
-    pub pat: String,                                 // c:99 char *pat
-    pub prog: Option<Patprog>, // c:100 Patprog prog (compiled)
-    pub weight: u64,                                 // c:101 zulong weight
-    pub eval: Option<Eprog>,   // c:102 Eprog eval
-    pub vals: Vec<String>,                           // c:103 char **vals
+    pub next: Option<Box<stypat>>, // c:98 Stypat next
+    pub pat: String,               // c:99 char *pat
+    pub prog: Option<Patprog>,     // c:100 Patprog prog (compiled)
+    pub weight: u64,               // c:101 zulong weight
+    pub eval: Option<Eprog>,       // c:102 Eprog eval
+    pub vals: Vec<String>,         // c:103 char **vals
 }
 pub type Stypat = Box<stypat>;
 
 /// `Style` mirroring Src/Modules/zutil.c:91-94.
 #[allow(non_camel_case_types)]
 pub struct style {
-    pub node: hashnode, // c:92 struct hashnode node
-    pub pats: Option<Stypat>,                 // c:93 Stypat pats (sorted by weight)
+    pub node: hashnode,       // c:92 struct hashnode node
+    pub pats: Option<Stypat>, // c:93 Stypat pats (sorted by weight)
 }
 pub type Style = Box<style>;
 
@@ -796,7 +801,6 @@ pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {
 // static struct features module_features                            c:2143
 // =====================================================================
 
-
 /// Port of `testforstyle(char *ctxt, char *style)` from Src/Modules/zutil.c:465.
 /// C: `static int testforstyle(char *ctxt, char *style)` — non-empty
 /// match check for context+style. Returns `!found` so 0 == success.
@@ -944,11 +948,7 @@ pub fn bin_zstyle(
                 return 1;
             }
             let pat = &args[2];
-            let prog = match patcompile(
-                pat,
-                PAT_STATIC,
-                None,
-            ) {
+            let prog = match patcompile(pat, PAT_STATIC, None) {
                 Some(p) => p,
                 None => return 1,
             };
@@ -1102,11 +1102,11 @@ pub fn bin_zformat(
     _func: i32,
 ) -> i32 {
     let mut presence = 0i32; // c:958
-    // C bin_zformat reads `args[0]` as the `-X` option directly (the
-    // BUILTIN spec doesn't pre-parse flags). zshrs's dispatch layer
-    // pre-parses flags into `ops` and strips them from args, so
-    // args[0] here is already the FIRST positional. Reconstruct the
-    // opt char from the parsed ops to match C's args[0][1] read.
+                             // C bin_zformat reads `args[0]` as the `-X` option directly (the
+                             // BUILTIN spec doesn't pre-parse flags). zshrs's dispatch layer
+                             // pre-parses flags into `ops` and strips them from args, so
+                             // args[0] here is already the FIRST positional. Reconstruct the
+                             // opt char from the parsed ops to match C's args[0][1] read.
     let opt: u8 = if OPT_ISSET(ops, b'f') {
         b'f'
     } else if OPT_ISSET(ops, b'F') {
@@ -1129,9 +1129,8 @@ pub fn bin_zformat(
     };
     // If ops carried the flag, args is already the post-flag list.
     // If we read opt from args[0] (fallback path), advance past it.
-    let args_used_opt_from_args0 = !OPT_ISSET(ops, b'f')
-        && !OPT_ISSET(ops, b'F')
-        && !OPT_ISSET(ops, b'a');
+    let args_used_opt_from_args0 =
+        !OPT_ISSET(ops, b'f') && !OPT_ISSET(ops, b'F') && !OPT_ISSET(ops, b'a');
     let args: &[String] = if args_used_opt_from_args0 {
         &args[1..] // c:965 args++
     } else {
@@ -1481,7 +1480,6 @@ pub fn rparseclo(result: &mut RParseResult) -> i32 {
 // yet covered above. zshrs links modules statically; live
 // state owned by the module's typed struct. Name-parity shims.
 
-
 /// Port of `prependactions(LinkList acts, LinkList branches)` from `Src/Modules/zutil.c:1269`.
 /// For each branch, pushnode (insert at HEAD) each action from `acts`
 /// in reverse — net effect: branch.actions gets `acts` prepended.
@@ -1720,7 +1718,8 @@ pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) 
                 // c:1379
                 if !action.is_empty() {
                     // c:1382
-                    crate::ported::exec::execstring(action, 1, 0, "zregexparse-action"); // c:1383
+                    crate::ported::exec::execstring(action, 1, 0, "zregexparse-action");
+                    // c:1383
                 }
             }
             return 0; // c:1385
@@ -1751,7 +1750,7 @@ pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) 
         savematch(&mut match1);
 
         let mut matched = false; // mirror of C's `ln` truthiness after break.
-        // c:1396 — `for (ln = firstnode(nexts); ln; ln = nextnode(ln))`
+                                 // c:1396 — `for (ln = firstnode(nexts); ln; ln = nextnode(ln))`
         for br_rc in &nexts.clone() {
             // c:1400 — `br = getdata(ln); next = br->state;`
             let br = br_rc.borrow();
@@ -1764,7 +1763,10 @@ pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) 
             //        if (!(next->patprog = patcompile(...))) return 3;`
             let (has_pattern, need_compile) = {
                 let n = next_rc.borrow();
-                (n.pattern.is_some(), n.pattern.is_some() && n.patprog.is_none())
+                (
+                    n.pattern.is_some(),
+                    n.pattern.is_some() && n.patprog.is_none(),
+                )
             };
             if need_compile {
                 let mut pat_str = {
@@ -1777,7 +1779,7 @@ pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) 
                 n.pattern = Some(pat_str);
                 match prog {
                     Some(p) => n.patprog = Some(p), // c:1404
-                    None => return 3, // c:1405 — patcompile failure.
+                    None => return 3,               // c:1405 — patcompile failure.
                 }
             }
             if !has_pattern {
@@ -1807,14 +1809,8 @@ pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) 
                     Some(g) => {
                         let g_cloned = g.clone();
                         drop(n);
-                        crate::ported::exec::execstring(
-                            &g_cloned,
-                            1,
-                            0,
-                            "zregexparse-guard",
-                        ); // c:1408
-                        crate::ported::builtin::LASTVAL
-                            .load(std::sync::atomic::Ordering::Relaxed)
+                        crate::ported::exec::execstring(&g_cloned, 1, 0, "zregexparse-guard"); // c:1408
+                        crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed)
                             == 0
                     }
                 }
@@ -1867,7 +1863,8 @@ pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) 
                 // c:1426 — `for (aln = firstnode(br->actions); ...)`
                 if !action.is_empty() {
                     // c:1429
-                    crate::ported::exec::execstring(action, 1, 0, "zregexparse-action"); // c:1430
+                    crate::ported::exec::execstring(action, 1, 0, "zregexparse-action");
+                    // c:1430
                 }
             }
             restorematch(&match2); // c:1432
@@ -1922,12 +1919,8 @@ pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) 
                     // c:1455
                     if !action.is_empty() {
                         // c:1458
-                        crate::ported::exec::execstring(
-                            action,
-                            1,
-                            0,
-                            "zregexparse-action",
-                        ); // c:1459
+                        crate::ported::exec::execstring(action, 1, 0, "zregexparse-action");
+                        // c:1459
                     }
                 }
                 return 0; // c:1461
@@ -1950,7 +1943,8 @@ pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) 
             if let Some(a) = action {
                 // c:1469
                 if !a.is_empty() {
-                    crate::ported::exec::execstring(&a, 1, 0, "zregexparse-action"); // c:1470
+                    crate::ported::exec::execstring(&a, 1, 0, "zregexparse-action");
+                    // c:1470
                 }
             }
         }
@@ -2010,10 +2004,7 @@ pub fn bin_zregexparse(
 
     // c:1494 — `oldextendedglob = opts[EXTENDEDGLOB]; opts[EXTENDEDGLOB] = 1;`
     let oldext = isset(EXTENDEDGLOB); // c:1494
-    opt_state_set(
-        &opt_name(EXTENDEDGLOB),
-        true,
-    ); // c:1496
+    opt_state_set(&opt_name(EXTENDEDGLOB), true); // c:1496
 
     // c:1499 — `pushheap(); rparsestates = newlinklist();`
     pushheap(); // c:1499
@@ -2058,10 +2049,7 @@ pub fn bin_zregexparse(
     }
 
     popheap(); // c:1513
-    opt_state_set(
-        &opt_name(EXTENDEDGLOB),
-        oldext,
-    ); // c:1514
+    opt_state_set(&opt_name(EXTENDEDGLOB), oldext); // c:1514
     ret // c:1515
 }
 
@@ -2677,14 +2665,22 @@ pub fn bin_zparseopts(
                     descs[idx].vals.push(Val {
                         name: o_raw.clone(),
                         arg: Some(arg),
-                        seq: { let _s = val_seq; val_seq += 1; _s },
+                        seq: {
+                            let _s = val_seq;
+                            val_seq += 1;
+                            _s
+                        },
                     });
                 } else if !e.is_empty() {
                     // c:2038
                     descs[idx].vals.push(Val {
                         name: o_raw.clone(),
                         arg: Some(e.to_string()),
-                        seq: { let _s = val_seq; val_seq += 1; _s },
+                        seq: {
+                            let _s = val_seq;
+                            val_seq += 1;
+                            _s
+                        },
                     });
                 } else if (dflags & ZOF_OPT) == 0
                     || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
@@ -2701,22 +2697,34 @@ pub fn bin_zparseopts(
                     descs[idx].vals.push(Val {
                         name: o_raw.clone(),
                         arg: Some(arg),
-                        seq: { let _s = val_seq; val_seq += 1; _s },
+                        seq: {
+                            let _s = val_seq;
+                            val_seq += 1;
+                            _s
+                        },
                     });
                 } else {
                     // c:2055
                     descs[idx].vals.push(Val {
                         name: o_raw.clone(),
                         arg: None,
-                        seq: { let _s = val_seq; val_seq += 1; _s },
+                        seq: {
+                            let _s = val_seq;
+                            val_seq += 1;
+                            _s
+                        },
                     });
                 }
             } else {
                 descs[idx].vals.push(Val {
                     name: o_raw.clone(),
                     arg: None,
-                        seq: { let _s = val_seq; val_seq += 1; _s },
-                    });
+                    seq: {
+                        let _s = val_seq;
+                        val_seq += 1;
+                        _s
+                    },
+                });
             }
             pi += 1;
             continue;
@@ -2753,7 +2761,11 @@ pub fn bin_zparseopts(
                     descs[idx].vals.push(Val {
                         name: format!("-{}", ch),
                         arg: Some(arg),
-                        seq: { let _s = val_seq; val_seq += 1; _s },
+                        seq: {
+                            let _s = val_seq;
+                            val_seq += 1;
+                            _s
+                        },
                     });
                     break;
                 } else if (dflags & ZOF_OPT) == 0
@@ -2770,20 +2782,32 @@ pub fn bin_zparseopts(
                     descs[idx].vals.push(Val {
                         name: format!("-{}", ch),
                         arg: Some(arg),
-                        seq: { let _s = val_seq; val_seq += 1; _s },
+                        seq: {
+                            let _s = val_seq;
+                            val_seq += 1;
+                            _s
+                        },
                     });
                 } else {
                     descs[idx].vals.push(Val {
                         name: format!("-{}", ch),
                         arg: None,
-                        seq: { let _s = val_seq; val_seq += 1; _s },
+                        seq: {
+                            let _s = val_seq;
+                            val_seq += 1;
+                            _s
+                        },
                     });
                 }
             } else {
                 descs[idx].vals.push(Val {
                     name: format!("-{}", ch),
                     arg: None,
-                    seq: { let _s = val_seq; val_seq += 1; _s },
+                    seq: {
+                        let _s = val_seq;
+                        val_seq += 1;
+                        _s
+                    },
                 });
             }
             ci += 1;
@@ -2821,10 +2845,8 @@ pub fn bin_zparseopts(
     //   name, arg) across all descs that share a target array,
     //   sorting by seq, and flattening into [name, arg?, name,
     //   arg?, …] form.
-    let mut arr_buckets: std::collections::BTreeMap<
-        String,
-        Vec<(usize, String, Option<String>)>,
-    > = std::collections::BTreeMap::new();
+    let mut arr_buckets: std::collections::BTreeMap<String, Vec<(usize, String, Option<String>)>> =
+        std::collections::BTreeMap::new();
     for d in &descs {
         let target = d.arr_name.clone().or_else(|| defarr.clone());
         let Some(tgt) = target else { continue };
@@ -3007,8 +3029,8 @@ pub struct zstyle_entry {
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct RParseState {
-    pub cutoff: i32,                                                  // c:1094
-    pub pattern: Option<String>,                                      // c:1095
+    pub cutoff: i32,             // c:1094
+    pub pattern: Option<String>, // c:1095
     // c:1096 — `Patprog patprog;` compiled on first match. The
     // zsh_h::Patprog alias (`Box<patprog>`) doesn't carry the
     // post-tokenisation buffer that pattern.rs::patcompile bundles
@@ -3016,8 +3038,8 @@ pub struct RParseState {
     // pattern image referenced by `patprog::p`. Use the canonical
     // pattern::Patprog so pattry() reads the right shape end-to-end.
     pub patprog: Option<crate::ported::pattern::Patprog>,
-    pub guard: Option<String>,                          // c:1097
-    pub action: Option<String>,                         // c:1098
+    pub guard: Option<String>,  // c:1097
+    pub action: Option<String>, // c:1098
     pub branches: Vec<std::rc::Rc<std::cell::RefCell<RParseBranch>>>, // c:1099
 }
 
@@ -3099,7 +3121,6 @@ pub fn zformat_substring(format: &str, specs: &HashMap<char, String>, presence: 
     out
 }
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -3124,11 +3145,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 4]);
     }
@@ -3834,10 +3851,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Pre-seed `$match` so we can observe the unset.
         assignaparam("match", vec!["seed".to_string()], 0);
-        assert!(
-            getaparam("match").is_some(),
-            "test setup: $match seeded"
-        );
+        assert!(getaparam("match").is_some(), "test setup: $match seeded");
 
         // Snapshot with all three fields None — restorematch must
         // unsetparam each (c:60/64/68).
@@ -3885,8 +3899,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = addstyle("zshrs_test_dup_style");
         let s = addstyle("zshrs_test_dup_style");
-        assert!(s.is_some(),
-            "addstyle on existing name still returns Some");
+        assert!(s.is_some(), "addstyle on existing name still returns Some");
     }
 
     /// `newzstyletable` returns None per current stub (no
@@ -3896,7 +3909,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let t = newzstyletable(64, "test_tab");
         // Current impl is a stub returning None — pin the contract.
-        assert!(t.is_none(),
-            "newzstyletable stub returns None; pin until ported");
+        assert!(
+            t.is_none(),
+            "newzstyletable stub returns None; pin until ported"
+        );
     }
 }

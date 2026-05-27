@@ -10,35 +10,63 @@ fn zshrs_bin() -> PathBuf {
         return PathBuf::from(p);
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target").join("debug").join("zshrs")
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output()
-        .map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 
 fn run_zsh_in(dir: &Path, s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).current_dir(dir).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .current_dir(dir)
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 
 fn run_zshrs_in(dir: &Path, s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .current_dir(dir).env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .current_dir(dir)
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 
 fn assert_parity_in(dir: &Path, script: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh_in(dir, script);
     let r = run_zshrs_in(dir, script);
     let z_sorted: Vec<&str> = {
@@ -192,7 +220,9 @@ mod no_match {
     #[test]
     fn unmatched_glob_errors_by_default() {
         let d = mkdir_with_files(&["only.txt"]);
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let z = run_zsh_in(d.path(), "echo *.nonexistent_xyz_42");
         let r = run_zshrs_in(d.path(), "echo *.nonexistent_xyz_42");
         assert_eq!(z.exit != 0, r.exit != 0, "exit-nonzero-ness must match");

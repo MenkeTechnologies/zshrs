@@ -170,7 +170,13 @@ fn run_zparseopts(
     gropt_seed: Vec<String>,
     ign_seed: Vec<String>,
     xopt_seed: Vec<String>,
-) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+) -> (
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+) {
     let src_name = "__compsys_argv";
     setaparam(src_name, argv.to_vec());
     setaparam("nopt", nopt_seed);
@@ -363,9 +369,7 @@ pub fn _description(args: &[String]) -> i32 {
                 "current-shown" => {
                     // sh:61-63
                     let old_list = get_compstate_str("old_list").unwrap_or_default();
-                    if old_list.contains("shown")
-                        && current_idx >= 1
-                        && current_idx <= qwords.len()
+                    if old_list.contains("shown") && current_idx >= 1 && current_idx <= qwords.len()
                     {
                         comp_ignore.push(qwords[current_idx - 1].clone());
                     }
@@ -424,8 +428,7 @@ pub fn _description(args: &[String]) -> i32 {
             //   $1 (any combination present), pushing the captured
             //   parts into the zformat argv as `m:msg r:num o:opts`.
             if let Some(d) = argv.first().cloned() {
-                let (stripped, m_msg, r_num, o_opts) =
-                    extract_description_parts(&d);
+                let (stripped, m_msg, r_num, o_opts) = extract_description_parts(&d);
                 if !m_msg.is_empty() || !r_num.is_empty() || !o_opts.is_empty() {
                     argv[0] = stripped;
                     if !m_msg.is_empty() {
@@ -596,11 +599,7 @@ fn extract_description_parts(s: &str) -> (String, String, String, String) {
         if r_num.is_empty() && trimmed.ends_with(')') {
             if let Some(open) = trimmed.rfind('(') {
                 let body = &trimmed[open + 1..trimmed.len() - 1];
-                if !body.is_empty()
-                    && body
-                        .chars()
-                        .all(|c| c.is_ascii_digit() || c == '-')
-                {
+                if !body.is_empty() && body.chars().all(|c| c.is_ascii_digit() || c == '-') {
                     r_num = body.to_string();
                     rest = trimmed[..open].trim_end().to_string();
                     continue;
@@ -690,9 +689,7 @@ mod tests {
             ]);
             getaparam("expl").unwrap_or_default()
         });
-        let has_j_default = arr
-            .windows(2)
-            .any(|w| w[0] == "-J" && w[1] == "-default-");
+        let has_j_default = arr.windows(2).any(|w| w[0] == "-J" && w[1] == "-default-");
         assert!(has_j_default, "expected `-J -default-` in {:?}", arr);
     }
 
@@ -765,8 +762,7 @@ mod tests {
     #[test]
     fn extract_description_parts_all_three() {
         // sh:83-86 — full triplet
-        let (stripped, m, r, o) =
-            extract_description_parts("file (msg) (123)[opts]");
+        let (stripped, m, r, o) = extract_description_parts("file (msg) (123)[opts]");
         assert_eq!(stripped, "file");
         assert_eq!(m, "msg");
         assert_eq!(r, "123");

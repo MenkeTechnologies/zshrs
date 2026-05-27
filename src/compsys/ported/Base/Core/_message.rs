@@ -116,8 +116,10 @@ pub fn _message(args: &[String]) -> i32 {
         //   inherit from $curtag.
         let (tag, descr): (String, String) = if args.len() > 3 {
             // shift drops original $1, so new $2 is original $3
-            (args.get(1).cloned().unwrap_or_default(),
-             args.get(2).cloned().unwrap_or_default())
+            (
+                args.get(1).cloned().unwrap_or_default(),
+                args.get(2).cloned().unwrap_or_default(),
+            )
         } else {
             (
                 getsparam("curtag").unwrap_or_default(),
@@ -139,7 +141,13 @@ pub fn _message(args: &[String]) -> i32 {
                 let expl = getaparam("expl").unwrap_or_default();
                 let compadd_argv: Vec<String> = expl
                     .iter()
-                    .map(|s| if s == "-X" { "-x".to_string() } else { s.clone() })
+                    .map(|s| {
+                        if s == "-X" {
+                            "-x".to_string()
+                        } else {
+                            s.clone()
+                        }
+                    })
                     .collect();
                 let _ = bin_compadd("compadd", &compadd_argv, &make_ops(), 0);
                 ret = 0;
@@ -269,11 +277,7 @@ mod tests {
         // sh:8 — `_comp_mesg=yes` is set unconditionally in -e mode.
         let _ = with_incompfunc(|| {
             let _ = setsparam("_comp_mesg", "");
-            _message(&[
-                "-e".to_string(),
-                "tag".to_string(),
-                "descr".to_string(),
-            ])
+            _message(&["-e".to_string(), "tag".to_string(), "descr".to_string()])
         });
         assert_eq!(getsparam("_comp_mesg").as_deref(), Some("yes"));
     }

@@ -4,32 +4,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -163,17 +197,22 @@ mod suffix_alias {
     /// Setup: register `txt` suffix to `cat`.
     #[test]
     fn suffix_alias_runs_handler_for_extension() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("hi.txt");
         std::fs::write(&f, "from file").unwrap();
-        let script = format!(
-            r#"alias -s txt=cat; cd {}; ./hi.txt"#,
-            dir.path().display()
-        );
-        let z = Command::new(zsh_path()).args(["-fc", &script]).output().unwrap();
-        let r = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", &script])
-            .env_remove("ZSHRS_CACHE").output().unwrap();
+        let script = format!(r#"alias -s txt=cat; cd {}; ./hi.txt"#, dir.path().display());
+        let z = Command::new(zsh_path())
+            .args(["-fc", &script])
+            .output()
+            .unwrap();
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", &script])
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .unwrap();
         assert_eq!(
             String::from_utf8_lossy(&z.stdout),
             String::from_utf8_lossy(&r.stdout),

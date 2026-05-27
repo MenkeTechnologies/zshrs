@@ -10,16 +10,14 @@
 //!
 //! Provides watch/log functionality for monitoring user logins/logouts.
 
-use chrono::{Local, TimeZone};
-use std::io::{BufRead, Write};
-use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(unix)]
-use std::ffi::CStr;
 use crate::ported::builtin::BUILTIN;
 use crate::ported::zsh_h::{builtin, module};
+use chrono::{Local, TimeZone};
+#[cfg(unix)]
+use std::ffi::CStr;
+use std::io::{BufRead, Write};
 use std::sync::{Mutex, OnceLock};
-
-
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// `WATCH_STRUCT_UTMP` typedef alias matching `Src/Modules/watch.c:71-79`:
 /// resolves to `libc::utmpx` on platforms with `<utmpx.h>` support
@@ -732,7 +730,6 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 // static struct features module_features                            c:700 (watch.c)
 // =====================================================================
 
-
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/watch.c:738`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
@@ -1118,7 +1115,6 @@ fn watch3ary_inline(inout: i32, u: &libc::utmpx, rest: &str, prnt: i32) -> (Stri
     (rendered, consumed)
 }
 
-
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -1157,7 +1153,11 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<crate::ported::zsh_h::features>,
+    _e: Option<&[i32]>,
+) -> i32 {
     0
 }
 
@@ -1205,8 +1205,8 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 
 #[cfg(test)]
 mod tests {
-    use crate::glob::matchpat;
     use super::*;
+    use crate::glob::matchpat;
 
     /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/watch.c:738`.
     #[test]
@@ -1455,16 +1455,20 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert!(watchlog_match("a?c", "abc"));
         assert!(watchlog_match("a?c", "axc"));
-        assert!(!watchlog_match("a?c", "abbc"),
-            "? matches exactly one char, not multiple");
+        assert!(
+            !watchlog_match("a?c", "abbc"),
+            "? matches exactly one char, not multiple"
+        );
     }
 
     /// Pattern without glob and value differs → false (no implicit substring match).
     #[test]
     fn watch_corpus_watchlog_match_no_glob_no_substring_match() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!watchlog_match("ice", "alice"),
-            "without glob, no substring matching");
+        assert!(
+            !watchlog_match("ice", "alice"),
+            "without glob, no substring matching"
+        );
     }
 
     /// Empty pattern matches only empty value (exact match).

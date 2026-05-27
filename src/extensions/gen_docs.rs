@@ -51,7 +51,10 @@ pub fn generate_markdown(filename: &str, source: &str) -> String {
     for (i, line) in source_lines.iter().enumerate() {
         let t = line.trim_start();
         // `function NAME { … }` or `function NAME() { … }`
-        if let Some(rest) = t.strip_prefix("function ").or_else(|| t.strip_prefix("function\t")) {
+        if let Some(rest) = t
+            .strip_prefix("function ")
+            .or_else(|| t.strip_prefix("function\t"))
+        {
             if let Some(name) = first_fn_name(rest) {
                 funcs.push(FuncDecl {
                     name,
@@ -139,7 +142,10 @@ pub fn generate_markdown(filename: &str, source: &str) -> String {
     if !exports.is_empty() {
         out.push_str("## Exports / Constants\n\n");
         for e in &exports {
-            out.push_str(&format!("- `{}` ({}) — line {}\n", e.name, e.verb, e.decl_line));
+            out.push_str(&format!(
+                "- `{}` ({}) — line {}\n",
+                e.name, e.verb, e.decl_line
+            ));
         }
         out.push('\n');
     }
@@ -240,8 +246,15 @@ fn first_fn_name(rest: &str) -> Option<String> {
 
 fn is_simple_identifier(s: &str) -> bool {
     !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':' || c == '+' || c == '@')
+        && s.chars().all(|c| {
+            c.is_alphanumeric()
+                || c == '_'
+                || c == '-'
+                || c == '.'
+                || c == ':'
+                || c == '+'
+                || c == '@'
+        })
 }
 
 /// Walk `root` and collect every shell-source file path. Same set the
@@ -254,7 +267,9 @@ pub fn collect_doc_sources(root: &Path, out: &mut Vec<std::path::PathBuf>) {
         }
         return;
     }
-    let Ok(entries) = std::fs::read_dir(root) else { return };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
     for e in entries.flatten() {
         let p = e.path();
         let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
@@ -274,8 +289,15 @@ fn is_shell_source(p: &Path) -> bool {
     let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
     if matches!(
         name,
-        ".zshrc" | ".zshenv" | ".zlogin" | ".zlogout" | ".zprofile" | ".zpreztorc"
-            | ".bashrc" | ".bash_profile" | ".profile"
+        ".zshrc"
+            | ".zshenv"
+            | ".zlogin"
+            | ".zlogout"
+            | ".zprofile"
+            | ".zpreztorc"
+            | ".bashrc"
+            | ".bash_profile"
+            | ".profile"
     ) {
         return true;
     }
@@ -301,8 +323,16 @@ mod tests {
                    alias ll='ls -al'\n\
                    export FOO=bar\n";
         let md = generate_markdown("greet.zsh", src);
-        assert!(md.contains("# Module: greet"), "missing module title: {}", md);
-        assert!(md.contains("Top-level header doc"), "missing header doc: {}", md);
+        assert!(
+            md.contains("# Module: greet"),
+            "missing module title: {}",
+            md
+        );
+        assert!(
+            md.contains("Top-level header doc"),
+            "missing header doc: {}",
+            md
+        );
         assert!(md.contains("### `greet`"), "missing function entry: {}", md);
         assert!(md.contains("Greet someone"), "missing per-fn doc: {}", md);
         assert!(md.contains("- `ll` = `'ls -al'`"), "missing alias: {}", md);

@@ -434,10 +434,11 @@ mod tests {
 
     #[test]
     fn test_from_zpwr_loads_something() {
-        let colors = ZstyleColors::from_zpwr();
-        // Should have parsed at least some colors if zpwr is installed
-        // This test will pass even without zpwr (empty is valid)
-        assert!(colors.tag_colors.len() >= 0);
+        // Smoke test: `from_zpwr` returns a valid `ZstyleColors` even
+        // when zpwr isn't installed (empty maps are the no-zpwr case).
+        // The real assertion is "no panic". Vec::len() is a `usize` so
+        // `>= 0` is a tautology and trips clippy::unused_comparisons.
+        let _colors = ZstyleColors::from_zpwr();
     }
 
     #[test]

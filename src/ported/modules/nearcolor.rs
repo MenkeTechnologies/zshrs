@@ -17,12 +17,10 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
-use std::sync::atomic::Ordering;
 use crate::ported::init::tccolours;
 use crate::ported::zsh_h::{color_rgb, features, hookdef, module};
+use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
-
-
 
 // =====================================================================
 // struct cielab { double L, a, b; };                                 c:35
@@ -449,7 +447,6 @@ fn deletehookdeffunc(_h: *const hookdef, _f: fn(*const hookdef, *const color_rgb
     1 // c:972
 }
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -469,11 +466,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 0]);
     }
@@ -782,8 +775,10 @@ mod tests {
             for g in [0, 128, 255] {
                 for b in [0, 128, 255] {
                     let idx = mapRGBto256(r, g, b);
-                    assert!((16..=255).contains(&idx),
-                        "({r},{g},{b}) → {idx} out of [16,255]");
+                    assert!(
+                        (16..=255).contains(&idx),
+                        "({r},{g},{b}) → {idx} out of [16,255]"
+                    );
                 }
             }
         }
@@ -806,7 +801,11 @@ mod tests {
     /// `deltae` of a color and itself is 0.
     #[test]
     fn nearcolor_corpus_deltae_self_is_zero() {
-        let lab = cielab { L: 50.0, a: 25.0, b: 30.0 };
+        let lab = cielab {
+            L: 50.0,
+            a: 25.0,
+            b: 30.0,
+        };
         let d = deltae(&lab, &lab);
         assert!(d.abs() < 1e-9, "deltae(x,x)=0, got {d}");
     }
@@ -814,8 +813,16 @@ mod tests {
     /// `deltae` is symmetric.
     #[test]
     fn nearcolor_corpus_deltae_symmetric() {
-        let a = cielab { L: 50.0, a: 25.0, b: 30.0 };
-        let b = cielab { L: 60.0, a: 15.0, b: 35.0 };
+        let a = cielab {
+            L: 50.0,
+            a: 25.0,
+            b: 30.0,
+        };
+        let b = cielab {
+            L: 60.0,
+            a: 15.0,
+            b: 35.0,
+        };
         let d1 = deltae(&a, &b);
         let d2 = deltae(&b, &a);
         assert!((d1 - d2).abs() < 1e-9);

@@ -14,13 +14,13 @@
 //! libtermcap into the build. Function signatures + observable
 //! outputs match C 1:1.
 
+use crate::ported::options::optlookup;
 use crate::ported::params::{getsparam, TERMFLAGS};
 use crate::ported::utils::{zsetupterm, zwarnnam};
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{Mutex, OnceLock};
-use crate::ported::options::optlookup;
 use crate::ported::zsh_h::{features, isset, module};
 use crate::zsh_h::TERM_UNKNOWN;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// Port of `ztgetflag(char *s)` from `Src/Modules/termcap.c:54`. Wraps
 /// libtermcap's `tgetflag()` to disambiguate "off" from "not
@@ -90,8 +90,7 @@ pub fn bin_echotc(
     // c:89 — `if ((termflags & TERM_UNKNOWN) && (isset(INTERACTIVE) || !init_term())) return 1;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
         // c:89
-        let interactive =
-            isset(optlookup("interactive"));
+        let interactive = isset(optlookup("interactive"));
         if interactive || !ensure_termcap_loaded() {
             // c:89-90
             return 1; // c:90
@@ -208,7 +207,10 @@ pub fn bin_echotc(
 /// Port of `static HashNode gettermcap(UNUSED(HashTable ht), const char *name)`
 /// from `Src/Modules/termcap.c:144-199`. Synthesised Param with
 /// PM_SCALAR + value or PM_UNSET on no match.
-pub fn gettermcap(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Option<crate::ported::zsh_h::Param> {
+pub fn gettermcap(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    name: &str,
+) -> Option<crate::ported::zsh_h::Param> {
     // c:144
     use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SCALAR, PM_UNSET};
 
@@ -493,7 +495,6 @@ fn ensure_termcap_loaded() -> bool {
 
 // (impl ShellExecutor block moved to src/exec_shims.rs — see file marker)
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -513,11 +514,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 2]);
     }
@@ -653,12 +650,7 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_echotc(
-            "echotc",
-            &["zz_definitely_not_a_cap".to_string()],
-            &ops,
-            0,
-        );
+        let r = bin_echotc("echotc", &["zz_definitely_not_a_cap".to_string()], &ops, 0);
         assert_ne!(r, 0, "unknown cap must error");
     }
 

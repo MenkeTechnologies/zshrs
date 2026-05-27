@@ -5,14 +5,13 @@
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use crate::{DPUTS, lex, parse};
 use crate::ported::linklist::LinkList;
 use crate::ported::mem::{queue_signals, unqueue_signals};
 use crate::ported::utils::{has_token, quotestring};
 use crate::ported::zsh_h;
 use crate::ported::zsh_h::{
-    estate, redir, wc_code, wordcode, Eprog, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_OR,
-    COND_STRDEQ, COND_STREQ, COND_STRNEQ, EC_NODUP, IS_READFD, JOBTEXTSIZE, Meta,
+    estate, redir, wc_code, wordcode, Eprog, Meta, COND_AND, COND_MOD, COND_MODI, COND_NOT,
+    COND_OR, COND_STRDEQ, COND_STREQ, COND_STRNEQ, EC_NODUP, IS_READFD, JOBTEXTSIZE,
     REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_CLOSE, REDIR_ERRAPP, REDIR_ERRAPPNOW,
     REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_HEREDOC, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN,
     REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, REDIR_WRITE, REDIR_WRITENOW,
@@ -27,6 +26,7 @@ use crate::ported::zsh_h::{
     WC_TYPESET, WC_TYPESET_ARGC, WC_WHILE, WC_WHILE_TYPE, WC_WHILE_UNTIL, Z_ASYNC, Z_DISOWN, Z_END,
     Z_SIMPLE,
 };
+use crate::{lex, parse, DPUTS};
 
 /// Port of `is_cond_binary_op(const char *str)` from `Src/text.c:58`.
 pub fn is_cond_binary_op(str: &str) -> i32 {

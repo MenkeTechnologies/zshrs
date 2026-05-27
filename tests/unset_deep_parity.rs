@@ -5,32 +5,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -115,18 +149,21 @@ mod scoping {
     /// `unset` inside function removes outer.
     #[test]
     fn unset_in_function_removes_outer() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 OUTER=val
 f() { unset OUTER; }
 f
 echo "[$OUTER]"
-"#);
+"#,
+        );
     }
 
     /// `local X; unset X` removes local — outer should be visible after fn.
     #[test]
     fn unset_local_in_function_uncovers_outer() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 OUTER=outer-val
 f() {
   local OUTER=inner
@@ -135,7 +172,8 @@ f() {
 }
 f
 echo "outside:[$OUTER]"
-"#);
+"#,
+        );
     }
 }
 
@@ -172,23 +210,27 @@ mod unset_dash_f {
     /// `unset -f f` removes function.
     #[test]
     fn unset_dash_f_function() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 f() { echo hi; }
 unset -f f
 type f 2>/dev/null
 echo "exit=$?"
-"#);
+"#,
+        );
     }
 
     /// Var with same name as function is separate.
     #[test]
     fn unset_dash_f_doesnt_touch_var() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 X=value
 X() { echo fn; }
 unset -f X
 echo "[$X]"
-"#);
+"#,
+        );
     }
 }
 
@@ -204,12 +246,14 @@ mod unset_dash_v {
     /// `unset -v` doesn't touch same-named function.
     #[test]
     fn unset_dash_v_doesnt_touch_function() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 Y=val
 Y() { echo fn; }
 unset -v Y
 Y
-"#);
+"#,
+        );
     }
 }
 
@@ -229,10 +273,12 @@ mod unset_pattern {
     /// `unset -m pattern` — pattern-match unset.
     #[test]
     fn unset_dash_m_pattern() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 FOO_A=1; FOO_B=2; BAR=3
 unset -m 'FOO_*'
 echo "[$FOO_A][$FOO_B][$BAR]"
-"#);
+"#,
+        );
     }
 }

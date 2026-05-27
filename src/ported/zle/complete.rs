@@ -47,7 +47,11 @@ use crate::ported::zle::{
     zle_move::*, zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*,
     zle_word::*,
 };
-use crate::ported::zsh_h::{eprog, funcwrap, module, options, param, PAT_HEAPDUP, PM_ARRAY, PM_HASHED, PM_INTEGER, PM_LOCAL, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE, PM_UNSET, PP_RANGE, PP_UNKWN};
+use crate::ported::zsh_h::{
+    eprog, funcwrap, module, options, param, PAT_HEAPDUP, PM_ARRAY, PM_HASHED, PM_INTEGER,
+    PM_LOCAL, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_SINGLE, PM_SPECIAL, PM_TYPE, PM_UNSET,
+    PP_RANGE, PP_UNKWN,
+};
 
 // =====================================================================
 // Cmlist / Cmatcher / Cpattern allocators + freers — Src/Zle/complete.c.
@@ -134,9 +138,7 @@ pub fn freecpattern(p: Option<Box<Cpattern>>) {
 /// wlen / lalen / ralen, deep-copying each Cpattern via
 /// `cpcpattern()`. Returns the new chain head.
 /// WARNING: param names don't match C — Rust=() vs C=(m)
-pub fn cpcmatcher(
-    m: Option<&Cmatcher>,
-) -> Option<Box<Cmatcher>> // c:155
+pub fn cpcmatcher(m: Option<&Cmatcher>) -> Option<Box<Cmatcher>> // c:155
 {
     let mut head: Option<Box<Cmatcher>> = None; // c:158
     let mut tail_ref: *mut Option<Box<Cmatcher>> = &mut head;
@@ -175,9 +177,7 @@ pub fn cpcmatcher(
 /// copies `tp`, then dispatches on `tp` to copy `u.str` (CCLASS /
 /// NCLASS / EQUIV) or `u.chr` (CHAR). Default keeps the union zero.
 /// WARNING: param names don't match C — Rust=() vs C=(o)
-pub fn cp_cpattern_element(
-    o: &Cpattern,
-) -> Box<Cpattern> {
+pub fn cp_cpattern_element(o: &Cpattern) -> Box<Cpattern> {
     let mut n = Cpattern::default(); // c:189 zalloc
     n.next = None; // c:191
     n.tp = o.tp; // c:193
@@ -199,9 +199,7 @@ pub fn cp_cpattern_element(
 /// Direct port of `cpcpattern(Cpattern o)` from `Src/Zle/complete.c:218`.
 /// C body (c:222-231): walk the source Cpattern chain, copying each
 /// element via `cp_cpattern_element()`. Returns the new chain head.
-pub fn cpcpattern(
-    o: Option<&Cpattern>,
-) -> Option<Box<Cpattern>> // c:218
+pub fn cpcpattern(o: Option<&Cpattern>) -> Option<Box<Cpattern>> // c:218
 {
     let mut head: Option<Box<Cpattern>> = None; // c:222
     let mut tail_ref: *mut Option<Box<Cpattern>> = &mut head;
@@ -293,7 +291,6 @@ pub static COMPWORDS: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceL
 /// which are real-bodied ports.
 /// WARNING: param names don't match C — Rust=() vs C=(name, s)
 pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
-
     if s.is_empty() {
         // c:249
         return None;
@@ -353,10 +350,7 @@ pub fn parse_cmatcher(name: &str, s: &str) -> Option<Box<Cmatcher>> {
             if let Some(next) = chars.clone().next() {
                 if next != ' ' && next != '\t' {
                     if !name.is_empty() {
-                        zwarnnam(
-                            name,
-                            "unexpected pattern following x: specification",
-                        );
+                        zwarnnam(name, "unexpected pattern following x: specification");
                     }
                     return None;
                 }
@@ -570,12 +564,7 @@ pub fn parse_pattern<'a>(
     name: &str,
     s: &'a str,
     end: char,
-) -> (
-    Option<Box<Cpattern>>,
-    &'a str,
-    i32,
-    bool,
-) {
+) -> (Option<Box<Cpattern>>, &'a str, i32, bool) {
     let mut ret: Option<Box<Cpattern>> = None;
     let mut tail_ptr: *mut Option<Box<Cpattern>> = &mut ret;
     let mut rest = s;
@@ -626,10 +615,7 @@ pub fn parse_pattern<'a>(
         } else if matches!(next_ch, '*' | '(' | ')' | '=') {
             // c:446
             if !name.is_empty() {
-                zwarnnam(
-                    name,
-                    &format!("invalid pattern character `{}'", next_ch),
-                );
+                zwarnnam(name, &format!("invalid pattern character `{}'", next_ch));
             }
             return (None, rest, 0, true);
         } else {
@@ -883,8 +869,7 @@ pub fn bin_compadd(
     let saved_prefix_for_inject: Option<String> = {
         let lock = COMPADD_PREFIX_INJECTOR.lock().unwrap();
         if let Some(inj) = lock.as_ref() {
-            let cur_prefix =
-                crate::ported::params::getsparam("PREFIX").unwrap_or_default();
+            let cur_prefix = crate::ported::params::getsparam("PREFIX").unwrap_or_default();
             // sh:_approximate:65 — `-p` arg-position detection. If
             //   the user passed `-p VAL` where VAL starts with `~`,
             //   the tilde-already-handled path triggers.
@@ -916,8 +901,7 @@ pub fn bin_compadd(
     //   When the trace flag is set, record the call into the trace
     //   buffer and short-circuit so no matches actually land.
     if COMPADD_TRACE_ACTIVE.load(Ordering::Relaxed) {
-        let mut buf = crate::ported::params::getaparam("_complete_help_funcs")
-            .unwrap_or_default();
+        let mut buf = crate::ported::params::getaparam("_complete_help_funcs").unwrap_or_default();
         buf.push(argv.join(" "));
         crate::ported::params::setaparam("_complete_help_funcs", buf);
         return 1;
@@ -929,8 +913,7 @@ pub fn bin_compadd(
 /// `(#a$N)` per-iteration without modifying PREFIX outside the
 /// compadd call. Set via [`set_compadd_prefix_injector`] / cleared
 /// via [`clear_compadd_prefix_injector`].
-pub static COMPADD_PREFIX_INJECTOR: std::sync::Mutex<Option<String>> =
-    std::sync::Mutex::new(None);
+pub static COMPADD_PREFIX_INJECTOR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// sh:_complete_help:11 — when this flag is set, every `bin_compadd`
 /// call records its argv into `_complete_help_funcs` and returns 1
@@ -959,12 +942,7 @@ pub fn set_compadd_trace(active: bool) {
 
 /// Internal: the actual compadd body. Split out so the injector
 /// wrapper can run before / after it without code duplication.
-fn bin_compadd_body(
-    name: &str,
-    argv: &[String],
-    _ops: &options,
-    _func: i32,
-) -> i32 {
+fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> i32 {
     // c:613-820 — flag-arg parse loop. Walk argv consuming `-X arg`
     // pairs into the `Cadata` struct; per-flag dispatch ports the C
     // switch at c:621-820.
@@ -1210,7 +1188,7 @@ pub fn do_comp_vars(
             } // c:965
               // c:968 — singsub(&sa); — caller already expanded.
             let pp = patcompile(sa, PAT_HEAPDUP, None); // c:969
-                                                                              // c:971-977 — walk compwords backward looking for sa match.
+                                                        // c:971-977 — walk compwords backward looking for sa match.
             i -= 1; // c:971
             while i >= 0 {
                 if let Some(ref prog) = pp {
@@ -1420,12 +1398,12 @@ pub fn bin_compset(
     let arg0 = &argv[0];
     let opt = arg0.as_bytes().get(1).copied().unwrap_or(0); // c:1152 argv[0][1]
     match opt {
-        b'n' => test = CVT_RANGENUM, // c:1154
-        b'N' => test = CVT_RANGEPAT, // c:1155
-        b'p' => test = CVT_PRENUM,   // c:1156
-        b'P' => test = CVT_PREPAT,   // c:1157
-        b's' => test = CVT_SUFNUM,   // c:1158
-        b'S' => test = CVT_SUFPAT,   // c:1159
+        b'n' => test = CVT_RANGENUM,                    // c:1154
+        b'N' => test = CVT_RANGEPAT,                    // c:1155
+        b'p' => test = CVT_PRENUM,                      // c:1156
+        b'P' => test = CVT_PREPAT,                      // c:1157
+        b's' => test = CVT_SUFNUM,                      // c:1158
+        b'S' => test = CVT_SUFPAT,                      // c:1159
         b'q' => return compcore::set_comp_sep() as i32, // c:1160
         _ => {
             // c:1161
@@ -2316,8 +2294,7 @@ pub fn comp_wrapper(
 
     // c:1593 — if comprestore == "auto", restore. Default is "auto" per
     // c:1576 (set in comp_wrapper itself before runshfunc).
-    let comprestore_val =
-        getsparam("comprestore").unwrap_or_else(|| "auto".to_string());
+    let comprestore_val = getsparam("comprestore").unwrap_or_else(|| "auto".to_string());
     if comprestore_val == "auto" {
         restore(&COMPPREFIX, opre);
         restore(&COMPSUFFIX, osuf);
@@ -2498,20 +2475,14 @@ pub fn boot_(m: *const module) -> i32 {
 /// Hookfn-shape thunk for `list_matches` — bridges the
 /// `(Hookdef, void*) -> i32` Hookfn signature to the typed
 /// `list_matches() -> i32` handler in compresult.rs.
-fn list_matches_hook(
-    _h: *mut crate::ported::zsh_h::hookdef,
-    _d: *mut std::ffi::c_void,
-) -> i32 {
+fn list_matches_hook(_h: *mut crate::ported::zsh_h::hookdef, _d: *mut std::ffi::c_void) -> i32 {
     // c:1763 — `addhookfunc("list_matches", list_matches);`
     crate::ported::zle::compresult::list_matches()
 }
 
 /// Hookfn-shape thunk for `invalidate_list` — same shape as
 /// `list_matches_hook`.
-fn invalidate_list_hook(
-    _h: *mut crate::ported::zsh_h::hookdef,
-    _d: *mut std::ffi::c_void,
-) -> i32 {
+fn invalidate_list_hook(_h: *mut crate::ported::zsh_h::hookdef, _d: *mut std::ffi::c_void) -> i32 {
     // c:1764 — `addhookfunc("invalidate_list", invalidate_list);`
     crate::ported::zle::compresult::invalidate_list()
 }
@@ -2902,8 +2873,7 @@ mod tests {
         set_compadd_trace(false);
         INCOMPFUNC.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "trace mode short-circuits to 1");
-        let buf = crate::ported::params::getaparam("_complete_help_funcs")
-            .unwrap_or_default();
+        let buf = crate::ported::params::getaparam("_complete_help_funcs").unwrap_or_default();
         assert_eq!(buf, vec!["-X files alpha".to_string()]);
     }
 

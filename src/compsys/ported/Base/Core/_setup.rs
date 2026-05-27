@@ -146,9 +146,7 @@ pub fn _setup(args: &[String]) -> i32 {
                     && (force_existing.is_empty()
                         || force_existing
                             .parse::<i64>()
-                            .map(|cur| {
-                                val.parse::<i64>().map(|v| cur > v).unwrap_or(false)
-                            })
+                            .map(|cur| val.parse::<i64>().map(|v| cur > v).unwrap_or(false))
                             .unwrap_or(false)));
             if valid {
                 let _ = setsparam("_comp_force_list", &val);

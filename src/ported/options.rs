@@ -18,14 +18,13 @@ use crate::ported::params::{keyboardhacksetfn, paramtab};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{
-    interact, isset, opt_name, options, APPENDHISTORY, BANGHIST, CHASELINKS, EMACSMODE,
+    interact, isset, opt_name, options, Meta, APPENDHISTORY, BANGHIST, CHASELINKS, EMACSMODE,
     EMULATE_CSH, EMULATE_FULLY, EMULATE_KSH, EMULATE_SH, EMULATE_UNUSED, EMULATE_ZSH, EXECOPT,
-    GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, INTERACTIVE, LOGINSHELL, MAILWARNING, Meta,
+    GLOBDOTS, HASHCMDS, HISTNOFUNCTIONS, IGNOREBRACES, INTERACTIVE, LOGINSHELL, MAILWARNING,
     MONITOR, MULTIBYTE, OPT_INVALID, OPT_SIZE, PAT_HEAPDUP, PROMPTSUBST, SHINSTDIN, SINGLECOMMAND,
     SUNKEYBOARDHACK, USEZLE, VIMODE,
 };
 use crate::utils::inittyptab;
-
 
 /// Emulation flags for option defaults
 // `#define OPT_X EMULATE_X` (options.c:55-58) — the option-default
@@ -515,11 +514,7 @@ pub fn bin_setopt(
                 .map(|c| c.to_ascii_lowercase())
                 .collect();
             // c:670 — patcompile(s, PAT_HEAPDUP, NULL).
-            let prog = patcompile(
-                &normalized,
-                PAT_HEAPDUP,
-                None,
-            );
+            let prog = patcompile(&normalized, PAT_HEAPDUP, None);
             if prog.is_none() {
                 // c:670
                 zwarnnam(nam, &format!("bad pattern: {}", raw)); // c:671
@@ -1078,8 +1073,7 @@ pub static KSH_LETTERS: &[(char, &str, bool)] = &[
 /// Port of file-static `int emulation;` at `Src/options.c:33`.
 /// Holds the current emulation bit (`EMULATE_ZSH`/`CSH`/`KSH`/`SH`,
 /// OR-able with `EMULATE_FULLY`).
-pub static EMULATION: AtomicI32 =
-    AtomicI32::new(EMULATE_ZSH);
+pub static EMULATION: AtomicI32 = AtomicI32::new(EMULATE_ZSH);
 
 /// `EMULATE_FULLY` bit (`Src/zsh.h:2354`) tracked separately so
 /// `install_emulation_defaults` can re-OR it into the emulation
@@ -1441,10 +1435,10 @@ fn optns_flags(name: &str) -> u16 {
         "correctall" => 0,                           // c:120
         "cprecedences" => OPT_EMULATE | (OPT_NONZSH as u16), // c:110
         "cshjunkiehistory" => OPT_EMULATE | (OPT_CSH as u16), // c:125
-        "cshjunkieloops" => OPT_EMULATE | (OPT_CSH as u16),   // c:126
-        "cshjunkiequotes" => OPT_EMULATE | (OPT_CSH as u16),  // c:127
-        "cshnullcmd" => OPT_EMULATE | (OPT_CSH as u16),       // c:128
-        "cshnullglob" => OPT_EMULATE | (OPT_CSH as u16),      // c:129
+        "cshjunkieloops" => OPT_EMULATE | (OPT_CSH as u16), // c:126
+        "cshjunkiequotes" => OPT_EMULATE | (OPT_CSH as u16), // c:127
+        "cshnullcmd" => OPT_EMULATE | (OPT_CSH as u16), // c:128
+        "cshnullglob" => OPT_EMULATE | (OPT_CSH as u16), // c:129
         "debugbeforecmd" => OPT_ALL as u16,          // c:127
         "emacs" => 0,                                // c:128
         "equals" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:129
@@ -1519,74 +1513,74 @@ fn optns_flags(name: &str) -> u16 {
         // MULTIBYTE_SUPPORT is compiled in (always true for zshrs
         // since Rust strings are UTF-8). Previous Rust port had `0`
         // which left multibyte off in all emulations.
-        "multibyte" => OPT_ALL as u16,               // c:197
-        "multifuncdef" => OPT_EMULATE | (OPT_ZSH as u16), // c:198
-        "multios" => OPT_EMULATE | (OPT_ZSH as u16), // c:199
-        "nomatch" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:200
-        "notify" => OPT_EMULATE | (OPT_ZSH as u16),  // c:201
-        "nullglob" => OPT_EMULATE,                   // c:202
-        "numericglobsort" => 0,                      // c:203
-        "octalzeroes" => OPT_EMULATE | (OPT_SH as u16), // c:204
-        "overstrike" => 0,                           // c:205
-        "pathdirs" => 0,                             // c:206
-        "pathscript" => OPT_EMULATE | (OPT_BOURNE as u16), // c:207
-        "pipefail" => OPT_EMULATE,                   // c:208
-        "posixaliases" => OPT_EMULATE | (OPT_BOURNE as u16), // c:209
-        "posixargzero" => OPT_EMULATE | (OPT_BOURNE as u16), // c:210
+        "multibyte" => OPT_ALL as u16,                        // c:197
+        "multifuncdef" => OPT_EMULATE | (OPT_ZSH as u16),     // c:198
+        "multios" => OPT_EMULATE | (OPT_ZSH as u16),          // c:199
+        "nomatch" => OPT_EMULATE | (OPT_NONBOURNE as u16),    // c:200
+        "notify" => OPT_EMULATE | (OPT_ZSH as u16),           // c:201
+        "nullglob" => OPT_EMULATE,                            // c:202
+        "numericglobsort" => 0,                               // c:203
+        "octalzeroes" => OPT_EMULATE | (OPT_SH as u16),       // c:204
+        "overstrike" => 0,                                    // c:205
+        "pathdirs" => 0,                                      // c:206
+        "pathscript" => OPT_EMULATE | (OPT_BOURNE as u16),    // c:207
+        "pipefail" => OPT_EMULATE,                            // c:208
+        "posixaliases" => OPT_EMULATE | (OPT_BOURNE as u16),  // c:209
+        "posixargzero" => OPT_EMULATE | (OPT_BOURNE as u16),  // c:210
         "posixbuiltins" => OPT_EMULATE | (OPT_BOURNE as u16), // c:211
-        "posixcd" => OPT_EMULATE | (OPT_BOURNE as u16), // c:212
+        "posixcd" => OPT_EMULATE | (OPT_BOURNE as u16),       // c:212
         "posixidentifiers" => OPT_EMULATE | (OPT_BOURNE as u16), // c:213
-        "posixjobs" => OPT_EMULATE | (OPT_BOURNE as u16), // c:214
-        "posixstrings" => OPT_EMULATE | (OPT_BOURNE as u16), // c:215
-        "posixtraps" => OPT_EMULATE | (OPT_BOURNE as u16), // c:216
-        "printeightbit" => 0,                        // c:217
-        "printexitvalue" => 0,                       // c:218
-        "privileged" => OPT_SPECIAL as u16,          // c:219
-        "promptbang" => OPT_EMULATE | (OPT_KSH as u16), // c:220
-        "promptcr" => OPT_ALL as u16,                // c:221
+        "posixjobs" => OPT_EMULATE | (OPT_BOURNE as u16),     // c:214
+        "posixstrings" => OPT_EMULATE | (OPT_BOURNE as u16),  // c:215
+        "posixtraps" => OPT_EMULATE | (OPT_BOURNE as u16),    // c:216
+        "printeightbit" => 0,                                 // c:217
+        "printexitvalue" => 0,                                // c:218
+        "privileged" => OPT_SPECIAL as u16,                   // c:219
+        "promptbang" => OPT_EMULATE | (OPT_KSH as u16),       // c:220
+        "promptcr" => OPT_ALL as u16,                         // c:221
         "promptpercent" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:222
-        "promptsp" => OPT_ALL as u16,                // c:223
-        "promptsubst" => OPT_EMULATE | (OPT_BOURNE as u16), // c:224
-        "pushdignoredups" => 0,                      // c:225
-        "pushdminus" => 0,                           // c:226
-        "pushdsilent" => 0,                          // c:227
-        "pushdtohome" => 0,                          // c:228
-        "rcexpandparam" => OPT_EMULATE,              // c:229
-        "rcquotes" => 0,                             // c:230
-        "rcs" => OPT_ALL as u16,                     // c:231
-        "recexact" => 0,                             // c:232
-        "rematchpcre" => 0,                          // c:233
-        "restricted" => OPT_SPECIAL as u16,          // c:234
-        "rmstarsilent" => OPT_EMULATE | (OPT_BOURNE as u16), // c:235
-        "rmstarwait" => 0,                           // c:236
-        "sharehistory" => 0,                         // c:237
+        "promptsp" => OPT_ALL as u16,                         // c:223
+        "promptsubst" => OPT_EMULATE | (OPT_BOURNE as u16),   // c:224
+        "pushdignoredups" => 0,                               // c:225
+        "pushdminus" => 0,                                    // c:226
+        "pushdsilent" => 0,                                   // c:227
+        "pushdtohome" => 0,                                   // c:228
+        "rcexpandparam" => OPT_EMULATE,                       // c:229
+        "rcquotes" => 0,                                      // c:230
+        "rcs" => OPT_ALL as u16,                              // c:231
+        "recexact" => 0,                                      // c:232
+        "rematchpcre" => 0,                                   // c:233
+        "restricted" => OPT_SPECIAL as u16,                   // c:234
+        "rmstarsilent" => OPT_EMULATE | (OPT_BOURNE as u16),  // c:235
+        "rmstarwait" => 0,                                    // c:236
+        "sharehistory" => 0,                                  // c:237
         "shfileexpansion" => OPT_EMULATE | (OPT_BOURNE as u16), // c:238
-        "shglob" => OPT_EMULATE | (OPT_BOURNE as u16), // c:239
-        "shinstdin" => OPT_SPECIAL as u16,           // c:240
-        "shnullcmd" => OPT_EMULATE | (OPT_BOURNE as u16), // c:241
+        "shglob" => OPT_EMULATE | (OPT_BOURNE as u16),        // c:239
+        "shinstdin" => OPT_SPECIAL as u16,                    // c:240
+        "shnullcmd" => OPT_EMULATE | (OPT_BOURNE as u16),     // c:241
         "shoptionletters" => OPT_EMULATE | (OPT_BOURNE as u16), // c:242
         "shortloops" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:243
         // c:Src/options.c:252 — `shortrepeat` is OPT_EMULATE only
         // (no OPT_ZSH). It defaults OFF in zsh emulation and only
         // turns on under non-zsh emulations. The previous Rust port
         // had OPT_EMULATE|OPT_ZSH which left it on in zsh.
-        "shortrepeat" => OPT_EMULATE,                // c:252
-        "shwordsplit" => OPT_EMULATE | (OPT_BOURNE as u16), // c:245
-        "singlecommand" => OPT_SPECIAL as u16,       // c:246
-        "singlelinezle" => 0,                        // c:247
-        "sourcetrace" => 0,                          // c:248
-        "sunkeyboardhack" => 0,                      // c:249
-        "transientrprompt" => 0,                     // c:250
-        "trapsasync" => 0,                           // c:251
+        "shortrepeat" => OPT_EMULATE,                         // c:252
+        "shwordsplit" => OPT_EMULATE | (OPT_BOURNE as u16),   // c:245
+        "singlecommand" => OPT_SPECIAL as u16,                // c:246
+        "singlelinezle" => 0,                                 // c:247
+        "sourcetrace" => 0,                                   // c:248
+        "sunkeyboardhack" => 0,                               // c:249
+        "transientrprompt" => 0,                              // c:250
+        "trapsasync" => 0,                                    // c:251
         "typesetsilent" => OPT_EMULATE | (OPT_BOURNE as u16), // c:252
-        "unset" => OPT_EMULATE | (OPT_BSHELL as u16), // c:253
-        "verbose" => OPT_EMULATE,                    // c:254
-        "vi" => 0,                                   // c:255
-        "warncreateglobal" => 0,                     // c:256
-        "warnnestedvar" => 0,                        // c:257
-        "xtrace" => OPT_EMULATE,                     // c:258
-        "zle" => OPT_SPECIAL as u16,                 // c:259
-        "dvorak" => 0,                               // c:260
+        "unset" => OPT_EMULATE | (OPT_BSHELL as u16),         // c:253
+        "verbose" => OPT_EMULATE,                             // c:254
+        "vi" => 0,                                            // c:255
+        "warncreateglobal" => 0,                              // c:256
+        "warnnestedvar" => 0,                                 // c:257
+        "xtrace" => OPT_EMULATE,                              // c:258
+        "zle" => OPT_SPECIAL as u16,                          // c:259
+        "dvorak" => 0,                                        // c:260
         _ => 0,
     }
 }
@@ -1648,7 +1642,11 @@ pub fn opt_state_get(name: &str) -> Option<bool> {
     // resolves to a different canonical, read THAT slot.
     let optno = optlookup(name);
     if optno != OPT_INVALID {
-        let (target_optno, negate) = if optno < 0 { (-optno, true) } else { (optno, false) };
+        let (target_optno, negate) = if optno < 0 {
+            (-optno, true)
+        } else {
+            (optno, false)
+        };
         let target_name = opt_name(target_optno);
         if !target_name.is_empty() && target_name != name {
             // Alias path — return canonical's state (negated for `no…` aliases).
@@ -1719,7 +1717,11 @@ pub fn opt_state_set_via_alias(name: &str, on: bool) -> bool {
         }
         return false;
     }
-    let (target_optno, negate) = if optno < 0 { (-optno, true) } else { (optno, false) };
+    let (target_optno, negate) = if optno < 0 {
+        (-optno, true)
+    } else {
+        (optno, false)
+    };
     let target_name = opt_name(target_optno);
     if target_name.is_empty() {
         if on {
@@ -1765,8 +1767,8 @@ pub fn list_emulate_options(cmdopts: &std::collections::HashMap<String, bool>, f
 }
 #[cfg(test)]
 mod tests {
-    use crate::ported::zsh_h::ALIASESOPT;
     use super::*;
+    use crate::ported::zsh_h::ALIASESOPT;
 
     // Tests share global OPTS_LIVE state; serialize via this mutex so
     // parallel cargo-test threads don't stomp each other's option-state
@@ -2036,8 +2038,7 @@ mod tests {
         );
         // ALIASESOPT is the next enum slot — must be 1.
         assert_eq!(
-            ALIASESOPT,
-            1,
+            ALIASESOPT, 1,
             "Src/zsh.h:2364 — ALIASESOPT immediately follows OPT_INVALID"
         );
     }
@@ -2338,7 +2339,10 @@ mod tests {
         // The two MAY resolve to the same optno (zsh's convention) OR
         // to distinct optnos that semantically mirror each other.
         // Pin: at minimum, noclobber must resolve to SOMETHING valid.
-        assert_ne!(negated, 0, "noclobber must resolve (either as alias or distinct optno)");
+        assert_ne!(
+            negated, 0,
+            "noclobber must resolve (either as alias or distinct optno)"
+        );
     }
 
     /// `isset(optlookup("X"))` for an unset option returns false.
@@ -2377,8 +2381,10 @@ mod tests {
         // After unset, the value is either None (truly cleared) OR
         // Some(false) (cleared to default). Both mean "not set".
         let v = opt_state_get("automenu");
-        assert!(v.is_none() || v == Some(false),
-            "after unset, got {v:?} — should be None or Some(false)");
+        assert!(
+            v.is_none() || v == Some(false),
+            "after unset, got {v:?} — should be None or Some(false)"
+        );
         opt_state_set("automenu", saved);
     }
 
@@ -2394,7 +2400,9 @@ mod tests {
         assert_eq!(opt_state_get("extendedglob"), Some(true));
         opt_state_set("extendedglob", false);
         assert_eq!(opt_state_get("extendedglob"), Some(false));
-        if let Some(s) = saved { opt_state_set("extendedglob", s); }
+        if let Some(s) = saved {
+            opt_state_set("extendedglob", s);
+        }
     }
 
     /// `Src/options.c:optns` — `nounset` flag (errors on unset var
@@ -2407,7 +2415,9 @@ mod tests {
         assert_eq!(opt_state_get("nounset"), Some(true));
         opt_state_set("nounset", false);
         assert_eq!(opt_state_get("nounset"), Some(false));
-        if let Some(s) = saved { opt_state_set("nounset", s); }
+        if let Some(s) = saved {
+            opt_state_set("nounset", s);
+        }
     }
 
     /// `errexit` — exit on error (set -e). Round-trip.
@@ -2419,7 +2429,9 @@ mod tests {
         assert_eq!(opt_state_get("errexit"), Some(true));
         opt_state_set("errexit", false);
         assert_eq!(opt_state_get("errexit"), Some(false));
-        if let Some(s) = saved { opt_state_set("errexit", s); }
+        if let Some(s) = saved {
+            opt_state_set("errexit", s);
+        }
     }
 
     /// `xtrace` — trace mode (set -x). Round-trip.
@@ -2431,7 +2443,9 @@ mod tests {
         assert_eq!(opt_state_get("xtrace"), Some(true));
         opt_state_set("xtrace", false);
         assert_eq!(opt_state_get("xtrace"), Some(false));
-        if let Some(s) = saved { opt_state_set("xtrace", s); }
+        if let Some(s) = saved {
+            opt_state_set("xtrace", s);
+        }
     }
 
     /// `kshglob` — enables `?(...)/+(...)/!(...)/@(...)` ksh-style globs.
@@ -2443,7 +2457,9 @@ mod tests {
         assert_eq!(opt_state_get("kshglob"), Some(true));
         opt_state_set("kshglob", false);
         assert_eq!(opt_state_get("kshglob"), Some(false));
-        if let Some(s) = saved { opt_state_set("kshglob", s); }
+        if let Some(s) = saved {
+            opt_state_set("kshglob", s);
+        }
     }
 
     /// `nullglob` — silently expand unmatched globs to nothing.
@@ -2455,7 +2471,9 @@ mod tests {
         assert_eq!(opt_state_get("nullglob"), Some(true));
         opt_state_set("nullglob", false);
         assert_eq!(opt_state_get("nullglob"), Some(false));
-        if let Some(s) = saved { opt_state_set("nullglob", s); }
+        if let Some(s) = saved {
+            opt_state_set("nullglob", s);
+        }
     }
 
     /// `kshzerosubscript` — subscript [0] returns element 1 (ksh-style).
@@ -2467,7 +2485,9 @@ mod tests {
         assert_eq!(opt_state_get("kshzerosubscript"), Some(true));
         opt_state_set("kshzerosubscript", false);
         assert_eq!(opt_state_get("kshzerosubscript"), Some(false));
-        if let Some(s) = saved { opt_state_set("kshzerosubscript", s); }
+        if let Some(s) = saved {
+            opt_state_set("kshzerosubscript", s);
+        }
     }
 
     /// `kshtypeset` — typeset arrays via ksh subscripting.
@@ -2479,7 +2499,9 @@ mod tests {
         assert_eq!(opt_state_get("kshtypeset"), Some(true));
         opt_state_set("kshtypeset", false);
         assert_eq!(opt_state_get("kshtypeset"), Some(false));
-        if let Some(s) = saved { opt_state_set("kshtypeset", s); }
+        if let Some(s) = saved {
+            opt_state_set("kshtypeset", s);
+        }
     }
 }
 

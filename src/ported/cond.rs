@@ -25,11 +25,15 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use crate::glob::matchpat;
-use crate::ported::zsh_h::{COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT, COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, isset, unset, EXTENDEDGLOB, CASEGLOB, POSIXBUILTINS};
-use std::io::Write;
-use std::os::unix::io::FromRawFd;
 use crate::ported::options::{optlookup, optlookupc};
 use crate::ported::utils::zwarnnam;
+use crate::ported::zsh_h::{
+    isset, unset, CASEGLOB, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT,
+    COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
+    EXTENDEDGLOB, POSIXBUILTINS,
+};
+use std::io::Write;
+use std::os::unix::io::FromRawFd;
 // C-style i32 return codes from `evalcond` (mirroring cond.c:70):
 //   0 — condition true
 //   1 — condition false
@@ -424,10 +428,7 @@ pub fn evalcond(
                                     if let Some(caps) = re.captures(&left) {
                                         // Whole-match: $MATCH.
                                         let m0 = caps.get(0).unwrap();
-                                        crate::ported::params::setsparam(
-                                            "MATCH",
-                                            m0.as_str(),
-                                        );
+                                        crate::ported::params::setsparam("MATCH", m0.as_str());
                                         // Capture groups → $match[1..N].
                                         // zsh's regex module emits the
                                         // unnamed groups as $match[1..N]
@@ -453,15 +454,9 @@ pub fn evalcond(
                                             begin_arr.push(b);
                                             end_arr.push(e);
                                         }
-                                        crate::ported::params::setaparam(
-                                            "match", match_arr,
-                                        );
-                                        crate::ported::params::setaparam(
-                                            "mbegin", begin_arr,
-                                        );
-                                        crate::ported::params::setaparam(
-                                            "mend", end_arr,
-                                        );
+                                        crate::ported::params::setaparam("match", match_arr);
+                                        crate::ported::params::setaparam("mbegin", begin_arr);
+                                        crate::ported::params::setaparam("mend", end_arr);
                                         b2i(true)
                                     } else {
                                         b2i(false)
@@ -737,12 +732,12 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
     // pattern as text — silently mis-routing every `[[ a = pat ]]`
     // glob test against the wrong side. Pass in Rust order.
     let matched = matchpat(&p, str, extended, case_sensitive); // c:557
-    // c:Src/pattern.c GF_MATCHREF / GF_BACKREF — (#m) writes the
-    // matched substring to $MATCH; (#b) writes capture groups to
-    // $match[]. In `==` cond context the pattern matches the whole
-    // string, so on success $MATCH = str. Capture-group support
-    // (real (#b) parens) is deferred — (#m) covers the high-traffic
-    // case (zinit's plugin-name matching uses it).
+                                                               // c:Src/pattern.c GF_MATCHREF / GF_BACKREF — (#m) writes the
+                                                               // matched substring to $MATCH; (#b) writes capture groups to
+                                                               // $match[]. In `==` cond context the pattern matches the whole
+                                                               // string, so on success $MATCH = str. Capture-group support
+                                                               // (real (#b) parens) is deferred — (#m) covers the high-traffic
+                                                               // case (zinit's plugin-name matching uses it).
     if matched && extended && p.contains("(#m)") {
         crate::ported::params::setsparam("MATCH", str);
         crate::ported::params::setiparam("MBEGIN", 1);
@@ -840,11 +835,23 @@ mod tests {
         let b = crate::ported::params::getaparam("mbegin");
         let e = crate::ported::params::getaparam("mend");
         // Group 1: "abc" at bytes 0..3 → mbegin[1] = "1" (1-based), mend[1] = "3".
-        assert_eq!(b.as_deref().and_then(|v| v.first().cloned()), Some("1".to_string()));
-        assert_eq!(e.as_deref().and_then(|v| v.first().cloned()), Some("3".to_string()));
+        assert_eq!(
+            b.as_deref().and_then(|v| v.first().cloned()),
+            Some("1".to_string())
+        );
+        assert_eq!(
+            e.as_deref().and_then(|v| v.first().cloned()),
+            Some("3".to_string())
+        );
         // Group 2: "123" at bytes 3..6 → mbegin[2] = "4", mend[2] = "6".
-        assert_eq!(b.as_deref().and_then(|v| v.get(1).cloned()), Some("4".to_string()));
-        assert_eq!(e.as_deref().and_then(|v| v.get(1).cloned()), Some("6".to_string()));
+        assert_eq!(
+            b.as_deref().and_then(|v| v.get(1).cloned()),
+            Some("4".to_string())
+        );
+        assert_eq!(
+            e.as_deref().and_then(|v| v.get(1).cloned()),
+            Some("6".to_string())
+        );
     }
 
     /// Failed match: returns 1 (false). $match/etc not asserted here
@@ -1487,10 +1494,26 @@ mod tests {
     fn cond_corpus_equality_operators() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["", "=", ""], &opts, &vars, false), 0, "= empty=empty");
-        assert_eq!(evalcond(&["a", "==", "a"], &opts, &vars, false), 0, "== equal");
-        assert_eq!(evalcond(&["x", "!=", "y"], &opts, &vars, false), 0, "!= unequal");
-        assert_eq!(evalcond(&["x", "==", "y"], &opts, &vars, false), 1, "== unequal false");
+        assert_eq!(
+            evalcond(&["", "=", ""], &opts, &vars, false),
+            0,
+            "= empty=empty"
+        );
+        assert_eq!(
+            evalcond(&["a", "==", "a"], &opts, &vars, false),
+            0,
+            "== equal"
+        );
+        assert_eq!(
+            evalcond(&["x", "!=", "y"], &opts, &vars, false),
+            0,
+            "!= unequal"
+        );
+        assert_eq!(
+            evalcond(&["x", "==", "y"], &opts, &vars, false),
+            1,
+            "== unequal false"
+        );
     }
 
     /// `Test/C02cond.ztst:177-178` — `[[ bar < foo && foo > bar ]]`
@@ -1499,9 +1522,21 @@ mod tests {
     fn cond_corpus_lexical_less_greater() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["bar", "<", "foo"], &opts, &vars, false), 0, "bar < foo");
-        assert_eq!(evalcond(&["foo", ">", "bar"], &opts, &vars, false), 0, "foo > bar");
-        assert_eq!(evalcond(&["foo", "<", "bar"], &opts, &vars, false), 1, "foo < bar false");
+        assert_eq!(
+            evalcond(&["bar", "<", "foo"], &opts, &vars, false),
+            0,
+            "bar < foo"
+        );
+        assert_eq!(
+            evalcond(&["foo", ">", "bar"], &opts, &vars, false),
+            0,
+            "foo > bar"
+        );
+        assert_eq!(
+            evalcond(&["foo", "<", "bar"], &opts, &vars, false),
+            1,
+            "foo < bar false"
+        );
     }
 
     /// `Test/C02cond.ztst:180-181` — `[[ 7 -eq 0x07 ]]` — hex constants
@@ -1510,9 +1545,21 @@ mod tests {
     fn cond_corpus_eq_hex_constant() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["7", "-eq", "0x07"], &opts, &vars, false), 0, "7 -eq 0x07");
-        assert_eq!(evalcond(&["10", "-ne", "0x10"], &opts, &vars, false), 0, "10 -ne 0x10 (16)");
-        assert_eq!(evalcond(&["16", "-eq", "0x10"], &opts, &vars, false), 0, "16 -eq 0x10");
+        assert_eq!(
+            evalcond(&["7", "-eq", "0x07"], &opts, &vars, false),
+            0,
+            "7 -eq 0x07"
+        );
+        assert_eq!(
+            evalcond(&["10", "-ne", "0x10"], &opts, &vars, false),
+            0,
+            "10 -ne 0x10 (16)"
+        );
+        assert_eq!(
+            evalcond(&["16", "-eq", "0x10"], &opts, &vars, false),
+            0,
+            "16 -eq 0x10"
+        );
     }
 
     /// `Test/C02cond.ztst:183-184` — `[[ 3 -lt 04 ]]` — leading-zero
@@ -1521,8 +1568,16 @@ mod tests {
     fn cond_corpus_lt_gt_with_leading_zero() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["3", "-lt", "04"], &opts, &vars, false), 0, "3 -lt 4");
-        assert_eq!(evalcond(&["05", "-gt", "2"], &opts, &vars, false), 0, "5 -gt 2");
+        assert_eq!(
+            evalcond(&["3", "-lt", "04"], &opts, &vars, false),
+            0,
+            "3 -lt 4"
+        );
+        assert_eq!(
+            evalcond(&["05", "-gt", "2"], &opts, &vars, false),
+            0,
+            "5 -gt 2"
+        );
     }
 
     /// `Test/C02cond.ztst:186-187` — `[[ 3 -le 3 && ! (4 -le 3) ]]`
@@ -1531,8 +1586,16 @@ mod tests {
     fn cond_corpus_le_equal_boundary() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["3", "-le", "3"], &opts, &vars, false), 0, "3 -le 3");
-        assert_eq!(evalcond(&["4", "-le", "3"], &opts, &vars, false), 1, "4 -le 3 false");
+        assert_eq!(
+            evalcond(&["3", "-le", "3"], &opts, &vars, false),
+            0,
+            "3 -le 3"
+        );
+        assert_eq!(
+            evalcond(&["4", "-le", "3"], &opts, &vars, false),
+            1,
+            "4 -le 3 false"
+        );
     }
 
     /// `Test/C02cond.ztst:189-190` — `[[ 3 -ge 3 && ! (3 -ge 4) ]]`.
@@ -1540,8 +1603,16 @@ mod tests {
     fn cond_corpus_ge_equal_boundary() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["3", "-ge", "3"], &opts, &vars, false), 0, "3 -ge 3");
-        assert_eq!(evalcond(&["3", "-ge", "4"], &opts, &vars, false), 1, "3 -ge 4 false");
+        assert_eq!(
+            evalcond(&["3", "-ge", "3"], &opts, &vars, false),
+            0,
+            "3 -ge 3"
+        );
+        assert_eq!(
+            evalcond(&["3", "-ge", "4"], &opts, &vars, false),
+            1,
+            "3 -ge 4 false"
+        );
     }
 
     /// `Test/C02cond.ztst:128` — `[[ -x file ]]` — true when file has

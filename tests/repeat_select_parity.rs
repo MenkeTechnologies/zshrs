@@ -8,60 +8,112 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, stderr: String, exit: i32 }
+struct R {
+    stdout: String,
+    stderr: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-        exit: o.status.code().unwrap_or(-1) }
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-        exit: o.status.code().unwrap_or(-1) }
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
 fn run_with_stdin(bin: &Path, script: &str, stdin: &str) -> R {
     let mut child = Command::new(bin)
-        .args(if bin.file_name().map(|n| n == "zsh").unwrap_or(false) { vec!["-fc", script] }
-              else { vec!["--zsh", "-f", "-c", script] })
+        .args(if bin.file_name().map(|n| n == "zsh").unwrap_or(false) {
+            vec!["-fc", script]
+        } else {
+            vec!["--zsh", "-f", "-c", script]
+        })
         .env_remove("ZSHRS_CACHE")
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
-        .spawn().expect("spawn");
-    child.stdin.as_mut().unwrap().write_all(stdin.as_bytes()).expect("write");
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .expect("write");
     let o = child.wait_with_output().expect("wait");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-        exit: o.status.code().unwrap_or(-1) }
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 /// Only compare stdout + exit. Stderr is excluded because select's prompt
 /// (PS3) goes to stderr and can pick up inherited environment formatting
 /// that varies between test runs.
 fn assert_parity_with_stdin(script: &str, stdin: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_with_stdin(Path::new(zsh_path()), script, stdin);
     let r = run_with_stdin(&zshrs_bin(), script, stdin);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{script}\nstdin: {stdin:?}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{script}\nstdin: {stdin:?}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -111,12 +163,14 @@ mod repeat_with_loop_body {
     /// repeat body can contain newlines.
     #[test]
     fn repeat_multiline_body() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 repeat 2 do
   echo step
   echo done-step
 done
-"#);
+"#,
+        );
     }
 
     /// repeat body with conditional.
@@ -132,7 +186,8 @@ mod repeat_break_continue {
     /// break exits repeat early.
     #[test]
     fn repeat_break() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 i=0
 repeat 10 do
   (( i++ ))
@@ -140,20 +195,23 @@ repeat 10 do
   echo $i
 done
 echo final=$i
-"#);
+"#,
+        );
     }
 
     /// continue skips to next iteration.
     #[test]
     fn repeat_continue() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 i=0
 repeat 5 do
   (( i++ ))
   if (( i == 3 )); then continue; fi
   echo $i
 done
-"#);
+"#,
+        );
     }
 }
 
@@ -190,10 +248,7 @@ mod select_basic {
     /// EOF on stdin → select loop exits.
     #[test]
     fn select_eof_exits_loop() {
-        assert_parity_with_stdin(
-            r#"select x in a b c; do echo $x; done; echo after"#,
-            "",
-        );
+        assert_parity_with_stdin(r#"select x in a b c; do echo $x; done; echo after"#, "");
     }
 }
 
@@ -229,9 +284,6 @@ mod select_blank_input {
     /// Blank input → repeats prompt.
     #[test]
     fn select_blank_then_choice() {
-        assert_parity_with_stdin(
-            r#"select x in a b; do echo "got:$x"; break; done"#,
-            "\n1\n",
-        );
+        assert_parity_with_stdin(r#"select x in a b; do echo "got:$x"; break; done"#, "\n1\n");
     }
 }

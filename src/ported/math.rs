@@ -22,7 +22,7 @@ use crate::ported::options::opt_state_set;
 use crate::ported::params::{convbase, getsparam, unsetparam};
 use crate::ported::utils::zerr;
 /// Re-export of `mnumber` (defined in zsh_h.rs as the Src/zsh.h:95 port).
-pub use crate::ported::zsh_h::{Nularg, MN_FLOAT, MN_INTEGER, MN_UNSET, mnumber};
+pub use crate::ported::zsh_h::{mnumber, Nularg, MN_FLOAT, MN_INTEGER, MN_UNSET};
 use crate::zsh_h::{PM_EFLOAT, PM_FFLOAT, PM_INTEGER};
 
 /// Re-export of `MN_FLOAT` (defined in zsh_h.rs as the Src/zsh.h:104 port).
@@ -177,13 +177,7 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         // around recursive entry.
         let saved = save_state();
         let idx_val = matheval(idx_str)
-            .map(|n| {
-                if n.type_ == MN_FLOAT {
-                    n.d as i64
-                } else {
-                    n.l
-                }
-            })
+            .map(|n| if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })
             .unwrap_or(0);
         restore_state(saved);
         // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
@@ -1593,8 +1587,7 @@ pub(crate) fn zzlex() -> i32 {
                                 break;
                             }
                         }
-                        let radix_str: String =
-                            m_input_clone()[rstart..m_pos()].to_string();
+                        let radix_str: String = m_input_clone()[rstart..m_pos()].to_string();
                         let radix: i32 = radix_str.parse().unwrap_or(10);
                         m_outputradix_set(n * radix); // c:807
                         checkradix = true; // c:808
@@ -1612,8 +1605,7 @@ pub(crate) fn zzlex() -> i32 {
                                     break;
                                 }
                             }
-                            let us_str: String =
-                                m_input_clone()[ustart..m_pos()].to_string();
+                            let us_str: String = m_input_clone()[ustart..m_pos()].to_string();
                             m_outputunderscore_set(us_str.parse().unwrap_or(3));
                             // c:812-813
                         } else {
@@ -1896,13 +1888,51 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // $((sqrt(4)))'` should exit 1, not silently return `2.`.
     let is_module_func = matches!(
         name,
-        "abs" | "acos" | "acosh" | "asin" | "asinh" | "atan" | "atan2"
-        | "atanh" | "cbrt" | "ceil" | "cos" | "cosh" | "erf" | "erfc"
-        | "exp" | "expm1" | "fabs" | "float" | "floor" | "gamma"
-        | "hypot" | "ilogb" | "int" | "j0" | "j1" | "lgamma" | "log"
-        | "log10" | "log1p" | "log2" | "logb" | "max" | "min"
-        | "nextafter" | "pow" | "rand" | "round" | "sin" | "sinh"
-        | "sqrt" | "tan" | "tanh" | "trunc" | "y0" | "y1"
+        "abs"
+            | "acos"
+            | "acosh"
+            | "asin"
+            | "asinh"
+            | "atan"
+            | "atan2"
+            | "atanh"
+            | "cbrt"
+            | "ceil"
+            | "cos"
+            | "cosh"
+            | "erf"
+            | "erfc"
+            | "exp"
+            | "expm1"
+            | "fabs"
+            | "float"
+            | "floor"
+            | "gamma"
+            | "hypot"
+            | "ilogb"
+            | "int"
+            | "j0"
+            | "j1"
+            | "lgamma"
+            | "log"
+            | "log10"
+            | "log1p"
+            | "log2"
+            | "logb"
+            | "max"
+            | "min"
+            | "nextafter"
+            | "pow"
+            | "rand"
+            | "round"
+            | "sin"
+            | "sinh"
+            | "sqrt"
+            | "tan"
+            | "tanh"
+            | "trunc"
+            | "y0"
+            | "y1"
     );
     // c:Src/module.c:2206-2322 `load_module` — the post-init flag
     // signaling "this module's setup/boot ran" is MOD_INIT_B (set
@@ -4919,7 +4949,8 @@ mod tests {
     fn zsh_corpus_multi_base_input() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            mathevali("0x10 + 0X01 + 2#1010").unwrap(), 27,
+            mathevali("0x10 + 0X01 + 2#1010").unwrap(),
+            27,
             "ztst:29 — hex + 2#binary sum",
         );
     }
@@ -4929,7 +4960,11 @@ mod tests {
     #[test]
     fn zsh_corpus_float_truncates_in_integer_context() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(mathevali("32.5").unwrap(), 32, "ztst:44 — truncate, not round");
+        assert_eq!(
+            mathevali("32.5").unwrap(),
+            32,
+            "ztst:44 — truncate, not round"
+        );
     }
 
     /// `Test/C01arith.ztst:46-50` — operator precedence chain:
@@ -4948,8 +4983,10 @@ mod tests {
     fn zsh_corpus_mixed_int_float_promotes_to_float() {
         let _g = crate::test_util::global_state_lock();
         let n = matheval("3 + 5 * 1.75").unwrap();
-        assert!((n.d - 11.75).abs() < 1e-9,
-            "ztst:96 — 3+5*1.75 = 11.75 (float promotion)");
+        assert!(
+            (n.d - 11.75).abs() < 1e-9,
+            "ztst:96 — 3+5*1.75 = 11.75 (float promotion)"
+        );
     }
 
     /// `Test/C01arith.ztst:62-64` — logical precedence:

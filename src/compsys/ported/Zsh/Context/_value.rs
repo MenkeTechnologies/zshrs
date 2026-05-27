@@ -128,10 +128,7 @@ pub fn _value(args: &[String]) -> i32 {
 
     // sh:38-47
     let curcontext = getsparam("curcontext").unwrap_or_default();
-    let pats = lookupstyle(
-        &format!(":completion:{}:", curcontext),
-        "assign-list",
-    );
+    let pats = lookupstyle(&format!(":completion:{}:", curcontext), "assign-list");
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();
     let assign_match = if !pats.is_empty() {

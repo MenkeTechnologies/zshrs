@@ -138,12 +138,11 @@ mod tests {
         // sh:5 — `C:=__targs` means -C is value-taking; the value
         //   accumulates into __targs alongside the literal `-C`.
         let _g = crate::test_util::global_state_lock();
-        let (rem, targs, gopt) =
-            run_zparseopts_wanted(&[
-                "-C".to_string(),
-                "subctx".to_string(),
-                "tagname".to_string(),
-            ]);
+        let (rem, targs, gopt) = run_zparseopts_wanted(&[
+            "-C".to_string(),
+            "subctx".to_string(),
+            "tagname".to_string(),
+        ]);
         assert_eq!(targs, vec!["-C", "subctx"]);
         assert_eq!(gopt, Vec::<String>::new());
         assert_eq!(rem, vec!["tagname"]);
@@ -154,11 +153,8 @@ mod tests {
         // sh:5 — `1 2 V J x` boolean, stored into __gopt; rest stays
         //   in argv.
         let _g = crate::test_util::global_state_lock();
-        let (rem, targs, gopt) = run_zparseopts_wanted(&[
-            "-V".to_string(),
-            "-1".to_string(),
-            "mytag".to_string(),
-        ]);
+        let (rem, targs, gopt) =
+            run_zparseopts_wanted(&["-V".to_string(), "-1".to_string(), "mytag".to_string()]);
         assert_eq!(targs, Vec::<String>::new());
         assert_eq!(gopt, vec!["-V", "-1"]);
         assert_eq!(rem, vec!["mytag"]);

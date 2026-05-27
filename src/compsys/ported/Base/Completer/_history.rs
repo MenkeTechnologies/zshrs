@@ -81,8 +81,7 @@ pub fn _history() -> i32 {
     let _ = setsparam("ISUFFIX", "");
 
     // sh:50-59  walk slices until nmatches > 0 or beg >= max.
-    while get_compstate_str("nmatches").and_then(|s| s.parse::<i64>().ok()) == Some(0)
-        && beg < max
+    while get_compstate_str("nmatches").and_then(|s| s.parse::<i64>().ok()) == Some(0) && beg < max
     {
         let end = (beg + slice).min(hmax);
         let hslice: Vec<String> = if beg <= end && beg >= 1 && end <= historywords.len() {

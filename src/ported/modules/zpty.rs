@@ -2,14 +2,13 @@
 //!
 //! Provides zpty builtin for running sub-processes with pseudo terminals.
 
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module, features};
+use crate::ported::zsh_h::{features, module, OPT_ARG, OPT_ISSET};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
-
 
 /// Port of `READ_MAX` from `Src/Modules/zpty.c:44`. Maximum bytes
 /// to read at once from a pty's master end (1 MB).
@@ -178,7 +177,6 @@ pub fn getptycmd<'a>(cmds: &'a HashMap<String, ptycmd>, name: &str) -> Option<&'
 // =====================================================================
 // static struct features module_features                            c:884 (zpty.c)
 // =====================================================================
-
 
 /// Open a pseudo-terminal master/slave pair.
 /// Port of `get_pty(int master, int *retfd)` from Src/Modules/zpty.c:191 (or :255 for
@@ -800,7 +798,6 @@ pub fn finish_(m: *const module) -> i32 {
     0
 }
 
-
 /// Global `ptycmds` linked-list from `Src/Modules/zpty.c:36`.
 /// C declares `static Ptycmd ptycmds;` and mutates it through the
 /// whole module. Rust uses OnceLock<Mutex<>> for thread-safe access.
@@ -826,11 +823,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 1]);
     }
@@ -867,8 +860,8 @@ fn module_features() -> &'static Mutex<features> {
 
 #[cfg(test)]
 mod tests {
-    use crate::zsh_h::{options, MAX_OPS};
     use super::*;
+    use crate::zsh_h::{options, MAX_OPS};
 
     #[test]
     fn test_pty_cmds_manager() {

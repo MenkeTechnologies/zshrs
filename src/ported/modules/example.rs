@@ -35,7 +35,7 @@ use crate::ported::compat::output64;
 use crate::ported::cond::{cond_str, cond_val};
 use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
 use crate::ported::string::dyncat;
-use crate::ported::zsh_h::{features, module, options, OPT_ISSET, MAX_OPS};
+use crate::ported::zsh_h::{features, module, options, MAX_OPS, OPT_ISSET};
 
 // =====================================================================
 // /* parameters */                                                  c:33
@@ -414,7 +414,6 @@ pub fn finish_(m: *const module) -> i32 {
 // `module_features` — port of `static struct features module_features`
 // from example.c:188.
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -443,11 +442,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 8]);
     }
@@ -785,9 +780,21 @@ mod tests {
     fn example_corpus_math_sum_int_args_stay_integer() {
         let _g = crate::test_util::global_state_lock();
         let args = vec![
-            mnumber { l: 1, d: 0.0, type_: MN_INTEGER },
-            mnumber { l: 2, d: 0.0, type_: MN_INTEGER },
-            mnumber { l: 3, d: 0.0, type_: MN_INTEGER },
+            mnumber {
+                l: 1,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 2,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 3,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
         ];
         let r = math_sum("sum", 3, &args, 0);
         assert_eq!(r.l, 6, "1+2+3=6");
@@ -799,8 +806,16 @@ mod tests {
     fn example_corpus_math_sum_mixed_promotes_to_float() {
         let _g = crate::test_util::global_state_lock();
         let args = vec![
-            mnumber { l: 2, d: 0.0, type_: MN_INTEGER },
-            mnumber { l: 0, d: 1.5, type_: MN_FLOAT },
+            mnumber {
+                l: 2,
+                d: 0.0,
+                type_: MN_INTEGER,
+            },
+            mnumber {
+                l: 0,
+                d: 1.5,
+                type_: MN_FLOAT,
+            },
         ];
         let r = math_sum("sum", 2, &args, 0);
         assert_eq!(r.type_, MN_FLOAT, "int+float → float");
@@ -812,8 +827,16 @@ mod tests {
     fn example_corpus_math_sum_two_floats() {
         let _g = crate::test_util::global_state_lock();
         let args = vec![
-            mnumber { l: 0, d: 1.25, type_: MN_FLOAT },
-            mnumber { l: 0, d: 2.75, type_: MN_FLOAT },
+            mnumber {
+                l: 0,
+                d: 1.25,
+                type_: MN_FLOAT,
+            },
+            mnumber {
+                l: 0,
+                d: 2.75,
+                type_: MN_FLOAT,
+            },
         ];
         let r = math_sum("sum", 2, &args, 0);
         assert_eq!(r.type_, MN_FLOAT);

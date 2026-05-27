@@ -371,15 +371,9 @@ pub fn upline() -> i32 {
     // c:243
     let mut n = MULT.load(Ordering::SeqCst);
     if n < 0 {
-        MULT.store(
-            -MULT.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        MULT.store(-MULT.load(Ordering::SeqCst), Ordering::SeqCst);
         let r = -downline();
-        MULT.store(
-            -MULT.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        MULT.store(-MULT.load(Ordering::SeqCst), Ordering::SeqCst);
         return r;
     }
     if LASTCOL.load(Ordering::SeqCst) == -1 {
@@ -399,10 +393,7 @@ pub fn upline() -> i32 {
     }
     if n == 0 {
         let x = findeol();
-        ZLECS.fetch_add(
-            LASTCOL.load(Ordering::SeqCst) as usize,
-            Ordering::SeqCst,
-        );
+        ZLECS.fetch_add(LASTCOL.load(Ordering::SeqCst) as usize, Ordering::SeqCst);
         if ZLECS.load(Ordering::SeqCst) >= x {
             ZLECS.store(x, Ordering::SeqCst);
         }
@@ -417,19 +408,12 @@ pub fn uplineorhistory() -> i32 {
     let n = upline();
     if n != 0 {
         ZLECS.store(ocs, Ordering::SeqCst);
-        if (ZLEREADFLAGS.load(Ordering::SeqCst)
-            & ZLRF_HISTORY)
-            == 0
-        {
+        if (ZLEREADFLAGS.load(Ordering::SeqCst) & ZLRF_HISTORY) == 0 {
             return 1;
         }
-        let saved_mult =
-            MULT.load(Ordering::SeqCst);
+        let saved_mult = MULT.load(Ordering::SeqCst);
         MULT.store(n, Ordering::SeqCst);
-        let ret = if zle_goto_hist(
-            -MULT.load(Ordering::SeqCst),
-            false,
-        ) {
+        let ret = if zle_goto_hist(-MULT.load(Ordering::SeqCst), false) {
             0
         } else {
             1
@@ -477,15 +461,9 @@ pub fn downline() -> i32 {
     // c:332
     let mut n = MULT.load(Ordering::SeqCst);
     if n < 0 {
-        MULT.store(
-            -MULT.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        MULT.store(-MULT.load(Ordering::SeqCst), Ordering::SeqCst);
         let r = -upline();
-        MULT.store(
-            -MULT.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        MULT.store(-MULT.load(Ordering::SeqCst), Ordering::SeqCst);
         return r;
     }
     if LASTCOL.load(Ordering::SeqCst) == -1 {
@@ -504,10 +482,7 @@ pub fn downline() -> i32 {
     }
     if n == 0 {
         let x = findeol();
-        ZLECS.fetch_add(
-            LASTCOL.load(Ordering::SeqCst) as usize,
-            Ordering::SeqCst,
-        );
+        ZLECS.fetch_add(LASTCOL.load(Ordering::SeqCst) as usize, Ordering::SeqCst);
         if ZLECS.load(Ordering::SeqCst) >= x {
             ZLECS.store(x, Ordering::SeqCst);
         }
@@ -522,19 +497,12 @@ pub fn downlineorhistory() -> i32 {
     let n = downline();
     if n != 0 {
         ZLECS.store(ocs, Ordering::SeqCst);
-        if (ZLEREADFLAGS.load(Ordering::SeqCst)
-            & ZLRF_HISTORY)
-            == 0
-        {
+        if (ZLEREADFLAGS.load(Ordering::SeqCst) & ZLRF_HISTORY) == 0 {
             return 1;
         }
-        let saved_mult =
-            MULT.load(Ordering::SeqCst);
+        let saved_mult = MULT.load(Ordering::SeqCst);
         MULT.store(n, Ordering::SeqCst);
-        let ret = if zle_goto_hist(
-            MULT.load(Ordering::SeqCst),
-            false,
-        ) {
+        let ret = if zle_goto_hist(MULT.load(Ordering::SeqCst), false) {
             0
         } else {
             1
@@ -691,9 +659,9 @@ pub fn historysearchbackward() -> i32 {
             continue;
         }
         let zt: String = he.zle_text.clone().unwrap_or(he.node.nam.clone()); // c:494 GETZLETEXT
-        // c:495-496 — `zlinecmp(zt, str) < 0 && (*args || strcmp(zt, zlemetaline) != 0)`
-        //              We never have args in the free-fn caller path, so
-        //              strcmp must be non-zero (zt ≠ current buffer).
+                                                                             // c:495-496 — `zlinecmp(zt, str) < 0 && (*args || strcmp(zt, zlemetaline) != 0)`
+                                                                             //              We never have args in the free-fn caller path, so
+                                                                             //              strcmp must be non-zero (zt ≠ current buffer).
         if zlinecmp(&zt, &str_pat) < 0 && zt != current_buf {
             remaining -= 1; // c:497
             if remaining <= 0 {
@@ -849,10 +817,7 @@ pub fn endofbufferorhistory() -> i32 {
     //                    else return endofhistory()`.
     let eol = findeol();
     if eol != ZLELL.load(Ordering::SeqCst) {
-        ZLECS.store(
-            ZLELL.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst);
         0
     } else {
         endofhistory()
@@ -928,7 +893,8 @@ pub fn insertlastword() -> i32 {
             {
                 deleteword = 1; // c:655
             } else {
-                LASTHIST.store(curhist.load(Ordering::SeqCst), Ordering::SeqCst); // c:657
+                LASTHIST.store(curhist.load(Ordering::SeqCst), Ordering::SeqCst);
+                // c:657
             }
         } else {
             LASTHIST.store(curhist.load(Ordering::SeqCst), Ordering::SeqCst); // c:657
@@ -1072,10 +1038,7 @@ pub fn zle_setline() -> i32 {
         let line = entry.line.clone();
         ZLELINE.lock().unwrap().clear();
         ZLELINE.lock().unwrap().extend(line.chars());
-        ZLECS.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLECS.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         return 0;
     }
     1
@@ -1156,10 +1119,7 @@ pub fn zle_goto_hist(n: i32, skipdups: bool) -> bool {
     };
     if let Some(line) = new_line {
         *ZLELINE.lock().unwrap() = line;
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         let new_cs = if new_idx == len {
             history()
                 .lock()
@@ -1716,10 +1676,10 @@ pub fn historybeginningsearchbackward() -> i32 {
             continue;
         }
         let zt: String = he.zle_text.clone().unwrap_or(he.node.nam.clone()); // c:2059 GETZLETEXT
-        // c:2060-2064 — compare prefix (zlemetaline truncated at zlemetacs)
-        //               against zt; require tst < 0 (he ≠ buffer prefix)
-        //               AND zlinecmp(zt, full-buffer-prefix) non-zero
-        //               (i.e. he is not exactly the current prefix either).
+                                                                             // c:2060-2064 — compare prefix (zlemetaline truncated at zlemetacs)
+                                                                             //               against zt; require tst < 0 (he ≠ buffer prefix)
+                                                                             //               AND zlinecmp(zt, full-buffer-prefix) non-zero
+                                                                             //               (i.e. he is not exactly the current prefix either).
         let buf_prefix: String = prefix.clone();
         let tst = zlinecmp(&zt, &buf_prefix);
         if tst < 0 && zlinecmp(&zt, &buf_prefix) != 0 {
@@ -1784,7 +1744,7 @@ pub fn historybeginningsearchforward() -> i32 {
             continue;
         }
         let zt: String = he.zle_text.clone().unwrap_or(he.node.nam.clone()); // c:2105 GETZLETEXT
-        // c:2106-2110 — `tst < 0 && zlinecmp(zt, buf_prefix) != 0`
+                                                                             // c:2106-2110 — `tst < 0 && zlinecmp(zt, buf_prefix) != 0`
         let buf_prefix: String = prefix.clone();
         let tst = zlinecmp(&zt, &buf_prefix);
         if tst < 0 && zlinecmp(&zt, &buf_prefix) != 0 {
@@ -1926,14 +1886,8 @@ pub fn history_up(hist: &mut History) {
 
     if let Some(entry) = hist.up() {
         *ZLELINE.lock().unwrap() = entry.line.chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
-        ZLECS.store(
-            ZLELL.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+        ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst);
         ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     }
 }
@@ -1946,22 +1900,13 @@ pub fn history_up(hist: &mut History) {
 pub fn history_down(hist: &mut History) {
     if let Some(entry) = hist.down() {
         *ZLELINE.lock().unwrap() = entry.line.chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
-        ZLECS.store(
-            ZLELL.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+        ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst);
         ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     } else if let Some(saved) = hist.saved_line.take() {
         // Restore saved line
         *ZLELINE.lock().unwrap() = saved;
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         ZLECS.store(hist.saved_cs, Ordering::SeqCst);
         ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     }
@@ -1994,10 +1939,7 @@ pub fn history_search_prefix(hist: &mut History) {
 
     if let Some(entry) = hist.search_backward(&prefix) {
         *ZLELINE.lock().unwrap() = entry.line.chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
     }
 }
@@ -2014,10 +1956,7 @@ pub fn beginning_of_history(hist: &mut History) {
         hist.cursor = 0;
         if let Some(entry) = hist.entries.first() {
             *ZLELINE.lock().unwrap() = entry.line.chars().collect();
-            ZLELL.store(
-                ZLELINE.lock().unwrap().len(),
-                Ordering::SeqCst,
-            );
+            ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
             ZLECS.store(0, Ordering::SeqCst);
             ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
         }
@@ -2049,22 +1988,13 @@ pub fn push_line() {
         return;
     }
     let line: String = ZLELINE.lock().unwrap().iter().collect();
-    BUFSTACK
-        .lock()
-        .unwrap()
-        .push(line);
+    BUFSTACK.lock().unwrap().push(line);
     let mut remaining = n - 1;
     while remaining > 0 {
-        BUFSTACK
-            .lock()
-            .unwrap()
-            .push(String::new());
+        BUFSTACK.lock().unwrap().push(String::new());
         remaining -= 1;
     }
-    STACKCS.store(
-        ZLECS.load(Ordering::SeqCst),
-        Ordering::SeqCst,
-    );
+    STACKCS.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst);
     ZLELINE.lock().unwrap().clear();
     ZLELL.store(0, Ordering::SeqCst);
     ZLECS.store(0, Ordering::SeqCst);
@@ -2081,14 +2011,8 @@ pub fn accept_line_and_down_history(hist: &mut History) -> Option<String> {
         hist.cursor += 1;
         if let Some(entry) = hist.entries.get(hist.cursor) {
             *ZLELINE.lock().unwrap() = entry.line.chars().collect();
-            ZLELL.store(
-                ZLELINE.lock().unwrap().len(),
-                Ordering::SeqCst,
-            );
-            ZLECS.store(
-                ZLELL.load(Ordering::SeqCst),
-                Ordering::SeqCst,
-            );
+            ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+            ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst);
         }
     }
 
@@ -2107,10 +2031,7 @@ pub fn vi_fetch_history(hist: &mut History, num: usize) {
         hist.cursor = num - 1;
         if let Some(entry) = hist.entries.get(hist.cursor) {
             *ZLELINE.lock().unwrap() = entry.line.chars().collect();
-            ZLELL.store(
-                ZLELINE.lock().unwrap().len(),
-                Ordering::SeqCst,
-            );
+            ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
             ZLECS.store(0, Ordering::SeqCst);
             ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
         }
@@ -2408,10 +2329,7 @@ mod tests {
         let _zle = zle_with_history(&["one", "two"]);
         // Compose a live draft, then walk up to "two", then back via endofhistory.
         *ZLELINE.lock().unwrap() = "myDraft".chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         history().lock().unwrap().cursor = 2; // sentinel
 
         // Up once → "two" (saves "myDraft" into saved_line).
@@ -2454,14 +2372,8 @@ mod tests {
         let _g = zle_test_setup();
         let mut zle = zle_with_history(&["one", "two"]);
         *ZLELINE.lock().unwrap() = "draft".chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
-        ZLECS.store(
-            ZLELL.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+        ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst);
         history().lock().unwrap().cursor = 2; // sentinel
                                               // Up to "two", then up to "one", then back down twice → restore "draft".
         assert!(zle_goto_hist(-1, false));
@@ -2476,10 +2388,7 @@ mod tests {
         let _g = zle_test_setup();
         let mut zle = zle_with_history(&["dup", "dup", "uniq"]);
         *ZLELINE.lock().unwrap() = "uniq".chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         history().lock().unwrap().cursor = 3;
         // skipdups + n=-1 from sentinel: matching cur_line "uniq" → entries[2]
         // is "uniq", same string as zleline, so it gets skipped, landing on "dup".
@@ -2492,10 +2401,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         *ZLELINE.lock().unwrap() = "echo hi".chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         ZLECS.store(4, Ordering::SeqCst);
         let leftover = upline();
         // Single-line buffer: can't go up, leftover == MULT.load(std::sync::atomic::Ordering::SeqCst) (1).
@@ -2507,10 +2413,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         *ZLELINE.lock().unwrap() = "first\nsecond".chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         ZLECS.store(9, Ordering::SeqCst); // inside "second" at col 3 ("sec[o]nd")
         let leftover = upline();
         assert_eq!(leftover, 0);
@@ -2524,10 +2427,7 @@ mod tests {
         let _g = zle_test_setup();
         let mut zle = zle_with_history(&["prev cmd"]);
         *ZLELINE.lock().unwrap() = "current".chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         ZLECS.store(0, Ordering::SeqCst);
         history().lock().unwrap().cursor = 1;
         let ret = uplineorhistory();
@@ -2575,19 +2475,13 @@ mod tests {
         ZLECS.store(4, Ordering::SeqCst);
         MULT.store(1, Ordering::SeqCst);
         push_line();
-        assert_eq!(
-            *BUFSTACK.lock().unwrap(),
-            vec!["in flight".to_string()]
-        );
+        assert_eq!(*BUFSTACK.lock().unwrap(), vec!["in flight".to_string()]);
         assert!(ZLELINE.lock().unwrap().is_empty());
         assert_eq!(ZLELL.load(Ordering::SeqCst), 0);
         assert_eq!(ZLECS.load(Ordering::SeqCst), 0);
         // stackcs records where the cursor was so a return-from-push can
         // restore it.
-        assert_eq!(
-            STACKCS.load(Ordering::SeqCst),
-            4
-        );
+        assert_eq!(STACKCS.load(Ordering::SeqCst), 4);
     }
 
     #[test]
@@ -2600,22 +2494,10 @@ mod tests {
         MULT.store(3, Ordering::SeqCst);
         push_line();
         // mult=3 → push line then 2 empties.
-        assert_eq!(
-            BUFSTACK.lock().unwrap().len(),
-            3
-        );
-        assert_eq!(
-            BUFSTACK.lock().unwrap()[0],
-            "x"
-        );
-        assert_eq!(
-            BUFSTACK.lock().unwrap()[1],
-            ""
-        );
-        assert_eq!(
-            BUFSTACK.lock().unwrap()[2],
-            ""
-        );
+        assert_eq!(BUFSTACK.lock().unwrap().len(), 3);
+        assert_eq!(BUFSTACK.lock().unwrap()[0], "x");
+        assert_eq!(BUFSTACK.lock().unwrap()[1], "");
+        assert_eq!(BUFSTACK.lock().unwrap()[2], "");
     }
 
     #[test]
@@ -2627,10 +2509,7 @@ mod tests {
         ZLELL.store(3, Ordering::SeqCst);
         MULT.store(-1, Ordering::SeqCst);
         push_line();
-        assert!(BUFSTACK
-            .lock()
-            .unwrap()
-            .is_empty());
+        assert!(BUFSTACK.lock().unwrap().is_empty());
         assert_eq!(ZLELINE.lock().unwrap().iter().collect::<String>(), "abc");
     }
 
@@ -2705,22 +2584,13 @@ mod tests {
         let next_idx = history().lock().unwrap().cursor + 1;
         if next_idx < len {
             if let Some(entry) = history().lock().unwrap().entries.get(next_idx) {
-                BUFSTACK
-                    .lock()
-                    .unwrap()
-                    .push(entry.line.clone());
-                STACKHIST.store(
-                    (entry.num as i32).max(0),
-                    Ordering::SeqCst,
-                );
+                BUFSTACK.lock().unwrap().push(entry.line.clone());
+                STACKHIST.store((entry.num as i32).max(0), Ordering::SeqCst);
             }
         }
         DONE.store(1, Ordering::SeqCst);
         assert!(DONE.load(Ordering::SeqCst) != 0);
-        assert_eq!(
-            *BUFSTACK.lock().unwrap(),
-            vec!["two".to_string()]
-        );
+        assert_eq!(*BUFSTACK.lock().unwrap(), vec!["two".to_string()]);
     }
 
     // ─── zsh-corpus pins for zlinecmp / zlinefind ──────────────────
@@ -2729,32 +2599,32 @@ mod tests {
     #[test]
     fn zle_hist_corpus_zlinecmp_exact_match_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zlinecmp("hello", "hello"), 0,
-            "exact match per c:143 = 0");
+        assert_eq!(zlinecmp("hello", "hello"), 0, "exact match per c:143 = 0");
     }
 
     /// `zlinecmp("helloworld", "hello")` returns -1 (input is prefix).
     #[test]
     fn zle_hist_corpus_zlinecmp_input_prefix_returns_neg_one() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zlinecmp("helloworld", "hello"), -1,
-            "input prefix of hist per c:146");
+        assert_eq!(
+            zlinecmp("helloworld", "hello"),
+            -1,
+            "input prefix of hist per c:146"
+        );
     }
 
     /// `zlinecmp("HELLO", "hello")` returns 1 (case-fold match).
     #[test]
     fn zle_hist_corpus_zlinecmp_case_fold_match_returns_one() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zlinecmp("HELLO", "hello"), 1,
-            "case-fold match per c:181");
+        assert_eq!(zlinecmp("HELLO", "hello"), 1, "case-fold match per c:181");
     }
 
     /// `zlinecmp("xxx", "hello")` returns 3 (no match at all).
     #[test]
     fn zle_hist_corpus_zlinecmp_no_match_returns_three() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zlinecmp("xxx", "hello"), 3,
-            "no match per c:174 = 3");
+        assert_eq!(zlinecmp("xxx", "hello"), 3, "no match per c:174 = 3");
     }
 
     /// `zlinecmp("", "")` returns 0 (both empty = same).

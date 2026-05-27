@@ -49,18 +49,15 @@ pub fn _history_complete_word() -> i32 {
     let _ = setsparam("curcontext", &new_ctx);
 
     let widget = getsparam("WIDGET").unwrap_or_default();
-    let direction = if widget.ends_with("newer") { "newer" } else { "older" };
+    let direction = if widget.ends_with("newer") {
+        "newer"
+    } else {
+        "older"
+    };
 
-    let stop_on = testforstyle(
-        &format!(":completion:{}:history-words", new_ctx),
-        "stop",
-    ) == 0;
+    let stop_on = testforstyle(&format!(":completion:{}:history-words", new_ctx), "stop") == 0;
 
-    if !testforstyle(
-        &format!(":completion:{}:history-words", new_ctx),
-        "list",
-    ) == 0
-    {
+    if !testforstyle(&format!(":completion:{}:history-words", new_ctx), "list") == 0 {
         set_compstate_str("list", "");
     }
 

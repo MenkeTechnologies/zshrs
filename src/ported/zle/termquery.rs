@@ -11,12 +11,12 @@ use std::io::{self, Read, Write};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::ported::zsh_h::ASSPM_AUGMENT;
 use crate::ported::zle::zle_h::{
     CURC_DEFAULT, CURC_INSERT, CURC_PENDING, CURC_REGION_END, CURC_REGION_START, CURF_BAR,
     CURF_BLINK, CURF_BLOCK, CURF_BLUE_SHIFT, CURF_COLOR, CURF_COLOR_MASK, CURF_GREEN_SHIFT,
     CURF_HIDDEN, CURF_RED_SHIFT, CURF_SHAPE_MASK, CURF_STEADY, CURF_UNDERLINE,
 };
+use crate::ported::zsh_h::ASSPM_AUGMENT;
 
 // Cursor-form runtime state, sized by CURC_DEFAULT (number of context slots).
 // Mirrors the `cursor_forms` / `cursor_enabled_mask` / `setup` file-statics
@@ -64,7 +64,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-
 // =====================================================================
 // Pattern-tag bytes — `Src/Zle/termquery.c:36-67`. The `term_pat[]`
 // table encodes terminal-response patterns as byte streams; the high-
@@ -218,8 +217,7 @@ fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
 /// Caches the terminal's reported default cursor color (packed
 /// 24-bit RGB) so `cursor_form` can restore it when the user-bound
 /// cursor color clears.
-pub static memo_cursor: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(0); // c:435
+pub static memo_cursor: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0); // c:435
 
 /// Port of `static char *COLORVAR[]` at `Src/Zle/termquery.c:135`.
 /// Per-channel param name for terminal default colors.
@@ -238,8 +236,8 @@ const MODEVAR: &str = ".term.mode"; // c:136
 pub fn handle_color(bg: i32, red: i32, green: i32, blue: i32) -> i32 {
     // c:438
     use crate::ported::zsh_h::{
-        TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK,
-        TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK,
+        TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT,
+        TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK,
     };
     let packed = (((red as u64) << 8) + green as u64) << 8 | blue as u64;
     let memo_tc = &crate::ported::prompt::memo_term_color;
@@ -272,7 +270,7 @@ pub fn handle_color(bg: i32, red: i32, green: i32, blue: i32) -> i32 {
     }
     // c:463 — `sprintf(colour, "#%02x%02x%02x", red, green, blue)`.
     let colour = format!("#{:02x}{:02x}{:02x}", red, green, blue); // c:463
-    // c:464 — `assignsparam(COLORVAR[bg], colour, 0)`.
+                                                                   // c:464 — `assignsparam(COLORVAR[bg], colour, 0)`.
     if let Some(name) = COLORVAR.get(bg as usize) {
         let _ = crate::ported::params::assignsparam(name, &colour, 0); // c:464
     }
@@ -685,7 +683,7 @@ pub fn collate_seq(sindex: usize, dir: i32) {
     while i >= 0 && i < max {
         let (key, seqs, class, default_enabled) = EDITEXT[i as usize];
         let mut enabled = default_enabled; // c:686
-        // c:687-688 — `if (i && !editext[i].seq[sindex]) continue;`
+                                           // c:687-688 — `if (i && !editext[i].seq[sindex]) continue;`
         if i != 0 && seqs[sindex].is_empty() {
             i += dir;
             continue;
@@ -1146,12 +1144,12 @@ pub fn cursor_form() {
     // region_active (visual / region start / region end), then the
     // default cmd-vs-edit-vs-insert split via vichgflag.
     let context: u32 = {
-        let insmode = crate::ported::zle::zle_main::INSMODE
-            .load(std::sync::atomic::Ordering::SeqCst);
-        let vichgflag = crate::ported::zle::zle_vi::VICHGFLAG
-            .load(std::sync::atomic::Ordering::SeqCst);
-        let region_active = crate::ported::zle::zle_main::REGION_ACTIVE
-            .load(std::sync::atomic::Ordering::SeqCst);
+        let insmode =
+            crate::ported::zle::zle_main::INSMODE.load(std::sync::atomic::Ordering::SeqCst);
+        let vichgflag =
+            crate::ported::zle::zle_vi::VICHGFLAG.load(std::sync::atomic::Ordering::SeqCst);
+        let region_active =
+            crate::ported::zle::zle_main::REGION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst);
         let in_vicmd = {
             let name = crate::ported::zle::zle_keymap::curkeymapname();
             *name == "vicmd"
@@ -1230,12 +1228,27 @@ pub fn cursor_form() {
         if shape == CURF_BAR as u32 {
             c += 2; // c:945 (fall-through pattern compresses to BAR=6)
             c += 2;
-            c += 2 - (if (want & CURF_BLINK as u32) != 0 { 1 } else { 0 });
+            c += 2
+                - (if (want & CURF_BLINK as u32) != 0 {
+                    1
+                } else {
+                    0
+                });
         } else if shape == CURF_UNDERLINE as u32 {
             c += 2; // c:946
-            c += 2 - (if (want & CURF_BLINK as u32) != 0 { 1 } else { 0 });
+            c += 2
+                - (if (want & CURF_BLINK as u32) != 0 {
+                    1
+                } else {
+                    0
+                });
         } else if shape == CURF_BLOCK as u32 {
-            c += 2 - (if (want & CURF_BLINK as u32) != 0 { 1 } else { 0 }); // c:947
+            c += 2
+                - (if (want & CURF_BLINK as u32) != 0 {
+                    1
+                } else {
+                    0
+                }); // c:947
         }
         // c:949 — `changed &= ~(CURF_BLINK | CURF_STEADY);`
         changed_mut &= !((CURF_BLINK | CURF_STEADY) as u32);
@@ -1265,7 +1278,10 @@ pub fn cursor_form() {
         let r = (want_color >> CURF_RED_SHIFT) & 0xff;
         let g = (want_color >> CURF_GREEN_SHIFT) & 0xff;
         let b = (want_color >> CURF_BLUE_SHIFT) & 0xff;
-        seq.push_str(&format!("\x1b]12;rgb:{:02x}00/{:02x}00/{:02x}00\x1b\\", r, g, b));
+        seq.push_str(&format!(
+            "\x1b]12;rgb:{:02x}00/{:02x}00/{:02x}00\x1b\\",
+            r, g, b
+        ));
     }
     if !seq.is_empty() {
         let fd = crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::Relaxed);
@@ -1321,8 +1337,8 @@ mod term_pat_tag_tests {
 
 #[cfg(test)]
 mod tests {
-    use crate::zle::zle_h::CURF_DEFAULT;
     use super::*;
+    use crate::zle::zle_h::CURF_DEFAULT;
 
     #[test]
     fn test_url_encode() {

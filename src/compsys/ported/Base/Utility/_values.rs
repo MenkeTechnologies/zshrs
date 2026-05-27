@@ -99,10 +99,7 @@ pub fn _values(args: &[String]) -> i32 {
             (s.clone(), "")
         };
         // `name=:msg:action` form (subsep present)
-        let bare_name = head
-            .strip_suffix('=')
-            .unwrap_or(&head)
-            .to_string();
+        let bare_name = head.strip_suffix('=').unwrap_or(&head).to_string();
         if prior_vals.iter().any(|p| {
             // dedupe: strip `subsep VALUE` if -S given
             let key = if let Some(ss) = subsep.as_deref() {
@@ -135,10 +132,7 @@ pub fn _values(args: &[String]) -> i32 {
     if !completed_prefix.is_empty() {
         let _ = crate::ported::zle::complete::bin_compset(
             "compset",
-            &[
-                "-P".to_string(),
-                glob_escape(&completed_prefix),
-            ],
+            &["-P".to_string(), glob_escape(&completed_prefix)],
             &crate::ported::zsh_h::options {
                 ind: [0u8; crate::ported::zsh_h::MAX_OPS],
                 args: Vec::new(),

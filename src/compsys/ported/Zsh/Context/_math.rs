@@ -64,8 +64,7 @@ pub fn _math() -> i32 {
         &[
             "math-parameters:math parameter: _math_params".to_string(),
             "user-math-functions:user math function: _user_math_func".to_string(),
-            "module-math-functions:math function from zsh/mathfunc: _module_math_func"
-                .to_string(),
+            "module-math-functions:math function from zsh/mathfunc: _module_math_func".to_string(),
         ],
     )
     .unwrap_or(1)

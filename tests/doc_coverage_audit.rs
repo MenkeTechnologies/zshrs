@@ -10,7 +10,9 @@ use zsh::extensions::lsp::lookup_doc;
 /// separator, or just the `_see man …_` stub from lookup_doc's
 /// last-ditch fallback.
 fn is_placeholder(s: &str) -> bool {
-    if s.is_empty() { return true; }
+    if s.is_empty() {
+        return true;
+    }
     match s.split_once("\n\n") {
         Some((_, body)) => body.is_empty() || body.starts_with("_see "),
         None => true,
@@ -34,15 +36,47 @@ fn canonical_keywords() -> Vec<&'static str> {
 }
 
 const SPECIAL_VARS: &[&str] = &[
-    "$0", "$?", "$!", "$$", "$#", "$*", "$@", "$-", "$_",
-    "$PATH", "$HOME", "$USER", "$PWD", "$OLDPWD",
-    "$ZSH_VERSION", "$RANDOM", "$LINENO", "$SECONDS",
-    "$EPOCHSECONDS", "$EPOCHREALTIME",
-    "$fpath", "$path", "$argv", "$pipestatus",
-    "$IFS", "$PS1", "$PS2", "$PS3", "$PS4", "$RPROMPT",
-    "$HISTSIZE", "$SAVEHIST", "$HISTFILE",
-    "$LANG", "$LC_ALL", "$LC_COLLATE", "$LC_CTYPE",
-    "$TERM", "$SHELL", "$EDITOR", "$VISUAL",
+    "$0",
+    "$?",
+    "$!",
+    "$$",
+    "$#",
+    "$*",
+    "$@",
+    "$-",
+    "$_",
+    "$PATH",
+    "$HOME",
+    "$USER",
+    "$PWD",
+    "$OLDPWD",
+    "$ZSH_VERSION",
+    "$RANDOM",
+    "$LINENO",
+    "$SECONDS",
+    "$EPOCHSECONDS",
+    "$EPOCHREALTIME",
+    "$fpath",
+    "$path",
+    "$argv",
+    "$pipestatus",
+    "$IFS",
+    "$PS1",
+    "$PS2",
+    "$PS3",
+    "$PS4",
+    "$RPROMPT",
+    "$HISTSIZE",
+    "$SAVEHIST",
+    "$HISTFILE",
+    "$LANG",
+    "$LC_ALL",
+    "$LC_COLLATE",
+    "$LC_CTYPE",
+    "$TERM",
+    "$SHELL",
+    "$EDITOR",
+    "$VISUAL",
 ];
 
 fn audit(label: &str, names: &[&'static str]) -> Vec<&'static str> {
@@ -59,7 +93,9 @@ fn audit(label: &str, names: &[&'static str]) -> Vec<&'static str> {
         names.len(),
         missing.len(),
     );
-    for n in &missing { eprintln!("           - {}", n); }
+    for n in &missing {
+        eprintln!("           - {}", n);
+    }
     missing
 }
 
@@ -67,7 +103,12 @@ fn audit(label: &str, names: &[&'static str]) -> Vec<&'static str> {
 fn every_keyword_has_real_doc() {
     let kws = canonical_keywords();
     let m = audit("keywords", &kws);
-    assert!(m.is_empty(), "{} keywords have placeholder docs: {:?}", m.len(), m);
+    assert!(
+        m.is_empty(),
+        "{} keywords have placeholder docs: {:?}",
+        m.len(),
+        m
+    );
 }
 
 #[test]
@@ -79,11 +120,37 @@ fn keywords_inventory_matches_man_zshmisc_reserved_words() {
     // reserved AND also builtins; both classifications apply.
     let kws: std::collections::BTreeSet<&str> = canonical_keywords().into_iter().collect();
     let upstream: std::collections::BTreeSet<&str> = [
-        "!", "[[", "{", "}",
-        "case", "coproc", "declare", "do", "done", "elif", "else",
-        "end", "esac", "export", "fi", "float", "for", "foreach",
-        "function", "if", "integer", "local", "nocorrect", "readonly",
-        "repeat", "select", "then", "time", "typeset", "until", "while",
+        "!",
+        "[[",
+        "{",
+        "}",
+        "case",
+        "coproc",
+        "declare",
+        "do",
+        "done",
+        "elif",
+        "else",
+        "end",
+        "esac",
+        "export",
+        "fi",
+        "float",
+        "for",
+        "foreach",
+        "function",
+        "if",
+        "integer",
+        "local",
+        "nocorrect",
+        "readonly",
+        "repeat",
+        "select",
+        "then",
+        "time",
+        "typeset",
+        "until",
+        "while",
     ]
     .into_iter()
     .collect();
@@ -102,7 +169,12 @@ fn keywords_inventory_matches_man_zshmisc_reserved_words() {
 #[test]
 fn every_special_var_has_real_doc() {
     let m = audit("specials", SPECIAL_VARS);
-    assert!(m.is_empty(), "{} special vars have placeholder docs: {:?}", m.len(), m);
+    assert!(
+        m.is_empty(),
+        "{} special vars have placeholder docs: {:?}",
+        m.len(),
+        m
+    );
 }
 
 #[test]
@@ -111,7 +183,12 @@ fn every_canonical_option_has_real_doc() {
     let mut names: Vec<&str> = ZSH_OPTIONS_SET.iter().copied().collect();
     names.sort();
     let m = audit("options", &names);
-    assert!(m.is_empty(), "{} options have placeholder docs: {:?}", m.len(), m);
+    assert!(
+        m.is_empty(),
+        "{} options have placeholder docs: {:?}",
+        m.len(),
+        m
+    );
 }
 
 #[test]
@@ -133,8 +210,15 @@ fn every_canonical_builtin_has_real_doc() {
         names.len(),
         missing.len(),
     );
-    for n in &missing { eprintln!("           - {}", n); }
-    assert!(missing.is_empty(), "{} builtins have placeholder docs: {:?}", missing.len(), missing);
+    for n in &missing {
+        eprintln!("           - {}", n);
+    }
+    assert!(
+        missing.is_empty(),
+        "{} builtins have placeholder docs: {:?}",
+        missing.len(),
+        missing
+    );
 }
 
 #[test]
@@ -149,7 +233,12 @@ fn every_canonical_extension_has_real_doc() {
     names.sort();
     names.dedup();
     let m = audit("extensions", &names);
-    assert!(m.is_empty(), "{} extension builtins have placeholder docs: {:?}", m.len(), m);
+    assert!(
+        m.is_empty(),
+        "{} extension builtins have placeholder docs: {:?}",
+        m.len(),
+        m
+    );
 }
 
 #[test]
@@ -167,7 +256,12 @@ fn every_operator_has_real_doc() {
         .map(|s| Box::leak(s.into_boxed_str()) as &'static str)
         .collect();
     let m = audit("operators", &names);
-    assert!(m.is_empty(), "{} operators have placeholder docs: {:?}", m.len(), m);
+    assert!(
+        m.is_empty(),
+        "{} operators have placeholder docs: {:?}",
+        m.len(),
+        m
+    );
 }
 
 #[test]
@@ -175,8 +269,13 @@ fn every_compsys_fn_has_real_doc() {
     // Rust-native compsys functions (`zsh::compsys::COMPSYS_FN_NAMES`).
     // Most resolve via the yodl-derived BUILTIN_DOCS table (compsys.yo
     // / compwid.yo) — anything missing needs a hand fallback.
-    let mut names: Vec<&'static str> = zsh::compsys::COMPSYS_FN_NAMES.iter().copied().collect();
+    let mut names: Vec<&'static str> = zsh::compsys::COMPSYS_FN_NAMES.to_vec();
     names.sort();
     let m = audit("compsys", &names);
-    assert!(m.is_empty(), "{} compsys fns have placeholder docs: {:?}", m.len(), m);
+    assert!(
+        m.is_empty(),
+        "{} compsys fns have placeholder docs: {:?}",
+        m.len(),
+        m
+    );
 }

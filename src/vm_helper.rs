@@ -48,6 +48,8 @@
 //! `Src/*.c` source file. `crate::ported::exec` is kept as a
 //! re-export alias so existing call-sites continue to compile.
 
+use crate::compsys::cache::CompsysCache;
+use crate::compsys::CompInitResult;
 use crate::history::HistoryEngine;
 use crate::options::ZSH_OPTIONS_SET;
 use crate::ported::builtin::{BREAKS, CONTFLAG};
@@ -56,11 +58,9 @@ use crate::ported::modules::parameter::*;
 use crate::ported::subst::singsub;
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::zsh_h::PM_UNDEFINED;
+use crate::ported::zsh_h::WC_SIMPLE;
 use crate::ported::zsh_h::{options, MAX_OPS};
 use crate::ported::zsh_h::{PM_ARRAY, PM_HASHED, PM_INTEGER, PM_READONLY};
-use crate::ported::zsh_h::WC_SIMPLE;
-use crate::compsys::cache::CompsysCache;
-use crate::compsys::CompInitResult;
 use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::ffi::CStr;
@@ -130,7 +130,6 @@ pub mod zsh_version {
 /// Match an intercept pattern against a command name or full command string.
 /// Supports: exact match, glob ("git *", "_*", "*"), or "all".
 
-
 /// O(1) builtin-name lookup set derived from the canonical
 /// `BUILTINS` table (`src/ported/builtin.rs:122`, the 1:1 port of
 /// `static struct builtin builtins[]` at `Src/builtin.c:40-137`).
@@ -159,8 +158,6 @@ pub(crate) static BUILTIN_NAMES: LazyLock<HashSet<String>> = LazyLock::new(|| {
     }
     s
 });
-
-
 
 use crate::exec_jobs::{JobState, JobTable};
 use crate::parse::{Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag};
@@ -559,7 +556,6 @@ impl ShellExecutor {
         }
     }
 
-
     /// Snapshot the alias map as a sorted `Vec<(name, value)>`,
     /// only entries WITHOUT the ALIAS_GLOBAL flag (regular aliases).
     pub fn alias_entries(&self) -> Vec<(String, String)> {
@@ -921,8 +917,7 @@ impl ShellExecutor {
                     // etc. read `integer-special` instead of zsh's
                     // `integer-readonly-special` — a parity gap on
                     // introspection metadata; runtime behavior matches.
-                    let safe_pm_flags =
-                        entry.pm_flags & (PM_TIED | PM_DI);
+                    let safe_pm_flags = entry.pm_flags & (PM_TIED | PM_DI);
                     let mut bits = safe_pm_flags | PM_SPECIAL;
                     if entry.pm_type == PM_ARRAY {
                         bits |= PM_DI;
@@ -996,8 +991,8 @@ impl ShellExecutor {
                 // Without this, `declare -p PATH` printed `typeset -T
                 // PATH=''` and `declare -p USER` printed nothing at
                 // all because USER was never in paramtab.
-                use crate::ported::zsh_h::{PM_EXPORTED, PM_SCALAR};
                 use crate::ported::zsh_h::hashnode as _hn;
+                use crate::ported::zsh_h::{PM_EXPORTED, PM_SCALAR};
                 for (env_name, env_value) in std::env::vars() {
                     if env_name.is_empty() || env_name.contains('[') {
                         continue;
@@ -1059,9 +1054,7 @@ impl ShellExecutor {
         // bin entry yet (full init port pending); this is the minimum
         // for `$HOST` to read non-empty.
         let mut host_buf = [0u8; 256];
-        let host_rc = unsafe {
-            libc::gethostname(host_buf.as_mut_ptr() as *mut libc::c_char, 256)
-        }; // c:874
+        let host_rc = unsafe { libc::gethostname(host_buf.as_mut_ptr() as *mut libc::c_char, 256) }; // c:874
         if host_rc == 0 {
             if let Ok(c) = std::ffi::CStr::from_bytes_until_nul(&host_buf) {
                 if let Ok(name) = c.to_str() {
@@ -1090,7 +1083,11 @@ impl ShellExecutor {
         let _ = unsafe { libc::uname(&mut uname_buf) };
         let to_str = |b: &[libc::c_char]| -> String {
             // c-string → owned String, truncated at first NUL.
-            let bytes: Vec<u8> = b.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
+            let bytes: Vec<u8> = b
+                .iter()
+                .take_while(|&&c| c != 0)
+                .map(|&c| c as u8)
+                .collect();
             String::from_utf8_lossy(&bytes).into_owned()
         };
         let cputype = to_str(&uname_buf.machine);
@@ -1109,7 +1106,11 @@ impl ShellExecutor {
             cputype.clone()
         };
         crate::ported::params::setsparam("MACHTYPE", &machtype); // c:967
-        let vendor = if sysname == "darwin" { "apple" } else { "unknown" };
+        let vendor = if sysname == "darwin" {
+            "apple"
+        } else {
+            "unknown"
+        };
         crate::ported::params::setsparam("VENDOR", vendor); // c:970
 
         // c:Src/params.c:878-882 — `setsparam("LOGNAME", getlogin() ?:
@@ -1130,20 +1131,20 @@ impl ShellExecutor {
         }; // c:880
         if let Some(name) = logname {
             crate::ported::params::setsparam("LOGNAME", &name); // c:881
-            // DO NOT setsparam("USERNAME", ...) here. `$USERNAME` is
-            // a special parameter whose SETTER (`usernamesetfn` in
-            // params.rs) performs setgid(2) + setuid(2) to actually
-            // change the effective user — that's a deliberate upstream
-            // zsh feature for `USERNAME=other-user cmd`. Calling it at
-            // init seeds the value AND tries to change uid/gid; when
-            // the resolved pwd's pw_uid differs from `getuid()` (sudo
-            // launches, macOS Keychain-helper inherited env, container
-            // entry points, etc.) the setgid call fails with EPERM and
-            // emits `zsh:1: failed to change group ID: Operation not
-            // permitted`. Upstream seeds `$USERNAME` via the GETTER
-            // path (`usernamegetfn` reads through `cached_username`
-            // populated by `inittyptab` → `get_username`), no setter
-            // call needed.
+                                                                // DO NOT setsparam("USERNAME", ...) here. `$USERNAME` is
+                                                                // a special parameter whose SETTER (`usernamesetfn` in
+                                                                // params.rs) performs setgid(2) + setuid(2) to actually
+                                                                // change the effective user — that's a deliberate upstream
+                                                                // zsh feature for `USERNAME=other-user cmd`. Calling it at
+                                                                // init seeds the value AND tries to change uid/gid; when
+                                                                // the resolved pwd's pw_uid differs from `getuid()` (sudo
+                                                                // launches, macOS Keychain-helper inherited env, container
+                                                                // entry points, etc.) the setgid call fails with EPERM and
+                                                                // emits `zsh:1: failed to change group ID: Operation not
+                                                                // permitted`. Upstream seeds `$USERNAME` via the GETTER
+                                                                // path (`usernamegetfn` reads through `cached_username`
+                                                                // populated by `inittyptab` → `get_username`), no setter
+                                                                // call needed.
         }
         exec
     }
@@ -1172,10 +1173,7 @@ impl ShellExecutor {
                         ops = chunk.ops.len(),
                         "execute_script_file: bytecode cache hit"
                     );
-                    return self.run_chunk(
-                        chunk,
-                        &format!("execute_script_file:cache:{abs_path}"),
-                    );
+                    return self.run_chunk(chunk, &format!("execute_script_file:cache:{abs_path}"));
                 }
             }
         }
@@ -1186,8 +1184,7 @@ impl ShellExecutor {
         // `lex_init_buf` / `loop()` without engaging the history layer.
         // (zsh fires `!` history sub only on interactive input, so
         // sourced files run verbatim.)
-        let content =
-            fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
+        let content = fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
         let status = self.execute_script_zsh_pipeline(&content)?;
 
         // Best-effort cache save — failures don't block execution.
@@ -1359,9 +1356,7 @@ impl ShellExecutor {
                     unsafe {
                         let _ = Box::from_raw(ptr);
                     }
-                    if let Some(body) =
-                        crate::ported::utils::getshfunc(name).and_then(|f| f.body)
-                    {
+                    if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let wrapped = format!("{name}() {{\n{body}\n}}");
                         let _ = self.execute_script_zsh_pipeline(&wrapped);
                     }
@@ -1447,12 +1442,7 @@ impl ShellExecutor {
         // Enter executor context BEFORE doshfunc so the body_runner's
         // VM builtins can `with_executor(...)` to reach this state.
         let _ctx = ExecutorContext::enter(self);
-        let status = crate::ported::exec::doshfunc(
-            &mut synth_shf,
-            doshargs,
-            false,
-            body_runner,
-        );
+        let status = crate::ported::exec::doshfunc(&mut synth_shf, doshargs, false, body_runner);
         drop(_ctx);
 
         self.prompt_funcstack.pop();
@@ -1586,7 +1576,6 @@ impl ShellExecutor {
         }
     }
 
-
     pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
         // `$(< FILE)` — zsh shorthand for "read FILE contents". Faster
         // than spawning `cat`. The leading `<` (after stripping
@@ -1655,13 +1644,13 @@ impl ShellExecutor {
         // Trace lines emitted by the inner program inherit this token
         // so their PS4 prefix shows "cmdsubst" matching zsh -x.
         cmdpush(crate::ported::zsh_h::CS_CMDSUBST as u8); // c:zsh.h:2799
-                                                                                 // Save LINENO so the inner cmdsubst's line counter doesn't
-                                                                                 // leak into the outer trace — direct port of Src/exec.c:1407
-                                                                                 // `oldlineno = lineno;` followed by `lineno = oldlineno;`
-                                                                                 // restore at line 1640. Inner program parses fresh as line 1
-                                                                                 // and increments from there; once it returns, the outer
-                                                                                 // line at the `$(…)` site must read the original outer
-                                                                                 // lineno (so xtrace renders `+:5:> echo …` not `+:1:> …`).
+                                                          // Save LINENO so the inner cmdsubst's line counter doesn't
+                                                          // leak into the outer trace — direct port of Src/exec.c:1407
+                                                          // `oldlineno = lineno;` followed by `lineno = oldlineno;`
+                                                          // restore at line 1640. Inner program parses fresh as line 1
+                                                          // and increments from there; once it returns, the outer
+                                                          // line at the `$(…)` site must read the original outer
+                                                          // lineno (so xtrace renders `+:5:> echo …` not `+:1:> …`).
         let saved_lineno = getsparam("LINENO");
         // Anchor the inner program's lineno to the outer's current
         // $LINENO so xtrace inside the cmdsubst renders the outer
@@ -1700,12 +1689,11 @@ impl ShellExecutor {
                     .ok()
                     .map(|t| t.clone())
                     .unwrap_or_default();
-                let paramtab_hashed_snap =
-                    crate::ported::params::paramtab_hashed_storage()
-                        .lock()
-                        .ok()
-                        .map(|m| m.clone())
-                        .unwrap_or_default();
+                let paramtab_hashed_snap = crate::ported::params::paramtab_hashed_storage()
+                    .lock()
+                    .ok()
+                    .map(|m| m.clone())
+                    .unwrap_or_default();
                 let pparams_snap = self.pparams();
                 let opts_snap = crate::ported::options::opt_state_snapshot();
                 let traps_snap = crate::ported::builtin::traps_table()
@@ -2013,7 +2001,6 @@ impl ShellExecutor {
             .map(|n| (n.to_string(), on.contains(n)))
             .collect()
     }
-
 }
 impl ShellExecutor {
     /// PURE PASSTHRU to the canonical `params::getsparam` (C port of
@@ -2190,10 +2177,7 @@ impl ShellExecutor {
 }
 
 impl ShellExecutor {
-    pub(crate) fn copy_dir_recursive(
-        src: &Path,
-        dest: &Path,
-    ) -> io::Result<()> {
+    pub(crate) fn copy_dir_recursive(src: &Path, dest: &Path) -> io::Result<()> {
         if !dest.exists() {
             fs::create_dir_all(dest)?;
         }
@@ -2212,7 +2196,6 @@ impl ShellExecutor {
         Ok(())
     }
 }
-
 
 // Magic-assoc scan-by-name aggregator. C's per-table getfn/scanfn
 // pointers in paramdef[] (Src/Modules/parameter.c:825+) handle this
@@ -2263,7 +2246,8 @@ pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
         }
     }
     None
-}/// Populate paramtab with PM_SPECIAL placeholder Params for every
+}
+/// Populate paramtab with PM_SPECIAL placeholder Params for every
 /// PARTAB / PARTAB_ARRAY entry — Rust-only init helper, no direct
 /// C counterpart (closest is `handlefeatures` walking `partab[]`
 /// in `Src/Modules/parameter.c:2341` boot/enables chain).
@@ -2279,7 +2263,9 @@ pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
 /// the canonical module-bootstrap chain.
 pub fn init_partab_params() {
     use crate::ported::modules::parameter::{PARTAB, PARTAB_ARRAY};
-    use crate::ported::zsh_h::{hashnode, param, Param, PM_HIDE, PM_HIDEVAL, PM_READONLY, PM_SPECIAL};
+    use crate::ported::zsh_h::{
+        hashnode, param, Param, PM_HIDE, PM_HIDEVAL, PM_READONLY, PM_SPECIAL,
+    };
     let mut tab = match paramtab().write() {
         Ok(t) => t,
         Err(_) => return,
@@ -2360,8 +2346,7 @@ impl ShellExecutor {
 /// and the VM bridge; `src/ported/*` files inline the compile+match
 /// idiom directly to preserve PORT.md Rule 1 faithfulness.
 pub fn glob_match_static(s: &str, pattern: &str) -> bool {
-    let matched = patcompile(pattern, PAT_HEAPDUP as i32, None)
-        .map_or(false, |p| pattry(&p, s));
+    let matched = patcompile(pattern, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, s));
     // c:Src/pattern.c GF_MATCHREF — `(#m)pat` writes the matched
     // substring to $MATCH on success. In `[[ str == pat ]]` cond
     // context the pattern matches the whole string, so on success
@@ -2370,11 +2355,7 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     if matched && pattern.contains("(#m)") {
         crate::ported::params::setsparam("MATCH", s);
         crate::ported::params::setiparam("MBEGIN", 1);
-        crate::ported::params::setiparam(
-            "MEND",
-            s.chars().count() as i64,
-        );
+        crate::ported::params::setiparam("MEND", s.chars().count() as i64);
     }
     matched
 }
-

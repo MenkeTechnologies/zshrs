@@ -228,8 +228,8 @@ pub fn nameddirtab() -> &'static Mutex<HashMap<String, nameddir>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::zsh_h::hashnode;
     use super::*;
+    use crate::zsh_h::hashnode;
 
     /// Process-wide lock serialising tests that mutate the global
     /// `nameddirtab`. Without this, parallel `cargo test` invocations

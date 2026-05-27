@@ -826,10 +826,7 @@ mod tests {
         joinlists(&mut first, &mut second);
 
         assert_eq!(first.len(), 4, "first must absorb second's elements");
-        assert!(
-            second.is_empty(),
-            "second must be emptied after joinlists"
-        );
+        assert!(second.is_empty(), "second must be emptied after joinlists");
     }
 
     /// `joinlists` with empty second → first unchanged.
@@ -948,8 +945,10 @@ mod tests {
     fn linklist_corpus_joinlists_concatenates() {
         let mut a = LinkList::<i32>::new();
         let mut b = LinkList::<i32>::new();
-        a.push_back(1); a.push_back(2);
-        b.push_back(3); b.push_back(4);
+        a.push_back(1);
+        a.push_back(2);
+        b.push_back(3);
+        b.push_back(4);
         joinlists(&mut a, &mut b);
         assert_eq!(a.len(), 4, "first holds union");
         assert!(b.is_empty(), "second emptied");
@@ -966,7 +965,9 @@ mod tests {
     #[test]
     fn linklist_corpus_getlinknode_drains_in_fifo_order() {
         let mut l = LinkList::<&'static str>::new();
-        l.push_back("a"); l.push_back("b"); l.push_back("c");
+        l.push_back("a");
+        l.push_back("b");
+        l.push_back("c");
         assert_eq!(getlinknode(&mut l), Some("a"));
         assert_eq!(getlinknode(&mut l), Some("b"));
         assert_eq!(getlinknode(&mut l), Some("c"));
@@ -978,7 +979,9 @@ mod tests {
     #[test]
     fn linklist_corpus_linknodebydatum_finds_value() {
         let mut l = LinkList::<i32>::new();
-        l.push_back(10); l.push_back(20); l.push_back(30);
+        l.push_back(10);
+        l.push_back(20);
+        l.push_back(30);
         assert_eq!(linknodebydatum(&l, &20), Some(1));
         assert_eq!(linknodebydatum(&l, &99), None);
     }

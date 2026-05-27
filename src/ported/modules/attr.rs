@@ -19,13 +19,11 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
-use std::ffi::CString;
-use crate::ported::utils::{metafy, unmetafy, zwarnnam};
-use crate::ported::zsh_h::{features, module, options, OPT_ISSET, MAX_OPS};
-use std::sync::{Mutex, OnceLock};
 use crate::params::setsparam;
-
-
+use crate::ported::utils::{metafy, unmetafy, zwarnnam};
+use crate::ported::zsh_h::{features, module, options, MAX_OPS, OPT_ISSET};
+use std::ffi::CString;
+use std::sync::{Mutex, OnceLock};
 
 // =====================================================================
 // xgetxattr(const char *path, const char *name, void *value, size_t size, int symlink)  c:36
@@ -582,7 +580,6 @@ fn unsetparam(v: &str) {
 // Tests
 // =====================================================================
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -607,11 +604,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 4]);
     }

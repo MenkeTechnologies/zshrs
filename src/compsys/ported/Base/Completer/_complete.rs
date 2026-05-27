@@ -71,10 +71,7 @@ pub fn _complete() -> i32 {
             }
             // Fall through to the generic dispatch via _alternative-
             //   style action: treat `action` as a command.
-            let parts: Vec<String> = action
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect();
+            let parts: Vec<String> = action.split_whitespace().map(|s| s.to_string()).collect();
             if let Some((cmd, rest)) = parts.split_first() {
                 return dispatch_function_call(cmd, rest).unwrap_or(1);
             }
@@ -91,8 +88,7 @@ pub fn _complete() -> i32 {
     // sh:96-107  -first- entry
     let first_comp = assoc_get("_comps", "-first-").unwrap_or_default();
     if !first_comp.is_empty() {
-        let service =
-            assoc_get("_services", "-first-").unwrap_or_else(|| "-first-".to_string());
+        let service = assoc_get("_services", "-first-").unwrap_or_else(|| "-first-".to_string());
         let _ = setsparam("service", &service);
         if dispatch_function_call(&first_comp, &[]).unwrap_or(1) == 0 {
             ret = 0;

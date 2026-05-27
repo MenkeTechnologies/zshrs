@@ -140,10 +140,7 @@ impl DapShared {
         while guard.pending_action.is_none() && !self.disconnected.load(Ordering::SeqCst) {
             guard = self.cv.wait(guard).expect("dap cv");
         }
-        let action = guard
-            .pending_action
-            .take()
-            .unwrap_or(DebugAction::Continue);
+        let action = guard.pending_action.take().unwrap_or(DebugAction::Continue);
         guard.is_paused = false;
         // Step mode persists until the IDE sends a plain `continue`.
         guard.step_mode = matches!(action, DebugAction::StepOver | DebugAction::StepIn);
@@ -186,7 +183,13 @@ impl DapShared {
         w.flush()
     }
 
-    fn emit_response(&self, req_seq: i64, command: &str, success: bool, body: Value) -> io::Result<()> {
+    fn emit_response(
+        &self,
+        req_seq: i64,
+        command: &str,
+        success: bool,
+        body: Value,
+    ) -> io::Result<()> {
         let seq = self.next_seq();
         let msg = json!({
             "seq": seq,
@@ -454,7 +457,11 @@ fn handle_request(
     launch_tx: &std::sync::mpsc::Sender<LaunchParams>,
     msg: Value,
 ) {
-    let cmd = msg.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let cmd = msg
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let req_seq = msg.get("seq").and_then(|v| v.as_i64()).unwrap_or(0);
     let args = msg.get("arguments").cloned().unwrap_or(Value::Null);
     tracing::trace!(
@@ -627,19 +634,23 @@ fn handle_request(
             );
         }
         "continue" => {
-            let _ = shared.emit_response(req_seq, &cmd, true, json!({ "allThreadsContinued": true }));
+            let _ =
+                shared.emit_response(req_seq, &cmd, true, json!({ "allThreadsContinued": true }));
             shared.resume_with(DebugAction::Continue);
         }
         "next" => {
-            let _ = shared.emit_response(req_seq, &cmd, true, json!({ "allThreadsContinued": true }));
+            let _ =
+                shared.emit_response(req_seq, &cmd, true, json!({ "allThreadsContinued": true }));
             shared.resume_with(DebugAction::StepOver);
         }
         "stepIn" => {
-            let _ = shared.emit_response(req_seq, &cmd, true, json!({ "allThreadsContinued": true }));
+            let _ =
+                shared.emit_response(req_seq, &cmd, true, json!({ "allThreadsContinued": true }));
             shared.resume_with(DebugAction::StepIn);
         }
         "stepOut" => {
-            let _ = shared.emit_response(req_seq, &cmd, true, json!({ "allThreadsContinued": true }));
+            let _ =
+                shared.emit_response(req_seq, &cmd, true, json!({ "allThreadsContinued": true }));
             shared.resume_with(DebugAction::StepOut);
         }
         "pause" => {
@@ -680,7 +691,11 @@ fn current_lineno() -> u32 {
 /// IntelliJ renders them as collapsible groups in fixed order, even
 /// when the user has "Sort Values Alphabetically" enabled — that
 /// toggle only sorts WITHIN a scope, not across scopes.
-fn snapshot_bucketed() -> (Vec<(String, String)>, Vec<(String, String)>, Vec<(String, String)>) {
+fn snapshot_bucketed() -> (
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+) {
     let mut user: Vec<(String, String)> = Vec::new();
     let mut specials: Vec<(String, String)> = Vec::new();
     let mut env: Vec<(String, String)> = Vec::new();
@@ -702,8 +717,7 @@ fn snapshot_bucketed() -> (Vec<(String, String)>, Vec<(String, String)>, Vec<(St
             } else {
                 String::new()
             };
-            let is_special =
-                (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0;
+            let is_special = (pm.node.flags & crate::ported::zsh_h::PM_SPECIAL as i32) != 0;
             // Environment FIRST — most users think of PATH/HOME/USER
             // as env vars even though zsh marks them PM_SPECIAL. The
             // process-env presence is what makes them env, not the
@@ -715,7 +729,11 @@ fn snapshot_bucketed() -> (Vec<(String, String)>, Vec<(String, String)>, Vec<(St
                 && name
                     .chars()
                     .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
-                && name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
+                && name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_uppercase())
+                    .unwrap_or(false);
             if in_process_env {
                 env.push((name.clone(), value));
             } else if is_special || is_caps_only {
@@ -739,12 +757,14 @@ fn snapshot_bucketed() -> (Vec<(String, String)>, Vec<(String, String)>, Vec<(St
 fn vars_to_json(vars: &[(String, String)]) -> Vec<Value> {
     vars.iter()
         .take(500)
-        .map(|(n, v)| json!({
-            "name": n,
-            "value": v,
-            "type": "scalar",
-            "variablesReference": 0,
-        }))
+        .map(|(n, v)| {
+            json!({
+                "name": n,
+                "value": v,
+                "type": "scalar",
+                "variablesReference": 0,
+            })
+        })
         .collect()
 }
 

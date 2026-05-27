@@ -38,12 +38,12 @@
 #![allow(non_snake_case)]
 
 use std::collections::HashMap;
-use std::io::{Read, Write, self};
+use std::io::{self, Read, Write};
 use std::sync::{Mutex, OnceLock};
 
+use crate::ported::params::{getiparam, setsparam};
 use crate::ported::utils::{zerrnam, zwarnnam};
 use crate::ported::zsh_h::{features, module, options};
-use crate::ported::params::{getiparam, setsparam};
 // =====================================================================
 // Port of `struct zc_win` from `Src/Modules/curses.c:63`.
 //
@@ -1351,12 +1351,7 @@ pub(crate) fn zccmd_resize(nam: &str, args: &[String]) -> i32 {
 /// the C source's "command can't be used before `zcurses init`"
 /// invariant before delegating to the matched `zccmd_*`.
 /// WARNING: param names don't match C — Rust=(args, _ops, _func) vs C=(nam, args, ops, func)
-pub(crate) fn bin_zcurses(
-    nam: &str,
-    args: &[String],
-    _ops: &options,
-    _func: i32,
-) -> i32 {
+pub(crate) fn bin_zcurses(nam: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     if args.is_empty() {
         zwarnnam(nam, "subcommand required");
         return 1;
@@ -2048,11 +2043,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1]);
     }
@@ -2199,8 +2190,8 @@ fn module_features() -> &'static Mutex<features> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ported::zsh_h::MAX_OPS;
     use super::*;
+    use crate::ported::zsh_h::MAX_OPS;
 
     static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -2717,9 +2708,18 @@ mod tests {
     #[test]
     fn curses_corpus_pairs_to_array_extracts_names() {
         let pairs = [
-            zcurses_namenumberpair { name: "alpha", number: 1 },
-            zcurses_namenumberpair { name: "beta",  number: 2 },
-            zcurses_namenumberpair { name: "gamma", number: 3 },
+            zcurses_namenumberpair {
+                name: "alpha",
+                number: 1,
+            },
+            zcurses_namenumberpair {
+                name: "beta",
+                number: 2,
+            },
+            zcurses_namenumberpair {
+                name: "gamma",
+                number: 3,
+            },
         ];
         let v = zcurses_pairs_to_array(&pairs);
         assert_eq!(v, vec!["alpha", "beta", "gamma"]);

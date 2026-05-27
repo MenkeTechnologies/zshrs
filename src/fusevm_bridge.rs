@@ -291,9 +291,7 @@ pub(crate) fn install_exec_hooks() {
     h::install_dispatch_function_call(|name, args| {
         with_executor(|exec| exec.dispatch_function_call(name, args))
     });
-    h::install_execute_script(|src| {
-        with_executor(|exec| exec.execute_script(src))
-    });
+    h::install_execute_script(|src| with_executor(|exec| exec.execute_script(src)));
     h::install_execute_script_zsh_pipeline(|src| {
         with_executor(|exec| exec.execute_script_zsh_pipeline(src))
     });
@@ -388,12 +386,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // src/ported/utils.rs:1532 handles both the `chpwd` shfunc
         // dispatch AND the `chpwd_functions` array walk.
         if status == 0 {
-            crate::ported::utils::callhookfunc(
-                "chpwd",
-                None,
-                1,
-                std::ptr::null_mut(),
-            );
+            crate::ported::utils::callhookfunc("chpwd", None, 1, std::ptr::null_mut());
         }
         Value::Status(status)
     });
@@ -481,9 +474,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // paramtab "_" slot is shadowed by lookup_special_var so
         // set_scalar on it has no effect on `$_` reads.
         if args.is_empty() {
-            crate::ported::params::set_zunderscore(
-                &["true".to_string()],
-            );
+            crate::ported::params::set_zunderscore(&["true".to_string()]);
         } else {
             crate::ported::params::set_zunderscore(&args);
         }
@@ -498,9 +489,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // Direct set; see BUILTIN_TRUE above for rationale.
         if args.is_empty() {
-            crate::ported::params::set_zunderscore(
-                &["false".to_string()],
-            );
+            crate::ported::params::set_zunderscore(&["false".to_string()]);
         } else {
             crate::ported::params::set_zunderscore(&args);
         }
@@ -513,9 +502,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let args = pop_args(vm, argc);
         // Direct set; see BUILTIN_TRUE above for rationale.
         if args.is_empty() {
-            crate::ported::params::set_zunderscore(
-                &[":".to_string()],
-            );
+            crate::ported::params::set_zunderscore(&[":".to_string()]);
         } else {
             crate::ported::params::set_zunderscore(&args);
         }
@@ -606,10 +593,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut full = Vec::with_capacity(args.len() + 1);
         full.push("command".to_string());
         full.extend(args.clone());
-        let dispatch = crate::ported::exec::execcmd_compile_head(
-            &full,
-            crate::ported::zsh_h::WC_SIMPLE,
-        );
+        let dispatch =
+            crate::ported::exec::execcmd_compile_head(&full, crate::ported::zsh_h::WC_SIMPLE);
         let post = &full[dispatch.precmd_skip..];
         // c:Src/builtin.c:4500 — `command -p` resets PATH for the
         // exec to the POSIX-defined default (`getconf PATH`), so
@@ -617,7 +602,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // emptied $PATH. zsh restores the original PATH after the
         // command returns. Mirror via a scoped env::set_var.
         let dash_p = args.iter().any(|a| {
-            a == "-p" || a == "-pv" || a == "-pV"
+            a == "-p"
+                || a == "-pv"
+                || a == "-pV"
                 || (a.starts_with('-') && a.contains('p') && !a.starts_with("--"))
         });
         // The post slice from execcmd_compile_head may still contain
@@ -628,7 +615,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             post.iter()
                 .filter(|a| {
                     let s = a.as_str();
-                    !(s.starts_with('-') && s.len() >= 2 && s[1..].chars().all(|c| c == 'p' || c == 'v' || c == 'V'))
+                    !(s.starts_with('-')
+                        && s.len() >= 2
+                        && s[1..].chars().all(|c| c == 'p' || c == 'v' || c == 'V'))
                 })
                 .cloned()
                 .collect()
@@ -645,9 +634,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .and_then(|o| String::from_utf8(o.stdout).ok())
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| {
-                    "/usr/bin:/bin:/usr/sbin:/sbin".to_string()
-                });
+                .unwrap_or_else(|| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
             env::set_var("PATH", &default_path);
             crate::ported::params::setsparam("PATH", &default_path);
             Some(saved)
@@ -729,9 +716,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         {
             return Value::Status(dispatch_builtin_raw(&n, r));
         }
-        Value::Status(
-            with_executor(|exec| exec.execute_external(&n, &r, &[])).unwrap_or(127),
-        )
+        Value::Status(with_executor(|exec| exec.execute_external(&n, &r, &[])).unwrap_or(127))
     });
 
     // `exec cmd args…` — BINF_EXEC prefix (Src/builtin.c:45). Zsh
@@ -904,7 +889,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let status = with_executor(|exec| exec.builtin_complete(&args));
         Value::Status(status)
     });
-
 
     reg_passthru!(vm, BUILTIN_COMPADD, "compadd");
     reg_passthru!(vm, BUILTIN_COMPSET, "compset");
@@ -1311,9 +1295,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // With `setopt pipefail` (or `set -o pipefail`), use the
         // first non-zero stage status (so failures earlier in the
         // pipeline propagate even if the last stage succeeded).
-        let pipefail_on = with_executor(|exec| {
-            opt_state_get("pipefail").unwrap_or(false)
-        });
+        let pipefail_on = with_executor(|exec| opt_state_get("pipefail").unwrap_or(false));
         let last_status = if pipefail_on {
             pipestatus
                 .iter()
@@ -1394,8 +1376,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 crate::ported::modules::clone::lastpid
                     .store(pid, std::sync::atomic::Ordering::Relaxed);
                 with_executor(|exec| {
-                    exec.jobs
-                        .add_pid_job(pid, String::new(), JobState::Running);
+                    exec.jobs.add_pid_job(pid, String::new(), JobState::Running);
                 });
                 Value::Status(0)
             }
@@ -1873,21 +1854,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let resolved_key = with_executor(|exec| {
             let is_indexed = exec.array(&name).is_some();
             if is_indexed && key.trim().parse::<i64>().is_err() {
-                crate::ported::math::mathevali(
-                    &crate::ported::subst::singsub(&key),
-                )
-                .map(|n| n.to_string())
-                .unwrap_or(key.clone())
+                crate::ported::math::mathevali(&crate::ported::subst::singsub(&key))
+                    .map(|n| n.to_string())
+                    .unwrap_or(key.clone())
             } else {
                 key.clone()
             }
         });
         let subscripted = format!("{}[{}]", name, resolved_key);
-        crate::ported::params::assignsparam(
-            &subscripted,
-            &value,
-            crate::ported::zsh_h::ASSPM_WARN,
-        );
+        crate::ported::params::assignsparam(&subscripted, &value, crate::ported::zsh_h::ASSPM_WARN);
         Value::Status(0)
     });
 
@@ -1900,10 +1875,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // gating, quote-aware parsing, and empty-field handling).
     vm.register_builtin(BUILTIN_WORD_SPLIT, |vm, _argc| {
         let s = vm.pop().to_str();
-        let (_joined, parts, _isarr, _flags) = crate::ported::subst::multsub(
-            &s,
-            crate::ported::zsh_h::PREFORK_SPLIT,
-        );
+        let (_joined, parts, _isarr, _flags) =
+            crate::ported::subst::multsub(&s, crate::ported::zsh_h::PREFORK_SPLIT);
         // Empty single-string special case → empty Array (drop empty arg).
         if parts.len() == 1 && parts[0].is_empty() {
             return Value::Array(Vec::new());
@@ -1970,8 +1943,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // segment-fast-path BUILTIN_GLOB_EXPAND fired even after
         // `noglob` set the option, so `noglob echo *.xyz` saw the
         // NOMATCH error instead of the literal pass-through.
-        let noglob = opt_state_get("noglob").unwrap_or(false)
-            || !opt_state_get("glob").unwrap_or(true);
+        let noglob =
+            opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
         if noglob {
             return if patterns.is_empty() {
                 Value::Array(Vec::new())
@@ -2023,8 +1996,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::ported::builtin::BREAKS.fetch_add(1, SeqCst);
         Value::Status(0)
     });
-
-
 
     // `${arr[*]}` — join array elements with the first IFS char into
     // a single string. Matches zsh: in DQ context this preserves the
@@ -2085,8 +2056,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let val = exec.get_variable(&name);
                     if val.is_empty() && !exec.has_scalar(&name) && env::var(&name).is_err() {
                         Value::Array(vec![])
-                    } else if opt_state_get("shwordsplit").unwrap_or(false)
-                    {
+                    } else if opt_state_get("shwordsplit").unwrap_or(false) {
                         // bash-compat: under setopt sh_word_split, do
                         // split scalars on IFS chars.
                         let ifs = exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string());
@@ -2246,9 +2216,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // BUILTIN_CONCAT_DISTRIBUTE distributes element-wise. Without
         // the option, arrays still join to a space-separated scalar
         // (zsh's default unquoted-array-as-scalar semantics).
-        let rc_expand = with_executor(|exec| {
-            opt_state_get("rcexpandparam").unwrap_or(false)
-        });
+        let rc_expand = with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
         if rc_expand {
             let arr_val = with_executor(|exec| {
                 sync_status(exec);
@@ -2352,9 +2320,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // as known regardless of value.
             let known = !v.is_empty()
                 || name.is_empty()
-                || name.chars().next().map(|c|
-                    !c.is_alphabetic() && c != '_'
-                ).unwrap_or(true)
+                || name
+                    .chars()
+                    .next()
+                    .map(|c| !c.is_alphabetic() && c != '_')
+                    .unwrap_or(true)
                 || crate::ported::params::paramtab()
                     .read()
                     .ok()
@@ -2391,9 +2361,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `$s` in `print $s` stayed a single arg even with the option
         // set, breaking POSIX-style scalar word-splitting.
         if !in_dq && opt_state_get("shwordsplit").unwrap_or(false) {
-            let ifs = with_executor(|exec| {
-                exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string())
-            });
+            let ifs =
+                with_executor(|exec| exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string()));
             let parts: Vec<Value> = val
                 .split(|c: char| ifs.contains(c))
                 .filter(|s| !s.is_empty())
@@ -2498,15 +2467,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             raw_values.push(vm.pop());
         }
         raw_values.reverse();
-        let name = raw_values
-            .first()
-            .map(|v| v.to_str())
-            .unwrap_or_default();
+        let name = raw_values.first().map(|v| v.to_str()).unwrap_or_default();
         let value_raw = raw_values.get(1).cloned();
-        let value = value_raw
-            .as_ref()
-            .map(|v| v.to_str())
-            .unwrap_or_default();
+        let value = value_raw.as_ref().map(|v| v.to_str()).unwrap_or_default();
         // c:Src/params.c — when the bytecode hands us an Int value
         // (only the arith assignment paths emit this — `(( X = N ))`
         // is the canonical site), route through setiparam so the
@@ -2542,11 +2505,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             // PM_EXPORTED / allexport env mirror — read AFTER setsparam
             // so the flag bit reflects any GSU setfn side-effects.
-            let allexport =
-                opt_state_get("allexport").unwrap_or(false);
-            let already_exported = (exec.param_flags(&name) as u32
-                & crate::ported::zsh_h::PM_EXPORTED)
-                != 0;
+            let allexport = opt_state_get("allexport").unwrap_or(false);
+            let already_exported =
+                (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
                 env::set_var(&name, &value);
             }
@@ -2555,8 +2516,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 && exec.local_scope_depth == 0
                 && !matches!(
                     name.as_str(),
-                    "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC"
-                    | "?" | "_" | "RANDOM"
+                    "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC" | "?" | "_" | "RANDOM"
                 )
             {
                 let ctx = exec.recorder_ctx();
@@ -2691,7 +2651,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let cont_save = crate::ported::builtin::CONTFLAG.swap(0, Ordering::Relaxed);
         let exit_save = crate::ported::builtin::EXIT_PENDING.swap(0, Ordering::Relaxed);
         TRY_ESCAPE_SAVE.with(|s| {
-            s.borrow_mut().push((ret_save, brk_save, cont_save, exit_save));
+            s.borrow_mut()
+                .push((ret_save, brk_save, cont_save, exit_save));
         });
         with_executor(|exec| {
             exec.set_scalar(
@@ -2705,15 +2666,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // unwind. The always-arm can reset it to 0 to
             // SWALLOW the error.
             if errored {
-                exec.set_scalar(
-                    "TRY_BLOCK_ERROR".to_string(),
-                    vm_status.to_string(),
-                );
+                exec.set_scalar("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
                 // Clear errflag so always-arm runs cleanly.
-                crate::ported::utils::errflag.fetch_and(
-                    !crate::ported::zsh_h::ERRFLAG_ERROR,
-                    Ordering::Relaxed,
-                );
+                crate::ported::utils::errflag
+                    .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             } else {
                 // c:Src/Modules/parameter.c — TRY_BLOCK_ERROR reads
                 // as 0 inside an always-arm when no error fired
@@ -3132,9 +3088,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE, |vm, _argc| {
         let rhs = vm.pop();
         let lhs = vm.pop();
-        let rc_expand = with_executor(|exec| {
-            opt_state_get("rcexpandparam").unwrap_or(false)
-        });
+        let rc_expand = with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
         let ifs_first = || -> String {
             with_executor(|exec| {
                 exec.get_variable("IFS")
@@ -3401,8 +3355,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // simple commands route to BUILTIN_XTRACE_ARGS instead. So
         // this handler always emits when xtrace is on — no prefix-
         // string heuristic.
-        let on =
-            with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
+        let on = with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
         if on {
             let already = XTRACE_DONE_PS4.with(|f| f.get());
             if !already {
@@ -3430,8 +3383,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.set_last_status(live);
         });
-        let on =
-            with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
+        let on = with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
         if on {
             let n_args = argc.saturating_sub(1) as usize;
             let len = vm.stack.len();
@@ -3490,8 +3442,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // no newline; trailing `\n` comes from XTRACE_ARGS (cmd path)
     // or XTRACE_NEWLINE (assignment-only path).
     vm.register_builtin(BUILTIN_XTRACE_ASSIGN, |vm, _argc| {
-        let on =
-            with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
+        let on = with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
         if on {
             // PEEK [..., name, value] — argc==2 by contract.
             let len = vm.stack.len();
@@ -3516,8 +3467,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // C's `fputc('\n', xtrerr); fflush(xtrerr);` at exec.c:3398
     // (the assignment-only path through execcmd_exec).
     vm.register_builtin(BUILTIN_XTRACE_NEWLINE, |_vm, _argc| {
-        let on =
-            with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
+        let on = with_executor(|exec| opt_state_get("xtrace").unwrap_or(false));
         if on {
             let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
             if already_ps4 {
@@ -3626,18 +3576,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let errflag_set = (crate::ported::utils::errflag.load(Ordering::Relaxed)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0;
-        if errflag_set
-            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
-        {
+        if errflag_set && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
             // Clear errflag so the abort doesn't keep re-triggering;
             // the script-end last_status gives the caller the
             // failing status. Update BOTH executor's last_status
             // (LASTVAL) AND the VM's last_status so run_chunk's
             // post-script sync sees the failing value.
-            crate::ported::utils::errflag.fetch_and(
-                !crate::ported::zsh_h::ERRFLAG_ERROR,
-                Ordering::Relaxed,
-            );
+            crate::ported::utils::errflag
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             with_executor(|exec| exec.set_last_status(1));
             vm.last_status = 1;
             return Value::Int(1);
@@ -3804,10 +3750,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let err = crate::ported::utils::errflag.load(Ordering::Relaxed)
             & crate::ported::zsh_h::ERRFLAG_ERROR;
         if err != 0 {
-            crate::ported::utils::errflag.fetch_and(
-                !crate::ported::zsh_h::ERRFLAG_ERROR,
-                Ordering::Relaxed,
-            );
+            crate::ported::utils::errflag
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             vm.last_status = 2;
             Value::Status(2)
         } else {
@@ -3912,8 +3856,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let out = crate::ported::subst::singsub(&prepped);
                     Value::str(out)
                 } else {
-                    let (_first, nodes, _ms_ws, _ret) =
-                        crate::ported::subst::multsub(&prepped, 0);
+                    let (_first, nodes, _ms_ws, _ret) = crate::ported::subst::multsub(&prepped, 0);
                     if nodes.is_empty() {
                         Value::str(String::new())
                     } else if nodes.len() == 1 {
@@ -3992,7 +3935,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // fires per c:Src/exec.c:2546.
                 let prepped: String = text.clone();
                 if std::env::var("ZSHRS_TRACE_DEFP").is_ok() {
-                    eprintln!("[TRACE_DEFP] text={:?} prepped={:?} mode={}", text, prepped, mode);
+                    eprintln!(
+                        "[TRACE_DEFP] text={:?} prepped={:?} mode={}",
+                        text, prepped, mode
+                    );
                 }
                 let pf_flags = if mode == 6 {
                     crate::ported::zsh_h::PREFORK_ASSIGN
@@ -4041,9 +3987,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // `setopt noglob` writes `glob=false`. Honor either
                 // form so the dispatcher behaves the same as zsh.
                 let noglob = opt_state_get("noglob").unwrap_or(false)
-                    || opt_state_get("GLOB")
-                        .map(|v| !v)
-                        .unwrap_or(false)
+                    || opt_state_get("GLOB").map(|v| !v).unwrap_or(false)
                     || !opt_state_get("glob").unwrap_or(true);
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
@@ -4096,8 +4040,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // can apply the appropriate filter. Both require
                         // `setopt extendedglob` — runtime falls through
                         // to literal if that's off.
-                        let extglob_meta = opt_state_get("extendedglob")
-                            .unwrap_or(false)
+                        let extglob_meta = opt_state_get("extendedglob").unwrap_or(false)
                             && (s.starts_with('^') || s.contains('~') || s.contains("/^"));
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
@@ -4160,7 +4103,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut ret_flags: i32 = 0;
         let (_full, _pos, nodes) = crate::ported::subst::paramsubst(
             &format!("${{#{}}}", name),
-            0, false, 0i32, &mut ret_flags,
+            0,
+            false,
+            0i32,
+            &mut ret_flags,
         );
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
             with_executor(|exec| exec.set_last_status(1));
@@ -4280,8 +4226,7 @@ fn paramsubst_to_value(body: &str) -> Value {
     // propagates the DQ flag without changing every bridge call site.
     let qt = with_executor(|exec| exec.in_dq_context > 0);
     let mut ret_flags: i32 = 0;
-    let (_full, _pos, nodes) =
-        crate::ported::subst::paramsubst(body, 0, qt, 0i32, &mut ret_flags);
+    let (_full, _pos, nodes) = crate::ported::subst::paramsubst(body, 0, qt, 0i32, &mut ret_flags);
     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         with_executor(|exec| exec.set_last_status(1));
     }
@@ -4845,9 +4790,7 @@ impl fusevm::ShellHost for ZshrsHost {
         //
         // brace_ccl: respect the BRACE_CCL option which the bracket-
         // class form `{a-z}` requires. Pull from executor options.
-        let brace_ccl = with_executor(|exec| {
-            opt_state_get("braceccl").unwrap_or(false)
-        });
+        let brace_ccl = with_executor(|exec| opt_state_get("braceccl").unwrap_or(false));
         crate::ported::glob::xpandbraces(s, brace_ccl)
     }
 
@@ -4857,12 +4800,7 @@ impl fusevm::ShellHost for ZshrsHost {
         glob_match_static(s, pattern)
     }
 
-    fn expand_param(
-        &mut self,
-        name: &str,
-        _modifier: u8,
-        _args: &[Value],
-    ) -> Value {
+    fn expand_param(&mut self, name: &str, _modifier: u8, _args: &[Value]) -> Value {
         // Sole funnel: route through `getsparam` matching C zsh's
         // `getsparam(name)` → `getvalue` → `getstrvalue` →
         // `Param.gsu->getfn` dispatch (Src/params.c:3076 / 2335).
@@ -5091,8 +5029,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // Bump SUBSHELL_DEPTH so zexit defers process::exit (see
         // SUBSHELL_DEPTH declaration in src/ported/builtin.rs for
         // rationale).
-        crate::ported::builtin::SUBSHELL_DEPTH
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::SUBSHELL_DEPTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn subshell_end(&mut self) -> Option<i32> {
@@ -5181,10 +5118,9 @@ impl fusevm::ShellHost for ZshrsHost {
         // continues. Matches C zsh's "subshell-exit-via-fork"
         // boundary where the child's process::exit(N) becomes
         // $WAITSTATUS / $? in the parent.
-        crate::ported::builtin::SUBSHELL_DEPTH
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        let exit_pending = crate::ported::builtin::EXIT_PENDING
-            .load(std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::SUBSHELL_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        let exit_pending =
+            crate::ported::builtin::EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed);
         if exit_pending != 0 {
             // c:Src/builtin.c — `exit N` masks N to 8 bits because
             // POSIX _exit takes the low byte as status. `(exit 256)`
@@ -5192,16 +5128,12 @@ impl fusevm::ShellHost for ZshrsHost {
             // `(exit 257)` exits with 1. Without the mask zshrs's
             // in-process subshell propagated the full i32 (256) into
             // the parent's $?, diverging from zsh.
-            let raw = crate::ported::builtin::EXIT_VAL
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let raw = crate::ported::builtin::EXIT_VAL.load(std::sync::atomic::Ordering::Relaxed);
             let val = raw & 0xFF;
             with_executor(|exec| exec.set_last_status(val));
-            crate::ported::builtin::EXIT_PENDING
-                .store(0, std::sync::atomic::Ordering::Relaxed);
-            crate::ported::builtin::RETFLAG
-                .store(0, std::sync::atomic::Ordering::Relaxed);
-            crate::ported::builtin::BREAKS
-                .store(0, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::EXIT_PENDING.store(0, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::RETFLAG.store(0, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::BREAKS.store(0, std::sync::atomic::Ordering::Relaxed);
             // Set the post-subshell-exit guard. The next GET_VAR
             // sync_status path consults this to skip its
             // vm.last_status→LASTVAL sync (which would overwrite the
@@ -5443,9 +5375,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // `alias hi='echo hello'; hi` in `-c` mode falls through to
         // "command not found" (matching zsh) while interactive REPL
         // input still re-parses with the live aliastab.
-        let interactive = crate::ported::zsh_h::isset(
-            crate::ported::zsh_h::INTERACTIVE,
-        );
+        let interactive = crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE);
         let already_expanding = if interactive {
             crate::ported::hashtable::aliastab_lock()
                 .read()
@@ -5503,8 +5433,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // `dispatch_function_call` (which itself wraps the canonical
         // `doshfunc` port from `Src/exec.c:5823`). Single doshfunc
         // call-site keeps scope-mgmt invariants in one place.
-        let status =
-            with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
+        let status = with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
 
         // $_ post-body — last call-arg or function name. Mirrors the
         // C `setunderscore` invocation after the body returns.
@@ -5517,7 +5446,6 @@ impl fusevm::ShellHost for ZshrsHost {
         status
     }
 }
-
 
 // ───────────────────────────────────────────────────────────────────────────
 // Host-routed shell ops: ShellExecutor methods invoked by ZshrsHost from the
@@ -5594,10 +5522,7 @@ impl ShellExecutor {
             if n_check != "-" {
                 if let Ok(src_fd) = n_check.parse::<i32>() {
                     if unsafe { libc::fcntl(src_fd, libc::F_GETFD) } == -1 {
-                        eprintln!(
-                            "zshrs:1: {}: bad file descriptor",
-                            src_fd
-                        );
+                        eprintln!("zshrs:1: {}: bad file descriptor", src_fd);
                         self.set_last_status(1);
                         self.redirect_failed = true;
                         return;
@@ -5866,12 +5791,8 @@ impl ShellExecutor {
                 // BUILTINS["private"].
                 return dispatch_builtin("private", rest_vec.clone());
             }
-            "zformat" => {
-                return dispatch_builtin("zformat", rest_vec.clone())
-            }
-            "zregexparse" => {
-                return dispatch_builtin("zregexparse", rest_vec.clone())
-            }
+            "zformat" => return dispatch_builtin("zformat", rest_vec.clone()),
+            "zregexparse" => return dispatch_builtin("zregexparse", rest_vec.clone()),
             // `unalias`/`unhash`/`unfunction` share `bin_unhash` but
             // each carries its own funcid (BIN_UNALIAS / BIN_UNHASH /
             // BIN_UNFUNCTION) — dispatch_builtin handles the BUILTINS
@@ -5939,8 +5860,8 @@ impl ShellExecutor {
             // zf_* aliases route through canonical BUILTINS entries
             // (files.c:816-824) — execbuiltin parses each fn's optstr
             // automatically.
-            "mkdir" | "zf_mkdir" | "zf_rm" | "zf_rmdir" | "zf_chmod"
-            | "zf_chown" | "zf_chgrp" | "zf_ln" | "zf_mv" | "zf_sync" => {
+            "mkdir" | "zf_mkdir" | "zf_rm" | "zf_rmdir" | "zf_chmod" | "zf_chown" | "zf_chgrp"
+            | "zf_ln" | "zf_mv" | "zf_sync" => {
                 return dispatch_builtin(cmd.as_str(), rest_vec.clone());
             }
             // `zstat` — port of zsh/stat module (Src/Modules/stat.c

@@ -69,7 +69,10 @@ mod tests {
         //   without executor).
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("CURRENT", "3");
-        setaparam("words", vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        setaparam(
+            "words",
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+        );
         assert_eq!(_cmdambivalent(), 1);
     }
 }

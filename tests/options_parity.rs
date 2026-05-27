@@ -4,32 +4,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -48,18 +82,24 @@ mod setopt {
 
     #[test]
     fn setopt_then_unsetopt_clears() {
-        assert_parity(r#"setopt EXTENDED_GLOB; unsetopt EXTENDED_GLOB; [[ -o EXTENDED_GLOB ]]; echo $?"#);
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; unsetopt EXTENDED_GLOB; [[ -o EXTENDED_GLOB ]]; echo $?"#,
+        );
     }
 
     #[test]
     fn setopt_no_prefix_inverts() {
         // `setopt NO_X` is equivalent to `unsetopt X`.
-        assert_parity(r#"setopt EXTENDED_GLOB; setopt NO_EXTENDED_GLOB; [[ -o EXTENDED_GLOB ]]; echo $?"#);
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; setopt NO_EXTENDED_GLOB; [[ -o EXTENDED_GLOB ]]; echo $?"#,
+        );
     }
 
     #[test]
     fn setopt_multiple_at_once() {
-        assert_parity(r#"setopt EXTENDED_GLOB NULL_GLOB; [[ -o extendedglob ]] && [[ -o nullglob ]]; echo $?"#);
+        assert_parity(
+            r#"setopt EXTENDED_GLOB NULL_GLOB; [[ -o extendedglob ]] && [[ -o nullglob ]]; echo $?"#,
+        );
     }
 }
 
@@ -175,7 +215,9 @@ mod print_options {
     /// output (varies between zsh/zshrs); just check exit + non-empty.
     #[test]
     fn setopt_no_args_exits_zero() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let z = run_zsh("setopt | head -1");
         let r = run_zshrs("setopt | head -1");
         // Both should exit 0; output line count > 0 ideally.

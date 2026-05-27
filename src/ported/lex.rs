@@ -12,10 +12,17 @@
 //! - Comments
 //! - Continuation lines
 
-use std::collections::VecDeque;
-use std::sync::atomic::Ordering;
-use serde::{Deserialize, Serialize};
-use crate::DPUTS;
+pub use super::zsh_h::{
+    lextok, AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR,
+    DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
+    DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
+    FOR, FOREACH, FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK,
+    IS_REDIROP, LEXERR, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS, LEXFLAGS_COMMENTS_KEEP,
+    LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, LEXFLAGS_ZLE, NEWLIN, NOCORRECT, NULLTOK, OUTANGAMP,
+    OUTANGAMPBANG, OUTANGBANG, OUTANG_TOK, OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP,
+    SEMIBAR, SEPER, STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
+};
+pub use crate::heredoc_ast::HereDoc;
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::hashtable::{aliastab_lock, reswdtab_lock, sufaliastab_lock};
 use crate::ported::hist::{hist_in_word, strinbeg, strinend};
@@ -26,29 +33,20 @@ use crate::ported::string::dupstring_wlen;
 use crate::ported::utils::{errflag, spckword, zerr, ERRFLAG_ERROR};
 use crate::ported::zle::compcore::{WB, WE};
 use crate::ported::zsh_h::{
-    alias, interact, isset, lex_stack, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma, Dash, Dnull, Equals,
-    Hat, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace,
-    Outbrack, Outpar, Outparmath, Pound, Qstring, Qtick, Quest, Snull, Star, Stringg, Tick, Tilde,
-    ALIASESOPT, CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE, CS_BRACE, CS_BRACEPAR,
-    CS_CMDSUBST, CS_CURSH, CS_DQUOTE, CS_HEREDOC, CS_HEREDOCD, CS_MATH, CS_MATHSUBST, CS_QUOTE,
-    ERRFLAG_INT, HISTALLOWCLOBBER, IGNOREBRACES, IGNORECLOSEBRACES, INP_ALIAS,
-    INTERACTIVECOMMENTS, KSHGLOB, Meta, POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN, SHORTLOOPS,
+    alias, interact, isset, lex_stack, lexbufstate, unset, Bang, Bar, Bnull, Bnullkeep, Comma,
+    Dash, Dnull, Equals, Hat, Inang, Inbrace, Inbrack, Inpar, Inparmath, Marker, Meta, Nularg,
+    Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Pound, Qstring, Qtick, Quest,
+    Snull, Star, Stringg, Tick, Tilde, ALIASESOPT, CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE,
+    CS_BRACE, CS_BRACEPAR, CS_CMDSUBST, CS_CURSH, CS_DQUOTE, CS_HEREDOC, CS_HEREDOCD, CS_MATH,
+    CS_MATHSUBST, CS_QUOTE, ERRFLAG_INT, HISTALLOWCLOBBER, IGNOREBRACES, IGNORECLOSEBRACES,
+    INP_ALIAS, INTERACTIVECOMMENTS, KSHGLOB, POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN, SHORTLOOPS,
     SHORTREPEAT, ZCONTEXT_LEX, ZCONTEXT_PARSE,
 };
 use crate::ported::ztype_h::itok;
-pub use super::zsh_h::{
-    AMPER, AMPERBANG, AMPOUTANG, BANG_TOK, BARAMP, BAR_TOK, CASE, COPROC, DAMPER, DBAR, DINANG,
-    DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG, DOUTANGBANG,
-    DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI, FOR, FOREACH,
-    FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK, IS_REDIROP, LEXERR,
-    LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP,
-    LEXFLAGS_NEWLINE, LEXFLAGS_ZLE, NEWLIN, NOCORRECT, NULLTOK, OUTANGAMP, OUTANGAMPBANG,
-    OUTANGBANG, OUTANG_TOK, OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR,
-    SEPER, STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND, lextok,
-};
-pub use crate::heredoc_ast::HereDoc;
-
-
+use crate::DPUTS;
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 
 /// zsh/Src/lex.c:216 `lex_context_save`. After save, the lexer
 /// is in a clean state suitable for parsing a nested input (command
@@ -1008,8 +1006,7 @@ fn gettok() -> lextok {
         && c as i32 == crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
     let qbang_adj: i32 = if qbang_at_bang { 1 } else { 0 };
     if (LEX_LEXFLAGS.get() & LEXFLAGS_ZLE) != 0
-        && (crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS)
-            == 0
+        && (crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS) == 0
     {
         LEX_WORDBEG.set(crate::ported::input::inbufct.with(|c| c.get()) - qbang_adj);
     }
@@ -1114,8 +1111,8 @@ fn gettok() -> lextok {
     // `expanding` and `strin` globals aren't ported yet — treated as 0
     // (the safe default for non-completion non-string-eval paths).
     let lexflags = LEX_LEXFLAGS.get();
-    let allow_comment_via_flags = (lexflags == 0 || (lexflags & LEXFLAGS_COMMENTS) != 0)
-        && (!interact() || unset(SHINSTDIN));
+    let allow_comment_via_flags =
+        (lexflags == 0 || (lexflags & LEXFLAGS_COMMENTS) != 0) && (!interact() || unset(SHINSTDIN));
     if c as i32 == crate::ported::hist::hashchar.load(std::sync::atomic::Ordering::SeqCst)
         && !LEX_NOCOMMENTS.get()
         && (isset(INTERACTIVECOMMENTS) || allow_comment_via_flags)
@@ -2608,7 +2605,7 @@ pub fn parsestr(s: &str) -> Result<String, String> {
 pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     let untok = untokenize(s); // c:1716 `untokenize(*s);`
     let dup = dupstring_wlen(&untok, untok.len()); // c:1717
-                                                                          // c:1715 `zcontext_save();`
+                                                   // c:1715 `zcontext_save();`
     zcontext_save();
     // Drain LEX_INPUT/LEX_POS so hgetc's two-input bridge prefers the
     // freshly-pushed inbuf frame (via inpush below) instead of double-
@@ -2656,7 +2653,7 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     DPUTS!(
         // c:1730
         CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1730
-        "BUG: parsestr: cmdstack not empty."                              // c:1730
+        "BUG: parsestr: cmdstack not empty."       // c:1730
     );
     // c:1729 `zcontext_restore();`
     zcontext_restore();
@@ -2712,15 +2709,15 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     let toklen = LEX_LEXBUF.with_borrow(|b| b.len) as usize;
     // c:1771 — DPUTS(toklen > l, "Bad length for parsed subscript")
     DPUTS!(toklen > l, "Bad length for parsed subscript"); // c:1771
-                                                                  // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
-                                                                  // `zcontext_restore();`
+                                                           // c:1779 `strinend();` / c:1780 `inpop();` / c:1782
+                                                           // `zcontext_restore();`
     strinend();
     inpop();
     // c:1785 — DPUTS(cmdsp, "BUG: parse_subscript: cmdstack not empty.")
     DPUTS!(
         // c:1785
         CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1785
-        "BUG: parse_subscript: cmdstack not empty."                       // c:1785
+        "BUG: parse_subscript: cmdstack not empty."  // c:1785
     );
     zcontext_restore();
     if parse_err {
@@ -2790,7 +2787,7 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
     DPUTS!(
         // c:1816
         CMDSTACK.with(|s| !s.borrow().is_empty()), // c:1816 cmdsp != 0
-        "BUG: parse_subst_string: cmdstack not empty."                    // c:1816
+        "BUG: parse_subst_string: cmdstack not empty."  // c:1816
     );
     // c:1817 `zcontext_restore();`
     zcontext_restore();
@@ -2887,9 +2884,7 @@ fn checkalias(lextext: &str) -> bool {
     // lex.c:1914-1933 — regular alias lookup. C: `an = (Alias)
     // aliastab->getnode(aliastab, zshlextext);`
     let alias_clone: Option<alias> = {
-        let guard = aliastab_lock()
-            .read()
-            .expect("aliastab poisoned");
+        let guard = aliastab_lock().read().expect("aliastab poisoned");
         guard.get(lextext).cloned()
     };
     if let Some(alias) = alias_clone {
@@ -2921,7 +2916,9 @@ fn checkalias(lextext: &str) -> bool {
                 if !crate::ztype_h::iblank(c as u8) {
                     break;
                 }
-                LEX_UNGET_BUF.with_borrow_mut(|b| { b.pop_front(); });
+                LEX_UNGET_BUF.with_borrow_mut(|b| {
+                    b.pop_front();
+                });
             }
             if !LEX_LEXSTOP.get() {
                 if let Some(c) = peek() {
@@ -2931,11 +2928,7 @@ fn checkalias(lextext: &str) -> bool {
                 }
             }
             // c:1928 — `inpush(an->text, INP_ALIAS, an);`
-            inpush(
-                &alias.text,
-                INP_ALIAS,
-                Some(lextext.to_string()),
-            );
+            inpush(&alias.text, INP_ALIAS, Some(lextext.to_string()));
             // c:1929-1930 — `if (an->text[0] == ' ' && !(an->node.flags & ALIAS_GLOBAL))
             //                  aliasspaceflag = 1;`
             // Drives HISTIGNORESPACE's alias-leading-space suppression
@@ -2946,9 +2939,7 @@ fn checkalias(lextext: &str) -> bool {
                 LEX_ALIAS_SPACE_FLAG.set(1);
             }
             // c:1929 — `an->inuse = 1;`.
-            let mut guard = aliastab_lock()
-                .write()
-                .expect("aliastab poisoned");
+            let mut guard = aliastab_lock().write().expect("aliastab poisoned");
             if let Some(a) = guard.get_mut(lextext) {
                 a.inuse = 1;
             }
@@ -2966,9 +2957,7 @@ fn checkalias(lextext: &str) -> bool {
             if dot_pos > 0 && dot_pos + 1 < lextext.len() {
                 let suffix = &lextext[dot_pos + 1..];
                 let alias_clone: Option<alias> = {
-                    let guard = sufaliastab_lock()
-                        .read()
-                        .expect("sufaliastab poisoned");
+                    let guard = sufaliastab_lock().read().expect("sufaliastab poisoned");
                     guard.get(suffix).cloned()
                 };
                 if let Some(alias) = alias_clone {
@@ -2979,21 +2968,11 @@ fn checkalias(lextext: &str) -> bool {
                         // popped FIRST (re-emitted to extend the
                         // current token), then space, then the alias
                         // body. C does it the same way.
-                        inpush(
-                            lextext,
-                            INP_ALIAS,
-                            Some(suffix.to_string()),
-                        );
+                        inpush(lextext, INP_ALIAS, Some(suffix.to_string()));
                         inpush(" ", INP_ALIAS, None);
-                        inpush(
-                            &alias.text,
-                            INP_ALIAS,
-                            None,
-                        );
+                        inpush(&alias.text, INP_ALIAS, None);
                         // c:1941 — `an->inuse = 1;`.
-                        let mut guard = sufaliastab_lock()
-                            .write()
-                            .expect("sufaliastab poisoned");
+                        let mut guard = sufaliastab_lock().write().expect("sufaliastab poisoned");
                         if let Some(a) = guard.get_mut(suffix) {
                             a.inuse = 1;
                         }
@@ -3039,8 +3018,7 @@ pub fn exalias() -> bool {
     //    && !hist_is_in_word()
     //    && (isset(CORRECTALL) || (isset(CORRECT) && incmdpos)))
     //       spckword(&tokstr, 1, incmdpos, 1);
-    let inbufflags_alias =
-        (crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS) != 0;
+    let inbufflags_alias = (crate::ported::input::inbufflags.with(|f| f.get()) & INP_ALIAS) != 0;
     let strin_set = crate::ported::input::strin.with(|c| c.get()) != 0;
     if interact()
         && isset(SHINSTDIN)
@@ -3063,9 +3041,9 @@ pub fn exalias() -> bool {
             };
             crate::ported::utils::spckword(
                 &mut buf,
-                1, // c:1962 hist=1
+                1,                                      // c:1962 hist=1
                 if LEX_INCMDPOS.get() { 1 } else { 0 }, // c:1962 cmd=incmdpos
-                1, // c:1962 ask=1
+                1,                                      // c:1962 ask=1
             );
             if buf != word {
                 set_tokstr(Some(buf));
@@ -3152,9 +3130,7 @@ pub fn exalias() -> bool {
         // get their turn.
         let reswd_path_eligible = LEX_INCMDPOS.get() || is_close_brace_special;
         let rw_tok: Option<lextok> = if reswd_path_eligible {
-            let guard = reswdtab_lock()
-                .read()
-                .expect("reswdtab poisoned");
+            let guard = reswdtab_lock().read().expect("reswdtab poisoned");
             guard.get(&lextext).map(|r| r.token)
         } else {
             None
@@ -5080,7 +5056,10 @@ mod tests {
         let _ = lex_init("(a)");
         let toks = collect_tokens();
         assert!(toks.contains(&INPAR_TOK), "expected INPAR_TOK in {toks:?}");
-        assert!(toks.contains(&OUTPAR_TOK), "expected OUTPAR_TOK in {toks:?}");
+        assert!(
+            toks.contains(&OUTPAR_TOK),
+            "expected OUTPAR_TOK in {toks:?}"
+        );
     }
 
     /// Backtick strings produce STRING_LEX with tokstr containing the
@@ -5091,7 +5070,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = lex_init("`echo a`");
         zshlex();
-        assert_eq!(tok(), STRING_LEX, "backtick command-sub lexes as STRING_LEX");
+        assert_eq!(
+            tok(),
+            STRING_LEX,
+            "backtick command-sub lexes as STRING_LEX"
+        );
     }
 
     /// Single-quoted string lexes as one STRING_LEX token, content preserved.
@@ -5121,10 +5104,19 @@ mod tests {
         let _ = lex_init("cmd 2>&1");
         let toks = collect_tokens();
         // At least one redirect-class token must appear.
-        let has_redir = toks.iter().any(|t| matches!(*t,
-            OUTANG_TOK | DOUTANG | INANG_TOK | OUTANGAMP | INANGAMP
-            | DOUTANGAMP | OUTANGAMPBANG | DOUTANGAMPBANG
-        ));
+        let has_redir = toks.iter().any(|t| {
+            matches!(
+                *t,
+                OUTANG_TOK
+                    | DOUTANG
+                    | INANG_TOK
+                    | OUTANGAMP
+                    | INANGAMP
+                    | DOUTANGAMP
+                    | OUTANGAMPBANG
+                    | DOUTANGAMPBANG
+            )
+        });
         assert!(has_redir, "expected a redirect token in {toks:?}");
     }
 

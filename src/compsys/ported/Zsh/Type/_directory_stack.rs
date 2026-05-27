@@ -81,7 +81,8 @@ pub fn _directory_stack(args: &[String]) -> i32 {
             } else {
                 (i + 1) as i64
             };
-            let cleaned = l.trim_start_matches(|c: char| c.is_ascii_digit() || c == '\t' || c == ' ');
+            let cleaned =
+                l.trim_start_matches(|c: char| c.is_ascii_digit() || c == '\t' || c == ' ');
             indexed.push(format!("{} {} {}", n, sep, cleaned));
         }
         // sh:37  list = first-word of each indexed line, prefixed by $PREFIX[1]

@@ -36,8 +36,15 @@ fn make_ops() -> options {
 /// sh:11-12 — bridge zparseopts with the dense spec list.
 fn run_zparseopts_sequence(
     args: &[String],
-) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>)
-{
+) -> (
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+) {
     let src = "__compsys_argv";
     setaparam(src, args.to_vec());
     setaparam("opts", Vec::new());
@@ -95,8 +102,7 @@ fn run_zparseopts_sequence(
 /// separator-delimited list.
 pub fn _sequence(args: &[String]) -> i32 {
     // sh:11
-    let (mut argv, opts, sep, num, mut pref, mut suf, uniq) =
-        run_zparseopts_sequence(args);
+    let (mut argv, opts, sep, num, mut pref, mut suf, uniq) = run_zparseopts_sequence(args);
 
     // sh:14
     let sep_char = sep.get(1).cloned().unwrap_or_else(|| ",".to_string());
@@ -132,10 +138,7 @@ pub fn _sequence(args: &[String]) -> i32 {
         let prefix = getsparam("PREFIX").unwrap_or_default();
         let suffix = getsparam("SUFFIX").unwrap_or_default();
         let trimmed_prefix = prefix.trim_start_matches(&pre as &str).to_string();
-        let mut dd: Vec<String> = trimmed_prefix
-            .split(&qsep)
-            .map(|s| s.to_string())
-            .collect();
+        let mut dd: Vec<String> = trimmed_prefix.split(&qsep).map(|s| s.to_string()).collect();
         if dd.len() > 1 {
             dd.pop(); // drop the LAST partial token
         } else {
@@ -156,10 +159,7 @@ pub fn _sequence(args: &[String]) -> i32 {
     if num_val > 0
         && bin_compset(
             "compset",
-            &[
-                "-P".to_string(),
-                format!("{}*{}", num_val - 1, qsep),
-            ],
+            &["-P".to_string(), format!("{}*{}", num_val - 1, qsep)],
             &make_ops(),
             0,
         ) == 0

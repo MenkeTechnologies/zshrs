@@ -7,30 +7,62 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 #[allow(dead_code)]
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh_in(d: &Path, s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).current_dir(d).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .current_dir(d)
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs_in(d: &Path, s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .current_dir(d).env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .current_dir(d)
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity_sorted(d: &Path, s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh_in(d, s);
     let r = run_zshrs_in(d, s);
     let z_sorted = {
@@ -43,7 +75,10 @@ fn assert_parity_sorted(d: &Path, s: &str) {
         v.sort();
         v.join("\n")
     };
-    assert_eq!(z_sorted, r_sorted, "glob divergence on:\n{s}\n--- zsh ---\n{z_sorted}\n--- zshrs ---\n{r_sorted}");
+    assert_eq!(
+        z_sorted, r_sorted,
+        "glob divergence on:\n{s}\n--- zsh ---\n{z_sorted}\n--- zshrs ---\n{r_sorted}"
+    );
 }
 
 fn setup_mixed_dir() -> tempfile::TempDir {
@@ -83,7 +118,9 @@ mod file_type_qualifiers {
     fn dot_x_qualifier_regular_executable() {
         let d = setup_mixed_dir();
         // Make file1.txt executable
-        let mut perm = std::fs::metadata(d.path().join("file1.txt")).unwrap().permissions();
+        let mut perm = std::fs::metadata(d.path().join("file1.txt"))
+            .unwrap()
+            .permissions();
         use std::os::unix::fs::PermissionsExt;
         perm.set_mode(0o755);
         std::fs::set_permissions(d.path().join("file1.txt"), perm).unwrap();
@@ -127,7 +164,9 @@ mod sort_qualifiers {
         let d = setup_mixed_dir();
         // Don't sort the output since the qualifier already sorts;
         // compare line-by-line ordering.
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let s = "print -l *.txt(on)";
         let z = run_zsh_in(d.path(), s);
         let r = run_zshrs_in(d.path(), s);
@@ -140,7 +179,9 @@ mod sort_qualifiers {
     #[allow(non_snake_case)]
     fn On_qualifier_sorts_by_name_descending() {
         let d = setup_mixed_dir();
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let s = "print -l *.txt(On)";
         let z = run_zsh_in(d.path(), s);
         let r = run_zshrs_in(d.path(), s);
@@ -181,7 +222,9 @@ mod count_subscript {
     #[test]
     fn bracket_one_keeps_first() {
         let d = setup_mixed_dir();
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         // Sort first to anchor "first" deterministically.
         let s = "print -l *(on[1])";
         let z = run_zsh_in(d.path(), s);
@@ -197,7 +240,9 @@ mod combined {
     #[test]
     fn dot_then_on_sorted_regular_files() {
         let d = setup_mixed_dir();
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let s = "print -l *(.on)";
         let z = run_zsh_in(d.path(), s);
         let r = run_zshrs_in(d.path(), s);

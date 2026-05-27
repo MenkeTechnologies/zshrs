@@ -56,7 +56,7 @@ fn esc(out: &mut String, s: &str) {
             b'\\' => out.push_str("\\\\"),
             b'"' => out.push_str("\\\""),
             0 => out.push_str("\\0"),
-            c if c < 0x20 || c >= 0x7f => {
+            c if !(0x20..0x7f).contains(&c) => {
                 let _ = write!(out, "\\x{:02x}", c);
             }
             c => out.push(c as char),
@@ -162,7 +162,7 @@ fn esc_bytes(out: &mut String, bytes: &[u8]) {
             b'\\' => out.push_str("\\\\"),
             b'"' => out.push_str("\\\""),
             0 => out.push_str("\\0"),
-            c if c < 0x20 || c >= 0x7f => {
+            c if !(0x20..0x7f).contains(&c) => {
                 let _ = write!(out, "\\x{:02x}", c);
             }
             c => out.push(c as char),

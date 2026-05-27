@@ -7,35 +7,73 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh_in(d: &Path, s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).current_dir(d).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .current_dir(d)
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs_in(d: &Path, s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .current_dir(d).env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .current_dir(d)
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity_in(d: &Path, s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh_in(d, s);
     let r = run_zshrs_in(d, s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
-fn tdir() -> tempfile::TempDir { tempfile::tempdir().expect("tempdir") }
+fn tdir() -> tempfile::TempDir {
+    tempfile::tempdir().expect("tempdir")
+}
 fn make_files(d: &Path, names: &[&str]) {
     for n in names {
         std::fs::write(d.join(n), "").unwrap();
@@ -141,7 +179,10 @@ mod combined_with_other_globs {
     #[test]
     fn star_then_numeric_range() {
         let d = tdir();
-        make_files(d.path(), &["fileA1.log", "fileB3.log", "fileC10.log", "fileD5.log"]);
+        make_files(
+            d.path(),
+            &["fileA1.log", "fileB3.log", "fileC10.log", "fileD5.log"],
+        );
         assert_parity_in(d.path(), "print -l file*<1-5>.log | sort");
     }
 }
@@ -154,7 +195,10 @@ mod negation {
     fn extended_glob_negation_with_range() {
         let d = tdir();
         make_files(d.path(), &["1", "2", "3", "10", "20", "100"]);
-        assert_parity_in(d.path(), "setopt extended_glob; print -l ^<1-5> 2>/dev/null | sort -n");
+        assert_parity_in(
+            d.path(),
+            "setopt extended_glob; print -l ^<1-5> 2>/dev/null | sort -n",
+        );
     }
 }
 

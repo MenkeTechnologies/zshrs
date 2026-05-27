@@ -37,41 +37,24 @@ pub fn deltochar() -> i32 {
     };
     let mut dest = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:42
     let mut ok = 0i32; // c:42
-    let mut n: i32 = if ZMOD.lock().unwrap().flags
-        & MOD_MULT
-        != 0
-    {
+    let mut n: i32 = if ZMOD.lock().unwrap().flags & MOD_MULT != 0 {
         ZMOD.lock().unwrap().mult
     } else {
         1
     }; // c:42 zmult
-    let zap = BINDK
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|t| t.nam.as_str())
-        == Some("zap-to-char"); // c:43
+    let zap = BINDK.lock().unwrap().as_ref().map(|t| t.nam.as_str()) == Some("zap-to-char"); // c:43
 
     if n > 0 {
         // c:45
-        while n > 0
-            && dest != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-        {
+        while n > 0 && dest != ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
             // c:46 while (n-- && dest != zlell)
             n -= 1;
-            while dest
-                != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-                && ZLELINE
-                    .lock()
-                    .unwrap()
-                    .get(dest)
-                    .copied()
-                    != Some(c)
+            while dest != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
+                && ZLELINE.lock().unwrap().get(dest).copied() != Some(c)
             {
                 dest += 1; // c:48 INCPOS(dest)
             }
-            if dest != ZLELL.load(std::sync::atomic::Ordering::SeqCst)
-            {
+            if dest != ZLELL.load(std::sync::atomic::Ordering::SeqCst) {
                 // c:50
                 if !zap || n > 0 {
                     // c:51
@@ -79,10 +62,8 @@ pub fn deltochar() -> i32 {
                 }
                 if n == 0 {
                     // c:53
-                    let ct = (dest as i32)
-                        - (ZLECS
-                            .load(std::sync::atomic::Ordering::SeqCst)
-                            as i32); // c:54 dest - zlecs
+                    let ct =
+                        (dest as i32) - (ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i32); // c:54 dest - zlecs
                     forekill(ct, 0); // c:54 CUT_RAW
                     ok += 1; // c:55
                 }
@@ -97,30 +78,15 @@ pub fn deltochar() -> i32 {
         while n < 0 && dest != 0 {
             // c:63 while (n++ && dest != 0)
             n += 1;
-            while dest != 0
-                && ZLELINE
-                    .lock()
-                    .unwrap()
-                    .get(dest)
-                    .copied()
-                    != Some(c)
-            {
+            while dest != 0 && ZLELINE.lock().unwrap().get(dest).copied() != Some(c) {
                 dest -= 1; // c:65 DECPOS(dest)
             }
-            if ZLELINE
-                .lock()
-                .unwrap()
-                .get(dest)
-                .copied()
-                == Some(c)
-            {
+            if ZLELINE.lock().unwrap().get(dest).copied() == Some(c) {
                 // c:67
                 if n == 0 {
                     // c:68
                     let zap_adj = if zap { 1 } else { 0 }; // c:70 trailing combining-char adjust
-                    let ct = (ZLECS
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                        as i32)
+                    let ct = (ZLECS.load(std::sync::atomic::Ordering::SeqCst) as i32)
                         - (dest as i32)
                         - zap_adj;
                     backkill(ct, 0); // c:70 CUT_RAW|CUT_FRONT

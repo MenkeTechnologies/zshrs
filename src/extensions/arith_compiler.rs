@@ -266,15 +266,14 @@ impl<'a> ArithCompiler<'a> {
                             b.is_ascii_digit() && (b - b'0') < base as u8
                         } else {
                             b.is_ascii_digit()
-                                || (b.is_ascii_alphabetic()
-                                    && {
-                                        let v = if b.is_ascii_lowercase() {
-                                            b - b'a' + 10
-                                        } else {
-                                            b - b'A' + 10
-                                        };
-                                        (v as u32) < base
-                                    })
+                                || (b.is_ascii_alphabetic() && {
+                                    let v = if b.is_ascii_lowercase() {
+                                        b - b'a' + 10
+                                    } else {
+                                        b - b'A' + 10
+                                    };
+                                    (v as u32) < base
+                                })
                         };
                         if in_base {
                             self.pos += 1;

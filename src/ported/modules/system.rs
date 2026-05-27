@@ -27,9 +27,8 @@ use crate::ported::math::{matheval, mnumber, MN_FLOAT, MN_INTEGER};
 use crate::ported::options::{opt_state_get, opt_state_set};
 use crate::ported::params::{isident, paramtab, setiparam, setsparam};
 use crate::ported::utils::{metafy, movefd, unmeta, zclose, zerr, zstrtol, zwarnnam};
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module, options};
+use crate::ported::zsh_h::{module, options, OPT_ARG, OPT_ISSET};
 use std::sync::{Mutex, OnceLock};
-
 
 const SYSREAD_BUFSIZE: usize = 8192; // c:45
 
@@ -1116,7 +1115,10 @@ pub fn fillpmsysparams(name: &str) -> Option<String> {
 /// from `Src/Modules/system.c:873-883`. Returns a synthesised Param
 /// with u_str set via fillpmsysparams, or PM_UNSET when name isn't
 /// pid/ppid/procsubstpid.
-pub fn getpmsysparams(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Option<crate::ported::zsh_h::Param> {
+pub fn getpmsysparams(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    name: &str,
+) -> Option<crate::ported::zsh_h::Param> {
     // c:873
     use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SCALAR, PM_UNSET};
     let mk = |s: String, extra: i32| -> Param {
@@ -1207,7 +1209,6 @@ pub fn scanpmsysparams(
 // =====================================================================
 // static struct features module_features                            c:910 (system.c)
 // =====================================================================
-
 
 // `bintab` — port of `static struct builtin bintab[]` (system.c).
 
@@ -1475,7 +1476,6 @@ pub static SYS_ERRNAMES: &[(&str, i32)] = &[
 /// New code should use `SYS_ERRNAMES` (matches the C identifier).
 pub static ERRNO_NAMES: &[(&str, i32)] = SYS_ERRNAMES;
 
-
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -1520,7 +1520,11 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<crate::ported::zsh_h::features>,
+    _e: Option<&[i32]>,
+) -> i32 {
     0
 }
 
@@ -1570,10 +1574,10 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 mod tests {
     use super::*;
     use crate::ported::math::{mnumber, MN_INTEGER};
+    use crate::zsh_h::{options, MAX_OPS};
     use std::fs::File;
     use std::io::Write;
     use tempfile::TempDir;
-    use crate::zsh_h::{options, MAX_OPS};
 
     /// Verifies `getposint` parses non-negative ints and rejects
     /// negatives + trailing garbage per c:51.
@@ -1669,7 +1673,10 @@ mod tests {
         let pm_pid = getpmsysparams(std::ptr::null_mut(), "pid").expect("pid Param");
         assert!(pm_pid.node.flags & PM_UNSET as i32 == 0, "pid must be set");
         let pm_bad = getpmsysparams(std::ptr::null_mut(), "nonsense").expect("Param");
-        assert!(pm_bad.node.flags & PM_UNSET as i32 != 0, "unknown key PM_UNSET");
+        assert!(
+            pm_bad.node.flags & PM_UNSET as i32 != 0,
+            "unknown key PM_UNSET"
+        );
     }
 
     /// Verifies `scanpmsysparams` yields all three known keys
@@ -1884,8 +1891,11 @@ mod tests {
     #[test]
     fn system_corpus_getposint_negative_returns_error() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(getposint("-5", "test"), -1,
-            "negative input rejected per c:51");
+        assert_eq!(
+            getposint("-5", "test"),
+            -1,
+            "negative input rejected per c:51"
+        );
     }
 
     /// `getposint("abc", "name")` returns -1 (non-integer).
@@ -1899,8 +1909,11 @@ mod tests {
     #[test]
     fn system_corpus_getposint_trailing_garbage_returns_error() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(getposint("42abc", "test"), -1,
-            "trailing non-digits rejected per c:51 eptr check");
+        assert_eq!(
+            getposint("42abc", "test"),
+            -1,
+            "trailing non-digits rejected per c:51 eptr check"
+        );
     }
 
     /// `getposint("")` returns 0 (zstrtol parses empty as 0,
@@ -1909,8 +1922,11 @@ mod tests {
     #[test]
     fn system_corpus_getposint_empty_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(getposint("", "test"), 0,
-            "empty input: zstrtol returns 0, neither error branch hits");
+        assert_eq!(
+            getposint("", "test"),
+            0,
+            "empty input: zstrtol returns 0, neither error branch hits"
+        );
     }
 
     /// `getposint("1000000", "name")` returns 1000000 (large positive).

@@ -4,17 +4,12 @@
 //!
 //! The history lines are kept in a hash, and also doubly-linked in a ring.   // c:98
 
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicUsize, Ordering};
-use std::sync::Mutex;
-use std::io::Write;
-use std::os::unix::io::AsRawFd;
-use std::path::Component::*;
-use std::sync::atomic::Ordering::SeqCst;
-use crate::{DPUTS, DPUTS1};
 use crate::ported::glob::remnulargs;
 use crate::ported::hashtable::addhistnode;
 use crate::ported::input::{ingetc, inputsetline, inungetc};
-use crate::ported::lex::{lexinit, parse_subst_string, untokenize, ztokens, LEX_ISFIRSTCH, LEX_LEXSTOP};
+use crate::ported::lex::{
+    lexinit, parse_subst_string, untokenize, ztokens, LEX_ISFIRSTCH, LEX_LEXSTOP,
+};
 use crate::ported::options::dosetopt;
 use crate::ported::parse::init_parse_status;
 use crate::ported::signals::unqueue_signals;
@@ -22,17 +17,23 @@ use crate::ported::subst::equalsubstr;
 use crate::ported::utils::{errflag, zerr, ERRFLAG_ERROR};
 use crate::ported::zle::compcore::ZLEMETACS;
 use crate::ported::zsh_h::{
-    hashnode, histent, hist_stack, isset, Pound, BANGHIST, CSHJUNKIEHISTORY, ERRFLAG_INT,
-    HFILE_FAST, HFILE_USE_OPTIONS, HISTEXPIREDUPSFIRST, HISTIGNOREALLDUPS, HISTIGNOREDUPS,
-    HISTIGNORESPACE, HISTNOFUNCTIONS, HISTNOSTORE, HISTREDUCEBLANKS, HISTVERIFY, INCAPPENDHISTORY,
-    INCAPPENDHISTORYTIME, INP_ALIAS, INP_HIST, INTERACTIVE, SHAREHISTORY, SHINSTDIN,
-    CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE, CASMOD_UPPER, HISTFLAG_DONE, HISTFLAG_NOEXEC,
-    HISTFLAG_RECALL, HISTFLAG_SETTY, HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD, HIST_TMPSTORE,
+    hashnode, hist_stack, histent, isset, Pound, BANGHIST, CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE,
+    CASMOD_UPPER, CSHJUNKIEHISTORY, ERRFLAG_INT, HFILE_FAST, HFILE_USE_OPTIONS,
+    HISTEXPIREDUPSFIRST, HISTFLAG_DONE, HISTFLAG_NOEXEC, HISTFLAG_RECALL, HISTFLAG_SETTY,
+    HISTIGNOREALLDUPS, HISTIGNOREDUPS, HISTIGNORESPACE, HISTNOFUNCTIONS, HISTNOSTORE,
+    HISTREDUCEBLANKS, HISTVERIFY, HIST_DUP, HIST_FOREIGN, HIST_NOWRITE, HIST_OLD, HIST_TMPSTORE,
+    INCAPPENDHISTORY, INCAPPENDHISTORYTIME, INP_ALIAS, INP_HIST, INTERACTIVE, SHAREHISTORY,
+    SHINSTDIN,
 };
 use crate::ported::ztype_h::itok;
 use crate::signals::queue_signals;
-
-
+use crate::{DPUTS, DPUTS1};
+use std::io::Write;
+use std::os::unix::io::AsRawFd;
+use std::path::Component::*;
+use std::sync::atomic::Ordering::SeqCst;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 // NOTE: `inbufflags` and `inbufct` are NOT imported because the
 // hist.rs body uses `let inbufflags = ...` shadowing — Rust treats
@@ -87,20 +88,20 @@ pub fn hist_context_save(hs: &mut hist_stack, toplevel: i32) {
     hs.chwords = chwords.lock().unwrap().clone(); // c:262
     hs.chwordlen = chwordlen.load(SeqCst); // c:263
     hs.chwordpos = chwordpos.load(SeqCst); // c:264
-                                                     // hs->hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline  // c:265-271
-                                                     // are runtime-mutable function-pointer globals in C; the Rust port
-                                                     // dispatches statically via crate::ported::input.
+                                           // hs->hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline  // c:265-271
+                                           // are runtime-mutable function-pointer globals in C; the Rust port
+                                           // dispatches statically via crate::ported::input.
     hs.hlinesz = hlinesz.load(SeqCst); // c:272
     hs.defev = defev.load(SeqCst); // c:273
     hs.hist_keep_comment = hist_keep_comment.load(SeqCst); // c:274
-                                                                     // hs->cstack = cmdstack; hs->csp = cmdsp;                               // c:296-282
+                                                           // hs->cstack = cmdstack; hs->csp = cmdsp;                               // c:296-282
     hs.csp = 0;
 
     stophist.store(0, SeqCst); // c:296
     chline.lock().unwrap().clear(); // c:296
     hptr.store(0, SeqCst); // c:296
     histactive.store(0, SeqCst); // c:296
-                                           // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
+                                 // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:296-289
 }
 
 /// Port of `void hist_context_restore(const struct hist_stack *hs, int toplevel)`
@@ -129,11 +130,11 @@ pub fn hist_context_restore(hs: &hist_stack, toplevel: i32) {
     *chwords.lock().unwrap() = hs.chwords.clone(); // c:308
     chwordlen.store(hs.chwordlen, SeqCst); // c:309
     chwordpos.store(hs.chwordpos, SeqCst); // c:310
-                                                     // hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline      // c:311-317
+                                           // hgetc / hungetc / hwaddc / hwbegin / hwabort / hwend / addtoline      // c:311-317
     hlinesz.store(hs.hlinesz, SeqCst); // c:318
     defev.store(hs.defev, SeqCst); // c:339
     hist_keep_comment.store(hs.hist_keep_comment, SeqCst); // c:339
-                                                                     // cmdstack = hs->cstack; cmdsp = hs->csp;                               // c:339-324
+                                                           // cmdstack = hs->cstack; cmdsp = hs->csp;                               // c:339-324
 }
 
 /// Port of `void hist_in_word(int yesno)` from Src/hist.c.
@@ -199,8 +200,7 @@ pub fn ihwaddc(c: i32) {
     // the hptr position (growing only when hptr == chline.len()),
     // then advance hptr.
     let bc = bangchar.load(SeqCst);
-    let qbang_active =
-        c == bc && stophist.load(SeqCst) < 2 && qbang.load(SeqCst);
+    let qbang_active = c == bc && stophist.load(SeqCst) < 2 && qbang.load(SeqCst);
     {
         let mut buf = chline.lock().expect("chline poisoned");
         let bytes = unsafe { buf.as_mut_vec() };
@@ -319,17 +319,14 @@ pub fn iaddtoline(c: i32) {
     // c:413 — `exlast = inbufct;`
     let inbufct_v = crate::ported::input::inbufct.with(|cnt| cnt.get());
     exlast.store(inbufct_v, SeqCst); // c:413
-                                               // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
+                                     // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
     let push_byte: u8 = if c >= 0 && c <= 0xff && itok(c as u8) {
         let idx = (c as u8).wrapping_sub(Pound as u8) as usize;
         // ztokens is the literal-char back-mapping for ITOK bytes.
         // Defensively guard against an out-of-range token byte
         // (the closed range Pound..=Nularg is 0x84..=0xa1, 30
         // entries; ztokens covers them).
-        ztokens
-            .bytes()
-            .nth(idx)
-            .unwrap_or(c as u8)
+        ztokens.bytes().nth(idx).unwrap_or(c as u8)
     } else {
         c as u8
     };
@@ -610,10 +607,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
         }
         // c:659 — (!cflag && inblank(c)) || c == '=' || c == '(' || lexstop
         let is_blank = (c as u8 as char).is_ascii_whitespace();
-        if (cflag == 0 && is_blank)
-            || c == b'=' as i32
-            || c == b'(' as i32
-            || lexstop.load(SeqCst)
+        if (cflag == 0 && is_blank) || c == b'=' as i32 || c == b'(' as i32 || lexstop.load(SeqCst)
         // c:659
         {
             safeinungetc(c); // c:660
@@ -762,11 +756,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                 if t0 != 0 {
                     ev = if t0 < 0 {
                         // c:746
-                        addhistnum(
-                            curhist.load(SeqCst),
-                            t0 as i32,
-                            HIST_FOREIGN as i32,
-                        )
+                        addhistnum(curhist.load(SeqCst), t0 as i32, HIST_FOREIGN as i32)
                     } else {
                         t0
                     };
@@ -1072,10 +1062,7 @@ pub fn histsubchar(c_in: i32) -> i32 {
                     // then remnulargs + untokenize.
                     let oef = errflag.load(SeqCst);
                     let _ = parse_subst_string(&sline); // c:921
-                    errflag.store(
-                        oef | (errflag.load(SeqCst) & ERRFLAG_INT),
-                        SeqCst,
-                    ); // c:923
+                    errflag.store(oef | (errflag.load(SeqCst) & ERRFLAG_INT), SeqCst); // c:923
                     let mut s = sline.clone();
                     remnulargs(&mut s); // c:924
                     sline = untokenize(&s); // c:925
@@ -1437,7 +1424,7 @@ pub fn hbegin(dohist: i32) {
         Ordering::Relaxed,
     );
     histdone.store(0, SeqCst); // c:1116
-                                         // c:1117 — `isset(INTERACTIVE)` / `isset(SHINSTDIN)`.
+                               // c:1117 — `isset(INTERACTIVE)` / `isset(SHINSTDIN)`.
     let interact = isset(INTERACTIVE);
     let shinstdin = isset(SHINSTDIN);
     if dohist == 0 {
@@ -1461,8 +1448,8 @@ pub fn hbegin(dohist: i32) {
         hlinesz.store(0, SeqCst); // c:1136
         chwords.lock().unwrap().clear(); // c:1137
         chwordlen.store(0, SeqCst); // c:1138
-                                              // hgetc/hungetc/hwaddc/hwbegin/hwabort/hwend/addtoline are       c:1139-1145
-                                              // function-pointer slots in C; Rust dispatches statically.
+                                    // hgetc/hungetc/hwaddc/hwbegin/hwabort/hwend/addtoline are       c:1139-1145
+                                    // function-pointer slots in C; Rust dispatches statically.
     } else {
         // c:1146
         let mut buf = chline.lock().unwrap(); // c:1147
@@ -1499,9 +1486,9 @@ pub fn hbegin(dohist: i32) {
         && strin.load(SeqCst) == 0
     {
         histactive.store(HA_ACTIVE, SeqCst); // c:1164
-        // c:1165 — `attachtty(mypgrp);` reclaims the controlling
-        // terminal for the shell's pgrp at the start of a fresh
-        // history-recording line.
+                                             // c:1165 — `attachtty(mypgrp);` reclaims the controlling
+                                             // terminal for the shell's pgrp at the start of a fresh
+                                             // history-recording line.
         let mypgrp = *crate::ported::jobs::MYPGRP
             .get_or_init(|| Mutex::new(0))
             .lock()
@@ -2350,12 +2337,12 @@ pub fn hwrep(rep: &str) {
     // re-opened by the chwordpos decrement.
     hptr.store(start_off.max(0) as usize, SeqCst); // c:1756
     chwordpos.fetch_sub(2, SeqCst); // c:1757
-                                              // c:1758 — `hwbegin(0);` re-open at current hptr (no offset).
+                                    // c:1758 — `hwbegin(0);` re-open at current hptr (no offset).
     ihwbegin(0);
     // c:1759 — `qbang = 1;` mark word as bang-bearing so subsequent
     // ihwaddc bang-escapes correctly.
     qbang.store(true, SeqCst); // c:1759
-                                         // c:1760 — `while (*rep) hwaddc(*rep++);` — push each byte.
+                               // c:1760 — `while (*rep) hwaddc(*rep++);` — push each byte.
     for b in rep.bytes() {
         ihwaddc(b as i32);
     }
@@ -3321,7 +3308,7 @@ pub fn ihungetc(c: i32) {
             // c:1009
             // c:1010 — DPUTS(hptr <= chline, "BUG: hungetc attempted at buffer start")
             DPUTS!(hp <= 0, "BUG: hungetc attempted at buffer start"); // c:1010
-                                                                              // c:1012 — DPUTS(*hptr != (char) c, "BUG: wrong character in hungetc() ")
+                                                                       // c:1012 — DPUTS(*hptr != (char) c, "BUG: wrong character in hungetc() ")
             DPUTS!(
                 // c:1012
                 hp > 0 && line_b.get(hp - 1).copied() != Some(c as u8), // c:1012
@@ -4006,10 +3993,10 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {
         },
         histfile: hf.map(|s| s.to_string()), // c:3872 h->histfile = histfile
         hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()), // c:3874 h->hist_ring = hist_ring
-        curhist: curhist.load(SeqCst),                    // c:3875 h->curhist = curhist
-        histlinect: histlinect.load(SeqCst),              // c:3876
-        histsiz: histsiz.load(SeqCst),                    // c:3877
-        savehistsiz: savehistsiz.load(SeqCst),            // c:3878
+        curhist: curhist.load(SeqCst),                              // c:3875 h->curhist = curhist
+        histlinect: histlinect.load(SeqCst),                        // c:3876
+        histsiz: histsiz.load(SeqCst),                              // c:3877
+        savehistsiz: savehistsiz.load(SeqCst),                      // c:3878
         locallevel: level,                                          // c:3879
     };
     histsave_stack.lock().unwrap().push(snap); // c:3901
@@ -5356,11 +5343,7 @@ mod subst_modifier_tests {
             "c:1779 — truncate chline at hptr=3 returns 'abc'"
         );
         assert_eq!(hptr.load(SeqCst), 0, "c:1783 — hptr reset to 0");
-        assert_eq!(
-            chwordpos.load(SeqCst),
-            0,
-            "c:1784 — chwordpos reset to 0"
-        );
+        assert_eq!(chwordpos.load(SeqCst), 0, "c:1784 — chwordpos reset to 0");
 
         // Restore state.
         *chline.lock().unwrap() = saved_chline;
@@ -5526,19 +5509,11 @@ mod subst_modifier_tests {
             "ABx",
             "c:368 — chline grows"
         );
-        assert_eq!(
-            hptr.load(SeqCst),
-            3,
-            "c:368 — hptr advances by 1"
-        );
+        assert_eq!(hptr.load(SeqCst), 3, "c:368 — hptr advances by 1");
 
         // Push 'y' → second advance.
         ihwaddc(b'y' as i32);
-        assert_eq!(
-            hptr.load(SeqCst),
-            4,
-            "c:368 — hptr advances on each push"
-        );
+        assert_eq!(hptr.load(SeqCst), 4, "c:368 — hptr advances on each push");
 
         // Bang-escape with qbang: qbang=true, c=bangchar → '\\' AND c
         // get pushed, hptr advances by 2.
@@ -6539,10 +6514,7 @@ mod subst_modifier_tests {
     /// Mixed: leading + multi + trailing all trimmed/collapsed.
     #[test]
     fn histreduceblanks_complex_input_normalizes() {
-        assert_eq!(
-            histreduceblanks("   a   b\t\tc   "),
-            "a b c"
-        );
+        assert_eq!(histreduceblanks("   a   b\t\tc   "), "a b c");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -6567,7 +6539,10 @@ mod subst_modifier_tests {
     #[test]
     fn histsplitwords_only_whitespace_returns_no_words() {
         let words = histsplitwords("    ", false);
-        assert!(words.is_empty(), "whitespace-only has no words; got {words:?}");
+        assert!(
+            words.is_empty(),
+            "whitespace-only has no words; got {words:?}"
+        );
     }
 
     /// Leading whitespace doesn't create phantom first word at offset 0.

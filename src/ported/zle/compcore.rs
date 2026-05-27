@@ -21,9 +21,6 @@
 
 #![allow(non_snake_case, non_upper_case_globals, dead_code)]
 
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{Mutex, OnceLock};
-use crate::DPUTS;
 use crate::ported::context::zcontext_restore_partial;
 use crate::ported::module::{gethookdef, runhookdef};
 use crate::ported::params::{getsparam, paramtab, paramtab_hashed_storage, setaparam, setsparam};
@@ -35,19 +32,31 @@ use crate::ported::zle::comp_h::{
     CMF_DELETE, CMF_DISPLINE, CMF_FMULT, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_PARBR, CMF_PARNEST,
     CMF_ROWS,
 };
-use crate::ported::zle::complete::{COMPIPREFIX, COMPLIST, COMPPREFIX, COMPQSTACK, COMPSUFFIX, INCOMPFUNC};
+use crate::ported::zle::complete::{
+    COMPIPREFIX, COMPLIST, COMPPREFIX, COMPQSTACK, COMPSUFFIX, INCOMPFUNC,
+};
 use crate::ported::zle::compmatch::{bld_parts, cline_matched};
 use crate::ported::zle::compresult::{do_ambig_menu, ztat};
 use crate::ported::zle::zle_h::{invalidatelist, COMP_LIST_COMPLETE, COMP_LIST_EXPAND, CUT_RAW};
 use crate::ported::zle::zle_refresh::{CLEARLIST, SHOWINGLIST};
-use crate::ported::zle::zle_tricky::{inststr, MENUCMP, ORIGCS, ORIGLINE, USEGLOB, USEMENU, VALIDLIST, WOULDINSTAB};
+use crate::ported::zle::zle_tricky::{
+    inststr, MENUCMP, ORIGCS, ORIGLINE, USEGLOB, USEMENU, VALIDLIST, WOULDINSTAB,
+};
 use crate::ported::zle::zle_utils::foredel;
-use crate::ported::zsh_h::{isset, Bnull, Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound, Qstring, Quest, Snull, Star, Stringg, Tilde, BASHAUTOLIST, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, RCQUOTES, SORTIT_IGNORING_BACKSLASHES, SORTIT_NUMERICALLY, ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
+use crate::ported::zsh_h::{
+    isset, Bnull, Dnull, Equals, Hat, Inbrace, Inbrack, Inpar, Outbrace, Outpar, Pound, Qstring,
+    Quest, Snull, Star, Stringg, Tilde, BASHAUTOLIST, NUMERICGLOBSORT, PM_HASHED, PM_TYPE,
+    QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, RCQUOTES, SORTIT_IGNORING_BACKSLASHES,
+    SORTIT_NUMERICALLY, ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE,
+};
+use crate::DPUTS;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 // =====================================================================
 // Substrate-blocked stubs — bodies need substrate listed in each
@@ -81,8 +90,8 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
 
     // c:300-307 — compqstack reset.
     let instring = INSTRING.load(Ordering::Relaxed); // c:307
-                                                                                     // c:305 — `compqstack = instring == QT_NONE ? "\\" : <quote-char>`.
-                                                                                     // Inlined `char_from_qt(x)` as `(x as u8) as char`.
+                                                     // c:305 — `compqstack = instring == QT_NONE ? "\\" : <quote-char>`.
+                                                     // Inlined `char_from_qt(x)` as `(x as u8) as char`.
     let head_q: char = if instring == QT_NONE {
         // c:305
         QT_BACKSLASH as u8 as char
@@ -164,10 +173,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     } else {
         ""
     };
-    if let Ok(mut g) = COMPLIST
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-    {
+    if let Ok(mut g) = COMPLIST.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = cl_str.into(); // c:329
     }
     startauto.store(opt_isset("AUTOMENU"), Ordering::Relaxed); // c:331
@@ -196,10 +202,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         // c:342
         // c:344 — error path.
         ZLEMETACS.store(0, Ordering::Relaxed); // c:344
-        foredel(
-            ZLEMETALL.load(Ordering::Relaxed),
-            CUT_RAW,
-        ); // c:345 — `foredel(zlemetall, CUT_RAW)`
+        foredel(ZLEMETALL.load(Ordering::Relaxed), CUT_RAW); // c:345 — `foredel(zlemetall, CUT_RAW)`
         let _ = inststr(
             &ORIGLINE
                 .get_or_init(|| Mutex::new(String::new()))
@@ -207,16 +210,10 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
                 .map(|g| g.clone())
                 .unwrap_or_default(),
         ); // c:346 — `inststr(origline)`
-        ZLEMETACS.store(
-            ORIGCS.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        ); // c:347
+        ZLEMETACS.store(ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed); // c:347
         CLEARLIST.store(1, Ordering::Relaxed); // c:348
         ret = 1;
-        if let Ok(mut g) = MINFO
-            .get_or_init(|| Mutex::new(Menuinfo::default()))
-            .lock()
-        {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.cur = None;
         } // c:350
         if useline.load(Ordering::Relaxed) < 0 {
@@ -260,10 +257,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     } else if useline.load(Ordering::Relaxed) == 0 && uselist.load(Ordering::Relaxed) != 0 {
         // c:374
         ZLEMETACS.store(0, Ordering::Relaxed); // c:375
-        foredel(
-            ZLEMETALL.load(Ordering::Relaxed),
-            CUT_RAW,
-        ); // c:376 — `foredel(zlemetall, CUT_RAW)`
+        foredel(ZLEMETALL.load(Ordering::Relaxed), CUT_RAW); // c:376 — `foredel(zlemetall, CUT_RAW)`
         let _ = inststr(
             &ORIGLINE
                 .get_or_init(|| Mutex::new(String::new()))
@@ -271,10 +265,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
                 .map(|g| g.clone())
                 .unwrap_or_default(),
         ); // c:377 — `inststr(origline)`
-        ZLEMETACS.store(
-            ORIGCS.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        ); // c:378
+        ZLEMETACS.store(ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed); // c:378
         SHOWINGLIST.store(-2, Ordering::Relaxed);
         // c:379
     } else if useline.load(Ordering::Relaxed) == 2 && nm > 1 {
@@ -311,10 +302,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
             }
             ZLEMETACS.store(new_cs as i32, Ordering::Relaxed);
         }
-        if let Ok(mut g) = MINFO
-            .get_or_init(|| Mutex::new(Menuinfo::default()))
-            .lock()
-        {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.cur = None;
         } // c:383
         if forcelist.load(Ordering::Relaxed) != 0 {
@@ -344,8 +332,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
             if SHOWINGLIST.load(Ordering::Relaxed) == 0
                 && uselist.load(Ordering::Relaxed) != 0
                 && LISTSHOWN.load(Ordering::Relaxed) != 0
-                && (USEMENU.load(Ordering::Relaxed) == 2
-                    || oldlist.load(Ordering::Relaxed) != 0)
+                && (USEMENU.load(Ordering::Relaxed) == 2 || oldlist.load(Ordering::Relaxed) != 0)
             {
                 SHOWINGLIST.store(osl, Ordering::Relaxed);
                 // c:395
@@ -383,10 +370,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
             CLEARLIST.store(1, Ordering::Relaxed);
         } // c:428
         ZLEMETACS.store(0, Ordering::Relaxed); // c:429
-        foredel(
-            ZLEMETALL.load(Ordering::Relaxed),
-            CUT_RAW,
-        ); // c:430 — `foredel(zlemetall, CUT_RAW)`
+        foredel(ZLEMETALL.load(Ordering::Relaxed), CUT_RAW); // c:430 — `foredel(zlemetall, CUT_RAW)`
         let _ = inststr(
             &ORIGLINE
                 .get_or_init(|| Mutex::new(String::new()))
@@ -394,10 +378,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
                 .map(|g| g.clone())
                 .unwrap_or_default(),
         ); // c:431 — `inststr(origline)`
-        ZLEMETACS.store(
-            ORIGCS.load(Ordering::Relaxed),
-            Ordering::Relaxed,
-        ); // c:432
+        ZLEMETACS.store(ORIGCS.load(Ordering::Relaxed), Ordering::Relaxed); // c:432
     }
 
     // c:436 — explanation strings.
@@ -408,8 +389,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         && (nm != 1 || dm != 0)
         && useline.load(Ordering::Relaxed) >= 0
         && useline.load(Ordering::Relaxed) != 2
-        && (oldlist.load(Ordering::Relaxed) == 0
-            || LISTSHOWN.load(Ordering::Relaxed) == 0)
+        && (oldlist.load(Ordering::Relaxed) == 0 || LISTSHOWN.load(Ordering::Relaxed) == 0)
     {
         onlyexpl.store(3, Ordering::Relaxed); // c:441
         SHOWINGLIST.store(-2, Ordering::Relaxed);
@@ -1486,7 +1466,6 @@ pub fn set_comp_sep() -> i32 {
 // Brace counters live in zle_tricky.c:114 — re-exported there. Local
 // re-exports here so call sites stay short:
 #[doc(hidden)]
-
 // =====================================================================
 // set_list_array — `Src/Zle/compcore.c:1947`.
 // =====================================================================
@@ -1836,10 +1815,7 @@ pub fn addmatches(
         // c:2215 — add_bmatchers(dat->match).
         crate::ported::zle::compmatch::add_bmatchers(Some(m));
         // c:2217 — addlinknode(matchers, dat->match).
-        if let Ok(mut g) = matchers
-            .get_or_init(|| Mutex::new(Vec::new()))
-            .lock()
-        {
+        if let Ok(mut g) = matchers.get_or_init(|| Mutex::new(Vec::new())).lock() {
             g.push(m.clone());
         }
     }
@@ -2153,7 +2129,7 @@ pub fn add_match_data(
 ) -> Cmatch {
     // c:2663 — DPUTS(!line, "BUG: add_match_data() without cline")
     DPUTS!(line.is_none(), "BUG: add_match_data() without cline"); // c:2663
-                                                                          // c:2657 — pick the active aminfo by `alt` (alternative path = fignore).
+                                                                   // c:2657 — pick the active aminfo by `alt` (alternative path = fignore).
     let _ai_ref = if alt != 0 { &fainfo } else { &ainfo }; // c:2657
                                                            // c:2666-2671 — cline_matched(line); pline; sline.
     cline_matched(&mut line);
@@ -2208,9 +2184,7 @@ pub fn add_match_data(
             // For each contributing string, build a Cline chain via
             // bld_parts and attach to the tail node's .next.
             if psl_local > 0 {
-                let s = bld_parts(
-                    psuf, psl_local, psl_local, None, None,
-                );
+                let s = bld_parts(psuf, psl_local, psl_local, None, None);
                 if let Some(node) = (*tail).as_mut() {
                     node.next = s;
                     while let Some(ref nn) = node.next {
@@ -2230,9 +2204,7 @@ pub fn add_match_data(
                 }
             }
             if isl_local > 0 {
-                let s = bld_parts(
-                    isuf_, isl_local, isl_local, None, None,
-                );
+                let s = bld_parts(isuf_, isl_local, isl_local, None, None);
                 if let Some(node) = (*tail).as_mut() {
                     node.next = s;
                 }
@@ -2244,9 +2216,7 @@ pub fn add_match_data(
                 }
             }
             if qisl_local > 0 {
-                let mut s = bld_parts(
-                    &qisuf_v, qisl_local, qisl_local, None, None,
-                );
+                let mut s = bld_parts(&qisuf_v, qisl_local, qisl_local, None, None);
                 // c:2741 — qsl->flags |= CLF_SUF; qsl->suffix = qsl->prefix.
                 if let Some(qsl) = s.as_mut() {
                     qsl.flags |= crate::ported::zle::comp_h::CLF_SUF;
@@ -2272,8 +2242,7 @@ pub fn add_match_data(
     };
     if pl_local > 0 {
         if ppl_local > 0 {
-            let p =
-                bld_parts(ppre, ppl_local, ppl_local, None, None);
+            let p = bld_parts(ppre, ppl_local, ppl_local, None, None);
             // Walk p to its tail, link its tail's next to line.
             if p.is_some() {
                 let mut p_chain = p;
@@ -2307,8 +2276,7 @@ pub fn add_match_data(
             line = Some(head);
         }
         if ipl_local > 0 {
-            let p =
-                bld_parts(ipre_, ipl_local, ipl_local, None, None);
+            let p = bld_parts(ipre_, ipl_local, ipl_local, None, None);
             if let Some(mut head) = p {
                 let mut t: *mut Option<Box<Cline>> = &mut head.next;
                 unsafe {
@@ -2324,9 +2292,7 @@ pub fn add_match_data(
             }
         }
         if qipl_local > 0 {
-            let p = bld_parts(
-                &qipre_v, qipl_local, qipl_local, None, None,
-            );
+            let p = bld_parts(&qipre_v, qipl_local, qipl_local, None, None);
             if let Some(mut head) = p {
                 let mut t: *mut Option<Box<Cline>> = &mut head.next;
                 unsafe {
@@ -3300,7 +3266,7 @@ pub fn freematch(m: Cmatch, _nbeg: i32, _nend: i32) {
     // c:3577 — `if (!m) return;` — Rust's owned `m` is always valid;
     // dropping it on return runs every field's destructor (c:3579-3596
     // zsfree / zfree calls collapsed).
-    drop(m);                                                                 // c:3598 zfree(m)
+    drop(m); // c:3598 zfree(m)
 }
 
 /// Direct port of `mod_export void freematches(Cmgroup g, int cm)` from
@@ -3315,10 +3281,7 @@ pub fn freematches(g: Vec<Cmgroup>, cm: i32) {
     drop(g);
     if cm != 0 {
         // c:3636
-        if let Ok(mut g) = MINFO
-            .get_or_init(|| Mutex::new(Menuinfo::default()))
-            .lock()
-        {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.cur = None; // c:3637
         }
     }
@@ -3567,13 +3530,11 @@ pub static lastend: AtomicI32 = AtomicI32::new(0); // c:276
 
 /// Port of `mod_export Brinfo brbeg` from `Src/Zle/zle_tricky.c`.
 /// Linked list of opening-brace positions in the word being completed.
-pub static BRBEG: OnceLock<Mutex<Option<Box<Brinfo>>>> =
-    OnceLock::new(); // zle_tricky.c brbeg
+pub static BRBEG: OnceLock<Mutex<Option<Box<Brinfo>>>> = OnceLock::new(); // zle_tricky.c brbeg
 
 /// Port of `mod_export Brinfo brend` from `Src/Zle/zle_tricky.c`.
 /// Linked list of closing-brace positions in the word being completed.
-pub static BREND: OnceLock<Mutex<Option<Box<Brinfo>>>> =
-    OnceLock::new(); // zle_tricky.c brend
+pub static BREND: OnceLock<Mutex<Option<Box<Brinfo>>>> = OnceLock::new(); // zle_tricky.c brend
 
 /// Port of `static int oldmenucmp` from compcore.c:457.
 pub static OLDMENUCMP: AtomicI32 = AtomicI32::new(0); // c:457
@@ -3629,25 +3590,16 @@ fn do_single_first_match() {
         .find(|g| g.mcount > 0)
         .and_then(|g| g.matches.first().cloned());
     if let Some(m) = first {
-        if let Ok(mut g) = MINFO
-            .get_or_init(|| Mutex::new(Menuinfo::default()))
-            .lock()
-        {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.cur = None;
         } // c:407
-        if let Ok(mut g) = MINFO
-            .get_or_init(|| Mutex::new(Menuinfo::default()))
-            .lock()
-        {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.asked = 0;
         } // c:408
           // c:409 — `do_single(m)`. Inlined: drop the Cmatch payload onto
           // MINFO.cur so the listing path picks it up (matches the C
           // behavior of routing the single-match insert through minfo).
-        if let Ok(mut g) = MINFO
-            .get_or_init(|| Mutex::new(Menuinfo::default()))
-            .lock()
-        {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.cur = Some(Box::new(m));
         }
     }
@@ -3762,19 +3714,13 @@ fn env_iparam(name: &str) -> i32 {
 }
 fn lastprebr_set(s: &str) {
     // zle_tricky.c lastprebr
-    if let Ok(mut g) = LASTPREBR
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-    {
+    if let Ok(mut g) = LASTPREBR.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = s.to_string();
     }
 }
 fn lastpostbr_set(s: &str) {
     // zle_tricky.c lastpostbr
-    if let Ok(mut g) = LASTPOSTBR
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-    {
+    if let Ok(mut g) = LASTPOSTBR.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = s.to_string();
     }
 }
@@ -3982,9 +3928,7 @@ fn lexsave() -> usize {
 /// `zcontext_restore_partial(ZCONTEXT_HIST|ZCONTEXT_LEX|ZCONTEXT_PARSE)`.
 fn lexrestore(_token: usize) {
     // lex.c via context.c:117
-    let parts = ZCONTEXT_HIST
-        | ZCONTEXT_LEX
-        | ZCONTEXT_PARSE;
+    let parts = ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE;
     zcontext_restore_partial(parts);
     LEXSAVE_DEPTH.fetch_sub(1, Ordering::SeqCst);
 }
@@ -4009,10 +3953,7 @@ fn inbackt_set(v: i32) {
 }
 fn autoq_set(s: &str) {
     // zle_tricky.c autoq
-    if let Ok(mut g) = AUTOQ
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-    {
+    if let Ok(mut g) = AUTOQ.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = s.to_string();
     }
 }
@@ -4022,13 +3963,11 @@ fn autoq_set(s: &str) {
 /// File-scope holder for `Cmlist bmatchers` — `Src/Zle/compcore.c:236`.
 /// C linked-list of matchers active for brace-matching, populated by
 /// `add_bmatchers` walking the user-installed `Cmatcher` chain.
-pub static bmatchers: OnceLock<Mutex<Option<Box<Cmlist>>>> =
-    OnceLock::new(); // c:236
+pub static bmatchers: OnceLock<Mutex<Option<Box<Cmlist>>>> = OnceLock::new(); // c:236
 
 /// File-scope holder for `Cmlist mstack` — `Src/Zle/compcore.c:236`.
 /// Matcher-stack — current active matcher list for compadd recursion.
-pub static mstack: OnceLock<Mutex<Option<Box<Cmlist>>>> =
-    OnceLock::new(); // c:236
+pub static mstack: OnceLock<Mutex<Option<Box<Cmlist>>>> = OnceLock::new(); // c:236
 
 // ---- Extern stubs for add_match_data's Cline operations ----
 
@@ -4731,25 +4670,16 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let _g = GLOBAL_MUT_LOCK.lock().unwrap();
-        if let Ok(mut g) = MINFO
-            .get_or_init(|| Mutex::new(Menuinfo::default()))
-            .lock()
-        {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             let mut cm = Cmatch::default();
             cm.str = Some("x".into());
             g.cur = Some(Box::new(cm));
             g.asked = 1;
         }
-        if let Ok(mut g) = MINFO
-            .get_or_init(|| Mutex::new(Menuinfo::default()))
-            .lock()
-        {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.cur = None;
         }
-        if let Ok(mut g) = MINFO
-            .get_or_init(|| Mutex::new(Menuinfo::default()))
-            .lock()
-        {
+        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.asked = 0;
         }
         let m = MINFO.get().unwrap().lock().unwrap().clone();

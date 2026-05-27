@@ -6,65 +6,72 @@
 //! associative arrays, parameter attributes, namerefs, scoping,
 //! tied parameters, and all special parameter get/set functions.
 
-use std::collections::{HashMap, HashSet};
-use std::env;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use fusevm::Value;
-use indexmap::IndexMap;
 use crate::config_h::DEFAULT_TMPPREFIX;
-use crate::{DPUTS, DPUTS2};
 use crate::func_body_fmt::FuncBodyFmt;
 use crate::lex::parse_subscript;
 use crate::ported::builtin::{LASTVAL, PPARAMS};
 use crate::ported::config_h::{MACHTYPE, OSTYPE, VENDOR};
 use crate::ported::exec::FORKLEVEL;
 use crate::ported::hashtable::emptycmdnamtable;
-use crate::ported::hist::{bangchar, hashchar, hatchar, histsiz, resizehistents, saveandpophiststack, savehistsiz};
+use crate::ported::hist::{
+    bangchar, hashchar, hatchar, histsiz, resizehistents, saveandpophiststack, savehistsiz,
+};
 use crate::ported::init::SHTTY;
 use crate::ported::lex::untokenize;
+use crate::ported::math::lastbase;
 #[allow(unused_imports)]
 use crate::ported::math::{
     matheval, mathevali, MN_FLOAT, MN_FLOAT as MN_FLT, MN_INTEGER, MN_INTEGER as MN_INT,
 };
-use crate::ported::math::lastbase;
 use crate::ported::mem::{popheap, pushheap};
 use crate::ported::modules::parameter::FUNCSTACK;
 #[allow(unused_imports)]
 use crate::ported::options::{opt_state_get, opt_state_set, optlookup};
 use crate::ported::patchlevel::{ZSH_PATCHLEVEL, ZSH_VERSION};
 use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::zsh_h::PAT_HEAPDUP;
 #[allow(unused_imports)]
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::signals_h::SIGS;
 use crate::ported::string::ztrdup;
+use crate::ported::utils::{
+    adduserdir, arrlen_ge, dec_locallevel, inc_locallevel, metafy, quotedzputs, xsymlink,
+};
 #[allow(unused_imports)]
 use crate::ported::utils::{
     adjustwinsize, argzero, colonsplit, errflag, get_username, inittyptab, itype_end,
     locallevel as locallevel_fn, posixzero, set_argzero, set_locallevel, set_posixzero, unmeta,
-    ztrdup_metafy, zerr, zwarn,
+    zerr, ztrdup_metafy, zwarn,
 };
-use crate::ported::utils::{adduserdir, arrlen_ge, dec_locallevel, inc_locallevel, metafy, quotedzputs, xsymlink};
+use crate::ported::zsh_h::PAT_HEAPDUP;
 #[allow(unused_imports)]
 use crate::ported::zsh_h::{
-    gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar, hashnode, hashtable, isset, mnumber, paramdef,
-    unset, value, HashTable, Marker, Param, ALLEXPORT, ASSPM_AUGMENT,
+    gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar, hashnode, hashtable, isset, mnumber,
+    param, paramdef, unset, value, HashTable, Marker, Param, ALLEXPORT, ASSPM_AUGMENT,
     ASSPM_ENV_IMPORT, ASSPM_WARN, AUTONAMEDIRS, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION,
     ERRFLAG_ERROR, EXECOPT, FS_FUNC, KSHARRAYS, PM_ARRAY, PM_AUTOLOAD, PM_DECLARED, PM_DEFAULTED,
     PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HASHELEM,
-    PM_INTEGER, PM_LEFT, PM_LOCAL, PM_NAMEDDIR, PM_NAMEREF, PM_NORESTORE, PM_READONLY,
+    PM_HIDE, PM_INTEGER, PM_LEFT, PM_LOCAL, PM_NAMEDDIR, PM_NAMEREF, PM_NORESTORE, PM_READONLY,
     PM_READONLY_SPECIAL, PM_REMOVABLE, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR,
-    PM_HIDE, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, PRINT_INCLUDEVALUE,
-    PRINT_KV_PAIR, PRINT_LINE, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY,
-    PRINT_TYPE, PRINT_TYPESET, SCANPM_ARRONLY, SCANPM_CHECKING, SCANPM_ISVAR_AT, SCANPM_KEYMATCH,
-    SCANPM_MATCHKEY, SCANPM_MATCHMANY, SCANPM_MATCHVAL, SCANPM_NONAMEREF, SCANPM_WANTINDEX,
-    SCANPM_WANTKEYS, SCANPM_WANTVALS, TERM_BAD, VALFLAG_EMPTY, VALFLAG_INV, VALFLAG_SUBST,
-    WARNCREATEGLOBAL, WARNNESTEDVAR,TERM_UNKNOWN, param, POSIXARGZERO
+    PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNIQUE, PM_UNSET, PM_UPPER, POSIXARGZERO,
+    PRINT_INCLUDEVALUE, PRINT_KV_PAIR, PRINT_LINE, PRINT_NAMEONLY, PRINT_POSIX_EXPORT,
+    PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, SCANPM_ARRONLY, SCANPM_CHECKING,
+    SCANPM_ISVAR_AT, SCANPM_KEYMATCH, SCANPM_MATCHKEY, SCANPM_MATCHMANY, SCANPM_MATCHVAL,
+    SCANPM_NONAMEREF, SCANPM_WANTINDEX, SCANPM_WANTKEYS, SCANPM_WANTVALS, TERM_BAD, TERM_UNKNOWN,
+    VALFLAG_EMPTY, VALFLAG_INV, VALFLAG_SUBST, WARNCREATEGLOBAL, WARNNESTEDVAR,
 };
-use crate::ported::zsh_h::{HashNode, Inbrack, CBASES, CHASELINKS, HFILE_USE_OPTIONS, Meta, OCTALZEROES, PM_LOWER, PRIVILEGED, SCANPM_ASSIGNING};
+use crate::ported::zsh_h::{
+    HashNode, Inbrack, Meta, CBASES, CHASELINKS, HFILE_USE_OPTIONS, OCTALZEROES, PM_LOWER,
+    PRIVILEGED, SCANPM_ASSIGNING,
+};
 use crate::ported::zsh_system_h::DEFAULT_TIMEFMT;
+use crate::{DPUTS, DPUTS2};
+use fusevm::Value;
+use indexmap::IndexMap;
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Port of `static int lc_update_needed` from `Src/params.c:5850`
 /// (under `#ifdef USE_LOCALE`). Set to 1 by `scanendscope` when a
@@ -152,7 +159,6 @@ pub static locallevel: std::sync::atomic::AtomicI32 = // c:54
 // dispatched on `PM_TYPE(node.flags)`. There is NO `ParamValue` enum in
 // C; do not reintroduce one.
 // ---------------------------------------------------------------------------
-
 
 /// Port of `LCIPDEF(name)` from `Src/params.c:324` —
 /// `IPDEF2(name, lc_blah_gsu, PM_UNSET)`.
@@ -1536,14 +1542,14 @@ pub fn createparamtable() {
         // (HOME_GSU/IFS_GSU/...). Non-special scalars (no match)
         // leave gsu_s as None and fall back to strsetfn/strgetfn.
         let gsu_s: Option<Box<gsu_scalar>> = match ip.name {
-            "HOME" => Some(Box::new(HOME_GSU.clone())),                      // c:248
-            "IFS" => Some(Box::new(IFS_GSU.clone())),                        // c:245
-            "TERM" => Some(Box::new(TERM_GSU.clone())),                      // c:250
-            "TERMINFO" => Some(Box::new(TERMINFO_GSU.clone())),              // c:251
-            "TERMINFO_DIRS" => Some(Box::new(TERMINFODIRS_GSU.clone())),     // c:252
-            "WORDCHARS" => Some(Box::new(WORDCHARS_GSU.clone())),            // c:249
-            "USERNAME" => Some(Box::new(USERNAME_GSU.clone())),              // c:247
-            "KEYBOARD_HACK" => Some(Box::new(KEYBOARDHACK_GSU.clone())),     // c:253
+            "HOME" => Some(Box::new(HOME_GSU.clone())), // c:248
+            "IFS" => Some(Box::new(IFS_GSU.clone())),   // c:245
+            "TERM" => Some(Box::new(TERM_GSU.clone())), // c:250
+            "TERMINFO" => Some(Box::new(TERMINFO_GSU.clone())), // c:251
+            "TERMINFO_DIRS" => Some(Box::new(TERMINFODIRS_GSU.clone())), // c:252
+            "WORDCHARS" => Some(Box::new(WORDCHARS_GSU.clone())), // c:249
+            "USERNAME" => Some(Box::new(USERNAME_GSU.clone())), // c:247
+            "KEYBOARD_HACK" => Some(Box::new(KEYBOARDHACK_GSU.clone())), // c:253
             "HISTCHARS" | "histchars" => Some(Box::new(HISTCHARS_GSU.clone())), // c:246
             _ => None,
         };
@@ -1559,7 +1565,7 @@ pub fn createparamtable() {
             u_val: 0,
             u_dval: 0.0,
             u_hash: None,
-            gsu_s,                                                           // c:840 gsu_s wired
+            gsu_s, // c:840 gsu_s wired
             gsu_i: None,
             gsu_f: None,
             gsu_a: None,
@@ -1621,10 +1627,7 @@ pub fn createparamtable() {
     // through ztrdup_metafy() to escape Meta bytes before storing in
     // the param table; the Rust port mirrors this.
     setsparam("TMPPREFIX", &ztrdup_metafy(DEFAULT_TMPPREFIX)); // c:870
-    setsparam(
-        "TIMEFMT",
-        &ztrdup_metafy(DEFAULT_TIMEFMT),
-    ); // c:871
+    setsparam("TIMEFMT", &ztrdup_metafy(DEFAULT_TIMEFMT)); // c:871
 
     // c:873-876 — HOST from gethostname() (ztrdup_metafy wrap c:875).
     let mut host_buf = [0u8; 256];
@@ -1842,14 +1845,8 @@ pub fn createparamtable() {
     );
     let argv0 = env::args().next().unwrap_or_default();
     setsparam("ZSH_ARGZERO", &ztrdup(&argv0)); // c:965 (ztrdup, not _metafy: posixzero)
-    setsparam(
-        "ZSH_VERSION",
-        &ztrdup_metafy(ZSH_VERSION),
-    ); // c:966 (Config/version.mk VERSION via patchlevel::ZSH_VERSION)
-    setsparam(
-        "ZSH_PATCHLEVEL",
-        &ztrdup_metafy(ZSH_PATCHLEVEL),
-    ); // c:967
+    setsparam("ZSH_VERSION", &ztrdup_metafy(ZSH_VERSION)); // c:966 (Config/version.mk VERSION via patchlevel::ZSH_VERSION)
+    setsparam("ZSH_PATCHLEVEL", &ztrdup_metafy(ZSH_PATCHLEVEL)); // c:967
 
     // c:968-979 — `setaparam("signals", sigptr = zalloc((TRAPCOUNT
     // + 1) * sizeof(char *))); t = sigs; while (t - sigs <= SIGCOUNT)
@@ -2077,7 +2074,7 @@ pub fn createparam(
             width: 0,
             env: None,
             ename: None,
-            old: oldpm,            // c:1137 pm->old = oldpm
+            old: oldpm, // c:1137 pm->old = oldpm
             // c:1136 — C: `pm = zshcalloc(sizeof *pm)`. calloc
             // zeroes pm.level so a freshly created GLOBAL assignment
             // (`x=foo` inside a function) gets level=0 and survives
@@ -2519,8 +2516,7 @@ pub(crate) fn getarg<'a>(
             } else if exact {
                 target == pat
             } else {
-                patcompile(pat, PAT_HEAPDUP as i32, None)
-                    .map_or(false, |p| pattry(&p, target))
+                patcompile(pat, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, target))
             }
         };
         if return_all {
@@ -2677,8 +2673,7 @@ pub(crate) fn getarg<'a>(
             let hit = if exact {
                 s == pat
             } else {
-                patcompile(pat_used, PAT_HEAPDUP as i32, None)
-                    .map_or(false, |p| pattry(&p, s))
+                patcompile(pat_used, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, s))
             };
             if hit {
                 remaining -= 1;
@@ -3106,8 +3101,7 @@ pub fn fetchvalue<'a>(
         // remainder starts with `[` (or the lexer's `Inbrack` token),
         // hand off to `getindex` which fills `v.start`/`v.end`/
         // `v.scanflags` and advances `pptr`.
-        if bracks > 0 && (pptr.starts_with('[') || pptr.starts_with(Inbrack))
-        {
+        if bracks > 0 && (pptr.starts_with('[') || pptr.starts_with(Inbrack)) {
             if getindex(pptr, v, scanflags) != 0 {
                 // c:2290
                 return Some(v); // c:2292
@@ -3119,7 +3113,8 @@ pub fn fetchvalue<'a>(
             // c:2294-2296 — KSHARRAYS implicit `[0]` for bare arr.
             v.end = 1;
             v.scanflags = 0;
-        } else {}
+        } else {
+        }
         return Some(v);
     }
     None
@@ -3183,7 +3178,7 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
         convbase_underscore(
             intgetfn(pm),
             if pm.base > 0 { pm.base } else { 10 }, // c:2373 pm->base
-            pm.width, // c:2373 pm->width for underscore grouping
+            pm.width,                               // c:2373 pm->width for underscore grouping
         )
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
         // c:2375
@@ -3627,9 +3622,9 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 let len = final_str.len();
                 let setfn_ptr = pm.gsu_s.as_ref().map(|g| g.setfn);
                 if let Some(setfn) = setfn_ptr {
-                    setfn(pm, final_str);                                    // c:2748
+                    setfn(pm, final_str); // c:2748
                 } else {
-                    strsetfn(pm, final_str);                                 // c:2748 (default)
+                    strsetfn(pm, final_str); // c:2748 (default)
                 }
                 if (pm.node.flags as u32 & (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z)) != 0
                     && pm.width == 0
@@ -3869,11 +3864,7 @@ pub fn setnumvalue(v: Option<&mut value>, val: mnumber) {
         let s = if (val.type_ & MN_INTEGER) != 0 {
             // c:2862
             // c:2864 — `convbase_underscore(val.u.l, pm->base, pm->width)`.
-            convbase_underscore(
-                val.l,
-                if pm.base > 0 { pm.base } else { 10 },
-                pm.width,
-            )
+            convbase_underscore(val.l, if pm.base > 0 { pm.base } else { 10 }, pm.width)
         } else {
             // c:2867
             // c:2869 — `convfloat_underscore(val.u.d, pm->width)`.
@@ -4199,11 +4190,14 @@ pub fn getsparam(name: &str) -> Option<String> {
                 Some(convfloat(pm.u_dval, pm.base, pm.node.flags as u32))
             } else if let Some(s) = pm.u_str.as_ref() {
                 Some(s.clone())
-            } else { pm.u_arr.as_ref().map(|arr| arr.join(" ")) };
+            } else {
+                pm.u_arr.as_ref().map(|arr| arr.join(" "))
+            };
             if let Some(mut s) = raw {
                 if pad_flags != 0 && pm.width > 0 {
                     let fwidth = pm.width as usize;
-                    let numeric_pm = (pm.node.flags as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT)) != 0;
+                    let numeric_pm =
+                        (pm.node.flags as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT)) != 0;
                     if pad_flags == PM_LEFT || pad_flags == (PM_LEFT | PM_RIGHT_Z) {
                         let trimmed: &str = if pad_flags & PM_RIGHT_Z != 0 {
                             s.trim_start_matches('0')
@@ -4225,7 +4219,9 @@ pub fn getsparam(name: &str) -> Option<String> {
                             if pad_flags & PM_RIGHT_Z != 0 {
                                 let bytes = s.as_bytes();
                                 let mut tpos = 0usize;
-                                while tpos < bytes.len() && (bytes[tpos] == b' ' || bytes[tpos] == b'\t') {
+                                while tpos < bytes.len()
+                                    && (bytes[tpos] == b' ' || bytes[tpos] == b'\t')
+                                {
                                     tpos += 1;
                                 }
                                 if numeric_pm && tpos < bytes.len() && bytes[tpos] == b'-' {
@@ -4238,7 +4234,9 @@ pub fn getsparam(name: &str) -> Option<String> {
                                 {
                                     tpos += 2;
                                 } else if (pm.node.flags as u32 & PM_INTEGER) != 0 {
-                                    if let Some(hash_off) = bytes[tpos..].iter().position(|&b| b == b'#') {
+                                    if let Some(hash_off) =
+                                        bytes[tpos..].iter().position(|&b| b == b'#')
+                                    {
                                         tpos += hash_off + 1;
                                     }
                                 }
@@ -4249,7 +4247,11 @@ pub fn getsparam(name: &str) -> Option<String> {
                                     zero = false;
                                 }
                             }
-                            let pad_char = if (pad_flags & PM_RIGHT_B) != 0 || !zero { ' ' } else { '0' };
+                            let pad_char = if (pad_flags & PM_RIGHT_B) != 0 || !zero {
+                                ' '
+                            } else {
+                                '0'
+                            };
                             let pad_count = fwidth - charlen;
                             let prefix = &s[..valprefend];
                             let rest = &s[valprefend..];
@@ -4620,8 +4622,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     if let Some(key) = subscript {
         match name {
             "functions" => {
-                use crate::ported::zsh_h::param as ParamStruct;
                 use crate::ported::zsh_h::hashnode;
+                use crate::ported::zsh_h::param as ParamStruct;
                 let pm: Box<ParamStruct> = Box::new(ParamStruct {
                     node: hashnode {
                         next: None,
@@ -4651,8 +4653,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 return Some(pm);
             }
             "dis_functions" => {
-                use crate::ported::zsh_h::param as ParamStruct;
                 use crate::ported::zsh_h::hashnode;
+                use crate::ported::zsh_h::param as ParamStruct;
                 let pm: Box<ParamStruct> = Box::new(ParamStruct {
                     node: hashnode {
                         next: None,
@@ -4686,11 +4688,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 // alias via canonical aliastab. Use createaliasnode
                 // with default flags (no ALIAS_GLOBAL / ALIAS_SUFFIX).
                 if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
-                    let node = crate::ported::hashtable::createaliasnode(
-                        key,
-                        val,
-                        0u32,
-                    );
+                    let node = crate::ported::hashtable::createaliasnode(key, val, 0u32);
                     tab.add(node);
                 }
                 unqueue_signals();
@@ -4700,10 +4698,23 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         nam: key.to_string(),
                         flags: 0,
                     },
-                    u_data: 0, u_arr: None, u_str: Some(val.to_string()),
-                    u_val: 0, u_dval: 0.0, u_hash: None,
-                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: Some(val.to_string()),
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
                 }));
             }
             "galiases" => {
@@ -4723,10 +4734,23 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         nam: key.to_string(),
                         flags: 0,
                     },
-                    u_data: 0, u_arr: None, u_str: Some(val.to_string()),
-                    u_val: 0, u_dval: 0.0, u_hash: None,
-                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: Some(val.to_string()),
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
                 }));
             }
             "saliases" => {
@@ -4746,10 +4770,23 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         nam: key.to_string(),
                         flags: 0,
                     },
-                    u_data: 0, u_arr: None, u_str: Some(val.to_string()),
-                    u_val: 0, u_dval: 0.0, u_hash: None,
-                    gsu_s: None, gsu_i: None, gsu_f: None, gsu_a: None, gsu_h: None,
-                    base: 0, width: 0, env: None, ename: None, old: None, level: 0,
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: Some(val.to_string()),
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
                 }));
             }
             _ => {}
@@ -4911,7 +4948,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             u_val: 0,
             u_dval: 0.0,
             u_hash: None,
-            gsu_s,                                                           // c:1149 special gsu wired
+            gsu_s, // c:1149 special gsu wired
             gsu_i: None,
             gsu_f: None,
             gsu_a: None,
@@ -4944,13 +4981,13 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         let pm = tab.get_mut(name).unwrap();
         if pm.gsu_s.is_none() {
             let new_gsu: Option<Box<gsu_scalar>> = match name {
-                "HOME" => Some(Box::new(HOME_GSU.clone())),                  // c:248
-                "IFS" => Some(Box::new(IFS_GSU.clone())),                    // c:245
-                "TERM" => Some(Box::new(TERM_GSU.clone())),                  // c:250
-                "TERMINFO" => Some(Box::new(TERMINFO_GSU.clone())),          // c:251
+                "HOME" => Some(Box::new(HOME_GSU.clone())), // c:248
+                "IFS" => Some(Box::new(IFS_GSU.clone())),   // c:245
+                "TERM" => Some(Box::new(TERM_GSU.clone())), // c:250
+                "TERMINFO" => Some(Box::new(TERMINFO_GSU.clone())), // c:251
                 "TERMINFO_DIRS" => Some(Box::new(TERMINFODIRS_GSU.clone())), // c:252
-                "WORDCHARS" => Some(Box::new(WORDCHARS_GSU.clone())),        // c:249
-                "USERNAME" => Some(Box::new(USERNAME_GSU.clone())),          // c:247
+                "WORDCHARS" => Some(Box::new(WORDCHARS_GSU.clone())), // c:249
+                "USERNAME" => Some(Box::new(USERNAME_GSU.clone())), // c:247
                 "KEYBOARD_HACK" => Some(Box::new(KEYBOARDHACK_GSU.clone())), // c:253
                 "HISTCHARS" | "histchars" => Some(Box::new(HISTCHARS_GSU.clone())), // c:246
                 _ => None,
@@ -5187,7 +5224,10 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     if existed {
         let pm_type = prior_flags as u32 & PM_TYPE(u32::MAX);
         if pm_type != PM_ARRAY && (prior_flags as u32 & PM_SPECIAL) != 0 {
-            zerr(&format!("{}: can't change type of a special parameter", name));
+            zerr(&format!(
+                "{}: can't change type of a special parameter",
+                name
+            ));
             errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
             return None;
         }
@@ -5221,10 +5261,11 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     {
         let prior_arr = {
             let tab = paramtab().read().unwrap();
-            tab.get(name).and_then(|pm| pm.u_arr.clone()).unwrap_or_default()
+            tab.get(name)
+                .and_then(|pm| pm.u_arr.clone())
+                .unwrap_or_default()
         };
-        let appended: Vec<String> =
-            prior_arr.into_iter().chain(val.into_iter()).collect();
+        let appended: Vec<String> = prior_arr.into_iter().chain(val.into_iter()).collect();
         val = appended;
     }
 
@@ -5329,7 +5370,10 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
             // Can't change type of a PM_SPECIAL non-hashed param.
             let pm_type = pm.node.flags as u32 & PM_TYPE(u32::MAX);
             if pm_type != PM_HASHED && (pm.node.flags as u32 & PM_SPECIAL) != 0 {
-                zerr(&format!("{}: can't change type of a special parameter", name));
+                zerr(&format!(
+                    "{}: can't change type of a special parameter",
+                    name
+                ));
                 errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                 return None;
             }
@@ -5465,7 +5509,11 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
             0
         } else {
             let lb = crate::ported::math::lastbase();
-            if lb > 0 { lb } else { 0 }
+            if lb > 0 {
+                lb
+            } else {
+                0
+            }
         };
         let pm: Param = Box::new(param {
             node: hashnode {
@@ -5535,11 +5583,7 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 let s_rendered = if val.type_ == MN_FLOAT {
                     convfloat_underscore(val.d, pm.width)
                 } else {
-                    convbase_underscore(
-                        val.l,
-                        if pm.base > 0 { pm.base } else { 10 },
-                        pm.width,
-                    )
+                    convbase_underscore(val.l, if pm.base > 0 { pm.base } else { 10 }, pm.width)
                 };
                 pm.u_str = Some(s_rendered);
             }
@@ -6197,9 +6241,9 @@ pub fn colonarrgetfn(arr: &[String]) -> String {
 /// generic arrvarsetfn.
 pub fn colonarrsetfn(pm: &mut param, x: Option<String>) {
     let uniq = (pm.node.flags as u32 & PM_UNIQUE) != 0; // c:4339
-    // c:4339-4341 — `arrvarsetfn(pm, x ? colonsplit(...) : NULL);`
-    // The None branch must pass `None` (not `Some(Vec::new())`) so the
-    // PM_SPECIAL + NULL → mkarray(NULL) arm in arrvarsetfn fires.
+                                                        // c:4339-4341 — `arrvarsetfn(pm, x ? colonsplit(...) : NULL);`
+                                                        // The None branch must pass `None` (not `Some(Vec::new())`) so the
+                                                        // PM_SPECIAL + NULL → mkarray(NULL) arm in arrvarsetfn fires.
     let arr = x.map(|s| colonsplit(&s, uniq)); // c:4339
     arrvarsetfn(pm, arr);
 }
@@ -6829,7 +6873,7 @@ pub fn clear_mbstate() {
     // routes through this one entry point per c:Src/params.c
     // setlang(c:4842) which calls clear_mbstate() between setlocale
     // and the per-LC_* re-apply loop.
-    crate::ported::utils::mb_charinit();         // c:utils.c mb_charinit
+    crate::ported::utils::mb_charinit(); // c:utils.c mb_charinit
     crate::ported::pattern::clear_shiftstate(); // c:pattern.c:327 clear_shiftstate
 }
 
@@ -7418,28 +7462,32 @@ pub fn histcharssetfn(_pm: &mut param, x: String) {
 // ---------------------------------------------------------------------
 
 /// Port of `static const struct gsu_scalar home_gsu` from `Src/params.c:248`.
-pub const HOME_GSU: gsu_scalar = gsu_scalar {                                // c:248
+pub const HOME_GSU: gsu_scalar = gsu_scalar {
+    // c:248
     getfn: homegetfn,
     setfn: homesetfn,
     unsetfn: stdunsetfn,
 };
 
 /// Port of `static const struct gsu_scalar ifs_gsu` from `Src/params.c:245`.
-pub const IFS_GSU: gsu_scalar = gsu_scalar {                                 // c:245
+pub const IFS_GSU: gsu_scalar = gsu_scalar {
+    // c:245
     getfn: ifsgetfn,
     setfn: ifssetfn,
     unsetfn: stdunsetfn,
 };
 
 /// Port of `static const struct gsu_scalar term_gsu` from `Src/params.c:250`.
-pub const TERM_GSU: gsu_scalar = gsu_scalar {                                // c:250
+pub const TERM_GSU: gsu_scalar = gsu_scalar {
+    // c:250
     getfn: termgetfn,
     setfn: termsetfn,
     unsetfn: stdunsetfn,
 };
 
 /// Port of `static const struct gsu_scalar terminfo_gsu` from `Src/params.c:251`.
-pub const TERMINFO_GSU: gsu_scalar = gsu_scalar {                            // c:251
+pub const TERMINFO_GSU: gsu_scalar = gsu_scalar {
+    // c:251
     getfn: terminfogetfn,
     setfn: terminfosetfn,
     unsetfn: stdunsetfn,
@@ -7447,7 +7495,8 @@ pub const TERMINFO_GSU: gsu_scalar = gsu_scalar {                            // 
 
 /// Port of `static const struct gsu_scalar terminfodirs_gsu`
 /// from `Src/params.c:252`.
-pub const TERMINFODIRS_GSU: gsu_scalar = gsu_scalar {                        // c:252
+pub const TERMINFODIRS_GSU: gsu_scalar = gsu_scalar {
+    // c:252
     getfn: terminfodirsgetfn,
     setfn: terminfodirssetfn,
     unsetfn: stdunsetfn,
@@ -7455,7 +7504,8 @@ pub const TERMINFODIRS_GSU: gsu_scalar = gsu_scalar {                        // 
 
 /// Port of `static const struct gsu_scalar wordchars_gsu`
 /// from `Src/params.c:249`.
-pub const WORDCHARS_GSU: gsu_scalar = gsu_scalar {                           // c:249
+pub const WORDCHARS_GSU: gsu_scalar = gsu_scalar {
+    // c:249
     getfn: wordcharsgetfn,
     setfn: wordcharssetfn,
     unsetfn: stdunsetfn,
@@ -7463,7 +7513,8 @@ pub const WORDCHARS_GSU: gsu_scalar = gsu_scalar {                           // 
 
 /// Port of `static const struct gsu_scalar username_gsu`
 /// from `Src/params.c:247`.
-pub const USERNAME_GSU: gsu_scalar = gsu_scalar {                            // c:247
+pub const USERNAME_GSU: gsu_scalar = gsu_scalar {
+    // c:247
     getfn: usernamegetfn,
     setfn: usernamesetfn,
     unsetfn: stdunsetfn,
@@ -7471,7 +7522,8 @@ pub const USERNAME_GSU: gsu_scalar = gsu_scalar {                            // 
 
 /// Port of `static const struct gsu_scalar keyboardhack_gsu`
 /// from `Src/params.c:253`.
-pub const KEYBOARDHACK_GSU: gsu_scalar = gsu_scalar {                        // c:253
+pub const KEYBOARDHACK_GSU: gsu_scalar = gsu_scalar {
+    // c:253
     getfn: keyboardhackgetfn,
     setfn: keyboardhacksetfn,
     unsetfn: stdunsetfn,
@@ -7479,7 +7531,8 @@ pub const KEYBOARDHACK_GSU: gsu_scalar = gsu_scalar {                        // 
 
 /// Port of `static const struct gsu_scalar histchars_gsu`
 /// from `Src/params.c:246`.
-pub const HISTCHARS_GSU: gsu_scalar = gsu_scalar {                           // c:246
+pub const HISTCHARS_GSU: gsu_scalar = gsu_scalar {
+    // c:246
     getfn: histcharsgetfn,
     setfn: histcharssetfn,
     unsetfn: stdunsetfn,
@@ -8000,10 +8053,7 @@ pub fn convbase_ptr(v: i64, base: i32) -> (String, i32) {
     if b > 0 {
         if isset(CBASES) && b == 16 {
             s.push_str("0x");
-        } else if isset(CBASES)
-            && b == 8
-            && isset(OCTALZEROES)
-        {
+        } else if isset(CBASES) && b == 8 && isset(OCTALZEROES) {
             s.push('0');
         } else if b != 10 {
             s.push_str(&format!("{}#", b));
@@ -8221,8 +8271,8 @@ pub fn endparamscope() {
     });
 
     dec_locallevel(); // c:5863 locallevel--
-                                            // c:5865 — `saveandpophiststack(0, HFILE_USE_OPTIONS);`. Pop
-                                            // all stack entries with locallevel > current.
+                      // c:5865 — `saveandpophiststack(0, HFILE_USE_OPTIONS);`. Pop
+                      // all stack entries with locallevel > current.
     saveandpophiststack(0, HFILE_USE_OPTIONS as i32);
     let ll = locallevel_fn();
     // c:5869 scanhashtable(paramtab, 0, 0, 0, scanendscope, 0). Walk
@@ -8502,10 +8552,7 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
         // previous Rust port used `print!("{}", floatgetfn(p))`
         // which always renders in Rust's default float format
         // (which differs from C's printf %g / %e formats).
-        print!(
-            "{}",
-            convfloat(floatgetfn(p), p.base, p.node.flags as u32)
-        ); // c:6063
+        print!("{}", convfloat(floatgetfn(p), p.base, p.node.flags as u32)); // c:6063
     } else if t == PM_ARRAY {
         if (printflags & PRINT_KV_PAIR) == 0 {
             print!("(");
@@ -8677,34 +8724,132 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             flags: u32,
         }
         const PMTYPES: &[PmType] = &[
-            PmType { binflag: PM_AUTOLOAD,  string: "undefined",       typeflag: 0,    flags: 0 },
-            PmType { binflag: PM_INTEGER,   string: "integer",         typeflag: b'i', flags: PMTF_USE_BASE },
-            PmType { binflag: PM_EFLOAT,    string: "float",           typeflag: b'E', flags: 0 },
-            PmType { binflag: PM_FFLOAT,    string: "float",           typeflag: b'F', flags: 0 },
-            PmType { binflag: PM_ARRAY,     string: "array",           typeflag: b'a', flags: 0 },
-            PmType { binflag: PM_HASHED,    string: "association",     typeflag: b'A', flags: 0 },
-            PmType { binflag: 0,            string: "local",           typeflag: 0,    flags: PMTF_TEST_LEVEL },
-            PmType { binflag: PM_HIDE,      string: "hide",            typeflag: b'h', flags: 0 },
-            PmType { binflag: PM_LEFT,      string: "left justified",  typeflag: b'L', flags: PMTF_USE_WIDTH },
-            PmType { binflag: PM_RIGHT_B,   string: "right justified", typeflag: b'R', flags: PMTF_USE_WIDTH },
-            PmType { binflag: PM_RIGHT_Z,   string: "zero filled",     typeflag: b'Z', flags: PMTF_USE_WIDTH },
-            PmType { binflag: PM_LOWER,     string: "lowercase",       typeflag: b'l', flags: 0 },
-            PmType { binflag: PM_UPPER,     string: "uppercase",       typeflag: b'u', flags: 0 },
-            PmType { binflag: PM_READONLY,  string: "readonly",        typeflag: b'r', flags: 0 },
-            PmType { binflag: PM_TAGGED,    string: "tagged",          typeflag: b't', flags: 0 },
-            PmType { binflag: PM_EXPORTED,  string: "exported",        typeflag: b'x', flags: 0 },
-            PmType { binflag: PM_UNIQUE,    string: "unique",          typeflag: b'U', flags: 0 },
-            PmType { binflag: PM_TIED,      string: "tied",            typeflag: b'T', flags: 0 },
-            PmType { binflag: PM_NAMEREF,   string: "nameref",         typeflag: b'n', flags: 0 },
+            PmType {
+                binflag: PM_AUTOLOAD,
+                string: "undefined",
+                typeflag: 0,
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_INTEGER,
+                string: "integer",
+                typeflag: b'i',
+                flags: PMTF_USE_BASE,
+            },
+            PmType {
+                binflag: PM_EFLOAT,
+                string: "float",
+                typeflag: b'E',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_FFLOAT,
+                string: "float",
+                typeflag: b'F',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_ARRAY,
+                string: "array",
+                typeflag: b'a',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_HASHED,
+                string: "association",
+                typeflag: b'A',
+                flags: 0,
+            },
+            PmType {
+                binflag: 0,
+                string: "local",
+                typeflag: 0,
+                flags: PMTF_TEST_LEVEL,
+            },
+            PmType {
+                binflag: PM_HIDE,
+                string: "hide",
+                typeflag: b'h',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_LEFT,
+                string: "left justified",
+                typeflag: b'L',
+                flags: PMTF_USE_WIDTH,
+            },
+            PmType {
+                binflag: PM_RIGHT_B,
+                string: "right justified",
+                typeflag: b'R',
+                flags: PMTF_USE_WIDTH,
+            },
+            PmType {
+                binflag: PM_RIGHT_Z,
+                string: "zero filled",
+                typeflag: b'Z',
+                flags: PMTF_USE_WIDTH,
+            },
+            PmType {
+                binflag: PM_LOWER,
+                string: "lowercase",
+                typeflag: b'l',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_UPPER,
+                string: "uppercase",
+                typeflag: b'u',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_READONLY,
+                string: "readonly",
+                typeflag: b'r',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_TAGGED,
+                string: "tagged",
+                typeflag: b't',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_EXPORTED,
+                string: "exported",
+                typeflag: b'x',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_UNIQUE,
+                string: "unique",
+                typeflag: b'U',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_TIED,
+                string: "tied",
+                typeflag: b'T',
+                flags: 0,
+            },
+            PmType {
+                binflag: PM_NAMEREF,
+                string: "nameref",
+                typeflag: b'n',
+                flags: 0,
+            },
         ];
         if (printflags & (PRINT_TYPE | PRINT_TYPESET)) != 0 {
-            let mut doneminus = false;                                       // c:6200
-            for pmptr in PMTYPES.iter() {                                    // c:6204
-                if altname != 0 && altname == pmptr.typeflag {               // c:6207
+            let mut doneminus = false; // c:6200
+            for pmptr in PMTYPES.iter() {
+                // c:6204
+                if altname != 0 && altname == pmptr.typeflag {
+                    // c:6207
                     continue;
                 }
-                let doprint = if (pmptr.flags & PMTF_TEST_LEVEL) != 0 {      // c:6209
-                    hn.level != 0                                            // c:6211
+                let doprint = if (pmptr.flags & PMTF_TEST_LEVEL) != 0 {
+                    // c:6209
+                    hn.level != 0 // c:6211
                 } else if (pmptr.binflag != PM_EXPORTED
                     || hn.level != 0
                     || (f & (PM_LOCAL | PM_ARRAY | PM_HASHED)) != 0)
@@ -8715,29 +8860,36 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 } else {
                     false
                 };
-                if doprint {                                                 // c:6230
-                    if (printflags & PRINT_TYPESET) != 0 {                   // c:6231
-                        if pmptr.typeflag != 0 {                             // c:6232
-                            if !doneminus {                                  // c:6233
-                                print!("-");                                 // c:6234
+                if doprint {
+                    // c:6230
+                    if (printflags & PRINT_TYPESET) != 0 {
+                        // c:6231
+                        if pmptr.typeflag != 0 {
+                            // c:6232
+                            if !doneminus {
+                                // c:6233
+                                print!("-"); // c:6234
                                 doneminus = true;
                             }
-                            print!("{}", pmptr.typeflag as char);            // c:6237
+                            print!("{}", pmptr.typeflag as char); // c:6237
                         }
                     } else {
-                        print!("{} ", pmptr.string);                         // c:6240
+                        print!("{} ", pmptr.string); // c:6240
                     }
-                    if (pmptr.flags & PMTF_USE_BASE) != 0 && hn.base != 0 {  // c:6242
-                        print!("{} ", hn.base);                              // c:6243
+                    if (pmptr.flags & PMTF_USE_BASE) != 0 && hn.base != 0 {
+                        // c:6242
+                        print!("{} ", hn.base); // c:6243
                         doneminus = false;
                     }
-                    if (pmptr.flags & PMTF_USE_WIDTH) != 0 && hn.width != 0 {// c:6245
-                        print!("{} ", hn.width);                             // c:6246
+                    if (pmptr.flags & PMTF_USE_WIDTH) != 0 && hn.width != 0 {
+                        // c:6245
+                        print!("{} ", hn.width); // c:6246
                         doneminus = false;
                     }
                 }
             }
-            if doneminus {                                                   // c:6252
+            if doneminus {
+                // c:6252
                 print!(" ");
             }
         }
@@ -9468,9 +9620,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // ported special_paramdef list registers PPID but nothing
         // populates the paramtab slot from getppid(2), so $PPID
         // always read 0. Route through the libc syscall directly.
-        "PPID" => Some(
-            (unsafe { libc::getppid() } as i64).to_string(),
-        ),
+        "PPID" => Some((unsafe { libc::getppid() } as i64).to_string()),
         // libc syscall callbacks.
         "RANDOM" => Some(randomgetfn().to_string()),
         "TTYIDLE" => Some(ttyidlegetfn().to_string()),
@@ -9526,8 +9676,8 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // pass it through. Each getfn here ignores pm (matches C's
         // UNUSED(Param pm)), so a fallback default-constructed param
         // is acceptable when the table isn't populated yet.
-        "USERNAME" | "HOME" | "TERM" | "WORDCHARS" | "IFS" | "TERMINFO"
-        | "TERMINFO_DIRS" | "KEYBOARD_HACK" | "histchars" | "HISTCHARS" => {
+        "USERNAME" | "HOME" | "TERM" | "WORDCHARS" | "IFS" | "TERMINFO" | "TERMINFO_DIRS"
+        | "KEYBOARD_HACK" | "histchars" | "HISTCHARS" => {
             let tab = paramtab().read().ok()?;
             let pm = tab.get(name)?;
             Some(match name {
@@ -9554,9 +9704,10 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // here from the canonical default. paramtab check first so
         // an explicit user-set value sticks.
         "TIMEFMT" => {
-            let tab_val = paramtab().read().ok().and_then(|t| {
-                t.get("TIMEFMT").and_then(|pm| pm.u_str.clone())
-            });
+            let tab_val = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get("TIMEFMT").and_then(|pm| pm.u_str.clone()));
             if let Some(v) = tab_val {
                 if !v.is_empty() {
                     return Some(v);
@@ -9570,9 +9721,10 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // `${NULLCMD:-x}` reads empty. Route here so the canonical
         // defaults stick when paramtab is empty.
         "NULLCMD" => {
-            let tab_val = paramtab().read().ok().and_then(|t| {
-                t.get("NULLCMD").and_then(|pm| pm.u_str.clone())
-            });
+            let tab_val = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get("NULLCMD").and_then(|pm| pm.u_str.clone()));
             if let Some(v) = tab_val {
                 if !v.is_empty() {
                     return Some(v);
@@ -9587,11 +9739,7 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         // c:Src/params.c lastvalgetfn — `?` and `status` are aliases
         // for the last-command exit code (lastval). C wires them via
         // separate IPDEF entries that share the same getfn.
-        "?" | "status" => Some(
-            LASTVAL
-                .load(Ordering::Relaxed)
-                .to_string(),
-        ),
+        "?" | "status" => Some(LASTVAL.load(Ordering::Relaxed).to_string()),
         // c:Src/loop.c:719 — `try_errflag = -1` reset before
         // each `{ try } always { catch }` block; reads `-1` when
         // outside a try block. zsh exposes TRY_BLOCK_ERROR as an
@@ -9650,8 +9798,8 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             // identifier (isident("!") == 0 per params.c:1288), so
             // those calls failed loudly. Read directly from the
             // canonical store like the C getter does.
-            let pid = crate::ported::modules::clone::lastpid
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let pid =
+                crate::ported::modules::clone::lastpid.load(std::sync::atomic::Ordering::Relaxed);
             Some(pid.to_string())
         }
         // $* / $@ join positional params via IFS first char.
@@ -10148,8 +10296,8 @@ fn paramvals_lock() -> &'static Mutex<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ported::zsh_h::Pound;
     use super::*;
+    use crate::ported::zsh_h::Pound;
     use crate::zsh_h::hashnode;
 
     /// `setscope_base` pushes the param name onto `SCOPEREFS[base]`
@@ -11266,7 +11414,11 @@ mod tests {
         let mut __pm = crate::ported::zsh_h::param::default();
         let saved = homegetfn(&__pm);
         homesetfn(&mut __pm, String::new());
-        assert_eq!(homegetfn(&__pm), "", "c:5126 — empty x stores empty (no panic)");
+        assert_eq!(
+            homegetfn(&__pm),
+            "",
+            "c:5126 — empty x stores empty (no panic)"
+        );
         homesetfn(&mut __pm, saved);
     }
 
@@ -12682,10 +12834,7 @@ mod tests {
     fn setaparam_then_getaparam_roundtrip_basic() {
         with_exec(|| {
             unsetparam("zshrs_rt_a1");
-            setaparam(
-                "zshrs_rt_a1",
-                vec!["a".into(), "b".into(), "c".into()],
-            );
+            setaparam("zshrs_rt_a1", vec!["a".into(), "b".into(), "c".into()]);
             assert_eq!(
                 getaparam("zshrs_rt_a1"),
                 Some(vec!["a".into(), "b".into(), "c".into()])
@@ -12711,10 +12860,7 @@ mod tests {
     fn setaparam_element_with_space_stays_one_element() {
         with_exec(|| {
             unsetparam("zshrs_rt_a3");
-            setaparam(
-                "zshrs_rt_a3",
-                vec!["hi there".into(), "world".into()],
-            );
+            setaparam("zshrs_rt_a3", vec!["hi there".into(), "world".into()]);
             assert_eq!(
                 getaparam("zshrs_rt_a3"),
                 Some(vec!["hi there".into(), "world".into()])
@@ -12846,8 +12992,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         unsetparam("ZP_IS");
         setiparam("ZP_IS", 42);
-        assert_eq!(getsparam("ZP_IS").as_deref(), Some("42"),
-            "integer param reads as string repr");
+        assert_eq!(
+            getsparam("ZP_IS").as_deref(),
+            Some("42"),
+            "integer param reads as string repr"
+        );
         unsetparam("ZP_IS");
     }
 
@@ -12886,8 +13035,11 @@ mod tests {
         unsetparam("ZP_O");
         setsparam("ZP_O", "first");
         setsparam("ZP_O", "second");
-        assert_eq!(getsparam("ZP_O").as_deref(), Some("second"),
-            "scalar overwrites cleanly");
+        assert_eq!(
+            getsparam("ZP_O").as_deref(),
+            Some("second"),
+            "scalar overwrites cleanly"
+        );
         unsetparam("ZP_O");
     }
 
@@ -12948,10 +13100,10 @@ mod tests {
     fn params_corpus_hash_round_trip_basic() {
         let _g = crate::test_util::global_state_lock();
         unsetparam("ZP_H");
-        sethparam("ZP_H", vec![
-            "key1".into(), "val1".into(),
-            "key2".into(), "val2".into(),
-        ]);
+        sethparam(
+            "ZP_H",
+            vec!["key1".into(), "val1".into(), "key2".into(), "val2".into()],
+        );
         let got = gethparam("ZP_H");
         assert!(got.is_some(), "hash param set");
         let g = got.unwrap();
@@ -12975,7 +13127,10 @@ mod tests {
     fn params_corpus_hash_keys_only_returns_keys() {
         let _g = crate::test_util::global_state_lock();
         unsetparam("ZP_HK");
-        sethparam("ZP_HK", vec!["a".into(), "1".into(), "b".into(), "2".into()]);
+        sethparam(
+            "ZP_HK",
+            vec!["a".into(), "1".into(), "b".into(), "2".into()],
+        );
         let keys = gethkparam("ZP_HK");
         assert!(keys.is_some(), "keys-only view exists");
         let k = keys.unwrap();

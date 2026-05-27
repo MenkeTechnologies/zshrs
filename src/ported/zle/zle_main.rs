@@ -22,8 +22,8 @@ use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, Instant};
 
 use super::zle_h::{
-    MOD_CHAR, MOD_CLIP, MOD_LINE, MOD_MULT, MOD_NEG, MOD_NULL, MOD_OSSEL, MOD_PRI, MOD_TMULT,
-    MOD_VIAPP, MOD_VIBUF, ZLE_LASTCOL, ZLE_NOTCOMMAND, widget,
+    widget, MOD_CHAR, MOD_CLIP, MOD_LINE, MOD_MULT, MOD_NEG, MOD_NULL, MOD_OSSEL, MOD_PRI,
+    MOD_TMULT, MOD_VIAPP, MOD_VIBUF, ZLE_LASTCOL, ZLE_NOTCOMMAND,
 };
 use super::zle_keymap::Keymap;
 use super::zle_thingy::Thingy;
@@ -35,13 +35,18 @@ use crate::ported::module::{addhookfunc, deletehookfunc};
 use crate::ported::params::getsparam;
 use crate::ported::utils::{errflag, getshfunc, write_loop, zwarnnam};
 use crate::ported::zle::compcore::LASTCHAR;
+use crate::ported::zle::termquery::mark_output;
 use crate::ported::zle::zle_keymap::{
     curkeymap, curkeymapname, keymapnamtab, linkkeymap, openkeymap, selectkeymap, LOCALKEYMAP,
 };
 use crate::ported::zle::zle_misc::DONE;
 use crate::ported::zle::zle_thingy::rthingy_nocreate;
-use crate::ported::zle::termquery::mark_output;
-use crate::ported::zsh_h::{hashtable, hookdef, module, HashTable, OPT_ARG_SAFE, OPT_ISSET, PM_ARRAY, PM_HASHED, PM_SCALAR, ZLCON_LINE_START, ZLE_CMD_ADD_TO_LINE, ZLE_CMD_CHPWD, ZLE_CMD_GET_KEY, ZLE_CMD_GET_LINE, ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC, ZLE_CMD_READ, ZLE_CMD_REFRESH, ZLE_CMD_RESET_PROMPT, ZLE_CMD_SET_HIST_LINE, ZLE_CMD_SET_KEYMAP, ZLE_CMD_TRASH, ZLRF_HISTORY, ZLRF_NOSETTY};
+use crate::ported::zsh_h::{
+    hashtable, hookdef, module, HashTable, OPT_ARG_SAFE, OPT_ISSET, PM_ARRAY, PM_HASHED, PM_SCALAR,
+    ZLCON_LINE_START, ZLE_CMD_ADD_TO_LINE, ZLE_CMD_CHPWD, ZLE_CMD_GET_KEY, ZLE_CMD_GET_LINE,
+    ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC, ZLE_CMD_READ, ZLE_CMD_REFRESH, ZLE_CMD_RESET_PROMPT,
+    ZLE_CMD_SET_HIST_LINE, ZLE_CMD_SET_KEYMAP, ZLE_CMD_TRASH, ZLRF_HISTORY, ZLRF_NOSETTY,
+};
 
 use crate::ported::zle::zle_h::{change, modifier};
 #[allow(unused_imports)]
@@ -63,9 +68,7 @@ use crate::ported::zle::{
 /// fetchttyinfo/attachtty save state remain on the host side.
 pub fn zsetterm() -> io::Result<()> {
     // c:210
-    let mut termios = termios::Termios::from_fd(
-        TTYFD.load(SeqCst),
-    )?;
+    let mut termios = termios::Termios::from_fd(TTYFD.load(SeqCst))?;
 
     // c:240 — disable canonical + echo + flusho.
     termios.c_lflag &= !(termios::ICANON | termios::ECHO);
@@ -93,7 +96,11 @@ pub fn zsetterm() -> io::Result<()> {
     // VLNEXT (^V) — zsh handles them itself via the key buffer.
     let vdisable: libc::cc_t = {
         let v = unsafe { libc::fpathconf(0, libc::_PC_VDISABLE) };
-        if v >= 0 { v as libc::cc_t } else { 0xff }
+        if v >= 0 {
+            v as libc::cc_t
+        } else {
+            0xff
+        }
     };
     termios.c_cc[libc::VQUIT] = vdisable;
     termios.c_cc[libc::VDISCARD] = vdisable;
@@ -113,11 +120,7 @@ pub fn zsetterm() -> io::Result<()> {
     // reverses the swap so the net effect inside zsh is none.
     termios.c_iflag |= (libc::INLCR | libc::ICRNL) as libc::tcflag_t;
 
-    termios::tcsetattr(
-        TTYFD.load(SeqCst),
-        termios::TCSANOW,
-        &termios,
-    )?;
+    termios::tcsetattr(TTYFD.load(SeqCst), termios::TCSANOW, &termios)?;
     Ok(())
 }
 
@@ -127,10 +130,7 @@ pub fn zsetterm() -> io::Result<()> {
 /// the loop already read but isn't ready to consume.
 pub fn ungetbyte(ch: u8) {
     // c:348
-    KUNGETBUF
-        .lock()
-        .unwrap()
-        .push_front(ch);
+    KUNGETBUF.lock().unwrap().push_front(ch);
 }
 
 /// Push a byte slice back onto the input queue, preserving order.
@@ -141,10 +141,7 @@ pub fn ungetbyte(ch: u8) {
 /// WARNING: param names don't match C — Rust=(s) vs C=(s, len)
 pub fn ungetbytes(s: &[u8]) {
     for &b in s.iter().rev() {
-        KUNGETBUF
-            .lock()
-            .unwrap()
-            .push_front(b);
+        KUNGETBUF.lock().unwrap().push_front(b);
     }
 }
 
@@ -218,7 +215,6 @@ impl Default for modifier {
         }
     }
 }
-
 
 /// Port of `breakread(int fd, char *buf, int n)` from Src/Zle/zle_main.c:381.
 pub fn breakread(fd: i32, buf: &mut [u8], n: usize) -> isize {
@@ -320,11 +316,7 @@ fn calc_timeout(do_keytmout: bool) -> ztmout {
 /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, cptr, full)
 pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     // Check unget buffer first
-    if let Some(b) = KUNGETBUF
-        .lock()
-        .unwrap()
-        .pop_front()
-    {
+    if let Some(b) = KUNGETBUF.lock().unwrap().pop_front() {
         return Some(b);
     }
 
@@ -424,8 +416,7 @@ pub fn getbyte(do_keytmout: bool) -> Option<u8> {
         b
     };
 
-    LASTCHAR
-        .store((b as i32) as i32, SeqCst);
+    LASTCHAR.store((b as i32) as i32, SeqCst);
     Some(b)
 }
 
@@ -602,20 +593,15 @@ pub fn zlecore() {
         // EOF on empty line: matches C's eofchar branch
         // (zle_main.c:1139-1150 — guarded by ZLRF_IGNOREEOF too).
         if ZLELL.load(SeqCst) == 0
-            && LASTCHAR.load(SeqCst)
-                == EOFCHAR.load(SeqCst)
-            && (ZLEREADFLAGS
-                .load(SeqCst)
-                & ZLRF_HISTORY)
-                != 0
+            && LASTCHAR.load(SeqCst) == EOFCHAR.load(SeqCst)
+            && (ZLEREADFLAGS.load(SeqCst) & ZLRF_HISTORY) != 0
         {
             EOFSENT.store(1, SeqCst);
             DONE.store(1, SeqCst);
             continue;
         }
 
-        *LBINDK.lock().unwrap() =
-            BINDK.lock().unwrap().take();
+        *LBINDK.lock().unwrap() = BINDK.lock().unwrap().take();
         *BINDK.lock().unwrap() = Some(thingy.clone());
 
         if let Some(widget) = &thingy.widget {
@@ -635,14 +621,8 @@ pub fn zlecore() {
         handleprefixes();
         if in_vi_cmd_mode()
             && ZLECS.load(SeqCst) > findbol()
-            && (ZLECS.load(SeqCst)
-                == ZLELL.load(SeqCst)
-                || ZLELINE
-                    .lock()
-                    .unwrap()
-                    .get(ZLECS.load(SeqCst))
-                    .copied()
-                    == Some('\n'))
+            && (ZLECS.load(SeqCst) == ZLELL.load(SeqCst)
+                || ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)).copied() == Some('\n'))
             && ZLECS.load(SeqCst) > 0
         {
             ZLECS.fetch_sub(1, SeqCst);
@@ -761,12 +741,7 @@ pub fn execimmortal(func: &str, args: &[String]) -> i32 {
 /// Bindk/metafy boundary management lives on the per-thread Zle
 /// struct already.
 /// Port of `execzlefunc(Thingy func, char **args, int set_bindk, int set_lbindk)` from `Src/Zle/zle_main.c:1420`.
-pub fn execzlefunc(
-    name: &str,
-    args: &[String],
-    set_bindk: i32,
-    set_lbindk: i32,
-) -> i32 {
+pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32) -> i32 {
     // c:1420
     // c:1420 — `if (!func) return 1`.
     if !rthingy_nocreate(name) {
@@ -868,10 +843,7 @@ pub fn handleprefixes() {
 
 /// Port of `savekeymap(char *cmdname, char *oldname, char *newname, Keymap *savemapptr)` from Src/Zle/zle_main.c:1632.
 /// WARNING: param names don't match C — Rust=(oldname, newname) vs C=(cmdname, oldname, newname, savemapptr)
-pub fn savekeymap(
-    oldname: &str,
-    newname: &str,
-) -> Option<std::sync::Arc<Keymap>> {
+pub fn savekeymap(oldname: &str, newname: &str) -> Option<std::sync::Arc<Keymap>> {
     // c:1632
     // C body (c:1634-1651): `km = openkeymap(newname); if (km) {
     //                       *savemap = openkeymap(oldname);
@@ -896,10 +868,7 @@ pub fn savekeymap(
 
 /// Port of `restorekeymap(char *cmdname, char *oldname, char *newname, Keymap savemap)` from Src/Zle/zle_main.c:1656.
 /// WARNING: param names don't match C — Rust=(oldname, savemap) vs C=(cmdname, oldname, newname, savemap)
-pub fn restorekeymap(
-    oldname: &str,
-    savemap: Option<std::sync::Arc<Keymap>>,
-) {
+pub fn restorekeymap(oldname: &str, savemap: Option<std::sync::Arc<Keymap>>) {
     // c:1656
     // C body (c:1657-1666): `if (savemap) { linkkeymap(savemap,
     //                       oldname, 0); unrefkeymap(savemap); }
@@ -1128,20 +1097,14 @@ pub fn scanfindfunc(seq: &str, func: &str, ff: &mut findfunc) {
 /// Port of whereis(UNUSED(char **args)) from zle_main.c
 pub fn whereis(widget_name: &str) -> Vec<String> {
     let mut bindings = Vec::new();
-    let tab = keymapnamtab()
-        .lock()
-        .unwrap();
+    let tab = keymapnamtab().lock().unwrap();
     for (name, node) in tab.iter() {
         let km = &node.keymap;
         // Check single char bindings
         for (i, opt) in km.first.iter().enumerate() {
             if let Some(t) = opt {
                 if t.nam == widget_name {
-                    bindings.push(format!(
-                        "{}:{}",
-                        name,
-                        printbind(&[i as u8])
-                    ));
+                    bindings.push(format!("{}:{}", name, printbind(&[i as u8])));
                 }
             }
         }
@@ -1286,8 +1249,8 @@ pub fn resetprompt() {
 pub fn zle_resetprompt() {
     // c:2058
     reexpandprompt(); // c:2060
-    // Flag for deferred-redisplay observers that still consult it
-    // (zlecore reads ZLE_RESET_NEEDED to know a redraw happened).
+                      // Flag for deferred-redisplay observers that still consult it
+                      // (zlecore reads ZLE_RESET_NEEDED to know a redraw happened).
     ZLE_RESET_NEEDED.store(1, SeqCst);
     if zleactive.load(Ordering::Relaxed) != 0 {
         // c:2061-2062 — `if (zleactive) redisplay(NULL);`
@@ -1354,26 +1317,25 @@ pub fn zlebeforetrap(
         // C uses the global `params` HashTable directly; the Rust
         // paramtab API takes a HashTable arg so we pass a fresh
         // empty one matching the C scope-push semantics.
-        let mut local_scope: HashTable =
-            Box::new(hashtable {
-                hsize: 0,
-                ct: 0,
-                nodes: Vec::new(),
-                tmpdata: 0,
-                hash: None,
-                emptytable: None,
-                filltable: None,
-                cmpnodes: None,
-                addnode: None,
-                getnode: None,
-                getnode2: None,
-                removenode: None,
-                disablenode: None,
-                enablenode: None,
-                freenode: None,
-                printnode: None,
-                scantab: None,
-            });
+        let mut local_scope: HashTable = Box::new(hashtable {
+            hsize: 0,
+            ct: 0,
+            nodes: Vec::new(),
+            tmpdata: 0,
+            hash: None,
+            emptytable: None,
+            filltable: None,
+            cmpnodes: None,
+            addnode: None,
+            getnode: None,
+            getnode2: None,
+            removenode: None,
+            disablenode: None,
+            enablenode: None,
+            freenode: None,
+            printnode: None,
+            scantab: None,
+        });
         crate::ported::params::startparamscope(&mut local_scope);
         // c:2108 — `makezleparams(1)`. Snapshot the ZLE state ($BUFFER
         // etc.) into the paramtab as readonly so trap ported observe
@@ -1570,9 +1532,9 @@ pub fn cleanup_(_m: *const module) -> i32 {
     //                deletehookfunc("after_trap",  zleaftertrap);`
     deletehookfunc("before_trap", zlebeforetrap); // c:2318
     deletehookfunc("after_trap", zleaftertrap); // c:2319
-                                                                       // c:2321-2324 — `deletekeymap(...)`. Drop is automatic on Arc<Keymap>;
-                                                                       // explicit-name unlink from keymapnamtab so the next module load starts
-                                                                       // fresh.
+                                                // c:2321-2324 — `deletekeymap(...)`. Drop is automatic on Arc<Keymap>;
+                                                // explicit-name unlink from keymapnamtab so the next module load starts
+                                                // fresh.
     if let Ok(mut tab) = keymapnamtab().lock() {
         tab.clear();
     }
@@ -1723,7 +1685,6 @@ pub fn zle_reset() {
 
 /// Try to read a byte non-blocking
 fn try_read_byte(buf: &mut [u8]) -> io::Result<bool> {
-
     let mut fds = [libc::pollfd {
         fd: io::stdin().as_raw_fd(),
         events: libc::POLLIN,
@@ -1911,8 +1872,7 @@ pub fn zle_main_entry(cmd: i32, ap: &mut zle_main_entry_args) -> Option<String> 
             // c:2180
             if let zle_main_entry_args::SetHistLine(v) = ap {
                 // c:2182 histline = va_arg
-                histline
-                    .store(*v as i32, SeqCst);
+                histline.store(*v as i32, SeqCst);
             }
         }
         x if x == ZLE_CMD_PREEXEC => {
@@ -2069,14 +2029,8 @@ pub fn in_vi_cmd_mode() -> bool {
 /// host-driven concerns that the bin can layer on top.
 pub fn get_key_cmd() -> Option<Thingy> {
     let km = {
-        let local = LOCALKEYMAP
-            .lock()
-            .unwrap()
-            .clone();
-        let cur = curkeymap
-            .lock()
-            .unwrap()
-            .clone();
+        let local = LOCALKEYMAP.lock().unwrap().clone();
+        let cur = curkeymap.lock().unwrap().clone();
         local.or(cur)?
     };
     let mut buf: Vec<u8> = Vec::with_capacity(8);
@@ -2183,17 +2137,12 @@ fn execute_widget(widget: &widget) {
 fn do_self_insert(c: char) {
     if (INSMODE.load(SeqCst) != 0) {
         // Insert mode
-        ZLELINE
-            .lock()
-            .unwrap()
-            .insert(ZLECS.load(SeqCst), c);
+        ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), c);
         ZLECS.fetch_add(1, SeqCst);
         ZLELL.fetch_add(1, SeqCst);
     } else {
         // Overwrite mode
-        if ZLECS.load(SeqCst)
-            < ZLELL.load(SeqCst)
-        {
+        if ZLECS.load(SeqCst) < ZLELL.load(SeqCst) {
             ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] = c;
         } else {
             ZLELINE.lock().unwrap().push(c);
@@ -2216,8 +2165,7 @@ fn do_self_insert(c: char) {
 /// matching the C `locerror` path at zle_main.c:1992.
 pub fn recursive_edit() -> i32 {
     ZLE_RECURSIVE.fetch_add(1, SeqCst);
-    let old_done =
-        DONE.load(SeqCst) != 0;
+    let old_done = DONE.load(SeqCst) != 0;
     let old_eofsent = EOFSENT.load(SeqCst);
 
     // Mirror zle_main.c:1984-1986 — refresh before entering the
@@ -2235,10 +2183,7 @@ pub fn recursive_edit() -> i32 {
     // via abort_line?" — approximated by checking eofsent.
     let locerror = EOFSENT.load(SeqCst);
 
-    DONE.store(
-        if old_done { 1 } else { 0 },
-        SeqCst,
-    );
+    DONE.store(if old_done { 1 } else { 0 }, SeqCst);
     EOFSENT.store(old_eofsent, SeqCst);
     ZLE_RECURSIVE.fetch_sub(1, SeqCst);
 
@@ -2280,12 +2225,7 @@ pub fn describe_key_briefly() {
                 .lock()
                 .unwrap()
                 .clone()
-                .or_else(|| {
-                    curkeymap
-                        .lock()
-                        .unwrap()
-                        .clone()
-                });
+                .or_else(|| curkeymap.lock().unwrap().clone());
             km.and_then(|k| k.first[c as usize].clone())
         };
         if let Some(thingy) = thingy {
@@ -2328,18 +2268,12 @@ fn display_msg(msg: &str) {
 
 /// The expanded left prompt string (post-`reexpandprompt`).
 pub fn prompt() -> String {
-    LPROMPT
-        .lock()
-        .unwrap()
-        .clone()
+    LPROMPT.lock().unwrap().clone()
 }
 
 /// The expanded right prompt string (RPS1-equivalent).
 pub fn rprompt() -> String {
-    RPROMPT
-        .lock()
-        .unwrap()
-        .clone()
+    RPROMPT.lock().unwrap().clone()
 }
 
 /// Set prompt
@@ -2421,9 +2355,8 @@ pub static PREFIXFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 /// Port of `int zlereadflags` from `Src/Zle/zle_main.c`. ZLRF_*
 /// flags passed to `zleread()` controlling history/setty behaviour.
 /// Default value matches input.c:418 (`ZLRF_HISTORY | ZLRF_NOSETTY`).
-pub static ZLEREADFLAGS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(
-    ZLRF_HISTORY | ZLRF_NOSETTY,
-);
+pub static ZLEREADFLAGS: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(ZLRF_HISTORY | ZLRF_NOSETTY);
 
 /// Port of `int zlecontext` from `Src/Zle/zle_main.c`. ZLCON_*
 /// context tag passed to `zleread()` — distinguishes line-start
@@ -2520,8 +2453,7 @@ pub fn is_emacs() -> bool {
     *n == "emacs" || *n == "main"
 }
 /// Port of `LinkList kring` from `Src/Zle/zle_misc.c`.
-pub static KILLRING: std::sync::Mutex<VecDeque<Vec<char>>> =
-    std::sync::Mutex::new(VecDeque::new());
+pub static KILLRING: std::sync::Mutex<VecDeque<Vec<char>>> = std::sync::Mutex::new(VecDeque::new());
 /// Port of `int kringsize` from `Src/Zle/zle_misc.c`.
 pub static KILLRINGMAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(8);
 
@@ -2534,10 +2466,10 @@ pub static KRINGNUM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 /// KILLRING on kill+replace, re-seeded by [`cuttext`].
 pub static CUTBUF: std::sync::Mutex<crate::ported::zle::zle_h::cutbuffer> = // c:98
     std::sync::Mutex::new(crate::ported::zle::zle_h::cutbuffer {
-        buf: String::new(),
-        len: 0,
-        flags: 0,
-    });
+            buf: String::new(),
+            len: 0,
+            flags: 0,
+        });
 /// Port of `int yanklast` from `Src/Zle/zle_misc.c`.
 pub static YANKLAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Port of `int neg_arg` from `Src/Zle/zle_main.c`.
@@ -2545,8 +2477,7 @@ pub static NEG_ARG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 /// Port of `int mult` from `Src/Zle/zle_main.c`.
 pub static MULT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
 /// Port of `Histent histlist` ZLE-session view from `Src/Zle/zle_hist.c`.
-pub static HISTORY: std::sync::OnceLock<std::sync::Mutex<History>> =
-    std::sync::OnceLock::new();
+pub static HISTORY: std::sync::OnceLock<std::sync::Mutex<History>> = std::sync::OnceLock::new();
 
 /// Check if last command was yank
 pub fn was_yank() -> bool {
@@ -2741,22 +2672,9 @@ mod tests {
         ZLELL.store(3, SeqCst);
         ZLECS.store(3, SeqCst);
         handleundo();
-        assert_eq!(
-            LASTLINE
-                .lock()
-                .unwrap()
-                .iter()
-                .collect::<String>(),
-            "abc"
-        );
-        assert_eq!(
-            LASTLL.load(SeqCst),
-            3
-        );
-        assert_eq!(
-            LASTCS.load(SeqCst),
-            3
-        );
+        assert_eq!(LASTLINE.lock().unwrap().iter().collect::<String>(), "abc");
+        assert_eq!(LASTLL.load(SeqCst), 3);
+        assert_eq!(LASTCS.load(SeqCst), 3);
     }
 
     #[test]
@@ -2778,34 +2696,13 @@ mod tests {
         // c:375 — non-Meta bytes pushed back in reverse.
         zle_reset();
         // Pre-clear unget_buf in case { zle_reset() } leaves anything.
-        KUNGETBUF
-            .lock()
-            .unwrap()
-            .clear();
+        KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(b"abc");
         // After backward walk: ungetbyte('c'), then 'b', then 'a'
         // → unget_buf front = ['a', 'b', 'c'] in read order.
-        assert_eq!(
-            KUNGETBUF
-                .lock()
-                .unwrap()
-                .pop_front(),
-            Some(b'a')
-        );
-        assert_eq!(
-            KUNGETBUF
-                .lock()
-                .unwrap()
-                .pop_front(),
-            Some(b'b')
-        );
-        assert_eq!(
-            KUNGETBUF
-                .lock()
-                .unwrap()
-                .pop_front(),
-            Some(b'c')
-        );
+        assert_eq!(KUNGETBUF.lock().unwrap().pop_front(), Some(b'a'));
+        assert_eq!(KUNGETBUF.lock().unwrap().pop_front(), Some(b'b'));
+        assert_eq!(KUNGETBUF.lock().unwrap().pop_front(), Some(b'c'));
     }
 
     #[test]
@@ -2816,22 +2713,10 @@ mod tests {
         // Encode 'a' meta-quoted: 0x83 followed by 'a' XOR 0x20 = 0x41.
         // So [0x83, 0x41] → emit 0x41 ^ 0x20 = 0x61 = 'a'.
         zle_reset();
-        KUNGETBUF
-            .lock()
-            .unwrap()
-            .clear();
+        KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(&[0x83, 0x41]);
-        assert_eq!(
-            KUNGETBUF
-                .lock()
-                .unwrap()
-                .pop_front(),
-            Some(b'a')
-        );
-        assert!(KUNGETBUF
-            .lock()
-            .unwrap()
-            .is_empty());
+        assert_eq!(KUNGETBUF.lock().unwrap().pop_front(), Some(b'a'));
+        assert!(KUNGETBUF.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -2841,50 +2726,20 @@ mod tests {
         // 'X' + Meta + 'a'XOR0x20 + 'Z' → 3 chars: 'X', 'a', 'Z'.
         // Encoded: [0x58, 0x83, 0x41, 0x5a].
         zle_reset();
-        KUNGETBUF
-            .lock()
-            .unwrap()
-            .clear();
+        KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(&[0x58, 0x83, 0x41, 0x5a]);
-        assert_eq!(
-            KUNGETBUF
-                .lock()
-                .unwrap()
-                .pop_front(),
-            Some(b'X')
-        );
-        assert_eq!(
-            KUNGETBUF
-                .lock()
-                .unwrap()
-                .pop_front(),
-            Some(b'a')
-        );
-        assert_eq!(
-            KUNGETBUF
-                .lock()
-                .unwrap()
-                .pop_front(),
-            Some(b'Z')
-        );
-        assert!(KUNGETBUF
-            .lock()
-            .unwrap()
-            .is_empty());
+        assert_eq!(KUNGETBUF.lock().unwrap().pop_front(), Some(b'X'));
+        assert_eq!(KUNGETBUF.lock().unwrap().pop_front(), Some(b'a'));
+        assert_eq!(KUNGETBUF.lock().unwrap().pop_front(), Some(b'Z'));
+        assert!(KUNGETBUF.lock().unwrap().is_empty());
     }
 
     #[test]
     fn ungetbytes_unmeta_empty_input() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        KUNGETBUF
-            .lock()
-            .unwrap()
-            .clear();
+        KUNGETBUF.lock().unwrap().clear();
         ungetbytes_unmeta(b"");
-        assert!(KUNGETBUF
-            .lock()
-            .unwrap()
-            .is_empty());
+        assert!(KUNGETBUF.lock().unwrap().is_empty());
     }
 }

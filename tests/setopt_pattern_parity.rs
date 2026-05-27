@@ -5,32 +5,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -53,7 +87,9 @@ mod basic {
     /// `unsetopt extendedglob` toggles back.
     #[test]
     fn unsetopt_clears() {
-        assert_parity(r#"setopt extendedglob; unsetopt extendedglob; [[ -o extendedglob ]]; echo $?"#);
+        assert_parity(
+            r#"setopt extendedglob; unsetopt extendedglob; [[ -o extendedglob ]]; echo $?"#,
+        );
     }
 }
 
@@ -75,7 +111,9 @@ mod underscore_case_alias {
     /// `no_extended_glob` is the negation form.
     #[test]
     fn no_prefix_negates() {
-        assert_parity(r#"setopt extendedglob; setopt no_extendedglob; [[ -o extendedglob ]]; echo $?"#);
+        assert_parity(
+            r#"setopt extendedglob; setopt no_extendedglob; [[ -o extendedglob ]]; echo $?"#,
+        );
     }
 }
 
@@ -122,7 +160,9 @@ mod set_dash_o {
     /// `set +o name` disables.
     #[test]
     fn set_plus_o_disables() {
-        assert_parity(r#"set -o extendedglob; set +o extendedglob; [[ -o extendedglob ]]; echo $?"#);
+        assert_parity(
+            r#"set -o extendedglob; set +o extendedglob; [[ -o extendedglob ]]; echo $?"#,
+        );
     }
 }
 
@@ -176,11 +216,13 @@ mod interactive_comments {
     /// Default zsh non-interactive: comments work in scripts.
     #[test]
     fn comments_in_script() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 # this is a comment
 echo hi
 # trailing
-"#);
+"#,
+        );
     }
 
     /// `setopt interactive_comments` enables `#` in interactive shells —
@@ -197,7 +239,9 @@ mod glob_options {
     /// `setopt null_glob` → unmatched globs become empty.
     #[test]
     fn null_glob_unmatched_empty() {
-        assert_parity(r#"setopt null_glob; for f in /tmp/nonexistent_xyz_*.txt; do echo "[$f]"; done; echo done"#);
+        assert_parity(
+            r#"setopt null_glob; for f in /tmp/nonexistent_xyz_*.txt; do echo "[$f]"; done; echo done"#,
+        );
     }
 
     /// `setopt no_match` (default) → unmatched globs error.
@@ -219,7 +263,9 @@ mod option_precedence {
     /// Last setopt wins.
     #[test]
     fn last_setopt_wins() {
-        assert_parity(r#"setopt extendedglob; unsetopt extendedglob; setopt extendedglob; [[ -o extendedglob ]]; echo $?"#);
+        assert_parity(
+            r#"setopt extendedglob; unsetopt extendedglob; setopt extendedglob; [[ -o extendedglob ]]; echo $?"#,
+        );
     }
 }
 
@@ -230,7 +276,9 @@ mod option_persist_in_subshell {
     #[test]
     #[ignore = "ZSHRS BUG: nested command-substitution loses [[ -o opt ]] exit code"]
     fn options_inherited_by_subshell() {
-        assert_parity(r#"setopt extendedglob; (echo "[[ -o extendedglob ]] is: $([[ -o extendedglob ]]; echo $?)")"#);
+        assert_parity(
+            r#"setopt extendedglob; (echo "[[ -o extendedglob ]] is: $([[ -o extendedglob ]]; echo $?)")"#,
+        );
     }
 
     /// Options set in subshell don't leak out.

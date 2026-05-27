@@ -75,7 +75,10 @@ pub fn _widgets(args: &[String]) -> i32 {
     // sh:6
     let (argv, pattern_arr) = run_zparseopts_widgets(args, seed);
     // `pattern_arr[1]` is the value of -g (after the literal -g).
-    let pat = pattern_arr.get(1).cloned().unwrap_or_else(|| "*".to_string());
+    let pat = pattern_arr
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| "*".to_string());
 
     // Collect widget keys whose value-string matches the pattern.
     let prog = patcompile(&pat, 0, None);

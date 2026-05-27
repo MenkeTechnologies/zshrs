@@ -15,11 +15,6 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
-use libc::{
-    S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP,
-    S_IXOTH, S_IXUSR,
-};
-use crate::{DPUTS, DPUTS1};
 use crate::init::zleentry;
 use crate::params::getsparam_u;
 use crate::ported::builtin::{BUILTINS, SFCONTEXT, STOPMSG};
@@ -29,6 +24,11 @@ use crate::ported::hashtable::shfunctab_lock;
 use crate::ported::hist::{bangchar, chrealpath};
 use crate::ported::init::SHTTY;
 use crate::ported::modules::clone::{coprocin, coprocout, mypgrp};
+use crate::{DPUTS, DPUTS1};
+use libc::{
+    S_IRGRP, S_IROTH, S_IRUSR, S_ISGID, S_ISUID, S_ISVTX, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP,
+    S_IXOTH, S_IXUSR,
+};
 // SHTTY imported under an alias to avoid collision with the
 // `SHTTY: i32` function parameters at fdsettyinfo/fdgettyinfo
 // (Rule E — C uses SHTTY as both the global and the parameter name).
@@ -40,12 +40,21 @@ use crate::ported::params::{
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
-use crate::ported::zsh_h::{dirsav, hashnode, interact, isset, nameddir, opt_name, unset, AUTONAMEDIRS, BEEP, CSHJUNKIEQUOTES, DEFAULT_IFS, DVORAK, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK, FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, LAST_NORMAL_TOK, MULTIBYTE, Marker, Meta, Dash, NICEFLAG_HEAP, NICEFLAG_NODUP, NICEFLAG_QUOTE, Nularg, ND_NOABBREV, ND_USERNAME, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, Pound, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, SHINSTDIN, Snull, SPECCHARS, XTRACE, ZLE_CMD_TRASH, CHASELINKS, BANGHIST, SFC_SUBST, RMSTARWAIT, GLOBDOTS, jobbing, HISTFLAG_NOEXEC, shfunc};
+use crate::ported::zsh_h::{
+    dirsav, hashnode, interact, isset, jobbing, nameddir, opt_name, shfunc, unset, Dash, Marker,
+    Meta, Nularg, Pound, Snull, AUTONAMEDIRS, BANGHIST, BEEP, CHASELINKS, CSHJUNKIEQUOTES,
+    DEFAULT_IFS, DVORAK, EMULATE_KSH, EMULATE_SH, EMULATION, FDT_EXTERNAL, FDT_FLOCK,
+    FDT_FLOCK_EXEC, FDT_INTERNAL, FDT_MODULE, FDT_UNUSED, GLOBDOTS, HISTFLAG_NOEXEC,
+    LAST_NORMAL_TOK, MULTIBYTE, ND_NOABBREV, ND_USERNAME, NICEFLAG_HEAP, NICEFLAG_NODUP,
+    NICEFLAG_QUOTE, OCTALZEROES, PATCHARS, POSIXIDENTIFIERS, PRINTEIGHTBIT, QT_BACKSLASH,
+    QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE,
+    QT_SINGLE, QT_SINGLE_OPTIONAL, RCQUOTES, RMSTARWAIT, SFC_SUBST, SHINSTDIN, SPECCHARS, XTRACE,
+    ZLE_CMD_TRASH,
+};
 use crate::ported::zsh_system_h::DEFAULT_WORDCHARS;
 use crate::ported::ztype_h::{
     imeta, itok, iwsep, IALNUM, IALPHA, IBLANK, ICNTRL, IDIGIT, IIDENT, IMETA, INBLANK, INULL,
-    IPATTERN, ISEP, ISPECIAL, ITOK,
-    IUSER, IWORD, IWSEP, TYPTAB, TYPTAB_FLAGS, ZISPRINT,
+    IPATTERN, ISEP, ISPECIAL, ITOK, IUSER, IWORD, IWSEP, TYPTAB, TYPTAB_FLAGS, ZISPRINT,
     ZTF_BANGCHAR, ZTF_INIT, ZTF_INTERACT, ZTF_SP_COMMA,
 };
 
@@ -565,20 +574,32 @@ pub fn wcs_nicechar_sel(
                 "^?".to_string()
             };
             // c:686 widthp = (s - buf) + wcw (wcw for '?' = 1).
-            if let Some(wp) = widthp { *wp = buf.chars().count(); }
-            if let Some(sp) = swidep { *sp = buf.len(); }
+            if let Some(wp) = widthp {
+                *wp = buf.chars().count();
+            }
+            if let Some(sp) = swidep {
+                *sp = buf.len();
+            }
             return buf;
         } else if c == '\n' {
             // c:625-627 — `\n` literal.
             buf = "\\n".to_string();
-            if let Some(wp) = widthp { *wp = 2; }
-            if let Some(sp) = swidep { *sp = buf.len(); }
+            if let Some(wp) = widthp {
+                *wp = 2;
+            }
+            if let Some(sp) = swidep {
+                *sp = buf.len();
+            }
             return buf;
         } else if c == '\t' {
             // c:628-630 — `\t` literal.
             buf = "\\t".to_string();
-            if let Some(wp) = widthp { *wp = 2; }
-            if let Some(sp) = swidep { *sp = buf.len(); }
+            if let Some(wp) = widthp {
+                *wp = 2;
+            }
+            if let Some(sp) = swidep {
+                *sp = buf.len();
+            }
             return buf;
         } else if cv < 0x20 {
             // c:631-638 — ^X / \C-X for controls (excluding \n, \t).
@@ -588,8 +609,12 @@ pub fn wcs_nicechar_sel(
             } else {
                 format!("^{}", cc)
             };
-            if let Some(wp) = widthp { *wp = buf.chars().count(); }
-            if let Some(sp) = swidep { *sp = buf.len(); }
+            if let Some(wp) = widthp {
+                *wp = buf.chars().count();
+            }
+            if let Some(sp) = swidep {
+                *sp = buf.len();
+            }
             return buf;
         }
         // c:639-641 — c >= 0x80 non-printable falls through to ret=-1
@@ -597,8 +622,12 @@ pub fn wcs_nicechar_sel(
     } else if cv < 0x80 {
         // c:644-704 — printable ASCII: emit raw char. wcw=1.
         buf = c.to_string();
-        if let Some(wp) = widthp { *wp = 1; }
-        if let Some(sp) = swidep { *sp = buf.len(); }
+        if let Some(wp) = widthp {
+            *wp = 1;
+        }
+        if let Some(sp) = swidep {
+            *sp = buf.len();
+        }
         return buf;
     }
     // c:644-678 — high-bit char: try UTF-8 encode first.
@@ -606,8 +635,12 @@ pub fn wcs_nicechar_sel(
         // c:681-693 — printable wide char: emit raw UTF-8.
         buf = c.to_string();
         let wcw = zwcwidth(c) as usize;
-        if let Some(wp) = widthp { *wp = wcw; }
-        if let Some(sp) = swidep { *sp = buf.len(); }
+        if let Some(wp) = widthp {
+            *wp = wcw;
+        }
+        if let Some(sp) = swidep {
+            *sp = buf.len();
+        }
         return buf;
     }
     // c:656-678 — non-printable wide: hex escape (or fall back to byte
@@ -615,37 +648,45 @@ pub fn wcs_nicechar_sel(
     if cv >= 0x10000 {
         // c:656-659 — `\U%.8x` (10 chars).
         buf = format!("\\U{:08x}", cv);
-        if let Some(wp) = widthp { *wp = 10; }
-        if let Some(sp) = swidep { *sp = buf.len(); }
+        if let Some(wp) = widthp {
+            *wp = 10;
+        }
+        if let Some(sp) = swidep {
+            *sp = buf.len();
+        }
         buf
     } else if cv >= 0x100 {
         // c:660-663 — `\u%.4x` (6 chars).
         buf = format!("\\u{:04x}", cv);
-        if let Some(wp) = widthp { *wp = 6; }
-        if let Some(sp) = swidep { *sp = buf.len(); }
+        if let Some(wp) = widthp {
+            *wp = 6;
+        }
+        if let Some(sp) = swidep {
+            *sp = buf.len();
+        }
         buf
     } else {
         // c:664-674 — fall back to byte nicechar_sel.
         buf = nicechar_sel(c, quotable);
         // c:670-671 — `*widthp = ztrlen(buf);` (display width respects
         // metafied chars). `ztrlen` counts visible cells.
-        if let Some(wp) = widthp { *wp = ztrlen(&buf); }
+        if let Some(wp) = widthp {
+            *wp = ztrlen(&buf);
+        }
         // c:672-673 — `*swidep = buf + strlen(buf);` (no trailing meta
         // since nicechar_sel ASCII output).
-        if let Some(sp) = swidep { *sp = buf.len(); }
+        if let Some(sp) = swidep {
+            *sp = buf.len();
+        }
         buf
     }
 }
 
 /// Port of `wcs_nicechar(wchar_t c, size_t *widthp, char **swidep)` from `Src/utils.c:709`.
 /// C body: `return wcs_nicechar_sel(c, widthp, swidep, 0);`
-pub fn wcs_nicechar(
-    c: char,
-    widthp: Option<&mut usize>,
-    swidep: Option<&mut usize>,
-) -> String {
+pub fn wcs_nicechar(c: char, widthp: Option<&mut usize>, swidep: Option<&mut usize>) -> String {
     // c:709
-    wcs_nicechar_sel(c, widthp, swidep, false)                               // c:711
+    wcs_nicechar_sel(c, widthp, swidep, false) // c:711
 }
 
 /// Port of `int is_wcs_nicechar(wchar_t c)` from Src/utils.c:720.
@@ -751,8 +792,8 @@ pub fn pathprog(prog: &str) -> Option<PathBuf> {
             // (from PATH entries or prog name with metafy lead bytes)
             // would silently miss valid executables.
             let unmeta_path = unmeta(full_path.to_str().unwrap_or("")); // c:776 unmeta(buf)
-                                                                                              // c:777-779 — `access(F_OK) == 0 && stat >= 0 && !S_ISDIR`.
-                                                                                              // is_file() folds existence + stat + not-dir into one.
+                                                                        // c:777-779 — `access(F_OK) == 0 && stat >= 0 && !S_ISDIR`.
+                                                                        // is_file() folds existence + stat + not-dir into one.
             if let Ok(meta) = fs::metadata(&unmeta_path) {
                 if meta.is_file() {
                     // Return the unmeta'd path since that's what
@@ -1627,14 +1668,10 @@ pub fn preprompt() {
     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::NOTIFY) {
         if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
-            let long_list = crate::ported::zsh_h::isset(
-                crate::ported::zsh_h::LONGLISTJOBS,
-            );
+            let long_list = crate::ported::zsh_h::isset(crate::ported::zsh_h::LONGLISTJOBS);
             for i in 1..guard.len() {
                 if (guard[i].stat & crate::ported::zsh_h::STAT_CHANGED) != 0 {
-                    let s = crate::ported::jobs::printjob(
-                        &guard[i], i, long_list, None, None,
-                    );
+                    let s = crate::ported::jobs::printjob(&guard[i], i, long_list, None, None);
                     if !s.is_empty() {
                         eprint!("{}", s);
                     }
@@ -1680,9 +1717,7 @@ pub fn preprompt() {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    if mailcheck > 0
-        && (currentmailcheck - LAST_MAILCHECK.load(Ordering::Relaxed)) > mailcheck
-    {
+    if mailcheck > 0 && (currentmailcheck - LAST_MAILCHECK.load(Ordering::Relaxed)) > mailcheck {
         // c:1597 — `if (mailpath && *mailpath && **mailpath)`
         let mailpath = crate::ported::params::getaparam("MAILPATH");
         let has_mailpath = mailpath
@@ -2348,26 +2383,18 @@ pub fn zclose(fd: i32) -> i32 {
                 // c:2136
             }
             fdtable_set(fd, FDT_UNUSED); // c:2137
-                                                               // c:2138-2139 — shrink max_zsh_fd past trailing UNUSED slots.
+                                         // c:2138-2139 — shrink max_zsh_fd past trailing UNUSED slots.
             let mut m = MAX_ZSH_FD.load(Ordering::Relaxed);
             while m > 0 && fdtable_get(m) == FDT_UNUSED {
                 m -= 1;
             }
             MAX_ZSH_FD.store(m, Ordering::Relaxed);
             // c:2140-2143 — coproc fd tracking.
-            if fd
-                == coprocin
-                    .load(Ordering::Relaxed)
-            {
-                coprocin
-                    .store(-1, Ordering::Relaxed);
+            if fd == coprocin.load(Ordering::Relaxed) {
+                coprocin.store(-1, Ordering::Relaxed);
             }
-            if fd
-                == coprocout
-                    .load(Ordering::Relaxed)
-            {
-                coprocout
-                    .store(-1, Ordering::Relaxed);
+            if fd == coprocout.load(Ordering::Relaxed) {
+                coprocout.store(-1, Ordering::Relaxed);
             }
         }
         #[cfg(unix)]
@@ -2526,10 +2553,10 @@ pub fn tuupper(c: char) -> char {
 /// `len > strlen(t)` (UB in C; explicitly bounded in Rust).
 pub fn ztrncpy(s: &mut String, t: &str, len: usize) {
     // c:2320
-    s.clear();                                                               // C overwrites from start of *s
-    let take = len.min(t.len());                                             // c:2322 while (len--)
-    s.push_str(&t[..take]);                                                  // c:2322 *s++ = *t++
-    // c:2325 — `*s = '\0';` (implicit in Rust String length)
+    s.clear(); // C overwrites from start of *s
+    let take = len.min(t.len()); // c:2322 while (len--)
+    s.push_str(&t[..take]); // c:2322 *s++ = *t++
+                            // c:2325 — `*s = '\0';` (implicit in Rust String length)
 }
 
 /// Port of `void strucpy(char **s, char *t)` from `Src/utils.c:2331-2337`.
@@ -2549,9 +2576,9 @@ pub fn ztrncpy(s: &mut String, t: &str, len: usize) {
 /// is implicit in Rust's owning-String model.
 pub fn strucpy(s: &mut String, t: &str) {
     // c:2331
-    s.push_str(t);                                                           // c:2335 `*u++ = *t++` loop
-    // c:2336 — `*s = u - 1;` — pointer-advance is implicit in Rust
-    // (`s.len()` is the new end-of-string position).
+    s.push_str(t); // c:2335 `*u++ = *t++` loop
+                   // c:2336 — `*s = u - 1;` — pointer-advance is implicit in Rust
+                   // (`s.len()` is the new end-of-string position).
 }
 
 /// Port of `void struncpy(char **s, char *t, int n)` from `Src/utils.c:2341-2350`.
@@ -2841,9 +2868,7 @@ pub fn zstrtoul_underscore(s: &str) -> Option<u64> {
     } else if s.starts_with("0b") || s.starts_with("0B") {
         // c:2540
         (2, &s[2..])
-    } else if s.starts_with('0')
-        && s.len() > 1
-        && isset(OCTALZEROES)
+    } else if s.starts_with('0') && s.len() > 1 && isset(OCTALZEROES)
     // c:2543
     {
         (8, &s[1..])
@@ -2974,19 +2999,21 @@ pub fn zmonotime(tloc: Option<&mut i64>) -> i64 {
     #[cfg(unix)]
     {
         // c:2782 — `struct timespec ts;`
-        let mut ts = libc::timespec {                                        // c:2782
+        let mut ts = libc::timespec {
+            // c:2782
             tv_sec: 0,
             tv_nsec: 0,
         };
         // c:2783 — `zgettime_monotonic_if_available(&ts);`
         unsafe {
-            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);             // c:2783
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts); // c:2783
         }
         // c:2784-2785 — `if (tloc) *tloc = ts.tv_sec;`
-        if let Some(t) = tloc {                                              // c:2784
-            *t = ts.tv_sec as i64;                                           // c:2785
+        if let Some(t) = tloc {
+            // c:2784
+            *t = ts.tv_sec as i64; // c:2785
         }
-        ts.tv_sec as i64                                                     // c:2786 return ts.tv_sec
+        ts.tv_sec as i64 // c:2786 return ts.tv_sec
     }
     #[cfg(not(unix))]
     {
@@ -3106,8 +3133,8 @@ pub fn checkrmall(s: &str) -> bool {
                             // c:2880-2892 — opendir + readdir loop, count entries (skip
                             // dotfiles when !GLOBDOTS), cap at max_count.
     let ignoredots = !isset(GLOBDOTS); // c:2881
-    // c:2880 — `if (!(dir = opendir(unmeta(s)))) return;` then
-    //          `while ((fn = zreaddir(dir, 1))) { ... }`.
+                                       // c:2880 — `if (!(dir = opendir(unmeta(s)))) return;` then
+                                       //          `while ((fn = zreaddir(dir, 1))) { ... }`.
     if let Ok(mut dir) = fs::read_dir(s_abs) {
         while let Some(fname) = zreaddir(&mut dir, 1) {
             if ignoredots && fname.starts_with('.') {
@@ -3151,8 +3178,8 @@ pub fn checkrmall(s: &str) -> bool {
     }
     // c:2905 — `nicezputs(s, shout)` — escape non-printables in path.
     let _ = nicezputs(s_abs, &mut stderr_w); // c:2905
-                                                      // c:2906-2912 — RMSTARWAIT: print "? (waiting ten seconds)",
-                                                      // flush, beep, sleep 10, then newline.
+                                             // c:2906-2912 — RMSTARWAIT: print "? (waiting ten seconds)",
+                                             // flush, beep, sleep 10, then newline.
     if isset(RMSTARWAIT) {
         // c:2906
         let _ = write!(stderr_w, "? (waiting ten seconds)"); // c:2907
@@ -3170,13 +3197,13 @@ pub fn checkrmall(s: &str) -> bool {
         return false; // c:2914
     }
     // c:2915-2917 — emit "[yn]? ", flush, beep.
-    let _ = io::stderr().write_all(b" [yn]? ");                              // c:2915 nicezputs of " [yn]? "
-    let _ = io::stderr().flush();                                            // c:2916
-    zbeep();                                                                 // c:2917
-    // c:2918 — `return (getquery("ny", 1) == 'y');`. Default-first-
-    // char is 'n' (no) — getquery's first valid char is the default
-    // returned when the user just hits Enter.
-    getquery(Some("ny"), 1) == b'y' as i32                                   // c:2918
+    let _ = io::stderr().write_all(b" [yn]? "); // c:2915 nicezputs of " [yn]? "
+    let _ = io::stderr().flush(); // c:2916
+    zbeep(); // c:2917
+             // c:2918 — `return (getquery("ny", 1) == 'y');`. Default-first-
+             // char is 'n' (no) — getquery's first valid char is the default
+             // returned when the user just hits Enter.
+    getquery(Some("ny"), 1) == b'y' as i32 // c:2918
 }
 
 /// Port of `ssize_t read_loop(int fd, char *buf, size_t len)` from
@@ -3455,7 +3482,7 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
     let isem: bool = term == "emacs";
     // c:3018 — `struct ttyinfo ti;`
     // Rust: termios is the canonical TTY-state type returned by gettyinfo.
-    let mut ti: libc::termios;                                               // c:3018
+    let mut ti: libc::termios; // c:3018
 
     attachtty(mypgrp.load(Ordering::Relaxed)); // c:3020 attachtty(mypgrp)
 
@@ -3470,11 +3497,12 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
     //                  ti.tio.c_cc[VTIME] = 0; }`
     #[cfg(unix)]
     {
-        ti.c_lflag &= !(libc::ECHO);                                         // c:3024
-        if !isem {                                                           // c:3025
-            ti.c_lflag &= !(libc::ICANON);                                   // c:3026
-            ti.c_cc[libc::VMIN] = 1;                                         // c:3027
-            ti.c_cc[libc::VTIME] = 0;                                        // c:3028
+        ti.c_lflag &= !(libc::ECHO); // c:3024
+        if !isem {
+            // c:3025
+            ti.c_lflag &= !(libc::ICANON); // c:3026
+            ti.c_cc[libc::VMIN] = 1; // c:3027
+            ti.c_cc[libc::VTIME] = 0; // c:3028
         }
     }
     // c:3037 — `settyinfo(&ti);`
@@ -3486,56 +3514,66 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
         // declared in `Src/init.c` (extern in zsh.h:1856). Without the
         // global tracked here we re-fetch current termios as a degraded
         // best-effort restore.
-        if !isem {                                                           // c:3040
-            if let Some(saved) = gettyinfo() {                               // c:3041 settyinfo(&shttyinfo)
+        if !isem {
+            // c:3040
+            if let Some(saved) = gettyinfo() {
+                // c:3041 settyinfo(&shttyinfo)
                 settyinfo(&saved);
             }
         }
-        let _ = write_loop(SHTTY.load(Ordering::Relaxed), b"n\n");           // c:3042
-        return b'n' as i32;                                                  // c:3043
+        let _ = write_loop(SHTTY.load(Ordering::Relaxed), b"n\n"); // c:3042
+        return b'n' as i32; // c:3043
     }
 
     // c:3046-3061 — `while ((c = read1char(0)) >= 0) { ... }`
     c = -1;
     loop {
-        let cc = read1char(0);                                               // c:3046
+        let cc = read1char(0); // c:3046
         if cc < 0 {
             c = cc;
             break;
         }
         c = cc;
-        if c == b'Y' as i32 {                                                // c:3047
-            c = b'y' as i32;                                                 // c:3048
-        } else if c == b'N' as i32 {                                         // c:3049
-            c = b'n' as i32;                                                 // c:3050
+        if c == b'Y' as i32 {
+            // c:3047
+            c = b'y' as i32; // c:3048
+        } else if c == b'N' as i32 {
+            // c:3049
+            c = b'n' as i32; // c:3050
         }
-        if valid_chars.is_none() {                                           // c:3051
-            break;                                                           // c:3052
+        if valid_chars.is_none() {
+            // c:3051
+            break; // c:3052
         }
-        if c == b'\n' as i32 {                                               // c:3053
+        if c == b'\n' as i32 {
+            // c:3053
             // c:3054 — `c = *valid_chars;`
             c = valid_chars.unwrap().bytes().next().unwrap_or(b'\n') as i32;
-            nl = 1;                                                          // c:3055
-            break;                                                           // c:3056
+            nl = 1; // c:3055
+            break; // c:3056
         }
         // c:3058 — `if (strchr(valid_chars, c))`
         if valid_chars.unwrap().bytes().any(|b| b as i32 == c) {
-            nl = 1;                                                          // c:3059
-            break;                                                           // c:3060
+            nl = 1; // c:3059
+            break; // c:3060
         }
-        zbeep();                                                             // c:3062
+        zbeep(); // c:3062
     }
-    if c >= 0 {                                                              // c:3064
+    if c >= 0 {
+        // c:3064
         // c:3065-3066 — `char buf = (char)c; write_loop(SHTTY, &buf, 1);`
-        let buf = [c as u8];                                                 // c:3065
-        let _ = write_loop(SHTTY.load(Ordering::Relaxed), &buf);             // c:3066
+        let buf = [c as u8]; // c:3065
+        let _ = write_loop(SHTTY.load(Ordering::Relaxed), &buf); // c:3066
     }
-    if nl != 0 {                                                             // c:3068
-        let _ = write_loop(SHTTY.load(Ordering::Relaxed), b"\n");            // c:3069
+    if nl != 0 {
+        // c:3068
+        let _ = write_loop(SHTTY.load(Ordering::Relaxed), b"\n"); // c:3069
     }
 
-    if isem {                                                                // c:3071
-        if c != b'\n' as i32 {                                               // c:3072
+    if isem {
+        // c:3071
+        if c != b'\n' as i32 {
+            // c:3072
             // c:3073 — `while ((d = read1char(1)) >= 0 && d != '\n');`
             loop {
                 d = read1char(1);
@@ -3544,10 +3582,12 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
                 }
             }
         }
-    } else if c != b'\n' as i32 && valid_chars.is_none() {                   // c:3075
+    } else if c != b'\n' as i32 && valid_chars.is_none() {
+        // c:3075
         // c:3077-3094 — MULTIBYTE_SUPPORT branch: drain trailing bytes
         // of an incomplete multibyte sequence.
-        if isset(MULTIBYTE) && c >= 0 {                                      // c:3077
+        if isset(MULTIBYTE) && c >= 0 {
+            // c:3077
             // c:3083-3093 — `for (;;) { ret = mbrlen(&cc, 1, &mbs);
             //                          if (ret != MB_INCOMPLETE) break;
             //                          c = read1char(1); if (c < 0) break;
@@ -3555,7 +3595,7 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
             // Rust: model MB_INCOMPLETE detection by checking whether
             // the byte buffer so far forms a complete UTF-8 prefix.
             // `cc` carries the current byte under examination.
-            let mut cc: u8 = c as u8;                                        // c:3082
+            let mut cc: u8 = c as u8; // c:3082
             let mut accum: Vec<u8> = vec![cc];
             loop {
                 // mbrlen returns MB_INCOMPLETE when the partial buffer
@@ -3566,14 +3606,16 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
                     Ok(_) => false,
                     Err(e) => e.error_len().is_none(),
                 };
-                if !incomplete {                                             // c:3088
+                if !incomplete {
+                    // c:3088
                     break;
                 }
-                let nc = read1char(1);                                       // c:3089
-                if nc < 0 {                                                  // c:3090
-                    break;                                                   // c:3091
+                let nc = read1char(1); // c:3089
+                if nc < 0 {
+                    // c:3090
+                    break; // c:3091
                 }
-                cc = nc as u8;                                               // c:3092
+                cc = nc as u8; // c:3092
                 accum.push(cc);
             }
             let _ = cc;
@@ -3589,7 +3631,7 @@ pub fn getquery(valid_chars: Option<&str>, purge: i32) -> i32 {
         settyinfo(&saved);
     }
 
-    c                                                                        // c:3102 return c
+    c // c:3102 return c
 }
 
 // `spscan` (Src/utils.c:3109) — canonical port lives below the
@@ -3679,13 +3721,12 @@ fn spscan(name: &str) {
 /// signature matches C exactly: takes `&mut String` for in-place fix.
 pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
     use crate::ported::hashtable::{
-        aliastab_lock, cmdnamtab_lock, fillcmdnamtable, pathchecked, reswdtab_lock,
-        shfunctab_lock,
+        aliastab_lock, cmdnamtab_lock, fillcmdnamtable, pathchecked, reswdtab_lock, shfunctab_lock,
     };
     use crate::ported::params::{getsparam, paramtab};
     use crate::ported::pattern::{patcompile, PAT_HEAPDUP};
     use crate::ported::zsh_h::{
-        isset, AUTOCD, Dash, Equals, HASHLISTALL, Stringg as StringTok, Tilde,
+        isset, Dash, Equals, Stringg as StringTok, Tilde, AUTOCD, HASHLISTALL,
     };
     // c:3130-3133 — locals.
     let _t: Option<String>;
@@ -3745,9 +3786,10 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
         // c:3150-3154 — HASHLISTALL: bulk-hash $PATH then retry.
         if isset(HASHLISTALL) {
             // c:3150
-            let path: Vec<String> = getsparam("PATH") // c:3151
-                .map(|p| p.split(':').map(String::from).collect())
-                .unwrap_or_default();
+            let path: Vec<String> =
+                getsparam("PATH") // c:3151
+                    .map(|p| p.split(':').map(String::from).collect())
+                    .unwrap_or_default();
             fillcmdnamtable(&path); // c:3151
             if cmdnamtab_lock() // c:3152
                 .read()
@@ -3895,7 +3937,8 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
                 return; // c:3209
             }
             // c:3210-3214 — `noerrs=2; singsub(&guess); noerrs = ne;`
-            let saved_noerrs = crate::ported::exec::noerrs.load(std::sync::atomic::Ordering::Relaxed);
+            let saved_noerrs =
+                crate::ported::exec::noerrs.load(std::sync::atomic::Ordering::Relaxed);
             crate::ported::exec::noerrs.store(2, std::sync::atomic::Ordering::Relaxed); // c:3212
             guess = crate::ported::subst::singsub(&guess); // c:3213
             crate::ported::exec::noerrs.store(saved_noerrs, std::sync::atomic::Ordering::Relaxed);
@@ -3942,7 +3985,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
                 return; // c:3224
             }
             SPCK_D.with(|c| c.set(100)); // c:3225
-                                          // c:3226-3230 — scan reswd, alias, shfunc, builtin, cmdnam.
+                                         // c:3226-3230 — scan reswd, alias, shfunc, builtin, cmdnam.
             if let Ok(t) = reswdtab_lock().read() {
                 // c:3226
                 for (k, _) in t.iter() {
@@ -4088,10 +4131,8 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
         }
     } else if x == 'a' {
         // c:3294
-        crate::ported::hist::histdone.fetch_or(
-            HISTFLAG_NOEXEC,
-            std::sync::atomic::Ordering::Relaxed,
-        ); // c:3295
+        crate::ported::hist::histdone
+            .fetch_or(HISTFLAG_NOEXEC, std::sync::atomic::Ordering::Relaxed); // c:3295
     } else if x == 'e' {
         // c:3296
         crate::ported::hist::histdone.fetch_or(
@@ -4189,8 +4230,7 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
                     let digs = digs.min(9);
                     let trunc_div: u64 = 10u64.pow(9 - digs);
                     let val = nsec / trunc_div;
-                    preprocessed
-                        .push_str(&format!("{:0width$}", val, width = digs as usize));
+                    preprocessed.push_str(&format!("{:0width$}", val, width = digs as usize));
                     i = j + 1;
                     continue;
                 }
@@ -4640,9 +4680,7 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
 /// `body=None` collapsed via `and_then` to `None`, which callers
 /// then read as "function doesn't exist."
 pub fn getshfunc(nam: &str) -> Option<shfunc> {
-    let tab = shfunctab_lock()
-        .read()
-        .expect("shfunctab poisoned");
+    let tab = shfunctab_lock().read().expect("shfunctab poisoned");
     tab.get(nam).cloned()
 }
 
@@ -4983,7 +5021,10 @@ pub fn inittyptab() {
         let wc = crate::ported::params::paramtab()
             .read()
             .ok()
-            .and_then(|t| t.get("WORDCHARS").map(|pm| crate::ported::params::wordcharsgetfn(pm)))
+            .and_then(|t| {
+                t.get("WORDCHARS")
+                    .map(|pm| crate::ported::params::wordcharsgetfn(pm))
+            })
             .unwrap_or_default();
         let src: String = if wc.is_empty() {
             DEFAULT_WORDCHARS.to_string()
@@ -5166,7 +5207,10 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
         let w = crate::ported::params::paramtab()
             .read()
             .ok()
-            .and_then(|t| t.get("WORDCHARS").map(|pm| crate::ported::params::wordcharsgetfn(pm)))
+            .and_then(|t| {
+                t.get("WORDCHARS")
+                    .map(|pm| crate::ported::params::wordcharsgetfn(pm))
+            })
             .unwrap_or_default();
         return w.chars().any(|x| x == c);
     }
@@ -5348,10 +5392,7 @@ pub fn spdist(s: &str, t: &str, thresh: usize) -> usize {
     //                  if (!*p && !*q) return 1;` — case-only mismatch.
     let mut p = 0usize;
     let mut q = 0usize;
-    while p < s_b.len()
-        && q < t_b.len()
-        && tulower(s_b[p] as char) == tulower(t_b[q] as char)
-    {
+    while p < s_b.len() && q < t_b.len() && tulower(s_b[p] as char) == tulower(t_b[q] as char) {
         p += 1;
         q += 1;
     }
@@ -5377,11 +5418,7 @@ pub fn spdist(s: &str, t: &str, thresh: usize) -> usize {
         }
         // c:4720-4721 — `if (p[1] == q[0] && q[1] == p[0]) return
         //                  spdist(p+2, q+2, thresh-1) + 1;` transposition.
-        if p + 1 < s_b.len()
-            && q + 1 < t_b.len()
-            && s_b[p + 1] == t_b[q]
-            && t_b[q + 1] == s_b[p]
-        {
+        if p + 1 < s_b.len() && q + 1 < t_b.len() && s_b[p + 1] == t_b[q] && t_b[q + 1] == s_b[p] {
             // SAFETY: bytes are ASCII for the keymap test below; from_utf8
             // is fine on a non-ASCII tail here because spdist takes &str.
             let s_tail = std::str::from_utf8(&s_b[p + 2..]).unwrap_or("");
@@ -5405,20 +5442,14 @@ pub fn spdist(s: &str, t: &str, thresh: usize) -> usize {
     }
     // c:4728-4729 — `if ((!*p && strlen(q) == 1) || (!*q && strlen(p) == 1))
     //                  return 2;` — single trailing-char insertion.
-    if (p == s_b.len() && (t_b.len() - q) == 1)
-        || (q == t_b.len() && (s_b.len() - p) == 1)
-    {
+    if (p == s_b.len() && (t_b.len() - q) == 1) || (q == t_b.len() && (s_b.len() - p) == 1) {
         return 2;
     }
     // c:4730-4748 — second walk: keyboard-adjacency mistype detection.
     p = 0;
     q = 0;
     while p < s_b.len() && q < t_b.len() {
-        if p + 1 < s_b.len()
-            && q + 1 < t_b.len()
-            && s_b[p] != t_b[q]
-            && s_b[p + 1] == t_b[q + 1]
-        {
+        if p + 1 < s_b.len() && q + 1 < t_b.len() && s_b[p] != t_b[q] && s_b[p + 1] == t_b[q + 1] {
             // c:4737-4738 — `if (!(z = strchr(keymap, p[0])) || *z == '\n' ||
             //                       *z == '\t') return spdist(p+1, q+1,
             //                       thresh-1) + 1;`
@@ -5623,7 +5654,7 @@ pub fn unmetafy(s: &mut Vec<u8>) -> usize {
     // First loop: find the first `Meta` byte. Everything before it
     // stays as-is, so we don't need to copy.
     let mut p: usize = 0;
-    while p < s.len() && s[p] != Meta{
+    while p < s.len() && s[p] != Meta {
         p += 1;
     }
     // Second loop: walk from `p` onward, copying each byte into the
@@ -5900,7 +5931,9 @@ pub fn zreaddir(dir: &mut fs::ReadDir, ignoredots: i32) -> Option<String> {
     for entry in dir.by_ref() {
         // c:5221 readdir loop
         let Ok(e) = entry else { continue };
-        let Ok(name) = e.file_name().into_string() else { continue };
+        let Ok(name) = e.file_name().into_string() else {
+            continue;
+        };
         // c:5232 — `if (ignoredots && de->d_name[0] == '.' &&
         //              (!de->d_name[1] || (de->d_name[1] == '.' && !de->d_name[2])))`.
         if ignoredots != 0 && (name == "." || name == "..") {
@@ -5929,32 +5962,36 @@ pub fn zreaddir(dir: &mut fs::ReadDir, ignoredots: i32) -> Option<String> {
 /// C's `EOF` sentinel for the int return).
 pub fn zputs(s: &str, stream: &mut dyn std::io::Write) -> i32 {
     // c:5265
-    let bytes = s.as_bytes();                                                // c:5265 *s walk
+    let bytes = s.as_bytes(); // c:5265 *s walk
     let mut i = 0;
-    while i < bytes.len() {                                                  // c:5267 while (*s)
-        let c: u8;                                                           // c:5268 char c
-        if bytes[i] == Meta {                                                // c:5269 if (*s == Meta)
+    while i < bytes.len() {
+        // c:5267 while (*s)
+        let c: u8; // c:5268 char c
+        if bytes[i] == Meta {
+            // c:5269 if (*s == Meta)
             // c:5270 — `c = *++s ^ 32;`
             if i + 1 < bytes.len() {
                 c = bytes[i + 1] ^ 32;
-                i += 1;                                                      // c:5270 ++s
+                i += 1; // c:5270 ++s
             } else {
                 i += 1;
                 continue;
             }
-        } else if itok(bytes[i]) {                                           // c:5271 else if (itok(*s))
+        } else if itok(bytes[i]) {
+            // c:5271 else if (itok(*s))
             // c:5272 — `s++; continue;` (skip token byte)
             i += 1;
             continue;
         } else {
-            c = bytes[i];                                                    // c:5274 else c = *s
+            c = bytes[i]; // c:5274 else c = *s
         }
-        i += 1;                                                              // c:5276 s++
-        if stream.write_all(&[c]).is_err() {                                 // c:5277 fputc(c, stream)
-            return -1;                                                       // c:5278 return EOF
+        i += 1; // c:5276 s++
+        if stream.write_all(&[c]).is_err() {
+            // c:5277 fputc(c, stream)
+            return -1; // c:5278 return EOF
         }
     }
-    0                                                                        // c:5280 return 0
+    0 // c:5280 return 0
 }
 
 /// Port of `nicedup(char const *s, int heap)` from `Src/utils.c:5289`
@@ -6030,7 +6067,7 @@ pub fn nicezputs(s: &str, stream: &mut dyn std::io::Write) -> i32 {
     // c:5313 (non-MULTIBYTE) / zsh.h:3274 (MULTIBYTE macro:
     //   `(void)mb_niceformat((str), (outs), NULL, 0)`).
     let _ = mb_niceformat(s, Some(stream), None, 0);
-    0                                                                        // c:5316 return 0
+    0 // c:5316 return 0
 }
 
 /// Port of `niceztrlen(char const *s)` from `Src/utils.c:5324`.
@@ -6065,27 +6102,29 @@ pub fn mb_niceformat(
     flags: i32,
 ) -> usize {
     // c:5366
-    let mut l: usize = 0;                                                    // c:5368 size_t l = 0
-    let mut newl: usize;                                                     // c:5368 size_t newl
-    // c:5369 — `int umlen, outalloc, outleft, eol = 0;`. outalloc/outleft
-    // model C's buffer-growth math; Rust String auto-grows so the realloc
-    // loop at c:5430-5440 collapses to push_str. umlen and eol carry.
-    let mut umlen: usize;                                                    // c:5369
-    let mut eol: bool = false;                                               // c:5369 int eol = 0
-    // c:5370 — `wchar_t c;` (carried inside loop in Rust)
-    // c:5371 — `char *ums, *ptr, *fmt, *outstr, *outptr;`
-    let mut ums: Vec<u8>;                                                    // c:5371 char *ums
-    let mut ptr: usize;                                                      // c:5371 char *ptr
-    let mut fmt: String;                                                     // c:5371 char *fmt
-    let mut outstr: Option<String>;                                          // c:5371 char *outstr
-    // c:5372 — `mbstate_t mbs;` (Rust UTF-8 has no shift state; tracked
-    // by the `valid_up_to` / `error_len` logic below).
+    let mut l: usize = 0; // c:5368 size_t l = 0
+    let mut newl: usize; // c:5368 size_t newl
+                         // c:5369 — `int umlen, outalloc, outleft, eol = 0;`. outalloc/outleft
+                         // model C's buffer-growth math; Rust String auto-grows so the realloc
+                         // loop at c:5430-5440 collapses to push_str. umlen and eol carry.
+    let mut umlen: usize; // c:5369
+    let mut eol: bool = false; // c:5369 int eol = 0
+                               // c:5370 — `wchar_t c;` (carried inside loop in Rust)
+                               // c:5371 — `char *ums, *ptr, *fmt, *outstr, *outptr;`
+    let mut ums: Vec<u8>; // c:5371 char *ums
+    let mut ptr: usize; // c:5371 char *ptr
+    let mut fmt: String; // c:5371 char *fmt
+    let mut outstr: Option<String>; // c:5371 char *outstr
+                                    // c:5372 — `mbstate_t mbs;` (Rust UTF-8 has no shift state; tracked
+                                    // by the `valid_up_to` / `error_len` logic below).
 
     // c:5374-5380 — `if (outstrp) outptr = outstr = zalloc(5*strlen(s));`
-    if outstrp.is_some() {                                                   // c:5374
-        outstr = Some(String::with_capacity(5 * s.len()));                   // c:5376
-    } else {                                                                 // c:5377
-        outstr = None;                                                       // c:5379 outstr = NULL
+    if outstrp.is_some() {
+        // c:5374
+        outstr = Some(String::with_capacity(5 * s.len())); // c:5376
+    } else {
+        // c:5377
+        outstr = None; // c:5379 outstr = NULL
     }
 
     // c:5382 — `ums = ztrdup(s);`
@@ -6107,11 +6146,12 @@ pub fn mb_niceformat(
     let detok = untokenize(s);
     let unmeta_str = unmeta(&detok);
     ums = unmeta_str.into_bytes();
-    umlen = ums.len();                                                       // c:5389 *umlen
-    ptr = 0;                                                                 // c:5389 ptr starts at 0 in ums
+    umlen = ums.len(); // c:5389 *umlen
+    ptr = 0; // c:5389 ptr starts at 0 in ums
 
     // c:5391 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless UTF-8)
-    while umlen > 0 {                                                        // c:5392
+    while umlen > 0 {
+        // c:5392
         // c:5393 — `cnt = eol ? MB_INVALID : mbrtowc(&c, ptr, umlen, &mbs);`
         // Rust equivalent: try to decode one UTF-8 scalar from ums[ptr..],
         // honoring `eol` (force the invalid arm when set).
@@ -6140,9 +6180,8 @@ pub fn mb_niceformat(
                     let valid_up_to = e.valid_up_to();
                     if valid_up_to > 0 {
                         // Decode the first valid char then continue.
-                        let valid_slice = unsafe {
-                            std::str::from_utf8_unchecked(&remaining[..valid_up_to])
-                        };
+                        let valid_slice =
+                            unsafe { std::str::from_utf8_unchecked(&remaining[..valid_up_to]) };
                         let ch = valid_slice.chars().next().unwrap();
                         decoded_c = Some(ch);
                         cnt = ch.len_utf8();
@@ -6150,7 +6189,7 @@ pub fn mb_niceformat(
                         // Incomplete sequence at end of input — MB_INCOMPLETE.
                         // c:5394 — `case MB_INCOMPLETE: eol = 1; FALL THROUGH`
                         eol = true;
-                        decoded_c = None;                                    // MB_INVALID
+                        decoded_c = None; // MB_INVALID
                         cnt = 1;
                     } else {
                         // Definite invalid byte — MB_INVALID.
@@ -6169,78 +6208,76 @@ pub fn mb_niceformat(
                 // MB_INCOMPLETE at c:5394).
                 // c:5400 — `fmt = nicechar_sel(*ptr, flags & NICEFLAG_QUOTE);`
                 fmt = nicechar_sel(ums[ptr] as char, (flags & NICEFLAG_QUOTE) != 0);
-                newl = fmt.len();                                            // c:5401 newl = strlen(fmt)
-                cnt_used = 1;                                                // c:5402 cnt = 1
-                // c:5403 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless)
+                newl = fmt.len(); // c:5401 newl = strlen(fmt)
+                cnt_used = 1; // c:5402 cnt = 1
+                              // c:5403 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless)
             }
             Some(c) if c == '\0' => {
                 // c:5406 — `case 0:` — '\0' decodes to 0; consume 1 byte
                 // and fall through to default.
-                cnt_used = 1;                                                // c:5409
-                // c:5411-5421 default arm (FALL THROUGH from case 0)
+                cnt_used = 1; // c:5409
+                              // c:5411-5421 default arm (FALL THROUGH from case 0)
                 if c == '\'' && (flags & NICEFLAG_QUOTE) != 0 {
                     // c:5413
-                    fmt = "\\'".to_string();                                 // c:5414
-                    newl = 2;                                                // c:5415
-                } else if c == '\\' && (flags & NICEFLAG_QUOTE) != 0 {       // c:5417
-                    fmt = "\\\\".to_string();                                // c:5418
-                    newl = 2;                                                // c:5419
+                    fmt = "\\'".to_string(); // c:5414
+                    newl = 2; // c:5415
+                } else if c == '\\' && (flags & NICEFLAG_QUOTE) != 0 {
+                    // c:5417
+                    fmt = "\\\\".to_string(); // c:5418
+                    newl = 2; // c:5419
                 } else {
                     // c:5422 — `fmt = wcs_nicechar_sel(c, &newl, NULL,
                     //                                 flags & NICEFLAG_QUOTE);`
                     let mut width: usize = 0;
-                    fmt = wcs_nicechar_sel(
-                        c,
-                        Some(&mut width),
-                        None,
-                        (flags & NICEFLAG_QUOTE) != 0,
-                    );
+                    fmt =
+                        wcs_nicechar_sel(c, Some(&mut width), None, (flags & NICEFLAG_QUOTE) != 0);
                     newl = width;
                 }
             }
             Some(c) => {
                 // c:5411 — `default:` arm (cnt > 0, valid char).
                 cnt_used = cnt;
-                if c == '\'' && (flags & NICEFLAG_QUOTE) != 0 {              // c:5413
-                    fmt = "\\'".to_string();                                 // c:5414
-                    newl = 2;                                                // c:5415
-                } else if c == '\\' && (flags & NICEFLAG_QUOTE) != 0 {       // c:5417
-                    fmt = "\\\\".to_string();                                // c:5418
-                    newl = 2;                                                // c:5419
+                if c == '\'' && (flags & NICEFLAG_QUOTE) != 0 {
+                    // c:5413
+                    fmt = "\\'".to_string(); // c:5414
+                    newl = 2; // c:5415
+                } else if c == '\\' && (flags & NICEFLAG_QUOTE) != 0 {
+                    // c:5417
+                    fmt = "\\\\".to_string(); // c:5418
+                    newl = 2; // c:5419
                 } else {
                     // c:5422 — `fmt = wcs_nicechar_sel(c, &newl, NULL,
                     //                                 flags & NICEFLAG_QUOTE);`
                     let mut width: usize = 0;
-                    fmt = wcs_nicechar_sel(
-                        c,
-                        Some(&mut width),
-                        None,
-                        (flags & NICEFLAG_QUOTE) != 0,
-                    );
+                    fmt =
+                        wcs_nicechar_sel(c, Some(&mut width), None, (flags & NICEFLAG_QUOTE) != 0);
                     newl = width;
                 }
             }
         }
 
-        umlen -= cnt_used;                                                   // c:5427 umlen -= cnt
-        ptr += cnt_used;                                                     // c:5428 ptr += cnt
-        l += newl;                                                           // c:5429 l += newl
+        umlen -= cnt_used; // c:5427 umlen -= cnt
+        ptr += cnt_used; // c:5428 ptr += cnt
+        l += newl; // c:5429 l += newl
 
-        if let Some(ref mut w) = stream {                                    // c:5431 if (stream)
+        if let Some(ref mut w) = stream {
+            // c:5431 if (stream)
             // c:5432 — `zputs(fmt, stream);`
             let _ = w.write_all(fmt.as_bytes());
         }
-        if let Some(ref mut buf) = outstr {                                  // c:5433 if (outstr)
+        if let Some(ref mut buf) = outstr {
+            // c:5433 if (outstr)
             // c:5434-5446 — append fmt to outstr, growing on demand. Rust
             // String auto-grows; the realloc loop collapses to push_str.
-            buf.push_str(&fmt);                                              // c:5446 memcpy(outptr, fmt, outlen)
+            buf.push_str(&fmt); // c:5446 memcpy(outptr, fmt, outlen)
         }
         let _ = fmt;
     }
 
     // c:5451 — `free(ums);` (Rust drop at scope exit)
     drop(ums);
-    if let Some(slot) = outstrp {                                            // c:5452 if (outstrp)
+    if let Some(slot) = outstrp {
+        // c:5452 if (outstrp)
         // c:5453 — `*outptr = '\0';` (no-op for Rust String)
         // c:5455-5460 — NICEFLAG_NODUP / NICEFLAG_HEAP shaping. Rust has
         // a single allocator so all three paths produce identical owned
@@ -6248,7 +6285,7 @@ pub fn mb_niceformat(
         *slot = outstr.take();
     }
 
-    l                                                                        // c:5462 return l
+    l // c:5462 return l
 }
 
 /// Port of `is_mb_niceformat(const char *s)` from `Src/utils.c:5474`.
@@ -6284,11 +6321,11 @@ pub fn mb_niceformat(
 pub fn is_mb_niceformat(s: &str) -> i32 {
     // c:5474
     // c:5476 — `int umlen, ret = 0;`
-    let umlen: usize;                                                        // c:5476
-    let mut ret: i32 = 0;                                                    // c:5476
-    // c:5477 — `char *ums, *ptr;` (eptr modelled by bytes.len())
-    let mut ums: Vec<u8>;                                                    // c:5477
-    let mut ptr: usize;                                                      // c:5477
+    let umlen: usize; // c:5476
+    let mut ret: i32 = 0; // c:5476
+                          // c:5477 — `char *ums, *ptr;` (eptr modelled by bytes.len())
+    let mut ums: Vec<u8>; // c:5477
+    let mut ptr: usize; // c:5477
 
     // c:5481-5483 — `ums = ztrdup(s); untokenize(ums); ptr =
     //                unmetafy(ums, &umlen);` — Rust uses char-based
@@ -6298,18 +6335,20 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
     let detok = untokenize(s);
     let unmeta_str = unmeta(&detok);
     ums = unmeta_str.into_bytes();
-    umlen = ums.len();                                                       // c:5483 *umlen
-    ptr = 0;                                                                 // c:5483 ptr starts at 0
+    umlen = ums.len(); // c:5483 *umlen
+    ptr = 0; // c:5483 ptr starts at 0
 
     // c:5485 — `memset(&mbs, 0, sizeof mbs);` (Rust: stateless UTF-8)
-    while ret == 0 && ptr < ums.len() {                                      // c:5486 while (umlen > 0)
+    while ret == 0 && ptr < ums.len() {
+        // c:5486 while (umlen > 0)
         let remaining = &ums[ptr..];
         match std::str::from_utf8(remaining) {
             Ok(s_slice) => {
                 // c:5503-5511 — `default: if (is_wcs_nicechar(c)) ret = 1;`
                 for ch in s_slice.chars() {
-                    if is_wcs_nicechar(ch) {                                 // c:5508
-                        ret = 1;                                             // c:5509
+                    if is_wcs_nicechar(ch) {
+                        // c:5508
+                        ret = 1; // c:5509
                         break;
                     }
                 }
@@ -6318,12 +6357,11 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
             Err(e) => {
                 let valid_up_to = e.valid_up_to();
                 if valid_up_to > 0 {
-                    let valid = unsafe {
-                        std::str::from_utf8_unchecked(&remaining[..valid_up_to])
-                    };
+                    let valid = unsafe { std::str::from_utf8_unchecked(&remaining[..valid_up_to]) };
                     for ch in valid.chars() {
-                        if is_wcs_nicechar(ch) {                             // c:5508
-                            ret = 1;                                         // c:5509
+                        if is_wcs_nicechar(ch) {
+                            // c:5508
+                            ret = 1; // c:5509
                             break;
                         }
                     }
@@ -6335,8 +6373,9 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
                 }
                 // c:5493-5498 — `case MB_INVALID: if (is_nicechar(*ptr))
                 //                ret = 1; break;`
-                if is_nicechar(remaining[0] as char) {                       // c:5494
-                    ret = 1;                                                 // c:5495
+                if is_nicechar(remaining[0] as char) {
+                    // c:5494
+                    ret = 1; // c:5495
                     break;
                 }
                 ptr += 1;
@@ -6344,8 +6383,8 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
         }
     }
 
-    drop(ums);                                                               // c:5519 free(ums)
-    ret                                                                      // c:5523 return ret
+    drop(ums); // c:5519 free(ums)
+    ret // c:5523 return ret
 }
 
 /// Multibyte metachar length with conversion (from utils.c mb_metacharlenconv_r)
@@ -6492,24 +6531,26 @@ pub fn sb_niceformat(
     flags: i32,
 ) -> usize {
     // c:5851
-    let mut l: usize = 0;                                                    // c:5853 size_t l = 0
-    let mut newl: usize;                                                     // c:5853 size_t newl
-    // c:5854 — `int umlen, outalloc, outleft;`. outalloc/outleft model
-    // C's buffer-growth math; Rust String auto-grows so the realloc
-    // loop at c:5897-5906 collapses to push_str. umlen carries through.
-    let umlen: usize;                                                        // c:5854
-    // c:5855 — `char *ums, *ptr, *eptr, *fmt, *outstr, *outptr;`
-    let mut ums: Vec<u8>;                                                    // c:5855 char *ums
-    let mut ptr: usize;                                                      // c:5855 char *ptr
-    let eptr: usize;                                                         // c:5855 char *eptr
-    let mut fmt: String;                                                     // c:5855 char *fmt
-    let mut outstr: Option<String>;                                          // c:5855 char *outstr
+    let mut l: usize = 0; // c:5853 size_t l = 0
+    let mut newl: usize; // c:5853 size_t newl
+                         // c:5854 — `int umlen, outalloc, outleft;`. outalloc/outleft model
+                         // C's buffer-growth math; Rust String auto-grows so the realloc
+                         // loop at c:5897-5906 collapses to push_str. umlen carries through.
+    let umlen: usize; // c:5854
+                      // c:5855 — `char *ums, *ptr, *eptr, *fmt, *outstr, *outptr;`
+    let mut ums: Vec<u8>; // c:5855 char *ums
+    let mut ptr: usize; // c:5855 char *ptr
+    let eptr: usize; // c:5855 char *eptr
+    let mut fmt: String; // c:5855 char *fmt
+    let mut outstr: Option<String>; // c:5855 char *outstr
 
     // c:5857-5863 — `if (outstrp) outptr = outstr = zalloc(2*strlen(s));`
-    if outstrp.is_some() {                                                   // c:5857
-        outstr = Some(String::with_capacity(2 * s.len()));                   // c:5859
-    } else {                                                                 // c:5860
-        outstr = None;                                                       // c:5862 outstr = NULL
+    if outstrp.is_some() {
+        // c:5857
+        outstr = Some(String::with_capacity(2 * s.len())); // c:5859
+    } else {
+        // c:5860
+        outstr = None; // c:5862 outstr = NULL
     }
 
     // c:5865 — `ums = ztrdup(s);`
@@ -6523,52 +6564,61 @@ pub fn sb_niceformat(
     // c:5871 — `untokenize(ums);` inlined byte-level (lex::untokenize
     // is char-based; C does byte-walks). Mirrors `Src/exec.c:2077-2099`
     // exec.c untokenize().
-    let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";                 // ZTOKENS — Src/lex.c:38
+    let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\"; // ZTOKENS — Src/lex.c:38
     let mut detok: Vec<u8> = Vec::with_capacity(ums.len());
-    for &c in &ums {                                                         // exec.c:2082
-        if (0x84u8..=0xa1u8).contains(&c) {                                  // exec.c:2083 itok(c)
-            if c != 0xa1u8 {                                                 // exec.c:2086 c != Nularg
+    for &c in &ums {
+        // exec.c:2082
+        if (0x84u8..=0xa1u8).contains(&c) {
+            // exec.c:2083 itok(c)
+            if c != 0xa1u8 {
+                // exec.c:2086 c != Nularg
                 let idx = (c - 0x84) as usize;
                 if idx < ztokens_table.len() {
                     detok.push(ztokens_table[idx]);
                 }
             }
         } else {
-            detok.push(c);                                                   // exec.c:2094
+            detok.push(c); // exec.c:2094
         }
     }
     ums = detok;
     // c:5872 — `ptr = unmetafy(ums, &umlen);`
     umlen = unmetafy(&mut ums);
     ums.truncate(umlen);
-    eptr = umlen;                                                            // c:5873 eptr = ptr + umlen
-    ptr = 0;                                                                 // c:5872 ptr starts at 0 in ums
+    eptr = umlen; // c:5873 eptr = ptr + umlen
+    ptr = 0; // c:5872 ptr starts at 0 in ums
 
-    while ptr < eptr {                                                       // c:5875
-        let c: i32 = ums[ptr] as i32;                                        // c:5876 int c = (unsigned char) *ptr
-        if c == b'\'' as i32 && (flags & NICEFLAG_QUOTE) != 0 {              // c:5877
-            fmt = "\\'".to_string();                                         // c:5878
-            newl = 2;                                                        // c:5879
-        } else if c == b'\\' as i32 && (flags & NICEFLAG_QUOTE) != 0 {       // c:5881
-            fmt = "\\\\".to_string();                                        // c:5882
-            newl = 2;                                                        // c:5883
-        } else {                                                             // c:5885
+    while ptr < eptr {
+        // c:5875
+        let c: i32 = ums[ptr] as i32; // c:5876 int c = (unsigned char) *ptr
+        if c == b'\'' as i32 && (flags & NICEFLAG_QUOTE) != 0 {
+            // c:5877
+            fmt = "\\'".to_string(); // c:5878
+            newl = 2; // c:5879
+        } else if c == b'\\' as i32 && (flags & NICEFLAG_QUOTE) != 0 {
+            // c:5881
+            fmt = "\\\\".to_string(); // c:5882
+            newl = 2; // c:5883
+        } else {
+            // c:5885
             fmt = nicechar_sel(c as u8 as char, (flags & NICEFLAG_QUOTE) != 0); // c:5886
-            newl = 1;                                                        // c:5887
+            newl = 1; // c:5887
         }
 
-        ptr += 1;                                                            // c:5890 ++ptr
-        l += newl;                                                           // c:5891 l += newl
+        ptr += 1; // c:5890 ++ptr
+        l += newl; // c:5891 l += newl
 
-        if let Some(ref mut w) = stream {                                    // c:5893 if (stream)
+        if let Some(ref mut w) = stream {
+            // c:5893 if (stream)
             // c:5894 — `zputs(fmt, stream);`
             let _ = w.write_all(fmt.as_bytes());
         }
-        if let Some(ref mut buf) = outstr {                                  // c:5895 if (outstr)
+        if let Some(ref mut buf) = outstr {
+            // c:5895 if (outstr)
             // c:5896-5912 — append fmt to outstr, growing on demand. Rust
             // String auto-grows; the realloc loop at c:5897-5906 collapses
             // to push_str (memcpy + outptr/outleft bookkeeping unneeded).
-            buf.push_str(&fmt);                                              // c:5907 memcpy(outptr, fmt, outlen)
+            buf.push_str(&fmt); // c:5907 memcpy(outptr, fmt, outlen)
         }
         // `fmt` is consumed at next iter assignment (C reuses pointer).
         let _ = fmt;
@@ -6576,7 +6626,8 @@ pub fn sb_niceformat(
 
     // c:5915 — `free(ums);` (Rust drop at scope exit)
     drop(ums);
-    if let Some(slot) = outstrp {                                            // c:5916 if (outstrp)
+    if let Some(slot) = outstrp {
+        // c:5916 if (outstrp)
         // c:5917 — `*outptr = '\0';` (no-op for String — push_str leaves
         // no embedded NUL, and Rust String is length-prefixed).
         // c:5919-5925 — NICEFLAG_NODUP / NICEFLAG_HEAP shaping: in C this
@@ -6587,7 +6638,7 @@ pub fn sb_niceformat(
         *slot = outstr.take();
     }
 
-    l                                                                        // c:5928 return l
+    l // c:5928 return l
 }
 
 /// Port of `int is_sb_niceformat(const char *s)` from `Src/utils.c:5937-5959`.
@@ -6598,46 +6649,51 @@ pub fn sb_niceformat(
 pub fn is_sb_niceformat(s: &str) -> i32 {
     // c:5937
     // c:5939 — `int umlen, ret = 0;`
-    let umlen: usize;                                                        // c:5939
-    let mut ret: i32 = 0;                                                    // c:5939
-    // c:5940 — `char *ums, *ptr, *eptr;`
-    let mut ums: Vec<u8>;                                                    // c:5940 char *ums
-    let mut ptr: usize;                                                      // c:5940 char *ptr
-    let eptr: usize;                                                         // c:5940 char *eptr
+    let umlen: usize; // c:5939
+    let mut ret: i32 = 0; // c:5939
+                          // c:5940 — `char *ums, *ptr, *eptr;`
+    let mut ums: Vec<u8>; // c:5940 char *ums
+    let mut ptr: usize; // c:5940 char *ptr
+    let eptr: usize; // c:5940 char *eptr
 
-    ums = s.as_bytes().to_vec();                                             // c:5942 ums = ztrdup(s)
-    // c:5943 — `untokenize(ums);` inlined byte-level (lex::untokenize is
-    // char-based; C does byte-walks). Mirrors `Src/exec.c:2077-2099`.
-    let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";                 // ZTOKENS — Src/lex.c:38
+    ums = s.as_bytes().to_vec(); // c:5942 ums = ztrdup(s)
+                                 // c:5943 — `untokenize(ums);` inlined byte-level (lex::untokenize is
+                                 // char-based; C does byte-walks). Mirrors `Src/exec.c:2077-2099`.
+    let ztokens_table = b"#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\"; // ZTOKENS — Src/lex.c:38
     let mut detok: Vec<u8> = Vec::with_capacity(ums.len());
-    for &c in &ums {                                                         // exec.c:2082
-        if (0x84u8..=0xa1u8).contains(&c) {                                  // exec.c:2083 itok(c)
-            if c != 0xa1u8 {                                                 // exec.c:2086 c != Nularg
+    for &c in &ums {
+        // exec.c:2082
+        if (0x84u8..=0xa1u8).contains(&c) {
+            // exec.c:2083 itok(c)
+            if c != 0xa1u8 {
+                // exec.c:2086 c != Nularg
                 let idx = (c - 0x84) as usize;
                 if idx < ztokens_table.len() {
                     detok.push(ztokens_table[idx]);
                 }
             }
         } else {
-            detok.push(c);                                                   // exec.c:2094
+            detok.push(c); // exec.c:2094
         }
     }
     ums = detok;
-    umlen = unmetafy(&mut ums);                                              // c:5944 ptr = unmetafy(ums, &umlen)
+    umlen = unmetafy(&mut ums); // c:5944 ptr = unmetafy(ums, &umlen)
     ums.truncate(umlen);
-    eptr = umlen;                                                            // c:5945 eptr = ptr + umlen
-    ptr = 0;                                                                 // c:5944 ptr starts at 0 in ums
+    eptr = umlen; // c:5945 eptr = ptr + umlen
+    ptr = 0; // c:5944 ptr starts at 0 in ums
 
-    while ptr < eptr {                                                       // c:5947
-        if is_nicechar(ums[ptr] as char) {                                   // c:5948 is_nicechar(*ptr)
-            ret = 1;                                                         // c:5949
-            break;                                                           // c:5950
+    while ptr < eptr {
+        // c:5947
+        if is_nicechar(ums[ptr] as char) {
+            // c:5948 is_nicechar(*ptr)
+            ret = 1; // c:5949
+            break; // c:5950
         }
-        ptr += 1;                                                            // c:5952 ++ptr
+        ptr += 1; // c:5952 ++ptr
     }
 
-    drop(ums);                                                               // c:5955 free(ums)
-    ret                                                                      // c:5957 return ret
+    drop(ums); // c:5955 free(ums)
+    ret // c:5957 return ret
 }
 
 /// Tab expansion — direct port of `zexpandtabs(const char *s, int len, int width, int startpos, FILE *fout, int all)` in zsh/Src/utils.c:5975.
@@ -6986,12 +7042,7 @@ pub(crate) fn quotedzputs(s: &str) -> String {
         // c:6485-6492 — `mb_niceformat(s, NULL, &substr,
         //                              NICEFLAG_QUOTE|NICEFLAG_NODUP);`
         let mut substr: Option<String> = None;
-        let _ = mb_niceformat(
-            s,
-            None,
-            Some(&mut substr),
-            NICEFLAG_QUOTE | NICEFLAG_NODUP,
-        );
+        let _ = mb_niceformat(s, None, Some(&mut substr), NICEFLAG_QUOTE | NICEFLAG_NODUP);
         return format!("$'{}'", substr.unwrap_or_default()); // c:6488
     }
     // c:6511-6518 — `if (!hasspecial(s)) return dupstring(s);`.
@@ -7982,8 +8033,7 @@ pub static mut SCRIPT_FILENAME: Option<String> = None;
 /// Port of `char *scriptname` from `Src/init.c`. Set when `source`
 /// is reading a script; cleared on return. Used by `zwarning()`
 /// (utils.c:147) as the diagnostic prefix.
-static SCRIPTNAME: std::sync::OnceLock<Mutex<Option<String>>> =
-    std::sync::OnceLock::new();
+static SCRIPTNAME: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
 
 /// Port of `char *argzero` from `Src/init.c`. The shell's argv[0].
 /// Used by `zwarning()` (utils.c:147) as the fallback diagnostic
@@ -8001,14 +8051,12 @@ static ARGZERO: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock
 /// = "zsh"`), init.c:1367 (`source` enters the named file),
 /// init.c:1558+1592+1667 (save/install/restore around `.` /
 /// `source` bin_dot dispatch).
-static SCRIPTFILENAME: std::sync::OnceLock<Mutex<Option<String>>> =
-    std::sync::OnceLock::new();
+static SCRIPTFILENAME: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
 
 /// Port of `char *posixzero` from `Src/params.c:76`. The original
 /// argv[0] preserved unchanged by later mutations. Used by
 /// `argzerogetfn` for `$0` under `isset(POSIXARGZERO)`.
-static POSIXZERO: std::sync::OnceLock<Mutex<Option<String>>> =
-    std::sync::OnceLock::new();
+static POSIXZERO: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
 
 // error flag: bits from enum errflag_bits                                 // c:124
 /// Port of `int errflag` from `Src/init.c`. Tracks whether an
@@ -9372,18 +9420,9 @@ mod tests {
     #[test]
     fn test_quotestring_backslash() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            quotestring("hello", QT_BACKSLASH),
-            "hello"
-        );
-        assert_eq!(
-            quotestring("has space", QT_BACKSLASH),
-            "has\\ space"
-        );
-        assert_eq!(
-            quotestring("$var", QT_BACKSLASH),
-            "\\$var"
-        );
+        assert_eq!(quotestring("hello", QT_BACKSLASH), "hello");
+        assert_eq!(quotestring("has space", QT_BACKSLASH), "has\\ space");
+        assert_eq!(quotestring("$var", QT_BACKSLASH), "\\$var");
     }
 
     /// Pin: `ispecial(c)` matches the canonical SPECCHARS set at
@@ -9444,57 +9483,30 @@ mod tests {
     #[test]
     fn test_quotestring_single() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            quotestring("hello", QT_SINGLE),
-            "'hello'"
-        );
-        assert_eq!(
-            quotestring("it's", QT_SINGLE),
-            "'it'\\''s'"
-        );
+        assert_eq!(quotestring("hello", QT_SINGLE), "'hello'");
+        assert_eq!(quotestring("it's", QT_SINGLE), "'it'\\''s'");
     }
 
     #[test]
     fn test_quotestring_double() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            quotestring("hello", QT_DOUBLE),
-            "\"hello\""
-        );
-        assert_eq!(
-            quotestring("say \"hi\"", QT_DOUBLE),
-            "\"say \\\"hi\\\"\""
-        );
+        assert_eq!(quotestring("hello", QT_DOUBLE), "\"hello\"");
+        assert_eq!(quotestring("say \"hi\"", QT_DOUBLE), "\"say \\\"hi\\\"\"");
     }
 
     #[test]
     fn test_quotestring_dollars() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            quotestring("hello", QT_DOLLARS),
-            "$'hello'"
-        );
-        assert_eq!(
-            quotestring("line\nbreak", QT_DOLLARS),
-            "$'line\\nbreak'"
-        );
-        assert_eq!(
-            quotestring("tab\there", QT_DOLLARS),
-            "$'tab\\there'"
-        );
+        assert_eq!(quotestring("hello", QT_DOLLARS), "$'hello'");
+        assert_eq!(quotestring("line\nbreak", QT_DOLLARS), "$'line\\nbreak'");
+        assert_eq!(quotestring("tab\there", QT_DOLLARS), "$'tab\\there'");
     }
 
     #[test]
     fn test_quotestring_pattern() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            quotestring("*.txt", QT_BACKSLASH_PATTERN),
-            "\\*.txt"
-        );
-        assert_eq!(
-            quotestring("file[1]", QT_BACKSLASH_PATTERN),
-            "file\\[1\\]"
-        );
+        assert_eq!(quotestring("*.txt", QT_BACKSLASH_PATTERN), "\\*.txt");
+        assert_eq!(quotestring("file[1]", QT_BACKSLASH_PATTERN), "file\\[1\\]");
     }
 
     #[test]
@@ -10291,7 +10303,8 @@ mod tests {
         let mut out: Option<String> = None;
         let l = sb_niceformat("hello", None, Some(&mut out), 0);
         assert_eq!(
-            out.as_deref(), Some("hello"),
+            out.as_deref(),
+            Some("hello"),
             "c:5886 — nicechar_sel passes printable through"
         );
         assert_eq!(l, 5, "c:5928 — return length equals output bytes");
@@ -10320,7 +10333,8 @@ mod tests {
         let mut out: Option<String> = None;
         sb_niceformat("\x01", None, Some(&mut out), 0);
         assert_eq!(
-            out.as_deref(), Some("^A"),
+            out.as_deref(),
+            Some("^A"),
             "c:5886 — control char → ^X form"
         );
 
@@ -10342,7 +10356,8 @@ mod tests {
         let mut out: Option<String> = None;
         sb_niceformat(s, None, Some(&mut out), 0);
         assert_eq!(
-            out.as_deref(), Some("a"),
+            out.as_deref(),
+            Some("a"),
             "c:5872 — unmetafy first: Meta+0x41 → 'a' → printable passthrough"
         );
         // META + 0x20 → decodes to NUL → "^@" form.
@@ -10432,11 +10447,13 @@ mod tests {
     fn is_mb_niceformat_false_for_pure_printable_ascii() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
-            is_mb_niceformat("hello"), 0,
+            is_mb_niceformat("hello"),
+            0,
             "c:5509 — printable ASCII needs no nice-format"
         );
         assert_eq!(
-            is_mb_niceformat(""), 0,
+            is_mb_niceformat(""),
+            0,
             "c:5486 — empty string has no chars to flag"
         );
         assert_eq!(is_mb_niceformat("ABC012!?@"), 0);
@@ -10461,15 +10478,27 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut out: Option<String> = None;
         mb_niceformat("hello", None, Some(&mut out), 0);
-        assert_eq!(out.as_deref(), Some("hello"), "c:5407 — printable ASCII passes through");
+        assert_eq!(
+            out.as_deref(),
+            Some("hello"),
+            "c:5407 — printable ASCII passes through"
+        );
 
         let mut out: Option<String> = None;
         mb_niceformat("café", None, Some(&mut out), 0);
-        assert_eq!(out.as_deref(), Some("café"), "c:5407 — Latin-1 'é' must NOT byte-mask to \\M-X");
+        assert_eq!(
+            out.as_deref(),
+            Some("café"),
+            "c:5407 — Latin-1 'é' must NOT byte-mask to \\M-X"
+        );
 
         let mut out: Option<String> = None;
         mb_niceformat("字", None, Some(&mut out), 0);
-        assert_eq!(out.as_deref(), Some("字"), "c:5407 — CJK printable passes through");
+        assert_eq!(
+            out.as_deref(),
+            Some("字"),
+            "c:5407 — CJK printable passes through"
+        );
 
         let mut out: Option<String> = None;
         mb_niceformat("abcéxyz", None, Some(&mut out), 0);
@@ -10482,11 +10511,19 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut out: Option<String> = None;
         mb_niceformat("\n", None, Some(&mut out), 0);
-        assert_eq!(out.as_deref(), Some("\\n"), "c:5407 → wcs_nicechar c:625 — newline escapes");
+        assert_eq!(
+            out.as_deref(),
+            Some("\\n"),
+            "c:5407 → wcs_nicechar c:625 — newline escapes"
+        );
 
         let mut out: Option<String> = None;
         mb_niceformat("\t", None, Some(&mut out), 0);
-        assert_eq!(out.as_deref(), Some("\\t"), "c:5407 → wcs_nicechar c:628 — tab escapes");
+        assert_eq!(
+            out.as_deref(),
+            Some("\\t"),
+            "c:5407 → wcs_nicechar c:628 — tab escapes"
+        );
 
         let mut out: Option<String> = None;
         mb_niceformat("a\nb", None, Some(&mut out), 0);
@@ -11062,9 +11099,21 @@ mod tests {
     fn wcs_nicechar_sel_printable_wide_emits_utf8() {
         let _g = crate::test_util::global_state_lock();
         // c:644-678 — printable wide char emits raw UTF-8.
-        assert_eq!(wcs_nicechar_sel('a', None, None, false), "a", "ASCII printable");
-        assert_eq!(wcs_nicechar_sel('é', None, None, false), "é", "Latin-1 printable");
-        assert_eq!(wcs_nicechar_sel('字', None, None, false), "字", "CJK printable");
+        assert_eq!(
+            wcs_nicechar_sel('a', None, None, false),
+            "a",
+            "ASCII printable"
+        );
+        assert_eq!(
+            wcs_nicechar_sel('é', None, None, false),
+            "é",
+            "Latin-1 printable"
+        );
+        assert_eq!(
+            wcs_nicechar_sel('字', None, None, false),
+            "字",
+            "CJK printable"
+        );
     }
 
     /// c:625-630 — `\n` and `\t` escape (same as nicechar_sel for ASCII).
@@ -11252,7 +11301,10 @@ mod tests {
         let saved = crate::ported::params::paramtab()
             .read()
             .ok()
-            .and_then(|t| t.get("WORDCHARS").map(|pm| crate::ported::params::wordcharsgetfn(pm)))
+            .and_then(|t| {
+                t.get("WORDCHARS")
+                    .map(|pm| crate::ported::params::wordcharsgetfn(pm))
+            })
             .unwrap_or_default();
         let mut do_set = |val: String| {
             if let Ok(mut tab) = crate::ported::params::paramtab().write() {
@@ -11648,8 +11700,12 @@ mod tests {
 
             let mut mb_out: Option<String> = None;
             let _ = mb_niceformat(input, None, Some(&mut mb_out), 0);
-            assert_eq!(nz, mb_out.unwrap_or_default(),
-                "nicezputs and mb_niceformat must agree for {:?}", input);
+            assert_eq!(
+                nz,
+                mb_out.unwrap_or_default(),
+                "nicezputs and mb_niceformat must agree for {:?}",
+                input
+            );
         }
         // \n must produce literal `\n` (backslash + n).
         let mut nz_buf: Vec<u8> = Vec::new();
@@ -11668,8 +11724,12 @@ mod tests {
             let nd = nicedup(input, 0);
             let mut mb_out: Option<String> = None;
             let _ = mb_niceformat(input, None, Some(&mut mb_out), 0);
-            assert_eq!(nd, mb_out.unwrap_or_default(),
-                "nicedup must equal mb_niceformat outstrp form for {:?}", input);
+            assert_eq!(
+                nd,
+                mb_out.unwrap_or_default(),
+                "nicedup must equal mb_niceformat outstrp form for {:?}",
+                input
+            );
         }
         // nicedupstring delegates to nicedup(s, 1).
         assert_eq!(nicedupstring("hé\nllo"), nicedup("hé\nllo", 1));
@@ -11892,8 +11952,7 @@ mod tests {
         // c:2009 — fdtable[new_fd] := FDT_INTERNAL.
         let entry = fdtable_get(new_fd);
         assert_eq!(
-            entry,
-            FDT_INTERNAL,
+            entry, FDT_INTERNAL,
             "c:2009 — movefd must mark new_fd as FDT_INTERNAL (got {})",
             entry
         );
@@ -12401,7 +12460,10 @@ mod tests {
     #[test]
     fn getkeystring_mixed_text_and_escapes() {
         assert_eq!(getkeystring("a\\nb").0, "a\nb");
-        assert_eq!(getkeystring("line1\\nline2\\tindented").0, "line1\nline2\tindented");
+        assert_eq!(
+            getkeystring("line1\\nline2\\tindented").0,
+            "line1\nline2\tindented"
+        );
     }
 
     // ── metafy / unmetafy round-trip on ASCII (identity) ────────────
@@ -12423,8 +12485,8 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
 
     use crate::zsh_h::{
-        QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL,
-        QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE, QT_SINGLE_OPTIONAL,
+        QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL, QT_DOLLARS, QT_DOUBLE, QT_NONE,
+        QT_SINGLE, QT_SINGLE_OPTIONAL,
     };
 
     /// QT_NONE: no quoting; passes input through unchanged.
@@ -12492,8 +12554,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let r = quotestring("a*b?c[d]", QT_BACKSLASH_PATTERN);
         assert!(
-            r.contains("\\*") && r.contains("\\?") && r.contains("\\[")
-                && r.contains("\\]"),
+            r.contains("\\*") && r.contains("\\?") && r.contains("\\[") && r.contains("\\]"),
             "all globs must be escaped; got {r:?}"
         );
     }
@@ -12585,8 +12646,10 @@ mod tests {
     #[test]
     fn quotestring_corpus_qt_single_wraps_plain_word() {
         let out = quotestring("hello", QT_SINGLE);
-        assert!(out.starts_with('\'') && out.ends_with('\''),
-            "single-quoted = wraps with ', got {out:?}");
+        assert!(
+            out.starts_with('\'') && out.ends_with('\''),
+            "single-quoted = wraps with ', got {out:?}"
+        );
         assert!(out.contains("hello"), "content preserved");
     }
 
@@ -12594,8 +12657,10 @@ mod tests {
     #[test]
     fn quotestring_corpus_qt_double_wraps_plain_word() {
         let out = quotestring("hello", QT_DOUBLE);
-        assert!(out.starts_with('"') && out.ends_with('"'),
-            "double-quoted = wraps with \", got {out:?}");
+        assert!(
+            out.starts_with('"') && out.ends_with('"'),
+            "double-quoted = wraps with \", got {out:?}"
+        );
     }
 
     /// `quotestring(QT_SINGLE)` on string with apostrophe escapes the
@@ -12637,8 +12702,10 @@ mod tests {
     #[test]
     fn quotestring_corpus_qt_backslash_plain_word_unchanged() {
         let out = quotestring("abc123", QT_BACKSLASH);
-        assert_eq!(out, "abc123",
-            "plain alphanumeric needs no escape, got {out:?}");
+        assert_eq!(
+            out, "abc123",
+            "plain alphanumeric needs no escape, got {out:?}"
+        );
     }
 
     /// `ztrlen("hello")` = 5 (no meta chars).

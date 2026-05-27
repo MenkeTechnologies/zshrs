@@ -16,13 +16,13 @@
 //! (uses libc's `regex_t` / `regmatch_t` directly). Rust port
 //! matches: zero types.
 
-use crate::ported::zsh_h::{features, module};
-use std::sync::{Mutex, OnceLock};
-use crate::DPUTS;
 use crate::options::{opt_state_get, opt_state_set, optlookup};
 use crate::ported::params::{setaparam, setiparam, setsparam};
 use crate::ported::utils::zwarnnam;
+use crate::ported::zsh_h::{features, module};
 use crate::zsh_h::isset;
+use crate::DPUTS;
+use std::sync::{Mutex, OnceLock};
 /// `ZREGEX_EXTENDED` from `Src/Modules/regex.c:36`.
 /// `#define ZREGEX_EXTENDED 0`. The id passed to
 /// `zcond_regex_match` for the only currently-supported flavour.
@@ -87,7 +87,10 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // regex crate ACCEPTS an empty pattern as "matches everywhere"
     // (POSIX-style). To match zsh, reject empty patterns explicitly.
     if rhre.is_empty() {
-        zregex_regerrwarn("-regex-match", "failed to compile regex: empty (sub)expression");
+        zregex_regerrwarn(
+            "-regex-match",
+            "failed to compile regex: empty (sub)expression",
+        );
         return 0;
     }
     // c:78 — regcomp(&re, rhre, rcflags).
@@ -202,7 +205,6 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
 // static struct features module_features                            c:217 (regex.c)
 // =====================================================================
 
-
 // `cotab` — port of `static struct conddef cotab[]` (regex.c).
 
 // `module_features` — port of `static struct features module_features`
@@ -249,8 +251,6 @@ pub fn finish_(m: *const module) -> i32 {
     0
 }
 
-
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -270,11 +270,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 1]);
     }
@@ -492,20 +488,14 @@ mod tests {
     #[test]
     fn regex_corpus_anchored_full_match() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            zcond_regex_match(&["abc", "^abc$"], ZREGEX_EXTENDED),
-            1,
-        );
+        assert_eq!(zcond_regex_match(&["abc", "^abc$"], ZREGEX_EXTENDED), 1,);
     }
 
     /// `[[ "xabcy" =~ "^abc$" ]]` rejects because of anchors.
     #[test]
     fn regex_corpus_anchored_rejects_extra_chars() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            zcond_regex_match(&["xabcy", "^abc$"], ZREGEX_EXTENDED),
-            0,
-        );
+        assert_eq!(zcond_regex_match(&["xabcy", "^abc$"], ZREGEX_EXTENDED), 0,);
     }
 
     /// Empty regex matches empty string.
@@ -521,8 +511,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(zcond_regex_match(&["aaa", "a*"], ZREGEX_EXTENDED), 1);
         assert_eq!(zcond_regex_match(&["", "a*"], ZREGEX_EXTENDED), 1);
-        assert_eq!(zcond_regex_match(&["b", "a*"], ZREGEX_EXTENDED), 1,
-            "a* matches empty prefix of 'b'");
+        assert_eq!(
+            zcond_regex_match(&["b", "a*"], ZREGEX_EXTENDED),
+            1,
+            "a* matches empty prefix of 'b'"
+        );
     }
 
     /// Invalid regex returns 0 (compile failure).
@@ -552,9 +545,6 @@ mod tests {
     #[test]
     fn regex_corpus_one_arg_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            zcond_regex_match(&["only_one"], ZREGEX_EXTENDED),
-            0,
-        );
+        assert_eq!(zcond_regex_match(&["only_one"], ZREGEX_EXTENDED), 0,);
     }
 }

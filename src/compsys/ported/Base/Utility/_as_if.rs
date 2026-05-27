@@ -52,11 +52,8 @@ pub fn _as_if(args: &[String]) -> i32 {
     let cmd = getsparam("_comp_command").unwrap_or_default();
     let cmd1 = getsparam("_comp_command1").unwrap_or_default();
     let cmd2 = getsparam("_comp_command2").unwrap_or_default();
-    let r = dispatch_function_call(
-        "_dispatch",
-        &[cmd, cmd1, cmd2, "-default-".to_string()],
-    )
-    .unwrap_or(1);
+    let r = dispatch_function_call("_dispatch", &[cmd, cmd1, cmd2, "-default-".to_string()])
+        .unwrap_or(1);
 
     // Restore shell-local scoping
     setaparam("words", saved_words);

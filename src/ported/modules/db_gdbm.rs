@@ -16,10 +16,12 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use once_cell::sync::Lazy;
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{unmeta, zwarnnam};
-use crate::zsh_h::{module, options, OPT_ARG, OPT_ISSET, PM_DONTIMPORT_SUID, PM_REMOVABLE, PM_SINGLE};
+use crate::zsh_h::{
+    module, options, OPT_ARG, OPT_ISSET, PM_DONTIMPORT_SUID, PM_REMOVABLE, PM_SINGLE,
+};
+use once_cell::sync::Lazy;
 
 /// Port of `PM_UPTODATE` from `Src/Modules/db_gdbm.c:38`.
 /// `#define PM_UPTODATE PM_DONTIMPORT_SUID` — re-uses a Param flag bit
@@ -41,12 +43,7 @@ pub const PM_UPTODATE: u32 = PM_DONTIMPORT_SUID; // c:38
 /// bin_ztie(char *nam, char **args, Options ops, UNUSED(int func))
 /// ```
 /// WARNING: param names don't match C — Rust=(nam, args, ops, _func) vs C=(nam, args, ops, func)
-pub fn bin_ztie(
-    nam: &str,
-    args: &[String],
-    ops: &options,
-    _func: i32,
-) -> i32 {
+pub fn bin_ztie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:109
     // c:109-115 — locals
     let pmname: &str;
@@ -57,7 +54,8 @@ pub fn bin_ztie(
     if !OPT_ISSET(ops, b'd') {
         zwarnnam(nam, &format!("you must pass `-d {}'", BACKTYPE));
         return 1; // c:119
-    } else {}
+    } else {
+    }
     // c:121 — `if (!OPT_ISSET(ops, 'f'))`
     if !OPT_ISSET(ops, b'f') {
         zwarnnam(nam, "you must pass `-f' with a filename");
@@ -156,12 +154,7 @@ pub fn bin_ztie(
 /// bin_zuntie(char *nam, char **args, Options ops, UNUSED(int func))
 /// ```
 /// WARNING: param names don't match C — Rust=(nam, args, ops, _func) vs C=(nam, args, ops, func)
-pub fn bin_zuntie(
-    nam: &str,
-    args: &[String],
-    ops: &options,
-    _func: i32,
-) -> i32 {
+pub fn bin_zuntie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:201
     // c:201-205 — locals
     let mut ret: i32 = 0; // c:205
@@ -215,12 +208,7 @@ pub fn bin_zuntie(
 /// bin_zgdbmpath(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))
 /// ```
 #[allow(unused_variables)]
-pub fn bin_zgdbmpath(
-    nam: &str,
-    args: &[String],
-    ops: &options,
-    func: i32,
-) -> i32 {
+pub fn bin_zgdbmpath(nam: &str, args: &[String], ops: &options, func: i32) -> i32 {
     // c:236
     // c:236 — `pmname = *args;`
     let pmname = match args.first() {
@@ -1141,7 +1129,6 @@ pub fn remove_tied_name(name: &str) -> i32 {
     0
 }
 
-
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -1181,7 +1168,11 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<crate::ported::zsh_h::features>,
+    _e: Option<&[i32]>,
+) -> i32 {
     0
 }
 
@@ -1229,8 +1220,8 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 
 #[cfg(test)]
 mod tests {
-    use crate::zsh_h::{options, PM_DONTIMPORT_SUID};
     use super::*;
+    use crate::zsh_h::{options, PM_DONTIMPORT_SUID};
 
     /// Port of `bin_ztie(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/db_gdbm.c:109`.
     #[test]

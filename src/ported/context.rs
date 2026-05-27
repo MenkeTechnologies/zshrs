@@ -10,13 +10,13 @@
 //! and the underlying thread_local state is what's saved/restored.
 
 use super::parse::ParseStack;
-use crate::ported::zsh_h::{ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE, lex_stack, hist_stack};
-use std::sync::Mutex;
-use crate::DPUTS;
 use crate::hist::{hist_context_restore, hist_context_save};
 use crate::lex::{lex_context_restore, lex_context_save};
 use crate::parse::{parse_context_restore, parse_context_save};
+use crate::ported::zsh_h::{hist_stack, lex_stack, ZCONTEXT_HIST, ZCONTEXT_LEX, ZCONTEXT_PARSE};
 use crate::signals_h::{queue_signals, unqueue_signals};
+use crate::DPUTS;
+use std::sync::Mutex;
 
 /// Port of `struct context_stack` from Src/context.c:38-44.
 #[allow(non_camel_case_types)]
@@ -74,7 +74,7 @@ pub fn zcontext_save_partial(parts: i32) {
     cs.next = head.take(); // c:89
     *head = Some(cs); // c:89
 
-   unqueue_signals(); // c:89
+    unqueue_signals(); // c:89
 }
 
 /// Port of `void zcontext_save(void)` from Src/context.c:80.
@@ -133,8 +133,8 @@ static cstack: Mutex<Option<Box<context_stack>>> = Mutex::new(None); // c:52
 
 #[cfg(test)]
 mod tests {
-    use crate::lex::{lex_init, set_toklineno, toklineno, LEX_DBPARENS};
     use super::*;
+    use crate::lex::{lex_init, set_toklineno, toklineno, LEX_DBPARENS};
 
     fn reset_cstack() {
         *cstack.lock().unwrap() = None;
@@ -331,8 +331,10 @@ mod tests {
         lex_init("");
         zcontext_save();
         zcontext_restore();
-        assert!(cstack.lock().unwrap().is_none(),
-            "save+restore leaves no stack");
+        assert!(
+            cstack.lock().unwrap().is_none(),
+            "save+restore leaves no stack"
+        );
     }
 
     /// Nested save/restore is correctly LIFO.
@@ -347,8 +349,7 @@ mod tests {
         zcontext_restore();
         zcontext_restore();
         zcontext_restore();
-        assert!(cstack.lock().unwrap().is_none(),
-            "all 3 levels drained");
+        assert!(cstack.lock().unwrap().is_none(), "all 3 levels drained");
     }
 
     /// `zcontext_save_partial(1)` + `zcontext_restore_partial(1)`

@@ -567,16 +567,12 @@ mod hashes {
     /// Keys come back in unspecified order; sort for stable compare.
     #[test]
     fn hash_keys_via_k_flag_sorted() {
-        assert_parity(
-            r#"typeset -A h; h[a]=1; h[b]=2; h[c]=3; print -l "${(@k)h}" | sort"#,
-        );
+        assert_parity(r#"typeset -A h; h[a]=1; h[b]=2; h[c]=3; print -l "${(@k)h}" | sort"#);
     }
 
     #[test]
     fn hash_values_via_v_flag_sorted() {
-        assert_parity(
-            r#"typeset -A h; h[a]=1; h[b]=2; h[c]=3; print -l "${(@v)h}" | sort"#,
-        );
+        assert_parity(r#"typeset -A h; h[a]=1; h[b]=2; h[c]=3; print -l "${(@v)h}" | sort"#);
     }
 }
 

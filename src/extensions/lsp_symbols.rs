@@ -169,9 +169,7 @@ pub fn collect_sourced_paths(src: &str, base_dir: &std::path::Path) -> Vec<std::
     let Some(prog) = parse_locked(src) else {
         return Vec::new();
     };
-    let mut finder = SourceFinder {
-        out: Vec::new(),
-    };
+    let mut finder = SourceFinder { out: Vec::new() };
     finder.walk_program(&prog);
     // Resolve every collected path against `base_dir` + $HOME.
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
@@ -397,16 +395,22 @@ impl<'a> OccurrenceFinder<'a> {
         // declarations (both bind callable names that the LSP treats
         // as functions for rename/find-refs).
         if matches!(self.kind, SymbolKind::Func) {
-            let is_alias = s.words.first().map(|w| w.as_str() == "alias").unwrap_or(false);
-            let is_autoload = s.words.first().map(|w| w.as_str() == "autoload").unwrap_or(false);
+            let is_alias = s
+                .words
+                .first()
+                .map(|w| w.as_str() == "alias")
+                .unwrap_or(false);
+            let is_autoload = s
+                .words
+                .first()
+                .map(|w| w.as_str() == "autoload")
+                .unwrap_or(false);
             if is_alias || is_autoload {
                 for w in s.words.iter().skip(1) {
                     // Untokenize first so `=` (tokenized as Equals 0x8d)
                     // and quote markers are visible to the splitter.
                     let untok_word = crate::ported::lex::untokenize(w);
-                    if untok_word.starts_with('-')
-                        || (is_autoload && untok_word.starts_with('+'))
-                    {
+                    if untok_word.starts_with('-') || (is_autoload && untok_word.starts_with('+')) {
                         continue;
                     }
                     let name_part = if is_alias {
@@ -958,7 +962,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let src = "alias myalias='echo hello'\nmyalias\n";
         let t = SymbolTable::build(src).expect("parse ok");
-        let dump: Vec<_> = t.symbols.iter().map(|s| (&s.name, &s.kind, s.decl_line)).collect();
+        let dump: Vec<_> = t
+            .symbols
+            .iter()
+            .map(|s| (&s.name, &s.kind, s.decl_line))
+            .collect();
         let funcs: Vec<_> = t
             .symbols
             .iter()
@@ -980,7 +988,11 @@ mod tests {
             .collect();
         assert_eq!(funcs.len(), 1);
         // Should also have a ref to the call site.
-        let refs: Vec<_> = t.refs.iter().filter(|r| r.name == "callback_helper").collect();
+        let refs: Vec<_> = t
+            .refs
+            .iter()
+            .filter(|r| r.name == "callback_helper")
+            .collect();
         assert!(!refs.is_empty(), "no ref recorded for call: {:?}", t.refs);
     }
 

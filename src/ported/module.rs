@@ -14,18 +14,23 @@
 //! hooks, and math functions).
 
 use crate::ported::builtin::createbuiltintable;
+use crate::ported::hist::casemodify;
+use crate::ported::mem::ztrdup;
 use crate::ported::params::{createparam, createspecialhash, paramtab, unsetparam_pm};
 use crate::ported::signals::unqueue_signals;
 use crate::ported::utils::{zwarn, zwarnnam};
-use crate::ported::zsh_h::{BINF_AUTOALL, CONDF_AUTOALL, HOOKF_ALL, Hookfn, MFF_USERFUNC, MOD_ALIAS, MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD, OPT_ISSET, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF, PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED, PM_TYPE, builtin, conddef, funcwrap, hookdef, mathfunc, options, paramdef, CASMOD_LOWER, CASMOD_UPPER, Param, linknode, linklist, PM_AUTOALL, PRINT_LIST};
+use crate::ported::zsh_h::{
+    builtin, conddef, funcwrap, hookdef, linklist, linknode, mathfunc, options, paramdef, Hookfn,
+    Param, BINF_AUTOALL, CASMOD_LOWER, CASMOD_UPPER, CONDF_AUTOALL, HOOKF_ALL, MFF_USERFUNC,
+    MOD_ALIAS, MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD, OPT_ISSET,
+    PM_ARRAY, PM_AUTOALL, PM_AUTOLOAD, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF,
+    PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED, PM_TYPE, PRINT_LIST,
+};
+pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, CONDF_INFIX, MFF_ADDED};
 use crate::zsh_h::module;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use crate::ported::hist::casemodify;
-use crate::ported::mem::ztrdup;
-pub use crate::ported::zsh_h::{BINF_ADDED, CONDF_ADDED, CONDF_INFIX, MFF_ADDED};
-
 
 /// Free module node (from module.c freemodulenode)
 /// Free a module table entry.
@@ -103,9 +108,7 @@ pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
 
     // c:195-201 — PRINTMOD_EXIST branch.
     if flags & PRINTMOD_EXIST != 0 {
-        if (m.node.flags & MOD_ALIAS) != 0
-            && (flags & PRINTMOD_ALIAS == 0 || m.alias.is_none())
-        {
+        if (m.node.flags & MOD_ALIAS) != 0 && (flags & PRINTMOD_ALIAS == 0 || m.alias.is_none()) {
             return out;
         }
         if m.node.flags & MOD_UNLOAD != 0 {
@@ -738,9 +741,7 @@ pub fn checkaddparam(nam: &str, opt_i: i32) -> i32 {
     // c:1026
     // c:1030 — if (!(pm = gethashnode2(paramtab, nam))) return 0;
     let pm_clone = {
-        let tab = paramtab()
-            .read()
-            .expect("paramtab poisoned");
+        let tab = paramtab().read().expect("paramtab poisoned");
         tab.get(nam).cloned()
     };
     let mut pm = match pm_clone {
@@ -886,10 +887,7 @@ pub fn addparamdef(d: &mut paramdef) -> i32 {
             // c:1087/1091
             if t == PM_SCALAR && (pmflags & PM_TIED) != 0 {
                 // c:1088
-                let lower = casemodify(
-                    &pm.node.nam,
-                    CASMOD_LOWER,
-                );
+                let lower = casemodify(&pm.node.nam, CASMOD_LOWER);
                 pm.ename = Some(ztrdup(&lower)); // c:1089
             }
             // c:1092 pm->gsu.s = d->gsu ? d->gsu : &varscalar_gsu;
@@ -906,10 +904,7 @@ pub fn addparamdef(d: &mut paramdef) -> i32 {
             // c:1104
             if (pmflags & PM_TIED) != 0 {
                 // c:1105
-                let upper = casemodify(
-                    &pm.node.nam,
-                    CASMOD_UPPER,
-                );
+                let upper = casemodify(&pm.node.nam, CASMOD_UPPER);
                 pm.ename = Some(ztrdup(&upper)); // c:1106
             }
             let _ = d.gsu; // c:1107
@@ -1567,7 +1562,7 @@ impl modulestab {
         let exists = self.autoload_params.contains_key(name); // c:1210
         if exists {
             unqueue_signals(); // c:1211
-                                                       // c:1213-1219 — 2-vs-0 mapping for `-i`/normal case.
+                               // c:1213-1219 — 2-vs-0 mapping for `-i`/normal case.
             if (flags & FEAT_IGNORE) != 0 {
                 return 0; // c:1219 ret==2 → 0
             }
@@ -1939,9 +1934,7 @@ pub fn find_module(table: &mut modulestab, name: &str, flags: i32) -> Option<Str
         match table.modules.get(&cur_name) {
             Some(m) => {
                 // c:1665 — if ((flags & FINDMOD_ALIASP) && (m->node.flags & MOD_ALIAS))
-                if (flags & FINDMOD_ALIASP) != 0
-                    && (m.node.flags & MOD_ALIAS) != 0
-                {
+                if (flags & FINDMOD_ALIASP) != 0 && (m.node.flags & MOD_ALIAS) != 0 {
                     // c:1668 — return find_module(m->u.alias, flags, namep);
                     if let Some(target) = m.alias.clone() {
                         cur_name = target;
@@ -2032,10 +2025,7 @@ pub fn dyn_setup_module(m: *const module) -> i32 {
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(4, m, features);`
 /// Op-code 4 = features.
 #[allow(unused_variables)]
-pub fn dyn_features_module(
-    m: *const module,
-    features: &mut Vec<String>,
-) -> i32 {
+pub fn dyn_features_module(m: *const module, features: &mut Vec<String>) -> i32 {
     // c:1733
     0 // c:1733
 }
@@ -2045,10 +2035,7 @@ pub fn dyn_features_module(
 /// C body: `return ((int (*)(int,Module,void*)) m->u.handle)(5, m, enables);`
 /// Op-code 5 = enables.
 #[allow(unused_variables)]
-pub fn dyn_enables_module(
-    m: *const module,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+pub fn dyn_enables_module(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     // c:1740
     0 // c:1733
 }
@@ -2768,10 +2755,7 @@ pub fn bin_zmodload_alias(
                 Some(m) => {
                     if (m.node.flags & MOD_ALIAS) == 0 {
                         // c:2560
-                        zwarnnam(
-                            nam,
-                            &format!("module is not an alias: {}", lhs),
-                        ); // c:2561
+                        zwarnnam(nam, &format!("module is not an alias: {}", lhs)); // c:2561
                         return 1; // c:2562
                     }
                     table.modules.remove(lhs); // c:2564 delete_module
@@ -2787,10 +2771,7 @@ pub fn bin_zmodload_alias(
                 // c:2570
                 if modname_ok(target) == 0 {
                     // c:2572
-                    zwarnnam(
-                        nam,
-                        &format!("invalid module name `{}'", target),
-                    ); // c:2573
+                    zwarnnam(nam, &format!("invalid module name `{}'", target)); // c:2573
                     return 1; // c:2574
                 }
                 // c:2576-2584 — cycle detection: walk alias chain
@@ -2803,10 +2784,7 @@ pub fn bin_zmodload_alias(
                     depth += 1;
                     if mname == lhs {
                         // c:2577
-                        zwarnnam(
-                            nam,
-                            &format!("module alias would refer to itself: {}", lhs),
-                        ); // c:2578
+                        zwarnnam(nam, &format!("module alias would refer to itself: {}", lhs)); // c:2578
                         return 1; // c:2580
                     }
                     match table.modules.get(mname) {
@@ -2820,10 +2798,7 @@ pub fn bin_zmodload_alias(
                 if let Some(m) = table.modules.get_mut(lhs) {
                     if (m.node.flags & MOD_ALIAS) == 0 {
                         // c:2587
-                        zwarnnam(
-                            nam,
-                            &format!("module is not an alias: {}", lhs),
-                        ); // c:2588
+                        zwarnnam(nam, &format!("module is not an alias: {}", lhs)); // c:2588
                         return 1; // c:2589
                     }
                     m.alias = Some(target.to_string()); // c:2591/2597
@@ -2844,17 +2819,11 @@ pub fn bin_zmodload_alias(
                         }
                     }
                     Some(_) => {
-                        zwarnnam(
-                            nam,
-                            &format!("module is not an alias: {}", lhs),
-                        ); // c:2605
+                        zwarnnam(nam, &format!("module is not an alias: {}", lhs)); // c:2605
                         return 1; // c:2606
                     }
                     None => {
-                        zwarnnam(
-                            nam,
-                            &format!("no such module alias: {}", lhs),
-                        ); // c:2609
+                        zwarnnam(nam, &format!("no such module alias: {}", lhs)); // c:2609
                         return 1; // c:2610
                     }
                 }
@@ -2961,12 +2930,7 @@ pub fn bin_zmodload_exist(
 /// - no args lists all dependencies.
 /// - `target dep1 ...` adds each dep to target's dependency list.
 /// WARNING: param names don't match C — Rust=(table, _nam, args, ops) vs C=(nam, args, ops)
-pub fn bin_zmodload_dep(
-    table: &mut modulestab,
-    _nam: &str,
-    args: &[String],
-    ops: &options,
-) -> i32 {
+pub fn bin_zmodload_dep(table: &mut modulestab, _nam: &str, args: &[String], ops: &options) -> i32 {
     // c:2649
     if OPT_ISSET(ops, b'u') {
         // c:2649
@@ -3082,19 +3046,11 @@ pub fn bin_zmodload_auto(
 ) -> i32 {
     // c:2726
     let fchar: char; // c:2726
-    let _flags: i32 = if OPT_ISSET(ops, b'i') {
-        FEAT_IGNORE
-    } else {
-        0
-    }; // c:2728
+    let _flags: i32 = if OPT_ISSET(ops, b'i') { FEAT_IGNORE } else { 0 }; // c:2728
 
     // c:2731-2773 — conditions branch (-c)
     if OPT_ISSET(ops, b'c') {
-        fchar = if OPT_ISSET(ops, b'I') {
-            'C'
-        } else {
-            'c'
-        };
+        fchar = if OPT_ISSET(ops, b'I') { 'C' } else { 'c' };
         let _ = fchar;
         if args.is_empty() {
             // c:2732
@@ -3128,11 +3084,7 @@ pub fn bin_zmodload_auto(
                     name,
                     module,
                     0,
-                    if OPT_ISSET(ops, b'L') {
-                        PRINT_LIST
-                    } else {
-                        0
-                    },
+                    if OPT_ISSET(ops, b'L') { PRINT_LIST } else { 0 },
                 );
             }
             return 0;
@@ -3200,25 +3152,14 @@ pub fn unload_named_module(table: &mut modulestab, name: &str, _nam: &str, _sile
 ///
 /// `zmodload [-u] [args]`: load, unload, or list modules.
 /// WARNING: param names don't match C — Rust=(table, nam, args, ops) vs C=(nam, args, ops)
-pub fn bin_zmodload_load(
-    table: &mut modulestab,
-    nam: &str,
-    args: &[String],
-    ops: &options,
-) -> i32 {
+pub fn bin_zmodload_load(table: &mut modulestab, nam: &str, args: &[String], ops: &options) -> i32 {
     // c:2971
     let mut ret: i32 = 0;
     if OPT_ISSET(ops, b'u') {
         // c:2974
         // c:2976-2979 — unload loop
         for arg in args {
-            if unload_named_module(
-                table,
-                arg,
-                nam,
-                OPT_ISSET(ops, b'i') as i32,
-            ) != 0
-            {
+            if unload_named_module(table, arg, nam, OPT_ISSET(ops, b'i') as i32) != 0 {
                 ret = 1;
             }
         }
@@ -3784,7 +3725,7 @@ pub fn featuresarray(
     cd: &[conddef],  // c:3290 f->cd_list
     mf: &[mathfunc], // c:3291 f->mf_list
     pd: &[paramdef], // c:3292 f->pd_list
-    n_abstract: i32,                       // c:3288 f->n_abstract
+    n_abstract: i32, // c:3288 f->n_abstract
 ) -> Vec<String> {
     let features_size = bn.len() + cd.len() + mf.len() + pd.len()            // c:3288
         + n_abstract.max(0) as usize;
@@ -3832,7 +3773,7 @@ pub fn getfeatureenables(
     cd: &[conddef],  // c:3325
     mf: &[mathfunc], // c:3326
     pd: &[paramdef], // c:3327
-    n_abstract: i32,                       // c:3323
+    n_abstract: i32, // c:3323
 ) -> Vec<i32> {
     let features_size = bn.len() + cd.len() + mf.len() + pd.len()            // c:3323
         + n_abstract.max(0) as usize;
@@ -3980,7 +3921,6 @@ pub const FEAT_REMOVE: i32 = 0x0008; // c:76
 /// `enum { FEAT_CHECKAUTO = 0x0010 }` from `Src/module.c:81`.
 pub const FEAT_CHECKAUTO: i32 = 0x0010; // c:81
 
-
 /// `FINDMOD_ALIASP` — bit in `find_module()`'s `flags` arg.
 /// Port of `enum { FINDMOD_ALIASP = 0x0001 }` from `Src/module.c:110`.
 /// /* Resolve any aliases to the underlying module. */
@@ -3993,8 +3933,8 @@ pub const FINDMOD_CREATE: i32 = 0x0002; // c:115
 
 #[cfg(test)]
 mod tests {
-    use crate::ported::zsh_h::hashnode;
     use super::*;
+    use crate::ported::zsh_h::hashnode;
 
     #[test]
     fn test_module_table_new() {
@@ -4201,11 +4141,7 @@ mod tests {
         conddef {
             next: None,
             name: name.to_string(),
-            flags: if infix {
-                CONDF_INFIX
-            } else {
-                0
-            },
+            flags: if infix { CONDF_INFIX } else { 0 },
             handler: None,
             min: 0,
             max: 0,
@@ -4588,8 +4524,7 @@ mod tests {
                 funcs: std::ptr::null_mut(),
             },
         ]);
-        let base: *mut hookdef =
-            Box::into_raw(arr) as *mut hookdef;
+        let base: *mut hookdef = Box::into_raw(arr) as *mut hookdef;
         assert_eq!(addhookdefs(std::ptr::null(), base, 2), 0);
         assert_eq!(gethookdef("zshrs_test_arr_0"), base);
         unsafe {
@@ -4599,9 +4534,7 @@ mod tests {
         unsafe {
             assert_eq!(deletehookdef(base), 0);
             assert_eq!(deletehookdef(base.add(1)), 0);
-            drop(Box::from_raw(
-                base as *mut [hookdef; 2],
-            ));
+            drop(Box::from_raw(base as *mut [hookdef; 2]));
         }
     }
 }
@@ -4738,8 +4671,10 @@ mod modname_tests {
         let _g = crate::test_util::global_state_lock();
         let mut t = newmoduletable();
         assert!(register_module(&mut t, "dup.module"));
-        assert!(!register_module(&mut t, "dup.module"),
-            "second registration of same name = false");
+        assert!(
+            !register_module(&mut t, "dup.module"),
+            "second registration of same name = false"
+        );
     }
 
     /// New modulestab is pre-seeded with built-in modules.
@@ -4748,7 +4683,11 @@ mod modname_tests {
     fn module_corpus_new_table_has_builtin_modules() {
         let _g = crate::test_util::global_state_lock();
         let t = newmoduletable();
-        assert!(t.modules.len() >= 1, "fresh modulestab has built-ins, got {}", t.modules.len());
+        assert!(
+            t.modules.len() >= 1,
+            "fresh modulestab has built-ins, got {}",
+            t.modules.len()
+        );
     }
 
     /// `register_module` with empty name does not panic.

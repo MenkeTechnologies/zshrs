@@ -19,30 +19,33 @@
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::Ordering;
 
+use crate::ported::glob::{hasbraces, remnulargs, tokenize, xpandbraces};
+use crate::ported::lex::untokenize;
+use crate::ported::mem::ztrdup;
 use crate::ported::params::{
     getstrvalue, getvalue, getvaluearr, locallevel, paramtab, setaparam, setarrvalue, sethparam,
     setiparam, setsparam, setstrvalue,
 };
-use crate::ported::glob::{hasbraces, remnulargs, tokenize, xpandbraces};
-use crate::ported::lex::untokenize;
-use crate::ported::mem::ztrdup;
 use crate::ported::pattern::{haswilds, patcompile, pattry, Patprog};
 use crate::ported::string::tricat;
 use crate::ported::utils::{
-    adjustcolumns, inittyptab, niceztrlen, quotestring, set_noerrs, strpfx, zwarnnam, ztrlen,
+    adjustcolumns, inittyptab, niceztrlen, quotestring, set_noerrs, strpfx, ztrlen, zwarnnam,
 };
 use crate::ported::zle::comp_h::{
     Cmatcher, Cpattern, CGF_NOSORT, CGF_UNIQALL, CGF_UNIQCON, CMF_LEFT, CMF_RIGHT, CPAT_ANY,
     CPAT_CCLASS, CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
 };
 use crate::ported::zle::compcore::{begcmgroup, comppatmatch, endcmgroup, get_user_var, rembslash};
-use crate::ported::zle::compmatch::{pattern_match, pattern_match1, pattern_match_equivalence};
 use crate::ported::zle::complete::{
     ignore_prefix, ignore_suffix, parse_cmatcher, restrict_range, COMPCURRENT, COMPPREFIX,
     COMPQSTACK, COMPSUFFIX, COMPWORDS, INCOMPFUNC,
 };
+use crate::ported::zle::compmatch::{pattern_match, pattern_match1, pattern_match_equivalence};
 use crate::ported::zle::compresult::ztat;
-use crate::ported::zsh_h::{isset, options, unset, value, Comma, Inbrace, Outbrace, GLOBDOTS, KSHARRAYS, MAX_OPS, OPT_ISSET, PM_ARRAY, PM_TYPE, PP_LOWER, PP_RANGE, PP_UPPER, QT_BACKSLASH, QT_BACKSLASH_PATTERN};
+use crate::ported::zsh_h::{
+    isset, options, unset, value, Comma, Inbrace, Outbrace, GLOBDOTS, KSHARRAYS, MAX_OPS,
+    OPT_ISSET, PM_ARRAY, PM_TYPE, PP_LOWER, PP_RANGE, PP_UPPER, QT_BACKSLASH, QT_BACKSLASH_PATTERN,
+};
 use crate::ported::ztype_h::{iblank, idigit, imeta, inblank};
 
 // =====================================================================
@@ -60,7 +63,6 @@ use crate::ported::zle::{
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-
 // =====================================================================
 // `_describe`-completion types — direct ports of the C structs at
 // Src/Zle/computil.c:40-91 (the cdset/cdstr/cdrun/cdstate chain
@@ -965,7 +967,6 @@ pub fn cd_init(
     args: &[String],
     disp: i32,
 ) -> i32 {
-
     // c:485 — discard prior parsed state.
     if cd_parsed.load(Ordering::Relaxed) != 0 {
         let mut st = cd_state.lock().unwrap();
@@ -1511,7 +1512,6 @@ pub fn bin_compdescribe(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:850
         zwarnnam(nam, "can only be called from completion function");
@@ -4340,7 +4340,6 @@ pub fn ca_set_data(
     optdef: Option<&caopt>,
     single: i32,
 ) {
-
     let mut arg: Option<Box<caarg>> = start_arg;
     let mut opt = opt.map(|s| s.to_string());
     let mut restr = 0;
@@ -4544,7 +4543,6 @@ pub fn bin_comparguments(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:2590
         zwarnnam(nam, "can only be called from completion function");
@@ -4766,11 +4764,7 @@ pub fn bin_comparguments(
         b'n' => {
             // c:2899
             let optbeg = ca_laststate.lock().map(|s| s.optbeg).unwrap_or(0);
-            let kshoffset = if isset(KSHARRAYS) {
-                0
-            } else {
-                1
-            };
+            let kshoffset = if isset(KSHARRAYS) { 0 } else { 1 };
             setiparam(&args[1], (optbeg + kshoffset) as i64);
             0
         }
@@ -5884,7 +5878,6 @@ pub fn bin_compvalues(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3479
         zwarnnam(nam, "can only be called from completion function");
@@ -6161,7 +6154,6 @@ pub fn bin_compquote(
     ops: &options,
     _func: i32,
 ) -> i32 {
-
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3685
         zwarnnam(nam, "can only be called from completion function");
@@ -6367,7 +6359,6 @@ pub fn bin_comptags(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3835
         zwarnnam(nam, "can only be called from completion function");
@@ -6594,7 +6585,6 @@ pub fn bin_comptry(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:3963
         zwarnnam(nam, "can only be called from completion function");
@@ -6874,7 +6864,6 @@ pub fn cfp_test_exact(
     accept: &[String], // c:4160
     skipped: &str,
 ) -> Option<Vec<String>> {
-
     let compprefix = COMPPREFIX
         .get()
         .and_then(|m| m.lock().ok().map(|s| s.clone()))
@@ -6975,7 +6964,6 @@ pub fn cfp_matcher_range(
     ms: &[Option<Box<Cmatcher>>], // c:4307
     add: &str,
 ) -> String {
-
     // Local PATMATCHRANGE — Rust copy of the helper used by pattern_match1
     // / pattern_match_equivalence. Walks an encoded char-range byte
     // sequence looking for `c`. Encoding:
@@ -7076,8 +7064,7 @@ pub fn cfp_matcher_range(
                 // class markers become `[:name:]`; ranges become
                 // `lo-hi`; literals pass through.
                 fn decode_range_bytes(bytes: &[u8]) -> String {
-                    let pp_range_marker =
-                        (0x80u8).wrapping_add(PP_RANGE as u8);
+                    let pp_range_marker = (0x80u8).wrapping_add(PP_RANGE as u8);
                     let mut out = String::new();
                     let mut i = 0usize;
                     while i < bytes.len() {
@@ -7477,7 +7464,6 @@ pub fn cfp_bld_pats(
     skipped: &str, // c:4704
     pats: &[String],
 ) -> Vec<String> {
-
     let compprefix = COMPPREFIX
         .get()
         .and_then(|m| m.lock().ok().map(|s| s.clone()))
@@ -7684,7 +7670,6 @@ pub fn cf_ignore(names: &[String], ign: &mut Vec<String>, style: &str, path: &st
 /// When `pre` itself contains a `/`, names matching that head are
 /// returned as the consensus list.
 pub fn cf_remove_other(names: &[String], pre: &str, amb: &mut i32) -> Option<Vec<String>> {
-
     if let Some(slash) = pre.find('/') {
         // c:4903
         // c:4906-4908 — pre' = pre[..slash] + "/".
@@ -7753,7 +7738,6 @@ pub fn bin_compfiles(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:4972
         zwarnnam(nam, "can only be called from completion function");
@@ -7893,7 +7877,6 @@ pub fn bin_compgroups(
     _ops: &options,
     _func: i32,
 ) -> i32 {
-
     if INCOMPFUNC.load(Ordering::Relaxed) != 1 {
         // c:5078
         zwarnnam(nam, "can only be called from completion function");
@@ -9215,8 +9198,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // Seed COMPPREFIX with a leading dot.
-        let m = COMPPREFIX
-            .get_or_init(|| std::sync::Mutex::new(String::new()));
+        let m = COMPPREFIX.get_or_init(|| std::sync::Mutex::new(String::new()));
         *m.lock().unwrap() = ".foo".to_string();
         // Force GLOBDOTS unset — that's the default in zle_test_setup.
         let out = cfp_bld_pats(0, &["d".to_string()], "", &["*.x".to_string()]);
@@ -9235,8 +9217,7 @@ mod tests {
     fn cfp_opt_pats_passthrough_empty_compprefix() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let m = COMPPREFIX
-            .get_or_init(|| std::sync::Mutex::new(String::new()));
+        let m = COMPPREFIX.get_or_init(|| std::sync::Mutex::new(String::new()));
         *m.lock().unwrap() = String::new();
         let pats = vec!["*".to_string(), "*.c".to_string()];
         let out = cfp_opt_pats(&pats, "");
@@ -9249,11 +9230,9 @@ mod tests {
     fn cfp_test_exact_no_anchor_returns_none() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        let pm = COMPPREFIX
-            .get_or_init(|| std::sync::Mutex::new(String::new()));
+        let pm = COMPPREFIX.get_or_init(|| std::sync::Mutex::new(String::new()));
         *pm.lock().unwrap() = String::new();
-        let sm = COMPSUFFIX
-            .get_or_init(|| std::sync::Mutex::new(String::new()));
+        let sm = COMPSUFFIX.get_or_init(|| std::sync::Mutex::new(String::new()));
         *sm.lock().unwrap() = String::new();
         let r = cfp_test_exact(&["/tmp".to_string()], &["true".to_string()], "");
         assert!(r.is_none());

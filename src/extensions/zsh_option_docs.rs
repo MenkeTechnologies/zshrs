@@ -976,5 +976,8 @@ pub fn lookup_option_doc(name: &str) -> Option<(&'static str, &'static str)> {
         .iter()
         .find(|(a, _)| *a == key.as_str())
         .map(|(_, c)| *c)?;
-    OPTION_DOCS.iter().find(|(n, _)| *n == canon).map(|&(n, d)| (n, d))
+    OPTION_DOCS
+        .iter()
+        .find(|(n, _)| *n == canon)
+        .map(|&(n, d)| (n, d))
 }

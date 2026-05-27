@@ -7,36 +7,69 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, stderr: String, exit: i32 }
+struct R {
+    stdout: String,
+    stderr: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-        exit: o.status.code().unwrap_or(-1) }
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-        exit: o.status.code().unwrap_or(-1) }
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -103,7 +136,9 @@ mod time_stderr_present {
     /// shells must agree on whether stderr is empty or not.
     #[test]
     fn time_emits_some_stderr_in_zsh() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let z = run_zsh(r#"time true"#);
         let r = run_zshrs(r#"time true"#);
         // Parity: both empty (builtin) or both non-empty.
@@ -120,16 +155,20 @@ mod time_stderr_present {
     /// (zsh default format includes ' total').
     #[test]
     fn time_default_stderr_format_has_known_marker() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let z = run_zsh(r#"time true"#);
         let r = run_zshrs(r#"time true"#);
         // zsh default ends with 'total'; check both shells include it
         // (or both don't — for `time true` zsh emits nothing).
         let z_has_total = z.stderr.contains("total");
         let r_has_total = r.stderr.contains("total");
-        assert_eq!(z_has_total, r_has_total,
-                   "time output format differs:\nzsh stderr: {:?}\nzshrs stderr: {:?}",
-                   z.stderr, r.stderr);
+        assert_eq!(
+            z_has_total, r_has_total,
+            "time output format differs:\nzsh stderr: {:?}\nzshrs stderr: {:?}",
+            z.stderr, r.stderr
+        );
     }
 }
 
@@ -139,14 +178,18 @@ mod timefmt {
     /// Custom `TIMEFMT='%J'` → output is just the command name.
     #[test]
     fn timefmt_J_just_command_name() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let z = run_zsh(r#"TIMEFMT='%J'; time true"#);
         let r = run_zshrs(r#"TIMEFMT='%J'; time true"#);
         // Both should produce stderr ending with "true\n" (or similar).
         let z_trim = z.stderr.trim();
         let r_trim = r.stderr.trim();
-        assert_eq!(z_trim, r_trim,
-                   "TIMEFMT=%J format mismatch:\nzsh: {z_trim:?}\nzshrs: {r_trim:?}");
+        assert_eq!(
+            z_trim, r_trim,
+            "TIMEFMT=%J format mismatch:\nzsh: {z_trim:?}\nzshrs: {r_trim:?}"
+        );
     }
 }
 

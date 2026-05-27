@@ -6,10 +6,9 @@
 //! Instead, we provide a simpler arena-style allocator abstraction that
 //! can be used for temporary allocations that all get freed at once.
 
-use std::cell::RefCell;
 pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::zsh_h::{options, OPT_ISSET};
-
+use std::cell::RefCell;
 
 // ===========================================================
 // Direct ports of arena/heap routines from Src/mem.c. Rust

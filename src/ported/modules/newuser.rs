@@ -5,10 +5,10 @@
 //! the C module sources `newuser` from a system-wide script dir to
 //! kick off the new-user install wizard.
 
-use std::path::PathBuf;
 use crate::ported::init::source;
 use crate::ported::params::getsparam;
 use crate::ported::zsh_h::{module, EMULATE_ZSH, EMULATION};
+use std::path::PathBuf;
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/newuser.c:37`. C body is
 /// `return 0;` (UNUSED `Module m`).
@@ -108,7 +108,8 @@ pub fn boot_(m: *const module) -> i32 {
     // c:81 — `if (!EMULATION(EMULATE_ZSH)) return 0;`
     if !EMULATION(EMULATE_ZSH) {
         return 0; // c:82
-    } else {}
+    } else {
+    }
 
     // c:84-88 — `if (!dotdir) { dotdir = home; if (!dotdir) return 0; }`.
     //
@@ -217,8 +218,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join(".zshrc");
         std::fs::File::create(&p).unwrap();
-        assert_eq!(check_dotfile(dir.path().to_str().unwrap(), ".zshrc"), 0,
-            "existing file = 0 per c:62");
+        assert_eq!(
+            check_dotfile(dir.path().to_str().unwrap(), ".zshrc"),
+            0,
+            "existing file = 0 per c:62"
+        );
     }
 
     /// `check_dotfile` returns -1 for a missing file in an existing dir.
@@ -238,10 +242,7 @@ mod tests {
     #[test]
     fn newuser_corpus_check_dotfile_missing_dir_returns_neg_one() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            check_dotfile("/never/exists/zshrs_xyz", ".zshrc"),
-            -1,
-        );
+        assert_eq!(check_dotfile("/never/exists/zshrs_xyz", ".zshrc"), -1,);
     }
 
     /// `boot_` returns 0 regardless of state.
@@ -258,7 +259,10 @@ mod tests {
     fn newuser_corpus_features_returns_one_no_features() {
         let _g = crate::test_util::global_state_lock();
         let mut features = Vec::new();
-        assert_eq!(features_(std::ptr::null(), &mut features), 1,
-            "newuser has no advertised features");
+        assert_eq!(
+            features_(std::ptr::null(), &mut features),
+            1,
+            "newuser has no advertised features"
+        );
     }
 }

@@ -4,35 +4,73 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh_in(d: &Path, s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).current_dir(d).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .current_dir(d)
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs_in(d: &Path, s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .current_dir(d).env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .current_dir(d)
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity_in(d: &Path, s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh_in(d, s);
     let r = run_zshrs_in(d, s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
-fn tdir() -> tempfile::TempDir { tempfile::tempdir().expect("tempdir") }
+fn tdir() -> tempfile::TempDir {
+    tempfile::tempdir().expect("tempdir")
+}
 
 mod basic_cd {
     use super::*;
@@ -156,7 +194,10 @@ mod oldpwd {
     fn pwd_var_updates_on_cd() {
         let d = tdir();
         std::fs::create_dir(d.path().join("a")).unwrap();
-        assert_parity_in(d.path(), "P1=$PWD; cd a; P2=$PWD; [[ $P1 != $P2 ]]; echo $?");
+        assert_parity_in(
+            d.path(),
+            "P1=$PWD; cd a; P2=$PWD; [[ $P1 != $P2 ]]; echo $?",
+        );
     }
 }
 
@@ -169,6 +210,9 @@ mod chase_links {
         let d = tdir();
         std::fs::create_dir(d.path().join("real")).unwrap();
         std::os::unix::fs::symlink(d.path().join("real"), d.path().join("link")).unwrap();
-        assert_parity_in(d.path(), "setopt chase_links; cd link 2>/dev/null; basename $PWD");
+        assert_parity_in(
+            d.path(),
+            "setopt chase_links; cd link 2>/dev/null; basename $PWD",
+        );
     }
 }

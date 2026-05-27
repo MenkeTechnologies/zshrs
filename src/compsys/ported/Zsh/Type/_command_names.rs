@@ -58,10 +58,7 @@ pub fn _command_names(args: &[String]) -> i32 {
     let curcontext = getsparam("curcontext").unwrap_or_default();
 
     // sh:9 — rehash style (TODO: dispatch `rehash` builtin)
-    let _ = testforstyle(
-        &format!(":completion:{}:commands", curcontext),
-        "rehash",
-    );
+    let _ = testforstyle(&format!(":completion:{}:commands", curcontext), "rehash");
 
     // sh:11-13
     let style_ctx = format!(":completion:{}:functions", curcontext);
@@ -97,8 +94,8 @@ pub fn _command_names(args: &[String]) -> i32 {
 
     let precommands = getaparam("precommands").unwrap_or_default();
     let builtin_precommands = getaparam("builtin_precommands").unwrap_or_default();
-    let precmd_overlap = !precommands.is_empty()
-        && precommands.iter().any(|p| builtin_precommands.contains(p));
+    let precmd_overlap =
+        !precommands.is_empty() && precommands.iter().any(|p| builtin_precommands.contains(p));
 
     if !dash_e && !precmd_overlap {
         // sh:31
@@ -107,12 +104,21 @@ pub fn _command_names(args: &[String]) -> i32 {
         }
         // sh:33-41
         defs.push("builtins:builtin command:compadd -Qk builtins".to_string());
-        defs.push(format!("functions:shell function:compadd -k 'functions{}'", ffilt));
+        defs.push(format!(
+            "functions:shell function:compadd -k 'functions{}'",
+            ffilt
+        ));
         defs.push("suffix-aliases:suffix alias:_suffix_alias_files".to_string());
         defs.push("reserved-words:reserved word:compadd -Qk reswords".to_string());
         defs.push("jobs:: _jobs -t".to_string());
-        defs.push("parameters:: _parameters -g \"^*(readonly|association)*\" -qS= -r \"\\n\\t\\- =[+\"".to_string());
-        defs.push("parameters:: _parameters -g \"*association*~*readonly*\" -qS\\[ -r \"\\n\\t\\- =[+\"".to_string());
+        defs.push(
+            "parameters:: _parameters -g \"^*(readonly|association)*\" -qS= -r \"\\n\\t\\- =[+\""
+                .to_string(),
+        );
+        defs.push(
+            "parameters:: _parameters -g \"*association*~*readonly*\" -qS\\[ -r \"\\n\\t\\- =[+\""
+                .to_string(),
+        );
 
         // sh:42-47 — aliases (verbose mode emission TODO sh:43)
         defs.push("aliases:alias:compadd -Qk aliases".to_string());

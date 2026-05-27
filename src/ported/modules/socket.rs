@@ -5,14 +5,18 @@
 //! (`bin_zsocket`, `setup_`/`features_`/`enables_`/`boot_`/
 //! `cleanup_`/`finish_`).
 
+use crate::ported::params::setiparam;
+use crate::ported::utils::{
+    addmodulefd, errflag, fdtable_get, fdtable_set, movefd, redup, zerrnam, zwarnnam,
+};
 /// Direct port of `bin_zsocket(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/socket.c:57`.
 /// C signature matches exactly: `static int bin_zsocket(char *nam,
 /// char **args, Options ops, UNUSED(int func))`.
 /// WARNING: param names don't match C — Rust=(nam, args, _func) vs C=(nam, args, ops, func)
-use crate::ported::zsh_h::{FDT_EXTERNAL, FDT_UNUSED, OPT_ARG, OPT_ISSET, module, features, options};
+use crate::ported::zsh_h::{
+    features, module, options, FDT_EXTERNAL, FDT_UNUSED, OPT_ARG, OPT_ISSET,
+};
 use std::sync::{Mutex, OnceLock};
-use crate::ported::params::setiparam;
-use crate::ported::utils::{addmodulefd, errflag, fdtable_get, fdtable_set, movefd, redup, zerrnam, zwarnnam};
 
 pub fn bin_zsocket(
     nam: &str,
@@ -54,7 +58,8 @@ pub fn bin_zsocket(
                 &format!("file descriptor {} is in use by the shell", targetfd),
             );
             return 1; // c:81
-        } else {}
+        } else {
+        }
     }
 
     if OPT_ISSET(ops, b'l') {
@@ -196,12 +201,12 @@ pub fn bin_zsocket(
                 break;
             }
             let osek = std::io::Error::last_os_error().raw_os_error();
-            if osek != Some(libc::EINTR)
-                || errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
+            if osek != Some(libc::EINTR) || errflag.load(std::sync::atomic::Ordering::Relaxed) != 0
             {
                 rfd = r;
                 break;
-            } else {}
+            } else {
+            }
         }
         if rfd == -1 {
             // c:199
@@ -336,7 +341,6 @@ pub fn bin_zsocket(
 // static struct features module_features                            c:284
 // =====================================================================
 
-
 // `bintab` — port of `static struct builtin bintab[]` (socket.c:280).
 
 // `module_features` — port of `static struct features module_features`
@@ -404,11 +408,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 1]);
     }

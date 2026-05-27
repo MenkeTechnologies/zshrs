@@ -109,9 +109,7 @@ pub fn _expand_alias() -> i32 {
     } else if matches!(regular.as_str(), "yes" | "1" | "true" | "on") && current == 1 {
         sel.push('r');
     }
-    if testforstyle(&ctx, "global") == 0
-        || lookupstyle(&ctx, "global").is_empty()
-    {
+    if testforstyle(&ctx, "global") == 0 || lookupstyle(&ctx, "global").is_empty() {
         sel = format!("g{}", sel);
     }
     if testforstyle(&ctx, "disabled") == 0 {
@@ -143,8 +141,8 @@ pub fn _expand_alias() -> i32 {
         if first_word == word && assoc_get("aliases", &word) == Some(tmp.clone()) {
             tmp = format!("\\{}", tmp);
         }
-        let add_space = testforstyle(&ctx, "add-space") == 0
-            || lookupstyle(&ctx, "add-space").is_empty();
+        let add_space =
+            testforstyle(&ctx, "add-space") == 0 || lookupstyle(&ctx, "add-space").is_empty();
         let suf: Vec<String> = if add_space {
             Vec::new()
         } else {

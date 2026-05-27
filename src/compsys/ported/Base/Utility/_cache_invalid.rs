@@ -55,9 +55,7 @@ pub fn _cache_invalid(args: &[String]) -> i32 {
         .first()
         .cloned()
         .unwrap_or_default();
-    if !policy.is_empty()
-        && dispatch_function_call(&policy, &[cache_path]).unwrap_or(1) == 0
-    {
+    if !policy.is_empty() && dispatch_function_call(&policy, &[cache_path]).unwrap_or(1) == 0 {
         return 0;
     }
 

@@ -67,7 +67,6 @@ use crate::ported::zle::{
 };
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-
 // Local aliases routing to the canonical `ZC_*` predicates in
 // `zle_h.rs:246-271` (port of `Src/Zle/zle.h:60-73`). Re-defining
 // these inline here is a divergence trap — the previous versions
@@ -136,9 +135,7 @@ pub fn forwardword(args: &[String]) -> i32 {
         // vi-range/word-motion kludge flag set by getvirange at
         // zle_vi.c:186; ported as atomic WORDFLAG. Was hardcoded to
         // `false`, dropping the vi-word-motion early-exit.
-        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0
-            && n == 0
-        {
+        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0 && n == 0 {
             return 0; // c:60
         }
         while ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -209,9 +206,7 @@ pub fn viforwardword(args: &[String]) -> i32 {
             ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst); // c:97 INCCS
         }
         // c:99 — `if (wordflag && !n) return 0;` (see forwardword note).
-        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0
-            && n == 0
-        {
+        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0 && n == 0 {
             return 0;
         } // c:99
         let mut nl = if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -272,9 +267,7 @@ pub fn viforwardblankword(args: &[String]) -> i32 {
             ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         // c:127 — `if (wordflag && !n) return 0;` (see forwardword note).
-        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0
-            && n == 0
-        {
+        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0 && n == 0 {
             return 0;
         } // c:127
         let mut nl = if ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -336,9 +329,7 @@ pub fn emacsforwardword(args: &[String]) -> i32 {
             ZLECS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         // c:164 — `if (wordflag && !n) return 0;` (see forwardword note).
-        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0
-            && n == 0
-        {
+        if WORDFLAG.load(std::sync::atomic::Ordering::Relaxed) != 0 && n == 0 {
             return 0;
         } // c:164
         while ZLECS.load(std::sync::atomic::Ordering::SeqCst)
@@ -871,8 +862,7 @@ pub fn vibackwardkillword(_args: &[String]) -> i32 {
     // c:462
     let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:462
                                                                  // c:464 — `lim = (viinsbegin > findbol()) ? viinsbegin : findbol();`
-    let viinsbegin =
-        VIINSBEGIN.load(std::sync::atomic::Ordering::SeqCst);
+    let viinsbegin = VIINSBEGIN.load(std::sync::atomic::Ordering::SeqCst);
     let bol = findbol();
     let lim: usize = viinsbegin.max(bol);
     let mut __g_zmod = ZMOD.lock().unwrap();
@@ -1771,8 +1761,7 @@ mod tests {
     /// `wordclass('_')` returns 1 — underscore counts as alnum word char.
     #[test]
     fn zle_word_corpus_wordclass_underscore_is_alnum() {
-        assert_eq!(wordclass('_'), 1,
-            "underscore is alnum per zsh word-class");
+        assert_eq!(wordclass('_'), 1, "underscore is alnum per zsh word-class");
     }
 
     /// `wordclass('.')` returns 2 (punct).
@@ -1800,7 +1789,10 @@ mod tests {
     /// (iblank covers space+tab only). It falls into class 3 (other).
     #[test]
     fn zle_word_corpus_wordclass_newline_is_other() {
-        assert_eq!(wordclass('\n'), 3,
-            "newline is NOT iblank (iblank = space/tab only) → class 3");
+        assert_eq!(
+            wordclass('\n'),
+            3,
+            "newline is NOT iblank (iblank = space/tab only) → class 3"
+        );
     }
 }

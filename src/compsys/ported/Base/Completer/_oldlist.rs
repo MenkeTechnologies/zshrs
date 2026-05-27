@@ -119,12 +119,7 @@ pub fn _oldlist() -> i32 {
             } else {
                 let prefix = getsparam("PREFIX").unwrap_or_default();
                 let suffix = getsparam("SUFFIX").unwrap_or_default();
-                let argv = vec![
-                    "-Qs".to_string(),
-                    suffix,
-                    "-".to_string(),
-                    prefix,
-                ];
+                let argv = vec!["-Qs".to_string(), suffix, "-".to_string(), prefix];
                 let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
             }
             return 0;

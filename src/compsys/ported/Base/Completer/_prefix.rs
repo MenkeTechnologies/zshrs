@@ -66,9 +66,9 @@ pub fn _prefix() -> i32 {
         let upto = comp_num.saturating_sub(1).min(completers.len());
         let slice = &completers[..upto];
         // Skip everything before "_prefix(:.*)?"
-        let ind = slice.iter().position(|c| {
-            c == "_prefix" || c.starts_with("_prefix:")
-        });
+        let ind = slice
+            .iter()
+            .position(|c| c == "_prefix" || c.starts_with("_prefix:"));
         match ind {
             Some(i) => slice[i..].to_vec(),
             None => slice.to_vec(),

@@ -61,10 +61,7 @@ pub fn _next_tags() -> i32 {
     //   as `_shadow` on both names: snapshot the prior shfunctab
     //   entries (so `_unshadow` restores them), letting any
     //   subsequent override land safely.
-    let _ = _shadow(&[
-        "_all_labels".to_string(),
-        "_next_label".to_string(),
-    ]);
+    let _ = _shadow(&["_all_labels".to_string(), "_next_label".to_string()]);
 
     // sh:111
     let ret = dispatch_function_call("_main_complete", &[]).unwrap_or(1);

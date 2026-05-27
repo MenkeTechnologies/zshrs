@@ -55,10 +55,7 @@ pub fn _subscript(args: &[String]) -> i32 {
 
     let _ = bin_compset(
         "compset",
-        &[
-            "-P".to_string(),
-            "\\(([^\\(\\)]|\\(*\\))##\\)".to_string(),
-        ],
+        &["-P".to_string(), "\\(([^\\(\\)]|\\(*\\))##\\)".to_string()],
         &make_ops(),
         0,
     );
@@ -70,9 +67,10 @@ pub fn _subscript(args: &[String]) -> i32 {
     let buffer = getsparam("BUFFER").unwrap_or_default();
 
     // sh:19  ~[ dynamic-name expansion?
-    if let Some(open_at) = (1..=cursor as usize).rev().find(|&i| {
-        buffer.as_bytes().get(i.saturating_sub(1)) == Some(&b'[')
-    }) {
+    if let Some(open_at) = (1..=cursor as usize)
+        .rev()
+        .find(|&i| buffer.as_bytes().get(i.saturating_sub(1)) == Some(&b'['))
+    {
         let head = &buffer[..open_at.saturating_sub(1)];
         if head.ends_with('~') {
             return _dynamic_directory_name();
@@ -82,9 +80,8 @@ pub fn _subscript(args: &[String]) -> i32 {
     // sh:21  :class:
     if prefix.starts_with(':') {
         let classes: Vec<String> = vec![
-            "alnum", "alpha", "ascii", "blank", "cntrl", "digit", "graph", "lower",
-            "print", "punct", "space", "upper", "xdigit", "IFS", "IDENT", "IFSSPACE",
-            "WORD",
+            "alnum", "alpha", "ascii", "blank", "cntrl", "digit", "graph", "lower", "print",
+            "punct", "space", "upper", "xdigit", "IFS", "IDENT", "IFSSPACE", "WORD",
         ]
         .into_iter()
         .map(|s| s.to_string())
@@ -153,8 +150,7 @@ pub fn _subscript(args: &[String]) -> i32 {
     }
 
     // sh:134 fallback
-    dispatch_function_call("_dispatch", &["-math-".to_string(), "-math-".to_string()])
-        .unwrap_or(1)
+    dispatch_function_call("_dispatch", &["-math-".to_string(), "-math-".to_string()]).unwrap_or(1)
 }
 
 #[cfg(test)]

@@ -578,8 +578,6 @@
 //! sh:574  return 0
 //! ```
 
-
-
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -700,7 +698,12 @@ pub fn install_standard_complete_widgets() -> usize {
         let dot_w = format!(".{}", w);
         if crate::ported::exec_hooks::dispatch_function_call(
             "zle",
-            &["-C".to_string(), w.to_string(), dot_w, "_main_complete".to_string()],
+            &[
+                "-C".to_string(),
+                w.to_string(),
+                dot_w,
+                "_main_complete".to_string(),
+            ],
         )
         .is_some()
         {
@@ -742,7 +745,9 @@ pub fn maybe_rebind_tab_for_expand() {
         &format!(":completion:{}:", curcontext),
         "completer",
     );
-    let has_expand = completers.iter().any(|c| c == "_expand" || c.starts_with("_expand:"));
+    let has_expand = completers
+        .iter()
+        .any(|c| c == "_expand" || c.starts_with("_expand:"));
     if !has_expand {
         return;
     }
@@ -1228,7 +1233,9 @@ pub fn build_cache_from_fpath(
 /// This is the equivalent of `compinit -C` with a valid zcompdump - it skips
 /// the fpath scan entirely and just loads from cache.
 #[allow(clippy::field_reassign_with_default)] // result is mutated across many subsequent statements; struct-literal init not practical
-pub fn load_from_cache(cache: &crate::compsys::cache::CompsysCache) -> std::io::Result<CompInitResult> {
+pub fn load_from_cache(
+    cache: &crate::compsys::cache::CompsysCache,
+) -> std::io::Result<CompInitResult> {
     use std::time::Instant;
     let start = Instant::now();
 
@@ -1588,12 +1595,8 @@ pub fn compdef(args: &[String]) -> i32 {
                 ret = 1;
                 continue;
             }
-            let svc_for_state = with_state(|s| {
-                s.services
-                    .get(&svc_in)
-                    .cloned()
-                    .unwrap_or(svc_in.clone())
-            });
+            let svc_for_state =
+                with_state(|s| s.services.get(&svc_in).cloned().unwrap_or(svc_in.clone()));
             with_state(|s| {
                 s.comps.insert(cmd.clone(), func.clone());
                 s.services.insert(cmd, svc_for_state);
@@ -1638,18 +1641,10 @@ pub fn compdef(args: &[String]) -> i32 {
                 // sh:346  zle -C <wname> <comp_widget> <func>
                 let _ = crate::ported::exec_hooks::dispatch_function_call(
                     "zle",
-                    &[
-                        "-C".to_string(),
-                        wname.clone(),
-                        comp_widget,
-                        func.clone(),
-                    ],
+                    &["-C".to_string(), wname.clone(), comp_widget, func.clone()],
                 );
                 // sh:347-352  bindkey
-                let _ = crate::ported::exec_hooks::dispatch_function_call(
-                    "bindkey",
-                    &[key, wname],
-                );
+                let _ = crate::ported::exec_hooks::dispatch_function_call("bindkey", &[key, wname]);
                 i += 3;
             }
         }
@@ -1969,10 +1964,7 @@ mod tests {
         reset_compdef_state();
         assert_eq!(run(&["-p", "_test", "*=postfix"]), 0);
         let state = snapshot_compdef_state();
-        assert_eq!(
-            state.patcomps.get("*"),
-            Some(&"=postfix=_test".to_string())
-        );
+        assert_eq!(state.patcomps.get("*"), Some(&"=postfix=_test".to_string()));
     }
 
     #[test]
@@ -2043,7 +2035,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         reset_compdef_state();
         run(&["_git", "git"]); // first set up git→_git
-        // Now `hub=git` should reuse _git
+                               // Now `hub=git` should reuse _git
         assert_eq!(run(&["hub=git"]), 0);
         let s = snapshot_compdef_state();
         assert_eq!(s.comps.get("hub"), Some(&"_git".to_string()));

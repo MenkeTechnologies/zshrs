@@ -125,7 +125,11 @@ pub fn _approximate(args: &[String]) -> i32 {
     // sh:56  `_shadow -s _approximate compadd` — wrap the entire
     //   loop so the compadd-override (when wired) installs/restores
     //   exactly once, not once per pass.
-    let _ = _shadow(&["-s".to_string(), "_approximate".to_string(), "compadd".to_string()]);
+    let _ = _shadow(&[
+        "-s".to_string(),
+        "_approximate".to_string(),
+        "compadd".to_string(),
+    ]);
 
     let mut ret: i32 = 1;
     let mut comp_correct: i64 = 1;

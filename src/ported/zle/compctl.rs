@@ -18,12 +18,8 @@
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::os::unix::fs::PermissionsExt;
 use crate::ported::builtin::findcmd;
 use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::utils::errflag;
 use crate::ported::zle::comp_h::{Aminfo, Cmlist};
 use crate::ported::zle::compctl_h::{
@@ -41,19 +37,22 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
-use crate::ported::zsh_h::{IN_NOTHING, QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE};
-
+use crate::ported::zsh_h::PAT_HEAPDUP;
+use crate::ported::zsh_h::{
+    IN_NOTHING, QT_BACKSLASH, QT_BACKTICK, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE,
+};
+use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt;
+use std::sync::{Arc, Mutex};
 
 // Re-export the canonical `compctl.h` ports from compctl_h.rs so
 // callers within compctl.rs reference the legit names. The four
 // types (Compctlp/Patcomp/Compcond/Compctl + CompcondData) are
 // direct ports of the C structs declared in Src/Zle/compctl.h.
 
-
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-
 // =====================================================================
 // COMP_* — `compctl` operation flags from `Src/Zle/compctl.c:53-60`.
 // Encode the command-line operation requested by `compctl`'s flag
@@ -625,8 +624,7 @@ pub(crate) fn get_compctl(
                             // compctl parse on a malformed matcher
                             // per C c:731-735.
                             if let Some(s) = val {
-                                if parse_cmatcher(name, &s).is_none()
-                                {
+                                if parse_cmatcher(name, &s).is_none() {
                                     eprintln!("{}: bad matcher specification `{}'", name, s);
                                     return 1;
                                 }
@@ -1920,9 +1918,7 @@ pub(crate) fn getreal(str_in: &str) -> String {
     // c:2140 — noerrs = ne;
     *NOERRS.lock().expect("NOERRS poisoned") = ne;
     // c:2141-2143 — if (!errflag && nonempty(l) && first non-empty) → use expanded.
-    if errflag.load(std::sync::atomic::Ordering::Relaxed) == 0
-        && !s.is_empty()
-    {
+    if errflag.load(std::sync::atomic::Ordering::Relaxed) == 0 && !s.is_empty() {
         return s;
     }
     // c:2144 — errflag &= ~ERRFLAG_ERROR;
@@ -2386,13 +2382,12 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
         // c:2542
         // c:2543 — patcompile(pc->pat) compiles the pattern once.
         // c:2544-2545 — pattry(prog, cmdstr) || (s && pattry(prog, s)).
-        let matches = patcompile(pat, PAT_HEAPDUP as i32, None)
-            .map_or(false, |prog| {
-                pattry(&prog, &cmdstr)             // c:2544
+        let matches = patcompile(pat, PAT_HEAPDUP as i32, None).map_or(false, |prog| {
+            pattry(&prog, &cmdstr)             // c:2544
                     || s_resolved.as_deref()
                         .map(|sr| pattry(&prog, sr)) // c:2545
                         .unwrap_or(false)
-            });
+        });
         if matches {
             makecomplistcc(cc, os, incmd); // c:2546
             ret |= 2; // c:2547
@@ -2966,8 +2961,7 @@ pub(crate) fn finish_() -> i32 {
 /// PORT_PLAN.md — `compctl -M` writes via `freecmlist + cpcmlist`,
 /// every completion call reads. `RwLock` lets parallel completion
 /// reads proceed without serialising on a mutex.
-pub(crate) static CMATCHER: std::sync::RwLock<Option<Box<Cmlist>>> =
-    std::sync::RwLock::new(None); // c:36
+pub(crate) static CMATCHER: std::sync::RwLock<Option<Box<Cmlist>>> = std::sync::RwLock::new(None); // c:36
 
 /// `compctltab` hash table — name → Compctl.
 /// Port of `HashTable compctltab;` at Src/Zle/compctl.c:46.
@@ -3289,12 +3283,7 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_compctl(
-            "compctl",
-            &["-f".to_string(), "mycmd".to_string()],
-            &ops,
-            0,
-        );
+        let r = bin_compctl("compctl", &["-f".to_string(), "mycmd".to_string()], &ops, 0);
         assert_eq!(r, 0);
         let g = COMPCTL_TAB.read().unwrap();
         assert!(g.as_ref().unwrap().contains_key("mycmd"));
@@ -3915,9 +3904,16 @@ mod tests {
     /// All QT_* constants are pairwise distinct.
     #[test]
     fn compctl_corpus_qt_pairwise_distinct() {
-        let qs = [QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS, QT_BACKTICK];
+        let qs = [
+            QT_NONE,
+            QT_BACKSLASH,
+            QT_SINGLE,
+            QT_DOUBLE,
+            QT_DOLLARS,
+            QT_BACKTICK,
+        ];
         for (i, a) in qs.iter().enumerate() {
-            for b in &qs[i+1..] {
+            for b in &qs[i + 1..] {
                 assert_ne!(a, b);
             }
         }
@@ -3926,9 +3922,15 @@ mod tests {
     /// All QT_* in [0, 5] range.
     #[test]
     fn compctl_corpus_qt_all_within_range() {
-        for q in [QT_NONE, QT_BACKSLASH, QT_SINGLE, QT_DOUBLE, QT_DOLLARS, QT_BACKTICK] {
-            assert!((0..=5).contains(&q),
-                "QT_* value {q} out of [0,5]");
+        for q in [
+            QT_NONE,
+            QT_BACKSLASH,
+            QT_SINGLE,
+            QT_DOUBLE,
+            QT_DOLLARS,
+            QT_BACKTICK,
+        ] {
+            assert!((0..=5).contains(&q), "QT_* value {q} out of [0,5]");
         }
     }
 }

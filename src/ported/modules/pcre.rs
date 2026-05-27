@@ -4,13 +4,16 @@
 //! Uses the Rust `regex` crate which provides Perl-compatible regex syntax.
 
 use crate::ported::utils::{metafy, zstrtol, zwarnnam};
-use crate::ported::zsh_h::{OPT_ARG, OPT_HASARG, OPT_ISSET, module, options, isset, MB_CHARLEN, KSHARRAYS, features, MAX_OPS};
+use crate::ported::zsh_h::{
+    features, isset, module, options, KSHARRAYS, MAX_OPS, MB_CHARLEN, OPT_ARG, OPT_HASARG,
+    OPT_ISSET,
+};
 use regex::Regex;
 
-use std::sync::{Mutex, OnceLock};
 use crate::params::setsparam;
 use crate::ported::options::optlookup;
 use crate::ported::params::{setaparam, sethparam, setiparam};
+use std::sync::{Mutex, OnceLock};
 
 /// Port of `CPCRE_PLAIN` from `Src/Modules/pcre.c:34`. Default
 /// pattern-flavour id passed to `cond_pcre_match` (the `-pcre-match`
@@ -191,7 +194,6 @@ pub fn pcre_callout(
 // static struct features module_features                            c:530 (pcre.c)
 // =====================================================================
 
-
 /// Port of `static int zpcre_get_substrings(pcre2_code *pat, char *arg,
 /// pcre2_match_data *mdata, int captured_count, char *matchvar,
 /// char *substravar, char *namedassoc, int want_offset_pair,
@@ -258,7 +260,6 @@ pub fn zpcre_get_substrings(
     matchedinarr: i32,
     want_begin_end: i32,
 ) -> i32 {
-
     let mut capture_start: i32 = 1; // c:164
     if matchedinarr != 0 {
         // c:169
@@ -496,12 +497,7 @@ pub fn getposint(instr: &str, nam: &str) -> i32 {
 /// paramtab via setsparam/setaparam). The caller writes the
 /// captures into the executor's parameter table.
 /// WARNING: param names don't match C — Rust=() vs C=(nam, args, ops, func)
-pub fn bin_pcre_match(
-    nam: &str,
-    args: &[String],
-    ops: &options,
-    _func: i32,
-) -> i32 {
+pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:330-341 — locals at function top.
     let ret: i32; // c:330
     let _c: u8 = 0; // c:330
@@ -588,15 +584,12 @@ pub fn bin_pcre_match(
     if full_match.is_some() {
         // c:400 ret > 0
         return_value = 0; // c:403
-        // c:405-414 — install $MATCH (or -v target) + $match (or -a
-        // receptacle). C uses zpcre_get_substrings which calls
-        // setsparam / setaparam directly; Rust mirrors that.
+                          // c:405-414 — install $MATCH (or -v target) + $match (or -a
+                          // receptacle). C uses zpcre_get_substrings which calls
+                          // setsparam / setaparam directly; Rust mirrors that.
         if let Some(m) = full_match.as_deref() {
             // c:Src/Modules/pcre.c:405 — `setsparam(matched_portion, ztrdup(m))`.
-            crate::ported::params::setsparam(
-                matched_portion.unwrap_or("MATCH"),
-                m,
-            );
+            crate::ported::params::setsparam(matched_portion.unwrap_or("MATCH"), m);
         }
         // c:410-413 — `setaparam(receptacle, captured_subs)`.
         let subs: Vec<String> = captures
@@ -656,7 +649,9 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                     }
                     let subs: Vec<String> = (1..caps.len())
                         .map(|i| {
-                            caps.get(i).map(|m| m.as_str().to_string()).unwrap_or_default()
+                            caps.get(i)
+                                .map(|m| m.as_str().to_string())
+                                .unwrap_or_default()
                         })
                         .collect();
                     crate::ported::params::setaparam("match", subs); // c:520
@@ -756,11 +751,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 4]);
     }
@@ -1155,8 +1146,7 @@ mod tests {
     #[test]
     fn pcre_corpus_cond_match_charclass_quantifier() {
         let _g = crate::test_util::global_state_lock();
-        let r = cond_pcre_match(
-            &["abc123".to_string(), "[a-z]+[0-9]+".to_string()], 0);
+        let r = cond_pcre_match(&["abc123".to_string(), "[a-z]+[0-9]+".to_string()], 0);
         assert_eq!(r, 1, "regex match succeeds");
     }
 
@@ -1164,8 +1154,7 @@ mod tests {
     #[test]
     fn pcre_corpus_cond_match_no_digits() {
         let _g = crate::test_util::global_state_lock();
-        let r = cond_pcre_match(
-            &["xyz".to_string(), "[0-9]+".to_string()], 0);
+        let r = cond_pcre_match(&["xyz".to_string(), "[0-9]+".to_string()], 0);
         assert_eq!(r, 0, "no digits in 'xyz' = false");
     }
 
@@ -1173,8 +1162,7 @@ mod tests {
     #[test]
     fn pcre_corpus_cond_match_empty_pattern_matches_empty() {
         let _g = crate::test_util::global_state_lock();
-        let r = cond_pcre_match(
-            &["".to_string(), "".to_string()], 0);
+        let r = cond_pcre_match(&["".to_string(), "".to_string()], 0);
         assert_eq!(r, 1);
     }
 
@@ -1182,8 +1170,7 @@ mod tests {
     #[test]
     fn pcre_corpus_cond_match_sets_MATCH() {
         let _g = crate::test_util::global_state_lock();
-        let _ = cond_pcre_match(
-            &["abc123".to_string(), "[a-z]+[0-9]+".to_string()], 0);
+        let _ = cond_pcre_match(&["abc123".to_string(), "[a-z]+[0-9]+".to_string()], 0);
         assert_eq!(
             crate::ported::params::getsparam("MATCH").as_deref(),
             Some("abc123"),
@@ -1195,8 +1182,7 @@ mod tests {
     #[test]
     fn pcre_corpus_cond_match_sets_match_array() {
         let _g = crate::test_util::global_state_lock();
-        let _ = cond_pcre_match(
-            &["abc123".to_string(), "([a-z]+)([0-9]+)".to_string()], 0);
+        let _ = cond_pcre_match(&["abc123".to_string(), "([a-z]+)([0-9]+)".to_string()], 0);
         let m = crate::ported::params::getaparam("match");
         assert_eq!(
             m.as_deref(),
@@ -1217,8 +1203,7 @@ mod tests {
     #[test]
     fn pcre_corpus_cond_match_invalid_pattern_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        let r = cond_pcre_match(
-            &["abc".to_string(), "[unterminated".to_string()], 0);
+        let r = cond_pcre_match(&["abc".to_string(), "[unterminated".to_string()], 0);
         assert_eq!(r, 0, "invalid pattern = no match");
     }
 }

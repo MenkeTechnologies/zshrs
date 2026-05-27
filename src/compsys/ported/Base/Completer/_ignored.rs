@@ -68,9 +68,9 @@ pub fn _ignored() -> i32 {
         let comp_num = getiparam("_completer_num") as usize;
         let upto = comp_num.saturating_sub(1).min(completers.len());
         let slice = &completers[..upto];
-        let ind = slice.iter().position(|c| {
-            c == "_ignored" || c.starts_with("_ignored:")
-        });
+        let ind = slice
+            .iter()
+            .position(|c| c == "_ignored" || c.starts_with("_ignored:"));
         match ind {
             Some(i) => slice[i..].to_vec(),
             None => slice.to_vec(),
@@ -89,13 +89,11 @@ pub fn _ignored() -> i32 {
         }
         if dispatch_function_call(bare, &[]).unwrap_or(1) == 0 {
             // sh:39-55  single-ignored handling
-            let single_ignored = lookupstyle(
-                &format!(":completion:{}:", curcontext),
-                "single-ignored",
-            )
-            .first()
-            .cloned()
-            .unwrap_or_default();
+            let single_ignored =
+                lookupstyle(&format!(":completion:{}:", curcontext), "single-ignored")
+                    .first()
+                    .cloned()
+                    .unwrap_or_default();
             let old_list = get_compstate_str("old_list").unwrap_or_default();
             let nmatches: i64 = get_compstate_str("nmatches")
                 .and_then(|s| s.parse().ok())

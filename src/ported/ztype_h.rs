@@ -688,9 +688,7 @@ mod tests {
 
     fn with_typtab<F: FnOnce()>(body: F) {
         let _g = crate::test_util::global_state_lock();
-        let _g2 = TYPTAB_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _g2 = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::ported::utils::inittyptab();
         body();
     }

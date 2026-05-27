@@ -31,16 +31,14 @@
 //!   `to_lowercase` (which subsumes C's `mbrtowc` + `towlower` +
 //!   `wcrtomb` dance at sort.c:341-368).
 
-use std::cmp::Ordering;
+use crate::ported::zsh_h::sortelt;
 use crate::zsh_h::{
     SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_BACKSLASHES, SORTIT_IGNORING_CASE,
     SORTIT_NUMERICALLY, SORTIT_NUMERICALLY_SIGNED, SORTIT_SOMEHOW,
 };
-use crate::ported::zsh_h::sortelt;
 use libc;
+use std::cmp::Ordering;
 use std::ffi::CString;
-
-
 
 /// Port of `eltpcmp(const void *a, const void *b)` from `Src/sort.c:44`.
 ///
@@ -549,22 +547,34 @@ mod tests {
     #[test]
     fn zstrcmp_equal_strings_return_equal() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zstrcmp("foo", "foo", SORTIT_ANYOLDHOW as u32), Ordering::Equal);
+        assert_eq!(
+            zstrcmp("foo", "foo", SORTIT_ANYOLDHOW as u32),
+            Ordering::Equal
+        );
     }
 
     /// Default mode: lex compare — "apple" < "banana".
     #[test]
     fn zstrcmp_lex_order_default() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zstrcmp("apple", "banana", SORTIT_ANYOLDHOW as u32), Ordering::Less);
-        assert_eq!(zstrcmp("banana", "apple", SORTIT_ANYOLDHOW as u32), Ordering::Greater);
+        assert_eq!(
+            zstrcmp("apple", "banana", SORTIT_ANYOLDHOW as u32),
+            Ordering::Less
+        );
+        assert_eq!(
+            zstrcmp("banana", "apple", SORTIT_ANYOLDHOW as u32),
+            Ordering::Greater
+        );
     }
 
     /// Default mode: case-sensitive — "ABC" < "abc" (ASCII).
     #[test]
     fn zstrcmp_default_case_sensitive() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zstrcmp("ABC", "abc", SORTIT_ANYOLDHOW as u32), Ordering::Less);
+        assert_eq!(
+            zstrcmp("ABC", "abc", SORTIT_ANYOLDHOW as u32),
+            Ordering::Less
+        );
     }
 
     /// IGNORING_CASE on zstrcmp directly is a NO-OP per C semantics:
@@ -582,21 +592,30 @@ mod tests {
         // strcoll under the test runner's locale returns Less for ABC<abc.
         let with = zstrcmp("ABC", "abc", SORTIT_IGNORING_CASE as u32);
         let without = zstrcmp("ABC", "abc", SORTIT_ANYOLDHOW as u32);
-        assert_eq!(with, without, "c:zstrcmp ignores IGNORING_CASE; pre-pass lives in strmetasort");
+        assert_eq!(
+            with, without,
+            "c:zstrcmp ignores IGNORING_CASE; pre-pass lives in strmetasort"
+        );
     }
 
     /// IGNORING_CASE: "AbC" < "abd".
     #[test]
     fn zstrcmp_ignore_case_still_compares_differing_letters() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zstrcmp("AbC", "abd", SORTIT_IGNORING_CASE as u32), Ordering::Less);
+        assert_eq!(
+            zstrcmp("AbC", "abd", SORTIT_IGNORING_CASE as u32),
+            Ordering::Less
+        );
     }
 
     /// NUMERICALLY: "2" < "10".
     #[test]
     fn zstrcmp_numeric_mode_two_less_than_ten() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zstrcmp("2", "10", SORTIT_NUMERICALLY as u32), Ordering::Less);
+        assert_eq!(
+            zstrcmp("2", "10", SORTIT_NUMERICALLY as u32),
+            Ordering::Less
+        );
     }
 
     /// Plain lex: "10" < "2".
@@ -610,14 +629,20 @@ mod tests {
     #[test]
     fn zstrcmp_numeric_mode_embedded_numbers() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zstrcmp("file2", "file10", SORTIT_NUMERICALLY as u32), Ordering::Less);
+        assert_eq!(
+            zstrcmp("file2", "file10", SORTIT_NUMERICALLY as u32),
+            Ordering::Less
+        );
     }
 
     /// Numeric mode falls back to lex for no-digit prefix tie.
     #[test]
     fn zstrcmp_numeric_mode_no_digits_falls_back_to_lex() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zstrcmp("abc", "abd", SORTIT_NUMERICALLY as u32), Ordering::Less);
+        assert_eq!(
+            zstrcmp("abc", "abd", SORTIT_NUMERICALLY as u32),
+            Ordering::Less
+        );
     }
 
     /// Both empty → Equal.
@@ -639,7 +664,10 @@ mod tests {
     #[test]
     fn zstrcmp_prefix_is_less_than_longer_string() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zstrcmp("foo", "foobar", SORTIT_ANYOLDHOW as u32), Ordering::Less);
+        assert_eq!(
+            zstrcmp("foo", "foobar", SORTIT_ANYOLDHOW as u32),
+            Ordering::Less
+        );
     }
 
     /// Symmetry — sign(cmp(a,b)) == -sign(cmp(b,a)).

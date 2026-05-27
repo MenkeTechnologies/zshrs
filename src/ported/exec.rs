@@ -43,26 +43,54 @@ use crate::ported::builtins::sched::zleactive;
 use crate::ported::compat::zgettime_monotonic_if_available;
 use crate::ported::config_h::DEFAULT_PATH;
 use crate::ported::context::{zcontext_restore, zcontext_save};
-use crate::ported::hashtable::{cmdnam_unhashed, cmdnamtab_lock, dircache_set, hashdir, pathchecked, shfunctab_lock};
+use crate::ported::hashtable::{
+    cmdnam_unhashed, cmdnamtab_lock, dircache_set, hashdir, pathchecked, shfunctab_lock,
+};
 use crate::ported::hist::{strinbeg, strinend};
 use crate::ported::init::{shout, underscorelen, underscoreused, zunderscore, SHTTY};
 use crate::ported::input::{inpop, inpush};
 use crate::ported::jobs::{expandjobtab, get_usage, release_pgrp, waitforpid, JOBTAB, THISJOB};
-use crate::ported::lex::{hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO};
+use crate::ported::lex::{
+    hgetc, parsestr, tok, untokenize, ztokens, LEXERR, LEX_LEXSTOP, LEX_LINENO,
+};
 use crate::ported::mem::{dupstring, dyncat, popheap, pushheap};
 use crate::ported::modules::clone::mypgrp;
 use crate::ported::options::{dosetopt, opt_state_set, sticky};
-use crate::ported::params::{endparamscope, getsparam, locallevel, paramtab, setiparam, zgetenv, zputenv};
+use crate::ported::params::{
+    endparamscope, getsparam, locallevel, paramtab, setiparam, zgetenv, zputenv,
+};
 use crate::ported::parse::{closedumps, ecrawstr, parse_list};
 use crate::ported::prompt::{cmdpop, cmdpush};
-use crate::ported::signals::{intrap, queue_signals, settrap, sigtrapped, signal_mask, signal_unblock, trapisfunc, traplocallevel, unqueue_signals, unsettrap};
-use crate::ported::signals_h::{child_block, child_unblock, dont_queue_signals, signal_default, signal_ignore, winch_unblock, SIGCOUNT};
+use crate::ported::signals::{
+    intrap, queue_signals, settrap, signal_mask, signal_unblock, sigtrapped, trapisfunc,
+    traplocallevel, unqueue_signals, unsettrap,
+};
+use crate::ported::signals_h::{
+    child_block, child_unblock, dont_queue_signals, signal_default, signal_ignore, winch_unblock,
+    SIGCOUNT,
+};
 use crate::ported::subst::{quotesubst, singsub};
-use crate::ported::utils::{errflag, fdtable_get, fdtable_set, gettempfile, gettempname, inc_locallevel, movefd, pathprog, printprompt4, quotedzputs, redup, unmeta, unmetafy, write_loop, zclose, zerr, zwarn, ERRFLAG_ERROR, MAX_ZSH_FD};
-use crate::ported::ztype_h::{inull, itok};
-use crate::ported::zsh_h::{builtin, eprog, execstack, funcwrap, hashnode, multio, redir, shfunc, unset, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, CHASEDOTS, CHASELINKS, CLOBBER, CLOBBEREMPTY, CS_CMDSUBST, Emulation_options, ERRFLAG_INT, FDT_EXTERNAL, FDT_INTERNAL, FDT_PROC_SUBST, FDT_SAVED_MASK, FDT_TYPE_MASK, FDT_UNUSED, FDT_XTRACE, HASHDIRS, INTERACTIVE, INP_LINENO, IS_CLOBBER_REDIR, IS_DASH, Inang, Inpar, JOBTEXTSIZE, MAX_PIPESTATS, Meta, MONITOR, MULTIOS, MULTIOUNIT, Nularg, Outpar, PATHDIRS, PM_LOADDIR, PM_READONLY, PM_UNDEFINED, POSIXBUILTINS, POSIXJOBS, POSIXTRAPS, Pound, REDIRF_FROM_HEREDOC, REDIR_CLOSE, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_OUTPIPE, USEZLE, VERBOSE, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE, WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END, WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, WC_TYPESET, ZSIG_FUNC, ZSIG_IGNORED, Z_END, cmdnam, emulation_options, isset, wc_code};
-use crate::zsh_h::XTRACE;
+use crate::ported::utils::{
+    errflag, fdtable_get, fdtable_set, gettempfile, gettempname, inc_locallevel, movefd, pathprog,
+    printprompt4, quotedzputs, redup, unmeta, unmetafy, write_loop, zclose, zerr, zwarn,
+    ERRFLAG_ERROR, MAX_ZSH_FD,
+};
+use crate::ported::zsh_h::{
+    builtin, cmdnam, emulation_options, eprog, execstack, funcwrap, hashnode, isset, multio, redir,
+    shfunc, unset, wc_code, Emulation_options, Inang, Inpar, Meta, Nularg, Outpar, Pound,
+    BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, CHASEDOTS,
+    CHASELINKS, CLOBBER, CLOBBEREMPTY, CS_CMDSUBST, ERRFLAG_INT, FDT_EXTERNAL, FDT_INTERNAL,
+    FDT_PROC_SUBST, FDT_SAVED_MASK, FDT_TYPE_MASK, FDT_UNUSED, FDT_XTRACE, HASHDIRS, INP_LINENO,
+    INTERACTIVE, IS_CLOBBER_REDIR, IS_DASH, JOBTEXTSIZE, MAX_PIPESTATS, MONITOR, MULTIOS,
+    MULTIOUNIT, PATHDIRS, PM_LOADDIR, PM_READONLY, PM_UNDEFINED, POSIXBUILTINS, POSIXJOBS,
+    POSIXTRAPS, REDIRF_FROM_HEREDOC, REDIR_CLOSE, REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE,
+    REDIR_OUTPIPE, USEZLE, VERBOSE, WC_LIST, WC_LIST_TYPE, WC_PIPE, WC_PIPE_END, WC_PIPE_TYPE,
+    WC_REDIR, WC_REDIR_TYPE, WC_REDIR_VARID, WC_SIMPLE, WC_SIMPLE_ARGC, WC_SUBLIST, WC_SUBLIST_END,
+    WC_SUBLIST_FLAGS, WC_SUBLIST_TYPE, WC_TYPESET, ZSIG_FUNC, ZSIG_IGNORED, Z_END,
+};
 use crate::ported::zsh_system_h::timespec as ZshTimespec;
+use crate::ported::ztype_h::{inull, itok};
+use crate::zsh_h::XTRACE;
 
 /// Port of the anonymous `enum { ... }` from `Src/exec.c:35-40`.
 /// Flag bits passed as the `addflags` argument to `addvars` /
@@ -416,10 +444,7 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
         // c:4646-4649 — if (!(errflag & ERRFLAG_ERROR)) errflag = ef | (errflag & ERRFLAG_INT);
         if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) == 0 {
             let cur = errflag.load(Ordering::Relaxed);
-            errflag.store(
-                ef | (cur & ERRFLAG_INT),
-                Ordering::Relaxed,
-            );
+            errflag.store(ef | (cur & ERRFLAG_INT), Ordering::Relaxed);
         }
     }
     Some(buf) // c:4651 return buf
@@ -447,17 +472,18 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
 /// silent-no-op pattern (return empty string when no executor) would
 /// mask catastrophic state corruption as "command produced no output",
 /// which is the failure mode the `subst.rs:496` warning block flags.
-/* $(...) */                                                                // c:4709
+/* $(...) */
+ // c:4709
 pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     // c:4713
     // c:4715 — `Eprog prog;`
     let prog: Option<crate::ported::exec::eprog>;
     // c:4716 — `int pipes[2];`  (collapsed: in-process executor; no fork)
     // c:4717 — `pid_t pid;`     (collapsed)
-    let mut s: String;                                                       // c:4718
-    // c:4720-4723 — `int onc = nocomments; nocomments = (interact &&
-    //                !sourcelevel && unset(INTERACTIVECOMMENTS));
-    //                prog = parse_string(cmd, 0); nocomments = onc;`
+    let mut s: String; // c:4718
+                       // c:4720-4723 — `int onc = nocomments; nocomments = (interact &&
+                       //                !sourcelevel && unset(INTERACTIVECOMMENTS));
+                       //                prog = parse_string(cmd, 0); nocomments = onc;`
     let onc = crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.get());
     let new_nc = crate::ported::zsh_h::interact()
         && crate::ported::init::sourcelevel.load(std::sync::atomic::Ordering::Relaxed) == 0
@@ -466,31 +492,34 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     prog = parse_string(cmd, 0);
     crate::ported::lex::LEX_NOCOMMENTS.with(|c| c.set(onc));
 
-    if prog.is_none() {                                                      // c:4725
-        return Vec::new();                                                   // c:4726 return NULL
+    if prog.is_none() {
+        // c:4725
+        return Vec::new(); // c:4726 return NULL
     }
     let prog = prog.unwrap();
 
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXECOPT) {         // c:4728
-        return Vec::new();                                                   // c:4729 newlinklist()
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::EXECOPT) {
+        // c:4728
+        return Vec::new(); // c:4729 newlinklist()
     }
 
     // c:4731 — `if ((s = simple_redir_name(prog, REDIR_READ)))` — `$(< word)`
     if let Some(red_name) = simple_redir_name(&prog, crate::ported::zsh_h::REDIR_READ) {
-        /* $(< word) */                                                      // c:4732
+        /* $(< word) */
+ // c:4732
         s = red_name;
-        s = crate::ported::subst::singsub(&s);                               // c:4737
+        s = crate::ported::subst::singsub(&s); // c:4737
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
-            return Vec::new();                                               // c:4739
+            return Vec::new(); // c:4739
         }
-        let s = crate::ported::lex::untokenize(&s);                          // c:4740
-        let path_meta = crate::ported::utils::unmeta(&s);                    // c:4741 unmeta(s)
+        let s = crate::ported::lex::untokenize(&s); // c:4740
+        let path_meta = crate::ported::utils::unmeta(&s); // c:4741 unmeta(s)
         let cpath = match std::ffi::CString::new(path_meta.as_bytes()) {
             Ok(c) => c,
             Err(_) => return Vec::new(),
         };
         let stream = unsafe {
-            libc::open(cpath.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY)      // c:4741
+            libc::open(cpath.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) // c:4741
         };
         if stream == -1 {
             // c:4742 — `zwarn("%e: %s", errno, s);`
@@ -498,7 +527,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
             crate::ported::utils::zerr(&format!("{}: {}", errno, s));
             crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
             crate::ported::exec::cmdoutval.store(1, std::sync::atomic::Ordering::Relaxed);
-            return Vec::new();                                               // c:4744
+            return Vec::new(); // c:4744
         }
         // c:4746 — `retval = readoutput(stream, qt, &readerror);`
         let mut readerror: i32 = 0;
@@ -506,7 +535,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
         if readerror != 0 {
             // c:4747
             crate::ported::utils::zerr(&format!(
-                "error when reading {}: {}",                                 // c:4748
+                "error when reading {}: {}", // c:4748
                 s,
                 std::io::Error::from_raw_os_error(readerror)
             ));
@@ -530,18 +559,18 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     crate::ported::builtin::LASTVAL.store(
         crate::ported::exec::cmdoutval.load(std::sync::atomic::Ordering::Relaxed),
         std::sync::atomic::Ordering::Relaxed,
-    );                                                                       // c:4775
+    ); // c:4775
 
     // c:4772 retval = readoutput — post-walk (c:4855-4871 tail) inlined.
     let buf = buf.trim_end_matches('\n');
     if qt != 0 {
         if buf.is_empty() {
-            vec![String::from(crate::ported::zsh_h::Nularg)]                 // c:4859-4861
+            vec![String::from(crate::ported::zsh_h::Nularg)] // c:4859-4861
         } else {
-            vec![buf.to_string()]                                            // c:4863
+            vec![buf.to_string()] // c:4863
         }
     } else {
-        crate::ported::utils::spacesplit(buf, false)                         // c:4865
+        crate::ported::utils::spacesplit(buf, false) // c:4865
     }
 }
 
@@ -701,8 +730,9 @@ pub fn resolvebuiltin<'a>(
             crate::ported::module::ensurefeature(&mut t, &modname, "b:", Some(cmdarg))
         };
         // c:2715-2716 — re-lookup the now-(hopefully)-resolved builtin.
-        if let Some(re) =
-            crate::ported::builtin::BUILTINS.iter().find(|b| b.node.nam == cmdarg)
+        if let Some(re) = crate::ported::builtin::BUILTINS
+            .iter()
+            .find(|b| b.node.nam == cmdarg)
         {
             if re.handlerfunc.is_some() {
                 return Some(re); // c:2723
@@ -872,9 +902,7 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
                 }
             }
             // c:3056 — `builtintab->getnode(builtintab, cmdarg)`.
-            let entry = BUILTINS
-                .iter()
-                .find(|b| b.node.nam == cmdarg);
+            let entry = BUILTINS.iter().find(|b| b.node.nam == cmdarg);
             let Some(entry) = entry else {
                 // c:3056-3058
                 break;
@@ -922,7 +950,7 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
                 let mut has_p = false; // c:3104
                 let mut has_vv = false; // c:3104
                 let mut has_other = false; // c:3104
-                // c:3107 — `while (IS_DASH(*argdata))`
+                                           // c:3107 — `while (IS_DASH(*argdata))`
                 while argnode < preargs.len()
                     && IS_DASH(preargs[argnode].chars().next().unwrap_or('\0'))
                 {
@@ -1121,7 +1149,7 @@ pub fn execcmd_compile_head(args: &[String], type_: u32) -> execcmd_dispatch {
             // set, where the loop continues normally).
             if (cflags & BINF_COMMAND) != 0 && !isset(POSIXBUILTINS) {
                 hn = None; // c:3275 hn = NULL
-                break;     // c:3277
+                break; // c:3277
             }
         }
     }
@@ -1217,10 +1245,8 @@ pub fn parse_string(s: &str, reset_lineno: i32) -> Option<eprog> {
     }
     p = parse_list(); // c:294
     LEX_LINENO.set(oldlineno as u64); // c:295
-                                                          // c:296-297 — `if (tok == LEXERR && !lastval) lastval = 1;`
-    if tok() == LEXERR
-        && LASTVAL.load(Ordering::Relaxed) == 0
-    {
+                                      // c:296-297 — `if (tok == LEXERR && !lastval) lastval = 1;`
+    if tok() == LEXERR && LASTVAL.load(Ordering::Relaxed) == 0 {
         LASTVAL.store(1, Ordering::Relaxed);
     }
     strinend(); // c:298
@@ -1511,7 +1537,7 @@ pub fn execsave() {
             }
             buf
         },
-        lastval: LASTVAL.load(Ordering::Relaxed),             // c:6449
+        lastval: LASTVAL.load(Ordering::Relaxed), // c:6449
         // c:6450 — `es->noeval = noeval;`. Snapshot math.c's
         // `int noeval` (the parse-only side-effect-skip counter)
         // via math.rs's pub accessor.
@@ -1520,8 +1546,7 @@ pub fn execsave() {
         // csh-glob diagnostic counter (glob.c:103 / glob.rs
         // BADCSHGLOB) so nested eval / trap dispatch doesn't disturb
         // the outer command's per-line accounting.
-        badcshglob: crate::ported::glob::BADCSHGLOB
-            .load(std::sync::atomic::Ordering::Relaxed), // c:6451
+        badcshglob: crate::ported::glob::BADCSHGLOB.load(std::sync::atomic::Ordering::Relaxed), // c:6451
         cmdoutpid: cmdoutpid.load(Ordering::Relaxed), // c:6452
         cmdoutval: cmdoutval.load(Ordering::Relaxed), // c:6453
         use_cmdoutval: use_cmdoutval.load(Ordering::Relaxed), // c:6454
@@ -1530,7 +1555,7 @@ pub fn execsave() {
         trap_state: TRAP_STATE.load(Ordering::Relaxed), // c:6457
         trapisfunc: trapisfunc.load(Ordering::Relaxed), // c:6458
         traplocallevel: traplocallevel.load(Ordering::Relaxed), // c:6459
-        noerrs: noerrs.load(Ordering::Relaxed), // c:6460
+        noerrs: noerrs.load(Ordering::Relaxed),       // c:6460
         this_noerrexit: this_noerrexit.load(Ordering::Relaxed), // c:6461
         // c:6462 — `es->underscore = ztrdup(zunderscore);`
         underscore: Some(zunderscore.lock().unwrap().clone()),
@@ -1600,7 +1625,7 @@ pub fn execrestore() {
     pline_level.store(en.pline_level, Ordering::Relaxed); // c:6481
     list_pipe_child.store(en.list_pipe_child, Ordering::Relaxed); // c:6482
     list_pipe_job.store(en.list_pipe_job, Ordering::Relaxed); // c:6483
-    // c:6484 — `strcpy(list_pipe_text, en->list_pipe_text);`.
+                                                              // c:6484 — `strcpy(list_pipe_text, en->list_pipe_text);`.
     if let Ok(mut s) = LIST_PIPE_TEXT.lock() {
         let nul = en
             .list_pipe_text
@@ -1610,13 +1635,12 @@ pub fn execrestore() {
         *s = String::from_utf8_lossy(&en.list_pipe_text[..nul]).into_owned();
     }
     LASTVAL.store(en.lastval, Ordering::Relaxed); // c:6485
-    // c:6486 — `noeval = en->noeval;`. Restore math.c's noeval
-    // counter from the saved frame.
+                                                  // c:6486 — `noeval = en->noeval;`. Restore math.c's noeval
+                                                  // counter from the saved frame.
     crate::ported::math::m_noeval_set(en.noeval);
     // c:6487 — `badcshglob = en->badcshglob;`. Restore the csh-glob
     // diagnostic counter saved on entry.
-    crate::ported::glob::BADCSHGLOB
-        .store(en.badcshglob, std::sync::atomic::Ordering::Relaxed);
+    crate::ported::glob::BADCSHGLOB.store(en.badcshglob, std::sync::atomic::Ordering::Relaxed);
     cmdoutpid.store(en.cmdoutpid, Ordering::Relaxed); // c:6488
     cmdoutval.store(en.cmdoutval, Ordering::Relaxed); // c:6489
     use_cmdoutval.store(en.use_cmdoutval, Ordering::Relaxed); // c:6490
@@ -1668,7 +1692,7 @@ pub fn execrestore() {
 pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str) {
     // c:1228
     pushheap(); // c:1232
-                                    // c:1233-1237 — VERBOSE banner.
+                // c:1233-1237 — VERBOSE banner.
     if isset(VERBOSE) {
         // c:1233
         let mut stderr = std::io::stderr().lock();
@@ -1731,11 +1755,7 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
 /// (d) `startparamscope/endparamscope` Rust signatures take
 ///     `&mut HashTable` (params.rs:7425/7435). We pass the global
 ///     paramtab handle via the params crate.
-pub fn runshfunc(
-    prog: &eprog,
-    mut wrap: Option<&funcwrap>,
-    name: &str,
-) {
+pub fn runshfunc(prog: &eprog, mut wrap: Option<&funcwrap>, name: &str) {
     // c:6166
     queue_signals(); // c:6171
                      // c:6173-6175 — snapshot zunderscore into `ou`.
@@ -1781,8 +1801,7 @@ pub fn runshfunc(
                 if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
                     if let Some(m) = tab.modules.get_mut(n) {
                         m.wrapper -= 1;
-                        m.wrapper == 0
-                            && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) != 0
+                        m.wrapper == 0 && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) != 0
                     } else {
                         false
                     }
@@ -1819,37 +1838,32 @@ pub fn runshfunc(
         let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(src);
     } else {
         // Pure wordcode body — drive via the canonical execode.
-        crate::ported::exec::execode(
-            Box::new(prog.clone()),
-            1,
-            0,
-            "shfunc",
-        );
+        crate::ported::exec::execode(Box::new(prog.clone()), 1, 0, "shfunc");
         let _ = name;
     }
     if let Some(ou_str) = ou {
         // c:6196
         setunderscore(&ou_str); // c:6197
-                                 // c:6198 — zfree(ou, ouu) — Rust drops on scope exit.
+                                // c:6198 — zfree(ou, ouu) — Rust drops on scope exit.
     }
     endparamscope(); // c:6200
-    // c:6141 — deferred-exit gate. After endparamscope() unwinds the
-    // function's local scope (locallevel--), check whether an exit
-    // queued inside the function has reached its target scope:
-    //   if (exit_pending && exit_level >= locallevel+1 && !in_exit_trap)
-    // The `+1` accounts for endparamscope having already happened
-    // here (locallevel is already one less than when exit_level was
-    // captured at c:5890). When the gate fires:
-    //   - locallevel > forklevel: still in a nested function — force
-    //     the outer frame to return too (retflag=1, breaks=loops).
-    //   - locallevel <= forklevel: out of all functions — actually
-    //     exit the shell now via zexit(exit_val, ZEXIT_NORMAL).
-    // `in_exit_trap` (c:Src/signals.c:63 — `int in_exit_trap;`) is the
-    // EXIT-trap reentry counter. dotrap at signals.c:1272/1277 wraps
-    // SIGEXIT handler dispatch with ++/--, so an exit issued FROM an
-    // EXIT trap shouldn't re-trigger the gate (or the trap would
-    // recurse). zshrs's signals::in_exit_trap is the canonical port
-    // surface — read it directly here.
+                     // c:6141 — deferred-exit gate. After endparamscope() unwinds the
+                     // function's local scope (locallevel--), check whether an exit
+                     // queued inside the function has reached its target scope:
+                     //   if (exit_pending && exit_level >= locallevel+1 && !in_exit_trap)
+                     // The `+1` accounts for endparamscope having already happened
+                     // here (locallevel is already one less than when exit_level was
+                     // captured at c:5890). When the gate fires:
+                     //   - locallevel > forklevel: still in a nested function — force
+                     //     the outer frame to return too (retflag=1, breaks=loops).
+                     //   - locallevel <= forklevel: out of all functions — actually
+                     //     exit the shell now via zexit(exit_val, ZEXIT_NORMAL).
+                     // `in_exit_trap` (c:Src/signals.c:63 — `int in_exit_trap;`) is the
+                     // EXIT-trap reentry counter. dotrap at signals.c:1272/1277 wraps
+                     // SIGEXIT handler dispatch with ++/--, so an exit issued FROM an
+                     // EXIT trap shouldn't re-trigger the gate (or the trap would
+                     // recurse). zshrs's signals::in_exit_trap is the canonical port
+                     // surface — read it directly here.
     let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
     let exit_level = crate::ported::builtin::EXIT_LEVEL.load(Ordering::Relaxed);
     let cur_locallevel = crate::ported::params::locallevel.load(Ordering::Relaxed) as i32;
@@ -1868,7 +1882,8 @@ pub fn runshfunc(
             // c:6151 — out of all functions: exit for real.
             crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:6151
             let val = crate::ported::builtin::EXIT_VAL.load(Ordering::Relaxed);
-            crate::ported::builtin::zexit(val, crate::ported::zsh_h::ZEXIT_NORMAL); // c:6152
+            crate::ported::builtin::zexit(val, crate::ported::zsh_h::ZEXIT_NORMAL);
+            // c:6152
         }
     }
     unqueue_signals(); // c:6202
@@ -1901,10 +1916,7 @@ pub fn runshfunc(
 /// Deep-clone a sticky emulation struct. Used by `shfunc_set_sticky`
 /// at function-def time to snapshot the pending `sticky` global so
 /// the function carries its own immutable copy.
-pub fn sticky_emulation_dup(
-    src: &emulation_options,
-    _useheap: i32,
-) -> Emulation_options {
+pub fn sticky_emulation_dup(src: &emulation_options, _useheap: i32) -> Emulation_options {
     // c:5501
     // c:5503-5505 — `newsticky = hcalloc/zshcalloc; newsticky->emulation = src->emulation;`
     let mut newsticky = Box::new(emulation_options {
@@ -2039,10 +2051,7 @@ pub fn checkclobberparam(f: &redir) -> i32 {
     let readonly = paramtab()
         .read()
         .ok()
-        .and_then(|t| {
-            t.get(&s)
-                .map(|p| (p.node.flags as u32 & PM_READONLY) != 0)
-        })
+        .and_then(|t| t.get(&s).map(|p| (p.node.flags as u32 & PM_READONLY) != 0))
         .unwrap_or(false);
     if readonly {
         // c:2191
@@ -2071,10 +2080,7 @@ pub fn checkclobberparam(f: &redir) -> i32 {
             if fd >= 0 && fd <= max_fd {
                 let kind = crate::ported::utils::fdtable_get(fd);
                 if kind == crate::ported::zsh_h::FDT_EXTERNAL {
-                    zwarn(&format!(
-                        "{}: file descriptor {} already open",
-                        s, fd
-                    )); // c:2206-2210
+                    zwarn(&format!("{}: file descriptor {} already open", s, fd)); // c:2206-2210
                     return 0; // c:2211
                 }
             }
@@ -2124,9 +2130,7 @@ pub fn clobber_open(f: &redir) -> i32 {
         Err(_) => return -1,
     };
     // c:2228-2230 — clobber path: just open + truncate.
-    if isset(CLOBBER)
-        || IS_CLOBBER_REDIR(f.typ)
-    {
+    if isset(CLOBBER) || IS_CLOBBER_REDIR(f.typ) {
         // c:2228
         // c:2229 — `open(ufname, O_WRONLY|O_CREAT|O_TRUNC|O_NOCTTY, 0666)`
         let fd = unsafe {
@@ -2222,10 +2226,7 @@ pub fn findcmd(arg0: &str, _docopy: i32, default_path: i32) -> Option<String> {
                 return Some(arg0.to_string()); // c:916
             }
             // c:917-919 — relative + PATHDIRS set → fall through to walk.
-            if arg0.starts_with("./")
-                || arg0.starts_with("../")
-                || !isset(PATHDIRS)
-            {
+            if arg0.starts_with("./") || arg0.starts_with("../") || !isset(PATHDIRS) {
                 return None;
             }
             // else fall through to PATH walk.
@@ -2525,11 +2526,7 @@ pub fn addfd(
 ///
 /// c:2299 — `addproc(pid, NULL, 1, &bgtime, -1, -1)` records the
 /// tee/cat child in the current job's auxprocs.
-pub fn closemn(
-    mfds: &mut [Option<Box<multio>>; 10],
-    fd: i32,
-    type_: i32,
-) {
+pub fn closemn(mfds: &mut [Option<Box<multio>>; 10], fd: i32, type_: i32) {
     // c:2273
     // c:2275 — `if (fd >= 0 && mfds[fd] && mfds[fd]->ct >= 2)`
     let needs_tee = fd >= 0
@@ -2580,9 +2577,13 @@ pub fn closemn(
                 if tj >= 0 {
                     if let Some(j) = guard.get_mut(tj as usize) {
                         crate::ported::jobs::addproc(
-                            j, pid, "", true,
+                            j,
+                            pid,
+                            "",
+                            true,
                             Some(std::time::Instant::now()),
-                            -1, -1,
+                            -1,
+                            -1,
                         );
                     }
                 }
@@ -2622,9 +2623,7 @@ pub fn closemn(
                     if i >= mn.fds.len() {
                         break;
                     }
-                    if write_loop(mn.fds[i], &buf[..len as usize])
-                        .is_err()
-                    {
+                    if write_loop(mn.fds[i], &buf[..len as usize]).is_err() {
                         break; // c:2319
                     }
                 }
@@ -2638,11 +2637,7 @@ pub fn closemn(
                 // c:2324 — `while ((len = read(mn->fds[i], buf, TCBUFSIZE)) != 0)`
                 loop {
                     let len = unsafe {
-                        libc::read(
-                            mn.fds[i],
-                            buf.as_mut_ptr() as *mut libc::c_void,
-                            buf.len(),
-                        )
+                        libc::read(mn.fds[i], buf.as_mut_ptr() as *mut libc::c_void, buf.len())
                     };
                     if len == 0 {
                         break;
@@ -2920,7 +2915,7 @@ pub fn hashcmd(arg0: &str, pp: &[String]) -> Option<cmdnam> {
     // c:1033-1036 — alloc cn, set flags=0, u.name=pp (the matching slice).
     let path_slice: Vec<String> = pp[pp_idx..].to_vec(); // c:1035
     let cn = cmdnam_unhashed(arg0, path_slice); // c:1033-1035
-                                                                          // c:1036 — `cmdnamtab->addnode(cmdnamtab, ztrdup(arg0), cn);`
+                                                // c:1036 — `cmdnamtab->addnode(cmdnamtab, ztrdup(arg0), cn);`
     if let Ok(mut tab) = cmdnamtab_lock().write() {
         tab.add(cn.clone());
     }
@@ -3202,23 +3197,17 @@ pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
     // c:4805
     let mut buf: Vec<u8> = Vec::with_capacity(64); // c:4816 (initial bsiz=64)
     let mut readret: isize = 0; // c:4818 readret tracks last read return
-    // c:4824 dont_queue_signals(); c:4825 child_unblock(); — signal-queue
-    // dance keeps SIGCHLD live so the foreground process can be reaped
-    // while we drain. zshrs's in-process command-sub runs without the
-    // queue (no fork), but the C call surface is preserved for parity.
+                                // c:4824 dont_queue_signals(); c:4825 child_unblock(); — signal-queue
+                                // dance keeps SIGCHLD live so the foreground process can be reaped
+                                // while we drain. zshrs's in-process command-sub runs without the
+                                // queue (no fork), but the C call surface is preserved for parity.
     dont_queue_signals(); // c:4824
     child_unblock(); // c:4825
     let mut inbuf = [0u8; 64]; // c:4815 inbuf[64]
     loop {
         // c:4826
         // c:4828 — `readret = read(in, inbuf, 64);`
-        let r = unsafe {
-            libc::read(
-                in_fd,
-                inbuf.as_mut_ptr() as *mut libc::c_void,
-                inbuf.len(),
-            )
-        };
+        let r = unsafe { libc::read(in_fd, inbuf.as_mut_ptr() as *mut libc::c_void, inbuf.len()) };
         readret = r as isize;
         if readret <= 0 {
             // c:4829
@@ -3241,7 +3230,7 @@ pub fn readoutput(in_fd: i32, qt: i32, readerror: &mut i32) -> Vec<String> {
         }
     }
     child_block(); // c:4854
-    // c:4855 — `if (readerror) *readerror = readret < 0 ? errno : 0;`
+                   // c:4855 — `if (readerror) *readerror = readret < 0 ? errno : 0;`
     *readerror = if readret < 0 {
         std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
     } else {
@@ -3390,7 +3379,7 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
     } else {
         args[0].clone()
     }; // c:731
-    // c:733-748 — STTY pre-exec handling.
+       // c:733-748 — STTY pre-exec handling.
     {
         let mut stty = STTYval.lock().unwrap();
         if let Some(s) = stty.take() {
@@ -3421,13 +3410,12 @@ pub fn execute(args: &mut Vec<String>, flags: u32, defpath: i32) {
     let argv = makecline(args); // c:771
     let newenvp_owned: Option<Vec<String>> = if (flags & BINF_CLEARENV) != 0 {
         Some(Vec::new()) // c:772-773 — blank_env: char ** with only NULL slot
-
     } else {
         None
     };
     let newenvp = newenvp_owned.as_deref();
     closem(FDT_XTRACE, 0); // c:779
-                            // c:780-785 — !FD_CLOEXEC SHTTY close — WARNING (d).
+                           // c:780-785 — !FD_CLOEXEC SHTTY close — WARNING (d).
     child_unblock(); // c:786
     if arg0.len() >= libc::PATH_MAX as usize {
         // c:787
@@ -3610,8 +3598,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
         .iter()
         .filter_map(|a| CString::new(a.as_str()).ok())
         .collect();
-    let mut argv_ptrs: Vec<*const libc::c_char> =
-        cargs.iter().map(|c| c.as_ptr()).collect();
+    let mut argv_ptrs: Vec<*const libc::c_char> = cargs.iter().map(|c| c.as_ptr()).collect();
     argv_ptrs.push(std::ptr::null());
     let env_holder: Vec<CString>;
     let env_ptrs: Vec<*const libc::c_char>;
@@ -3681,9 +3668,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                     ));
                 } else {
                     // c:552
-                    while t0 > 0
-                        && (buf[t0] == b' ' || buf[t0] == b'\t' || buf[t0] == b'\n')
-                    {
+                    while t0 > 0 && (buf[t0] == b' ' || buf[t0] == b'\t' || buf[t0] == b'\n') {
                         buf[t0] = 0;
                         t0 -= 1;
                     } // c:553-554
@@ -3693,27 +3678,21 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                     } // c:555
                     let ptr2_lo = ptr_lo;
                     let mut ptr_hi = ptr2_lo;
-                    while ptr_hi < buf.len()
-                        && buf[ptr_hi] != 0
-                        && buf[ptr_hi] != b' '
-                    {
+                    while ptr_hi < buf.len() && buf[ptr_hi] != 0 && buf[ptr_hi] != b' ' {
                         ptr_hi += 1;
                     } // c:556
-                    let interp_str =
-                        String::from_utf8_lossy(&buf[ptr2_lo..ptr_hi]).into_owned();
+                    let interp_str = String::from_utf8_lossy(&buf[ptr2_lo..ptr_hi]).into_owned();
                     if eno == libc::ENOENT {
                         // c:557 — pathprog rewrite path.
                         let pprog = if !interp_str.starts_with('/') {
                             // c:561
-                            pathprog(&interp_str)
-                                .map(|p| p.display().to_string())
+                            pathprog(&interp_str).map(|p| p.display().to_string())
                         } else {
                             None
                         };
                         if let Some(pprog) = pprog {
                             // c:562
-                            let mut argv_new: Vec<String> =
-                                Vec::with_capacity(argv.len() + 2);
+                            let mut argv_new: Vec<String> = Vec::with_capacity(argv.len() + 2);
                             argv_new.push(interp_str.clone()); // c:564
                             if ptr_hi >= buf.len() || buf[ptr_hi] == 0 {
                                 argv_new.push(pth.to_string());
@@ -3728,8 +3707,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                                     rest_hi += 1;
                                 }
                                 let arg_str =
-                                    String::from_utf8_lossy(&buf[rest_lo..rest_hi])
-                                        .into_owned();
+                                    String::from_utf8_lossy(&buf[rest_lo..rest_hi]).into_owned();
                                 argv_new.push(arg_str);
                                 argv_new.push(pth.to_string());
                             }
@@ -3756,13 +3734,9 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                         while rest_hi < buf.len() && buf[rest_hi] != 0 {
                             rest_hi += 1;
                         }
-                        let arg_str =
-                            String::from_utf8_lossy(&buf[rest_lo..rest_hi]).into_owned();
-                        let mut argv_new: Vec<String> = vec![
-                            interp_str.clone(),
-                            arg_str,
-                            pth.to_string(),
-                        ];
+                        let arg_str = String::from_utf8_lossy(&buf[rest_lo..rest_hi]).into_owned();
+                        let mut argv_new: Vec<String> =
+                            vec![interp_str.clone(), arg_str, pth.to_string()];
                         for orig in argv.iter().skip(1) {
                             argv_new.push(orig.clone());
                         }
@@ -3770,8 +3744,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                         return zexecve(&interp_str, &argv_new, newenvp); // c:581
                     } else {
                         // c:582
-                        let mut argv_new: Vec<String> =
-                            vec![interp_str.clone(), pth.to_string()];
+                        let mut argv_new: Vec<String> = vec![interp_str.clone(), pth.to_string()];
                         for orig in argv.iter().skip(1) {
                             argv_new.push(orig.clone());
                         }
@@ -3789,10 +3762,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                         let mut binary = true;
                         for &b in &buf[..npos] {
                             // c:602-609
-                            if (b as char).is_ascii_lowercase()
-                                || b == b'$'
-                                || b == b'`'
-                            {
+                            if (b as char).is_ascii_lowercase() || b == b'$' || b == b'`' {
                                 has_letter = true;
                             }
                             if has_letter && b == b'\n' {
@@ -3807,9 +3777,7 @@ pub fn zexecve(pth: &str, argv: &[String], newenvp: Option<&[String]>) -> i32 {
                     // c:611
                     let mut argv_new: Vec<String> = Vec::with_capacity(argv.len() + 2);
                     argv_new.push("sh".to_string()); // c:625
-                    if !argv.is_empty()
-                        && (argv[0].starts_with('-') || argv[0].starts_with('+'))
-                    {
+                    if !argv.is_empty() && (argv[0].starts_with('-') || argv[0].starts_with('+')) {
                         argv_new.push("-".to_string()); // c:623
                     }
                     for orig in argv.iter() {
@@ -3953,7 +3921,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     let _ = redup(fd, 1); // c:4985
     entersubsh(esub::PGRP | esub::NOMONITOR, None); // c:4986
     cmdpush(CS_CMDSUBST as u8); // c:4987
-                                                       // c:4988 — execode — WARNING (d).
+                                // c:4988 — execode — WARNING (d).
     let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
     let body = if body_end > 2 && body_end <= cmd.len() {
         &cmd[2..body_end]
@@ -3965,7 +3933,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     unsafe {
         libc::close(1);
     } // c:4990
-                                                          // _realexit — WARNING (e)
+      // _realexit — WARNING (e)
     std::process::exit(0); // c:4991
     #[allow(unreachable_code)]
     {
@@ -4012,10 +3980,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         .map(|m| *m.lock().unwrap())
         .unwrap_or(-1);
     if tj_check == -1 {
-        zerr(&format!(
-            "process substitution {} cannot be used here",
-            cmd
-        )); // c:5069
+        zerr(&format!("process substitution {} cannot be used here", cmd)); // c:5069
         return None; // c:5070
     }
     // c:5072 — PATH_DEV_FD path: allocate buffer for the /dev/fd/N string.
@@ -4029,7 +3994,10 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         // c:5075
         return None;
     }
-    let mut bgtime: ZshTimespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut bgtime: ZshTimespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let pid = zfork(Some(&mut bgtime)); // c:5077
     if pid != 0 {
         // c:5077 — parent path.
@@ -4042,8 +4010,8 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
         }
         let fd = pipes[(1 - out) as usize]; // c:5085
         fdtable_set(fd, FDT_PROC_SUBST); // c:5086
-        // c:5087 — `addfilelist(NULL, fd);` — register the proc-subst
-        // pipe fd in the current job's filelist so it's closed at job exit.
+                                         // c:5087 — `addfilelist(NULL, fd);` — register the proc-subst
+                                         // pipe fd in the current job's filelist so it's closed at job exit.
         if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
             let tj = crate::ported::jobs::THISJOB
@@ -4070,9 +4038,13 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
                 if tj >= 0 {
                     if let Some(j) = guard.get_mut(tj as usize) {
                         crate::ported::jobs::addproc(
-                            j, pid, "", true,
+                            j,
+                            pid,
+                            "",
+                            true,
                             Some(std::time::Instant::now()),
-                            -1, -1,
+                            -1,
+                            -1,
                         );
                     }
                 }
@@ -4119,8 +4091,8 @@ pub mod esub {
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct entersubsh_ret {
-    pub gleader: i32,        // c:1122
-    pub list_pipe_job: i32,  // c:1123
+    pub gleader: i32,       // c:1122
+    pub list_pipe_job: i32, // c:1123
 }
 
 /// Port of `static void entersubsh(int flags, struct entersubsh_ret *retp)`
@@ -4165,13 +4137,12 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
         }
     }
     monitor = if isset(MONITOR) { 1 } else { 0 }; // c:1093
-    job_control_ok =
-        if monitor != 0 && (flags & esub::JOB_CONTROL) != 0 && isset(POSIXJOBS) {
-            // c:1094
-            1
-        } else {
-            0
-        };
+    job_control_ok = if monitor != 0 && (flags & esub::JOB_CONTROL) != 0 && isset(POSIXJOBS) {
+        // c:1094
+        1
+    } else {
+        0
+    };
     EXIT_VAL.store(0, Ordering::Relaxed); // c:1095
     if (flags & esub::NOMONITOR) != 0 {
         // c:1096
@@ -4189,13 +4160,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
                     libc::close(0);
                 } // c:1103
                 let devnull = std::ffi::CString::new("/dev/null").unwrap();
-                if unsafe {
-                    libc::open(
-                        devnull.as_ptr(),
-                        libc::O_RDWR | libc::O_NOCTTY,
-                    )
-                } != 0
-                {
+                if unsafe { libc::open(devnull.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) } != 0 {
                     // c:1104
                     zerr(&format!(
                         // c:1105
@@ -4220,16 +4185,12 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
             let lpc = list_pipe_child.load(Ordering::Relaxed);
             if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
-                let lpj_gleader = guard
-                    .get(lpj as usize)
-                    .map(|j| j.gleader)
-                    .unwrap_or(0);
+                let lpj_gleader = guard.get(lpj as usize).map(|j| j.gleader).unwrap_or(0);
                 if lpj_gleader != 0 && (lp != 0 || lpc != 0) {
                     // c:1111-1124 — inherit list_pipe_job's group leader.
                     let pgid = if unsafe { libc::setpgid(0, lpj_gleader) } == -1
                         || (unsafe { libc::killpg(lpj_gleader, 0) } == -1
-                            && std::io::Error::last_os_error().raw_os_error()
-                                == Some(libc::ESRCH))
+                            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH))
                     {
                         // c:1115-1117 — primary group leader gone; this child becomes leader.
                         let new_gl = if lpc != 0 {
@@ -4259,13 +4220,9 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
                     }
                 } else {
                     // c:1126-1151 — standard group-leader-takeover path.
-                    let thisjob_gleader = guard
-                        .get(thisjob as usize)
-                        .map(|j| j.gleader)
-                        .unwrap_or(0);
-                    if thisjob_gleader == 0
-                        || unsafe { libc::setpgid(0, thisjob_gleader) } == -1
-                    {
+                    let thisjob_gleader =
+                        guard.get(thisjob as usize).map(|j| j.gleader).unwrap_or(0);
+                    if thisjob_gleader == 0 || unsafe { libc::setpgid(0, thisjob_gleader) } == -1 {
                         let new_gl = unsafe { libc::getpid() };
                         if let Some(j) = guard.get_mut(thisjob as usize) {
                             j.gleader = new_gl; // c:1138
@@ -4307,8 +4264,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
     zsh_subshell.fetch_add(1, Ordering::Relaxed);
     // c:1162 — `if ((flags & ESUB_REVERTPGRP) && getpid() == mypgrp)`.
     if (flags & esub::REVERTPGRP) != 0
-        && unsafe { libc::getpid() }
-            == mypgrp.load(Ordering::Relaxed)
+        && unsafe { libc::getpid() } == mypgrp.load(Ordering::Relaxed)
     {
         release_pgrp(); // c:1163
     }
@@ -4381,7 +4337,7 @@ pub fn entersubsh(flags: i32, retp: Option<&mut entersubsh_ret>) {
     }
     dosetopt(USEZLE, 0, 0); // c:1208
     zleactive.store(0, Ordering::Relaxed); // c:1209
-                                                                            // c:1214-1217 — close saved fds.
+                                           // c:1214-1217 — close saved fds.
     let max = MAX_ZSH_FD.load(Ordering::Relaxed);
     for i in 10..=max {
         if (fdtable_get(i) & FDT_SAVED_MASK) != 0 {
@@ -4474,7 +4430,10 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
         return -1;
     }
     // c:5135 — `if ((pid = zfork(&bgtime)))` — parent path.
-    let mut bgtime: ZshTimespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut bgtime: ZshTimespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let pid = zfork(Some(&mut bgtime)); // c:5135
     if pid != 0 {
         // c:5135 — parent.
@@ -4495,9 +4454,13 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
                 if tj >= 0 {
                     if let Some(j) = guard.get_mut(tj as usize) {
                         crate::ported::jobs::addproc(
-                            j, pid, "", true, // aux=1 for proc subst
+                            j,
+                            pid,
+                            "",
+                            true, // aux=1 for proc subst
                             Some(std::time::Instant::now()),
-                            -1, -1,
+                            -1,
+                            -1,
                         );
                     }
                 }
@@ -4511,7 +4474,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     let _ = redup(pipes[out as usize], out); // c:5147
     closem(FDT_UNUSED, 0); // c:5148
     cmdpush(CS_CMDSUBST as u8); // c:5149
-                                                       // c:5150 — execode(prog, 0, 1, ...) — see WARNING (c).
+                                // c:5150 — execode(prog, 0, 1, ...) — see WARNING (c).
     let body_end = if ends_at > 0 { ends_at - 1 } else { 2 };
     let body = if body_end > 2 && body_end <= bytes.len() {
         &cmd[2..body_end]
@@ -4520,7 +4483,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     };
     let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(body);
     cmdpop(); // c:5151
-                                     // c:5152 — _realexit() — WARNING (d).
+              // c:5152 — _realexit() — WARNING (d).
     std::process::exit(LASTVAL.load(Ordering::Relaxed));
 }
 
@@ -4604,7 +4567,11 @@ pub fn cancd2(s: &str) -> i32 {
         let pwd_str = getsparam("PWD").unwrap_or_default(); // c:6424 `pwd`
         let mut raw = if !s.starts_with('/') {
             // c:6423
-            format!("{}/{}", if pwd_str.len() > 1 { &pwd_str[..] } else { "" }, s)
+            format!(
+                "{}/{}",
+                if pwd_str.len() > 1 { &pwd_str[..] } else { "" },
+                s
+            )
         } else {
             s.to_string()
         };
@@ -4788,12 +4755,12 @@ pub fn getherestr(fn_: &redir) -> i32 {
     };
     // c:4675 — `write_loop(fd, t, len);`
     let _ = write_loop(fd, &bytes); // c:4675
-                                                          // c:4676 — `close(fd);`
+                                    // c:4676 — `close(fd);`
     let _ = zclose(fd); // c:4676
-                                              // c:4677 — `fd = open(s, O_RDONLY | O_NOCTTY);`
+                        // c:4677 — `fd = open(s, O_RDONLY | O_NOCTTY);`
     let cstr = std::ffi::CString::new(s.as_str()).unwrap_or_default();
     let new_fd = unsafe { libc::open(cstr.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) }; // c:4677
-                                                                                       // c:4678 — `unlink(s);`
+                                                                                        // c:4678 — `unlink(s);`
     unsafe {
         libc::unlink(cstr.as_ptr());
     } // c:4678
@@ -4849,8 +4816,8 @@ pub fn quote_tokenized_output(str_in: &str, file: &mut impl std::io::Write) -> s
                 i += 1;
                 continue; // c:2126
             }
-            b'\\' | b'<' | b'>' | b'(' | b'|' | b')' | b'^' | b'#' | b'~' | b'[' | b']'
-            | b'*' | b'?' | b'$' | b' ' => {
+            b'\\' | b'<' | b'>' | b'(' | b'|' | b')' | b'^' | b'#' | b'~' | b'[' | b']' | b'*'
+            | b'?' | b'$' | b' ' => {
                 // c:2128-2142
                 file.write_all(b"\\")?; // c:2143
             }
@@ -4920,31 +4887,31 @@ pub fn quote_tokenized_output(str_in: &str, file: &mut impl std::io::Write) -> s
 // `ksh93::ksh93_wrapper` port at c:152-227.
 // =====================================================================
 
-use crate::ported::r#loop::try_tryflag;
 use crate::ported::math::{matheval as wc_matheval, mathevali as wc_mathevali};
 use crate::ported::pattern::{patcompile, pattry};
+use crate::ported::r#loop::try_tryflag;
 
 // Addvars-specific imports (Src/exec.c:2497 port at exec.rs::addvars).
+use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS, RETFLAG};
 use crate::ported::linklist::LinkList;
+use crate::ported::mem::freeheap;
+use crate::ported::params::setloopvar;
 use crate::ported::params::{assignaparam, assignsparam, unsetparam};
+use crate::ported::parse::{ecgetlist, ecgetstr};
 use crate::ported::pattern::haswilds;
+use crate::ported::signals_h::{queue_signal_level, restore_queue_signals};
 use crate::ported::subst::{globlist, prefork};
+use crate::ported::zsh_h::{
+    estate, wordcode, EC_DUP, EC_DUPTOK, EC_NODUP, NOERREXIT_EXIT, NOERREXIT_RETURN, PAT_STATIC,
+    WC_CASE, WC_CASE_AND, WC_CASE_OR, WC_CASE_SKIP, WC_CASE_TESTAND, WC_CASE_TYPE, WC_CURSH_SKIP,
+    WC_END, WC_FOR_COND, WC_FOR_LIST, WC_FOR_SKIP, WC_FOR_TYPE, WC_FUNCDEF, WC_FUNCDEF_SKIP, WC_IF,
+    WC_IF_ELSE, WC_IF_SKIP, WC_IF_TYPE, WC_REPEAT_SKIP, WC_TIMED_EMPTY, WC_TIMED_TYPE, WC_TRY_SKIP,
+    WC_WHILE_SKIP, WC_WHILE_TYPE, WC_WHILE_UNTIL,
+};
 use crate::ported::zsh_h::{
     ALLEXPORT, ASSPM_AUGMENT, ASSPM_KEY_VALUE, ASSPM_WARN, GLOBASSIGN, KSHARRAYS, PREFORK_ASSIGN,
     PREFORK_KEY_VALUE, PREFORK_SINGLE, WC_ASSIGN, WC_ASSIGN_INC, WC_ASSIGN_NUM, WC_ASSIGN_SCALAR,
     WC_ASSIGN_TYPE, WC_ASSIGN_TYPE2,
-};
-use crate::ported::parse::{ecgetlist, ecgetstr};
-use crate::ported::params::setloopvar;
-use crate::ported::mem::freeheap;
-use crate::ported::signals_h::{queue_signal_level, restore_queue_signals};
-use crate::ported::builtin::{BREAKS, CONTFLAG, LOOPS, RETFLAG};
-use crate::ported::zsh_h::{
-    estate, wordcode, EC_DUP, EC_DUPTOK, EC_NODUP, NOERREXIT_EXIT, NOERREXIT_RETURN, PAT_STATIC,
-    WC_CASE, WC_CASE_AND, WC_CASE_OR, WC_CASE_SKIP, WC_CASE_TESTAND, WC_CASE_TYPE, WC_CURSH_SKIP, WC_END,
-    WC_FOR_COND, WC_FOR_LIST, WC_FOR_SKIP, WC_FOR_TYPE, WC_FUNCDEF, WC_FUNCDEF_SKIP, WC_IF,
-    WC_IF_ELSE, WC_IF_SKIP, WC_IF_TYPE, WC_REPEAT_SKIP, WC_TIMED_EMPTY, WC_TIMED_TYPE, WC_TRY_SKIP,
-    WC_WHILE_SKIP, WC_WHILE_TYPE, WC_WHILE_UNTIL,
 };
 use crate::ported::zsh_h::{
     CS_ALWAYS, CS_CASE, CS_COND, CS_CURSH, CS_ELIF, CS_ELIFTHEN, CS_ELSE, CS_FOR, CS_IF, CS_IFTHEN,
@@ -4985,14 +4952,11 @@ fn execsubst(list: &mut Vec<String>) {
     if list.is_empty() {
         return; // c:2686 `if (strs)`
     }
-    let mut ll: crate::ported::subst::LinkList =
-        std::mem::take(list).into_iter().collect();
+    let mut ll: crate::ported::subst::LinkList = std::mem::take(list).into_iter().collect();
     let prefork_flags = esprefork.load(Ordering::Relaxed); // c:2687 esprefork
     let mut rf: i32 = 0;
     crate::ported::subst::prefork(&mut ll, prefork_flags, &mut rf); // c:2687
-    if esglob.load(Ordering::Relaxed) != 0
-        && errflag.load(Ordering::Relaxed) == 0
-    {
+    if esglob.load(Ordering::Relaxed) != 0 && errflag.load(Ordering::Relaxed) == 0 {
         // c:2688 `if (esglob && !errflag)`
         crate::ported::subst::globlist(&mut ll, 0); // c:2690
     }
@@ -5023,9 +4987,9 @@ fn addvars(state: &mut estate, pc: usize, addflags: i32) {
     let mut flags: i32; // c:2504 `int flags;`
     let opc = state.pc; // c:2506 `Wordcode opc = state->pc;`
     let mut ac: wordcode; // c:2507 `wordcode ac;`
-    // c:2508 `local_list1(svl);` — stack-local one-element LinkList
-    // for the scalar-assignment path. Rust uses a fresh LinkList per
-    // iteration; equivalent semantics.
+                          // c:2508 `local_list1(svl);` — stack-local one-element LinkList
+                          // for the scalar-assignment path. Rust uses a fresh LinkList per
+                          // iteration; equivalent semantics.
 
     // c:2510-2515 — comment about WARNCREATEGLOBAL warning suppression
     // when the assignment list is implicitly local (ADDVAR_RESTORE).
@@ -5136,8 +5100,8 @@ fn addvars(state: &mut estate, pc: usize, addflags: i32) {
             };
             if needs_glob {
                 globlist(&mut vl, prefork_ret); // c:2556
-                // c:2557-2562 — `if (isset(GLOBASSIGN) && isstr)
-                //                  unsetparam(name);`
+                                                // c:2557-2562 — `if (isset(GLOBASSIGN) && isstr)
+                                                //                  unsetparam(name);`
                 if isset(GLOBASSIGN) && isstr {
                     unsetparam(&name); // c:2562
                 }
@@ -5159,8 +5123,8 @@ fn addvars(state: &mut estate, pc: usize, addflags: i32) {
                 // c:2577 `untokenize(peekfirst(vl));`
                 let peek = vl.nodes.front().cloned().unwrap_or_default();
                 val = untokenize(&peek).to_string(); // c:2577-2578
-                // c:2578 `val = ztrdup(ugetnode(vl));` — ugetnode pops;
-                // we just cloned the front above. Equivalent.
+                                                     // c:2578 `val = ztrdup(ugetnode(vl));` — ugetnode pops;
+                                                     // we just cloned the front above. Equivalent.
             }
             if xtr {
                 // c:2580
@@ -5184,7 +5148,7 @@ fn addvars(state: &mut estate, pc: usize, addflags: i32) {
                     unsetparam(&name); // c:2592
                 }
                 let pm = assignsparam(&name, &val, myflags); // c:2593
-                // c:2594 `opts[ALLEXPORT] = allexp;` — restore.
+                                                             // c:2594 `opts[ALLEXPORT] = allexp;` — restore.
                 opt_state_set("allexport", allexp);
                 pm
             } else {
@@ -5194,7 +5158,7 @@ fn addvars(state: &mut estate, pc: usize, addflags: i32) {
             if pm.is_none() {
                 // c:2597 `if (!pm)`
                 LASTVAL.store(1, Ordering::Relaxed); // c:2598 `lastval = 1;`
-                // c:2599-2604 — "cheating" comment: don't zerr.
+                                                     // c:2599-2604 — "cheating" comment: don't zerr.
                 if cmdoutval.load(Ordering::Relaxed) == 0 {
                     // c:2605 `if (!cmdoutval)`
                     cmdoutval.store(1, Ordering::Relaxed); // c:2606
@@ -5228,7 +5192,7 @@ fn addvars(state: &mut estate, pc: usize, addflags: i32) {
         // c:2632 `if (!assignaparam(name, arr, myflags))`
         if assignaparam(&name, arr, myflags).is_none() {
             LASTVAL.store(1, Ordering::Relaxed); // c:2633
-            // c:2634-2638 — "cheating" comment.
+                                                 // c:2634-2638 — "cheating" comment.
             if cmdoutval.load(Ordering::Relaxed) == 0 {
                 // c:2639
                 cmdoutval.store(1, Ordering::Relaxed); // c:2640
@@ -5302,16 +5266,16 @@ pub fn execcursh(state: &mut estate, do_exec: i32) -> i32 {
 /// `Src/exec.c:5204-5232`. Run a `[[ ... ]]` cond expression.
 pub fn execcond(state: &mut estate, _do_exec: i32) -> i32 {
     state.pc -= 1; // c:5208 — `state->pc--;`
-    // c:5209-5213 — XTRACE prelude.
+                   // c:5209-5213 — XTRACE prelude.
     if isset(XTRACE) {
         printprompt4();
         eprint!("[[");
         // c:5212 — `tracingcond++;` not modeled in zshrs.
     }
     cmdpush(CS_COND as u8); // c:5214
-    // c:5215 — `stat = evalcond(state, NULL);` — TODO faithful: needs
-    // the wordcode-level evalcond from Src/cond.c which is distinct
-    // from the test-builtin evalcond ported in cond.rs. Pending.
+                            // c:5215 — `stat = evalcond(state, NULL);` — TODO faithful: needs
+                            // the wordcode-level evalcond from Src/cond.c which is distinct
+                            // from the test-builtin evalcond ported in cond.rs. Pending.
     let stat: i32 = 0;
     // c:5219-5221 — `if (stat == 2) errflag |= ERRFLAG_ERROR;`
     if stat == 2 {
@@ -5371,7 +5335,10 @@ pub fn execarith(state: &mut estate, _do_exec: i32) -> i32 {
 /// `Src/exec.c:5279-5294`. Run `time pipeline`: drives execpline with
 /// the Z_TIMED|Z_SYNC flags so it tracks wall/user/sys time.
 pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
-    let jb = *THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap(); // c:5283
+    let jb = *THISJOB
+        .get_or_init(|| std::sync::Mutex::new(-1))
+        .lock()
+        .unwrap(); // c:5283
     let prior = state.prog.prog[state.pc.wrapping_sub(1)];
     // c:5284-5287 — empty `time` (no pipeline) — print accumulated shell time.
     if WC_TIMED_TYPE(prior) == WC_TIMED_EMPTY {
@@ -5385,7 +5352,10 @@ pub fn exectime(state: &mut estate, _do_exec: i32) -> i32 {
     state.pc += 1;
     use crate::ported::zsh_h::{Z_SYNC, Z_TIMED};
     let _ = execpline(state, slcode, Z_TIMED as i32 | Z_SYNC as i32, 0);
-    *THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = jb; // c:5289
+    *THISJOB
+        .get_or_init(|| std::sync::Mutex::new(-1))
+        .lock()
+        .unwrap() = jb; // c:5289
     LASTVAL.load(Ordering::Relaxed) // c:5290
 }
 
@@ -5472,11 +5442,12 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
     } else {
         None
     };
-    let prog_ref: Option<&crate::ported::zsh_h::eprog> = match (shf.funcdef.as_deref(), prog_owned.as_ref()) {
-        (Some(p), _) => Some(p),
-        (_, Some(p)) => Some(p),
-        _ => None,
-    };
+    let prog_ref: Option<&crate::ported::zsh_h::eprog> =
+        match (shf.funcdef.as_deref(), prog_owned.as_ref()) {
+            (Some(p), _) => Some(p),
+            (_, Some(p)) => Some(p),
+            _ => None,
+        };
     if let Some(prog) = prog_ref {
         // Save old PPARAMS.
         let old_pparams: Vec<String> = crate::ported::builtin::PPARAMS
@@ -5524,10 +5495,10 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
 /// path).
 #[allow(non_snake_case)]
 pub fn doshfunc(
-    shfunc: &mut shfunc,                          // c:5823
-    doshargs: Vec<String>,                        // c:5823
-    noreturnval: bool,                            // c:5823
-    mut body_runner: impl FnMut() -> i32,         // (Rust-only — body delegate)
+    shfunc: &mut shfunc,                  // c:5823
+    doshargs: Vec<String>,                // c:5823
+    noreturnval: bool,                    // c:5823
+    mut body_runner: impl FnMut() -> i32, // (Rust-only — body delegate)
 ) -> i32 {
     use crate::ported::builtin::{BREAKS, CONTFLAG, LASTVAL, LOOPS, RETFLAG};
     use crate::ported::jobs::{NUMPIPESTATS, PIPESTATS};
@@ -5537,10 +5508,10 @@ pub fn doshfunc(
     use crate::ported::zsh_h::{FS_EVAL, FS_FUNC, FS_SOURCE, FUNCTIONARGZERO, PM_UNDEFINED};
     use std::sync::atomic::Ordering;
 
-    let name = shfunc.node.nam.clone();                                      // c:5827
-    let flags = shfunc.node.flags;                                           // c:5828
-    let fname = dupstring(&name);                                            // c:5829
-    let _ = fname;                                                           // c:5829 (kept for parity)
+    let name = shfunc.node.nam.clone(); // c:5827
+    let flags = shfunc.node.flags; // c:5828
+    let fname = dupstring(&name); // c:5829
+    let _ = fname; // c:5829 (kept for parity)
 
     // c:5835 — `queue_signals();` Lots of memory + global-state changes.
     queue_signals();
@@ -5552,18 +5523,23 @@ pub fn doshfunc(
     // `funcdef->nref` via useeprog.)
 
     // c:5856-5916 — Funcsave allocation + per-field snapshot.
-    let funcsave_breaks   = BREAKS.load(Ordering::Relaxed);                  // c:5859
-    let funcsave_contflag = CONTFLAG.load(Ordering::Relaxed);                // c:5860
-    let funcsave_loops    = LOOPS.load(Ordering::Relaxed);                   // c:5861
-    let funcsave_lastval  = LASTVAL.load(Ordering::Relaxed);                 // c:5862
-    let funcsave_numpipestats = {                                            // c:5864
-        NUMPIPESTATS.get_or_init(|| std::sync::Mutex::new(0))
-            .lock().map(|n| *n).unwrap_or(0)
+    let funcsave_breaks = BREAKS.load(Ordering::Relaxed); // c:5859
+    let funcsave_contflag = CONTFLAG.load(Ordering::Relaxed); // c:5860
+    let funcsave_loops = LOOPS.load(Ordering::Relaxed); // c:5861
+    let funcsave_lastval = LASTVAL.load(Ordering::Relaxed); // c:5862
+    let funcsave_numpipestats = {
+        // c:5864
+        NUMPIPESTATS
+            .get_or_init(|| std::sync::Mutex::new(0))
+            .lock()
+            .map(|n| *n)
+            .unwrap_or(0)
     };
-    let funcsave_noerrexit = noerrexit.load(Ordering::Relaxed);              // c:5865
-    // c:5866-5867 — trap_state PRIMED branch decrements trap_return.
-    if TRAP_STATE.load(Ordering::Relaxed) == TRAP_STATE_PRIMED {             // c:5866
-        TRAP_RETURN.fetch_sub(1, Ordering::Relaxed);                         // c:5867
+    let funcsave_noerrexit = noerrexit.load(Ordering::Relaxed); // c:5865
+                                                                // c:5866-5867 — trap_state PRIMED branch decrements trap_return.
+    if TRAP_STATE.load(Ordering::Relaxed) == TRAP_STATE_PRIMED {
+        // c:5866
+        TRAP_RETURN.fetch_sub(1, Ordering::Relaxed); // c:5867
     }
     // c:5871 — `noerrexit &= ~NOERREXIT_RETURN;` — scope-clear of
     // return-suppress so a `return` inside the body fires errexit
@@ -5572,9 +5548,10 @@ pub fn doshfunc(
 
     // c:5872-5880 — noreturnval branch: deep-copy pipestats so the
     // function body's pipestats writes are restored on exit.
-    let funcsave_pipestats: Option<Vec<i32>> = if noreturnval {              // c:5872
+    let funcsave_pipestats: Option<Vec<i32>> = if noreturnval {
+        // c:5872
         let p = PIPESTATS.get_or_init(|| std::sync::Mutex::new([0; MAX_PIPESTATS]));
-        p.lock().ok().map(|g| g[..funcsave_numpipestats].to_vec())          // c:5879 memcpy
+        p.lock().ok().map(|g| g[..funcsave_numpipestats].to_vec()) // c:5879 memcpy
     } else {
         None
     };
@@ -5593,12 +5570,15 @@ pub fn doshfunc(
 
     // c:5901 — `pptab = pparams;` — save outer positional params.
     let pptab: Vec<String> = crate::ported::builtin::PPARAMS
-        .lock().map(|p| p.clone()).unwrap_or_default();
+        .lock()
+        .map(|p| p.clone())
+        .unwrap_or_default();
 
     // c:5902-5903 — non-undefined: `scriptname = dupstring(name);`
     let funcsave_scriptname = crate::ported::utils::scriptname_get();
-    if (flags as u32 & PM_UNDEFINED) == 0 {                                  // c:5902
-        crate::ported::utils::set_scriptname(Some(dupstring(&name)));        // c:5903
+    if (flags as u32 & PM_UNDEFINED) == 0 {
+        // c:5902
+        crate::ported::utils::set_scriptname(Some(dupstring(&name))); // c:5903
     }
 
     // c:5904-5908 — `funcsave->zoptind = zoptind; ...` snapshot.
@@ -5629,7 +5609,8 @@ pub fn doshfunc(
     // c:5978-5998 — pparams swap. C reads doshargs and constructs the
     // function's positional-param array. First arg is the function
     // name (regardless of FUNCTIONARGZERO); the rest become $1..$N.
-    let funcsave_argv0: Option<String> = if !doshargs.is_empty() {           // c:5978
+    let funcsave_argv0: Option<String> = if !doshargs.is_empty() {
+        // c:5978
         // c:5982-5985 — `pparams = x = zshcalloc(...)`.
         let positionals: Vec<String> = if doshargs.len() > 1 {
             doshargs[1..].to_vec()
@@ -5641,9 +5622,10 @@ pub fn doshfunc(
         }
         // c:5984-5987 — FUNCTIONARGZERO: save argzero, install
         // doshargs[0] (the function name).
-        if isset(FUNCTIONARGZERO) {                                          // c:5984
+        if isset(FUNCTIONARGZERO) {
+            // c:5984
             let prev = crate::ported::utils::argzero();
-            crate::ported::utils::set_argzero(Some(doshargs[0].clone()));    // c:5986
+            crate::ported::utils::set_argzero(Some(doshargs[0].clone())); // c:5986
             prev
         } else {
             None
@@ -5653,9 +5635,10 @@ pub fn doshfunc(
         if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
             *pp = Vec::new();
         }
-        if isset(FUNCTIONARGZERO) {                                          // c:5994
+        if isset(FUNCTIONARGZERO) {
+            // c:5994
             let prev = crate::ported::utils::argzero();
-            crate::ported::utils::set_argzero(prev.clone());                 // c:5996 ztrdup(argzero)
+            crate::ported::utils::set_argzero(prev.clone()); // c:5996 ztrdup(argzero)
             prev
         } else {
             None
@@ -5692,27 +5675,28 @@ pub fn doshfunc(
             (Some(p.name.clone()), Some(p.tp))
         } else {
             // c:6011-6012 — outermost: argv0 (saved) or argzero global.
-            let z = funcsave_argv0.clone().or_else(crate::ported::utils::argzero);
+            let z = funcsave_argv0
+                .clone()
+                .or_else(crate::ported::utils::argzero);
             (z, None)
         }
     };
     // c:6018-6019 — flineno: shfunc->lineno (function def line)
     let flineno = shfunc.lineno;
-    let filename = shfunc.filename.clone()
-        .or_else(|| Some(String::new()));
+    let filename = shfunc.filename.clone().or_else(|| Some(String::new()));
     {
         let frame = crate::ported::zsh_h::funcstack {
-            prev: None,                                                      // c:6014 (Vec-stack: index encodes link)
-            name: dupstring(&name),                                          // c:6005
-            filename,                                                        // c:6019
-            caller,                                                          // c:6011
-            flineno,                                                         // c:6018
-            lineno: lineno_now,                                              // c:6013
-            tp: FS_FUNC,                                                     // c:6015
+            prev: None,             // c:6014 (Vec-stack: index encodes link)
+            name: dupstring(&name), // c:6005
+            filename,               // c:6019
+            caller,                 // c:6011
+            flineno,                // c:6018
+            lineno: lineno_now,     // c:6013
+            tp: FS_FUNC,            // c:6015
         };
-        let _ = prev_tp;                                                     // c:6011 (informational)
+        let _ = prev_tp; // c:6011 (informational)
         let mut stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
-        stack.push(frame);                                                   // c:6016 funcstack = &funcsave->fstack
+        stack.push(frame); // c:6016 funcstack = &funcsave->fstack
     }
 
     // c:6021-6042 — body execution. C: `runshfunc(prog, wrappers, name)`.
@@ -5736,17 +5720,19 @@ pub fn doshfunc(
 
     // c:6047-6053 — retflag clear. C clears retflag and restores
     // outer breaks if a `return` fired.
-    if RETFLAG.load(Ordering::SeqCst) != 0 {                                 // c:6047
-        RETFLAG.store(0, Ordering::SeqCst);                                  // c:6051
-        BREAKS.store(funcsave_breaks, Ordering::SeqCst);                     // c:6052
+    if RETFLAG.load(Ordering::SeqCst) != 0 {
+        // c:6047
+        RETFLAG.store(0, Ordering::SeqCst); // c:6051
+        BREAKS.store(funcsave_breaks, Ordering::SeqCst); // c:6052
     }
 
     // c:6054-6058 — pparams + argv0 restore.
     if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
-        *pp = pptab;                                                         // c:6059 pparams = pptab
+        *pp = pptab; // c:6059 pparams = pptab
     }
-    if let Some(saved) = funcsave_argv0 {                                    // c:6055
-        crate::ported::utils::set_argzero(Some(saved));                      // c:6057
+    if let Some(saved) = funcsave_argv0 {
+        // c:6055
+        crate::ported::utils::set_argzero(Some(saved)); // c:6057
     }
 
     // c:6064 — `scriptname = funcsave->scriptname;`
@@ -5772,8 +5758,13 @@ pub fn doshfunc(
         // c:6097-6101 — non-LOCALOPTIONS: restore only the always-
         // restored subset (XTRACE / PRINTEXITVALUE / LOCALOPTIONS /
         // LOCALLOOPS / WARNNESTEDVAR).
-        for opt in ["xtrace", "printexitvalue", "localoptions",
-                    "localloops", "warnnestedvar"] {
+        for opt in [
+            "xtrace",
+            "printexitvalue",
+            "localoptions",
+            "localloops",
+            "warnnestedvar",
+        ] {
             if let Some(v) = funcsave_opts.get(opt) {
                 crate::ported::options::opt_state_set(opt, *v);
             }
@@ -5784,9 +5775,9 @@ pub fn doshfunc(
     // breaks/contflag/loops snapshot. Skip the warn lines for now;
     // restore the bookkeeping.
     if crate::ported::options::opt_state_get("localloops").unwrap_or(false) {
-        BREAKS.store(funcsave_breaks, Ordering::SeqCst);                     // c:6109
-        CONTFLAG.store(funcsave_contflag, Ordering::SeqCst);                 // c:6110
-        LOOPS.store(funcsave_loops, Ordering::SeqCst);                       // c:6111
+        BREAKS.store(funcsave_breaks, Ordering::SeqCst); // c:6109
+        CONTFLAG.store(funcsave_contflag, Ordering::SeqCst); // c:6110
+        LOOPS.store(funcsave_loops, Ordering::SeqCst); // c:6111
     }
 
     // c:6114 — `endtrapscope();` — canonical port at signals.rs:1164
@@ -5796,8 +5787,9 @@ pub fn doshfunc(
     crate::ported::signals::endtrapscope();
 
     // c:6116-6117 — TRAP_STATE_PRIMED branch: bump trap_return back.
-    if TRAP_STATE.load(Ordering::Relaxed) == TRAP_STATE_PRIMED {             // c:6116
-        TRAP_RETURN.fetch_add(1, Ordering::Relaxed);                         // c:6117
+    if TRAP_STATE.load(Ordering::Relaxed) == TRAP_STATE_PRIMED {
+        // c:6116
+        TRAP_RETURN.fetch_add(1, Ordering::Relaxed); // c:6117
     }
 
     // c:6118 — `ret = lastval;`
@@ -5809,18 +5801,19 @@ pub fn doshfunc(
     // c:6120-6124 — noreturnval: restore lastval + pipestats. C runs
     // the function for side-effects only; outer lastval/pipestats
     // should reflect the PRE-call state.
-    if noreturnval {                                                         // c:6120
-        LASTVAL.store(funcsave_lastval, Ordering::Relaxed);                  // c:6121
+    if noreturnval {
+        // c:6120
+        LASTVAL.store(funcsave_lastval, Ordering::Relaxed); // c:6121
         if let Some(saved_ps) = funcsave_pipestats {
             let n = NUMPIPESTATS.get_or_init(|| std::sync::Mutex::new(0));
             if let Ok(mut nguard) = n.lock() {
-                *nguard = funcsave_numpipestats;                             // c:6122
+                *nguard = funcsave_numpipestats; // c:6122
             }
             let p = PIPESTATS.get_or_init(|| std::sync::Mutex::new([0; MAX_PIPESTATS]));
             if let Ok(mut pguard) = p.lock() {
                 for (i, v) in saved_ps.iter().enumerate() {
                     if i < pguard.len() {
-                        pguard[i] = *v;                                      // c:6123 memcpy
+                        pguard[i] = *v; // c:6123 memcpy
                     }
                 }
             }
@@ -5836,11 +5829,9 @@ pub fn doshfunc(
     // nested function) or actually exit the shell.
     let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
     let exit_level = crate::ported::builtin::EXIT_LEVEL.load(Ordering::Relaxed);
-    let cur_locallevel =
-        crate::ported::params::locallevel.load(Ordering::Relaxed) as i32;
+    let cur_locallevel = crate::ported::params::locallevel.load(Ordering::Relaxed) as i32;
     let cur_forklevel = FORKLEVEL.load(Ordering::Relaxed);
-    let in_exit_trap =
-        crate::ported::signals::in_exit_trap.load(Ordering::Relaxed); // c:Src/signals.c:63
+    let in_exit_trap = crate::ported::signals::in_exit_trap.load(Ordering::Relaxed); // c:Src/signals.c:63
     if exit_pending != 0 && exit_level >= cur_locallevel + 1 && in_exit_trap == 0 {
         // c:6141
         if cur_locallevel > cur_forklevel {
@@ -5854,7 +5845,8 @@ pub fn doshfunc(
             // c:6151 — out of all functions: exit for real.
             crate::ported::builtin::STOPMSG.store(1, Ordering::Relaxed); // c:6151
             let val = crate::ported::builtin::EXIT_VAL.load(Ordering::Relaxed);
-            crate::ported::builtin::zexit(val, crate::ported::zsh_h::ZEXIT_NORMAL); // c:6152
+            crate::ported::builtin::zexit(val, crate::ported::zsh_h::ZEXIT_NORMAL);
+            // c:6152
         }
     }
 
@@ -5862,7 +5854,7 @@ pub fn doshfunc(
     // params installed during the body. (Function-local scope.)
     endparamscope();
 
-    ret                                                                      // c:6157 return ret
+    ret // c:6157 return ret
 }
 
 /// `TRAP_STATE_PRIMED` per `Src/signals.h:55` — doshfunc tests this
@@ -5876,19 +5868,16 @@ const TRAP_STATE_PRIMED: i32 = 2; // c:Src/signals.h:55
 /// name(s)+body from the wordcode payload, allocate the Shfunc,
 /// install into `shfunctab` (named), or execute immediately (anon).
 #[allow(non_snake_case)]
-pub fn execfuncdef(
-    state: &mut estate,
-    mut redir_prog: Option<crate::ported::zsh_h::Eprog>,
-) -> i32 {
+pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh_h::Eprog>) -> i32 {
     use crate::ported::hashtable::{dircache_set, shfunctab_lock};
     use crate::ported::jobs::{getsigidx, removetrapnode};
     use crate::ported::parse::{dupeprog, freeeprog, incrdumpcount};
     use crate::ported::signals::settrap;
     use crate::ported::utils::scriptfilename_get;
     use crate::ported::zsh_h::{
-        eprog as eprog_t, hashnode, patprog as patprog_t, shfunc as shfunc_t, EC_DUPTOK as _,
-        EF_HEAP, EF_MAP, EF_REAL, FS_EVAL, FS_FUNC, PM_ANONYMOUS, PM_TAGGED, PM_TAGGED_LOCAL,
-        Patprog, PRINTEXITVALUE, SHINSTDIN, ZSIG_FUNC,
+        eprog as eprog_t, hashnode, patprog as patprog_t, shfunc as shfunc_t, Patprog,
+        EC_DUPTOK as _, EF_HEAP, EF_MAP, EF_REAL, FS_EVAL, FS_FUNC, PM_ANONYMOUS, PM_TAGGED,
+        PM_TAGGED_LOCAL, PRINTEXITVALUE, SHINSTDIN, ZSIG_FUNC,
     };
     // c:5311 — `Shfunc shf;`
     let mut shf: Box<shfunc_t>;
@@ -5941,12 +5930,9 @@ pub fn execfuncdef(
     // c:5328 — `nprg = (end - state->pc);`
     nprg = end.saturating_sub(state.pc) as i32;
     // c:5329 — `plen = nprg * sizeof(wordcode);`
-    plen = nprg
-        .saturating_mul(std::mem::size_of::<wordcode>() as i32);
+    plen = nprg.saturating_mul(std::mem::size_of::<wordcode>() as i32);
     // c:5330 — `len = plen + (npats * sizeof(Patprog)) + nstrs;`
-    len = plen
-        + npats.saturating_mul(std::mem::size_of::<usize>() as i32)
-        + nstrs;
+    len = plen + npats.saturating_mul(std::mem::size_of::<usize>() as i32) + nstrs;
     // c:5331 — `tracing_flags = do_tracing ? PM_TAGGED_LOCAL : 0;`
     tracing_flags = if do_tracing != 0 {
         PM_TAGGED_LOCAL as i32
@@ -6003,13 +5989,10 @@ pub fn execfuncdef(
             let pats: Vec<Patprog> = (0..npats).map(|_| make_pat()).collect();
             let prog_words: Vec<wordcode> = state.prog.prog[state.pc..end].to_vec();
             // c:5365 — `prog->strs = state->strs + sbeg;`
-            let strs_tail = state
-                .strs
-                .as_ref()
-                .map(|t| {
-                    let off = (sbeg as usize).min(t.len());
-                    t[off..].to_string()
-                });
+            let strs_tail = state.strs.as_ref().map(|t| {
+                let off = (sbeg as usize).min(t.len());
+                t[off..].to_string()
+            });
             prog = Box::new(eprog_t {
                 flags: EF_HEAP,
                 len,
@@ -6018,7 +6001,7 @@ pub fn execfuncdef(
                 pats,
                 prog: prog_words,
                 strs: strs_tail,
-                shf: None, // c:5377
+                shf: None,  // c:5377
                 dump: None, // c:5356
             });
         } else if dump_present {
@@ -6041,7 +6024,7 @@ pub fn execfuncdef(
                 pats,
                 prog: prog_words,
                 strs: strs_tail,
-                shf: None, // c:5377
+                shf: None,                     // c:5377
                 dump: state.prog.dump.clone(), // c:5361
             });
         } else {
@@ -6065,7 +6048,7 @@ pub fn execfuncdef(
                 pats,
                 prog: prog_words,
                 strs: strs_copy,
-                shf: None, // c:5377
+                shf: None,  // c:5377
                 dump: None, // c:5371
             });
         }
@@ -6128,7 +6111,7 @@ pub fn execfuncdef(
             shf.node.flags |= PM_ANONYMOUS as i32; // c:5412
 
             state.pc = end; // c:5414
-            // c:5415 — `end += *state->pc++;`
+                            // c:5415 — `end += *state->pc++;`
             end += state.prog.prog[state.pc] as usize;
             state.pc += 1;
             // c:5416 — `args = ecgetlist(state, *state->pc++, EC_DUPTOK, &htok);`
@@ -6168,7 +6151,7 @@ pub fn execfuncdef(
             // c:5434-5435 — `if (!args) args = newlinklist();`
             // (Rust Vec is never null; no-op.)
             shf.node.nam = ANONYMOUS_FUNCTION_NAME.to_string(); // c:5436
-            // c:5437 — `pushnode(args, shf->node.nam);` — prepend.
+                                                                // c:5437 — `pushnode(args, shf->node.nam);` — prepend.
             args.insert(0, shf.node.nam.clone());
 
             execshfunc(&mut shf, &mut args); // c:5439
@@ -6219,8 +6202,8 @@ pub fn execfuncdef(
                         if let Ok(rd) = shfunctab_lock().read() {
                             if let Some(old) = rd.get(nm) {
                                 // c:5481 — propagate PM_TAGGED|PM_TAGGED_LOCAL.
-                                shf.node.flags |= old.node.flags
-                                    & (PM_TAGGED as i32 | PM_TAGGED_LOCAL as i32);
+                                shf.node.flags |=
+                                    old.node.flags & (PM_TAGGED as i32 | PM_TAGGED_LOCAL as i32);
                             }
                         }
                     }
@@ -6278,13 +6261,19 @@ pub fn execsimple(state: &mut estate) -> i32 {
     code = wc_code(state.prog.prog[state.pc]);
     state.pc += 1;
     // c:1311-1312 — `otj = thisjob; thisjob = -1;`
-    let otj = *THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap();
-    *THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = -1;
-    use crate::ported::zsh_h::{WC_ASSIGN, WC_CURSH};
+    let otj = *THISJOB
+        .get_or_init(|| std::sync::Mutex::new(-1))
+        .lock()
+        .unwrap();
+    *THISJOB
+        .get_or_init(|| std::sync::Mutex::new(-1))
+        .lock()
+        .unwrap() = -1;
     use crate::ported::zsh_h::{
         WC_ARITH, WC_CASE, WC_COND, WC_FOR, WC_REPEAT, WC_SELECT, WC_SUBSH, WC_TIMED, WC_TRY,
         WC_WHILE,
     };
+    use crate::ported::zsh_h::{WC_ASSIGN, WC_CURSH};
     let lv = if code == WC_ASSIGN {
         // c:1315-1319 — assignment-only simple cmd path.
         // cmdoutval = 0; addvars(state, state->pc - 1, 0); setunderscore("");
@@ -6329,7 +6318,10 @@ pub fn execsimple(state: &mut estate) -> i32 {
         result
     };
     // c:1334 — `thisjob = otj;`
-    *THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = otj;
+    *THISJOB
+        .get_or_init(|| std::sync::Mutex::new(-1))
+        .lock()
+        .unwrap() = otj;
     LASTVAL.store(lv, Ordering::Relaxed); // c:1336 — `return lastval = lv;`
     lv
 }
@@ -6349,9 +6341,12 @@ pub fn execsimple(state: &mut estate) -> i32 {
 pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i32 {
     let mut last_status: i32 = 0;
     let mut donetrap: i32 = 0; // c:1352 — `static int donetrap;`
-    let cj = *THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap(); // c:1364 — `cj = thisjob;`
+    let cj = *THISJOB
+        .get_or_init(|| std::sync::Mutex::new(-1))
+        .lock()
+        .unwrap(); // c:1364 — `cj = thisjob;`
     let _ = dont_change_job; // c:1361 — restored on exit if nonzero.
-    // c:1380 — `code = *state->pc++;`
+                             // c:1380 — `code = *state->pc++;`
     if state.pc >= state.prog.prog.len() {
         return last_status;
     }
@@ -6362,7 +6357,7 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
         LASTVAL.store(0, Ordering::Relaxed);
         return 0;
     }
-    use crate::ported::zsh_h::{WC_LIST_SKIP, WC_LIST_TYPE, Z_SIMPLE, Z_END, Z_SYNC};
+    use crate::ported::zsh_h::{WC_LIST_SKIP, WC_LIST_TYPE, Z_END, Z_SIMPLE, Z_SYNC};
     // c:1385-1499 — main WC_LIST loop.
     while wc_code(code) == WC_LIST
         && BREAKS.load(Ordering::SeqCst) == 0
@@ -6390,8 +6385,8 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
             state.pc += 1;
             // c:1525-1625 — sublist chain (&&/|| operators) inlined.
             use crate::ported::zsh_h::{
-                WC_SUBLIST_AND, WC_SUBLIST_END, WC_SUBLIST_NOT, WC_SUBLIST_OR, WC_SUBLIST_SKIP,
-                WC_SUBLIST_SIMPLE,
+                WC_SUBLIST_AND, WC_SUBLIST_END, WC_SUBLIST_NOT, WC_SUBLIST_OR, WC_SUBLIST_SIMPLE,
+                WC_SUBLIST_SKIP,
             };
             let mut sub_code = code;
             let _ = dont_change_job;
@@ -6482,7 +6477,10 @@ pub fn execlist(state: &mut estate, dont_change_job: i32, mut exiting: i32) -> i
     }
     // c:1659-1664 — cleanup: restore thisjob if dont_change_job, this_noerrexit=1.
     if dont_change_job != 0 {
-        *THISJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() = cj;
+        *THISJOB
+            .get_or_init(|| std::sync::Mutex::new(-1))
+            .lock()
+            .unwrap() = cj;
     }
     let _ = donetrap;
     this_noerrexit.store(1, Ordering::Relaxed);
@@ -6561,17 +6559,17 @@ pub fn execcmd_fork(
     use crate::ported::signals::sigtrapped as sigtrapped_static;
     use crate::ported::signals_h::SIGEXIT;
     use crate::ported::zsh_h::{
-        Z_ASYNC, WC_ASSIGN as ZWC_ASSIGN, WC_ASSIGN_NUM as ZWC_ASSIGN_NUM,
+        AUTOCONTINUE, BGNICE, WC_ASSIGN as ZWC_ASSIGN, WC_ASSIGN_NUM as ZWC_ASSIGN_NUM,
         WC_ASSIGN_SCALAR as ZWC_ASSIGN_SCALAR, WC_ASSIGN_TYPE as ZWC_ASSIGN_TYPE,
-        WC_SUBSH as ZWC_SUBSH, AUTOCONTINUE, BGNICE, ZSIG_IGNORED,
+        WC_SUBSH as ZWC_SUBSH, ZSIG_IGNORED, Z_ASYNC,
     };
     // c:2810
     let pid: libc::pid_t; // c:2814
     let mut synch: [i32; 2] = [-1, -1]; // c:2815
     let flags: i32; // c:2815
     let mut esret: entersubsh_ret = entersubsh_ret::default(); // c:2816
-    // c:2817 — `struct timespec bgtime;` — bgtime is passed to zfork
-    // for accounting; the Rust zfork wrapper expects Option<&mut ZshTimespec>.
+                                                               // c:2817 — `struct timespec bgtime;` — bgtime is passed to zfork
+                                                               // for accounting; the Rust zfork wrapper expects Option<&mut ZshTimespec>.
     let mut bgtime = ZshTimespec::default();
 
     crate::ported::signals_h::child_block(); // c:2819
@@ -6580,10 +6578,7 @@ pub fn execcmd_fork(
 
     // c:2823 — `if (pipe(synch) < 0) { zerr("pipe failed: %e", errno); return -1; }`
     if unsafe { libc::pipe(synch.as_mut_ptr()) } < 0 {
-        zerr(&format!(
-            "pipe failed: {}",
-            std::io::Error::last_os_error()
-        ));
+        zerr(&format!("pipe failed: {}", std::io::Error::last_os_error()));
         return -1; // c:2825
     }
     // c:2826 — `else if ((pid = zfork(&bgtime)) == -1) { ... }`
@@ -6600,7 +6595,7 @@ pub fn execcmd_fork(
     if pid != 0 {
         // c:2833 — parent.
         unsafe { libc::close(synch[1]) }; // c:2834
-        // c:2835 — `read_loop(synch[0], (char *)&esret, sizeof(esret));`
+                                          // c:2835 — `read_loop(synch[0], (char *)&esret, sizeof(esret));`
         let mut buf = [0u8; std::mem::size_of::<entersubsh_ret>()];
         let _ = crate::ported::utils::read_loop(synch[0], &mut buf);
         // entersubsh_ret is two i32s; reconstruct from LE bytes (host order).
@@ -6679,7 +6674,10 @@ pub fn execcmd_fork(
             if tj >= 0 {
                 if let Some(j) = guard.get_mut(tj as usize) {
                     crate::ported::jobs::addproc(
-                        j, pid, text, false,
+                        j,
+                        pid,
+                        text,
+                        false,
                         Some(std::time::Instant::now()),
                         esret.gleader,
                         esret.list_pipe_job,
@@ -6742,7 +6740,7 @@ pub fn execcmd_fork(
         }
     }
     entersubsh(flags, Some(&mut esret)); // c:2868
-    // c:2869 — `write_loop(synch[1], &esret, sizeof(esret));`
+                                         // c:2869 — `write_loop(synch[1], &esret, sizeof(esret));`
     let mut buf = [0u8; 8];
     buf[0..4].copy_from_slice(&esret.gleader.to_ne_bytes());
     buf[4..8].copy_from_slice(&esret.list_pipe_job.to_ne_bytes());
@@ -6805,10 +6803,7 @@ pub fn execcmd_fork(
 /// without expanding (no prefork, no globbing), and fills `eparams`
 /// so the caller (execcmd_exec at c:2901 or execpline2 at c:2013)
 /// can branch on the command type before the real work.
-pub fn execcmd_analyse(
-    state: &mut estate,
-    eparams: &mut crate::ported::zsh_h::execcmd_params,
-) {
+pub fn execcmd_analyse(state: &mut estate, eparams: &mut crate::ported::zsh_h::execcmd_params) {
     use crate::ported::zsh_h::{
         WC_ASSIGN as ZWC_ASSIGN, WC_REDIR as ZWC_REDIR, WC_SIMPLE as ZWC_SIMPLE,
         WC_SIMPLE_ARGC as ZWC_SIMPLE_ARGC, WC_TYPESET as ZWC_TYPESET,
@@ -6822,18 +6817,17 @@ pub fn execcmd_analyse(
     // c:2738 — `eparams->beg = state->pc;`
     eparams.beg = state.pc;
     // c:2739-2740 — `eparams->redir = (wc_code(*state->pc) == WC_REDIR ? ecgetredirs(state) : NULL);`
-    eparams.redir = if state.pc < state.prog.prog.len()
-        && wc_code(state.prog.prog[state.pc]) == ZWC_REDIR
-    {
-        Some(crate::ported::parse::ecgetredirs(state))
-    } else {
-        None
-    };
+    eparams.redir =
+        if state.pc < state.prog.prog.len() && wc_code(state.prog.prog[state.pc]) == ZWC_REDIR {
+            Some(crate::ported::parse::ecgetredirs(state))
+        } else {
+            None
+        };
     // c:2741-2748 — varspc walk (WC_ASSIGN chain).
     if state.pc < state.prog.prog.len() && wc_code(state.prog.prog[state.pc]) == ZWC_ASSIGN {
         cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed); // c:2742
         eparams.varspc = Some(state.pc); // c:2743
-        // c:2744-2746 — `while (wc_code((code = *state->pc)) == WC_ASSIGN) state->pc += ...`
+                                         // c:2744-2746 — `while (wc_code((code = *state->pc)) == WC_ASSIGN) state->pc += ...`
         loop {
             if state.pc >= state.prog.prog.len() {
                 break;
@@ -7001,11 +6995,8 @@ pub fn save_params(
 /// unset every name in removelist, then for each saved param in
 /// restorelist re-install its values (PM_SPECIAL go through gsu
 /// setfn; regular params re-enter paramtab as-is).
-pub fn restore_params(
-    restorelist: Vec<crate::ported::zsh_h::param>,
-    removelist: Vec<String>,
-) {
-    use crate::ported::zsh_h::{PM_SPECIAL, PM_READONLY};
+pub fn restore_params(restorelist: Vec<crate::ported::zsh_h::param>, removelist: Vec<String>) {
+    use crate::ported::zsh_h::{PM_READONLY, PM_SPECIAL};
     // c:4470-4476 — `while ((s = ugetnode(removelist)))` — unset each.
     for s in &removelist {
         // c:4471 — `if ((pm = paramtab->getnode(paramtab, s)) && !(pm->node.flags & PM_SPECIAL))`
@@ -7207,13 +7198,13 @@ pub fn execpline2(
             output,
             how,
             if last1 != 0 { 1 } else { 2 }, // c:2014 `last1 ? 1 : 2`
-            -1, // c:2014 close_if_forked = -1
+            -1,                             // c:2014 close_if_forked = -1
         );
     } else {
         // c:2015-2039 — non-terminal stage: pipe + fork + recurse.
         let mut pipes: [i32; 2] = [-1, -1]; // c:2016
         let old_list_pipe = list_pipe.load(Ordering::Relaxed); // c:2017
-        // c:2018 — `Wordcode next = state->pc + (*state->pc);`
+                                                               // c:2018 — `Wordcode next = state->pc + (*state->pc);`
         let next = if state.pc < state.prog.prog.len() {
             state.pc + state.prog.prog[state.pc] as usize
         } else {
@@ -7288,12 +7279,16 @@ pub fn execpline2(
 pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> i32 {
     use crate::ported::zsh_h::{WC_SUBLIST_FLAGS, WC_SUBLIST_NOT, Z_TIMED};
     let slflags = WC_SUBLIST_FLAGS(slcode); // c:1673
-    // c:1677-1680 — `if (wc_code(code) != WC_PIPE && !(how & Z_TIMED))
-    //                  return lastval = (slflags & WC_SUBLIST_NOT) != 0;
-    //                else if (slflags & WC_SUBLIST_NOT) last1 = 0;`
+                                            // c:1677-1680 — `if (wc_code(code) != WC_PIPE && !(how & Z_TIMED))
+                                            //                  return lastval = (slflags & WC_SUBLIST_NOT) != 0;
+                                            //                else if (slflags & WC_SUBLIST_NOT) last1 = 0;`
     if state.pc >= state.prog.prog.len() || wc_code(state.prog.prog[state.pc]) != WC_PIPE {
         if (how & Z_TIMED as i32) == 0 {
-            let ret = if (slflags & WC_SUBLIST_NOT) != 0 { 1 } else { 0 };
+            let ret = if (slflags & WC_SUBLIST_NOT) != 0 {
+                1
+            } else {
+                0
+            };
             LASTVAL.store(ret, Ordering::Relaxed);
             return ret;
         }
@@ -7601,8 +7596,8 @@ pub fn execwhile(state: &mut estate, _do_exec: i32) -> i32 {
     LOOPS.fetch_add(1, Ordering::SeqCst); // c:427
     let loop_pc = state.pc; // c:428
     let old_simple_pline = simple_pline.load(Ordering::Relaxed); // c:419
-    // c:430-456 — empty-loop fast path. If loop body is two WC_ENDs,
-    // sit in a tight signal-wait loop until ^C breaks us.
+                                                                 // c:430-456 — empty-loop fast path. If loop body is two WC_ENDs,
+                                                                 // sit in a tight signal-wait loop until ^C breaks us.
     if state.prog.prog.get(loop_pc) == Some(&WC_END)
         && state.prog.prog.get(loop_pc + 1) == Some(&WC_END)
     {
@@ -7623,7 +7618,7 @@ pub fn execwhile(state: &mut estate, _do_exec: i32) -> i32 {
             simple_pline.store(old_simple_pline, Ordering::Relaxed);
             noerrexit.store(olderrexit, Ordering::Relaxed); // c:451
             let cond_status = LASTVAL.load(Ordering::Relaxed); // c:452
-            // c:453-460 — `if (!((lastval == 0) ^ isuntil)) break;`
+                                                               // c:453-460 — `if (!((lastval == 0) ^ isuntil)) break;`
             let cond_passed = (cond_status == 0) ^ isuntil;
             if !cond_passed {
                 if BREAKS.load(Ordering::SeqCst) > 0 {
@@ -7702,7 +7697,7 @@ pub fn execrepeat(state: &mut estate, _do_exec: i32) -> i32 {
         state.pc = loop_pc;
         let _ = execlist(state, 1, 0); // c:527
         freeheap(); // c:528
-        // c:529-534 — breaks/continue handling.
+                    // c:529-534 — breaks/continue handling.
         if BREAKS.load(Ordering::SeqCst) > 0 {
             let prev = BREAKS.fetch_sub(1, Ordering::SeqCst);
             if prev - 1 > 0 || CONTFLAG.load(Ordering::SeqCst) == 0 {
@@ -7755,14 +7750,10 @@ pub fn execif(state: &mut estate, do_exec: i32) -> i32 {
             break;
         }
         let next_pc = state.pc + WC_IF_SKIP(code) as usize; // c:572
-        cmdpush(if s != 0 {
-            CS_ELIF as u8
-        } else {
-            CS_IF as u8
-        }); // c:573
+        cmdpush(if s != 0 { CS_ELIF as u8 } else { CS_IF as u8 }); // c:573
         let _ = execlist(state, 1, 0); // c:574
         cmdpop(); // c:575
-        // c:576-579 — selected branch: lastval == 0.
+                  // c:576-579 — selected branch: lastval == 0.
         if LASTVAL.load(Ordering::Relaxed) == 0 {
             run = 1;
             break;
@@ -7775,7 +7766,7 @@ pub fn execif(state: &mut estate, do_exec: i32) -> i32 {
         state.pc = next_pc;
     }
     noerrexit.store(olderrexit, Ordering::Relaxed); // c:584
-    // c:585-591 — run selected branch.
+                                                    // c:585-591 — run selected branch.
     if run != 0 {
         cmdpush(if run == 2 {
             CS_ELSE as u8
@@ -7801,7 +7792,7 @@ pub fn execif(state: &mut estate, do_exec: i32) -> i32 {
 pub fn execcase(state: &mut estate, do_exec: i32) -> i32 {
     let code0 = state.prog.prog[state.pc.wrapping_sub(1)]; // c:603
     let end_pc = state.pc + WC_CASE_SKIP(code0) as usize; // c:607
-    // c:609-611 — read & expand the case-word.
+                                                          // c:609-611 — read & expand the case-word.
     let raw_word = ecgetstr(state, EC_DUP, None);
     let word_sub = singsub(&raw_word);
     let word = untokenize(&word_sub);
@@ -7848,7 +7839,11 @@ pub fn execcase(state: &mut estate, do_exec: i32) -> i32 {
         state.pc += (2 * nalts_remaining) as usize; // c:668
         if patok {
             // c:672-684 — run selected arm body.
-            let _ = execlist(state, 1, ((WC_CASE_TYPE(code) == WC_CASE_OR) as i32) & do_exec);
+            let _ = execlist(
+                state,
+                1,
+                ((WC_CASE_TYPE(code) == WC_CASE_OR) as i32) & do_exec,
+            );
             // c:675-682 — chain into ;& and ;| siblings.
             while RETFLAG.load(Ordering::SeqCst) == 0
                 && wc_code(code) == WC_CASE
@@ -7861,8 +7856,11 @@ pub fn execcase(state: &mut estate, do_exec: i32) -> i32 {
                 let inner_next = state.pc + WC_CASE_SKIP(code) as usize;
                 let inner_nalts = state.prog.prog[state.pc] as usize;
                 state.pc += 1 + 2 * inner_nalts;
-                let _ =
-                    execlist(state, 1, ((WC_CASE_TYPE(code) == WC_CASE_OR) as i32) & do_exec);
+                let _ = execlist(
+                    state,
+                    1,
+                    ((WC_CASE_TYPE(code) == WC_CASE_OR) as i32) & do_exec,
+                );
                 let _ = inner_next;
             }
             if WC_CASE_TYPE(code) != WC_CASE_TESTAND {
@@ -7906,7 +7904,7 @@ pub fn exectry(state: &mut estate, _do_exec: i32) -> i32 {
     freeheap(); // c:756
     cmdpop(); // c:758
     cmdpush(CS_ALWAYS as u8); // c:759
-    // c:762-763 — save try_errflag / try_interrupt.
+                              // c:762-763 — save try_errflag / try_interrupt.
     let saved_err = errflag.load(Ordering::Relaxed);
     let save_try_err = (saved_err & ERRFLAG_ERROR) != 0;
     let save_try_int = (saved_err & ERRFLAG_INT) != 0;
@@ -7918,7 +7916,7 @@ pub fn exectry(state: &mut estate, _do_exec: i32) -> i32 {
     let save_contflag = CONTFLAG.swap(0, Ordering::SeqCst);
     state.pc = always_pc; // c:776
     let _ = execlist(state, 1, 0); // c:777
-    // c:779-786 — restore errflag bits.
+                                   // c:779-786 — restore errflag bits.
     if save_try_err {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
     } else {
@@ -7945,7 +7943,6 @@ pub fn exectry(state: &mut estate, _do_exec: i32) -> i32 {
     this_noerrexit.store(1, Ordering::Relaxed); // c:799
     endval
 }
-
 
 /// Port of `execcmd_exec(Estate state, Execcmd_params eparams,
 /// int input, int output, int how, int last1, int close_if_forked)`
@@ -8011,102 +8008,93 @@ pub fn execcmd_exec(
     close_if_forked: i32,
 ) {
     use crate::ported::zsh_h::{
-        Z_ASYNC, Z_SYNC, Z_TIMED, Z_DISOWN,
-        WC_SIMPLE, WC_TYPESET, WC_SUBSH, WC_FUNCDEF, WC_AUTOFN, WC_CURSH,
-        WC_TIMED, WC_REDIR, WC_ASSIGN as ZWC_ASSIGN,
-        WC_ASSIGN_TYPE as ZWC_ASSIGN_TYPE,
-        WC_ASSIGN_TYPE2 as ZWC_ASSIGN_TYPE2,
-        WC_ASSIGN_NUM as ZWC_ASSIGN_NUM,
-        WC_ASSIGN_SCALAR as ZWC_ASSIGN_SCALAR,
-        WC_ASSIGN_INC as ZWC_ASSIGN_INC,
-        BINF_BUILTIN, BINF_COMMAND, BINF_EXEC, BINF_PREFIX,
-        BINF_NOGLOB, BINF_PSPECIAL, BINF_ASSIGN as BINF_ASSIGN_FLAG,
-        BINF_MAGICEQUALS,
-        AUTOCONTINUE, AUTORESUME, AUTOCD, BGNICE,
-        EXECOPT, HASHCMDS, MAGICEQUALSUBST, NOTIFY,
-        POSIXBUILTINS, PRINTEXITVALUE, RCS, RMSTARSILENT,
-        SHINSTDIN, XTRACE, CSHNULLCMD, SHNULLCMD,
-        ERRFLAG_INT,
-        STAT_CURSH, STAT_NOPRINT, STAT_BUILTIN, STAT_DONE,
-        ASG_ARRAY, ASG_KEY_VALUE,
-                HFILE_USE_OPTIONS,
-        PREFORK_TYPESET, PREFORK_SINGLE, PREFORK_ASSIGN, PREFORK_KEY_VALUE,
-        REDIR_READ, REDIR_READWRITE, REDIR_CLOSE,
-        REDIR_HERESTR, REDIR_MERGEIN, REDIR_MERGEOUT,
-        REDIR_INPIPE, REDIR_OUTPIPE,
-        IS_APPEND_REDIR, IS_ERROR_REDIR, IS_DASH,
-        FDT_INTERNAL, FDT_UNUSED, FDT_EXTERNAL, FDT_TYPE_MASK, FDT_XTRACE,
-        PM_READONLY, PM_SPECIAL,
-        Star,
+        Star, ASG_ARRAY, ASG_KEY_VALUE, AUTOCD, AUTOCONTINUE, AUTORESUME, BGNICE,
+        BINF_ASSIGN as BINF_ASSIGN_FLAG, BINF_BUILTIN, BINF_COMMAND, BINF_EXEC, BINF_MAGICEQUALS,
+        BINF_NOGLOB, BINF_PREFIX, BINF_PSPECIAL, CSHNULLCMD, ERRFLAG_INT, EXECOPT, FDT_EXTERNAL,
+        FDT_INTERNAL, FDT_TYPE_MASK, FDT_UNUSED, FDT_XTRACE, HASHCMDS, HFILE_USE_OPTIONS,
+        IS_APPEND_REDIR, IS_DASH, IS_ERROR_REDIR, MAGICEQUALSUBST, NOTIFY, PM_READONLY, PM_SPECIAL,
+        POSIXBUILTINS, PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_SINGLE, PREFORK_TYPESET,
+        PRINTEXITVALUE, RCS, REDIR_CLOSE, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN,
+        REDIR_MERGEOUT, REDIR_OUTPIPE, REDIR_READ, REDIR_READWRITE, RMSTARSILENT, SHINSTDIN,
+        SHNULLCMD, STAT_BUILTIN, STAT_CURSH, STAT_DONE, STAT_NOPRINT, WC_ASSIGN as ZWC_ASSIGN,
+        WC_ASSIGN_INC as ZWC_ASSIGN_INC, WC_ASSIGN_NUM as ZWC_ASSIGN_NUM,
+        WC_ASSIGN_SCALAR as ZWC_ASSIGN_SCALAR, WC_ASSIGN_TYPE as ZWC_ASSIGN_TYPE,
+        WC_ASSIGN_TYPE2 as ZWC_ASSIGN_TYPE2, WC_AUTOFN, WC_CURSH, WC_FUNCDEF, WC_REDIR, WC_SIMPLE,
+        WC_SUBSH, WC_TIMED, WC_TYPESET, XTRACE, Z_ASYNC, Z_DISOWN, Z_SYNC, Z_TIMED,
     };
 
     // c:2900
 
     // c:2904-2916 — locals.
-    let mut hn: Option<*mut builtin> = None;                              // c:2904 HashNode hn = NULL
-    let mut filelist: Vec<String> = Vec::new();                            // c:2905 LinkList filelist = NULL
-    // c:2906 LinkNode node; (loop locals)
-    // c:2907 Redir fn;       (loop locals)
+    let mut hn: Option<*mut builtin> = None; // c:2904 HashNode hn = NULL
+    let mut filelist: Vec<String> = Vec::new(); // c:2905 LinkList filelist = NULL
+                                                // c:2906 LinkNode node; (loop locals)
+                                                // c:2907 Redir fn;       (loop locals)
     let mut mfds: [Option<Box<multio>>; 10] =                              // c:2908 struct multio *mfds[10]
         [None, None, None, None, None, None, None, None, None, None];
-    let mut text: Option<String> = None;                                   // c:2909 char *text
-    let mut save: [i32; 10] = [-2; 10];                                    // c:2910 int save[10]
-    let mut fil: i32;                                                      // c:2911 int fil
-    let mut dfil: i32 = 0;                                                 // c:2911 int dfil
-    let mut is_cursh: i32 = 0;                                             // c:2911 int is_cursh = 0
-    let mut do_exec: i32 = 0;                                              // c:2911 int do_exec = 0
-    let mut redir_err: i32 = 0;                                            // c:2911 int redir_err = 0
-    let mut i: i32;                                                        // c:2911 int i
-    let mut nullexec: i32 = 0;                                             // c:2912 int nullexec = 0
-    let mut magic_assign: i32 = 0;                                         // c:2912 int magic_assign = 0
-    let mut forked: i32 = 0;                                               // c:2912 int forked = 0
-    let mut old_lastval: i32;                                              // c:2912 int old_lastval
-    let mut is_shfunc: i32 = 0;                                            // c:2913 int is_shfunc = 0
-    let mut is_builtin: i32 = 0;                                           // c:2913 int is_builtin = 0
-    let mut is_exec: i32 = 0;                                              // c:2913 int is_exec = 0
-    let mut use_defpath: i32 = 0;                                          // c:2913 int use_defpath = 0
-    // c:2914 — `Various flags to the command.`
-    let mut cflags: u32 = 0;                                               // c:2915 int cflags = 0
-    let mut orig_cflags: u32 = 0;                                          // c:2915 int orig_cflags = 0
-    let mut checked: i32 = 0;                                              // c:2915 int checked = 0
-    let mut oautocont: i32 = -1;                                           // c:2915 int oautocont = -1
-    // c:2916 — `FILE *oxtrerr = xtrerr, *newxtrerr = NULL;` — xtrerr
-    // accessor is stub; track newxtrerr state via Option<RawFd>.
-    let mut newxtrerr: Option<i32> = None;                                 // c:2916
+    let mut text: Option<String> = None; // c:2909 char *text
+    let mut save: [i32; 10] = [-2; 10]; // c:2910 int save[10]
+    let mut fil: i32; // c:2911 int fil
+    let mut dfil: i32 = 0; // c:2911 int dfil
+    let mut is_cursh: i32 = 0; // c:2911 int is_cursh = 0
+    let mut do_exec: i32 = 0; // c:2911 int do_exec = 0
+    let mut redir_err: i32 = 0; // c:2911 int redir_err = 0
+    let mut i: i32; // c:2911 int i
+    let mut nullexec: i32 = 0; // c:2912 int nullexec = 0
+    let mut magic_assign: i32 = 0; // c:2912 int magic_assign = 0
+    let mut forked: i32 = 0; // c:2912 int forked = 0
+    let mut old_lastval: i32; // c:2912 int old_lastval
+    let mut is_shfunc: i32 = 0; // c:2913 int is_shfunc = 0
+    let mut is_builtin: i32 = 0; // c:2913 int is_builtin = 0
+    let mut is_exec: i32 = 0; // c:2913 int is_exec = 0
+    let mut use_defpath: i32 = 0; // c:2913 int use_defpath = 0
+                                  // c:2914 — `Various flags to the command.`
+    let mut cflags: u32 = 0; // c:2915 int cflags = 0
+    let mut orig_cflags: u32 = 0; // c:2915 int orig_cflags = 0
+    let mut checked: i32 = 0; // c:2915 int checked = 0
+    let mut oautocont: i32 = -1; // c:2915 int oautocont = -1
+                                 // c:2916 — `FILE *oxtrerr = xtrerr, *newxtrerr = NULL;` — xtrerr
+                                 // accessor is stub; track newxtrerr state via Option<RawFd>.
+    let mut newxtrerr: Option<i32> = None; // c:2916
 
     // c:2917-2924 — eparams field unpacking. `args` / `redir` are
     // pulled into mutable locals so the body can mutate them
     // independently of the eparams struct.
-    let mut args: Option<Vec<String>> = eparams.args.take();               // c:2921 LinkList args
-    let mut redir: Option<Vec<redir>> = eparams.redir.take();              // c:2922 LinkList redir
-    let varspc: Option<usize> = eparams.varspc;                            // c:2923 Wordcode varspc
-    let typ: i32 = eparams.typ;                                            // c:2924 int type
-    // c:2925-2929 — `preargs comes from expanding the head of the args
-    // list in order to check for prefix commands.` declared later.
+    let mut args: Option<Vec<String>> = eparams.args.take(); // c:2921 LinkList args
+    let mut redir: Option<Vec<redir>> = eparams.redir.take(); // c:2922 LinkList redir
+    let varspc: Option<usize> = eparams.varspc; // c:2923 Wordcode varspc
+    let typ: i32 = eparams.typ; // c:2924 int type
+                                // c:2925-2929 — `preargs comes from expanding the head of the args
+                                // list in order to check for prefix commands.` declared later.
 
     // c:2933-2937 — `for the "time" keyword` — child_times_t shti, chti
     // + struct timespec then. Rust port keeps the names so the shelltime
     // start+stop calls map directly. Use jobs.rs's existing types.
-    let mut shti = crate::ported::jobs::timeinfo::default();          // c:2934
-    let mut chti = crate::ported::jobs::timeinfo::default();          // c:2934
+    let mut shti = crate::ported::jobs::timeinfo::default(); // c:2934
+    let mut chti = crate::ported::jobs::timeinfo::default(); // c:2934
     let mut then_ts = std::time::Instant::now(); // c:2935 struct timespec then
     if (how & Z_TIMED as i32) != 0 {
         // c:2936
-        crate::ported::jobs::shelltime(Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 0); // c:2937
+        crate::ported::jobs::shelltime(Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 0);
+        // c:2937
     }
 
-    doneps4.store(0, Ordering::Relaxed);                                   // c:2939
+    doneps4.store(0, Ordering::Relaxed); // c:2939
 
     // c:2941-2947 — `If assignment but no command get the status from
     // variable assignment.`
-    old_lastval = LASTVAL.load(Ordering::Relaxed);                         // c:2945
+    old_lastval = LASTVAL.load(Ordering::Relaxed); // c:2945
     if args.is_none() && varspc.is_some() {
         // c:2946
         let ef = errflag.load(Ordering::Relaxed);
         LASTVAL.store(
-            if ef != 0 { ef } else { cmdoutval.load(Ordering::Relaxed) },
+            if ef != 0 {
+                ef
+            } else {
+                cmdoutval.load(Ordering::Relaxed)
+            },
             Ordering::Relaxed,
-        );                                                                 // c:2947
+        ); // c:2947
     }
     // c:2948-2954 — `If there are arguments, we should reset the status
     // for the command before execution---unless we are using the result
@@ -8125,8 +8113,12 @@ pub fn execcmd_exec(
         // c:2964-2965
         if (how & Z_DISOWN as i32) != 0 {
             // c:2966
-            oautocont = if crate::ported::options::opt_state_get("autocontinue").unwrap_or(false) { 1 } else { 0 }; // c:2967
-            crate::ported::options::opt_state_set("autocontinue", true);     // c:2968
+            oautocont = if crate::ported::options::opt_state_get("autocontinue").unwrap_or(false) {
+                1
+            } else {
+                0
+            }; // c:2967
+            crate::ported::options::opt_state_set("autocontinue", true); // c:2968
         }
         // c:2970-2971 — `pushnode(args, dupstring((how & Z_DISOWN) ? "disown" : (how & Z_ASYNC) ? "bg" : "fg"));`
         let head = if (how & Z_DISOWN as i32) != 0 {
@@ -8139,7 +8131,7 @@ pub fn execcmd_exec(
         if let Some(ref mut v) = args {
             v.insert(0, head);
         }
-        how = Z_SYNC as i32;                                               // c:2972
+        how = Z_SYNC as i32; // c:2972
     }
 
     // c:2975-2986 — AUTORESUME prefix match against jobtab.
@@ -8162,9 +8154,7 @@ pub fn execcmd_exec(
                 for i in 1..guard.len() {
                     // jobs.c:1997 — `for (i = 1; i <= maxjob; i++)`
                     if (guard[i].stat & crate::ported::zsh_h::STAT_CHANGED) != 0 {
-                        let s = crate::ported::jobs::printjob(
-                            &guard[i], i, long_list, None, None,
-                        ); // jobs.c:1999
+                        let s = crate::ported::jobs::printjob(&guard[i], i, long_list, None, None); // jobs.c:1999
                         if !s.is_empty() {
                             eprint!("{}", s);
                         }
@@ -8174,7 +8164,10 @@ pub fn execcmd_exec(
         }
         // c:2984 — `if (findjobnam(peekfirst(args)) != -1)`
         let head = args.as_ref().unwrap()[0].clone();
-        let maxjob = JOBTAB.get().map(|m| m.lock().unwrap().len() as i32).unwrap_or(0);
+        let maxjob = JOBTAB
+            .get()
+            .map(|m| m.lock().unwrap().len() as i32)
+            .unwrap_or(0);
         let thisjob = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
         // c:2982 — `findjobnam(s)`. Canonical port at
         // jobs.rs::findjobnam matches against `proc.text`, which is
@@ -8203,7 +8196,7 @@ pub fn execcmd_exec(
     // ====================================================================
     // save_params + restore_params — top-level ports in exec.rs
     // (c:4410 / c:4464). Both bridged via `use` below.
-    use crate::ported::exec::{save_params, restore_params};
+    use crate::ported::exec::{restore_params, save_params};
     // isreallycom — top-level port at exec.rs (c:972). Bridges the
     // local shadow that this fn body used pre-port.
     use crate::ported::exec::isreallycom;
@@ -8232,7 +8225,10 @@ pub fn execcmd_exec(
     {
         // c:2988
         // c:2999 — `text = getjobtext(state->prog, eparams->beg);`
-        text = Some(crate::ported::text::getjobtext(state.prog.clone(), Some(eparams.beg)));
+        text = Some(crate::ported::text::getjobtext(
+            state.prog.clone(),
+            Some(eparams.beg),
+        ));
         // c:3000-3008 — `switch (execcmd_fork(...)) { -1: goto fatal; 0: break; default: return; }`
         let mut filelist_for_fork = filelist.clone();
         let pid = crate::ported::exec::execcmd_fork(
@@ -8250,13 +8246,22 @@ pub fn execcmd_exec(
                 // c:3002-3003 — `goto fatal;` — fall through to fatal:
                 // label at c:4377. We model this with a flag.
                 redir_err = 1; // pretend redir error to trigger fatal arm
-                // Continue to done label by setting forked + jumping forward.
-                // Simplified: just bail with status 1 + fatal handling at
-                // the bottom of the fn.
+                               // Continue to done label by setting forked + jumping forward.
+                               // Simplified: just bail with status 1 + fatal handling at
+                               // the bottom of the fn.
                 return execcmd_exec_done_path(
-                    redir_err, oautocont, how, &mut shti, &mut chti, &mut then_ts,
-                    forked, &mut newxtrerr,
-                    cflags, orig_cflags, is_cursh, do_exec,
+                    redir_err,
+                    oautocont,
+                    how,
+                    &mut shti,
+                    &mut chti,
+                    &mut then_ts,
+                    forked,
+                    &mut newxtrerr,
+                    cflags,
+                    orig_cflags,
+                    is_cursh,
+                    do_exec,
                 );
             }
             0 => {
@@ -8269,13 +8274,18 @@ pub fn execcmd_exec(
                     crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
                 }
                 if (how & Z_TIMED as i32) != 0 {
-                    crate::ported::jobs::shelltime(Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1);
+                    crate::ported::jobs::shelltime(
+                        Some(&mut shti),
+                        Some(&mut chti),
+                        Some(&mut then_ts),
+                        1,
+                    );
                 }
                 return;
             }
         }
-        last1 = 1;                                                          // c:3009
-        forked = 1;                                                         // c:3009
+        last1 = 1; // c:3009
+        forked = 1; // c:3009
     } else {
         // c:3010-3011
         text = None;
@@ -8353,20 +8363,18 @@ pub fn execcmd_exec(
     // execsubst() call inside this command's expansion uses the same
     // prefork flags. Also keep a local copy for the immediate
     // prefork(args, esprefork, NULL) below.
-    let esprefork_v: i32 = if magic_assign != 0
-        || (isset(MAGICEQUALSUBST) && typ != WC_TYPESET as i32)
-    {
-        PREFORK_TYPESET                                                    // c:3300
-    } else {
-        0
-    };
+    let esprefork_v: i32 =
+        if magic_assign != 0 || (isset(MAGICEQUALSUBST) && typ != WC_TYPESET as i32) {
+            PREFORK_TYPESET // c:3300
+        } else {
+            0
+        };
     esprefork.store(esprefork_v, Ordering::Relaxed); // c:3298 esprefork = ...
 
     // c:3302-3307 — prefork(args, esprefork, NULL) + joinlists(preargs, args).
     if args.is_some() && eparams.htok != 0 {
         // c:3303-3304 — `if (eparams->htok) prefork(args, esprefork, NULL);`
-        let mut as_linklist: crate::ported::linklist::LinkList<String> =
-            Default::default();
+        let mut as_linklist: crate::ported::linklist::LinkList<String> = Default::default();
         if let Some(ref v) = args {
             for s in v {
                 as_linklist.push_back(s.clone());
@@ -8392,7 +8400,7 @@ pub fn execcmd_exec(
 
     // c:3309-3406 — main resolution loop + empty-command branch.
     if typ == WC_SIMPLE as i32 || typ == WC_TYPESET as i32 {
-        let mut unglobbed: i32 = 0;                                        // c:3310
+        let mut unglobbed: i32 = 0; // c:3310
 
         // c:3312 — `for (;;)` — main resolution loop.
         loop {
@@ -8421,15 +8429,15 @@ pub fn execcmd_exec(
                 // c:3319-3322
                 if let Some(ref mut v) = args {
                     for s in v.iter_mut() {
-                        *s = untokenize(s);                                // c:3321
+                        *s = untokenize(s); // c:3321
                     }
                 }
-                unglobbed = 1;                                             // c:3322
+                unglobbed = 1; // c:3322
             }
 
             // c:3327-3328 — `if ((cflags & BINF_EXEC) && last1) do_exec = 1;`
             if (cflags & BINF_EXEC) != 0 && last1 != 0 {
-                do_exec = 1;                                               // c:3328
+                do_exec = 1; // c:3328
             }
 
             // c:3331-3407 — empty-command branch.
@@ -8439,11 +8447,11 @@ pub fn execcmd_exec(
                     // c:3332 — `if (redir && nonempty(redir))`
                     if do_exec != 0 {
                         // c:3333 — `Was this "exec < foobar"?`
-                        nullexec = 1;                                      // c:3335
+                        nullexec = 1; // c:3335
                         break;
                     } else if varspc.is_some() {
                         // c:3337
-                        nullexec = 2;                                      // c:3338
+                        nullexec = 2; // c:3338
                         break;
                     } else if {
                         // c:3340-3341 — `if (!nullcmd || !*nullcmd ||
@@ -8454,7 +8462,7 @@ pub fn execcmd_exec(
                     } {
                         // c:3342 — `zerr("redirection with no command");`
                         zerr("redirection with no command");
-                        LASTVAL.store(1, Ordering::Relaxed);               // c:3343
+                        LASTVAL.store(1, Ordering::Relaxed); // c:3343
                         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3344
                         if forked != 0 {
                             // c:3345-3346
@@ -8463,10 +8471,13 @@ pub fn execcmd_exec(
                         if (how & Z_TIMED as i32) != 0 {
                             // c:3347-3348
                             crate::ported::jobs::shelltime(
-                                Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1,
+                                Some(&mut shti),
+                                Some(&mut chti),
+                                Some(&mut then_ts),
+                                1,
                             );
                         }
-                        return;                                            // c:3349
+                        return; // c:3349
                     } else if {
                         // c:3350 — `if (!nullcmd || !*nullcmd || opts[SHNULLCMD])`
                         let nc = crate::ported::params::getsparam("NULLCMD");
@@ -8477,7 +8488,7 @@ pub fn execcmd_exec(
                         if args.is_none() {
                             args = Some(Vec::new());
                         }
-                        args.as_mut().unwrap().push(":".to_string());      // c:3353
+                        args.as_mut().unwrap().push(":".to_string()); // c:3353
                     } else if {
                         // c:3354-3356 — `readnullcmd && *readnullcmd &&
                         //   peekfirst(redir).type == REDIR_READ &&
@@ -8492,45 +8503,50 @@ pub fn execcmd_exec(
                         if args.is_none() {
                             args = Some(Vec::new());
                         }
-                        let rnc = crate::ported::params::getsparam("READNULLCMD")
-                            .unwrap_or_default();
-                        args.as_mut().unwrap().push(rnc);                  // c:3359
+                        let rnc =
+                            crate::ported::params::getsparam("READNULLCMD").unwrap_or_default();
+                        args.as_mut().unwrap().push(rnc); // c:3359
                     } else {
                         // c:3360-3364 — default: nullcmd as command.
                         if args.is_none() {
                             args = Some(Vec::new());
                         }
-                        let nc = crate::ported::params::getsparam("NULLCMD")
-                            .unwrap_or_default();
-                        args.as_mut().unwrap().push(nc);                   // c:3363
+                        let nc = crate::ported::params::getsparam("NULLCMD").unwrap_or_default();
+                        args.as_mut().unwrap().push(nc); // c:3363
                     }
                 } else if (cflags & BINF_PREFIX) != 0 && (cflags & BINF_COMMAND) != 0 {
                     // c:3365 — bare `command`: lastval=0, return.
-                    LASTVAL.store(0, Ordering::Relaxed);                   // c:3366
+                    LASTVAL.store(0, Ordering::Relaxed); // c:3366
                     if forked != 0 {
-                        crate::ported::builtin::_realexit();                                       // c:3367-3368
+                        crate::ported::builtin::_realexit(); // c:3367-3368
                     }
                     if (how & Z_TIMED as i32) != 0 {
                         crate::ported::jobs::shelltime(
-                            Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1,
-                        );                                                 // c:3369-3370
+                            Some(&mut shti),
+                            Some(&mut chti),
+                            Some(&mut then_ts),
+                            1,
+                        ); // c:3369-3370
                     }
-                    return;                                                // c:3371
+                    return; // c:3371
                 } else {
                     // c:3372-3406 — no arguments default arm.
                     // c:3378-3385 — badcshglob == 1 → no match.
                     if crate::ported::glob::BADCSHGLOB.load(Ordering::Relaxed) == 1 {
-                        zerr("no match");                                  // c:3379
-                        LASTVAL.store(1, Ordering::Relaxed);               // c:3380
+                        zerr("no match"); // c:3379
+                        LASTVAL.store(1, Ordering::Relaxed); // c:3380
                         if forked != 0 {
-                            crate::ported::builtin::_realexit();                                   // c:3381-3382
+                            crate::ported::builtin::_realexit(); // c:3381-3382
                         }
                         if (how & Z_TIMED as i32) != 0 {
                             crate::ported::jobs::shelltime(
-                                Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1,
-                            );                                             // c:3383-3384
+                                Some(&mut shti),
+                                Some(&mut chti),
+                                Some(&mut then_ts),
+                                1,
+                            ); // c:3383-3384
                         }
-                        return;                                            // c:3385
+                        return; // c:3385
                     }
                     // c:3387 — `cmdoutval = use_cmdoutval ? lastval : 0;`
                     cmdoutval.store(
@@ -8543,12 +8559,12 @@ pub fn execcmd_exec(
                     );
                     if varspc.is_some() {
                         // c:3388-3392 — `lastval = old_lastval; addvars(state, varspc, 0);`
-                        LASTVAL.store(old_lastval, Ordering::Relaxed);     // c:3390
-                        addvars(state, varspc.unwrap_or(0), 0);            // c:3391
+                        LASTVAL.store(old_lastval, Ordering::Relaxed); // c:3390
+                        addvars(state, varspc.unwrap_or(0), 0); // c:3391
                     }
                     if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                         // c:3393
-                        LASTVAL.store(1, Ordering::Relaxed);               // c:3394
+                        LASTVAL.store(1, Ordering::Relaxed); // c:3394
                     } else {
                         // c:3395-3396
                         LASTVAL.store(cmdoutval.load(Ordering::Relaxed), Ordering::Relaxed);
@@ -8560,14 +8576,17 @@ pub fn execcmd_exec(
                         eprintln!();
                     }
                     if forked != 0 {
-                        crate::ported::builtin::_realexit();                                       // c:3401-3402
+                        crate::ported::builtin::_realexit(); // c:3401-3402
                     }
                     if (how & Z_TIMED as i32) != 0 {
                         crate::ported::jobs::shelltime(
-                            Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1,
-                        );                                                 // c:3403-3404
+                            Some(&mut shti),
+                            Some(&mut chti),
+                            Some(&mut then_ts),
+                            1,
+                        ); // c:3403-3404
                     }
-                    return;                                                // c:3405
+                    return; // c:3405
                 }
             }
 
@@ -8583,7 +8602,7 @@ pub fn execcmd_exec(
                 }
             {
                 // c:3423
-                break;                                                     // c:3426
+                break; // c:3426
             }
 
             // c:3428 — `cmdarg = (char *) peekfirst(args);`
@@ -8596,8 +8615,8 @@ pub fn execcmd_exec(
                     .map(|t| t.iter().any(|(k, _)| k.as_str() == cmdarg.as_str()))
                     .unwrap_or(false);
                 if in_shfunctab {
-                    is_shfunc = 1;                                         // c:3431
-                    break;                                                 // c:3432
+                    is_shfunc = 1; // c:3431
+                    break; // c:3432
                 }
             }
             // c:3434-3447 — builtintab lookup.
@@ -8607,42 +8626,45 @@ pub fn execcmd_exec(
             if builtin_entry.is_none() {
                 if (cflags & BINF_BUILTIN) != 0 {
                     // c:3435 — `zwarn("no such builtin: %s", cmdarg);`
-                    zwarn(&format!("no such builtin: {}", cmdarg));        // c:3436
-                    LASTVAL.store(1, Ordering::Relaxed);                   // c:3437
+                    zwarn(&format!("no such builtin: {}", cmdarg)); // c:3436
+                    LASTVAL.store(1, Ordering::Relaxed); // c:3437
                     if oautocont >= 0 {
                         // c:3438-3439
                         crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
                     }
                     if forked != 0 {
-                        crate::ported::builtin::_realexit();                                       // c:3440-3441
+                        crate::ported::builtin::_realexit(); // c:3440-3441
                     }
                     if (how & Z_TIMED as i32) != 0 {
                         crate::ported::jobs::shelltime(
-                            Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1,
-                        );                                                 // c:3442-3443
+                            Some(&mut shti),
+                            Some(&mut chti),
+                            Some(&mut then_ts),
+                            1,
+                        ); // c:3442-3443
                     }
-                    return;                                                // c:3444
+                    return; // c:3444
                 }
-                break;                                                     // c:3446
+                break; // c:3446
             }
             let entry = builtin_entry.unwrap();
             // c:3448-3460 — `if (!(hn->flags & BINF_PREFIX)) { is_builtin = 1; ... }`
             if (entry.node.flags as u32 & BINF_PREFIX) == 0 {
-                is_builtin = 1;                                            // c:3449
-                // c:3452 — `if (!(hn = resolvebuiltin(cmdarg, hn)))` —
-                // module autoload check. zshrs's BUILTINS table is
-                // static and pre-resolved; treat resolvebuiltin as
-                // pass-through.
+                is_builtin = 1; // c:3449
+                                // c:3452 — `if (!(hn = resolvebuiltin(cmdarg, hn)))` —
+                                // module autoload check. zshrs's BUILTINS table is
+                                // static and pre-resolved; treat resolvebuiltin as
+                                // pass-through.
                 hn = Some(entry as *const builtin as *mut builtin);
-                break;                                                     // c:3459
+                break; // c:3459
             }
             // c:3461-3463 — BINF_PREFIX modifier (builtin/command/exec).
             cflags &= !(BINF_BUILTIN | BINF_COMMAND);
             cflags |= entry.node.flags as u32;
             if let Some(ref mut v) = args {
-                v.remove(0);                                               // c:3463 uremnode(args, firstnode(args))
+                v.remove(0); // c:3463 uremnode(args, firstnode(args))
             }
-            hn = None;                                                     // c:3464
+            hn = None; // c:3464
         }
     }
 
@@ -8651,20 +8673,20 @@ pub fn execcmd_exec(
         // c:3468
         if LASTVAL.load(Ordering::Relaxed) == 0 {
             // c:3469
-            LASTVAL.store(1, Ordering::Relaxed);                           // c:3470
+            LASTVAL.store(1, Ordering::Relaxed); // c:3470
         }
         if oautocont >= 0 {
-            crate::ported::options::opt_state_set("autocontinue", oautocont != 0); // c:3472
+            crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+            // c:3472
         }
         if forked != 0 {
-            crate::ported::builtin::_realexit();                                                   // c:3473-3474
+            crate::ported::builtin::_realexit(); // c:3473-3474
         }
         if (how & Z_TIMED as i32) != 0 {
-            crate::ported::jobs::shelltime(
-                Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1,
-            );                                                             // c:3475-3476
+            crate::ported::jobs::shelltime(Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1);
+            // c:3475-3476
         }
-        return;                                                            // c:3477
+        return; // c:3477
     }
 
     // c:3480-3483 — `Get the text associated with this command.`
@@ -8673,7 +8695,10 @@ pub fn execcmd_exec(
         && (isset(MONITOR) || (how & Z_TIMED as i32) != 0)
     {
         // c:3481-3482
-        text = Some(crate::ported::text::getjobtext(state.prog.clone(), Some(eparams.beg)));    // c:3483
+        text = Some(crate::ported::text::getjobtext(
+            state.prog.clone(),
+            Some(eparams.beg),
+        )); // c:3483
     }
 
     // c:3485-3492 — `Set up special parameter $_`.
@@ -8684,7 +8709,7 @@ pub fn execcmd_exec(
             .and_then(|v| v.last())
             .cloned()
             .unwrap_or_default();
-        setunderscore(&last_str);                                          // c:3491-3492
+        setunderscore(&last_str); // c:3491-3492
     }
 
     // c:3494-3524 — `Warn about "rm *"`.
@@ -8708,8 +8733,8 @@ pub fn execcmd_exec(
                 let pwd = crate::ported::params::getsparam("PWD").unwrap_or_default();
                 if !crate::ported::utils::checkrmall(&pwd) {
                     // c:3506
-                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);    // c:3507
-                    break;                                                 // c:3508
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3507
+                    break; // c:3508
                 }
             } else if l >= 2 {
                 // c:3510 — `s[l-2] == '/' && s[l-1] == Star`
@@ -8723,7 +8748,7 @@ pub fn execcmd_exec(
                     if !crate::ported::utils::checkrmall(&prefix) {
                         // c:3518
                         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:3519
-                        break;                                             // c:3520
+                        break; // c:3520
                     }
                 }
             }
@@ -8735,7 +8760,7 @@ pub fn execcmd_exec(
         // c:3526
         if state.prog.prog.get(state.pc).copied().unwrap_or(0) != 0 {
             // c:3535 — `Nonymous, don't do redirections here`
-            redir = None;                                                  // c:3537
+            redir = None; // c:3537
         }
     } else if is_shfunc != 0 || typ == WC_AUTOFN as i32 {
         // c:3539
@@ -8758,10 +8783,13 @@ pub fn execcmd_exec(
                     }
                     if (how & Z_TIMED as i32) != 0 {
                         crate::ported::jobs::shelltime(
-                            Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1,
+                            Some(&mut shti),
+                            Some(&mut chti),
+                            Some(&mut then_ts),
+                            1,
                         );
                     }
-                    return;                                                // c:3558
+                    return; // c:3558
                 }
             }
         }
@@ -8809,19 +8837,19 @@ pub fn execcmd_exec(
     // c:3582-3591 — errflag bail-out (2).
     if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
         // c:3582
-        LASTVAL.store(1, Ordering::Relaxed);                               // c:3583
+        LASTVAL.store(1, Ordering::Relaxed); // c:3583
         if oautocont >= 0 {
-            crate::ported::options::opt_state_set("autocontinue", oautocont != 0); // c:3584-3585
+            crate::ported::options::opt_state_set("autocontinue", oautocont != 0);
+            // c:3584-3585
         }
         if forked != 0 {
-            crate::ported::builtin::_realexit();                                                   // c:3586-3587
+            crate::ported::builtin::_realexit(); // c:3586-3587
         }
         if (how & Z_TIMED as i32) != 0 {
-            crate::ported::jobs::shelltime(
-                Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1,
-            );                                                             // c:3588-3589
+            crate::ported::jobs::shelltime(Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1);
+            // c:3588-3589
         }
-        return;                                                            // c:3590
+        return; // c:3590
     }
 
     // c:3593-3632 — external resolution + AUTOCD.
@@ -8831,15 +8859,19 @@ pub fn execcmd_exec(
             && isset(SHINSTDIN)
             && redir.as_ref().map(|v| v.is_empty()).unwrap_or(true)
             && args.as_ref().map(|v| v.len() == 1).unwrap_or(false)
-            && !args.as_ref().unwrap()[0].is_empty();                      // c:3595-3597
+            && !args.as_ref().unwrap()[0].is_empty(); // c:3595-3597
         if hn.is_none() {
             // c:3600
             let cmdarg = args.as_ref().unwrap()[0].clone();
-            let mut dohashcmd = isset(HASHCMDS);                           // c:3604
-            // c:3606 — `hn = cmdnamtab->getnode(cmdnamtab, cmdarg);`
+            let mut dohashcmd = isset(HASHCMDS); // c:3604
+                                                 // c:3606 — `hn = cmdnamtab->getnode(cmdnamtab, cmdarg);`
             let mut have_cmdnam: Option<cmdnam> = {
                 let tab = cmdnamtab_lock().read().ok();
-                tab.and_then(|t| t.iter().find(|(k, _)| k.as_str() == cmdarg.as_str()).map(|(_, v)| v.clone()))
+                tab.and_then(|t| {
+                    t.iter()
+                        .find(|(k, _)| k.as_str() == cmdarg.as_str())
+                        .map(|(_, v)| v.clone())
+                })
             };
             if have_cmdnam.is_some() && trycd && !isreallycom(have_cmdnam.as_ref().unwrap()) {
                 // c:3607
@@ -8855,11 +8887,10 @@ pub fn execcmd_exec(
             }
             if have_cmdnam.is_none() && dohashcmd && cmdarg != ".." {
                 // c:3616 — `if (!hn && dohashcmd && strcmp(cmdarg, "..")) `
-                let has_slash = cmdarg.contains('/');                      // c:3617-3618
+                let has_slash = cmdarg.contains('/'); // c:3617-3618
                 if !has_slash {
                     // c:3619 — `hn = (HashNode) hashcmd(cmdarg, checkpath);`
-                    let path_dirs = crate::ported::params::getsparam("PATH")
-                        .unwrap_or_default();
+                    let path_dirs = crate::ported::params::getsparam("PATH").unwrap_or_default();
                     let dirs: Vec<String> = path_dirs.split(':').map(String::from).collect();
                     have_cmdnam = hashcmd(&cmdarg, &dirs);
                 }
@@ -8875,24 +8906,22 @@ pub fn execcmd_exec(
             let cmdarg = args.as_ref().unwrap()[0].clone();
             if let Some(s) = cancd(&cmdarg) {
                 // c:3625
-                args.as_mut().unwrap()[0] = s;                             // c:3626
-                args.as_mut().unwrap().insert(0, "--".to_string());        // c:3627
-                args.as_mut().unwrap().insert(0, "cd".to_string());        // c:3628
-                // c:3629 — `if ((hn = builtintab->getnode(builtintab, "cd")))`
+                args.as_mut().unwrap()[0] = s; // c:3626
+                args.as_mut().unwrap().insert(0, "--".to_string()); // c:3627
+                args.as_mut().unwrap().insert(0, "cd".to_string()); // c:3628
+                                                                    // c:3629 — `if ((hn = builtintab->getnode(builtintab, "cd")))`
                 let cd_entry = BUILTINS.iter().find(|b| b.node.nam.as_str() == "cd");
                 if let Some(cd) = cd_entry {
                     hn = Some(cd as *const builtin as *mut builtin);
-                    is_builtin = 1;                                        // c:3630
+                    is_builtin = 1; // c:3630
                 }
             }
         }
     }
 
     // c:3635 — `is_cursh = (is_builtin || is_shfunc || nullexec || type >= WC_CURSH);`
-    is_cursh = (is_builtin != 0
-        || is_shfunc != 0
-        || nullexec != 0
-        || typ >= WC_CURSH as i32) as i32;
+    is_cursh =
+        (is_builtin != 0 || is_shfunc != 0 || nullexec != 0 || typ >= WC_CURSH as i32) as i32;
 
     // c:3659-3697 — fork decision.
     if forked == 0 {
@@ -8906,7 +8935,7 @@ pub fn execcmd_exec(
                             .get()
                             .map(|jt| crate::ported::jobs::havefiles(&jt.lock().unwrap()))
                             .unwrap_or(false)
-                        || false /* fdtable_flocks — substrate stub */)))
+                        || false/* fdtable_flocks — substrate stub */)))
         {
             // c:3660-3663
             let mut filelist_for_fork = filelist.clone();
@@ -8925,9 +8954,18 @@ pub fn execcmd_exec(
                     // c:3666-3667 — goto fatal.
                     redir_err = 1;
                     return execcmd_exec_done_path(
-                        redir_err, oautocont, how, &mut shti, &mut chti,
-                        &mut then_ts, forked, &mut newxtrerr,
-                        cflags, orig_cflags, is_cursh, do_exec,
+                        redir_err,
+                        oautocont,
+                        how,
+                        &mut shti,
+                        &mut chti,
+                        &mut then_ts,
+                        forked,
+                        &mut newxtrerr,
+                        cflags,
+                        orig_cflags,
+                        is_cursh,
+                        do_exec,
                     );
                 }
                 0 => {
@@ -8940,13 +8978,16 @@ pub fn execcmd_exec(
                     }
                     if (how & Z_TIMED as i32) != 0 {
                         crate::ported::jobs::shelltime(
-                            Some(&mut shti), Some(&mut chti), Some(&mut then_ts), 1,
+                            Some(&mut shti),
+                            Some(&mut chti),
+                            Some(&mut then_ts),
+                            1,
                         );
                     }
                     return;
                 }
             }
-            forked = 1;                                                    // c:3673
+            forked = 1; // c:3673
         } else if is_cursh != 0 {
             // c:3674
             // c:3678-3682 — set jobtab[thisjob] stat bits.
@@ -8955,27 +8996,27 @@ pub fn execcmd_exec(
                 if let Some(jt) = JOBTAB.get() {
                     let mut guard = jt.lock().unwrap();
                     if let Some(j) = guard.get_mut(thisjob as usize) {
-                        j.stat |= STAT_CURSH;                              // c:3678
-                        // c:3679-3680 — `if (!jobtab[thisjob].procs)
-                        //                  jobtab[thisjob].stat |= STAT_NOPRINT;`
-                        // Suppress the "[N] done" print for jobs that
-                        // never forked a real process (cursh / builtin /
-                        // null exec).
+                        j.stat |= STAT_CURSH; // c:3678
+                                              // c:3679-3680 — `if (!jobtab[thisjob].procs)
+                                              //                  jobtab[thisjob].stat |= STAT_NOPRINT;`
+                                              // Suppress the "[N] done" print for jobs that
+                                              // never forked a real process (cursh / builtin /
+                                              // null exec).
                         if j.procs.is_empty() {
-                            j.stat |= STAT_NOPRINT;                        // c:3680
+                            j.stat |= STAT_NOPRINT; // c:3680
                         }
                         if is_builtin != 0 {
-                            j.stat |= STAT_BUILTIN;                        // c:3682
+                            j.stat |= STAT_BUILTIN; // c:3682
                         }
                     }
                 }
             }
         } else {
             // c:3683-3697 — external exec (real or fake).
-            is_exec = 1;                                                   // c:3687
-            // c:3695 — `if (type == WC_SUBSH) forked = 1;`
+            is_exec = 1; // c:3687
+                         // c:3695 — `if (type == WC_SUBSH) forked = 1;`
             if typ == WC_SUBSH as i32 {
-                forked = 1;                                                // c:3696
+                forked = 1; // c:3696
             }
         }
     }
@@ -8989,7 +9030,7 @@ pub fn execcmd_exec(
                 oargs.push_back(s.clone());
             }
         }
-        crate::ported::subst::globlist(&mut oargs, 0);                      // c:3702
+        crate::ported::subst::globlist(&mut oargs, 0); // c:3702
         let mut out: Vec<String> = Vec::new();
         while let Some(s) = oargs.pop_front() {
             out.push(s);
@@ -8998,11 +9039,22 @@ pub fn execcmd_exec(
     }
     if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
         // c:3705
-        LASTVAL.store(1, Ordering::Relaxed);                               // c:3706
+        LASTVAL.store(1, Ordering::Relaxed); // c:3706
         return execcmd_exec_err_path(
-            forked, &mut save, &mut mfds, oautocont, how,
-            &mut shti, &mut chti, &mut then_ts, &mut newxtrerr,
-            cflags, orig_cflags, is_cursh, do_exec, redir_err,
+            forked,
+            &mut save,
+            &mut mfds,
+            oautocont,
+            how,
+            &mut shti,
+            &mut chti,
+            &mut then_ts,
+            &mut newxtrerr,
+            cflags,
+            orig_cflags,
+            is_cursh,
+            do_exec,
+            redir_err,
         );
     }
 
@@ -9016,10 +9068,10 @@ pub fn execcmd_exec(
 
     // c:3720-3724 — pipeline input/output to mfds.
     if input != 0 {
-        addfd(forked, &mut save, &mut mfds, 0, input, 0, None);            // c:3722
+        addfd(forked, &mut save, &mut mfds, 0, input, 0, None); // c:3722
     }
     if output != 0 {
-        addfd(forked, &mut save, &mut mfds, 1, output, 1, None);           // c:3724
+        addfd(forked, &mut save, &mut mfds, 1, output, 1, None); // c:3724
     }
 
     // c:3726-3728 — `if (redir) spawnpipes(redir, nullexec);`
@@ -9034,7 +9086,7 @@ pub fn execcmd_exec(
             break;
         }
         let mut fn_ = redir_list.remove(0); // c:3732 `fn = (Redir) ugetnode(redir);`
-        // c:3734-3735 DPUTS — debug assert REDIR_HEREDOC* gone.
+                                            // c:3734-3735 DPUTS — debug assert REDIR_HEREDOC* gone.
         if fn_.typ == crate::ported::zsh_h::REDIR_INPIPE {
             // c:3736
             if crate::ported::exec::checkclobberparam(&fn_) == 0 || fn_.fd2 == -1 {
@@ -9044,12 +9096,21 @@ pub fn execcmd_exec(
                 }
                 crate::ported::exec::closemnodes(&mut mfds); // c:3740
                 crate::ported::exec::fixfds(&save); // c:3741
-                { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); } // c:3742
+                {
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    LASTVAL.store(1, Ordering::Relaxed);
+                } // c:3742
                 break;
             }
             // c:3744 — `addfd(forked, save, mfds, fn->fd1, fn->fd2, 0, fn->varid);`
             crate::ported::exec::addfd(
-                forked, &mut save, &mut mfds, fn_.fd1, fn_.fd2, 0, fn_.varid.as_deref(),
+                forked,
+                &mut save,
+                &mut mfds,
+                fn_.fd1,
+                fn_.fd2,
+                0,
+                fn_.varid.as_deref(),
             );
         } else if fn_.typ == crate::ported::zsh_h::REDIR_OUTPIPE {
             // c:3745
@@ -9060,17 +9121,26 @@ pub fn execcmd_exec(
                 }
                 crate::ported::exec::closemnodes(&mut mfds); // c:3749
                 crate::ported::exec::fixfds(&save); // c:3750
-                { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); } // c:3751
+                {
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    LASTVAL.store(1, Ordering::Relaxed);
+                } // c:3751
                 break;
             }
             // c:3753
             crate::ported::exec::addfd(
-                forked, &mut save, &mut mfds, fn_.fd1, fn_.fd2, 1, fn_.varid.as_deref(),
+                forked,
+                &mut save,
+                &mut mfds,
+                fn_.fd1,
+                fn_.fd2,
+                1,
+                fn_.varid.as_deref(),
             );
         } else {
             // c:3754 — non-pipe redir branch.
             let mut closed: i32; // c:3755
-            // c:3756-3757 — xpandredir glob/brace.
+                                 // c:3756-3757 — xpandredir glob/brace.
             if fn_.typ != crate::ported::zsh_h::REDIR_HERESTR {
                 // Put fn_ back temporarily so xpandredir can mutate
                 // around it; not implemented identically — xpandredir
@@ -9083,7 +9153,10 @@ pub fn execcmd_exec(
                 // c:3758
                 crate::ported::exec::closemnodes(&mut mfds); // c:3759
                 crate::ported::exec::fixfds(&save); // c:3760
-                { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); } // c:3761
+                {
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    LASTVAL.store(1, Ordering::Relaxed);
+                } // c:3761
                 break;
             }
             if !isset(crate::ported::zsh_h::EXECOPT) {
@@ -9104,19 +9177,26 @@ pub fn execcmd_exec(
                         let e = std::io::Error::last_os_error();
                         let raw = e.raw_os_error().unwrap_or(0);
                         if raw != 0 && raw != libc::EINTR {
-                            zwarn(&format!(
-                                "can't create temp file for here document: {}",
-                                e
-                            )); // c:3772-3774
+                            zwarn(&format!("can't create temp file for here document: {}", e));
+                            // c:3772-3774
                         }
                         crate::ported::exec::closemnodes(&mut mfds); // c:3775
                         crate::ported::exec::fixfds(&save); // c:3776
-                        { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); } // c:3777
+                        {
+                            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                            LASTVAL.store(1, Ordering::Relaxed);
+                        } // c:3777
                         break;
                     }
                     // c:3779
                     crate::ported::exec::addfd(
-                        forked, &mut save, &mut mfds, fn_.fd1, fil_local, 0, fn_.varid.as_deref(),
+                        forked,
+                        &mut save,
+                        &mut mfds,
+                        fn_.fd1,
+                        fil_local,
+                        0,
+                        fn_.varid.as_deref(),
                     );
                 }
                 t if t == crate::ported::zsh_h::REDIR_READ
@@ -9133,7 +9213,10 @@ pub fn execcmd_exec(
                             Err(_) => {
                                 crate::ported::exec::closemnodes(&mut mfds);
                                 crate::ported::exec::fixfds(&save);
-                                { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); }
+                                {
+                                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                                    LASTVAL.store(1, Ordering::Relaxed);
+                                }
                                 break;
                             }
                         };
@@ -9159,18 +9242,24 @@ pub fn execcmd_exec(
                         crate::ported::exec::fixfds(&save); // c:3792
                         let e = std::io::Error::last_os_error();
                         if e.raw_os_error().unwrap_or(0) != libc::EINTR {
-                            zwarn(&format!(
-                                "{}: {}",
-                                e,
-                                fn_.name.as_deref().unwrap_or("")
-                            )); // c:3793-3794
+                            zwarn(&format!("{}: {}", e, fn_.name.as_deref().unwrap_or("")));
+                            // c:3793-3794
                         }
-                        { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); } // c:3795
+                        {
+                            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                            LASTVAL.store(1, Ordering::Relaxed);
+                        } // c:3795
                         break;
                     }
                     // c:3797
                     crate::ported::exec::addfd(
-                        forked, &mut save, &mut mfds, fn_.fd1, fil_local, 0, fn_.varid.as_deref(),
+                        forked,
+                        &mut save,
+                        &mut mfds,
+                        fn_.fd1,
+                        fil_local,
+                        0,
+                        fn_.varid.as_deref(),
                     );
                     // c:3800-3802 — `if (nullexec == 1 && fn->fd1 == 0 && ...) init_io(NULL);`
                     if nullexec == 1
@@ -9207,7 +9296,10 @@ pub fn execcmd_exec(
                         let is_ro = paramtab()
                             .read()
                             .ok()
-                            .and_then(|t| t.get(varname).map(|p| (p.node.flags as u32 & PM_READONLY) != 0))
+                            .and_then(|t| {
+                                t.get(varname)
+                                    .map(|p| (p.node.flags as u32 & PM_READONLY) != 0)
+                            })
                             .unwrap_or(false);
                         if value_opt.is_none() {
                             bad = 1; // c:3811 getvalue failed
@@ -9219,12 +9311,11 @@ pub fn execcmd_exec(
                                 Ok(n) => {
                                     fd1_local = n;
                                     fn_.fd1 = n;
-                                    let max_fd = crate::ported::utils::MAX_ZSH_FD
-                                        .load(Ordering::Relaxed);
+                                    let max_fd =
+                                        crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed);
                                     if n >= 10
                                         && n <= max_fd
-                                        && (crate::ported::utils::fdtable_get(n)
-                                            & FDT_TYPE_MASK)
+                                        && (crate::ported::utils::fdtable_get(n) & FDT_TYPE_MASK)
                                             == FDT_INTERNAL
                                     {
                                         // c:3835 shell-owned-fd reject
@@ -9269,15 +9360,15 @@ pub fn execcmd_exec(
                     }
                     if fd1_local < 10 {
                         // c:3866
-                        closemn(
-                            &mut mfds,
-                            fd1_local,
-                            crate::ported::zsh_h::REDIR_CLOSE,
-                        ); // c:3867
+                        closemn(&mut mfds, fd1_local, crate::ported::zsh_h::REDIR_CLOSE);
+                        // c:3867
                     }
                     // c:3873-3876
                     let _ = &mut fd1_local;
-                    if closed == 0 && crate::ported::utils::zclose(fn_.fd1) < 0 && fn_.varid.is_some() {
+                    if closed == 0
+                        && crate::ported::utils::zclose(fn_.fd1) < 0
+                        && fn_.varid.is_some()
+                    {
                         zwarn(&format!(
                             "failed to close file descriptor {}: {}",
                             fn_.fd1,
@@ -9297,10 +9388,8 @@ pub fn execcmd_exec(
                     } else if fn_.fd2 > 9 {
                         // c:3884-3897 — fd table check.
                         let max_fd = crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed);
-                        let cin = crate::ported::modules::clone::coprocin
-                            .load(Ordering::Relaxed);
-                        let cout = crate::ported::modules::clone::coprocout
-                            .load(Ordering::Relaxed);
+                        let cin = crate::ported::modules::clone::coprocin.load(Ordering::Relaxed);
+                        let cout = crate::ported::modules::clone::coprocout.load(Ordering::Relaxed);
                         let in_table = if fn_.fd2 <= max_fd {
                             let kind = crate::ported::utils::fdtable_get(fn_.fd2)
                                 & crate::ported::zsh_h::FDT_TYPE_MASK;
@@ -9311,7 +9400,7 @@ pub fn execcmd_exec(
                         };
                         if in_table || fn_.fd2 == cin || fn_.fd2 == cout {
                             fil_local = -1; // c:3896
-                            // Per-platform errno setter (c:3897 `errno = EBADF;`).
+                                            // Per-platform errno setter (c:3897 `errno = EBADF;`).
                             #[cfg(target_os = "macos")]
                             unsafe {
                                 *libc::__error() = libc::EBADF;
@@ -9324,11 +9413,9 @@ pub fn execcmd_exec(
                             let fd = if fn_.fd2 == -2 {
                                 // c:3900-3901
                                 if fn_.typ == crate::ported::zsh_h::REDIR_MERGEOUT {
-                                    crate::ported::modules::clone::coprocout
-                                        .load(Ordering::Relaxed)
+                                    crate::ported::modules::clone::coprocout.load(Ordering::Relaxed)
                                 } else {
-                                    crate::ported::modules::clone::coprocin
-                                        .load(Ordering::Relaxed)
+                                    crate::ported::modules::clone::coprocin.load(Ordering::Relaxed)
                                 }
                             } else {
                                 fn_.fd2
@@ -9340,11 +9427,9 @@ pub fn execcmd_exec(
                     } else {
                         let fd = if fn_.fd2 == -2 {
                             if fn_.typ == crate::ported::zsh_h::REDIR_MERGEOUT {
-                                crate::ported::modules::clone::coprocout
-                                    .load(Ordering::Relaxed)
+                                crate::ported::modules::clone::coprocout.load(Ordering::Relaxed)
                             } else {
-                                crate::ported::modules::clone::coprocin
-                                    .load(Ordering::Relaxed)
+                                crate::ported::modules::clone::coprocin.load(Ordering::Relaxed)
                             }
                         } else {
                             fn_.fd2
@@ -9362,13 +9447,13 @@ pub fn execcmd_exec(
                             } else {
                                 format!("{}", fn_.fd2)
                             };
-                            zwarn(&format!(
-                                "{}: {}",
-                                desc,
-                                std::io::Error::last_os_error()
-                            )); // c:3911-3913
+                            zwarn(&format!("{}: {}", desc, std::io::Error::last_os_error()));
+                            // c:3911-3913
                         }
-                        { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); } // c:3914
+                        {
+                            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                            LASTVAL.store(1, Ordering::Relaxed);
+                        } // c:3914
                         break;
                     }
                     // c:3916-3917
@@ -9401,7 +9486,10 @@ pub fn execcmd_exec(
                             Err(_) => {
                                 crate::ported::exec::closemnodes(&mut mfds);
                                 crate::ported::exec::fixfds(&save);
-                                { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); }
+                                {
+                                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                                    LASTVAL.store(1, Ordering::Relaxed);
+                                }
                                 break;
                             }
                         };
@@ -9436,24 +9524,28 @@ pub fn execcmd_exec(
                         let e = std::io::Error::last_os_error();
                         let raw = e.raw_os_error().unwrap_or(0);
                         if raw != 0 && raw != libc::EINTR {
-                            zwarn(&format!(
-                                "{}: {}",
-                                e,
-                                fn_.name.as_deref().unwrap_or("")
-                            )); // c:3939-3940
+                            zwarn(&format!("{}: {}", e, fn_.name.as_deref().unwrap_or("")));
+                            // c:3939-3940
                         }
-                        { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); } // c:3941
+                        {
+                            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                            LASTVAL.store(1, Ordering::Relaxed);
+                        } // c:3941
                         break;
                     }
                     // c:3943
                     crate::ported::exec::addfd(
-                        forked, &mut save, &mut mfds, fn_.fd1, fil_local, 1, fn_.varid.as_deref(),
+                        forked,
+                        &mut save,
+                        &mut mfds,
+                        fn_.fd1,
+                        fil_local,
+                        1,
+                        fn_.varid.as_deref(),
                     );
                     if crate::ported::zsh_h::IS_ERROR_REDIR(fn_.typ) {
                         // c:3944-3945
-                        crate::ported::exec::addfd(
-                            forked, &mut save, &mut mfds, 2, dfil, 1, None,
-                        );
+                        crate::ported::exec::addfd(forked, &mut save, &mut mfds, 2, dfil, 1, None);
                     }
                     let _ = &mut dfil;
                 }
@@ -9463,7 +9555,10 @@ pub fn execcmd_exec(
                 // c:3949
                 crate::ported::exec::closemnodes(&mut mfds); // c:3950
                 crate::ported::exec::fixfds(&save); // c:3951
-                { errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); LASTVAL.store(1, Ordering::Relaxed); } // c:3952
+                {
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    LASTVAL.store(1, Ordering::Relaxed);
+                } // c:3952
                 break;
             }
         }
@@ -9475,7 +9570,7 @@ pub fn execcmd_exec(
         // c:3959
         if let Some(m) = mfds.get(i as usize).and_then(|o| o.as_ref()) {
             if m.ct >= 2 {
-                closemn(&mut mfds, i, REDIR_CLOSE);                        // c:3960
+                closemn(&mut mfds, i, REDIR_CLOSE); // c:3960
             }
         }
         i += 1;
@@ -9492,24 +9587,28 @@ pub fn execcmd_exec(
                 // c:3971-3972
                 save_params(state, vspc, &mut restorelist, &mut removelist);
             }
-            addvars(state, vspc, 0);                                       // c:3973
+            addvars(state, vspc, 0); // c:3973
             if !restorelist.is_empty() {
                 // c:3974
-                restore_params(restorelist, removelist);                   // c:3975
+                restore_params(restorelist, removelist); // c:3975
             }
         }
         let ef = errflag.load(Ordering::Relaxed);
         LASTVAL.store(
-            if ef != 0 { ef } else { cmdoutval.load(Ordering::Relaxed) },
+            if ef != 0 {
+                ef
+            } else {
+                cmdoutval.load(Ordering::Relaxed)
+            },
             Ordering::Relaxed,
-        );                                                                 // c:3977
+        ); // c:3977
         if nullexec == 1 {
             // c:3978
             // c:3983-3985 — close save[i].
             i = 0;
             while i < 10 {
                 if save[i as usize] != -2 {
-                    let _ = zclose(save[i as usize]);                      // c:3985
+                    let _ = zclose(save[i as usize]); // c:3985
                 }
                 i += 1;
             }
@@ -9519,14 +9618,23 @@ pub fn execcmd_exec(
                 if let Some(jt) = JOBTAB.get() {
                     let mut guard = jt.lock().unwrap();
                     if let Some(j) = guard.get_mut(thisjob as usize) {
-                        j.stat |= STAT_DONE;                               // c:3989
+                        j.stat |= STAT_DONE; // c:3989
                     }
                 }
             }
             return execcmd_exec_done_path(
-                redir_err, oautocont, how, &mut shti, &mut chti, &mut then_ts,
-                forked, &mut newxtrerr,
-                cflags, orig_cflags, is_cursh, do_exec,
+                redir_err,
+                oautocont,
+                how,
+                &mut shti,
+                &mut chti,
+                &mut then_ts,
+                forked,
+                &mut newxtrerr,
+                cflags,
+                orig_cflags,
+                is_cursh,
+                do_exec,
             );
         }
         if isset(XTRACE) {
@@ -9545,15 +9653,15 @@ pub fn execcmd_exec(
             } else {
                 0
             } | esub::PGRP
-                | esub::FAKE;                                              // c:4004-4005
+                | esub::FAKE; // c:4004-4005
             if typ != WC_SUBSH as i32 {
-                flags |= esub::KEEPTRAP;                                   // c:4007
+                flags |= esub::KEEPTRAP; // c:4007
             }
             if (do_exec != 0 || (typ >= WC_CURSH as i32 && last1 == 1)) && forked == 0 {
                 // c:4008-4009
-                flags |= esub::REVERTPGRP;                                 // c:4010
+                flags |= esub::REVERTPGRP; // c:4010
             }
-            entersubsh(flags, None);                                       // c:4011
+            entersubsh(flags, None); // c:4011
         }
 
         if typ == WC_FUNCDEF as i32 {
@@ -9569,11 +9677,11 @@ pub fn execcmd_exec(
         } else if typ >= WC_CURSH as i32 {
             // c:4042
             if last1 == 1 {
-                do_exec = 1;                                               // c:4044
+                do_exec = 1; // c:4044
             }
             if typ == WC_AUTOFN as i32 {
                 // c:4046
-                let lv = execautofn_basic(state, do_exec);                 // c:4051
+                let lv = execautofn_basic(state, do_exec); // c:4051
                 LASTVAL.store(lv, Ordering::Relaxed);
             } else {
                 // c:4053 — `lastval = (execfuncs[type - WC_CURSH])(state, do_exec);`
@@ -9587,29 +9695,31 @@ pub fn execcmd_exec(
             // c:4055
             let mut restorelist: Vec<crate::ported::zsh_h::param> = Vec::new();
             let mut removelist: Vec<String> = Vec::new();
-            let mut do_save: i32 = 0;                                      // c:4057
+            let mut do_save: i32 = 0; // c:4057
 
             if forked == 0 {
                 // c:4060
                 if isset(POSIXBUILTINS) {
                     // c:4061
                     if is_shfunc != 0
-                        || (hn
-                            .map(|p| unsafe { (*p).node.flags as u32 })
-                            .unwrap_or(0)
+                        || (hn.map(|p| unsafe { (*p).node.flags as u32 }).unwrap_or(0)
                             & (BINF_PSPECIAL | BINF_ASSIGN_FLAG))
                             != 0
                     {
                         // c:4067
-                        do_save = if (orig_cflags & BINF_COMMAND) != 0 { 1 } else { 0 };
+                        do_save = if (orig_cflags & BINF_COMMAND) != 0 {
+                            1
+                        } else {
+                            0
+                        };
                     } else {
-                        do_save = 1;                                       // c:4070
+                        do_save = 1; // c:4070
                     }
                 } else {
                     // c:4071
                     if (cflags & (BINF_COMMAND | BINF_ASSIGN_FLAG)) != 0 || magic_assign == 0 {
                         // c:4076
-                        do_save = 1;                                       // c:4077
+                        do_save = 1; // c:4077
                     }
                 }
                 if do_save != 0 {
@@ -9621,25 +9731,34 @@ pub fn execcmd_exec(
             }
             if varspc.is_some() {
                 // c:4082
-                let mut addflags: i32 = 0;                                 // c:4086
+                let mut addflags: i32 = 0; // c:4086
                 if is_shfunc != 0 {
-                    addflags |= ADDVAR_EXPORT;                             // c:4088
+                    addflags |= ADDVAR_EXPORT; // c:4088
                 }
                 if !restorelist.is_empty() {
-                    addflags |= ADDVAR_RESTORE;                            // c:4090
+                    addflags |= ADDVAR_RESTORE; // c:4090
                 }
-                addvars(state, varspc.unwrap_or(0), addflags);             // c:4092
+                addvars(state, varspc.unwrap_or(0), addflags); // c:4092
                 if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                     // c:4093
                     if !restorelist.is_empty() {
-                        restore_params(restorelist, removelist);           // c:4094-4095
+                        restore_params(restorelist, removelist); // c:4094-4095
                     }
-                    LASTVAL.store(1, Ordering::Relaxed);                   // c:4096
-                    fixfds(&save);                                         // c:4097
+                    LASTVAL.store(1, Ordering::Relaxed); // c:4096
+                    fixfds(&save); // c:4097
                     return execcmd_exec_done_path(
-                        redir_err, oautocont, how, &mut shti, &mut chti, &mut then_ts,
-                        forked, &mut newxtrerr,
-                        cflags, orig_cflags, is_cursh, do_exec,
+                        redir_err,
+                        oautocont,
+                        how,
+                        &mut shti,
+                        &mut chti,
+                        &mut then_ts,
+                        forked,
+                        &mut newxtrerr,
+                        cflags,
+                        orig_cflags,
+                        is_cursh,
+                        do_exec,
                     );
                 }
             }
@@ -9652,7 +9771,11 @@ pub fn execcmd_exec(
                 // we re-resolve the shfunc by name from shfunctab and
                 // dispatch through the top-level execshfunc port at
                 // exec.rs:4978 (which routes to runshfunc).
-                let name = args.as_ref().and_then(|v| v.first()).cloned().unwrap_or_default();
+                let name = args
+                    .as_ref()
+                    .and_then(|v| v.first())
+                    .cloned()
+                    .unwrap_or_default();
                 let mut shf_clone: Option<shfunc> = if let Ok(tab) = shfunctab_lock().read() {
                     tab.get(&name).cloned()
                 } else {
@@ -9679,10 +9802,10 @@ pub fn execcmd_exec(
                 }
             } else {
                 // c:4107 — builtin path.
-                let mut assigns: Vec<crate::ported::zsh_h::asgment> = Vec::new();                // c:4108
-                let postassigns = eparams.postassigns;                     // c:4109
+                let mut assigns: Vec<crate::ported::zsh_h::asgment> = Vec::new(); // c:4108
+                let postassigns = eparams.postassigns; // c:4109
                 if forked != 0 {
-                    closem(FDT_INTERNAL, 0);                               // c:4111
+                    closem(FDT_INTERNAL, 0); // c:4111
                 }
                 if postassigns != 0 {
                     // c:4112-4230 — typeset post-assignment processing.
@@ -9693,7 +9816,7 @@ pub fn execcmd_exec(
                     };
                     let opc = state.pc; // c:4113
                     state.pc = eparams.assignspc.unwrap_or(state.pc); // c:4114
-                    // c:4115 — `assigns = newlinklist();` — already declared above.
+                                                                      // c:4115 — `assigns = newlinklist();` — already declared above.
                     let mut pa_remaining = postassigns;
                     while pa_remaining > 0 {
                         // c:4116 — `while (postassigns--)`
@@ -9709,10 +9832,11 @@ pub fn execcmd_exec(
                             ECDUPTOK_LOCAL,
                             Some(&mut pa_htok),
                         ); // c:4119
-                        // c:4123-4124 DPUTS — debug assertion skipped.
+                           // c:4123-4124 DPUTS — debug assertion skipped.
                         if pa_htok != 0 {
                             // c:4126 — `init_list1(svl, name);`
-                            let mut svl: crate::ported::linklist::LinkList<String> = Default::default();
+                            let mut svl: crate::ported::linklist::LinkList<String> =
+                                Default::default();
                             svl.push_back(name.clone());
                             // c:4127-4166 — INC-scalar special case (typeset $ass form).
                             if WC_ASSIGN_TYPE(ac) == WC_ASSIGN_SCALAR
@@ -9886,15 +10010,15 @@ pub fn execcmd_exec(
                         a_vec,
                         assigns,
                         hn.unwrap_or(std::ptr::null_mut()),
-                    );                                                     // c:4233
+                    ); // c:4233
                     if (errflag.load(Ordering::Relaxed) & ERRFLAG_INT) == 0 {
                         // c:4238
-                        LASTVAL.store(ret, Ordering::Relaxed);             // c:4239
+                        LASTVAL.store(ret, Ordering::Relaxed); // c:4239
                     }
                 }
                 if (do_save & BINF_COMMAND as i32) != 0 {
                     // c:4241
-                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);  // c:4242
+                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed); // c:4242
                 }
                 // c:4244 fflush(stdout) — Rust stdio auto-flushes.
                 // c:4245-4251 — write-error check on save[1].
@@ -9911,17 +10035,21 @@ pub fn execcmd_exec(
             if do_exec != 0 {
                 // c:4263
                 if subsh.load(Ordering::Relaxed) != 0 {
-                    crate::ported::builtin::_realexit();                                           // c:4264-4265
+                    crate::ported::builtin::_realexit(); // c:4264-4265
                 }
-                if isset(RCS) && crate::ported::zsh_h::interact() && nohistsave.load(Ordering::Relaxed) == 0 {
+                if isset(RCS)
+                    && crate::ported::zsh_h::interact()
+                    && nohistsave.load(Ordering::Relaxed) == 0
+                {
                     // c:4269
-                    crate::ported::hist::savehistfile(None, HFILE_USE_OPTIONS as i32); // c:4270
+                    crate::ported::hist::savehistfile(None, HFILE_USE_OPTIONS as i32);
+                    // c:4270
                 }
-                crate::ported::builtin::realexit();                                                // c:4271
+                crate::ported::builtin::realexit(); // c:4271
             }
             if !restorelist.is_empty() {
                 // c:4273
-                restore_params(restorelist, removelist);                   // c:4274
+                restore_params(restorelist, removelist); // c:4274
             }
         } else {
             // c:4276 — external command execute.
@@ -9932,47 +10060,54 @@ pub fn execcmd_exec(
                     let cur = crate::ported::params::getsparam("SHLVL")
                         .and_then(|s| s.parse::<i64>().ok())
                         .unwrap_or(1);
-                    setiparam("SHLVL", cur - 1);                           // c:4281
+                    setiparam("SHLVL", cur - 1); // c:4281
                 }
-                if do_exec != 0 && isset(RCS) && crate::ported::zsh_h::interact() && nohistsave.load(Ordering::Relaxed) == 0 {
+                if do_exec != 0
+                    && isset(RCS)
+                    && crate::ported::zsh_h::interact()
+                    && nohistsave.load(Ordering::Relaxed) == 0
+                {
                     // c:4285
-                    crate::ported::hist::savehistfile(None, HFILE_USE_OPTIONS as i32); // c:4286
+                    crate::ported::hist::savehistfile(None, HFILE_USE_OPTIONS as i32);
+                    // c:4286
                 }
             }
             if typ == WC_SIMPLE as i32 || typ == WC_TYPESET as i32 {
                 // c:4288
                 if varspc.is_some() {
                     // c:4289
-                    let mut addflags: i32 = ADDVAR_EXPORT;                 // c:4290
+                    let mut addflags: i32 = ADDVAR_EXPORT; // c:4290
                     if forked != 0 {
-                        addflags |= ADDVAR_RESTORE;                        // c:4292
+                        addflags |= ADDVAR_RESTORE; // c:4292
                     }
-                    addvars(state, varspc.unwrap_or(0), addflags);         // c:4293
+                    addvars(state, varspc.unwrap_or(0), addflags); // c:4293
                     if (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
                         // c:4294
-                        std::process::exit(1);                             // c:4295
+                        std::process::exit(1); // c:4295
                     }
                 }
-                closem(FDT_INTERNAL, 0);                                   // c:4297
-                // c:4298-4305 — close coprocin/coprocout.
+                closem(FDT_INTERNAL, 0); // c:4297
+                                         // c:4298-4305 — close coprocin/coprocout.
                 let cpi = crate::ported::modules::clone::coprocin.load(Ordering::Relaxed);
                 if cpi != -1 {
-                    let _ = zclose(cpi);                                   // c:4299
-                    crate::ported::modules::clone::coprocin.store(-1, Ordering::Relaxed); // c:4300
+                    let _ = zclose(cpi); // c:4299
+                    crate::ported::modules::clone::coprocin.store(-1, Ordering::Relaxed);
+                    // c:4300
                 }
                 let cpo = crate::ported::modules::clone::coprocout.load(Ordering::Relaxed);
                 if cpo != -1 {
-                    let _ = zclose(cpo);                                   // c:4303
-                    crate::ported::modules::clone::coprocout.store(-1, Ordering::Relaxed); // c:4304
+                    let _ = zclose(cpo); // c:4303
+                    crate::ported::modules::clone::coprocout.store(-1, Ordering::Relaxed);
+                    // c:4304
                 }
                 if forked == 0 {
                     // c:4307
-                    crate::ported::builtins::rlimits::setlimits("");     // c:4308
+                    crate::ported::builtins::rlimits::setlimits(""); // c:4308
                 }
                 if (how & Z_ASYNC as i32) != 0 {
                     // c:4310 — `zsfree(STTYval); STTYval = 0;`
                     let mut guard = STTYval.lock().unwrap();
-                    *guard = None;                                         // c:4311-4312
+                    *guard = None; // c:4311-4312
                 }
                 // c:4314 — `execute(args, cflags, use_defpath);`
                 let mut a_vec: Vec<String> = args.clone().unwrap_or_default();
@@ -9980,9 +10115,9 @@ pub fn execcmd_exec(
             } else {
                 // c:4315 — `( ... )` — WC_SUBSH.
                 crate::ported::exec::list_pipe.store(0, Ordering::Relaxed); // c:4318
-                // c:4319 — `pipecleanfilelist(filelist, 0);` — clean
-                // proc-subst entries from the current job's filelist
-                // before recursing into the subshell body.
+                                                                            // c:4319 — `pipecleanfilelist(filelist, 0);` — clean
+                                                                            // proc-subst entries from the current job's filelist
+                                                                            // before recursing into the subshell body.
                 if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
                     let mut guard = jt.lock().unwrap();
                     let tj = crate::ported::jobs::THISJOB
@@ -9995,17 +10130,26 @@ pub fn execcmd_exec(
                         }
                     }
                 }
-                state.pc += 1;                                             // c:4324 — `state->pc++;`
-                let _ = crate::ported::exec::execlist(state, 0, 1);        // c:4325
+                state.pc += 1; // c:4324 — `state->pc++;`
+                let _ = crate::ported::exec::execlist(state, 0, 1); // c:4325
             }
         }
     }
 
     // c:4330-4404 — err: + done: + fatal:.
     return execcmd_exec_done_path(
-        redir_err, oautocont, how, &mut shti, &mut chti, &mut then_ts,
-        forked, &mut newxtrerr,
-        cflags, orig_cflags, is_cursh, do_exec,
+        redir_err,
+        oautocont,
+        how,
+        &mut shti,
+        &mut chti,
+        &mut then_ts,
+        forked,
+        &mut newxtrerr,
+        cflags,
+        orig_cflags,
+        is_cursh,
+        do_exec,
     );
 }
 
@@ -10029,8 +10173,7 @@ fn execcmd_exec_done_path(
     do_exec: i32,
 ) {
     use crate::ported::zsh_h::{
-        POSIXBUILTINS, INTERACTIVE, BINF_PSPECIAL, BINF_EXEC, BINF_COMMAND,
-        Z_TIMED, AUTOCONTINUE,
+        AUTOCONTINUE, BINF_COMMAND, BINF_EXEC, BINF_PSPECIAL, INTERACTIVE, POSIXBUILTINS, Z_TIMED,
     };
     // c:4366
     // c:4367-4386 — POSIX special-builtin error escalation.
@@ -10040,28 +10183,29 @@ fn execcmd_exec_done_path(
     {
         // c:4367-4369
         let _forked_or_subsh = forked | crate::ported::exec::zsh_subshell.load(Ordering::Relaxed); // c:4376
-        // fatal: label entry point — same handling.
+                                                                                                   // fatal: label entry point — same handling.
         if redir_err != 0 || (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 {
             // c:4378
             if !isset(INTERACTIVE) {
                 // c:4379
                 if _forked_or_subsh != 0 {
-                    unsafe { libc::_exit(1) };                             // c:4381
+                    unsafe { libc::_exit(1) }; // c:4381
                 } else {
-                    std::process::exit(1);                                 // c:4383
+                    std::process::exit(1); // c:4383
                 }
             }
-            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);            // c:4385
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:4385
         }
     }
     // c:4388-4389 — `if ((is_cursh || do_exec) && (how & Z_TIMED)) shelltime(...);`
     if (is_cursh != 0 || do_exec != 0) && (how & Z_TIMED as i32) != 0 {
-        crate::ported::jobs::shelltime(Some(shti), Some(chti), Some(then_ts), 1);      // c:4389
+        crate::ported::jobs::shelltime(Some(shti), Some(chti), Some(then_ts), 1);
+        // c:4389
     }
     // c:4390-4398 — newxtrerr close.
     if let Some(fd) = newxtrerr.take() {
         // c:4390
-        let _ = zclose(fd);                                                // c:4396
+        let _ = zclose(fd); // c:4396
     }
     // c:4400-4401 — `zsfree(STTYval); STTYval = 0;`
     {
@@ -10095,7 +10239,7 @@ fn execcmd_exec_err_path(
     do_exec: i32,
     redir_err: i32,
 ) {
-    use crate::ported::zsh_h::{FDT_UNUSED};
+    use crate::ported::zsh_h::FDT_UNUSED;
     // c:4330
     if forked != 0 {
         // c:4331
@@ -10103,13 +10247,13 @@ fn execcmd_exec_err_path(
         let mut i: i32 = 0;
         while i < 10 {
             if crate::ported::utils::fdtable_get(i) != FDT_UNUSED {
-                unsafe { libc::close(i) };                                 // c:4358
+                unsafe { libc::close(i) }; // c:4358
             }
             i += 1;
         }
         // c:4359 — `closem(FDT_UNUSED, 1);`
-        closem(FDT_UNUSED, 1);                                             // c:4359
-        // c:4360-4361 — `if (thisjob != -1) waitjobs();`
+        closem(FDT_UNUSED, 1); // c:4359
+                               // c:4360-4361 — `if (thisjob != -1) waitjobs();`
         let thisjob = THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
         if thisjob != -1 {
             if let Some(jt) = JOBTAB.get() {
@@ -10117,13 +10261,23 @@ fn execcmd_exec_err_path(
                 crate::ported::jobs::waitjobs(&mut guard, thisjob as usize); // c:4361
             }
         }
-        crate::ported::builtin::_realexit();                                                       // c:4362
+        crate::ported::builtin::_realexit(); // c:4362
     }
-    fixfds(save);                                                          // c:4364
+    fixfds(save); // c:4364
 
     execcmd_exec_done_path(
-        redir_err, oautocont, how, shti, chti, then_ts, forked, newxtrerr,
-        cflags, orig_cflags, is_cursh, do_exec,
+        redir_err,
+        oautocont,
+        how,
+        shti,
+        chti,
+        then_ts,
+        forked,
+        newxtrerr,
+        cflags,
+        orig_cflags,
+        is_cursh,
+        do_exec,
     );
 }
 
@@ -10191,16 +10345,22 @@ mod tests {
     #[test]
     fn exec_corpus_isrelative_absolute_with_dotdot_is_one() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(isrelative("/foo/../bar"), 1,
-            "absolute path with ../ is still 'relative' per zsh");
+        assert_eq!(
+            isrelative("/foo/../bar"),
+            1,
+            "absolute path with ../ is still 'relative' per zsh"
+        );
     }
 
     /// `isrelative("/foo/./bar")` = 1 (contains `./` component).
     #[test]
     fn exec_corpus_isrelative_absolute_with_dot_is_one() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(isrelative("/./x"), 1,
-            "absolute with ./ component reported relative");
+        assert_eq!(
+            isrelative("/./x"),
+            1,
+            "absolute with ./ component reported relative"
+        );
     }
 
     /// `Src/exec.c:5300` — `is_anonymous_function_name("(anon)")` = 1.
@@ -10214,8 +10374,11 @@ mod tests {
     fn exec_corpus_is_anonymous_function_name_rejects_normal() {
         assert_eq!(is_anonymous_function_name("regular_name"), 0);
         assert_eq!(is_anonymous_function_name(""), 0);
-        assert_eq!(is_anonymous_function_name("anon"), 0,
-            "plain 'anon' (no parens) is NOT the sentinel");
+        assert_eq!(
+            is_anonymous_function_name("anon"),
+            0,
+            "plain 'anon' (no parens) is NOT the sentinel"
+        );
     }
 
     /// `iscom("/nonexistent/never_a_path")` = false.

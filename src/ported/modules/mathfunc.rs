@@ -12,9 +12,9 @@
 #![allow(clippy::approx_constant)]
 
 use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
-use std::sync::{Mutex, OnceLock};
 use crate::ported::zsh_h::{features, module};
 use crate::random_real::random_real;
+use std::sync::{Mutex, OnceLock};
 
 // libm bindings used by the math-function dispatcher. Direct port
 // of the calls C's `math_func()` (Src/Modules/mathfunc.c:172-436)
@@ -399,7 +399,6 @@ pub fn math_func(_name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
     ret // c:434
 }
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -465,11 +464,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 48]);
     }
@@ -785,11 +780,19 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
 
     fn mn_int(v: i64) -> mnumber {
-        mnumber { l: v, d: 0.0, type_: MN_INTEGER }
+        mnumber {
+            l: v,
+            d: 0.0,
+            type_: MN_INTEGER,
+        }
     }
 
     fn mn_float(v: f64) -> mnumber {
-        mnumber { l: 0, d: v, type_: MN_FLOAT }
+        mnumber {
+            l: 0,
+            d: v,
+            type_: MN_FLOAT,
+        }
     }
 
     /// `abs(-5)` (integer) preserves integer type and returns 5.
@@ -917,7 +920,11 @@ mod tests {
     fn mathfunc_corpus_abs_negative_float() {
         let _g = crate::test_util::global_state_lock();
         let r = math_func("abs", 1, &[mn_float(-5.0)], MF_ABS);
-        assert!((r.d.abs() - 5.0).abs() < 1e-9, "|−5.0| = 5.0, got {:?}", r.d);
+        assert!(
+            (r.d.abs() - 5.0).abs() < 1e-9,
+            "|−5.0| = 5.0, got {:?}",
+            r.d
+        );
     }
 
     /// `cos(0)` = 1.0.

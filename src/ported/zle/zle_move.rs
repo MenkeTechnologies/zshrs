@@ -58,10 +58,7 @@ pub fn alignmultiwordleft(pos: &mut usize, setpos: i32) -> i32 {
     let mut loccs = *pos;
     let zlell = ZLELL.load(Ordering::SeqCst) as usize;
     // c:54-55 — gate on COMBININGCHARS + boundary checks.
-    if !isset(COMBININGCHARS)
-        || loccs == zlell
-        || loccs == 0
-    {
+    if !isset(COMBININGCHARS) || loccs == zlell || loccs == 0 {
         return 0;
     }
     let zleline = ZLELINE.lock().unwrap();
@@ -79,11 +76,11 @@ pub fn alignmultiwordleft(pos: &mut usize, setpos: i32) -> i32 {
         }
         if IS_BASECHAR(zleline[loccs]) {
             if setpos != 0 {
-                *pos = loccs;                                              // c:68
+                *pos = loccs; // c:68
             }
-            return 1;                                                      // c:69
+            return 1; // c:69
         } else if !IS_COMBINING(zleline[loccs]) {
-            return 0;                                                      // c:71
+            return 0; // c:71
         }
         // c:75 — `if (loccs-- == 0) return 0;` post-decrement: returns
         // 0 BEFORE decrementing past 0 (so we never read at -1).
@@ -124,7 +121,7 @@ pub fn alignmultiwordright(pos: &mut usize, setpos: i32) -> i32 {
     if alignmultiwordleft(pos, 0) == 0 {
         return 0;
     }
-    let mut loccs = *pos + 1;                                              // c:100
+    let mut loccs = *pos + 1; // c:100
     let zlell = ZLELL.load(Ordering::SeqCst) as usize;
     let zleline = ZLELINE.lock().unwrap();
     // c:102-110 — scan forward through the cluster.
@@ -134,9 +131,9 @@ pub fn alignmultiwordright(pos: &mut usize, setpos: i32) -> i32 {
         }
         if !IS_COMBINING(zleline[loccs]) {
             if setpos != 0 {
-                *pos = loccs;                                              // c:106
+                *pos = loccs; // c:106
             }
-            return 1;                                                      // c:107
+            return 1; // c:107
         }
         loccs += 1;
     }
@@ -160,9 +157,9 @@ pub fn alignmultiwordright(pos: &mut usize, setpos: i32) -> i32 {
 /// at the new position.
 pub fn inccs() {
     // c:122
-    let new_cs = ZLECS.fetch_add(1, Ordering::SeqCst) + 1;                 // c:122
+    let new_cs = ZLECS.fetch_add(1, Ordering::SeqCst) + 1; // c:122
     let mut p = new_cs;
-    alignmultiwordright(&mut p, 1);                                        // c:125
+    alignmultiwordright(&mut p, 1); // c:125
     if p != new_cs {
         ZLECS.store(p, Ordering::SeqCst);
     }
@@ -182,10 +179,10 @@ pub fn inccs() {
 /// cluster at the new position to land on the cluster's base char.
 pub fn deccs() {
     // c:133
-    let prev = ZLECS.fetch_sub(1, Ordering::SeqCst);                       // c:133
+    let prev = ZLECS.fetch_sub(1, Ordering::SeqCst); // c:133
     let new_cs = prev.saturating_sub(1);
     let mut p = new_cs;
-    alignmultiwordleft(&mut p, 1);                                          // c:136
+    alignmultiwordleft(&mut p, 1); // c:136
     if p != new_cs {
         ZLECS.store(p, Ordering::SeqCst);
     }
@@ -301,35 +298,18 @@ pub fn endofline() -> i32 {
         return ret;
     }
     for _ in 0..n {
-        if ZLECS.load(Ordering::SeqCst)
-            >= ZLELL.load(Ordering::SeqCst)
-        {
-            ZLECS.store(
-                ZLELL.load(Ordering::SeqCst),
-                Ordering::SeqCst,
-            );
+        if ZLECS.load(Ordering::SeqCst) >= ZLELL.load(Ordering::SeqCst) {
+            ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst);
             return 0;
         }
-        if ZLELINE
-            .lock()
-            .unwrap()
-            .get(ZLECS.load(Ordering::SeqCst))
-            == Some(&'\n')
-        {
+        if ZLELINE.lock().unwrap().get(ZLECS.load(Ordering::SeqCst)) == Some(&'\n') {
             ZLECS.fetch_add(1, Ordering::SeqCst);
-            if ZLECS.load(Ordering::SeqCst)
-                == ZLELL.load(Ordering::SeqCst)
-            {
+            if ZLECS.load(Ordering::SeqCst) == ZLELL.load(Ordering::SeqCst) {
                 return 0;
             }
         }
-        while ZLECS.load(Ordering::SeqCst)
-            != ZLELL.load(Ordering::SeqCst)
-            && ZLELINE
-                .lock()
-                .unwrap()
-                .get(ZLECS.load(Ordering::SeqCst))
-                != Some(&'\n')
+        while ZLECS.load(Ordering::SeqCst) != ZLELL.load(Ordering::SeqCst)
+            && ZLELINE.lock().unwrap().get(ZLECS.load(Ordering::SeqCst)) != Some(&'\n')
         {
             ZLECS.fetch_add(1, Ordering::SeqCst);
         }
@@ -502,10 +482,7 @@ pub fn forwardchar() -> i32 {
         ZMOD.lock().unwrap().mult = saved;
         return ret;
     }
-    while ZLECS.load(Ordering::SeqCst)
-        < ZLELL.load(Ordering::SeqCst)
-        && n > 0
-    {
+    while ZLECS.load(Ordering::SeqCst) < ZLELL.load(Ordering::SeqCst) && n > 0 {
         // c:457 while (zlecs < zlell && n--)
         inccs(); // c:458 INCCS()
         n -= 1;
@@ -577,10 +554,7 @@ pub fn setmarkcommand() -> i32 {
         REGION_ACTIVE.store(0, Ordering::SeqCst); // c:486
         return 0; // c:487
     }
-    MARK.store(
-        ZLECS.load(Ordering::SeqCst),
-        Ordering::SeqCst,
-    ); // c:489 mark = zlecs
+    MARK.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst); // c:489 mark = zlecs
     REGION_ACTIVE.store(1, Ordering::SeqCst); // c:490
     0 // c:491 return 0
 }
@@ -616,19 +590,11 @@ pub fn exchangepointandmark() -> i32 {
         return 0; // c:502
     }
     let x = MARK.load(Ordering::SeqCst); // c:504 x = mark
-    MARK.store(
-        ZLECS.load(Ordering::SeqCst),
-        Ordering::SeqCst,
-    ); // c:505 mark = zlecs
+    MARK.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst); // c:505 mark = zlecs
     ZLECS.store(x, Ordering::SeqCst); // c:506 zlecs = x
-    if ZLECS.load(Ordering::SeqCst)
-        > ZLELL.load(Ordering::SeqCst)
-    {
+    if ZLECS.load(Ordering::SeqCst) > ZLELL.load(Ordering::SeqCst) {
         // c:507
-        ZLECS.store(
-            ZLELL.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        ); // c:508
+        ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst); // c:508
     }
     if ZMOD.lock().unwrap().mult > 0 {
         // c:509
@@ -649,10 +615,7 @@ pub fn visualmode() -> i32 {
             REGION_ACTIVE.store(0, Ordering::SeqCst);
         } // c:525-527
         0 => {
-            MARK.store(
-                ZLECS.load(Ordering::SeqCst),
-                Ordering::SeqCst,
-            ); // c:529 fall-through to case 2
+            MARK.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst); // c:529 fall-through to case 2
             REGION_ACTIVE.store(1, Ordering::SeqCst); // c:532
         }
         2 => {
@@ -675,10 +638,7 @@ pub fn visuallinemode() -> i32 {
             REGION_ACTIVE.store(0, Ordering::SeqCst);
         } // c:549-551
         0 => {
-            MARK.store(
-                ZLECS.load(Ordering::SeqCst),
-                Ordering::SeqCst,
-            ); // c:553
+            MARK.store(ZLECS.load(Ordering::SeqCst), Ordering::SeqCst); // c:553
             REGION_ACTIVE.store(2, Ordering::SeqCst); // c:556
         }
         1 => {
@@ -723,10 +683,7 @@ pub fn vigotocolumn() -> i32 {
     } else {
         eol.saturating_sub((-n) as usize)
     };
-    ZLECS.store(
-        target.max(bol).min(eol),
-        Ordering::SeqCst,
-    );
+    ZLECS.store(target.max(bol).min(eol), Ordering::SeqCst);
     0
 }
 
@@ -739,13 +696,8 @@ pub fn vimatchbracket() -> i32 {
     {
         deccs(); // c:600
     }
-    if ZLECS.load(Ordering::SeqCst)
-        == ZLELL.load(Ordering::SeqCst)
-        || ZLELINE
-            .lock()
-            .unwrap()
-            .get(ZLECS.load(Ordering::SeqCst))
-            == Some(&'\n')
+    if ZLECS.load(Ordering::SeqCst) == ZLELL.load(Ordering::SeqCst)
+        || ZLELINE.lock().unwrap().get(ZLECS.load(Ordering::SeqCst)) == Some(&'\n')
     {
         // c:604
         ZLECS.store(ocs, Ordering::SeqCst); // c:605
@@ -770,9 +722,7 @@ pub fn vimatchbracket() -> i32 {
     let mut depth = 1i32; // c:639
     loop {
         if dir > 0 {
-            if ZLECS.load(Ordering::SeqCst)
-                >= ZLELL.load(Ordering::SeqCst)
-            {
+            if ZLECS.load(Ordering::SeqCst) >= ZLELL.load(Ordering::SeqCst) {
                 ZLECS.store(ocs, Ordering::SeqCst);
                 return 1;
             }
@@ -784,11 +734,7 @@ pub fn vimatchbracket() -> i32 {
             }
             ZLECS.fetch_sub(1, Ordering::SeqCst);
         }
-        let c = match ZLELINE
-            .lock()
-            .unwrap()
-            .get(ZLECS.load(Ordering::SeqCst))
-        {
+        let c = match ZLELINE.lock().unwrap().get(ZLECS.load(Ordering::SeqCst)) {
             Some(&c) => c,
             None => {
                 ZLECS.store(ocs, Ordering::SeqCst);
@@ -908,12 +854,7 @@ pub fn vibackwardchar() -> i32 {
         // c:696
         deccs(); // c:697
                  // c:698-701 — if we crossed onto a '\n', step back forward and exit.
-        if ZLELINE
-            .lock()
-            .unwrap()
-            .get(ZLECS.load(Ordering::SeqCst))
-            == Some(&'\n')
-        {
+        if ZLELINE.lock().unwrap().get(ZLECS.load(Ordering::SeqCst)) == Some(&'\n') {
             ZLECS.fetch_add(1, Ordering::SeqCst);
             break;
         }
@@ -935,16 +876,11 @@ pub fn viendofline() -> i32 {
         return 1;
     }
     for _ in 0..n {
-        if ZLECS.load(Ordering::SeqCst)
-            > ZLELL.load(Ordering::SeqCst)
-        {
+        if ZLECS.load(Ordering::SeqCst) > ZLELL.load(Ordering::SeqCst) {
             ZLECS.store(oldcs, Ordering::SeqCst);
             return 1;
         }
-        ZLECS.store(
-            findeol() + 1,
-            Ordering::SeqCst,
-        );
+        ZLECS.store(findeol() + 1, Ordering::SeqCst);
     }
     if ZLECS.load(Ordering::SeqCst) > 0 {
         deccs();
@@ -966,10 +902,7 @@ pub fn viendofline() -> i32 {
 /// WARNING: param names don't match C — Rust=(zle) vs C=(args)
 pub fn vibeginningofline() -> i32 {
     // c:728
-    ZLECS.store(
-        findbol(),
-        Ordering::SeqCst,
-    ); // c:708
+    ZLECS.store(findbol(), Ordering::SeqCst); // c:708
     0 // c:731
 }
 
@@ -1055,17 +988,13 @@ pub fn vifindchar(repeat: i32) -> i32 {
     // c:800-808 — repeat skip-over-current-match.
     if repeat != 0 && tail != 0 {
         if vdir > 0 {
-            if ZLECS.load(Ordering::SeqCst) + 1
-                < ZLELL.load(Ordering::SeqCst)
-                && (ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst) + 1]
-                    as i32)
-                    == vfind
+            if ZLECS.load(Ordering::SeqCst) + 1 < ZLELL.load(Ordering::SeqCst)
+                && (ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst) + 1] as i32) == vfind
             {
                 inccs();
             }
         } else if ZLECS.load(Ordering::SeqCst) > 0
-            && (ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst) - 1] as i32)
-                == vfind
+            && (ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst) - 1] as i32) == vfind
         {
             deccs();
         }
@@ -1085,16 +1014,14 @@ pub fn vifindchar(repeat: i32) -> i32 {
             }
             if {
                 let __c = ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)];
-                ZLECS.load(Ordering::SeqCst)
-                    >= ZLELL.load(Ordering::SeqCst)
+                ZLECS.load(Ordering::SeqCst) >= ZLELL.load(Ordering::SeqCst)
                     || (__c as i32) == vfind
                     || __c == '\n'
             } {
                 break;
             }
         }
-        if ZLECS.load(Ordering::SeqCst)
-            >= ZLELL.load(Ordering::SeqCst)
+        if ZLECS.load(Ordering::SeqCst) >= ZLELL.load(Ordering::SeqCst)
             || ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)] == '\n'
         {
             ZLECS.store(ocs, Ordering::SeqCst); // c:820
@@ -1158,13 +1085,8 @@ pub fn virevrepeatfind() -> i32 {
 /// whitespace. ZC_iblank is `iblank` (space/tab) for ASCII.
 pub fn vifirstnonblank() -> i32 {
     // c:862
-    ZLECS.store(
-        findbol(),
-        Ordering::SeqCst,
-    ); // c:862
-    while ZLECS.load(Ordering::SeqCst)
-        != ZLELL.load(Ordering::SeqCst)
-    {
+    ZLECS.store(findbol(), Ordering::SeqCst); // c:862
+    while ZLECS.load(Ordering::SeqCst) != ZLELL.load(Ordering::SeqCst) {
         // c:865
         let ch = ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)];
         // c:865 — `ZC_iblank` aliases to `wcsiblank` under MULTIBYTE_SUPPORT
@@ -1206,10 +1128,7 @@ pub fn vigotomark(ch: char) -> i32 {
     };
     if let Some((cs, hist)) = vimarks().lock().unwrap()[idx] {
         // c:903
-        ZLECS.store(
-            cs.min(ZLELL.load(Ordering::SeqCst)),
-            Ordering::SeqCst,
-        );
+        ZLECS.store(cs.min(ZLELL.load(Ordering::SeqCst)), Ordering::SeqCst);
         history().lock().unwrap().cursor = hist.max(0) as usize;
         return 0;
     }
@@ -1238,8 +1157,7 @@ pub fn move_to_bol() {
 /// Port of `findeol()` from Src/Zle/zle_utils.c:1169 — mutating
 /// counterpart to `findeol`.
 pub fn move_to_eol() {
-    while ZLECS.load(Ordering::SeqCst)
-        < ZLELL.load(Ordering::SeqCst)
+    while ZLECS.load(Ordering::SeqCst) < ZLELL.load(Ordering::SeqCst)
         && ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)] != '\n'
     {
         ZLECS.fetch_add(1, Ordering::SeqCst);
@@ -1290,9 +1208,7 @@ pub fn move_down() -> bool {
 
     // Find end of current line
     let mut line_end = ZLECS.load(Ordering::SeqCst);
-    while line_end < ZLELL.load(Ordering::SeqCst)
-        && ZLELINE.lock().unwrap()[line_end] != '\n'
-    {
+    while line_end < ZLELL.load(Ordering::SeqCst) && ZLELINE.lock().unwrap()[line_end] != '\n' {
         line_end += 1;
     }
 
@@ -1305,9 +1221,7 @@ pub fn move_down() -> bool {
 
     // Find end of next line
     let mut next_end = ZLECS.load(Ordering::SeqCst);
-    while next_end < ZLELL.load(Ordering::SeqCst)
-        && ZLELINE.lock().unwrap()[next_end] != '\n'
-    {
+    while next_end < ZLELL.load(Ordering::SeqCst) && ZLELINE.lock().unwrap()[next_end] != '\n' {
         next_end += 1;
     }
 
@@ -1392,8 +1306,11 @@ mod alignmultiword_tests {
         ZLELL.store(2, Ordering::SeqCst);
         drop(line);
         let mut pos = 1usize;
-        assert_eq!(alignmultiwordleft(&mut pos, 1), 0,
-            "c:54 — !isset(COMBININGCHARS) short-circuits to 0");
+        assert_eq!(
+            alignmultiwordleft(&mut pos, 1),
+            0,
+            "c:54 — !isset(COMBININGCHARS) short-circuits to 0"
+        );
         assert_eq!(pos, 1, "pos unchanged");
         teardown_combining();
     }
@@ -1406,7 +1323,11 @@ mod alignmultiword_tests {
         let _g = zle_test_setup();
         setup_combining(&['a', 'b']);
         let mut pos = 2usize; // == zlell
-        assert_eq!(alignmultiwordleft(&mut pos, 1), 0, "c:54 — at zlell, return 0");
+        assert_eq!(
+            alignmultiwordleft(&mut pos, 1),
+            0,
+            "c:54 — at zlell, return 0"
+        );
         teardown_combining();
     }
 
@@ -1418,7 +1339,11 @@ mod alignmultiword_tests {
         let _g = zle_test_setup();
         setup_combining(&['\u{0301}', 'b']); // combining at start
         let mut pos = 0usize;
-        assert_eq!(alignmultiwordleft(&mut pos, 1), 0, "c:54 — loccs==0, return 0");
+        assert_eq!(
+            alignmultiwordleft(&mut pos, 1),
+            0,
+            "c:54 — loccs==0, return 0"
+        );
         teardown_combining();
     }
 
@@ -1430,8 +1355,11 @@ mod alignmultiword_tests {
         let _g = zle_test_setup();
         setup_combining(&['a', 'b', 'c']); // all base chars
         let mut pos = 1usize; // on 'b' (base char)
-        assert_eq!(alignmultiwordleft(&mut pos, 1), 0,
-            "c:58 — !IS_COMBINING(curr) → return 0");
+        assert_eq!(
+            alignmultiwordleft(&mut pos, 1),
+            0,
+            "c:58 — !IS_COMBINING(curr) → return 0"
+        );
         assert_eq!(pos, 1, "pos unchanged");
         teardown_combining();
     }
@@ -1445,13 +1373,21 @@ mod alignmultiword_tests {
         // 'a' (base) + 2 combining marks: 0301 (acute), 0303 (tilde).
         setup_combining(&['a', '\u{0301}', '\u{0303}']);
         // Sanity: option + width prerequisites for the test to be valid.
-        assert!(crate::ported::zsh_h::isset(crate::ported::zsh_h::COMBININGCHARS),
-            "setup precondition: isset(COMBININGCHARS) must be true");
-        assert_eq!(crate::ported::compat::u9_wcwidth('\u{0303}'), 0,
-            "setup precondition: U+0303 must have width 0 for IS_COMBINING");
+        assert!(
+            crate::ported::zsh_h::isset(crate::ported::zsh_h::COMBININGCHARS),
+            "setup precondition: isset(COMBININGCHARS) must be true"
+        );
+        assert_eq!(
+            crate::ported::compat::u9_wcwidth('\u{0303}'),
+            0,
+            "setup precondition: U+0303 must have width 0 for IS_COMBINING"
+        );
         let mut pos = 2usize; // on second combining mark
-        assert_eq!(alignmultiwordleft(&mut pos, 1), 1,
-            "c:69 — found base char, return 1");
+        assert_eq!(
+            alignmultiwordleft(&mut pos, 1),
+            1,
+            "c:69 — found base char, return 1"
+        );
         assert_eq!(pos, 0, "c:68 — pos set to base char index");
         teardown_combining();
     }
@@ -1479,8 +1415,11 @@ mod alignmultiword_tests {
         // 'a' (base) + 2 combining marks + 'b' (next base).
         setup_combining(&['a', '\u{0301}', '\u{0303}', 'b']);
         let mut pos = 2usize; // on second combining mark
-        assert_eq!(alignmultiwordright(&mut pos, 1), 1,
-            "c:107 — found non-combining char, return 1");
+        assert_eq!(
+            alignmultiwordright(&mut pos, 1),
+            1,
+            "c:107 — found non-combining char, return 1"
+        );
         assert_eq!(pos, 3, "c:106 — pos set to next base char index");
         teardown_combining();
     }
@@ -1493,8 +1432,11 @@ mod alignmultiword_tests {
         let _g = zle_test_setup();
         setup_combining(&['a', 'b']); // no combining chars
         let mut pos = 1usize;
-        assert_eq!(alignmultiwordright(&mut pos, 1), 0,
-            "c:96 — left-align failed → return 0");
+        assert_eq!(
+            alignmultiwordright(&mut pos, 1),
+            0,
+            "c:96 — left-align failed → return 0"
+        );
         assert_eq!(pos, 1, "pos unchanged");
         teardown_combining();
     }
@@ -1508,8 +1450,11 @@ mod alignmultiword_tests {
         // 'a' + 2 combining marks; cluster extends to end.
         setup_combining(&['a', '\u{0301}', '\u{0303}']);
         let mut pos = 1usize;
-        assert_eq!(alignmultiwordright(&mut pos, 1), 1,
-            "c:114 — fell off end, still return 1");
+        assert_eq!(
+            alignmultiwordright(&mut pos, 1),
+            1,
+            "c:114 — fell off end, still return 1"
+        );
         assert_eq!(pos, 3, "c:113 — pos set to zlell (end-of-buffer)");
         teardown_combining();
     }
@@ -1541,10 +1486,7 @@ mod region_tests {
         ZMOD.lock().unwrap().mult = 1;
         let r = setmarkcommand();
         assert_eq!(r, 0);
-        assert_eq!(
-            MARK.load(Ordering::SeqCst),
-            7
-        );
+        assert_eq!(MARK.load(Ordering::SeqCst), 7);
         assert_eq!(REGION_ACTIVE.load(Ordering::SeqCst), 1);
     }
 
@@ -1562,10 +1504,7 @@ mod region_tests {
         assert_eq!(r, 0);
         assert_eq!(REGION_ACTIVE.load(Ordering::SeqCst), 0);
         // mark NOT updated because we returned early.
-        assert_eq!(
-            MARK.load(Ordering::SeqCst),
-            5
-        );
+        assert_eq!(MARK.load(Ordering::SeqCst), 5);
     }
 
     #[test]
@@ -1582,10 +1521,7 @@ mod region_tests {
         let r = exchangepointandmark();
         assert_eq!(r, 0);
         assert_eq!(ZLECS.load(Ordering::SeqCst), 8);
-        assert_eq!(
-            MARK.load(Ordering::SeqCst),
-            3
-        );
+        assert_eq!(MARK.load(Ordering::SeqCst), 3);
         // c:509-510 — zmult > 0 → activate region.
         assert_eq!(REGION_ACTIVE.load(Ordering::SeqCst), 1);
     }
@@ -1604,10 +1540,7 @@ mod region_tests {
         assert_eq!(r, 0);
         // No swap.
         assert_eq!(ZLECS.load(Ordering::SeqCst), 3);
-        assert_eq!(
-            MARK.load(Ordering::SeqCst),
-            8
-        );
+        assert_eq!(MARK.load(Ordering::SeqCst), 8);
         assert_eq!(REGION_ACTIVE.load(Ordering::SeqCst), 1);
     }
 

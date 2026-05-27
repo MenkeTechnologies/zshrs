@@ -7,32 +7,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -133,11 +167,13 @@ mod match_variable {
     /// $MATCH preserved across non-match (zsh: not modified).
     #[test]
     fn match_var_after_failed_match() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 [[ "abc" =~ "abc" ]]
 [[ "xyz" =~ "qqq" ]]
 echo "[$MATCH]"
-"#);
+"#,
+        );
     }
 }
 
@@ -147,19 +183,23 @@ mod match_array {
     /// $match[1] holds first capture group.
     #[test]
     fn match_array_first_capture() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 [[ "hello123world" =~ "([a-z]+)([0-9]+)([a-z]+)" ]]
 echo "${match[1]}/${match[2]}/${match[3]}"
-"#);
+"#,
+        );
     }
 
     /// $#match = number of capture groups.
     #[test]
     fn match_array_count() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 [[ "abc" =~ "(a)(b)(c)" ]]
 echo "${#match}"
-"#);
+"#,
+        );
     }
 }
 
@@ -169,19 +209,23 @@ mod offsets {
     /// $MBEGIN / $MEND give 1-indexed start/end of match.
     #[test]
     fn mbegin_mend_offsets() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 [[ "foobar" =~ "ob" ]]
 echo "$MBEGIN/$MEND"
-"#);
+"#,
+        );
     }
 
     /// $mbegin[N] / $mend[N] for capture groups.
     #[test]
     fn mbegin_array_for_groups() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 [[ "abcdef" =~ "(b)(d)" ]]
 echo "${mbegin[1]}/${mend[1]}/${mbegin[2]}/${mend[2]}"
-"#);
+"#,
+        );
     }
 }
 
@@ -280,23 +324,27 @@ mod in_if_construct {
     /// `if [[ str =~ pat ]]; then ...; fi`.
     #[test]
     fn regex_in_if_true() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 if [[ "abc123" =~ "[0-9]+" ]]; then
   echo "yes: $MATCH"
 else
   echo no
 fi
-"#);
+"#,
+        );
     }
 
     #[test]
     fn regex_in_if_false() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 if [[ "abcdef" =~ "[0-9]+" ]]; then
   echo yes
 else
   echo no
 fi
-"#);
+"#,
+        );
     }
 }

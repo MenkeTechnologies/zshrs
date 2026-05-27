@@ -59,9 +59,7 @@ pub fn _history_modifiers(args: &[String]) -> i32 {
     };
 
     let first_char = prefix.chars().next();
-    if first_char.is_some()
-        && matches!(first_char.unwrap(), 's' | 'S')
-    {
+    if first_char.is_some() && matches!(first_char.unwrap(), 's' | 'S') {
         // sh:18 — substitution mode, delimiter follows
         //   Defer to _describe with the standard substitution
         //   flag set (l/q/x/u, plus type-specific p/&).
