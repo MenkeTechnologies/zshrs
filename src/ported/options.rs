@@ -645,6 +645,33 @@ pub fn optlookup(name: &str) -> i32 {
             // c:709
             return -optno; // c:710
         }
+        // c:Src/options.c:708 — `getnode(s+2)` consults the SAME
+        // hashtable as the head lookup, which includes both
+        // canonical names AND OPT_ALIAS rows. The Rust port's
+        // alias map (lines 617-635) only fired for the head lookup;
+        // `no_dotglob` (strip _ → "nodotglob", strip "no" →
+        // "dotglob") fell through to optno_by_name which doesn't
+        // know about aliases. Apply the same alias resolution
+        // here so `setopt no_dotglob` flips GLOBDOTS off.
+        let alias_after_no: Option<i32> = match stripped {
+            "braceexpand" => Some(-IGNOREBRACES),
+            "dotglob" => Some(GLOBDOTS),
+            "hashall" => Some(HASHCMDS),
+            "histappend" => Some(APPENDHISTORY),
+            "histexpand" => Some(BANGHIST),
+            "log" => Some(-HISTNOFUNCTIONS),
+            "mailwarn" => Some(MAILWARNING),
+            "onecmd" => Some(SINGLECOMMAND),
+            "physical" => Some(CHASELINKS),
+            "promptvars" => Some(PROMPTSUBST),
+            "stdin" => Some(SHINSTDIN),
+            "trackall" => Some(HASHCMDS),
+            "login" => Some(LOGINSHELL),
+            _ => None,
+        };
+        if let Some(optno) = alias_after_no {
+            return -optno;
+        }
     }
     match optno_by_name(&s) {
         // c:721
