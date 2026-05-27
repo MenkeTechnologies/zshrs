@@ -152,7 +152,6 @@ mod ansi_c_quote {
 
     /// `$'\033'` → ESC (octal escape).
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: $'\\033' octal-escape byte count differs from zsh"]
     fn ansi_quote_octal_escape_byte_count() {
         assert_parity(r#"echo -n $'\033' | wc -c"#);
     }
