@@ -8044,7 +8044,11 @@ pub fn convbase_ptr(v: i64, base: i32) -> (String, i32) {
     let mut value = v;
     if value < 0 {
         s.push('-');
-        value = -value;
+        // c:Src/params.c — `value = -value;` on INT_MIN is UB in C
+        // but in practice wraps back to INT_MIN. Use wrapping_neg
+        // to avoid Rust's debug-build overflow panic. zsh prints
+        // `-9223372036854775808` for `$((2**63))`; we mirror that.
+        value = value.wrapping_neg();
     }
     let mut b = base;
     if (-1..=1).contains(&b) {
