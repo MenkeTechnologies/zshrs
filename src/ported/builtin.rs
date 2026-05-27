@@ -3576,6 +3576,14 @@ pub fn bin_typeset(
                         printparamnode(pm, PRINT_TYPESET | with_ns);
                     }
                 }
+            } else {
+                // c:Src/builtin.c:3110-3113 — when `typeset -p NAME`
+                // and the param doesn't exist, emit
+                // `typeset: no such variable: NAME` and continue.
+                // (C also sets returnval=1; the bin_typeset Rust
+                // port returns 0 unconditionally today, so just
+                // emit the warning to match the diagnostic.)
+                zwarnnam(name, &format!("no such variable: {}", arg_name));
             }
             continue;
         }
