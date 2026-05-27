@@ -192,7 +192,6 @@ mod trap_signal {
 
     /// trap handler catches signal sent by kill.
     #[test]
-    #[ignore = "ZSHRS BUG: trap subsystem broken — covered in trap_parity.rs"]
     fn trap_catches_kill_signal() {
         assert_parity(r#"
 trap 'echo "caught INT"' INT
