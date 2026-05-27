@@ -6133,9 +6133,13 @@ fn split_subscript(s: &str) -> Option<(&str, &str)> {
     }
     let base = &s[..lb];
     let key = &s[lb + 1..s.len() - 1];
-    if base.is_empty() || key.is_empty() {
+    if base.is_empty() {
         return None;
     }
+    // Empty key (`H[""]=v` after untokenize → `H[]=v`) is a valid
+    // associative-array assignment in zsh — the empty string is a
+    // legal hash key. Don't reject it; the assoc set path stores
+    // the entry under "" and reads come back the same way.
     // Reject `arr[@]` / `arr[*]` — those are splice forms handled
     // elsewhere (array_splice_ref / ARRAY_ALL).
     if key == "@" || key == "*" {
