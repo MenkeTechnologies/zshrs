@@ -82,7 +82,6 @@ mod array_element {
 
     /// `unset 'arr[2]'` removes one elem.
     #[test]
-    #[ignore = "ZSHRS BUG: unset arr[N] compacts array; zsh leaves empty slot at index N"]
     fn unset_array_element() {
         assert_parity(r#"arr=(a b c d); unset 'arr[2]'; print -l "${(@)arr}""#);
     }
@@ -230,7 +229,6 @@ mod unset_pattern {
 
     /// `unset -m pattern` — pattern-match unset.
     #[test]
-    #[ignore = "ZSHRS BUG: unset -m pattern not supported"]
     fn unset_dash_m_pattern() {
         assert_parity(r#"
 FOO_A=1; FOO_B=2; BAR=3

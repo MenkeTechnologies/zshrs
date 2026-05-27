@@ -202,7 +202,6 @@ mod background {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: bg+wait $? value differs from zsh"]
     fn background_returns_zero() {
         assert_parity("true &; wait; echo $?");
     }

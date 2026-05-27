@@ -223,7 +223,8 @@ impl<'a> ArithCompiler<'a> {
     fn read_number(&mut self) -> Tok {
         let start = self.pos;
 
-        // Handle hex: 0x...
+        // Handle hex: 0x... (c:Src/math.c lexconstant — 0x/0X prefix
+        // always parses as base 16 regardless of OCTALZEROES.)
         if self.pos + 1 < self.input.len()
             && self.input.as_bytes()[self.pos] == b'0'
             && (self.input.as_bytes()[self.pos + 1] == b'x'
@@ -238,24 +239,64 @@ impl<'a> ArithCompiler<'a> {
             return Tok::Num(val);
         }
 
-        // Handle octal: 0...
-        if self.pos + 1 < self.input.len()
-            && self.input.as_bytes()[self.pos] == b'0'
-            && self.input.as_bytes()[self.pos + 1].is_ascii_digit()
-        {
-            while self.pos < self.input.len() && self.input.as_bytes()[self.pos].is_ascii_digit() {
-                self.pos += 1;
-            }
-            let val = i64::from_str_radix(&self.input[start + 1..self.pos], 8).unwrap_or(0);
-            return Tok::Num(val);
-        }
-
-        // Decimal integer or float
+        // Decimal integer (and possibly base-N or octal). Greedy: walk
+        // all digits, then check for `#` (base-N) or `.` (float).
         while self.pos < self.input.len() && self.input.as_bytes()[self.pos].is_ascii_digit() {
             self.pos += 1;
         }
 
-        // Check for float
+        // c:Src/math.c — `N#digits` base-N literal. The leading
+        // number is the base (2..=36); the digits after `#` use that
+        // base. zsh accepts `#` (signed result) and `##` (unsigned),
+        // but for the arith_compiler scope just `#` is sufficient.
+        if self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b'#' {
+            let base_str = &self.input[start..self.pos];
+            if let Ok(base) = base_str.parse::<u32>() {
+                if (2..=36).contains(&base) {
+                    self.pos += 1; // skip `#`
+                    let digit_start = self.pos;
+                    while self.pos < self.input.len() {
+                        let b = self.input.as_bytes()[self.pos];
+                        let in_base = if base <= 10 {
+                            b.is_ascii_digit() && (b - b'0') < base as u8
+                        } else {
+                            b.is_ascii_digit()
+                                || (b.is_ascii_alphabetic()
+                                    && {
+                                        let v = if b.is_ascii_lowercase() {
+                                            b - b'a' + 10
+                                        } else {
+                                            b - b'A' + 10
+                                        };
+                                        (v as u32) < base
+                                    })
+                        };
+                        if in_base {
+                            self.pos += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let digits = &self.input[digit_start..self.pos];
+                    let val = i64::from_str_radix(digits, base).unwrap_or(0);
+                    return Tok::Num(val);
+                }
+            }
+        }
+
+        // c:Src/math.c — `010` (leading zero) is octal ONLY when
+        // OCTALZEROES is set; default off, so a leading-zero literal
+        // is decimal. Honour the option here.
+        let lex_octal = self.pos > start + 1
+            && self.input.as_bytes()[start] == b'0'
+            && self.input.as_bytes()[start + 1].is_ascii_digit()
+            && crate::ported::zsh_h::isset(crate::ported::zsh_h::OCTALZEROES);
+        if lex_octal {
+            let val = i64::from_str_radix(&self.input[start + 1..self.pos], 8).unwrap_or(0);
+            return Tok::Num(val);
+        }
+
+        // Float (after decimal-integer scan).
         if self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b'.' {
             self.pos += 1;
             while self.pos < self.input.len() && self.input.as_bytes()[self.pos].is_ascii_digit() {

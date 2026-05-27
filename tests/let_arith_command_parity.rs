@@ -177,25 +177,21 @@ mod logical {
 
     /// && short-circuits.
     #[test]
-    #[ignore = "ZSHRS HANG: (( 1 && 1 )) infinite-loops; logical && operator broken in arith VM"]
     fn logical_and_both_true() {
         assert_parity(r#"(( 1 && 1 )); echo $?"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS HANG: (( 0 && 1 )) infinite-loops; logical && operator broken in arith VM"]
     fn logical_and_first_false() {
         assert_parity(r#"(( 0 && 1 )); echo $?"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS HANG: (( 1 || 0 )) infinite-loops; logical || operator broken in arith VM"]
     fn logical_or_first_true() {
         assert_parity(r#"(( 1 || 0 )); echo $?"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS HANG: (( 0 || 0 )) infinite-loops; logical || operator broken in arith VM"]
     fn logical_or_both_false() {
         assert_parity(r#"(( 0 || 0 )); echo $?"#);
     }
@@ -278,14 +274,12 @@ mod errors {
 
     /// Division by zero → arith error, nonzero exit.
     #[test]
-    #[ignore = "ZSHRS BUG: (( X = 5/0 )) aborts script; zsh continues with exit=2"]
     fn division_by_zero_errors() {
         assert_parity(r#"(( X = 5 / 0 )) 2>/dev/null; echo exit=$?"#);
     }
 
     /// Modulo by zero → arith error.
     #[test]
-    #[ignore = "ZSHRS BUG: (( X = 5%0 )) reports exit=1 instead of zsh's exit=2"]
     fn modulo_by_zero_errors() {
         assert_parity(r#"(( X = 5 % 0 )) 2>/dev/null; echo exit=$?"#);
     }
@@ -303,7 +297,6 @@ mod base_literals {
 
     /// 0 octal literal.
     #[test]
-    #[ignore = "ZSHRS BUG: 010 treated as octal; zsh defaults OCTAL_ZEROES off (010 is decimal 10)"]
     fn octal_literal() {
         assert_parity(r#"(( X = 010 )); echo $X"#);
     }

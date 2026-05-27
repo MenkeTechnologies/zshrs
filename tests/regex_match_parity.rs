@@ -81,7 +81,6 @@ mod metachars {
 
     /// `$` end anchor.
     #[test]
-    #[ignore = "ZSHRS BUG: regex $ end-anchor doesn't match; zsh exits 0"]
     fn dollar_end_anchor() {
         assert_parity(r#"[[ "foobar" =~ "bar$" ]]; echo $?"#);
     }
@@ -209,7 +208,6 @@ mod variable_as_pattern {
 
     /// Pattern from variable. zsh expands $PAT as a regex.
     #[test]
-    #[ignore = "ZSHRS BUG: regex pattern from variable with anchors doesn't match"]
     fn pattern_in_variable() {
         assert_parity(r#"PAT="^[0-9]+$"; [[ "12345" =~ $PAT ]]; echo $?"#);
     }
@@ -256,7 +254,6 @@ mod count_quantifiers {
 
     /// `{N,M}` between N and M.
     #[test]
-    #[ignore = "ZSHRS BUG: regex {N,M} range quantifier with anchors doesn't match; zsh exits 0"]
     fn brace_range_quantifier() {
         assert_parity(r#"[[ "aaa" =~ "^a{2,5}$" ]]; echo $?"#);
     }
@@ -267,7 +264,6 @@ mod pos_neg_combinations {
 
     /// Combined start/end anchors.
     #[test]
-    #[ignore = "ZSHRS BUG: regex ^...$ full-string anchors don't match; $ end-anchor broken"]
     fn full_string_match_with_anchors() {
         assert_parity(r#"[[ "hello" =~ "^hello$" ]]; echo $?"#);
     }

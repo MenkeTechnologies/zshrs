@@ -51,7 +51,6 @@ mod noclobber_on {
 
     /// With NO_CLOBBER set, `>` on existing file errors out.
     #[test]
-    #[ignore = "ZSHRS BUG: setopt no_clobber doesn't block > on existing file"]
     fn no_clobber_blocks_overwrite() {
         let d = tdir();
         std::fs::write(d.path().join("exists.txt"), "old\n").unwrap();
@@ -67,7 +66,6 @@ mod noclobber_on {
 
     /// `>|` force-clobber overrides NO_CLOBBER.
     #[test]
-    #[ignore = "ZSHRS BUG: >| force-clobber under no_clobber not honored"]
     fn pipe_bar_force_clobber_works() {
         let d = tdir();
         std::fs::write(d.path().join("exists.txt"), "old\n").unwrap();
@@ -76,7 +74,6 @@ mod noclobber_on {
 
     /// `>!` zsh alias for `>|`.
     #[test]
-    #[ignore = "ZSHRS BUG: >! force-clobber under no_clobber not honored"]
     fn bang_force_clobber_works() {
         let d = tdir();
         std::fs::write(d.path().join("exists.txt"), "old\n").unwrap();
@@ -106,7 +103,6 @@ mod noclobber_off {
 
     /// Toggling no_clobber off mid-script restores `>` behavior.
     #[test]
-    #[ignore = "ZSHRS BUG: unsetopt no_clobber after setopt no_clobber doesn't re-allow >"]
     fn unset_no_clobber_restores_overwrite() {
         let d = tdir();
         std::fs::write(d.path().join("out.txt"), "old\n").unwrap();
@@ -119,7 +115,6 @@ mod no_clobber_alias {
 
     /// `setopt NOCLOBBER` (no underscore) is also accepted.
     #[test]
-    #[ignore = "ZSHRS BUG: setopt NOCLOBBER alias doesn't activate guard"]
     fn noclobber_no_underscore_works() {
         let d = tdir();
         std::fs::write(d.path().join("exists.txt"), "old\n").unwrap();

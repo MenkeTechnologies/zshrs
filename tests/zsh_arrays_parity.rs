@@ -207,7 +207,6 @@ mod assign_from_string {
 
     /// With $=X force split.
     #[test]
-    #[ignore = "ZSHRS BUG: arr=($=X) doesn't split into multiple elements (same as ifs $=X bug)"]
     fn array_init_with_force_split() {
         assert_parity(r#"X="a b c"; arr=($=X); echo ${#arr}"#);
     }

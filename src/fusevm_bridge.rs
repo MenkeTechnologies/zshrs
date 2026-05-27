@@ -758,6 +758,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_passthru!(vm, BUILTIN_FUNCTIONS, "functions");
     reg_passthru!(vm, BUILTIN_TRAP, "trap");
     reg_passthru!(vm, BUILTIN_DIRS, "dirs");
+    // pushd / popd dispatch through canonical bin_cd via execbuiltin
+    // — the BUILTINS table at src/ported/builtin.rs:9298 wires
+    // `pushd` to bin_cd with funcid=BIN_PUSHD, and `popd` similarly
+    // with BIN_POPD. Without these reg_passthru lines the fusevm
+    // BUILTIN_PUSHD/POPD opcodes had no handler installed, so the
+    // emitted CallBuiltin(110, …) silently returned a no-op and the
+    // dirstack/$dirstack/pwd all stayed unchanged.
+    reg_passthru!(vm, BUILTIN_PUSHD, "pushd");
+    reg_passthru!(vm, BUILTIN_POPD, "popd");
     // type / whence / where / which all route through `bin_whence`
     // (canonical port at `src/ported/builtin.rs:3734` of
     // `Src/builtin.c:3975`). Each gets its own opcode so funcid +
@@ -2463,12 +2472,42 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
-    // BUILTIN_SET_TRY_BLOCK_ERROR — capture the try-block's exit status
-    // into $TRY_BLOCK_ERROR so the always-arm can read it.
+    // BUILTIN_SET_TRY_BLOCK_ERROR — capture the try-block's exit
+    // status into `__zshrs_try_block_saved_status` (a scratch
+    // scalar) so the always-arm can later restore it. Also set
+    // `TRY_BLOCK_ERROR` per zsh semantics: it stays at -1 unless
+    // the try-block fired an explicit error (errflag), per
+    // c:Src/exec.c execlist's WC_TRYBLOCK arm.
     vm.register_builtin(BUILTIN_SET_TRY_BLOCK_ERROR, |vm, _argc| {
+        use std::sync::atomic::Ordering;
         let vm_status = vm.last_status;
+        let errored = (crate::ported::utils::errflag.load(Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0;
         with_executor(|exec| {
-            exec.set_scalar("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
+            exec.set_scalar(
+                "__zshrs_try_block_saved_status".to_string(),
+                vm_status.to_string(),
+            );
+            // c:Src/exec.c WC_TRYBLOCK — TRY_BLOCK_ERROR reflects
+            // the errflag state at try-block exit. zsh leaves it
+            // at -1 (sentinel) when the block completed normally,
+            // and sets to last_status when errflag triggered the
+            // unwind. The always-arm can reset it to 0 to
+            // SWALLOW the error.
+            if errored {
+                exec.set_scalar(
+                    "TRY_BLOCK_ERROR".to_string(),
+                    vm_status.to_string(),
+                );
+                // Clear errflag so always-arm runs cleanly.
+                crate::ported::utils::errflag.fetch_and(
+                    !crate::ported::zsh_h::ERRFLAG_ERROR,
+                    Ordering::Relaxed,
+                );
+            } else {
+                exec.set_scalar("TRY_BLOCK_ERROR".to_string(), "-1".to_string());
+            }
         });
         Value::Status(0)
     });
@@ -2517,12 +2556,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // restore TRY_BLOCK_ERROR unconditionally — the always-list's
     // exit status is discarded for the construct.
     vm.register_builtin(BUILTIN_RESTORE_TRY_BLOCK_STATUS, |_vm, _argc| {
-        let try_status = with_executor(|exec| {
-            exec.scalar("TRY_BLOCK_ERROR")
+        // c:Src/exec.c — the entire `{try} always {…}` construct's
+        // exit status is the try-block's status unless the always
+        // arm reset TRY_BLOCK_ERROR to 0 (which "swallows" the
+        // error and the construct exits 0). Read the saved try
+        // status from the scratch scalar; if TRY_BLOCK_ERROR is 0
+        // after the always block ran, the user swallowed the
+        // error → return 0.
+        let (saved, tbe) = with_executor(|exec| {
+            let s = exec
+                .scalar("__zshrs_try_block_saved_status")
                 .and_then(|s| s.parse::<i32>().ok())
-                .unwrap_or(0)
+                .unwrap_or(0);
+            let t = exec
+                .scalar("TRY_BLOCK_ERROR")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(-1);
+            (s, t)
         });
-        Value::Status(try_status)
+        // If TRY_BLOCK_ERROR was set to 0 by the always-arm (the
+        // "swallow" idiom), the construct succeeds. Otherwise the
+        // saved try-block status wins.
+        let final_status = if tbe == 0 { 0 } else { saved };
+        Value::Status(final_status)
     });
 
     vm.register_builtin(BUILTIN_IS_TTY, |vm, _argc| {
@@ -3388,9 +3444,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // the result as Value::Str so it can be Concat'd into surrounding
     // word context.
     vm.register_builtin(BUILTIN_ARITH_EVAL, |vm, _argc| {
+        // Pure path: evaluate expr, return string. errflag may be
+        // set by arithsubst on math error; the caller decides
+        // whether to clear it. For `(( ... ))` (math command) the
+        // compile_arith path clears via BUILTIN_ARITH_CMD_FINISH;
+        // for `$((... ))` (substitution inside another command)
+        // errflag stays set so the surrounding command aborts —
+        // matches c:Src/math.c "math errors propagate as errflag
+        // through the containing word expansion".
         let expr = vm.pop().to_str();
         let result = crate::ported::subst::arithsubst(&expr, "", "");
+        let _ = vm; // silence unused warning when no math error path mutates
         Value::str(result)
+    });
+
+    // After-call hook used by compile_arith's `(( ... ))` path: when
+    // arithsubst set errflag (math error), clear it and signal
+    // status=2 in vm.last_status — matches zsh's c:exec.c arith-
+    // failure: the math command exits 2 and the script continues.
+    vm.register_builtin(BUILTIN_ARITH_CMD_FINISH, |vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let err = crate::ported::utils::errflag.load(Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR;
+        if err != 0 {
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::zsh_h::ERRFLAG_ERROR,
+                Ordering::Relaxed,
+            );
+            vm.last_status = 2;
+            Value::Status(2)
+        } else {
+            Value::Status(vm.last_status)
+        }
     });
 
     // `$(cmd)` — pops [cmd_string], routes through
@@ -4122,6 +4207,15 @@ pub const BUILTIN_PARAM_LENGTH: u16 = 311;
 /// Value::Str. Bypasses ArithCompiler's float-only Op::Div path so
 /// `$((10/3))` returns "3" not "3.333...".
 pub const BUILTIN_ARITH_EVAL: u16 = 312;
+/// `(( ... ))` math command post-eval status hook. Pops nothing,
+/// pushes Value::Status. If errflag is set (math error in the
+/// preceding BUILTIN_ARITH_EVAL call), clears it and emits status=2
+/// matching c:Src/math.c arith-failure semantics. Otherwise emits
+/// the current vm.last_status. Used by compile_arith's `(( ... ))`
+/// path so the math command swallows errors without halting the
+/// script — `$((... ))` substitutions skip this hook so their
+/// errflag propagates up to the containing command.
+pub const BUILTIN_ARITH_CMD_FINISH: u16 = 527;
 /// `$(cmd)` command substitution. Pops \[cmd_string\], runs through
 /// `run_command_substitution` which compiles via parse_init+parse + ZshCompiler
 /// and captures stdout via an in-process pipe. Returns trimmed output

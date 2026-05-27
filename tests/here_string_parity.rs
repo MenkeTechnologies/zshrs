@@ -127,7 +127,6 @@ mod nested_quoting {
 
     /// Double-quoted with escaped dollar still literal.
     #[test]
-    #[ignore = "ZSHRS BUG: \\$ inside double-quoted here-string still expands; zsh leaves $X literal"]
     fn escaped_dollar_in_here_string() {
         assert_parity(r#"X=expanded; cat <<< "\$X""#);
     }

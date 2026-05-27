@@ -190,7 +190,6 @@ mod no_match {
     /// Without NULL_GLOB, no-match glob errors. zsh exits non-zero; zshrs
     /// may or may not — pin the contract and let the test flag divergence.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: unmatched-glob exit-nonzero-ness differs from zsh"]
     fn unmatched_glob_errors_by_default() {
         let d = mkdir_with_files(&["only.txt"]);
         if !zsh_available() { return; }

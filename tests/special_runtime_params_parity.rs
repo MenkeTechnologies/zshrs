@@ -143,14 +143,12 @@ mod dollar_bang {
 
     /// $! is PID of last backgrounded job.
     #[test]
-    #[ignore = "ZSHRS BUG: $! after backgrounded sleep returns empty; should be a PID"]
     fn bang_after_background_is_pid() {
         assert_parity(r#"sleep 0.01 & wait; (( ${!:-0} > 0 )); echo $?"#);
     }
 
     /// $! before any & is unset/empty.
     #[test]
-    #[ignore = "ZSHRS BUG: $! defaulting differs from zsh's '0' value"]
     fn bang_initially_empty() {
         assert_parity(r#"echo "[${!:-empty}]""#);
     }
@@ -199,7 +197,6 @@ mod funcstack {
 
     /// $funcstack lists active function names.
     #[test]
-    #[ignore = "ZSHRS BUG: $funcstack[1] inside function returns empty; should be function name"]
     fn funcstack_in_function() {
         assert_parity(r#"
 f() { echo "${funcstack[1]}"; }

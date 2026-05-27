@@ -37,7 +37,6 @@ mod var_isolation {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: subshell var assignment leaks into outer scope"]
     fn subshell_var_doesnt_leak_out() {
         assert_parity("(X=inside; echo $X); echo [$X]");
     }
@@ -53,7 +52,6 @@ mod var_isolation {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: subshell unset propagates to outer scope"]
     fn subshell_unset_doesnt_unset_outer() {
         assert_parity("X=value; (unset X; echo inside:[$X]); echo outside:[$X]");
     }

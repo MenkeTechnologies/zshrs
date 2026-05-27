@@ -98,7 +98,6 @@ mod hash_length_flag {
 
     /// `${(#)X}` — interpret X as numeric code → char.
     #[test]
-    #[ignore = "ZSHRS BUG: ${(#)N} numeric-to-char doesn't emit byte; zsh emits the code, zshrs empty"]
     fn hash_flag_converts_numeric_to_char() {
         assert_parity(r#"echo "${(#)65}""#);
     }

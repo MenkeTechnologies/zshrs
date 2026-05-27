@@ -193,7 +193,6 @@ mod escapes_and_quotes {
 
     /// Double-quoted braces — literal (braces don't expand in DQ).
     #[test]
-    #[ignore = "ZSHRS BUG: double-quoted braces still get expanded; zsh keeps literal"]
     fn double_quoted_braces_literal() {
         assert_parity(r#"print -l "{a,b,c}""#);
     }
