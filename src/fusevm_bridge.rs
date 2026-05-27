@@ -3555,6 +3555,48 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Int(0)
         }
     });
+    // c:Src/exec.c — drop-in replacement for fusevm's Op::Exec used by
+    // the dynamic-first-word path (`$cmd`, `$(cmd)`, glob-named cmds).
+    // fusevm's Op::Exec returns Value::Status(0) when post-expansion
+    // argv is empty (vm.rs:1722) — that clobbers \$? for the
+    // `\$(exit 1); echo \$?` case where the cmd-subst left
+    // last_status = 1 but the empty expansion gets exec'd to 0.
+    // Mirror C zsh: when the word list is empty after expansion,
+    // \$? becomes whatever the inner cmd-subst's last_status is
+    // (preserved here by returning Value::Status(last_status)).
+    vm.register_builtin(BUILTIN_EXEC_DYNAMIC, |vm, argc| {
+        let raw = pop_args(vm, argc);
+        // Flatten Array entries into argv slots (matches fusevm
+        // Op::Exec's flatten at vm.rs:1660-1665) so `${arr[@]}` /
+        // splice expansions produce one argv slot per element.
+        let args: Vec<String> = raw.into_iter().collect();
+        if args.is_empty() {
+            // c:Src/exec.c — empty argv preserves prior \$?. The
+            // cmd-subst inside the word already set last_status; just
+            // round-trip it back through SetStatus.
+            return Value::Status(vm.last_status);
+        }
+        if args[0].is_empty() {
+            // Explicit empty command word — exec returns EACCES.
+            let script_name = crate::ported::utils::scriptname_get()
+                .unwrap_or_else(|| "zshrs".to_string());
+            let lineno: u64 = with_executor(|exec| {
+                exec.scalar("LINENO")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+            });
+            eprintln!("{}:{}: permission denied: ", script_name, lineno);
+            return Value::Status(126);
+        }
+        // Non-empty path: route through the same logic ZshrsHost::exec
+        // uses — intercepts/AOP, command_hash, pre/postexec hooks.
+        let status = with_executor(|exec| exec.host_exec_external(&args));
+        crate::ported::builtin::LASTVAL
+            .store(status, std::sync::atomic::Ordering::Relaxed);
+        let mut synth = crate::ported::zsh_h::job::default();
+        crate::ported::jobs::waitonejob(&mut synth);
+        Value::Status(status)
+    });
     vm.register_builtin(BUILTIN_DEBUG_TRAP, |_vm, _argc| {
         // c:Src/signals.c:1245 dotrap(SIGDEBUG) — fires the DEBUG
         // trap body once per statement. The body sees the parent
@@ -4617,6 +4659,13 @@ pub const BUILTIN_NOEXEC_CHECK: u16 = 604;
 /// statement after the first (the first builtin consumed the flag,
 /// subsequent statements ran unimpeded).
 pub const BUILTIN_REDIRECT_FAILED_CHECK: u16 = 605;
+/// Drop-in replacement for fusevm's Op::Exec for the dynamic-first-
+/// word path (`$cmd`, `$(cmd)`, `~/bin/foo`). Returns
+/// Value::Status(vm.last_status) when post-expansion argv is empty
+/// (preserves the inner cmd-subst's exit), Value::Status(126) with
+/// "permission denied" when argv[0] is empty, otherwise routes
+/// through executor.host_exec_external like Op::Exec did.
+pub const BUILTIN_EXEC_DYNAMIC: u16 = 606;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
@@ -5274,13 +5323,27 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn exec(&mut self, args: Vec<String>) -> i32 {
-        // c:Src/exec.c — when the command word evaluates to an empty
-        // string (e.g. `"$nonexistent"` with the var unset), zsh
-        // attempts exec(2) which returns EACCES → "permission
-        // denied". Match by emitting the diagnostic and returning
-        // 126. Without this, an empty command word silently returned
-        // 0 and the calling script continued unaware.
-        if args.is_empty() || args[0].is_empty() {
+        // c:Src/exec.c — two distinct empty-command cases:
+        //
+        // 1. args=[""]  — an explicit empty-string command word
+        //    (`""`, `"\$unset"`, `\$'\$x'`). zsh attempts exec(2)
+        //    on the empty path → EACCES → "permission denied", \$?
+        //    = 126.
+        //
+        // 2. args=[]    — the WORD LIST is empty (unquoted \$(\$cmd)
+        //    that produced empty, or an unquoted unset \$var that
+        //    elided). zsh: no exec is attempted; \$? becomes the
+        //    last cmd-subst's exit status (the inner sub-VM
+        //    already set last_status), and the line completes
+        //    silently. Critically NOT 126.
+        if args.is_empty() {
+            // c:Src/exec.c — empty word list passes through to a
+            // no-op; preserve whatever the inner cmd-subst's exit
+            // is. Return last_status so the caller's SetStatus
+            // round-trips correctly.
+            return with_executor(|exec| exec.last_status());
+        }
+        if args[0].is_empty() {
             let script_name = crate::ported::utils::scriptname_get()
                 .unwrap_or_else(|| "zshrs".to_string());
             let lineno: u64 = with_executor(|exec| {

@@ -1089,7 +1089,15 @@ impl ZshCompiler {
             for w in &simple.words {
                 self.compile_word_str(w);
             }
-            self.builder.emit(Op::Exec(argc), 0);
+            // Replace fusevm's Op::Exec with BUILTIN_EXEC_DYNAMIC so
+            // empty-argv expansion (`\$(exit 1)` produces "") preserves
+            // the cmd-subst's last_status. Op::Exec hardcodes 0 for
+            // empty argv (fusevm vm.rs:1722-1723) which clobbered \$?
+            // in chains like `\$(exit 1); echo \$?`.
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_DYNAMIC, argc),
+                0,
+            );
             self.builder.emit(Op::SetStatus, 0);
             if has_redirects {
                 self.builder.emit(Op::WithRedirectsEnd, 0);
