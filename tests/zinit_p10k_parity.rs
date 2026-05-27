@@ -677,7 +677,6 @@ echo "${(t)x}""#,
 // ───────────────────────── tied path arrays ─────────────────────
 
 mod tied_path_arrays {
-    use super::*;
 
     /// `PATH="/dir"` — assigning to the scalar must mirror into both
     /// the `path` array AND the process env. Without this, child

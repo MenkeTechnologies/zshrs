@@ -16,12 +16,12 @@
 //! Unknown capabilities return `None` so callers can emit `""`
 //! matching zsh's `PM_UNSET` fallback (terminfo.c:165-168).
 
-use crate::ported::params::{TERMFLAGS };
-use std::sync::atomic::Ordering;
-use crate::ported::zsh_h::module;
-use std::sync::{Mutex, OnceLock};
 use crate::options::optlookup;
+use crate::ported::params::TERMFLAGS;
+use crate::ported::zsh_h::module;
 use crate::zsh_h::{isset, TERM_UNKNOWN};
+use std::sync::atomic::Ordering;
+use std::sync::{Mutex, OnceLock};
 
 // FFI bindings to the system ncurses terminfo interface. Direct
 // port of the call sites in `zsh/Src/Modules/terminfo.c`. macOS
@@ -97,10 +97,7 @@ pub fn bin_echoti(
         unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
     });
     if !term_ok {
-        crate::ported::utils::zwarnnam(
-            name,
-            &format!("no such terminfo capability: {}", s),
-        );
+        crate::ported::utils::zwarnnam(name, &format!("no such terminfo capability: {}", s));
         return 1;
     }
 
@@ -204,7 +201,10 @@ pub fn bin_echoti(
 /// from `Src/Modules/terminfo.c:135-177`. Returns a synthesised Param
 /// with PM_INTEGER (numeric cap), PM_SCALAR yes/no (boolean cap),
 /// PM_SCALAR escape-string (string cap), or PM_UNSET ("" + flag).
-pub fn getterminfo(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Option<crate::ported::zsh_h::Param> {
+pub fn getterminfo(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    name: &str,
+) -> Option<crate::ported::zsh_h::Param> {
     // c:135
     use crate::ported::zsh_h::{hashnode, param, PM_INTEGER, PM_READONLY, PM_SCALAR, PM_UNSET};
     const TERM_BAD: i32 = 1 << 1;
@@ -348,8 +348,7 @@ pub fn scanterminfo(
         return;
     }
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_UNKNOWN) != 0 {
-        let interactive =
-            isset(optlookup("interactive"));
+        let interactive = isset(optlookup("interactive"));
         if interactive {
             return;
         }
@@ -480,7 +479,6 @@ pub fn scanterminfo(
 // static struct features module_features                            c:307 (terminfo.c)
 // =====================================================================
 
-
 // `bintab` — port of `static struct builtin bintab[]` (terminfo.c).
 
 // `partab` — port of `static struct paramdef partab[]` (terminfo.c).
@@ -559,7 +557,6 @@ pub const COMMON_STRING_CAPS: &[&str] = &[
     "cup", "ich1", "dch1", "il1", "dl1",
 ];
 
-
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -594,7 +591,11 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<crate::ported::zsh_h::features>,
+    _e: Option<&[i32]>,
+) -> i32 {
     0
 }
 
@@ -655,10 +656,8 @@ mod tests {
         use crate::ported::zsh_h::PM_UNSET;
         // termflags check may early-return None if $TERM is bad; treat
         // both Some(unset) and None as acceptable for this regression.
-        if let Some(pm) = getterminfo(
-            std::ptr::null_mut(),
-            "definitely_not_a_real_cap_name_zshrs",
-        ) {
+        if let Some(pm) = getterminfo(std::ptr::null_mut(), "definitely_not_a_real_cap_name_zshrs")
+        {
             assert!(
                 pm.node.flags & PM_UNSET as i32 != 0,
                 "PM_UNSET flag must be set for unknown cap"

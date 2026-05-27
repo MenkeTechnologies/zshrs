@@ -537,7 +537,9 @@ fn code_action_offers_extract_variable_and_constant() {
         "expected `local EXTRACTED=…` decl line: {edits:?}"
     );
     assert!(
-        edits.iter().any(|e| e.get("newText") == Some(&json!("$EXTRACTED"))),
+        edits
+            .iter()
+            .any(|e| e.get("newText") == Some(&json!("$EXTRACTED"))),
         "expected `$EXTRACTED` replacement: {edits:?}"
     );
     lsp.shutdown();
@@ -743,8 +745,10 @@ fn rename_strips_qualifier_from_qualified_new_name() {
     assert_eq!(edits.len(), 3, "expected 3 edits, got: {:?}", edits);
     for e in edits {
         assert_eq!(
-            e["newText"], json!("handle2"),
-            "qualifier must be stripped; got: {:?}", e
+            e["newText"],
+            json!("handle2"),
+            "qualifier must be stripped; got: {:?}",
+            e
         );
     }
     lsp.shutdown();
@@ -795,7 +799,8 @@ fn hover_suppressed_inside_string_literal() {
         }),
     );
     assert_eq!(
-        miss, Value::Null,
+        miss,
+        Value::Null,
         "hover inside string literal must be suppressed; got: {:?}",
         miss
     );

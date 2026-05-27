@@ -139,14 +139,8 @@ pub fn startvitext(im: i32) {
     // c:118
     startvichange(im); // c:118
     selectkeymap("main", 1); // c:121
-    VISTARTCHANGE.store(
-        UNDO_CHANGENO.load(SeqCst),
-        SeqCst,
-    ); // c:122
-    VIINSBEGIN.store(
-        ZLECS.load(SeqCst),
-        SeqCst,
-    ); // c:123
+    VISTARTCHANGE.store(UNDO_CHANGENO.load(SeqCst), SeqCst); // c:122
+    VIINSBEGIN.store(ZLECS.load(SeqCst), SeqCst); // c:123
 }
 
 /// Port of `vigetkey()` from Src/Zle/zle_vi.c:128.
@@ -169,9 +163,9 @@ pub fn vigetkey() -> i32 {
     // c:137 — `m[0] = lastchar;`. Updated by getbyte side effect; we
     // also have `byte` in hand.
     crate::ported::zle::compcore::LASTCHAR.store(byte as i32, SeqCst); // c:137
-    // c:138 — `metafy(m, 1, META_NOALLOC);` — Rust UTF-8 storage
-    // doesn't need the meta-escape step here; the byte is already
-    // in canonical form for keybind lookup.
+                                                                       // c:138 — `metafy(m, 1, META_NOALLOC);` — Rust UTF-8 storage
+                                                                       // doesn't need the meta-escape step here; the byte is already
+                                                                       // in canonical form for keybind lookup.
 
     // c:139-142 — `if (mn) cmd = keybind(mn, m, &str); else cmd = t_undefinedkey;`
     let cmd: Option<crate::ported::zle::zle_thingy::Thingy> = if let Some(km) = mn {
@@ -203,8 +197,7 @@ pub fn vigetkey() -> i32 {
         Some("vi-quoted-insert") => {
             // c:149
             // c:150 — `ZLE_CHAR_T sav = zleline[zlecs];`
-            let zlecs =
-                ZLECS.load(SeqCst);
+            let zlecs = ZLECS.load(SeqCst);
             let sav: Option<char> = {
                 let line = ZLELINE.lock().unwrap();
                 line.get(zlecs).copied() // c:150
@@ -324,10 +317,7 @@ pub fn viaddnext() -> i32 {
 pub fn viaddeol() -> i32 {
     // c:346
     // C body (c:347-350): `zlecs = findeol(); startvitext(1); return 0`.
-    ZLECS.store(
-        findeol(),
-        SeqCst,
-    );
+    ZLECS.store(findeol(), SeqCst);
     startvitext(1);
     0
 }
@@ -372,7 +362,7 @@ pub fn videlete() -> i32 {
     }
     let cs = ZLECS.load(SeqCst) as i32;
     forekill(c2 - cs, CUT_RAW); // c:390
-                                                                                          // c:392-398 — line-wise: drop trailing newline.
+                                // c:392-398 — line-wise: drop trailing newline.
     if VILINERANGE.load(Ordering::Relaxed) != 0 {
         let ll = ZLELL.load(SeqCst);
         if ll != 0 {
@@ -437,13 +427,8 @@ pub fn visubstitute() -> i32 {
     if n < 0 {
         return 1;
     }
-    if ZLECS.load(SeqCst)
-        == ZLELL.load(SeqCst)
-        || ZLELINE
-            .lock()
-            .unwrap()
-            .get(ZLECS.load(SeqCst))
-            == Some(&'\n')
+    if ZLECS.load(SeqCst) == ZLELL.load(SeqCst)
+        || ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)) == Some(&'\n')
     {
         return 1;
     }
@@ -453,10 +438,7 @@ pub fn visubstitute() -> i32 {
         let text: Vec<char> = ZLELINE
             .lock()
             .unwrap()
-            .drain(
-                ZLECS.load(SeqCst)
-                    ..ZLECS.load(SeqCst) + count,
-            )
+            .drain(ZLECS.load(SeqCst)..ZLECS.load(SeqCst) + count)
             .collect();
         KILLRING.lock().unwrap().push_front(text);
         if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
@@ -486,10 +468,7 @@ pub fn vichangeeol() -> i32 {
         if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
             KILLRING.lock().unwrap().pop_back();
         }
-        ZLELL.fetch_sub(
-            eol - ZLECS.load(SeqCst),
-            SeqCst,
-        );
+        ZLELL.fetch_sub(eol - ZLECS.load(SeqCst), SeqCst);
     }
     startvitext(1);
     0
@@ -568,8 +547,7 @@ pub fn viyankeol() -> i32 {
     if x == ZLECS.load(SeqCst) {
         return 1; // c:550
     }
-    let text: Vec<char> =
-        ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)..x].to_vec();
+    let text: Vec<char> = ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)..x].to_vec();
     KILLRING.lock().unwrap().push_front(text);
     if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
         KILLRING.lock().unwrap().pop_back();
@@ -593,17 +571,9 @@ pub fn viyankwholeline() -> i32 {
         return 1;
     }
     for _ in 0..n {
-        ZLECS.store(
-            findeol() + 1,
-            SeqCst,
-        );
-        if ZLECS.load(SeqCst)
-            > ZLELL.load(SeqCst)
-        {
-            ZLECS.store(
-                ZLELL.load(SeqCst),
-                SeqCst,
-            );
+        ZLECS.store(findeol() + 1, SeqCst);
+        if ZLECS.load(SeqCst) > ZLELL.load(SeqCst) {
+            ZLECS.store(ZLELL.load(SeqCst), SeqCst);
         }
     }
     let end = ZLECS.load(SeqCst);
@@ -639,9 +609,7 @@ pub fn vireplacechars() -> i32 {
     if n > avail {
         return 1; // not enough chars
     }
-    if let Some(c) = char::from_u32(
-        crate::ported::zle::compcore::LASTCHAR.load(SeqCst) as u32,
-    ) {
+    if let Some(c) = char::from_u32(crate::ported::zle::compcore::LASTCHAR.load(SeqCst) as u32) {
         for i in 0..n {
             ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) + i] = c;
         }
@@ -702,14 +670,8 @@ pub fn viopenlinebelow() -> i32 {
     // C body (c:700-707): `zlecs = findeol(); spaceinline(1);
     //                     zleline[zlecs++] = '\\n'; startvitext(1);
     //                     clearlist = 1; return 0`.
-    ZLECS.store(
-        findeol(),
-        SeqCst,
-    );
-    ZLELINE
-        .lock()
-        .unwrap()
-        .insert(ZLECS.load(SeqCst), '\n');
+    ZLECS.store(findeol(), SeqCst);
+    ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), '\n');
     ZLECS.fetch_add(1, SeqCst);
     ZLELL.fetch_add(1, SeqCst);
     startvitext(1);
@@ -723,14 +685,8 @@ pub fn viopenlineabove() -> i32 {
     // C body (c:712-718): `zlecs = findbol(); spaceinline(1);
     //                     zleline[zlecs] = '\\n'; startvitext(1);
     //                     clearlist = 1; return 0`.
-    ZLECS.store(
-        findbol(),
-        SeqCst,
-    );
-    ZLELINE
-        .lock()
-        .unwrap()
-        .insert(ZLECS.load(SeqCst), '\n');
+    ZLECS.store(findbol(), SeqCst);
+    ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), '\n');
     ZLELL.fetch_add(1, SeqCst);
     startvitext(1);
     ZLE_RESET_NEEDED.store(1, SeqCst);
@@ -748,14 +704,13 @@ pub fn vioperswapcase() -> i32 {
     let oldcs = ZLECS.load(SeqCst);
     while ZLECS.load(SeqCst) < eol {
         let c = ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)];
-        ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] =
-            if c.is_ascii_uppercase() {
-                c.to_ascii_lowercase()
-            } else if c.is_ascii_lowercase() {
-                c.to_ascii_uppercase()
-            } else {
-                c
-            };
+        ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] = if c.is_ascii_uppercase() {
+            c.to_ascii_lowercase()
+        } else if c.is_ascii_lowercase() {
+            c.to_ascii_uppercase()
+        } else {
+            c
+        };
         ZLECS.fetch_add(1, SeqCst);
     }
     ZLECS.store(oldcs, SeqCst);
@@ -829,10 +784,7 @@ pub fn virepeatchange() -> i32 {
 
     // c:797-798 — `if (!lastvichg.buf || vichgflag || virangeflag) return 1;`
     let last = LASTVICHG.lock().unwrap();
-    if last.buf.is_empty()
-        || VICHGFLAG.load(SeqCst) != 0
-        || VIRANGEFLAG.load(SeqCst) != 0
-    {
+    if last.buf.is_empty() || VICHGFLAG.load(SeqCst) != 0 || VIRANGEFLAG.load(SeqCst) != 0 {
         return 1;
     }
     drop(last);
@@ -854,10 +806,7 @@ pub fn virepeatchange() -> i32 {
             // c:805-808
             lvc.mod_.vibuf = zmod_vibuf;
             lvc.mod_.flags = (lvc.mod_.flags & !MOD_VIAPP) | MOD_VIBUF | zmod_viapp;
-        } else if lvc.mod_.flags & MOD_VIBUF != 0
-            && lvc.mod_.vibuf >= 27
-            && lvc.mod_.vibuf <= 34
-        {
+        } else if lvc.mod_.flags & MOD_VIBUF != 0 && lvc.mod_.vibuf >= 27 && lvc.mod_.vibuf <= 34 {
             // c:809-811 — "1.."8 → advance to next numbered buffer
             lvc.mod_.vibuf += 1;
         }
@@ -953,10 +902,7 @@ pub fn vibackwarddeletechar() -> i32 {
     if nn > cs - bol {
         nn = cs - bol;
     }
-    backkill(
-        nn as i32,
-        CUT_FRONT | CUT_RAW,
-    );
+    backkill(nn as i32, CUT_FRONT | CUT_RAW);
     0
 }
 
@@ -988,9 +934,7 @@ pub fn vijoin() -> i32 {
     let n = ZMOD.lock().unwrap().mult.max(1);
     for _ in 0..n {
         let eol = findeol();
-        if eol >= ZLELL.load(SeqCst)
-            || ZLELINE.lock().unwrap().get(eol) != Some(&'\n')
-        {
+        if eol >= ZLELL.load(SeqCst) || ZLELINE.lock().unwrap().get(eol) != Some(&'\n') {
             return 1;
         }
         ZLELINE.lock().unwrap()[eol] = ' ';
@@ -1080,8 +1024,7 @@ pub fn visetbuffer() -> i32 {
     // C body: read one char as the vi buffer name (a-z or 1-9 or '"');
     //         set zmod.vibuf for the next yank/cut. Without vigetkey
     //         interactive read, use lastchar.
-    let c = (crate::ported::zle::compcore::LASTCHAR.load(SeqCst)
-        & 0xff) as u8;
+    let c = (crate::ported::zle::compcore::LASTCHAR.load(SeqCst) & 0xff) as u8;
     let idx: i32 = if c.is_ascii_digit() {
         (c - b'0') as i32 + 26
     } else if c.is_ascii_lowercase() {
@@ -1115,10 +1058,7 @@ pub fn vikilleol() -> i32 {
         if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
             KILLRING.lock().unwrap().pop_back();
         }
-        ZLELL.fetch_sub(
-            eol - ZLECS.load(SeqCst),
-            SeqCst,
-        );
+        ZLELL.fetch_sub(eol - ZLECS.load(SeqCst), SeqCst);
     }
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
@@ -1355,18 +1295,14 @@ pub fn vi_find_char_inner(repeat: bool) -> i32 {
     // so we don't get stuck on the same char.
     if repeat && TAILADD.load(SeqCst) != 0 {
         if VFINDDIR.load(SeqCst) > 0 {
-            if ZLECS.load(SeqCst)
-                < ZLELL.load(SeqCst)
-                && ZLECS.load(SeqCst) + 1
-                    < ZLELL.load(SeqCst)
-                && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) + 1]
-                    == target
+            if ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
+                && ZLECS.load(SeqCst) + 1 < ZLELL.load(SeqCst)
+                && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) + 1] == target
             {
                 ZLECS.fetch_add(1, SeqCst);
             }
         } else if ZLECS.load(SeqCst) > 0
-            && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1]
-                == target
+            && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1] == target
         {
             ZLECS.fetch_sub(1, SeqCst);
         }
@@ -1425,10 +1361,7 @@ pub fn vi_find_char_inner(repeat: bool) -> i32 {
     }
     // Apply the t/T adjustment after the final landing.
     let tail = TAILADD.load(SeqCst);
-    if tail > 0
-        && ZLECS.load(SeqCst)
-            < ZLELL.load(SeqCst)
-    {
+    if tail > 0 && ZLECS.load(SeqCst) < ZLELL.load(SeqCst) {
         ZLECS.fetch_add(1, SeqCst);
     } else if tail < 0 && ZLECS.load(SeqCst) > 0 {
         ZLECS.fetch_sub(1, SeqCst);
@@ -1442,9 +1375,7 @@ pub fn vi_find_char_inner(repeat: bool) -> i32 {
 /// motion — recognises (), [], {}, <>; walks forward or backward
 /// honouring nesting depth.
 pub fn vi_match_bracket() {
-    let c = if ZLECS.load(SeqCst)
-        < ZLELL.load(SeqCst)
-    {
+    let c = if ZLECS.load(SeqCst) < ZLELL.load(SeqCst) {
         ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)]
     } else {
         return;
@@ -1518,27 +1449,21 @@ pub fn vi_swap_case() {
     let count = vi_get_arg() as usize;
 
     for _ in 0..count {
-        if ZLECS.load(SeqCst)
-            < ZLELL.load(SeqCst)
-        {
+        if ZLECS.load(SeqCst) < ZLELL.load(SeqCst) {
             let c = ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)];
-            ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] =
-                if c.is_uppercase() {
-                    c.to_lowercase().next().unwrap_or(c)
-                } else if c.is_lowercase() {
-                    c.to_uppercase().next().unwrap_or(c)
-                } else {
-                    c
-                };
+            ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] = if c.is_uppercase() {
+                c.to_lowercase().next().unwrap_or(c)
+            } else if c.is_lowercase() {
+                c.to_uppercase().next().unwrap_or(c)
+            } else {
+                c
+            };
             ZLECS.fetch_add(1, SeqCst);
         }
     }
 
     // Move back one if we went past end
-    if ZLECS.load(SeqCst) > 0
-        && ZLECS.load(SeqCst)
-            == ZLELL.load(SeqCst)
-    {
+    if ZLECS.load(SeqCst) > 0 && ZLECS.load(SeqCst) == ZLELL.load(SeqCst) {
         ZLECS.fetch_sub(1, SeqCst);
     }
 
@@ -1563,10 +1488,7 @@ pub fn vi_visual_mode() {
             REGION_ACTIVE.store(0, SeqCst);
         }
         0 => {
-            MARK.store(
-                ZLECS.load(SeqCst),
-                SeqCst,
-            );
+            MARK.store(ZLECS.load(SeqCst), SeqCst);
             REGION_ACTIVE.store(1, SeqCst);
         }
         2 => {
@@ -1585,10 +1507,7 @@ pub fn vi_visual_line_mode() {
             REGION_ACTIVE.store(0, SeqCst);
         }
         0 => {
-            MARK.store(
-                ZLECS.load(SeqCst),
-                SeqCst,
-            );
+            MARK.store(ZLECS.load(SeqCst), SeqCst);
             REGION_ACTIVE.store(2, SeqCst);
         }
         1 => {
@@ -1606,10 +1525,7 @@ pub fn vi_visual_line_mode() {
 /// extension, not a port.
 pub fn vi_visual_block_mode() {
     if REGION_ACTIVE.load(SeqCst) == 0 {
-        MARK.store(
-            ZLECS.load(SeqCst),
-            SeqCst,
-        );
+        MARK.store(ZLECS.load(SeqCst), SeqCst);
     }
     REGION_ACTIVE.store(1, SeqCst);
 }
@@ -1625,15 +1541,10 @@ pub fn vi_deactivate_region() {
 /// the named slot; non-letter names are rejected.
 pub fn vi_set_mark(name: char) {
     // Set the historical mark (mirror with zle_main::MARK.load(std::sync::atomic::Ordering::SeqCst) for emacs compat).
-    MARK.store(
-        ZLECS.load(SeqCst),
-        SeqCst,
-    );
+    MARK.store(ZLECS.load(SeqCst), SeqCst);
     if let Some(idx) = vimark_slot(name) {
-        vimarks().lock().unwrap()[idx] = Some((
-            ZLECS.load(SeqCst),
-            history().lock().unwrap().cursor as i32,
-        ));
+        vimarks().lock().unwrap()[idx] =
+            Some((ZLECS.load(SeqCst), history().lock().unwrap().cursor as i32));
     }
 }
 
@@ -1652,10 +1563,8 @@ pub fn vi_goto_mark(name: char) {
     };
     // Save the pre-jump position into the implicit mark (slot 26) so the
     // user can return to it with `''`.
-    vimarks().lock().unwrap()[26] = Some((
-        ZLECS.load(SeqCst),
-        history().lock().unwrap().cursor as i32,
-    ));
+    vimarks().lock().unwrap()[26] =
+        Some((ZLECS.load(SeqCst), history().lock().unwrap().cursor as i32));
     if hist >= 0 && (hist as usize) < history().lock().unwrap().entries.len() {
         // Cross-history jumps need to load that entry.
         let target = hist as usize;
@@ -1665,16 +1574,10 @@ pub fn vi_goto_mark(name: char) {
                 .line
                 .chars()
                 .collect();
-            ZLELL.store(
-                ZLELINE.lock().unwrap().len(),
-                SeqCst,
-            );
+            ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
         }
     }
-    ZLECS.store(
-        cs.min(ZLELL.load(SeqCst)),
-        SeqCst,
-    );
+    ZLECS.store(cs.min(ZLELL.load(SeqCst)), SeqCst);
     ZLE_RESET_NEEDED.store(1, SeqCst);
 }
 
@@ -1852,11 +1755,7 @@ pub fn vi_get_range(op_char: char) -> Option<(usize, usize, bool)> {
                 p = findeol();
             }
             let bol = findbol();
-            let end = if p < ZLELL.load(SeqCst) {
-                p + 1
-            } else {
-                p
-            };
+            let end = if p < ZLELL.load(SeqCst) { p + 1 } else { p };
             return Some((bol, end, true));
         }
         'k' => {
@@ -1909,9 +1808,7 @@ pub fn vi_get_range(op_char: char) -> Option<(usize, usize, bool)> {
             // range — match C's `if (vfinddir == 1 && virangeflag) INCCS();`
             // at zle_move.c:828.
             let mut p = ZLECS.load(SeqCst);
-            if (motion == 'f' || motion == 't')
-                && p < ZLELL.load(SeqCst)
-            {
+            if (motion == 'f' || motion == 't') && p < ZLELL.load(SeqCst) {
                 p += 1;
             }
             ZLECS.store(pos, SeqCst);
@@ -1956,14 +1853,8 @@ pub fn vi_delete_op() -> i32 {
     vi_cut_into_killring(start, end);
     let drained = end - start;
     ZLELINE.lock().unwrap().drain(start..end);
-    ZLELL.store(
-        ZLELINE.lock().unwrap().len(),
-        SeqCst,
-    );
-    ZLECS.store(
-        start.min(ZLELL.load(SeqCst)),
-        SeqCst,
-    );
+    ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
+    ZLECS.store(start.min(ZLELL.load(SeqCst)), SeqCst);
     if line_mode && ZLELL.load(SeqCst) > 0 {
         // C zle_vi.c:392-397 — for line ranges, also pull the trailing
         // \n if the cursor now sits past the buffer end, then jump to
@@ -1996,18 +1887,9 @@ pub fn vi_change_op() -> i32 {
     };
     vi_cut_into_killring(start, end);
     ZLELINE.lock().unwrap().drain(start..end);
-    ZLELL.store(
-        ZLELINE.lock().unwrap().len(),
-        SeqCst,
-    );
-    ZLECS.store(
-        start.min(ZLELL.load(SeqCst)),
-        SeqCst,
-    );
-    VISTARTCHANGE.store(
-        UNDO_CHANGENO.load(SeqCst),
-        SeqCst,
-    );
+    ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
+    ZLECS.store(start.min(ZLELL.load(SeqCst)), SeqCst);
+    VISTARTCHANGE.store(UNDO_CHANGENO.load(SeqCst), SeqCst);
     selectkeymap("main", 1);
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
@@ -2059,10 +1941,7 @@ mod tests {
     fn zle_with(line: &str, cs: usize) {
         zle_reset();
         *ZLELINE.lock().unwrap() = line.chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
         ZLECS.store(cs, SeqCst);
     }
 
@@ -2277,10 +2156,7 @@ mod tests {
         assert_eq!(ZLECS.load(SeqCst), 0);
         // vistartchange records the change number we entered insert mode at;
         // it should now equal undo_changeno (zero in this fresh zle).
-        assert_eq!(
-            VISTARTCHANGE.load(SeqCst),
-            UNDO_CHANGENO.load(SeqCst)
-        );
+        assert_eq!(VISTARTCHANGE.load(SeqCst), UNDO_CHANGENO.load(SeqCst));
     }
 
     #[test]
@@ -2389,8 +2265,11 @@ mod tests {
         zle_with("hello", 0);
         let r = viaddeol();
         assert_eq!(r, 0);
-        assert_eq!(ZLECS.load(SeqCst), 5,
-            "cursor at end-of-line after viaddeol");
+        assert_eq!(
+            ZLECS.load(SeqCst),
+            5,
+            "cursor at end-of-line after viaddeol"
+        );
     }
 
     /// `viinsert()` returns 0 and doesn't move cursor.
@@ -2402,8 +2281,7 @@ mod tests {
         let r = viinsert();
         assert_eq!(r, 0);
         // viinsert just enters insert mode at current pos.
-        assert_eq!(ZLECS.load(SeqCst), 2,
-            "viinsert doesn't move cursor");
+        assert_eq!(ZLECS.load(SeqCst), 2, "viinsert doesn't move cursor");
     }
 
     /// `viaddnext()` advances cursor by 1 when not at EOL.
@@ -2414,8 +2292,7 @@ mod tests {
         zle_with("hello", 0);
         let r = viaddnext();
         assert_eq!(r, 0);
-        assert_eq!(ZLECS.load(SeqCst), 1,
-            "viaddnext from pos 0 → pos 1");
+        assert_eq!(ZLECS.load(SeqCst), 1, "viaddnext from pos 0 → pos 1");
     }
 
     /// `viaddnext()` at EOL doesn't advance (already at end).
@@ -2426,8 +2303,7 @@ mod tests {
         zle_with("hello", 5);
         let r = viaddnext();
         assert_eq!(r, 0);
-        assert_eq!(ZLECS.load(SeqCst), 5,
-            "viaddnext at EOL stays at EOL");
+        assert_eq!(ZLECS.load(SeqCst), 5, "viaddnext at EOL stays at EOL");
     }
 
     /// `viinsert_init` doesn't panic.

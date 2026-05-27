@@ -45,7 +45,9 @@ struct CompsysCompletion {
 }
 #[allow(dead_code)]
 impl CompsysCompletion {
-    fn new(_s: impl AsRef<str>) -> Self { Self::default() }
+    fn new(_s: impl AsRef<str>) -> Self {
+        Self::default()
+    }
 }
 #[allow(unused_imports)]
 use CompsysCompletion as Completion;
@@ -53,25 +55,46 @@ use CompsysCompletion as Completion;
 #[derive(Clone, Copy, Debug, Default)]
 enum MenuAction {
     #[default]
-    Next, Prev, Up, Down, Left, Right, PageUp, PageDown,
+    Next,
+    Prev,
+    Up,
+    Down,
+    Left,
+    Right,
+    PageUp,
+    PageDown,
 }
 #[derive(Clone, Debug, Default)]
 struct MenuState;
 impl MenuState {
-    fn new() -> Self { Self }
+    fn new() -> Self {
+        Self
+    }
     fn start(&mut self) {}
     fn stop(&mut self) {}
-    fn cols(&self) -> usize { 0 }
-    fn selected_index(&self) -> Option<usize> { None }
+    fn cols(&self) -> usize {
+        0
+    }
+    fn selected_index(&self) -> Option<usize> {
+        None
+    }
     fn set_term_size(&mut self, _w: usize, _h: usize) {}
     fn set_available_rows(&mut self, _r: usize) {}
-    fn process_action(&mut self, _a: MenuAction) -> MenuResult { MenuResult }
-    fn render(&self) -> MenuRendering { MenuRendering::default() }
+    fn process_action(&mut self, _a: MenuAction) -> MenuResult {
+        MenuResult
+    }
+    fn render(&self) -> MenuRendering {
+        MenuRendering::default()
+    }
 }
 #[derive(Clone, Debug, Default)]
-struct MenuRendering { lines: Vec<MenuLine> }
+struct MenuRendering {
+    lines: Vec<MenuLine>,
+}
 #[derive(Clone, Debug, Default)]
-struct MenuLine { content: String }
+struct MenuLine {
+    content: String,
+}
 #[derive(Clone, Debug, Default)]
 struct MenuResult;
 
@@ -82,8 +105,12 @@ struct CompletionGroup {
 }
 #[allow(dead_code)]
 impl CompletionGroup {
-    fn new(_name: impl AsRef<str>) -> Self { Self::default() }
-    fn add(&mut self, c: CompsysCompletion) { self.matches.push(c); }
+    fn new(_name: impl AsRef<str>) -> Self {
+        Self::default()
+    }
+    fn add(&mut self, c: CompsysCompletion) {
+        self.matches.push(c);
+    }
 }
 
 #[allow(dead_code)]
@@ -91,8 +118,12 @@ impl CompletionGroup {
 struct CompletionState;
 #[allow(dead_code)]
 impl CompletionState {
-    fn new() -> Self { Self }
-    fn from_line(_line: &str, _cursor: usize) -> Self { Self }
+    fn new() -> Self {
+        Self
+    }
+    fn from_line(_line: &str, _cursor: usize) -> Self {
+        Self
+    }
     fn add_match(&mut self, _c: CompsysCompletion, _group: Option<&str>) {}
     fn begin_group(&mut self, _name: &str, _sorted: bool) {}
     fn end_group(&mut self) {}
@@ -214,8 +245,7 @@ fn render_inline_md(line: &str, cyan: &str, bold: &str, reset: &str) -> String {
         // **bold** — only when matched closer exists on the same line.
         if c == '*' && i + 1 < bytes.len() && bytes[i + 1] as char == '*' {
             if let Some(end) = find_bytes(&bytes[i + 2..], b"**") {
-                let inner =
-                    std::str::from_utf8(&bytes[i + 2..i + 2 + end]).unwrap_or("");
+                let inner = std::str::from_utf8(&bytes[i + 2..i + 2 + end]).unwrap_or("");
                 out.push_str(bold);
                 out.push_str(inner);
                 out.push_str(reset);
@@ -225,15 +255,11 @@ fn render_inline_md(line: &str, cyan: &str, bold: &str, reset: &str) -> String {
         }
         // `_emph_` — strip the underscores in colored mode (no portable
         // italic); leave them in plain mode so the markdown stays valid.
-        if c == '_'
-            && !cyan.is_empty()
-            && (i == 0 || !(bytes[i - 1] as char).is_alphanumeric())
-        {
+        if c == '_' && !cyan.is_empty() && (i == 0 || !(bytes[i - 1] as char).is_alphanumeric()) {
             // Look ahead for a matching `_` not bounded by alphanum on
             // its right side.
             if let Some(rel) = find_word_close_underscore(&bytes[i + 1..]) {
-                let inner =
-                    std::str::from_utf8(&bytes[i + 1..i + 1 + rel]).unwrap_or("");
+                let inner = std::str::from_utf8(&bytes[i + 1..i + 1 + rel]).unwrap_or("");
                 // Underline if supported; cheap unicode-clean fallback:
                 // just emit dim text.
                 out.push_str("\x1b[3m");
@@ -450,7 +476,9 @@ fn run_gen_docs_subcommand(args: &[&str]) -> i32 {
             n += 1;
             let stem2 = format!("{}.{}-{}", stem, ext, n);
             out_path = match rel.parent() {
-                Some(p) if !p.as_os_str().is_empty() => out_root.join(p).join(format!("{}.md", stem2)),
+                Some(p) if !p.as_os_str().is_empty() => {
+                    out_root.join(p).join(format!("{}.md", stem2))
+                }
                 _ => out_root.join(format!("{}.md", stem2)),
             };
         }
@@ -1147,7 +1175,9 @@ pub fn zshrs_main() {
     };
     let selected_mode = explicit_mode.or(argv0_inferred_mode);
     let parity_mode_selected = if let Some(mode) = selected_mode {
-        unsafe { SHELL_MODE = mode; }
+        unsafe {
+            SHELL_MODE = mode;
+        }
         true
     } else {
         false
@@ -1174,7 +1204,9 @@ pub fn zshrs_main() {
     }
 
     if parity_mode_selected {
-        unsafe { std::env::set_var("ZSHRS_CACHE", "0"); }
+        unsafe {
+            std::env::set_var("ZSHRS_CACHE", "0");
+        }
         tracing::info!(mode = ?shell_mode(), "parity mode: ZSHRS_CACHE=0, daemon disabled, plugin_cache replay disabled");
     }
     tracing::info!(mode = ?shell_mode(), "shell mode selected");
@@ -3382,7 +3414,6 @@ impl ZshrsCompleter {
             comp_state: CompletionState::new(),
         }
     }
-
 }
 
 impl Completer for ZshrsCompleter {

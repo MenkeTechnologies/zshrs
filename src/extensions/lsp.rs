@@ -578,9 +578,7 @@ fn diagnose(text: &str) -> Vec<Value> {
                 }
                 ')' => {
                     // `))` closes arithmetic.
-                    if bytes.get(i + 1) == Some(&b')')
-                        && stack.last().map(|x| x.0) == Some('A')
-                    {
+                    if bytes.get(i + 1) == Some(&b')') && stack.last().map(|x| x.0) == Some('A') {
                         stack.pop();
                         i += 2;
                         continue;
@@ -590,16 +588,9 @@ fn diagnose(text: &str) -> Vec<Value> {
                     } else {
                         // Bare `)` inside an open `case ... esac` is a
                         // pattern-arm terminator, not a paren mismatch.
-                        let in_case =
-                            block_stack.iter().any(|(kw, _, _)| *kw == "case");
+                        let in_case = block_stack.iter().any(|(kw, _, _)| *kw == "case");
                         if !in_case {
-                            diags.push(diagnostic(
-                                line_no,
-                                i,
-                                1,
-                                "unmatched `)`",
-                                1,
-                            ));
+                            diags.push(diagnostic(line_no, i, 1, "unmatched `)`", 1));
                         }
                     }
                 }
@@ -622,9 +613,7 @@ fn diagnose(text: &str) -> Vec<Value> {
                     stack.push(('[', line_no, i));
                 }
                 ']' => {
-                    if bytes.get(i + 1) == Some(&b']')
-                        && stack.last().map(|x| x.0) == Some('D')
-                    {
+                    if bytes.get(i + 1) == Some(&b']') && stack.last().map(|x| x.0) == Some('D') {
                         stack.pop();
                         i += 2;
                         continue;
@@ -671,11 +660,7 @@ fn diagnose(text: &str) -> Vec<Value> {
                     let is_comment_start = match prev {
                         None => true,
                         Some(p) => {
-                            p.is_whitespace()
-                                || p == ';'
-                                || p == '&'
-                                || p == '|'
-                                || p == '('
+                            p.is_whitespace() || p == ';' || p == '&' || p == '|' || p == '('
                         }
                     };
                     if is_comment_start {
@@ -841,16 +826,29 @@ fn completion(state: &State, params: &Value) -> Value {
                 // `*(/D^.)` chain — directories that aren't dotfiles.
                 let items: Vec<Value> = GLOB_QUALIFIER_DOCS
                     .iter()
-                    .map(|(q, doc)| ctx_item_chain(q, *doc,
-                        &format!("**`(`{}`)`** — {}\n\n_zsh glob qualifier — `*(QUALIFIERS)`_", q, doc)))
+                    .map(|(q, doc)| {
+                        ctx_item_chain(
+                            q,
+                            *doc,
+                            &format!(
+                                "**`(`{}`)`** — {}\n\n_zsh glob qualifier — `*(QUALIFIERS)`_",
+                                q, doc
+                            ),
+                        )
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::HistoryDesignator => {
                 let items: Vec<Value> = HISTORY_DESIGNATOR_DOCS
                     .iter()
-                    .map(|(d, doc)| ctx_item(d, *doc,
-                        &format!("**`!{}`** — {}\n\n_zsh history event designator_", d, doc)))
+                    .map(|(d, doc)| {
+                        ctx_item(
+                            d,
+                            *doc,
+                            &format!("**`!{}`** — {}\n\n_zsh history event designator_", d, doc),
+                        )
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
@@ -864,8 +862,16 @@ fn completion(state: &State, params: &Value) -> Value {
                 // multi-letter input).
                 let items: Vec<Value> = PARAM_MODIFIER_DOCS
                     .iter()
-                    .map(|(m, doc)| ctx_item_chain(m, *doc,
-                        &format!("**`:{}`** — {}\n\n_zsh modifier — `${{var:MOD}}` / `!event:MOD`_", m, doc)))
+                    .map(|(m, doc)| {
+                        ctx_item_chain(
+                            m,
+                            *doc,
+                            &format!(
+                                "**`:{}`** — {}\n\n_zsh modifier — `${{var:MOD}}` / `!event:MOD`_",
+                                m, doc
+                            ),
+                        )
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
@@ -884,16 +890,29 @@ fn completion(state: &State, params: &Value) -> Value {
             LspCompletionContext::SignalName => {
                 let items: Vec<Value> = SIGNAL_NAMES
                     .iter()
-                    .map(|(n, doc)| ctx_item(n, *doc,
-                        &format!("**SIG{}** — {}\n\n_signal name — `kill -{}` / `trap … {}`_", n, doc, n, n)))
+                    .map(|(n, doc)| {
+                        ctx_item(
+                            n,
+                            *doc,
+                            &format!(
+                                "**SIG{}** — {}\n\n_signal name — `kill -{}` / `trap … {}`_",
+                                n, doc, n, n
+                            ),
+                        )
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::ModuleName => {
                 let items: Vec<Value> = ZSH_MODULE_NAMES
                     .iter()
-                    .map(|(n, doc)| ctx_item(n, *doc,
-                        &format!("**`{}`** — {}\n\n_zsh module — `zmodload {}`_", n, doc, n)))
+                    .map(|(n, doc)| {
+                        ctx_item(
+                            n,
+                            *doc,
+                            &format!("**`{}`** — {}\n\n_zsh module — `zmodload {}`_", n, doc, n),
+                        )
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
@@ -907,30 +926,49 @@ fn completion(state: &State, params: &Value) -> Value {
             LspCompletionContext::WidgetName => {
                 let items: Vec<Value> = ZLE_WIDGET_NAMES
                     .iter()
-                    .map(|(n, doc)| ctx_item(n, *doc, &format!("**`{}`** — {}\n\n_ZLE widget_", n, doc)))
+                    .map(|(n, doc)| {
+                        ctx_item(n, *doc, &format!("**`{}`** — {}\n\n_ZLE widget_", n, doc))
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::TypesetFlag => {
                 let items: Vec<Value> = TYPESET_FLAGS
                     .iter()
-                    .map(|(f, doc)| ctx_item(f, *doc,
-                        &format!("**`{}`** — {}\n\n_typeset / declare / local / readonly flag_", f, doc)))
+                    .map(|(f, doc)| {
+                        ctx_item(
+                            f,
+                            *doc,
+                            &format!(
+                                "**`{}`** — {}\n\n_typeset / declare / local / readonly flag_",
+                                f, doc
+                            ),
+                        )
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::ZstyleContext => {
                 let items: Vec<Value> = ZSTYLE_CONTEXTS
                     .iter()
-                    .map(|(c, doc)| ctx_item(c, *doc, &format!("**`{}`** — {}\n\n_zstyle context pattern_", c, doc)))
+                    .map(|(c, doc)| {
+                        ctx_item(
+                            c,
+                            *doc,
+                            &format!("**`{}`** — {}\n\n_zstyle context pattern_", c, doc),
+                        )
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
             LspCompletionContext::CompdefFn => {
                 let mut items = Vec::new();
                 for n in crate::compsys::COMPSYS_FN_NAMES {
-                    items.push(ctx_item(n, "compsys completion function",
-                        &format!("**`{}`** — compsys completion function", n)));
+                    items.push(ctx_item(
+                        n,
+                        "compsys completion function",
+                        &format!("**`{}`** — compsys completion function", n),
+                    ));
                 }
                 return json!({ "isIncomplete": false, "items": items });
             }
@@ -938,8 +976,13 @@ fn completion(state: &State, params: &Value) -> Value {
             LspCompletionContext::TestOperator => {
                 let items: Vec<Value> = TEST_OPERATORS
                     .iter()
-                    .map(|(op, doc)| ctx_item(op, *doc,
-                        &format!("**`{}`** — {}\n\n_inside `[[ … ]]` conditional_", op, doc)))
+                    .map(|(op, doc)| {
+                        ctx_item(
+                            op,
+                            *doc,
+                            &format!("**`{}`** — {}\n\n_inside `[[ … ]]` conditional_", op, doc),
+                        )
+                    })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
             }
@@ -1166,20 +1209,27 @@ fn completion(state: &State, params: &Value) -> Value {
     // zero items and the popup closed — even though the server has
     // `$GID`/`$galiases`/`$gid` available.
     let prefix_has_dollar = prefix.starts_with('$');
-    let bare_prefix: String = prefix.strip_prefix('$').map(|s| s.to_string()).unwrap_or_default();
+    let bare_prefix: String = prefix
+        .strip_prefix('$')
+        .map(|s| s.to_string())
+        .unwrap_or_default();
     let bare_prefix_lc = bare_prefix.to_lowercase();
     for (name, _doc) in crate::zsh_special_var_docs::SPECIAL_VAR_DOCS {
         // Skip the pure-symbolic ones (`$`, `?`, `*`, etc) — they're
         // already in SPECIAL_VARS with the `$` prefix. The remaining
         // alphabetic names are the meaningful completions.
-        if !name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+        if !name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_')
+            .unwrap_or(false)
+        {
             continue;
         }
         if want(name) {
             push(&mut items, name, 6, "special variable");
         } else if prefix_has_dollar
-            && (bare_prefix_lc.is_empty()
-                || name.to_lowercase().starts_with(&bare_prefix_lc))
+            && (bare_prefix_lc.is_empty() || name.to_lowercase().starts_with(&bare_prefix_lc))
         {
             let with_sigil = format!("${}", name);
             push(&mut items, &with_sigil, 6, "special variable");
@@ -1189,14 +1239,18 @@ fn completion(state: &State, params: &Value) -> Value {
     // surface so completion offers every surface name. Same dual-prefix
     // match as above so `$PROMPT<TAB>` hits aliased forms.
     for (alias, _canon) in crate::zsh_special_var_docs::SPECIAL_VAR_ALIASES {
-        if !alias.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+        if !alias
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_')
+            .unwrap_or(false)
+        {
             continue;
         }
         if want(alias) {
             push(&mut items, alias, 6, "special variable");
         } else if prefix_has_dollar
-            && (bare_prefix_lc.is_empty()
-                || alias.to_lowercase().starts_with(&bare_prefix_lc))
+            && (bare_prefix_lc.is_empty() || alias.to_lowercase().starts_with(&bare_prefix_lc))
         {
             let with_sigil = format!("${}", alias);
             push(&mut items, &with_sigil, 6, "special variable");
@@ -1438,7 +1492,8 @@ fn position_inside_string_literal(line_text: &str, start: usize, end: usize) -> 
     //   2. Span is identifier-only (e.g. cursor mid-name) and the
     //      byte immediately before is `$`.
     let cap = end.min(bytes.len());
-    if start < cap && bytes[start] == b'$'
+    if start < cap
+        && bytes[start] == b'$'
         && bytes[start + 1..cap]
             .iter()
             .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
@@ -1477,10 +1532,7 @@ fn position_inside_string_literal(line_text: &str, start: usize, end: usize) -> 
             }
             // `${` opens a code-context interpolation inside `"..."`
             // and `` `...` ``. Single-quoted strings don't expand.
-            if (q == b'"' || q == b'`')
-                && c == b'$'
-                && i + 1 < bytes.len()
-                && bytes[i + 1] == b'{'
+            if (q == b'"' || q == b'`') && c == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{'
             {
                 interp_depth = 1;
                 i += 2;
@@ -2060,7 +2112,10 @@ pub fn lookup_doc(name: &str) -> String {
             return format!("**{}** — _special variable_\n\n{}", d.0, d.1);
         }
     }
-    if let Some(d) = OPTION_DOCS_FALLBACK.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
+    if let Some(d) = OPTION_DOCS_FALLBACK
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+    {
         return format!("**{}** — _zsh option_\n\n{}", d.0, d.1);
     }
     // Full doc-comment body (extracted from source `///` blocks by
@@ -2292,16 +2347,22 @@ const GLOB_QUALIFIER_DOCS: &[(&str, &str)] = &[
 /// inside `((…))` arithmetic. Verified against `man zshexpn` "History
 /// Expansion → Event Designators".
 const HISTORY_DESIGNATOR_DOCS: &[(&str, &str)] = &[
-    ("!",   "previous command (`!!`)"),
-    ("N",   "command N from history (`!42`)"),
-    ("-N",  "N commands back (`!-3` = third-to-last)"),
+    ("!", "previous command (`!!`)"),
+    ("N", "command N from history (`!42`)"),
+    ("-N", "N commands back (`!-3` = third-to-last)"),
     ("str", "most recent command starting with `str` (`!ls`)"),
-    ("?str?", "most recent command containing `str` (`!?docker?`)"),
-    ("#",   "current command line typed so far"),
-    ("$",   "last argument of previous command (= `!!:$`)"),
-    ("^",   "first argument of previous command (= `!!:^`)"),
-    ("*",   "all arguments of previous command (= `!!:*`)"),
-    (":",   "introduce a word designator / modifier — `!!:1`, `!!:s/old/new/`, `!!:h`"),
+    (
+        "?str?",
+        "most recent command containing `str` (`!?docker?`)",
+    ),
+    ("#", "current command line typed so far"),
+    ("$", "last argument of previous command (= `!!:$`)"),
+    ("^", "first argument of previous command (= `!!:^`)"),
+    ("*", "all arguments of previous command (= `!!:*`)"),
+    (
+        ":",
+        "introduce a word designator / modifier — `!!:1`, `!!:s/old/new/`, `!!:h`",
+    ),
 ];
 
 /// Parameter expansion + history modifiers — what follows `:` inside
@@ -2315,46 +2376,82 @@ const HISTORY_DESIGNATOR_DOCS: &[(&str, &str)] = &[
 /// Expansion" + "Modifiers".
 const PARAM_MODIFIER_DOCS: &[(&str, &str)] = &[
     // ── Parameter default-value forms ──
-    ("-",   "`${var:-WORD}` — use WORD if `var` unset or empty"),
-    ("=",   "`${var:=WORD}` — assign WORD to `var` (and use it) if unset/empty"),
-    ("?",   "`${var:?MSG}` — print MSG to stderr + exit if `var` unset/empty"),
-    ("+",   "`${var:+WORD}` — use WORD if `var` IS set (the inverse of `:-`)"),
+    ("-", "`${var:-WORD}` — use WORD if `var` unset or empty"),
+    (
+        "=",
+        "`${var:=WORD}` — assign WORD to `var` (and use it) if unset/empty",
+    ),
+    (
+        "?",
+        "`${var:?MSG}` — print MSG to stderr + exit if `var` unset/empty",
+    ),
+    (
+        "+",
+        "`${var:+WORD}` — use WORD if `var` IS set (the inverse of `:-`)",
+    ),
     // ── Substring slicing ──
-    ("0",   "`${var:OFFSET:LENGTH}` — substring (zero-based; negative offset = from end)"),
+    (
+        "0",
+        "`${var:OFFSET:LENGTH}` — substring (zero-based; negative offset = from end)",
+    ),
     // ── Path / file modifiers ──
-    ("h",   "head — strip last path component (like `dirname`)"),
-    ("t",   "tail — keep ONLY last path component (like `basename`)"),
-    ("r",   "root — strip the final `.ext` suffix"),
-    ("e",   "extension — keep ONLY the final `.ext` (no leading dot)"),
-    ("a",   "absolute — textually resolve `..` / `.` against `$PWD`"),
-    ("A",   "absolute + resolve symlinks (like `realpath`)"),
-    ("c",   "PATH lookup — replace bare command with full path via `$PATH`"),
-    ("P",   "physical path — resolve all symlinks"),
-    ("f",   "repeat `:h` until the result is no longer an existing directory"),
-    ("F",   "`:F:N:` — repeat `:h` N times"),
+    ("h", "head — strip last path component (like `dirname`)"),
+    (
+        "t",
+        "tail — keep ONLY last path component (like `basename`)",
+    ),
+    ("r", "root — strip the final `.ext` suffix"),
+    (
+        "e",
+        "extension — keep ONLY the final `.ext` (no leading dot)",
+    ),
+    (
+        "a",
+        "absolute — textually resolve `..` / `.` against `$PWD`",
+    ),
+    ("A", "absolute + resolve symlinks (like `realpath`)"),
+    (
+        "c",
+        "PATH lookup — replace bare command with full path via `$PATH`",
+    ),
+    ("P", "physical path — resolve all symlinks"),
+    (
+        "f",
+        "repeat `:h` until the result is no longer an existing directory",
+    ),
+    ("F", "`:F:N:` — repeat `:h` N times"),
     // ── Substitution ──
-    ("s",   "`:s/OLD/NEW/` — substitute first OLD with NEW"),
-    ("gs",  "`:gs/OLD/NEW/` — global substitute (every occurrence)"),
-    ("&",   "repeat the last `:s` substitution"),
-    ("g&",  "repeat the last `:s` substitution globally"),
+    ("s", "`:s/OLD/NEW/` — substitute first OLD with NEW"),
+    (
+        "gs",
+        "`:gs/OLD/NEW/` — global substitute (every occurrence)",
+    ),
+    ("&", "repeat the last `:s` substitution"),
+    ("g&", "repeat the last `:s` substitution globally"),
     // ── Quoting ──
-    ("q",   "quote — backslash-escape all metacharacters"),
-    ("Q",   "unquote — remove ONE level of quoting"),
-    ("x",   "quote, breaking at whitespace into separate words"),
+    ("q", "quote — backslash-escape all metacharacters"),
+    ("Q", "unquote — remove ONE level of quoting"),
+    ("x", "quote, breaking at whitespace into separate words"),
     // ── Case ──
-    ("l",   "lowercase first character"),
-    ("u",   "uppercase first character"),
-    ("L",   "lowercase ENTIRE string"),
-    ("U",   "uppercase ENTIRE string"),
-    ("C",   "capitalize each word (`Title Case`)"),
+    ("l", "lowercase first character"),
+    ("u", "uppercase first character"),
+    ("L", "lowercase ENTIRE string"),
+    ("U", "uppercase ENTIRE string"),
+    ("C", "capitalize each word (`Title Case`)"),
     // ── Array operations ──
-    ("S",   "sort array elements ascending"),
-    ("O",   "sort array elements descending"),
-    ("#",   "`${var:#PATTERN}` — remove array elements matching PATTERN (with `(@)`)"),
-    ("|",   "`${arr:|other}` — set difference (elements of `arr` not in `other`)"),
-    ("*",   "`${arr:*other}` — set intersection"),
-    ("^",   "`${arr:^other}` — interleave (zip) two arrays"),
-    ("^^",  "`${arr:^^other}` — distributed zip (every pair)"),
+    ("S", "sort array elements ascending"),
+    ("O", "sort array elements descending"),
+    (
+        "#",
+        "`${var:#PATTERN}` — remove array elements matching PATTERN (with `(@)`)",
+    ),
+    (
+        "|",
+        "`${arr:|other}` — set difference (elements of `arr` not in `other`)",
+    ),
+    ("*", "`${arr:*other}` — set intersection"),
+    ("^", "`${arr:^other}` — interleave (zip) two arrays"),
+    ("^^", "`${arr:^^other}` — distributed zip (every pair)"),
 ];
 
 /// Signal names — POSIX + zsh-specific synthetic signals (`ZERR`,
@@ -2362,97 +2459,142 @@ const PARAM_MODIFIER_DOCS: &[(&str, &str)] = &[
 /// (`SIGINT` / `INT`) is offered without the `SIG` prefix per zsh's
 /// `kill -l` output convention.
 const SIGNAL_NAMES: &[(&str, &str)] = &[
-    ("HUP",    "1 — hangup (terminal closed)"),
-    ("INT",    "2 — interrupt (Ctrl-C)"),
-    ("QUIT",   "3 — quit + core dump (Ctrl-\\)"),
-    ("ILL",    "4 — illegal instruction"),
-    ("TRAP",   "5 — trace/breakpoint trap"),
-    ("ABRT",   "6 — abort (`abort()` syscall)"),
-    ("BUS",    "7 — bus error"),
-    ("FPE",    "8 — floating-point exception"),
-    ("KILL",   "9 — kill (uncatchable, unblockable)"),
-    ("USR1",   "10 — user-defined signal 1"),
-    ("SEGV",   "11 — segmentation fault"),
-    ("USR2",   "12 — user-defined signal 2"),
-    ("PIPE",   "13 — write to pipe with no readers"),
-    ("ALRM",   "14 — alarm clock (`alarm()`)"),
-    ("TERM",   "15 — termination request (default `kill`)"),
-    ("CHLD",   "17 — child process state change"),
-    ("CONT",   "18 — continue if stopped"),
-    ("STOP",   "19 — stop (uncatchable)"),
-    ("TSTP",   "20 — terminal stop (Ctrl-Z)"),
-    ("TTIN",   "21 — background process needs tty input"),
-    ("TTOU",   "22 — background process tty output"),
-    ("URG",    "23 — urgent socket data"),
-    ("XCPU",   "24 — CPU time limit exceeded"),
-    ("XFSZ",   "25 — file size limit exceeded"),
+    ("HUP", "1 — hangup (terminal closed)"),
+    ("INT", "2 — interrupt (Ctrl-C)"),
+    ("QUIT", "3 — quit + core dump (Ctrl-\\)"),
+    ("ILL", "4 — illegal instruction"),
+    ("TRAP", "5 — trace/breakpoint trap"),
+    ("ABRT", "6 — abort (`abort()` syscall)"),
+    ("BUS", "7 — bus error"),
+    ("FPE", "8 — floating-point exception"),
+    ("KILL", "9 — kill (uncatchable, unblockable)"),
+    ("USR1", "10 — user-defined signal 1"),
+    ("SEGV", "11 — segmentation fault"),
+    ("USR2", "12 — user-defined signal 2"),
+    ("PIPE", "13 — write to pipe with no readers"),
+    ("ALRM", "14 — alarm clock (`alarm()`)"),
+    ("TERM", "15 — termination request (default `kill`)"),
+    ("CHLD", "17 — child process state change"),
+    ("CONT", "18 — continue if stopped"),
+    ("STOP", "19 — stop (uncatchable)"),
+    ("TSTP", "20 — terminal stop (Ctrl-Z)"),
+    ("TTIN", "21 — background process needs tty input"),
+    ("TTOU", "22 — background process tty output"),
+    ("URG", "23 — urgent socket data"),
+    ("XCPU", "24 — CPU time limit exceeded"),
+    ("XFSZ", "25 — file size limit exceeded"),
     ("VTALRM", "26 — virtual timer alarm"),
-    ("PROF",   "27 — profiling timer alarm"),
-    ("WINCH",  "28 — window size change"),
-    ("IO",     "29 — async I/O ready"),
-    ("PWR",    "30 — power failure"),
-    ("SYS",    "31 — bad syscall"),
+    ("PROF", "27 — profiling timer alarm"),
+    ("WINCH", "28 — window size change"),
+    ("IO", "29 — async I/O ready"),
+    ("PWR", "30 — power failure"),
+    ("SYS", "31 — bad syscall"),
     // ── zsh synthetic signals ──
-    ("EXIT",   "0 — shell exit (special — `trap ... EXIT`)"),
-    ("ZERR",   "zsh — fires on any non-zero exit status"),
-    ("DEBUG",  "zsh — fires before every command (with `DEBUG_BEFORE_CMD`)"),
+    ("EXIT", "0 — shell exit (special — `trap ... EXIT`)"),
+    ("ZERR", "zsh — fires on any non-zero exit status"),
+    (
+        "DEBUG",
+        "zsh — fires before every command (with `DEBUG_BEFORE_CMD`)",
+    ),
 ];
 
 /// Loadable zsh modules — `zmodload zsh/MOD`. Canonical list from
 /// `man zshmodules`. Most expose builtins, parameters, or math ported
 /// that aren't compiled into the core.
 const ZSH_MODULE_NAMES: &[(&str, &str)] = &[
-    ("zsh/attr",         "extended file attribute manipulation"),
-    ("zsh/cap",          "POSIX capability sets"),
-    ("zsh/clone",        "fork the shell to a new session"),
-    ("zsh/compctl",      "legacy `compctl` completion (deprecated)"),
-    ("zsh/complete",     "core programmable completion machinery"),
-    ("zsh/complist",     "completion list display + menuselect keymap"),
-    ("zsh/computil",     "internal helpers used by `_arguments` / `_describe`"),
-    ("zsh/curses",       "ncurses bindings (`zcurses`)"),
-    ("zsh/datetime",     "`strftime` builtin + `$EPOCHSECONDS` / `$EPOCHREALTIME`"),
-    ("zsh/db/gdbm",      "GDBM key-value store as a zsh associative array"),
-    ("zsh/deltochar",    "`delete-to-char` / `zap-to-char` ZLE widgets"),
-    ("zsh/example",      "template module (skeleton; not useful)"),
-    ("zsh/files",        "in-shell file ops (`mkdir`, `chmod`, `mv`, `rm`, `chown`, `sync`, `ln`)"),
-    ("zsh/langinfo",     "locale info (`$langinfo`)"),
-    ("zsh/mapfile",      "read/write a file as an assoc array"),
-    ("zsh/mathfunc",     "`sin`, `cos`, `sqrt`, `log`, `exp`, … math functions for `((…))`"),
-    ("zsh/nearcolor",    "approximate-color terminal fallback"),
-    ("zsh/newuser",      "first-run user setup helper"),
-    ("zsh/parameter",    "reflection — `$functions`, `$aliases`, `$options`, `$commands`, `$parameters`, etc."),
-    ("zsh/pcre",         "Perl-compatible regex (`pcre_match` / `=~`)"),
-    ("zsh/regex",        "POSIX extended regex (`=~`)"),
-    ("zsh/sched",        "in-shell scheduler (`sched +5 cmd`)"),
-    ("zsh/net/socket",   "Unix-domain socket builtin (`zsocket`)"),
-    ("zsh/stat",         "`stat` builtin returning fields into a hash"),
-    ("zsh/system",       "low-level syscalls (`sysread`, `syswrite`, `syserror`, `sysopen`)"),
-    ("zsh/net/tcp",      "TCP socket builtin (`ztcp`)"),
-    ("zsh/termcap",      "termcap parameter access (`$termcap`)"),
-    ("zsh/terminfo",     "terminfo parameter access (`$terminfo`)"),
-    ("zsh/zftp",         "FTP client built into the shell"),
-    ("zsh/zle",          "Zsh Line Editor — `bindkey`, `zle`, widget registration"),
-    ("zsh/zleparameter", "ZLE introspection — `$widgets`, `$keymaps`"),
-    ("zsh/zprof",        "profiling — `zprof` builtin"),
-    ("zsh/zpty",         "spawn commands in a pseudo-terminal"),
-    ("zsh/zselect",      "`select(2)` on fds with a timeout"),
-    ("zsh/zutil",        "core utilities — `zparseopts`, `zformat`, `zstyle`, `zregexparse`"),
+    ("zsh/attr", "extended file attribute manipulation"),
+    ("zsh/cap", "POSIX capability sets"),
+    ("zsh/clone", "fork the shell to a new session"),
+    ("zsh/compctl", "legacy `compctl` completion (deprecated)"),
+    ("zsh/complete", "core programmable completion machinery"),
+    (
+        "zsh/complist",
+        "completion list display + menuselect keymap",
+    ),
+    (
+        "zsh/computil",
+        "internal helpers used by `_arguments` / `_describe`",
+    ),
+    ("zsh/curses", "ncurses bindings (`zcurses`)"),
+    (
+        "zsh/datetime",
+        "`strftime` builtin + `$EPOCHSECONDS` / `$EPOCHREALTIME`",
+    ),
+    (
+        "zsh/db/gdbm",
+        "GDBM key-value store as a zsh associative array",
+    ),
+    (
+        "zsh/deltochar",
+        "`delete-to-char` / `zap-to-char` ZLE widgets",
+    ),
+    ("zsh/example", "template module (skeleton; not useful)"),
+    (
+        "zsh/files",
+        "in-shell file ops (`mkdir`, `chmod`, `mv`, `rm`, `chown`, `sync`, `ln`)",
+    ),
+    ("zsh/langinfo", "locale info (`$langinfo`)"),
+    ("zsh/mapfile", "read/write a file as an assoc array"),
+    (
+        "zsh/mathfunc",
+        "`sin`, `cos`, `sqrt`, `log`, `exp`, … math functions for `((…))`",
+    ),
+    ("zsh/nearcolor", "approximate-color terminal fallback"),
+    ("zsh/newuser", "first-run user setup helper"),
+    (
+        "zsh/parameter",
+        "reflection — `$functions`, `$aliases`, `$options`, `$commands`, `$parameters`, etc.",
+    ),
+    ("zsh/pcre", "Perl-compatible regex (`pcre_match` / `=~`)"),
+    ("zsh/regex", "POSIX extended regex (`=~`)"),
+    ("zsh/sched", "in-shell scheduler (`sched +5 cmd`)"),
+    ("zsh/net/socket", "Unix-domain socket builtin (`zsocket`)"),
+    ("zsh/stat", "`stat` builtin returning fields into a hash"),
+    (
+        "zsh/system",
+        "low-level syscalls (`sysread`, `syswrite`, `syserror`, `sysopen`)",
+    ),
+    ("zsh/net/tcp", "TCP socket builtin (`ztcp`)"),
+    ("zsh/termcap", "termcap parameter access (`$termcap`)"),
+    ("zsh/terminfo", "terminfo parameter access (`$terminfo`)"),
+    ("zsh/zftp", "FTP client built into the shell"),
+    (
+        "zsh/zle",
+        "Zsh Line Editor — `bindkey`, `zle`, widget registration",
+    ),
+    (
+        "zsh/zleparameter",
+        "ZLE introspection — `$widgets`, `$keymaps`",
+    ),
+    ("zsh/zprof", "profiling — `zprof` builtin"),
+    ("zsh/zpty", "spawn commands in a pseudo-terminal"),
+    ("zsh/zselect", "`select(2)` on fds with a timeout"),
+    (
+        "zsh/zutil",
+        "core utilities — `zparseopts`, `zformat`, `zstyle`, `zregexparse`",
+    ),
 ];
 
 /// Keymap names — `bindkey -A NAME` source / `bindkey -N NAME` target,
 /// also `bindkey -M NAME …`. The named maps zsh ships out of the box.
 const KEYMAP_NAMES: &[(&str, &str)] = &[
-    ("emacs",       "GNU Readline emacs bindings (default)"),
-    ("vicmd",       "vi command-mode keymap"),
-    ("viins",       "vi insert-mode keymap"),
-    ("viopp",       "vi operator-pending keymap (for `d` / `c` / `y`)"),
-    ("visual",      "vi visual-mode keymap"),
-    (".safe",       "minimal fallback keymap — only `self-insert` + `accept-line`"),
-    ("main",        "alias — whichever keymap is currently the editing map"),
-    ("command",     "vi-mode command-line input keymap"),
-    ("menuselect",  "active inside `menu-select` widget"),
-    ("isearch",     "active inside incremental-search widgets"),
-    ("listscroll",  "active when scrolling completion list"),
+    ("emacs", "GNU Readline emacs bindings (default)"),
+    ("vicmd", "vi command-mode keymap"),
+    ("viins", "vi insert-mode keymap"),
+    ("viopp", "vi operator-pending keymap (for `d` / `c` / `y`)"),
+    ("visual", "vi visual-mode keymap"),
+    (
+        ".safe",
+        "minimal fallback keymap — only `self-insert` + `accept-line`",
+    ),
+    (
+        "main",
+        "alias — whichever keymap is currently the editing map",
+    ),
+    ("command", "vi-mode command-line input keymap"),
+    ("menuselect", "active inside `menu-select` widget"),
+    ("isearch", "active inside incremental-search widgets"),
+    ("listscroll", "active when scrolling completion list"),
 ];
 
 /// Built-in ZLE widgets — second arg of `bindkey`, first arg of `zle`,
@@ -2461,129 +2603,177 @@ const KEYMAP_NAMES: &[(&str, &str)] = &[
 /// commonly used ~120 widgets from `man zshzle` "Standard Widgets".
 const ZLE_WIDGET_NAMES: &[(&str, &str)] = &[
     // ── movement ──
-    ("backward-char",                 "move one character left"),
-    ("forward-char",                  "move one character right"),
-    ("backward-word",                 "move one word left"),
-    ("forward-word",                  "move one word right"),
-    ("beginning-of-line",             "move to start of line"),
-    ("end-of-line",                   "move to end of line"),
-    ("beginning-of-buffer-or-history", "start of buffer / previous-history at top"),
-    ("end-of-buffer-or-history",      "end of buffer / next-history at bottom"),
+    ("backward-char", "move one character left"),
+    ("forward-char", "move one character right"),
+    ("backward-word", "move one word left"),
+    ("forward-word", "move one word right"),
+    ("beginning-of-line", "move to start of line"),
+    ("end-of-line", "move to end of line"),
+    (
+        "beginning-of-buffer-or-history",
+        "start of buffer / previous-history at top",
+    ),
+    (
+        "end-of-buffer-or-history",
+        "end of buffer / next-history at bottom",
+    ),
     // ── editing ──
-    ("self-insert",                   "insert the typed character"),
-    ("accept-line",                   "submit current line for execution"),
-    ("accept-and-hold",               "submit + keep line in buffer"),
-    ("accept-and-infer-next-history", "submit + recall the line after this in history"),
-    ("backward-delete-char",          "delete character before cursor"),
-    ("delete-char",                   "delete character under cursor"),
-    ("backward-kill-word",            "delete word before cursor (saves to kill ring)"),
-    ("kill-word",                     "delete word after cursor"),
-    ("backward-kill-line",            "delete from cursor to start of line"),
-    ("kill-line",                     "delete from cursor to end of line"),
-    ("kill-whole-line",               "delete entire line"),
-    ("kill-region",                   "delete from mark to cursor"),
-    ("yank",                          "paste last kill"),
-    ("yank-pop",                      "rotate to earlier kill (after `yank`)"),
-    ("transpose-chars",               "swap two characters"),
-    ("transpose-words",               "swap two words"),
-    ("up-case-word",                  "uppercase next word"),
-    ("down-case-word",                "lowercase next word"),
-    ("capitalize-word",               "capitalize next word"),
-    ("quoted-insert",                 "literal-insert next key (e.g. for control chars)"),
-    ("overwrite-mode",                "toggle insert / overwrite"),
-    ("undo",                          "undo last edit"),
-    ("redo",                          "redo last undone edit"),
-    ("clear-screen",                  "clear terminal + redraw"),
-    ("redisplay",                     "force redraw"),
-    ("send-break",                    "abandon line (SIGINT-equivalent)"),
+    ("self-insert", "insert the typed character"),
+    ("accept-line", "submit current line for execution"),
+    ("accept-and-hold", "submit + keep line in buffer"),
+    (
+        "accept-and-infer-next-history",
+        "submit + recall the line after this in history",
+    ),
+    ("backward-delete-char", "delete character before cursor"),
+    ("delete-char", "delete character under cursor"),
+    (
+        "backward-kill-word",
+        "delete word before cursor (saves to kill ring)",
+    ),
+    ("kill-word", "delete word after cursor"),
+    ("backward-kill-line", "delete from cursor to start of line"),
+    ("kill-line", "delete from cursor to end of line"),
+    ("kill-whole-line", "delete entire line"),
+    ("kill-region", "delete from mark to cursor"),
+    ("yank", "paste last kill"),
+    ("yank-pop", "rotate to earlier kill (after `yank`)"),
+    ("transpose-chars", "swap two characters"),
+    ("transpose-words", "swap two words"),
+    ("up-case-word", "uppercase next word"),
+    ("down-case-word", "lowercase next word"),
+    ("capitalize-word", "capitalize next word"),
+    (
+        "quoted-insert",
+        "literal-insert next key (e.g. for control chars)",
+    ),
+    ("overwrite-mode", "toggle insert / overwrite"),
+    ("undo", "undo last edit"),
+    ("redo", "redo last undone edit"),
+    ("clear-screen", "clear terminal + redraw"),
+    ("redisplay", "force redraw"),
+    ("send-break", "abandon line (SIGINT-equivalent)"),
     // ── history ──
-    ("up-line-or-history",            "previous line / previous history entry"),
-    ("down-line-or-history",          "next line / next history entry"),
-    ("up-history",                    "previous history entry"),
-    ("down-history",                  "next history entry"),
-    ("beginning-of-history",          "first history entry"),
-    ("end-of-history",                "last history entry (current line)"),
-    ("history-incremental-search-backward", "Ctrl-R — incremental search backward"),
-    ("history-incremental-search-forward",  "Ctrl-S — incremental search forward"),
-    ("history-search-backward",       "search history matching current line prefix"),
-    ("history-search-forward",        "forward variant of `history-search-backward`"),
-    ("history-beginning-search-backward", "search backward keeping cursor position"),
-    ("history-beginning-search-forward",  "search forward keeping cursor position"),
-    ("infer-next-history",            "infer next-history based on previous match"),
-    ("insert-last-word",              "insert last word of previous line (`!!:$`)"),
+    (
+        "up-line-or-history",
+        "previous line / previous history entry",
+    ),
+    ("down-line-or-history", "next line / next history entry"),
+    ("up-history", "previous history entry"),
+    ("down-history", "next history entry"),
+    ("beginning-of-history", "first history entry"),
+    ("end-of-history", "last history entry (current line)"),
+    (
+        "history-incremental-search-backward",
+        "Ctrl-R — incremental search backward",
+    ),
+    (
+        "history-incremental-search-forward",
+        "Ctrl-S — incremental search forward",
+    ),
+    (
+        "history-search-backward",
+        "search history matching current line prefix",
+    ),
+    (
+        "history-search-forward",
+        "forward variant of `history-search-backward`",
+    ),
+    (
+        "history-beginning-search-backward",
+        "search backward keeping cursor position",
+    ),
+    (
+        "history-beginning-search-forward",
+        "search forward keeping cursor position",
+    ),
+    (
+        "infer-next-history",
+        "infer next-history based on previous match",
+    ),
+    (
+        "insert-last-word",
+        "insert last word of previous line (`!!:$`)",
+    ),
     // ── completion ──
-    ("complete-word",                 "complete the current word"),
-    ("expand-or-complete",            "expand alias / glob, else complete"),
-    ("expand-or-complete-prefix",     "as above but with prefix match"),
-    ("list-choices",                  "show completion options without inserting"),
-    ("menu-complete",                 "cycle through completions"),
-    ("menu-expand-or-complete",       "expand / cycle"),
-    ("reverse-menu-complete",         "cycle backward"),
-    ("delete-char-or-list",           "delete-char if not at EOL, else list-choices"),
-    ("complete-prefix",               "complete current prefix"),
-    ("expand-cmd-path",               "expand command to full path"),
-    ("expand-word",                   "expand current word"),
+    ("complete-word", "complete the current word"),
+    ("expand-or-complete", "expand alias / glob, else complete"),
+    (
+        "expand-or-complete-prefix",
+        "as above but with prefix match",
+    ),
+    ("list-choices", "show completion options without inserting"),
+    ("menu-complete", "cycle through completions"),
+    ("menu-expand-or-complete", "expand / cycle"),
+    ("reverse-menu-complete", "cycle backward"),
+    (
+        "delete-char-or-list",
+        "delete-char if not at EOL, else list-choices",
+    ),
+    ("complete-prefix", "complete current prefix"),
+    ("expand-cmd-path", "expand command to full path"),
+    ("expand-word", "expand current word"),
     // ── vi mode ──
-    ("vi-cmd-mode",                   "switch to vi command mode"),
-    ("vi-insert",                     "switch to vi insert mode"),
-    ("vi-insert-bol",                 "insert at start of line"),
-    ("vi-add-next",                   "append after current char (vi `a`)"),
-    ("vi-add-eol",                    "append at end of line (vi `A`)"),
-    ("vi-backward-char",              "h"),
-    ("vi-forward-char",               "l"),
-    ("vi-backward-word",              "b"),
-    ("vi-forward-word",               "w"),
-    ("vi-backward-word-end",          "ge"),
-    ("vi-forward-word-end",           "e"),
-    ("vi-backward-blank-word",        "B"),
-    ("vi-forward-blank-word",         "W"),
-    ("vi-up-line-or-history",         "k — previous line / history"),
-    ("vi-down-line-or-history",       "j — next line / history"),
-    ("vi-beginning-of-line",          "0"),
-    ("vi-end-of-line",                "$"),
-    ("vi-first-non-blank",            "^"),
-    ("vi-delete",                     "d"),
-    ("vi-delete-char",                "x"),
-    ("vi-backward-delete-char",       "X"),
-    ("vi-change",                     "c"),
-    ("vi-change-eol",                 "C"),
-    ("vi-change-whole-line",          "S"),
-    ("vi-substitute",                 "s"),
-    ("vi-yank",                       "y"),
-    ("vi-yank-eol",                   "Y"),
-    ("vi-yank-whole-line",            "yy"),
-    ("vi-put-after",                  "p"),
-    ("vi-put-before",                 "P"),
-    ("vi-replace",                    "R"),
-    ("vi-replace-chars",              "r"),
-    ("vi-repeat-change",              "."),
-    ("vi-repeat-search",              "n"),
-    ("vi-rev-repeat-search",          "N"),
-    ("vi-find-next-char",             "f"),
-    ("vi-find-prev-char",             "F"),
-    ("vi-find-next-char-skip",        "t"),
-    ("vi-find-prev-char-skip",        "T"),
-    ("vi-undo-change",                "u"),
-    ("vi-join",                       "J — join with next line"),
-    ("vi-quoted-insert",              "Ctrl-V — literal next"),
-    ("vi-set-buffer",                 "select named register"),
-    ("vi-history-search-backward",    "?"),
-    ("vi-history-search-forward",     "/"),
-    ("vi-match-bracket",              "% — jump to matching bracket"),
+    ("vi-cmd-mode", "switch to vi command mode"),
+    ("vi-insert", "switch to vi insert mode"),
+    ("vi-insert-bol", "insert at start of line"),
+    ("vi-add-next", "append after current char (vi `a`)"),
+    ("vi-add-eol", "append at end of line (vi `A`)"),
+    ("vi-backward-char", "h"),
+    ("vi-forward-char", "l"),
+    ("vi-backward-word", "b"),
+    ("vi-forward-word", "w"),
+    ("vi-backward-word-end", "ge"),
+    ("vi-forward-word-end", "e"),
+    ("vi-backward-blank-word", "B"),
+    ("vi-forward-blank-word", "W"),
+    ("vi-up-line-or-history", "k — previous line / history"),
+    ("vi-down-line-or-history", "j — next line / history"),
+    ("vi-beginning-of-line", "0"),
+    ("vi-end-of-line", "$"),
+    ("vi-first-non-blank", "^"),
+    ("vi-delete", "d"),
+    ("vi-delete-char", "x"),
+    ("vi-backward-delete-char", "X"),
+    ("vi-change", "c"),
+    ("vi-change-eol", "C"),
+    ("vi-change-whole-line", "S"),
+    ("vi-substitute", "s"),
+    ("vi-yank", "y"),
+    ("vi-yank-eol", "Y"),
+    ("vi-yank-whole-line", "yy"),
+    ("vi-put-after", "p"),
+    ("vi-put-before", "P"),
+    ("vi-replace", "R"),
+    ("vi-replace-chars", "r"),
+    ("vi-repeat-change", "."),
+    ("vi-repeat-search", "n"),
+    ("vi-rev-repeat-search", "N"),
+    ("vi-find-next-char", "f"),
+    ("vi-find-prev-char", "F"),
+    ("vi-find-next-char-skip", "t"),
+    ("vi-find-prev-char-skip", "T"),
+    ("vi-undo-change", "u"),
+    ("vi-join", "J — join with next line"),
+    ("vi-quoted-insert", "Ctrl-V — literal next"),
+    ("vi-set-buffer", "select named register"),
+    ("vi-history-search-backward", "?"),
+    ("vi-history-search-forward", "/"),
+    ("vi-match-bracket", "% — jump to matching bracket"),
     // ── misc ──
-    ("which-command",                 "show what command would run"),
-    ("describe-key-briefly",          "show binding for next key"),
-    ("execute-named-cmd",             "M-x style command execution"),
-    ("execute-last-named-cmd",        "re-run last named command"),
-    ("push-line",                     "save line + clear, runs on next prompt"),
-    ("push-line-or-edit",             "push-line or edit multiline"),
-    ("push-input",                    "push to input stack"),
-    ("get-line",                      "pop input from stack"),
-    ("set-mark-command",              "set the mark at cursor"),
-    ("exchange-point-and-mark",       "swap cursor + mark"),
-    ("digit-argument",                "begin numeric argument"),
-    ("universal-argument",            "begin numeric argument"),
-    ("undefined-key",                 "called when binding lookup fails"),
+    ("which-command", "show what command would run"),
+    ("describe-key-briefly", "show binding for next key"),
+    ("execute-named-cmd", "M-x style command execution"),
+    ("execute-last-named-cmd", "re-run last named command"),
+    ("push-line", "save line + clear, runs on next prompt"),
+    ("push-line-or-edit", "push-line or edit multiline"),
+    ("push-input", "push to input stack"),
+    ("get-line", "pop input from stack"),
+    ("set-mark-command", "set the mark at cursor"),
+    ("exchange-point-and-mark", "swap cursor + mark"),
+    ("digit-argument", "begin numeric argument"),
+    ("universal-argument", "begin numeric argument"),
+    ("undefined-key", "called when binding lookup fails"),
 ];
 
 /// `typeset` / `declare` / `local` / `readonly` / `integer` / `float`
@@ -2740,67 +2930,97 @@ const MATH_FUNCTIONS: &[(&str, &str)] = &[
 /// contexts are user-defined — but covers the canonical completion /
 /// vcs_info / prompt namespaces.
 const ZSTYLE_CONTEXTS: &[(&str, &str)] = &[
-    (":completion:*",                              "all completion settings"),
-    (":completion:*:default",                      "default completion"),
-    (":completion:*:descriptions",                 "tag-group descriptions in menus"),
-    (":completion:*:matches",                      "match grouping / formatting"),
-    (":completion:*:options",                      "option-name completion"),
-    (":completion:*:warnings",                     "no-match warning style"),
-    (":completion:*:messages",                     "info messages from completion ported"),
-    (":completion:*:corrections",                  "spell-correction style"),
-    (":completion:*:*:*:*:processes",              "process-name completion (`kill <TAB>`)"),
-    (":completion:*:functions",                    "function-name completion"),
-    (":completion:*:manuals",                      "man-page completion"),
-    (":completion:*:hosts",                        "hostname completion (ssh, scp, etc.)"),
-    (":vcs_info:*",                                "version-control info system (`git`/`hg`/`svn` in prompt)"),
-    (":vcs_info:git:*",                            "git-specific vcs_info"),
-    (":prompt:*",                                  "prompt customization (themes)"),
-    (":urlglobber",                                "URL-glob filtering"),
-    (":zftp:*",                                    "zftp module configuration"),
-    (":grep:*",                                    "grep widget configuration"),
-    (":compinstall",                               "`compinstall` wizard state"),
-    (":zle:*",                                     "ZLE widget configuration"),
-    (":bracketed-paste-magic",                     "bracketed-paste-magic widget"),
-    (":syntax-highlighting",                       "fast-syntax-highlighting / zsh-syntax-highlighting"),
+    (":completion:*", "all completion settings"),
+    (":completion:*:default", "default completion"),
+    (
+        ":completion:*:descriptions",
+        "tag-group descriptions in menus",
+    ),
+    (":completion:*:matches", "match grouping / formatting"),
+    (":completion:*:options", "option-name completion"),
+    (":completion:*:warnings", "no-match warning style"),
+    (
+        ":completion:*:messages",
+        "info messages from completion ported",
+    ),
+    (":completion:*:corrections", "spell-correction style"),
+    (
+        ":completion:*:*:*:*:processes",
+        "process-name completion (`kill <TAB>`)",
+    ),
+    (":completion:*:functions", "function-name completion"),
+    (":completion:*:manuals", "man-page completion"),
+    (
+        ":completion:*:hosts",
+        "hostname completion (ssh, scp, etc.)",
+    ),
+    (
+        ":vcs_info:*",
+        "version-control info system (`git`/`hg`/`svn` in prompt)",
+    ),
+    (":vcs_info:git:*", "git-specific vcs_info"),
+    (":prompt:*", "prompt customization (themes)"),
+    (":urlglobber", "URL-glob filtering"),
+    (":zftp:*", "zftp module configuration"),
+    (":grep:*", "grep widget configuration"),
+    (":compinstall", "`compinstall` wizard state"),
+    (":zle:*", "ZLE widget configuration"),
+    (":bracketed-paste-magic", "bracketed-paste-magic widget"),
+    (
+        ":syntax-highlighting",
+        "fast-syntax-highlighting / zsh-syntax-highlighting",
+    ),
 ];
 
 /// Pattern modifiers for extended-glob `(#…)`. Need `EXTENDED_GLOB`.
 /// From `man zshexpn` "Pattern Matching → Globbing Flags".
 const PATTERN_MODIFIERS: &[(&str, &str)] = &[
-    ("i",   "case-insensitive matching for the rest of the pattern"),
-    ("l",   "lowercase chars match upper + lower"),
-    ("I",   "case-sensitive — reset after `(#i)`"),
-    ("b",   "activate backreferences (`$match[N]` / `$mbegin` / `$mend`)"),
-    ("B",   "deactivate backreferences"),
-    ("m",   "set `$MATCH` / `$MBEGIN` / `$MEND` even without backref"),
-    ("M",   "deactivate `m`"),
-    ("a",   "`(#aN)` — approximate match with up to N errors"),
-    ("s",   "anchor pattern to start of string"),
-    ("e",   "anchor pattern to end of string"),
-    ("c",   "`(#cN,M)` — preceding atom matched between N and M times"),
-    ("u",   "use Unicode character properties"),
-    ("U",   "deactivate `u`"),
-    ("q",   "treat following pattern as glob qualifier list (`(#q.,L0)`)"),
+    ("i", "case-insensitive matching for the rest of the pattern"),
+    ("l", "lowercase chars match upper + lower"),
+    ("I", "case-sensitive — reset after `(#i)`"),
+    (
+        "b",
+        "activate backreferences (`$match[N]` / `$mbegin` / `$mend`)",
+    ),
+    ("B", "deactivate backreferences"),
+    (
+        "m",
+        "set `$MATCH` / `$MBEGIN` / `$MEND` even without backref",
+    ),
+    ("M", "deactivate `m`"),
+    ("a", "`(#aN)` — approximate match with up to N errors"),
+    ("s", "anchor pattern to start of string"),
+    ("e", "anchor pattern to end of string"),
+    (
+        "c",
+        "`(#cN,M)` — preceding atom matched between N and M times",
+    ),
+    ("u", "use Unicode character properties"),
+    ("U", "deactivate `u`"),
+    (
+        "q",
+        "treat following pattern as glob qualifier list (`(#q.,L0)`)",
+    ),
 ];
 
 /// Subscript flags for `${arr[(X)pattern]}` — reverse / index / range
 /// search modifiers inside array subscripts. From `man zshparam`
 /// "ARRAY PARAMETERS → SUBSCRIPT FLAGS".
 const SUBSCRIPT_FLAGS: &[(&str, &str)] = &[
-    ("e",   "exact match — disable globbing on subscript"),
-    ("i",   "return INDEX of first matching element"),
-    ("I",   "return INDEX of LAST matching element"),
-    ("r",   "return VALUE of first match — search reverse"),
-    ("R",   "as `r` but ranged"),
-    ("b",   "byte offset (with `i` / `I`)"),
-    ("n",   "`(nN)` — Nth match (with `i` / `I` / `r` / `R`)"),
-    ("w",   "word offset (split on `$IFS`)"),
-    ("W",   "word offset with empty fields"),
-    ("p",   "process `\\NNN` escapes in `(s::)` separator"),
-    ("s",   "`(s:STR:)` — split on STR (with `w` / `W`)"),
-    ("f",   "split scalar on newlines (= `(s.\\n.)`)"),
-    ("k",   "match against keys of an associative array"),
-    ("v",   "match against values of an associative array"),
+    ("e", "exact match — disable globbing on subscript"),
+    ("i", "return INDEX of first matching element"),
+    ("I", "return INDEX of LAST matching element"),
+    ("r", "return VALUE of first match — search reverse"),
+    ("R", "as `r` but ranged"),
+    ("b", "byte offset (with `i` / `I`)"),
+    ("n", "`(nN)` — Nth match (with `i` / `I` / `r` / `R`)"),
+    ("w", "word offset (split on `$IFS`)"),
+    ("W", "word offset with empty fields"),
+    ("p", "process `\\NNN` escapes in `(s::)` separator"),
+    ("s", "`(s:STR:)` — split on STR (with `w` / `W`)"),
+    ("f", "split scalar on newlines (= `(s.\\n.)`)"),
+    ("k", "match against keys of an associative array"),
+    ("v", "match against values of an associative array"),
 ];
 
 /// Where the cursor sits — drives which completion table to surface.
@@ -2815,19 +3035,19 @@ enum LspCompletionContext {
     HistoryDesignator,
     ParamColonModifier,
     // NEW — command-position contexts (leading command dispatches).
-    OptionOnly,       // setopt / unsetopt / set -o / set +o
-    SignalName,       // kill -SIG / trap … SIG
-    ModuleName,       // zmodload
-    KeymapName,       // bindkey -M / -A / -N (1st arg)
-    WidgetName,       // zle … / bindkey "key" (2nd arg)
-    TypesetFlag,      // typeset / declare / local / readonly / integer / float / export with leading `-`
-    ZstyleContext,    // zstyle (1st arg)
-    CompdefFn,        // compdef (1st arg)
+    OptionOnly,    // setopt / unsetopt / set -o / set +o
+    SignalName,    // kill -SIG / trap … SIG
+    ModuleName,    // zmodload
+    KeymapName,    // bindkey -M / -A / -N (1st arg)
+    WidgetName,    // zle … / bindkey "key" (2nd arg)
+    TypesetFlag, // typeset / declare / local / readonly / integer / float / export with leading `-`
+    ZstyleContext, // zstyle (1st arg)
+    CompdefFn,   // compdef (1st arg)
     // NEW — bracket / paren contexts.
-    TestOperator,     // inside [[ … ]]
-    MathFunction,     // inside (( … )) or $(( … ))
-    PatternModifier,  // inside (#…)
-    SubscriptFlag,    // inside ${arr[(…)…]}
+    TestOperator,    // inside [[ … ]]
+    MathFunction,    // inside (( … )) or $(( … ))
+    PatternModifier, // inside (#…)
+    SubscriptFlag,   // inside ${arr[(…)…]}
     /// Cursor right after a `-` argument to a known builtin —
     /// surface the builtin's option flags from its yodl hover doc.
     /// `print -<TAB>` → -a/-b/-c/-C/-D/-f/-i/-l/-m/-n/-N/-o/-O/-P/-r
@@ -3013,8 +3233,7 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
         let mut k = cap;
         // Walk back over the modifier letters being typed.
         while k > 0
-            && (bytes[k - 1].is_ascii_alphabetic()
-                || matches!(bytes[k - 1], b'&' | b'/' | b'g'))
+            && (bytes[k - 1].is_ascii_alphabetic() || matches!(bytes[k - 1], b'&' | b'/' | b'g'))
         {
             k -= 1;
         }
@@ -3026,7 +3245,10 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
             let mut e = colon;
             while e > 0
                 && (bytes[e - 1].is_ascii_alphanumeric()
-                    || matches!(bytes[e - 1], b'?' | b'#' | b'$' | b'^' | b'*' | b'-' | b'_' | b'!'))
+                    || matches!(
+                        bytes[e - 1],
+                        b'?' | b'#' | b'$' | b'^' | b'*' | b'-' | b'_' | b'!'
+                    ))
             {
                 e -= 1;
             }
@@ -3161,7 +3383,11 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
                 let mut last_flag: Option<u8> = None;
                 let mut j = 0;
                 while j < cap {
-                    if bytes[j] == b'-' && j > 0 && matches!(bytes[j - 1], b' ' | b'\t') && j + 1 < cap {
+                    if bytes[j] == b'-'
+                        && j > 0
+                        && matches!(bytes[j - 1], b' ' | b'\t')
+                        && j + 1 < cap
+                    {
                         last_flag = Some(bytes[j + 1]);
                     }
                     j += 1;
@@ -3172,7 +3398,8 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
                 return LspCompletionContext::WidgetName;
             }
             "zle" => return LspCompletionContext::WidgetName,
-            "typeset" | "declare" | "local" | "readonly" | "integer" | "float" | "export" | "private" => {
+            "typeset" | "declare" | "local" | "readonly" | "integer" | "float" | "export"
+            | "private" => {
                 // Surface flags only when the current arg starts with `-`.
                 let bytes = line.as_bytes();
                 let cap = col.min(bytes.len());
@@ -3204,9 +3431,7 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
         }
         let starts_with_dash = j < cap && bytes[j] == b'-';
         let just_after_builtin = j == cap;
-        if (starts_with_dash || just_after_builtin)
-            && is_known_builtin_with_flag_docs(&cmd)
-        {
+        if (starts_with_dash || just_after_builtin) && is_known_builtin_with_flag_docs(&cmd) {
             return LspCompletionContext::BuiltinFlag(cmd);
         }
     }
@@ -3256,10 +3481,7 @@ fn derive_inline_flag_desc(body: &str, flag: &str) -> Option<String> {
         let cap_end = (sstart + 400).min(bytes.len());
         while send < cap_end {
             let c = bytes[send];
-            if c == b'.'
-                && send + 1 < bytes.len()
-                && matches!(bytes[send + 1], b' ' | b'\n')
-            {
+            if c == b'.' && send + 1 < bytes.len() && matches!(bytes[send + 1], b' ' | b'\n') {
                 send += 1; // include the period
                 break;
             }
@@ -3327,8 +3549,8 @@ fn is_known_builtin_with_flag_docs(name: &str) -> bool {
 /// in `BUILTIN_FLAGS_CACHE` so a hot `print -<TAB>` doesn't re-parse
 /// the same body on every keystroke.
 fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
-    use std::sync::OnceLock;
     use std::sync::Mutex;
+    use std::sync::OnceLock;
     static CACHE: OnceLock<Mutex<std::collections::HashMap<String, Vec<(String, String)>>>> =
         OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
@@ -3374,9 +3596,9 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     // (flag, first-line-desc). Used by the 25 builtins whose docs
     // have proper bullet lists (print, typeset, read, compadd,
     // stat, whence, bindkey, fc, zparseopts, zcompile, zmv, …).
-    let re_bullet = regex::Regex::new(
-        r"(?m)^\s*-\s+\*\*`(-[A-Za-z+])(?:\s+[^`]*)?`\*\*[^A-Za-z\n]*([^\n]+)"
-    ).unwrap();
+    let re_bullet =
+        regex::Regex::new(r"(?m)^\s*-\s+\*\*`(-[A-Za-z+])(?:\s+[^`]*)?`\*\*[^A-Za-z\n]*([^\n]+)")
+            .unwrap();
     for cap in re_bullet.captures_iter(&body) {
         let flag = cap.get(1).unwrap().as_str().to_string();
         let raw_desc = cap.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -3834,17 +4056,15 @@ const EXT_BUILTIN_DOCS: &[(&str, &str)] = &[
 /// canonical `ZSH_OPTIONS_SET` entries; this fills the remainder so
 /// every option gets real hover text instead of a `see man zshoptions`
 /// stub.
-const OPTION_DOCS_FALLBACK: &[(&str, &str)] = &[
-    (
-        "RESTRICTED",
-        "Restricted-shell mode (equivalent to invoking zsh as `rzsh` or with `-r`).\
+const OPTION_DOCS_FALLBACK: &[(&str, &str)] = &[(
+    "RESTRICTED",
+    "Restricted-shell mode (equivalent to invoking zsh as `rzsh` or with `-r`).\
          \n\nDisables: `cd`, modifying `$PATH` / `$ENV` / `$SHELL`, `>` / `>>` redirects,\
          creating functions with the `function` keyword, `exec`-ing commands containing `/`,\
          `kill`-ing by pid, and several `setopt` toggles. Designed for sandboxed login shells\
          where the user must stay inside a curated command set. Once set, cannot be cleared\
          within the running shell.",
-    ),
-];
+)];
 
 // ── Document symbols ────────────────────────────────────────────────────
 
@@ -4346,9 +4566,7 @@ fn references_via_ast(
                     continue;
                 };
                 for s in &t.symbols {
-                    if s.name == bare
-                        && matches!(s.kind, SymbolKind::Func | SymbolKind::Global)
-                    {
+                    if s.name == bare && matches!(s.kind, SymbolKind::Func | SymbolKind::Global) {
                         found = Some(s.kind.clone());
                         break 'outer;
                     }
@@ -4410,8 +4628,7 @@ fn references_via_ast(
     if !matches!(kind, SymbolKind::Local) {
         // Track every URI already walked so source-chain following
         // (below) doesn't re-emit duplicate locations.
-        let mut walked: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut walked: std::collections::HashSet<String> = std::collections::HashSet::new();
         walked.insert(active_uri.to_string());
         for (uri, src) in state.all_docs() {
             if uri == active_uri {
@@ -4466,20 +4683,23 @@ fn references_via_ast(
                 .get(&uri)
                 .cloned()
                 .or_else(|| state.workspace_files.get(&uri).cloned())
-                .or_else(|| {
-                    file_uri_to_path(&uri).and_then(|p| std::fs::read_to_string(p).ok())
-                });
-            let Some(parent_text) = parent_text else { continue };
+                .or_else(|| file_uri_to_path(&uri).and_then(|p| std::fs::read_to_string(p).ok()));
+            let Some(parent_text) = parent_text else {
+                continue;
+            };
             let parent_dir = file_uri_to_path(&uri)
                 .and_then(|p| p.parent().map(|d| d.to_path_buf()))
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
-            for sourced_path in crate::lsp_symbols::collect_sourced_paths(&parent_text, &parent_dir) {
+            for sourced_path in crate::lsp_symbols::collect_sourced_paths(&parent_text, &parent_dir)
+            {
                 let sourced_uri = format!("file://{}", sourced_path.display());
                 if walked.contains(&sourced_uri) {
                     continue;
                 }
                 walked.insert(sourced_uri.clone());
-                let Ok(sourced_text) = std::fs::read_to_string(&sourced_path) else { continue };
+                let Ok(sourced_text) = std::fs::read_to_string(&sourced_path) else {
+                    continue;
+                };
                 let lines = find_ast_occurrences(&sourced_text, &name, kind.clone());
                 let src_lines: Vec<&str> = sourced_text.lines().collect();
                 for line in lines {
@@ -4647,20 +4867,20 @@ fn rename(state: &State, params: &Value) -> Value {
 // ── Semantic tokens ─────────────────────────────────────────────────────
 
 const SEMANTIC_TOKEN_TYPES: &[&str] = &[
-    "comment",       // 0
-    "string",        // 1
-    "number",        // 2
-    "keyword",       // 3
-    "operator",      // 4
-    "function",      // 5 — compat zsh builtins
-    "variable",      // 6
-    "parameter",     // 7
-    "type",          // 8
-    "macro",         // 9 — kept for back-compat; also used for compsys ported now
-    "property",      // 10
-    "regexp",        // 11
-    "zshrsExtension",// 12 — zshrs-only ext + daemon `z*` builtins
-    "zshrsCompsys",  // 13 — `_arguments` / `_files` / `_describe` family
+    "comment",        // 0
+    "string",         // 1
+    "number",         // 2
+    "keyword",        // 3
+    "operator",       // 4
+    "function",       // 5 — compat zsh builtins
+    "variable",       // 6
+    "parameter",      // 7
+    "type",           // 8
+    "macro",          // 9 — kept for back-compat; also used for compsys ported now
+    "property",       // 10
+    "regexp",         // 11
+    "zshrsExtension", // 12 — zshrs-only ext + daemon `z*` builtins
+    "zshrsCompsys",   // 13 — `_arguments` / `_files` / `_describe` family
 ];
 
 fn semantic_tokens(state: &State, params: &Value) -> Value {
@@ -4746,26 +4966,30 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                 // to interpolate past it; if the string was unterminated
                 // (`close == bb.len()` and last char is NOT `q`), keep
                 // going to end-of-line.
-                let inner_end = if close > 0 && close <= bb.len() && bb.get(close - 1) == Some(&(q as u8)) {
-                    close - 1
-                } else {
-                    close
-                };
-                let flush_string =
-                    |data: &mut Vec<u32>, last_line: &mut u32, last_col: &mut u32,
-                     col: usize, seg_start: usize, seg_end: usize| {
-                        if seg_end > seg_start {
-                            push_tok(
-                                data,
-                                last_line,
-                                last_col,
-                                ln,
-                                (col + seg_start) as u32,
-                                (seg_end - seg_start) as u32,
-                                1, // string
-                            );
-                        }
+                let inner_end =
+                    if close > 0 && close <= bb.len() && bb.get(close - 1) == Some(&(q as u8)) {
+                        close - 1
+                    } else {
+                        close
                     };
+                let flush_string = |data: &mut Vec<u32>,
+                                    last_line: &mut u32,
+                                    last_col: &mut u32,
+                                    col: usize,
+                                    seg_start: usize,
+                                    seg_end: usize| {
+                    if seg_end > seg_start {
+                        push_tok(
+                            data,
+                            last_line,
+                            last_col,
+                            ln,
+                            (col + seg_start) as u32,
+                            (seg_end - seg_start) as u32,
+                            1, // string
+                        );
+                    }
+                };
                 while p < inner_end {
                     let c = bb[p] as char;
                     // Skip escape sequences `\X` (backslash applies in
@@ -4855,7 +5079,14 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
                     p += 1;
                 }
                 // Trailing string segment (includes the closing quote).
-                flush_string(&mut data, &mut last_line, &mut last_col, col, seg_start, close);
+                flush_string(
+                    &mut data,
+                    &mut last_line,
+                    &mut last_col,
+                    col,
+                    seg_start,
+                    close,
+                );
                 col += close;
                 continue;
             }
@@ -4913,10 +5144,8 @@ fn semantic_tokens(state: &State, params: &Value) -> Value {
             // never emitted any, so the user's selected operator color
             // never applied.
             const OPERATORS: &[&str] = &[
-                ";;&", "<<<", "<<-",
-                "&&", "||", "|&", "<<", ">>", "&>", ">|", ">!",
-                ">&", "<&", "<>", "==", "!=", "=~", "+=", "-=", ":=", "?=",
-                "[[", "]]", "((", "))", ";;", ";|",
+                ";;&", "<<<", "<<-", "&&", "||", "|&", "<<", ">>", "&>", ">|", ">!", ">&", "<&",
+                "<>", "==", "!=", "=~", "+=", "-=", ":=", "?=", "[[", "]]", "((", "))", ";;", ";|",
                 "|", "&", ">", "<",
             ];
             let mut op_len = 0usize;
@@ -5083,7 +5312,10 @@ fn push_tok(
 //                   the top of the body with `N = positional count + 1`.
 
 fn code_actions(state: &State, params: &Value) -> Value {
-    let uri = params["textDocument"]["uri"].as_str().unwrap_or("").to_string();
+    let uri = params["textDocument"]["uri"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     let text = match state.docs.get(&uri).cloned() {
         Some(t) => t,
         None => return Value::Array(vec![]),
@@ -5230,12 +5462,7 @@ fn selection_covers_whole_line(line_text: &str, start_col: u32, end_col: u32) ->
         && line_text[suffix_byte..].chars().all(char::is_whitespace)
 }
 
-fn make_extract_function_singleline(
-    uri: &str,
-    leading_ws: &str,
-    line: u32,
-    body: &str,
-) -> Value {
+fn make_extract_function_singleline(uri: &str, leading_ws: &str, line: u32, body: &str) -> Value {
     // Insert `extracted_function() { body; }` above the line, replace
     // the line's content with a bare call.
     let name = "extracted_function";
@@ -5307,8 +5534,7 @@ fn make_extract_function_multiline(
             // Strip the common indent then re-indent one level past the
             // function-decl leading whitespace.
             let stripped = if l.chars().take(common_indent).all(|c| c.is_whitespace()) {
-                &l[l
-                    .char_indices()
+                &l[l.char_indices()
                     .nth(common_indent)
                     .map(|(i, _)| i)
                     .unwrap_or(l.len())..]
@@ -5432,17 +5658,16 @@ fn needs_string_wrap_for_extraction(selection: &str) -> bool {
     if t.is_empty() {
         return false;
     }
-    if (t.starts_with('"') && t.ends_with('"'))
-        || (t.starts_with('\'') && t.ends_with('\''))
-    {
+    if (t.starts_with('"') && t.ends_with('"')) || (t.starts_with('\'') && t.ends_with('\'')) {
         return false;
     }
     // Bare `$VAR` / `${VAR}` — already an expression.
     if let Some(rest) = t.strip_prefix('$') {
-        let body = rest.strip_prefix('{').and_then(|r| r.strip_suffix('}')).unwrap_or(rest);
-        if !body.is_empty()
-            && body.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
+        let body = rest
+            .strip_prefix('{')
+            .and_then(|r| r.strip_suffix('}'))
+            .unwrap_or(rest);
+        if !body.is_empty() && body.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return false;
         }
     }
@@ -6156,9 +6381,18 @@ const SPECIAL_VAR_DOCS: &[(&str, &str)] = &[
     ("$path", "Array version of $PATH."),
     ("$argv", "Array of positional parameters (same as $@)."),
     ("$pipestatus", "Exit statuses of each pipeline element."),
-    ("$SHELL", "Pathname of the login shell. Honored by many tools as the default user shell."),
-    ("$EDITOR", "Preferred editor for tools that invoke an editor (`fc`, `git`, `crontab`, …)."),
-    ("$VISUAL", "Preferred full-screen editor. Takes precedence over `$EDITOR` when set."),
+    (
+        "$SHELL",
+        "Pathname of the login shell. Honored by many tools as the default user shell.",
+    ),
+    (
+        "$EDITOR",
+        "Preferred editor for tools that invoke an editor (`fc`, `git`, `crontab`, …).",
+    ),
+    (
+        "$VISUAL",
+        "Preferred full-screen editor. Takes precedence over `$EDITOR` when set.",
+    ),
 ];
 
 // ── Reflection dump for the IntelliJ tool window ────────────────────────
@@ -6325,7 +6559,12 @@ pub fn all_canonical_names() -> Vec<String> {
     for (name, _) in crate::zsh_special_var_docs::SPECIAL_VAR_DOCS {
         // Skip pure-symbolic ones — they're handled separately by
         // the lookup_doc cascade.
-        if name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+        if name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_')
+            .unwrap_or(false)
+        {
             set.insert(format!("${}", name));
         } else {
             set.insert((*name).to_string());
@@ -6381,17 +6620,19 @@ fn edit_distance(a: &str, b: &str) -> usize {
     let bv: Vec<char> = b.chars().collect();
     let m = av.len();
     let n = bv.len();
-    if m == 0 { return n; }
-    if n == 0 { return m; }
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
     let mut prev: Vec<usize> = (0..=n).collect();
     let mut cur: Vec<usize> = vec![0; n + 1];
     for i in 1..=m {
         cur[0] = i;
         for j in 1..=n {
             let cost = if av[i - 1] == bv[j - 1] { 0 } else { 1 };
-            cur[j] = (cur[j - 1] + 1)
-                .min(prev[j] + 1)
-                .min(prev[j - 1] + cost);
+            cur[j] = (cur[j - 1] + 1).min(prev[j] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut cur);
     }
@@ -6493,7 +6734,12 @@ pub fn dump_reference_html() -> String {
     let mut specials: Vec<String> = crate::zsh_special_var_docs::SPECIAL_VAR_DOCS
         .iter()
         .map(|(name, _)| {
-            if name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+            if name
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_alphabetic() || c == '_')
+                .unwrap_or(false)
+            {
                 format!("${}", name)
             } else {
                 (*name).to_string()
@@ -6516,8 +6762,10 @@ pub fn dump_reference_html() -> String {
     );
 
     // ── compsys functions (`crate::compsys::COMPSYS_FN_NAMES`) ──────────────
-    let mut compsys_names: Vec<String> =
-        crate::compsys::COMPSYS_FN_NAMES.iter().map(|s| s.to_string()).collect();
+    let mut compsys_names: Vec<String> = crate::compsys::COMPSYS_FN_NAMES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     compsys_names.sort();
     write_chapter(
         &mut out,
@@ -6760,7 +7008,8 @@ fn inline_md(s: &str) -> String {
             && !(bytes[i + 1] as char).is_whitespace()
         {
             if let Some(end) = find_close(bytes, i + 1, b"_") {
-                let after_ok = end + 1 >= bytes.len() || !(bytes[end + 1] as char).is_alphanumeric();
+                let after_ok =
+                    end + 1 >= bytes.len() || !(bytes[end + 1] as char).is_alphanumeric();
                 if after_ok {
                     out.push_str("<em>");
                     out.push_str(&inline_md(
@@ -7072,7 +7321,16 @@ mod tests {
         // purely special-var/array params. The bug was classifying
         // them as builtins because module doc files have item(tt(X))
         // blocks describing the parameter behavior.
-        for name in &["prompt", "path", "aliases", "jobdirs", "jobstates", "commands", "modules", "widgets"] {
+        for name in &[
+            "prompt",
+            "path",
+            "aliases",
+            "jobdirs",
+            "jobstates",
+            "commands",
+            "modules",
+            "widgets",
+        ] {
             let card = lookup_doc(name);
             assert!(
                 card.contains("special variable"),
@@ -7086,7 +7344,15 @@ mod tests {
         // per `ported::builtin::BUILTINS` (history is fc-alias,
         // functions is typeset-f-alias) so the special-var-wins
         // override must NOT touch them.
-        for name in &["cd", "echo", "set", "shift", "unset", "functions", "history"] {
+        for name in &[
+            "cd",
+            "echo",
+            "set",
+            "shift",
+            "unset",
+            "functions",
+            "history",
+        ] {
             let card = lookup_doc(name);
             assert!(
                 card.contains("zsh builtin") || card.contains("zshrs"),
@@ -7168,11 +7434,7 @@ mod tests {
         // unclosed → cascade of 100+ false positives downstream.
         let src = "[[ $# -gt 0 ]] && echo args\n";
         let d = diagnose(src);
-        assert!(
-            d.is_empty(),
-            "`$#` mis-handled as comment marker: {:?}",
-            d
-        );
+        assert!(d.is_empty(), "`$#` mis-handled as comment marker: {:?}", d);
     }
 
     #[test]
@@ -7195,11 +7457,7 @@ mod tests {
         // not be parsed as two `[`/`]` token pairs.
         let src = "[[ -n \"$x\" ]]\n";
         let d = diagnose(src);
-        assert!(
-            d.is_empty(),
-            "`[[ ]]` mis-handled as two `[`s: {:?}",
-            d
-        );
+        assert!(d.is_empty(), "`[[ ]]` mis-handled as two `[`s: {:?}", d);
     }
 
     #[test]
@@ -7208,11 +7466,7 @@ mod tests {
         // `(( ... ))` is a single arithmetic expression.
         let src = "(( i++ ))\n";
         let d = diagnose(src);
-        assert!(
-            d.is_empty(),
-            "`(( ))` mis-handled as two `(`s: {:?}",
-            d
-        );
+        assert!(d.is_empty(), "`(( ))` mis-handled as two `(`s: {:?}", d);
     }
 
     #[test]
@@ -7222,11 +7476,7 @@ mod tests {
         // pattern-arm terminator, not a paren mismatch.
         let src = "case \"$x\" in\n  -h|--help) echo usage ;;\n  *) echo other ;;\nesac\n";
         let d = diagnose(src);
-        assert!(
-            d.is_empty(),
-            "case-arm `)` flagged as unmatched: {:?}",
-            d
-        );
+        assert!(d.is_empty(), "case-arm `)` flagged as unmatched: {:?}", d);
     }
 
     #[test]
@@ -7237,11 +7487,10 @@ mod tests {
         let src = "echo bare )\n";
         let d = diagnose(src);
         assert!(
-            d.iter()
-                .any(|v| v["message"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains("unmatched `)`")),
+            d.iter().any(|v| v["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("unmatched `)`")),
             "real unmatched `)` was not flagged: {:?}",
             d
         );
@@ -7408,7 +7657,11 @@ mod tests {
             "snippet insertTextFormat must be 2 (Snippet — placeholders honored)"
         );
         let body = snippet["insertText"].as_str().unwrap();
-        assert!(body.contains("then") && body.contains("fi"), "snippet body wrong: {}", body);
+        assert!(
+            body.contains("then") && body.contains("fi"),
+            "snippet body wrong: {}",
+            body
+        );
     }
 
     #[test]
@@ -7419,7 +7672,9 @@ mod tests {
         // surfacing `if`, `cd`, `setopt` etc. is noise. Pin the gate.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), r#"echo "hello if"#.into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), r#"echo "hello if"#.into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             // Cursor sits right after `if` INSIDE the open `"...` literal.
@@ -7431,7 +7686,11 @@ mod tests {
             items.is_empty(),
             "expected 0 items inside dq literal, got {}: {:?}",
             items.len(),
-            items.iter().take(5).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+            items
+                .iter()
+                .take(5)
+                .map(|i| i["label"].as_str().unwrap_or("?"))
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -7442,7 +7701,9 @@ mod tests {
         // completion here.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), r#"echo "x $(cd"#.into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), r#"echo "x $(cd"#.into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             // Cursor right after `cd` inside `$(`.
@@ -7453,7 +7714,11 @@ mod tests {
         assert!(
             items.iter().any(|i| i["label"] == "cd"),
             "expected `cd` to surface inside $() within dq: {:?}",
-            items.iter().take(5).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+            items
+                .iter()
+                .take(5)
+                .map(|i| i["label"].as_str().unwrap_or("?"))
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -7461,7 +7726,9 @@ mod tests {
     fn completion_active_inside_backticks_inside_dq() {
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), "echo \"x `cd".into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "echo \"x `cd".into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 11 },
@@ -7480,7 +7747,9 @@ mod tests {
         // completion is genuinely useful here, so the gate must allow it.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), r#"echo "x ${P"#.into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), r#"echo "x ${P"#.into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 11 },
@@ -7499,7 +7768,9 @@ mod tests {
         // so completion is pure noise.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), "echo 'hello if".into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "echo 'hello if".into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 14 },
@@ -7514,7 +7785,9 @@ mod tests {
         // Comments are docs / TODOs / disabled code — not shell code.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), "# todo: if".into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "# todo: if".into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 10 },
@@ -7531,7 +7804,9 @@ mod tests {
         // level.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), r#"echo "x" if"#.into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), r#"echo "x" if"#.into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 11 },
@@ -7567,14 +7842,23 @@ mod tests {
                 items.iter().any(|i| i["label"] == *want),
                 "missing param flag `{}` in completion; got {:?}",
                 want,
-                items.iter().map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+                items
+                    .iter()
+                    .map(|i| i["label"].as_str().unwrap_or("?"))
+                    .collect::<Vec<_>>(),
             );
         }
         // Should NOT include shell builtins / keywords / options here.
         assert!(
-            !items.iter().any(|i| i["label"] == "cd" || i["label"] == "if"),
+            !items
+                .iter()
+                .any(|i| i["label"] == "cd" || i["label"] == "if"),
             "param-flag context leaked normal completion: {:?}",
-            items.iter().take(20).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+            items
+                .iter()
+                .take(20)
+                .map(|i| i["label"].as_str().unwrap_or("?"))
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -7584,7 +7868,9 @@ mod tests {
         // full table surfaced (user may add more flags, eg `${(bC)`).
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), "echo ${(b".into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "echo ${(b".into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 9 },
@@ -7605,7 +7891,9 @@ mod tests {
         // classify on `${` before it.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), "echo ${${(".into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "echo ${${(".into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 10 },
@@ -7621,7 +7909,9 @@ mod tests {
         // context, NOT flag context. Param-flag table must NOT fire.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), "echo ${(b)var".into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "echo ${(b)var".into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 13 },
@@ -7634,8 +7924,13 @@ mod tests {
         // like `cd`/`vared` has multi-char. Assert at least one
         // multi-char label exists OR the result is empty.
         let single_char_only = !items.is_empty()
-            && items.iter().all(|i| i["label"].as_str().unwrap_or("").chars().count() == 1);
-        assert!(!single_char_only, "param-flag table leaked past closing `)`");
+            && items
+                .iter()
+                .all(|i| i["label"].as_str().unwrap_or("").chars().count() == 1);
+        assert!(
+            !single_char_only,
+            "param-flag table leaked past closing `)`"
+        );
     }
 
     #[test]
@@ -7656,11 +7951,17 @@ mod tests {
                 items.iter().any(|i| i["label"] == *want),
                 "missing glob qualifier `{}`; got {:?}",
                 want,
-                items.iter().take(20).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+                items
+                    .iter()
+                    .take(20)
+                    .map(|i| i["label"].as_str().unwrap_or("?"))
+                    .collect::<Vec<_>>(),
             );
         }
         assert!(
-            !items.iter().any(|i| i["label"] == "cd" || i["label"] == "if"),
+            !items
+                .iter()
+                .any(|i| i["label"] == "cd" || i["label"] == "if"),
             "glob-qualifier context leaked normal completion",
         );
     }
@@ -7696,10 +7997,17 @@ mod tests {
         let result = completion(&state, &params);
         let items = result["items"].as_array().unwrap();
         // Should be normal completion — expect `cd` to be present.
-        let has_normal = items.iter().any(|i| i["label"] == "cd" || i["label"] == "if");
+        let has_normal = items
+            .iter()
+            .any(|i| i["label"] == "cd" || i["label"] == "if");
         let single_char_only = !items.is_empty()
-            && items.iter().all(|i| i["label"].as_str().unwrap_or("").chars().count() == 1);
-        assert!(has_normal || !single_char_only, "subshell `(` mis-triggered glob qualifier table");
+            && items
+                .iter()
+                .all(|i| i["label"].as_str().unwrap_or("").chars().count() == 1);
+        assert!(
+            has_normal || !single_char_only,
+            "subshell `(` mis-triggered glob qualifier table"
+        );
     }
 
     #[test]
@@ -7732,11 +8040,16 @@ mod tests {
                 items.iter().any(|i| i["label"] == *want),
                 "missing history designator `{}`; got {:?}",
                 want,
-                items.iter().map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+                items
+                    .iter()
+                    .map(|i| i["label"].as_str().unwrap_or("?"))
+                    .collect::<Vec<_>>(),
             );
         }
         // No builtins / keywords here.
-        assert!(!items.iter().any(|i| i["label"] == "cd" || i["label"] == "if"));
+        assert!(!items
+            .iter()
+            .any(|i| i["label"] == "cd" || i["label"] == "if"));
     }
 
     #[test]
@@ -7799,7 +8112,9 @@ mod tests {
         // `${var:` — cursor after `:`, want modifier completion.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), "echo ${var:".into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "echo ${var:".into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 11 },
@@ -7811,7 +8126,10 @@ mod tests {
                 items.iter().any(|i| i["label"] == *want),
                 "missing modifier `{}`; got {:?}",
                 want,
-                items.iter().map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+                items
+                    .iter()
+                    .map(|i| i["label"].as_str().unwrap_or("?"))
+                    .collect::<Vec<_>>(),
             );
         }
     }
@@ -7822,14 +8140,20 @@ mod tests {
         // surfaced so the IDE can re-filter as the user keeps typing.
         let _g = crate::test_util::global_state_lock();
         let mut state = State::default();
-        state.docs.insert("file:///t.zsh".into(), "echo ${var:h".into());
+        state
+            .docs
+            .insert("file:///t.zsh".into(), "echo ${var:h".into());
         let params = json!({
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 12 },
         });
         let result = completion(&state, &params);
         let items = result["items"].as_array().unwrap();
-        assert!(items.len() >= 25, "expected full modifier table; got {}", items.len());
+        assert!(
+            items.len() >= 25,
+            "expected full modifier table; got {}",
+            items.len()
+        );
     }
 
     #[test]
@@ -7862,7 +8186,9 @@ mod tests {
         let result = completion(&state, &params);
         let items = result["items"].as_array().unwrap();
         // No history-only label like `?str?`; verify it's normal flow.
-        let has_normal = items.iter().any(|i| i["label"] == "cd" || i["label"] == "if");
+        let has_normal = items
+            .iter()
+            .any(|i| i["label"] == "cd" || i["label"] == "if");
         let modifier_only = !items.is_empty()
             && items.iter().all(|i| {
                 let l = i["label"].as_str().unwrap_or("");
@@ -7893,37 +8219,57 @@ mod tests {
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": col },
         });
-        completion(&state, &params)["items"].as_array().cloned().unwrap_or_default()
+        completion(&state, &params)["items"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
     }
 
     #[test]
     fn completion_setopt_surfaces_options_only() {
         let items = complete_at("setopt extend", 13);
         // Should include real options, NOT builtins / keywords.
-        assert!(items.iter().any(|i| i["label"] == "extended_glob"
-            || i["label"] == "extendedglob"
-            || i["label"] == "EXTENDED_GLOB"), "no extended_glob variant");
-        assert!(!items.iter().any(|i| i["label"] == "cd" || i["label"] == "if"));
+        assert!(
+            items.iter().any(|i| i["label"] == "extended_glob"
+                || i["label"] == "extendedglob"
+                || i["label"] == "EXTENDED_GLOB"),
+            "no extended_glob variant"
+        );
+        assert!(!items
+            .iter()
+            .any(|i| i["label"] == "cd" || i["label"] == "if"));
     }
 
     #[test]
     fn completion_unsetopt_surfaces_options_only() {
         let items = complete_at("unsetopt nul", 12);
-        assert!(items.iter().any(|i| i["label"].as_str().unwrap_or("").to_lowercase().contains("null")));
+        assert!(items.iter().any(|i| i["label"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("null")));
         assert!(!items.iter().any(|i| i["label"] == "if"));
     }
 
     #[test]
     fn completion_set_dash_o_surfaces_options() {
         let items = complete_at("set -o errex", 12);
-        assert!(items.iter().any(|i| i["label"].as_str().unwrap_or("").to_lowercase().contains("err")));
+        assert!(items.iter().any(|i| i["label"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("err")));
     }
 
     #[test]
     fn completion_kill_dash_surfaces_signals() {
         let items = complete_at("kill -", 6);
         for want in &["HUP", "INT", "TERM", "KILL", "USR1"] {
-            assert!(items.iter().any(|i| i["label"] == *want), "missing signal `{}`", want);
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing signal `{}`",
+                want
+            );
         }
     }
 
@@ -7931,15 +8277,29 @@ mod tests {
     fn completion_trap_surfaces_signals() {
         let items = complete_at("trap 'cmd' ", 11);
         for want in &["INT", "TERM", "EXIT", "ZERR", "DEBUG"] {
-            assert!(items.iter().any(|i| i["label"] == *want), "missing signal `{}`", want);
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing signal `{}`",
+                want
+            );
         }
     }
 
     #[test]
     fn completion_zmodload_surfaces_modules() {
         let items = complete_at("zmodload ", 9);
-        for want in &["zsh/zle", "zsh/datetime", "zsh/system", "zsh/parameter", "zsh/mathfunc"] {
-            assert!(items.iter().any(|i| i["label"] == *want), "missing module `{}`", want);
+        for want in &[
+            "zsh/zle",
+            "zsh/datetime",
+            "zsh/system",
+            "zsh/parameter",
+            "zsh/mathfunc",
+        ] {
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing module `{}`",
+                want
+            );
         }
     }
 
@@ -7947,7 +8307,11 @@ mod tests {
     fn completion_bindkey_dash_M_surfaces_keymaps() {
         let items = complete_at("bindkey -M ", 11);
         for want in &["emacs", "vicmd", "viins", "viopp"] {
-            assert!(items.iter().any(|i| i["label"] == *want), "missing keymap `{}`", want);
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing keymap `{}`",
+                want
+            );
         }
     }
 
@@ -7971,7 +8335,11 @@ mod tests {
     fn completion_typeset_dash_surfaces_flags() {
         let items = complete_at("typeset -", 9);
         for want in &["-a", "-A", "-i", "-g", "-r", "-x", "-U", "-f"] {
-            assert!(items.iter().any(|i| i["label"] == *want), "missing flag `{}`", want);
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing flag `{}`",
+                want
+            );
         }
     }
 
@@ -7994,14 +8362,20 @@ mod tests {
     fn completion_compdef_surfaces_compsys_fns() {
         let items = complete_at("compdef ", 8);
         // Should be `_*` style ported only.
-        assert!(items.iter().any(|i| i["label"].as_str().unwrap_or("").starts_with('_')));
+        assert!(items
+            .iter()
+            .any(|i| i["label"].as_str().unwrap_or("").starts_with('_')));
     }
 
     #[test]
     fn completion_inside_double_bracket_surfaces_test_ops() {
         let items = complete_at("[[ -f /tmp/x && -", 17);
         for want in &["-f", "-d", "-e", "-z", "-n", "=~"] {
-            assert!(items.iter().any(|i| i["label"] == *want), "missing test op `{}`", want);
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing test op `{}`",
+                want
+            );
         }
     }
 
@@ -8009,7 +8383,11 @@ mod tests {
     fn completion_inside_double_paren_surfaces_math_fns() {
         let items = complete_at("(( x = sq", 9);
         for want in &["sqrt", "sin", "cos", "log", "exp"] {
-            assert!(items.iter().any(|i| i["label"] == *want), "missing math fn `{}`", want);
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing math fn `{}`",
+                want
+            );
         }
     }
 
@@ -8027,7 +8405,11 @@ mod tests {
                 items.iter().any(|i| i["label"] == *want),
                 "missing pattern mod `{}` — got {:?}",
                 want,
-                items.iter().take(20).map(|i| i["label"].as_str().unwrap_or("?")).collect::<Vec<_>>(),
+                items
+                    .iter()
+                    .take(20)
+                    .map(|i| i["label"].as_str().unwrap_or("?"))
+                    .collect::<Vec<_>>(),
             );
         }
     }
@@ -8036,7 +8418,11 @@ mod tests {
     fn completion_inside_subscript_flag_paren() {
         let items = complete_at("echo ${arr[(", 12);
         for want in &["i", "I", "r", "R", "e", "n"] {
-            assert!(items.iter().any(|i| i["label"] == *want), "missing subscript flag `{}`", want);
+            assert!(
+                items.iter().any(|i| i["label"] == *want),
+                "missing subscript flag `{}`",
+                want
+            );
         }
     }
 
@@ -8044,52 +8430,92 @@ mod tests {
 
     #[test]
     fn completion_signal_table_has_30_entries() {
-        assert!(SIGNAL_NAMES.len() >= 30, "SIGNAL_NAMES: {}", SIGNAL_NAMES.len());
+        assert!(
+            SIGNAL_NAMES.len() >= 30,
+            "SIGNAL_NAMES: {}",
+            SIGNAL_NAMES.len()
+        );
     }
 
     #[test]
     fn completion_module_table_has_30_entries() {
-        assert!(ZSH_MODULE_NAMES.len() >= 30, "ZSH_MODULE_NAMES: {}", ZSH_MODULE_NAMES.len());
+        assert!(
+            ZSH_MODULE_NAMES.len() >= 30,
+            "ZSH_MODULE_NAMES: {}",
+            ZSH_MODULE_NAMES.len()
+        );
     }
 
     #[test]
     fn completion_keymap_table_has_10_entries() {
-        assert!(KEYMAP_NAMES.len() >= 10, "KEYMAP_NAMES: {}", KEYMAP_NAMES.len());
+        assert!(
+            KEYMAP_NAMES.len() >= 10,
+            "KEYMAP_NAMES: {}",
+            KEYMAP_NAMES.len()
+        );
     }
 
     #[test]
     fn completion_widget_table_has_100_entries() {
-        assert!(ZLE_WIDGET_NAMES.len() >= 100, "ZLE_WIDGET_NAMES: {}", ZLE_WIDGET_NAMES.len());
+        assert!(
+            ZLE_WIDGET_NAMES.len() >= 100,
+            "ZLE_WIDGET_NAMES: {}",
+            ZLE_WIDGET_NAMES.len()
+        );
     }
 
     #[test]
     fn completion_typeset_flag_table_has_20_entries() {
-        assert!(TYPESET_FLAGS.len() >= 20, "TYPESET_FLAGS: {}", TYPESET_FLAGS.len());
+        assert!(
+            TYPESET_FLAGS.len() >= 20,
+            "TYPESET_FLAGS: {}",
+            TYPESET_FLAGS.len()
+        );
     }
 
     #[test]
     fn completion_test_op_table_has_30_entries() {
-        assert!(TEST_OPERATORS.len() >= 30, "TEST_OPERATORS: {}", TEST_OPERATORS.len());
+        assert!(
+            TEST_OPERATORS.len() >= 30,
+            "TEST_OPERATORS: {}",
+            TEST_OPERATORS.len()
+        );
     }
 
     #[test]
     fn completion_math_fn_table_has_40_entries() {
-        assert!(MATH_FUNCTIONS.len() >= 40, "MATH_FUNCTIONS: {}", MATH_FUNCTIONS.len());
+        assert!(
+            MATH_FUNCTIONS.len() >= 40,
+            "MATH_FUNCTIONS: {}",
+            MATH_FUNCTIONS.len()
+        );
     }
 
     #[test]
     fn completion_zstyle_context_table_has_15_entries() {
-        assert!(ZSTYLE_CONTEXTS.len() >= 15, "ZSTYLE_CONTEXTS: {}", ZSTYLE_CONTEXTS.len());
+        assert!(
+            ZSTYLE_CONTEXTS.len() >= 15,
+            "ZSTYLE_CONTEXTS: {}",
+            ZSTYLE_CONTEXTS.len()
+        );
     }
 
     #[test]
     fn completion_pattern_modifier_table_has_10_entries() {
-        assert!(PATTERN_MODIFIERS.len() >= 10, "PATTERN_MODIFIERS: {}", PATTERN_MODIFIERS.len());
+        assert!(
+            PATTERN_MODIFIERS.len() >= 10,
+            "PATTERN_MODIFIERS: {}",
+            PATTERN_MODIFIERS.len()
+        );
     }
 
     #[test]
     fn completion_subscript_flag_table_has_10_entries() {
-        assert!(SUBSCRIPT_FLAGS.len() >= 10, "SUBSCRIPT_FLAGS: {}", SUBSCRIPT_FLAGS.len());
+        assert!(
+            SUBSCRIPT_FLAGS.len() >= 10,
+            "SUBSCRIPT_FLAGS: {}",
+            SUBSCRIPT_FLAGS.len()
+        );
     }
 
     #[test]
@@ -8113,12 +8539,22 @@ mod tests {
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 1 },
         });
-        let items = completion(&state, &params)["items"].as_array().unwrap().clone();
-        let labels: Vec<&str> = items.iter().map(|i| i["label"].as_str().unwrap_or("")).collect();
+        let items = completion(&state, &params)["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let labels: Vec<&str> = items
+            .iter()
+            .map(|i| i["label"].as_str().unwrap_or(""))
+            .collect();
         assert!(
             labels.iter().any(|l| *l == "end"),
             "RESWDS `end` not surfaced — labels: {:?}",
-            labels.iter().filter(|l| l.starts_with('e')).take(10).collect::<Vec<_>>(),
+            labels
+                .iter()
+                .filter(|l| l.starts_with('e'))
+                .take(10)
+                .collect::<Vec<_>>(),
         );
     }
 
@@ -8135,9 +8571,17 @@ mod tests {
             "textDocument": { "uri": "file:///t.zsh" },
             "position": { "line": 0, "character": 7 },
         });
-        let items = completion(&state, &params)["items"].as_array().unwrap().clone();
-        let labels: Vec<&str> = items.iter().map(|i| i["label"].as_str().unwrap_or("")).collect();
-        for want in &["-a", "-b", "-c", "-n", "-N", "-o", "-O", "-P", "-r", "-R", "-z"] {
+        let items = completion(&state, &params)["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let labels: Vec<&str> = items
+            .iter()
+            .map(|i| i["label"].as_str().unwrap_or(""))
+            .collect();
+        for want in &[
+            "-a", "-b", "-c", "-n", "-N", "-o", "-O", "-P", "-r", "-R", "-z",
+        ] {
             assert!(
                 labels.iter().any(|l| l == want),
                 "missing `print -` flag `{}` — got {:?}",
@@ -8226,10 +8670,7 @@ mod tests {
                     }
                 }
                 "psvar" => {
-                    assert!(
-                        labels.iter().any(|l| *l == "psvar"),
-                        "missing `psvar`",
-                    );
+                    assert!(labels.iter().any(|l| *l == "psvar"), "missing `psvar`",);
                 }
                 _ => {}
             }
@@ -8359,7 +8800,8 @@ mod tests {
         // At least one ref must point at the sourced file URI.
         let sourced_uri = format!("file://{}", sourced.canonicalize().unwrap().display());
         assert!(
-            arr.iter().any(|r| r["uri"].as_str() == Some(sourced_uri.as_str())),
+            arr.iter()
+                .any(|r| r["uri"].as_str() == Some(sourced_uri.as_str())),
             "no ref pointing at sourced file `{}`: {:?}",
             sourced_uri,
             arr,
@@ -8602,10 +9044,14 @@ mod tests {
         let r = rename(&state, &params);
         let changes = r["changes"].as_object().expect("changes");
         let edits = changes["file:///t.zsh"].as_array().expect("edits");
-        assert!(!edits.is_empty(), "expected at least 1 edit, got: {edits:?}");
+        assert!(
+            !edits.is_empty(),
+            "expected at least 1 edit, got: {edits:?}"
+        );
         for e in edits {
             assert_eq!(
-                e["newText"], json!("handle2"),
+                e["newText"],
+                json!("handle2"),
                 "qualifier must be stripped; got: {e:?}"
             );
         }
@@ -8887,7 +9333,11 @@ mod tests {
             decl,
         );
         let call = edits[1]["newText"].as_str().unwrap_or("");
-        assert!(call.trim() == "extracted_function", "call must be bare: {:?}", call);
+        assert!(
+            call.trim() == "extracted_function",
+            "call must be bare: {:?}",
+            call
+        );
     }
 
     #[test]

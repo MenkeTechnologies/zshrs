@@ -190,6 +190,8 @@ pub mod recorder_ext;
 // Plugin-Framework-Agnostic State-Modification Recorder. Entire module
 // is `#![cfg(feature = "recorder")]` so it disappears from the default
 // `zshrs` build at the rustc-expansion stage. See docs/RECORDER.md.
+#[path = "extensions/gen_docs.rs"]
+pub mod gen_docs;
 #[cfg(feature = "recorder")]
 pub mod recorder;
 #[path = "extensions/regex_mod.rs"]
@@ -198,22 +200,20 @@ pub mod regex_mod;
 pub mod stringsort;
 #[path = "extensions/worker.rs"]
 pub mod worker;
+#[path = "extensions/zsh_builtin_docs.rs"]
+pub mod zsh_builtin_docs;
+#[path = "extensions/zsh_ext_builtin_docs.rs"]
+pub mod zsh_ext_builtin_docs;
+#[path = "extensions/zsh_keyword_docs.rs"]
+pub mod zsh_keyword_docs;
+#[path = "extensions/zsh_option_docs.rs"]
+pub mod zsh_option_docs;
+#[path = "extensions/zsh_special_var_docs.rs"]
+pub mod zsh_special_var_docs;
 #[path = "extensions/zwc.rs"]
 pub mod zwc;
 #[path = "extensions/zwc_decode.rs"]
 pub mod zwc_decode;
-#[path = "extensions/zsh_option_docs.rs"]
-pub mod zsh_option_docs;
-#[path = "extensions/zsh_builtin_docs.rs"]
-pub mod zsh_builtin_docs;
-#[path = "extensions/zsh_keyword_docs.rs"]
-pub mod zsh_keyword_docs;
-#[path = "extensions/zsh_special_var_docs.rs"]
-pub mod zsh_special_var_docs;
-#[path = "extensions/zsh_ext_builtin_docs.rs"]
-pub mod zsh_ext_builtin_docs;
-#[path = "extensions/gen_docs.rs"]
-pub mod gen_docs;
 // Backwards-compat re-export so `crate::rlimits::…` keeps resolving.
 pub use builtins::rlimits;
 

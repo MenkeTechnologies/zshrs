@@ -83,7 +83,10 @@ mod tests {
     #[test]
     fn register_then_dispatch_returns_one_without_zregexparse() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(_regex_arguments(&["myfn".to_string(), "/foo/".to_string()]), 0);
+        assert_eq!(
+            _regex_arguments(&["myfn".to_string(), "/foo/".to_string()]),
+            0
+        );
         assert_eq!(dispatch_registered("myfn"), 1);
     }
 

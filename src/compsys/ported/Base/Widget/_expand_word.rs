@@ -36,8 +36,7 @@ pub fn _expand_word() -> i32 {
     let _ = setsparam("curcontext", &new_ctx);
 
     // sh:13
-    let r =
-        dispatch_function_call("_main_complete", &["_expand".to_string()]).unwrap_or(1);
+    let r = dispatch_function_call("_main_complete", &["_expand".to_string()]).unwrap_or(1);
 
     // Restore shell-local scoping
     let _ = setsparam("curcontext", &saved);
@@ -59,6 +58,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("curcontext", "original:ctx:foo:bar");
         let _ = _expand_word();
-        assert_eq!(getsparam("curcontext").as_deref(), Some("original:ctx:foo:bar"));
+        assert_eq!(
+            getsparam("curcontext").as_deref(),
+            Some("original:ctx:foo:bar")
+        );
     }
 }

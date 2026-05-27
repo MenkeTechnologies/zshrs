@@ -5,26 +5,32 @@
 //! `prompt_tls::sync_from_globals` before expansion to refresh from
 //! the canonical C globals (paramtab, LASTVAL, curhist, JOBTAB, ...).
 
+use crate::ported::params::{paramtab, setaparam};
+use crate::ported::utils::{imeta_byte, strpfx};
+use crate::ported::zsh_h::{
+    isset, zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, PROMPTBANG, PROMPTPERCENT,
+    TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR,
+    TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_ALL, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK,
+    TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK,
+    TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR,
+};
+use crate::zsh_h::Meta;
+use crate::DPUTS;
 use std::cell::RefCell;
 use std::env;
 use std::sync::atomic::Ordering;
-use crate::DPUTS;
-use crate::ported::params::{paramtab, setaparam};
-use crate::ported::utils::{imeta_byte, strpfx};
-use crate::ported::zsh_h::{isset, zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, PROMPTBANG, PROMPTPERCENT, TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_ALL, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT, TXT_ATTR_FG_MASK, TXT_ERROR};
-use crate::zsh_h::Meta;
 
 /// Thread-local mirrors of zsh globals read during `promptexpand()` (logical
 /// `$PWD`, `$?`, `cmdstack`, …). C uses scattered globals; zshrs uses TLS,
 /// then copies into `buf_vars` for each expansion walk.
 pub(crate) mod prompt_tls {
-    use std::cell::RefCell;
-    use std::env;
     use crate::ported::hist::curhist;
     use crate::ported::jobs::JOBTAB;
     use crate::ported::modules::parameter::FUNCSTACK;
     use crate::ported::params::{getsparam, paramtab};
     use crate::ported::utils::adjustcolumns;
+    use std::cell::RefCell;
+    use std::env;
 
     thread_local! {
         pub(super) static PWD: RefCell<String> = const { RefCell::new(String::new()) };
@@ -107,8 +113,7 @@ pub(crate) mod prompt_tls {
         });
         // c:hist.c:233 curhist
         HISTNUM.with(|c| {
-            *c.borrow_mut() =
-                curhist.load(std::sync::atomic::Ordering::Relaxed);
+            *c.borrow_mut() = curhist.load(std::sync::atomic::Ordering::Relaxed);
         });
         SHLVL.with(|c| *c.borrow_mut() = shlvl);
         // c:jobs.c:88 jobtab — count in-use job slots
@@ -306,7 +311,11 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
     let neg_n = if signed < 0 || (signed as u64) >= (i32::MIN as u32 as u64) {
         // High-bit set → originally a negative i32 widened through usize.
         let as_i32 = (signed as i32).wrapping_neg();
-        if as_i32 > 0 { Some(as_i32 as usize) } else { None }
+        if as_i32 > 0 {
+            Some(as_i32 as usize)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -1988,9 +1997,11 @@ impl buf_vars {
 
             // Status
             '?' => self.out_str(&prompt_tls::LASTVAL.with(|c| *c.borrow()).to_string()),
-            '#' => self.out_char(
-                if prompt_tls::IS_ROOT.with(|c| *c.borrow()) { '#' } else { '%' }
-            ),
+            '#' => self.out_char(if prompt_tls::IS_ROOT.with(|c| *c.borrow()) {
+                '#'
+            } else {
+                '%'
+            }),
 
             // History
             'h' | '!' => self.out_str(&prompt_tls::HISTNUM.with(|c| *c.borrow()).to_string()),
@@ -2722,15 +2733,13 @@ pub fn allocate_colour_buffer() {
     if lenfg < 1 {
         lenfg = 1;
     } // c:2396-2397
-    lenfg += seqs[COL_SEQ_FG as usize].start.len()
-        + seqs[COL_SEQ_FG as usize].end.len(); // c:2398-2399
+    lenfg += seqs[COL_SEQ_FG as usize].start.len() + seqs[COL_SEQ_FG as usize].end.len(); // c:2398-2399
 
     let mut lenbg: usize = seqs[COL_SEQ_BG as usize].def.len(); // c:2401
     if lenbg < 1 {
         lenbg = 1;
     } // c:2403-2404
-    lenbg += seqs[COL_SEQ_BG as usize].start.len()
-        + seqs[COL_SEQ_BG as usize].end.len(); // c:2405-2406
+    lenbg += seqs[COL_SEQ_BG as usize].start.len() + seqs[COL_SEQ_BG as usize].end.len(); // c:2405-2406
     drop(seqs);
 
     let len = if lenfg > lenbg { lenfg } else { lenbg }; // c:2408
@@ -3168,8 +3177,7 @@ mod tests {
         );
 
         // -truecolor → explicitly disabled (c:1940 with result=0).
-        let _ =
-            setaparam(".term.extensions", vec!["-truecolor".to_string()]);
+        let _ = setaparam(".term.extensions", vec!["-truecolor".to_string()]);
         assert!(
             !truecolor_terminal(),
             ".term.extensions=(-truecolor) must report off"
@@ -3285,10 +3293,7 @@ mod tests {
     fn match_colour_numeric_out_of_range_errors() {
         let _g = crate::test_util::global_state_lock();
         let mut cur = 0usize;
-        assert_eq!(
-            match_colour(Some(&mut cur), "500", true, 0),
-            TXT_ERROR
-        );
+        assert_eq!(match_colour(Some(&mut cur), "500", true, 0), TXT_ERROR);
     }
 
     /// `match_colour` parses #RRGGBB truecolor → packs r/g/b into
@@ -3300,10 +3305,7 @@ mod tests {
         let attr = match_colour(Some(&mut cur), "#ff8040", true, 0);
         assert_ne!(attr, TXT_ERROR);
         assert_eq!(attr & TXTFGCOLOUR, TXTFGCOLOUR);
-        assert_eq!(
-            attr & TXT_ATTR_FG_24BIT,
-            TXT_ATTR_FG_24BIT
-        );
+        assert_eq!(attr & TXT_ATTR_FG_24BIT, TXT_ATTR_FG_24BIT);
         let pixel = (attr >> TXT_ATTR_FG_COL_SHIFT) & 0xffffff;
         assert_eq!(pixel, 0xff8040);
         assert_eq!(cur, 7);
@@ -3562,10 +3564,8 @@ mod tests {
     #[test]
     fn tsetattrs_fg_color_replaces_fg_mask() {
         let _g = crate::test_util::global_state_lock();
-        let palette_idx_5: zattr = (5u64 << TXT_ATTR_FG_COL_SHIFT)
-            & TXT_ATTR_FG_COL_MASK;
-        let palette_idx_2: zattr = (2u64 << TXT_ATTR_FG_COL_SHIFT)
-            & TXT_ATTR_FG_COL_MASK;
+        let palette_idx_5: zattr = (5u64 << TXT_ATTR_FG_COL_SHIFT) & TXT_ATTR_FG_COL_MASK;
+        let palette_idx_2: zattr = (2u64 << TXT_ATTR_FG_COL_SHIFT) & TXT_ATTR_FG_COL_MASK;
         // Pre-seed pending with idx=5
         set_pending_text_attrs(TXTFGCOLOUR | palette_idx_5);
         // tsetattrs with idx=2 should wholesale-replace, not OR
@@ -3830,7 +3830,10 @@ mod tests {
     #[test]
     fn promptexpand_corpus_plain_text_with_escapes_preserves_letters() {
         let out = expand("abc%Bdef%bxyz");
-        let plain: String = out.chars().filter(|c| !c.is_ascii_control() && *c != '[').collect();
+        let plain: String = out
+            .chars()
+            .filter(|c| !c.is_ascii_control() && *c != '[')
+            .collect();
         assert!(plain.contains("abc"), "starts with abc, got {out:?}");
         assert!(plain.contains("def"), "middle has def, got {out:?}");
         assert!(plain.contains("xyz"), "ends with xyz, got {out:?}");

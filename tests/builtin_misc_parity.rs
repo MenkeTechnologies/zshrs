@@ -4,32 +4,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -161,41 +195,49 @@ mod getopts {
     /// Basic getopts loop with `-a` / `-b` flags + arg.
     #[test]
     fn getopts_simple_flag_loop() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 set -- -a -b val -c
 while getopts "abc" opt; do
   echo opt=$opt
 done
-"#);
+"#,
+        );
     }
 
     #[test]
     fn getopts_with_arg() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 set -- -f filename
 while getopts "f:" opt; do
   echo opt=$opt arg=$OPTARG
 done
-"#);
+"#,
+        );
     }
 
     #[test]
     fn getopts_optind_after_loop() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 set -- -a -b
 while getopts "ab" opt; do :; done
 echo OPTIND=$OPTIND
-"#);
+"#,
+        );
     }
 
     #[test]
     fn getopts_unknown_option_emits_question_mark() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 set -- -X
 while getopts "ab" opt 2>/dev/null; do
   echo opt=$opt
 done
-"#);
+"#,
+        );
     }
 }
 
@@ -205,7 +247,9 @@ mod source_dot {
     /// `source` runs a script in current shell.
     #[test]
     fn source_runs_script_in_current_shell() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("snippet.sh");
         std::fs::write(&p, "echo from-source\n").unwrap();
@@ -218,7 +262,9 @@ mod source_dot {
     /// `.` is alias for `source`.
     #[test]
     fn dot_is_alias_for_source() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("snippet.sh");
         std::fs::write(&p, "echo from-dot\n").unwrap();
@@ -231,7 +277,9 @@ mod source_dot {
     /// Sourced script sees + modifies current shell's vars.
     #[test]
     fn source_can_modify_parent_vars() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("set.sh");
         std::fs::write(&p, "X=from_sourced\n").unwrap();

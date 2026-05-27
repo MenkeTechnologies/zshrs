@@ -69,7 +69,12 @@ pub fn _complete_tag() -> i32 {
     if let (Some(cp), Some(lp)) = (cap_path.as_ref(), low_path.as_ref()) {
         if cp == lp {
             if let Ok(content) = fs::read_to_string(cp) {
-                if content.lines().next().map(|l| l.starts_with("!_TAG_")).unwrap_or(false) {
+                if content
+                    .lines()
+                    .next()
+                    .map(|l| l.starts_with("!_TAG_"))
+                    .unwrap_or(false)
+                {
                     emacs_tags_path = None;
                 }
             }
@@ -136,16 +141,18 @@ fn parse_emacs_tags(path: &str) -> Vec<String> {
                 // Take everything BEFORE the DEL, then split on the last
                 // non-ident char.
                 let head = &line[..del_idx];
-                let tail = head.trim_end_matches(
-                    |c: char| !(c.is_ascii_alphanumeric() || c == '_'),
-                );
+                let tail =
+                    head.trim_end_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_'));
                 let name_start = tail
                     .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
                     .map(|i| i + 1)
                     .unwrap_or(0);
                 let name = &tail[name_start..];
                 if !name.is_empty()
-                    && name.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic())
+                    && name
+                        .chars()
+                        .next()
+                        .map(|c| c == '_' || c.is_ascii_alphabetic())
                         .unwrap_or(false)
                 {
                     out.push(name.to_string());

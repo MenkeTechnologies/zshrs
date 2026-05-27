@@ -4,32 +4,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -93,11 +127,13 @@ mod dynamic_var {
     /// Build and call function dynamically.
     #[test]
     fn eval_dynamic_function_call() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 greet() { echo "hi"; }
 FN=greet
 eval "$FN"
-"#);
+"#,
+        );
     }
 
     /// Build complex command from variable.
@@ -173,13 +209,15 @@ mod local_scope {
     /// eval inside function honors local scope.
     #[test]
     fn eval_in_function_uses_local_scope() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 f() {
   local INNER=inner
   eval "echo $INNER"
 }
 f
-"#);
+"#,
+        );
     }
 }
 
@@ -217,19 +255,23 @@ mod side_effects {
     /// eval to define alias.
     #[test]
     fn eval_define_alias() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 eval "alias myhi='echo hi'"
 alias myhi
-"#);
+"#,
+        );
     }
 
     /// eval to define function.
     #[test]
     fn eval_define_function() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 eval "myfn() { echo from-fn; }"
 myfn
-"#);
+"#,
+        );
     }
 }
 
@@ -239,14 +281,16 @@ mod return_in_eval {
     /// `return` inside eval inside function exits function.
     #[test]
     fn return_in_eval_exits_function() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 f() {
   eval "return 42"
   echo "should not print"
 }
 f
 echo "exit=$?"
-"#);
+"#,
+        );
     }
 }
 

@@ -8,32 +8,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -61,7 +95,8 @@ mod dollar_random {
     /// Setting $RANDOM seeds.
     #[test]
     fn random_seeding_reproducible() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 RANDOM=42
 A=$RANDOM
 B=$RANDOM
@@ -69,7 +104,8 @@ RANDOM=42
 C=$RANDOM
 D=$RANDOM
 (( A == C && B == D )); echo $?
-"#);
+"#,
+        );
     }
 }
 
@@ -107,12 +143,14 @@ mod dollar_lineno {
     /// $LINENO increases across lines in a script.
     #[test]
     fn lineno_increases_across_lines() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 A=$LINENO
 B=$LINENO
 C=$LINENO
 (( A < B && B < C )); echo $?
-"#);
+"#,
+        );
     }
 }
 
@@ -182,7 +220,9 @@ mod pipestatus {
     /// Mixed exit codes captured.
     #[test]
     fn pipestatus_mixed_exits() {
-        assert_parity(r#"false | true | false; echo "${pipestatus[1]}/${pipestatus[2]}/${pipestatus[3]}""#);
+        assert_parity(
+            r#"false | true | false; echo "${pipestatus[1]}/${pipestatus[2]}/${pipestatus[3]}""#,
+        );
     }
 
     /// $#pipestatus = length of last pipeline.
@@ -198,10 +238,12 @@ mod funcstack {
     /// $funcstack lists active function names.
     #[test]
     fn funcstack_in_function() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 f() { echo "${funcstack[1]}"; }
 f
-"#);
+"#,
+        );
     }
 
     /// Empty outside any function.
@@ -213,11 +255,13 @@ f
     /// Nested functions stack.
     #[test]
     fn funcstack_nested() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 inner() { echo "stack: ${funcstack[1]}/${funcstack[2]}"; }
 outer() { inner; }
 outer
-"#);
+"#,
+        );
     }
 }
 

@@ -46,7 +46,10 @@ mod tests {
     #[test]
     fn shifts_words_and_decrements_current() {
         let _g = crate::test_util::global_state_lock();
-        setaparam("words", vec!["nohup".to_string(), "ls".to_string(), "-la".to_string()]);
+        setaparam(
+            "words",
+            vec!["nohup".to_string(), "ls".to_string(), "-la".to_string()],
+        );
         let _ = setsparam("CURRENT", "3");
         let _r = _precommand();
         let words = getaparam("words").unwrap_or_default();

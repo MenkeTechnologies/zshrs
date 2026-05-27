@@ -78,13 +78,7 @@ pub fn _requested(args: &[String]) -> i32 {
 
     // sh:8  comptags -R "$1"
     let arg1 = argv.first().cloned().unwrap_or_default();
-    if bin_comptags(
-        "comptags",
-        &["-R".to_string(), arg1],
-        &make_ops(),
-        0,
-    ) != 0
-    {
+    if bin_comptags("comptags", &["-R".to_string(), arg1], &make_ops(), 0) != 0 {
         // sh:16
         return 1;
     }

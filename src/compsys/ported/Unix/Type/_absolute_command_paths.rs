@@ -78,17 +78,10 @@ pub fn _hashed_absolute_command_paths(args: &[String]) -> i32 {
         // sh:10  matches = commands values starting with $dir
         let matches: Vec<String> = commands
             .chunks(2)
-            .filter_map(|kv| {
-                kv.get(1)
-                    .filter(|v| v.starts_with(dir))
-                    .cloned()
-            })
+            .filter_map(|kv| kv.get(1).filter(|v| v.starts_with(dir)).cloned())
             .collect();
         // sh:11
-        let descs: Vec<String> = matches
-            .iter()
-            .map(|m| basename(m))
-            .collect();
+        let descs: Vec<String> = matches.iter().map(|m| basename(m)).collect();
         // sh:12  compadd -M "l:|=$dir" -d descs "$@" -a matches
         setaparam("descs", descs);
         setaparam("matches", matches);
@@ -146,10 +139,8 @@ pub fn _absolute_command_paths() -> i32 {
     dispatch_function_call(
         "_alternative",
         &[
-            "commands:hashed command by absolute path:_hashed_absolute_command_paths"
-                .to_string(),
-            "commands:full path to an executable:_typed-in_absolute_command_paths"
-                .to_string(),
+            "commands:hashed command by absolute path:_hashed_absolute_command_paths".to_string(),
+            "commands:full path to an executable:_typed-in_absolute_command_paths".to_string(),
         ],
     )
     .unwrap_or(1)

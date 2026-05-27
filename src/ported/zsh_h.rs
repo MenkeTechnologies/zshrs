@@ -716,14 +716,14 @@ pub struct builtin {
 #[derive(Default)]
 pub struct execcmd_params {
     // c:1492
-    pub args: Option<Vec<String>>,  // c:1493 LinkList args
-    pub redir: Option<Vec<redir>>,  // c:1494 LinkList redir
-    pub beg: usize,                 // c:1495 Wordcode beg (pc index)
-    pub varspc: Option<usize>,      // c:1496 Wordcode varspc (NULL → None)
-    pub assignspc: Option<usize>,   // c:1497 Wordcode assignspc
-    pub typ: i32,                   // c:1498 (Rust keyword `type`)
-    pub postassigns: i32,           // c:1499
-    pub htok: i32,                  // c:1500
+    pub args: Option<Vec<String>>, // c:1493 LinkList args
+    pub redir: Option<Vec<redir>>, // c:1494 LinkList redir
+    pub beg: usize,                // c:1495 Wordcode beg (pc index)
+    pub varspc: Option<usize>,     // c:1496 Wordcode varspc (NULL → None)
+    pub assignspc: Option<usize>,  // c:1497 Wordcode assignspc
+    pub typ: i32,                  // c:1498 (Rust keyword `type`)
+    pub postassigns: i32,          // c:1499
+    pub htok: i32,                 // c:1500
 }
 
 /// Port of `struct module` from `Src/zsh.h:1503-1513`. C uses a union
@@ -1239,7 +1239,7 @@ pub struct process {
     pub pid: i32,                            // c:1119 pid_t
     pub text: String,                        // c:1120 char text[JOBTEXTSIZE]
     pub status: i32,                         // c:1121
-    pub ti: timeinfo,  // c:1122 child_times_t ti
+    pub ti: timeinfo,                        // c:1122 child_times_t ti
     pub bgtime: Option<std::time::Instant>,  // c:1123 struct timespec bgtime
     pub endtime: Option<std::time::Instant>, // c:1124 struct timespec endtime
 }
@@ -4446,8 +4446,7 @@ mod tests {
     /// U+0301 = COMBINING ACUTE ACCENT.
     #[test]
     fn zshh_corpus_wcwidth_combining_is_zero() {
-        assert_eq!(WCWIDTH('\u{0301}'), 0,
-            "combining acute accent has width 0");
+        assert_eq!(WCWIDTH('\u{0301}'), 0, "combining acute accent has width 0");
     }
 
     /// `IS_COMBINING` true for combining accent codepoints.
@@ -4477,8 +4476,10 @@ mod tests {
     /// `IS_BASECHAR` false for combining marks.
     #[test]
     fn zshh_corpus_is_basechar_false_for_combining() {
-        assert!(!IS_BASECHAR('\u{0301}'),
-            "combining accent is not a base char");
+        assert!(
+            !IS_BASECHAR('\u{0301}'),
+            "combining accent is not a base char"
+        );
     }
 
     /// Pound (lex marker) is in the imeta range 0x83..=0xa2.
@@ -4487,7 +4488,8 @@ mod tests {
         let p = Pound as u32;
         assert!(
             p >= 0x83 && p <= 0xa2,
-            "Pound = {:#x} must be in imeta range 0x83..=0xa2", p
+            "Pound = {:#x} must be in imeta range 0x83..=0xa2",
+            p
         );
     }
 }

@@ -4,32 +4,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -131,38 +165,44 @@ mod terminators {
     /// `;;` — match, run, then break out of case.
     #[test]
     fn double_semicolon_breaks_out() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 case foo in
   foo) echo first;;
   *)   echo never;;
 esac
-"#);
+"#,
+        );
     }
 
     /// `;&` — match, run, then fall through to next arm (no test on
     /// next arm's pattern). zsh-extension.
     #[test]
     fn ampersand_semicolon_fall_through() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 case foo in
   foo) echo first;&
   bar) echo second;&
   baz) echo third;;
 esac
-"#);
+"#,
+        );
     }
 
     /// `;;&` — match, run, then continue testing remaining patterns.
     /// zsh-extension.
     #[test]
     fn double_semicolon_amp_continue_match() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 case foo in
   foo*) echo prefix;;&
   *foo) echo suffix;;&
   *)    echo other;;
 esac
-"#);
+"#,
+        );
     }
 }
 
@@ -190,7 +230,8 @@ mod nested {
 
     #[test]
     fn case_inside_case() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 case top in
   top)
     case inner in
@@ -198,18 +239,21 @@ case top in
     esac
     ;;
 esac
-"#);
+"#,
+        );
     }
 
     #[test]
     fn case_inside_if() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 if true; then
   case foo in
     foo) echo got;;
   esac
 fi
-"#);
+"#,
+        );
     }
 }
 

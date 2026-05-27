@@ -6,18 +6,34 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 
 fn run_with_stdin(bin: &Path, script: &str, stdin_bytes: &[u8]) -> R {
     let args: Vec<&str> = if bin.file_name().map(|n| n == "zsh").unwrap_or(false) {
@@ -25,16 +41,31 @@ fn run_with_stdin(bin: &Path, script: &str, stdin_bytes: &[u8]) -> R {
     } else {
         vec!["--zsh", "-f", "-c", script]
     };
-    let mut child = Command::new(bin).args(args).env_remove("ZSHRS_CACHE")
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
-        .spawn().expect("spawn");
-    child.stdin.as_mut().unwrap().write_all(stdin_bytes).expect("write");
+    let mut child = Command::new(bin)
+        .args(args)
+        .env_remove("ZSHRS_CACHE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(stdin_bytes)
+        .expect("write");
     let o = child.wait_with_output().expect("wait");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 
 fn assert_parity_stdin(script: &str, stdin_bytes: &[u8]) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_with_stdin(Path::new(zsh_path()), script, stdin_bytes);
     let r = run_with_stdin(&zshrs_bin(), script, stdin_bytes);
     assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{script}\nstdin: {stdin_bytes:?}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
@@ -107,7 +138,10 @@ mod dash_d_delim {
     /// `read -d ''` reads until NUL.
     #[test]
     fn dash_d_nul_delim() {
-        assert_parity_stdin(r#"read -d '' x; echo "[$x]""#, b"all of this\nincluding newlines\0");
+        assert_parity_stdin(
+            r#"read -d '' x; echo "[$x]""#,
+            b"all of this\nincluding newlines\0",
+        );
     }
 }
 
@@ -127,15 +161,16 @@ mod dash_A_array {
     /// `read -A arr` reads line into array (word-split).
     #[test]
     fn dash_A_into_array() {
-        assert_parity_stdin(r#"read -A arr; echo "${#arr}|${arr[1]}|${arr[2]}|${arr[3]}""#,
-            b"one two three\n");
+        assert_parity_stdin(
+            r#"read -A arr; echo "${#arr}|${arr[1]}|${arr[2]}|${arr[3]}""#,
+            b"one two three\n",
+        );
     }
 
     /// `read -A` with single word.
     #[test]
     fn dash_A_single_word() {
-        assert_parity_stdin(r#"read -A arr; echo "${#arr}|${arr[1]}""#,
-            b"hello\n");
+        assert_parity_stdin(r#"read -A arr; echo "${#arr}|${arr[1]}""#, b"hello\n");
     }
 }
 
@@ -145,22 +180,28 @@ mod multi_line {
     /// One `read` per line.
     #[test]
     fn read_one_line_at_a_time() {
-        assert_parity_stdin(r#"
+        assert_parity_stdin(
+            r#"
 read a
 read b
 read c
 echo "$a|$b|$c"
-"#, b"first\nsecond\nthird\n");
+"#,
+            b"first\nsecond\nthird\n",
+        );
     }
 
     /// Loop `while read line` over entire stdin.
     #[test]
     fn while_read_loop_over_stdin() {
-        assert_parity_stdin(r#"
+        assert_parity_stdin(
+            r#"
 while read line; do
   echo "got: $line"
 done
-"#, b"alpha\nbeta\ngamma\n");
+"#,
+            b"alpha\nbeta\ngamma\n",
+        );
     }
 }
 
@@ -170,22 +211,22 @@ mod ifs_handling {
     /// Custom IFS affects word-splitting in read.
     #[test]
     fn ifs_colon_word_split() {
-        assert_parity_stdin(r#"IFS=: read a b c; echo "[$a][$b][$c]""#,
-            b"alpha:beta:gamma\n");
+        assert_parity_stdin(
+            r#"IFS=: read a b c; echo "[$a][$b][$c]""#,
+            b"alpha:beta:gamma\n",
+        );
     }
 
     /// Multi-char IFS.
     #[test]
     fn ifs_multi_char_split() {
-        assert_parity_stdin(r#"IFS=:, read a b c; echo "[$a][$b][$c]""#,
-            b"x:y,z\n");
+        assert_parity_stdin(r#"IFS=:, read a b c; echo "[$a][$b][$c]""#, b"x:y,z\n");
     }
 
     /// Empty IFS — no splitting.
     #[test]
     fn ifs_empty_no_split() {
-        assert_parity_stdin(r#"IFS= read x; echo "[$x]""#,
-            b"  spaces preserved  \n");
+        assert_parity_stdin(r#"IFS= read x; echo "[$x]""#, b"  spaces preserved  \n");
     }
 }
 
@@ -196,8 +237,7 @@ mod prompt_with_dash_p {
     /// `read "?prompt" var` is zsh's prompt syntax.
     #[test]
     fn zsh_prompt_via_question_mark() {
-        assert_parity_stdin(r#"read "?Name: " x 2>/dev/null; echo "[$x]""#,
-            b"jacob\n");
+        assert_parity_stdin(r#"read "?Name: " x 2>/dev/null; echo "[$x]""#, b"jacob\n");
     }
 }
 
@@ -223,8 +263,7 @@ mod zero_byte_data {
     /// Read line containing NUL byte (handling varies).
     #[test]
     fn read_line_with_nul() {
-        assert_parity_stdin(r#"read x; echo "[$x]" | od -c | head -1"#,
-            b"abc\0def\n");
+        assert_parity_stdin(r#"read x; echo "[$x]" | od -c | head -1"#, b"abc\0def\n");
     }
 }
 

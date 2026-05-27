@@ -18,7 +18,6 @@ use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::{features, module, options, MAX_OPS};
 use std::sync::{Mutex, OnceLock};
 
-
 // =====================================================================
 // libcap FFI — declared in `<sys/capability.h>` (libcap), not libc.
 // =====================================================================
@@ -317,7 +316,6 @@ pub fn finish_(m: *const module) -> i32 {
 // Tests
 // =====================================================================
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -341,11 +339,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 3]);
     }
@@ -558,8 +552,12 @@ mod tests {
     fn cap_corpus_bin_setcap_notavail_returns_one_with_full_args() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
-        let r = bin_setcap("setcap",
-            &["cap_net_admin+ep".into(), "/bin/ls".into()], &ops, 0);
+        let r = bin_setcap(
+            "setcap",
+            &["cap_net_admin+ep".into(), "/bin/ls".into()],
+            &ops,
+            0,
+        );
         assert_eq!(r, 1);
     }
 

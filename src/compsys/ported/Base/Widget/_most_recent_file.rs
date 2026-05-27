@@ -23,7 +23,7 @@
 //! selecting the Nth oldest match. We replicate via std::fs +
 //! mtime sort instead of evaluating zsh-glob expressions inline.
 
-use crate::ported::params::{getsparam, getiparam};
+use crate::ported::params::{getiparam, getsparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};
 use std::fs;

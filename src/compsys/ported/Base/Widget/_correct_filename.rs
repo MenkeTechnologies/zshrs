@@ -95,8 +95,7 @@ pub fn _correct_filename(args: &[String]) -> i32 {
             ];
             let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
             let cur_insert =
-                crate::ported::zle::compcore::get_compstate_str("insert")
-                    .unwrap_or_default();
+                crate::ported::zle::compcore::get_compstate_str("insert").unwrap_or_default();
             if !cur_insert.is_empty() {
                 set_compstate_str("insert", "menu");
             }
@@ -162,8 +161,7 @@ pub fn _correct_filename(args: &[String]) -> i32 {
         ];
         let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
         let cur_insert =
-            crate::ported::zle::compcore::get_compstate_str("insert")
-                .unwrap_or_default();
+            crate::ported::zle::compcore::get_compstate_str("insert").unwrap_or_default();
         if !cur_insert.is_empty() {
             set_compstate_str("insert", "menu");
         }

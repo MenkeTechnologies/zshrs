@@ -6,32 +6,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -126,23 +160,27 @@ mod iteration {
     /// `for k v in ${(kv)H}` iterates pairs.
     #[test]
     fn for_loop_over_kv_pairs() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 typeset -A H=(a 1 b 2 c 3)
 for k v in "${(@kv)H}"; do
   echo "$k=$v"
 done | sort
-"#);
+"#,
+        );
     }
 
     /// Iterate keys only.
     #[test]
     fn for_loop_over_keys() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 typeset -A H=(a 1 b 2)
 for k in "${(@k)H}"; do
   echo "$k"
 done | sort
-"#);
+"#,
+        );
     }
 }
 
@@ -152,11 +190,13 @@ mod delete {
     /// `unset 'H[k]'` removes one key.
     #[test]
     fn unset_single_key() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 typeset -A H=(a 1 b 2 c 3)
 unset 'H[b]'
 echo "${(@k)H}" | tr ' ' '\n' | sort
-"#);
+"#,
+        );
     }
 
     /// `unset H` clears whole hash.
@@ -188,20 +228,24 @@ mod subscript_flags {
     /// `${H[(I)pat]}` pattern-key lookup.
     #[test]
     fn flag_I_pattern_lookup() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 typeset -A H=(apple 1 banana 2 cherry 3)
 echo "${H[(I)b*]}"
-"#);
+"#,
+        );
     }
 
     /// `${(M)H[(I)*a*]}` match-only modifier.
     #[test]
     #[ignore = "ZSHRS BUG: (I) pattern-key lookup may differ from zsh"]
     fn flag_I_returns_all_matches() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 typeset -A H=(apple 1 banana 2 cherry 3)
 print -l "${(@k)H[(I)*a*]}" | sort
-"#);
+"#,
+        );
     }
 }
 
@@ -242,7 +286,8 @@ mod assoc_in_function {
 
     #[test]
     fn assoc_inside_function_local() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 f() {
   typeset -A LOCAL_H
   LOCAL_H[x]=10
@@ -250,6 +295,7 @@ f() {
 }
 f
 echo "outside=[${LOCAL_H[x]}]"
-"#);
+"#,
+        );
     }
 }

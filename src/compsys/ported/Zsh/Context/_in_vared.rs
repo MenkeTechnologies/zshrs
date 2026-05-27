@@ -118,10 +118,7 @@ mod tests {
         setaparam("myarr", vec!["a".to_string(), "b".to_string()]);
         set_compstate_str("vared", "myarr");
         let _ = _in_vared();
-        assert_eq!(
-            get_compstate_str("context").as_deref(),
-            Some("array_value")
-        );
+        assert_eq!(get_compstate_str("context").as_deref(), Some("array_value"));
     }
 
     #[test]

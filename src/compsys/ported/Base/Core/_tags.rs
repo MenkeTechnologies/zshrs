@@ -110,12 +110,7 @@ pub fn _tags(args: &[String]) -> i32 {
     // sh:15  if (( $# ))
     if argv.is_empty() {
         // sh:67  comptags "-N$prev"
-        return bin_comptags(
-            "comptags",
-            &[format!("-N{}", prev)],
-            &make_ops(),
-            0,
-        );
+        return bin_comptags("comptags", &[format!("-N{}", prev)], &make_ops(), 0);
     }
 
     // sh:19  local curcontext="$curcontext"
@@ -307,10 +302,7 @@ mod tests {
         // can't easily inspect from here without deeper comptags
         // hooks); the test just ensures the code path doesn't panic.
         let _r = with_incompfunc(|| {
-            crate::ported::params::setsparam(
-                "curcontext",
-                ":completion::complete:command:",
-            );
+            crate::ported::params::setsparam("curcontext", ":completion::complete:command:");
             _tags(&["-Cnewfield".to_string(), "mytag".to_string()])
         });
     }
@@ -319,10 +311,7 @@ mod tests {
     fn c_flag_short_form_consumes_two_args() {
         // sh:24-26 — `-C newfield` consumes 2 argv entries.
         let _r = with_incompfunc(|| {
-            crate::ported::params::setsparam(
-                "curcontext",
-                ":completion::complete:command:",
-            );
+            crate::ported::params::setsparam("curcontext", ":completion::complete:command:");
             _tags(&[
                 "-C".to_string(),
                 "newfield".to_string(),
@@ -335,10 +324,7 @@ mod tests {
     fn end_of_flags_marker_is_stripped() {
         // sh:29 — single `-` or `--` between -C and tags is consumed.
         let _r = with_incompfunc(|| {
-            crate::ported::params::setsparam(
-                "curcontext",
-                ":completion::complete:command:",
-            );
+            crate::ported::params::setsparam("curcontext", ":completion::complete:command:");
             _tags(&["-".to_string(), "mytag".to_string()])
         });
     }
@@ -349,10 +335,7 @@ mod tests {
         //   dispatch_function_call returns None and we fall through to
         //   the default sort path. Verify no panic.
         let _r = with_incompfunc(|| {
-            crate::ported::params::setsparam(
-                "curcontext",
-                ":completion::complete:command:",
-            );
+            crate::ported::params::setsparam("curcontext", ":completion::complete:command:");
             crate::ported::params::setsparam("_sort_tags", "nonexistent_hook");
             let r = _tags(&["options".to_string(), "values".to_string()]);
             crate::ported::params::setsparam("_sort_tags", "");

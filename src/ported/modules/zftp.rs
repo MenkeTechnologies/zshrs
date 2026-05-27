@@ -7,20 +7,18 @@
 //!
 //! Provides a builtin FTP client for zsh.
 
+use crate::ported::builtin::{LASTVAL, SFCONTEXT};
+use crate::ported::params::getiparam;
+use crate::ported::utils::{errflag, getshfunc, zwarnnam};
+use crate::ported::zsh_h::{module, options, SFC_HOOK};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
-use crate::ported::builtin::{LASTVAL, SFCONTEXT};
-use crate::ported::params::getiparam;
-use crate::ported::utils::{errflag, getshfunc, zwarnnam};
-use crate::ported::zsh_h::{module, options, SFC_HOOK};
 use std::sync::{Mutex, OnceLock};
-
-
+use std::time::Duration;
 
 /// Port of `zftp_session(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2889`.
 #[allow(unused_variables)]
@@ -190,7 +188,7 @@ pub extern "C" fn zfhandler(sig: i32) {
     if sig == libc::SIGALRM {
         // c:368
         ZFDRRRRING.store(1, Ordering::Relaxed); // c:369
-                                                                   // c:370-374 — errno = ETIMEDOUT (or EIO).
+                                                // c:370-374 — errno = ETIMEDOUT (or EIO).
         unsafe {
             *errno_ptr() = libc::ETIMEDOUT;
         }
@@ -207,8 +205,8 @@ pub extern "C" fn zfhandler(sig: i32) {
 pub fn zfalarm(tmout: i32) {
     // c:384
     ZFDRRRRING.store(0, Ordering::Relaxed); // c:384
-                                                               // c:387-392 — fire alarm even when tmout is 0 so a pending non-zero
-                                                               // main-shell alarm doesn't bleed into the FTP code path.
+                                            // c:387-392 — fire alarm even when tmout is 0 so a pending non-zero
+                                            // main-shell alarm doesn't bleed into the FTP code path.
     if ZFALARMED.load(Ordering::Relaxed) != 0 {
         // c:393
         unsafe {
@@ -716,8 +714,7 @@ pub fn zfgetmsg() -> i32 {
     // c:791-797 — EOF or 421: close + warn.
     let zcfin = ZCFINISH.load(Ordering::Relaxed);
     let cur_code = lastcode.load(Ordering::Relaxed);
-    if (zcfin == 2 || cur_code == 421) && ZFCLOSING.load(Ordering::Relaxed) == 0
-    {
+    if (zcfin == 2 || cur_code == 421) && ZFCLOSING.load(Ordering::Relaxed) == 0 {
         ZCFINISH.store(2, Ordering::Relaxed); // c:792
         zfclose(0); // c:793
         zwarnnam(
@@ -859,10 +856,7 @@ pub fn zfopendata(name: &str) -> (i32, bool) {
                 // c:925
                 Ok(t) => t,
                 Err(_) => {
-                    zwarnnam(
-                        name,
-                        &format!("bad response to PASV: {}", last),
-                    );
+                    zwarnnam(name, &format!("bad response to PASV: {}", last));
                     zfclosedata();
                     return (1, false); // c:946
                 }
@@ -1666,12 +1660,11 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
                     &sofar.to_string(),
                     ZFPM_READONLY | ZFPM_INTEGER,
                 ); // c:1608
-                SFCONTEXT
-                    .store(SFC_HOOK, Ordering::Relaxed); // c:1609
-                                                                               // c:1610 — doshfunc(shfunc, NULL, 1). Static-link path:
-                                                                               // VM-level CallFunction dispatch happens inside fusevm
-                                                                               // when a live frame exists; from this caller we trust
-                                                                               // the `getshfunc` probe and read the post-call LASTVAL.
+                SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:1609
+                                                              // c:1610 — doshfunc(shfunc, NULL, 1). Static-link path:
+                                                              // VM-level CallFunction dispatch happens inside fusevm
+                                                              // when a live frame exists; from this caller we trust
+                                                              // the `getshfunc` probe and read the post-call LASTVAL.
                 let _ = LASTVAL.load(Ordering::Relaxed);
                 SFCONTEXT.store(osc, Ordering::Relaxed);
             // c:1611
@@ -1689,11 +1682,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
     ZFDRRRRING.store(0, Ordering::Relaxed); // c:1620
 
     // c:1621-1625 — block-mode EOF marker on send completion.
-    if errflag.load(Ordering::Relaxed) == 0
-        && ret == 0
-        && recv == 0
-        && use_block_mode
-    {
+    if errflag.load(Ordering::Relaxed) == 0 && ret == 0 && recv == 0 && use_block_mode {
         let eof_buf = [0u8; 1];
         if zfwrite_block(fdout, &eof_buf, 0, wtmout) < 0 {
             ret = 1; // c:1624
@@ -1870,10 +1859,7 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {
             "ftp" => 21,
             "ftps" => 990,
             _ => {
-                zwarnnam(
-                    name,
-                    &format!("Can't find port for service `{}'", portnam),
-                ); // c:1768
+                zwarnnam(name, &format!("Can't find port for service `{}'", portnam)); // c:1768
                 return 1; // c:1769
             }
         }
@@ -1931,8 +1917,7 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {
         if errflag.load(Ordering::Relaxed) != 0 {
             break;
         }
-        match TcpStream::connect_timeout(addr, Duration::from_secs(tmout.max(1) as u64))
-        {
+        match TcpStream::connect_timeout(addr, Duration::from_secs(tmout.max(1) as u64)) {
             Ok(s) => {
                 connected = Some((s, *addr));
                 break;
@@ -2819,19 +2804,15 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
         if progress != 0 && ret != 2 {
             if let Some(_shfunc) = getshfunc("zftp_progress") {
                 // c:2607
-                let osc =
-                    SFCONTEXT.load(Ordering::Relaxed); // c:2610
+                let osc = SFCONTEXT.load(Ordering::Relaxed); // c:2610
                 zfsetparam(
                     "ZFTP_TRANSFER", // c:2611-2612
                     if recv { "GF" } else { "PF" },
                     ZFPM_READONLY,
                 );
-                SFCONTEXT.store(
-                    SFC_HOOK,
-                    Ordering::Relaxed,
-                ); // c:2613
-                   // c:2614 — doshfunc dispatch happens inside fusevm; static
-                   // caller probes via getshfunc + reads LASTVAL.
+                SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:2613
+                                                              // c:2614 — doshfunc dispatch happens inside fusevm; static
+                                                              // caller probes via getshfunc + reads LASTVAL.
                 let _ = LASTVAL.load(Ordering::Relaxed);
                 SFCONTEXT.store(osc, Ordering::Relaxed);
                 // c:2615
@@ -3017,10 +2998,9 @@ pub fn zfclose(leaveparams: i32) {
         if getshfunc("zftp_chpwd").is_some() {
             // c:2767
             let osc = SFCONTEXT.load(Ordering::Relaxed);
-            SFCONTEXT
-                .store(SFC_HOOK, Ordering::Relaxed); // c:2770
-                                                                           // c:2771 doshfunc dispatch — VM-level CallFunction lives
-                                                                           // inside fusevm; static caller probes via getshfunc.
+            SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:2770
+                                                          // c:2771 doshfunc dispatch — VM-level CallFunction lives
+                                                          // inside fusevm; static caller probes via getshfunc.
             let _ = LASTVAL.load(Ordering::Relaxed);
             SFCONTEXT.store(osc, Ordering::Relaxed); // c:2772
         }
@@ -4296,7 +4276,6 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 // static struct features module_features                            c:3163 (zftp.c)
 // =====================================================================
 
-
 /// Port of `boot_(UNUSED(Module m))` from `Src/Modules/zftp.c:3196`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
@@ -4317,9 +4296,9 @@ pub fn boot_(m: *const module) -> i32 {
         Ordering::Relaxed,
     );
     let _default = newsession("default"); // c:3219
-    // c:3219 — `addhookfunc("exit", zftpexithook)` — register the
-    // process-exit cleanup so all live ftp sessions get torn down
-    // before the shell exits.
+                                          // c:3219 — `addhookfunc("exit", zftpexithook)` — register the
+                                          // process-exit cleanup so all live ftp sessions get torn down
+                                          // before the shell exits.
     crate::ported::module::addhookfunc("exit", zftpexithook as crate::ported::zsh_h::Hookfn);
     0
 }
@@ -4329,10 +4308,7 @@ pub fn cleanup_(m: *const module) -> i32 {
     // c:3219
     // c:3228 — `deletehookfunc("exit", zftpexithook)` — drop the
     // exit-hook registration before the module unloads.
-    crate::ported::module::deletehookfunc(
-        "exit",
-        zftpexithook as crate::ported::zsh_h::Hookfn,
-    );
+    crate::ported::module::deletehookfunc("exit", zftpexithook as crate::ported::zsh_h::Hookfn);
     // c:3228 — `zftp_cleanup()`: close every live session.
     zftp_cleanup(); // c:3228
     setfeatureenables(m, module_features(), None) // c:3228
@@ -4550,8 +4526,7 @@ pub struct zftp_globals {
 /// `static Zftp_session zfsessions[]` and friends in zftp.c. Holds
 /// all sessions and the currently-active one. Free ported above route
 /// through this so subcommand dispatch matches C behaviour.
-static ZFTP_STATE_INNER: OnceLock<Mutex<zftp_globals>> =
-    OnceLock::new();
+static ZFTP_STATE_INNER: OnceLock<Mutex<zftp_globals>> = OnceLock::new();
 
 /// WARNING: NOT IN ZFTP.C — platform-gated `errno` pointer; C reads errno directly after syscalls
 /// (equivalent C logic at Src/Modules/zftp.c:25).
@@ -4655,7 +4630,6 @@ pub static OALTIME: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64:
 
 // `zftp_cleanup` is defined above at c:3128; the exit hook calls it.
 
-
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -4690,7 +4664,11 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<crate::ported::zsh_h::features>,
+    _e: Option<&[i32]>,
+) -> i32 {
     0
 }
 
@@ -5253,8 +5231,7 @@ mod tests {
     #[test]
     fn zftp_corpus_zfst_type_ignores_mode_bits() {
         let combined = ZFST_IMAG | ZFST_BLOC;
-        assert_eq!(ZFST_TYPE(combined), ZFST_IMAG,
-            "ZFST_TYPE strips mode bits");
+        assert_eq!(ZFST_TYPE(combined), ZFST_IMAG, "ZFST_TYPE strips mode bits");
     }
 
     /// `ZFST_MODE` masks mode bits.
@@ -5268,15 +5245,17 @@ mod tests {
     #[test]
     fn zftp_corpus_zfst_mode_ignores_type_bits() {
         let combined = ZFST_IMAG | ZFST_BLOC;
-        assert_eq!(ZFST_MODE(combined), ZFST_BLOC,
-            "ZFST_MODE strips type bits");
+        assert_eq!(ZFST_MODE(combined), ZFST_BLOC, "ZFST_MODE strips type bits");
     }
 
     /// `ZFST_TMSK` and `ZFST_MMSK` don't overlap.
     #[test]
     fn zftp_corpus_zfst_type_mode_masks_disjoint() {
-        assert_eq!(ZFST_TMSK & ZFST_MMSK, 0,
-            "type-mask and mode-mask must be disjoint");
+        assert_eq!(
+            ZFST_TMSK & ZFST_MMSK,
+            0,
+            "type-mask and mode-mask must be disjoint"
+        );
     }
 
     /// `ZFST_TYPE(0)` and `ZFST_MODE(0)` both return 0.

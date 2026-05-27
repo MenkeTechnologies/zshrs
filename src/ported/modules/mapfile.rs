@@ -18,6 +18,8 @@
 //! zsh-framework types).
 
 use crate::ported::utils::{metafy, unmeta, zwarn};
+use crate::ported::zsh_h::features;
+use crate::zsh_h::module;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::{Read, Write};
@@ -25,8 +27,6 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::features;
-use crate::zsh_h::module;
 
 // ---------------------------------------------------------------------------
 // File-scope statics (none in C body that need Rust mirrors —
@@ -326,7 +326,10 @@ pub fn get_contents(fname: &str) -> Option<String> {
 /// Port of `static HashNode getpmmapfile(HashTable ht, const char *name)`
 /// from `Src/Modules/mapfile.c:217-237`. Signature matches C exactly
 /// so this can be registered as a `HashGetFn` in PARTAB.
-pub fn getpmmapfile(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Option<crate::ported::zsh_h::Param> {
+pub fn getpmmapfile(
+    _ht: *mut crate::ported::zsh_h::HashTable,
+    name: &str,
+) -> Option<crate::ported::zsh_h::Param> {
     // c:217
     use crate::ported::zsh_h::{hashnode, param, PM_SCALAR, PM_UNSET};
     // c:220-221 — `pm = (Param) hcalloc(sizeof(struct param));
@@ -338,9 +341,9 @@ pub fn getpmmapfile(_ht: *mut crate::ported::zsh_h::HashTable, name: &str) -> Op
         None => (String::new(), true),
     };
     let mut flags: i32 = PM_SCALAR as i32; // c:222 — `pm->node.flags = PM_SCALAR;`
-    // c:224 — `pm->node.flags |= (partab[0].pm->node.flags & PM_READONLY);`
-    // partab[0] is the mapfile entry itself; PM_READONLY isn't set on
-    // mapfile in C (it's writable via setpmmapfile), so this is a no-op.
+                                           // c:224 — `pm->node.flags |= (partab[0].pm->node.flags & PM_READONLY);`
+                                           // partab[0] is the mapfile entry itself; PM_READONLY isn't set on
+                                           // mapfile in C (it's writable via setpmmapfile), so this is a no-op.
     if is_unset {
         flags |= PM_UNSET as i32; // c:234
     }
@@ -386,7 +389,7 @@ pub fn scanpmmapfile(
     // c:241
     use crate::ported::zsh_h::{hashnode, param, PM_SCALAR};
     let dir = match std::fs::read_dir(".") {
-        Ok(d) => d, // c:246
+        Ok(d) => d,       // c:246
         Err(_) => return, // c:247
     };
     let f = match func {
@@ -492,7 +495,6 @@ pub fn finish_(m: *const module) -> i32 {
     0
 }
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -512,11 +514,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 1]);
     }
@@ -587,8 +585,14 @@ mod tests {
         use crate::ported::zsh_h::PM_UNSET;
         let pm = getpmmapfile(std::ptr::null_mut(), "/nonexistent/file/path/zshrs_mapfile")
             .expect("getpmmapfile always returns Some(Param)");
-        assert!(pm.u_str.as_deref() == Some(""), "u_str should be empty for missing file");
-        assert!(pm.node.flags & PM_UNSET as i32 != 0, "PM_UNSET flag should be set");
+        assert!(
+            pm.u_str.as_deref() == Some(""),
+            "u_str should be empty for missing file"
+        );
+        assert!(
+            pm.node.flags & PM_UNSET as i32 != 0,
+            "PM_UNSET flag should be set"
+        );
     }
 
     /// Verifies the c:88 `open(O_RDWR|O_CREAT)` + c:97 `memcpy` +
@@ -633,7 +637,10 @@ mod tests {
         static COLLECTED: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
         COLLECTED.lock().unwrap().clear();
         fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
-            COLLECTED.lock().unwrap().push((node.nam.clone(), String::new()));
+            COLLECTED
+                .lock()
+                .unwrap()
+                .push((node.nam.clone(), String::new()));
         }
         scanpmmapfile(std::ptr::null_mut(), Some(cb), 0);
         let entries = COLLECTED.lock().unwrap().clone();

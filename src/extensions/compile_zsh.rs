@@ -241,10 +241,8 @@ impl ZshCompiler {
         // `dotrap(SIGDEBUG)` which checks the traps_table for a
         // "DEBUG" entry and runs the body. Cheap no-op when no
         // DEBUG trap is set (one hashmap lookup).
-        self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_DEBUG_TRAP, 0),
-            0,
-        );
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_DEBUG_TRAP, 0), 0);
         self.builder.emit(Op::Pop, 0);
         // c:Src/exec.c:1390 — `set -n` (noexec option): parse but
         // don't execute. The check runs at the start of each
@@ -715,10 +713,16 @@ impl ZshCompiler {
                 // re-emit a Jump to the surrounding scope's matching
                 // list so the original short-circuit still happens.
                 let saved_return = std::mem::take(&mut self.return_patches);
-                let saved_breaks: Vec<Vec<usize>> =
-                    self.break_patches.iter().map(|v| std::mem::take(&mut v.clone())).collect();
-                let saved_continues: Vec<Vec<usize>> =
-                    self.continue_patches.iter().map(|v| std::mem::take(&mut v.clone())).collect();
+                let saved_breaks: Vec<Vec<usize>> = self
+                    .break_patches
+                    .iter()
+                    .map(|v| std::mem::take(&mut v.clone()))
+                    .collect();
+                let saved_continues: Vec<Vec<usize>> = self
+                    .continue_patches
+                    .iter()
+                    .map(|v| std::mem::take(&mut v.clone()))
+                    .collect();
                 // Replace the per-loop lists with fresh inner copies
                 // so escapes captured inside the try-block don't fire
                 // the outer loop's break/continue.
@@ -1053,10 +1057,8 @@ impl ZshCompiler {
                 // always-arm post-restore can detect the escape and
                 // re-emit the loop-end jump.
                 if self.try_block_depth > 0 {
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_BREAK, 0),
-                        0,
-                    );
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_BREAK, 0), 0);
                     self.builder.emit(Op::Pop, 0);
                 }
                 let idx = depth.saturating_sub(levels);
@@ -1161,8 +1163,10 @@ impl ZshCompiler {
             }
         }
 
-        let dispatch =
-            crate::ported::exec::execcmd_compile_head(&simple.words, crate::ported::zsh_h::WC_SIMPLE);
+        let dispatch = crate::ported::exec::execcmd_compile_head(
+            &simple.words,
+            crate::ported::zsh_h::WC_SIMPLE,
+        );
         let precmd_skip = dispatch.precmd_skip;
 
         // c:Src/exec.c:3372-3406 "Empty command" no-redir arm — bare
@@ -1931,8 +1935,7 @@ impl ZshCompiler {
             // zsh numeric range glob `<N-M>`: any `<…-…>` shape with
             // optional digits on either side outside a bracket-class.
             || has_numeric_range_glob(&untoked);
-        let trigger_tilde =
-            untoked.starts_with('~') || untoked.contains(":~") || untoked.contains("=~")
+        let trigger_tilde = untoked.starts_with('~') || untoked.contains(":~") || untoked.contains("=~")
             // c:Src/subst.c:715 — `=cmd` (EQUALS option) routes
             // through filesubstr's equalsubstr arm. Route the word
             // through the bridge so filesub fires at runtime; the
@@ -2591,42 +2594,42 @@ impl ZshCompiler {
                     // Fall through to the default text-expansion path.
                     let _ = (flags, name);
                 } else {
-                // Detect `[@]`/`[*]` on the ORIGINAL untoked text since
-                // parse_zsh_flag stripped the suffix from `name`. This
-                // flag is encoded into the runtime flags string with
-                // sentinel `\u{03}` so the runtime handler knows the
-                // user wrote `[@]` (which keeps array-only flags
-                // active in DQ context per zsh subst.c).
-                let inner = untoked
-                    .strip_prefix("${")
-                    .and_then(|s| s.strip_suffix('}'))
-                    .unwrap_or(&untoked);
-                let had_at_or_star = inner.ends_with("[@]") || inner.ends_with("[*]");
-                let mut flags_for_runtime = String::new();
-                if dq_wrapped {
-                    flags_for_runtime.push('\u{02}');
-                }
-                if had_at_or_star {
-                    flags_for_runtime.push('\u{03}');
-                }
-                // Sentinel `\u{04}` = "RHS of a scalar assignment".
-                // BUILTIN_PARAM_FLAG reads this at runtime and treats
-                // it as PREFORK_SINGLE — split flags `(f)` / `(s)` /
-                // `(0)` / `(z)` are suppressed per Src/subst.c:3902
-                // ssub gate. Direct port of zsh's prefork being
-                // called with PREFORK_SINGLE|PREFORK_ASSIGN by
-                // Src/exec.c::addvars line 2546.
-                if self.scalar_assign_depth > 0 {
-                    flags_for_runtime.push('\u{04}');
-                }
-                flags_for_runtime.push_str(flags);
-                let name_const = self.builder.add_constant(Value::str(name));
-                self.builder.emit(Op::LoadConst(name_const), 0);
-                let flags_const = self.builder.add_constant(Value::str(flags_for_runtime));
-                self.builder.emit(Op::LoadConst(flags_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
-                return;
+                    // Detect `[@]`/`[*]` on the ORIGINAL untoked text since
+                    // parse_zsh_flag stripped the suffix from `name`. This
+                    // flag is encoded into the runtime flags string with
+                    // sentinel `\u{03}` so the runtime handler knows the
+                    // user wrote `[@]` (which keeps array-only flags
+                    // active in DQ context per zsh subst.c).
+                    let inner = untoked
+                        .strip_prefix("${")
+                        .and_then(|s| s.strip_suffix('}'))
+                        .unwrap_or(&untoked);
+                    let had_at_or_star = inner.ends_with("[@]") || inner.ends_with("[*]");
+                    let mut flags_for_runtime = String::new();
+                    if dq_wrapped {
+                        flags_for_runtime.push('\u{02}');
+                    }
+                    if had_at_or_star {
+                        flags_for_runtime.push('\u{03}');
+                    }
+                    // Sentinel `\u{04}` = "RHS of a scalar assignment".
+                    // BUILTIN_PARAM_FLAG reads this at runtime and treats
+                    // it as PREFORK_SINGLE — split flags `(f)` / `(s)` /
+                    // `(0)` / `(z)` are suppressed per Src/subst.c:3902
+                    // ssub gate. Direct port of zsh's prefork being
+                    // called with PREFORK_SINGLE|PREFORK_ASSIGN by
+                    // Src/exec.c::addvars line 2546.
+                    if self.scalar_assign_depth > 0 {
+                        flags_for_runtime.push('\u{04}');
+                    }
+                    flags_for_runtime.push_str(flags);
+                    let name_const = self.builder.add_constant(Value::str(name));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    let flags_const = self.builder.add_constant(Value::str(flags_for_runtime));
+                    self.builder.emit(Op::LoadConst(flags_const), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);
+                    return;
                 }
             }
         }
@@ -5015,7 +5018,13 @@ fn is_splice_expansion(s: &str) -> bool {
         .trim_start_matches('"')
         .trim_end_matches('"')
         .chars()
-        .map(|c| if c == crate::ported::zsh_h::Qstring { '$' } else { c })
+        .map(|c| {
+            if c == crate::ported::zsh_h::Qstring {
+                '$'
+            } else {
+                c
+            }
+        })
         .collect();
     let pq = normalized;
     if pq == "$@" || pq == "$*" || pq == "${@}" || pq == "${*}" {
@@ -5091,7 +5100,13 @@ fn is_distribute_expansion(s: &str) -> bool {
         .trim_start_matches('"')
         .trim_end_matches('"')
         .chars()
-        .map(|c| if c == crate::ported::zsh_h::Qstring { '$' } else { c })
+        .map(|c| {
+            if c == crate::ported::zsh_h::Qstring {
+                '$'
+            } else {
+                c
+            }
+        })
         .collect();
     let pq = normalized;
     if let Some(inner) = pq.strip_prefix("${").and_then(|t| t.strip_suffix('}')) {
@@ -7029,8 +7044,7 @@ mod tests {
         // run parse_init, run parse, then compile.
         use std::sync::atomic::Ordering;
         let saved = crate::ported::utils::errflag.load(Ordering::Relaxed);
-        crate::ported::utils::errflag
-            .fetch_and(!crate::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+        crate::ported::utils::errflag.fetch_and(!crate::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
         crate::ported::parse::parse_init(src);
         let program = crate::ported::parse::parse();
         crate::ported::utils::errflag.store(saved, Ordering::Relaxed);
@@ -7040,8 +7054,7 @@ mod tests {
     /// Returns true if any op in the chunk (including sub_chunks) matches
     /// the variant kind (compared by discriminant via `matches!` predicate).
     fn has_op(chunk: &fusevm::Chunk, pred: impl Fn(&Op) -> bool + Copy) -> bool {
-        chunk.ops.iter().any(pred)
-            || chunk.sub_chunks.iter().any(|c| has_op(c, pred))
+        chunk.ops.iter().any(pred) || chunk.sub_chunks.iter().any(|c| has_op(c, pred))
     }
 
     // ── Smoke: every construct compiles to non-empty ops ─────────────
@@ -7124,9 +7137,7 @@ mod tests {
         assert!(
             has_op(&chunk, |op| matches!(
                 op,
-                Op::JumpIfFalse(..)
-                    | Op::JumpIfFalseKeep(..)
-                    | Op::Jump(..)
+                Op::JumpIfFalse(..) | Op::JumpIfFalseKeep(..) | Op::Jump(..)
             )),
             "while should emit Jump/JumpIfFalse for loop"
         );
@@ -7138,10 +7149,7 @@ mod tests {
         assert!(!chunk.ops.is_empty(), "for-in should compile");
         // Iteration uses GetSlot/SetSlot to walk the list.
         assert!(
-            has_op(&chunk, |op| matches!(
-                op,
-                Op::GetSlot(..) | Op::SetSlot(..)
-            )),
+            has_op(&chunk, |op| matches!(op, Op::GetSlot(..) | Op::SetSlot(..))),
             "for-in should manipulate slots for the iter var"
         );
     }
@@ -7204,11 +7212,9 @@ mod tests {
         // constant. Either path is acceptable; pin that SOMETHING
         // non-empty was emitted to handle the substitution.
         let chunk = compile_src("X=$(echo hi)");
-        let routes_through_cmdsubst =
-            has_op(&chunk, |op| matches!(op, Op::CmdSubst(..)));
+        let routes_through_cmdsubst = has_op(&chunk, |op| matches!(op, Op::CmdSubst(..)));
         let has_sub_chunk = !chunk.sub_chunks.is_empty();
-        let has_builtin =
-            has_op(&chunk, |op| matches!(op, Op::CallBuiltin(..)));
+        let has_builtin = has_op(&chunk, |op| matches!(op, Op::CallBuiltin(..)));
         assert!(
             routes_through_cmdsubst || has_sub_chunk || has_builtin,
             "$(cmd) should produce a recognizable substitution path"
@@ -7254,10 +7260,7 @@ mod tests {
         // observed HereString lowering.
         let chunk = compile_src("cat <<EOF\nhello\nEOF\n");
         assert!(
-            has_op(&chunk, |op| matches!(
-                op,
-                Op::HereDoc(..) | Op::HereString
-            )),
+            has_op(&chunk, |op| matches!(op, Op::HereDoc(..) | Op::HereString)),
             "here-doc should lower to HereDoc or HereString"
         );
         assert!(
@@ -7342,10 +7345,10 @@ mod tests {
         // ExpandParam(..) opcode. Pin EITHER path so the test survives
         // a future opcode promotion without rotting.
         let chunk = compile_src("echo $HOME");
-        let routes_through_op =
-            has_op(&chunk, |op| matches!(op, Op::ExpandParam(..) | Op::GetSlot(..)));
-        let routes_through_builtin =
-            has_op(&chunk, |op| matches!(op, Op::CallBuiltin(..)));
+        let routes_through_op = has_op(&chunk, |op| {
+            matches!(op, Op::ExpandParam(..) | Op::GetSlot(..))
+        });
+        let routes_through_builtin = has_op(&chunk, |op| matches!(op, Op::CallBuiltin(..)));
         assert!(
             routes_through_op || routes_through_builtin,
             "$HOME should route through ExpandParam, GetSlot, or builtin dispatch"
@@ -7384,10 +7387,9 @@ mod tests {
         // compile time.
         let chunk = compile_src("echo ~/x");
         assert!(
-            chunk
-                .constants
-                .iter()
-                .any(|c| matches!(c, fusevm::Value::Str(s) if s.contains("~/x") || s.contains("~"))),
+            chunk.constants.iter().any(
+                |c| matches!(c, fusevm::Value::Str(s) if s.contains("~/x") || s.contains("~"))
+            ),
             "tilde literal must be in the constant pool"
         );
     }
@@ -7460,4 +7462,3 @@ mod tests {
         let _ = chunk.source;
     }
 }
-

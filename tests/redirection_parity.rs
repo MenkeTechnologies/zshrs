@@ -4,29 +4,61 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh_in(dir: &Path, s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).current_dir(dir).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .current_dir(dir)
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs_in(dir: &Path, s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .current_dir(dir).env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .current_dir(dir)
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity_in(dir: &Path, s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     // Snapshot every file in `dir` BEFORE the first shell runs so the
     // second shell sees the same starting state. Without this, redirect
     // tests that pre-create files (`echo line1 > out.txt` then
@@ -51,10 +83,16 @@ fn assert_parity_in(dir: &Path, s: &str) {
         let _ = std::fs::write(p, b);
     }
     let r = run_zshrs_in(dir, s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
-fn tdir() -> tempfile::TempDir { tempfile::tempdir().expect("tempdir") }
+fn tdir() -> tempfile::TempDir {
+    tempfile::tempdir().expect("tempdir")
+}
 
 mod stdout_redirect {
     use super::*;
@@ -94,24 +132,27 @@ mod stderr_redirect {
         let d = tdir();
         // Generate stderr via a parse error or `echo` of nothing useful;
         // use a command that reliably writes to stderr.
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo err >&2' 2> err.txt; cat err.txt"#);
+        assert_parity_in(d.path(), r#"sh -c 'echo err >&2' 2> err.txt; cat err.txt"#);
     }
 
     #[test]
     fn stderr_to_file_only_stdout_remains() {
         let d = tdir();
         // Both stdout and stderr; redirect stderr only, stdout passes through.
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo OUT; echo ERR >&2' 2> err.txt; cat err.txt"#);
+        assert_parity_in(
+            d.path(),
+            r#"sh -c 'echo OUT; echo ERR >&2' 2> err.txt; cat err.txt"#,
+        );
     }
 
     #[test]
     fn stderr_append() {
         let d = tdir();
         std::fs::write(d.path().join("err.txt"), "first\n").unwrap();
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo more >&2' 2>> err.txt; cat err.txt"#);
+        assert_parity_in(
+            d.path(),
+            r#"sh -c 'echo more >&2' 2>> err.txt; cat err.txt"#,
+        );
     }
 }
 
@@ -140,24 +181,24 @@ mod fd_dup {
     #[test]
     fn two_to_one_merges_stderr_into_stdout() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo OUT; echo ERR >&2' 2>&1"#);
+        assert_parity_in(d.path(), r#"sh -c 'echo OUT; echo ERR >&2' 2>&1"#);
     }
 
     /// `>file 2>&1` — both stdout and stderr go to file.
     #[test]
     fn gt_file_then_two_to_one_captures_both() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo OUT; echo ERR >&2' > both.txt 2>&1; cat both.txt"#);
+        assert_parity_in(
+            d.path(),
+            r#"sh -c 'echo OUT; echo ERR >&2' > both.txt 2>&1; cat both.txt"#,
+        );
     }
 
     /// `1>&2` redirects stdout to stderr.
     #[test]
     fn one_to_two_swaps_stdout_to_stderr() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            r#"echo hi 1>&2 2> err.txt; cat err.txt"#);
+        assert_parity_in(d.path(), r#"echo hi 1>&2 2> err.txt; cat err.txt"#);
     }
 }
 
@@ -168,8 +209,10 @@ mod amp_redirect {
     #[test]
     fn amp_gt_redirects_both_streams() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo OUT; echo ERR >&2' &> all.txt; cat all.txt"#);
+        assert_parity_in(
+            d.path(),
+            r#"sh -c 'echo OUT; echo ERR >&2' &> all.txt; cat all.txt"#,
+        );
     }
 
     /// `&>>` appends both streams.
@@ -177,8 +220,10 @@ mod amp_redirect {
     fn amp_gt_gt_appends_both() {
         let d = tdir();
         std::fs::write(d.path().join("all.txt"), "first\n").unwrap();
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo OUT; echo ERR >&2' &>> all.txt; cat all.txt"#);
+        assert_parity_in(
+            d.path(),
+            r#"sh -c 'echo OUT; echo ERR >&2' &>> all.txt; cat all.txt"#,
+        );
     }
 }
 
@@ -208,16 +253,20 @@ mod multiple_redirects {
     #[ignore = "ZSHRS DIVERGENCE: multi-`>` on same cmd vs zsh's last-wins or both-fail"]
     fn second_gt_wins_for_stdout() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            "echo hi > first.txt > second.txt; cat first.txt second.txt 2>/dev/null; echo done");
+        assert_parity_in(
+            d.path(),
+            "echo hi > first.txt > second.txt; cat first.txt second.txt 2>/dev/null; echo done",
+        );
     }
 
     /// Separate fds — each redirect goes to its own file.
     #[test]
     fn out_to_one_file_err_to_another() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo OUT; echo ERR >&2' > out.txt 2> err.txt; cat out.txt err.txt"#);
+        assert_parity_in(
+            d.path(),
+            r#"sh -c 'echo OUT; echo ERR >&2' > out.txt 2> err.txt; cat out.txt err.txt"#,
+        );
     }
 }
 
@@ -227,15 +276,16 @@ mod pipeline_redirect {
     #[test]
     fn pipe_then_gt_file() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            "echo hello world | tr ' ' '_' > out.txt; cat out.txt");
+        assert_parity_in(
+            d.path(),
+            "echo hello world | tr ' ' '_' > out.txt; cat out.txt",
+        );
     }
 
     #[test]
     fn pipe_amp_merges_stderr_into_pipe() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo OUT; echo ERR >&2' |& cat"#);
+        assert_parity_in(d.path(), r#"sh -c 'echo OUT; echo ERR >&2' |& cat"#);
     }
 }
 
@@ -246,8 +296,7 @@ mod close_fd {
     #[test]
     fn close_stderr_with_dash() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            r#"sh -c 'echo OUT; echo ERR >&2' 2>&-"#);
+        assert_parity_in(d.path(), r#"sh -c 'echo OUT; echo ERR >&2' 2>&-"#);
     }
 }
 
@@ -258,7 +307,6 @@ mod redirect_from_var {
     #[test]
     fn redirect_target_is_variable() {
         let d = tdir();
-        assert_parity_in(d.path(),
-            "F=out.txt; echo hi > $F; cat $F");
+        assert_parity_in(d.path(), "F=out.txt; echo hi > $F; cat $F");
     }
 }

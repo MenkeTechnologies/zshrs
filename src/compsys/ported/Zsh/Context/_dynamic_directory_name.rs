@@ -73,8 +73,7 @@ pub fn _dynamic_directory_name() -> i32 {
             }
             // sh:18
             loop {
-                let mut nl_args =
-                    vec![tag.clone(), "expl".to_string(), descr.to_string()];
+                let mut nl_args = vec![tag.clone(), "expl".to_string(), descr.to_string()];
                 nl_args.extend(suf.iter().cloned());
                 if _next_label(&nl_args) != 0 {
                     break;

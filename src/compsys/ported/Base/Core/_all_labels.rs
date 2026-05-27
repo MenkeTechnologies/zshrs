@@ -124,11 +124,7 @@ fn has_unescaped_colon(s: &str) -> bool {
 ///   prev_arr_vals = `${(P@)2}` — the current value of the
 ///   per-`_description` array named by the caller's $2.
 ///   extras = `${(@)argv[5,-1]}` or `${(@)argv[__suf,-1]}`.
-fn dispatch_action(
-    action_argv: &[String],
-    prev_arr_vals: &[String],
-    extras: &[String],
-) -> i32 {
+fn dispatch_action(action_argv: &[String], prev_arr_vals: &[String], extras: &[String]) -> i32 {
     if action_argv.is_empty() {
         return 1;
     }

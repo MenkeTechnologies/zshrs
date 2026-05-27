@@ -71,5 +71,4 @@ pub mod ztype_h;
 #[cfg(test)]
 mod tests {
     use super::*;
-
 }

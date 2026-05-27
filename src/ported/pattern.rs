@@ -57,27 +57,25 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
-use std::sync::Mutex;
-pub use crate::ported::zsh_h::{
-    patstralloc, GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE, PAT_ANY,
-    PAT_FILE, PAT_FILET, PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH, PAT_NOGLD,
-    PAT_NOTEND, PAT_NOTSTART, PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP, Patstralloc,
-};
 use crate::ported::params::{paramtab, paramtab_hashed_storage};
 use crate::ported::utils::ztrsub;
 use crate::ported::zle::zle_h::{COMP_LIST_COMPLETE, COMP_LIST_EXPAND};
-use crate::utils::zerrnam;
-use crate::zsh_h::{Bang, Bar, Hat, Inang, Inbrack, Inpar, Marker, Meta, Nularg, Outbrack, Pound, Quest, Star,
-                   isset, patprog, BASHAUTOLIST, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB,
-                   MULTIBYTE, NUMERICGLOBSORT, PM_HASHED, PM_TYPE, RCQUOTES, SHGLOB, SORTIT_IGNORING_BACKSLASHES,
-                   SORTIT_NUMERICALLY, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH,
-                   ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR,
-                   ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST,
-                   ZPC_KSH_STAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
-
+pub use crate::ported::zsh_h::{
+    patstralloc, Patstralloc, GF_BACKREF, GF_IGNCASE, GF_LCMATCHUC, GF_MATCHREF, GF_MULTIBYTE,
+    PAT_ANY, PAT_FILE, PAT_FILET, PAT_HAS_EXCLUDP, PAT_HEAPDUP, PAT_LCMATCHUC, PAT_NOANCH,
+    PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART, PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP,
 };
-
+use crate::utils::zerrnam;
+use crate::zsh_h::{
+    isset, patprog, Bang, Bar, Hat, Inang, Inbrack, Inpar, Marker, Meta, Nularg, Outbrack, Pound,
+    Quest, Star, BASHAUTOLIST, CASEGLOB, CASEPATHS, EXTENDEDGLOB, KSHGLOB, MULTIBYTE,
+    NUMERICGLOBSORT, PM_HASHED, PM_TYPE, RCQUOTES, SHGLOB, SORTIT_IGNORING_BACKSLASHES,
+    SORTIT_NUMERICALLY, ZPC_BAR, ZPC_BNULLKEEP, ZPC_COUNT, ZPC_HASH, ZPC_HAT, ZPC_INANG,
+    ZPC_INBRACK, ZPC_INPAR, ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST,
+    ZPC_KSH_STAR, ZPC_NULL, ZPC_OUTPAR, ZPC_QUEST, ZPC_SLASH, ZPC_STAR, ZPC_TILDE,
+};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 // =====================================================================
 // 6. ZPC_* enum from zsh.h:1644 — indexes into the active-pattern-
@@ -156,7 +154,6 @@ pub const P_PURESTR: i32 = 0x04; // c:218 Can be matched with a strcmp.
 // the longer path. C source has these as `#define` in zsh.h, not
 // pattern.c, so the canonical home is zsh_h.rs; we just alias.
 // =====================================================================
-
 
 // C: `static int patnpar;` — number of active parens (1-indexed at
 // compile time; the *struct* patnpar is the actual count).
@@ -268,8 +265,8 @@ pub const PA_UNMETA: i32 = 2; // c:407
 /// `patsize` updates are the post-write `patout.len()`.
 fn patadd(add: Option<&[u8]>, ch: u8, n: i64, paflags: i32) {
     use crate::ported::lex::ztokens as ztokens_str;
-    use crate::ported::ztype_h::itok;
     use crate::ported::zsh_h::Pound;
+    use crate::ported::ztype_h::itok;
     let ztokens = ztokens_str.as_bytes();
     // c:412
     // c:415 — `long newpatsize = patsize + n;`
@@ -550,7 +547,8 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 // final cumulative byte.
                 let errs_byte = bits & 0xff;
                 if errs_byte != 0 {
-                    hoisted_globflags = (hoisted_globflags & !0xff) | errs_byte; // c:1066
+                    hoisted_globflags = (hoisted_globflags & !0xff) | errs_byte;
+                    // c:1066
                 }
                 if (bits & GF_MULTIBYTE) == 0 && rest.contains('U') {
                     hoisted_globflags &= !GF_MULTIBYTE;
@@ -1492,9 +1490,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
     // making `(x)#` and `[a-z]##[0-9]##` match even with
     // extendedglob OFF (parity bugs #5/#6 vs real zsh).
     let hash_char = zpc_special.lock().unwrap()[ZPC_HASH as usize]; // c:1612
-    let has_hash = hash_char == b'#'
-        && q_off < parse2.len()
-        && parse2.as_bytes()[q_off] == b'#'; // c:1611-1614
+    let has_hash = hash_char == b'#' && q_off < parse2.len() && parse2.as_bytes()[q_off] == b'#'; // c:1611-1614
     drop(parse2);
     if !has_hash && (kshchar == 0 || kshchar == b'@' || kshchar == b'!') {
         return atom; // c:1616-1617
@@ -1551,10 +1547,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
         }
     };
 
-    if ((*flagp & P_SIMPLE) != 0)
-        && (op == P_ONEHASH || op == P_TWOHASH)
-        && atom_op == P_ANY
-    {
+    if ((*flagp & P_SIMPLE) != 0) && (op == P_ONEHASH || op == P_TWOHASH) && atom_op == P_ANY {
         // c:1705-1717 — `?#` becomes `*`; `?##` becomes `?*`. The atom
         // is P_ANY at offset `atom`; rewrite or pad as needed.
         let mut buf = patout.lock().unwrap();
@@ -1571,7 +1564,10 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             *tail_out = atom as usize;
         }
         *flagp &= !P_PURESTR;
-    } else if ((*flagp & P_SIMPLE) != 0) && op != 0 && (patglobflags.load(Ordering::Relaxed) & 0xff) == 0 {
+    } else if ((*flagp & P_SIMPLE) != 0)
+        && op != 0
+        && (patglobflags.load(Ordering::Relaxed) & 0xff) == 0
+    {
         // c:1718-1720 — simple operand, no approximate-match counter:
         // emit `patinsert(op, starter, NULL, 0)`. The matcher walks
         // the inserted P_ONEHASH/P_TWOHASH operand at scan+I_BODY.
@@ -1833,7 +1829,7 @@ pub struct rpat {
     /// Cumulative edit-count for approximate-match `(#aN)`. Reset to 0
     /// at the top of each pattry, incremented on P_EXACTLY mismatches
     /// when `glob_flags & 0xff > 0` (the substitution-budget byte).
-    pub errsfound: i32,              // c:2046
+    pub errsfound: i32, // c:2046
 }
 
 /// Port of `wchar_t charref(char *x, char *y, int *zmb_ind)` from
@@ -1918,20 +1914,23 @@ pub fn patmungestring(string: &mut &str, stringlen: &mut i32, unmetalenin: &mut 
     let bytes = string.as_bytes();
     if *stringlen > 0 && !bytes.is_empty() && bytes[0] as char == Nularg {
         // c:2085 — `(*string)++;` — advance past Nularg.
-        *string = &string[1..];                                              // c:2085
-        // c:2090 — `if (*unmetalenin > 0) (*unmetalenin)--;`
-        if *unmetalenin > 0 {                                                // c:2089
-            *unmetalenin -= 1;                                               // c:2090
+        *string = &string[1..]; // c:2085
+                                // c:2090 — `if (*unmetalenin > 0) (*unmetalenin)--;`
+        if *unmetalenin > 0 {
+            // c:2089
+            *unmetalenin -= 1; // c:2090
         }
         // c:2092 — `if (*stringlen > 0) (*stringlen)--;`
-        if *stringlen > 0 {                                                  // c:2091
-            *stringlen -= 1;                                                 // c:2092
+        if *stringlen > 0 {
+            // c:2091
+            *stringlen -= 1; // c:2092
         }
     }
 
     // c:2096-2097 — `if (*stringlen < 0) *stringlen = strlen(*string);`
-    if *stringlen < 0 {                                                      // c:2096
-        *stringlen = string.len() as i32;                                    // c:2097
+    if *stringlen < 0 {
+        // c:2096
+        *stringlen = string.len() as i32; // c:2097
     }
 }
 
@@ -1942,7 +1941,7 @@ pub fn patmungestring(string: &mut &str, stringlen: &mut i32, unmetalenin: &mut 
 pub fn pattry(prog: &Patprog, string: &str) -> bool {
     // c:2223
     // c:2225 — `return pattrylen(prog, string, len, -1, NULL, 0);`
-    pattrylen(prog, string, string.len() as i32, -1, None, 0)                // c:2225
+    pattrylen(prog, string, string.len() as i32, -1, None, 0) // c:2225
 }
 
 /// Port of `int pattrylen(Patprog prog, char *string, int len,
@@ -1961,14 +1960,22 @@ pub fn pattry(prog: &Patprog, string: &str) -> bool {
 pub fn pattrylen(
     prog: &Patprog,
     string: &str,
-    len: i32,                                                                // c:2236
+    len: i32, // c:2236
     unmetalen: i32,
     patstralloc: Option<&Patstralloc>,
     offset: i32,
 ) -> bool {
     // c:2238
     pattryrefs(
-        prog, string, len, unmetalen, patstralloc, offset, None, None, None, // c:2239
+        prog,
+        string,
+        len,
+        unmetalen,
+        patstralloc,
+        offset,
+        None,
+        None,
+        None, // c:2239
     )
 }
 
@@ -2248,7 +2255,7 @@ pub fn savepatterndisables() -> u32 {
 /// ```
 pub fn startpatternscope() {
     // c:4241
-    let saved = savepatterndisables();                                       // c:4247
+    let saved = savepatterndisables(); // c:4247
     PATSCOPE_STACK.with(|s| s.borrow_mut().push(saved));
 }
 
@@ -2314,7 +2321,7 @@ pub fn endpatternscope() {
 /// C body: `memset(zpc_disables, 0, ZPC_COUNT)` — zero every slot.
 pub fn clearpatterndisables() {
     // c:4296
-    *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];                // c:4298
+    *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize]; // c:4298
 }
 
 /// Port of `haswilds(char *str)` from `Src/pattern.c:4306`.
@@ -2347,7 +2354,7 @@ pub fn clearpatterndisables() {
 /// where bare `[` is still the start of a char-class wildcard.
 pub fn haswilds(str: &str) -> bool {
     // c:4306
-    let bytes = str.as_bytes();                                              // c:4324
+    let bytes = str.as_bytes(); // c:4324
     let len = bytes.len();
     if len == 0 {
         return false;
@@ -2355,11 +2362,9 @@ pub fn haswilds(str: &str) -> bool {
 
     // c:4317-4318 — `%?foo` job-ref: skip position 1 if it's a `?` or
     // `Quest` immediately after a leading `%`.
-    let skip_pos_1 = len >= 2
-        && bytes[0] == b'%'
-        && (bytes[1] == b'?' || bytes[1] == Quest as u8);
+    let skip_pos_1 = len >= 2 && bytes[0] == b'%' && (bytes[1] == b'?' || bytes[1] == Quest as u8);
 
-    let disp = zpc_disables.lock().unwrap();                                 // c:read zpc_disables[]
+    let disp = zpc_disables.lock().unwrap(); // c:read zpc_disables[]
 
     let mut escape = false;
     // c:4323-4373 — main scan. Each metachar checked in both literal
@@ -2390,7 +2395,7 @@ pub fn haswilds(str: &str) -> bool {
                 || (i > 0
                     && isset(KSHGLOB)
                     && (((prev == Quest as u8 || prev == b'?')
-                            && disp[ZPC_KSH_QUEST as usize] == 0)
+                        && disp[ZPC_KSH_QUEST as usize] == 0)
                         || ((prev == Star as u8 || prev == b'*')
                             && disp[ZPC_KSH_STAR as usize] == 0)
                         || (prev == b'+' && disp[ZPC_KSH_PLUS as usize] == 0)
@@ -2398,39 +2403,39 @@ pub fn haswilds(str: &str) -> bool {
                         || (prev == b'!' && disp[ZPC_KSH_BANG2 as usize] == 0)
                         || (prev == b'@' && disp[ZPC_KSH_AT as usize] == 0)))
             {
-                return true;                                                 // c:4335
+                return true; // c:4335
             }
         } else if b == Bar as u8 || b == b'|' {
             if disp[ZPC_BAR as usize] == 0 {
-                return true;                                                 // c:4340
+                return true; // c:4340
             }
         } else if b == Star as u8 || b == b'*' {
             if disp[ZPC_STAR as usize] == 0 {
-                return true;                                                 // c:4345
+                return true; // c:4345
             }
         } else if b == Inbrack as u8 || b == b'[' {
             if disp[ZPC_INBRACK as usize] == 0 {
-                return true;                                                 // c:4350
+                return true; // c:4350
             }
         } else if b == Inang as u8 || b == b'<' {
             if disp[ZPC_INANG as usize] == 0 {
-                return true;                                                 // c:4355
+                return true; // c:4355
             }
         } else if b == Quest as u8 || b == b'?' {
             if disp[ZPC_QUEST as usize] == 0 {
-                return true;                                                 // c:4360
+                return true; // c:4360
             }
         } else if b == Pound as u8 || b == b'#' {
             if isset(EXTENDEDGLOB) && disp[ZPC_HASH as usize] == 0 {
-                return true;                                                 // c:4365
+                return true; // c:4365
             }
         } else if b == Hat as u8 || b == b'^' {
             if isset(EXTENDEDGLOB) && disp[ZPC_HAT as usize] == 0 {
-                return true;                                                 // c:4370
+                return true; // c:4370
             }
         }
     }
-    false                                                                    // c:4374
+    false // c:4374
 }
 
 // =====================================================================
@@ -2537,8 +2542,25 @@ pub static patstrcache: Mutex<String> = Mutex::new(String::new()); // c:281
 /// and every `[:class:]` byte marker emitted by `complete.rs:733`
 /// (`0x80 + ch`) was off-by-one for classes after `alnum`. Real port bug.
 const POSIX_CLASS_NAMES: &[&str] = &[
-    "alpha", "alnum", "ascii", "blank", "cntrl", "digit", "graph", "lower", "print", "punct",
-    "space", "upper", "xdigit", "IDENT", "IFS", "IFSSPACE", "WORD", "INCOMPLETE", "INVALID",
+    "alpha",
+    "alnum",
+    "ascii",
+    "blank",
+    "cntrl",
+    "digit",
+    "graph",
+    "lower",
+    "print",
+    "punct",
+    "space",
+    "upper",
+    "xdigit",
+    "IDENT",
+    "IFS",
+    "IFSSPACE",
+    "WORD",
+    "INCOMPLETE",
+    "INVALID",
 ];
 
 /// Port of file-static `zpc_disables_stack` from `Src/pattern.c:4244`.
@@ -2787,8 +2809,16 @@ fn approx_match_exactly(
                 *state = saved_outer.clone();
                 state.errsfound += 1;
                 let r = walk(
-                    code, next, string, input_bytes, str_bytes,
-                    s_off + 1, p_off, state, glob_flags, max_errs,
+                    code,
+                    next,
+                    string,
+                    input_bytes,
+                    str_bytes,
+                    s_off + 1,
+                    p_off,
+                    state,
+                    glob_flags,
+                    max_errs,
                 );
                 update(&mut best, r);
             }
@@ -2799,8 +2829,16 @@ fn approx_match_exactly(
         if s_off < input_bytes.len() && str_bytes[p_off] == input_bytes[s_off] {
             *state = saved_outer.clone();
             let r = walk(
-                code, next, string, input_bytes, str_bytes,
-                s_off + 1, p_off + 1, state, glob_flags, max_errs,
+                code,
+                next,
+                string,
+                input_bytes,
+                str_bytes,
+                s_off + 1,
+                p_off + 1,
+                state,
+                glob_flags,
+                max_errs,
             );
             update(&mut best, r);
         }
@@ -2811,8 +2849,16 @@ fn approx_match_exactly(
                 *state = saved_outer.clone();
                 state.errsfound += 1;
                 let r = walk(
-                    code, next, string, input_bytes, str_bytes,
-                    s_off + 1, p_off + 1, state, glob_flags, max_errs,
+                    code,
+                    next,
+                    string,
+                    input_bytes,
+                    str_bytes,
+                    s_off + 1,
+                    p_off + 1,
+                    state,
+                    glob_flags,
+                    max_errs,
                 );
                 update(&mut best, r);
             }
@@ -2821,8 +2867,16 @@ fn approx_match_exactly(
                 *state = saved_outer.clone();
                 state.errsfound += 1;
                 let r = walk(
-                    code, next, string, input_bytes, str_bytes,
-                    s_off + 1, p_off, state, glob_flags, max_errs,
+                    code,
+                    next,
+                    string,
+                    input_bytes,
+                    str_bytes,
+                    s_off + 1,
+                    p_off,
+                    state,
+                    glob_flags,
+                    max_errs,
                 );
                 update(&mut best, r);
             }
@@ -2830,8 +2884,16 @@ fn approx_match_exactly(
             *state = saved_outer.clone();
             state.errsfound += 1;
             let r = walk(
-                code, next, string, input_bytes, str_bytes,
-                s_off, p_off + 1, state, glob_flags, max_errs,
+                code,
+                next,
+                string,
+                input_bytes,
+                str_bytes,
+                s_off,
+                p_off + 1,
+                state,
+                glob_flags,
+                max_errs,
             );
             update(&mut best, r);
         }
@@ -2839,7 +2901,16 @@ fn approx_match_exactly(
         best
     }
     walk(
-        code, next, string, input_bytes, str_bytes, s_off, 0, state, glob_flags, max_errs,
+        code,
+        next,
+        string,
+        input_bytes,
+        str_bytes,
+        s_off,
+        0,
+        state,
+        glob_flags,
+        max_errs,
     )
 }
 
@@ -2924,8 +2995,16 @@ fn patmatch(
         }
         if (flags & GF_IGNCASE) != 0 {
             // c:2672-2674
-            let a = if chin.is_ascii_uppercase() { chin.to_ascii_lowercase() } else { chin };
-            let b = if chpa.is_ascii_uppercase() { chpa.to_ascii_lowercase() } else { chpa };
+            let a = if chin.is_ascii_uppercase() {
+                chin.to_ascii_lowercase()
+            } else {
+                chin
+            };
+            let b = if chpa.is_ascii_uppercase() {
+                chpa.to_ascii_lowercase()
+            } else {
+                chpa
+            };
             return a == b;
         }
         if (flags & GF_LCMATCHUC) != 0 {
@@ -3125,8 +3204,7 @@ fn patmatch(
                 while positions.len() > min {
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
-                    if let Some(end) =
-                        patmatch(code, next, string, cur, &mut sub_state, glob_flags)
+                    if let Some(end) = patmatch(code, next, string, cur, &mut sub_state, glob_flags)
                     {
                         *state = sub_state;
                         return Some(end);
@@ -3155,14 +3233,16 @@ fn patmatch(
                 // the next-chain run the exclude operand against the
                 // same input range; if any exclude matches with the
                 // SAME consumed length, fail; else succeed.
-                if next != 0
-                    && next < code.len()
-                    && P_ISEXCLUDE(code[next + I_OP])
-                {
+                if next != 0 && next < code.len() && P_ISEXCLUDE(code[next + I_OP]) {
                     let operand = scan + I_BODY + operand_off_extra;
                     let mut asserted_state = state.clone();
                     let asserted_end = patmatch(
-                        code, operand, string, s_off, &mut asserted_state, glob_flags,
+                        code,
+                        operand,
+                        string,
+                        s_off,
+                        &mut asserted_state,
+                        glob_flags,
                     );
                     if asserted_end.is_none() {
                         return None;
@@ -3181,7 +3261,12 @@ fn patmatch(
                         let truncated = &string[..end];
                         let mut e_state = state.clone();
                         if let Some(em) = patmatch(
-                            code, excl_operand, truncated, s_off, &mut e_state, glob_flags,
+                            code,
+                            excl_operand,
+                            truncated,
+                            s_off,
+                            &mut e_state,
+                            glob_flags,
                         ) {
                             if em == end {
                                 excluded = true;
@@ -3225,9 +3310,8 @@ fn patmatch(
                                         break;
                                     }
                                 }
-                                let nb: [u8; 4] = code[excl2 + I_NEXT..excl2 + I_NEXT + 4]
-                                    .try_into()
-                                    .unwrap();
+                                let nb: [u8; 4] =
+                                    code[excl2 + I_NEXT..excl2 + I_NEXT + 4].try_into().unwrap();
                                 let n = u32::from_le_bytes(nb) as usize;
                                 if n == 0 || n == excl2 {
                                     break;
@@ -3427,8 +3511,7 @@ fn patmatch(
                 while positions.len() > min_usize {
                     let cur = *positions.last().unwrap();
                     let mut sub_state = state.clone();
-                    if let Some(end) =
-                        patmatch(code, next, string, cur, &mut sub_state, glob_flags)
+                    if let Some(end) = patmatch(code, next, string, cur, &mut sub_state, glob_flags)
                     {
                         *state = sub_state;
                         return Some(end);
@@ -3466,9 +3549,7 @@ fn patmatch(
                 let saved_state = state.clone();
                 if next == 0 {
                     // No continuation — leaf P_OPEN; just commit and continue.
-                    if n > 0 && n <= NSUBEXP
-                        && (state.captures_set & (1u16 << (n - 1))) == 0
-                    {
+                    if n > 0 && n <= NSUBEXP && (state.captures_set & (1u16 << (n - 1))) == 0 {
                         state.patbeginp[n - 1] = save;
                     }
                     return Some(s_off);
@@ -3476,10 +3557,7 @@ fn patmatch(
                 match patmatch(code, next, string, s_off, state, glob_flags) {
                     Some(end) => {
                         // c:2957-2959 — first-write commit.
-                        if n > 0
-                            && n <= NSUBEXP
-                            && (state.captures_set & (1u16 << (n - 1))) == 0
-                        {
+                        if n > 0 && n <= NSUBEXP && (state.captures_set & (1u16 << (n - 1))) == 0 {
                             state.patbeginp[n - 1] = save;
                         }
                         return Some(end);
@@ -3517,9 +3595,7 @@ fn patmatch(
                 let save = s_off;
                 let saved_state = state.clone();
                 if next == 0 {
-                    if n > 0 && n <= NSUBEXP
-                        && (state.captures_set & (1u16 << (n - 1))) == 0
-                    {
+                    if n > 0 && n <= NSUBEXP && (state.captures_set & (1u16 << (n - 1))) == 0 {
                         state.patendp[n - 1] = save;
                         state.captures_set |= 1u16 << (n - 1);
                     }
@@ -3527,10 +3603,7 @@ fn patmatch(
                 }
                 match patmatch(code, next, string, s_off, state, glob_flags) {
                     Some(end) => {
-                        if n > 0
-                            && n <= NSUBEXP
-                            && (state.captures_set & (1u16 << (n - 1))) == 0
-                        {
+                        if n > 0 && n <= NSUBEXP && (state.captures_set & (1u16 << (n - 1))) == 0 {
                             state.patendp[n - 1] = save;
                             state.captures_set |= 1u16 << (n - 1);
                         }
@@ -3579,11 +3652,12 @@ pub fn patallocstr(
     // c:2137 — `int needfullpath;`
     let mut needfullpath: bool;
     // Working values (mutated when force triggers patmungestring).
-    let mut string: &str = string;                                           // c:2133 char *string param
+    let mut string: &str = string; // c:2133 char *string param
     let mut stringlen: i32 = stringlen;
     let mut unmetalen: i32 = unmetalen;
 
-    if force != 0 {                                                          // c:2139
+    if force != 0 {
+        // c:2139
         // c:2140 — `patmungestring(&string, &stringlen, &unmetalen);`
         patmungestring(&mut string, &mut stringlen, &mut unmetalen);
     }
@@ -3592,33 +3666,34 @@ pub fn patallocstr(
      * For a top-level ~-exclusion, we will need the full
      * path to exclude, so copy the path so far and append the
      * current test string.
-     */                                                                      // c:2142-2146
-    // c:2147 — `needfullpath = (prog->flags & PAT_HAS_EXCLUDP) && pathpos;`
-    // `pathpos` is the `gd_pathpos` field of `curglobdata` (c:Src/glob.c:166-170
-    // struct globdata; c:197 static curglobdata; c:199-201 macros expand
-    // `pathpos`→`curglobdata.gd_pathpos`). Read directly from the
-    // shared CURGLOBDATA mutex — the canonical port surface for glob
-    // state in zshrs.
+     */
+ // c:2142-2146
+ // c:2147 — `needfullpath = (prog->flags & PAT_HAS_EXCLUDP) && pathpos;`
+ // `pathpos` is the `gd_pathpos` field of `curglobdata` (c:Src/glob.c:166-170
+ // struct globdata; c:197 static curglobdata; c:199-201 macros expand
+ // `pathpos`→`curglobdata.gd_pathpos`). Read directly from the
+ // shared CURGLOBDATA mutex — the canonical port surface for glob
+ // state in zshrs.
     let pathpos: i32 = crate::ported::glob::CURGLOBDATA
         .lock()
         .map(|gd| gd.pathpos as i32)
         .unwrap_or(0); // c:Src/glob.c:169 gd_pathpos
     needfullpath = (prog.0.flags & PAT_HAS_EXCLUDP as i32) != 0 && pathpos != 0; // c:2147
 
-    /* Get the length of the full string when unmetafied. */                 // c:2149
-    if unmetalen < 0 {                                                       // c:2150
+    /* Get the length of the full string when unmetafied. */
+ // c:2149
+    if unmetalen < 0 {
+        // c:2150
         // c:2151 — `patstralloc->unmetalen = ztrsub(string + stringlen, string);`
         // ztrsub returns the unmetafied char count between two pointers
         // in the same string. Rust analog: ztrsub(buf, start, end).
-        patstralloc.unmetalen = ztrsub(
-            string,
-            0,
-            (stringlen as usize).min(string.len()),
-        ) as i32;
-    } else {                                                                 // c:2152
-        patstralloc.unmetalen = unmetalen;                                   // c:2153
+        patstralloc.unmetalen = ztrsub(string, 0, (stringlen as usize).min(string.len())) as i32;
+    } else {
+        // c:2152
+        patstralloc.unmetalen = unmetalen; // c:2153
     }
-    if needfullpath {                                                        // c:2154
+    if needfullpath {
+        // c:2154
         // c:2155 — `patstralloc->unmetalenp = ztrsub(pathbuf + pathpos, pathbuf);`
         // `pathbuf` is `curglobdata.gd_pathbuf` (c:Src/glob.c:170, macro
         // at c:200). ztrsub(end, start) returns unmetafied char count
@@ -3629,16 +3704,19 @@ pub fn patallocstr(
             .map(|gd| gd.pathbuf.clone())
             .unwrap_or_default(); // c:Src/glob.c:170 gd_pathbuf
         let p_end = (pathpos as usize).min(pathbuf.len());
-        patstralloc.unmetalenp = ztrsub(&pathbuf, 0, p_end) as i32;          // c:2155
-        if patstralloc.unmetalenp == 0 {                                     // c:2156
-            needfullpath = false;                                            // c:2157 (`needfullpath = 0;`)
+        patstralloc.unmetalenp = ztrsub(&pathbuf, 0, p_end) as i32; // c:2155
+        if patstralloc.unmetalenp == 0 {
+            // c:2156
+            needfullpath = false; // c:2157 (`needfullpath = 0;`)
         }
-    } else {                                                                 // c:2158
-        patstralloc.unmetalenp = 0;                                          // c:2159
+    } else {
+        // c:2158
+        patstralloc.unmetalenp = 0; // c:2159
     }
-    /* Initialise cache area */                                              // c:2161
-    patstralloc.progstrunmeta = None;                                        // c:2162
-    patstralloc.progstrunmetalen = 0;                                        // c:2163
+    /* Initialise cache area */
+ // c:2161
+    patstralloc.progstrunmeta = None; // c:2162
+    patstralloc.progstrunmetalen = 0; // c:2163
 
     // c:2165-2166 — `DPUTS(needfullpath && (prog->flags & (PAT_PURES|PAT_ANY)),
     //                       "rum sort of file exclusion");`
@@ -3648,66 +3726,75 @@ pub fn patallocstr(
      * Partly for efficiency, and partly for the convenience of
      * globbing, we don't unmetafy pure string patterns, and
      * there's no reason to if the pattern is just a *.
-     */                                                                      // c:2167-2171
+     */
+ // c:2167-2171
     let pures_or_any = (prog.0.flags & (PAT_PURES | PAT_ANY) as i32) != 0;
-    if force != 0
-        || (!pures_or_any
-            && (needfullpath || patstralloc.unmetalen != stringlen))         // c:2172
+    if force != 0 || (!pures_or_any && (needfullpath || patstralloc.unmetalen != stringlen))
+    // c:2172
     {
         /*
          * We need to copy if we need to prepend the path so far
          * (in which case we copy both chunks), or if we have
          * Meta characters.
-         */                                                                  // c:2174-2178
-        // c:2179 — `char *dst, *ptr; int i, icopy, ncopy;`
+         */
+ // c:2174-2178
+ // c:2179 — `char *dst, *ptr; int i, icopy, ncopy;`
         let total = (patstralloc.unmetalen + patstralloc.unmetalenp) as usize;
-        let mut dst = String::with_capacity(total);                          // c:2182 zhalloc
+        let mut dst = String::with_capacity(total); // c:2182 zhalloc
 
         // c:2184-2192 — choose source chunk(s).
         let mut ptr: &str;
         let mut ncopy: i32;
-        if needfullpath {                                                    // c:2185
+        if needfullpath {
+            // c:2185
             // c:2186 — `ptr = pathbuf;` (stubbed empty)
             ptr = "";
-            ncopy = patstralloc.unmetalenp;                                  // c:2188
-        } else {                                                             // c:2189
-            ptr = string;                                                    // c:2190
-            ncopy = patstralloc.unmetalen;                                   // c:2191
+            ncopy = patstralloc.unmetalenp; // c:2188
+        } else {
+            // c:2189
+            ptr = string; // c:2190
+            ncopy = patstralloc.unmetalen; // c:2191
         }
         // c:2193-2210 — for (icopy = 0; icopy < 2; icopy++) outer loop:
         //   copy ncopy bytes from ptr to dst, unmetafy Meta+X pairs.
-        for icopy in 0..2 {                                                  // c:2193
+        for icopy in 0..2 {
+            // c:2193
             let ptr_bytes = ptr.as_bytes();
             let mut i = 0i32;
             let mut byte_idx = 0usize;
-            while i < ncopy && byte_idx < ptr_bytes.len() {                  // c:2194
+            while i < ncopy && byte_idx < ptr_bytes.len() {
+                // c:2194
                 if ptr_bytes[byte_idx] == Meta as u8 && byte_idx + 1 < ptr_bytes.len() {
                     // c:2195-2197 — `if (*ptr == Meta) { ptr++; *dst++ = *ptr++ ^ 32; }`
-                    byte_idx += 1;                                           // c:2196 ptr++
-                    dst.push((ptr_bytes[byte_idx] ^ 32) as char);            // c:2197 *dst++ = *ptr++ ^ 32
+                    byte_idx += 1; // c:2196 ptr++
+                    dst.push((ptr_bytes[byte_idx] ^ 32) as char); // c:2197 *dst++ = *ptr++ ^ 32
                     byte_idx += 1;
-                } else {                                                     // c:2198
+                } else {
+                    // c:2198
                     // c:2199 — `else *dst++ = *ptr++;`
                     dst.push(ptr_bytes[byte_idx] as char);
                     byte_idx += 1;
                 }
                 i += 1;
             }
-            if !needfullpath {                                               // c:2203
-                break;                                                       // c:2204
+            if !needfullpath {
+                // c:2203
+                break; // c:2204
             }
-            /* next time append test string to path so far */                // c:2205
-            ptr = string;                                                    // c:2207
-            ncopy = patstralloc.unmetalen;                                   // c:2208
+            /* next time append test string to path so far */
+ // c:2205
+            ptr = string; // c:2207
+            ncopy = patstralloc.unmetalen; // c:2208
             let _ = icopy;
         }
-        patstralloc.alloced = Some(dst.clone());                             // c:2182 dst = patstralloc->alloced
-        return Some(dst);                                                    // c:2213 return patstralloc->alloced
-    } else {                                                                 // c:2214
-        patstralloc.alloced = None;                                          // c:2215
+        patstralloc.alloced = Some(dst.clone()); // c:2182 dst = patstralloc->alloced
+        return Some(dst); // c:2213 return patstralloc->alloced
+    } else {
+        // c:2214
+        patstralloc.alloced = None; // c:2215
     }
 
-    None                                                                     // c:2218 return patstralloc->alloced (NULL)
+    None // c:2218 return patstralloc->alloced (NULL)
 }
 
 // `patrepeat(Upat p, char *charstart)` (C: pattern.c:4096 — `static int`
@@ -3820,9 +3907,9 @@ pub fn numeric_range_contains(lo: Option<i64>, hi: Option<i64>, n: i64) -> bool 
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
-    use crate::options::{opt_state_get, opt_state_set};
     use super::*;
+    use crate::options::{opt_state_get, opt_state_set};
+    use std::thread;
 
     // Pattern compile shares file-static globals (patout, patparse,
     // patnpar, ...) with the same single-thread semantics as zsh's
@@ -3847,8 +3934,7 @@ mod tests {
     /// calling, `patcompile_concurrent_safe` exercises 8 threads that
     /// would serialise via this fn instead of through the real engine).
     fn patmatch(pat: &str, text: &str) -> bool {
-        patcompile(pat, PAT_HEAPDUP as i32, None)
-            .map_or(false, |prog| pattry(&prog, text))
+        patcompile(pat, PAT_HEAPDUP as i32, None).map_or(false, |prog| pattry(&prog, text))
     }
 
     #[test]
@@ -4031,12 +4117,24 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(range_type("alpha"), Some(1), "PP_ALPHA (c:colon_stuffs[0])");
         assert_eq!(range_type("alnum"), Some(2), "PP_ALNUM (c:colon_stuffs[1])");
-        assert_eq!(range_type("ascii"), Some(3), "PP_ASCII (c:colon_stuffs[2]) — was missing pre-fix");
+        assert_eq!(
+            range_type("ascii"),
+            Some(3),
+            "PP_ASCII (c:colon_stuffs[2]) — was missing pre-fix"
+        );
         assert_eq!(range_type("digit"), Some(6), "PP_DIGIT (c:colon_stuffs[5])");
-        assert_eq!(range_type("xdigit"), Some(13), "PP_XDIGIT (c:colon_stuffs[12])");
+        assert_eq!(
+            range_type("xdigit"),
+            Some(13),
+            "PP_XDIGIT (c:colon_stuffs[12])"
+        );
         assert_eq!(range_type("IDENT"), Some(14), "PP_IDENT — zsh extension");
         assert_eq!(range_type("WORD"), Some(17), "PP_WORD — zsh extension");
-        assert_eq!(range_type("INVALID"), Some(19), "PP_INVALID — zsh extension");
+        assert_eq!(
+            range_type("INVALID"),
+            Some(19),
+            "PP_INVALID — zsh extension"
+        );
         assert_eq!(range_type("nonsense"), None);
     }
 
@@ -4521,8 +4619,7 @@ mod tests {
             "Src/zsh.h:224 — Marker must be 0xa2 (not 0x80)"
         );
         assert_eq!(
-            Marker as u8,
-            Marker as u8,
+            Marker as u8, Marker as u8,
             "pattern.rs::Marker must alias zsh_h::Marker"
         );
     }
@@ -4928,7 +5025,10 @@ mod tests {
     #[test]
     fn haswilds_single_close_bracket_is_not_wild() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!haswilds("]"), "single literal `]` not in C switch (c:4324-4373)");
+        assert!(
+            !haswilds("]"),
+            "single literal `]` not in C switch (c:4324-4373)"
+        );
     }
 
     /// `Src/pattern.c:4314-4318` — `%?foo` job-ref special: the `?`
@@ -5013,8 +5113,10 @@ mod tests {
         crate::ported::options::opt_state_set("kshglob", false);
         assert!(haswilds("(a|b)"), "( wild without SHGLOB (c:4327)");
         crate::ported::options::opt_state_set("shglob", true);
-        assert!(!haswilds("(a|b)") || haswilds("(a|b)"),
-            "( gated by SHGLOB at c:4327 — kept loose since `|` itself still triggers wild");
+        assert!(
+            !haswilds("(a|b)") || haswilds("(a|b)"),
+            "( gated by SHGLOB at c:4327 — kept loose since `|` itself still triggers wild"
+        );
         crate::ported::options::opt_state_set("shglob", false);
     }
 
@@ -5084,7 +5186,10 @@ mod tests {
         assert!(haswilds("*"), "star wild when ZPC_STAR enabled");
         // Disable star → not wild.
         zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
-        assert!(!haswilds("*"), "star NOT wild when ZPC_STAR disabled (c:4344)");
+        assert!(
+            !haswilds("*"),
+            "star NOT wild when ZPC_STAR disabled (c:4344)"
+        );
         // Restore.
         zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 0;
     }
@@ -5096,7 +5201,10 @@ mod tests {
         zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 0;
         assert!(haswilds("[abc]"), "[ wild when ZPC_INBRACK enabled");
         zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 1;
-        assert!(!haswilds("[abc]"), "[ NOT wild when ZPC_INBRACK disabled (c:4349)");
+        assert!(
+            !haswilds("[abc]"),
+            "[ NOT wild when ZPC_INBRACK disabled (c:4349)"
+        );
         zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 0;
     }
 
@@ -5178,8 +5286,16 @@ mod tests {
         let ret = pat_enables("disable", &["|", "bogus", "*"], false);
         assert_eq!(ret, 1, "c:4207 — at least one invalid → ret = 1");
         // Both valid ones got applied (c:4196 `for (; *patp; patp++)` doesn't break on miss).
-        assert_eq!(zpc_disables.lock().unwrap()[ZPC_BAR as usize], 1, "| was disabled");
-        assert_eq!(zpc_disables.lock().unwrap()[ZPC_STAR as usize], 1, "* was disabled");
+        assert_eq!(
+            zpc_disables.lock().unwrap()[ZPC_BAR as usize],
+            1,
+            "| was disabled"
+        );
+        assert_eq!(
+            zpc_disables.lock().unwrap()[ZPC_STAR as usize],
+            1,
+            "* was disabled"
+        );
         // Restore.
         zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
         zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 0;
@@ -5208,7 +5324,9 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // Save baseline.
         let baseline = zpc_disables.lock().unwrap().clone();
-        for name in &["|", "(", "?", "*", "[", "<", "^", "#", "?(", "*(", "+(", "!("] {
+        for name in &[
+            "|", "(", "?", "*", "[", "<", "^", "#", "?(", "*(", "+(", "!(",
+        ] {
             assert_eq!(
                 pat_enables("disable", &[name], false),
                 0,
@@ -5336,10 +5454,7 @@ mod tests {
         zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
         let disables = savepatterndisables();
         let expected = (1u32 << ZPC_BAR) | (1u32 << ZPC_STAR);
-        assert_eq!(
-            disables, expected,
-            "c:4231 — bits ZPC_BAR + ZPC_STAR set"
-        );
+        assert_eq!(disables, expected, "c:4231 — bits ZPC_BAR + ZPC_STAR set");
         // Restore.
         *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
     }
@@ -5509,17 +5624,20 @@ mod tests {
         // Outer.
         zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 1;
         startpatternscope(); // frame A
-        // Inner.
+                             // Inner.
         zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
         zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
         startpatternscope(); // frame B
-        // Innermost.
+                             // Innermost.
         zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 1;
         endpatternscope(); // pop B → inner restored
         assert_eq!(zpc_disables.lock().unwrap()[ZPC_BAR as usize], 0);
         assert_eq!(zpc_disables.lock().unwrap()[ZPC_STAR as usize], 1);
-        assert_eq!(zpc_disables.lock().unwrap()[ZPC_INBRACK as usize], 0,
-            "c:4287 — frame B's snapshot didn't include this slot's 1");
+        assert_eq!(
+            zpc_disables.lock().unwrap()[ZPC_INBRACK as usize],
+            0,
+            "c:4287 — frame B's snapshot didn't include this slot's 1"
+        );
         endpatternscope(); // pop A → outer restored
         assert_eq!(zpc_disables.lock().unwrap()[ZPC_BAR as usize], 1);
         assert_eq!(zpc_disables.lock().unwrap()[ZPC_STAR as usize], 0);
@@ -5827,7 +5945,10 @@ mod tests {
     fn ext_glob_hash_a0_is_exact_match_only() {
         let _g = crate::test_util::global_state_lock();
         assert!(ext_glob_match("(#a0)foo", "foo"), "exact ok");
-        assert!(!ext_glob_match("(#a0)foo", "fop"), "no edit budget rejects 1-sub");
+        assert!(
+            !ext_glob_match("(#a0)foo", "fop"),
+            "no edit budget rejects 1-sub"
+        );
     }
 
     /// `(#a1)foo` matches "fxoo" via INSERTION in input (extra 'x').
@@ -5837,8 +5958,10 @@ mod tests {
     fn ext_glob_hash_a_accepts_insertion_in_input() {
         let _g = crate::test_util::global_state_lock();
         // "fxoo" — extra 'x' between 'f' and 'oo'.
-        assert!(ext_glob_match("(#a1)foo", "fxoo"),
-            "1 insertion-in-input edit");
+        assert!(
+            ext_glob_match("(#a1)foo", "fxoo"),
+            "1 insertion-in-input edit"
+        );
     }
 
     /// `(#a1)foo` matches "fo" via DELETION from input (missing 'o').
@@ -5846,7 +5969,10 @@ mod tests {
     #[test]
     fn ext_glob_hash_a_accepts_deletion_from_input() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#a1)foo", "fo"), "1 deletion-from-input edit");
+        assert!(
+            ext_glob_match("(#a1)foo", "fo"),
+            "1 deletion-from-input edit"
+        );
     }
 
     /// `(#a2)foo` matches "fxooy" via 1 insertion + 1 substitution.
@@ -5857,8 +5983,10 @@ mod tests {
     fn ext_glob_hash_a_mixed_edits_within_budget() {
         let _g = crate::test_util::global_state_lock();
         // 2 insertions: 'x' and 'y'.
-        assert!(ext_glob_match("(#a2)foo", "fxooy"),
-            "2 insertions in input within budget");
+        assert!(
+            ext_glob_match("(#a2)foo", "fxooy"),
+            "2 insertions in input within budget"
+        );
     }
 
     /// Budget upper bound: `(#a1)abc` rejects "xyz" (3 substitutions > 1).
@@ -5872,8 +6000,10 @@ mod tests {
     #[test]
     fn ext_glob_hash_a3_accepts_all_substituted() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#a3)abc", "xyz"),
-            "3 substitutions at budget 3");
+        assert!(
+            ext_glob_match("(#a3)abc", "xyz"),
+            "3 substitutions at budget 3"
+        );
     }
 
     /// Position-independent substitution: budget allows replacing
@@ -5900,7 +6030,10 @@ mod tests {
     #[test]
     fn zsh_corpus_foo_tilde_exact_match() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("foo~", "foo~"), "ztst:26 — literal tilde matches");
+        assert!(
+            ext_glob_match("foo~", "foo~"),
+            "ztst:26 — literal tilde matches"
+        );
     }
 
     /// `Test/D02glob.ztst:27` — `[[ foo~ = (foo~) ]]` parenthesised
@@ -5908,7 +6041,10 @@ mod tests {
     #[test]
     fn zsh_corpus_foo_tilde_in_parens() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(foo~)", "foo~"), "ztst:27 — (foo~) matches foo~");
+        assert!(
+            ext_glob_match("(foo~)", "foo~"),
+            "ztst:27 — (foo~) matches foo~"
+        );
     }
 
     /// `Test/D02glob.ztst:28` — `[[ foo~ = (foo~|) ]]` alternation
@@ -5916,7 +6052,10 @@ mod tests {
     #[test]
     fn zsh_corpus_alternation_with_empty_alt() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(foo~|)", "foo~"), "ztst:28 — empty alt accepted");
+        assert!(
+            ext_glob_match("(foo~|)", "foo~"),
+            "ztst:28 — empty alt accepted"
+        );
     }
 
     /// `Test/D02glob.ztst:29` — `[[ foo.c = *.c~boo* ]]` exclude
@@ -5926,8 +6065,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: extended-glob exclude pattern `pat~exclude` not implemented"]
     fn zsh_corpus_exclude_pattern_basic() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("*.c~boo*", "foo.c"),
-            "ztst:29 — *.c~boo* matches foo.c");
+        assert!(
+            ext_glob_match("*.c~boo*", "foo.c"),
+            "ztst:29 — *.c~boo* matches foo.c"
+        );
     }
 
     /// `Test/D02glob.ztst:30` — `[[ foo.c = *.c~boo*~foo* ]]`
@@ -5937,8 +6078,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: extended-glob exclude pattern `pat~exclude` not implemented"]
     fn zsh_corpus_exclude_pattern_double() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!ext_glob_match("*.c~boo*~foo*", "foo.c"),
-            "ztst:30 — double exclude rejects foo.c");
+        assert!(
+            !ext_glob_match("*.c~boo*~foo*", "foo.c"),
+            "ztst:30 — double exclude rejects foo.c"
+        );
     }
 
     /// `Test/D02glob.ztst:31` — `[[ fofo = (fo#)# ]]` — `#` is the
@@ -5948,8 +6091,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: nested `#` quantifier (fo#)# crashes patmatch with SIGABRT (stack overflow / unbounded recursion)"]
     fn zsh_corpus_hash_repetition_double() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(fo#)#", "fofo"),
-            "ztst:31 — (fo#)# matches fofo");
+        assert!(
+            ext_glob_match("(fo#)#", "fofo"),
+            "ztst:31 — (fo#)# matches fofo"
+        );
     }
 
     /// `Test/D02glob.ztst:32` — `[[ ffo = (fo#)# ]]`. `fo#` means
@@ -5959,8 +6104,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: nested `#` quantifier (fo#)# crashes patmatch with SIGABRT (stack overflow / unbounded recursion)"]
     fn zsh_corpus_hash_repetition_min_one() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(fo#)#", "ffo"),
-            "ztst:32 — (fo#)# matches ffo via 1-iter outer");
+        assert!(
+            ext_glob_match("(fo#)#", "ffo"),
+            "ztst:32 — (fo#)# matches ffo via 1-iter outer"
+        );
     }
 
     /// `Test/D02glob.ztst:36` — `[[ foooofof = (fo##)# ]]` —
@@ -5970,8 +6117,10 @@ mod tests {
     #[test]
     fn zsh_corpus_hash_hash_quantifier_min_two() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!ext_glob_match("(fo##)#", "foooofof"),
-            "ztst:36 — (fo##)# rejects foooofof");
+        assert!(
+            !ext_glob_match("(fo##)#", "foooofof"),
+            "ztst:36 — (fo##)# rejects foooofof"
+        );
     }
 
     /// `Test/D02glob.ztst:50` — `[[ aac = ((a))#a(c) ]]` —
@@ -5985,8 +6134,10 @@ mod tests {
     #[test]
     fn zsh_corpus_nested_paren_quantifier() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("((a))#a(c)", "aac"),
-            "ztst:50 — ((a))#a(c) matches aac");
+        assert!(
+            ext_glob_match("((a))#a(c)", "aac"),
+            "ztst:50 — ((a))#a(c) matches aac"
+        );
     }
 
     /// `Test/D02glob.ztst:51` — `[[ ac = ((a))#a(c) ]]` — single
@@ -5994,8 +6145,10 @@ mod tests {
     #[test]
     fn zsh_corpus_zero_iteration_quantifier() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("((a))#a(c)", "ac"),
-            "ztst:51 — ((a))# can be zero iters");
+        assert!(
+            ext_glob_match("((a))#a(c)", "ac"),
+            "ztst:51 — ((a))# can be zero iters"
+        );
     }
 
     /// `Test/D02glob.ztst:52` — `[[ c = ((a))#a(c) ]]` — empty
@@ -6004,8 +6157,10 @@ mod tests {
     #[test]
     fn zsh_corpus_required_literal_after_zero_quantifier() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!ext_glob_match("((a))#a(c)", "c"),
-            "ztst:52 — bare `c` lacks required `a`");
+        assert!(
+            !ext_glob_match("((a))#a(c)", "c"),
+            "ztst:52 — bare `c` lacks required `a`"
+        );
     }
 
     /// `Test/D02glob.ztst:73` — `[[ foo = ((^x)) ]]` — exclude
@@ -6016,8 +6171,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: extended-glob `^pat` negation not fully wired"]
     fn zsh_corpus_caret_exclude_basic() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("((^x))", "foo"),
-            "ztst:73 — ((^x)) matches foo");
+        assert!(
+            ext_glob_match("((^x))", "foo"),
+            "ztst:73 — ((^x)) matches foo"
+        );
     }
 
     /// `Test/D02glob.ztst:75` — `[[ foo = ((^foo)) ]]` — `^foo`
@@ -6027,8 +6184,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: extended-glob `^pat` negation not fully wired"]
     fn zsh_corpus_caret_exclude_exact_match_inverted() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!ext_glob_match("((^foo))", "foo"),
-            "ztst:75 — ((^foo)) rejects foo");
+        assert!(
+            !ext_glob_match("((^foo))", "foo"),
+            "ztst:75 — ((^foo)) rejects foo"
+        );
     }
 
     /// `Test/D02glob.ztst:79` — `[[ foot = z*~*x ]]` — `*` then
@@ -6037,8 +6196,10 @@ mod tests {
     #[test]
     fn zsh_corpus_star_exclude_no_z_prefix() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!ext_glob_match("z*~*x", "foot"),
-            "ztst:79 — foot doesn't start with z");
+        assert!(
+            !ext_glob_match("z*~*x", "foot"),
+            "ztst:79 — foot doesn't start with z"
+        );
     }
 
     /// `Test/D02glob.ztst:80` — `[[ zoot = z*~*x ]]` — `zoot`
@@ -6047,8 +6208,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: extended-glob `pat~exclude` not implemented"]
     fn zsh_corpus_star_exclude_zoot() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("z*~*x", "zoot"),
-            "ztst:80 — zoot matches z* and not *x");
+        assert!(
+            ext_glob_match("z*~*x", "zoot"),
+            "ztst:80 — zoot matches z* and not *x"
+        );
     }
 
     // ─── POSIX class brackets — Test/D02glob.ztst:111-118 ─────────────
@@ -6082,8 +6245,10 @@ mod tests {
     #[test]
     fn zsh_corpus_literal_brackets_in_class_with_repetition() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("[[:]#", "[:"),
-            "ztst:113 — [[:]# matches '[:'");
+        assert!(
+            ext_glob_match("[[:]#", "[:"),
+            "ztst:113 — [[:]# matches '[:'"
+        );
     }
 
     // ─── (#i) / (#l) case modifiers — Test/D02glob.ztst:119-132 ───────
@@ -6093,8 +6258,10 @@ mod tests {
     #[test]
     fn zsh_corpus_hash_i_case_insensitive() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#i)FOOXX", "fooxx"),
-            "ztst:119 — (#i)FOOXX matches fooxx");
+        assert!(
+            ext_glob_match("(#i)FOOXX", "fooxx"),
+            "ztst:119 — (#i)FOOXX matches fooxx"
+        );
     }
 
     /// `Test/D02glob.ztst:120` — `(#l)FOOXX` requires pattern UPPER
@@ -6107,8 +6274,10 @@ mod tests {
     #[test]
     fn zsh_corpus_hash_l_uppercase_pattern_with_lower_input_fails() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!ext_glob_match("(#l)FOOXX", "fooxx"),
-            "ztst:120 — (#l)FOOXX does NOT match fooxx");
+        assert!(
+            !ext_glob_match("(#l)FOOXX", "fooxx"),
+            "ztst:120 — (#l)FOOXX does NOT match fooxx"
+        );
     }
 
     /// `Test/D02glob.ztst:121` — `(#l)fooxx` (lowercase pattern) DOES
@@ -6117,8 +6286,10 @@ mod tests {
     #[test]
     fn zsh_corpus_hash_l_lowercase_pattern_matches_uppercase_input() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#l)fooxx", "FOOXX"),
-            "ztst:121 — (#l)fooxx matches FOOXX (asymmetric upcasing)");
+        assert!(
+            ext_glob_match("(#l)fooxx", "FOOXX"),
+            "ztst:121 — (#l)fooxx matches FOOXX (asymmetric upcasing)"
+        );
     }
 
     /// `Test/D02glob.ztst:122` — `(#i)FOO(#I)X(#i)X` mixes case
@@ -6128,8 +6299,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: mid-pattern (#I) case-cancel modifier not wired"]
     fn zsh_corpus_hash_capital_i_cancels_case_insensitive() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!ext_glob_match("(#i)FOO(#I)X(#i)X", "fooxx"),
-            "ztst:122 — (#I) cancels (#i), 4th char `X` requires upper");
+        assert!(
+            !ext_glob_match("(#i)FOO(#I)X(#i)X", "fooxx"),
+            "ztst:122 — (#I) cancels (#i), 4th char `X` requires upper"
+        );
     }
 
     /// `Test/D02glob.ztst:123` — same pattern with input "fooXx":
@@ -6139,8 +6312,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: mid-pattern (#i)/(#I) toggle not wired"]
     fn zsh_corpus_hash_i_capital_i_toggle_succeeds() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#i)FOO(#I)X(#i)X", "fooXx"),
-            "ztst:123 — mixed case modifiers succeed");
+        assert!(
+            ext_glob_match("(#i)FOO(#I)X(#i)X", "fooXx"),
+            "ztst:123 — mixed case modifiers succeed"
+        );
     }
 
     /// `Test/D02glob.ztst:128` — `(#i)*m*` matches "Modules"
@@ -6148,8 +6323,10 @@ mod tests {
     #[test]
     fn zsh_corpus_hash_i_with_star_glob() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#i)*m*", "Modules"),
-            "ztst:128 — (#i)*m* case-insensitive substring");
+        assert!(
+            ext_glob_match("(#i)*m*", "Modules"),
+            "ztst:128 — (#i)*m* case-insensitive substring"
+        );
     }
 
     // ─── Numeric ranges `<n-m>` — Test/D02glob.ztst:133-137 ───────────
@@ -6163,8 +6340,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: numeric-range pattern `<n-m>` matcher doesn't accept partial prefix split"]
     fn zsh_corpus_numeric_range_one_to_thousand() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("<1-1000>33", "633"),
-            "ztst:133 — <1-1000>33 matches 633");
+        assert!(
+            ext_glob_match("<1-1000>33", "633"),
+            "ztst:133 — <1-1000>33 matches 633"
+        );
     }
 
     /// `Test/D02glob.ztst:136` — `<->33` is the open-ended range
@@ -6173,8 +6352,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: open-ended `<->` numeric range doesn't accept partial prefix split"]
     fn zsh_corpus_numeric_range_open_ended() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("<->33", "633"),
-            "ztst:136 — <->33 matches 633 (any number)");
+        assert!(
+            ext_glob_match("<->33", "633"),
+            "ztst:136 — <->33 matches 633 (any number)"
+        );
     }
 
     // ─── (#a) approximate match details — Test/D02glob.ztst:147-164 ───
@@ -6187,8 +6368,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: (#a) approximate match doesn't span P_ANYOF (bracket class) opcodes"]
     fn zsh_corpus_hash_a1_bracket_class_with_one_edit() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#a1)[b][b]", "bob"),
-            "ztst:147 — (#a1)[b][b] matches bob via 1 edit");
+        assert!(
+            ext_glob_match("(#a1)[b][b]", "bob"),
+            "ztst:147 — (#a1)[b][b] matches bob via 1 edit"
+        );
     }
 
     /// `Test/D02glob.ztst:151` — `(#a2)XbcX` matches "abcd" via
@@ -6196,8 +6379,10 @@ mod tests {
     #[test]
     fn zsh_corpus_hash_a2_two_substitutions() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#a2)XbcX", "abcd"),
-            "ztst:151 — 2 substitutions allowed");
+        assert!(
+            ext_glob_match("(#a2)XbcX", "abcd"),
+            "ztst:151 — 2 substitutions allowed"
+        );
     }
 
     /// `Test/D02glob.ztst:152` — `(#a2)ad` matches "abcd" via
@@ -6207,8 +6392,10 @@ mod tests {
     #[test]
     fn zsh_corpus_hash_a2_two_insertions_in_input() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#a2)ad", "abcd"),
-            "ztst:152 — (#a2)ad matches abcd via 2 insertions in input");
+        assert!(
+            ext_glob_match("(#a2)ad", "abcd"),
+            "ztst:152 — (#a2)ad matches abcd via 2 insertions in input"
+        );
     }
 
     /// `Test/D02glob.ztst:153` — `(#a2)abcd` matches "ad" via
@@ -6216,8 +6403,10 @@ mod tests {
     #[test]
     fn zsh_corpus_hash_a2_two_deletions_from_input() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#a2)abcd", "ad"),
-            "ztst:153 — (#a2)abcd matches ad via 2 deletions");
+        assert!(
+            ext_glob_match("(#a2)abcd", "ad"),
+            "ztst:153 — (#a2)abcd matches ad via 2 deletions"
+        );
     }
 
     /// `Test/D02glob.ztst:158` — `(#a2)abcd` rejects "dcba" — 4
@@ -6225,8 +6414,10 @@ mod tests {
     #[test]
     fn zsh_corpus_hash_a2_rejects_full_reverse() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!ext_glob_match("(#a2)abcd", "dcba"),
-            "ztst:158 — full reverse exceeds budget 2");
+        assert!(
+            !ext_glob_match("(#a2)abcd", "dcba"),
+            "ztst:158 — full reverse exceeds budget 2"
+        );
     }
 
     /// `Test/D02glob.ztst:159` — `(#a3)abcd` matches "dcba" via
@@ -6241,8 +6432,10 @@ mod tests {
     #[ignore = "ZSHRS BUG: Damerau transposition operation not implemented (#a3 vs dcba/abcd needs swap)"]
     fn zsh_corpus_hash_a3_reverse_via_transposition() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("(#a3)abcd", "dcba"),
-            "ztst:159 — (#a3)abcd matches dcba via Damerau transpositions");
+        assert!(
+            ext_glob_match("(#a3)abcd", "dcba"),
+            "ztst:159 — (#a3)abcd matches dcba via Damerau transpositions"
+        );
     }
 
     // ─── (#s) start / (#e) end anchors — Test/D02glob.ztst:168-179 ────
@@ -6279,7 +6472,10 @@ mod tests {
     #[test]
     fn zsh_corpus_literal_tilde_in_pattern() {
         let _g = crate::test_util::global_state_lock();
-        assert!(ext_glob_match("foo~", "foo~"), "literal ~ in non-extglob position");
+        assert!(
+            ext_glob_match("foo~", "foo~"),
+            "literal ~ in non-extglob position"
+        );
     }
 
     /// `Misc/globtests` — `[[ foo.c = *.c~boo* ]]` — extended-glob

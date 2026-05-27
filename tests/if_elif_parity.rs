@@ -4,32 +4,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -86,7 +120,8 @@ mod if_elif {
 
     #[test]
     fn if_elif_else_all_chain() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 X=2
 if (( X == 1 )); then
   echo one
@@ -97,12 +132,14 @@ elif (( X == 3 )); then
 else
   echo other
 fi
-"#);
+"#,
+        );
     }
 
     #[test]
     fn if_elif_else_falls_to_else() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 X=99
 if (( X == 1 )); then
   echo one
@@ -111,24 +148,28 @@ elif (( X == 2 )); then
 else
   echo other
 fi
-"#);
+"#,
+        );
     }
 
     #[test]
     fn multiple_elif_no_match() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 if false; then echo a
 elif false; then echo b
 elif false; then echo c
 fi
 echo done
-"#);
+"#,
+        );
     }
 
     /// First matching elif wins; later elifs don't fire.
     #[test]
     fn first_matching_elif_wins() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 X=2
 if (( X == 1 )); then
   echo a
@@ -137,7 +178,8 @@ elif (( X >= 2 )); then
 elif (( X >= 0 )); then
   echo c
 fi
-"#);
+"#,
+        );
     }
 }
 
@@ -174,18 +216,21 @@ mod nested {
 
     #[test]
     fn if_inside_then() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 if true; then
   if true; then
     echo inner
   fi
 fi
-"#);
+"#,
+        );
     }
 
     #[test]
     fn if_inside_else() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 if false; then
   echo top-true
 else
@@ -195,12 +240,14 @@ else
     echo inner-false
   fi
 fi
-"#);
+"#,
+        );
     }
 
     #[test]
     fn three_levels_deep() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 if true; then
   if true; then
     if true; then
@@ -208,7 +255,8 @@ if true; then
     fi
   fi
 fi
-"#);
+"#,
+        );
     }
 }
 
@@ -273,13 +321,15 @@ mod multi_line {
     /// Newline-separated then/else clauses.
     #[test]
     fn multi_line_if_else() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 if true
 then
   echo yes
 else
   echo no
 fi
-"#);
+"#,
+        );
     }
 }

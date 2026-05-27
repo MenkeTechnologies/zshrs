@@ -1466,8 +1466,10 @@ mod tests {
     /// DEFAULT_TMPPREFIX starts with "/tmp/".
     #[test]
     fn config_h_corpus_default_tmpprefix_starts_with_tmp() {
-        assert!(DEFAULT_TMPPREFIX.starts_with("/tmp/"),
-            "tmp prefix in /tmp/ namespace, got {DEFAULT_TMPPREFIX:?}");
+        assert!(
+            DEFAULT_TMPPREFIX.starts_with("/tmp/"),
+            "tmp prefix in /tmp/ namespace, got {DEFAULT_TMPPREFIX:?}"
+        );
     }
 
     /// DEFAULT_PATH includes /usr/bin and /bin.
@@ -1507,7 +1509,9 @@ mod tests {
     /// DEFAULT_HISTSIZE is positive.
     #[test]
     fn config_h_corpus_default_histsize_positive() {
-        assert!(DEFAULT_HISTSIZE > 0,
-            "histsize must be positive, got {DEFAULT_HISTSIZE}");
+        assert!(
+            DEFAULT_HISTSIZE > 0,
+            "histsize must be positive, got {DEFAULT_HISTSIZE}"
+        );
     }
 }

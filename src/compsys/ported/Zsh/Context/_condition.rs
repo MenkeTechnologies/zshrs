@@ -75,8 +75,8 @@ const BINARY_TESTS: &[&str] = &[
 
 fn is_file_test_op(prev: &str) -> bool {
     let chars: &[&str] = &[
-        "-a", "-b", "-c", "-d", "-e", "-f", "-g", "-h", "-k", "-p", "-r", "-s",
-        "-u", "-w", "-x", "-L", "-O", "-G", "-S", "-N", "-nt", "-ot", "-ef",
+        "-a", "-b", "-c", "-d", "-e", "-f", "-g", "-h", "-k", "-p", "-r", "-s", "-u", "-w", "-x",
+        "-L", "-O", "-G", "-S", "-N", "-nt", "-ot", "-ef",
     ];
     chars.contains(&prev)
 }
@@ -130,19 +130,13 @@ pub fn _condition() -> i32 {
     let mut ret: i32 = 1;
     if prefix.starts_with('-') || !prefix_needed {
         // sh:17
-        let group = matches!(
-            prev.as_str(),
-            "[[" | "||" | "&&" | "!" | "("
-        );
+        let group = matches!(prev.as_str(), "[[" | "||" | "&&" | "!" | "(");
         let catalog: Vec<String> = if group {
             UNARY_TESTS.iter().map(|s| s.to_string()).collect()
         } else {
             BINARY_TESTS.iter().map(|s| s.to_string()).collect()
         };
-        let mut describe_argv: Vec<String> = vec![
-            "-o".to_string(),
-            "condition code".to_string(),
-        ];
+        let mut describe_argv: Vec<String> = vec!["-o".to_string(), "condition code".to_string()];
         for c in catalog {
             describe_argv.push(c);
         }
@@ -169,7 +163,10 @@ mod tests {
     #[test]
     fn dash_o_dispatches_to_options() {
         let _g = crate::test_util::global_state_lock();
-        setaparam("words", vec!["[[".to_string(), "-o".to_string(), "".to_string()]);
+        setaparam(
+            "words",
+            vec!["[[".to_string(), "-o".to_string(), "".to_string()],
+        );
         let _ = setsparam("CURRENT", "3");
         // Without tag setup, dispatch returns 1.
         let _r = _condition();
@@ -178,7 +175,10 @@ mod tests {
     #[test]
     fn dash_t_dispatches_to_file_descriptors() {
         let _g = crate::test_util::global_state_lock();
-        setaparam("words", vec!["[[".to_string(), "-t".to_string(), "".to_string()]);
+        setaparam(
+            "words",
+            vec!["[[".to_string(), "-t".to_string(), "".to_string()],
+        );
         let _ = setsparam("CURRENT", "3");
         let _r = _condition();
     }

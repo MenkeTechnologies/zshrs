@@ -11,35 +11,22 @@ use super::lex::{
     DBAR, DINANG, DINANGDASH, DINBRACK, DINPAR, DOLOOP, DONE, DOUTANG, DOUTANGAMP, DOUTANGAMPBANG,
     DOUTANGBANG, DOUTBRACK, DOUTPAR, DSEMI, ELIF, ELSE, ENDINPUT, ENVARRAY, ENVSTRING, ESAC, FI,
     FOR, FOREACH, FUNC, IF, INANGAMP, INANG_TOK, INBRACE_TOK, INOUTANG, INOUTPAR, INPAR_TOK,
-    IS_REDIROP, LEXERR, NEWLIN, NOCORRECT, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG, OUTANG_TOK,
-    OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER, STRING_LEX, THEN,
-    TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
-    LEX_HEREDOCS
+    IS_REDIROP, LEXERR, LEX_HEREDOCS, NEWLIN, NOCORRECT, OUTANGAMP, OUTANGAMPBANG, OUTANGBANG,
+    OUTANG_TOK, OUTBRACE_TOK, OUTPAR_TOK, REPEAT, SELECT, SEMI, SEMIAMP, SEMIBAR, SEPER,
+    STRING_LEX, THEN, TIME, TRINANG, TYPESET, UNTIL, WHILE, ZEND,
 };
 use super::zsh_h::{
-    eprog, estate, isset, redir, unset, wc_code, wordcode, Bang, Dash, Equals, Inang, Outang,
-    Tilde, ALIASFUNCDEF, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_NT, COND_OR, COND_REGEX,
-    COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, CSHJUNKIELOOPS, EC_DUP,
-    EC_NODUP, EF_HEAP, EF_REAL, EXECOPT, IGNOREBRACES, IS_DASH, MULTIFUNCDEF, OPT_ISSET,
+    eprog, estate, funcdump, isset, redir, unset, wc_code, wordcode, Bang, Dash, Equals, Inang,
+    Outang, Tilde, ALIASFUNCDEF, COND_AND, COND_MOD, COND_MODI, COND_NOT, COND_NT, COND_OR,
+    COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ, CSHJUNKIELOOPS,
+    EC_DUP, EC_NODUP, EF_HEAP, EF_REAL, EXECOPT, IGNOREBRACES, IS_DASH, MULTIFUNCDEF, OPT_ISSET,
     PM_UNDEFINED, POSIXBUILTINS, REDIRF_FROM_HEREDOC, REDIR_APP, REDIR_APPNOW, REDIR_ERRAPP,
     REDIR_ERRAPPNOW, REDIR_ERRWRITE, REDIR_ERRWRITENOW, REDIR_FROM_HEREDOC_MASK, REDIR_HEREDOC,
     REDIR_HEREDOCDASH, REDIR_HERESTR, REDIR_INPIPE, REDIR_MERGEIN, REDIR_MERGEOUT, REDIR_OUTPIPE,
     REDIR_READ, REDIR_READWRITE, REDIR_VARID_MASK, REDIR_WRITE, REDIR_WRITENOW, SHORTLOOPS,
     SHORTREPEAT, WCB_COND, WCB_SIMPLE, WC_REDIR, WC_REDIR_FROM_HEREDOC, WC_REDIR_TYPE,
     WC_REDIR_VARID, WC_SUBLIST_COPROC, WC_SUBLIST_NOT,
-    funcdump
 };
-use crate::ported::signals::unqueue_signals;
-use crate::ported::utils::{errflag, zerr, zwarnnam, ERRFLAG_ERROR};
-use serde::{Deserialize, Serialize};
-use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::MetadataExt;
-use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
 pub use crate::heredoc_ast::HereDoc;
 use crate::ported::lex::{
     incasepat, incmdpos, incond, infor, input_slice, inredir, inrepeat, intypeset, isnewlin,
@@ -47,6 +34,8 @@ use crate::ported::lex::{
     set_infor, set_inredir, set_inrepeat, set_intypeset, set_isnewlin, set_lineno, set_noaliases,
     set_nocorrect, tok, tokfd, toklineno, tokstr, zshlex,
 };
+use crate::ported::signals::unqueue_signals;
+use crate::ported::utils::{errflag, zerr, zwarnnam, ERRFLAG_ERROR};
 use crate::prompt::{cmdpop, cmdpush};
 pub use crate::zsh_ast::{
     CaseArm, CaseTerm, CaseTerminator, CompoundCommand, ForList, HereDocInfo, ListFlags, ListOp,
@@ -68,6 +57,15 @@ use crate::zsh_h::{
     WC_SUBLIST_SIMPLE, WC_SUBLIST_TYPE, WC_TIMED_EMPTY, WC_TIMED_PIPE, WC_WHILE_UNTIL,
     WC_WHILE_WHILE, Z_ASYNC, Z_DISOWN, Z_END, Z_SIMPLE, Z_SYNC,
 };
+use serde::{Deserialize, Serialize};
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 // Names lifted out of inside-fn `use` statements (PORT.md
 // 'no imports inside FNs ever').
@@ -215,10 +213,7 @@ pub fn parse_context_restore(ps: &parse_stack) {
 
     // parse.c:354 — `errflag &= ~ERRFLAG_ERROR;` — clear the
     // error flag so the outer parse sees a clean state.
-    errflag.fetch_and(
-        !ERRFLAG_ERROR,
-        Ordering::Relaxed,
-    );
+    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
 }
 
 /// Direct port of `ecadjusthere(int p, int d)` at `Src/parse.c:360`. Walk
@@ -1840,7 +1835,9 @@ fn par_funcdef() -> Option<ZshCommand> {
                 // the trailing `;`/`\n` that lives in the input.
                 let t = s.trim();
                 let t = t.strip_suffix('}').unwrap_or(t).trim_end();
-                let t = t.trim_end_matches(|c: char| c == ';' || c == '\n').trim_end();
+                let t = t
+                    .trim_end_matches(|c: char| c == ';' || c == '\n')
+                    .trim_end();
                 t.to_string()
             })
             .filter(|s| !s.is_empty());
@@ -1958,8 +1955,8 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     // following command line evaporated — `nocorrect echo hello`
     // produced empty output.
     while tok() == NOCORRECT {
-        set_nocorrect(1);                                                    // c:1846
-        zshlex();                                                            // c:1907 (loop-tail zshlex)
+        set_nocorrect(1); // c:1846
+        zshlex(); // c:1907 (loop-tail zshlex)
     }
 
     // Parse leading assignments
@@ -2061,9 +2058,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 // `f1 f2() { ... }` defines f1 AND f2 to the same
                 // body, but only when MULTIFUNCDEF is set.
                 if !isset(MULTIFUNCDEF) && words.len() > 1 {
-                    zerr(
-                        "parse error: multiple names in function definition without MULTIFUNCDEF",
-                    );
+                    zerr("parse error: multiple names in function definition without MULTIFUNCDEF");
                     return None;
                 }
                 // c:2061-2068 — `if (isset(EXECOPT) && hasalias &&
@@ -2441,10 +2436,7 @@ pub fn par_cond_double(a: &str, b: &str) -> i32 {
         // parse so the whole line is rejected, matching zsh's
         // observable behavior of stdout="" on parse error.
         zerr(&format!("parse error: condition expected: {}", a));
-        errflag.fetch_or(
-            crate::ported::zsh_h::ERRFLAG_ERROR,
-            Ordering::SeqCst,
-        );
+        errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
         set_tok(LEXERR);
         return 1;
     }
@@ -2641,9 +2633,7 @@ pub fn par_cond_multi(a: &str, l: &[String]) -> i32 {
 ///   3. Sets ERRFLAG_ERROR per c:2753 (noerr=0 path always taken).
 pub fn yyerror(msg: &str) {
     // c:2733
-    let int_flagged = (errflag.load(Ordering::SeqCst)
-        & crate::ported::zsh_h::ERRFLAG_INT)
-        != 0;
+    let int_flagged = (errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_INT) != 0;
     if !int_flagged {
         // c:2746
         let body = if msg.is_empty() {
@@ -2656,10 +2646,7 @@ pub fn yyerror(msg: &str) {
         zwarnnam("zsh", &body);
     }
     // c:2753 — `if (!noerr && noerrs != 2) errflag |= ERRFLAG_ERROR;`
-    errflag.fetch_or(
-        crate::ported::zsh_h::ERRFLAG_ERROR,
-        Ordering::SeqCst,
-    );
+    errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
 }
 
 // ============================================================
@@ -2881,12 +2868,7 @@ pub fn ecgetarr(s: &mut estate, num: usize, dup: i32, tokflag: Option<&mut i32>)
 /// Port of `ecgetlist(Estate s, int num, int dup, int *tokflag)` from
 /// `Src/parse.c:2937`. Same shape as `ecgetarr` but C returns
 /// `LinkList`; zshrs uses `Vec<String>` for both.
-pub fn ecgetlist(
-    s: &mut estate,
-    num: usize,
-    dup: i32,
-    tokflag: Option<&mut i32>,
-) -> Vec<String> {
+pub fn ecgetlist(s: &mut estate, num: usize, dup: i32, tokflag: Option<&mut i32>) -> Vec<String> {
     if num == 0 {
         // c:2949-2952
         if let Some(tf) = tokflag {
@@ -4156,18 +4138,17 @@ pub type ParseStack = parse_stack;
 /// Placeholder Eprog used by `shf->funcdef = &dummy_eprog;` in
 /// builtin.c when clearing a stale autoload stub. Held in a Mutex
 /// so `init_eprog` can set it once at shell startup.
-pub static DUMMY_EPROG: std::sync::Mutex<eprog> =
-    std::sync::Mutex::new(eprog {
-        flags: 0,
-        len: 0,
-        npats: 0,
-        nref: 0,
-        prog: Vec::new(),
-        strs: None,
-        pats: Vec::new(),
-        shf: None,
-        dump: None,
-    });
+pub static DUMMY_EPROG: std::sync::Mutex<eprog> = std::sync::Mutex::new(eprog {
+    flags: 0,
+    len: 0,
+    npats: 0,
+    nref: 0,
+    prog: Vec::new(),
+    strs: None,
+    pats: Vec::new(),
+    shf: None,
+    dump: None,
+});
 
 /// Walk every ZshRedir in the program and, for any with a `heredoc_idx`,
 /// pull the body+terminator out of `bodies` and stuff into `heredoc`.
@@ -4963,8 +4944,7 @@ pub fn par_for_wordcode(cmplx: &mut i32) {
             }
             // c:1130-1135 — `if (!isident(tokstr) || errflag) { ... YYERRORV; }`
             if !crate::ported::params::isident(&tokstr().unwrap_or_default())
-                || (errflag.load(Ordering::Relaxed) & 1)
-                    != 0
+                || (errflag.load(Ordering::Relaxed) & 1) != 0
             {
                 set_noaliases(ona);
                 set_nocorrect(onc);
@@ -6682,9 +6662,7 @@ pub fn par_simple_wordcode(cmplx: &mut i32, mut nr: i32) -> i32 {
                     let ok = par_cmd_wordcode(&mut body_c, if argc == 0 { 1 } else { 0 });
                     if !ok {
                         cmdpop();
-                        zerr(
-                            "par_simple: funcdef short-body: missing command",
-                        );
+                        zerr("par_simple: funcdef short-body: missing command");
                         return 0;
                     }
                     if argc == 0 {
@@ -7879,7 +7857,9 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
                 // the trailing `;`/`\n` that lives in the input.
                 let t = s.trim();
                 let t = t.strip_suffix('}').unwrap_or(t).trim_end();
-                let t = t.trim_end_matches(|c: char| c == ';' || c == '\n').trim_end();
+                let t = t
+                    .trim_end_matches(|c: char| c == ';' || c == '\n')
+                    .trim_end();
                 t.to_string()
             })
             .filter(|s| !s.is_empty());
@@ -7899,9 +7879,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
         // accepted when SHORTLOOPS is set. parse_init seeds
         // SHORTLOOPS=on so this fires only when a script
         // explicitly disabled the option.
-        zerr(
-            "parse error: short function body form requires SHORTLOOPS option",
-        );
+        zerr("parse error: short function body form requires SHORTLOOPS option");
         None
     } else {
         match par_cmd() {
@@ -7973,8 +7951,7 @@ fn parse_cond_and() -> Option<ZshCond> {
 /// loaded-`.zwc` linked list. C walks `dumps`/`p->next` directly;
 /// the Rust port uses a `Mutex<Vec<funcdump>>` indexed by filename
 /// so refcount ops can find an entry without raw-pointer compare.
-pub static DUMPS: std::sync::Mutex<Vec<funcdump>> =
-    std::sync::Mutex::new(Vec::new());
+pub static DUMPS: std::sync::Mutex<Vec<funcdump>> = std::sync::Mutex::new(Vec::new());
 
 /// Cond-expression `!` negation level. C: handled inside
 /// par_cond_2 at parse.c:2476-2625 via the Bang token check.
@@ -8085,9 +8062,8 @@ fn parse_cond_primary() -> Option<ZshCond> {
     // `-o` form and the tokenized `Dash+a`/`Dash+o` form that the
     // lexer emits inside cond bodies (Dash = \u{9b}, Src/zsh.h:182).
     let op_chars: Vec<char> = op.chars().collect();
-    let is_dash_a_or_o = op_chars.len() == 2
-        && IS_DASH(op_chars[0])
-        && (op_chars[1] == 'a' || op_chars[1] == 'o');
+    let is_dash_a_or_o =
+        op_chars.len() == 2 && IS_DASH(op_chars[0]) && (op_chars[1] == 'a' || op_chars[1] == 'o');
     if is_dash_a_or_o {
         crate::ported::utils::zerr(&format!("parse error: condition expected: {}", s1));
         crate::ported::utils::errflag.fetch_or(
@@ -8270,10 +8246,7 @@ pub fn read_fdhead(buf: &[u32], offset: usize) -> Option<fdhead> {
 /// equivalent is removing the entry from the dumps list. Called
 /// by `decrdumpcount` when the refcount hits zero (c:3988) and
 /// by `closedumps` when shutting down (c:4008).
-fn freedump_locked(
-    g: &mut std::sync::MutexGuard<'_, Vec<funcdump>>,
-    filename: &str,
-) {
+fn freedump_locked(g: &mut std::sync::MutexGuard<'_, Vec<funcdump>>, filename: &str) {
     // c:3976
     g.retain(|d| d.filename.as_deref() != Some(filename));
 }
@@ -9281,8 +9254,11 @@ esac"#;
     fn parse_corpus_empty_input_no_error() {
         let _g = crate::test_util::global_state_lock();
         let prog = parse("").unwrap();
-        assert!(prog.lists.is_empty() || prog.lists.len() <= 1,
-            "empty input → 0 or 1 list, got {}", prog.lists.len());
+        assert!(
+            prog.lists.is_empty() || prog.lists.len() <= 1,
+            "empty input → 0 or 1 list, got {}",
+            prog.lists.len()
+        );
     }
 
     /// Comment-only input parses as empty.

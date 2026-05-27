@@ -39,7 +39,15 @@ pub fn _numbers(args: &[String]) -> i32 {
     // sh:43  zparseopts
     let src = "__compsys_argv";
     setaparam(src, args.to_vec());
-    for name in &["opts_flat", "tags", "units", "min", "max", "default", "type"] {
+    for name in &[
+        "opts_flat",
+        "tags",
+        "units",
+        "min",
+        "max",
+        "default",
+        "type",
+    ] {
         setaparam(name, Vec::new());
     }
     let _ = bin_zparseopts(
@@ -89,7 +97,10 @@ pub fn _numbers(args: &[String]) -> i32 {
         .filter(|s| !s.is_empty())
         .cloned()
         .unwrap_or_else(|| "number".to_string());
-    let tag = tags.get(1).cloned().unwrap_or_else(|| "numbers".to_string());
+    let tag = tags
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| "numbers".to_string());
     let suffix_specs: Vec<String> = if argv.is_empty() {
         Vec::new()
     } else {
@@ -106,7 +117,11 @@ pub fn _numbers(args: &[String]) -> i32 {
     } else {
         "<->".to_string()
     };
-    let mut partial = if f_flag { "(|.)".to_string() } else { String::new() };
+    let mut partial = if f_flag {
+        "(|.)".to_string()
+    } else {
+        String::new()
+    };
     if n_flag {
         pat = format!("(|-){}", pat);
         partial = format!("(|-){}", partial);
@@ -116,12 +131,7 @@ pub fn _numbers(args: &[String]) -> i32 {
     // sh:54-61  unit-suffix completion (when caller passes suffixes
     //   AND PREFIX already matches the numeric pattern)
     if !suffix_specs.is_empty()
-        && bin_compset(
-            "compset",
-            &["-P".to_string(), pat.clone()],
-            &make_ops(),
-            0,
-        ) == 0
+        && bin_compset("compset", &["-P".to_string(), pat.clone()], &make_ops(), 0) == 0
     {
         let mut units_arr: Vec<String> = Vec::new();
         for spec in &suffix_specs {
@@ -138,10 +148,7 @@ pub fn _numbers(args: &[String]) -> i32 {
             "unit".to_string(),
         ]);
         let expl = getaparam("expl").unwrap_or_default();
-        let mut argv2: Vec<String> = vec![
-            "-M".to_string(),
-            "r:|/=* r:|=*".to_string(),
-        ];
+        let mut argv2: Vec<String> = vec!["-M".to_string(), "r:|/=* r:|=*".to_string()];
         argv2.extend(expl);
         argv2.push("-".to_string());
         argv2.extend(units_arr);
@@ -173,8 +180,7 @@ pub fn _numbers(args: &[String]) -> i32 {
     }
     let _ = prefix;
 
-    let mut desc_argv: Vec<String> =
-        vec!["-x".to_string(), tag, "expl".to_string(), desc];
+    let mut desc_argv: Vec<String> = vec!["-x".to_string(), tag, "expl".to_string(), desc];
     desc_argv.extend(formats);
     let _ = _description(&desc_argv);
     let insert = get_compstate_str("insert").unwrap_or_default();

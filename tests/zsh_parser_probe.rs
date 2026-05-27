@@ -345,7 +345,6 @@ fn probe_assoc_two_in_dquote() {
 
 #[test]
 fn probe_lex_pure_funcdef() {
-    use zsh::tokens::lextok;
     zsh::lex::lex_init("f() { :; }; f");
     for _ in 0..15 {
         zsh::lex::zshlex();
@@ -363,7 +362,6 @@ fn probe_lex_pure_funcdef() {
 
 #[test]
 fn probe_lex_array_then_funcdef() {
-    use zsh::tokens::lextok;
     zsh::lex::lex_init("g=(o1); f() { :; }; f");
     for _ in 0..15 {
         zsh::lex::zshlex();
@@ -376,7 +374,6 @@ fn probe_lex_array_then_funcdef() {
 
 #[test]
 fn probe_lex_printf() {
-    use zsh::tokens::lextok;
     zsh::lex::lex_init(r#"printf "a\nb""#);
     for _ in 0..10 {
         zsh::lex::zshlex();
@@ -417,7 +414,6 @@ fn probe_for_implicit_pos() {
 
 #[test]
 fn probe_lex_regex_paren() {
-    use zsh::tokens::lextok;
     let src = r#"[[ "1.2" =~ ([0-9]+).([0-9]+) ]]"#;
     zsh::lex::lex_init(src);
     for _ in 0..15 {

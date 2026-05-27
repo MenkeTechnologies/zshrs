@@ -14,12 +14,12 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use crate::ported::zsh_h::{OPT_ISSET, module, eprog, funcwrap, features, options, MAX_OPS};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{Mutex, OnceLock};
 use crate::ported::compat::zgettime_monotonic_if_available;
 use crate::ported::mem::ztrdup;
 use crate::ported::modules::parameter::FUNCSTACK;
+use crate::ported::zsh_h::{eprog, features, funcwrap, module, options, MAX_OPS, OPT_ISSET};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Mutex, OnceLock};
 // ---------------------------------------------------------------------------
 // Structs (port of c:36-64).
 // ---------------------------------------------------------------------------
@@ -420,9 +420,7 @@ pub fn name_for_anonymous_function(name: &str) -> String {
     // c:219 — char lineno[DIGBUFSIZE];
     // c:220 — char *parts[7];
     // c:222 — convbase(lineno, funcstack[0].flineno, 10);
-    let stack = FUNCSTACK
-        .lock()
-        .expect("FUNCSTACK poisoned");
+    let stack = FUNCSTACK.lock().expect("FUNCSTACK poisoned");
     let flineno = stack.first().map(|f| f.flineno).unwrap_or(0); // c:222
     let filename = stack
         .first()
@@ -542,9 +540,9 @@ pub fn zprof_wrapper(
             let new_pfunc = Pfunc {
                 // c:255
                 name: ztrdup(&name_for_lookups), // c:256
-                calls: 0,                                            // c:257
-                time: 0.0,                                           // c:258 self/time = 0
-                self_time: 0.0,                                      // c:258
+                calls: 0,                        // c:257
+                time: 0.0,                       // c:258 self/time = 0
+                self_time: 0.0,                  // c:258
                 num: 0,
             };
             let mut calls = CALLS.lock().unwrap();
@@ -748,7 +746,6 @@ pub fn finish_(m: *const module) -> i32 {
 // static struct funcwrap wrapper[]                                  c:328
 // =====================================================================
 
-
 // ---------------------------------------------------------------------------
 // File-static globals — port of c:66-71.
 // ---------------------------------------------------------------------------
@@ -785,7 +782,6 @@ pub static STACK: Mutex<Vec<Sfunc>> = Mutex::new(Vec::new()); // c:70
 /// `MOD_UNLOAD` flag-check on the same pointer.
 pub static ZPROF_MODULE: AtomicBool = AtomicBool::new(false); // c:74
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -805,11 +801,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 1]);
     }
@@ -868,8 +860,8 @@ fn module_features() -> &'static Mutex<features> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ported::zsh_h::funcstack;
     use super::*;
+    use crate::ported::zsh_h::funcstack;
 
     /// Serialise tests that mutate the module-static globals so the
     /// cargo-test parallel runner doesn't shred each other's state.
@@ -1029,10 +1021,7 @@ mod tests {
         }
         let s = name_for_anonymous_function("anon");
         // Cleanup so subsequent tests aren't polluted.
-        FUNCSTACK
-            .lock()
-            .unwrap()
-            .clear();
+        FUNCSTACK.lock().unwrap().clear();
         assert_eq!(s, "anon [/tmp/foo.zsh:42]");
     }
 
@@ -1048,10 +1037,7 @@ mod tests {
     fn name_for_anonymous_function_empty_funcstack_defaults() {
         let _g = crate::test_util::global_state_lock();
         // Ensure stack is empty.
-        FUNCSTACK
-            .lock()
-            .unwrap()
-            .clear();
+        FUNCSTACK.lock().unwrap().clear();
         // No panic on first().unwrap() — the fn uses Option chains.
         let s = std::panic::catch_unwind(|| name_for_anonymous_function("anon"))
             .expect("must not panic on empty funcstack");
@@ -1226,28 +1212,58 @@ mod tests {
     #[test]
     fn zprof_corpus_cmpsfuncs_higher_self_time_first() {
         let _g = crate::test_util::global_state_lock();
-        let high = Pfunc { name: "high".into(), self_time: 100.0, ..Default::default() };
-        let low  = Pfunc { name: "low".into(),  self_time: 1.0,   ..Default::default() };
-        assert_eq!(cmpsfuncs(&high, &low), std::cmp::Ordering::Less,
-            "higher self_time sorts first");
+        let high = Pfunc {
+            name: "high".into(),
+            self_time: 100.0,
+            ..Default::default()
+        };
+        let low = Pfunc {
+            name: "low".into(),
+            self_time: 1.0,
+            ..Default::default()
+        };
+        assert_eq!(
+            cmpsfuncs(&high, &low),
+            std::cmp::Ordering::Less,
+            "higher self_time sorts first"
+        );
     }
 
     /// `cmptfuncs` sorts higher total time first.
     #[test]
     fn zprof_corpus_cmptfuncs_higher_time_first() {
         let _g = crate::test_util::global_state_lock();
-        let high = Pfunc { name: "high".into(), time: 100.0, ..Default::default() };
-        let low  = Pfunc { name: "low".into(),  time: 1.0,   ..Default::default() };
-        assert_eq!(cmptfuncs(&high, &low), std::cmp::Ordering::Less,
-            "higher total time sorts first");
+        let high = Pfunc {
+            name: "high".into(),
+            time: 100.0,
+            ..Default::default()
+        };
+        let low = Pfunc {
+            name: "low".into(),
+            time: 1.0,
+            ..Default::default()
+        };
+        assert_eq!(
+            cmptfuncs(&high, &low),
+            std::cmp::Ordering::Less,
+            "higher total time sorts first"
+        );
     }
 
     /// `cmpsfuncs` equal self_time → Equal.
     #[test]
     fn zprof_corpus_cmpsfuncs_equal_self_time() {
         let _g = crate::test_util::global_state_lock();
-        let a = Pfunc { name: "a".into(), self_time: 5.0, ..Default::default() };
-        let b = Pfunc { name: "b".into(), self_time: 5.0, ..Default::default() };
+        let a = Pfunc {
+            name: "a".into(),
+            self_time: 5.0,
+            ..Default::default()
+        };
+        let b = Pfunc {
+            name: "b".into(),
+            self_time: 5.0,
+            ..Default::default()
+        };
         // Equal self_time may or may not tie-break by name; pin: not Greater
         let o = cmpsfuncs(&a, &b);
         assert_ne!(o, std::cmp::Ordering::Greater);

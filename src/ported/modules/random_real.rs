@@ -224,8 +224,8 @@ pub fn clz64(x: u64) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
     use super::*;
+    use std::collections::HashSet;
 
     /// Verifies `clz64` matches `_zclz64` across boundary inputs —
     /// both should agree per the C `#define` dispatch (c:43-46).
@@ -481,7 +481,9 @@ mod tests {
         let a = random_real();
         let b = random_real();
         let c = random_real();
-        assert!(a != b || b != c || a != c,
-            "3 random_real calls all same: {a} {b} {c}");
+        assert!(
+            a != b || b != c || a != c,
+            "3 random_real calls all same: {a} {b} {c}"
+        );
     }
 }

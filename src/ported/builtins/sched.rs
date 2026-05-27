@@ -31,8 +31,6 @@
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use libc::time_t;
-use crate::DPUTS;
 use crate::init::zleentry;
 use crate::mem::popheap;
 use crate::ported::mem::pushheap;
@@ -40,10 +38,12 @@ use crate::ported::utils::{
     addprepromptfn, addtimedfn, delprepromptfn, deltimedfn, unmeta, zjoin, zstrtol, ztrftime,
     zwarnnam,
 };
-use crate::ported::zsh_h::{isset, options, param, VERBOSE, MAX_OPS};
+use crate::ported::zsh_h::{isset, options, param, MAX_OPS, VERBOSE};
 use crate::ported::ztype_h::idigit;
 use crate::utils::TIMED_FNS;
 use crate::zsh_h::{features, module};
+use crate::DPUTS;
+use libc::time_t;
 // =====================================================================
 // typedef struct schedcmd  *Schedcmd;                                c:35
 // =====================================================================
@@ -222,7 +222,7 @@ pub(crate) fn checksched() -> i32 {
             DPUTS!(
                 // c:141
                 !TIMED_FNS.lock().unwrap().is_empty(), // c:141 timedfns && firstnode(timedfns)
-                "BUG: already timed fn (1)"                                  // c:142
+                "BUG: already timed fn (1)"            // c:142
             );
             schedaddtimed(); // c:143
         }
@@ -309,7 +309,7 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
                     DPUTS!(
                         // c:182
                         !TIMED_FNS.lock().unwrap().is_empty(), // c:182
-                        "BUG: already timed fn (2)"                                  // c:182
+                        "BUG: already timed fn (2)"            // c:182
                     );
                     schedaddtimed(); // c:183
                 }
@@ -539,7 +539,7 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
             DPUTS!(
                 // c:319
                 !TIMED_FNS.lock().unwrap().is_empty(), // c:319
-                "BUG: already timed fn (3)"                                  // c:319
+                "BUG: already timed fn (3)"            // c:319
             );
             schedaddtimed(); // c:320
         } else {
@@ -561,7 +561,7 @@ pub(crate) fn bin_sched(nam: &str, argv: &[String], _ops: &options, _func: i32) 
         DPUTS!(
             // c:332
             !TIMED_FNS.lock().unwrap().is_empty(), // c:332
-            "BUG: already timed fn (4)"                                  // c:332
+            "BUG: already timed fn (4)"            // c:332
         );
         schedaddtimed(); // c:333
     }
@@ -679,7 +679,6 @@ pub fn cleanup_(m: *const module) -> i32 {
 // static struct features module_features                             c:386
 // =====================================================================
 
-
 /// Port of `finish_(UNUSED(Module m))` from `Src/Builtins/sched.c:443`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {
@@ -739,11 +738,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 }
 
 // `handlefeatures` lives in `Src/module.c:3388`.
-fn handlefeatures(
-    m: *const module,
-    f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(getfeatureenables(m, f));
     } else if let Some(e) = enables.as_ref() {
@@ -760,11 +755,7 @@ fn getfeatureenables(_m: *const module, f: &Mutex<features>) -> Vec<i32> {
 }
 
 // `setfeatureenables` lives in `Src/module.c:3350`.
-fn setfeatureenables(
-    _m: *const module,
-    _f: &Mutex<features>,
-    _e: Option<&Vec<i32>>,
-) -> i32 {
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&Vec<i32>>) -> i32 {
     0
 }
 

@@ -333,14 +333,18 @@ fn parity_read_minus_A_default_ifs() {
 /// boundary (unlike whitespace which coalesces).
 #[test]
 fn parity_read_minus_A_comma_ifs_four_fields() {
-    assert_parity(r#"IFS=, read -A arr <<< "x,y,z,w"; echo "${#arr}=[${arr[1]}][${arr[2]}][${arr[3]}][${arr[4]}]""#);
+    assert_parity(
+        r#"IFS=, read -A arr <<< "x,y,z,w"; echo "${#arr}=[${arr[1]}][${arr[2]}][${arr[3]}][${arr[4]}]""#,
+    );
 }
 
 /// `read -A` with consecutive whitespace coalesces into one delimiter
 /// (zsh-style).
 #[test]
 fn parity_read_minus_A_whitespace_coalesce() {
-    assert_parity(r#"read -A arr <<< "a   b  c"; echo "${#arr}=[${arr[1]}][${arr[2]}][${arr[3]}]""#);
+    assert_parity(
+        r#"read -A arr <<< "a   b  c"; echo "${#arr}=[${arr[1]}][${arr[2]}][${arr[3]}]""#,
+    );
 }
 
 // ─── 12. Modifier on array subscript applies to whole array — FIXED ─
@@ -763,7 +767,9 @@ fn parity_typeset_F_precision_two_digits() {
 /// splitting path.
 #[test]
 fn parity_read_minus_d_minus_A_with_ifs() {
-    assert_parity(r#"printf "a,b" | { IFS=, read -d "" -A arr; echo "${#arr}=${arr[1]}-${arr[2]}"; }"#);
+    assert_parity(
+        r#"printf "a,b" | { IFS=, read -d "" -A arr; echo "${#arr}=${arr[1]}-${arr[2]}"; }"#,
+    );
 }
 
 // ─── 31. ${(o)a} sort order is case-insensitive — FIXED ─────────

@@ -21,9 +21,9 @@
 //! constants + the queueing-API call shape.
 
 use crate::ported::signals::{queue_front, queue_rear, signal_mask_queue, signal_queue};
-use std::sync::atomic::{AtomicI32, Ordering};
-use crate::{DPUTS, DPUTS2};
 use crate::signals::{queue_in, queueing_enabled};
+use crate::{DPUTS, DPUTS2};
+use std::sync::atomic::{AtomicI32, Ordering};
 // ---------------------------------------------------------------------------
 // Pseudo-signal indexes (c:34-46).
 // ---------------------------------------------------------------------------
@@ -344,7 +344,7 @@ pub fn unqueue_signals() {
     DPUTS!(
         // c:93
         queueing_enabled.load(Ordering::SeqCst) == 0, // c:93
-        "BUG: unqueue_signals called but not queueing"                        // c:93
+        "BUG: unqueue_signals called but not queueing"  // c:93
     );
     queue_in.fetch_sub(1, Ordering::SeqCst); // c:94 --queue_in
     let prev = queueing_enabled.fetch_sub(1, Ordering::SeqCst); // c:95

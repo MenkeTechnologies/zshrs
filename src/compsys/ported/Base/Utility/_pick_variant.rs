@@ -98,7 +98,11 @@ pub fn _pick_variant(args: &[String]) -> i32 {
     // sh:8 — opts[-c] defaults to $words[1]
     let cmd_name = match opt(&opts_flat, "-c") {
         Some(v) => v,
-        None => getaparam("words").unwrap_or_default().first().cloned().unwrap_or_default(),
+        None => getaparam("words")
+            .unwrap_or_default()
+            .first()
+            .cloned()
+            .unwrap_or_default(),
     };
 
     // sh:10-13 — extract `name=pattern` pairs from argv head

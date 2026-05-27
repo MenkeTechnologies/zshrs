@@ -287,7 +287,9 @@ pub fn read_config_full() -> Config {
                 }
             },
             _ => {
-                tracing::warn!("zshrs.toml: [builtins].coreutils_shadows must be bool or string; using off");
+                tracing::warn!(
+                    "zshrs.toml: [builtins].coreutils_shadows must be bool or string; using off"
+                );
                 false
             }
         })

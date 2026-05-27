@@ -355,7 +355,11 @@ mod tests {
             let mut tab = shfunctab_lock().write().unwrap();
             tab.add(make_shfunc("targetfn", ""));
         }
-        let _ = _shadow(&["-s".to_string(), "my-suffix".to_string(), "targetfn".to_string()]);
+        let _ = _shadow(&[
+            "-s".to_string(),
+            "my-suffix".to_string(),
+            "targetfn".to_string(),
+        ]);
         let backup = current_backup_name("targetfn").unwrap();
         assert_eq!(backup, "targetfn@my-suffix");
         let _ = _unshadow();
@@ -413,11 +417,7 @@ mod tests {
             let mut tab = shfunctab_lock().write().unwrap();
             tab.add(make_shfunc("fn1", ""));
         }
-        let _ = _shadow(&[
-            "-s".to_string(),
-            "frame1".to_string(),
-            "fn1".to_string(),
-        ]);
+        let _ = _shadow(&["-s".to_string(), "frame1".to_string(), "fn1".to_string()]);
         let stack = getaparam(STACK_PARAM).unwrap_or_default();
         assert_eq!(stack, vec!["frame1", "f@fn1", "--"]);
         let _ = _unshadow();

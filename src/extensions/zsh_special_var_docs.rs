@@ -559,5 +559,8 @@ pub fn lookup_special_var_doc(name: &str) -> Option<(&'static str, &'static str)
         .iter()
         .find(|(a, _)| *a == key.as_str())
         .map(|(_, c)| *c)?;
-    SPECIAL_VAR_DOCS.iter().find(|(n, _)| *n == canon).map(|&(n, d)| (n, d))
+    SPECIAL_VAR_DOCS
+        .iter()
+        .find(|(n, _)| *n == canon)
+        .map(|&(n, d)| (n, d))
 }

@@ -5,32 +5,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -113,7 +147,9 @@ mod hash_m_match_var {
 
     #[test]
     fn hash_m_match_var_full_match() {
-        assert_parity(r#"setopt EXTENDED_GLOB; [[ "abc123" == (#m)*[0-9]* ]] && echo "MATCH=$MATCH""#);
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; [[ "abc123" == (#m)*[0-9]* ]] && echo "MATCH=$MATCH""#,
+        );
     }
 }
 
@@ -124,19 +160,23 @@ mod hash_b_backref {
     #[test]
     #[ignore = "ZSHRS BUG: (#b) doesn't populate $match[] array"]
     fn hash_b_captures_into_match_array() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 setopt EXTENDED_GLOB
 [[ "hello-world" == (#b)(*)-(*) ]] && echo "1=${match[1]} 2=${match[2]}"
-"#);
+"#,
+        );
     }
 
     #[test]
     #[ignore = "ZSHRS BUG: (#b) doesn't populate $match[] for three captures"]
     fn hash_b_three_captures() {
-        assert_parity(r#"
+        assert_parity(
+            r#"
 setopt EXTENDED_GLOB
 [[ "a:b:c" == (#b)(*):(*):(*) ]] && echo "${match[1]}|${match[2]}|${match[3]}"
-"#);
+"#,
+        );
     }
 }
 
@@ -206,7 +246,9 @@ mod combined {
     #[test]
     #[ignore = "ZSHRS BUG: (#b) capture in combined form doesn't populate $match[]"]
     fn hash_b_with_extension_match() {
-        assert_parity(r#"setopt EXTENDED_GLOB; [[ "access.log" == (#b)(*).log ]] && echo "name=${match[1]}""#);
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; [[ "access.log" == (#b)(*).log ]] && echo "name=${match[1]}""#,
+        );
     }
 }
 

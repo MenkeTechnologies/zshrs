@@ -63,7 +63,10 @@ pub fn _regex_words(args: &[String]) -> i32 {
     } else {
         let q = shell_quote(&term);
         let qd = shell_quote(&desc);
-        (format!(":{}:{}:_values -s {} {}", tag, desc, q, qd), String::new())
+        (
+            format!(":{}:{}:_values -s {} {}", tag, desc, q, qd),
+            String::new(),
+        )
     };
 
     // sh:41-47

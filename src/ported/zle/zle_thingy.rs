@@ -10,11 +10,11 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::zle_h::{
-    TH_IMMORTAL, WIDGET_INT, WIDGET_INUSE, WIDGET_NCOMP, WidgetImpl, ZLE_ISCOMP, ZLE_KEEPSUFFIX,
-    ZLE_MENUCMP, widget,
+    widget, WidgetImpl, TH_IMMORTAL, WIDGET_INT, WIDGET_INUSE, WIDGET_NCOMP, ZLE_ISCOMP,
+    ZLE_KEEPSUFFIX, ZLE_MENUCMP,
 };
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{options, OPT_ISSET, DISABLED};
+use crate::ported::zsh_h::{options, DISABLED, OPT_ISSET};
 
 #[allow(unused_imports)]
 use crate::ported::zle::{
@@ -27,7 +27,6 @@ use crate::ported::zle::{
 
 // --- AUTO: cross-zle hoisted-fn use glob ---
 #[allow(unused_imports)]
-
 // =====================================================================
 // hashtable management — `Src/Zle/zle_thingy.c:58-124`.
 // =====================================================================
@@ -661,20 +660,20 @@ pub fn bin_zle(
     // the table type matches `struct opn` exactly.
     type OpHandler = fn(&str, &[String], &options, i32) -> i32;
     let opns: [(u8, OpHandler, i32, i32); 14] = [
-        (b'l', bin_zle_list, 0, -1),         // c:350
-        (b'D', bin_zle_del, 1, -1),          // c:351
-        (b'A', bin_zle_link, 2, 2),          // c:352
-        (b'N', bin_zle_new, 1, 2),           // c:353
-        (b'C', bin_zle_complete, 3, 3),      // c:354
-        (b'R', bin_zle_refresh, 0, -1),      // c:355
-        (b'M', bin_zle_mesg, 1, 1),          // c:356
-        (b'U', bin_zle_unget, 1, 1),         // c:357
-        (b'K', bin_zle_keymap, 1, 1),        // c:358
-        (b'I', bin_zle_invalidate, 0, 0),    // c:359
-        (b'f', bin_zle_flags, 1, -1),        // c:360
-        (b'F', bin_zle_fd, 0, 2),            // c:361
-        (b'T', bin_zle_transform, 0, 2),     // c:362
-        (0u8, bin_zle_call, 0, -1),          // c:363 — sentinel: no flag → bin_zle_call.
+        (b'l', bin_zle_list, 0, -1),      // c:350
+        (b'D', bin_zle_del, 1, -1),       // c:351
+        (b'A', bin_zle_link, 2, 2),       // c:352
+        (b'N', bin_zle_new, 1, 2),        // c:353
+        (b'C', bin_zle_complete, 3, 3),   // c:354
+        (b'R', bin_zle_refresh, 0, -1),   // c:355
+        (b'M', bin_zle_mesg, 1, 1),       // c:356
+        (b'U', bin_zle_unget, 1, 1),      // c:357
+        (b'K', bin_zle_keymap, 1, 1),     // c:358
+        (b'I', bin_zle_invalidate, 0, 0), // c:359
+        (b'f', bin_zle_flags, 1, -1),     // c:360
+        (b'F', bin_zle_fd, 0, 2),         // c:361
+        (b'T', bin_zle_transform, 0, 2),  // c:362
+        (0u8, bin_zle_call, 0, -1),       // c:363 — sentinel: no flag → bin_zle_call.
     ];
 
     // c:369 — `for (op = opns; op->o && !OPT_ISSET(ops, op->o); op++) ;`.
@@ -702,7 +701,10 @@ pub fn bin_zle(
     let (op_o, op_func, op_min, op_max) = &opns[op_idx];
     if n < *op_min {
         // c:379
-        zwarnnam(name, &format!("not enough arguments for -{}", *op_o as char)); // c:380
+        zwarnnam(
+            name,
+            &format!("not enough arguments for -{}", *op_o as char),
+        ); // c:380
         return 1; // c:381
     } else if *op_max != -1 && n > *op_max {
         // c:382
@@ -773,8 +775,7 @@ pub fn bin_zle_refresh(_name: &str, args: &[String], ops: &options, _func: i32) 
     // c:420-421 — `char *s = statusline; int ocl = clearlist;`. Save
     // pre-call state so the function can restore it on exit.
     let s_save: Option<String> = STATUSLINE.lock().unwrap().clone(); // c:420
-    let ocl: i32 = CLEARLIST
-        .load(Ordering::Relaxed); // c:421
+    let ocl: i32 = CLEARLIST.load(Ordering::Relaxed); // c:421
 
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
         // c:423
@@ -792,48 +793,37 @@ pub fn bin_zle_refresh(_name: &str, args: &[String], ops: &options, _func: i32) 
         }
         if args.len() > 1 {
             // c:429 — second-and-following args form a list to display.
-            let zmultsav: i32 =
-                crate::ported::zle::compcore::ZMULT.load(Ordering::Relaxed); // c:431
-            // c:433-434 — `for (; *args; args++) addlinknode(l, *args);`.
+            let zmultsav: i32 = crate::ported::zle::compcore::ZMULT.load(Ordering::Relaxed); // c:431
+                                                                                             // c:433-434 — `for (; *args; args++) addlinknode(l, *args);`.
             let list: Vec<String> = args[1..].to_vec(); // c:434
             crate::ported::zle::compcore::ZMULT.store(1, Ordering::Relaxed); // c:436
-            // c:437 — `listlist(l)`. Rust port takes (&[String], cols);
-            // 0 cols defers width to listlist's internal calc.
+                                                                             // c:437 — `listlist(l)`. Rust port takes (&[String], cols);
+                                                                             // 0 cols defers width to listlist's internal calc.
             listlist(&list, 0); // c:437
             if STATUSLINE.lock().unwrap().is_some() {
                 // c:438
-                LASTLISTLEN
-                    .fetch_add(1, Ordering::Relaxed); // c:439
+                LASTLISTLEN.fetch_add(1, Ordering::Relaxed); // c:439
             }
             // c:440 — `showinglist = clearlist = 0;`.
-            SHOWINGLIST
-                .store(0, Ordering::Relaxed);
-            CLEARLIST
-                .store(0, Ordering::Relaxed);
+            SHOWINGLIST.store(0, Ordering::Relaxed);
+            CLEARLIST.store(0, Ordering::Relaxed);
             // c:441 — restore zmult.
-            crate::ported::zle::compcore::ZMULT
-                .store(zmultsav, Ordering::Relaxed);
+            crate::ported::zle::compcore::ZMULT.store(zmultsav, Ordering::Relaxed);
         } else if OPT_ISSET(ops, b'c') {
             // c:442 — single positional + `-c`: queue a clear.
-            CLEARLIST
-                .store(1, Ordering::Relaxed); // c:443
-            LASTLISTLEN
-                .store(0, Ordering::Relaxed); // c:444
+            CLEARLIST.store(1, Ordering::Relaxed); // c:443
+            LASTLISTLEN.store(0, Ordering::Relaxed); // c:444
         }
     } else if OPT_ISSET(ops, b'c') {
         // c:446 — no positionals + `-c`: clear list immediately.
-        CLEARLIST
-            .store(1, Ordering::Relaxed); // c:447
-        LISTSHOWN
-            .store(1, Ordering::Relaxed); // c:447
-        LASTLISTLEN
-            .store(0, Ordering::Relaxed); // c:448
+        CLEARLIST.store(1, Ordering::Relaxed); // c:447
+        LISTSHOWN.store(1, Ordering::Relaxed); // c:447
+        LASTLISTLEN.store(0, Ordering::Relaxed); // c:448
     }
     zrefresh(); // c:450
-    // c:451-452 — `statusline = s; clearlist = ocl;` restore.
+                // c:451-452 — `statusline = s; clearlist = ocl;` restore.
     *STATUSLINE.lock().unwrap() = s_save; // c:451
-    CLEARLIST
-        .store(ocl, Ordering::Relaxed); // c:452
+    CLEARLIST.store(ocl, Ordering::Relaxed); // c:452
     0 // c:453
 }
 
@@ -851,10 +841,7 @@ pub fn bin_zle_refresh(_name: &str, args: &[String], ops: &options, _func: i32) 
 pub fn bin_zle_mesg(name: &str, args: &[String], _ops: &options, _func: i32) -> i32 {
     // c:459
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
-        crate::ported::utils::zwarnnam(
-            name,
-            "can only be called from widget function",
-        );
+        crate::ported::utils::zwarnnam(name, "can only be called from widget function");
         return 1; // c:463
     }
     if let Some(arg) = args.first() {
@@ -865,9 +852,7 @@ pub fn bin_zle_mesg(name: &str, args: &[String], _ops: &options, _func: i32) -> 
     // will redraw soon; outside that path, redraw now so the message
     // is visible before the next event-loop tick.
     use crate::ported::zsh_h::SFC_WIDGET;
-    if crate::ported::builtin::SFCONTEXT.load(std::sync::atomic::Ordering::Relaxed)
-        != SFC_WIDGET
-    {
+    if crate::ported::builtin::SFCONTEXT.load(std::sync::atomic::Ordering::Relaxed) != SFC_WIDGET {
         crate::ported::zle::zle_refresh::zrefresh(); // c:467
     }
     0 // c:468
@@ -916,10 +901,7 @@ pub fn bin_zle_keymap(name: &str, args: &[String], _ops: &options, _func: i32) -
     // c:488
     // c:489-491 — `if (!zleactive)` reject from outside ZLE.
     if crate::ported::builtins::sched::zleactive.load(Ordering::Relaxed) == 0 {
-        crate::ported::utils::zwarnnam(
-            name,
-            "can only be called from widget function",
-        );
+        crate::ported::utils::zwarnnam(name, "can only be called from widget function");
         return 1; // c:491
     }
     // c:493 — `return selectkeymap(*args, 0)`.
@@ -1217,7 +1199,7 @@ pub fn bin_zle_flags(_name: &str, args: &[String], _ops: &options, _func: i32) -
     // c:651
     // c:653-654 — locals.
     let mut ret: i32 = 0; // c:653
-    // c:656-659 — !zle_usable early-return.
+                          // c:656-659 — !zle_usable early-return.
     if zle_usable() == 0 {
         zwarnnam("zle", "can only set flags from a widget"); // c:657
         return 1; // c:658
@@ -1225,10 +1207,7 @@ pub fn bin_zle_flags(_name: &str, args: &[String], _ops: &options, _func: i32) -
     // c:661-663 — `if (bindk) { Widget w = bindk->widget; if (w) { ... } }`.
     // BINDK holds the Thingy bound by the active key. When unset (no
     // active key sequence), the c:661 guard skips the whole loop.
-    let bindk_present = BINDK
-        .lock()
-        .map(|b| b.is_some())
-        .unwrap_or(false);
+    let bindk_present = BINDK.lock().map(|b| b.is_some()).unwrap_or(false);
     if bindk_present {
         // c:661
         // c:664-693 — `for (flag = args; *flag; flag++) { ... }`.
@@ -1260,24 +1239,23 @@ pub fn bin_zle_flags(_name: &str, args: &[String], _ops: &options, _func: i32) -
                 }
                 "vichange" => {
                     // c:682 — `if (invicmdmode()) startvichange(-1); ...`
-                    if invicmdmode(
-                        &crate::ported::zle::zle_keymap::curkeymapname(),
-                    ) {
+                    if invicmdmode(&crate::ported::zle::zle_keymap::curkeymapname()) {
                         // c:683
                         startvichange(-1); // c:684
-                        // c:685-688 — if a numeric arg is active and a
-                        // PM_SPECIAL `NUMERIC` param exists, clear its
-                        // PM_UNSET bit so the value becomes visible to
-                        // the widget.
+                                           // c:685-688 — if a numeric arg is active and a
+                                           // PM_SPECIAL `NUMERIC` param exists, clear its
+                                           // PM_UNSET bit so the value becomes visible to
+                                           // the widget.
                         let zm_flags = ZMOD.lock().unwrap().flags;
                         if (zm_flags & (MOD_MULT | MOD_TMULT)) != 0 {
                             // c:685 — numeric arg present.
                             if let Ok(mut tab) = crate::ported::params::paramtab().write() {
                                 if let Some(pm) = tab.get_mut("NUMERIC") {
-                                    if (pm.node.flags as u32 & crate::ported::zsh_h::PM_SPECIAL) != 0 {
+                                    if (pm.node.flags as u32 & crate::ported::zsh_h::PM_SPECIAL)
+                                        != 0
+                                    {
                                         // c:687 — clear PM_UNSET so widget sees value.
-                                        pm.node.flags &=
-                                            !(crate::ported::zsh_h::PM_UNSET as i32);
+                                        pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
                                     }
                                 }
                             }
@@ -1286,10 +1264,7 @@ pub fn bin_zle_flags(_name: &str, args: &[String], _ops: &options, _func: i32) -
                 }
                 _ => {
                     // c:691-693 — unknown flag name.
-                    zwarnnam(
-                        "zle",
-                        &format!("invalid flag `{}' given to zle -f", flag),
-                    ); // c:692
+                    zwarnnam("zle", &format!("invalid flag `{}' given to zle -f", flag)); // c:692
                     ret = 1; // c:693
                 }
             }
@@ -1324,7 +1299,7 @@ pub fn bin_zle_call(_name: &str, args: &[String], _ops: &options, _func: i32) ->
     let mut setlbindk = 0i32; // c:707
                               // c:707 `remetafy` collapses in Rust (UTF-8 storage).
     let mut keymap_restore: Option<String> = None; // c:708
-    // c:708 — `char *wname = *args++;`. Consume first arg as widget name.
+                                                   // c:708 — `char *wname = *args++;`. Consume first arg as widget name.
     let mut argv: Vec<String> = args.to_vec();
     let wname = if argv.is_empty() {
         None
@@ -1463,13 +1438,8 @@ pub fn bin_zle_call(_name: &str, args: &[String], _ops: &options, _func: i32) ->
                         argv.remove(1);
                         consumed_next = true;
                     }
-                    keymap_restore =
-                        Some(crate::ported::zle::zle_keymap::curkeymapname().clone()); // c:780
-                    if crate::ported::zle::zle_keymap::selectkeymap(
-                        &keymap_tmp.unwrap(),
-                        0,
-                    ) != 0
-                    {
+                    keymap_restore = Some(crate::ported::zle::zle_keymap::curkeymapname().clone()); // c:780
+                    if crate::ported::zle::zle_keymap::selectkeymap(&keymap_tmp.unwrap(), 0) != 0 {
                         // c:781
                         return 1; // c:784
                     }
@@ -1494,12 +1464,10 @@ pub fn bin_zle_call(_name: &str, args: &[String], _ops: &options, _func: i32) ->
     //   setbindk, setlbindk); unrefthingy(t);`. Rust execzlefunc takes
     // (name, args); setbindk/setlbindk plumbing pending the wider sig.
     rthingy(&wname); // c:800
-    // c:806 — `ret = execzlefunc(t, args, setbindk, setlbindk)`.
-    // Now that execzlefunc takes the 4-arg C sig, thread the flags
-    // collected from `-w` (setbindk) and `-f nolast` (setlbindk).
-    let ret = execzlefunc(
-        &wname, &argv, setbindk, setlbindk,
-    ); // c:806
+                     // c:806 — `ret = execzlefunc(t, args, setbindk, setlbindk)`.
+                     // Now that execzlefunc takes the 4-arg C sig, thread the flags
+                     // collected from `-w` (setbindk) and `-f nolast` (setlbindk).
+    let ret = execzlefunc(&wname, &argv, setbindk, setlbindk); // c:806
     unrefthingy(&wname); // c:807
 
     // c:808-809 — `if (saveflag) zmod = modsave;`.
@@ -1604,7 +1572,7 @@ pub fn bin_zle_fd(_name: &str, args: &[String], ops: &options, _func: i32) -> i3
                     continue; // c:880
                 }
                 found = true; // c:881
-                // c:882 — `printf("%s -F %s%d %s\n", name, widget ? "-w " : "", fd, func);`
+                              // c:882 — `printf("%s -F %s%d %s\n", name, widget ? "-w " : "", fd, func);`
                 let w_flag = if w.widget != 0 { "-w " } else { "" };
                 println!("zle -F {}{} {}", w_flag, w.fd, w.func);
             }
@@ -1632,8 +1600,8 @@ pub fn bin_zle_fd(_name: &str, args: &[String], ops: &options, _func: i32) -> i3
                 // c:904 — append new entry.
                 tab.push(watch_fd {
                     // c:910-913
-                    fd,           // c:911
-                    func: funcnam, // c:912
+                    fd,                                               // c:911
+                    func: funcnam,                                    // c:912
                     widget: if OPT_ISSET(ops, b'w') { 1 } else { 0 }, // c:913
                 });
                 // c:914 — `nwatch = newnwatch;` (Vec.len() tracks
@@ -1649,10 +1617,7 @@ pub fn bin_zle_fd(_name: &str, args: &[String], ops: &options, _func: i32) -> i3
         }
         if !found {
             // c:944 — `if (!found) zwarnnam(name, "No handler installed for fd %d", fd);`
-            zwarnnam(
-                "zle",
-                &format!("No handler installed for fd {}", fd),
-            ); // c:945
+            zwarnnam("zle", &format!("No handler installed for fd {}", fd)); // c:945
             return 1; // c:946
         }
     }
@@ -1775,14 +1740,14 @@ pub fn init_thingies() -> i32 {
     // c:1024 — `Thingy t;`.
     // c:1026 — `createthingytab();` create the empty hash table.
     createthingytab(); // c:1026
-    // c:1027-1028 — `for (t = thingies; t->nam; t++)
-    //                  thingytab->addnode(thingytab, t->nam, t);`.
-    // The C `thingies[]` array is generated from
-    // `Src/Zle/thingies.list` (391 names). Rust uses the parallel
-    // `IWIDGET_NAMES` slice in `zle_bindings.rs` — the subset of
-    // those names that have a fn-pointer port via `iwidget_lookup`.
-    // Walking only the ported subset matches what `zle -N` /
-    // `bindkey` can actually dispatch.
+                       // c:1027-1028 — `for (t = thingies; t->nam; t++)
+                       //                  thingytab->addnode(thingytab, t->nam, t);`.
+                       // The C `thingies[]` array is generated from
+                       // `Src/Zle/thingies.list` (391 names). Rust uses the parallel
+                       // `IWIDGET_NAMES` slice in `zle_bindings.rs` — the subset of
+                       // those names that have a fn-pointer port via `iwidget_lookup`.
+                       // Walking only the ported subset matches what `zle -N` /
+                       // `bindkey` can actually dispatch.
     let names = crate::ported::zle::zle_bindings::IWIDGET_NAMES;
     let mut tab = thingytab().lock().unwrap();
     for nam in names {
@@ -1945,10 +1910,12 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_zle_call("zle", &[
-            "widget_name".to_string(),
-            "-q".to_string(),
-        ], &ops_empty, 0);
+        let r = bin_zle_call(
+            "zle",
+            &["widget_name".to_string(), "-q".to_string()],
+            &ops_empty,
+            0,
+        );
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:791-794 — unknown option char → return 1");
     }
@@ -2020,12 +1987,7 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_zle_fd(
-            "zle",
-            &["7".to_string(), "my_handler".to_string()],
-            &ops,
-            0,
-        );
+        let r = bin_zle_fd("zle", &["7".to_string(), "my_handler".to_string()], &ops, 0);
         assert_eq!(r, 0, "c:889-914 — install → 0");
         let tab = WATCH_FDS.lock().unwrap();
         assert_eq!(tab.len(), 1);
@@ -2188,11 +2150,16 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_zle_flags("zle", &[
-            "yank".to_string(),
-            "yankbefore".to_string(),
-            "kill".to_string(),
-        ], &ops_empty, 0);
+        let r = bin_zle_flags(
+            "zle",
+            &[
+                "yank".to_string(),
+                "yankbefore".to_string(),
+                "kill".to_string(),
+            ],
+            &ops_empty,
+            0,
+        );
         *BINDK.lock().unwrap() = None;
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 0, "c:665-669 — all recognized → ret=0");
@@ -2213,11 +2180,12 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_zle_call("zle", &[
-            "widget".to_string(),
-            "-f".to_string(),
-            "bogus".to_string(),
-        ], &ops_empty, 0);
+        let r = bin_zle_call(
+            "zle",
+            &["widget".to_string(), "-f".to_string(), "bogus".to_string()],
+            &ops_empty,
+            0,
+        );
         crate::ported::builtins::sched::zleactive.store(0, Ordering::Relaxed);
         assert_eq!(r, 1, "c:741 — -f with non-'nolast' → return 1");
     }
@@ -2400,7 +2368,11 @@ mod tests {
         let _g = zle_test_setup();
         let n = makethingynode();
         assert_eq!(n.rc, 0, "fresh node must have rc=0");
-        assert_ne!((n.flags & DISABLED), 0, "fresh node must have DISABLED flag set");
+        assert_ne!(
+            (n.flags & DISABLED),
+            0,
+            "fresh node must have DISABLED flag set"
+        );
     }
 
     /// c:158 — `rthingy` on the same name twice bumps the refcount,

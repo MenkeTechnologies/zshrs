@@ -12,11 +12,18 @@ use crate::ported::lex::{set_tok, tok, ENDINPUT};
 use crate::ported::mem::popheap;
 use crate::ported::options::{dosetopt, emulation};
 use crate::ported::params::{getsparam, TERMFLAGS};
-use crate::ported::signals::{dotrap, install_handler, intr, queue_signals, signal_ignore, sigtrapped, unqueue_signals};
+use crate::ported::signals::{
+    dotrap, install_handler, intr, queue_signals, signal_ignore, sigtrapped, unqueue_signals,
+};
 use crate::ported::signals_h::dont_queue_signals;
 use crate::ported::text::getpermtext;
 use crate::ported::utils::{callhookfunc, errflag, movefd, unmeta, ERRFLAG_ERROR};
-use crate::ported::zsh_h::{eprog, hookdef, interact, islogin, isset, jobbing, Eprog, EMULATE_KSH, EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP, HIST_TMPSTORE, HOOK_SUFFIX, HUP, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, TERM_UNKNOWN, ZEXIT_NORMAL, ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC, HOOKF_ALL};
+use crate::ported::zsh_h::{
+    eprog, hookdef, interact, islogin, isset, jobbing, Eprog, EMULATE_KSH, EMULATE_SH, GLOBALRCS,
+    HISTBEEP, HISTIGNOREDUPS, HIST_DUP, HIST_TMPSTORE, HOOKF_ALL, HOOK_SUFFIX, HUP, INTERACTIVE,
+    LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, TERM_UNKNOWN, ZEXIT_NORMAL,
+    ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC,
+};
 // =========================================================================
 // File-scope globals from init.c
 // =========================================================================
@@ -827,8 +834,8 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     {
         let exename = argv0.lock().unwrap().clone(); // c:1318
         let exename = unmeta(&exename); // c:1318
-                                                              // c:1319 — `cwd = pwd;` (the in-shell logical cwd global).
-                                                              //          Read paramtab; was reading OS env which can lag.
+                                        // c:1319 — `cwd = pwd;` (the in-shell logical cwd global).
+                                        //          Read paramtab; was reading OS env which can lag.
         let cwd = getsparam("PWD").map(|s| unmeta(&s));
         let mypath = getmypath(
             Some(&exename), // c:1320
@@ -937,10 +944,10 @@ pub fn init_signals() {
         #[cfg(not(target_os = "haiku"))]
         {
             install_handler(libc::SIGWINCH); // c:1424
-                                                                     // c:1425 — `winch_block()`. SIGWINCH unblocked at the
-                                                                     // prompt-display boundary (preprompt at utils.c). Not
-                                                                     // yet modeled — leaves SIGWINCH unblocked, the safe
-                                                                     // default for non-resize-aware redraw paths.
+                                             // c:1425 — `winch_block()`. SIGWINCH unblocked at the
+                                             // prompt-display boundary (preprompt at utils.c). Not
+                                             // yet modeled — leaves SIGWINCH unblocked, the safe
+                                             // default for non-resize-aware redraw paths.
         }
 
         // c:1427-1431 — interactive-only handlers.
@@ -1117,8 +1124,7 @@ pub fn sourcehome(s: &str) {
     let h = if is_posix {
         getsparam("HOME")
     } else {
-        getsparam("ZDOTDIR")
-            .or_else(|| getsparam("HOME"))
+        getsparam("ZDOTDIR").or_else(|| getsparam("HOME"))
     };
     let h = match h {
         // c:1685-1689
@@ -1391,7 +1397,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         if prog.is_none() {
             // c:156
             hend(None); // c:158
-                                             // c:159-161 — break on clean EOF / non-toplevel LEXERR / justonce
+                        // c:159-161 — break on clean EOF / non-toplevel LEXERR / justonce
             let tok_v = tok(); // c:159 tok
             let errflag_v = errflag.load(Ordering::SeqCst);
             let lexerr_break = tok_v == LEXERR && (!isset(SHINSTDIN) || toplevel == 0);
@@ -1429,10 +1435,10 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             if toplevel != 0 {
                 // c:180
                 let preexec_fn = crate::ported::utils::getshfunc("preexec"); // c:181
-                let preexec_hook = crate::ported::params::paramtab().read().ok().and_then(|t| {
-                    t.get(&format!("preexec{}", HOOK_SUFFIX))
-                        .map(|_| ())
-                }); // c:182 paramtab->getnode("preexec_functions")
+                let preexec_hook = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(&format!("preexec{}", HOOK_SUFFIX)).map(|_| ())); // c:182 paramtab->getnode("preexec_functions")
                 if preexec_fn.is_some() || preexec_hook.is_some() {
                     let mut args: Vec<String> = Vec::new(); // c:191 newlinklist()
                     args.push("preexec".to_string()); // c:192 addlinknode(args, "preexec")
@@ -1456,30 +1462,28 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                     // freshly-allocated empty eprog so getjobtext/getpermtext
                     // return their NULL-prog representation. Real text comes
                     // from src/vm_helper once that bridge lands.
-                    let placeholder: Eprog =
-                        Box::new(eprog {
-                            flags: 0,
-                            len: 0,
-                            npats: 0,
-                            nref: 0,
-                            pats: Vec::new(),
-                            prog: Vec::new(),
-                            strs: None,
-                            shf: None,
-                            dump: None,
-                        });
-                    let placeholder2: Eprog =
-                        Box::new(eprog {
-                            flags: 0,
-                            len: 0,
-                            npats: 0,
-                            nref: 0,
-                            pats: Vec::new(),
-                            prog: Vec::new(),
-                            strs: None,
-                            shf: None,
-                            dump: None,
-                        });
+                    let placeholder: Eprog = Box::new(eprog {
+                        flags: 0,
+                        len: 0,
+                        npats: 0,
+                        nref: 0,
+                        pats: Vec::new(),
+                        prog: Vec::new(),
+                        strs: None,
+                        shf: None,
+                        dump: None,
+                    });
+                    let placeholder2: Eprog = Box::new(eprog {
+                        flags: 0,
+                        len: 0,
+                        npats: 0,
+                        nref: 0,
+                        pats: Vec::new(),
+                        prog: Vec::new(),
+                        strs: None,
+                        shf: None,
+                        dump: None,
+                    });
                     let job_text = crate::ported::text::getjobtext(placeholder, None); // c:199
                     args.push(crate::ported::mem::dupstring(&job_text));
                     // c:200 — getpermtext(prog, NULL, 0)
@@ -1555,7 +1559,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         if isset(SINGLECOMMAND) && toplevel != 0 {
             // c:236
             dont_queue_signals(); // c:237
-                                                            // c:238 — sigtrapped[SIGEXIT] != 0 → dotrap(SIGEXIT)
+                                  // c:238 — sigtrapped[SIGEXIT] != 0 → dotrap(SIGEXIT)
             let tr = sigtrapped.lock().unwrap();
             let sigexit = libc::SIGINT as usize; // SIGEXIT = 0 (zsh-internal)
             if tr.get(sigexit).copied().unwrap_or(0) != 0 {
@@ -1603,10 +1607,7 @@ fn parseopts_setemulate(nam: &str, flags: i32) {
 
     // c:351 — `opts[LOGINSHELL] = ((flags & PARSEARGS_LOGIN) != 0);`
     const PARSEARGS_LOGIN: i32 = 2;
-    crate::ported::options::opt_state_set(
-        "loginshell",
-        (flags & PARSEARGS_LOGIN) != 0,
-    );
+    crate::ported::options::opt_state_set("loginshell", (flags & PARSEARGS_LOGIN) != 0);
 
     // c:352 — `opts[PRIVILEGED] = (getuid() != geteuid() || …);`
     let priv_on = unsafe { libc::getuid() != libc::geteuid() || libc::getgid() != libc::getegid() };

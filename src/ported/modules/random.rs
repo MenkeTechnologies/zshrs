@@ -10,10 +10,10 @@ use std::os::fd::IntoRawFd;
 use std::os::unix::fs::FileTypeExt;
 use std::sync::atomic::Ordering;
 
-use std::sync::{Mutex, OnceLock};
 use crate::ported::utils::zwarn;
 use crate::random_real::random_real;
 use crate::zsh_h::{features, module};
+use std::sync::{Mutex, OnceLock};
 
 /// Fill a buffer with cryptographically random bytes.
 /// Port of `getrandom_buffer(void *buf, size_t len)` from Src/Modules/random.c:62 — the
@@ -405,11 +405,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 3]);
     }
@@ -658,8 +654,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         for _ in 0..50 {
             let v = math_zrand_float();
-            assert!((0.0..1.0).contains(&v),
-                "value {v} out of [0.0, 1.0)");
+            assert!((0.0..1.0).contains(&v), "value {v} out of [0.0, 1.0)");
         }
     }
 

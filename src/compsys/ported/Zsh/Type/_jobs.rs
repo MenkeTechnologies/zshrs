@@ -49,10 +49,8 @@ pub fn _jobs(args: &[String]) -> i32 {
 
     // sh:5-7  -t prefix-needed guard
     if argv.first().map(|s| s == "-t").unwrap_or(false) {
-        let prefix_needed = testforstyle(
-            &format!(":completion:{}:jobs", curcontext),
-            "prefix-needed",
-        ) == 0;
+        let prefix_needed =
+            testforstyle(&format!(":completion:{}:jobs", curcontext), "prefix-needed") == 0;
         let prefix = getsparam("PREFIX").unwrap_or_default();
         let nm: i64 = get_compstate_str("nmatches")
             .and_then(|s| s.parse().ok())
@@ -65,17 +63,10 @@ pub fn _jobs(args: &[String]) -> i32 {
 
     // sh:8-9  styles
     let mut pfx = String::from("%");
-    if testforstyle(
-        &format!(":completion:{}:jobs", curcontext),
-        "prefix-hidden",
-    ) == 0
-    {
+    if testforstyle(&format!(":completion:{}:jobs", curcontext), "prefix-hidden") == 0 {
         pfx.clear();
     }
-    let verbose = testforstyle(
-        &format!(":completion:{}:jobs", curcontext),
-        "verbose",
-    ) == 0
+    let verbose = testforstyle(&format!(":completion:{}:jobs", curcontext), "verbose") == 0
         || crate::ported::modules::zutil::lookupstyle(
             &format!(":completion:{}:jobs", curcontext),
             "verbose",
@@ -85,35 +76,34 @@ pub fn _jobs(args: &[String]) -> i32 {
     // sh:11-21  filter
     let jobstates = assoc_chunks("jobstates");
     let jobtexts = assoc_chunks("jobtexts");
-    let (jids, expls): (Vec<String>, String) =
-        match argv.first().map(|s| s.as_str()) {
-            Some("-r") => {
-                argv.remove(0);
-                (
-                    jobstates
-                        .iter()
-                        .filter(|(_, v)| v.starts_with("running"))
-                        .map(|(k, _)| k.clone())
-                        .collect(),
-                    "running job".to_string(),
-                )
-            }
-            Some("-s") => {
-                argv.remove(0);
-                (
-                    jobstates
-                        .iter()
-                        .filter(|(_, v)| v.starts_with("suspended"))
-                        .map(|(k, _)| k.clone())
-                        .collect(),
-                    "suspended job".to_string(),
-                )
-            }
-            _ => (
-                jobtexts.iter().map(|(k, _)| k.clone()).collect(),
-                "job".to_string(),
-            ),
-        };
+    let (jids, expls): (Vec<String>, String) = match argv.first().map(|s| s.as_str()) {
+        Some("-r") => {
+            argv.remove(0);
+            (
+                jobstates
+                    .iter()
+                    .filter(|(_, v)| v.starts_with("running"))
+                    .map(|(k, _)| k.clone())
+                    .collect(),
+                "running job".to_string(),
+            )
+        }
+        Some("-s") => {
+            argv.remove(0);
+            (
+                jobstates
+                    .iter()
+                    .filter(|(_, v)| v.starts_with("suspended"))
+                    .map(|(k, _)| k.clone())
+                    .collect(),
+                "suspended job".to_string(),
+            )
+        }
+        _ => (
+            jobtexts.iter().map(|(k, _)| k.clone()).collect(),
+            "job".to_string(),
+        ),
+    };
 
     if jids.is_empty() {
         return 1;

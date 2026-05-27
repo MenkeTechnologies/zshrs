@@ -171,7 +171,7 @@ mod params_special_vars {
                 .trim()
                 .parse()
                 .expect("RANDOM value");
-            assert!(v >= 0 && v < 0x8000, "{}: RANDOM={}", shell, v);
+            assert!((0..0x8000).contains(&v), "{}: RANDOM={}", shell, v);
         }
     }
 
@@ -876,7 +876,7 @@ mod property_bounds {
                     .parse()
                     .unwrap_or_else(|_| panic!("{} line {} non-numeric: {:?}", label, i, line));
                 assert!(
-                    v >= 0 && v < 0x8000,
+                    (0..0x8000).contains(&v),
                     "{} line {} out of range: {}",
                     label,
                     i,

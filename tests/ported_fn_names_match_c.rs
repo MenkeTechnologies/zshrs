@@ -136,11 +136,7 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
                             found_close = true;
                             break;
                         }
-                        if bytes[j] == b'\\' && !escape {
-                            escape = true;
-                        } else {
-                            escape = false;
-                        }
+                        escape = bytes[j] == b'\\' && !escape;
                         j += 1;
                     }
                     if found_close {
@@ -382,7 +378,7 @@ fn ported_fns_match_c_source() {
         };
         let expected_c_files = rust_path_to_c_files(path, &ported_root_canonical);
         let rel_display = path
-            .strip_prefix(&PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+            .strip_prefix(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
             .unwrap_or(path)
             .display()
             .to_string();

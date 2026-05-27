@@ -19,6 +19,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use crate::ported::params::{setiparam, setsparam};
+use crate::ported::zle::compcore::ZMULT;
 use crate::ported::zle::zle_h::{WidgetImpl, MOD_MULT, MOD_NEG, MOD_TMULT};
 use crate::ported::zle::zle_hist::{ISEARCH_ACTIVE, ISEARCH_ENDPOS, ISEARCH_STARTPOS};
 use crate::ported::zle::zle_keymap::{addkeybuf, freekeynode, KeyBinding};
@@ -27,13 +28,15 @@ use crate::ported::zle::zle_misc::{
     POSTDISPLAY, PREDISPLAY, PREVIOUS_ABORTED_SEARCH, PREVIOUS_SEARCH, SUFFIXLEN,
 };
 use crate::ported::zle::zle_thingy::Thingy;
-use crate::ported::zsh_h::{hashnode, param, ScanFunc, PM_READONLY, PM_SCALAR, ZLCON_LINE_CONT, ZLCON_LINE_START, ZLCON_SELECT, ZLCON_VARED};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_h::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
-use crate::ported::zle::compcore::ZMULT;
+use crate::ported::zsh_h::{
+    hashnode, param, ScanFunc, PM_READONLY, PM_SCALAR, ZLCON_LINE_CONT, ZLCON_LINE_START,
+    ZLCON_SELECT, ZLCON_VARED,
+};
 
 /// `$BUFFER` accessor — full edited line as a String.
 /// Port of `get_buffer(UNUSED(Param pm))` from Src/Zle/zle_params.c (the
@@ -79,11 +82,8 @@ pub fn makezleparams(_ro: i32) {
         "CURSOR",
         crate::ported::zle::compcore::ZLECS.load(Ordering::Relaxed) as i64,
     ); // c:zleparams[3]
-    let _ = setiparam(
-        "NUMERIC",
-        ZMULT.load(Ordering::Relaxed) as i64,
-    ); // c:zleparams[7]
-       // $BUFFERLINES — count of newlines in BUFFER + 1.
+    let _ = setiparam("NUMERIC", ZMULT.load(Ordering::Relaxed) as i64); // c:zleparams[7]
+                                                                        // $BUFFERLINES — count of newlines in BUFFER + 1.
     let lines = line.chars().filter(|c| *c == '\n').count() as i64 + 1;
     let _ = setiparam("BUFFERLINES", lines); // c:zleparams[10]
 }
@@ -114,10 +114,7 @@ pub fn zleunsetfn(pm: &mut param, exp: i32) {
 pub fn set_buffer(s: &str) {
     // c:245
     *ZLELINE.lock().unwrap() = s.chars().collect();
-    ZLELL.store(
-        ZLELINE.lock().unwrap().len(),
-        Ordering::SeqCst,
-    );
+    ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
     ZLECS.store(
         ZLECS
             .load(Ordering::SeqCst)
@@ -129,11 +126,7 @@ pub fn set_buffer(s: &str) {
 
 pub fn get_buffer() -> String {
     // c:258
-    ZLELINE
-        .lock()
-        .unwrap()
-        .iter()
-        .collect()
+    ZLELINE.lock().unwrap().iter().collect()
 }
 
 /// `$CURSOR=pos` setter — clamped to buffer length.
@@ -141,10 +134,7 @@ pub fn get_buffer() -> String {
 /// WARNING: param names don't match C — Rust=(pos) vs C=(pm, x)
 pub fn set_cursor(pos: usize) {
     // c:267
-    ZLECS.store(
-        pos.min(ZLELL.load(Ordering::SeqCst)),
-        Ordering::SeqCst,
-    );
+    ZLECS.store(pos.min(ZLELL.load(Ordering::SeqCst)), Ordering::SeqCst);
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
@@ -161,10 +151,7 @@ pub fn get_cursor() -> usize {
 /// WARNING: param names don't match C — Rust=(pos) vs C=(pm, x)
 pub fn set_mark(pos: usize) {
     // c:299
-    MARK.store(
-        pos.min(ZLELL.load(Ordering::SeqCst)),
-        Ordering::SeqCst,
-    );
+    MARK.store(pos.min(ZLELL.load(Ordering::SeqCst)), Ordering::SeqCst);
 }
 
 /// `$crate::ported::zle::zle_main::MARK` accessor — current mark position.
@@ -191,10 +178,7 @@ pub fn set_region_active(
     x: i64,
 ) {
     // c:320 — `region_active = (int)!!x`. !!x: 0→0, anything else→1.
-    REGION_ACTIVE.store(
-        if x != 0 { 1 } else { 0 },
-        Ordering::SeqCst,
-    );
+    REGION_ACTIVE.store(if x != 0 { 1 } else { 0 }, Ordering::SeqCst);
 }
 
 /// Port of `get_region_active(UNUSED(Param pm))` from `Src/Zle/zle_params.c:325`.
@@ -218,18 +202,12 @@ pub fn get_region_active() -> i64 {
 /// WARNING: param names don't match C — Rust=(s) vs C=(pm, x)
 pub fn set_lbuffer(s: &str) {
     // c:332
-    let rbuf: String = ZLELINE.lock().unwrap()
-        [ZLECS.load(Ordering::SeqCst)..]
+    let rbuf: String = ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)..]
         .iter()
         .collect();
-    *ZLELINE.lock().unwrap() =
-        s.chars().chain(rbuf.chars()).collect();
-    ZLELL.store(
-        ZLELINE.lock().unwrap().len(),
-        Ordering::SeqCst,
-    );
-    ZLECS
-        .store(s.chars().count(), Ordering::SeqCst);
+    *ZLELINE.lock().unwrap() = s.chars().chain(rbuf.chars()).collect();
+    ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+    ZLECS.store(s.chars().count(), Ordering::SeqCst);
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
@@ -238,8 +216,7 @@ pub fn set_lbuffer(s: &str) {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_lbuffer() -> String {
     // c:355
-    ZLELINE.lock().unwrap()
-        [..ZLECS.load(Ordering::SeqCst)]
+    ZLELINE.lock().unwrap()[..ZLECS.load(Ordering::SeqCst)]
         .iter()
         .collect()
 }
@@ -249,16 +226,11 @@ pub fn get_lbuffer() -> String {
 /// WARNING: param names don't match C — Rust=(s) vs C=(pm, x)
 pub fn set_rbuffer(s: &str) {
     // c:364
-    let lbuf: String = ZLELINE.lock().unwrap()
-        [..ZLECS.load(Ordering::SeqCst)]
+    let lbuf: String = ZLELINE.lock().unwrap()[..ZLECS.load(Ordering::SeqCst)]
         .iter()
         .collect();
-    *ZLELINE.lock().unwrap() =
-        lbuf.chars().chain(s.chars()).collect();
-    ZLELL.store(
-        ZLELINE.lock().unwrap().len(),
-        Ordering::SeqCst,
-    );
+    *ZLELINE.lock().unwrap() = lbuf.chars().chain(s.chars()).collect();
+    ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
     ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
 }
 
@@ -267,8 +239,7 @@ pub fn set_rbuffer(s: &str) {
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn get_rbuffer() -> String {
     // c:384
-    ZLELINE.lock().unwrap()
-        [ZLECS.load(Ordering::SeqCst)..]
+    ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)..]
         .iter()
         .collect()
 }
@@ -377,10 +348,7 @@ pub fn get_keys() -> Vec<u8> {
 pub fn get_keys_queued_count() -> i64 {
     // c:470
     // c:470 — `return kungetct`. Bytes pending in the unget queue.
-    KUNGETBUF
-        .lock()
-        .unwrap()
-        .len() as i64
+    KUNGETBUF.lock().unwrap().len() as i64
 }
 
 /// Port of `set_numeric(UNUSED(Param pm), zlong x)` from Src/Zle/zle_params.c:477.
@@ -438,17 +406,8 @@ pub fn set_histno(x: i64) {
     // to entries.len() when x is out of range (matches the
     // quietgethist NULL-result early-return).
     let idx = x.max(0) as usize;
-    if idx
-        <= history()
-            .lock()
-            .unwrap()
-            .entries
-            .len()
-    {
-        history()
-            .lock()
-            .unwrap()
-            .cursor = idx;
+    if idx <= history().lock().unwrap().entries.len() {
+        history().lock().unwrap().cursor = idx;
     }
 }
 
@@ -457,10 +416,7 @@ pub fn get_histno() -> i64 {
     // c:514
     // c:514 — `return histline`. zshrs tracks the editing history
     // line via the History.cursor field (offset into entries Vec).
-    history()
-        .lock()
-        .unwrap()
-        .cursor as i64
+    history().lock().unwrap().cursor as i64
 }
 
 /// `$BUFFERLINES` accessor — number of newline-separated lines.
@@ -520,8 +476,7 @@ pub fn get_yankend() -> i64 {
 pub fn get_yankactive() -> i64 {
     // c:556
     // c:549 — `return !!(lastcmd & ZLE_YANK) + !!(lastcmd & ZLE_YANKAFTER)`.
-    let last =
-        LASTCMD.load(Ordering::SeqCst) as i32;
+    let last = LASTCMD.load(Ordering::SeqCst) as i32;
     let yank = ((last & ZLE_YANK) != 0) as i64;
     let yankafter = ((last & ZLE_YANKAFTER) != 0) as i64;
     yank + yankafter
@@ -531,16 +486,14 @@ pub fn get_yankactive() -> i64 {
 pub fn set_yankstart(i: i64) {
     // c:563
     // c:563 — `yankb = i`.
-    YANKB
-        .store(i.max(0) as usize, Ordering::SeqCst);
+    YANKB.store(i.max(0) as usize, Ordering::SeqCst);
 }
 
 /// Port of `set_yankend(UNUSED(Param pm), zlong i)` from Src/Zle/zle_params.c:570.
 pub fn set_yankend(i: i64) {
     // c:570
     // c:563 — `yanke = i`.
-    YANKE
-        .store(i.max(0) as usize, Ordering::SeqCst);
+    YANKE.store(i.max(0) as usize, Ordering::SeqCst);
 }
 
 /// Port of `get_isearchmatchstart(UNUSED(Param pm))` from Src/Zle/zle_params.c:577.
@@ -578,8 +531,7 @@ pub fn get_isearchmatchactive() -> i64 {
 pub fn get_suffixstart() -> i64 {
     // c:598
     let sfx_len = SUFFIXLEN.load(Ordering::Relaxed);
-    (ZLECS.load(Ordering::SeqCst) as i64)
-        - (sfx_len as i64) // c:600 zlecs - suffixlen
+    (ZLECS.load(Ordering::SeqCst) as i64) - (sfx_len as i64) // c:600 zlecs - suffixlen
 }
 
 /// Port of `get_suffixend(UNUSED(Param pm))` from `Src/Zle/zle_params.c:605`.
@@ -634,15 +586,8 @@ pub fn get_cutbuffer() -> String {
 pub fn set_cutbuffer(s: &str) {
     // c:629
     let chars: Vec<char> = s.chars().collect();
-    if KILLRING
-        .lock()
-        .unwrap()
-        .is_empty()
-    {
-        KILLRING
-            .lock()
-            .unwrap()
-            .push_front(chars);
+    if KILLRING.lock().unwrap().is_empty() {
+        KILLRING.lock().unwrap().push_front(chars);
     } else {
         KILLRING.lock().unwrap()[0] = chars;
     }
@@ -655,10 +600,7 @@ pub fn unset_cutbuffer(exp: i32) {
     if exp != 0 {
         // zshrs uses VecDeque for the kill ring; the "primary" cut
         // buffer is the front entry. Clearing means popping it.
-        KILLRING
-            .lock()
-            .unwrap()
-            .pop_front();
+        KILLRING.lock().unwrap().pop_front();
     }
 }
 
@@ -667,16 +609,10 @@ pub fn set_killring(x: Option<&[String]>) {
     // c:661
     // c:661-672 — `if (kring) { free each kptr->buf; zfree(kring) }`.
     // Then either rebuild from `x` or leave NULL.
-    KILLRING
-        .lock()
-        .unwrap()
-        .clear();
+    KILLRING.lock().unwrap().clear();
     if let Some(arr) = x {
         for entry in arr {
-            KILLRING
-                .lock()
-                .unwrap()
-                .push_back(entry.chars().collect());
+            KILLRING.lock().unwrap().push_back(entry.chars().collect());
         }
     }
 }
@@ -727,8 +663,7 @@ pub fn set_register(name: char, value: &str) -> i32 {
     //              vbuf->buf = stringaszleline(value, 0, &n, ...);
     //              vbuf->len = n`.
     if (idx as usize) < vibuf().lock().unwrap().len() {
-        vibuf().lock().unwrap()[idx as usize] =
-            value.chars().collect();
+        vibuf().lock().unwrap()[idx as usize] = value.chars().collect();
     }
     0
 }
@@ -760,10 +695,7 @@ pub fn scan_registers(_ht: i32, func: Option<ScanFunc>, flags: i32) {
         Some(f) => f,
         None => return,
     };
-    let buf = vibuf()
-        .lock()
-        .unwrap()
-        .clone(); // c:794 vibuf walk
+    let buf = vibuf().lock().unwrap().clone(); // c:794 vibuf walk
     let mut ch: u8 = b'a'; // c:798 ch = 'a'
     for i in 0..36usize {
         // c:798 for (i = 0; i < 36; i++)
@@ -849,11 +781,7 @@ pub fn unset_registers(exp: i32) {
     // C body c:859-870 — `if (exp) { for (i...) { vibuf[i].buf=NULL;
     //                              vibuf[i].len = 0; } stdunsetfn(...) }`.
     if exp != 0 {
-        for buf in vibuf()
-            .lock()
-            .unwrap()
-            .iter_mut()
-        {
+        for buf in vibuf().lock().unwrap().iter_mut() {
             buf.clear();
         }
     }
@@ -1003,15 +931,13 @@ pub fn get_zle_state() -> String {
     } else {
         "overwrite" // c:977
     };
-    let hist_str = if (crate::ported::hist::hist_skip_flags
-        .load(Ordering::SeqCst)
-        & HIST_FOREIGN as i32)
-        != 0
-    {
-        "localhistory" // c:982
-    } else {
-        "globalhistory" // c:984
-    };
+    let hist_str =
+        if (crate::ported::hist::hist_skip_flags.load(Ordering::SeqCst) & HIST_FOREIGN as i32) != 0
+        {
+            "localhistory" // c:982
+        } else {
+            "globalhistory" // c:984
+        };
     // c:1015 — `strmetasort(arr, SORTIT_ANYOLDHOW, NULL);`
     let mut parts = vec![insmode_str.to_string(), hist_str.to_string()];
     parts.sort();
@@ -1058,30 +984,15 @@ mod region_active_tests {
         // c:320 — `region_active = (int)!!x`. Any non-zero → 1; zero → 0.
         zle_reset();
         set_region_active(0);
-        assert_eq!(
-            REGION_ACTIVE.load(Ordering::SeqCst),
-            0
-        );
+        assert_eq!(REGION_ACTIVE.load(Ordering::SeqCst), 0);
         set_region_active(1);
-        assert_eq!(
-            REGION_ACTIVE.load(Ordering::SeqCst),
-            1
-        );
+        assert_eq!(REGION_ACTIVE.load(Ordering::SeqCst), 1);
         set_region_active(99);
-        assert_eq!(
-            REGION_ACTIVE.load(Ordering::SeqCst),
-            1
-        );
+        assert_eq!(REGION_ACTIVE.load(Ordering::SeqCst), 1);
         set_region_active(-1);
-        assert_eq!(
-            REGION_ACTIVE.load(Ordering::SeqCst),
-            1
-        );
+        assert_eq!(REGION_ACTIVE.load(Ordering::SeqCst), 1);
         set_region_active(0);
-        assert_eq!(
-            REGION_ACTIVE.load(Ordering::SeqCst),
-            0
-        );
+        assert_eq!(REGION_ACTIVE.load(Ordering::SeqCst), 0);
     }
 }
 
@@ -1125,14 +1036,8 @@ mod numeric_tests {
         assert_eq!(ZMOD.lock().unwrap().mult, 7);
         // Only MULT remains; TMULT and NEG are gone.
         assert_ne!(ZMOD.lock().unwrap().flags & MOD_MULT, 0);
-        assert_eq!(
-            ZMOD.lock().unwrap().flags & MOD_TMULT,
-            0
-        );
-        assert_eq!(
-            ZMOD.lock().unwrap().flags & MOD_NEG,
-            0
-        );
+        assert_eq!(ZMOD.lock().unwrap().flags & MOD_TMULT, 0);
+        assert_eq!(ZMOD.lock().unwrap().flags & MOD_NEG, 0);
     }
 
     #[test]
@@ -1300,10 +1205,7 @@ mod batch_getters_tests {
     fn get_histno_reads_history_cursor() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        history()
-            .lock()
-            .unwrap()
-            .cursor = 7;
+        history().lock().unwrap().cursor = 7;
         assert_eq!(get_histno(), 7);
     }
 
@@ -1319,18 +1221,9 @@ mod batch_getters_tests {
     fn get_keys_queued_count_returns_unget_len() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        KUNGETBUF
-            .lock()
-            .unwrap()
-            .push_back(b'a');
-        KUNGETBUF
-            .lock()
-            .unwrap()
-            .push_back(b'b');
-        KUNGETBUF
-            .lock()
-            .unwrap()
-            .push_back(b'c');
+        KUNGETBUF.lock().unwrap().push_back(b'a');
+        KUNGETBUF.lock().unwrap().push_back(b'b');
+        KUNGETBUF.lock().unwrap().push_back(b'c');
         assert_eq!(get_keys_queued_count(), 3);
     }
 
@@ -1350,14 +1243,8 @@ mod batch_getters_tests {
         let _g = zle_test_setup();
         set_yankstart(5);
         set_yankend(11);
-        assert_eq!(
-            YANKB.load(Ordering::SeqCst),
-            5
-        );
-        assert_eq!(
-            YANKE.load(Ordering::SeqCst),
-            11
-        );
+        assert_eq!(YANKB.load(Ordering::SeqCst), 5);
+        assert_eq!(YANKE.load(Ordering::SeqCst), 11);
     }
 }
 
@@ -1526,9 +1413,7 @@ mod widget_killring_tests {
         let _g = zle_test_setup();
         // Register 'a' (idx 0).
         set_register('a', "hello");
-        let s: String = vibuf().lock().unwrap()[0]
-            .iter()
-            .collect();
+        let s: String = vibuf().lock().unwrap()[0].iter().collect();
         assert_eq!(s, "hello");
         // get_registers reads back the same.
         assert_eq!(get_registers("a"), Some("hello".to_string()));
@@ -1540,9 +1425,7 @@ mod widget_killring_tests {
         let _g = zle_test_setup();
         // Register '0' → idx 26.
         set_register('0', "zero");
-        let s: String = vibuf().lock().unwrap()[26]
-            .iter()
-            .collect();
+        let s: String = vibuf().lock().unwrap()[26].iter().collect();
         assert_eq!(s, "zero");
         assert_eq!(get_registers("0"), Some("zero".to_string()));
     }
@@ -1587,46 +1470,23 @@ mod widget_killring_tests {
     fn set_histno_clamps_to_entries_len() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        history()
-            .lock()
-            .unwrap()
-            .entries
-            .push(HistEntry {
-                line: "ls".to_string(),
-                num: 1,
-                time: None,
-            });
-        history()
-            .lock()
-            .unwrap()
-            .entries
-            .push(HistEntry {
-                line: "cd".to_string(),
-                num: 2,
-                time: None,
-            });
+        history().lock().unwrap().entries.push(HistEntry {
+            line: "ls".to_string(),
+            num: 1,
+            time: None,
+        });
+        history().lock().unwrap().entries.push(HistEntry {
+            line: "cd".to_string(),
+            num: 2,
+            time: None,
+        });
         set_histno(1);
-        assert_eq!(
-            history()
-                .lock()
-                .unwrap()
-                .cursor,
-            1
-        );
+        assert_eq!(history().lock().unwrap().cursor, 1);
         // Beyond-end clamp: x > entries.len() → no change (early
         // return mirrors C's `quietgethist returns NULL → return`).
-        history()
-            .lock()
-            .unwrap()
-            .cursor = 7;
+        history().lock().unwrap().cursor = 7;
         set_histno(99);
-        assert_eq!(
-            history()
-                .lock()
-                .unwrap()
-                .cursor,
-            7
-        );
+        assert_eq!(history().lock().unwrap().cursor, 7);
     }
 
     // ─── zsh-corpus pins for BUFFER / CURSOR / MARK round-trips ────
@@ -1656,7 +1516,7 @@ mod widget_killring_tests {
     fn zle_params_corpus_cursor_clamps_to_buffer_length() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        set_buffer("abc");  // len=3
+        set_buffer("abc"); // len=3
         set_cursor(99);
         assert_eq!(get_cursor(), 3, "cursor clamped to buf len");
     }

@@ -1411,7 +1411,6 @@ fn ensure_limits_initialized() {
 // fn-pointer fields).
 // =====================================================================
 
-
 // Backing store for `module_features` — built on first call to a
 // loader hook. Bucket-2 shared global per the same rationale as
 // LIMITS/RESINFO above.

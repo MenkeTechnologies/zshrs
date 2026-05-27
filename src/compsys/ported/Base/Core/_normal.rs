@@ -125,8 +125,7 @@ pub fn _normal(args: &[String]) -> i32 {
             0,
         );
         // sh:21
-        return dispatch_function_call("_history_modifiers", &["h".to_string()])
-            .unwrap_or(1);
+        return dispatch_function_call("_history_modifiers", &["h".to_string()]).unwrap_or(1);
     }
 
     // sh:27  CURRENT == 1: command-position completion

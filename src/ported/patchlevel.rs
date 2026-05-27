@@ -78,15 +78,19 @@ mod tests {
     /// `ZSH_PATCHLEVEL` starts with "zsh-" prefix.
     #[test]
     fn patchlevel_corpus_zsh_prefix() {
-        assert!(ZSH_PATCHLEVEL.starts_with("zsh-"),
-            "patchlevel must start with `zsh-`, got {ZSH_PATCHLEVEL:?}");
+        assert!(
+            ZSH_PATCHLEVEL.starts_with("zsh-"),
+            "patchlevel must start with `zsh-`, got {ZSH_PATCHLEVEL:?}"
+        );
     }
 
     /// `ZSH_VERSION` follows MAJOR.MINOR format with at least one dot.
     #[test]
     fn patchlevel_corpus_version_has_dot() {
-        assert!(ZSH_VERSION.contains('.'),
-            "ZSH_VERSION must contain a dot (MAJOR.MINOR), got {ZSH_VERSION:?}");
+        assert!(
+            ZSH_VERSION.contains('.'),
+            "ZSH_VERSION must contain a dot (MAJOR.MINOR), got {ZSH_VERSION:?}"
+        );
     }
 
     /// `ZSH_VERSION` MAJOR is "5" (current zsh series).

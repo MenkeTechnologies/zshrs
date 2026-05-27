@@ -12,7 +12,6 @@ use crate::ported::utils::zwarnnam;
 use crate::ported::zsh_h::module;
 use std::sync::{Mutex, OnceLock};
 
-
 /// Port of static helper `handle_digits()` from
 /// `Src/Modules/zselect.c:40`. Validates that `argptr` is a
 /// digit-prefixed file-descriptor and adds the parsed fd to
@@ -308,7 +307,6 @@ pub fn setup_(m: *const module) -> i32 {
 // static struct features module_features                            c:275
 // =====================================================================
 
-
 /// Port of `features_(UNUSED(Module m), UNUSED(char ***features))` from `Src/Modules/zselect.c:295`.
 /// C body: `*features = featuresarray(m, &module_features); return 0;`
 pub fn features_(m: *const module, features: &mut Vec<String>) -> i32 {
@@ -379,7 +377,11 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<crate::ported::zsh_h::features>,
+    _e: Option<&[i32]>,
+) -> i32 {
     0
 }
 
@@ -427,8 +429,8 @@ fn module_features() -> &'static Mutex<crate::ported::zsh_h::features> {
 
 #[cfg(test)]
 mod tests {
-    use crate::zsh_h::{options, MAX_OPS};
     use super::*;
+    use crate::zsh_h::{options, MAX_OPS};
 
     fn empty_ops_zs() -> options {
         options {
@@ -592,12 +594,16 @@ mod tests {
     fn zselect_corpus_handle_digits_zero() {
         let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
-        unsafe { libc::FD_ZERO(&mut fdset); }
+        unsafe {
+            libc::FD_ZERO(&mut fdset);
+        }
         let mut fdmax: libc::c_int = 0;
         let r = handle_digits("zselect", "0", &mut fdset, &mut fdmax);
         assert_eq!(r, 0);
-        assert!(unsafe { libc::FD_ISSET(0, &fdset) },
-            "fd 0 must be set in fdset");
+        assert!(
+            unsafe { libc::FD_ISSET(0, &fdset) },
+            "fd 0 must be set in fdset"
+        );
         assert_eq!(fdmax, 1, "fdmax = fd+1 = 1");
     }
 
@@ -606,7 +612,9 @@ mod tests {
     fn zselect_corpus_handle_digits_five() {
         let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
-        unsafe { libc::FD_ZERO(&mut fdset); }
+        unsafe {
+            libc::FD_ZERO(&mut fdset);
+        }
         let mut fdmax: libc::c_int = 0;
         let r = handle_digits("zselect", "5", &mut fdset, &mut fdmax);
         assert_eq!(r, 0);
@@ -619,7 +627,9 @@ mod tests {
     fn zselect_corpus_handle_digits_does_not_lower_fdmax() {
         let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
-        unsafe { libc::FD_ZERO(&mut fdset); }
+        unsafe {
+            libc::FD_ZERO(&mut fdset);
+        }
         let mut fdmax: libc::c_int = 10;
         let r = handle_digits("zselect", "3", &mut fdset, &mut fdmax);
         assert_eq!(r, 0);
@@ -631,7 +641,9 @@ mod tests {
     fn zselect_corpus_handle_digits_rejects_letter_prefix() {
         let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
-        unsafe { libc::FD_ZERO(&mut fdset); }
+        unsafe {
+            libc::FD_ZERO(&mut fdset);
+        }
         let mut fdmax: libc::c_int = 0;
         let r = handle_digits("zselect", "a5", &mut fdset, &mut fdmax);
         assert_eq!(r, 1, "non-digit start rejected");
@@ -642,7 +654,9 @@ mod tests {
     fn zselect_corpus_handle_digits_rejects_trailing_garbage() {
         let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
-        unsafe { libc::FD_ZERO(&mut fdset); }
+        unsafe {
+            libc::FD_ZERO(&mut fdset);
+        }
         let mut fdmax: libc::c_int = 0;
         let r = handle_digits("zselect", "5abc", &mut fdset, &mut fdmax);
         assert_eq!(r, 1, "trailing garbage rejected");
@@ -653,7 +667,9 @@ mod tests {
     fn zselect_corpus_handle_digits_rejects_negative() {
         let _g = crate::test_util::global_state_lock();
         let mut fdset: libc::fd_set = unsafe { std::mem::zeroed() };
-        unsafe { libc::FD_ZERO(&mut fdset); }
+        unsafe {
+            libc::FD_ZERO(&mut fdset);
+        }
         let mut fdmax: libc::c_int = 0;
         let r = handle_digits("zselect", "-3", &mut fdset, &mut fdmax);
         assert_eq!(r, 1, "leading minus not a digit");

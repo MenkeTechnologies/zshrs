@@ -10,11 +10,11 @@
 
 use std::{env, fs};
 
-use std::os::unix::fs::MetadataExt;
 use crate::params::getsparam;
 use crate::ported::zsh_h::dirsav;
 use crate::utils::{unmeta, zwarn};
 use crate::zsh_system_h::{timespec, OPEN_MAX, ZSH_INITIAL_OPEN_MAX};
+use std::os::unix::fs::MetadataExt;
 
 /// Provide clock time with nanoseconds.
 ///
@@ -158,11 +158,11 @@ pub fn zopenmax() -> i64 {
     // `ZSH_INITIAL_OPEN_MAX` from `Src/zsh_system.h:307` — 64 (NOT 1024).
     // Canonical port lives in `crate::ported::zsh_system_h`; use it
     // directly so any future C-source bump propagates here.
-                                                                                                // `OPEN_MAX` from `Src/zsh_system.h:310-313` — either NOFILE
-                                                                                                // (host-defined) or falls through to `ZSH_INITIAL_OPEN_MAX`. The
-                                                                                                // C body's `j = OPEN_MAX` starting point is the host's NOFILE
-                                                                                                // (typically 1024 on Linux, 10240 on macOS) when available;
-                                                                                                // otherwise it collapses to 64. Use the canonical port.
+    // `OPEN_MAX` from `Src/zsh_system.h:310-313` — either NOFILE
+    // (host-defined) or falls through to `ZSH_INITIAL_OPEN_MAX`. The
+    // C body's `j = OPEN_MAX` starting point is the host's NOFILE
+    // (typically 1024 on Linux, 10240 on macOS) when available;
+    // otherwise it collapses to 64. Use the canonical port.
     #[cfg(unix)]
     {
         unsafe {
@@ -944,8 +944,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         // c:307 — canonical value.
         assert_eq!(
-            ZSH_INITIAL_OPEN_MAX,
-            64,
+            ZSH_INITIAL_OPEN_MAX, 64,
             "Src/zsh_system.h:307 — ZSH_INITIAL_OPEN_MAX must be 64"
         );
         // zopenmax() must be positive and bounded by the OPEN_MAX

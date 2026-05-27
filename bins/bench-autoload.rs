@@ -1,7 +1,7 @@
 //! Benchmark autoload -Xz: SQLite cache vs filesystem scan
 
-use zsh::compsys::cache::{default_cache_path, CompsysCache};
 use std::time::Instant;
+use zsh::compsys::cache::{default_cache_path, CompsysCache};
 
 fn main() {
     let cache_path = default_cache_path();

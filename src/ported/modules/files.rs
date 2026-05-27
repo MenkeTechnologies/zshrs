@@ -8,7 +8,7 @@
 #![allow(non_camel_case_types, non_snake_case)]
 
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module, options};
+use crate::ported::zsh_h::{module, options, OPT_ARG, OPT_ISSET};
 use std::io::Read;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::sync::{Mutex, OnceLock};
@@ -1203,7 +1203,6 @@ pub fn getnumeric(p: &str, errp: &mut i32) -> u64 {
     ret // c:725
 }
 
-
 static MODULE_FEATURES: OnceLock<Mutex<crate::ported::zsh_h::features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -1257,7 +1256,11 @@ fn handlefeatures(
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<crate::ported::zsh_h::features>, _e: Option<&[i32]>) -> i32 {
+fn setfeatureenables(
+    _m: *const module,
+    _f: &Mutex<crate::ported::zsh_h::features>,
+    _e: Option<&[i32]>,
+) -> i32 {
     0
 }
 

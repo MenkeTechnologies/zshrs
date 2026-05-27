@@ -101,5 +101,4 @@ fn chained_modifiers_apply_left_to_right() {
         zsh::glob::glob(&pattern)
     };
     assert_eq!(got, vec!["Cargo".to_string()], "pattern={}", pattern);
-
 }

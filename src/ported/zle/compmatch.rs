@@ -25,21 +25,21 @@
 // `comp_h.rs` and used by the real porters of `match_str` /
 // `pattern_match` / `add_match_str` etc. below.
 
+use crate::ported::pattern::pattry;
 use crate::ported::utils::set_noerrs;
 use crate::ported::zle::comp_h::{
     Cline, Cmatcher, Cmlist, Cpattern, CLF_DIFF, CLF_JOIN, CLF_LINE, CLF_MATCHED, CLF_MISS,
     CLF_NEW, CLF_SUF, CMF_INTER, CMF_LEFT, CMF_LINE, CMF_RIGHT, CPAT_ANY, CPAT_CCLASS, CPAT_CHAR,
     CPAT_EQUIV, CPAT_NCLASS,
 };
-use crate::ported::zle::compcore::{multiquote, mstack, tildequote, useqbr};
+use crate::ported::zle::compcore::{mstack, multiquote, tildequote, useqbr};
 use crate::ported::zle::zle_h::{brinfo, ZC_tolower, ZC_toupper};
-use crate::ported::pattern::pattry;
-use crate::ported::zsh_h::{PP_LOWER, PP_RANGE, PP_UPPER};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
+use crate::ported::zsh_h::{PP_LOWER, PP_RANGE, PP_UPPER};
 use std::sync::{Mutex, OnceLock};
 
 /// Port of `cpatterns_same(Cpattern a, Cpattern b)` from `Src/Zle/compmatch.c:42`.
@@ -218,16 +218,14 @@ pub fn add_bmatchers(m: Option<&Cmatcher>) {
 /// `bmatchers` contains no matchers absent from `mstack`.
 pub fn update_bmatchers() {
     // c:121
-    let bm_cell =
-        crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+    let bm_cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
     let ms_cell = mstack.get_or_init(|| Mutex::new(None));
     let mut p = bm_cell.lock().ok().and_then(|mut g| g.take()); // c:124 Cmlist p = bmatchers
     let ms_head = ms_cell
         .lock()
         .ok()
         .and_then(|g| g.as_ref().map(|b| (**b).clone()));
-    let mut new_bmatchers: Option<Box<Cmlist>> =
-        p.as_ref().map(|b| (**b).clone()).map(Box::new);
+    let mut new_bmatchers: Option<Box<Cmlist>> = p.as_ref().map(|b| (**b).clone()).map(Box::new);
     while let Some(node) = p {
         // c:128 while (p)
         let mut t = false; // c:129 t = 0
@@ -488,7 +486,6 @@ pub fn cline_setlens(l: &mut Option<Box<Cline>>, both: i32) {
 // — `Src/Zle/compmatch.c:283-317`.
 // =====================================================================
 
-
 /// Port of `cline_matched(Cline p)` from `Src/Zle/compmatch.c:254`.
 /// ```c
 /// void
@@ -620,7 +617,6 @@ pub fn add_match_str(
     mut wl: i32,
     sfx: i32,
 ) {
-
     // c:332-334 — `if (m && (m->flags & CMF_LINE)) { wl = m->llen; w = l; }`.
     let (eff_w_owned, eff_w): (String, &str) = match m {
         Some(mat) if (mat.flags & CMF_LINE) != 0 => {
@@ -676,7 +672,6 @@ pub fn add_match_part(
     osl: i32,
     sfx: i32,
 ) {
-
     // c:382 — `if (l && !strncmp(l, w, wl)) l = NULL` — drop redundant anchor.
     let l_eff: Option<String> = match l {
         Some(lstr)
@@ -743,10 +738,7 @@ pub fn add_match_part(
             }
         }
         // c:417 — `matchsubs = matchlastsub = NULL`.
-        if let Ok(mut g) = MATCHLASTSUB
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-        {
+        if let Ok(mut g) = MATCHLASTSUB.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
     }
@@ -787,25 +779,16 @@ pub fn add_match_part(
         .unwrap_or(false);
     if last_present {
         // c:440
-        if let Ok(mut tail) = MATCHLASTPART
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-        {
+        if let Ok(mut tail) = MATCHLASTPART.get_or_init(|| Mutex::new(None)).lock() {
             if let Some(t) = tail.as_mut() {
                 t.next = p.clone();
             }
         }
-    } else if let Ok(mut head) = MATCHPARTS
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-    {
+    } else if let Ok(mut head) = MATCHPARTS.get_or_init(|| Mutex::new(None)).lock() {
         *head = p.clone(); // c:442
     }
     if let Some(lp_node) = lp {
-        if let Ok(mut tail) = MATCHLASTPART
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-        {
+        if let Ok(mut tail) = MATCHLASTPART.get_or_init(|| Mutex::new(None)).lock() {
             *tail = Some(lp_node); // c:443
         }
     }
@@ -830,7 +813,6 @@ pub fn add_match_sub(
     w: Option<&str>,
     wl: i32,
 ) {
-
     // c:450-453 — `if (m && (m->flags & CMF_LINE)) { wl = m->llen; w = l; }`.
     let (eff_w, eff_wl) = match m {
         Some(mat) if (mat.flags & CMF_LINE) != 0 => (l, mat.llen),
@@ -905,7 +887,6 @@ pub fn match_str(
     test: i32,
     part: i32,
 ) -> i32 {
-
     let l_bytes = l_in.as_bytes();
     let w_bytes = w_in.as_bytes();
     let mut ll = l_bytes.len() as i32;
@@ -935,10 +916,7 @@ pub fn match_str(
 
     // Snapshot the mstack chain into a Vec for stable iteration.
     let mstack_snapshot: Vec<Box<Cmatcher>> = {
-        let g = mstack
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-            .ok();
+        let g = mstack.get_or_init(|| Mutex::new(None)).lock().ok();
         let mut out = Vec::new();
         if let Some(g) = g {
             let mut cur = g.as_deref();
@@ -1849,7 +1827,6 @@ pub fn pattern_match_equivalence(
     wmtp: i32,
     wchr: u32,
 ) -> u32 {
-
     // c:1324 — PATMATCHINDEX(lp->u.str, wind-1, &lchr, &lmtp).
     // Walk lp.str's encoded byte sequence finding the entry at index
     // (wind-1). Encoding (from parse_class):
@@ -1946,7 +1923,6 @@ pub fn pattern_match_restrict(
     prestrict: Option<&Cpattern>,
     new_line: &mut Vec<char>,
 ) -> i32 {
-
     let mut p_cur = p;
     let mut wp_cur = wp;
     let mut pr_cur = prestrict;
@@ -2073,7 +2049,6 @@ pub fn pattern_match(
     wp: Option<&Cpattern>,
     ws: &str,
 ) -> i32 {
-
     let (mut p_cur, mut wp_cur) = (p, wp); // c:1551 walking p / wp
     let mut s_bytes = s.chars().peekable();
     let mut ws_bytes = ws.chars().peekable();
@@ -2144,7 +2119,6 @@ pub fn bld_parts(
     lp: Option<&mut Option<Box<Cline>>>,
     lprem: Option<&mut Option<Box<Cline>>>,
 ) -> Option<Box<Cline>> {
-
     let bytes = str.as_bytes();
     let total: usize = (len as usize).min(bytes.len());
     let mut op = plen;
@@ -2182,9 +2156,7 @@ pub fn bld_parts(
                 continue;
             }
             let str_at = std::str::from_utf8(&bytes[str_pos..]).unwrap_or("");
-            if pattern_match(mp.right.as_deref(), str_at, None, "")
-                == 0
-            {
+            if pattern_match(mp.right.as_deref(), str_at, None, "") == 0 {
                 cur = ms.next.as_deref();
                 continue;
             }
@@ -2194,12 +2166,7 @@ pub fn bld_parts(
                     false
                 } else {
                     let l_slice = std::str::from_utf8(&bytes[off as usize..]).unwrap_or("");
-                    pattern_match(
-                        mp.left.as_deref(),
-                        l_slice,
-                        None,
-                        "",
-                    ) != 0
+                    pattern_match(mp.left.as_deref(), l_slice, None, "") != 0
                 }
             };
             if !l_anchor_ok {
@@ -2341,7 +2308,6 @@ pub fn bld_line(
     wlen: i32,
     _sfx: i32,
 ) -> i32 {
-
     // c:1772 — walk mp->line, emitting a char per pattern entry based
     // on its tp:
     //   - CPAT_CHAR : the literal char from the pattern
@@ -2584,14 +2550,14 @@ pub fn cmp_anchors(
 #[allow(non_camel_case_types)]
 pub struct cmdata {
     // c:2142
-    pub cl: Option<Box<Cline>>, // c:2143
+    pub cl: Option<Box<Cline>>,  // c:2143
     pub pcl: Option<Box<Cline>>, // c:2143
-    pub str: String,                                        // c:2152
-    pub astr: String,                                       // c:2152
-    pub len: i32,                                           // c:2152
-    pub alen: i32,                                          // c:2152
-    pub olen: i32,                                          // c:2152
-    pub line: i32,                                          // c:2152
+    pub str: String,             // c:2152
+    pub astr: String,            // c:2152
+    pub len: i32,                // c:2152
+    pub alen: i32,               // c:2152
+    pub olen: i32,               // c:2152
+    pub line: i32,               // c:2152
 }
 
 /// Direct port of `static int check_cmdata(cmdata md, int sfx)` from
@@ -2695,7 +2661,6 @@ pub fn join_sub(
     sfx: i32,
     join: i32,
 ) -> Option<Box<Cline>> {
-
     // c:2214 — `if (!check_cmdata(md, sfx))`. Refill md from next
     // Cline; bail when chain exhausted.
     if check_cmdata(md, sfx) != 0 {
@@ -2957,7 +2922,6 @@ pub fn join_psfx(
     nrest: Option<&mut Option<Box<Cline>>>,
     sfx: i32,
 ) {
-
     // c:2451-2455 — pick prefix/suffix chains.
     let mut remaining: Option<Box<Cline>> = if sfx != 0 {
         ot.suffix.take()
@@ -3283,7 +3247,6 @@ pub fn join_mid(
     o: &mut Cline, // c:2608
     n: &mut Cline,
 ) {
-
     if (o.flags & CLF_JOIN) != 0 {
         // c:2611
         // c:2616 — `join_psfx(o, n, NULL, &nr, 0)`.
@@ -3362,7 +3325,6 @@ pub fn sub_join(
     e: &mut Cline,
     anew: i32,
 ) -> i32 {
-
     // c:2651 — `if (!e->suffix && a->prefix)`.
     if e.suffix.is_some() || a.prefix.is_none() {
         return 0; // c:2698
@@ -3527,19 +3489,14 @@ pub fn join_clines(
     // returning the removed head. Caller passes a raw pointer at the
     // splice point. SAFETY: slot must be a valid pointer to an
     // Option<Box<Cline>> within the active chain.
-    unsafe fn splice_take_at(
-        slot: *mut Option<Box<Cline>>,
-    ) -> Option<Box<Cline>> {
+    unsafe fn splice_take_at(slot: *mut Option<Box<Cline>>) -> Option<Box<Cline>> {
         unsafe { (*slot).take() }
     }
 
     // Helper: walk down `n` steps in a chain returning a mutable pointer
     // to the slot at position `n`. SAFETY: chain must have at least n
     // .next links.
-    unsafe fn slot_at_offset(
-        head: *mut Option<Box<Cline>>,
-        n: usize,
-    ) -> *mut Option<Box<Cline>> {
+    unsafe fn slot_at_offset(head: *mut Option<Box<Cline>>, n: usize) -> *mut Option<Box<Cline>> {
         unsafe {
             let mut s = head;
             for _ in 0..n {
@@ -3576,10 +3533,8 @@ pub fn join_clines(
             if o_new && !n_new {
                 // c:2726 — find first non-NEW node in o whose anchor
                 // matches n.
-                let n_immut: *const Cline =
-                    (*nn_slot).as_deref().unwrap();
-                let o_head: *mut Cline =
-                    (*oo_slot).as_deref_mut().unwrap();
+                let n_immut: *const Cline = (*nn_slot).as_deref().unwrap();
+                let o_head: *mut Cline = (*oo_slot).as_deref_mut().unwrap();
                 let found = find_node_in_chain(&*o_head, |t| {
                     (t.flags & CLF_NEW) == 0 && {
                         // cmp_anchors needs &mut o, &n. We have
@@ -3618,8 +3573,7 @@ pub fn join_clines(
 
             // c:2752-2774 — !o_new && n_new mirror case.
             if !o_new && n_new {
-                let o_immut: *const Cline =
-                    (*oo_slot).as_deref().unwrap();
+                let o_immut: *const Cline = (*oo_slot).as_deref().unwrap();
                 let n_head: &Cline = (*nn_slot).as_deref().unwrap();
                 let found = find_node_in_chain(n_head, |t| {
                     (t.flags & CLF_NEW) == 0 && {
@@ -3653,8 +3607,7 @@ pub fn join_clines(
             let mask = CLF_SUF | CLF_MID;
             if (o_flags & mask) != (n_flags & mask) {
                 // c:2781 — find a node in n whose mask matches o's.
-                let o_immut: *const Cline =
-                    (*oo_slot).as_deref().unwrap();
+                let o_immut: *const Cline = (*oo_slot).as_deref().unwrap();
                 let n_head_im: &Cline = (*nn_slot).as_deref().unwrap();
                 let o_mask = (*o_immut).flags & mask;
                 let found_n = find_node_in_chain(n_head_im, |t| {
@@ -3670,8 +3623,7 @@ pub fn join_clines(
                     continue;
                 }
                 // c:2792 — find a node in o whose mask matches n's.
-                let n_immut_2: *const Cline =
-                    (*nn_slot).as_deref().unwrap();
+                let n_immut_2: *const Cline = (*nn_slot).as_deref().unwrap();
                 let o_head_im: &Cline = (*oo_slot).as_deref().unwrap();
                 let n_mask = (*n_immut_2).flags & mask;
                 let found_o = find_node_in_chain(o_head_im, |t| {
@@ -3856,8 +3808,7 @@ pub fn join_clines(
                 } // c:2949
                 let is_mid = (o_ref.flags & CLF_MID) != 0;
                 let is_suf = (o_ref.flags & CLF_SUF) != 0;
-                let n_mut_ptr: *mut Cline =
-                    (*nn_slot).as_mut().unwrap().as_mut();
+                let n_mut_ptr: *mut Cline = (*nn_slot).as_mut().unwrap().as_mut();
                 if is_mid {
                     // c:2951
                     join_mid(o_ref, &mut *n_mut_ptr);
@@ -3895,26 +3846,20 @@ pub static MATCHBUF: OnceLock<Mutex<String>> = OnceLock::new(); // c:287
 
 /// Port of `Cline matchparts, matchlastpart` from
 /// `Src/Zle/compmatch.c:292`. Top-level cline list being built.
-pub static MATCHPARTS: OnceLock<Mutex<Option<Box<Cline>>>> =
-    OnceLock::new(); // c:292
+pub static MATCHPARTS: OnceLock<Mutex<Option<Box<Cline>>>> = OnceLock::new(); // c:292
 
 /// Port of `Cline matchsubs, matchlastsub` from
 /// `Src/Zle/compmatch.c:294`. Inner cline list (prefix/suffix sub-list).
-pub static MATCHSUBS: OnceLock<Mutex<Option<Box<Cline>>>> =
-    OnceLock::new(); // c:294
+pub static MATCHSUBS: OnceLock<Mutex<Option<Box<Cline>>>> = OnceLock::new(); // c:294
 
 /// File-scope `Cline matchlastpart` from `Src/Zle/compmatch.c:327`.
-pub static MATCHLASTPART: OnceLock<
-    Mutex<Option<Box<Cline>>>,
-> = OnceLock::new(); // c:292
+pub static MATCHLASTPART: OnceLock<Mutex<Option<Box<Cline>>>> = OnceLock::new(); // c:292
 
 /// File-scope `int matchbufadded` from `Src/Zle/compmatch.c:446`.
 pub static MATCHBUFADDED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:289
 
 /// File-scope `Cline matchlastsub` from `Src/Zle/compmatch.c:294`.
-pub static MATCHLASTSUB: OnceLock<
-    Mutex<Option<Box<Cline>>>,
-> = OnceLock::new(); // c:294
+pub static MATCHLASTSUB: OnceLock<Mutex<Option<Box<Cline>>>> = OnceLock::new(); // c:294
 
 /// Port of `PATMATCHRANGE(str, c, indp, mtp)` macro from
 /// `Src/pattern.c`. Walks an encoded character-range descriptor in
@@ -3932,7 +3877,6 @@ fn patmatchrange(
     mut indp: Option<&mut u32>,
     mtp: Option<&mut i32>,
 ) -> bool {
-
     let Some(bytes) = s else {
         return false;
     };
@@ -4428,10 +4372,7 @@ mod tests {
     fn match_parts_truncates_and_matches() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        if let Ok(mut g) = mstack
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-        {
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
         let r = match_parts("abcXYZ", "abcdef", 3, 0);
@@ -4444,10 +4385,7 @@ mod tests {
     fn comp_match_exact_prefix_match() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        if let Ok(mut g) = mstack
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-        {
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
         let mut clp: Option<Box<Cline>> = None;
@@ -4476,10 +4414,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         // Clear mstack to guarantee the empty-stack code path.
-        if let Ok(mut g) = mstack
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-        {
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
             *g = None;
         }
         let r = match_str("abc", "xyz", None, 0, None, 0, 0, 0);
@@ -4510,16 +4445,14 @@ mod tests {
             right: None,
             ralen: 0,
         };
-        let bm_cell =
-            crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
+        let bm_cell = crate::ported::zle::compcore::bmatchers.get_or_init(|| Mutex::new(None));
         *bm_cell.lock().unwrap() = Some(Box::new(Cmlist {
             next: None,
             matcher: Box::new(matcher),
             str: String::new(),
         }));
         // Clear mstack so the entry must be trimmed.
-        let ms_cell =
-            mstack.get_or_init(|| Mutex::new(None));
+        let ms_cell = mstack.get_or_init(|| Mutex::new(None));
         *ms_cell.lock().unwrap() = None;
 
         update_bmatchers();

@@ -33,8 +33,7 @@ pub fn _functions(args: &[String]) -> i32 {
     let style_ctx = format!(":completion:{}:functions", curcontext);
     let prefix_needed = testforstyle(&style_ctx, "prefix-needed") == 0;
     let prefix = getsparam("PREFIX").unwrap_or_default();
-    let prefix_filtered =
-        prefix_needed && !prefix.starts_with('_') && !prefix.starts_with('.');
+    let prefix_filtered = prefix_needed && !prefix.starts_with('_') && !prefix.starts_with('.');
     let ffilt = if prefix_filtered { "[(I)[^_.]*]" } else { "" };
 
     // sh:9

@@ -8,38 +8,68 @@ fn zshrs_bin() -> PathBuf {
         return PathBuf::from(p);
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target").join("debug").join("zshrs")
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output()
-        .map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -78,40 +108,50 @@ mod heredoc_var_expansion {
     /// Unquoted delim → parameter expansion happens inside body.
     #[test]
     fn unquoted_delim_expands_dollar_var() {
-        assert_parity(r#"X=value; cat <<EOF
+        assert_parity(
+            r#"X=value; cat <<EOF
 hello $X
-EOF"#);
+EOF"#,
+        );
     }
 
     #[test]
     fn unquoted_delim_expands_braced_var() {
-        assert_parity(r#"X=value; cat <<EOF
+        assert_parity(
+            r#"X=value; cat <<EOF
 hello ${X}
-EOF"#);
+EOF"#,
+        );
     }
 
     /// Single-quoted delim → NO parameter expansion (literal $X).
     #[test]
     fn single_quoted_delim_no_var_expansion() {
-        assert_parity(r#"X=value; cat <<'EOF'
+        assert_parity(
+            r#"X=value; cat <<'EOF'
 hello $X
-EOF"#);
+EOF"#,
+        );
     }
 
     /// Double-quoted delim → same as unquoted (expansion happens).
     #[test]
     fn double_quoted_delim_expands_dollar_var() {
-        assert_parity(r#"X=value; cat <<"EOF"
+        assert_parity(
+            r#"X=value; cat <<"EOF"
 hello $X
-EOF"#);
+EOF"#,
+        );
     }
 
     /// Backslash-escaped delim → no expansion (per zsh docs).
     #[test]
     fn backslash_escaped_delim_no_expansion() {
-        assert_parity(r#"X=value; cat <<\EOF
+        assert_parity(
+            r#"X=value; cat <<\EOF
 hello $X
-EOF"#);
+EOF"#,
+        );
     }
 }
 
@@ -146,17 +186,21 @@ mod heredoc_command_subst {
     /// Command substitution inside heredoc body (unquoted delim).
     #[test]
     fn cmdsubst_inside_unquoted_heredoc() {
-        assert_parity(r#"cat <<EOF
+        assert_parity(
+            r#"cat <<EOF
 result: $(echo "from cmd")
-EOF"#);
+EOF"#,
+        );
     }
 
     /// No cmd subst when delim is single-quoted.
     #[test]
     fn cmdsubst_literal_when_delim_quoted() {
-        assert_parity(r#"cat <<'EOF'
+        assert_parity(
+            r#"cat <<'EOF'
 result: $(echo "from cmd")
-EOF"#);
+EOF"#,
+        );
     }
 }
 

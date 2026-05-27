@@ -38,7 +38,7 @@ use crate::ported::params::{getaparam, getsparam, paramtab, setaparam};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
-use crate::ported::zsh_h::{options, PM_LOCAL, PM_TYPE, MAX_OPS};
+use crate::ported::zsh_h::{options, MAX_OPS, PM_LOCAL, PM_TYPE};
 
 fn make_ops() -> options {
     options {
@@ -131,7 +131,10 @@ pub fn _parameters(args: &[String]) -> i32 {
         0,
     );
     pattern_seed = getaparam("pattern").unwrap_or_default();
-    let pattern_val = pattern_seed.get(1).cloned().unwrap_or_else(|| "*".to_string());
+    let pattern_val = pattern_seed
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| "*".to_string());
     let argv = getaparam(src).unwrap_or_default();
 
     // Build the filter against (R)pattern + excl PM_LOCAL + pfilt.
@@ -168,10 +171,7 @@ pub fn _parameters(args: &[String]) -> i32 {
     normal.sort();
 
     // sh:45-54  fake-parameters
-    let fake_vals = lookupstyle(
-        &format!(":completion:{}:", curcontext),
-        "fake-parameters",
-    );
+    let fake_vals = lookupstyle(&format!(":completion:{}:", curcontext), "fake-parameters");
     let mut faked: Vec<String> = Vec::new();
     let mut fakes: Vec<String> = Vec::new();
     for v in fake_vals {

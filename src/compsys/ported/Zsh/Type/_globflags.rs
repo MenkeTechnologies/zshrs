@@ -45,10 +45,7 @@ pub fn _globflags() -> i32 {
     // sh:8
     let _ = bin_compset(
         "compset",
-        &[
-            "-P".to_string(),
-            "([ilIUubBmMcq]|a(|<->))##".to_string(),
-        ],
+        &["-P".to_string(), "([ilIUubBmMcq]|a(|<->))##".to_string()],
         &make_ops(),
         0,
     );
@@ -72,8 +69,8 @@ pub fn _globflags() -> i32 {
     if preprefix.starts_with('a') || preprefix.contains(|c: char| c == 'a') {
         // approximation: trailing `a` or `a<digits>`
         let tail_a_only = preprefix == "a";
-        let tail_a_count = preprefix.starts_with('a')
-            && preprefix[1..].chars().all(|c| c.is_ascii_digit());
+        let tail_a_count =
+            preprefix.starts_with('a') && preprefix[1..].chars().all(|c| c.is_ascii_digit());
         if tail_a_only || tail_a_count {
             let _ = _message(&["-e".to_string(), "number".to_string(), "errors".to_string()]);
             if tail_a_only {

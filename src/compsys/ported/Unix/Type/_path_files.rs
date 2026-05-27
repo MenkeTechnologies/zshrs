@@ -262,20 +262,20 @@ pub fn _path_files(args: &[String]) -> i32 {
             .into_iter()
             .filter_map(|pat| {
                 patcompile(&pat, 0, None).map(|prog| {
-                    Box::new(move |name: &str| pattry(&prog, name))
-                        as Box<dyn Fn(&str) -> bool>
+                    Box::new(move |name: &str| pattry(&prog, name)) as Box<dyn Fn(&str) -> bool>
                 })
             })
             .collect();
     let ignored_suffixes: Vec<String> =
         lookupstyle(&format!(":completion:{}:", curcontext), "ignored-suffixes");
-    let special_dirs_style =
-        lookupstyle(&format!(":completion:{}:", curcontext), "special-dirs")
-            .first()
-            .cloned()
-            .unwrap_or_default();
-    let special_dirs_on =
-        matches!(special_dirs_style.as_str(), "yes" | "true" | "1" | "on" | ".." | "true ..");
+    let special_dirs_style = lookupstyle(&format!(":completion:{}:", curcontext), "special-dirs")
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    let special_dirs_on = matches!(
+        special_dirs_style.as_str(),
+        "yes" | "true" | "1" | "on" | ".." | "true .."
+    );
 
     let entries = match fs::read_dir(Path::new(&scan_root)) {
         Ok(e) => e,

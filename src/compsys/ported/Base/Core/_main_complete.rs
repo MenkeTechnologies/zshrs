@@ -79,13 +79,10 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let mut curcontext = getsparam("curcontext").unwrap_or_default();
 
     // sh:60-68  pending-tab short-circuit
-    let insert_tab = lookupstyle(
-        &format!(":completion:{}:", curcontext),
-        "insert-tab",
-    )
-    .first()
-    .cloned()
-    .unwrap_or_else(|| "yes".to_string());
+    let insert_tab = lookupstyle(&format!(":completion:{}:", curcontext), "insert-tab")
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "yes".to_string());
     let pending = getiparam("PENDING");
     let pending_match = if insert_tab.contains("pending") {
         if let Some(eq_pos) = insert_tab.find("pending=") {
@@ -119,7 +116,8 @@ pub fn _main_complete(args: &[String]) -> i32 {
             || insert_tab.starts_with("1 ");
         let vared = get_compstate_str("vared").unwrap_or_default();
         if on_tab
-            && (!curcontext.starts_with(':') || vared.is_empty()
+            && (!curcontext.starts_with(':')
+                || vared.is_empty()
                 || testforstyle(&format!(":completion:vared{}:", curcontext), "insert-tab") == 0)
         {
             return 0;
@@ -230,10 +228,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
             args.to_vec()
         }
     } else {
-        let style_chain = lookupstyle(
-            &format!(":completion:{}:", curcontext),
-            "completer",
-        );
+        let style_chain = lookupstyle(&format!(":completion:{}:", curcontext), "completer");
         if !style_chain.is_empty() {
             style_chain
         } else {
@@ -255,10 +250,11 @@ pub fn _main_complete(args: &[String]) -> i32 {
         //   right is the curcontext-field suffix.
         let mut parts = completer_spec.splitn(2, ':');
         let bare = parts.next().unwrap_or("").to_string();
-        let field_suffix = parts
-            .next()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| bare.strip_prefix('_').map(|s| s.replace('_', "-")).unwrap_or_default());
+        let field_suffix = parts.next().map(|s| s.to_string()).unwrap_or_else(|| {
+            bare.strip_prefix('_')
+                .map(|s| s.replace('_', "-"))
+                .unwrap_or_default()
+        });
         let _ = setsparam("_completer", &field_suffix);
 
         // sh:175  curcontext patch: replace middle `:`-field
@@ -267,10 +263,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
         curcontext = new_ctx;
 
         // sh:180  matcher-list loop
-        let matchers = lookupstyle(
-            &format!(":completion:{}:", curcontext),
-            "matcher-list",
-        );
+        let matchers = lookupstyle(&format!(":completion:{}:", curcontext), "matcher-list");
         let matcher_list: Vec<String> = if matchers.is_empty() {
             vec!["".to_string()]
         } else {
@@ -310,24 +303,17 @@ pub fn _main_complete(args: &[String]) -> i32 {
     if nm < 1 && !comp_mesg.is_empty() {
         set_compstate_str("insert", "");
         set_compstate_str("list", "list force");
-    } else if nm == 0
-        && comp_mesg.is_empty()
-        && old_list != "keep"
-    {
+    } else if nm == 0 && comp_mesg.is_empty() && old_list != "keep" {
         // sh:353-371  warnings format emission
         let lastdescr = getaparam("_lastdescr").unwrap_or_default();
-        let warn_format = lookupstyle(
-            &format!(":completion:{}:warnings", curcontext),
-            "format",
-        )
-        .first()
-        .cloned()
-        .unwrap_or_default();
+        let warn_format = lookupstyle(&format!(":completion:{}:warnings", curcontext), "format")
+            .first()
+            .cloned()
+            .unwrap_or_default();
         if !lastdescr.is_empty() && !warn_format.is_empty() {
             set_compstate_str("list", "list force");
             set_compstate_str("insert", "");
-            let quoted: Vec<String> =
-                lastdescr.iter().map(|d| format!("`{}'", d)).collect();
+            let quoted: Vec<String> = lastdescr.iter().map(|d| format!("`{}'", d)).collect();
             let str_msg = match quoted.len() {
                 1 => quoted[0].clone(),
                 2 => format!("{} or {}", quoted[0], quoted[1]),
@@ -347,12 +333,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
             let _ = setsparam("mesg", "");
             let _ = bin_zformat("zformat", &zf_argv, &make_ops(), 0);
             let mesg = getsparam("mesg").unwrap_or_else(|| warn_format.clone());
-            let _ = bin_compadd(
-                "compadd",
-                &["-x".to_string(), mesg],
-                &make_ops(),
-                0,
-            );
+            let _ = bin_compadd("compadd", &["-x".to_string(), mesg], &make_ops(), 0);
         }
     }
 
@@ -421,9 +402,7 @@ pub fn _main_complete(args: &[String]) -> i32 {
     lastcomp.push("unambiguous".to_string());
     lastcomp.push(get_compstate_str("unambiguous").unwrap_or_default());
     lastcomp.push("unambiguous_cursor".to_string());
-    lastcomp.push(
-        get_compstate_str("unambiguous_cursor").unwrap_or_default(),
-    );
+    lastcomp.push(get_compstate_str("unambiguous_cursor").unwrap_or_default());
     setaparam("_lastcomp", lastcomp);
 
     // sh:384-396  always-block: ZLS_COLORS save/restore.

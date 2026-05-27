@@ -38,18 +38,21 @@ use crate::ported::zle::comp_h::{
     CGF_PACKED, CGF_ROWS, CLF_LINE, CLF_SUF, CMF_ALL, CMF_DISPLINE, CMF_FILE, CMF_HIDE, CMF_MULT,
     CMF_NOLIST, CMF_PACKED, CMF_ROWS,
 };
-use crate::ported::zle::compcore::{amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, listdat as listdat_static, menuacc, nmatches as nmatches_g, nmatches, oldins, oldlist, onlyexpl, MINFO};
+use crate::ported::zle::compcore::{
+    amatches, fromcomp, iforcemenu, insmnum, lastmatches, lastpermmnum, listdat as listdat_static,
+    menuacc, nmatches as nmatches_g, nmatches, oldins, oldlist, onlyexpl, MINFO,
+};
 use crate::ported::zle::complete::COMPLISTMAX;
 use crate::ported::zle::computil::CM_SPACE;
 use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
 use crate::ported::zle::zle_refresh::tcoutclear;
 use crate::ported::zle::zle_tricky::printfmt;
-use crate::ported::zsh_h::{isset, LISTPACKED, LISTROWSFIRST, LISTTYPES, USEZLE};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
+use crate::ported::zsh_h::{isset, LISTPACKED, LISTROWSFIRST, LISTTYPES, USEZLE};
 /// Port of `mod_export int invcount` from `Src/Zle/compresult.c:37`.
 /// Invalidation counter — bumped every time the cached completion
 /// list goes stale. `complistmatches` reads it to detect "we have a
@@ -558,9 +561,7 @@ pub fn do_ambig_menu() -> i32 {
             }
         } else {
             if let Ok(mut m) = MINFO
-                .get_or_init(|| {
-                    std::sync::Mutex::new(Menuinfo::default())
-                })
+                .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
                 .lock()
             {
                 m.cur = None; // c:1399
@@ -569,10 +570,7 @@ pub fn do_ambig_menu() -> i32 {
     }
 
     // c:1429 — `insmnum = comp_mod(insmnum, lastpermmnum)`.
-    let mut idx = comp_mod(
-        insmnum.load(Relaxed),
-        lastpermmnum.load(Relaxed),
-    );
+    let mut idx = comp_mod(insmnum.load(Relaxed), lastpermmnum.load(Relaxed));
     insmnum.store(idx, Relaxed);
 
     // c:1430-1438 — walk amatches advancing past groups with mcount<=idx.
@@ -615,9 +613,7 @@ pub fn do_ambig_menu() -> i32 {
             // c:1455 — `minfo.cur = m;`. Inlined per the no-fake-helper
             // rule (set_minfo_cur was a Rust-only wrapper).
             if let Ok(mut g) = MINFO
-                .get_or_init(|| {
-                    std::sync::Mutex::new(Menuinfo::default())
-                })
+                .get_or_init(|| std::sync::Mutex::new(Menuinfo::default()))
                 .lock()
             {
                 g.cur = Some(Box::new(m.clone()));
@@ -741,8 +737,7 @@ pub fn calclist(showall: i32) -> i32 {
 
     // c:1506-1511 — early-exit when nothing has changed.
     {
-        let ld = listdat_static
-            .get_or_init(|| std::sync::Mutex::new(Cldata::default()));
+        let ld = listdat_static.get_or_init(|| std::sync::Mutex::new(Cldata::default()));
         let g = ld.lock().unwrap();
         if LASTINVCOUNT.with(|c| c.get()) == invcount
             && g.valid != 0
@@ -757,8 +752,7 @@ pub fn calclist(showall: i32) -> i32 {
     }
     LASTINVCOUNT.with(|c| c.set(invcount)); // c:1512
 
-    let am =
-        amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let am = amatches.get_or_init(|| std::sync::Mutex::new(Vec::new()));
     let mut groups = am.lock().unwrap();
     let nmatches2 = nmatches.load(Relaxed);
     let mut mlens: Vec<i32> = vec![0; (nmatches2 + 1) as usize];
@@ -848,9 +842,7 @@ pub fn calclist(showall: i32) -> i32 {
                     }
                     if let Some(disp) = m.disp.clone() {
                         if (m.flags & CMF_DISPLINE) != 0 {
-                            nlines += 1 + printfmt(
-                                &disp, 0, false, false,
-                            );
+                            nlines += 1 + printfmt(&disp, 0, false, false);
                             g.flags |= CGF_HASDL;
                         } else {
                             let l =
@@ -1209,8 +1201,7 @@ pub fn calclist(showall: i32) -> i32 {
     }
 
     // c:1910-1918 — commit listdat.
-    let ld = listdat_static
-        .get_or_init(|| std::sync::Mutex::new(Cldata::default()));
+    let ld = listdat_static.get_or_init(|| std::sync::Mutex::new(Cldata::default()));
     let mut g = ld.lock().unwrap();
     g.valid = 1;
     g.hidden = hidden;
@@ -1419,12 +1410,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
             }
             // c:2017-2018 — printfmt(e.str, count, 1, 1).
             let n = if e.always != 0 { -1 } else { e.count };
-            let l = printfmt(
-                e.str.as_deref().unwrap_or(""),
-                n,
-                true,
-                true,
-            );
+            let l = printfmt(e.str.as_deref().unwrap_or(""), n, true, true);
             ml += l;
             if cl >= 0 && (cl - l) <= 1 {
                 cl = -1;
@@ -1711,15 +1697,14 @@ pub fn list_matches() -> i32 {
     let mut dat = Chdata::default();
     dat.matches = groups.into_iter().next().map(Box::new); // c:2317 first group head
     dat.num = nmatches_g.load(Relaxed); // c:2319
-                                                  // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` fires every
-                                                  // registered Hookfn; first non-zero short-circuits per HOOKF_ALL.
-                                                  // When `gethookdef` returns NULL (no module registered a handler)
-                                                  // or `runhookdef` returns 0 with no Hookfns, fall through to the
-                                                  // canonical `ilistmatches` renderer.
+                                        // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` fires every
+                                        // registered Hookfn; first non-zero short-circuits per HOOKF_ALL.
+                                        // When `gethookdef` returns NULL (no module registered a handler)
+                                        // or `runhookdef` returns 0 with no Hookfns, fall through to the
+                                        // canonical `ilistmatches` renderer.
     let h = crate::ported::module::gethookdef("complist-matches");
     let handled = if !h.is_null() {
-        let dat_ptr =
-            (&mut dat) as *mut Chdata as *mut std::ffi::c_void;
+        let dat_ptr = (&mut dat) as *mut Chdata as *mut std::ffi::c_void;
         crate::ported::module::runhookdef(h, dat_ptr) != 0
     } else {
         false
@@ -2053,11 +2038,7 @@ mod tests {
     #[test]
     fn compresult_corpus_unambig_data_no_shared_prefix() {
         let _g = crate::test_util::global_state_lock();
-        let matches = vec![
-            "alpha".to_string(),
-            "beta".to_string(),
-            "gamma".to_string(),
-        ];
+        let matches = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
         assert_eq!(unambig_data(&matches), "");
     }
 

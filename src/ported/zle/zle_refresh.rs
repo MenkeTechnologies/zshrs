@@ -2,20 +2,20 @@
 //!
 //! Direct port from zsh/Src/Zle/zle_refresh.c
 
-use std::fmt::Write;
-use std::io;
-use std::sync::atomic::Ordering;
 use super::zle_h::{REFRESH_ELEMENT, REFRESH_STRING};
 use crate::ported::init::{tclen, SHTTY};
 use crate::ported::utils::{adjustcolumns, adjustlines, write_loop};
-use crate::ported::zsh_h::{isset, COMBININGCHARS, TCCLEAREOL, TCDEL, TCINS, TXT_ERROR, TXT_MULTIWORD_MASK};
 #[allow(unused_imports)]
 use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
-
-
+use crate::ported::zsh_h::{
+    isset, COMBININGCHARS, TCCLEAREOL, TCDEL, TCINS, TXT_ERROR, TXT_MULTIWORD_MASK,
+};
+use std::fmt::Write;
+use std::io;
+use std::sync::atomic::Ordering;
 
 /// Port of `ZR_memset(REFRESH_ELEMENT *dst, REFRESH_ELEMENT rc, int len)` from `Src/Zle/zle_refresh.c:86`.
 /// ```c
@@ -269,10 +269,7 @@ impl RefreshState {
     /// both video buffers allocated, `need_full_redraw` set so the
     /// first paint touches every cell.
     pub fn new() -> Self {
-        let (cols, rows) = (
-            adjustcolumns(),
-            adjustlines(),
-        );
+        let (cols, rows) = (adjustcolumns(), adjustlines());
         RefreshState {
             columns: cols,
             lines: rows,
@@ -289,10 +286,7 @@ impl RefreshState {
     /// SIGWINCH (the C source calls it from `adjustwinsize()` in
     /// Src/init.c).
     pub fn reset_video(&mut self) {
-        let (cols, rows) = (
-            adjustcolumns(),
-            adjustlines(),
-        );
+        let (cols, rows) = (adjustcolumns(), adjustlines());
         self.columns = cols;
         self.lines = rows;
         self.old_video = Some(VideoBuffer::new(cols, rows));
@@ -409,7 +403,9 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
         ..TextAttr::default()
     };
     if !seen.contains(&HighlightCategory::Region) {
-        manager.category_attrs.insert(HighlightCategory::Region, default_standout);
+        manager
+            .category_attrs
+            .insert(HighlightCategory::Region, default_standout);
     }
     if !seen.contains(&HighlightCategory::Isearch) {
         manager
@@ -417,10 +413,14 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
             .insert(HighlightCategory::Isearch, default_underline);
     }
     if !seen.contains(&HighlightCategory::Suffix) {
-        manager.category_attrs.insert(HighlightCategory::Suffix, default_bold);
+        manager
+            .category_attrs
+            .insert(HighlightCategory::Suffix, default_bold);
     }
     if !seen.contains(&HighlightCategory::Special) {
-        manager.category_attrs.insert(HighlightCategory::Special, default_standout);
+        manager
+            .category_attrs
+            .insert(HighlightCategory::Special, default_standout);
     }
 }
 
@@ -600,10 +600,11 @@ pub fn freevideo(state: &mut RefreshState) {
 /// **Signature note:** takes the RefreshState (which owns the
 /// VideoBuffers + the prompt cache) rather than the C file-statics.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn resetvideo(state: &mut RefreshState) { // c:725
+pub fn resetvideo(state: &mut RefreshState) {
+    // c:725
     use crate::ported::params::TERMFLAGS;
-    use crate::ported::zsh_h::TERM_SHORT;
     use crate::ported::prompt::countprompt;
+    use crate::ported::zsh_h::TERM_SHORT;
 
     // c:729 — `winw = zterm_columns;`
     let cols = adjustcolumns();
@@ -797,9 +798,10 @@ pub fn nextline(
 
     // c:867-869 — allocate the row if missing.
     if rpms.ln as usize >= new_video.lines.len() {
-        new_video
-            .lines
-            .resize(rpms.ln as usize + 1, vec![RefreshElement::default(); (winw + 2) as usize]);
+        new_video.lines.resize(
+            rpms.ln as usize + 1,
+            vec![RefreshElement::default(); (winw + 2) as usize],
+        );
     }
     // c:871-872 — `rpms->s = nbuf[ln]; rpms->sen = s + winw;`
     rpms.pos = 0;
@@ -869,16 +871,20 @@ pub fn addmultiword(
         let size = NMW_SIZE.get();
         // c:921-927 — `if (nmw_ind + iadd > nmw_size) { … realloc … }`.
         if ind + iadd > size {
-            let mw_more = if iadd > DEF_MWBUF_ALLOC { iadd } else { DEF_MWBUF_ALLOC }; // c:922-923
+            let mw_more = if iadd > DEF_MWBUF_ALLOC {
+                iadd
+            } else {
+                DEF_MWBUF_ALLOC
+            }; // c:922-923
             let new_size = size + mw_more;
-            buf.borrow_mut().resize(new_size, 0);                              // c:924-926
-            NMW_SIZE.set(new_size);                                            // c:925 nmw_size += mw_more
+            buf.borrow_mut().resize(new_size, 0); // c:924-926
+            NMW_SIZE.set(new_size); // c:925 nmw_size += mw_more
         }
         let mut b = buf.borrow_mut();
         // c:929-932 — `nmwptr = nmwbuf + nmw_ind; *nmwptr++ = ichars; for(…) *nmwptr++ = tptr[icnt];`
-        b[ind] = ichars as u32;                                                // c:930
+        b[ind] = ichars as u32; // c:930
         for icnt in 0..ichars {
-            b[ind + 1 + icnt] = tptr[icnt] as u32;                             // c:931-932
+            b[ind + 1 + icnt] = tptr[icnt] as u32; // c:931-932
         }
     });
     // c:934 — `base->chr = (wint_t)nmw_ind;`. Store the buffer index in
@@ -909,10 +915,7 @@ pub fn zrefresh() {
     //          shout destination and reduces syscall count.
     let mut handle = String::new();
 
-    let (cols, _rows) = (
-        adjustcolumns(),
-        adjustlines(),
-    );
+    let (cols, _rows) = (adjustcolumns(), adjustlines());
 
     let prompt = prompt().to_string();
     let rprompt = rprompt().to_string();
@@ -992,10 +995,7 @@ pub fn zrefresh() {
 
     // Walk the buffer chars from buffer_start, applying overlay attrs.
     let mut current_attr: Option<TextAttr> = None;
-    let line_snapshot = ZLELINE
-        .lock()
-        .unwrap()
-        .clone();
+    let line_snapshot = ZLELINE.lock().unwrap().clone();
     for (written, (idx, ch)) in line_snapshot
         .iter()
         .enumerate()
@@ -1093,10 +1093,7 @@ impl HighlightManager {
 /// ```
 /// Common-prefix length of two REFRESH_ELEMENT strings; stops at
 /// the first NUL chr in `olds` or first cell that differs in chr+atr.
-pub fn wpfxlen(
-    olds: &[REFRESH_ELEMENT],
-    news: &[REFRESH_ELEMENT],
-) -> usize {
+pub fn wpfxlen(olds: &[REFRESH_ELEMENT], news: &[REFRESH_ELEMENT]) -> usize {
     let mut i = 0;
     while i < olds.len() && i < news.len() && olds[i].chr != '\0' && olds[i] == news[i] {
         i += 1;
@@ -1489,8 +1486,7 @@ pub fn refreshline(ln: i32) {
         if eligible {
             // c:1965
             // c:1976-2006 — TCDEL try-block: find a series we can delete
-            if (tclen.lock().unwrap()[TCDEL as usize]
-                != 0)
+            if (tclen.lock().unwrap()[TCDEL as usize] != 0)
             /* tccan(TCDEL) per zsh.h:2682 */
             {
                 // c:1976
@@ -1498,8 +1494,7 @@ pub fn refreshline(ln: i32) {
                 while (i_try as usize) < ol.len() && ol[i_try as usize].chr != '\0' {
                     // c:1979 — `tcdelcost(i) < wpfxlen(ol + i, nl)`
                     let ol_tail = &ol[i_try as usize..];
-                    let cheap_delete =
-                        tcdelcost(i_try) < wpfxlen(ol_tail, &nl) as i32;
+                    let cheap_delete = tcdelcost(i_try) < wpfxlen(ol_tail, &nl) as i32;
                     if cheap_delete {
                         // c:1985-1990 — apply attributes, tc_delchars(i)
                         // !!! STUB: treplaceattrs / applytextattributes /
@@ -1529,8 +1524,7 @@ pub fn refreshline(ln: i32) {
                 while (i_try as usize) < nl.len() && nl[i_try as usize].chr != '\0' {
                     // c:2015 — `tcinscost(i) < wpfxlen(ol, nl + i)`
                     let nl_tail = &nl[i_try as usize..];
-                    let cheap_insert =
-                        tcinscost(i_try) < wpfxlen(&ol, nl_tail) as i32;
+                    let cheap_insert = tcinscost(i_try) < wpfxlen(&ol, nl_tail) as i32;
                     if cheap_insert {
                         // c:2016-2018 — tc_inschars(i); zwrite(nl, i);
                         for _ in 0..i_try {
@@ -1631,7 +1625,8 @@ pub fn moveto(row: usize, col: usize) {
 /// safe ASCII fallback so cursor positioning still works on terms
 /// without termcap entries. Returns 1 when any escape was emitted,
 /// 0 when no usable capability existed.
-pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 { // c:2163
+pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
+    // c:2163
     use crate::ported::init::{tclen, tcstr};
     use crate::ported::zsh_h::{TCLEFT, TCRIGHT, TC_COUNT};
 
@@ -1818,7 +1813,8 @@ pub fn tcout_via_func(cap: i32, arg: i32) -> i32 {
 /// Resolves the cap escape via `tcstr[cap]` and writes it to SHTTY
 /// (stdout fallback when unset). Now that init_term populates tcstr
 /// with ANSI/VT100 escapes, the index lookup actually does something.
-pub fn tcout(cap: i32) { // c:2339
+pub fn tcout(cap: i32) {
+    // c:2339
     use crate::ported::init::tcstr;
     use crate::ported::zsh_h::TC_COUNT;
     let cap_idx = cap as usize;
@@ -1841,7 +1837,8 @@ pub fn tcout(cap: i32) { // c:2339
 /// `Src/Zle/zle_refresh.c:2351`. Resolves the cap escape via
 /// `tcstr[cap]`, expands `%d` against `arg` (the most common
 /// termcap parametrisation), and writes the result to SHTTY.
-pub fn tcoutarg(cap: i32, arg: i32) { // c:2351
+pub fn tcoutarg(cap: i32, arg: i32) {
+    // c:2351
     use crate::ported::init::tcstr;
     use crate::ported::zsh_h::TC_COUNT;
     let cap_idx = cap as usize;
@@ -2237,10 +2234,7 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     }
 
     // c:2680 (function tail) — `singmoveto(nvcs);`
-    singmoveto(
-        &mut RefreshState::new(),
-        nvcs as usize,
-    );
+    singmoveto(&mut RefreshState::new(), nvcs as usize);
 
     let _ = (lpromptw, width); // silence unused
 }
@@ -2255,7 +2249,8 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
 ///   - else right: `tc_rightcurs(pos - vcs)` (c:2700)
 ///   - update `state.vcs` to `pos` for the next call
 /// WARNING: param names don't match C — Rust=(state, pos) vs C=(pos)
-pub fn singmoveto(state: &mut RefreshState, pos: usize) { // c:2687
+pub fn singmoveto(state: &mut RefreshState, pos: usize) {
+    // c:2687
     use crate::ported::init::tclen;
     use crate::ported::zsh_h::TCMULTLEFT;
 
@@ -2479,19 +2474,10 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
         });
 
     if REGION_ACTIVE.load(Ordering::SeqCst) != 0 {
-        let (lo, hi) = if MARK
-            .load(Ordering::SeqCst)
-            <= ZLECS.load(Ordering::SeqCst)
-        {
-            (
-                MARK.load(Ordering::SeqCst),
-                ZLECS.load(Ordering::SeqCst),
-            )
+        let (lo, hi) = if MARK.load(Ordering::SeqCst) <= ZLECS.load(Ordering::SeqCst) {
+            (MARK.load(Ordering::SeqCst), ZLECS.load(Ordering::SeqCst))
         } else {
-            (
-                ZLECS.load(Ordering::SeqCst),
-                MARK.load(Ordering::SeqCst),
-            )
+            (ZLECS.load(Ordering::SeqCst), MARK.load(Ordering::SeqCst))
         };
         let lo = lo.min(buf_len);
         let hi = hi.min(buf_len);
@@ -2499,11 +2485,7 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
             *slot = Some(visual_attr);
         }
     }
-    for region in &highlight()
-        .lock()
-        .unwrap()
-        .regions
-    {
+    for region in &highlight().lock().unwrap().regions {
         let start = region.start.min(buf_len);
         let end = region.end.min(buf_len);
         for slot in attrs.iter_mut().take(end).skip(start) {
@@ -2783,7 +2765,8 @@ pub fn tc_upcurs(_x: i32) { // c:1728
 /// Port of `tc_leftcurs(X)` macro from `Src/Zle/zle_refresh.c:1729`.
 /// `(void) tcmultout(TCLEFT, TCMULTLEFT, (X))`.
 #[inline]
-pub fn tc_leftcurs(x: i32) { // c:1729
+pub fn tc_leftcurs(x: i32) {
+    // c:1729
     let _ = tcmultout(
         crate::ported::zsh_h::TCLEFT,
         crate::ported::zsh_h::TCMULTLEFT,
@@ -3303,12 +3286,12 @@ mod tests {
     /// mirror that init so we exercise the same growth math the
     /// C source guarantees correctness for.
     fn reset_nmw_state() {
-        NMW_IND.with(|c| c.set(1));                                          // c:746
-        NMW_SIZE.with(|c| c.set(DEF_MWBUF_ALLOC));                           // c:745
+        NMW_IND.with(|c| c.set(1)); // c:746
+        NMW_SIZE.with(|c| c.set(DEF_MWBUF_ALLOC)); // c:745
         NMWBUF.with(|b| {
             let mut buf = b.borrow_mut();
             buf.clear();
-            buf.resize(DEF_MWBUF_ALLOC, 0);                                  // c:747 zalloc(nmw_size)
+            buf.resize(DEF_MWBUF_ALLOC, 0); // c:747 zalloc(nmw_size)
         });
     }
 
@@ -3353,7 +3336,11 @@ mod tests {
         let pre_size = NMW_SIZE.get();
         let mut base = REFRESH_ELEMENT { chr: '\0', atr: 0 };
         addmultiword(&mut base, &['x'], 1);
-        assert_eq!(NMW_SIZE.get(), pre_size, "c:921 — no grow needed (1+2 ≤ 32)");
+        assert_eq!(
+            NMW_SIZE.get(),
+            pre_size,
+            "c:921 — no grow needed (1+2 ≤ 32)"
+        );
         reset_nmw_state();
     }
 
@@ -3366,10 +3353,16 @@ mod tests {
         let pre_size = NMW_SIZE.get();
         let mut base = REFRESH_ELEMENT { chr: '\0', atr: 0 };
         // 40-codepoint cluster: iadd = 41 > DEF_MWBUF_ALLOC=32.
-        let cluster: Vec<char> = (0..40).map(|i| char::from_u32(0x300 + i as u32).unwrap()).collect();
+        let cluster: Vec<char> = (0..40)
+            .map(|i| char::from_u32(0x300 + i as u32).unwrap())
+            .collect();
         addmultiword(&mut base, &cluster, 40);
         // c:922 — mw_more = iadd = 41, nmw_size = pre_size + 41.
-        assert_eq!(NMW_SIZE.get(), pre_size + 41, "c:922 — grow = iadd, not DEF_MWBUF_ALLOC");
+        assert_eq!(
+            NMW_SIZE.get(),
+            pre_size + 41,
+            "c:922 — grow = iadd, not DEF_MWBUF_ALLOC"
+        );
         reset_nmw_state();
     }
 
@@ -3390,7 +3383,10 @@ mod tests {
         // First push at nmw_ind=1; advanced to 4.
         assert_eq!(a.chr as u32, 1, "first push index");
         // Second push at nmw_ind=4; advanced to 7.
-        assert_eq!(b.chr as u32, 4, "second push index (c:43 invariant — never 0)");
+        assert_eq!(
+            b.chr as u32, 4,
+            "second push index (c:43 invariant — never 0)"
+        );
         assert_eq!(NMW_IND.get(), 7, "after two 2-clusters: 1 + 3 + 3 = 7");
         reset_nmw_state();
     }
@@ -3444,10 +3440,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         *ZLELINE.lock().unwrap() = "hello world".chars().collect();
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            Ordering::SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
         MARK.store(2, Ordering::SeqCst);
         ZLECS.store(7, Ordering::SeqCst);
         REGION_ACTIVE.store(1, Ordering::SeqCst); // charwise visual
@@ -3575,10 +3568,7 @@ mod tests {
         MARK.store(1, Ordering::SeqCst);
         ZLECS.store(4, Ordering::SeqCst);
         REGION_ACTIVE.store(1, Ordering::SeqCst);
-        zle_set_highlight(
-            &mut highlight().lock().unwrap(),
-            &["region:fg=red,bold"],
-        );
+        zle_set_highlight(&mut highlight().lock().unwrap(), &["region:fg=red,bold"]);
         let attrs = compute_render_attrs();
         for slot in attrs.iter().take(4).skip(1) {
             let a = slot.expect("region painted");
@@ -3600,10 +3590,7 @@ mod tests {
             fg_color: Some(1),
             ..TextAttr::default()
         };
-        highlight()
-            .lock()
-            .unwrap()
-            .add_region(1, 4, custom);
+        highlight().lock().unwrap().add_region(1, 4, custom);
         let attrs = compute_render_attrs();
         assert!(attrs[0].is_none());
         for slot in attrs.iter().take(4).skip(1) {

@@ -15,12 +15,12 @@
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use crate::ported::init::init_io;
+use crate::ported::params::setsparam;
 use crate::ported::utils::{unmetafy, zerrnam, zwarnnam};
 use crate::ported::zsh_h::{features, module, options, MAX_OPS};
 use std::ffi::CString;
 use std::os::unix::io::RawFd;
-use crate::ported::init::init_io;
-use crate::ported::params::setsparam;
 // =====================================================================
 // bin_clone(char *nam, char **args, UNUSED(Options ops), UNUSED(int func))  c:43
 // =====================================================================
@@ -277,7 +277,6 @@ pub static ttystrname: Mutex<String> = Mutex::new(String::new());
 // Tests
 // =====================================================================
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -297,11 +296,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 1]);
     }

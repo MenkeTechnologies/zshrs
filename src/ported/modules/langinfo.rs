@@ -8,15 +8,15 @@
 //! Provides the `${langinfo[NAME]}` magic-assoc backed by libc
 //! `nl_langinfo(3)`.
 
+use crate::ported::zsh_h::features;
+use crate::utils::unmetafy;
+use crate::zsh_h::module;
 /// `nl_names[]` — port of the static name-array at `langinfo.c:65`.
 /// Each entry pairs with the parallel `nl_vals[]` array of `nl_item`
 /// integer keys. Used by `liitem()` for name→item lookup and by
 /// `scanlanginfo()` to enumerate every entry.
 use std::ffi::CStr;
 use std::sync::{Mutex, OnceLock};
-use crate::ported::zsh_h::features;
-use crate::utils::unmetafy;
-use crate::zsh_h::module;
 
 /// Port of `liitem(const char *name)` from `Src/Modules/langinfo.c:379`. Walks the
 /// parallel `nl_names[]` / `nl_vals[]` arrays looking for `name`;
@@ -284,7 +284,6 @@ pub static NL_NAMES: &[&str] = &[
     "ALT_DIGITS",
 ];
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -304,11 +303,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 1]);
     }
@@ -522,16 +517,20 @@ mod tests {
     #[test]
     fn langinfo_corpus_codeset_is_known() {
         let _g = crate::test_util::global_state_lock();
-        assert!(liitem("CODESET").is_some(),
-            "CODESET is a POSIX-standard nl_item key");
+        assert!(
+            liitem("CODESET").is_some(),
+            "CODESET is a POSIX-standard nl_item key"
+        );
     }
 
     /// `liitem("DAY_1")` returns Some (POSIX day name).
     #[test]
     fn langinfo_corpus_day_1_is_known() {
         let _g = crate::test_util::global_state_lock();
-        assert!(liitem("DAY_1").is_some(),
-            "DAY_1 is a POSIX-standard nl_item key");
+        assert!(
+            liitem("DAY_1").is_some(),
+            "DAY_1 is a POSIX-standard nl_item key"
+        );
     }
 
     /// `liitem("RADIXCHAR")` is known.
@@ -564,7 +563,9 @@ mod tests {
     fn langinfo_corpus_scanlanginfo_returns_entries() {
         let _g = crate::test_util::global_state_lock();
         let entries = scanlanginfo();
-        assert!(!entries.is_empty(),
-            "scanlanginfo should return some entries");
+        assert!(
+            !entries.is_empty(),
+            "scanlanginfo should return some entries"
+        );
     }
 }

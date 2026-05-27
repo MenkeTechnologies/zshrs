@@ -67,8 +67,7 @@ pub fn _sep_parts(args: &[String]) -> i32 {
             compadd_opts.push(a.clone());
             if matches!(
                 a.as_str(),
-                "-J" | "-V" | "-P" | "-F" | "-S" | "-r" | "-R" | "-x" | "-X" | "-M"
-                    | "-o"
+                "-J" | "-V" | "-P" | "-F" | "-S" | "-r" | "-R" | "-x" | "-X" | "-M" | "-o"
             ) && idx + 1 < args.len()
             {
                 compadd_opts.push(args[idx + 1].clone());

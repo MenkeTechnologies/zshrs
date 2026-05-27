@@ -20,17 +20,17 @@
 // in fully-qualified `crate::ported::zle::zle_main::*` paths. MARK
 // excluded: this file has its own `pub static MARK` at line 1610
 // (a duplicate that pre-existed this cleanup — separate fix).
+use crate::ported::zle::compcore::{
+    LASTCHAR, ZLECS as ZLECS_C, ZLELINE as ZLELINE_C, ZLELL as ZLELL_C,
+};
 use crate::ported::zle::zle_main::{
     vibuf, zle_reset, INSMODE, KILLRING, KILLRINGMAX, LASTCHAR_WIDE, LASTCHAR_WIDE_VALID, MARK,
     MULT, NEG_ARG, PREFIXFLAG, REGION_ACTIVE, YANKB, YANKE, ZLECS, ZLELINE, ZLELL,
     ZLE_RESET_NEEDED, ZMOD,
 };
-use crate::ported::zle::compcore::{
-    LASTCHAR, ZLECS as ZLECS_C, ZLELINE as ZLELINE_C, ZLELL as ZLELL_C,
-};
 use std::io::Read;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::atomic::Ordering::SeqCst;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::ported::builtins::sched::zleactive;
 use crate::ported::utils::{errflag, quotestring};
@@ -192,20 +192,13 @@ pub fn selfinsert() -> i32 {
 pub fn fixunmeta() {
     // c:130
     // c:130 — `lastchar &= 0x7f`. Strip Meta/high bit.
-    LASTCHAR
-        .fetch_and((0x7f) as i32, SeqCst);
+    LASTCHAR.fetch_and((0x7f) as i32, SeqCst);
     // c:133-134 — `if (lastchar == '\\r') lastchar = '\\n'`.
-    if LASTCHAR.load(SeqCst)
-        == b'\r' as i32
-    {
-        LASTCHAR
-            .store((b'\n' as i32) as i32, SeqCst);
+    if LASTCHAR.load(SeqCst) == b'\r' as i32 {
+        LASTCHAR.store((b'\n' as i32) as i32, SeqCst);
     }
     // c:140 — `lastchar_wide = (ZLE_INT_T)lastchar`. Sync wide.
-    LASTCHAR_WIDE.store(
-        (LASTCHAR.load(SeqCst)) as i32,
-        SeqCst,
-    );
+    LASTCHAR_WIDE.store((LASTCHAR.load(SeqCst)) as i32, SeqCst);
     LASTCHAR_WIDE_VALID.store(1, SeqCst);
 }
 
@@ -233,9 +226,7 @@ pub fn deletechar() -> i32 {
     n = ZMOD.lock().unwrap().mult;
     // c:169-173 — `while (n--) { if (zlecs == zlell) return 1; INCCS() }`.
     while n > 0 {
-        if ZLECS.load(SeqCst)
-            == ZLELL.load(SeqCst)
-        {
+        if ZLECS.load(SeqCst) == ZLELL.load(SeqCst) {
             return 1;
         }
         inccs();
@@ -247,10 +238,7 @@ pub fn deletechar() -> i32 {
         if ZLECS.load(SeqCst) > 0 {
             ZLECS.fetch_sub(1, SeqCst);
             if ZLECS.load(SeqCst) < ZLELINE.lock().unwrap().len() {
-                ZLELINE
-                    .lock()
-                    .unwrap()
-                    .remove(ZLECS.load(SeqCst));
+                ZLELINE.lock().unwrap().remove(ZLECS.load(SeqCst));
                 ZLELL.fetch_sub(1, SeqCst);
             }
         }
@@ -277,10 +265,7 @@ pub fn backwarddeletechar() -> i32 {
     for _ in 0..count {
         if ZLECS.load(SeqCst) > 0 {
             ZLECS.fetch_sub(1, SeqCst);
-            ZLELINE
-                .lock()
-                .unwrap()
-                .remove(ZLECS.load(SeqCst));
+            ZLELINE.lock().unwrap().remove(ZLECS.load(SeqCst));
             ZLELL.fetch_sub(1, SeqCst);
         }
     }
@@ -300,46 +285,30 @@ pub fn killwholeline() -> i32 {
         // c:201
         // c:202-203 — last-line edge: at zlell with non-empty buffer
         // step back one so the trailing '\n' belongs to this line.
-        let _fg = ZLECS.load(SeqCst) > 0
-            && ZLECS.load(SeqCst)
-                == ZLELL.load(SeqCst);
+        let _fg = ZLECS.load(SeqCst) > 0 && ZLECS.load(SeqCst) == ZLELL.load(SeqCst);
         if _fg {
             ZLECS.fetch_sub(1, SeqCst);
         }
         // c:204-205 — walk back to bol.
-        while ZLECS.load(SeqCst) > 0
-            && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1] != '\n'
-        {
+        while ZLECS.load(SeqCst) > 0 && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1] != '\n' {
             ZLECS.fetch_sub(1, SeqCst);
         }
         // c:206 — `for (i=zlecs; i!=zlell && zleline[i]!='\n'; i++)`.
         let mut i = ZLECS.load(SeqCst);
-        while i != ZLELL.load(SeqCst)
-            && ZLELINE.lock().unwrap()[i] != '\n'
-        {
+        while i != ZLELL.load(SeqCst) && ZLELINE.lock().unwrap()[i] != '\n' {
             i += 1;
         }
         // c:207 — `forekill(i - zlecs + (i != zlell), ...)`. Include
         // the trailing '\n' if there is one.
-        let drop = i - ZLECS.load(SeqCst)
-            + (if i != ZLELL.load(SeqCst) {
-                1
-            } else {
-                0
-            });
+        let drop = i - ZLECS.load(SeqCst) + (if i != ZLELL.load(SeqCst) { 1 } else { 0 });
         if drop > 0 {
             let text: Vec<char> = ZLELINE
                 .lock()
                 .unwrap()
-                .drain(
-                    ZLECS.load(SeqCst)
-                        ..ZLECS.load(SeqCst) + drop,
-                )
+                .drain(ZLECS.load(SeqCst)..ZLECS.load(SeqCst) + drop)
                 .collect();
             KILLRING.lock().unwrap().push_front(text);
-            if KILLRING.lock().unwrap().len()
-                > KILLRINGMAX.load(SeqCst)
-            {
+            if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
                 KILLRING.lock().unwrap().pop_back();
             }
             ZLELL.fetch_sub(drop, SeqCst);
@@ -377,15 +346,11 @@ pub fn backwardkillline() -> i32 {
     let mut i = 0_usize;
     // c:236-242 — walk back; '\n' on the LEFT bumps zlecs--, i++.
     while nn > 0 {
-        if ZLECS.load(SeqCst) > 0
-            && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1] == '\n'
-        {
+        if ZLECS.load(SeqCst) > 0 && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1] == '\n' {
             ZLECS.fetch_sub(1, SeqCst);
             i += 1;
         } else {
-            while ZLECS.load(SeqCst) > 0
-                && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1]
-                    != '\n'
+            while ZLECS.load(SeqCst) > 0 && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1] != '\n'
             {
                 ZLECS.fetch_sub(1, SeqCst);
                 i += 1;
@@ -400,10 +365,7 @@ pub fn backwardkillline() -> i32 {
         let text: Vec<char> = ZLELINE
             .lock()
             .unwrap()
-            .drain(
-                ZLECS.load(SeqCst)
-                    ..ZLECS.load(SeqCst) + i,
-            )
+            .drain(ZLECS.load(SeqCst)..ZLECS.load(SeqCst) + i)
             .collect();
         KILLRING.lock().unwrap().push_front(text);
         if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
@@ -459,49 +421,34 @@ pub fn gosmacstransposechars() -> i32 {
     // C body (c:276-307): gosmacs-style: transpose char before cursor
     // with char at cursor; advance cursor. Skips through newlines and
     // multi-byte combining chars.
-    if ZLECS.load(SeqCst) < 2
-        || ZLECS.load(SeqCst)
-            > ZLELL.load(SeqCst)
-    {
+    if ZLECS.load(SeqCst) < 2 || ZLECS.load(SeqCst) > ZLELL.load(SeqCst) {
         // Edge: try to advance past initial newline so we can transpose.
         let twice = ZLECS.load(SeqCst) == 0
-            || ZLELINE.lock().unwrap().get(
-                ZLECS
-                    .load(SeqCst)
-                    .saturating_sub(1),
-            ) == Some(&'\n');
-        if ZLECS.load(SeqCst)
-            >= ZLELL.load(SeqCst)
             || ZLELINE
                 .lock()
                 .unwrap()
-                .get(ZLECS.load(SeqCst))
-                == Some(&'\n')
+                .get(ZLECS.load(SeqCst).saturating_sub(1))
+                == Some(&'\n');
+        if ZLECS.load(SeqCst) >= ZLELL.load(SeqCst)
+            || ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)) == Some(&'\n')
         {
             return 1;
         }
         ZLECS.fetch_add(1, SeqCst);
         if twice {
-            if ZLECS.load(SeqCst)
-                >= ZLELL.load(SeqCst)
-                || ZLELINE
-                    .lock()
-                    .unwrap()
-                    .get(ZLECS.load(SeqCst))
-                    == Some(&'\n')
+            if ZLECS.load(SeqCst) >= ZLELL.load(SeqCst)
+                || ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)) == Some(&'\n')
             {
                 return 1;
             }
             ZLECS.fetch_add(1, SeqCst);
         }
     }
-    if ZLECS.load(SeqCst) >= 2
-        && ZLECS.load(SeqCst) <= ZLELINE.lock().unwrap().len()
-    {
-        ZLELINE.lock().unwrap().swap(
-            ZLECS.load(SeqCst) - 2,
-            ZLECS.load(SeqCst) - 1,
-        );
+    if ZLECS.load(SeqCst) >= 2 && ZLECS.load(SeqCst) <= ZLELINE.lock().unwrap().len() {
+        ZLELINE
+            .lock()
+            .unwrap()
+            .swap(ZLECS.load(SeqCst) - 2, ZLECS.load(SeqCst) - 1);
         ZLE_RESET_NEEDED.store(1, SeqCst);
     }
     0
@@ -519,12 +466,9 @@ pub fn transposechars() -> i32 {
         // c:321
         n -= 1;
         let mut ct = ZLECS.load(SeqCst); // c:322
-        if ct == 0
-            || ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1] == '\n'
-        {
+        if ct == 0 || ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1] == '\n' {
             // c:322
-            if ZLELL.load(SeqCst)
-                == ZLECS.load(SeqCst)
+            if ZLELL.load(SeqCst) == ZLECS.load(SeqCst)
                 || ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] == '\n'
             {
                 // c:323
@@ -536,10 +480,7 @@ pub fn transposechars() -> i32 {
             incpos(&mut ct); // c:327
         }
         if neg {
-            if ZLECS.load(SeqCst) > 0
-                && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1]
-                    != '\n'
-            {
+            if ZLECS.load(SeqCst) > 0 && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) - 1] != '\n' {
                 // c:330
                 deccs(); // c:331
                 if ct > 1 && ZLELINE.lock().unwrap()[ct - 2] != '\n' {
@@ -547,15 +488,12 @@ pub fn transposechars() -> i32 {
                     decpos(&mut ct); // c:333
                 }
             }
-        } else if ZLECS.load(SeqCst)
-            != ZLELL.load(SeqCst)
+        } else if ZLECS.load(SeqCst) != ZLELL.load(SeqCst)
             && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] != '\n'
         {
             inccs(); // c:338
         }
-        if ct == ZLELL.load(SeqCst)
-            || ZLELINE.lock().unwrap()[ct] == '\n'
-        {
+        if ct == ZLELL.load(SeqCst) || ZLELINE.lock().unwrap()[ct] == '\n' {
             // c:340
             decpos(&mut ct); // c:341
         }
@@ -582,69 +520,32 @@ pub fn poundinsert() -> i32 {
     //              done = 1; return 0`.
     ZLECS.store(0, SeqCst); // c:371
     vifirstnonblank(); // c:372
-    let at_pound = ZLELINE
-        .lock()
-        .unwrap()
-        .get(ZLECS.load(SeqCst))
-        == Some(&'#');
+    let at_pound = ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)) == Some(&'#');
     if !at_pound {
         // c:374-383 — insert # at this line, advance to next, repeat.
-        ZLELINE
-            .lock()
-            .unwrap()
-            .insert(ZLECS.load(SeqCst), '#');
+        ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), '#');
         ZLELL.fetch_add(1, SeqCst);
-        ZLECS.store(
-            findeol(),
-            SeqCst,
-        );
-        while ZLECS.load(SeqCst)
-            != ZLELL.load(SeqCst)
-        {
+        ZLECS.store(findeol(), SeqCst);
+        while ZLECS.load(SeqCst) != ZLELL.load(SeqCst) {
             ZLECS.fetch_add(1, SeqCst);
             vifirstnonblank();
-            ZLELINE
-                .lock()
-                .unwrap()
-                .insert(ZLECS.load(SeqCst), '#');
+            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), '#');
             ZLELL.fetch_add(1, SeqCst);
-            ZLECS.store(
-                findeol(),
-                SeqCst,
-            );
+            ZLECS.store(findeol(), SeqCst);
         }
     } else {
         // c:384-393 — strip leading # from each line.
-        ZLELINE
-            .lock()
-            .unwrap()
-            .remove(ZLECS.load(SeqCst));
+        ZLELINE.lock().unwrap().remove(ZLECS.load(SeqCst));
         ZLELL.fetch_sub(1, SeqCst);
-        ZLECS.store(
-            findeol(),
-            SeqCst,
-        );
-        while ZLECS.load(SeqCst)
-            != ZLELL.load(SeqCst)
-        {
+        ZLECS.store(findeol(), SeqCst);
+        while ZLECS.load(SeqCst) != ZLELL.load(SeqCst) {
             ZLECS.fetch_add(1, SeqCst);
             vifirstnonblank();
-            if ZLELINE
-                .lock()
-                .unwrap()
-                .get(ZLECS.load(SeqCst))
-                == Some(&'#')
-            {
-                ZLELINE
-                    .lock()
-                    .unwrap()
-                    .remove(ZLECS.load(SeqCst));
+            if ZLELINE.lock().unwrap().get(ZLECS.load(SeqCst)) == Some(&'#') {
+                ZLELINE.lock().unwrap().remove(ZLECS.load(SeqCst));
                 ZLELL.fetch_sub(1, SeqCst);
             }
-            ZLECS.store(
-                findeol(),
-                SeqCst,
-            );
+            ZLECS.store(findeol(), SeqCst);
         }
     }
     DONE.store(1, SeqCst); // c:395
@@ -680,10 +581,7 @@ pub fn acceptandhold() -> i32 {
     // c:409
     let zlell = ZLELL.load(SeqCst);
     let line: String = ZLELINE.lock().unwrap().iter().take(zlell).collect();
-    BUFSTACK
-        .lock()
-        .unwrap()
-        .insert(0, line); // c:411 zpushnode
+    BUFSTACK.lock().unwrap().insert(0, line); // c:411 zpushnode
     STACKCS.store(ZLECS.load(SeqCst), SeqCst); // c:412
     DONE.store(1, SeqCst); // c:413
     0 // c:414
@@ -711,8 +609,7 @@ pub fn killline() -> i32 {
             ZLECS.fetch_add(1, SeqCst);
             i += 1;
         } else {
-            while ZLECS.load(SeqCst)
-                != ZLELL.load(SeqCst)
+            while ZLECS.load(SeqCst) != ZLELL.load(SeqCst)
                 && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)] != '\n'
             {
                 ZLECS.fetch_add(1, SeqCst);
@@ -744,16 +641,12 @@ pub fn regionlines() -> (usize, usize) {
     let origcs = ZLECS.load(SeqCst);
     let start;
     let end;
-    if ZLECS.load(SeqCst)
-        < MARK.load(SeqCst)
-    {
+    if ZLECS.load(SeqCst) < MARK.load(SeqCst) {
         // c:449
         // c:450-452 — start=findbol(); zlecs=min(mark,zlell); end=findeol().
         start = findbol();
         ZLECS.store(
-            if MARK.load(SeqCst)
-                > ZLELL.load(SeqCst)
-            {
+            if MARK.load(SeqCst) > ZLELL.load(SeqCst) {
                 ZLELL.load(SeqCst)
             } else {
                 MARK.load(SeqCst)
@@ -764,10 +657,7 @@ pub fn regionlines() -> (usize, usize) {
     } else {
         // c:454-456 — end=findeol(); zlecs=mark; start=findbol().
         end = findeol();
-        ZLECS.store(
-            MARK.load(SeqCst),
-            SeqCst,
-        );
+        ZLECS.store(MARK.load(SeqCst), SeqCst);
         start = findbol();
     }
     // c:458 — `zlecs = origcs`. Restore.
@@ -779,29 +669,15 @@ pub fn regionlines() -> (usize, usize) {
 pub fn killregion() -> i32 {
     // c:463
     // c:463-466 — `if (mark > zlell) mark = zlell`.
-    if MARK.load(SeqCst)
-        > ZLELL.load(SeqCst)
-    {
-        MARK.store(
-            ZLELL.load(SeqCst),
-            SeqCst,
-        );
+    if MARK.load(SeqCst) > ZLELL.load(SeqCst) {
+        MARK.store(ZLELL.load(SeqCst), SeqCst);
     }
     // c:467-479 — region_active==2 (visual-line); skip the line-mode
     // path for the simplified port.
-    let (start, end) = if MARK
-        .load(SeqCst)
-        > ZLECS.load(SeqCst)
-    {
-        (
-            ZLECS.load(SeqCst),
-            MARK.load(SeqCst),
-        )
+    let (start, end) = if MARK.load(SeqCst) > ZLECS.load(SeqCst) {
+        (ZLECS.load(SeqCst), MARK.load(SeqCst))
     } else {
-        (
-            MARK.load(SeqCst),
-            ZLECS.load(SeqCst),
-        )
+        (MARK.load(SeqCst), ZLECS.load(SeqCst))
     };
     if start < end {
         let text: Vec<char> = ZLELINE.lock().unwrap().drain(start..end).collect();
@@ -831,27 +707,13 @@ pub fn copyregionaskill(args: &[String]) -> i32 {
         return 0;
     }
     // c:503-512 — copy region between point and mark.
-    if MARK.load(SeqCst)
-        > ZLELL.load(SeqCst)
-    {
-        MARK.store(
-            ZLELL.load(SeqCst),
-            SeqCst,
-        );
+    if MARK.load(SeqCst) > ZLELL.load(SeqCst) {
+        MARK.store(ZLELL.load(SeqCst), SeqCst);
     }
-    let (start, end) = if MARK
-        .load(SeqCst)
-        > ZLECS.load(SeqCst)
-    {
-        (
-            ZLECS.load(SeqCst),
-            MARK.load(SeqCst),
-        )
+    let (start, end) = if MARK.load(SeqCst) > ZLECS.load(SeqCst) {
+        (ZLECS.load(SeqCst), MARK.load(SeqCst))
     } else {
-        (
-            MARK.load(SeqCst),
-            ZLECS.load(SeqCst),
-        )
+        (MARK.load(SeqCst), ZLECS.load(SeqCst))
     };
     let text: Vec<char> = ZLELINE.lock().unwrap()[start..end].to_vec();
     KILLRING.lock().unwrap().push_front(text);
@@ -866,21 +728,12 @@ pub fn copyregionaskill(args: &[String]) -> i32 {
 pub fn yank() {
     // c:533
     if let Some(text) = KILLRING.lock().unwrap().front() {
-        MARK.store(
-            ZLECS.load(SeqCst),
-            SeqCst,
-        );
+        MARK.store(ZLECS.load(SeqCst), SeqCst);
         for &c in text {
-            ZLELINE
-                .lock()
-                .unwrap()
-                .insert(ZLECS.load(SeqCst), c);
+            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), c);
             ZLECS.fetch_add(1, SeqCst);
         }
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
         YANKLAST.store(true, SeqCst);
         ZLE_RESET_NEEDED.store(1, SeqCst);
     }
@@ -900,39 +753,25 @@ pub fn pastebuf(buf: &[char], mult: i32, position: i32) -> i32 {
         return 0;
     }
     // c:591-592 — `if (position == 1 && zlecs != findeol()) INCCS()`.
-    if position == 1
-        && ZLECS.load(SeqCst)
-            < ZLELL.load(SeqCst)
-    {
+    if position == 1 && ZLECS.load(SeqCst) < ZLELL.load(SeqCst) {
         ZLECS.fetch_add(1, SeqCst);
     }
     // c:593 — `yankb = zlecs`.
-    YANKB.store(
-        ZLECS.load(SeqCst),
-        SeqCst,
-    );
+    YANKB.store(ZLECS.load(SeqCst), SeqCst);
     // c:595-599 — `while (mult--) { spaceinline(cc); ZS_memcpy; zlecs += cc }`.
     let mut n = mult;
     while n > 0 {
         for (i, &c) in buf.iter().enumerate() {
-            ZLELINE
-                .lock()
-                .unwrap()
-                .insert(ZLECS.load(SeqCst) + i, c);
+            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst) + i, c);
         }
         ZLECS.fetch_add(buf.len(), SeqCst);
         ZLELL.fetch_add(buf.len(), SeqCst);
         n -= 1;
     }
     // c:600 — `yanke = zlecs`.
-    YANKE.store(
-        ZLECS.load(SeqCst),
-        SeqCst,
-    );
+    YANKE.store(ZLECS.load(SeqCst), SeqCst);
     // c:601-602 — vicmd → DECCS.
-    if ZLECS.load(SeqCst) > 0
-        && *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd"
-    {
+    if ZLECS.load(SeqCst) > 0 && *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
         ZLECS.fetch_sub(1, SeqCst);
     }
     ZLE_RESET_NEEDED.store(1, SeqCst);
@@ -1033,9 +872,7 @@ pub fn putreplaceselection() -> i32 {
     if REGION_ACTIVE.load(SeqCst) == 2 {
         // c:713
         // c:714-717 — regionlines split; lines-flag check elided.
-        pos = if ZLELL.load(SeqCst)
-            == ZLECS.load(SeqCst)
-        {
+        pos = if ZLELL.load(SeqCst) == ZLECS.load(SeqCst) {
             1
         } else {
             0
@@ -1050,8 +887,7 @@ pub fn yankpop() -> i32 {
     // c:728
     // c:730-735 — `if (!(lastcmd & ZLE_YANK) || !kring || !kctbuf)
     //               return 1`.
-    let last =
-        LASTCMD.load(SeqCst) as i32;
+    let last = LASTCMD.load(SeqCst) as i32;
     if (last & ZLE_YANK) == 0 || KILLRING.lock().unwrap().is_empty() {
         return 1;
     }
@@ -1071,21 +907,12 @@ pub fn yankpop() -> i32 {
     }
     if let Some(next) = KILLRING.lock().unwrap().front().cloned() {
         for (i, &c) in next.iter().enumerate() {
-            ZLELINE
-                .lock()
-                .unwrap()
-                .insert(ZLECS.load(SeqCst) + i, c);
+            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst) + i, c);
         }
-        YANKB.store(
-            ZLECS.load(SeqCst),
-            SeqCst,
-        );
+        YANKB.store(ZLECS.load(SeqCst), SeqCst);
         ZLECS.fetch_add(next.len(), SeqCst);
         ZLELL.fetch_add(next.len(), SeqCst);
-        YANKE.store(
-            ZLECS.load(SeqCst),
-            SeqCst,
-        );
+        YANKE.store(ZLECS.load(SeqCst), SeqCst);
     }
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
@@ -1210,10 +1037,7 @@ pub fn bracketedpaste(args: &[String]) -> i32 {
         }
         // c:833 — `doinsert(wpaste, n)`. Inline insert at zlecs.
         for c in wpaste.iter().copied() {
-            ZLELINE
-                .lock()
-                .unwrap()
-                .insert(ZLECS.load(SeqCst), c);
+            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), c);
             ZLECS.fetch_add(1, SeqCst);
             ZLELL.fetch_add(1, SeqCst);
         }
@@ -1243,9 +1067,7 @@ pub fn whatcursorposition() -> i32 {
     // c:851
     let bol = findbol(); // c:855
     let mut msg = String::with_capacity(100);
-    if ZLECS.load(SeqCst)
-        == ZLELL.load(SeqCst)
-    {
+    if ZLECS.load(SeqCst) == ZLELL.load(SeqCst) {
         // c:858
         msg.push_str("EOF"); // c:859
     } else {
@@ -1261,8 +1083,7 @@ pub fn whatcursorposition() -> i32 {
         msg.push_str(&format!(" (0{:o}, {}, 0x{:x})", cu, cu, cu)); // c:881
     }
     let pct = if ZLELL.load(SeqCst) > 0 {
-        100 * ZLECS.load(SeqCst)
-            / ZLELL.load(SeqCst)
+        100 * ZLECS.load(SeqCst) / ZLELL.load(SeqCst)
     } else {
         0
     };
@@ -1358,9 +1179,7 @@ pub fn digitargument() -> i32 {
     // c:1044 — `int sign = (zmult < 0) ? -1 : 1`.
     let sign: i32 = if ZMOD.lock().unwrap().mult < 0 { -1 } else { 1 };
     // c:1045 — `parsedigit(lastchar)`.
-    let newdigit = parsedigit(
-        LASTCHAR.load(SeqCst),
-    );
+    let newdigit = parsedigit(LASTCHAR.load(SeqCst));
     if newdigit < 0 {
         // c:1047
         return 1; // c:1048
@@ -1516,9 +1335,7 @@ pub fn copyprevword() -> i32 {
     }
     // span: t0..(start of search)
     let mut t1 = t0;
-    while t1 < ZLECS.load(SeqCst)
-        && is_word(ZLELINE.lock().unwrap()[t1])
-    {
+    while t1 < ZLECS.load(SeqCst) && is_word(ZLELINE.lock().unwrap()[t1]) {
         t1 += 1;
     }
     let len = t1 - t0;
@@ -1527,10 +1344,7 @@ pub fn copyprevword() -> i32 {
     }
     let copied: Vec<char> = ZLELINE.lock().unwrap()[t0..t1].to_vec();
     for (i, &c) in copied.iter().enumerate() {
-        ZLELINE
-            .lock()
-            .unwrap()
-            .insert(ZLECS.load(SeqCst) + i, c);
+        ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst) + i, c);
     }
     ZLECS.fetch_add(len, SeqCst);
     ZLELL.fetch_add(len, SeqCst);
@@ -1558,10 +1372,7 @@ pub fn copyprevshellword() -> i32 {
     }
     let copied: Vec<char> = ZLELINE.lock().unwrap()[t0..t1].to_vec();
     for (i, &c) in copied.iter().enumerate() {
-        ZLELINE
-            .lock()
-            .unwrap()
-            .insert(ZLECS.load(SeqCst) + i, c);
+        ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst) + i, c);
     }
     ZLECS.fetch_add(copied.len(), SeqCst);
     ZLELL.fetch_add(copied.len(), SeqCst);
@@ -1587,10 +1398,7 @@ pub fn copyprevshellword() -> i32 {
 ///    return 1;`
 pub fn sendbreak() -> i32 {
     // c:1144
-    errflag.fetch_or(
-        ERRFLAG_ERROR | ERRFLAG_INT,
-        Ordering::Relaxed,
-    ); // c:1146
+    errflag.fetch_or(ERRFLAG_ERROR | ERRFLAG_INT, Ordering::Relaxed); // c:1146
     1 // c:1147
 }
 
@@ -1600,13 +1408,8 @@ pub fn quoteregion() -> i32 {
     // c:1152 — `int extra = invicmdmode()`. Vi-cmd-mode bias.
     let mut extra = *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd";
     // c:1158-1159 — `if (mark > zlell) mark = zlell`.
-    if MARK.load(SeqCst)
-        > ZLELL.load(SeqCst)
-    {
-        MARK.store(
-            ZLELL.load(SeqCst),
-            SeqCst,
-        );
+    if MARK.load(SeqCst) > ZLELL.load(SeqCst) {
+        MARK.store(ZLELL.load(SeqCst), SeqCst);
     }
     // c:1160-1170 — visual-line vs. char modes; normalize zlecs/mark.
     if REGION_ACTIVE.load(SeqCst) == 2 {
@@ -1614,47 +1417,31 @@ pub fn quoteregion() -> i32 {
         ZLECS.store(a, SeqCst);
         MARK.store(b, SeqCst);
         extra = false;
-    } else if MARK.load(SeqCst)
-        < ZLECS.load(SeqCst)
-    {
-        std::mem::swap(
-            &mut MARK.load(SeqCst),
-            &mut ZLECS.load(SeqCst),
-        );
+    } else if MARK.load(SeqCst) < ZLECS.load(SeqCst) {
+        std::mem::swap(&mut MARK.load(SeqCst), &mut ZLECS.load(SeqCst));
     }
     // c:1171-1172 — `if (extra) INCPOS(mark)`. Include cursor cell.
-    if extra
-        && MARK.load(SeqCst)
-            < ZLELL.load(SeqCst)
-    {
+    if extra && MARK.load(SeqCst) < ZLELL.load(SeqCst) {
         MARK.fetch_add(1, SeqCst);
     }
     // c:1173-1175 — copy region into temp str; foredel; quote; insert.
-    let region: Vec<char> = ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)
-        ..MARK.load(SeqCst)]
-        .to_vec();
+    let region: Vec<char> = ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)..MARK.load(SeqCst)].to_vec();
     let len = region.len();
     let quoted = makequote(&region);
     let qlen = quoted.len();
     // c:1176 — `foredel(len, CUT_RAW)` — delete region (no kill).
-    ZLELINE.lock().unwrap().drain(
-        ZLECS.load(SeqCst)
-            ..ZLECS.load(SeqCst) + len,
-    );
+    ZLELINE
+        .lock()
+        .unwrap()
+        .drain(ZLECS.load(SeqCst)..ZLECS.load(SeqCst) + len);
     ZLELL.fetch_sub(len, SeqCst);
     // c:1178-1179 — insert quoted text at cursor.
     for (i, &c) in quoted.iter().enumerate() {
-        ZLELINE
-            .lock()
-            .unwrap()
-            .insert(ZLECS.load(SeqCst) + i, c);
+        ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst) + i, c);
     }
     ZLELL.fetch_add(qlen, SeqCst);
     // c:1180-1181 — `mark = zlecs; zlecs += len`.
-    MARK.store(
-        ZLECS.load(SeqCst),
-        SeqCst,
-    );
+    MARK.store(ZLECS.load(SeqCst), SeqCst);
     ZLECS.fetch_add(qlen, SeqCst);
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
@@ -1664,8 +1451,7 @@ pub fn quoteregion() -> i32 {
 pub fn quoteline() -> i32 {
     // c:1187
     // c:1187 — `len = zlell`. Quote whole buffer.
-    let quoted =
-        makequote(&ZLELINE.lock().unwrap()[..ZLELL.load(SeqCst)]);
+    let quoted = makequote(&ZLELINE.lock().unwrap()[..ZLELL.load(SeqCst)]);
     let len = quoted.len();
     // c:1193-1195 — `sizeline; ZS_memcpy; zlecs = zlell = len`.
     *ZLELINE.lock().unwrap() = quoted;
@@ -1851,20 +1637,17 @@ pub fn makeparamsuffix(br: i32, n: i32) {
 /// Name of the function to call after auto-suffix is consumed.
 /// Set by `makesuffixstr(f, ...)`; read by `iremovesuffix` to fire
 /// the user hook on auto-removal.
-pub static suffixfunc: std::sync::Mutex<Option<String>> =
-    std::sync::Mutex::new(None);
+pub static suffixfunc: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// Port of `int suffixnoinsrem;` from `Src/Zle/zle_misc.c:1549`.
 /// "Whether to remove suffix on uninsertable characters" — set by
 /// `makesuffixstr` from the `\-` / `^`-inverted class flag.
-pub static suffixnoinsrem: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
+pub static suffixnoinsrem: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `mod_export int suffixlen;` from `Src/Zle/zle_misc.c:1553`.
 /// "Length of the currently active, auto-removable suffix." Consumed
 /// by `iremovesuffix` for the actual delete.
-pub static suffixlen: std::sync::atomic::AtomicI32 =
-    std::sync::atomic::AtomicI32::new(0);
+pub static suffixlen: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `makesuffixstr(char *f, char *s, int n)` from
 /// `Src/Zle/zle_misc.c:1642`. Three-way dispatch:
@@ -1874,33 +1657,36 @@ pub static suffixlen: std::sync::atomic::AtomicI32 =
 ///   - neither → fall back to `makesuffix(n)` default char set
 pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
     // c:1642
-    if let Some(f_str) = f {                                                 // c:1644
+    if let Some(f_str) = f {
+        // c:1644
         // c:1645-1647 — `zsfree(suffixfunc); suffixfunc = ztrdup(f);
         //                suffixlen = n;`.
         if let Ok(mut g) = suffixfunc.lock() {
-            *g = Some(f_str.to_string());                                    // c:1646
+            *g = Some(f_str.to_string()); // c:1646
         }
-        suffixlen.store(n, std::sync::atomic::Ordering::Relaxed);            // c:1647
-    } else if let Some(s_str) = s {                                          // c:1648
-        let mut inv: i32;                                                    // c:1649
-        let _i: usize;                                                       // c:1649
-        let mut z: i32 = 0;                                                  // c:1649
-        let s_iter_start;                                                    // c:1650 ZLE_STRING_T s
-        if s_str.starts_with('^') || s_str.starts_with('!') {                // c:1652
-            inv = 1;                                                         // c:1653
-            s_iter_start = &s_str[1..];                                      // c:1654 `s++`
+        suffixlen.store(n, std::sync::atomic::Ordering::Relaxed); // c:1647
+    } else if let Some(s_str) = s {
+        // c:1648
+        let mut inv: i32; // c:1649
+        let _i: usize; // c:1649
+        let mut z: i32 = 0; // c:1649
+        let s_iter_start; // c:1650 ZLE_STRING_T s
+        if s_str.starts_with('^') || s_str.starts_with('!') {
+            // c:1652
+            inv = 1; // c:1653
+            s_iter_start = &s_str[1..]; // c:1654 `s++`
         } else {
-            inv = 0;                                                         // c:1656
+            inv = 0; // c:1656
             s_iter_start = s_str;
         }
         // c:1657 — `s = getkeystring(s, &i, GETKEYS_SUFFIX, &z);`
-        let (decoded, consumed) =
-            crate::ported::utils::getkeystring(s_iter_start);
+        let (decoded, consumed) = crate::ported::utils::getkeystring(s_iter_start);
         // GETKEYS_SUFFIX scan sets `z` when `\-` appears; current
         // getkeystring port doesn't expose `z` separately. The `\-`
         // detection is observable inline by scanning the literal arg
         // for `\-` prior to getkeystring's escape collapse.
-        if s_iter_start.contains("\\-") {                                    // c:1657 z out-param
+        if s_iter_start.contains("\\-") {
+            // c:1657 z out-param
             z = 1;
         }
         let _ = consumed;
@@ -1912,43 +1698,55 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
         /*
          * Remove suffix on uninsertable characters if `\-` was given
          * and the character class wasn't negated -- or vice versa.
-         */                                                                  // c:1661-1662
+         */
+ // c:1661-1662
         suffixnoinsrem.store(z ^ inv, std::sync::atomic::Ordering::Relaxed); // c:1663
-        suffixlen.store(n, std::sync::atomic::Ordering::Relaxed);            // c:1664
+        suffixlen.store(n, std::sync::atomic::Ordering::Relaxed); // c:1664
 
         // c:1666-1689 — walk `ws`, peeking for `a-b` range form.
-        let mut lasts: usize = 0;                                            // c:1666
-        let mut wptr: usize = 0;                                             // c:1666
-        while i > 0 {                                                        // c:1667
-            if i >= 3 && ws.get(wptr + 1) == Some(&'-') {                    // c:1668
-                if wptr > lasts {                                            // c:1671
+        let mut lasts: usize = 0; // c:1666
+        let mut wptr: usize = 0; // c:1666
+        while i > 0 {
+            // c:1667
+            if i >= 3 && ws.get(wptr + 1) == Some(&'-') {
+                // c:1668
+                if wptr > lasts {
+                    // c:1671
                     let span: Vec<char> = ws[lasts..wptr].to_vec();
                     let lenstr = (wptr - lasts) as i32;
                     addsuffix(
-                        if inv != 0 { SUFTYP_NEGSTR } else { SUFTYP_POSSTR },
+                        if inv != 0 {
+                            SUFTYP_NEGSTR
+                        } else {
+                            SUFTYP_POSSTR
+                        },
                         0,
                         span,
                         lenstr,
                         n,
-                    );                                                       // c:1672-1673
+                    ); // c:1672-1673
                 }
-                let mut s_arr: Vec<char> = Vec::with_capacity(2);            // c:1669 ZLE_CHAR_T str[2]
-                s_arr.push(ws[wptr]);                                        // c:1674
-                s_arr.push(ws[wptr + 2]);                                    // c:1675
+                let mut s_arr: Vec<char> = Vec::with_capacity(2); // c:1669 ZLE_CHAR_T str[2]
+                s_arr.push(ws[wptr]); // c:1674
+                s_arr.push(ws[wptr + 2]); // c:1675
                 addsuffix(
-                    if inv != 0 { SUFTYP_NEGRNG } else { SUFTYP_POSRNG },
+                    if inv != 0 {
+                        SUFTYP_NEGRNG
+                    } else {
+                        SUFTYP_POSRNG
+                    },
                     0,
                     s_arr,
                     2,
                     n,
-                );                                                           // c:1676-1677
+                ); // c:1676-1677
 
-                wptr += 3;                                                   // c:1679
-                i -= 3;                                                      // c:1680
-                lasts = wptr;                                                // c:1681
+                wptr += 3; // c:1679
+                i -= 3; // c:1680
+                lasts = wptr; // c:1681
             } else {
-                wptr += 1;                                                   // c:1683
-                i -= 1;                                                      // c:1684
+                wptr += 1; // c:1683
+                i -= 1; // c:1684
                 if i == 0 && wptr == ws.len() {
                     // Final char will be appended by the post-loop span
                     // below; nothing to do here.
@@ -1960,16 +1758,21 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
                 }
             }
         }
-        if wptr > lasts {                                                    // c:1687
+        if wptr > lasts {
+            // c:1687
             let span: Vec<char> = ws[lasts..wptr].to_vec();
             let lenstr = (wptr - lasts) as i32;
             addsuffix(
-                if inv != 0 { SUFTYP_NEGSTR } else { SUFTYP_POSSTR },
+                if inv != 0 {
+                    SUFTYP_NEGSTR
+                } else {
+                    SUFTYP_POSSTR
+                },
                 0,
                 span,
                 lenstr,
                 n,
-            );                                                               // c:1688-1689
+            ); // c:1688-1689
         }
         // c:1690 — `free(ws);` (Rust drop)
         let _ = (lasts, wptr);
@@ -1978,7 +1781,7 @@ pub fn makesuffixstr(f: Option<&str>, s: Option<&str>, n: i32) {
         inv += 0;
         let _ = inv;
     } else {
-        makesuffix(n);                                                       // c:1692
+        makesuffix(n); // c:1692
     }
 }
 
@@ -2144,10 +1947,7 @@ pub static SUFFIXFUNC: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync
 /// Port of selfinsert(UNUSED(char **args)) from zle_misc.c
 pub fn self_insert(c: char) {
     // c:113
-    ZLELINE
-        .lock()
-        .unwrap()
-        .insert(ZLECS.load(SeqCst), c);
+    ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), c);
     ZLECS.fetch_add(1, SeqCst);
     ZLELL.fetch_add(1, SeqCst);
     ZLE_RESET_NEEDED.store(1, SeqCst);
@@ -2216,10 +2016,7 @@ pub fn kill_whole_line() {
 /// This bare method only swaps; the widget-level
 /// `widget_exchange_point_and_mark` honours the count semantics.
 pub fn exchange_point_and_mark() {
-    std::mem::swap(
-        &mut ZLECS.load(SeqCst),
-        &mut MARK.load(SeqCst),
-    );
+    std::mem::swap(&mut ZLECS.load(SeqCst), &mut MARK.load(SeqCst));
     ZLE_RESET_NEEDED.store(1, SeqCst);
 }
 
@@ -2229,10 +2026,7 @@ pub fn exchange_point_and_mark() {
 /// `widget_set_mark_command` covers the negative-count
 /// deactivate path that the bare C source supports.
 pub fn set_mark_here() {
-    MARK.store(
-        ZLECS.load(SeqCst),
-        SeqCst,
-    );
+    MARK.store(ZLECS.load(SeqCst), SeqCst);
 }
 
 /// Copy region as kill
@@ -2242,18 +2036,10 @@ pub fn set_mark_here() {
 /// Port of killregion(UNUSED(char **args)) from zle_misc.c
 pub fn kill_region() {
     // c:463
-    let (start, end) = if ZLECS.load(SeqCst)
-        < MARK.load(SeqCst)
-    {
-        (
-            ZLECS.load(SeqCst),
-            MARK.load(SeqCst),
-        )
+    let (start, end) = if ZLECS.load(SeqCst) < MARK.load(SeqCst) {
+        (ZLECS.load(SeqCst), MARK.load(SeqCst))
     } else {
-        (
-            MARK.load(SeqCst),
-            ZLECS.load(SeqCst),
-        )
+        (MARK.load(SeqCst), ZLECS.load(SeqCst))
     };
 
     let text: Vec<char> = ZLELINE.lock().unwrap().drain(start..end).collect();
@@ -2272,9 +2058,7 @@ pub fn kill_region() {
 /// Port of yankpop(UNUSED(char **args)) from zle_misc.c
 pub fn yank_pop() {
     // c:728
-    if !YANKLAST.load(SeqCst)
-        || KILLRING.lock().unwrap().is_empty()
-    {
+    if !YANKLAST.load(SeqCst) || KILLRING.lock().unwrap().is_empty() {
         return;
     }
 
@@ -2292,10 +2076,7 @@ pub fn yank_pop() {
         }
     }
     ZLECS.store(start, SeqCst);
-    ZLELL.store(
-        ZLELINE.lock().unwrap().len(),
-        SeqCst,
-    );
+    ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
 
     // Rotate kill ring
     if let Some(front) = KILLRING.lock().unwrap().pop_front() {
@@ -2305,16 +2086,10 @@ pub fn yank_pop() {
     // Insert new text
     if let Some(text) = KILLRING.lock().unwrap().front() {
         for &c in text {
-            ZLELINE
-                .lock()
-                .unwrap()
-                .insert(ZLECS.load(SeqCst), c);
+            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), c);
             ZLECS.fetch_add(1, SeqCst);
         }
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
     }
 
     ZLE_RESET_NEEDED.store(1, SeqCst);
@@ -2323,15 +2098,11 @@ pub fn yank_pop() {
 /// Transpose chars
 /// Port of transposechars(UNUSED(char **args)) from zle_misc.c
 pub fn transpose_chars() {
-    if ZLECS.load(SeqCst) == 0
-        || ZLELL.load(SeqCst) < 2
-    {
+    if ZLECS.load(SeqCst) == 0 || ZLELL.load(SeqCst) < 2 {
         return;
     }
 
-    let pos = if ZLECS.load(SeqCst)
-        == ZLELL.load(SeqCst)
-    {
+    let pos = if ZLECS.load(SeqCst) == ZLELL.load(SeqCst) {
         ZLECS.load(SeqCst) - 1
     } else {
         ZLECS.load(SeqCst)
@@ -2350,41 +2121,34 @@ pub fn transpose_chars() {
 /// uses `casemodifyword()` with a CASMOD_CAPS flag). Mirrors emacs's
 /// M-c convention. Cursor lands past the modified word.
 pub fn capitalize_word() {
-    while ZLECS.load(SeqCst)
-        < ZLELL.load(SeqCst)
-        && !ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)]
-            .is_alphanumeric()
+    while ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
+        && !ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphanumeric()
     {
         ZLECS.fetch_add(1, SeqCst);
     }
 
-    if ZLECS.load(SeqCst)
-        < ZLELL.load(SeqCst)
+    if ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
         && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphabetic()
     {
         {
             let mut __g = ZLELINE.lock().unwrap();
-            __g[ZLECS.load(SeqCst)] = __g
-                [ZLECS.load(SeqCst)]
-            .to_uppercase()
-            .next()
-            .unwrap_or(__g[ZLECS.load(SeqCst)]);
+            __g[ZLECS.load(SeqCst)] = __g[ZLECS.load(SeqCst)]
+                .to_uppercase()
+                .next()
+                .unwrap_or(__g[ZLECS.load(SeqCst)]);
         }
         ZLECS.fetch_add(1, SeqCst);
     }
 
-    while ZLECS.load(SeqCst)
-        < ZLELL.load(SeqCst)
-        && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)]
-            .is_alphanumeric()
+    while ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
+        && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphanumeric()
     {
         {
             let mut __g = ZLELINE.lock().unwrap();
-            __g[ZLECS.load(SeqCst)] = __g
-                [ZLECS.load(SeqCst)]
-            .to_lowercase()
-            .next()
-            .unwrap_or(__g[ZLECS.load(SeqCst)]);
+            __g[ZLECS.load(SeqCst)] = __g[ZLECS.load(SeqCst)]
+                .to_lowercase()
+                .next()
+                .unwrap_or(__g[ZLECS.load(SeqCst)]);
         }
         ZLECS.fetch_add(1, SeqCst);
     }
@@ -2396,26 +2160,21 @@ pub fn capitalize_word() {
 /// Port of `downcaseword(UNUSED(char **args))` from Src/Zle/zle_word.c — calls
 /// `casemodifyword()` with the CASMOD_LOWER flag.
 pub fn downcase_word() {
-    while ZLECS.load(SeqCst)
-        < ZLELL.load(SeqCst)
-        && !ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)]
-            .is_alphanumeric()
+    while ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
+        && !ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphanumeric()
     {
         ZLECS.fetch_add(1, SeqCst);
     }
 
-    while ZLECS.load(SeqCst)
-        < ZLELL.load(SeqCst)
-        && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)]
-            .is_alphanumeric()
+    while ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
+        && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphanumeric()
     {
         {
             let mut __g = ZLELINE.lock().unwrap();
-            __g[ZLECS.load(SeqCst)] = __g
-                [ZLECS.load(SeqCst)]
-            .to_lowercase()
-            .next()
-            .unwrap_or(__g[ZLECS.load(SeqCst)]);
+            __g[ZLECS.load(SeqCst)] = __g[ZLECS.load(SeqCst)]
+                .to_lowercase()
+                .next()
+                .unwrap_or(__g[ZLECS.load(SeqCst)]);
         }
         ZLECS.fetch_add(1, SeqCst);
     }
@@ -2427,26 +2186,21 @@ pub fn downcase_word() {
 /// Port of `upcaseword(UNUSED(char **args))` from Src/Zle/zle_word.c — calls
 /// `casemodifyword()` with the CASMOD_UPPER flag.
 pub fn upcase_word() {
-    while ZLECS.load(SeqCst)
-        < ZLELL.load(SeqCst)
-        && !ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)]
-            .is_alphanumeric()
+    while ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
+        && !ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphanumeric()
     {
         ZLECS.fetch_add(1, SeqCst);
     }
 
-    while ZLECS.load(SeqCst)
-        < ZLELL.load(SeqCst)
-        && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)]
-            .is_alphanumeric()
+    while ZLECS.load(SeqCst) < ZLELL.load(SeqCst)
+        && ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)].is_alphanumeric()
     {
         {
             let mut __g = ZLELINE.lock().unwrap();
-            __g[ZLECS.load(SeqCst)] = __g
-                [ZLECS.load(SeqCst)]
-            .to_uppercase()
-            .next()
-            .unwrap_or(__g[ZLECS.load(SeqCst)]);
+            __g[ZLECS.load(SeqCst)] = __g[ZLECS.load(SeqCst)]
+                .to_uppercase()
+                .next()
+                .unwrap_or(__g[ZLECS.load(SeqCst)]);
         }
         ZLECS.fetch_add(1, SeqCst);
     }
@@ -2463,19 +2217,13 @@ pub fn transpose_words() {
 
     // Find boundaries of two words
     let mut end2 = ZLECS.load(SeqCst);
-    while end2 < ZLELL.load(SeqCst)
-        && ZLELINE.lock().unwrap()[end2].is_alphanumeric()
-    {
+    while end2 < ZLELL.load(SeqCst) && ZLELINE.lock().unwrap()[end2].is_alphanumeric() {
         end2 += 1;
     }
-    while end2 < ZLELL.load(SeqCst)
-        && !ZLELINE.lock().unwrap()[end2].is_alphanumeric()
-    {
+    while end2 < ZLELL.load(SeqCst) && !ZLELINE.lock().unwrap()[end2].is_alphanumeric() {
         end2 += 1;
     }
-    while end2 < ZLELL.load(SeqCst)
-        && ZLELINE.lock().unwrap()[end2].is_alphanumeric()
-    {
+    while end2 < ZLELL.load(SeqCst) && ZLELINE.lock().unwrap()[end2].is_alphanumeric() {
         end2 += 1;
     }
 
@@ -2512,10 +2260,7 @@ pub fn transpose_words() {
             ZLELINE.lock().unwrap().insert(start1 + i, *c);
         }
 
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
         ZLECS.store(new_end1, SeqCst);
         ZLE_RESET_NEEDED.store(1, SeqCst);
     }
@@ -2535,18 +2280,10 @@ pub fn quote_line() {
 /// Quote region
 /// Port of quoteregion(UNUSED(char **args)) from zle_misc.c
 pub fn quote_region() {
-    let (start, end) = if ZLECS.load(SeqCst)
-        < MARK.load(SeqCst)
-    {
-        (
-            ZLECS.load(SeqCst),
-            MARK.load(SeqCst),
-        )
+    let (start, end) = if ZLECS.load(SeqCst) < MARK.load(SeqCst) {
+        (ZLECS.load(SeqCst), MARK.load(SeqCst))
     } else {
-        (
-            MARK.load(SeqCst),
-            ZLECS.load(SeqCst),
-        )
+        (MARK.load(SeqCst), ZLECS.load(SeqCst))
     };
 
     ZLELINE.lock().unwrap().insert(end, '\'');
@@ -2560,9 +2297,7 @@ pub fn quote_region() {
 /// What cursor position - display cursor info
 /// Port of whatcursorposition(UNUSED(char **args)) from zle_misc.c
 pub fn what_cursor_position() -> String {
-    if ZLECS.load(SeqCst)
-        >= ZLELL.load(SeqCst)
-    {
+    if ZLECS.load(SeqCst) >= ZLELL.load(SeqCst) {
         return format!(
             "point={} of {} (EOL)",
             ZLECS.load(SeqCst),
@@ -2592,9 +2327,7 @@ pub fn what_cursor_position() -> String {
 /// Digit argument - accumulate numeric argument
 /// Port of digitargument(UNUSED(char **args)) from zle_misc.c
 pub fn digit_argument(digit: u8) {
-    if MULT.load(SeqCst) == 1
-        && !NEG_ARG.load(SeqCst)
-    {
+    if MULT.load(SeqCst) == 1 && !NEG_ARG.load(SeqCst) {
         MULT.store(0, SeqCst);
     }
     MULT.store(
@@ -2608,10 +2341,7 @@ pub fn digit_argument(digit: u8) {
 /// Negative argument
 /// Port of negargument(UNUSED(char **args)) from zle_misc.c
 pub fn neg_argument() {
-    NEG_ARG.store(
-        !NEG_ARG.load(SeqCst),
-        SeqCst,
-    );
+    NEG_ARG.store(!NEG_ARG.load(SeqCst), SeqCst);
 }
 
 /// Undefined key - beep
@@ -2633,9 +2363,7 @@ pub fn send_break() {
 /// Vi put after cursor
 /// Port of viputafter(UNUSED(char **args)) from zle_misc.c
 pub fn vi_put_after() {
-    if ZLECS.load(SeqCst)
-        < ZLELL.load(SeqCst)
-    {
+    if ZLECS.load(SeqCst) < ZLELL.load(SeqCst) {
         ZLECS.fetch_add(1, SeqCst);
     }
     yank();
@@ -2676,16 +2404,10 @@ pub fn copy_prev_word() {
     if start < end {
         let word: Vec<char> = ZLELINE.lock().unwrap()[start..end].to_vec();
         for c in word {
-            ZLELINE
-                .lock()
-                .unwrap()
-                .insert(ZLECS.load(SeqCst), c);
+            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst), c);
             ZLECS.fetch_add(1, SeqCst);
         }
-        ZLELL.store(
-            ZLELINE.lock().unwrap().len(),
-            SeqCst,
-        );
+        ZLELL.store(ZLELINE.lock().unwrap().len(), SeqCst);
         ZLE_RESET_NEEDED.store(1, SeqCst);
     }
 }
@@ -3018,8 +2740,7 @@ mod tests {
         ZMOD.lock().unwrap().flags = 0;
         ZMOD.lock().unwrap().base = 10;
         ZMOD.lock().unwrap().mult = 1; // sign = 1
-        LASTCHAR
-            .store((b'5' as i32) as i32, SeqCst);
+        LASTCHAR.store((b'5' as i32) as i32, SeqCst);
         let r = digitargument();
         assert_eq!(r, 0);
         assert_eq!(ZMOD.lock().unwrap().tmult, 5);
@@ -3037,8 +2758,7 @@ mod tests {
         ZMOD.lock().unwrap().tmult = 5;
         ZMOD.lock().unwrap().base = 10;
         ZMOD.lock().unwrap().mult = 1; // sign = 1
-        LASTCHAR
-            .store((b'7' as i32) as i32, SeqCst);
+        LASTCHAR.store((b'7' as i32) as i32, SeqCst);
         digitargument();
         assert_eq!(ZMOD.lock().unwrap().tmult, 57);
     }
@@ -3050,8 +2770,7 @@ mod tests {
         // c:1047-1048 — parsedigit < 0 → return 1.
         zle_reset();
         ZMOD.lock().unwrap().base = 10;
-        LASTCHAR
-            .store((b'a' as i32) as i32, SeqCst); // not a decimal digit
+        LASTCHAR.store((b'a' as i32) as i32, SeqCst); // not a decimal digit
         assert_eq!(digitargument(), 1);
     }
 
@@ -3066,8 +2785,7 @@ mod tests {
         ZMOD.lock().unwrap().tmult = -1; // set by negargument
         ZMOD.lock().unwrap().base = 10;
         ZMOD.lock().unwrap().mult = -1; // negative → sign = -1
-        LASTCHAR
-            .store((b'3' as i32) as i32, SeqCst);
+        LASTCHAR.store((b'3' as i32) as i32, SeqCst);
         digitargument();
         assert_eq!(ZMOD.lock().unwrap().tmult, -3);
         // NEG cleared.
@@ -3139,22 +2857,12 @@ mod tests {
     fn fixunmeta_strips_meta_and_normalizes_cr() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        LASTCHAR.store(
-            (0x80 | b'a' as i32) as i32,
-            SeqCst,
-        );
+        LASTCHAR.store((0x80 | b'a' as i32) as i32, SeqCst);
         fixunmeta();
-        assert_eq!(
-            LASTCHAR.load(SeqCst),
-            b'a' as i32
-        );
-        LASTCHAR
-            .store((b'\r' as i32) as i32, SeqCst);
+        assert_eq!(LASTCHAR.load(SeqCst), b'a' as i32);
+        LASTCHAR.store((b'\r' as i32) as i32, SeqCst);
         fixunmeta();
-        assert_eq!(
-            LASTCHAR.load(SeqCst),
-            b'\n' as i32
-        );
+        assert_eq!(LASTCHAR.load(SeqCst), b'\n' as i32);
     }
 
     #[test]
@@ -3164,8 +2872,7 @@ mod tests {
         *ZLELINE.lock().unwrap() = "abc".chars().collect();
         ZLELL.store(3, SeqCst);
         ZLECS.store(1, SeqCst);
-        LASTCHAR
-            .store((b'X' as i32) as i32, SeqCst);
+        LASTCHAR.store((b'X' as i32) as i32, SeqCst);
         LASTCHAR_WIDE_VALID.store(0, SeqCst);
         selfinsert();
         let s: String = ZLELINE.lock().unwrap().iter().collect();
@@ -3179,10 +2886,7 @@ mod tests {
         *ZLELINE.lock().unwrap() = "ab".chars().collect();
         ZLELL.store(2, SeqCst);
         ZLECS.store(1, SeqCst);
-        LASTCHAR.store(
-            (0x80 | b'X' as i32) as i32,
-            SeqCst,
-        );
+        LASTCHAR.store((0x80 | b'X' as i32) as i32, SeqCst);
         LASTCHAR_WIDE_VALID.store(0, SeqCst);
         selfinsertunmeta();
         let s: String = ZLELINE.lock().unwrap().iter().collect();
@@ -3635,8 +3339,7 @@ mod tests {
         ZLELL.store(4, SeqCst);
         transpose_swap(0, 0, 4);
         let got: String = ZLELINE.lock().unwrap().iter().collect();
-        assert_eq!(got, "abcd",
-            "empty first half = identity transform");
+        assert_eq!(got, "abcd", "empty first half = identity transform");
     }
 
     /// Second half empty (middle == end): no-op.
@@ -3651,8 +3354,7 @@ mod tests {
         ZLELL.store(4, SeqCst);
         transpose_swap(0, 4, 4);
         let got: String = ZLELINE.lock().unwrap().iter().collect();
-        assert_eq!(got, "abcd",
-            "empty second half = identity transform");
+        assert_eq!(got, "abcd", "empty second half = identity transform");
     }
 
     /// Partial-buffer transpose: only middle bytes swapped, surrounds preserved.
@@ -3667,7 +3369,6 @@ mod tests {
         ZLELL.store(8, SeqCst);
         transpose_swap(2, 4, 6);
         let got: String = ZLELINE.lock().unwrap().iter().collect();
-        assert_eq!(got, "XYcdabZW",
-            "surrounding chars XY,ZW must be preserved");
+        assert_eq!(got, "XYcdabZW", "surrounding chars XY,ZW must be preserved");
     }
 }

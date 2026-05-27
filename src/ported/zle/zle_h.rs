@@ -1279,8 +1279,7 @@ mod tests {
         ];
         for (i, a) in flags.iter().enumerate() {
             for b in &flags[i + 1..] {
-                assert_eq!(a & b, 0,
-                    "flags {a:#x} and {b:#x} must be disjoint");
+                assert_eq!(a & b, 0, "flags {a:#x} and {b:#x} must be disjoint");
             }
         }
     }
@@ -1288,8 +1287,10 @@ mod tests {
     /// T_THINGY_NAMES is non-empty (canonical widget-name table).
     #[test]
     fn zle_h_corpus_thingy_names_table_nonempty() {
-        assert!(!T_THINGY_NAMES.is_empty(),
-            "thingy names table must list canonical widget names");
+        assert!(
+            !T_THINGY_NAMES.is_empty(),
+            "thingy names table must list canonical widget names"
+        );
     }
 
     /// TH_IMMORTAL bit is 1<<1 per c:234.

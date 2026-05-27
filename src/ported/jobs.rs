@@ -15,26 +15,29 @@
 //!
 //! Provides job control, process management, and signal handling for jobs.
 
-use std::env;
-use std::os::unix::process::ExitStatusExt;
-use std::process::Child;
-use std::sync::atomic::Ordering;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
-use crate::DPUTS;
 use crate::exec_jobs::JobTable;
 use crate::ported::builtin::{SHELL_EXITING, STOPMSG};
 use crate::ported::builtins::sched::zleactive;
 use crate::ported::hashtable_h::{BIN_BG, BIN_DISOWN, BIN_FG, BIN_JOBS, BIN_WAIT};
 use crate::ported::options::opt_state_set;
 use crate::ported::params::{getsparam, setsparam, unsetparam};
-use crate::ported::signals::{killjb, queue_signals, signal_block, signal_setmask, unqueue_signals, wait_for_processes};
+use crate::ported::signals::{
+    killjb, queue_signals, signal_block, signal_setmask, unqueue_signals, wait_for_processes,
+};
 use crate::ported::signals_h::{signal_default, signal_ignore, sigs_name, sigs_number};
 use crate::ported::utils::zwarnnam;
-use crate::ported::zsh_h::{MONITOR, OPT_ISSET, POSIXBUILTINS, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB, STAT_SUBJOB_ORPHANED, STAT_SUPERJOB, isset, job, options, process, POSIXJOBS, LONGLISTJOBS, INTERACTIVE};
-pub use crate::ported::zsh_h::{MAXJOBS_ALLOC, MAX_PIPESTATS, SP_RUNNING, timeinfo};
-
-
+use crate::ported::zsh_h::{
+    isset, job, options, process, INTERACTIVE, LONGLISTJOBS, MONITOR, OPT_ISSET, POSIXBUILTINS,
+    POSIXJOBS, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB, STAT_SUBJOB_ORPHANED, STAT_SUPERJOB,
+};
+pub use crate::ported::zsh_h::{timeinfo, MAXJOBS_ALLOC, MAX_PIPESTATS, SP_RUNNING};
+use crate::DPUTS;
+use std::env;
+use std::os::unix::process::ExitStatusExt;
+use std::process::Child;
+use std::sync::atomic::Ordering;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// job status flags. `i32` to match C's `int stat` field on
 /// `struct job` (`Src/zsh.h:1062`).
@@ -304,7 +307,6 @@ impl job {
 // C-style globals (Bucket 2: shell-wide shared state per PORT_PLAN.md)
 // Declared in same order as jobs.c lines 57-131
 // ---------------------------------------------------------------------------
-
 
 /// Port of `hasprocs(int job)` from `Src/jobs.c:243`.
 ///
@@ -1009,8 +1011,7 @@ pub fn dumptime(job: &job) -> Option<String> {
     // call (c:808 inside printtime). Rust printtime takes format as a
     // parameter, so we read it here and pass through.
     const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
-    let format =
-        getsparam("TIMEFMT").unwrap_or_else(|| DEFAULT_TIMEFMT.to_string());
+    let format = getsparam("TIMEFMT").unwrap_or_else(|| DEFAULT_TIMEFMT.to_string());
 
     // c:1027-1029 — for each proc, printtime(dtime_ts(&bgtime, &endtime), &ti, text).
     let lines: Vec<String> = job
@@ -1478,8 +1479,7 @@ pub fn deletejob(jn: &mut job, disowning: bool) {
         // c:1515
         #[cfg(unix)]
         unsafe {
-            let pgrp =
-                crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed);
+            let pgrp = crate::ported::modules::clone::mypgrp.load(Ordering::Relaxed);
             if pgrp > 0 {
                 libc::tcsetpgrp(0, pgrp); // c:1516 attachtty(mypgrp)
             }
@@ -1626,8 +1626,8 @@ pub fn zwaitjob(job: &mut job, wait_cmd: i32) -> Option<i32> {
         return Some(0);
     }
 
-    use crate::ported::zsh_h::{ERRFLAG_ERROR, STAT_DONE, STAT_STOPPED, ZSIG_TRAPPED, INTERACTIVE};
     use crate::ported::utils::errflag;
+    use crate::ported::zsh_h::{ERRFLAG_ERROR, INTERACTIVE, STAT_DONE, STAT_STOPPED, ZSIG_TRAPPED};
 
     // c:1675 — `int q = queue_signal_level();`
     let q = crate::ported::signals_h::queue_signal_level();
@@ -1761,7 +1761,7 @@ pub fn clearjobtab(table: &mut JobTable, monitor: i32) {
     // c:1780
     let _ = table; // legacy executor-side handle, unused now
     let posix_jobs = isset(POSIXJOBS); // c:1786
-                                                                                   // c:1786-1787 — `if (isset(POSIXJOBS)) oldmaxjob = 0;`.
+                                       // c:1786-1787 — `if (isset(POSIXJOBS)) oldmaxjob = 0;`.
     if posix_jobs {
         if let Some(om) = OLDMAXJOB.get() {
             if let Ok(mut o) = om.lock() {
@@ -2489,13 +2489,13 @@ pub fn getjob(s: &str, prog: &str) -> i32 {
 pub fn init_jobs(argv: &[String], envp: &[String]) -> JobTable {
     // c:2164
     let table = JobTable::new(); // c:2164 zalloc
-                                                   // c:2185-2210 — `-Z` hackspace scan: locate contiguous argv+envp
-                                                   // space. Static-link path: we don't yet keep `hackzero` /
-                                                   // `hackspace` globals (the bin_fg -Z arm uses prctl directly on
-                                                   // Linux + pthread_setname_np on macOS, both bypassing the argv
-                                                   // overwrite trick). The scan computes the byte-distance only;
-                                                   // record it via env-var bridge so a future setproctitle fallback
-                                                   // can read it.
+                                 // c:2185-2210 — `-Z` hackspace scan: locate contiguous argv+envp
+                                 // space. Static-link path: we don't yet keep `hackzero` /
+                                 // `hackspace` globals (the bin_fg -Z arm uses prctl directly on
+                                 // Linux + pthread_setname_np on macOS, both bypassing the argv
+                                 // overwrite trick). The scan computes the byte-distance only;
+                                 // record it via env-var bridge so a future setproctitle fallback
+                                 // can read it.
     if !argv.is_empty() {
         // c:2187 hackzero = *argv
         let zero = argv[0].as_str();
@@ -2704,11 +2704,7 @@ pub fn bin_fg(
         } // c:2456
     } else {
         // c:2458 — `lng = !!isset(LONGLISTJOBS);`
-        lng = if isset(LONGLISTJOBS) {
-            1
-        } else {
-            0
-        };
+        lng = if isset(LONGLISTJOBS) { 1 } else { 0 };
     }
     let _ = lng;
 
@@ -2732,9 +2728,7 @@ pub fn bin_fg(
     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::NOTIFY) {
         if let Some(jt) = JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
-            let long_list = crate::ported::zsh_h::isset(
-                crate::ported::zsh_h::LONGLISTJOBS,
-            );
+            let long_list = crate::ported::zsh_h::isset(crate::ported::zsh_h::LONGLISTJOBS);
             for i in 1..guard.len() {
                 if (guard[i].stat & crate::ported::zsh_h::STAT_CHANGED) != 0 {
                     let s = printjob(&guard[i], i, long_list, None, None);
@@ -3010,10 +3004,7 @@ pub fn bin_kill(
                 return returnval; // c:2868
             }
             // c:2869-2876 — bare `-l`: print every signal name.
-            print!(
-                "{}",
-                sigs_name(1).unwrap_or("HUP")
-            );
+            print!("{}", sigs_name(1).unwrap_or("HUP"));
             for s in 2..=crate::ported::signals_h::SIGCOUNT {
                 if let Some(n) = sigs_name(s) {
                     print!(" {}", n);
@@ -3252,9 +3243,7 @@ pub fn bin_kill(
 /// `$signals` array only carries the real OS signals (no virtual
 /// entries). Used by `arrays_get("signals")` in the subst path.
 pub fn sig_names_for_signals_param() -> Vec<String> {
-    let mut out: Vec<String> = Vec::with_capacity(
-        crate::ported::signals_h::SIGCOUNT as usize + 1,
-    );
+    let mut out: Vec<String> = Vec::with_capacity(crate::ported::signals_h::SIGCOUNT as usize + 1);
     // Slot 0 → "EXIT".
     if let Some(n) = crate::ported::signals_h::sigs_name(0) {
         out.push(n.to_string());
@@ -3268,14 +3257,10 @@ pub fn sig_names_for_signals_param() -> Vec<String> {
     // Virtual signals ZERR / DEBUG occupy the tail (SIGCOUNT+1,
     // SIGCOUNT+2) per c:Src/signames.c — zsh exposes them in
     // `$signals` after the real OS signals.
-    if let Some(n) = crate::ported::signals_h::sigs_name(
-        crate::ported::signals_h::SIGZERR,
-    ) {
+    if let Some(n) = crate::ported::signals_h::sigs_name(crate::ported::signals_h::SIGZERR) {
         out.push(n.to_string());
     }
-    if let Some(n) = crate::ported::signals_h::sigs_name(
-        crate::ported::signals_h::SIGDEBUG,
-    ) {
+    if let Some(n) = crate::ported::signals_h::sigs_name(crate::ported::signals_h::SIGDEBUG) {
         out.push(n.to_string());
     }
     out
@@ -3506,9 +3491,7 @@ pub fn bin_suspend(
     //          `islogin` global, set when zsh's `argv[0]` started with
     //          `-`. Probe `$0` via paramtab (was reading the OS env,
     //          which never carries a literal `$0`).
-    let islogin = getsparam("0")
-        .map(|s| s.starts_with('-'))
-        .unwrap_or(false);
+    let islogin = getsparam("0").map(|s| s.starts_with('-')).unwrap_or(false);
     //won't suspend a login shell, unless forced
     if islogin && !OPT_ISSET(ops, b'f') {
         // c:3173
@@ -3826,8 +3809,7 @@ pub fn waitonejob(jn: &mut job) {
         // c:1753 — `deletejob(jn, 0);`
         deletejob(jn, false);
         // c:1754 — `pipestats[0] = lastval;`
-        let lastval = crate::ported::builtin::LASTVAL
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let lastval = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
         let p = PIPESTATS.get_or_init(|| Mutex::new([0; MAX_PIPESTATS]));
         if let Ok(mut pguard) = p.lock() {
             pguard[0] = lastval; // c:1754
@@ -3841,10 +3823,7 @@ pub fn waitonejob(jn: &mut job) {
         // walk the C `pipestats[]` array. zshrs's paramtab fast-path
         // reads from `paramtab["pipestatus"]` so mirror the C array
         // into the param table for visibility.
-        crate::ported::params::setaparam(
-            "pipestatus",
-            vec![lastval.to_string()],
-        );
+        crate::ported::params::setaparam("pipestatus", vec![lastval.to_string()]);
     }
 }
 
@@ -3885,8 +3864,8 @@ pub fn getbgstatus(pid: i32) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ported::zsh_h::{STAT_BUILTIN, STAT_CHANGED, STAT_DONE, STAT_STOPPED, STAT_TIMED};
     use super::*;
+    use crate::ported::zsh_h::{STAT_BUILTIN, STAT_CHANGED, STAT_DONE, STAT_STOPPED, STAT_TIMED};
 
     /// printtime expands rusage directives (`%M`/`%F`/`%R`/`%c`/`%w`) from a
     /// `timeinfo` argument. The directive set was untyped before the rusage

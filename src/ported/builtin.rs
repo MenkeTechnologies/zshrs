@@ -29,16 +29,22 @@ use std::sync::{Mutex, OnceLock};
 #[allow(unused_imports)]
 use std::{env, fs, io, io::Write, path::Path, path::PathBuf};
 
-use indexmap::IndexMap;
-use crate::DPUTS;
 use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
 use crate::parse::{Redirect, ShellCommand};
 use crate::ported::compat::zgetcwd;
 use crate::ported::config_h::DEFAULT_PATH;
 use crate::ported::exec::{getfpfunc, iscom, loadautofn, FORKLEVEL, TRAP_RETURN, TRAP_STATE};
-use crate::ported::hashnameddir::{addnameddirnode, emptynameddirtable, fillnameddirtable, nameddirtab, printnameddirnode};
-use crate::ported::hashtable::{aliastab_lock, cmdnamtab_lock, createaliasnode, dircache_set, emptycmdnamtable, fillcmdnamtable, hnamcmp, printaliasnode, printcmdnamnode, printshfuncexpand, reswdtab_lock, scanmatchshfunc, scanshfunc, shfunctab_lock, sufaliastab_lock};
+use crate::ported::hashnameddir::{
+    addnameddirnode, emptynameddirtable, fillnameddirtable, nameddirtab, printnameddirnode,
+};
+use crate::ported::hashtable::{
+    aliastab_lock, cmdnamtab_lock, createaliasnode, dircache_set, emptycmdnamtable,
+    fillcmdnamtable, hnamcmp, printaliasnode, printcmdnamnode, printshfuncexpand, reswdtab_lock,
+    scanmatchshfunc, scanshfunc, shfunctab_lock, sufaliastab_lock,
+};
+use crate::DPUTS;
+use indexmap::IndexMap;
 // `curhist` (hist.rs static) NOT imported — there's an unavoidable
 // `let curhist` local in fc_main that mirrors C's `int curhist;` local
 // shadowing the global. Rule E says keep the C name. The static is
@@ -54,14 +60,41 @@ use crate::ported::mem::{queue_signals, unqueue_signals};
 use crate::ported::module::MATHFUNCS;
 use crate::ported::modules::parameter::{DIRSTACK, FUNCSTACK};
 use crate::ported::options::{dosetopt, emulation, optlookup, ZSH_OPTIONS_SET};
-use crate::ported::params::{createparam, getiparam, getsparam, isident, locallevel as locallevel_param, locallevel, paramtab, printparamnode, setaparam, setiparam, setsparam, unsetparam, unsetparam_pm};
+use crate::ported::params::{
+    createparam, getiparam, getsparam, isident, locallevel as locallevel_param, locallevel,
+    paramtab, printparamnode, setaparam, setiparam, setsparam, unsetparam, unsetparam_pm,
+};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals::settrap;
-use crate::ported::utils::{argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir, print_if_link, printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn, zwarnnam, GETKEYS_ECHO, GETKEYS_PRINT};
+use crate::ported::utils::{
+    argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir,
+    print_if_link, printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn,
+    zwarnnam, GETKEYS_ECHO, GETKEYS_PRINT,
+};
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
 use crate::ported::zle::compctl::compctlread;
-use crate::ported::zsh_h::{eprog, nameddir, options, ALIAS_GLOBAL, ALIAS_SUFFIX, BINF_KEEPNUM, DISABLED, EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, MAX_OPS, MFF_STR, OPT_ARG, OPT_HASARG, OPT_ISSET, OPT_MINUS, OPT_PLUS, PM_ABSPATH_USED, PM_ARRAY, PM_CUR_FPATH, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF, PM_UNIQUE, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED, PM_UNALIASED, PM_UNDEFINED, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TYPESET_OPTSTR, XTRACE, asgment, builtin, hashnode, isset, mathfunc, param, shfunc, HandlerFunc, ASG_ARRAY, ASG_ARRAYP, ASG_KEY_VALUE, ASG_VALUEP, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID, BINF_EXEC, BINF_HANDLES_OPTS, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, FUNCTIONARGZERO, HASHED, INTERACTIVE, MFF_USERFUNC, MONITOR, NULLBINCMD, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_AUTOLOAD, PM_DECLARED, PM_EXPORTED, PM_HIDE, PM_SCALAR, PM_SPECIAL, PM_TYPE, PM_UNSET, POSIXBUILTINS, PRINT_INCLUDEVALUE, TYPESETSILENT, TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_DEFERRED, ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC, alias, cmdnam, Meta};
+use crate::ported::zsh_h::{
+    alias, asgment, builtin, cmdnam, eprog, hashnode, isset, mathfunc, nameddir, options, param,
+    shfunc, HandlerFunc, Meta, ALIAS_GLOBAL, ALIAS_SUFFIX, ASG_ARRAY, ASG_ARRAYP, ASG_KEY_VALUE,
+    ASG_VALUEP, BINF_ADDED, BINF_ASSIGN, BINF_BUILTIN, BINF_COMMAND, BINF_DASH, BINF_DASHDASHVALID,
+    BINF_EXEC, BINF_HANDLES_OPTS, BINF_KEEPNUM, BINF_MAGICEQUALS, BINF_NOGLOB, BINF_PLUSOPTS,
+    BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID, DISABLED,
+    EMULATE_CSH, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC,
+    FUNCTIONARGZERO, HASHED, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN,
+    INTERACTIVE, MAX_OPS, MFF_STR, MFF_USERFUNC, MONITOR, NULLBINCMD, OPT_ARG, OPT_HASARG,
+    OPT_ISSET, OPT_MINUS, OPT_PLUS, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_ABSPATH_USED, PM_ARRAY,
+    PM_AUTOLOAD, PM_CUR_FPATH, PM_DECLARED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
+    PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF,
+    PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TAGGED_LOCAL,
+    PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNDEFINED, PM_UNIQUE, PM_UNSET, PM_UPPER, PM_WARNNESTED,
+    PM_ZSHSTORED, POSIXBUILTINS, PRINT_INCLUDEVALUE, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY,
+    PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH,
+    PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD,
+    PRINT_WITH_NAMESPACE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TRAP_STATE_FORCE_RETURN,
+    TRAP_STATE_PRIMED, TYPESETSILENT, TYPESET_OPTSTR, XTRACE, ZEXIT_DEFERRED, ZEXIT_NORMAL,
+    ZEXIT_SIGNAL, ZSIG_FUNC,
+};
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
 
@@ -141,27 +174,30 @@ pub fn createbuiltintable() -> &'static HashMap<String, &'static builtin> {
 /// printf("%s\n", bn->node.nam);
 /// ```
 pub fn printbuiltinnode(
-    hn: *mut hashnode,                                                       // c:174
+    hn: *mut hashnode, // c:174
     printflags: i32,
 ) {
     if hn.is_null() {
         return;
     }
-    let bn = unsafe { &*hn };                                                // c:176
-    if (printflags & PRINT_WHENCE_WORD as i32) != 0 {                        // c:178
-        println!("{}: builtin", bn.nam);                                     // c:179
-        return;                                                              // c:180
+    let bn = unsafe { &*hn }; // c:176
+    if (printflags & PRINT_WHENCE_WORD as i32) != 0 {
+        // c:178
+        println!("{}: builtin", bn.nam); // c:179
+        return; // c:180
     }
-    if (printflags & PRINT_WHENCE_CSH as i32) != 0 {                         // c:183
-        println!("{}: shell built-in command", bn.nam);                      // c:184
-        return;                                                              // c:185
+    if (printflags & PRINT_WHENCE_CSH as i32) != 0 {
+        // c:183
+        println!("{}: shell built-in command", bn.nam); // c:184
+        return; // c:185
     }
-    if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {                     // c:188
-        println!("{} is a shell builtin", bn.nam);                           // c:189
-        return;                                                              // c:190
+    if (printflags & PRINT_WHENCE_VERBOSE as i32) != 0 {
+        // c:188
+        println!("{} is a shell builtin", bn.nam); // c:189
+        return; // c:190
     }
     // c:193 — `/* default is name only */`
-    println!("{}", bn.nam);                                                  // c:194
+    println!("{}", bn.nam); // c:194
 }
 
 /// Port of `freebuiltinnode(HashNode hn)` from Src/builtin.c:199.
@@ -304,7 +340,7 @@ pub fn execbuiltin(
         // c:264
         // c:265 — DPUTS(1, "Missing builtin detected too late")
         DPUTS!(true, "Missing builtin detected too late"); // c:265
-                                                                  // c:266 — deletebuiltin(bn->node.nam) — not yet ported here.
+                                                           // c:266 — deletebuiltin(bn->node.nam) — not yet ported here.
         return 1; // c:267
     }
 
@@ -527,8 +563,7 @@ pub fn execbuiltin(
     let ef = errflag.load(Relaxed);
     if (ef & ERRFLAG_ERROR) != 0 {
         // c:426
-        errflag
-            .fetch_and(!ERRFLAG_ERROR, Relaxed); // c:427
+        errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:427
         return 1; // c:428
     }
 
@@ -555,7 +590,7 @@ pub fn execbuiltin(
         // user typed, not the option-stripped tail.
         let fullargv = &argarr; // c:441
         printprompt4(); // c:442
-                                              // c:443 — `fprintf(xtrerr, "%s", name);`
+                        // c:443 — `fprintf(xtrerr, "%s", name);`
         eprint!("{}", name); // c:443
                              // c:444-447 — `while (*fullargv) { fputc(' ',xtrerr); quotedzputs(...); }`
         for s in fullargv {
@@ -797,12 +832,12 @@ pub fn bin_enable(
     if argv.is_empty() {
         // c:553
         queue_signals(); // c:554
-        // c:555 — `scanhashtable(ht, 1, flags1, flags2, ht->printnode, 0);`
-        // Filter: print only entries where (flags & flags1) == flags1
-        // && (flags & flags2) == 0. For enable/disable, flags1 and
-        // flags2 are DISABLED-bit selectors that mask the listed set
-        // to ONLY the kind being toggled (enable lists enabled,
-        // disable lists disabled).
+                         // c:555 — `scanhashtable(ht, 1, flags1, flags2, ht->printnode, 0);`
+                         // Filter: print only entries where (flags & flags1) == flags1
+                         // && (flags & flags2) == 0. For enable/disable, flags1 and
+                         // flags2 are DISABLED-bit selectors that mask the listed set
+                         // to ONLY the kind being toggled (enable lists enabled,
+                         // disable lists disabled).
         let is_disabled = |nm: &str| -> bool {
             match tab {
                 Tab::Alias => aliastab_lock()
@@ -1019,8 +1054,7 @@ pub fn bin_set(
                     zerrnam(nam, &format!("no such option: {}", optname));
                     unqueue_signals();
                     return 1;
-                } else if dosetopt(optno, if action { 1 } else { 0 }, 0)
-                    != 0
+                } else if dosetopt(optno, if action { 1 } else { 0 }, 0) != 0
                 // c:644
                 {
                     zerrnam(nam, &format!("can't change option: {}", optname));
@@ -1065,8 +1099,7 @@ pub fn bin_set(
                 if optno == 0 {
                     // c:663
                     zerr(&format!("bad option: -{}", c)); // c:663
-                } else if dosetopt(optno, if action { 1 } else { 0 }, 0)
-                    != 0
+                } else if dosetopt(optno, if action { 1 } else { 0 }, 0) != 0
                 // c:664
                 {
                     zerr(&format!("can't change option: -{}", c)); // c:664
@@ -1151,10 +1184,7 @@ pub fn bin_set(
                     // c:686 PRINT_NAMEONLY
                     println!("{}", k);
                 } else {
-                    let quoted: Vec<String> = arr
-                        .iter()
-                        .map(|v| quotedzputs(v))
-                        .collect();
+                    let quoted: Vec<String> = arr.iter().map(|v| quotedzputs(v)).collect();
                     println!("{}=({})", k, quoted.join(" "));
                 }
             }
@@ -1593,7 +1623,7 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
         // c:887
         let arg = &argv[0];
         DOPRINTDIR.fetch_add(1, Relaxed); // c:891
-                                                    // c:892-908 — `+N`/`-N` numeric stack-index form.
+                                          // c:892-908 — `+N`/`-N` numeric stack-index form.
         let posixcd = isset(optlookup("posixcd"));
         if !posixcd
             && arg.len() > 1
@@ -1669,10 +1699,7 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
         if let Some(ret) = cd_try_chdir("", dest, hard) {
             return Some(ret);
         }
-        zwarnnam(
-            cnam,
-            &format!("{}: {}", io::Error::last_os_error(), dest),
-        );
+        zwarnnam(cnam, &format!("{}: {}", io::Error::last_os_error(), dest));
         return None;
     }
 
@@ -1873,7 +1900,7 @@ pub fn printdirstack() {
         })
         .unwrap_or_default();
     print!("{}", fprintdir(&pwd)); // c:1281
-                                                         // c:1282-1286 — `for (node = firstnode(dirstack); ...)`
+                                   // c:1282-1286 — `for (node = firstnode(dirstack); ...)`
     if let Ok(d) = DIRSTACK.lock() {
         for entry in d.iter() {
             // c:1282
@@ -2859,8 +2886,7 @@ pub fn typeset_single(
     let pm_ref = unsafe { pm.as_mut() };
     if let Some(pm_r) = &pm_ref {
         let pm_flags = pm_r.node.flags as u32;
-        let locallevel_v =
-            locallevel_param.load(Relaxed);
+        let locallevel_v = locallevel_param.load(Relaxed);
         if (pm_flags & PM_NAMEREF) != 0
             && ((off | on) as u32 & PM_NAMEREF) == 0
             && (pm_r.level == locallevel_v || (on as u32 & PM_LOCAL) == 0)
@@ -3033,29 +3059,26 @@ pub fn typeset_single(
     // c:2240-2247 — print-only path: typeset -p / typeset name (no value).
     if usepm != 0 && on == 0 && _roff == 0 && asg_ref.is_some_and(|a| !ASG_VALUEP(a)) {
         // c:2241 — `int with_ns = OPT_ISSET(ops,'m') ? PRINT_WITH_NAMESPACE : 0;`
-        let with_ns = if OPT_ISSET(ops, b'm') {                              // c:2241
+        let with_ns = if OPT_ISSET(ops, b'm') {
+            // c:2241
             PRINT_WITH_NAMESPACE
         } else {
             0
         };
         if let Some(pm_r) = unsafe { pm.as_mut() } {
-            if OPT_ISSET(ops, b'p') {                                        // c:2242
+            if OPT_ISSET(ops, b'p') {
+                // c:2242
                 // c:2243 — `paramtab->printnode(&pm->node, PRINT_TYPESET|with_ns);`
-                printparamnode(
-                    pm_r,
-                    PRINT_TYPESET | with_ns,
-                );
+                printparamnode(pm_r, PRINT_TYPESET | with_ns);
             } else if !OPT_ISSET(ops, b'g')                                  // c:2244
-                && (!isset(TYPESETSILENT) || OPT_ISSET(ops, b'm'))           // c:2245
+                && (!isset(TYPESETSILENT) || OPT_ISSET(ops, b'm'))
+            // c:2245
             {
                 // c:2246 — `paramtab->printnode(&pm->node, PRINT_INCLUDEVALUE|with_ns);`
-                printparamnode(
-                    pm_r,
-                    PRINT_INCLUDEVALUE | with_ns,
-                );
+                printparamnode(pm_r, PRINT_INCLUDEVALUE | with_ns);
             }
         }
-        return pm;                                                           // c:2247
+        return pm; // c:2247
     }
 
     // c:2355-2378 — tc (type-conversion) branch: recreate the param.
@@ -3414,17 +3437,17 @@ pub fn bin_typeset(
     let _ = (off, returnval);
     let is_hashed = (on & PM_HASHED) != 0; // c:2655 `-A`
     let is_array = (on & PM_ARRAY) != 0; // c:2655 `-a`
-    // c:Src/builtin.c typeset_single — when the array RHS comes from
-    // an unquoted `$@` / `${arr[@]}` splat (e.g. `typeset -a opts=
-    // ("$@")`), the upstream prefork has already split the value
-    // into separate argv entries: `["opts=(a", "b", "c)"]`. C zsh's
-    // parser captures the entire `name=(... )` shape as one ENVARRAY
-    // token by walking paren depth at parse time so the splat fills
-    // the array's element list. zshrs's compile path emits the
-    // synthetic word `opts=("$@")` then runtime DQ-strip + splat
-    // separates it. Reconstruct the single arg here: when one entry
-    // starts with `NAME=(` and a later entry ends with `)`, rejoin
-    // the run with spaces between elements.
+                                         // c:Src/builtin.c typeset_single — when the array RHS comes from
+                                         // an unquoted `$@` / `${arr[@]}` splat (e.g. `typeset -a opts=
+                                         // ("$@")`), the upstream prefork has already split the value
+                                         // into separate argv entries: `["opts=(a", "b", "c)"]`. C zsh's
+                                         // parser captures the entire `name=(... )` shape as one ENVARRAY
+                                         // token by walking paren depth at parse time so the splat fills
+                                         // the array's element list. zshrs's compile path emits the
+                                         // synthetic word `opts=("$@")` then runtime DQ-strip + splat
+                                         // separates it. Reconstruct the single arg here: when one entry
+                                         // starts with `NAME=(` and a later entry ends with `)`, rejoin
+                                         // the run with spaces between elements.
     let argv: Vec<String> = {
         let mut out: Vec<String> = Vec::with_capacity(argv.len());
         let mut i = 0;
@@ -3432,9 +3455,10 @@ pub fn bin_typeset(
             let arg = &argv[i];
             let open = arg.find("=(");
             let is_open = open.is_some()
-                && arg.as_bytes().first().is_some_and(|b| {
-                    b.is_ascii_alphabetic() || *b == b'_'
-                })
+                && arg
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_')
                 && !arg.ends_with(')');
             if is_open {
                 // Find the matching `)` — scan forward through argv
@@ -3509,8 +3533,8 @@ pub fn bin_typeset(
             .as_bytes()
             .first()
             .is_some_and(|b| b.is_ascii_digit());
-        let pname_valid = (isident(arg_name) || pname_in_tab)
-            && (!first_is_digit || arg_name == "0");
+        let pname_valid =
+            (isident(arg_name) || pname_in_tab) && (!first_is_digit || arg_name == "0");
         if !pname_valid {
             if first_is_digit {
                 zerrnam(
@@ -3534,7 +3558,8 @@ pub fn bin_typeset(
         // overwrites pm.node.flags on the reuse-arm (c:2018), clobbering
         // typeset-attribute bits set by an earlier `typeset -i n` call.
         if !arg.contains('=') && OPT_ISSET(&ops, b'p') {
-            let with_ns = if OPT_ISSET(&ops, b'm') {                         // c:2241
+            let with_ns = if OPT_ISSET(&ops, b'm') {
+                // c:2241
                 PRINT_WITH_NAMESPACE
             } else {
                 0
@@ -3548,10 +3573,7 @@ pub fn bin_typeset(
                     if let Some(pm) = tab.get_mut(arg_name) {
                         // c:2243 — `paramtab->printnode(&pm->node,
                         //   PRINT_TYPESET|with_ns);`
-                        printparamnode(
-                            pm,
-                            PRINT_TYPESET | with_ns,
-                        );
+                        printparamnode(pm, PRINT_TYPESET | with_ns);
                     }
                 }
             }
@@ -3567,8 +3589,7 @@ pub fn bin_typeset(
         // through `createparam`'s reuse arm (params.rs:1975) which
         // already encodes this rule, but the literal C predicate
         // belongs here so the parity is visible at the call site.
-        let cur_locallevel =
-            locallevel.load(Relaxed) as i32;
+        let cur_locallevel = locallevel.load(Relaxed) as i32;
         let pm_reuse_local: bool = if pname_in_tab {
             let tab = paramtab().read().unwrap();
             let pm = tab.get(arg_name).unwrap();
@@ -3593,7 +3614,8 @@ pub fn bin_typeset(
                 .and_then(|t| t.get(arg_name).map(|pm| pm.level))
                 .unwrap_or(0);
             if level_compare >= cur_locallevel
-                || ((on as u32 & PM_LOCAL) == 0 && level_compare < cur_locallevel) // c:3130
+                || ((on as u32 & PM_LOCAL) == 0 && level_compare < cur_locallevel)
+            // c:3130
             {
                 // unsetparam_pm + hn = NULL would happen here. The
                 // simplified PM_NAMEREF path leaves the reset to
@@ -3641,21 +3663,21 @@ pub fn bin_typeset(
             // pre-set by a prior scope.
             if let Ok(mut tab) = paramtab().write() {
                 if let Some(pm) = tab.get_mut(arg_name) {
-                    pm.level = cur_locallevel;                               // c:2575
-                    // c:2691 + c:4087 arrsetfn — flags that affect the
-                    // VALUE store (PM_UNIQUE dedup, PM_LEFT/RIGHT_B/Z
-                    // padding width) must land on pm.flags BEFORE
-                    // assignaparam → arrsetfn runs, else those
-                    // setfns see the un-flagged pm. C zsh applies
-                    // these as part of the pre-assignment stamp at
-                    // typeset_single c:2476-2479. Mirror by
-                    // pre-stamping the value-affecting subset of
-                    // `on`. The full attribute mask (PM_READONLY,
-                    // PM_EXPORTED, etc.) still lands in the
-                    // post-assign block below since those don't
-                    // change the value at write time.
-                    let pre_assign_mask: u32 = PM_UNIQUE | PM_LEFT | PM_RIGHT_B
-                        | PM_RIGHT_Z | PM_LOWER | PM_UPPER;
+                    pm.level = cur_locallevel; // c:2575
+                                               // c:2691 + c:4087 arrsetfn — flags that affect the
+                                               // VALUE store (PM_UNIQUE dedup, PM_LEFT/RIGHT_B/Z
+                                               // padding width) must land on pm.flags BEFORE
+                                               // assignaparam → arrsetfn runs, else those
+                                               // setfns see the un-flagged pm. C zsh applies
+                                               // these as part of the pre-assignment stamp at
+                                               // typeset_single c:2476-2479. Mirror by
+                                               // pre-stamping the value-affecting subset of
+                                               // `on`. The full attribute mask (PM_READONLY,
+                                               // PM_EXPORTED, etc.) still lands in the
+                                               // post-assign block below since those don't
+                                               // change the value at write time.
+                    let pre_assign_mask: u32 =
+                        PM_UNIQUE | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z | PM_LOWER | PM_UPPER;
                     pm.node.flags |= (on as u32 & pre_assign_mask) as i32;
                     pm.node.flags &= !((off as u32 & pre_assign_mask) as i32);
                 }
@@ -3672,17 +3694,19 @@ pub fn bin_typeset(
         // here BEFORE the assignment so we emit the C error message.
         if let Some(br) = arg_name.find('[') {
             let base = &arg_name[..br];
-            if (on as u32 & PM_LOCAL) != 0 && cur_locallevel != 0 {          // c:2462
+            if (on as u32 & PM_LOCAL) != 0 && cur_locallevel != 0 {
+                // c:2462
                 let pm_level = paramtab()
                     .read()
                     .ok()
                     .and_then(|t| t.get(base).map(|pm| pm.level));
-                if pm_level.is_none() || pm_level != Some(cur_locallevel) {  // c:2466
+                if pm_level.is_none() || pm_level != Some(cur_locallevel) {
+                    // c:2466
                     zerrnam(
                         name,
                         &format!("{}: can't create local array elements", base), // c:2466
                     );
-                    continue;                                                // c:2467
+                    continue; // c:2467
                 }
             }
         }
@@ -3741,17 +3765,30 @@ pub fn bin_typeset(
                 // the paramtab entry. `(t)ARR` then read `array`
                 // instead of `array-export`, and `typeset -p ARR`
                 // emitted `typeset -a ARR=...` instead of `-ax`.
-                let post_assign_mask = (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B
-                    | PM_RIGHT_Z | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE)
-                    as i32;
+                let post_assign_mask = (PM_READONLY
+                    | PM_EXPORTED
+                    | PM_LEFT
+                    | PM_RIGHT_B
+                    | PM_RIGHT_Z
+                    | PM_TAGGED
+                    | PM_HIDE
+                    | PM_HIDEVAL
+                    | PM_UNIQUE) as i32;
                 let post_assign_to_set = (on
-                    & (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z
-                       | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE))
-                    as i32;
+                    & (PM_READONLY
+                        | PM_EXPORTED
+                        | PM_LEFT
+                        | PM_RIGHT_B
+                        | PM_RIGHT_Z
+                        | PM_TAGGED
+                        | PM_HIDE
+                        | PM_HIDEVAL
+                        | PM_UNIQUE)) as i32;
                 if post_assign_to_set != 0 {
                     if let Ok(mut tab) = paramtab().write() {
                         if let Some(pm) = tab.get_mut(n) {
-                            pm.node.flags = (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                            pm.node.flags =
+                                (pm.node.flags & !post_assign_mask) | post_assign_to_set;
                         }
                     }
                 }
@@ -3823,15 +3860,27 @@ pub fn bin_typeset(
                     }
                 }
                 setsparam(n, &folded); // c:params.c:3350
-                // c:2510-2520 — `on = pm->node.flags;` then stamp the
-                // attribute bits on the just-assigned param.
-                let post_assign_mask = (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B
-                    | PM_RIGHT_Z | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE)
-                    as i32;
+                                       // c:2510-2520 — `on = pm->node.flags;` then stamp the
+                                       // attribute bits on the just-assigned param.
+                let post_assign_mask = (PM_READONLY
+                    | PM_EXPORTED
+                    | PM_LEFT
+                    | PM_RIGHT_B
+                    | PM_RIGHT_Z
+                    | PM_TAGGED
+                    | PM_HIDE
+                    | PM_HIDEVAL
+                    | PM_UNIQUE) as i32;
                 let post_assign_to_set = (on
-                    & (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z
-                       | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE))
-                    as i32;
+                    & (PM_READONLY
+                        | PM_EXPORTED
+                        | PM_LEFT
+                        | PM_RIGHT_B
+                        | PM_RIGHT_Z
+                        | PM_TAGGED
+                        | PM_HIDE
+                        | PM_HIDEVAL
+                        | PM_UNIQUE)) as i32;
                 if post_assign_to_set != 0 {
                     if let Ok(mut tab) = paramtab().write() {
                         if let Some(pm) = tab.get_mut(n) {
@@ -3850,16 +3899,16 @@ pub fn bin_typeset(
                 // ignored the `2` and printed at the default
                 // 10-digit precision.
                 {
-                    let prec_arg: Option<&str> =
-                        if (on & PM_INTEGER) != 0 && OPT_HASARG(&ops, b'i') {
-                            OPT_ARG(&ops, b'i')
-                        } else if (on & PM_EFLOAT) != 0 && OPT_HASARG(&ops, b'E') {
-                            OPT_ARG(&ops, b'E')
-                        } else if (on & PM_FFLOAT) != 0 && OPT_HASARG(&ops, b'F') {
-                            OPT_ARG(&ops, b'F')
-                        } else {
-                            None
-                        };
+                    let prec_arg: Option<&str> = if (on & PM_INTEGER) != 0 && OPT_HASARG(&ops, b'i')
+                    {
+                        OPT_ARG(&ops, b'i')
+                    } else if (on & PM_EFLOAT) != 0 && OPT_HASARG(&ops, b'E') {
+                        OPT_ARG(&ops, b'E')
+                    } else if (on & PM_FFLOAT) != 0 && OPT_HASARG(&ops, b'F') {
+                        OPT_ARG(&ops, b'F')
+                    } else {
+                        None
+                    };
                     if let Some(s) = prec_arg {
                         if let Ok(b) = s.trim().parse::<i32>() {
                             if let Ok(mut tab) = paramtab().write() {
@@ -3937,14 +3986,29 @@ pub fn bin_typeset(
             }
             // Stamp attribute bits on paramtab entry — same set as
             // the `name=value` post-assign mask.
-            let post_assign_mask = (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B
-                | PM_RIGHT_Z | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE | PM_HASHED
-                | PM_ARRAY)
-                as i32;
+            let post_assign_mask = (PM_READONLY
+                | PM_EXPORTED
+                | PM_LEFT
+                | PM_RIGHT_B
+                | PM_RIGHT_Z
+                | PM_TAGGED
+                | PM_HIDE
+                | PM_HIDEVAL
+                | PM_UNIQUE
+                | PM_HASHED
+                | PM_ARRAY) as i32;
             let post_assign_to_set = (on
-                & (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z
-                   | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE | PM_HASHED | PM_ARRAY))
-                as i32;
+                & (PM_READONLY
+                    | PM_EXPORTED
+                    | PM_LEFT
+                    | PM_RIGHT_B
+                    | PM_RIGHT_Z
+                    | PM_TAGGED
+                    | PM_HIDE
+                    | PM_HIDEVAL
+                    | PM_UNIQUE
+                    | PM_HASHED
+                    | PM_ARRAY)) as i32;
             if post_assign_to_set != 0 {
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg_name) {
@@ -3963,13 +4027,25 @@ pub fn bin_typeset(
             let pre_assign_to_set = (on
                 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_LOWER | PM_UPPER | PM_NAMEREF))
                 as i32;
-            let post_assign_mask = (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B
-                | PM_RIGHT_Z | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE)
-                as i32;
+            let post_assign_mask = (PM_READONLY
+                | PM_EXPORTED
+                | PM_LEFT
+                | PM_RIGHT_B
+                | PM_RIGHT_Z
+                | PM_TAGGED
+                | PM_HIDE
+                | PM_HIDEVAL
+                | PM_UNIQUE) as i32;
             let post_assign_to_set = (on
-                & (PM_READONLY | PM_EXPORTED | PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z
-                   | PM_TAGGED | PM_HIDE | PM_HIDEVAL | PM_UNIQUE))
-                as i32;
+                & (PM_READONLY
+                    | PM_EXPORTED
+                    | PM_LEFT
+                    | PM_RIGHT_B
+                    | PM_RIGHT_Z
+                    | PM_TAGGED
+                    | PM_HIDE
+                    | PM_HIDEVAL
+                    | PM_UNIQUE)) as i32;
             // c:2374 — `s = ztrdup(getsparam(pname));`. Capture the
             // pre-conversion scalar value so the re-assignment after
             // type flip preserves it through the new setfn.
@@ -3981,8 +4057,7 @@ pub fn bin_typeset(
             if pre_assign_to_set != 0 {
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
-                        pm.node.flags =
-                            (pm.node.flags & !pre_assign_mask) | pre_assign_to_set;
+                        pm.node.flags = (pm.node.flags & !pre_assign_mask) | pre_assign_to_set;
                     }
                 }
                 // c:2372-2378 — re-assign saved value through new type's
@@ -4010,18 +4085,18 @@ pub fn bin_typeset(
             // the `pm.base = 4` set here through `assignnparam`'s
             // re-assign path (params.rs:5340-5374, c:2874-2878).
             {
-                let prec_arg: Option<&str> =
-                    if (on & PM_INTEGER) != 0 && OPT_HASARG(&ops, b'i') {
-                        OPT_ARG(&ops, b'i') // c:1974 -i N
-                    } else if (on & PM_EFLOAT) != 0 && OPT_HASARG(&ops, b'E') {
-                        OPT_ARG(&ops, b'E') // c:1977 -E N
-                    } else if (on & PM_FFLOAT) != 0 && OPT_HASARG(&ops, b'F') {
-                        OPT_ARG(&ops, b'F') // c:1980 -F N
-                    } else {
-                        None
-                    };
+                let prec_arg: Option<&str> = if (on & PM_INTEGER) != 0 && OPT_HASARG(&ops, b'i') {
+                    OPT_ARG(&ops, b'i') // c:1974 -i N
+                } else if (on & PM_EFLOAT) != 0 && OPT_HASARG(&ops, b'E') {
+                    OPT_ARG(&ops, b'E') // c:1977 -E N
+                } else if (on & PM_FFLOAT) != 0 && OPT_HASARG(&ops, b'F') {
+                    OPT_ARG(&ops, b'F') // c:1980 -F N
+                } else {
+                    None
+                };
                 if let Some(s) = prec_arg {
-                    if let Ok(b) = s.trim().parse::<i32>() { // c:1985 zstrtol
+                    if let Ok(b) = s.trim().parse::<i32>() {
+                        // c:1985 zstrtol
                         if let Ok(mut tab) = paramtab().write() {
                             if let Some(pm) = tab.get_mut(arg) {
                                 pm.base = b; // c:1987 pm->base = base
@@ -4035,8 +4110,7 @@ pub fn bin_typeset(
             if post_assign_to_set != 0 {
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
-                        pm.node.flags =
-                            (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                        pm.node.flags = (pm.node.flags & !post_assign_mask) | post_assign_to_set;
                     }
                 }
                 // c:Src/params.c:3024 addenv — mirror PM_EXPORTED to OS env.
@@ -4233,10 +4307,7 @@ pub fn listusermathfunc(p: &mathfunc) {
         // c:3269-3274 — function names are not required to be ident chars,
         // so the module name goes through quotedzputs for safe printing.
         print!(" "); // c:3273
-        print!(
-            "{}",
-            quotedzputs(p.module.as_deref().unwrap_or(""))
-        ); // c:3274
+        print!("{}", quotedzputs(p.module.as_deref().unwrap_or(""))); // c:3274
         showargs -= 1; // c:3275
     }
     println!(); // c:3277
@@ -4297,10 +4368,7 @@ pub fn add_autoload_function(
         // it has PM_LOADDIR|PM_ABSPATH_USED build "<dir>/<funcname>" and
         // access(R_OK), inherit the dir on hit.
         let calling_f: Option<String> = {
-            let stack = FUNCSTACK
-                .lock()
-                .map(|s| s.clone())
-                .unwrap_or_default();
+            let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
             // c:3306 — `for (fs = funcstack; fs; fs = fs->prev)`
             stack
                 .iter()
@@ -4809,10 +4877,7 @@ pub fn bin_functions(
         queue_signals(); // c:3624
                          // c:3625-3633 — walk funcstack to find the enclosing FS_FUNC frame.
         let funcname: Option<String> = {
-            let stack = FUNCSTACK
-                .lock()
-                .map(|s| s.clone())
-                .unwrap_or_default();
+            let stack = FUNCSTACK.lock().map(|s| s.clone()).unwrap_or_default();
             stack
                 .iter()
                 .rev()
@@ -5110,8 +5175,8 @@ pub fn mkautofn(shf: *mut shfunc) -> *mut eprog {
     // satisfies the autoload trampoline contract.
     let p = Box::new(eprog {
         len: 5 * size_of::<u32>() as i32, // c:3796
-        prog: Vec::new(),                           // c:3797
-        strs: None,                                 // c:3798
+        prog: Vec::new(),                 // c:3797
+        strs: None,                       // c:3798
         shf: if shf.is_null() {
             None
         }
@@ -5418,8 +5483,7 @@ pub fn bin_whence(
         // per `-m` invocation; Rust mirrors with a single fillcmdnamtable
         // against the shell-side $PATH array.
         if let Some(path) = getsparam("PATH") {
-            let path_arr: Vec<String> =
-                path.split(':').map(|s| s.to_string()).collect();
+            let path_arr: Vec<String> = path.split(':').map(|s| s.to_string()).collect();
             fillcmdnamtable(&path_arr);
         }
         // c:4030-4033 — `if (all) { pushheap(); matchednodes = newlinklist(); }`.
@@ -5507,8 +5571,7 @@ pub fn bin_whence(
                         for b in BUILTINS.iter() {
                             if pattry(&prog, &b.node.nam) {
                                 printbuiltinnode(
-                                    &b.node as *const hashnode
-                                        as *mut hashnode,
+                                    &b.node as *const hashnode as *mut hashnode,
                                     printflags,
                                 ); // c:4066
                                 informed += 1; // c:4064
@@ -5568,10 +5631,7 @@ pub fn bin_whence(
     // -a true` consulted an empty MATCHEDNODES and skipped every
     // print.
     let argv_vec: Vec<String> = if OPT_ISSET(ops, b'm') {
-        MATCHEDNODES
-            .lock()
-            .map(|m| m.clone())
-            .unwrap_or_default()
+        MATCHEDNODES.lock().map(|m| m.clone()).unwrap_or_default()
     } else {
         argv.to_vec()
     };
@@ -5580,9 +5640,9 @@ pub fn bin_whence(
         // c:4088 — `informed = 0;` reset per iteration so the per-arg
         // not-found path can fire correctly.
         informed = 0; // c:4088
-        // c:4090 `char *cnam` is the findcmd return in C; in Rust it
-        // is bound inline at the findcmd call site below.
-        // c:4089-4137 — !`-p` and !`-a` matched-from-prior-`-m` arm.
+                      // c:4090 `char *cnam` is the findcmd return in C; in Rust it
+                      // is bound inline at the findcmd call site below.
+                      // c:4089-4137 — !`-p` and !`-a` matched-from-prior-`-m` arm.
         if !OPT_ISSET(ops, b'p') {
             // c:4093-4097 — alias check. C: `aliastab->printnode(hn, aliasflags)`.
             let alias_text = aliastab_lock()
@@ -5608,8 +5668,7 @@ pub fn bin_whence(
                 // c:4101 — `suf[-1] != Meta`. Rust strings are UTF-8;
                 // skip when the byte immediately before `.` would be
                 // a metafy escape (rare in real shell usage).
-                let pre_dot_not_meta = arg.as_bytes()[idx - 1] as u8
-                    != Meta;
+                let pre_dot_not_meta = arg.as_bytes()[idx - 1] as u8 != Meta;
                 if after_dot_nonempty && dot_not_at_start && pre_dot_not_meta {
                     let suf = &arg[idx + 1..];
                     let suf_alias = sufaliastab_lock()
@@ -5723,10 +5782,10 @@ pub fn bin_whence(
                         continue;
                     }
                     let full = format!("{}/{}", dir, arg); // c:4147
-                    // c:4150 — `iscom(buf)`: access(X_OK)==0 &&
-                    // S_ISREG(stat). Was `Path::is_file()` which omits
-                    // the X_OK check — would have flagged non-executable
-                    // files as matches.
+                                                           // c:4150 — `iscom(buf)`: access(X_OK)==0 &&
+                                                           // S_ISREG(stat). Was `Path::is_file()` which omits
+                                                           // the X_OK check — would have flagged non-executable
+                                                           // files as matches.
                     if iscom(&full) {
                         // c:4150
                         if wd {
@@ -5746,15 +5805,13 @@ pub fn bin_whence(
                             // the final realpath; -S prints the whole
                             // chain.
                             if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'S') {
-                                print_if_link(
-                                    &full,
-                                    OPT_ISSET(ops, b'S'),
-                                ); // c:4160
+                                print_if_link(&full, OPT_ISSET(ops, b'S')); // c:4160
                             }
                             println!(); // c:4161 fputc('\n', stdout)
                         }
                         informed = 1; // c:4163
-                    } else {}
+                    } else {
+                    }
                 }
             }
             // c:4166-4171 — `if (!informed && (wd || v || csh))`. C:
@@ -5786,7 +5843,7 @@ pub fn bin_whence(
         // doubled the lookup. Collapsed into one to match C.
         if let Some(cnam) = findcmd(
             arg,
-            1, // c:4181 docmd
+            1,                                                    // c:4181 docmd
             (func == BIN_COMMAND && OPT_ISSET(ops, b'p')) as i32, // c:4182-4183
         ) {
             // c:4181
@@ -5803,10 +5860,7 @@ pub fn bin_whence(
                 }
                 // c:4193-4194 — `-s`/`-S` symlink follow.
                 if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'S') {
-                    print_if_link(
-                        &cnam,
-                        OPT_ISSET(ops, b'S'),
-                    ); // c:4194
+                    print_if_link(&cnam, OPT_ISSET(ops, b'S')); // c:4194
                 }
                 println!(); // c:4195 fputc('\n', stdout)
             }
@@ -6000,13 +6054,13 @@ pub fn bin_hash(
                     node: hashnode {
                         next: None,
                         nam: n.to_string(),
-                        flags: HASHED as i32,                                // c:4316
+                        flags: HASHED as i32, // c:4316
                     },
                     name: None,
-                    cmd: Some(v.to_string()),                                // c:4316
+                    cmd: Some(v.to_string()), // c:4316
                 };
                 if let Ok(mut tab) = cmdnamtab_lock().write() {
-                    tab.add(cn);                                             // c:4318 addnode
+                    tab.add(cn); // c:4318 addnode
                 }
             }
             if OPT_ISSET(ops, b'v') {
@@ -6023,10 +6077,7 @@ pub fn bin_hash(
         } else {
             // c:4323-4334 — display existing entry / look up.
             if dir_mode {
-                let snapshot = nameddirtab()
-                    .lock()
-                    .ok()
-                    .and_then(|t| t.get(n).cloned());
+                let snapshot = nameddirtab().lock().ok().and_then(|t| t.get(n).cloned());
                 match snapshot {
                     Some(nd) => {
                         if OPT_ISSET(ops, b'v') {
@@ -6142,14 +6193,10 @@ pub fn bin_unhash(
     // Helper: clear entire table.
     let clear_all = |t: &Tab| match t {
         Tab::Alias => {
-            let _ = aliastab_lock()
-                .write()
-                .map(|mut g| g.clear());
+            let _ = aliastab_lock().write().map(|mut g| g.clear());
         }
         Tab::SufAlias => {
-            let _ = sufaliastab_lock()
-                .write()
-                .map(|mut g| g.clear());
+            let _ = sufaliastab_lock().write().map(|mut g| g.clear());
         }
         Tab::NamedDir => {
             emptynameddirtable();
@@ -6159,8 +6206,7 @@ pub fn bin_unhash(
             // `emptyhashtable(shfunctab)` GSU; Rust port iterates names
             // and removes each (no `clear` method on shfunc_table).
             if let Ok(mut t) = shfunctab_lock().write() {
-                let names: Vec<String> =
-                    t.iter().map(|(k, _)| k.clone()).collect();
+                let names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
                 for nm in names {
                     let _ = t.remove(&nm);
                 }
@@ -6564,10 +6610,7 @@ pub fn bin_print(
                 Some(unsafe { fs::File::from_raw_fd(dup_fd) }) // c:4847
             }
             Err(_) => {
-                zwarnnam(
-                    name,
-                    &format!("number expected after -u: {}", argptr),
-                ); // c:4837
+                zwarnnam(name, &format!("number expected after -u: {}", argptr)); // c:4837
                 return 1; // c:4838
             }
         }
@@ -6629,8 +6672,7 @@ pub fn bin_print(
         }
         // c:4728 — `patcompile(*args, PAT_STATIC, NULL)`.
         let pat = &args[0];
-        let pprog =
-            patcompile(pat, PAT_STATIC, None);
+        let pprog = patcompile(pat, PAT_STATIC, None);
         match pprog {
             None => {
                 zwarnnam(name, &format!("bad pattern: {}", pat)); // c:4730
@@ -6666,19 +6708,19 @@ pub fn bin_print(
         // c:4598-4600 — `-P` prompt-style percent expansion.
         for a in processed_args.iter_mut() {
             *a = crate::ported::prompt::expand_prompt(a); // c:Src/prompt.c:182
-            // c:Src/prompt.c:236-247 — `if (!ns) { ... chuck(Inpar/
-            // Outpar/Nularg); }`. When `ns=0` (non-stripping flag
-            // off), zsh REMOVES the Inpar/Outpar/Nularg marker bytes
-            // from the output. `print -P` calls promptexpand with
-            // `ns=0` per Src/builtin.c:4598, so the SGR-wrapping
-            // markers MUST NOT leak into stdout. The Rust port's
-            // expand_prompt uses ad-hoc `\x01`/`\x02` (readline
-            // RL_PROMPT_*_IGNORE) markers instead of canonical
-            // Inpar/Outpar, but the strip rule applies identically:
-            // for non-prompt-render callers, scrub them. Parity bug
-            // #17 — without this, `print -P "%F{red}red%f"` emitted
-            // `\x01\E[31m\x02red\x01\E[39m\x02` instead of zsh's
-            // `\E[31mred\E[39m`.
+                                                          // c:Src/prompt.c:236-247 — `if (!ns) { ... chuck(Inpar/
+                                                          // Outpar/Nularg); }`. When `ns=0` (non-stripping flag
+                                                          // off), zsh REMOVES the Inpar/Outpar/Nularg marker bytes
+                                                          // from the output. `print -P` calls promptexpand with
+                                                          // `ns=0` per Src/builtin.c:4598, so the SGR-wrapping
+                                                          // markers MUST NOT leak into stdout. The Rust port's
+                                                          // expand_prompt uses ad-hoc `\x01`/`\x02` (readline
+                                                          // RL_PROMPT_*_IGNORE) markers instead of canonical
+                                                          // Inpar/Outpar, but the strip rule applies identically:
+                                                          // for non-prompt-render callers, scrub them. Parity bug
+                                                          // #17 — without this, `print -P "%F{red}red%f"` emitted
+                                                          // `\x01\E[31m\x02red\x01\E[39m\x02` instead of zsh's
+                                                          // `\E[31mred\E[39m`.
             a.retain(|c| c != '\x01' && c != '\x02');
         }
     }
@@ -6816,7 +6858,9 @@ pub fn bin_print(
         }
         // Strip trailing newline; the post-loop `if !nonewline` adds
         // one back.
-        if out.ends_with('\n') { out.pop(); }
+        if out.ends_with('\n') {
+            out.pop();
+        }
         out
     } else {
         processed_args.join(sep)
@@ -6862,8 +6906,8 @@ pub fn bin_print(
             use std::io::Write as _;
             let _ = f.write_all(body.as_bytes()); // c:5124 fwrite
             let _ = f.write_all(final_term); // c:5132
-                                              // f closes on drop (close(dup_fd)) — user's original fd
-                                              // remains open per c:4843 dup semantics.
+                                             // f closes on drop (close(dup_fd)) — user's original fd
+                                             // remains open per c:4843 dup semantics.
         } else {
             // stdout path. -N writes NUL via raw stdout; print!/println!
             // would mangle a NUL inside a String literal via format
@@ -7088,7 +7132,7 @@ pub fn bin_getopts(
             // c:5701
             ZOPTIND.store(zoptind, Relaxed);
             OPTCIND.store(optcind, Relaxed);
-            setiparam("OPTIND", zoptind as i64);                            // c:5702
+            setiparam("OPTIND", zoptind as i64); // c:5702
             return 1;
         }
         str_buf = args[(zoptind - 1) as usize].clone();
@@ -7113,7 +7157,7 @@ pub fn bin_getopts(
             zoptind += 1;
             ZOPTIND.store(zoptind, Relaxed);
             OPTCIND.store(0, Relaxed);
-            setiparam("OPTIND", zoptind as i64);                            // c:5711
+            setiparam("OPTIND", zoptind as i64); // c:5711
             return 1;
         }
         optcind += 1;
@@ -7192,16 +7236,16 @@ pub fn bin_getopts(
             // c:5763 — `p = ztrdup(args[zoptind++]);` — read args[zoptind]
             // then post-increment. zoptind now points one past the
             // arg-bearing flag's index.
-            let p_arg = args[zoptind as usize].clone();                      // c:5763
-            zoptind += 1;                                                    // c:5763 post-increment
+            let p_arg = args[zoptind as usize].clone(); // c:5763
+            zoptind += 1; // c:5763 post-increment
             setsparam("OPTARG", &p_arg); // c:5765
-            // c:5771 — `optcind = 0; zoptind++;` — bump past the
-            // consumed value arg too, so the NEXT getopts call sees
-            // the arg AFTER the value. Previous Rust port skipped this
-            // second increment, so the next iter re-read the consumed
-            // value as if it were a new flag.
-            optcind = 0;                                                     // c:5771
-            zoptind += 1;                                                    // c:5772
+                                         // c:5771 — `optcind = 0; zoptind++;` — bump past the
+                                         // consumed value arg too, so the NEXT getopts call sees
+                                         // the arg AFTER the value. Previous Rust port skipped this
+                                         // second increment, so the next iter re-read the consumed
+                                         // value as if it were a new flag.
+            optcind = 0; // c:5771
+            zoptind += 1; // c:5772
         } else {
             // c:5774 — `p = metafy(str+optcind, lenstr-optcind, META_DUP);`
             let p_arg = str_buf[(optcind as usize)..].to_string();
@@ -7264,11 +7308,11 @@ pub fn bin_break(
                 return 1; // c:5834
             }
             CONTFLAG.store(1, Relaxed); // c:5836 FALLTHROUGH
-                                                  // c:5837 — fallthrough to BIN_BREAK's loops==0 guard
-                                                  // (impossible here since we already returned above) +
-                                                  // break-count assign. Inlined directly. The previous
-                                                  // Rust port had a redundant `if loops == 0 { return 1 }`
-                                                  // dead-coded after the first guard.
+                                        // c:5837 — fallthrough to BIN_BREAK's loops==0 guard
+                                        // (impossible here since we already returned above) +
+                                        // break-count assign. Inlined directly. The previous
+                                        // Rust port had a redundant `if loops == 0 { return 1 }`
+                                        // dead-coded after the first guard.
             BREAKS.store(
                 if nump != 0 { num.min(loops) } else { 1 }, // c:5842
                 Relaxed,
@@ -7299,10 +7343,10 @@ pub fn bin_break(
                 RETFLAG.store(1, Relaxed); // c:5842
                 BREAKS.store(loops, Relaxed); // c:5843
                 LASTVAL.store(num, Relaxed); // c:5844
-                                                       // c:5845-5854 — inside a primed trap with the sentinel
-                                                       // `trap_return == -2`, promote to TRAP_STATE_FORCE_RETURN
-                                                       // and carry `lastval`. POSIXTRAPS + `implicit` opts out:
-                                                       // POSIX semantics keep $? from before the trap fired.
+                                             // c:5845-5854 — inside a primed trap with the sentinel
+                                             // `trap_return == -2`, promote to TRAP_STATE_FORCE_RETURN
+                                             // and carry `lastval`. POSIXTRAPS + `implicit` opts out:
+                                             // POSIX semantics keep $? from before the trap fired.
                 let posixtraps = isset(optlookup("posixtraps"));
                 let cur_state = TRAP_STATE.load(Relaxed);
                 let cur_return = TRAP_RETURN.load(Relaxed);
@@ -7545,7 +7589,7 @@ pub fn zexit(val: i32, from_where: i32) {
     // c:5977
     // c:5989 — `exit_val = val;`
     EXIT_VAL.store(val, Relaxed); // c:5989
-                                            // c:5990 — `if (shell_exiting == -1) { retflag = 1; breaks = loops; return; }`
+                                  // c:5990 — `if (shell_exiting == -1) { retflag = 1; breaks = loops; return; }`
     if SHELL_EXITING.load(Relaxed) == -1 {
         // c:5990
         RETFLAG.store(1, Relaxed); // c:5991
@@ -7585,9 +7629,9 @@ pub fn zexit(val: i32, from_where: i32) {
     }
     // c:6014 — `shell_exiting = -1;`
     SHELL_EXITING.store(-1, Relaxed); // c:6014
-                                                // c:6019 — `errflag = 0;`
+                                      // c:6019 — `errflag = 0;`
     errflag.store(0, Relaxed); // c:6019
-                                                               // c:6021-6024 — MONITOR → killrunjobs.
+                               // c:6021-6024 — MONITOR → killrunjobs.
     if isset(MONITOR) {
         // c:6021
         crate::ported::signals::killrunjobs(if from_where == ZEXIT_SIGNAL { 1 } else { 0 });
@@ -7613,10 +7657,7 @@ pub fn zexit(val: i32, from_where: i32) {
     // LASTVAL below) and runs in the shell process. Remove the
     // entry from traps_table first so the trap body's own commands
     // don't re-trigger it recursively.
-    let exit_trap = traps_table()
-        .lock()
-        .ok()
-        .and_then(|mut t| t.remove("EXIT"));
+    let exit_trap = traps_table().lock().ok().and_then(|mut t| t.remove("EXIT"));
     if let Some(body) = exit_trap {
         // Set LASTVAL to the requested exit value so `$?` inside
         // the trap body sees the right number (matches `(exit 7)`
@@ -7799,20 +7840,18 @@ pub fn bin_dot(
     crate::ported::init::sourcelevel.fetch_add(1, Relaxed); // c:1606
     let result = match fs::read_to_string(&path) {
         // c:6140
-        Ok(src) => {
-            crate::ported::exec_hooks::execute_script(&src).unwrap_or(1)
-        }
+        Ok(src) => crate::ported::exec_hooks::execute_script(&src).unwrap_or(1),
         // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
         Err(_) => 128 - 2,
     };
     crate::ported::init::sourcelevel.fetch_sub(1, Relaxed); // c:1644
-                                                 // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
-                                                 // sourced file's execute_script unwinds, the return has been
-                                                 // serviced; clear the flag so the outer compile unit's main loop
-                                                 // (init.rs:1252's `if retflag break` guard) doesn't see a stale
-                                                 // request and abort `echo done` after `source foo`.
+                                                            // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
+                                                            // sourced file's execute_script unwinds, the return has been
+                                                            // serviced; clear the flag so the outer compile unit's main loop
+                                                            // (init.rs:1252's `if retflag break` guard) doesn't see a stale
+                                                            // request and abort `echo done` after `source foo`.
     RETFLAG.store(0, Relaxed); // c:5842 unwind
-                                         // c:6149 again — restore argzero on the success path as well.
+                               // c:6149 again — restore argzero on the success path as well.
     if let Some(prev) = saved_argzero {
         set_argzero(prev);
     }
@@ -7832,27 +7871,29 @@ pub fn eval(argv: &[String]) -> i32 {
 
     // c:6163 — `ineval = !isset(EVALLINENO);`
     INEVAL.store(
-        if !isset(crate::ported::zsh_h::EVALLINENO) { 1 } else { 0 },
+        if !isset(crate::ported::zsh_h::EVALLINENO) {
+            1
+        } else {
+            0
+        },
         Relaxed,
     );
     let ineval_now = INEVAL.load(Relaxed) != 0;
 
-    if !ineval_now {                                                         // c:6164
+    if !ineval_now {
+        // c:6164
         // c:6165 — `scriptname = "(eval)";`
         crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
         // c:6166-6196 — funcstack push: build a fstack frame describing
         // this eval, link it to the head of FUNCSTACK.
         let prev_frame = {
-            let stack = FUNCSTACK
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
             stack.last().cloned()
         };
-        let lineno_now =
-            crate::ported::input::lineno.with(|c| c.get()) as i64;
+        let lineno_now = crate::ported::input::lineno.with(|c| c.get()) as i64;
         let caller = match &prev_frame {
             Some(p) => Some(p.name.clone()),
-            None => argzero(),                         // c:6168 dupstring(argzero)
+            None => argzero(), // c:6168 dupstring(argzero)
         };
 
         // c:6182-6196 — flineno/filename derivation. Three cases:
@@ -7862,37 +7903,36 @@ pub fn eval(argv: &[String]) -> i32 {
         //   3. otherwise (function): flineno = prev.flineno + lineno,
         //      filename = prev.filename or ""
         let (flineno, filename): (i64, Option<String>) = match &prev_frame {
-            None => (lineno_now, caller.clone()),                            // c:6183-6184
+            None => (lineno_now, caller.clone()), // c:6183-6184
             Some(p) if p.tp == crate::ported::zsh_h::FS_SOURCE => {
-                (lineno_now, caller.clone())                                 // c:6183-6184
+                (lineno_now, caller.clone()) // c:6183-6184
             }
             Some(p) => {
-                let mut fl = p.flineno + lineno_now;                         // c:6186
-                if p.tp == crate::ported::zsh_h::FS_EVAL {                   // c:6191
-                    fl -= 1;                                                 // c:6192
+                let mut fl = p.flineno + lineno_now; // c:6186
+                if p.tp == crate::ported::zsh_h::FS_EVAL {
+                    // c:6191
+                    fl -= 1; // c:6192
                 }
                 let fname = p.filename.clone().or_else(|| Some(String::new())); // c:6193-6195
                 (fl, fname)
             }
         };
         let frame = crate::ported::zsh_h::funcstack {
-            prev: None,                                                      // c:1349 — linked via FUNCSTACK vec
-            name: "(eval)".to_string(),                                      // c:6167
-            filename,                                                        // c:6184 / c:6193
-            caller,                                                          // c:6168
-            flineno,                                                         // c:6183 / c:6186
-            lineno: lineno_now,                                              // c:6169
-            tp: crate::ported::zsh_h::FS_EVAL,                               // c:6170
+            prev: None,                        // c:1349 — linked via FUNCSTACK vec
+            name: "(eval)".to_string(),        // c:6167
+            filename,                          // c:6184 / c:6193
+            caller,                            // c:6168
+            flineno,                           // c:6183 / c:6186
+            lineno: lineno_now,                // c:6169
+            tp: crate::ported::zsh_h::FS_EVAL, // c:6170
         };
         {
-            let mut stack = FUNCSTACK
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            stack.push(frame);                                               // c:6197 funcstack = &fstack
+            let mut stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
+            stack.push(frame); // c:6197 funcstack = &fstack
         }
-        fpushed = true;                                                      // c:6199
+        fpushed = true; // c:6199
     } else {
-        fpushed = false;                                                     // c:6201
+        fpushed = false; // c:6201
     }
 
     // c:6203 — `prog = parse_string(zjoin(argv, ' ', 1), 1);`
@@ -7903,8 +7943,9 @@ pub fn eval(argv: &[String]) -> i32 {
         // c:6205 — `if (wc_code(*prog->prog) != WC_LIST)`
         let head = prog.prog.first().copied().unwrap_or(0);
         if crate::ported::zsh_h::wc_code(head) != crate::ported::zsh_h::WC_LIST as u32 {
-            /* No code to execute */                                          // c:6206
-            LASTVAL.store(0, Relaxed);          // c:6207
+            /* No code to execute */
+ // c:6206
+            LASTVAL.store(0, Relaxed); // c:6207
         } else {
             // c:6209 — `execode(prog, 1, 0, "eval");`. Routes through
             // the executor; in-process equivalent.
@@ -7925,28 +7966,24 @@ pub fn eval(argv: &[String]) -> i32 {
             }
         }
     } else {
-        LASTVAL.store(1, Relaxed);              // c:6215
+        LASTVAL.store(1, Relaxed); // c:6215
     }
 
-    if fpushed {                                                             // c:6218
+    if fpushed {
+        // c:6218
         // c:6219 — `funcstack = funcstack->prev;`
-        let mut stack = FUNCSTACK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut stack = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
         stack.pop();
     }
 
     // c:6221 — `errflag &= ~ERRFLAG_ERROR;`
-    errflag.fetch_and(
-        !ERRFLAG_ERROR,
-        Relaxed,
-    );
+    errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
     // c:6222 — `scriptname = oscriptname;`
     crate::ported::utils::set_scriptname(oscriptname);
     // c:6223 — `ineval = oineval;`
     INEVAL.store(oineval, Relaxed);
 
-    LASTVAL.load(Relaxed)                       // c:6225
+    LASTVAL.load(Relaxed) // c:6225
 }
 
 /// Port of `bin_emulate(char *nam, char **argv, Options ops, UNUSED(int func))` from Src/builtin.c:6232.
@@ -7973,8 +8010,7 @@ pub fn bin_emulate(
             return 1; // c:6252
         }
         // c:6255-6271 — `switch(SHELL_EMULATION())` → name dispatch.
-        let bits =
-            emulation.load(Relaxed) as i32;
+        let bits = emulation.load(Relaxed) as i32;
         let shname = if (bits & EMULATE_CSH) != 0 {
             "csh"
         }
@@ -8200,9 +8236,7 @@ pub fn bin_read(
     let read_byte = |fd: i32| -> std::io::Result<Option<u8>> {
         let mut b = [0u8; 1];
         loop {
-            let n = unsafe {
-                libc::read(fd, b.as_mut_ptr() as *mut libc::c_void, 1)
-            };
+            let n = unsafe { libc::read(fd, b.as_mut_ptr() as *mut libc::c_void, 1) };
             match n {
                 1 => return Ok(Some(b[0])),
                 0 => return Ok(None),
@@ -8492,9 +8526,7 @@ pub fn zread(izle: i32, readchar: &mut i32, izle_timeout: i64) -> i32 {
         match n {
             1 => return buf[0] as i32, // c:7169
             0 => return -1,            // EOF
-            -1 if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => {
-                continue
-            }
+            -1 if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => continue,
             _ => return -1,
         }
     }
@@ -8817,9 +8849,7 @@ pub fn bin_trap(
         // as "not trapped") and the dotrap dispatch never fires.
         // The traps_table entry alone isn't enough — handletrap
         // gates on sigtrapped[idx] != 0.
-        if sig > 0 && sig <= crate::ported::signals_h::SIGCOUNT
-            && sig != libc::SIGCHLD as i32
-        {
+        if sig > 0 && sig <= crate::ported::signals_h::SIGCOUNT && sig != libc::SIGCHLD as i32 {
             crate::ported::signals::settrap(sig, None, ZSIG_FUNC);
         }
     }
@@ -10620,49 +10650,94 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
         // chmod/chown/ln/mkdir/rm/rmdir/sync but separate BUILTIN entries
         // so `autoload -U zf_*` resolves and `zsh -f` sees them all.
         BUILTIN(
-            "zf_chgrp", 0,
+            "zf_chgrp",
+            0,
             Some(crate::ported::modules::files::bin_chown as HandlerFunc),
-            2, -1, crate::ported::modules::files::BIN_CHGRP, Some("hRs"), None,
+            2,
+            -1,
+            crate::ported::modules::files::BIN_CHGRP,
+            Some("hRs"),
+            None,
         ), // c:816
         BUILTIN(
-            "zf_chmod", 0,
+            "zf_chmod",
+            0,
             Some(crate::ported::modules::files::bin_chmod as HandlerFunc),
-            2, -1, 0, Some("Rs"), None,
+            2,
+            -1,
+            0,
+            Some("Rs"),
+            None,
         ), // c:817
         BUILTIN(
-            "zf_chown", 0,
+            "zf_chown",
+            0,
             Some(crate::ported::modules::files::bin_chown as HandlerFunc),
-            2, -1, crate::ported::modules::files::BIN_CHOWN, Some("hRs"), None,
+            2,
+            -1,
+            crate::ported::modules::files::BIN_CHOWN,
+            Some("hRs"),
+            None,
         ), // c:818
         BUILTIN(
-            "zf_ln", 0,
+            "zf_ln",
+            0,
             Some(crate::ported::modules::files::bin_ln as HandlerFunc),
-            1, -1, crate::ported::modules::files::BIN_LN, Some("dfins"), None,
+            1,
+            -1,
+            crate::ported::modules::files::BIN_LN,
+            Some("dfins"),
+            None,
         ), // c:819
         BUILTIN(
-            "zf_mkdir", 0,
+            "zf_mkdir",
+            0,
             Some(crate::ported::modules::files::bin_mkdir as HandlerFunc),
-            1, -1, 0, Some("pm:"), None,
+            1,
+            -1,
+            0,
+            Some("pm:"),
+            None,
         ), // c:820
         BUILTIN(
-            "zf_mv", 0,
+            "zf_mv",
+            0,
             Some(crate::ported::modules::files::bin_ln as HandlerFunc),
-            2, -1, crate::ported::modules::files::BIN_MV, Some("fi"), None,
+            2,
+            -1,
+            crate::ported::modules::files::BIN_MV,
+            Some("fi"),
+            None,
         ), // c:821
         BUILTIN(
-            "zf_rm", 0,
+            "zf_rm",
+            0,
             Some(crate::ported::modules::files::bin_rm as HandlerFunc),
-            1, -1, 0, Some("dfiRrs"), None,
+            1,
+            -1,
+            0,
+            Some("dfiRrs"),
+            None,
         ), // c:822
         BUILTIN(
-            "zf_rmdir", 0,
+            "zf_rmdir",
+            0,
             Some(crate::ported::modules::files::bin_rmdir as HandlerFunc),
-            1, -1, 0, None, None,
+            1,
+            -1,
+            0,
+            None,
+            None,
         ), // c:823
         BUILTIN(
-            "zf_sync", 0,
+            "zf_sync",
+            0,
             Some(crate::ported::modules::files::bin_sync as HandlerFunc),
-            0, 0, 0, None, None,
+            0,
+            0,
+            0,
+            None,
+            None,
         ), // c:824
     ]
 });
@@ -10871,9 +10946,7 @@ pub fn BUILTIN(
 // `traps` mirror — sig name → body. Real `sigtrapped[]`/`siglists[]`
 // arrays live in src/ported/signals.rs; this Mutex is the static-link
 // shim that bin_trap reads/writes.
-static TRAPS_INNER: OnceLock<
-    Mutex<HashMap<String, String>>,
-> = OnceLock::new();
+static TRAPS_INNER: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
 #[allow(non_snake_case)]
 fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
@@ -10925,10 +10998,7 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
             // spec walk before reaching the conversion char.
             if iter.peek() == Some(&'*') {
                 iter.next(); // c:4796 — consume the `*` marker
-                let w: i64 = args
-                    .get(arg_i)
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                let w: i64 = args.get(arg_i).and_then(|s| s.parse().ok()).unwrap_or(0);
                 arg_i += 1;
                 spec.push_str(&w.to_string());
             } else {
@@ -10947,10 +11017,7 @@ fn printf_format(fmt: &str, args: &[String]) -> String {
                 // `.` precision: also accepts `*` per c:4796 same as width.
                 if iter.peek() == Some(&'*') {
                     iter.next();
-                    let p: i64 = args
-                        .get(arg_i)
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(0);
+                    let p: i64 = args.get(arg_i).and_then(|s| s.parse().ok()).unwrap_or(0);
                     arg_i += 1;
                     spec.push_str(&p.to_string());
                 } else {
@@ -11168,10 +11235,7 @@ fn format_spec_radix(spec: &str, n: u64, conv: char) -> String {
     } else if zero_pad {
         // For `%#04x` with value 15: body = "0xf" (3 chars), width=4,
         // pad=1. Zero-pad after the `0x` prefix → "0x0f". Match libc.
-        if let Some(rest) = body
-            .strip_prefix("0x")
-            .or_else(|| body.strip_prefix("0X"))
-        {
+        if let Some(rest) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
             let prefix = &body[..2];
             format!("{}{}{}", prefix, "0".repeat(pad), rest)
         } else {
@@ -11425,9 +11489,7 @@ mod tests {
         );
         let p = resolved.unwrap();
         assert!(
-            DEFAULT_PATH
-                .split(':')
-                .any(|d| p.starts_with(d)),
+            DEFAULT_PATH.split(':').any(|d| p.starts_with(d)),
             "resolved path must be under one of DEFAULT_PATH's dirs; got {:?}",
             p
         );
@@ -12104,12 +12166,7 @@ mod tests {
             .lock()
             .unwrap()
             .clear();
-        let r = bin_print(
-            "printf",
-            &["hello".to_string()],
-            &ops,
-            BIN_PRINTF,
-        );
+        let r = bin_print("printf", &["hello".to_string()], &ops, BIN_PRINTF);
         assert_eq!(r, 0);
         let buf = crate::ported::zle::zle_main::BUFSTACK.lock().unwrap();
         assert_eq!(
@@ -12143,9 +12200,7 @@ mod tests {
             BIN_PRINT,
         );
         assert_eq!(r, 0, "c:5565 — -z should succeed");
-        let buf = crate::ported::zle::zle_main::BUFSTACK
-            .lock()
-            .unwrap();
+        let buf = crate::ported::zle::zle_main::BUFSTACK.lock().unwrap();
         assert_eq!(
             buf.last().map(|s| s.as_str()),
             Some("echo foo"),
@@ -12179,9 +12234,7 @@ mod tests {
         assert_eq!(r, 0, "c:5574 — -s should succeed");
         // After -s, the joined "hello world" string must appear in
         // histtab (the in-process history lookup table).
-        let tab = crate::ported::hashtable::histtab_lock()
-            .read()
-            .unwrap();
+        let tab = crate::ported::hashtable::histtab_lock().read().unwrap();
         assert!(
             tab.contains_key("hello world"),
             "c:5574 — addhistnode must record `hello world` in histtab"
@@ -12211,7 +12264,12 @@ mod tests {
 
         let r = bin_print(
             "print",
-            &["foo*".to_string(), "foo1".to_string(), "bar".to_string(), "foo2".to_string()],
+            &[
+                "foo*".to_string(),
+                "foo1".to_string(),
+                "bar".to_string(),
+                "foo2".to_string(),
+            ],
             &ops,
             BIN_PRINT,
         );
@@ -12268,8 +12326,7 @@ mod tests {
             f.read_to_end(&mut buf).unwrap();
         }
         assert_eq!(
-            buf,
-            b"a\0b\0c\0",
+            buf, b"a\0b\0c\0",
             "c:5126-5132 — -N: NUL separators + NUL terminator"
         );
     }
@@ -12310,12 +12367,7 @@ mod tests {
         // Closing wfd in the caller after print so reader sees EOF.
         // We dup'd inside bin_print so closing wfd here is safe AFTER
         // bin_print returns.
-        let r = bin_print(
-            "print",
-            &["hello".to_string()],
-            &ops,
-            BIN_PRINT,
-        );
+        let r = bin_print("print", &["hello".to_string()], &ops, BIN_PRINT);
         assert_eq!(r, 0, "c:4847 — bin_print should return 0 on success");
         unsafe { libc::close(wfd) };
 
@@ -12530,7 +12582,12 @@ mod tests {
     // ─── zsh-corpus pins for fixed-return builtins ──────────────────
 
     fn empty_opts_for_corpus() -> options {
-        options { ind: [0u8; MAX_OPS], args: Vec::new(), argscount: 0, argsalloc: 0 }
+        options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        }
     }
 
     /// `Src/builtin.c:4550` — `bin_true` always returns 0 regardless of
@@ -12617,12 +12674,7 @@ mod tests {
         let o = empty_opts_for_corpus();
         crate::ported::params::unsetparam("ZL_A");
         crate::ported::params::unsetparam("ZL_B");
-        let r = bin_let(
-            "let",
-            &["ZL_A=1".into(), "ZL_B=7".into()],
-            &o,
-            0,
-        );
+        let r = bin_let("let", &["ZL_A=1".into(), "ZL_B=7".into()], &o, 0);
         assert_eq!(r, 0, "last expr non-zero → 0");
         assert_eq!(crate::ported::params::getiparam("ZL_A"), 1);
         assert_eq!(crate::ported::params::getiparam("ZL_B"), 7);

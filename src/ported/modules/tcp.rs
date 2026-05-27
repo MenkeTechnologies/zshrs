@@ -15,14 +15,16 @@
 //! `thread_local!` Vec replacing the linked list (per PORT_PLAN
 //! Phase 2 bucket-1: file-statics → thread_local).
 
-use crate::ported::modules::tcp_h::{tcp_session, tcp_sockaddr, ZTCP_LISTEN, ZTCP_INBOUND, ZTCP_ZFTP};
+use crate::ported::modules::tcp_h::{
+    tcp_session, tcp_sockaddr, ZTCP_INBOUND, ZTCP_LISTEN, ZTCP_ZFTP,
+};
 use crate::ported::utils::{addmodulefd, errflag, movefd, redup, zerrnam, zwarn, zwarnnam};
-use crate::ported::zsh_h::{OPT_ARG, OPT_ISSET, module, FDT_MODULE, options, features};
+use crate::ported::zsh_h::{features, module, options, FDT_MODULE, OPT_ARG, OPT_ISSET};
 use std::net::ToSocketAddrs;
 use std::os::unix::io::RawFd;
 
-use std::sync::{Mutex, OnceLock};
 use crate::ported::params::setiparam;
+use std::sync::{Mutex, OnceLock};
 
 impl Default for tcp_sockaddr {
     /// WARNING: NOT IN TCP.C — method on Rust-only `tcp_sockaddr` wrapper.
@@ -587,7 +589,8 @@ pub fn bin_ztcp(
             {
                 rfd = r;
                 break;
-            } else {}
+            } else {
+            }
         }
         sess_with(sidx, |s| {
             s.peer.in_ = peer;
@@ -874,7 +877,6 @@ pub fn boot_(m: *const module) -> i32 {
 // static struct features module_features                            c:705 (tcp.c)
 // =====================================================================
 
-
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/tcp.c:745`.
 /// C body: `tcp_cleanup(); return setfeatureenables(m, &module_features, NULL);`
 pub fn cleanup_(m: *const module) -> i32 {
@@ -973,11 +975,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 1]);
     }

@@ -93,9 +93,9 @@ pub fn completeword() -> i32 {
     USEMENU.store(0, Ordering::SeqCst); // c:218
     USEGLOB.store(1, Ordering::SeqCst); // c:219
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:220
-    // c:221-222 — `if (lastchar == '\t' && usetab()) return selfinsert(args)`.
-    // When TAB is pressed at line indent (only whitespace to BOL),
-    // insert a literal tab instead of completing.
+                                            // c:221-222 — `if (lastchar == '\t' && usetab()) return selfinsert(args)`.
+                                            // When TAB is pressed at line indent (only whitespace to BOL),
+                                            // insert a literal tab instead of completing.
     let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
     if lastch == b'\t' as i32 && usetab(&[b'\t']) != 0 {
         // c:222 — `return selfinsert(args)`.
@@ -171,9 +171,7 @@ pub fn deletecharorlist() -> i32 {
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:275
                                             // c:277-279 — `if (zlecs == zlell) return docomplete(COMP_LIST_COMPLETE);
                                             //              else deletechar()`.
-    if ZLECS.load(Ordering::SeqCst)
-        == ZLELL.load(Ordering::SeqCst)
-    {
+    if ZLECS.load(Ordering::SeqCst) == ZLELL.load(Ordering::SeqCst) {
         docomplete(COMP_LIST_COMPLETE)
     } else {
         deletechar()
@@ -238,8 +236,7 @@ pub fn listexpand() -> i32 {
 pub fn reversemenucomplete() -> i32 {
     // c:344
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:346
-    ZMOD.lock().unwrap().mult =
-        -ZMOD.lock().unwrap().mult; // c:347
+    ZMOD.lock().unwrap().mult = -ZMOD.lock().unwrap().mult; // c:347
     menucomplete() // c:348
 }
 
@@ -698,14 +695,8 @@ pub fn has_real_token(s: &str) -> bool {
 /// WARNING: param names don't match C — Rust=(zle) vs C=()
 pub fn get_comp_string() -> Option<String> {
     // c:1087
-    let snap: String = ZLELINE
-        .lock()
-        .unwrap()
-        .iter()
-        .collect();
-    let cs = ZLECS
-        .load(Ordering::SeqCst)
-        .min(snap.len());
+    let snap: String = ZLELINE.lock().unwrap().iter().collect();
+    let cs = ZLECS.load(Ordering::SeqCst).min(snap.len());
     let bytes = snap.as_bytes();
     let mut start = cs;
     while start > 0 && !bytes[start - 1].is_ascii_whitespace() {
@@ -762,23 +753,25 @@ pub fn inststrlen(
                     + &str[..take]
                     + &String::from_utf8_lossy(&bytes[cs..]);
                 *g = new_line;
-                ZLEMETALL.store(g.len() as i32, Ordering::SeqCst);           // c:2239 spaceinline updates ZLEMETALL
-                if move_cursor {                                             // c:2240
-                    ZLEMETACS.fetch_add(take as i32, Ordering::SeqCst);      // c:2241 zlemetacs += len
+                ZLEMETALL.store(g.len() as i32, Ordering::SeqCst); // c:2239 spaceinline updates ZLEMETALL
+                if move_cursor {
+                    // c:2240
+                    ZLEMETACS.fetch_add(take as i32, Ordering::SeqCst); // c:2241 zlemetacs += len
                 }
             }
         }
         return len;
     }
     // c:2244-2253 — non-meta wide path.
-    let instr = &str[..(len as usize).min(str.len())];                       // c:2247 ztrduppfx(str, len)
-    let zlestr: Vec<char> = stringaszleline(instr);                          // c:2248
+    let instr = &str[..(len as usize).min(str.len())]; // c:2247 ztrduppfx(str, len)
+    let zlestr: Vec<char> = stringaszleline(instr); // c:2248
     let zlelen = zlestr.len();
-    spaceinline(zlelen as i32);                                              // c:2249
+    spaceinline(zlelen as i32); // c:2249
     {
         let mut line = ZLELINE.lock().unwrap();
         let pos = ZLECS.load(Ordering::SeqCst);
-        for (i, ch) in zlestr.iter().enumerate() {                           // c:2250 ZS_strncpy
+        for (i, ch) in zlestr.iter().enumerate() {
+            // c:2250 ZS_strncpy
             if pos + i < line.len() {
                 line[pos + i] = *ch;
             } else {
@@ -786,10 +779,11 @@ pub fn inststrlen(
             }
         }
     }
-    if move_cursor {                                                         // c:2253
-        ZLECS.fetch_add(zlelen, Ordering::SeqCst);                           // c:2254 zlecs += len
+    if move_cursor {
+        // c:2253
+        ZLECS.fetch_add(zlelen, Ordering::SeqCst); // c:2254 zlecs += len
     }
-    len                                                                      // c:2257 return len
+    len // c:2257 return len
 }
 
 /// !!! WARNING: PARTIAL PORT — stub. C `doexpansion(char *s, int lst,
@@ -823,11 +817,7 @@ pub fn doexpansion() -> i32 {
 /// WARNING: param names don't match C — Rust=() vs C=(s, lst, incmd)
 pub fn docompletion() -> i32 {
     // c:2339
-    crate::ported::zle::compcore::do_completion(
-        "",
-        0,
-        COMP_LIST_COMPLETE,
-    )
+    crate::ported::zle::compcore::do_completion("", 0, COMP_LIST_COMPLETE)
 }
 
 /// Get length of common prefix
@@ -1023,14 +1013,8 @@ pub fn fixmagicspace() {
     // c:2867
     // C body c:2869-2876 — `lastchar = ' '; lastchar_wide = L' ';
     //                       lastchar_wide_valid = 1`.
-    crate::ported::zle::compcore::LASTCHAR.store(
-        (b' ' as i32) as i32,
-        Ordering::SeqCst,
-    );
-    LASTCHAR_WIDE.store(
-        (b' ' as i32) as i32,
-        Ordering::SeqCst,
-    );
+    crate::ported::zle::compcore::LASTCHAR.store((b' ' as i32) as i32, Ordering::SeqCst);
+    LASTCHAR_WIDE.store((b' ' as i32) as i32, Ordering::SeqCst);
     LASTCHAR_WIDE_VALID.store(1, Ordering::SeqCst);
 }
 
@@ -1045,10 +1029,7 @@ pub fn magicspace() -> i32 {
         ZLELINE
             .lock()
             .unwrap()
-            .insert(
-                ZLECS.load(Ordering::SeqCst),
-                ' ',
-            );
+            .insert(ZLECS.load(Ordering::SeqCst), ' ');
         ZLECS.fetch_add(1, Ordering::SeqCst);
     }
     ret
@@ -1079,14 +1060,8 @@ pub fn getcurcmd() -> Option<String> {
     //                      of a pipeline segment). This matches the
     //                      common case of `processcmd` invoked in the
     //                      first segment.
-    let snap: String = ZLELINE
-        .lock()
-        .unwrap()
-        .iter()
-        .collect();
-    let cs = ZLECS
-        .load(Ordering::SeqCst)
-        .min(snap.len());
+    let snap: String = ZLELINE.lock().unwrap().iter().collect();
+    let cs = ZLECS.load(Ordering::SeqCst).min(snap.len());
     let prefix = &snap[..cs];
     let mut last_seg_start = 0;
     for (i, b) in prefix.bytes().enumerate() {
@@ -1119,24 +1094,18 @@ pub fn processcmd() -> i32 {
     ZMOD.lock().unwrap().mult = 1; // c:2981
     let _ = pushline(); // c:2982
     ZMOD.lock().unwrap().mult = m; // c:2983
-                                                                 // c:2984 — `inststr(bindk->nam)` injects the bound widget name.
-                                                                 //           Without bindk live we use the literal "run-help " marker
-                                                                 //           commonly bound to processcmd in zsh.
+                                   // c:2984 — `inststr(bindk->nam)` injects the bound widget name.
+                                   //           Without bindk live we use the literal "run-help " marker
+                                   //           commonly bound to processcmd in zsh.
     let q = quotename(&s, 0);
     let combined = format!("run-help {}", q);
     for (i, ch) in combined.chars().enumerate() {
         ZLELINE
             .lock()
             .unwrap()
-            .insert(
-                ZLECS.load(Ordering::SeqCst) + i,
-                ch,
-            );
+            .insert(ZLECS.load(Ordering::SeqCst) + i, ch);
     }
-    ZLECS.fetch_add(
-        combined.chars().count(),
-        Ordering::SeqCst,
-    );
+    ZLECS.fetch_add(combined.chars().count(), Ordering::SeqCst);
     0
 }
 
@@ -1214,9 +1183,7 @@ pub fn expandorcompleteprefix() -> i32 {
     COMPPREF.store(1, Ordering::SeqCst); // c:3045
     let ret = expandorcomplete(); // c:3046
     if ZLECS.load(Ordering::SeqCst) > 0
-        && ZLELINE.lock().unwrap()
-            [ZLECS.load(Ordering::SeqCst) - 1]
-            == ' '
+        && ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst) - 1] == ' '
     {
         // c:3047
         makesuffixstr(None, Some("\\-"), 0); // c:3048
@@ -1397,8 +1364,8 @@ pub fn quotename(s: &str, instring: i32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::zle::zle_h::brinfo;
     use super::*;
+    use crate::zle::zle_h::brinfo;
 
     #[test]
     fn test_pfxlen() {
@@ -1706,8 +1673,11 @@ mod tests {
         *ZLELINE.lock().unwrap() = "abc".chars().collect();
         ZLELL.store(3, Ordering::SeqCst);
         ZLECS.store(3, Ordering::SeqCst);
-        assert_eq!(usetab(b"\t"), 0,
-            "cursor after non-WS char → no literal tab (need completion)");
+        assert_eq!(
+            usetab(b"\t"),
+            0,
+            "cursor after non-WS char → no literal tab (need completion)"
+        );
     }
 
     /// `usetab` returns 1 when cursor follows only spaces/tabs at BOL.
@@ -1718,7 +1688,6 @@ mod tests {
         *ZLELINE.lock().unwrap() = "   ".chars().collect();
         ZLELL.store(3, Ordering::SeqCst);
         ZLECS.store(3, Ordering::SeqCst);
-        assert_eq!(usetab(b"\t"), 1,
-            "after pure-WS indent, tab = literal");
+        assert_eq!(usetab(b"\t"), 1, "after pure-WS indent, tab = literal");
     }
 }

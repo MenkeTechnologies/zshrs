@@ -83,9 +83,18 @@ pub fn _aliases(args: &[String]) -> i32 {
         ('r', "aliases:regular alias:compadd -k aliases"),
         ('g', "global-aliases:global alias:compadd -k galiases"),
         ('s', "suffix-aliases:suffix alias:compadd -k saliases"),
-        ('R', "disabled-aliases:disabled regular alias:compadd -k dis_aliases"),
-        ('G', "disabled-global-aliases:disabled global alias:compadd -k dis_galiases"),
-        ('S', "disabled-suffix-aliases:disabled suffix alias:compadd -k dis_saliases"),
+        (
+            'R',
+            "disabled-aliases:disabled regular alias:compadd -k dis_aliases",
+        ),
+        (
+            'G',
+            "disabled-global-aliases:disabled global alias:compadd -k dis_galiases",
+        ),
+        (
+            'S',
+            "disabled-suffix-aliases:disabled suffix alias:compadd -k dis_saliases",
+        ),
     ] {
         if sel.contains(chr) {
             alt_args.push(spec.to_string());

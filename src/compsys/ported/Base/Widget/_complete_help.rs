@@ -100,10 +100,7 @@ mod tests {
         //   confirm the buffer was reset before dispatch even though
         //   no compadd calls fired.
         let _g = crate::test_util::global_state_lock();
-        setaparam(
-            "_complete_help_funcs",
-            vec!["stale_entry".to_string()],
-        );
+        setaparam("_complete_help_funcs", vec!["stale_entry".to_string()]);
         let _ = _complete_help(&[]);
         let after = getaparam("_complete_help_funcs").unwrap_or_default();
         assert!(

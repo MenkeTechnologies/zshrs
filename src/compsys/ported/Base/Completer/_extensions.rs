@@ -100,7 +100,13 @@ pub fn _extensions() -> i32 {
         return 1;
     }
     // sh:14  remove digit-only extensions like `.1`, `.1.txt`
-    files.retain(|f| !f[1..].chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false));
+    files.retain(|f| {
+        !f[1..]
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+    });
 
     // sh:16-21  prefix-hidden style
     let curcontext = getsparam("curcontext").unwrap_or_default();
@@ -110,7 +116,10 @@ pub fn _extensions() -> i32 {
     ) == 0;
     if prefix_hidden {
         // sh:17  drop leading "." from each entry
-        files = files.iter().map(|f| f.trim_start_matches('.').to_string()).collect();
+        files = files
+            .iter()
+            .map(|f| f.trim_start_matches('.').to_string())
+            .collect();
     } else {
         // sh:19-20
         let prefix = getsparam("PREFIX").unwrap_or_default();
@@ -155,7 +164,10 @@ pub fn _extensions() -> i32 {
         argv.push("-a".to_string());
         argv.push("files".to_string());
         let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
-        if get_compstate_str("exact_string").unwrap_or_default().is_empty() {
+        if get_compstate_str("exact_string")
+            .unwrap_or_default()
+            .is_empty()
+        {
             return 0;
         }
     }

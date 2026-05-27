@@ -145,8 +145,6 @@
 //! sh:141  autoload -Uz compdump
 //! ```
 
-
-
 use rayon::prelude::*;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -179,16 +177,15 @@ pub fn compdump(
     //   written + flushed.
     let host = hostname();
     let pid = std::process::id();
-    let tmp = dump_path
-        .with_file_name(format!(
-            "{}.{}.{}",
-            dump_path
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            host,
-            pid
-        ));
+    let tmp = dump_path.with_file_name(format!(
+        "{}.{}.{}",
+        dump_path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        host,
+        pid
+    ));
     {
         let mut file = File::create(&tmp)?;
 
@@ -223,7 +220,11 @@ pub fn compdump(
         if !autoload_names.is_empty() {
             writeln!(file, "autoload -Uz \\")?;
             for (i, name) in autoload_names.iter().enumerate() {
-                let cont = if i + 1 < autoload_names.len() { " \\" } else { "" };
+                let cont = if i + 1 < autoload_names.len() {
+                    " \\"
+                } else {
+                    ""
+                };
                 writeln!(file, "  {}{}", name, cont)?;
             }
         }
@@ -231,8 +232,7 @@ pub fn compdump(
         //   captured options (e.g. `+X`) so `autoload +X foo` is
         //   restored verbatim. The shell writes one `autoload ${opts}
         //   ${name}` line per entry.
-        let mut compautos_sorted: Vec<(&String, &String)> =
-            result.compautos.iter().collect();
+        let mut compautos_sorted: Vec<(&String, &String)> = result.compautos.iter().collect();
         compautos_sorted.sort_by(|a, b| a.0.cmp(b.0));
         for (name, opts) in &compautos_sorted {
             let opt_str = if opts.is_empty() {

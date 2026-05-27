@@ -34,8 +34,7 @@ pub fn _correct_word() -> i32 {
     };
     let _ = setsparam("curcontext", &new_ctx);
 
-    let r =
-        dispatch_function_call("_main_complete", &["_correct".to_string()]).unwrap_or(1);
+    let r = dispatch_function_call("_main_complete", &["_correct".to_string()]).unwrap_or(1);
 
     let _ = setsparam("curcontext", &saved);
     r

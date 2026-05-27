@@ -25,19 +25,20 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Mutex, OnceLock};
 use crate::ported::builtins::sched::zleactive;
+pub use crate::ported::options::emulation;
+pub use crate::ported::params::locallevel;
 use crate::ported::params::{createparam, paramtab, setiparam, setloopvar, setsparam};
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::string::{dupstring, ztrdup};
-use crate::ported::zsh_h::{eprog, features, funcstack, funcwrap, isset, module, param, paramdef, EMULATE_KSH, EMULATION, KSHARRAYS, PARAMDEF, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET, VIMODE};
+use crate::ported::zsh_h::{
+    eprog, features, funcstack, funcwrap, isset, module, param, paramdef, EMULATE_KSH, EMULATION,
+    KSHARRAYS, PARAMDEF, PM_LOCAL, PM_NAMEREF, PM_READONLY, PM_UNSET, VIMODE,
+};
 use crate::ported::ztype_h::INAMESPC;
-pub use crate::ported::options::emulation;
-pub use crate::ported::params::locallevel;
 use crate::zsh_h::{PM_ARRAY, PM_SCALAR, PM_SPECIAL};
-
-
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 // =====================================================================
 // /* Implementing "namespace" requires creating a new keword.  Hrm. */ c:34
@@ -129,10 +130,7 @@ pub fn matchgetfn(pm: *mut param) -> Vec<String> {
             ap
         } else {
             // c:81-82 — pm->u.arr = zarrdup(zsh_match);
-            let dup: Vec<String> = zsh_match
-                .iter()
-                .map(|s| ztrdup(s))
-                .collect();
+            let dup: Vec<String> = zsh_match.iter().map(|s| ztrdup(s)).collect();
             if !pm.is_null() {
                 unsafe {
                     (*pm).u_arr = Some(dup.clone());
@@ -551,8 +549,8 @@ pub fn cleanup_(m: *const module) -> i32 {
             0,
             0,
         ), // c:119
-        PARAMDEF(".sh.file", (PM_NAMEREF | PM_READONLY) as i32, 0, 0),        // c:121
-        PARAMDEF(".sh.lineno", (PM_NAMEREF | PM_READONLY) as i32, 0, 0),      // c:122
+        PARAMDEF(".sh.file", (PM_NAMEREF | PM_READONLY) as i32, 0, 0), // c:121
+        PARAMDEF(".sh.lineno", (PM_NAMEREF | PM_READONLY) as i32, 0, 0), // c:122
         PARAMDEF(".sh.match", (PM_ARRAY | PM_READONLY) as i32, 0, 0),  // c:123
         PARAMDEF(
             ".sh.name",
@@ -566,8 +564,8 @@ pub fn cleanup_(m: *const module) -> i32 {
             0,
             0,
         ), // c:126
-        PARAMDEF(".sh.subshell", (PM_NAMEREF | PM_READONLY) as i32, 0, 0),    // c:128
-        PARAMDEF(".sh.version", (PM_NAMEREF | PM_READONLY) as i32, 0, 0),     // c:130
+        PARAMDEF(".sh.subshell", (PM_NAMEREF | PM_READONLY) as i32, 0, 0), // c:128
+        PARAMDEF(".sh.version", (PM_NAMEREF | PM_READONLY) as i32, 0, 0), // c:130
     ];
 
     /* Clean up namerefs, otherwise deleteparamdef() is confused */
@@ -591,7 +589,6 @@ pub fn cleanup_(m: *const module) -> i32 {
     }
     setfeatureenables(m, module_features(), None) // c:279
 }
-
 
 /// Port of `finish_(UNUSED(Module m))` from `Src/Modules/ksh93.c:284`.
 #[allow(unused_variables)]
@@ -629,17 +626,12 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 10]);
     }
     0
 }
-
 
 // WARNING: NOT IN KSH93.C — Rust-only module-framework shim.
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
@@ -728,8 +720,8 @@ fn module_features() -> &'static Mutex<features> {
 
 #[cfg(test)]
 mod tests {
-    use crate::zsh_h::hashnode;
     use super::*;
+    use crate::zsh_h::hashnode;
 
     /// Verifies `ksh93_wrapper` returns 1 in the !EMULATE_KSH branch
     /// (c:149-150) when `emulation` global is 0 (default).

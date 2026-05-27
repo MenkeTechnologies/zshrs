@@ -17,22 +17,30 @@
 
 #![allow(non_camel_case_types)]
 
-use crate::ported::zsh_h::{alias, BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH, FUNC, IF, INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, REPEAT, SELECT, THEN, TIME, TYPESET, UNTIL, WHILE, ZEND};
+use crate::compat::zgetcwd;
+use crate::hist::{hashchar, hist_ring};
+use crate::jobs::getsigidx;
+use crate::ported::zsh_h::{
+    alias, BANG_TOK, CASE, COPROC, DINBRACK, DOLOOP, DONE, ELIF, ELSE, ESAC, FI, FOR, FOREACH,
+    FUNC, IF, INBRACE_TOK, NOCORRECT, OUTBRACE_TOK, REPEAT, SELECT, THEN, TIME, TYPESET, UNTIL,
+    WHILE, ZEND,
+};
+use crate::signals::{settrap, unsettrap};
+use crate::text::{getpermtext, zoutputtab};
+use crate::utils::{nicezputs, quotedzputs, xsymlink, zputs, ztrcmp, zwarn};
+use crate::zsh_h::{
+    cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, EF_RUN,
+    HASHED, HIST_DUP, HIST_TMPSTORE, PM_CUR_FPATH, PM_KSHSTORED, PM_LOADDIR, PM_TAGGED,
+    PM_TAGGED_LOCAL, PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED, PRINT_LIST, PRINT_NAMEONLY,
+    PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE,
+    PRINT_WHENCE_WORD, ZSIG_FUNC,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use crate::compat::zgetcwd;
-use crate::hist::{hashchar, hist_ring};
-use crate::jobs::getsigidx;
-use crate::signals::{settrap, unsettrap};
-use crate::text::{getpermtext, zoutputtab};
-use crate::utils::{nicezputs, quotedzputs, xsymlink, zputs, ztrcmp, zwarn};
-use crate::zsh_h::{cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, EF_RUN, HASHED, HIST_DUP, HIST_TMPSTORE, PM_CUR_FPATH, PM_KSHSTORED, PM_LOADDIR, PM_TAGGED, PM_TAGGED_LOCAL, PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED, PRINT_LIST, PRINT_NAMEONLY, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, ZSIG_FUNC};
-
-
 
 /// Generic hash function (zsh's hasher)
 /// Compute the canonical zsh hash for a string.
@@ -1239,7 +1247,7 @@ pub fn enableshfuncnode(hn: &str) {
             // c:882 — `settrap(sigidx, NULL, ZSIG_FUNC)`. The TRAPxxx
             // function body resolves through shfunctab at dispatch
             // (`gettrapnode`), not via the trap arrays directly.
-            let _ = settrap(sig, None,ZSIG_FUNC);
+            let _ = settrap(sig, None, ZSIG_FUNC);
         }
     }
 }
@@ -1273,8 +1281,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
     // c:919-925 — PRINT_NAMEONLY (or PRINT_WHENCE_SIMPLE without FUNCDEF):
     // `zputs(nam); putchar('\n'); return;`
     if (printflags & PRINT_NAMEONLY) != 0
-        || ((printflags & PRINT_WHENCE_SIMPLE) != 0
-            && (printflags & PRINT_WHENCE_FUNCDEF) == 0)
+        || ((printflags & PRINT_WHENCE_SIMPLE) != 0 && (printflags & PRINT_WHENCE_FUNCDEF) == 0)
     {
         let mut so = std::io::stdout();
         let _ = zputs(&hn.node.nam, &mut so); // c:922
@@ -1290,7 +1297,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
     {
         let mut so = std::io::stdout();
         let _ = nicezputs(&hn.node.nam, &mut so); // c:929
-        // c:930-933 — printf one of three strings via nested ternary.
+                                                  // c:930-933 — printf one of three strings via nested ternary.
         let msg = if (printflags & PRINT_WHENCE_WORD) != 0 {
             ": function" // c:930
         } else if (hn.node.flags & PM_UNDEFINED as i32) != 0 {
@@ -1337,7 +1344,10 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
         let mut t: Option<String>;
         if (hn.node.flags & PM_UNDEFINED as i32) != 0 {
             // c:950
-            println!("{} undefined", hashchar.load(Ordering::Relaxed) as u8 as char); // c:951
+            println!(
+                "{} undefined",
+                hashchar.load(Ordering::Relaxed) as u8 as char
+            ); // c:951
             let _ = zoutputtab(&mut io::stdout()); // c:952
             t = None;
         } else if let Some(fd) = hn.funcdef.as_ref() {
@@ -1395,7 +1405,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
             ];
             let mut so = std::io::stdout();
             let _ = zputs("builtin autoload -X", &mut so); // c:967
-                                                  // c:968-969 — emit each fopt char whose flag is set.
+                                                           // c:968-969 — emit each fopt char whose flag is set.
             for fl in 0..fopt.len() {
                 // c:968
                 if (hn.node.flags & flgs[fl] as i32) != 0 {
@@ -1417,7 +1427,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
             let body = t.take().unwrap();
             let mut so = std::io::stdout();
             let _ = zputs(&body, &mut so); // c:975
-                                  // c:977-982 — funcdef.flags & EF_RUN → run-time suffix.
+                                           // c:977-982 — funcdef.flags & EF_RUN → run-time suffix.
             let ef_run = hn
                 .funcdef
                 .as_ref()
@@ -2551,12 +2561,8 @@ fn simple_glob_match(pattern: &str, name: &str) -> bool {
     // c:hashtable.c:412 — `scanmatchtable` callers pass a compiled
     // `Patprog`; this helper inlines the compile+match since callers
     // here have only the raw pattern string.
-    crate::ported::pattern::patcompile(
-        pattern,
-        crate::ported::zsh_h::PAT_HEAPDUP as i32,
-        None,
-    )
-    .map_or(false, |p| crate::ported::pattern::pattry(&p, name))
+    crate::ported::pattern::patcompile(pattern, crate::ported::zsh_h::PAT_HEAPDUP as i32, None)
+        .map_or(false, |p| crate::ported::pattern::pattry(&p, name))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2794,8 +2800,14 @@ mod tests {
         table.add(shfunc_autoload("lazy"));
 
         assert!(table.get("myfunc").is_some());
-        assert_eq!((table.get("myfunc").unwrap().node.flags & PM_UNDEFINED as i32), 0);
-        assert_ne!((table.get("lazy").unwrap().node.flags & PM_UNDEFINED as i32), 0);
+        assert_eq!(
+            (table.get("myfunc").unwrap().node.flags & PM_UNDEFINED as i32),
+            0
+        );
+        assert_ne!(
+            (table.get("lazy").unwrap().node.flags & PM_UNDEFINED as i32),
+            0
+        );
 
         table.disable("myfunc");
         assert!(table.get("myfunc").is_none());
@@ -3160,30 +3172,45 @@ mod tests {
         assert_eq!(a.text, "ls -la");
         // Regular alias = no GLOBAL/SUFFIX flags.
         let f = a.node.flags as i32;
-        assert_eq!(f & (crate::ported::zsh_h::ALIAS_GLOBAL | crate::ported::zsh_h::ALIAS_SUFFIX), 0,
-            "regular alias has no GLOBAL/SUFFIX bits");
+        assert_eq!(
+            f & (crate::ported::zsh_h::ALIAS_GLOBAL | crate::ported::zsh_h::ALIAS_SUFFIX),
+            0,
+            "regular alias has no GLOBAL/SUFFIX bits"
+        );
     }
 
     /// `createaliasnode` with ALIAS_GLOBAL flag sets the global bit.
     #[test]
     fn alias_corpus_create_global_alias_carries_flag() {
         let _g = crate::test_util::global_state_lock();
-        let a = createaliasnode("G", "global text",
-            crate::ported::zsh_h::ALIAS_GLOBAL as u32);
+        let a = createaliasnode(
+            "G",
+            "global text",
+            crate::ported::zsh_h::ALIAS_GLOBAL as u32,
+        );
         let f = a.node.flags as i32;
-        assert_ne!(f & crate::ported::zsh_h::ALIAS_GLOBAL, 0,
-            "ALIAS_GLOBAL set");
+        assert_ne!(
+            f & crate::ported::zsh_h::ALIAS_GLOBAL,
+            0,
+            "ALIAS_GLOBAL set"
+        );
     }
 
     /// `createaliasnode` with ALIAS_SUFFIX flag sets the suffix bit.
     #[test]
     fn alias_corpus_create_suffix_alias_carries_flag() {
         let _g = crate::test_util::global_state_lock();
-        let a = createaliasnode("S", "suffix text",
-            crate::ported::zsh_h::ALIAS_SUFFIX as u32);
+        let a = createaliasnode(
+            "S",
+            "suffix text",
+            crate::ported::zsh_h::ALIAS_SUFFIX as u32,
+        );
         let f = a.node.flags as i32;
-        assert_ne!(f & crate::ported::zsh_h::ALIAS_SUFFIX, 0,
-            "ALIAS_SUFFIX set");
+        assert_ne!(
+            f & crate::ported::zsh_h::ALIAS_SUFFIX,
+            0,
+            "ALIAS_SUFFIX set"
+        );
     }
 
     /// Empty text is preserved (zsh allows zero-length alias expansion).

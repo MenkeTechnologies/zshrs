@@ -143,15 +143,13 @@ pub fn _match() -> i32 {
         }
         // sh:67
         let unambig = get_compstate_str("unambiguous").unwrap_or_default();
-        if matches!(ins.as_str(), "true" | "yes" | "on" | "1")
-            && unambig.len() >= combined.len()
-        {
+        if matches!(ins.as_str(), "true" | "yes" | "on" | "1") && unambig.len() >= combined.len() {
             set_compstate_str("pattern_insert", "unambiguous");
         } else if _requested(&["original".to_string()]) == 0 {
-            let orig_style_on =
-                lookupstyle(&ctx, "original").first().map(|v| {
-                    matches!(v.as_str(), "yes" | "true" | "1" | "on")
-                }).unwrap_or(false);
+            let orig_style_on = lookupstyle(&ctx, "original")
+                .first()
+                .map(|v| matches!(v.as_str(), "yes" | "true" | "1" | "on"))
+                .unwrap_or(false);
             if nm > 1 || orig_style_on {
                 // sh:74
                 let _ = _description(&[

@@ -15,13 +15,13 @@
 //! - Character-by-character input with push-back support
 //! - Meta-character encoding for internal tokens
 
+use crate::ported::zsh_h::{
+    Meta, INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO,
+    INP_RAW_KEEP,
+};
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Read, Write, self};
-use crate::ported::zsh_h::{
-    INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO, INP_RAW_KEEP, Meta
-};
-
+use std::io::{self, BufRead, BufReader, Read, Write};
 
 /// Port of `struct instacks` from `Src/input.c:109`. One frame in
 /// the input stack — pushed by `inpush()` and popped by `inpoptop()`
@@ -412,7 +412,7 @@ pub fn zstuff(path: &str) -> Result<(String, i64), i32> {
         Err(_) => 0,
     };
     let mut buf = String::new(); // c:629 — `buf = zalloc(len + 1);`
-    // c:630-635 — `fread(buf, len, 1, in)` failure arm zerrs read error.
+                                 // c:630-635 — `fread(buf, len, 1, in)` failure arm zerrs read error.
     if file.read_to_string(&mut buf).is_err() {
         // c:630
         crate::ported::utils::zerr(&format!("read error on {}", path)); // c:631
@@ -1207,8 +1207,12 @@ mod tests {
         reset_input();
         inputsetline("xy", 0);
         let _ = ingetc(); // consume 'x' → pos=1
-        inungetc('Z');     // pos→0; 'Z' silently dropped per C contract
-        assert_eq!(ingetc(), Some('x'), "buf[pos-1] returned, NOT the unget char");
+        inungetc('Z'); // pos→0; 'Z' silently dropped per C contract
+        assert_eq!(
+            ingetc(),
+            Some('x'),
+            "buf[pos-1] returned, NOT the unget char"
+        );
         assert_eq!(ingetc(), Some('y'));
     }
 

@@ -15,26 +15,17 @@
 //! - Trap management (trap builtin)
 //! - Job control signals
 
-pub use crate::signals_h::{signal_default, signal_ignore};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
-use nix::sys::signal::{
-    sigprocmask, SaFlags, SigAction, SigHandler, SigSet, Signal as NixSignal, SigmaskHow,
-};
-use nix::unistd::getpid;
-use crate::DPUTS;
 use crate::ported::builtin::{zexit, BREAKS, LASTVAL, LOOPS, RETFLAG, SFCONTEXT, STOPMSG};
 use crate::ported::context::{zcontext_restore, zcontext_save};
 use crate::ported::exec::{TRAP_RETURN, TRAP_STATE};
 use crate::ported::init::zleentry;
 use crate::ported::jobs::gettrapnode;
+pub use crate::ported::jobs::{getsigidx, getsigname};
 use crate::ported::mem::{zsfree, ztrdup};
 use crate::ported::options::optlookup;
 use crate::ported::params::{getiparam, ttyidlegetfn};
-use crate::ported::signals_h::{
-    SIGNUM, TRAPCOUNT as TRAPCOUNT_H, VSIGCOUNT,
-};
+pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
+use crate::ported::signals_h::{SIGNUM, TRAPCOUNT as TRAPCOUNT_H, VSIGCOUNT};
 use crate::ported::utils::{
     errflag, inc_locallevel, locallevel as locallevel_fn, zerr, zwarn, ERRFLAG_ERROR, RESETNEEDED,
 };
@@ -44,14 +35,19 @@ use crate::ported::zsh_h::{
     TRAP_STATE_FORCE_RETURN, TRAP_STATE_PRIMED, ZEXIT_SIGNAL, ZLE_CMD_REFRESH, ZSIG_FUNC,
     ZSIG_IGNORED, ZSIG_SHIFT, ZSIG_TRAPPED,
 };
-use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
-pub use crate::ported::jobs::{getsigidx, getsigname};
-pub use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::r#loop::try_tryflag;
 use crate::sched::zleactive;
+pub use crate::signals_h::{signal_default, signal_ignore};
+use crate::signals_h::{MAX_QUEUE_SIZE, SIGCOUNT, SIGDEBUG, SIGEXIT, SIGZERR, TRAPCOUNT};
 use crate::utils::getshfunc;
-
-
+use crate::DPUTS;
+use nix::sys::signal::{
+    sigprocmask, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow, Signal as NixSignal,
+};
+use nix::unistd::getpid;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 // getsigidx / getsigname live in `jobs.rs` per C source split:
 // `getsigidx` at `Src/jobs.c:3047`, `getsigname` at `Src/jobs.c:3087`.
@@ -393,9 +389,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                 if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
                     if let Ok(mut guard) = jt.lock() {
                         for (pid, status) in reaped {
-                            let _ = crate::ported::jobs::update_bg_job(
-                                &mut guard, pid, status,
-                            );
+                            let _ = crate::ported::jobs::update_bg_job(&mut guard, pid, status);
                         }
                     }
                 }
@@ -406,8 +400,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
             if handletrap(libc::SIGPIPE) == 0 {
                 // c:436-441 — non-interactive exits immediately; an
                 // interactive non-tty also exits via zexit.
-                let interact =
-                    isset(optlookup("interactive"));
+                let interact = isset(optlookup("interactive"));
                 if !interact {
                     unsafe {
                         libc::_exit(libc::SIGPIPE);
@@ -417,8 +410,7 @@ extern "C" fn zhandler(sig: libc::c_int) {
                     // Rust port hardcoded fd 0 (stdin) with a comment
                     // claiming "SHTTY isn't a single global in zshrs"
                     // — but SHTTY IS a global at `init::SHTTY`. Use it.
-                    let shtty =
-                        crate::ported::init::SHTTY.load(Ordering::SeqCst);
+                    let shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
                     let on_tty = shtty >= 0 && unsafe { libc::isatty(shtty) } != 0;
                     if !on_tty {
                         STOPMSG // c:439
@@ -442,28 +434,24 @@ extern "C" fn zhandler(sig: libc::c_int) {
             if handletrap(libc::SIGINT) == 0 {
                 // c:454-456 — PRIVILEGED+INTERACTIVE during a signal-
                 // noerrexit window: immediate exit.
-                let privileged =
-                    isset(optlookup("privileged"));
-                let interactive =
-                    isset(optlookup("interactive"));
+                let privileged = isset(optlookup("privileged"));
+                let interactive = isset(optlookup("interactive"));
                 if privileged && interactive {
                     zexit(libc::SIGINT, ZEXIT_SIGNAL);
                 }
                 // c:457 — `errflag |= ERRFLAG_INT;`
                 let cur = errflag.load(Ordering::Relaxed);
-                errflag
-                    .store(cur | ERRFLAG_INT, Ordering::Relaxed); // c:457
-                // c:458-462 — `if (list_pipe || chline || simple_pline)`:
-                // an interactive SIGINT mid-pipeline must break loops,
-                // flush pending input, and signal any cursh job.
-                let in_list_pipe = crate::ported::exec::list_pipe
-                    .load(Ordering::Relaxed) != 0;
+                errflag.store(cur | ERRFLAG_INT, Ordering::Relaxed); // c:457
+                                                                     // c:458-462 — `if (list_pipe || chline || simple_pline)`:
+                                                                     // an interactive SIGINT mid-pipeline must break loops,
+                                                                     // flush pending input, and signal any cursh job.
+                let in_list_pipe = crate::ported::exec::list_pipe.load(Ordering::Relaxed) != 0;
                 let chline_nonempty = crate::ported::hist::chline
                     .lock()
                     .map(|s| !s.is_empty())
                     .unwrap_or(false);
-                let in_simple_pline = crate::ported::exec::simple_pline
-                    .load(Ordering::Relaxed) != 0;
+                let in_simple_pline =
+                    crate::ported::exec::simple_pline.load(Ordering::Relaxed) != 0;
                 if in_list_pipe || chline_nonempty || in_simple_pline {
                     // c:459 — `breaks = loops;`
                     let l = crate::ported::builtin::LOOPS.load(Ordering::Relaxed);
@@ -612,7 +600,8 @@ pub fn killrunjobs(from_signal: i32) {
     }
 }
 
-/* send a signal to a job (simply involves kill if monitoring is on) */    // c:525
+/* send a signal to a job (simply involves kill if monitoring is on) */
+ // c:525
 /// Port of `killjb(Job jn, int sig)` from `Src/signals.c:529`.
 /// CALLER CONVENTION: Rust passes `jn_idx: usize` (JOBTAB index)
 /// instead of C `Job jn` (pointer); the body resolves the job via
@@ -620,10 +609,11 @@ pub fn killrunjobs(from_signal: i32) {
 #[cfg(unix)]
 pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
     // c:529
-    let _pn: ();                                                             // c:531 `Process pn;` — modelled by loop binding
-    let mut err: i32 = 0;                                                    // c:532
+    let _pn: (); // c:531 `Process pn;` — modelled by loop binding
+    let mut err: i32 = 0; // c:532
 
-    if crate::ported::zsh_h::jobbing() {                                     // c:534
+    if crate::ported::zsh_h::jobbing() {
+        // c:534
         // Snapshot the job state under the lock (gleader + stat + other
         // + procs + other-procs). Avoid holding the lock during kill()
         // syscalls — they can block under signals.
@@ -660,18 +650,20 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
         };
         let (stat, gleader, other, procs_pids, other_procs, other_empty) = snap;
 
-        if (stat & crate::ported::zsh_h::STAT_SUPERJOB) != 0 {               // c:535
-            if sig == libc::SIGCONT {                                        // c:536
+        if (stat & crate::ported::zsh_h::STAT_SUPERJOB) != 0 {
+            // c:535
+            if sig == libc::SIGCONT {
+                // c:536
                 // c:537-540 — walk jobtab[jn->other].procs, killpg each;
                 // fall through to kill() on killpg failure; ESRCH ignored.
-                for pid in &other_procs {                                    // c:537
-                    if unsafe { libc::killpg(*pid, sig) } == -1 {            // c:538
+                for pid in &other_procs {
+                    // c:537
+                    if unsafe { libc::killpg(*pid, sig) } == -1 {
+                        // c:538
                         let e = std::io::Error::last_os_error().raw_os_error();
                         // c:539 — fallback kill()
-                        if unsafe { libc::kill(*pid, sig) } == -1
-                            && e != Some(libc::ESRCH)
-                        {
-                            err = -1;                                        // c:540
+                        if unsafe { libc::kill(*pid, sig) } == -1 && e != Some(libc::ESRCH) {
+                            err = -1; // c:540
                         }
                     }
                 }
@@ -681,29 +673,31 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
                  * which is assumed to be the one controlling the
                  * subjob, i.e. the forked zsh that was originally
                  * list_pipe_pid...
-                 */                                                          // c:542-547
+                 */
+ // c:542-547
                 let n = procs_pids.len();
                 if n > 0 {
-                    for pid in &procs_pids[..n - 1] {                        // c:548 `for pn = jn->procs; pn->next; ...`
+                    for pid in &procs_pids[..n - 1] {
+                        // c:548 `for pn = jn->procs; pn->next; ...`
                         if unsafe { libc::kill(*pid, sig) } == -1
-                            && std::io::Error::last_os_error().raw_os_error()
-                                != Some(libc::ESRCH)
+                            && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
                         {
-                            err = -1;                                        // c:550
+                            err = -1; // c:550
                         }
                     }
 
                     /*
                      * ...we only continue that once the external processes
                      * currently associated with the subjob are finished.
-                     */                                                      // c:552-555
-                    if other_empty {                                         // c:556
+                     */
+ // c:552-555
+                    if other_empty {
+                        // c:556
                         let last = procs_pids[n - 1];
                         if unsafe { libc::kill(last, sig) } == -1
-                            && std::io::Error::last_os_error().raw_os_error()
-                                != Some(libc::ESRCH)
+                            && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
                         {
-                            err = -1;                                        // c:558
+                            err = -1; // c:558
                         }
                     }
                 }
@@ -711,43 +705,51 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
                 /*
                  * The following marks both the superjob and subjob
                  * as running, as done elsewhere.
-                 */                                                          // c:560-569
-                if err != -1 {                                               // c:570
+                 */
+ // c:560-569
+                if err != -1 {
+                    // c:570
                     let table = crate::ported::jobs::JOBTAB.get().unwrap();
                     let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
-                    crate::ported::jobs::makerunning(&mut tab, jn_idx);      // c:571
+                    crate::ported::jobs::makerunning(&mut tab, jn_idx); // c:571
                 }
 
-                return err;                                                  // c:573
+                return err; // c:573
             }
 
             // c:575 — `if (killpg(jobtab[jn->other].gleader, sig) == -1 && errno != ESRCH) err = -1;`
             let other_gleader = crate::ported::jobs::JOBTAB
                 .get()
-                .and_then(|t| t.lock().ok().and_then(|tab| tab.get(other as usize).map(|j| j.gleader)))
+                .and_then(|t| {
+                    t.lock()
+                        .ok()
+                        .and_then(|tab| tab.get(other as usize).map(|j| j.gleader))
+                })
                 .unwrap_or(0);
             if other_gleader > 0
                 && unsafe { libc::killpg(other_gleader, sig) } == -1
                 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
             {
-                err = -1;                                                    // c:576
+                err = -1; // c:576
             }
 
             if unsafe { libc::killpg(gleader, sig) } == -1                   // c:578
                 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
             {
-                err = -1;                                                    // c:579
+                err = -1; // c:579
             }
 
-            return err;                                                      // c:581
-        } else {                                                             // c:583
-            err = unsafe { libc::killpg(gleader, sig) };                     // c:584
-            if sig == libc::SIGCONT && err != -1 {                           // c:585
+            return err; // c:581
+        } else {
+            // c:583
+            err = unsafe { libc::killpg(gleader, sig) }; // c:584
+            if sig == libc::SIGCONT && err != -1 {
+                // c:585
                 let table = crate::ported::jobs::JOBTAB.get().unwrap();
                 let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
-                crate::ported::jobs::makerunning(&mut tab, jn_idx);          // c:586
+                crate::ported::jobs::makerunning(&mut tab, jn_idx); // c:586
             }
-            return err;                                                      // c:587
+            return err; // c:587
         }
     }
     // c:590-604 — non-jobbing: walk jn->procs, kill each if SP_RUNNING
@@ -763,14 +765,16 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
             None => return err,
         }
     };
-    for (pid, status) in snap {                                              // c:590
+    for (pid, status) in snap {
+        // c:590
         /*
          * Do not kill this job's process if it's already dead as its
          * pid could have been reused by the system.
          */                                                                  // c:591-595
         let is_running = status == crate::ported::zsh_h::SP_RUNNING;
         let is_stopped = libc::WIFSTOPPED(status);
-        if is_running || is_stopped {                                        // c:596
+        if is_running || is_stopped {
+            // c:596
             /*
              * kill -0 on a job is pointless. We still call kill() for each
              * process in case the user cares about it but we ignore its outcome.
@@ -781,12 +785,12 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
                 && sig != 0
             {
                 err = r;
-                return -1;                                                   // c:602
+                return -1; // c:602
             }
-            err = r;                                                         // c:601 assignment
+            err = r; // c:601 assignment
         }
     }
-    err                                                                      // c:605
+    err // c:605
 }
 
 /// Port of `struct savetrap` from `Src/signals.c:611-624`.
@@ -795,10 +799,10 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
 #[allow(non_camel_case_types)]
 pub struct savetrap {
     // c:611
-    pub sig: i32,                                  // c:613
-    pub flags: i32,                                // c:614
-    pub local: i32,                                // c:615 locallevel at save
-    pub posix: i32,                                // c:616 exit_trap_posix snapshot
+    pub sig: i32,            // c:613
+    pub flags: i32,          // c:614
+    pub local: i32,          // c:615 locallevel at save
+    pub posix: i32,          // c:616 exit_trap_posix snapshot
     pub list: Option<Eprog>, // c:617 trap eval-list Eprog
 }
 
@@ -950,8 +954,7 @@ pub fn settrap(sig: i32, l: Option<Eprog>, flags: i32) -> i32 {
     if sig == SIGEXIT {
         // c:746 — `if (isset(POSIXTRAPS)) ...`. In POSIX mode SIGEXIT
         // is sticky and not tagged with the local-level shift.
-        let posix_traps =
-            isset(optlookup("posixtraps")); // c:746
+        let posix_traps = isset(optlookup("posixtraps")); // c:746
         EXIT_TRAP_POSIX.store(posix_traps, Ordering::Relaxed);
         if !posix_traps {
             if let Ok(mut g) = sigtrapped.lock() {
@@ -1253,11 +1256,7 @@ pub fn endtrapscope() {
             let signame = getsigname(SIGEXIT);
             let t = crate::ported::builtin::traps_table().lock();
             t.ok()
-                .and_then(|g| {
-                    g.get(&signame)
-                        .cloned()
-                        .or_else(|| g.get("EXIT").cloned())
-                })
+                .and_then(|g| g.get(&signame).cloned().or_else(|| g.get("EXIT").cloned()))
                 .unwrap_or_default()
         };
         if !body.is_empty() {
@@ -1569,13 +1568,16 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     }
 
     zcontext_save(); // c:1126
-                                             // c:1128 — `execsave()` saves trap_return/trap_state. Without a
-                                             // canonical `execsave` port yet, snapshot the two atomics inline.
+                     // c:1128 — `execsave()` saves trap_return/trap_state. Without a
+                     // canonical `execsave` port yet, snapshot the two atomics inline.
     let saved_trap_state = TRAP_STATE.load(Ordering::SeqCst); // c:1128 execsave
     let saved_trap_return = TRAP_RETURN.load(Ordering::SeqCst); // c:1128 execsave
     BREAKS.store(0, Ordering::SeqCst); // c:1129 breaks = 0
     RETFLAG.store(0, Ordering::SeqCst); // c:1129 retflag = 0
-    traplocallevel.store(crate::ported::params::locallevel.load(Ordering::SeqCst), Ordering::SeqCst); // c:1130
+    traplocallevel.store(
+        crate::ported::params::locallevel.load(Ordering::SeqCst),
+        Ordering::SeqCst,
+    ); // c:1130
 
     // c:1131 — `runhookdef(BEFORETRAPHOOK, NULL);` — fire any
     // registered "before-trap" module hooks. Looked up by name
@@ -1590,11 +1592,10 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     if (*sigtr & ZSIG_FUNC) != 0 {
         // c:1132
         let osc = SFCONTEXT.load(Ordering::SeqCst); // c:1133 osc
-        // c:1133 — `int old_incompfunc = incompfunc;` — snapshot the
-        // completion-function-active flag so the trap dispatch can
-        // run code outside the comp-fn scope and restore on return.
-        let old_incompfunc: i32 =
-            crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed);
+                                                    // c:1133 — `int old_incompfunc = incompfunc;` — snapshot the
+                                                    // completion-function-active flag so the trap dispatch can
+                                                    // run code outside the comp-fn scope and restore on return.
+        let old_incompfunc: i32 = crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed);
         let hn = gettrapnode(sig, false); // c:1134
 
         let mut args: Vec<String> = Vec::new(); // c:1136 znewlinklist
@@ -1617,10 +1618,10 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         isfunc = 1;
 
         SFCONTEXT.store(SFC_SIGNAL, Ordering::SeqCst); // c:1158
-        // c:1159 — `incompfunc = 0;` — clear the active-compfn flag
-        // so user-level trap handlers can run normal `complete` /
-        // `compadd` etc. without being mis-detected as inside a
-        // completion widget.
+                                                       // c:1159 — `incompfunc = 0;` — clear the active-compfn flag
+                                                       // so user-level trap handlers can run normal `complete` /
+                                                       // `compadd` etc. without being mis-detected as inside a
+                                                       // completion widget.
         crate::ported::zle::complete::INCOMPFUNC.store(0, Ordering::Relaxed);
         // c:1160 — `doshfunc((Shfunc)sigfn, args, 1);` — dispatch
         // through execshfunc (exec.rs:5009) for PPARAMS save/swap/
@@ -1636,8 +1637,8 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
             crate::ported::exec::execshfunc(&mut shf, &mut args);
         }
         SFCONTEXT.store(osc, Ordering::SeqCst); // c:1161
-        // c:1162 — `incompfunc = old_incompfunc;` — restore the
-        // completion-function-active flag we snapshotted at c:1133.
+                                                // c:1162 — `incompfunc = old_incompfunc;` — restore the
+                                                // completion-function-active flag we snapshotted at c:1133.
         crate::ported::zle::complete::INCOMPFUNC.store(old_incompfunc, Ordering::Relaxed);
         let _ = args; // c:1163 freelinklist(args)
         zsfree(name); // c:1164 zsfree(name)
@@ -1742,9 +1743,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
     }
 
     // c:1231 — `if (zleactive && resetneeded) zleentry(ZLE_CMD_REFRESH);`
-    if zleactive.load(Ordering::SeqCst) != 0
-        && RESETNEEDED.load(Ordering::SeqCst) != 0
-    {
+    if zleactive.load(Ordering::SeqCst) != 0 && RESETNEEDED.load(Ordering::SeqCst) != 0 {
         let _ = zleentry(ZLE_CMD_REFRESH);
     }
 
@@ -2094,9 +2093,9 @@ pub fn is_interact() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::options::dosetopt;
     use crate::zsh_h::{HUP, MONITOR, TRAPSASYNC};
-    use super::*;
 
     #[test]
     fn test_sig_by_name() {

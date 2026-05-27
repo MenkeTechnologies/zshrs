@@ -15,11 +15,10 @@
 //!
 //! Order in this file mirrors C source order verbatim.
 
-use std::fmt::Write;
-use std::sync::{Mutex, OnceLock};
 use crate::ported::zsh_h::features;
 use crate::zsh_h::module;
-
+use std::fmt::Write;
+use std::sync::{Mutex, OnceLock};
 
 /// Port of `GROUPVAR` from `Src/Modules/hlgroup.c:33`.
 /// `#define GROUPVAR ".zle.hlgroups"`. Name of the user-defined
@@ -228,30 +227,29 @@ pub fn getgroup(name: &str, sgr: bool) -> Option<String> {
     };
     let pm = match table.get(var) {
         Some(p) => p,
-        None => return None,                                                 // c:102-103 PM_UNSET
+        None => return None, // c:102-103 PM_UNSET
     };
     // c:97 — `|| PM_TYPE(v->pm->node.flags) != PM_HASHED`
     if crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) != crate::ported::zsh_h::PM_HASHED {
-        return None;                                                         // c:102-103 PM_UNSET
+        return None; // c:102-103 PM_UNSET
     }
     // c:98 — `|| !(hlg = v->pm->gsu.h->getfn(v->pm))` — fetch backing hash.
     let hlg = match pm.u_hash.as_ref() {
         Some(h) => h,
-        None => return None,                                                 // c:102-103 PM_UNSET
+        None => return None, // c:102-103 PM_UNSET
     };
     // c:99 — `|| !(hn = gethashnode2(hlg, name))` — lookup by name.
     let hn = hlg.nodes.iter().find_map(|opt| {
-        opt.as_ref().and_then(|hn| {
-            if hn.nam == name { Some(hn) } else { None }
-        })
+        opt.as_ref()
+            .and_then(|hn| if hn.nam == name { Some(hn) } else { None })
     });
     let hn = match hn {
         Some(h) => h,
-        None => return None,                                                 // c:102-103 PM_UNSET
+        None => return None, // c:102-103 PM_UNSET
     };
     // c:100 — `|| (((Param) hn)->node.flags & PM_UNSET)`
     if (hn.flags & crate::ported::zsh_h::PM_UNSET as i32) != 0 {
-        return None;                                                         // c:102-103 PM_UNSET
+        return None; // c:102-103 PM_UNSET
     }
     // The hashnode's value lives on the associated Param. The Rust
     // HashTable.nodes stores `HashNode` (just nam+flags), not the
@@ -261,10 +259,10 @@ pub fn getgroup(name: &str, sgr: bool) -> Option<String> {
     let composite_key = format!("{}[{}]", var, name);
     let raw_attr = match table.get(&composite_key) {
         Some(child_pm) => child_pm.u_str.clone().unwrap_or_default(),
-        None => return None,                                                 // attribute string unreachable
+        None => return None, // attribute string unreachable
     };
     // c:105 — `pm->u.str = convertattr(((Param) hn)->u.str, sgr);`
-    Some(convertattr(&raw_attr, sgr))                                        // c:105
+    Some(convertattr(&raw_attr, sgr)) // c:105
 }
 
 /// shared magic-assoc scanner behind `${(k).zle.esc}` /
@@ -377,7 +375,6 @@ pub fn finish_(m: *const module) -> i32 {
     0 // c:218
 }
 
-
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
 // Local stubs for the per-module entry points. C uses generic
@@ -397,11 +394,7 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(
-    _m: *const module,
-    _f: &Mutex<features>,
-    enables: &mut Option<Vec<i32>>,
-) -> i32 {
+fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
     if enables.is_none() {
         *enables = Some(vec![1; 2]);
     }

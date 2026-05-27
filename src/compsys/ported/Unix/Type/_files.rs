@@ -70,8 +70,7 @@ pub fn _files(args: &[String]) -> i32 {
 
     // sh:46-67  pats = file-patterns style OR default
     let curcontext = getsparam("curcontext").unwrap_or_default();
-    let file_patterns =
-        lookupstyle(&format!(":completion:{}:", curcontext), "file-patterns");
+    let file_patterns = lookupstyle(&format!(":completion:{}:", curcontext), "file-patterns");
     let pats: Vec<String> = if !file_patterns.is_empty() {
         file_patterns
     } else {

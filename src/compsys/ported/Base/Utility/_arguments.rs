@@ -257,8 +257,7 @@ pub fn _arguments(args: &[String]) -> i32 {
 
     // Track which positional options have already been consumed
     //   so optional/repeatable accounting works.
-    let mut consumed_opts: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut consumed_opts: std::collections::HashSet<String> = std::collections::HashSet::new();
     for w in &words {
         if w.starts_with('-') {
             // Account for `--flag=val` GNU form
@@ -314,11 +313,7 @@ pub fn _arguments(args: &[String]) -> i32 {
                     }
                     break;
                 }
-                option_strs.push(format!(
-                    "{}:{}",
-                    flag,
-                    msg.as_deref().unwrap_or("")
-                ));
+                option_strs.push(format!("{}:{}", flag, msg.as_deref().unwrap_or("")));
             }
         }
         if let Some((m, a, _opt)) = matched_action {
@@ -326,8 +321,7 @@ pub fn _arguments(args: &[String]) -> i32 {
         }
         if !option_strs.is_empty() {
             setaparam("_arguments_options", option_strs);
-            let mut alt_args: Vec<String> =
-                vec!["options:option:_arguments_options".to_string()];
+            let mut alt_args: Vec<String> = vec!["options:option:_arguments_options".to_string()];
             let _ = alt_args.split_off(1);
             return _alternative(&alt_args);
         }
@@ -338,7 +332,12 @@ pub fn _arguments(args: &[String]) -> i32 {
     let pos = if current > 1 { current - 1 } else { 1 };
     for s in &specs {
         match s {
-            Spec::Positional { idx: i, msg, action, .. } if *i == pos => {
+            Spec::Positional {
+                idx: i,
+                msg,
+                action,
+                ..
+            } if *i == pos => {
                 return dispatch_action(action, msg);
             }
             _ => {}
@@ -377,7 +376,12 @@ mod tests {
     fn parses_positional_spec() {
         let s = parse_spec("1:filename:_files").unwrap();
         match s {
-            Spec::Positional { idx, msg, action, optional } => {
+            Spec::Positional {
+                idx,
+                msg,
+                action,
+                optional,
+            } => {
                 assert_eq!(idx, 1);
                 assert_eq!(msg, "filename");
                 assert_eq!(action, "_files");
@@ -415,7 +419,9 @@ mod tests {
     fn parses_repeatable_option() {
         let s = parse_spec("*-v[verbose, repeatable]").unwrap();
         match s {
-            Spec::Option { flag, repeatable, .. } => {
+            Spec::Option {
+                flag, repeatable, ..
+            } => {
                 assert_eq!(flag, "-v");
                 assert!(repeatable);
             }
@@ -427,7 +433,9 @@ mod tests {
     fn parses_optional_arg_option() {
         let s = parse_spec("-X[debug]::level:_files").unwrap();
         match s {
-            Spec::Option { flag, optional_arg, .. } => {
+            Spec::Option {
+                flag, optional_arg, ..
+            } => {
                 assert_eq!(flag, "-X");
                 assert!(optional_arg);
             }

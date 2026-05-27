@@ -1936,5 +1936,8 @@ pub fn lookup_builtin_doc(name: &str) -> Option<(&'static str, &'static str)> {
         .iter()
         .find(|(a, _)| *a == key.as_str())
         .map(|(_, c)| *c)?;
-    BUILTIN_DOCS.iter().find(|(n, _)| *n == canon).map(|&(n, d)| (n, d))
+    BUILTIN_DOCS
+        .iter()
+        .find(|(n, _)| *n == canon)
+        .map(|&(n, d)| (n, d))
 }

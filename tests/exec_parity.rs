@@ -4,49 +4,103 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn zshrs_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") { return PathBuf::from(p); }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("debug").join("zshrs")
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("debug")
+        .join("zshrs")
 }
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() { "/opt/homebrew/bin/zsh" }
-    else if Path::new("/usr/local/bin/zsh").exists() { "/usr/local/bin/zsh" }
-    else { "/bin/zsh" }
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
 }
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
-struct R { stdout: String, exit: i32 }
+struct R {
+    stdout: String,
+    exit: i32,
+}
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs(s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity(s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh(s);
     let r = run_zshrs(s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
 fn run_zsh_in(d: &Path, s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).current_dir(d).output().expect("zsh");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .current_dir(d)
+        .output()
+        .expect("zsh");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn run_zshrs_in(d: &Path, s: &str) -> R {
-    let o = Command::new(zshrs_bin()).args(["--zsh", "-f", "-c", s])
-        .current_dir(d).env_remove("ZSHRS_CACHE").output().expect("zshrs");
-    R { stdout: String::from_utf8_lossy(&o.stdout).into_owned(), exit: o.status.code().unwrap_or(-1) }
+    let o = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", s])
+        .current_dir(d)
+        .env_remove("ZSHRS_CACHE")
+        .output()
+        .expect("zshrs");
+    R {
+        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+        exit: o.status.code().unwrap_or(-1),
+    }
 }
 fn assert_parity_in(d: &Path, s: &str) {
-    if !zsh_available() { return; }
+    if !zsh_available() {
+        return;
+    }
     let z = run_zsh_in(d, s);
     let r = run_zshrs_in(d, s);
-    assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
+    assert_eq!(
+        z.stdout, r.stdout,
+        "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}",
+        z.stdout, r.stdout
+    );
     assert_eq!(z.exit, r.exit);
 }
 
@@ -75,7 +129,9 @@ mod persistent_redirect {
     #[test]
     #[ignore = "BOTH SHELLS HANG: cat after `exec > FILE` blocks waiting for output to flush"]
     fn exec_redirect_only_persists() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let d = tempfile::tempdir().unwrap();
         let f = d.path().join("out.txt");
         let script = format!(r#"exec > {0}; echo one; echo two; cat {0}"#, f.display());
@@ -91,7 +147,9 @@ mod persistent_redirect {
     /// `exec 2> FILE` redirects stderr persistently.
     #[test]
     fn exec_redirect_stderr_only() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let d = tempfile::tempdir().unwrap();
         let f = d.path().join("err.txt");
         let script = format!(
@@ -104,7 +162,9 @@ mod persistent_redirect {
     /// `exec 3< FILE` opens fd 3 for reading from FILE.
     #[test]
     fn exec_opens_high_fd_for_reading() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join("in.txt"), "content\n").unwrap();
         let script = "exec 3< in.txt; read line <&3; echo got=$line; exec 3<&-";
@@ -114,7 +174,9 @@ mod persistent_redirect {
     /// `exec 3> FILE` opens fd 3 for writing.
     #[test]
     fn exec_opens_high_fd_for_writing() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let d = tempfile::tempdir().unwrap();
         let script = "exec 3> out.txt; echo hello >&3; exec 3>&-; cat out.txt";
         assert_parity_in(d.path(), script);
@@ -127,7 +189,9 @@ mod close_fd {
     /// `exec 3<&-` closes fd 3.
     #[test]
     fn exec_closes_fd() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join("in.txt"), "data\n").unwrap();
         let script = "exec 3< in.txt; exec 3<&-; echo ok";
@@ -172,7 +236,9 @@ mod dup_fd {
     /// subsequent `2> file`, all output captured.
     #[test]
     fn exec_dup_stdout_to_stderr_then_redir() {
-        if !zsh_available() { return; }
+        if !zsh_available() {
+            return;
+        }
         let d = tempfile::tempdir().unwrap();
         let script = r#"exec 1>&2 2>captured; echo hi 2>&1; cat captured"#;
         assert_parity_in(d.path(), script);

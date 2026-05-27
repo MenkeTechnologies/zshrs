@@ -56,10 +56,6 @@
 // remlpaths, remtext, xsymlinks) live in src/ported/hist.rs (the
 // canonical port of Src/hist.c). Import here so subst.rs's modify()
 // arms and the parity tests can reference by bare name.
-#[allow(unused_imports)]
-use std::ffi::CString;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use crate::DPUTS;
 use crate::lex::untokenize;
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
 use crate::ported::exec::getoutput;
@@ -72,15 +68,42 @@ use crate::ported::hist::{
 use crate::ported::math::mathevali;
 use crate::ported::modules::parameter::*;
 use crate::ported::options::{opt_state_set, ZSH_OPTIONS_SET};
-use crate::ported::params::{assignsparam, convbase_underscore, convfloat_underscore, getarrvalue, getsparam, lookup_special_var, paramtab, paramtab_hashed_storage, setsparam};
+use crate::ported::params::{
+    assignsparam, convbase_underscore, convfloat_underscore, getarrvalue, getsparam,
+    lookup_special_var, paramtab, paramtab_hashed_storage, setsparam,
+};
 use crate::ported::pattern::{patcompile, pattry};
-use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::prompt::promptexpand;
 use crate::ported::string::{dupstring, dyncat};
-use crate::ported::utils::{errflag, getkeystring, quotestring, xsymlinks, zerr, GETKEY_CTRL, GETKEY_EMACS, GETKEY_OCTAL_ESC};
+use crate::ported::utils::{
+    errflag, getkeystring, quotestring, xsymlinks, zerr, GETKEY_CTRL, GETKEY_EMACS,
+    GETKEY_OCTAL_ESC,
+};
+use crate::ported::zsh_h::PAT_HEAPDUP;
 #[allow(unused_imports)]
-use crate::ported::zsh_h::{ALIAS_GLOBAL, ALIAS_SUFFIX, Bnull, Bnullkeep, CASMOD_NONE, DISABLED, Dnull, Equals, HASHED, Hat, IGNOREBRACES, Inang, Inbrace, Inbrack, Inpar, Inparmath, LEXFLAGS_ACTIVE, LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, MN_FLOAT, MN_UNSET, MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, PM_ARRAY, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE, PM_UPPER, PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK, PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET, Param, Pound, QT_BACKSLASH_PATTERN, QT_QUOTEDZPUTS, QT_SINGLE_OPTIONAL, Qstring, Qtick, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, SHFILEEXPANSION, SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY, SORTIT_SOMEHOW, SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR, Snull, Stringg, Tick, Tilde, hashnode, isset, param, PUSHDMINUS, SHWORDSPLIT, SORTIT_NUMERICALLY_SIGNED, KSHTYPESET, RCEXPANDPARAM, QT_NONE, QT_SINGLE, QT_DOLLARS, HISTSUBSTPATTERN, QT_BACKSLASH};
+use crate::ported::zsh_h::{
+    hashnode, isset, param, Bnull, Bnullkeep, Dnull, Equals, Hat, Inang, Inbrace, Inbrack, Inpar,
+    Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Param,
+    Pound, Qstring, Qtick, Snull, Stringg, Tick, Tilde, ALIAS_GLOBAL, ALIAS_SUFFIX, CASMOD_NONE,
+    DISABLED, HASHED, HISTSUBSTPATTERN, IGNOREBRACES, KSHTYPESET, LEXFLAGS_ACTIVE,
+    LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, MN_FLOAT, MN_UNSET,
+    MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, PM_ARRAY, PM_EFLOAT, PM_EXPORTED,
+    PM_FFLOAT, PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF,
+    PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_UNIQUE, PM_UPPER,
+    PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT, PREFORK_NO_UNTOK,
+    PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP, PREFORK_TYPESET,
+    PUSHDMINUS, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_DOLLARS, QT_NONE, QT_QUOTEDZPUTS, QT_SINGLE,
+    QT_SINGLE_OPTIONAL, RCEXPANDPARAM, SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS,
+    SHFILEEXPANSION, SHWORDSPLIT, SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE,
+    SORTIT_NUMERICALLY, SORTIT_NUMERICALLY_SIGNED, SORTIT_SOMEHOW, SUB_ALL, SUB_BIND, SUB_DOSUBST,
+    SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST,
+    SUB_RETFAIL, SUB_START, SUB_SUBSTR,
+};
 use crate::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_UPPER};
+use crate::DPUTS;
+#[allow(unused_imports)]
+use std::ffi::CString;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Port of `LF_ARRAY` from `Src/subst.c:33`.
 /// `#define LF_ARRAY 1`. Linked-list flag the substitution-result
@@ -349,8 +372,7 @@ pub fn prefork(list: &mut LinkList, flags: i32, ret_flags: &mut i32) {
                 // entirely when state.skip_filesub is set — used
                 // for `${var/pat/repl}` pattern + replacement
                 // contexts where literal `~` must be preserved.
-                if !isset(SHFILEEXPANSION) && !SKIP_FILESUB.with(|c| c.get())
-                {
+                if !isset(SHFILEEXPANSION) && !SKIP_FILESUB.with(|c| c.get()) {
                     // c:100
                     if let Some(data) = list.getdata(node_idx) {
                         // c:100
@@ -766,8 +788,7 @@ fn stringsubst(
                 // there too and the expression body starts at pos+3
                 // (and the matching inner `)` lands just before the
                 // Outparmath). Same depth bookkeeping as ASCII shape.
-                let mixed_shape = token_shape
-                    && chars.get(pos + 2).copied() == Some('(');
+                let mixed_shape = token_shape && chars.get(pos + 2).copied() == Some('(');
                 let start = if mixed_shape {
                     pos + 3
                 } else if token_shape {
@@ -775,7 +796,11 @@ fn stringsubst(
                 } else {
                     pos + 3
                 };
-                let mut depth = if token_shape && !mixed_shape { 1_i32 } else { 2_i32 };
+                let mut depth = if token_shape && !mixed_shape {
+                    1_i32
+                } else {
+                    2_i32
+                };
                 let mut p = start;
                 let mut end_off: Option<usize> = None;
                 let mut end_outparmath = false;
@@ -1192,8 +1217,7 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
     // (failure under CSHNULLGLOB) / bit 2 (success); the terminal
     // diagnostic below checks the OR for the "all-failed-no-success"
     // case.
-    crate::ported::glob::BADCSHGLOB
-        .store(0, std::sync::atomic::Ordering::Relaxed);
+    crate::ported::glob::BADCSHGLOB.store(0, std::sync::atomic::Ordering::Relaxed);
     let mut node_idx = 0; // c:493
 
     while node_idx < list.nodes.len() && !errflag_set() {
@@ -1253,26 +1277,20 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
             // c:1882-1886 `treat as literal` branch unconditionally.
             let nullglob = isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
             let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
-            // c:Src/glob.c:1232 — `if (!haswilds(str))` test that
-            // bypasses zglob entirely. We mirror it here so plain
-            // literals like `echo foo` don't trip NOMATCH.
-            let has_glob_chars = data.chars().any(|c| matches!(c,
-                '*' | '?' | '[' | ']'
-            )) || crate::ported::pattern::haswilds(&data);
-            if has_glob_chars
-                && !nullglob
-                && !csh_nullglob
-                && isset(crate::ported::zsh_h::NOMATCH) // c:1876
+                                                                         // c:Src/glob.c:1232 — `if (!haswilds(str))` test that
+                                                                         // bypasses zglob entirely. We mirror it here so plain
+                                                                         // literals like `echo foo` don't trip NOMATCH.
+            let has_glob_chars = data.chars().any(|c| matches!(c, '*' | '?' | '[' | ']'))
+                || crate::ported::pattern::haswilds(&data);
+            if has_glob_chars && !nullglob && !csh_nullglob && isset(crate::ported::zsh_h::NOMATCH)
+            // c:1876
             {
-                crate::ported::utils::zerr(&format!(
-                    "no matches found: {}",
-                    data
-                )); // c:1877
+                crate::ported::utils::zerr(&format!("no matches found: {}", data)); // c:1877
                 crate::ported::utils::errflag.fetch_or(
                     crate::ported::zsh_h::ERRFLAG_ERROR,
                     std::sync::atomic::Ordering::Relaxed,
                 ); // c:1877 (zerr side-effect)
-                // c:1880 `return` — drop the unmatched token from the list.
+                   // c:1880 `return` — drop the unmatched token from the list.
                 list.delete_node(node_idx);
                 continue;
             }
@@ -1303,14 +1321,11 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
     // Suppressed when noerrs is set (e.g. inside `eval` error-
     // checking blocks).
     // c:507 — `noerrs` from exec.c:117 (Rust: exec.rs:122 pub static).
-    let noerrs = crate::ported::exec::noerrs
-        .load(std::sync::atomic::Ordering::Relaxed)
-        != 0;
-    let badcshglob =
-        crate::ported::glob::BADCSHGLOB.load(std::sync::atomic::Ordering::Relaxed);
+    let noerrs = crate::ported::exec::noerrs.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    let badcshglob = crate::ported::glob::BADCSHGLOB.load(std::sync::atomic::Ordering::Relaxed);
     if noerrs {
-        crate::ported::glob::BADCSHGLOB
-            .store(0, std::sync::atomic::Ordering::Relaxed); // c:507
+        crate::ported::glob::BADCSHGLOB.store(0, std::sync::atomic::Ordering::Relaxed);
+    // c:507
     } else if badcshglob == 1 {
         crate::ported::utils::zerr("no match"); // c:509
     }
@@ -1603,10 +1618,7 @@ fn filesub(namptr: &str, assign: i32) -> String {
         let starts_with_tilde_or_equals = if str_start < namptr.len() {
             let suffix = &namptr[str_start..];
             let first = suffix.chars().next();
-            matches!(
-                first,
-                Some('~') | Some('=') | Some('\u{98}') | Some(Equals)
-            )
+            matches!(first, Some('~') | Some('=') | Some('\u{98}') | Some(Equals))
         } else {
             false
         };
@@ -1727,7 +1739,9 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
     // preserved by the EXPAND_TEXT emit's untokenize loop
     // (compile_zsh.rs:3048+) so this strict check still fires for
     // legitimate tilde expansions.
-    if first == '\u{98}' /* Tilde token */ {
+    if first == '\u{98}'
+    /* Tilde token */
+    {
         // c:741
         if chars.len() == 1 {
             // c:748 — bare ~
@@ -1754,9 +1768,8 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // The canonical Inpar value is `\u{88}` (Src/zsh.h:163 `Inpar=0x88`).
         // Effect: `~(xxx` (legitimate Inpar after tilde) wouldn't isend,
         // while `~$xxx` (Stringg, which should NOT isend) would.
-        let isend = |c: char| -> bool {
-            c == '\0' || c == '/' || c == Inpar || (assign && c == ':')
-        };
+        let isend =
+            |c: char| -> bool { c == '\0' || c == '/' || c == Inpar || (assign && c == ':') };
 
         // `~/...` and `~` (isend(str[1])) — bare HOME
         if isend(nx) {
@@ -1825,16 +1838,13 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                 // dstackent(ch, val) → pwd or stack entry.
                 // c:4902 — read from canonical DIRSTACK global (mirrors
                 // C'namptr `mod_export LinkList dirstack` at builtin.c:743).
-                let dirstack: Vec<String> = DIRSTACK
-                    .lock()
-                    .map(|d| d.clone())
-                    .unwrap_or_default();
+                let dirstack: Vec<String> = DIRSTACK.lock().map(|d| d.clone()).unwrap_or_default();
                 let pushdminus = isset(PUSHDMINUS); // c:4906
-                // c:Src/subst.c:786 — bare digit form `~N` without
-                // explicit `+`/`-` defaults to `+N` (top of stack at
-                // 0). When neg==false and we saw no sign char, fall
-                // through to `+` semantics; `dstackent` handles the
-                // 0-of-(empty-stack-with-only-pwd) case.
+                                                    // c:Src/subst.c:786 — bare digit form `~N` without
+                                                    // explicit `+`/`-` defaults to `+N` (top of stack at
+                                                    // 0). When neg==false and we saw no sign char, fall
+                                                    // through to `+` semantics; `dstackent` handles the
+                                                    // 0-of-(empty-stack-with-only-pwd) case.
                 let entry = dstackent(
                     // c:4902
                     if neg { '-' } else { '+' }, // c:4902
@@ -2340,7 +2350,7 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
         // c:1447
         Ok(n) => n, // c:1447
         Err(msg) => {
-            zerr(&msg);           // emit error to stderr (C side-effect)
+            zerr(&msg); // emit error to stderr (C side-effect)
             return None; // c:1448
         }
     };
@@ -2613,10 +2623,10 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
         // `Src/zsh.h:163,165`. Use the canonical consts.
         match c {
             // c:1579
-            '[' | Inbrack => depth += 1, // c:1579
+            '[' | Inbrack => depth += 1,  // c:1579
             ']' | Outbrack => depth -= 1, // c:1579
-            '(' | Inpar => depth += 1,   // c:1579
-            ')' | Outpar => depth -= 1,  // c:1579
+            '(' | Inpar => depth += 1,    // c:1579
+            ')' | Outpar => depth -= 1,   // c:1579
             ':' if depth == 0 => {
                 end = Some(i);
                 break;
@@ -2876,11 +2886,11 @@ pub fn paramsubst(
         // — NOT IN C. Set when `${(@)${(@)…}…}` outer (@) triggers
         // multsub on the inner; cleared at end of paramsubst.
         let mut subexp_array_temp: Option<String> = None; // c:N/A (Rust-only)
-        // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
-        // and Inpar TOKEN (\u{88}) — the lexer emits Inpar TOKEN for
-        // `${(flag)name}` in DQ context and in the new bridge passthru
-        // path where raw tokenized text reaches paramsubst without an
-        // intermediate untokenize pass.
+                                                          // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
+                                                          // and Inpar TOKEN (\u{88}) — the lexer emits Inpar TOKEN for
+                                                          // `${(flag)name}` in DQ context and in the new bridge passthru
+                                                          // path where raw tokenized text reaches paramsubst without an
+                                                          // intermediate untokenize pass.
         if matches!(body_chars.first(), Some(&'(') | Some(&Inpar)) {
             // c:2147
             // `~` inside `(flags)` toggles tok_arg for untok_and_escape on
@@ -2932,9 +2942,7 @@ pub fn paramsubst(
                         // Five `q`s would push quotetype past QT_DOLLARS;
                         // `(b)` sets QT_BACKSLASH_PATTERN. Either case
                         // followed by another `q` is invalid per C.
-                        if quotetype == QT_DOLLARS
-                            || quotetype == QT_BACKSLASH_PATTERN
-                        {
+                        if quotetype == QT_DOLLARS || quotetype == QT_BACKSLASH_PATTERN {
                             zerr("error in flags");
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
@@ -3040,16 +3048,16 @@ pub fn paramsubst(
                         }
                         let del = body_chars[idx]; // c:2325 del0 = s
                         idx += 1; // get_strarg(s) advances past opening del
-                        // Parse N — digits up to closing del.
+                                  // Parse N — digits up to closing del.
                         let mut num_str = String::new();
                         while idx < body_chars.len() && body_chars[idx].is_ascii_digit() {
                             num_str.push(body_chars[idx]);
                             idx += 1;
                         }
                         let n: i64 = num_str.parse().unwrap_or(0); // c:2326
-                        // c:1441 — `*s = t + arglen` advances PAST the
-                        // closing delimiter. Mirror by skipping the
-                        // closing del.
+                                                                   // c:1441 — `*s = t + arglen` advances PAST the
+                                                                   // closing delimiter. Mirror by skipping the
+                                                                   // closing del.
                         if idx < body_chars.len() && body_chars[idx] == del {
                             idx += 1;
                         }
@@ -3058,14 +3066,14 @@ pub fn paramsubst(
                         } else {
                             postnum = n;
                         } // c:2329-2331
-                        // c:2334 — `if (!dellen || memcmp(del0, s, dellen)) break;`.
-                        // After the get_intarg advance, s points at
-                        // either another delimiter (continue with STR1)
-                        // or a non-delimiter (closing `)`, end of flag).
-                        // Use `continue` (not the match's bottom
-                        // increment) so idx stays at the current
-                        // position — the outer ')' arm picks up the
-                        // closing paren next iteration.
+                          // c:2334 — `if (!dellen || memcmp(del0, s, dellen)) break;`.
+                          // After the get_intarg advance, s points at
+                          // either another delimiter (continue with STR1)
+                          // or a non-delimiter (closing `)`, end of flag).
+                          // Use `continue` (not the match's bottom
+                          // increment) so idx stays at the current
+                          // position — the outer ')' arm picks up the
+                          // closing paren next iteration.
                         if idx >= body_chars.len() || body_chars[idx] != del {
                             continue;
                         }
@@ -3270,11 +3278,11 @@ pub fn paramsubst(
                         // land on `)` immediately and must flagerr.
                         shsplit = LEXFLAGS_ACTIVE; // c:2443 (implicit from Z arm)
                         idx += 1; // c:2444 ++s
-                        // c:2445 `if (*t)` else flagerr (`*t == 0`).
-                        // get_strarg returns end-of-string when no
-                        // matching delim found; the C path then takes
-                        // the else branch. In Rust: if next char is the
-                        // flag-block close `)` (or end of body), flagerr.
+                                  // c:2445 `if (*t)` else flagerr (`*t == 0`).
+                                  // get_strarg returns end-of-string when no
+                                  // matching delim found; the C path then takes
+                                  // the else branch. In Rust: if next char is the
+                                  // flag-block close `)` (or end of body), flagerr.
                         if idx >= body_chars.len() || body_chars[idx] == ')' {
                             zerr("bad substitution"); // c:2473 flagerr
                             errflag_set_error();
@@ -3346,7 +3354,7 @@ pub fn paramsubst(
                                     // c:2417 switch (*s)
                                     'e' => getkeys |= GETKEY_EMACS as i32, // c:2418-2419
                                     'o' => getkeys |= GETKEY_OCTAL_ESC as i32, // c:2421-2422
-                                    'c' => getkeys |= GETKEY_CTRL as i32, // c:2424-2425
+                                    'c' => getkeys |= GETKEY_CTRL as i32,  // c:2424-2425
                                     _ => {
                                         // c:2428 default
                                         // c:2430 goto flagerr — emit bad-subst.
@@ -3606,17 +3614,15 @@ pub fn paramsubst(
                 p += 1; // c:2649
             } // c:2649
         } // c:2649
-        // c:2649 — `isstring(*s)` matches both `$` (`Stringg`) and the
-        // DQ-context `\u{8c}` (`Qstring`) per Src/zsh.h:167. Mirror
-        // here so nested ${${x}} inside DQ — where the inner `$` is
-        // Qstring-tokenized — still detects the subexp. Bridge
-        // passthru: unquoted nested `${…}` also reaches paramsubst
-        // as `Stringg` (\u{85}) since the lexer emits Stringg for
-        // `$` inside braces; accept it too.
+          // c:2649 — `isstring(*s)` matches both `$` (`Stringg`) and the
+          // DQ-context `\u{8c}` (`Qstring`) per Src/zsh.h:167. Mirror
+          // here so nested ${${x}} inside DQ — where the inner `$` is
+          // Qstring-tokenized — still detects the subexp. Bridge
+          // passthru: unquoted nested `${…}` also reaches paramsubst
+          // as `Stringg` (\u{85}) since the lexer emits Stringg for
+          // `$` inside braces; accept it too.
         let mut subexp_value: Option<String> = if idx < body_chars.len()
-            && (body_chars[idx] == '$'
-                || body_chars[idx] == Qstring
-                || body_chars[idx] == Stringg)
+            && (body_chars[idx] == '$' || body_chars[idx] == Qstring || body_chars[idx] == Stringg)
         // c:2649
         {
             // Walk just the nested $-form (depth-tracked over its
@@ -3730,10 +3736,7 @@ pub fn paramsubst(
         // is-passthru contract it moved here.
         if idx < body_chars.len() && body_chars[idx] == '\u{01}' {
             zerr("bad substitution");
-            errflag.fetch_or(
-                crate::ported::zsh_h::ERRFLAG_ERROR,
-                Ordering::Relaxed,
-            );
+            errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             return (String::new(), idx + 1, Vec::new());
         }
         if subexp_value.is_none() {
@@ -3768,7 +3771,7 @@ pub fn paramsubst(
                             || first == Pound
                             || first == '\u{87}' /* Star */
                             || first == '\u{86}' /* Quest */
-                            || first == '\u{96}' /* Bang */)
+                            || first == '\u{96}'/* Bang */)
                     {
                         break;
                     }
@@ -3800,20 +3803,18 @@ pub fn paramsubst(
         // `=`, `?`, `[`, `(`) are valid. zsh's paramsubst at
         // subst.c:2147+ rejects this combination with
         // "bad substitution"; mirror that here so $? matches.
-        if (var_name == "!" || var_name == "\u{96}")
-            && idx < body_chars.len()
-        {
+        if (var_name == "!" || var_name == "\u{96}") && idx < body_chars.len() {
             let nx = body_chars[idx];
             if nx.is_ascii_alphanumeric()
                 || nx == '_'
-                || nx == '@' || nx == '*' || nx == '\u{87}'
-                || nx == '!' || nx == '\u{96}'
+                || nx == '@'
+                || nx == '*'
+                || nx == '\u{87}'
+                || nx == '!'
+                || nx == '\u{96}'
             {
                 zerr("bad substitution");
-                errflag.fetch_or(
-                    crate::ported::zsh_h::ERRFLAG_ERROR,
-                    Ordering::Relaxed,
-                );
+                errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
                 return (String::new(), new_pos, Vec::new());
             }
         }
@@ -3827,7 +3828,7 @@ pub fn paramsubst(
             subexp_value = None;
         }
 
-// ${arr[subscript]} — subscript loop. Port of subst.c:2862-3000.
+        // ${arr[subscript]} — subscript loop. Port of subst.c:2862-3000.
         // Parse `[…]` after the var name, with brace-depth tracking
         // for nested `${arr[$other[1]]}`. Accept both ASCII `[` and
         // Inbrack TOKEN (\u{91}) — the bridge passthru path delivers
@@ -3950,7 +3951,12 @@ pub fn paramsubst(
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        let matched = if exact { hay == pat.as_str() } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, hay)) };
+                        let matched = if exact {
+                            hay == pat.as_str()
+                        } else {
+                            patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, hay))
+                        };
                         if matched {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all {
@@ -4004,7 +4010,12 @@ pub fn paramsubst(
                         Box::new(arr.iter().enumerate())
                     };
                     for (idx, elem) in iter {
-                        let matched = if exact { elem == &pat } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, elem)) };
+                        let matched = if exact {
+                            elem == &pat
+                        } else {
+                            patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, elem))
+                        };
                         if matched {
                             found_idx = Some(idx);
                             break;
@@ -4066,28 +4077,24 @@ pub fn paramsubst(
                     } else {
                         String::new()
                     }
-                } else if let Some(idx_n) = sub
-                    .parse::<i64>()
-                    .ok()
-                    .or_else(|| {
-                        // c:Src/params.c:1411-1430 — paren-wrapped subscript
-                        // expression. When the content inside the outermost
-                        // parens isn't a recognized flag-block (handled
-                        // above), C falls through to getindex's arith
-                        // evaluation path so `${arr[(-1)]}` evaluates `(-1)`
-                        // as math and returns last element. zshrs's bare
-                        // sub.parse::<i64>() couldn't handle the leading
-                        // `(`, returning empty. Strip a balanced outermost
-                        // paren pair and retry the integer parse — covers
-                        // `(N)`, `(-N)`, `(+N)`.
-                        let s = sub.trim();
-                        if s.starts_with('(') && s.ends_with(')') && s.len() >= 2 {
-                            s[1..s.len() - 1].trim().parse::<i64>().ok()
-                        } else {
-                            None
-                        }
-                    })
-                {
+                } else if let Some(idx_n) = sub.parse::<i64>().ok().or_else(|| {
+                    // c:Src/params.c:1411-1430 — paren-wrapped subscript
+                    // expression. When the content inside the outermost
+                    // parens isn't a recognized flag-block (handled
+                    // above), C falls through to getindex's arith
+                    // evaluation path so `${arr[(-1)]}` evaluates `(-1)`
+                    // as math and returns last element. zshrs's bare
+                    // sub.parse::<i64>() couldn't handle the leading
+                    // `(`, returning empty. Strip a balanced outermost
+                    // paren pair and retry the integer parse — covers
+                    // `(N)`, `(-N)`, `(+N)`.
+                    let s = sub.trim();
+                    if s.starts_with('(') && s.ends_with(')') && s.len() >= 2 {
+                        s[1..s.len() - 1].trim().parse::<i64>().ok()
+                    } else {
+                        None
+                    }
+                }) {
                     // c:2926 (numeric index)
                     let len = arr.len() as i64;
                     // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
@@ -4189,7 +4196,12 @@ pub fn paramsubst(
                             } else {
                                 crate::vm_helper::partab_get(&var_name, k).unwrap_or_default()
                             };
-                            let matched = if exact { hay == pat } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &hay)) };
+                            let matched = if exact {
+                                hay == pat
+                            } else {
+                                patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                    .map_or(false, |__p| pattry(&__p, &hay))
+                            };
                             if matched {
                                 out.push(if by_key {
                                     k.clone()
@@ -4238,7 +4250,7 @@ pub fn paramsubst(
                     let return_index = flags.contains('I') || flags.contains('i');
                     let want_last = flags.contains('I') || flags.contains('R');
                     let exact = flags.contains('e'); // c:1419 e — literal compare, no glob
-                    // Sliding-window match across the string (glob unless (e)).
+                                                     // Sliding-window match across the string (glob unless (e)).
                     let n = s_chars.len();
                     let mut found: Option<(usize, usize)> = None;
                     'outer: for start in 0..=n {
@@ -4249,7 +4261,12 @@ pub fn paramsubst(
                         };
                         for len in lengths {
                             let cand: String = s_chars[start..start + len].iter().collect();
-                            let matched = if exact { cand == pat } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) };
+                            let matched = if exact {
+                                cand == pat
+                            } else {
+                                patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                    .map_or(false, |__p| pattry(&__p, &cand))
+                            };
                             if matched {
                                 found = Some((start, start + len));
                                 if !want_last {
@@ -4264,7 +4281,9 @@ pub fn paramsubst(
                         for start in (0..=n).rev() {
                             for len in 1..=(n - start) {
                                 let cand: String = s_chars[start..start + len].iter().collect();
-                                if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
+                                if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                    .map_or(false, |__p| pattry(&__p, &cand))
+                                {
                                     found = Some((start, start + len));
                                     break;
                                 }
@@ -4456,15 +4475,15 @@ pub fn paramsubst(
             // c:3845
             let _ = post_flags_start;
             let getlen = 1 + whichlen; // c:2588
-            // c:Src/subst.c:3193 — `:-default` modifier on `${#NAME:-X}`
-            // shape. When var_name resolves empty (unset, empty
-            // positional, or empty literal name `${#:-X}`), apply the
-            // default BEFORE computing length so `${#:-foo}` returns 3.
-            // C's flow handles this naturally because modifiers run
-            // first and length runs at the end of paramsubst at c:3845;
-            // the Rust port computes length early and returns, so we
-            // need an inline modifier pre-pass for the empty-or-unset
-            // case.
+                                       // c:Src/subst.c:3193 — `:-default` modifier on `${#NAME:-X}`
+                                       // shape. When var_name resolves empty (unset, empty
+                                       // positional, or empty literal name `${#:-X}`), apply the
+                                       // default BEFORE computing length so `${#:-foo}` returns 3.
+                                       // C's flow handles this naturally because modifiers run
+                                       // first and length runs at the end of paramsubst at c:3845;
+                                       // the Rust port computes length early and returns, so we
+                                       // need an inline modifier pre-pass for the empty-or-unset
+                                       // case.
             let raw_value_for_len = {
                 let r = rest.as_str();
                 if let Some(default) = r.strip_prefix(":-") {
@@ -4517,9 +4536,8 @@ pub fn paramsubst(
                     // widgets / etc.) first; fall through to
                     // PARTAB_ARRAY for array magic-assocs
                     // (patchars / pipestatus / dirstack / ...).
-                    crate::vm_helper::partab_scan_keys(&var_name).or_else(|| {
-                        crate::vm_helper::partab_array_get(&var_name)
-                    })
+                    crate::vm_helper::partab_scan_keys(&var_name)
+                        .or_else(|| crate::vm_helper::partab_array_get(&var_name))
                 } else {
                     None
                 };
@@ -4532,10 +4550,9 @@ pub fn paramsubst(
             let single_slot_subscript = subscript
                 .as_deref()
                 .map_or(false, |s| s != "@" && s != "*" && !s.contains(','));
-            let is_array_source = (arrays_contains(&var_name)
-                || assoc_contains(&var_name)
-                || magic_keys.is_some())
-                && !single_slot_subscript;
+            let is_array_source =
+                (arrays_contains(&var_name) || assoc_contains(&var_name) || magic_keys.is_some())
+                    && !single_slot_subscript;
             let n: usize = if is_array_source {
                 // c:3849 if (isarr)
                 if getlen == 1 {
@@ -4565,10 +4582,7 @@ pub fn paramsubst(
                     if arr.is_empty() {
                         0
                     } else {
-                        let sl = sep
-                            .as_deref()
-                            .map(|s| s.chars().count())
-                            .unwrap_or(1); // c:3851
+                        let sl = sep.as_deref().map(|s| s.chars().count()).unwrap_or(1); // c:3851
                         let mut len: i64 = -(sl as i64); // c:3857
                         for elem in &arr {
                             len += (sl as i64) + (elem.chars().count() as i64); // c:3858
@@ -4587,11 +4601,7 @@ pub fn paramsubst(
                     };
                     let mut total: i32 = 0;
                     for elem in &arr {
-                        total += crate::ported::utils::wordcount(
-                            elem,
-                            spsep.as_deref(),
-                            multi,
-                        );
+                        total += crate::ported::utils::wordcount(elem, spsep.as_deref(), multi);
                     }
                     total.max(0) as usize
                 }
@@ -4605,12 +4615,8 @@ pub fn paramsubst(
                 } else {
                     // c:3869 word count
                     let multi = if getlen > 3 { 1 } else { 0 };
-                    crate::ported::utils::wordcount(
-                        &raw_value_for_len,
-                        spsep.as_deref(),
-                        multi,
-                    )
-                    .max(0) as usize
+                    crate::ported::utils::wordcount(&raw_value_for_len, spsep.as_deref(), multi)
+                        .max(0) as usize
                 }
             };
             let n_str = n.to_string();
@@ -4637,13 +4643,13 @@ pub fn paramsubst(
         // assoc_arrays, route through the function_names / alias_names
         // sets. Direct port of zsh's per-magic-table getfn dispatch.
         let mut value: String; // c:2247
-        // c:Src/Modules/parameter.c — magic-assoc (k)/(v)/(kv) reads
-        // return array shape (each key/value as a distinct word). The
-        // value computation below joins them with space for the scalar
-        // path; capture the unjoined Vec here so the split_parts
-        // declared post-value can pick it up and the auto_splat block
-        // emits multiple result_nodes. Without this, `a=( ${(k)builtins}
-        // )` got 1 element instead of zsh's 103.
+                               // c:Src/Modules/parameter.c — magic-assoc (k)/(v)/(kv) reads
+                               // return array shape (each key/value as a distinct word). The
+                               // value computation below joins them with space for the scalar
+                               // path; capture the unjoined Vec here so the split_parts
+                               // declared post-value can pick it up and the auto_splat block
+                               // emits multiple result_nodes. Without this, `a=( ${(k)builtins}
+                               // )` got 1 element instead of zsh's 103.
         let mut magic_assoc_array: Option<Vec<String>> = None;
         if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 {
             // c:2247 (kv) — interleaved key/value pairs. Walk assoc
@@ -4661,10 +4667,8 @@ pub fn paramsubst(
                 })
                 .or_else(|| match var_name.as_str() {
                     "aliases" => aliastab_lock().read().ok().map(|t| {
-                        let mut entries: Vec<(String, String)> = t
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.text.clone()))
-                            .collect();
+                        let mut entries: Vec<(String, String)> =
+                            t.iter().map(|(k, v)| (k.clone(), v.text.clone())).collect();
                         entries.sort_by(|a, b| a.0.cmp(&b.0));
                         entries.into_iter().flat_map(|(k, v)| [k, v]).collect()
                     }),
@@ -4672,8 +4676,8 @@ pub fn paramsubst(
                         keys.sort();
                         keys.into_iter()
                             .flat_map(|k| {
-                                let v = crate::vm_helper::partab_get(&var_name, &k)
-                                    .unwrap_or_default();
+                                let v =
+                                    crate::vm_helper::partab_get(&var_name, &k).unwrap_or_default();
                                 [k, v]
                             })
                             .collect()
@@ -4736,37 +4740,21 @@ pub fn paramsubst(
                     // (hashtable.c:594).
                     match var_name.as_str() {
                         // c:2247
-                        "aliases" => {
-                            aliastab_lock()
-                                .read()
-                                .ok()
-                                .map(|t| {
-                                    let mut names: Vec<String> =
-                                        t.iter().map(|(k, _)| k.clone()).collect();
-                                    names.sort();
-                                    names.join(" ")
-                                })
-                        }
-                        "functions" | "dis_functions" => shfunctab_lock()
-                            .read()
-                            .ok()
-                            .map(|t| {
-                                let mut names: Vec<String> =
-                                    t.iter().map(|(k, _)| k.clone()).collect();
-                                names.sort();
-                                names.join(" ")
-                            }),
-                        "commands" => {
-                            cmdnamtab_lock()
-                                .read()
-                                .ok()
-                                .map(|t| {
-                                    let mut names: Vec<String> =
-                                        t.iter().map(|(k, _)| k.clone()).collect();
-                                    names.sort();
-                                    names.join(" ")
-                                })
-                        }
+                        "aliases" => aliastab_lock().read().ok().map(|t| {
+                            let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
+                            names.sort();
+                            names.join(" ")
+                        }),
+                        "functions" | "dis_functions" => shfunctab_lock().read().ok().map(|t| {
+                            let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
+                            names.sort();
+                            names.join(" ")
+                        }),
+                        "commands" => cmdnamtab_lock().read().ok().map(|t| {
+                            let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
+                            names.sort();
+                            names.join(" ")
+                        }),
                         // c:Src/Modules/parameter.c — generic PARTAB
                         // magic-assoc fallback (parameters/builtins/
                         // options/modules/reswords/nameddirs/...) via
@@ -4782,12 +4770,10 @@ pub fn paramsubst(
                         // differs from zsh's specific hash. Most
                         // consumers (`zinit ls $functions`, plugin
                         // sanity checks) don't care about hash order.
-                        _ => {
-                            crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
-                                keys.sort();
-                                keys.join(" ")
-                            })
-                        }
+                        _ => crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
+                            keys.sort();
+                            keys.join(" ")
+                        }),
                     } // c:2247
                 }) // c:2247
                 .unwrap_or_default();
@@ -4808,8 +4794,7 @@ pub fn paramsubst(
                             keys.sort();
                             keys.into_iter()
                                 .map(|k| {
-                                    crate::vm_helper::partab_get(&var_name, &k)
-                                        .unwrap_or_default()
+                                    crate::vm_helper::partab_get(&var_name, &k).unwrap_or_default()
                                 })
                                 .collect()
                         })
@@ -4922,12 +4907,12 @@ pub fn paramsubst(
         // (e.g. :# filter, (s::) split) so the auto-splat block
         // below splats those instead of the original backing array.
         let mut split_parts: Option<Vec<String>> = None; // c:3950
-        // c:Src/Modules/parameter.c — magic-assoc (k)/(v) reads
-        // captured by magic_assoc_array (declared near `value` above).
-        // Seed split_parts so the auto_splat block emits each key/
-        // value as its own result_node. C achieves this via SCANPM_*
-        // → isarr=1; the Rust port collapses to a single scalar
-        // without this seed.
+                                                         // c:Src/Modules/parameter.c — magic-assoc (k)/(v) reads
+                                                         // captured by magic_assoc_array (declared near `value` above).
+                                                         // Seed split_parts so the auto_splat block emits each key/
+                                                         // value as its own result_node. C achieves this via SCANPM_*
+                                                         // → isarr=1; the Rust port collapses to a single scalar
+                                                         // without this seed.
         if let Some(ref keys) = magic_assoc_array {
             if !keys.is_empty() {
                 split_parts = Some(keys.clone());
@@ -4960,19 +4945,16 @@ pub fn paramsubst(
                                   // set (SCANPM_ISVAR_AT path at c:2027-2029) so the
                                   // array iteration MUST fire — `\${arr[@]:#pat}` filters
                                   // the elements, not the joined scalar.
-                let is_array_subscript = matches!(
-                    subscript.as_deref(),
-                    Some("@") | Some("*")
-                ) || subscript
-                    .as_deref()
-                    .map_or(false, |s| s.contains(','));
+                let is_array_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"))
+                    || subscript.as_deref().map_or(false, |s| s.contains(','));
                 let has_subscript = subscript.is_some() && !is_array_subscript;
                 if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript) {
                     let kept: Vec<String> = arr
                         .into_iter() // c:3540
                         .filter(|elem| {
                             // c:3540
-                            let m = patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, elem)); // c:3540
+                            let m = patcompile(&p, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, elem)); // c:3540
                             if invert {
                                 m
                             } else {
@@ -4988,7 +4970,8 @@ pub fn paramsubst(
                     split_parts = Some(kept); // c:3540
                 } else {
                     // c:3540
-                    let m = patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &raw_value)); // c:3540
+                    let m = patcompile(&p, PAT_HEAPDUP as i32, None)
+                        .map_or(false, |__p| pattry(&__p, &raw_value)); // c:3540
                     value = if invert {
                         // c:3540
                         if m {
@@ -5178,7 +5161,9 @@ pub fn paramsubst(
                     let new_arr: Vec<String> = arr
                         .into_iter()
                         .map(|elem| {
-                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &elem)) {
+                            if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, &elem))
+                            {
                                 repl.clone()
                             } else {
                                 elem
@@ -5187,7 +5172,9 @@ pub fn paramsubst(
                         .collect();
                     value = new_arr.join(" "); // c:3870
                     split_parts = Some(new_arr); // c:3870
-                } else if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &raw_value)) {
+                } else if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                    .map_or(false, |__p| pattry(&__p, &raw_value))
+                {
                     value = repl; // c:3870
                 } else {
                     value = raw_value.clone(); // c:3870
@@ -5289,7 +5276,9 @@ pub fn paramsubst(
                         let mut matched: Option<usize> = None;
                         for end in (1..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
-                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
+                            if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, &cand))
+                            {
                                 matched = Some(end);
                                 break;
                             }
@@ -5306,7 +5295,9 @@ pub fn paramsubst(
                         let mut matched: Option<usize> = None;
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
+                            if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, &cand))
+                            {
                                 matched = Some(start);
                                 break;
                             }
@@ -5324,7 +5315,9 @@ pub fn paramsubst(
                         let mut m: Option<usize> = None;
                         for e in (q + 1..=nn).rev() {
                             let c: String = cv[q..e].iter().collect();
-                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &c)) {
+                            if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, &c))
+                            {
                                 m = Some(e);
                                 break;
                             }
@@ -5412,7 +5405,10 @@ pub fn paramsubst(
                 // form).
                 let pat = singsub(&raw_pat);
                 if std::env::var("ZSHRS_TRACE_REPL2").is_ok() {
-                    eprintln!("[TRACE_REPL2] rep={:?} raw_pat={:?} pat={:?} raw_repl={:?}", rep, raw_pat, pat, raw_repl);
+                    eprintln!(
+                        "[TRACE_REPL2] rep={:?} raw_pat={:?} pat={:?} raw_repl={:?}",
+                        rep, raw_pat, pat, raw_repl
+                    );
                 }
                 // Replacement: per Src/glob.c::compgetmatch:2687-2688,
                 // C runs `singsub(replstrp); untokenize(*replstrp);`.
@@ -5467,7 +5463,9 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for end in (0..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
-                            if patcompile(anchor_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
+                            if patcompile(anchor_pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, &cand))
+                            {
                                 return format!("{}{}", repl, cv[end..].iter().collect::<String>());
                             }
                         }
@@ -5477,7 +5475,9 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if patcompile(anchor_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
+                            if patcompile(anchor_pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, &cand))
+                            {
                                 return format!(
                                     "{}{}",
                                     cv[..start].iter().collect::<String>(),
@@ -5492,7 +5492,9 @@ pub fn paramsubst(
                         for start in 0..nn {
                             for end in (start + 1..=nn).rev() {
                                 let cand: String = cv[start..end].iter().collect();
-                                if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
+                                if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                    .map_or(false, |__p| pattry(&__p, &cand))
+                                {
                                     let mut out = String::with_capacity(val.len());
                                     out.extend(cv[..start].iter());
                                     out.push_str(&repl);
@@ -5568,7 +5570,9 @@ pub fn paramsubst(
                             let mut k = nn;
                             loop {
                                 let prefix: String = cv[..k].iter().collect();
-                                if patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &prefix)) {
+                                if patcompile(&p, PAT_HEAPDUP as i32, None)
+                                    .map_or(false, |__p| pattry(&__p, &prefix))
+                                {
                                     if match_only {
                                         return prefix;
                                     }
@@ -5614,7 +5618,9 @@ pub fn paramsubst(
                     let total = cv.len();
                     for k in 0..=total {
                         let prefix: String = cv[..k].iter().collect();
-                        if patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &prefix)) {
+                        if patcompile(&p, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |__p| pattry(&__p, &prefix))
+                        {
                             if match_only {
                                 return prefix;
                             }
@@ -5662,7 +5668,9 @@ pub fn paramsubst(
                     let mut k = total;
                     loop {
                         let suffix: String = cv[total - k..].iter().collect();
-                        if patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &suffix)) {
+                        if patcompile(&p, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |__p| pattry(&__p, &suffix))
+                        {
                             if match_only {
                                 return suffix;
                             }
@@ -5703,7 +5711,9 @@ pub fn paramsubst(
                     let total = cv.len();
                     for k in 0..=total {
                         let suffix: String = cv[total - k..].iter().collect();
-                        if patcompile(&p, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &suffix)) {
+                        if patcompile(&p, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |__p| pattry(&__p, &suffix))
+                        {
                             if match_only {
                                 return suffix;
                             }
@@ -5744,10 +5754,10 @@ pub fn paramsubst(
                     .collect();
                 value = kept.join(" ");
                 split_parts = Some(kept); // c:3540 (auto-splat)
-                // c:3548 SUB_DIFFERENCE returns array shape; mark
-                // isarr=1 so the auto_splat block at c:4245 fires
-                // even though `rest` is non-empty (the operator
-                // consumed it).
+                                          // c:3548 SUB_DIFFERENCE returns array shape; mark
+                                          // isarr=1 so the auto_splat block at c:4245 fires
+                                          // even though `rest` is non-empty (the operator
+                                          // consumed it).
                 isarr = 1;
             } else if let Some(rhs) = r.strip_prefix(":*") {
                 // c:3540 (intersect)
@@ -6015,7 +6025,9 @@ pub fn paramsubst(
                         } else {
                             off.min(total)
                         } as usize;
-                        let len = parts.get(1).map(|s| crate::ported::math::mathevali(&singsub(s)).unwrap_or(0));
+                        let len = parts
+                            .get(1)
+                            .map(|s| crate::ported::math::mathevali(&singsub(s)).unwrap_or(0));
                         value = match len {
                             Some(l) if l >= 0 => {
                                 raw_value.chars().skip(start).take(l as usize).collect()
@@ -6064,19 +6076,19 @@ pub fn paramsubst(
                     tab.get(&var_name).map(|pm| {
                         // c:2814
                         let f = pm.node.flags as u32; // c:2814
-                        // c:Src/params.c paramtype-from-flags read.
-                        // For PM_SPECIAL params, the pm_type bits aren't
-                        // always carried on the paramtab entry (env-
-                        // imported specials like SHLVL come in as
-                        // PM_SCALAR even though IPDEF5 declares them
-                        // PM_INTEGER). Overlay the canonical pm_type
-                        // from special_params so (t) reads match zsh
-                        // (`integer-export-special` instead of
-                        // `scalar-special` for $SHLVL). Also detect
-                        // env-presence to set PM_EXPORTED on params
-                        // that came in via the environment but whose
-                        // paramtab entry didn't carry the flag (set-
-                        // before-export sequence loses the flag).
+                                                      // c:Src/params.c paramtype-from-flags read.
+                                                      // For PM_SPECIAL params, the pm_type bits aren't
+                                                      // always carried on the paramtab entry (env-
+                                                      // imported specials like SHLVL come in as
+                                                      // PM_SCALAR even though IPDEF5 declares them
+                                                      // PM_INTEGER). Overlay the canonical pm_type
+                                                      // from special_params so (t) reads match zsh
+                                                      // (`integer-export-special` instead of
+                                                      // `scalar-special` for $SHLVL). Also detect
+                                                      // env-presence to set PM_EXPORTED on params
+                                                      // that came in via the environment but whose
+                                                      // paramtab entry didn't carry the flag (set-
+                                                      // before-export sequence loses the flag).
                         let f_overlay = if (f & PM_SPECIAL) != 0 {
                             let mut bits = f;
                             if let Some(sp) = crate::ported::params::special_params
@@ -6421,9 +6433,7 @@ pub fn paramsubst(
                         // sortflags bitmask C uses (SORTIT_NUMERICALLY
                         // / SORTIT_NUMERICALLY_SIGNED).
                         let flags = sortit as u32;
-                        sorted.sort_by(|a, b| {
-                            crate::ported::sort::zstrcmp(a, b, flags)
-                        });
+                        sorted.sort_by(|a, b| crate::ported::sort::zstrcmp(a, b, flags));
                     } else if (sortit & SORTIT_IGNORING_CASE) != 0 {
                         // c:4187 SORTIT_IGNORING_CASE
                         sorted.sort_by_key(|a| a.to_lowercase()); // c:4187
@@ -6491,12 +6501,12 @@ pub fn paramsubst(
             let join_with = sep.as_deref().unwrap_or(" "); // c:3950
             value = parts.join(join_with);
             split_parts = Some(parts); // c:3950
-            // c:3274 — `isarr = nojoin ? 1 : 2;`. The value 2 is
-            // C's "array came from splitting a scalar" sentinel
-            // (Src/subst.c:1647-1657 comment). The c:3317 qt-sepjoin
-            // transition skips when `spsep` is set, so isarr=2
-            // survives DQ and the splat block at c:4245 fires —
-            // matching zsh's `"${(s. .)str}"` per-word output.
+                                       // c:3274 — `isarr = nojoin ? 1 : 2;`. The value 2 is
+                                       // C's "array came from splitting a scalar" sentinel
+                                       // (Src/subst.c:1647-1657 comment). The c:3317 qt-sepjoin
+                                       // transition skips when `spsep` is set, so isarr=2
+                                       // survives DQ and the splat block at c:4245 fires —
+                                       // matching zsh's `"${(s. .)str}"` per-word output.
             isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
         } else if let Some(ref sp) = sep {
             // c:3906-3907 — `val = sepjoin(aval, sep, 1); isarr = 0;`
@@ -6691,17 +6701,13 @@ pub fn paramsubst(
                     p += 1;
                     continue; // c:2439
                 } // c:2439
-                // `((` at the start of a token: zsh's lexer treats
-                // `(( … ))` as a single DINPAR token (arith command
-                // start) and bufferwords returns the entire `((…))`
-                // as ONE word per Src/lex.c gettokstr's DINPAR arm.
-                // Walk chars consuming until matching `))`, tracking
-                // nested `(` for safety. Single token result.
-                if cur.is_empty()
-                    && ch == '('
-                    && p + 1 < chars_v.len()
-                    && chars_v[p + 1] == '('
-                {
+                  // `((` at the start of a token: zsh's lexer treats
+                  // `(( … ))` as a single DINPAR token (arith command
+                  // start) and bufferwords returns the entire `((…))`
+                  // as ONE word per Src/lex.c gettokstr's DINPAR arm.
+                  // Walk chars consuming until matching `))`, tracking
+                  // nested `(` for safety. Single token result.
+                if cur.is_empty() && ch == '(' && p + 1 < chars_v.len() && chars_v[p + 1] == '(' {
                     let start = p;
                     let mut depth = 2_i32;
                     // Push the opening `((`.
@@ -6767,9 +6773,7 @@ pub fn paramsubst(
                         cur.push(ch);
                         in_dq = true;
                     } // c:2439
-                    '#' if cur.is_empty()
-                        && !(shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 =>
-                    {
+                    '#' if cur.is_empty() && !(shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 => {
                         // c:2451
                         // Start of comment word — keep or skip.
                         in_comment = !(shsplit & LEXFLAGS_COMMENTS_KEEP) != 0; // c:2451
@@ -6777,9 +6781,7 @@ pub fn paramsubst(
                             cur.push(ch);
                         } // c:2451
                     } // c:2451
-                    '#' if cur.is_empty()
-                        && (shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 =>
-                    {
+                    '#' if cur.is_empty() && (shsplit & LEXFLAGS_COMMENTS_STRIP) != 0 => {
                         // c:2456
                         in_comment = true; // c:2456
                     } // c:2456
@@ -6803,9 +6805,7 @@ pub fn paramsubst(
                         // to `;` and yields them as the `;` token.
                         let canon = if ch == '\n' { ';' } else { ch };
                         let mut sep_str = String::from(canon);
-                        if (ch == '&' || ch == ';')
-                            && p + 1 < chars_v.len()
-                            && chars_v[p + 1] == ch
+                        if (ch == '&' || ch == ';') && p + 1 < chars_v.len() && chars_v[p + 1] == ch
                         {
                             sep_str.push(ch);
                             p += 1;
@@ -6830,12 +6830,12 @@ pub fn paramsubst(
                 p += 1; // c:2439
             } // c:2439
             push_word(&mut cur, &mut words); // c:2439
-            // c:4174-4198 — bufferwords result becomes a word list:
-            // when there are multiple words OR isarr was set, the
-            // value is the list (aval), else the single joined val.
-            // Mirror by setting split_parts so the auto_splat block
-            // (or DQ join via sepjoin gate) consumes the list.
-            // Per c:3274 split-from-scalar convention, isarr = 2.
+                                             // c:4174-4198 — bufferwords result becomes a word list:
+                                             // when there are multiple words OR isarr was set, the
+                                             // value is the list (aval), else the single joined val.
+                                             // Mirror by setting split_parts so the auto_splat block
+                                             // (or DQ join via sepjoin gate) consumes the list.
+                                             // Per c:3274 split-from-scalar convention, isarr = 2.
             value = words.join(" "); // c:4191 single-word case
             if !words.is_empty() {
                 split_parts = Some(words); // c:4194
@@ -6853,13 +6853,13 @@ pub fn paramsubst(
         if (mods & 1) != 0 {
             // c:4155 if (mods & 1)
             let home_opt = getsparam("HOME"); // c:4155
-                                                                     // Pull named-dirs (~name) hash into a [(name, path)]
-                                                                     // sorted by path-length-descending so the LONGEST match
-                                                                     // wins (zsh canonical: most-specific tilde-contraction).
-                                                                     // Direct port of subst.c → modify dir-handling which
-                                                                     // walks the nameddirtab in length-desc order.
-                                                                     // c:2229 — canonical nameddirtab read (mirrors C's
-                                                                     // `mod_export HashTable nameddirtab` at hashnameddir.c:48).
+                                              // Pull named-dirs (~name) hash into a [(name, path)]
+                                              // sorted by path-length-descending so the LONGEST match
+                                              // wins (zsh canonical: most-specific tilde-contraction).
+                                              // Direct port of subst.c → modify dir-handling which
+                                              // walks the nameddirtab in length-desc order.
+                                              // c:2229 — canonical nameddirtab read (mirrors C's
+                                              // `mod_export HashTable nameddirtab` at hashnameddir.c:48).
             let mut named: Vec<(String, String)> = nameddirtab()
                 .lock()
                 .map(|t| {
@@ -7354,7 +7354,8 @@ pub fn paramsubst(
         // splat from the underlying array storage. Gate auto_splat
         // off when wantt fired, mirroring C's `if (isarr)` at
         // c:4245 not firing when wantt cleared isarr to 0.
-        let auto_splat = !wantt && (isarr != 0                  // c:4245
+        let auto_splat = !wantt
+            && (isarr != 0                  // c:4245
             || force_splat_from_eq                           // c:2566
             || (!(nojoin == 2)                                     // c:3950
             && !qt                                           // c:3950 (only outside DQ)
@@ -7516,16 +7517,9 @@ pub fn paramsubst(
             let prefix: String = chars[..start_pos].iter().collect();
             let suffix: String = chars[sub_end..].iter().collect();
             let rewritten = format!("{}${{+{}}}{}", prefix, name_with_sub, suffix);
-            return paramsubst(
-                &rewritten,
-                prefix.chars().count(),
-                qt,
-                pf_flags,
-                ret_flags,
-            );
+            return paramsubst(&rewritten, prefix.chars().count(), qt, pf_flags, ret_flags);
         }
     }
-
 
     // Simple $var (or $arr[idx] for array-element access — per
     // Src/lex.c::gettokstr, zsh accepts `$name[subscript]` as a
@@ -7611,7 +7605,12 @@ pub fn paramsubst(
                     let mut out: Vec<String> = Vec::new();
                     for (k, v) in map.iter() {
                         let hay = if by_key { k.as_str() } else { v.as_str() };
-                        let matched = if exact { hay == pat.as_str() } else { patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, hay)) };
+                        let matched = if exact {
+                            hay == pat.as_str()
+                        } else {
+                            patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, hay))
+                        };
                         if matched {
                             out.push(if by_key { k.clone() } else { v.clone() });
                             if !return_all {
@@ -7650,7 +7649,9 @@ pub fn paramsubst(
                     let return_all = flags.contains('I') || flags.contains('R');
                     let mut out: Vec<String> = Vec::new();
                     for (idx, elem) in arr.iter().enumerate() {
-                        if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, elem)) {
+                        if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |__p| pattry(&__p, elem))
+                        {
                             if return_index {
                                 out.push((idx + 1).to_string());
                             } else {
@@ -7679,11 +7680,11 @@ pub fn paramsubst(
                 } else if let Ok(idx) = sub.parse::<i32>() {
                     // c:1625
                     let n = arr.len() as i32; // c:1625
-                    // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
-                    // non-strict mode: `a[0]` aliases to `a[1]` (first
-                    // element). Strict mode (default) returns empty.
-                    // Without this, `setopt kshzerosubscript; a=(q);
-                    // print $a[0]` returned "" instead of "q".
+                                              // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
+                                              // non-strict mode: `a[0]` aliases to `a[1]` (first
+                                              // element). Strict mode (default) returns empty.
+                                              // Without this, `setopt kshzerosubscript; a=(q);
+                                              // print $a[0]` returned "" instead of "q".
                     let i = if idx == 0 {
                         if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
                             0 // c:2140 — `end = startnextlen` (first elem)
@@ -7749,8 +7750,8 @@ pub fn paramsubst(
                 } else if let Ok(idx) = sub.parse::<i32>() {
                     // c:1625
                     let n = chars_v.len() as i32; // c:1625
-                    // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
-                    // non-strict mode on scalar char-index.
+                                                  // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
+                                                  // non-strict mode on scalar char-index.
                     let i = if idx == 0 {
                         if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
                             0 // c:2140
@@ -7945,9 +7946,9 @@ pub fn paramsubst(
         '*' | '@' => {
             // c:1625
             let mut values = arrays_get("@").unwrap_or_default(); // c:1625
-            // c:Src/lex.c gettokstr — bare `$@[SUB]` / `$*[SUB]` parses
-            // the bracket subscript inline. Walk a depth-tracked `[...]`
-            // after the `@`/`*` and apply via getarrvalue when present.
+                                                                  // c:Src/lex.c gettokstr — bare `$@[SUB]` / `$*[SUB]` parses
+                                                                  // the bracket subscript inline. Walk a depth-tracked `[...]`
+                                                                  // after the `@`/`*` and apply via getarrvalue when present.
             let mut after_pos = pos + 1;
             // Accept literal `[` AND tokenized Inbrack (\u{86}) /
             // Outbrack (\u{8b}). When paramsubst runs on input that
@@ -7984,7 +7985,13 @@ pub fn paramsubst(
                         // splat — values unchanged
                     } else if let Ok(idx) = sub.parse::<i64>() {
                         let n = values.len() as i64;
-                        let i = if idx == 0 { -1 } else if idx < 0 { n + idx } else { idx - 1 };
+                        let i = if idx == 0 {
+                            -1
+                        } else if idx < 0 {
+                            n + idx
+                        } else {
+                            idx - 1
+                        };
                         values = if i >= 0 && (i as usize) < values.len() {
                             vec![values[i as usize].clone()]
                         } else {
@@ -8402,7 +8409,9 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     for start in 0..=n {
                         for end in start..=n {
                             let span: String = cv[start..end].iter().collect();
-                            if patcompile(&eff_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &span)) {
+                            if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, &span))
+                            {
                                 // Convert char positions to byte positions.
                                 let bs: usize = cv[..start].iter().map(|c| c.len_utf8()).sum();
                                 let be: usize =
@@ -8424,7 +8433,9 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     let mut found: Option<usize> = None;
                     for end in 0..=n {
                         let span: String = cv[..end].iter().collect();
-                        if patcompile(&eff_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &span)) {
+                        if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |__p| pattry(&__p, &span))
+                        {
                             found = Some(cv[..end].iter().map(|c| c.len_utf8()).sum());
                             break;
                         }
@@ -8448,7 +8459,9 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     let mut found: Option<usize> = None;
                     for start in 0..=n {
                         let span: String = cv[start..].iter().collect();
-                        if patcompile(&eff_pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &span)) {
+                        if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |__p| pattry(&__p, &span))
+                        {
                             found = Some(cv[..start].iter().map(|c| c.len_utf8()).sum());
                             break;
                         }
@@ -8519,11 +8532,10 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             };
             *hsubl.lock().unwrap() = Some(eff_pat.clone()); // c:4673
             *hsubr.lock().unwrap() = Some(repl.clone()); // c:4673
-            hsubpatopt
-                .store(mode as i32, Ordering::Relaxed); // c:4673
-                                                                           // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
-                                                                           // rejoins. Pull through the same code path :& uses
-                                                                           // below by deferring to a shared `apply_subst` closure.
+            hsubpatopt.store(mode as i32, Ordering::Relaxed); // c:4673
+                                                              // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
+                                                              // rejoins. Pull through the same code path :& uses
+                                                              // below by deferring to a shared `apply_subst` closure.
             if wall {
                 // c:4665
                 let separator = sep.as_deref().unwrap_or(" "); // c:4665
@@ -8562,9 +8574,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 let r_opt = hsubr.lock().unwrap().clone();
                 match (p_opt, r_opt) {
                     (Some(p), Some(r)) => {
-                        let mode = hsubpatopt
-                            .load(Ordering::Relaxed)
-                            as u8;
+                        let mode = hsubpatopt.load(Ordering::Relaxed) as u8;
                         Some((p, r, mode))
                     }
                     _ => None,
@@ -8974,7 +8984,6 @@ thread_local! {
 // `convbase` lives in src/ported/utils.rs (canonical port of
 // Src/utils.c). Callers below import via the full path.
 
-
 /// Multsub flags (from subst.c)
 // `pub mod multsub_flags { … }` — DELETED per user directive; was
 // a Rust-only u32 wrapper duplicating the canonical i32 constants
@@ -9112,12 +9121,9 @@ fn arrays_contains(name: &str) -> bool {
         "fignore" => Some("FIGNORE"),
         _ => None,
     };
-    if paramtab()
-        .read()
-        .map_or(false, |tab| {
-            tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
-        })
-    {
+    if paramtab().read().map_or(false, |tab| {
+        tab.get(name).map_or(false, |pm| pm.u_arr.is_some())
+    }) {
         return true;
     }
     // Tied partner exists → array partner is conceptually set. C's
@@ -9323,8 +9329,8 @@ mod tests {
         let name = "X".to_string();
         let value = "value".to_string();
         setsparam(&name, &value); // utils.c:6915
-                                                           // singsub currently doesn't process $ - it's a high-level wrapper
-                                                           // that needs prefork to be fully working
+                                  // singsub currently doesn't process $ - it's a high-level wrapper
+                                  // that needs prefork to be fully working
         let result = singsub("X"); // utils.c:6915
                                    // For now, just test that it returns something
         assert!(!result.is_empty() || result.is_empty()); // utils.c:6915
@@ -9755,11 +9761,7 @@ mod tests {
     fn filesubstr_ascii_tilde_does_not_expand() {
         let _g = crate::test_util::global_state_lock();
         let r = filesubstr("~", false);
-        assert!(
-            r.is_none(),
-            "ASCII `~` must not tilde-expand (got {:?})",
-            r
-        );
+        assert!(r.is_none(), "ASCII `~` must not tilde-expand (got {:?})", r);
     }
 
     /// c:4531 — `modify(s, ":h")` is the dirname modifier — `${var:h}`
@@ -10255,10 +10257,7 @@ mod tests {
     #[test]
     fn paramsubst_substring_negative_offset_with_length() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PS_NEG2", "hello", "${PS_NEG2:(-3):2}"),
-            "ll"
-        );
+        assert_eq!(psubst_one("PS_NEG2", "hello", "${PS_NEG2:(-3):2}"), "ll");
     }
 
     /// `${H:0:-1}` where H=hello → `hell` (negative length = drop last N).
@@ -10272,10 +10271,7 @@ mod tests {
     #[test]
     fn paramsubst_flag_q_backslash_escapes_whitespace() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PS_Q", "hi there", "${(q)PS_Q}"),
-            r"hi\ there"
-        );
+        assert_eq!(psubst_one("PS_Q", "hi there", "${(q)PS_Q}"), r"hi\ there");
     }
 
     /// `${(q-)X}` where X="hi there" → `'hi there'` (single-quote when needed).
@@ -10303,18 +10299,11 @@ mod tests {
     fn paramsubst_flag_P_dereferences_indirect_name() {
         let _g = crate::test_util::global_state_lock();
         setsparam("PSU_TARGET", "real_value");
-        let (out, _, _) = paramsubst(
-            "${(P)PSU_REF}",
-            0,
-            false,
-            0,
-            &mut 0,
-        );
+        let (out, _, _) = paramsubst("${(P)PSU_REF}", 0, false, 0, &mut 0);
         // Run psubst_one to set PSU_REF; can't reuse psubst_one here
         // because we need TWO params set, not just one.
         setsparam("PSU_REF", "PSU_TARGET");
-        let (out2, _, _) =
-            paramsubst("${(P)PSU_REF}", 0, false, 0, &mut 0);
+        let (out2, _, _) = paramsubst("${(P)PSU_REF}", 0, false, 0, &mut 0);
         let _ = out;
         assert_eq!(out2, "real_value");
     }
@@ -10327,11 +10316,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
 
     /// Set an array param, expand `expr`, return (single_str_result, vec_result).
-    fn psubst_arr(
-        name: &str,
-        elements: &[&str],
-        expr: &str,
-    ) -> (String, Vec<String>) {
+    fn psubst_arr(name: &str, elements: &[&str], expr: &str) -> (String, Vec<String>) {
         errflag.store(0, Ordering::Relaxed);
         let _ = crate::ported::params::setaparam(
             name,
@@ -10348,8 +10333,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_index_one_returns_first_element() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSA1", &["alpha", "beta", "gamma", "delta"], "${PSA1[1]}");
+        let (out, _) = psubst_arr("PSA1", &["alpha", "beta", "gamma", "delta"], "${PSA1[1]}");
         assert_eq!(out, "alpha");
     }
 
@@ -10357,8 +10341,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_index_two_returns_second_element() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSA2", &["alpha", "beta", "gamma", "delta"], "${PSA2[2]}");
+        let (out, _) = psubst_arr("PSA2", &["alpha", "beta", "gamma", "delta"], "${PSA2[2]}");
         assert_eq!(out, "beta");
     }
 
@@ -10366,8 +10349,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_index_negative_one_returns_last_element() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSA3", &["alpha", "beta", "gamma", "delta"], "${PSA3[-1]}");
+        let (out, _) = psubst_arr("PSA3", &["alpha", "beta", "gamma", "delta"], "${PSA3[-1]}");
         assert_eq!(out, "delta");
     }
 
@@ -10375,8 +10357,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_index_negative_two_returns_second_to_last() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSA4", &["alpha", "beta", "gamma", "delta"], "${PSA4[-2]}");
+        let (out, _) = psubst_arr("PSA4", &["alpha", "beta", "gamma", "delta"], "${PSA4[-2]}");
         assert_eq!(out, "gamma");
     }
 
@@ -10384,8 +10365,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_index_out_of_range_returns_empty() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSA5", &["alpha", "beta", "gamma", "delta"], "${PSA5[99]}");
+        let (out, _) = psubst_arr("PSA5", &["alpha", "beta", "gamma", "delta"], "${PSA5[99]}");
         assert_eq!(out, "");
     }
 
@@ -10394,8 +10374,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_length_returns_element_count() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSA6", &["alpha", "beta", "gamma", "delta"], "${#PSA6}");
+        let (out, _) = psubst_arr("PSA6", &["alpha", "beta", "gamma", "delta"], "${#PSA6}");
         assert_eq!(out, "4");
     }
 
@@ -10422,11 +10401,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_slice_one_two_returns_first_two_elements() {
         let _g = crate::test_util::global_state_lock();
-        let (out, multi) = psubst_arr(
-            "PSA9",
-            &["alpha", "beta", "gamma", "delta"],
-            "${PSA9[1,2]}",
-        );
+        let (out, multi) = psubst_arr("PSA9", &["alpha", "beta", "gamma", "delta"], "${PSA9[1,2]}");
         // EITHER multi has the two elements, OR out is "alpha beta"
         // (some paramsubst paths return joined string instead of vec).
         if !multi.is_empty() {
@@ -10494,11 +10469,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_F_flag_joins_with_newlines_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) = psubst_arr(
-            "PSA13",
-            &["alpha", "beta", "gamma", "delta"],
-            "${(F)PSA13}",
-        );
+        let (out, _) = psubst_arr("PSA13", &["alpha", "beta", "gamma", "delta"], "${(F)PSA13}");
         assert_eq!(
             out, "alpha\nbeta\ngamma\ndelta",
             "zsh 5.9 reference: print -r -- \"${{(F)arr}}\" → alpha\\nbeta\\ngamma\\ndelta"
@@ -10513,8 +10484,7 @@ mod tests {
     fn paramsubst_scalar_split_on_colon_yields_four_parts() {
         let _g = crate::test_util::global_state_lock();
         setsparam("PSA14", "a:b:c:d");
-        let (out, _, multi) =
-            paramsubst("${(s/:/)PSA14}", 0, false, 0, &mut 0);
+        let (out, _, multi) = paramsubst("${(s/:/)PSA14}", 0, false, 0, &mut 0);
         if !multi.is_empty() {
             assert_eq!(multi, vec!["a", "b", "c", "d"]);
         } else {
@@ -10530,8 +10500,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_sort_ascending() {
         let _g = crate::test_util::global_state_lock();
-        let (out, multi) =
-            psubst_arr("PSA15", &["charlie", "alpha", "bravo"], "${(o)PSA15}");
+        let (out, multi) = psubst_arr("PSA15", &["charlie", "alpha", "bravo"], "${(o)PSA15}");
         if !multi.is_empty() {
             assert_eq!(multi, vec!["alpha", "bravo", "charlie"]);
         } else {
@@ -10543,8 +10512,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_sort_descending() {
         let _g = crate::test_util::global_state_lock();
-        let (out, multi) =
-            psubst_arr("PSA16", &["charlie", "alpha", "bravo"], "${(O)PSA16}");
+        let (out, multi) = psubst_arr("PSA16", &["charlie", "alpha", "bravo"], "${(O)PSA16}");
         if !multi.is_empty() {
             assert_eq!(multi, vec!["charlie", "bravo", "alpha"]);
         } else {
@@ -10568,18 +10536,11 @@ mod tests {
     #[test]
     fn paramsubst_arr_filter_hash_removes_matching_literal_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, multi) = psubst_arr(
-            "PSD1",
-            &["foo", "bar", "baz", "qux"],
-            "${PSD1[@]:#bar}",
-        );
+        let (out, multi) = psubst_arr("PSD1", &["foo", "bar", "baz", "qux"], "${PSD1[@]:#bar}");
         if !multi.is_empty() {
             assert_eq!(multi, vec!["foo", "baz", "qux"]);
         } else {
-            assert_eq!(
-                out, "foo baz qux",
-                "zsh: ${{mix[@]:#bar}} → 'foo baz qux'"
-            );
+            assert_eq!(out, "foo baz qux", "zsh: ${{mix[@]:#bar}} → 'foo baz qux'");
         }
     }
 
@@ -10588,11 +10549,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_filter_hash_removes_matching_glob_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, multi) = psubst_arr(
-            "PSD2",
-            &["foo", "bar", "baz", "qux"],
-            "${PSD2[@]:#ba*}",
-        );
+        let (out, multi) = psubst_arr("PSD2", &["foo", "bar", "baz", "qux"], "${PSD2[@]:#ba*}");
         if !multi.is_empty() {
             assert_eq!(multi, vec!["foo", "qux"]);
         } else {
@@ -10606,11 +10563,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_per_element_suffix_strip() {
         let _g = crate::test_util::global_state_lock();
-        let (out, multi) = psubst_arr(
-            "PSD3",
-            &["foo.txt", "bar.txt", "baz.md"],
-            "${PSD3[@]%.txt}",
-        );
+        let (out, multi) = psubst_arr("PSD3", &["foo.txt", "bar.txt", "baz.md"], "${PSD3[@]%.txt}");
         if !multi.is_empty() {
             assert_eq!(multi, vec!["foo", "bar", "baz.md"]);
         } else {
@@ -10623,11 +10576,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_per_element_basename_via_longest_prefix() {
         let _g = crate::test_util::global_state_lock();
-        let (out, multi) = psubst_arr(
-            "PSD4",
-            &["/a/x", "/b/y", "/c/z"],
-            "${PSD4[@]##*/}",
-        );
+        let (out, multi) = psubst_arr("PSD4", &["/a/x", "/b/y", "/c/z"], "${PSD4[@]##*/}");
         if !multi.is_empty() {
             assert_eq!(multi, vec!["x", "y", "z"]);
         } else {
@@ -10650,8 +10599,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_substring_of_indexed_element_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSD6", &["hello", "world"], "${PSD6[1]:0:3}");
+        let (out, _) = psubst_arr("PSD6", &["hello", "world"], "${PSD6[1]:0:3}");
         assert_eq!(out, "hel", "zsh: ${{arr[1]:0:3}} → first 3 chars of arr[1]");
     }
 
@@ -10672,7 +10620,10 @@ mod tests {
         errflag.store(0, Ordering::Relaxed);
         let _ = crate::ported::params::setaparam(
             "PSD7",
-            ["charlie", "alpha", "bravo"].iter().map(|s| (*s).to_string()).collect(),
+            ["charlie", "alpha", "bravo"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
         );
         let (out, _, _) = paramsubst("${(o)PSD7}", 0, true, 0, &mut 0);
         assert_eq!(
@@ -10690,11 +10641,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_compound_oj_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) = psubst_arr(
-            "PSD8",
-            &["charlie", "alpha", "bravo"],
-            "${(oj/-/)PSD8}",
-        );
+        let (out, _) = psubst_arr("PSD8", &["charlie", "alpha", "bravo"], "${(oj/-/)PSD8}");
         assert_eq!(
             out, "charlie-alpha-bravo",
             "zsh: (oj/-/) does NOT sort in scalar context; got {out:?}"
@@ -10706,8 +10653,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_compound_Fo_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) =
-            psubst_arr("PSD9", &["charlie", "alpha", "bravo"], "${(Fo)PSD9}");
+        let (out, _) = psubst_arr("PSD9", &["charlie", "alpha", "bravo"], "${(Fo)PSD9}");
         assert_eq!(
             out, "charlie\nalpha\nbravo",
             "zsh: (Fo) → newline-join unsorted; got {out:?}"
@@ -10774,40 +10720,28 @@ mod tests {
     #[test]
     fn paramsubst_mod_chain_h_t_returns_last_dir_component() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PMC1", PATH_FIXTURE, "${PMC1:h:t}"),
-            "to"
-        );
+        assert_eq!(psubst_one("PMC1", PATH_FIXTURE, "${PMC1:h:t}"), "to");
     }
 
     /// `${P:t:r}` — basename then strip last extension → "file.txt"
     #[test]
     fn paramsubst_mod_chain_t_r_basename_strip_last_ext() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PMC2", PATH_FIXTURE, "${PMC2:t:r}"),
-            "file.txt"
-        );
+        assert_eq!(psubst_one("PMC2", PATH_FIXTURE, "${PMC2:t:r}"), "file.txt");
     }
 
     /// `${P:r:t}` — strip ext then basename → "file.txt"
     #[test]
     fn paramsubst_mod_chain_r_t_strip_then_basename() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PMC3", PATH_FIXTURE, "${PMC3:r:t}"),
-            "file.txt"
-        );
+        assert_eq!(psubst_one("PMC3", PATH_FIXTURE, "${PMC3:r:t}"), "file.txt");
     }
 
     /// `${P:r:e}` — strip last ext (.bak), then ext of result (.txt) → "txt"
     #[test]
     fn paramsubst_mod_chain_r_e_returns_inner_extension() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PMC4", PATH_FIXTURE, "${PMC4:r:e}"),
-            "txt"
-        );
+        assert_eq!(psubst_one("PMC4", PATH_FIXTURE, "${PMC4:r:e}"), "txt");
     }
 
     /// `${P:r:r}` — strip two extensions → "/path/to/file"
@@ -10824,10 +10758,7 @@ mod tests {
     #[test]
     fn paramsubst_mod_chain_t_e_basename_then_extension() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PMC6", PATH_FIXTURE, "${PMC6:t:e}"),
-            "bak"
-        );
+        assert_eq!(psubst_one("PMC6", PATH_FIXTURE, "${PMC6:t:e}"), "bak");
     }
 
     /// `${P:s/file/X/}` — single substitution.
@@ -10890,10 +10821,7 @@ mod tests {
     #[test]
     fn paramsubst_mod_q_quotes_backslash_escape() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PMC12", "hi there", "${PMC12:q}"),
-            r"hi\ there"
-        );
+        assert_eq!(psubst_one("PMC12", "hi there", "${PMC12:q}"), r"hi\ there");
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -10910,9 +10838,12 @@ mod tests {
         let _ = crate::ported::params::sethparam(
             name,
             vec![
-                "k1".into(), "v1".into(),
-                "k2".into(), "v2".into(),
-                "k3".into(), "v3".into(),
+                "k1".into(),
+                "v1".into(),
+                "k2".into(),
+                "v2".into(),
+                "k3".into(),
+                "v3".into(),
             ],
         );
     }
@@ -10942,8 +10873,7 @@ mod tests {
     fn paramsubst_hash_missing_key_returns_empty() {
         let _g = crate::test_util::global_state_lock();
         build_test_hash("PSH3");
-        let (out, _, _) =
-            paramsubst("${PSH3[missing]}", 0, false, 0, &mut 0);
+        let (out, _, _) = paramsubst("${PSH3[missing]}", 0, false, 0, &mut 0);
         assert_eq!(out, "");
         crate::ported::params::unsetparam("PSH3");
     }
@@ -10963,8 +10893,7 @@ mod tests {
     fn paramsubst_hash_k_flag_returns_keys() {
         let _g = crate::test_util::global_state_lock();
         build_test_hash("PSH5");
-        let (out, _, multi) =
-            paramsubst("${(k)PSH5}", 0, false, 0, &mut 0);
+        let (out, _, multi) = paramsubst("${(k)PSH5}", 0, false, 0, &mut 0);
         // Collect into a Vec, sort, compare.
         let mut keys: Vec<String> = if !multi.is_empty() {
             multi
@@ -10981,8 +10910,7 @@ mod tests {
     fn paramsubst_hash_v_flag_returns_values() {
         let _g = crate::test_util::global_state_lock();
         build_test_hash("PSH6");
-        let (out, _, multi) =
-            paramsubst("${(v)PSH6}", 0, false, 0, &mut 0);
+        let (out, _, multi) = paramsubst("${(v)PSH6}", 0, false, 0, &mut 0);
         let mut vals: Vec<String> = if !multi.is_empty() {
             multi
         } else {
@@ -11000,8 +10928,7 @@ mod tests {
     fn paramsubst_hash_kv_flag_returns_alternating_pairs() {
         let _g = crate::test_util::global_state_lock();
         build_test_hash("PSH7");
-        let (out, _, multi) =
-            paramsubst("${(kv)PSH7}", 0, false, 0, &mut 0);
+        let (out, _, multi) = paramsubst("${(kv)PSH7}", 0, false, 0, &mut 0);
         let mut all: Vec<String> = if !multi.is_empty() {
             multi
         } else {
@@ -11027,11 +10954,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_slice_to_negative_two() {
         let _g = crate::test_util::global_state_lock();
-        let (out, multi) = psubst_arr(
-            "PS_S1",
-            &["a", "b", "c", "d", "e"],
-            "${PS_S1[1,-2]}",
-        );
+        let (out, multi) = psubst_arr("PS_S1", &["a", "b", "c", "d", "e"], "${PS_S1[1,-2]}");
         if !multi.is_empty() {
             assert_eq!(multi, vec!["a", "b", "c", "d"]);
         } else {
@@ -11044,11 +10967,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_slice_negative_three_to_negative_one() {
         let _g = crate::test_util::global_state_lock();
-        let (out, multi) = psubst_arr(
-            "PS_S2",
-            &["a", "b", "c", "d", "e"],
-            "${PS_S2[-3,-1]}",
-        );
+        let (out, multi) = psubst_arr("PS_S2", &["a", "b", "c", "d", "e"], "${PS_S2[-3,-1]}");
         if !multi.is_empty() {
             assert_eq!(multi, vec!["c", "d", "e"]);
         } else {
@@ -11061,11 +10980,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_paren_negative_one_is_last_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) = psubst_arr(
-            "PS_S3",
-            &["a", "b", "c", "d", "e"],
-            "${PS_S3[(-1)]}",
-        );
+        let (out, _) = psubst_arr("PS_S3", &["a", "b", "c", "d", "e"], "${PS_S3[(-1)]}");
         assert_eq!(out, "e", "zsh: arr=(a b c d e); ${{arr[(-1)]}} → e");
     }
 
@@ -11074,11 +10989,7 @@ mod tests {
     #[test]
     fn paramsubst_arr_paren_positive_one_is_first_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
-        let (out, _) = psubst_arr(
-            "PS_S4",
-            &["a", "b", "c", "d", "e"],
-            "${PS_S4[(1)]}",
-        );
+        let (out, _) = psubst_arr("PS_S4", &["a", "b", "c", "d", "e"], "${PS_S4[(1)]}");
         assert_eq!(out, "a", "zsh: arr=(a b c d e); ${{arr[(1)]}} → a");
     }
 
@@ -11088,10 +10999,7 @@ mod tests {
     fn paramsubst_arr_set_intersection_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         errflag.store(0, Ordering::Relaxed);
-        let _ = crate::ported::params::setaparam(
-            "PS_OTHER1",
-            vec!["b".into(), "d".into()],
-        );
+        let _ = crate::ported::params::setaparam("PS_OTHER1", vec!["b".into(), "d".into()]);
         let (out, multi) = psubst_arr(
             "PS_LIST1",
             &["a", "b", "c", "d", "e"],
@@ -11110,10 +11018,7 @@ mod tests {
     fn paramsubst_arr_set_subtraction_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         errflag.store(0, Ordering::Relaxed);
-        let _ = crate::ported::params::setaparam(
-            "PS_OTHER2",
-            vec!["b".into(), "d".into()],
-        );
+        let _ = crate::ported::params::setaparam("PS_OTHER2", vec!["b".into(), "d".into()]);
         let (out, multi) = psubst_arr(
             "PS_LIST2",
             &["a", "b", "c", "d", "e"],
@@ -11133,8 +11038,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("PS_ASSIGN1");
         errflag.store(0, Ordering::Relaxed);
-        let (out, _, _) =
-            paramsubst("${PS_ASSIGN1:=newval}", 0, false, 0, &mut 0);
+        let (out, _, _) = paramsubst("${PS_ASSIGN1:=newval}", 0, false, 0, &mut 0);
         assert_eq!(out, "newval", "expansion returns the assigned value");
         // Side effect: the param now equals "newval"
         assert_eq!(
@@ -11153,8 +11057,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         errflag.store(0, Ordering::Relaxed);
         setsparam("PS_ASSIGN2", "");
-        let (out, _, _) =
-            paramsubst("${PS_ASSIGN2:=newval}", 0, false, 0, &mut 0);
+        let (out, _, _) = paramsubst("${PS_ASSIGN2:=newval}", 0, false, 0, &mut 0);
         assert_eq!(out, "newval");
         assert_eq!(
             crate::ported::params::getsparam("PS_ASSIGN2").as_deref(),
@@ -11171,8 +11074,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         errflag.store(0, Ordering::Relaxed);
         setsparam("PS_ASSIGN3", "preserved");
-        let (out, _, _) =
-            paramsubst("${PS_ASSIGN3:=newval}", 0, false, 0, &mut 0);
+        let (out, _, _) = paramsubst("${PS_ASSIGN3:=newval}", 0, false, 0, &mut 0);
         assert_eq!(out, "preserved");
         assert_eq!(
             crate::ported::params::getsparam("PS_ASSIGN3").as_deref(),
@@ -11192,10 +11094,7 @@ mod tests {
     #[test]
     fn paramsubst_compound_uppercase_then_substring() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PCC1", "Hello", "${(U)PCC1:0:3}"),
-            "HEL"
-        );
+        assert_eq!(psubst_one("PCC1", "Hello", "${(U)PCC1:0:3}"), "HEL");
     }
 
     /// `${(U)X:1}` — uppercase + drop first char.
@@ -11203,10 +11102,7 @@ mod tests {
     #[test]
     fn paramsubst_compound_uppercase_then_drop_first() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PCC2", "Hello", "${(U)PCC2:1}"),
-            "ELLO"
-        );
+        assert_eq!(psubst_one("PCC2", "Hello", "${(U)PCC2:1}"), "ELLO");
     }
 
     /// `${#${(U)X}}` — length of uppercase result. = 5 for "Hello".
@@ -11214,10 +11110,7 @@ mod tests {
     #[test]
     fn paramsubst_compound_length_of_uppercase() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PCC3", "Hello", "${#${(U)PCC3}}"),
-            "5"
-        );
+        assert_eq!(psubst_one("PCC3", "Hello", "${#${(U)PCC3}}"), "5");
     }
 
     /// `${(L)X##*B}` — lowercase then strip longest *B prefix.
@@ -11238,10 +11131,7 @@ mod tests {
     #[test]
     fn paramsubst_compound_length_of_strip_result() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(
-            psubst_one("PCC5", "FOOBARBAZ", "${#${PCC5##*B}}"),
-            "2"
-        );
+        assert_eq!(psubst_one("PCC5", "FOOBARBAZ", "${#${PCC5##*B}}"), "2");
     }
 
     /// `${${S#*:}#*:}` — double-strip prefix (chained nested expansion).
@@ -11341,10 +11231,16 @@ mod tests {
         );
         let b = crate::ported::params::getaparam("mbegin");
         let e = crate::ported::params::getaparam("mend");
-        assert_eq!(b.as_deref(), Some(&["12".to_string()][..]),
-            "Test/D04parameter.ztst:1251 — $mbegin[1]=12");
-        assert_eq!(e.as_deref(), Some(&["16".to_string()][..]),
-            "Test/D04parameter.ztst:1251 — $mend[1]=16");
+        assert_eq!(
+            b.as_deref(),
+            Some(&["12".to_string()][..]),
+            "Test/D04parameter.ztst:1251 — $mbegin[1]=12"
+        );
+        assert_eq!(
+            e.as_deref(),
+            Some(&["16".to_string()][..]),
+            "Test/D04parameter.ztst:1251 — $mend[1]=16"
+        );
     }
 
     /// `Test/D04parameter.ztst:1261-1270` — `(#m)` flag: assigns
@@ -11368,8 +11264,11 @@ mod tests {
             "Test/D04parameter.ztst:1262 — (S) + (#m) substring strip",
         );
         let m = crate::ported::params::getsparam("MATCH");
-        assert_eq!(m.as_deref(), Some("MATCH"),
-            "Test/D04parameter.ztst:1263 — $MATCH=MATCH");
+        assert_eq!(
+            m.as_deref(),
+            Some("MATCH"),
+            "Test/D04parameter.ztst:1263 — $MATCH=MATCH"
+        );
     }
 
     /// `Test/D04parameter.ztst:1272-1275` — `(#m)` substitution form:
@@ -11424,11 +11323,7 @@ mod tests {
     #[ignore = "ZSHRS BUG: fully-anchored ${(S)var//#%(...)/repl} with (#b) not wired"]
     fn paramsubst_pound_b_fully_anchored_must_scan_whole_string() {
         let _g = crate::test_util::global_state_lock();
-        let result = psubst_one(
-            "ZP_BBA",
-            "string",
-            "${(S)ZP_BBA//#%((#b)(*))/different}",
-        );
+        let result = psubst_one("ZP_BBA", "string", "${(S)ZP_BBA//#%((#b)(*))/different}");
         assert_eq!(
             result, "different",
             "Test/D04parameter.ztst:2358 — full-anchor search expected",
@@ -11471,11 +11366,7 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_strip_shortest_prefix() {
         let _g = crate::test_util::global_state_lock();
-        let result = psubst_one(
-            "ZP_S1",
-            "This is very boring indeed.",
-            "${ZP_S1#*s}",
-        );
+        let result = psubst_one("ZP_S1", "This is very boring indeed.", "${ZP_S1#*s}");
         assert_eq!(
             result, " is very boring indeed.",
             "Test/D04parameter.ztst:129 — ${{var#*s}} shortest prefix to first 's'",
@@ -11489,11 +11380,7 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_strip_longest_prefix() {
         let _g = crate::test_util::global_state_lock();
-        let result = psubst_one(
-            "ZP_S2",
-            "This is very boring indeed.",
-            "${ZP_S2##*s}",
-        );
+        let result = psubst_one("ZP_S2", "This is very boring indeed.", "${ZP_S2##*s}");
         assert_eq!(
             result, " very boring indeed.",
             "Test/D04parameter.ztst:130 — ${{var##*s}} longest prefix",
@@ -11615,11 +11502,7 @@ mod tests {
     #[ignore = "ZSHRS BUG: ${var//\\\\/-} backslash-as-search-pat not unescaped before paramsubst pattern compile"]
     fn paramsubst_zsh_corpus_replace_literal_backslash() {
         let _g = crate::test_util::global_state_lock();
-        let result = psubst_one(
-            "ZP_BS",
-            r"a\string\with\backslashes",
-            r"${ZP_BS//\\/-}",
-        );
+        let result = psubst_one("ZP_BS", r"a\string\with\backslashes", r"${ZP_BS//\\/-}");
         assert_eq!(
             result, "a-string-with-backslashes",
             "ztst:192 — global \\ → -",
@@ -11632,11 +11515,7 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_replace_escaped_slash() {
         let _g = crate::test_util::global_state_lock();
-        let result = psubst_one(
-            "ZP_SL",
-            "a/string/with/slashes",
-            r"${ZP_SL//\//-}",
-        );
+        let result = psubst_one("ZP_SL", "a/string/with/slashes", r"${ZP_SL//\//-}");
         assert_eq!(
             result, "a-string-with-slashes",
             "ztst:194 — global escaped / → -",
@@ -11665,11 +11544,7 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_uppercase_flag() {
         let _g = crate::test_util::global_state_lock();
-        let result = psubst_one(
-            "ZP_UC",
-            "doing that tour of India.",
-            "${(U)ZP_UC}",
-        );
+        let result = psubst_one("ZP_UC", "doing that tour of India.", "${(U)ZP_UC}");
         assert_eq!(
             result, "DOING THAT TOUR OF INDIA.",
             "ztst:416 — (U) uppercases all chars",
@@ -11704,15 +11579,8 @@ mod tests {
     #[ignore = "ZSHRS BUG: (#m) on tokenized `${~:-*}` chain not wired"]
     fn paramsubst_zsh_corpus_pound_m_with_tokenized_glob_input() {
         let _g = crate::test_util::global_state_lock();
-        let result = psubst_one(
-            "ZP_TKM",
-            "",
-            "${${~:-*}//(#m)*/$MATCH=$MATCH}",
-        );
-        assert_eq!(
-            result, "*=*",
-            "ztst:1279 — tokenized * passed through (#m)",
-        );
+        let result = psubst_one("ZP_TKM", "", "${${~:-*}//(#m)*/$MATCH=$MATCH}");
+        assert_eq!(result, "*=*", "ztst:1279 — tokenized * passed through (#m)",);
     }
 
     /// `Test/D04parameter.ztst:1306-1311` — `${file//(#b)(*)left/
@@ -11761,7 +11629,11 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_array_slice_empty_when_end_before_start() {
         let _g = crate::test_util::global_state_lock();
-        let (s, _) = psubst_arr("ZA_E1", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_E1[1,0]}");
+        let (s, _) = psubst_arr(
+            "ZA_E1",
+            &["a", "b", "c", "d", "e", "f", "g"],
+            "${ZA_E1[1,0]}",
+        );
         assert_eq!(s, "", "ztst:22 — [1,0] empty");
     }
 
@@ -11778,7 +11650,11 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_array_slice_zero_to_zero_is_empty() {
         let _g = crate::test_util::global_state_lock();
-        let (s, _) = psubst_arr("ZA_ZZ", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_ZZ[0,0]}");
+        let (s, _) = psubst_arr(
+            "ZA_ZZ",
+            &["a", "b", "c", "d", "e", "f", "g"],
+            "${ZA_ZZ[0,0]}",
+        );
         assert_eq!(s, "", "ztst:38 — [0,0] empty");
     }
 
@@ -11787,7 +11663,11 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_array_slice_zero_to_one_yields_first() {
         let _g = crate::test_util::global_state_lock();
-        let (s, _) = psubst_arr("ZA_OZ", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_OZ[0,1]}");
+        let (s, _) = psubst_arr(
+            "ZA_OZ",
+            &["a", "b", "c", "d", "e", "f", "g"],
+            "${ZA_OZ[0,1]}",
+        );
         assert_eq!(s, "a", "ztst:42 — [0,1] yields first element");
     }
 
@@ -11804,7 +11684,11 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_array_slice_negative_end() {
         let _g = crate::test_util::global_state_lock();
-        let (_, v) = psubst_arr("ZA_NE", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_NE[2,-4]}");
+        let (_, v) = psubst_arr(
+            "ZA_NE",
+            &["a", "b", "c", "d", "e", "f", "g"],
+            "${ZA_NE[2,-4]}",
+        );
         assert_eq!(v.join(" "), "b c d", "ztst:54 — [2,-4] slice");
     }
 
@@ -11813,7 +11697,11 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_array_slice_negative_start() {
         let _g = crate::test_util::global_state_lock();
-        let (_, v) = psubst_arr("ZA_NS", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_NS[-4,5]}");
+        let (_, v) = psubst_arr(
+            "ZA_NS",
+            &["a", "b", "c", "d", "e", "f", "g"],
+            "${ZA_NS[-4,5]}",
+        );
         assert_eq!(v.join(" "), "d e", "ztst:58 — [-4,5] slice");
     }
 
@@ -11822,7 +11710,11 @@ mod tests {
     #[test]
     fn paramsubst_zsh_corpus_array_slice_both_negative() {
         let _g = crate::test_util::global_state_lock();
-        let (_, v) = psubst_arr("ZA_NN", &["a", "b", "c", "d", "e", "f", "g"], "${ZA_NN[-6,-2]}");
+        let (_, v) = psubst_arr(
+            "ZA_NN",
+            &["a", "b", "c", "d", "e", "f", "g"],
+            "${ZA_NN[-6,-2]}",
+        );
         assert_eq!(v.join(" "), "b c d e f", "ztst:62 — [-6,-2] slice");
     }
 
@@ -11844,7 +11736,10 @@ mod tests {
     fn paramsubst_zsh_corpus_array_index_zero_no_ksh_zero() {
         let _g = crate::test_util::global_state_lock();
         let (s, _) = psubst_arr("ZA_KZ0", &["one", "two", "three", "four"], "X${ZA_KZ0[0]}X");
-        assert_eq!(s, "XX", "ztst:203 — array[0] empty without KSH_ZERO_SUBSCRIPT");
+        assert_eq!(
+            s, "XX",
+            "ztst:203 — array[0] empty without KSH_ZERO_SUBSCRIPT"
+        );
     }
 
     /// `Test/D06subscript.ztst:233-236` — string subscripts.
@@ -11978,7 +11873,10 @@ mod tests {
     fn paramsubst_zsh_corpus_q_minus_flag_space_gets_quoted() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZQM_SP", "foo bar", "${(q-)ZQM_SP}");
-        assert_eq!(result, "'foo bar'", "ztst:459 — (q-) quotes when space present");
+        assert_eq!(
+            result, "'foo bar'",
+            "ztst:459 — (q-) quotes when space present"
+        );
     }
 
     /// `Test/D04parameter.ztst:454-460` — `${(q-)foo}` with glob chars:
@@ -11999,7 +11897,10 @@ mod tests {
     fn paramsubst_zsh_corpus_quoted_zero_length_in_subst() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZZL_F", "", "${${ZZL_F}/?*/replacement}");
-        assert_eq!(result, "", "ztst:1304 — empty var stays empty through nested /");
+        assert_eq!(
+            result, "",
+            "ztst:1304 — empty var stays empty through nested /"
+        );
     }
 
     // ─── More ${var:-default} / ${var:+alt} / ${var:?err} pins ────────
@@ -12042,7 +11943,10 @@ mod tests {
     fn paramsubst_zsh_corpus_dash_only_empty_returns_empty() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZD_E", "", "${ZD_E-fallback}");
-        assert_eq!(result, "", "${{var-d}} set-but-empty returns empty (not default)");
+        assert_eq!(
+            result, "",
+            "${{var-d}} set-but-empty returns empty (not default)"
+        );
     }
 
     // ─── String trim flags: # ## % %% pins ──────────────────────────
@@ -12111,7 +12015,10 @@ mod tests {
     fn paramsubst_zsh_corpus_c_flag_capitalizes_multibyte_with_apostrophe() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZCM", "l'état c'est moi", "${(C)ZCM}");
-        assert_eq!(result, "L'État C'Est Moi", "ztst:136 — (C) restarts word after '");
+        assert_eq!(
+            result, "L'État C'Est Moi",
+            "ztst:136 — (C) restarts word after '"
+        );
     }
 
     // ─── Subscript on multibyte string ────────────────────────────────
@@ -12131,7 +12038,10 @@ mod tests {
     fn paramsubst_zsh_corpus_multibyte_subscript_accented() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZMS2", "ténébreux", "${ZMS2[2]}");
-        assert_eq!(result, "é", "ztst:22 — [2] is 'é' (multibyte codepoint, not byte)");
+        assert_eq!(
+            result, "é",
+            "ztst:22 — [2] is 'é' (multibyte codepoint, not byte)"
+        );
     }
 
     /// `Test/D07multibyte.ztst` — `${a[1,3]}` slice spans 3 codepoints.
@@ -12299,8 +12209,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("ZAR_V");
         crate::ported::params::setiparam("ZAR_V", 21);
-        let result = psubst_one("ZAR_V_IGNORE", "ignored",
-            "$(( ZAR_V * 2 ))");
+        let result = psubst_one("ZAR_V_IGNORE", "ignored", "$(( ZAR_V * 2 ))");
         assert_eq!(result, "42");
         crate::ported::params::unsetparam("ZAR_V");
     }

@@ -285,11 +285,8 @@ fn variables_locals_scope_contains_user_vars_only() {
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     let path = tmp.path().to_path_buf();
     let canon = std::fs::canonicalize(&path).expect("canonicalize");
-    std::fs::write(
-        &path,
-        "my_user_var=42\nanother_user_var=hello\necho done\n",
-    )
-    .expect("write program");
+    std::fs::write(&path, "my_user_var=42\nanother_user_var=hello\necho done\n")
+        .expect("write program");
     let _ = dap.request(
         "setBreakpoints",
         json!({
@@ -319,7 +316,7 @@ fn variables_locals_scope_contains_user_vars_only() {
         .map(|v| v["name"].as_str().unwrap_or(""))
         .collect();
     assert!(
-        locals.iter().any(|n| *n == "my_user_var"),
+        locals.contains(&"my_user_var"),
         "Locals missing my_user_var: {:?}",
         locals,
     );
@@ -343,7 +340,7 @@ fn variables_locals_scope_contains_user_vars_only() {
         env.iter().take(10).collect::<Vec<_>>(),
     );
     assert!(
-        !env.iter().any(|n| *n == "my_user_var"),
+        !env.contains(&"my_user_var"),
         "Environment leaked user var: {:?}",
         env.iter().take(10).collect::<Vec<_>>(),
     );
@@ -413,11 +410,8 @@ fn breakpoint_actually_pauses_and_continue_resumes() {
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     let path = tmp.path().to_path_buf();
     let canon = std::fs::canonicalize(&path).expect("canonicalize");
-    std::fs::write(
-        &path,
-        "echo line1\necho line2\necho line3\necho line4\n",
-    )
-    .expect("write program");
+    std::fs::write(&path, "echo line1\necho line2\necho line3\necho line4\n")
+        .expect("write program");
 
     let _ = dap.request(
         "setBreakpoints",

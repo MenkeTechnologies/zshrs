@@ -49,15 +49,13 @@ fn parallel_math_eval_returns_correct_per_worker_results() {
             let got = mathevali(&expr);
             (
                 tid,
-                got.map(|v| (v, expected))
-                    .map_err(|e| e)
-                    .and_then(|(g, e)| {
-                        if g == e {
-                            Ok(g)
-                        } else {
-                            Err(format!("tid={tid} expr=`{expr}` expected={e} got={g}"))
-                        }
-                    }),
+                got.map(|v| (v, expected)).and_then(|(g, e)| {
+                    if g == e {
+                        Ok(g)
+                    } else {
+                        Err(format!("tid={tid} expr=`{expr}` expected={e} got={g}"))
+                    }
+                }),
             )
         }));
     }

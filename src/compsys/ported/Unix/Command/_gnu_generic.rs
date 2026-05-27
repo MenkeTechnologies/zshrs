@@ -15,8 +15,11 @@ use crate::ported::exec_hooks::dispatch_function_call;
 /// `_gnu_generic` — fallback completer for GNU-style commands.
 /// Pure delegation to `_arguments` (not yet ported as an engine fn).
 pub fn _gnu_generic() -> i32 {
-    dispatch_function_call("_arguments", &["*:arg: _default".to_string(), "--".to_string()])
-        .unwrap_or(1)
+    dispatch_function_call(
+        "_arguments",
+        &["*:arg: _default".to_string(), "--".to_string()],
+    )
+    .unwrap_or(1)
 }
 
 #[cfg(test)]

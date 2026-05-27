@@ -96,8 +96,7 @@ pub fn _dispatch(args: &[String]) -> i32 {
             if str_arg.is_empty() {
                 continue;
             }
-            let service =
-                assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
+            let service = assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
             let _ = setsparam("service", &service);
             let patcomps = getaparam("_patcomps").unwrap_or_default();
             for i in patcomps.chunks(2) {
@@ -108,10 +107,8 @@ pub fn _dispatch(args: &[String]) -> i32 {
                     //   malformed pattern.
                     let matched = pattern_match(pat, str_arg);
                     if matched {
-                        let parts: Vec<String> = action
-                            .split_whitespace()
-                            .map(|s| s.to_string())
-                            .collect();
+                        let parts: Vec<String> =
+                            action.split_whitespace().map(|s| s.to_string()).collect();
                         if let Some((cmd, rest)) = parts.split_first() {
                             if dispatch_function_call(cmd, rest).unwrap_or(1) == 0 {
                                 ret = 0;
@@ -145,8 +142,7 @@ pub fn _dispatch(args: &[String]) -> i32 {
         //   shell-quoting layer)
         name = str_arg.clone();
         comp = assoc_get("_comps", str_arg).unwrap_or_default();
-        let service =
-            assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
+        let service = assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
         let _ = setsparam("service", &service);
         if !comp.is_empty() {
             break;
@@ -176,18 +172,18 @@ pub fn _dispatch(args: &[String]) -> i32 {
             if str_arg.is_empty() {
                 continue;
             }
-            let service =
-                assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
+            let service = assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
             let _ = setsparam("service", &service);
             let pp = getaparam("_postpatcomps").unwrap_or_default();
             for i in pp.chunks(2) {
-                if i.first().map(|k| pattern_match(k, str_arg)).unwrap_or(false) {
+                if i.first()
+                    .map(|k| pattern_match(k, str_arg))
+                    .unwrap_or(false)
+                {
                     if let Some(action) = i.get(1) {
                         let _ = setsparam("_compskip", "default");
-                        let parts: Vec<String> = action
-                            .split_whitespace()
-                            .map(|s| s.to_string())
-                            .collect();
+                        let parts: Vec<String> =
+                            action.split_whitespace().map(|s| s.to_string()).collect();
                         if let Some((cmd, rest)) = parts.split_first() {
                             if dispatch_function_call(cmd, rest).unwrap_or(1) == 0 {
                                 ret = 0;
@@ -211,12 +207,8 @@ pub fn _dispatch(args: &[String]) -> i32 {
 
     // sh:81-84  fallback to last-arg's comp
     let cs2 = getsparam("_compskip").unwrap_or_default();
-    if name == last_arg
-        && !comp.is_empty()
-        && !(cs2 == "all" || cs2.contains("default"))
-    {
-        let service =
-            assoc_get("_services", &name).unwrap_or_else(|| name.clone());
+    if name == last_arg && !comp.is_empty() && !(cs2 == "all" || cs2.contains("default")) {
+        let service = assoc_get("_services", &name).unwrap_or_else(|| name.clone());
         let _ = setsparam("service", &service);
         if dispatch_function_call(&comp, &[]).unwrap_or(1) == 0 {
             ret = 0;

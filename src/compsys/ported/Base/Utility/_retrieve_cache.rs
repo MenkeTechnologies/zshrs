@@ -70,10 +70,7 @@ pub fn _retrieve_cache(args: &[String]) -> i32 {
     match dir_meta {
         Ok(m) if m.is_dir() => {}
         Ok(_) => {
-            let _ = _message(&[format!(
-                "cache-dir ({}) isn't a directory!",
-                cache_dir
-            )]);
+            let _ = _message(&[format!("cache-dir ({}) isn't a directory!", cache_dir)]);
             return 1;
         }
         Err(_) => return 1,

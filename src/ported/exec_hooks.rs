@@ -181,8 +181,7 @@ mod tests {
         // We can't unset OnceLock once set, but if test runs first
         // in this process it should be None. The defensive pin is:
         // either None or Some — never panic.
-        let _ = dispatch_function_call("__never_a_real_function_zshrs__",
-            &["a".into()]);
+        let _ = dispatch_function_call("__never_a_real_function_zshrs__", &["a".into()]);
         // No panic = pass.
     }
 
@@ -212,9 +211,7 @@ mod tests {
     fn exec_hooks_corpus_array_falls_back_to_getaparam() {
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("EH_FB");
-        crate::ported::params::setaparam(
-            "EH_FB", vec!["x".into(), "y".into(), "z".into()],
-        );
+        crate::ported::params::setaparam("EH_FB", vec!["x".into(), "y".into(), "z".into()]);
         let got = array("EH_FB");
         assert_eq!(
             got.as_deref(),
