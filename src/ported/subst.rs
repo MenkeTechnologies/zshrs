@@ -8186,9 +8186,26 @@ pub fn paramsubst(
         } // c:1625
         _ => {
             // c:1625
-            // Just a literal $
-            result_nodes.push(s.to_string()); // c:1625
-            (s.to_string(), start_pos + 1, result_nodes) // c:1625
+            // Just a literal $ — if the dispatch char (which lives
+            // at `chars[start_pos]`) is the tokenized DQ-form
+            // (Qstring `\u{8c}`) or the bare Stringg (`\u{85}`),
+            // emit it as a literal ASCII `$` so callers don't see
+            // the metafied byte leak through. Parity bug: bare
+            // `"$"` (a `$` with nothing valid following it inside
+            // DQ) printed as the metafied byte sequence instead of
+            // a real dollar sign.
+            let leading = chars.get(start_pos).copied().unwrap_or('\0');
+            if leading == Qstring || leading == Stringg {
+                let mut out = String::with_capacity(s.len());
+                out.push_str(&chars[..start_pos].iter().collect::<String>());
+                out.push('$');
+                out.push_str(&chars[start_pos + 1..].iter().collect::<String>());
+                result_nodes.push(out.clone());
+                (out, start_pos + 1, result_nodes)
+            } else {
+                result_nodes.push(s.to_string()); // c:1625
+                (s.to_string(), start_pos + 1, result_nodes) // c:1625
+            }
         } // c:1625
     } // c:1625
 } // c:1625
