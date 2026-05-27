@@ -3505,12 +3505,30 @@ pub fn bin_typeset(
         out
     };
     let argv = argv.as_slice();
+    // c:Src/builtin.c:2813+ — under PM_TIED (`-T scalar array [sep]`)
+    // the third positional is the SEPARATOR character, not a param
+    // name. Track arg index so we can skip validation/createparam
+    // on the separator. Beyond index 2 under -T is a usage error
+    // in C zsh but we follow the lenient "ignore" path.
+    let tied_mode = (on & PM_TIED) != 0;
+    let mut tied_name_count: usize = 0;
     for arg in argv {
         // c:Src/builtin.c typeset_single — when PM_LOCAL is in
         // flags, createparam first to install pm.old chain at
         // locallevel (createparam c:1132-1147). Applies uniformly
         // to all forms: `local x`, `local x=v`, `local arr=(...)`,
         // `local -A h`. endparamscope unwinds via Param.old.
+        if tied_mode {
+            tied_name_count += 1;
+            if tied_name_count > 2 {
+                // Separator / extra args — don't run name
+                // validation or createparam against them. Full
+                // -T body (createparam SCALAR_TIED + array tie
+                // backref) is deferred per the comment above on
+                // the typeset_single dispatch.
+                continue;
+            }
+        }
         let arg_name: &str = match arg.find('=') {
             Some(i) => &arg[..i],
             None => arg.as_str(),
