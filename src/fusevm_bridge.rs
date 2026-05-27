@@ -2562,13 +2562,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let _ = sub_vm.run();
         let status = sub_vm.last_status;
         let elapsed = start.elapsed();
-        eprintln!(
-            "{:.2}s user {:.2}s system {:.0}% cpu {:.3} total",
-            elapsed.as_secs_f64() * 0.7,
-            elapsed.as_secs_f64() * 0.1,
-            ((elapsed.as_secs_f64() * 0.8) / elapsed.as_secs_f64() * 100.0).min(100.0),
-            elapsed.as_secs_f64()
-        );
+        // c:Src/exec.c — zsh's `time` keyword reads rusage from
+        // waitpid, which is only populated for forked external
+        // processes. A pure builtin (`time true`, `time echo`)
+        // produces zero user/system and zsh skips the print
+        // entirely. Mirror by suppressing when elapsed is below
+        // 1ms (heuristic for "no external work happened").
+        if elapsed.as_secs_f64() >= 0.001 {
+            eprintln!(
+                "{:.2}s user {:.2}s system {:.0}% cpu {:.3} total",
+                elapsed.as_secs_f64() * 0.7,
+                elapsed.as_secs_f64() * 0.1,
+                ((elapsed.as_secs_f64() * 0.8) / elapsed.as_secs_f64() * 100.0).min(100.0),
+                elapsed.as_secs_f64()
+            );
+        }
         Value::Status(status)
     });
 

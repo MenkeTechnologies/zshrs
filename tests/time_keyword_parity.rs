@@ -97,29 +97,34 @@ mod time_block {
 mod time_stderr_present {
     use super::*;
 
-    /// `time` writes its summary on stderr. We don't compare verbatim
-    /// (numbers vary), but we verify both shells produce non-empty
-    /// stderr for `time true`.
+    /// `time` writes its summary on stderr only when the inner
+    /// command actually consumed CPU (zsh reads rusage from waitpid;
+    /// builtins produce zero usage and zsh prints nothing). Both
+    /// shells must agree on whether stderr is empty or not.
     #[test]
-    #[ignore = "ZSHRS BUG: zshrs always emits time-stderr; zsh -fc doesn't emit for fast simple commands"]
     fn time_emits_some_stderr_in_zsh() {
         if !zsh_available() { return; }
         let z = run_zsh(r#"time true"#);
         let r = run_zshrs(r#"time true"#);
-        // Both must produce non-empty stderr lines.
-        assert!(!z.stderr.is_empty(), "zsh time should emit stderr");
-        assert!(!r.stderr.is_empty(), "zshrs time should emit stderr");
+        // Parity: both empty (builtin) or both non-empty.
+        assert_eq!(
+            z.stderr.is_empty(),
+            r.stderr.is_empty(),
+            "time stderr emission differs:\nzsh: {:?}\nzshrs: {:?}",
+            z.stderr,
+            r.stderr
+        );
     }
 
     /// stderr from `time` contains "total" or similar marker
     /// (zsh default format includes ' total').
     #[test]
-    #[ignore = "ZSHRS BUG: time-format 'total' marker emission differs between shells in non-interactive mode"]
     fn time_default_stderr_format_has_known_marker() {
         if !zsh_available() { return; }
         let z = run_zsh(r#"time true"#);
         let r = run_zshrs(r#"time true"#);
-        // zsh default ends with 'total'; check both shells include it.
+        // zsh default ends with 'total'; check both shells include it
+        // (or both don't — for `time true` zsh emits nothing).
         let z_has_total = z.stderr.contains("total");
         let r_has_total = r.stderr.contains("total");
         assert_eq!(z_has_total, r_has_total,
