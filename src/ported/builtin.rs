@@ -1035,8 +1035,16 @@ pub fn bin_set(
                 } else {
                     idx += 1;
                     if idx >= argv.len() {
-                        // c:636
-                        // c:637 — `printoptionstates(hadplus); inittyptab(); return 0;`
+                        // c:636-637 — `printoptionstates(hadplus);
+                        // inittyptab(); return 0;`. The Rust port
+                        // previously returned 0 without printing,
+                        // so `set -o` / `set +o` (no option name)
+                        // emitted nothing instead of the full
+                        // option-state listing (one per line).
+                        // hadplus is true when the user invoked
+                        // `set +o` (POSIX-output form); else `set -o`
+                        // (zsh-output form).
+                        crate::ported::options::printoptionstates(hadplus);
                         return 0;
                     }
                     argv[idx].clone()
