@@ -1004,6 +1004,18 @@ pub fn lastbase() -> i32 {
     M_LASTBASE.with(|c| c.get())
 }
 
+/// Public setter for `lastbase` — used by the bytecode arith
+/// compiler (extensions/arith_compiler.rs) to communicate the
+/// source numeric base when a `N#NNN` or `0x..` literal is
+/// consumed inside `(( … ))`. The canonical math.c port at
+/// `Src/math.c::lexconstant` sets this internally; bypassing
+/// the canonical lexer (as `arith_compiler` does) requires
+/// poking the TLS slot directly so assignsparam's `pm.base ==
+/// 0 ? lastbase()` inheritance path fires.
+pub fn set_lastbase(base: i32) {
+    m_lastbase_set(base)
+}
+
 #[inline]
 fn m_prec() -> &'static [u8; TOKCOUNT] {
     M_PREC.with(|c| c.get())

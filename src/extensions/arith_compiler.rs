@@ -236,6 +236,11 @@ impl<'a> ArithCompiler<'a> {
                 self.pos += 1;
             }
             let val = i64::from_str_radix(&self.input[start + 2..self.pos], 16).unwrap_or(0);
+            // c:Src/math.c lexconstant — set `lastbase = 16` for the
+            // PM_INTEGER pm.base inheritance path in assignsparam.
+            // Without this `(( X = 0xff )); echo \$X` printed 255
+            // instead of zsh's `16#FF`.
+            crate::ported::math::set_lastbase(16);
             return Tok::Num(val);
         }
 
@@ -279,6 +284,11 @@ impl<'a> ArithCompiler<'a> {
                     }
                     let digits = &self.input[digit_start..self.pos];
                     let val = i64::from_str_radix(digits, base).unwrap_or(0);
+                    // c:Src/math.c lexconstant — record the source
+                    // base so PM_INTEGER assignment can inherit it
+                    // for display formatting (`(( X = 2#1010 ));
+                    // echo \$X` → `2#1010`).
+                    crate::ported::math::set_lastbase(base as i32);
                     return Tok::Num(val);
                 }
             }
