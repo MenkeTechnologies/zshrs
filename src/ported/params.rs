@@ -9542,21 +9542,32 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
         ),
         // c:Src/loop.c:719 — `try_errflag = -1` reset before
         // each `{ try } always { catch }` block; reads `-1` when
-        // outside a try block. Read from paramtab; if entry is
-        // missing/PM_UNSET/default (u_val=0), fall back to -1.
-        // Since try/always isn't fully wired in the Rust port,
-        // and no other code path writes TRY_BLOCK_ERROR yet,
-        // `$TRY_BLOCK_ERROR` always reads -1 here.
+        // outside a try block. zsh exposes TRY_BLOCK_ERROR as an
+        // integer special-param: inside an always-arm after a
+        // normal-exit try, reads 0; -1 only when no try has yet
+        // fired in this scope. BUILTIN_SET_TRY_BLOCK_ERROR writes
+        // via set_scalar (u_str), so accept either storage form
+        // and treat a present-but-empty u_str as 0 too.
         "TRY_BLOCK_ERROR" => {
+            // c:Src/loop.c:719 — internal sentinel `try_errflag = -1`
+            // means "no try block has run yet in this scope". As soon
+            // as a try block runs, BUILTIN_SET_TRY_BLOCK_ERROR stores
+            // 0 (success) or last_status (errored) into paramtab.
+            // The user-visible read should reflect whatever is stored;
+            // -1 is only the default when no entry exists yet.
             let v = paramtab().read().ok().and_then(|t| {
                 t.get("TRY_BLOCK_ERROR").and_then(|pm| {
                     if (pm.node.flags as u32 & PM_UNSET) != 0 {
-                        None
-                    } else if pm.u_val != 0 {
-                        Some(pm.u_val)
-                    } else {
-                        None
+                        return None;
                     }
+                    // Entry exists → trust it. u_str holds the value
+                    // for setsparam writes; u_val for integer
+                    // assigns. Either way, an existing entry means
+                    // "some try block stored a value."
+                    if let Some(ref s) = pm.u_str {
+                        return Some(s.parse::<i64>().unwrap_or(0));
+                    }
+                    Some(pm.u_val)
                 })
             });
             Some(v.unwrap_or(-1).to_string())
