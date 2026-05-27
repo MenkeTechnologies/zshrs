@@ -649,6 +649,15 @@ impl ZshCompiler {
                     self.builder.patch_jump(patch, landing);
                 }
                 self.builder.emit(Op::SubshellEnd, 0);
+                // c:Src/exec.c — after a WC_SUBSH child exits, the
+                // parent checks errflag / set -e against the inner
+                // exit status. `set -e; (false); echo done` should
+                // abort the script after the subshell because the
+                // subshell exited 1. Without the check the parent's
+                // `echo done` ran. Emit ERREXIT_CHECK same as a
+                // simple command does (handles set -e, retflag,
+                // exit_pending, non-interactive errflag).
+                self.emit_errexit_check();
             }
             ZshCommand::Cursh(prog) => {
                 // {list} — brace group; no isolation.
