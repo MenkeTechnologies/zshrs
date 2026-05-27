@@ -3532,6 +3532,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Int(0)
         }
     });
+    // c:Src/exec.c — block-level redirect-failure gate. When a
+    // compound command (`{ … } < file`, `( … ) > file`, etc.) has a
+    // failing redirect (e.g. `< /nonexistent`), zsh skips the entire
+    // body AND sets lastval to 1. The simple-command path's
+    // redirect_failed check (line 215-221 above) only catches the
+    // failure when a builtin dispatches and is consumed by that
+    // single builtin call — so a multi-statement block kept running
+    // its remaining statements after the redir error. Emit-side at
+    // compile_zsh.rs::compile_command's Redirected arm pairs this
+    // with a JumpIfTrue → WithRedirectsEnd to abandon the body.
+    vm.register_builtin(BUILTIN_REDIRECT_FAILED_CHECK, |vm, _argc| {
+        let failed = with_executor(|exec| {
+            let f = exec.redirect_failed;
+            exec.redirect_failed = false;
+            f
+        });
+        if failed {
+            vm.last_status = 1;
+            Value::Int(1)
+        } else {
+            Value::Int(0)
+        }
+    });
     vm.register_builtin(BUILTIN_DEBUG_TRAP, |_vm, _argc| {
         // c:Src/signals.c:1245 dotrap(SIGDEBUG) — fires the DEBUG
         // trap body once per statement. The body sees the parent
@@ -4585,6 +4608,15 @@ pub const BUILTIN_DEBUG_TRAP: u16 = 603;
 /// JumpIfTrue skips the statement body. c:Src/exec.c:1390 main loop
 /// check.
 pub const BUILTIN_NOEXEC_CHECK: u16 = 604;
+/// Block-level redirect-failure gate. Reads exec.redirect_failed
+/// (set by host.redirect when a redirect open fails); returns
+/// Value::Int(1) AND clears the flag if set, else 0. Emit-side at
+/// compile_zsh.rs::compile_command's Redirected arm pairs with a
+/// JumpIfTrue → WithRedirectsEnd to abandon the body. Without this,
+/// a multi-statement block after a failed redir kept running every
+/// statement after the first (the first builtin consumed the flag,
+/// subsequent statements ran unimpeded).
+pub const BUILTIN_REDIRECT_FAILED_CHECK: u16 = 605;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
