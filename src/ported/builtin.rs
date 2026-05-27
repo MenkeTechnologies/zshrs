@@ -6424,7 +6424,15 @@ pub fn bin_alias(
             aliastab_lock()
         };
         if let Ok(t) = lock.read() {
-            for (_n, a) in t.iter() {
+            // c:Src/builtin.c:4496 — `scanhashtable(aliastab, 1, ...)`
+            // sets the SORT flag (1). The C source walks the table
+            // sorted by `hnamcmp` (byte-wise ASCII compare); the
+            // Rust port iterated in arbitrary hash order, so
+            // `alias` output sequence diverged from zsh's
+            // (uppercase-before-lowercase) ASCII ordering.
+            let mut entries: Vec<_> = t.iter().collect();
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            for (_n, a) in entries {
                 // c:4497
                 if (a.node.flags & flags1 as i32) == flags1 as i32
                     && (a.node.flags & flags2 as i32) == 0
