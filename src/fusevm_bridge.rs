@@ -3806,7 +3806,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // the start of the current statement. Direct port of zsh's
         // pre-cmdsubst lastval propagation per Src/exec.c:4770.
         let live_status = vm.last_status;
-        with_executor(|exec| match mode {
+        with_executor(|exec| exec.set_last_status(live_status));
+        let result_value = with_executor(|exec| match mode {
             // Mode 1 = DoubleQuoted (argument context).
             // Mode 5 = DoubleQuoted in scalar-assignment context.
             // Both share the same DQ unescape pre-processing; mode 5
@@ -4087,7 +4088,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     Value::Array(parts.into_iter().map(Value::str).collect())
                 }
             }
-        })
+        });
+        // Pull any inner cmd-subst (`` `cmd` `` via mode 3 or via
+        // mode 0/6 multsub → getoutput, `$(cmd)` via the default
+        // arm's multsub path, nested `$()`s reached through
+        // stringsubst) back into vm.last_status so a containing
+        // assignment's BUILTIN_SET_VAR — which reads vm.last_status —
+        // sees the cmd-subst's exit. Without this, backtick
+        // assignments (`a=\`false\`; echo $?`) reported 0 because the
+        // ported LASTVAL update never reached the VM-side counter.
+        let cs_status = with_executor(|exec| exec.last_status());
+        vm.last_status = cs_status;
+        result_value
     });
 
     // `${#name}` — pops [name]. Returns the value's element count for
