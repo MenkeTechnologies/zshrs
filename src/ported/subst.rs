@@ -1918,13 +1918,18 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
     }
 
     // `=cmd` — PATH lookup via equalsubstr. C:
-    // `if (*str == Equals && isset(Equals) && str[1] && str[1] != Inpar)`.
-    // The previous Rust port had `\u{86}` labeled Equals (wrong — that's
-    // Hat; Equals is \u{8d}) AND `\u{85}` labeled Inpar (wrong — that's
-    // Stringg; Inpar is \u{88}). Use canonical consts. The EQUALS
-    // option gate (c:715) must be honoured — without `setopt EQUALS`
-    // (default off) the `=cmd` form stays literal.
-    if (first == '=' || first == Equals)
+    // `if (*str == Equals && isset(EQUALS) && str[1] && str[1] != Inpar)`.
+    // The check is on the TOKENIZED Equals marker (\u{8d}), NOT
+    // literal `=`. The Equals marker is only set by the lexer for
+    // a source-level literal `=` at the start of a word; results
+    // of param expansion / cmd substitution that happen to start
+    // with `=` get the raw byte and stay literal.
+    //
+    // Parity bug: zshrs accepted BOTH literal `=` AND Equals,
+    // so post-substitution strings like `${kv#a}` of "a=1" → "=1"
+    // got incorrectly treated as `=cmd` and triggered command-not-
+    // found ("1: not found"). Match C: Equals marker only.
+    if first == Equals
         && chars.len() > 1
         && chars[1] != Inpar
         && crate::ported::zsh_h::isset(crate::ported::zsh_h::EQUALSOPT)
