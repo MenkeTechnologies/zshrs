@@ -3052,6 +3052,19 @@ pub fn paramsubst(
                             break;
                         }
                         let del = body_chars[idx]; // c:2325 del0 = s
+                        // c:Src/subst.c:1366-1391 get_strarg — paired
+                        // bracket delimiters: `(…)`, `[…]`, `{…}`,
+                        // `<…>`. `${(l[3][_])arr}` opens groups with
+                        // `[` and closes with `]`. Without the mapping
+                        // the (l)/(r) parser scanned for a second `[`
+                        // and bailed with "bad substitution".
+                        let close_del = match del {
+                            '(' => ')',
+                            '[' => ']',
+                            '{' => '}',
+                            '<' => '>',
+                            other => other,
+                        };
                         idx += 1; // get_strarg(s) advances past opening del
                                   // Parse N — digits up to closing del.
                         let mut num_str = String::new();
@@ -3063,7 +3076,7 @@ pub fn paramsubst(
                                                                    // c:1441 — `*s = t + arglen` advances PAST the
                                                                    // closing delimiter. Mirror by skipping the
                                                                    // closing del.
-                        if idx < body_chars.len() && body_chars[idx] == del {
+                        if idx < body_chars.len() && body_chars[idx] == close_del {
                             idx += 1;
                         }
                         if is_left {
@@ -3086,7 +3099,7 @@ pub fn paramsubst(
                         // reads from `:` and walks until matching `:`.
                         idx += 1; // skip opening del
                         let s1_start = idx;
-                        while idx < body_chars.len() && body_chars[idx] != del {
+                        while idx < body_chars.len() && body_chars[idx] != close_del {
                             idx += 1;
                         }
                         let s1_raw: String = body_chars[s1_start..idx].iter().collect();
@@ -3107,7 +3120,7 @@ pub fn paramsubst(
                         // c:2360 — STR2 (one-time pad).
                         idx += 1;
                         let s2_start = idx;
-                        while idx < body_chars.len() && body_chars[idx] != del {
+                        while idx < body_chars.len() && body_chars[idx] != close_del {
                             idx += 1;
                         }
                         let s2_raw: String = body_chars[s2_start..idx].iter().collect();
