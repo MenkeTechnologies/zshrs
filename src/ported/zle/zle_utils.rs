@@ -1370,7 +1370,7 @@ pub fn get_undo_current_change() -> i64 {
     }
 
     /* add entry for any pending changes */
- // c:1800
+    // c:1800
     mkundoent(); // c:1801
     setlastline(); // c:1802
 

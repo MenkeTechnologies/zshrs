@@ -7944,7 +7944,7 @@ pub fn eval(argv: &[String]) -> i32 {
         let head = prog.prog.first().copied().unwrap_or(0);
         if crate::ported::zsh_h::wc_code(head) != crate::ported::zsh_h::WC_LIST as u32 {
             /* No code to execute */
- // c:6206
+            // c:6206
             LASTVAL.store(0, Relaxed); // c:6207
         } else {
             // c:6209 — `execode(prog, 1, 0, "eval");`. Routes through

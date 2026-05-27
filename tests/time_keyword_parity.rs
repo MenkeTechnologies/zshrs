@@ -3,6 +3,8 @@
 //! NB: `time` output goes to stderr and contains wall/user/sys
 //! durations that vary per run. We test the structure & exit codes.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

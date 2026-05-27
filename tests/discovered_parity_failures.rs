@@ -8,6 +8,9 @@
 //! remain). The file is kept as a regression pin so future drift in
 //! any of these areas trips a parity failure.
 
+#![allow(non_snake_case)]
+#![allow(clippy::doc_lazy_continuation)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

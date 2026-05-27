@@ -8,6 +8,8 @@
 //!
 //! Skip pattern: tests no-op silently when `zsh` isn't on PATH.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -93,6 +95,7 @@ fn assert_parity(script: &str) {
 /// Only assert stdout matches (skip stderr/exit). Use for cases where
 /// zsh and zshrs may emit different diagnostic prefixes but produce
 /// the same user-visible value.
+#[allow(dead_code)]
 fn assert_stdout_parity(script: &str) {
     if !zsh_available() {
         return;

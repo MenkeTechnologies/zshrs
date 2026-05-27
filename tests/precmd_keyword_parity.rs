@@ -1,5 +1,7 @@
 //! Pre-command keyword parity tests: noglob, nocorrect, builtin, command.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

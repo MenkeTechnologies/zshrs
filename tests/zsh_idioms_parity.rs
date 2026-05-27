@@ -3,6 +3,8 @@
 //! Targets the daily-driver constructs zinit / p10k / oh-my-zsh /
 //! prezto rely on.
 
+#![allow(non_snake_case)]
+
 use std::path::PathBuf;
 use std::process::Command;
 

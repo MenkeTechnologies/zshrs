@@ -16,6 +16,8 @@
 //! `corpus_dash_fc_bulk_q`, `corpus_dash_fc_bulk_r`, `corpus_dash_fc_bulk_s`, `corpus_dash_fc_bulk_t`, `corpus_dash_fc_bulk_u`, `corpus_dash_fc_bulk_v`,
 //! `corpus_dash_fc_bulk_w`, `corpus_dash_fc_bulk_x`, `corpus_dash_fc_bulk_y`, `corpus_dash_fc_bulk_z`, `corpus_dash_fc_bulk_aa`, `corpus_dash_fc_bulk_ab`, `corpus_dash_fc_bulk_ac`, `corpus_dash_fc_bulk_ad`, `corpus_dash_fc_bulk_ae`, `corpus_dash_fc_bulk_af`, `corpus_dash_fc_bulk_ag`, `corpus_dash_fc_bulk_ah`, `corpus_dash_fc_bulk_ai`). Pass/fail is **stdout + exit** only (see `assert_parity`).
 
+#![allow(non_snake_case)]
+
 use std::path::PathBuf;
 use std::process::Command;
 

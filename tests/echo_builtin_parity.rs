@@ -3,6 +3,8 @@
 //! NB: zsh defaults to `setopt BSD_ECHO` off, so `echo` processes
 //! escapes by default (different from bash without -e).
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

@@ -178,7 +178,7 @@ fn collect_free_fns(src: &str) -> Vec<(String, usize)> {
         // optional `unsafe` / `async` / `extern`.
         let stripped = trimmed
             .strip_prefix("pub(crate) ")
-            .or_else(|| trimmed.strip_prefix("pub(super) ").map(|s| s))
+            .or_else(|| trimmed.strip_prefix("pub(super) "))
             .unwrap_or_else(|| trimmed.strip_prefix("pub ").unwrap_or(trimmed));
         let stripped = stripped.strip_prefix("unsafe ").unwrap_or(stripped);
         let stripped = stripped.strip_prefix("async ").unwrap_or(stripped);

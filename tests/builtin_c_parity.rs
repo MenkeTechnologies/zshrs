@@ -39,6 +39,7 @@ fn zsh_available() -> bool {
         .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 struct ShellResult {
     stdout: String,
     stderr: String,

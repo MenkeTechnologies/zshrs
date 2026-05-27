@@ -159,6 +159,7 @@ fn wc_name(kind: wordcode) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn esc(out: &mut String, s: &str) {
     for b in s.bytes() {
         match b {

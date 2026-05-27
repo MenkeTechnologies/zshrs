@@ -3,6 +3,8 @@
 //! `${(w)V}` word-count, `${(C)V}` capitalize words,
 //! `${(L)V}` lowercase, `${(U)V}` uppercase, `${(0)V}` NUL-split.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

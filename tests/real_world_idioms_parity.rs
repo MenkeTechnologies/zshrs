@@ -3,6 +3,8 @@
 //! similar daily-driver frameworks. Each test is a standalone
 //! mini-script that exercises a multi-feature interaction.
 
+#![allow(non_snake_case)]
+
 use std::path::PathBuf;
 use std::process::Command;
 

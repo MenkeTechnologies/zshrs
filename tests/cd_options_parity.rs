@@ -1,5 +1,7 @@
 //! cd builtin option parity: -, -L, -P, -s, env CDPATH, AUTO_CD, etc.
 
+#![allow(non_snake_case)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
