@@ -6063,9 +6063,93 @@ pub fn paramsubst(
                             value.clone()
                         }
                     };
-                    if subscript.is_some() {
-                        // c:2859/2887 isarr=0 after subscript → scalar
+                    // c:2859/2887 — single-slot subscript (`[N]`,
+                    // `[key]`) clears isarr so modify runs on the
+                    // picked scalar. `[@]` ALWAYS keeps array
+                    // shape. `[*]` keeps shape unquoted, sepjoins
+                    // to scalar in DQ. Range `[lo,hi]` keeps shape
+                    // unquoted, sepjoins to scalar in DQ. Direct
+                    // port of Src/params.c::getindex isarr-flag
+                    // dispatch (SCANPM_ISVAR_AT for @, SCANPM_ISVAR
+                    // for *, SCANPM_ARRAYRANGE for slice).
+                    //
+                    // Parity bug: \`${a[@]:t}\` left the array
+                    // unchanged because the scalar path was taken
+                    // indiscriminately for any subscript.
+                    // Accept tokenized Star (\u{87}) as the `*`
+                    // subscript — the lexer pre-tokenizes `*` in
+                    // some unquoted contexts.
+                    let is_at = subscript.as_deref() == Some("@");
+                    let is_star = matches!(
+                        subscript.as_deref(),
+                        Some("*") | Some("\u{87}")
+                    );
+                    let is_range = subscript
+                        .as_deref()
+                        .map_or(false, |s| s.contains(','));
+                    // Per-element mode: `[@]` always; `[*]` only
+                    // outside DQ; slice only outside DQ. Anything
+                    // else is scalar (single index, named key,
+                    // sepjoined range/star in DQ).
+                    let per_element = is_at || ((is_star || is_range) && !qt);
+                    let scalar_subscript = subscript.is_some() && !per_element;
+                    if scalar_subscript {
+                        // c:2859/2887 isarr=0 after subscript → scalar.
+                        // For `[*]`/range under qt the value was
+                        // already sepjoined upstream, so mod_one runs
+                        // on the joined scalar — exactly what zsh does.
+                        // For `[*]`-tokenized unquoted that arrived
+                        // via Star lookup, value is empty (the array
+                        // path didn't set it); pull from arrays_get
+                        // and run per-element.
+                        let _ = value.clone();
                         value = mod_one(&value);
+                        // c:Src/subst.c:4533 — modify on `[*]`/range
+                        // in DQ sepjoins the array first, runs modify
+                        // on the joined scalar, then needs to suppress
+                        // the downstream auto_splat re-fetching the
+                        // original array. Seed split_parts with the
+                        // modified scalar so auto_splat (line ~7370)
+                        // uses it; flip isarr to 0 so the splat block
+                        // skips entirely.
+                        if (is_star || is_range) && qt {
+                            split_parts = Some(vec![value.clone()]);
+                            isarr = 0;
+                        }
+                    } else if per_element {
+                        // c:4533 — array-shape subscript keeps isarr;
+                        // modify loops per element. Use split_parts
+                        // when prior operator (slice) already
+                        // narrowed; else pull straight from the
+                        // backing array.
+                        if let Some(parts) = split_parts.clone() {
+                            let new_parts: Vec<String> = parts.iter().map(|s| mod_one(s)).collect();
+                            value = new_parts.join(" ");
+                            split_parts = Some(new_parts);
+                        } else if let Some(arr) = arrays_get(&var_name) {
+                            // Honor a range subscript (split_parts
+                            // would have captured it normally; do the
+                            // narrowing here when it didn't).
+                            let narrowed: Vec<String> = if is_range {
+                                if let Some((lo_s, hi_s)) = subscript
+                                    .as_deref()
+                                    .and_then(|s| s.split_once(','))
+                                {
+                                    let lo: i64 = lo_s.trim().parse().unwrap_or(1);
+                                    let hi: i64 = hi_s.trim().parse().unwrap_or(arr.len() as i64);
+                                    getarrvalue(&arr, lo, hi)
+                                } else {
+                                    arr.clone()
+                                }
+                            } else {
+                                arr.clone()
+                            };
+                            let new_arr: Vec<String> = narrowed.iter().map(|s| mod_one(s)).collect();
+                            value = new_arr.join(" ");
+                            split_parts = Some(new_arr);
+                        } else {
+                            value = mod_one(&value);
+                        }
                     } else if qt && arrays_contains(&var_name) {
                         // c:3030-3034 DQ sepjoin cleared isarr → scalar
                         value = mod_one(&sepjoined_for_qt());
