@@ -11403,7 +11403,7 @@ fn format_spec_uint(spec: &str, n: u64) -> String {
 }
 
 fn format_spec_float(spec: &str, n: f64) -> String {
-    let (left_align, width, prec) = parse_width_prec(spec);
+    let (left_align, zero_pad, width, prec) = parse_flags_width_prec(spec);
     let p = prec.unwrap_or(6);
     let body = format!("{:.*}", p, n);
     let pad = width.saturating_sub(body.chars().count());
@@ -11411,6 +11411,12 @@ fn format_spec_float(spec: &str, n: f64) -> String {
         body
     } else if left_align {
         format!("{}{}", body, " ".repeat(pad))
+    } else if zero_pad {
+        if let Some(rest) = body.strip_prefix('-') {
+            format!("-{}{}", "0".repeat(pad), rest)
+        } else {
+            format!("{}{}", "0".repeat(pad), body)
+        }
     } else {
         format!("{}{}", " ".repeat(pad), body)
     }
@@ -11421,7 +11427,7 @@ fn format_spec_float(spec: &str, n: f64) -> String {
 /// of %e/%f and strips trailing zeros; %e/%E uses scientific notation;
 /// %f/%F is decimal-fraction (no scientific). Default precision is 6.
 fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
-    let (left_align, width, prec) = parse_width_prec(spec);
+    let (left_align, zero_pad, width, prec) = parse_flags_width_prec(spec);
     let body = match conv {
         'f' | 'F' => {
             let p = prec.unwrap_or(6);
@@ -11500,7 +11506,21 @@ fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
     if pad == 0 {
         body
     } else if left_align {
+        // c:libc printf — `-` overrides `0`; pad on the right with spaces.
         format!("{}{}", body, " ".repeat(pad))
+    } else if zero_pad {
+        // c:libc printf — `0` flag without `-`: zero-pad between the
+        // optional sign and digits. `printf "%05.2f" 1.5` → "01.50",
+        // `printf "%05.2f" -1.5` → "-1.50" (no extra pad since sign +
+        // body already fills width). Previously the helper discarded
+        // zero_pad via parse_width_prec and always space-padded.
+        if let Some(rest) = body.strip_prefix('-') {
+            format!("-{}{}", "0".repeat(pad), rest)
+        } else if let Some(rest) = body.strip_prefix('+') {
+            format!("+{}{}", "0".repeat(pad), rest)
+        } else {
+            format!("{}{}", "0".repeat(pad), body)
+        }
     } else {
         format!("{}{}", " ".repeat(pad), body)
     }
