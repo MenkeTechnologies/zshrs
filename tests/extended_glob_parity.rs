@@ -85,14 +85,12 @@ mod hash_a_approximate_match {
 
     /// `(#a1)` — 1 substitution distance allowed.
     #[test]
-    #[ignore = "ZSHRS BUG: (#aN) approximate match not implemented (entire feature class)"]
     fn hash_a1_one_substitution() {
         assert_parity(r#"setopt EXTENDED_GLOB; [[ "fop" == (#a1)foo ]]; echo $?"#);
     }
 
     /// `(#a2)` — 2 substitutions.
     #[test]
-    #[ignore = "ZSHRS BUG: (#aN) approximate match not implemented"]
     fn hash_a2_two_substitutions() {
         assert_parity(r#"setopt EXTENDED_GLOB; [[ "fxy" == (#a2)foo ]]; echo $?"#);
     }

@@ -122,7 +122,6 @@ mod case_upper_lower {
 
     /// `${V^}` uppercase first char (zsh-bash compat may differ).
     #[test]
-    #[ignore = "ZSHRS/zsh BUG: ${V^} (uppercase-first) may not be supported uniformly"]
     fn upper_first() {
         assert_parity(r#"X=hello; echo "${X^}""#);
     }

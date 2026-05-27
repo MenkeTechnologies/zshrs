@@ -69,37 +69,31 @@ mod ansi_attrs {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %B SGR bold output differs from zsh"]
     fn B_bold_emits_sgr() {
         assert_parity(r#"print -P '%B' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %b reset output differs"]
     fn b_reset_emits_sgr() {
         assert_parity(r#"print -P '%b' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %U underline output differs"]
     fn U_underline_emits_sgr() {
         assert_parity(r#"print -P '%U' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %u underline-off output differs"]
     fn u_underline_off_emits_sgr() {
         assert_parity(r#"print -P '%u' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %S standout output differs"]
     fn S_standout_emits_sgr() {
         assert_parity(r#"print -P '%S' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %s standout-off output differs"]
     fn s_standout_off_emits_sgr() {
         assert_parity(r#"print -P '%s' | cat -v"#);
     }
@@ -109,37 +103,31 @@ mod colors {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %F{red} SGR 31 output differs"]
     fn F_red_emits_sgr_31() {
         assert_parity(r#"print -P '%F{red}' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %F{blue} SGR 34 output differs"]
     fn F_blue_emits_sgr_34() {
         assert_parity(r#"print -P '%F{blue}' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %f reset fg output differs"]
     fn f_reset_fg() {
         assert_parity(r#"print -P '%f' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %K{red} bg SGR 41 output differs"]
     fn K_red_bg_emits_sgr_41() {
         assert_parity(r#"print -P '%K{red}' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %k reset bg output differs"]
     fn k_reset_bg() {
         assert_parity(r#"print -P '%k' | cat -v"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %F{numeric_index} output differs"]
     fn F_numeric_index_1_is_red() {
         assert_parity(r#"print -P '%F{1}' | cat -v"#);
     }
@@ -149,13 +137,11 @@ mod literal_opaque {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %{...%} ignore-marker stripping differs"]
     fn literal_braces_content_only() {
         assert_parity(r#"print -P '%{ABCD%}' | cat"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P %{...%} with surrounding text wrong"]
     fn literal_braces_with_text_around() {
         assert_parity(r#"print -P 'before%{ABC%}after' | cat"#);
     }
@@ -189,7 +175,6 @@ mod text_around_escape {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: print -P text-around-escape wrap differs"]
     fn text_before_after_bold() {
         assert_parity(r#"print -P 'pre%Bmid%bafter' | cat -v"#);
     }

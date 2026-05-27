@@ -4485,6 +4485,10 @@ impl ZshCompiler {
         // contains `/`. MathEval has full operator support and writes
         // variable values back through extract_string_variables.
         let needs_eval = inner_arith.contains('/')
+            // c:Src/math.c — `%` zero-divisor is a math error like
+            // `/`. fusevm's Op::Mod returns 0 silently; route
+            // through matheval so the zerr+status=2 path fires.
+            || inner_arith.contains('%')
             || inner_arith.contains("|=")
             || inner_arith.contains("&=")
             || inner_arith.contains("^=")
@@ -4523,10 +4527,19 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
-            // Result stays on stack as Value::Str (e.g. "3" / "0" / "1.5").
-            // Compare against "0" to compute the truthiness. Don't
-            // re-evaluate the expression — it's an assignment so the
-            // second call would compound (e.g. `a/=3` runs twice).
+            // c:Src/exec.c WC_ARITH — `(( expr ))` is a "math
+            // command": result string → status (0 if non-zero,
+            // 1 if zero). On math error, status=2 and errflag is
+            // cleared by BUILTIN_ARITH_CMD_FINISH so the next
+            // statement still runs.
+            //
+            // Stack on entry to the finish block: [result_str]
+            //   1. Compare result to "0" to compute truthiness.
+            //   2. JumpIfTrue → status=1 (math result was 0).
+            //   3. Else → status=0 (math result was non-zero).
+            //   4. Then BUILTIN_ARITH_CMD_FINISH inspects errflag
+            //      and, if set, overrides status with 2 + clears
+            //      the global errflag.
             let zero_const = self.builder.add_constant(Value::str("0"));
             self.builder.emit(Op::LoadConst(zero_const), 0);
             self.builder.emit(Op::StrEq, 0);
@@ -4538,8 +4551,15 @@ impl ZshCompiler {
             self.builder.patch_jump(true_jump, true_target);
             self.builder.emit(Op::LoadInt(1), 0);
             self.builder.emit(Op::SetStatus, 0);
-            let end = self.builder.current_pos();
-            self.builder.patch_jump(end_jump, end);
+            let after_status = self.builder.current_pos();
+            self.builder.patch_jump(end_jump, after_status);
+            // Errflag-aware finish — overrides status to 2 if math
+            // error fired, clearing errflag for next statement.
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
             self.emit_cmd_pop();
             return;
         }
@@ -4592,7 +4612,17 @@ impl ZshCompiler {
         let chunk = ac.builder.build();
 
         // Inline ArithCompiler's emitted ops into ours, remapping const
-        // indices into our local constant table.
+        // indices into our local constant table AND shifting Jump
+        // targets by the inline offset. ArithCompiler emits absolute
+        // positions referring to its own builder (which starts at 0);
+        // inlined into the parent at offset `inline_base`, every
+        // `Jump`/`JumpIf*Keep`/`JumpIfTrue`/`JumpIfFalse` target must
+        // be shifted by `inline_base` so it lands at the corresponding
+        // op in the parent's bytecode. Without this, `(( 0 && 0 ))`
+        // emitted a `JumpIfFalseKeep(4)` that pointed at the parent's
+        // prologue at position 4 — an infinite loop back to early
+        // setup ops (BUILTIN_XTRACE_LINE / CMDPUSH / etc.).
+        let inline_base = self.builder.current_pos();
         let mut const_remap: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
         for op in &chunk.ops {
             let remapped: Op = match op {
@@ -4607,6 +4637,11 @@ impl ZshCompiler {
                     });
                     Op::LoadConst(dst)
                 }
+                Op::Jump(t) => Op::Jump(*t + inline_base),
+                Op::JumpIfTrue(t) => Op::JumpIfTrue(*t + inline_base),
+                Op::JumpIfFalse(t) => Op::JumpIfFalse(*t + inline_base),
+                Op::JumpIfTrueKeep(t) => Op::JumpIfTrueKeep(*t + inline_base),
+                Op::JumpIfFalseKeep(t) => Op::JumpIfFalseKeep(*t + inline_base),
                 other => other.clone(),
             };
             self.builder.emit(remapped, 0);

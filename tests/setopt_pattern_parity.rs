@@ -95,7 +95,6 @@ mod setopt_m_pattern {
 
     /// `setopt -m 'extended*'` matches multiple options.
     #[test]
-    #[ignore = "ZSHRS BUG: setopt -m pattern may not be implemented"]
     fn setopt_m_pattern_enables_multi() {
         assert_parity(r#"setopt -m 'extended*'; [[ -o extendedglob ]]; echo $?"#);
     }
@@ -205,7 +204,6 @@ mod glob_options {
 
     /// `setopt no_match` (default) → unmatched globs error.
     #[test]
-    #[ignore = "ZSHRS BUG: default nomatch doesn't fire; unmatched glob echoes literal, exits 0"]
     fn nomatch_errors_on_unmatched_glob() {
         assert_parity(r#"echo /tmp/nonexistent_xyz_*.txt 2>/dev/null; echo exit=$?"#);
     }

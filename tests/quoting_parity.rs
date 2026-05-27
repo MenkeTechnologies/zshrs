@@ -102,7 +102,6 @@ mod double_quotes {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: \"\\$X\" still expands; zsh keeps literal $X"]
     fn double_quote_backslash_escapes_dollar() {
         assert_parity(r#"X=value; echo "\$X""#);
     }
@@ -141,7 +140,6 @@ mod ansi_c_quote {
 
     /// `$'\r'` → carriage return.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: $'\\r' byte count differs from zsh"]
     fn ansi_quote_carriage_return() {
         assert_parity(r#"echo -n $'\r' | wc -c"#);
     }
@@ -190,7 +188,6 @@ mod backslash_escape {
 
     /// `\$` outside quotes — `$` literal.
     #[test]
-    #[ignore = "ZSHRS BUG: \\$ outside quotes still expands $X; zsh keeps literal $X"]
     fn backslash_escapes_dollar_outside_quotes() {
         assert_parity(r#"X=value; echo \$X"#);
     }

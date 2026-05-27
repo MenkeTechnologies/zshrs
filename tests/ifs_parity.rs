@@ -58,14 +58,12 @@ mod equals_split {
 
     /// `$=var` forces splitting.
     #[test]
-    #[ignore = "ZSHRS BUG: $=X word-split forcing flag doesn't split"]
     fn equals_prefix_forces_split() {
         assert_parity(r#"X="a b c"; f() { echo $#; }; f $=X"#);
     }
 
     /// `$=var` uses $IFS for splitting.
     #[test]
-    #[ignore = "ZSHRS BUG: $=X with custom IFS doesn't honor IFS"]
     fn equals_split_uses_ifs() {
         assert_parity(r#"X="a:b:c"; IFS=:; f() { echo $#; }; f $=X"#);
     }
@@ -92,7 +90,6 @@ mod custom_ifs {
 
     /// IFS=: with `$=X` splits on colon.
     #[test]
-    #[ignore = "ZSHRS BUG: custom IFS + $=X split doesn't honor IFS"]
     fn ifs_colon_splits_on_colon() {
         assert_parity(r#"IFS=:; X="a:b:c"; f() { echo $#; }; f $=X"#);
     }
@@ -121,7 +118,6 @@ mod for_loop_iteration {
 
     /// for-in with $=X forces split → three iters.
     #[test]
-    #[ignore = "ZSHRS BUG: $=X in for-in doesn't split into multiple iterations"]
     fn for_in_equals_forces_split() {
         assert_parity(r#"X="a b c"; n=0; for x in $=X; do n=$((n+1)); done; echo $n"#);
     }

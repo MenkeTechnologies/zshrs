@@ -93,7 +93,6 @@ mod join {
 
     /// `${(j./.)A}` joins array with /.
     #[test]
-    #[ignore = "ZSHRS BUG: ${(j./.)arr} array-join emits empty; zsh joins with /"]
     fn join_with_slash() {
         assert_parity(r#"arr=(usr local bin); echo "${(j./.)arr}""#);
     }
@@ -207,7 +206,6 @@ mod p_string_subst {
 
     /// `${(p)X}` enables prompt-style substitution. Test integration.
     #[test]
-    #[ignore = "ZSHRS BUG: ${(p)X} prompt-style subst differs"]
     fn p_flag_processes_escape() {
         assert_parity(r#"X=$'a\nb'; echo "[${(p)X}]""#);
     }
@@ -218,7 +216,6 @@ mod ps_join_combined {
 
     /// `${(pj.\n.)A}` join with newline (escape-processed).
     #[test]
-    #[ignore = "ZSHRS BUG: (pj) join with escape-processed delimiter differs"]
     fn pj_join_with_newline_escape() {
         assert_parity(r#"arr=(a b c); echo "${(pj.\n.)arr}""#);
     }

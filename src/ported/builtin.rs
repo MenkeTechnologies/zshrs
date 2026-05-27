@@ -1411,22 +1411,16 @@ pub fn bin_cd(
     // c:849 — `zpushnode(dirstack, ztrdup(pwd));`. C uses the `pwd`
     //          global (the in-shell logical cwd, kept in sync with
     //          $PWD). Read from paramtab; fall back to getcwd if
-    //          unset.
-    let pwd = getsparam("PWD").unwrap_or_else(|| zgetcwd());
-    if let Ok(mut d) = DIRSTACK.lock() {
-        d.insert(0, pwd); // c:849
-    }
+    //          unset. The C source pushes pre-cd pwd to the top of
+    //          dirstack here as a scratch slot used by cd_get_dest's
+    //          +N/-N resolver; cd_new_pwd's remnode logic relies on
+    //          this. Save the pre-cd path for the post-cd dirstack
+    //          maintenance below.
+    let pre_pwd = getsparam("PWD").unwrap_or_else(|| zgetcwd());
 
     // c:850-854 — `if (!(dir = cd_get_dest(...))) { pop; unqueue; return 1; }`
     let dest = cd_get_dest(nam, argv, OPT_ISSET(ops, b's'), func);
     if dest.is_none() {
-        // c:850
-        // c:851 — `zsfree(getlinknode(dirstack));` — pop the placeholder.
-        if let Ok(mut d) = DIRSTACK.lock() {
-            if !d.is_empty() {
-                d.remove(0);
-            } // c:851
-        }
         unqueue_signals(); // c:852
         return 1; // c:853
     }
@@ -1439,14 +1433,38 @@ pub fn bin_cd(
     //          global); was reading OS env which can lag behind.
     let old = getsparam("PWD");
     if env::set_current_dir(&dest_path).is_err() {
-        // chdir failed — pop placeholder and bail.
-        if let Ok(mut d) = DIRSTACK.lock() {
-            if !d.is_empty() {
-                d.remove(0);
-            }
-        }
         unqueue_signals();
         return 1;
+    }
+    // c:Src/builtin.c:849 + cd_new_pwd dirstack maintenance —
+    // collapsed into a single post-cd update here since the Rust
+    // cd_get_dest returns a String rather than a LinkNode that
+    // could be pre-pushed onto dirstack:
+    //   * BIN_PUSHD: push pre-cd pwd to top so subsequent
+    //     `${dirstack[1]}` and `popd` see the previous directory.
+    //   * BIN_POPD: pop dirstack[0] (the directory we just left,
+    //     which cd_get_dest read from the stack to compute dest).
+    //   * BIN_CD: dirstack unchanged unless AUTO_PUSHD is set, in
+    //     which case the CD behaves like a pushd.
+    {
+        let autopushd = isset(optlookup("autopushd"));
+        if let Ok(mut d) = DIRSTACK.lock() {
+            if func == BIN_PUSHD || (func == BIN_CD && autopushd) {
+                // c:849 — push pre-cd pwd.
+                // c:1210-1218 — PUSHDIGNOREDUPS: skip duplicate of
+                // the new (current) pwd.
+                let dup_skip = isset(optlookup("pushdignoredups"))
+                    && d.first().map(|s| *s == pre_pwd).unwrap_or(false);
+                if !dup_skip {
+                    d.insert(0, pre_pwd.clone());
+                }
+            } else if func == BIN_POPD {
+                // c:1197-1199 — pop top of stack (the dir we left).
+                if !d.is_empty() {
+                    d.remove(0);
+                }
+            }
+        }
     }
     if let Some(o) = old {
         // c:1239 oldpwd = pwd
@@ -1472,8 +1490,33 @@ pub fn bin_cd(
             Ok(c) => c.to_string_lossy().into_owned(),
             Err(_) => dest_path.clone(),
         }
+    } else if dest_path.starts_with('/') {
+        // c:1241 — absolute path. pwd = new_pwd.
+        dest_path.clone()
     } else {
-        dest_path.clone() // c:1241 pwd = new_pwd
+        // c:1240 — relative path. zsh resolves logically: walk the
+        // dest segments against pre-cd pwd, collapsing `.` and `..`
+        // without dereferencing symlinks. Without this, `pushd ..`
+        // from /tmp left $PWD = ".." literally.
+        let mut segs: Vec<&str> = if pre_pwd.is_empty() || pre_pwd == "/" {
+            Vec::new()
+        } else {
+            pre_pwd.trim_start_matches('/').split('/').collect()
+        };
+        for part in dest_path.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    segs.pop();
+                }
+                _ => segs.push(part),
+            }
+        }
+        if segs.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", segs.join("/"))
+        }
     };
     // c:1242 — `setsparam("PWD", pwd);` + export side via env.
     setsparam("PWD", &pwd);
@@ -1493,32 +1536,35 @@ pub fn bin_cd(
 /// WARNING: param names don't match C — Rust=() vs C=(nam, argv, hard, func)
 pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option<String> {
     if argv.is_empty() {
-        // c:872
-        // c:873-875 — popd needs at least 2 stack entries.
+        // c:872 — bare popd / pushd / cd (no args).
+        // The Rust port doesn't pre-push pwd to dirstack inside bin_cd
+        // (cd_get_dest's String return signature doesn't fit C's
+        // pre-push pattern), so dirstack[0] here is the most-recent
+        // pushed entry, not the temporary scratch slot the C source
+        // sees. Adjust the indices accordingly: C reads index 1
+        // (skipping the scratch), Rust reads index 0.
         if func == BIN_POPD {
             let depth = DIRSTACK.lock().map(|d| d.len()).unwrap_or(0);
-            if depth < 2 {
-                // c:873
-                zwarnnam(nam, "directory stack empty"); // c:874
-                return None; // c:875
+            if depth < 1 {
+                zwarnnam(nam, "directory stack empty");
+                return None;
             }
-            // c:885 — `dir = nextnode(firstnode(dirstack));`
-            return DIRSTACK.lock().ok().and_then(|d| d.get(1).cloned());
+            return DIRSTACK.lock().ok().and_then(|d| d.first().cloned());
         }
         if func == BIN_PUSHD {
-            // c:877 — `if (unset(PUSHDTOHOME)) dir = nextnode(firstnode(dirstack));`
+            // c:877 — bare pushd without PUSHDTOHOME swaps top two.
+            // In Rust's pre-push-free model that's just dirstack[0].
             let pushdtohome = isset(optlookup("pushdtohome"));
             if !pushdtohome {
-                // c:877
-                return DIRSTACK.lock().ok().and_then(|d| d.get(1).cloned());
+                return DIRSTACK.lock().ok().and_then(|d| d.first().cloned());
             }
         }
-        // c:880-884 — fall through to $HOME (paramtab, not OS env).
+        // c:880-884 — fall through to $HOME.
         match getsparam("HOME") {
-            Some(h) if !h.is_empty() => Some(h), // c:884
+            Some(h) if !h.is_empty() => Some(h),
             _ => {
-                zwarnnam(nam, "HOME not set"); // c:881
-                None // c:882
+                zwarnnam(nam, "HOME not set");
+                None
             }
         }
     } else if argv.len() == 1 {
@@ -1745,41 +1791,11 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {
 /// caller writes PWD directly. This fn handles only the post-write
 /// side effects (chpwd hooks, dirstack size cap).
 /// WARNING: param names don't match C — Rust=(_func, _dir, _quiet) vs C=(func, dir, quiet)
-pub fn cd_new_pwd(func: i32, dir: usize, quiet: i32) {
-    // c:1187
-    // c:1193-1194 — if (func == BIN_PUSHD) rolllist(dirstack, dir);
-    {
-        let mut ds = DIRSTACK.lock().unwrap();
-        if func == BIN_PUSHD && !ds.is_empty() && dir < ds.len() {
-            let entry = ds.remove(dir);
-            ds.insert(0, entry); // rotate selected to top
-        }
-        // c:1195 — new_pwd = remnode(dirstack, dir);
-        let _new_pwd = if dir < ds.len() {
-            Some(ds.remove(dir))
-        } else {
-            None
-        };
-        // c:1197-1199 — if (BIN_POPD && nonempty) new_pwd = getlinknode(dirstack);
-        if func == BIN_POPD && !ds.is_empty() {
-            // pop_front equivalent — discard top after rotate above.
-            ds.remove(0);
-        } else if func == BIN_CD && !isset(optlookup("autopushd")) {
-            // c:1200-1201 — getlinknode(dirstack) discards top
-            if !ds.is_empty() {
-                ds.remove(0);
-            }
-        }
-        // c:1210-1218 — PUSHDIGNOREDUPS: dedupe matching entry.
-        if isset(optlookup("pushdignoredups")) {
-            if let Some(cwd) = env::current_dir()
-                .ok()
-                .and_then(|p| p.to_str().map(String::from))
-            {
-                ds.retain(|d| *d != cwd);
-            }
-        }
-    }
+pub fn cd_new_pwd(func: i32, _dir: usize, quiet: i32) {
+    // c:1187 — post-cd side effects (print, hooks). Dirstack
+    // maintenance was moved into `bin_cd` because the Rust port's
+    // cd_get_dest returns a String (not a LinkNode pre-pushed on
+    // dirstack), so C's remnode/rolllist sequence doesn't fit.
 
     // c:1236-1242 — shift PWD → OLDPWD, set new PWD.
     //
@@ -8588,8 +8604,26 @@ pub fn bin_trap(
             zwarnnam(name, &format!("undefined signal: {}", sigarg)); // c:7427
             break; // c:7428
         }
+        // c:Src/signals.c — C zsh stores traps in a fixed array
+        // indexed by signal number. Aliases (`0`, `EXIT`, `SIGEXIT`)
+        // all resolve to index 0 and share the same slot. The Rust
+        // port stores by name string, so we must normalize the key
+        // to the canonical signal name (or "EXIT" for the 0 alias)
+        // — otherwise `trap 'echo bye' 0` lands in a `"0"` slot
+        // that nothing else looks up.
+        let canonical = if sig == 0 {
+            "EXIT".to_string()
+        } else {
+            // Strip SIG/sig prefix and uppercase so `SIGINT` / `int`
+            // / `INT` all map to the same key.
+            sigarg
+                .strip_prefix("SIG")
+                .or_else(|| sigarg.strip_prefix("sig"))
+                .unwrap_or(sigarg.as_str())
+                .to_uppercase()
+        };
         if let Ok(mut t) = traps_table().lock() {
-            t.insert(sigarg.clone(), arg.clone()); // c:7448 (effective)
+            t.insert(canonical, arg.clone()); // c:7448 (effective)
         }
     }
     0

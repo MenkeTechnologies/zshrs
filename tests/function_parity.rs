@@ -157,7 +157,6 @@ mod local_vars {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: `local X` (no value) display differs from zsh empty-but-set"]
     fn unset_local_doesnt_unset_global() {
         assert_parity("X=outer; f() { local X; echo before:[$X]; }; f; echo after:[$X]");
     }

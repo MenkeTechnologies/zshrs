@@ -46,13 +46,11 @@ mod exit_trap {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap EXIT handler doesn't fire when shell exits in -c mode"]
     fn trap_exit_runs_on_normal_exit() {
         assert_parity(r#"trap 'echo bye' EXIT"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap 0 (alias for EXIT) doesn't fire on shell exit"]
     fn trap_zero_is_alias_for_exit() {
         assert_parity(r#"trap 'echo bye' 0"#);
     }
@@ -74,7 +72,6 @@ mod err_trap {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap ERR doesn't fire on failing command"]
     fn trap_err_runs_on_failing_command() {
         assert_parity(r#"(trap 'echo failed' ERR; false); echo done"#);
     }
@@ -105,7 +102,6 @@ mod multiple_signals {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap on multiple signals — EXIT handler doesn't fire"]
     fn trap_targets_multiple_signals() {
         assert_parity(r#"trap 'echo handler' EXIT TERM USR1; echo ok"#);
     }
@@ -129,7 +125,6 @@ mod replace {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap replacement — neither body fires"]
     fn trap_replacement_updates_body() {
         assert_parity(r#"trap 'echo first' EXIT; trap 'echo second' EXIT"#);
     }
@@ -149,7 +144,6 @@ mod combined_with_subshell {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: trap in subshell — handler doesn't fire on subshell exit"]
     fn trap_in_subshell_doesnt_leak() {
         assert_parity(r#"(trap 'echo inside' EXIT); echo after"#);
     }

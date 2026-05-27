@@ -78,14 +78,12 @@ mod symbolic_input {
 
     /// Symbolic umask input: `u=rwx,g=rx,o=rx` → 022.
     #[test]
-    #[ignore = "ZSHRS BUG: umask symbolic input (u=rwx,g=rx,o=rx) not parsed"]
     fn symbolic_set_u_rwx_g_rx_o_rx() {
         assert_parity(r#"umask u=rwx,g=rx,o=rx; umask"#);
     }
 
     /// `u-w` removes write bit from user.
     #[test]
-    #[ignore = "ZSHRS BUG: umask symbolic remove (u-w) not parsed"]
     fn symbolic_remove_user_write() {
         assert_parity(r#"umask 022; umask u-w; umask"#);
     }

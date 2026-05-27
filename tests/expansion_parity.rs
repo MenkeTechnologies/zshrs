@@ -124,13 +124,11 @@ mod bare {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: echo [$UNSET] output differs at shell level"]
     fn unset_var_empty() {
         assert_parity("echo [$UNSET_PARAM]");
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: echo [$X] for empty X differs at shell level"]
     fn empty_string_var() {
         assert_parity("X=; echo [$X]");
     }
@@ -159,7 +157,6 @@ mod defaults {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: ${X-default} for empty (set-to-empty) X output differs"]
     fn dash_only_empty_keeps_empty() {
         assert_parity("X=; echo [${X-default}]");
     }
@@ -175,13 +172,11 @@ mod defaults {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: [${X:+alt}] for empty X output differs"]
     fn colon_plus_empty() {
         assert_parity("X=; echo [${X:+alt}]");
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: [${UNSET:+alt}] output differs"]
     fn colon_plus_unset() {
         assert_parity("echo [${UNSET:+alt}]");
     }
@@ -215,7 +210,6 @@ mod length_and_substring {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: ${#multibyte} counts bytes vs zsh chars"]
     fn length_multibyte_counts_chars() {
         assert_parity("X=日本語; echo ${#X}");
     }
@@ -500,7 +494,6 @@ mod arrays {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: out-of-range arr index output differs in [..]"]
     fn array_out_of_range_empty() {
         assert_parity("arr=(a b c); echo [${arr[99]}]");
     }
@@ -562,7 +555,6 @@ mod hashes {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: hash-missing-key [${h[x]}] output differs"]
     fn hash_missing_key_empty() {
         assert_parity("typeset -A h; h[a]=1; echo [${h[missing]}]");
     }

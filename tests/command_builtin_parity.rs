@@ -79,7 +79,6 @@ ls
 
     /// Function shadows builtin → command bypasses.
     #[test]
-    #[ignore = "ZSHRS BUG: command print 'real-print' emits output; zsh emits nothing (different bypass semantics)"]
     fn command_bypasses_function_that_shadows_builtin() {
         assert_parity(r#"
 print() { echo "function-print"; }

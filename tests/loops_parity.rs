@@ -67,7 +67,6 @@ mod for_in {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: for x in {1..5} loop output diverges from zsh"]
     fn for_in_brace_expansion() {
         assert_parity("for x in {1..5}; do echo $x; done");
     }

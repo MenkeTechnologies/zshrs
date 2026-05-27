@@ -192,13 +192,11 @@ mod float_format {
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: printf %e scientific format differs from zsh"]
     fn percent_e_scientific() {
         assert_parity(r#"printf "%e\n" 1234.5"#);
     }
 
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: printf %g general format differs from zsh"]
     fn percent_g_general() {
         assert_parity(r#"printf "%g\n" 1234.5"#);
     }
@@ -218,7 +216,6 @@ mod escape_sequences {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: printf escape \\r byte count differs from zsh"]
     fn escape_r_carriage_return_byte_count() {
         assert_parity(r#"printf "\r" | wc -c"#);
     }

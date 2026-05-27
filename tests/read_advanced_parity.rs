@@ -225,7 +225,6 @@ mod zero_byte_data {
 
     /// Read line containing NUL byte (handling varies).
     #[test]
-    #[ignore = "ZSHRS BUG: read of NUL byte may differ in handling"]
     fn read_line_with_nul() {
         assert_parity_stdin(r#"read x; echo "[$x]" | od -c | head -1"#,
             b"abc\0def\n");

@@ -51,7 +51,6 @@ mod basic_cd {
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: cd - prints/goes to new PWD not OLDPWD; basename returns current dir instead of previous"]
     fn cd_dash_goes_to_oldpwd() {
         let d = tdir();
         std::fs::create_dir(d.path().join("a")).unwrap();
@@ -107,7 +106,6 @@ mod cd_two_args {
 
     /// `cd old new` — substitute `old` with `new` in PWD.
     #[test]
-    #[ignore = "ZSHRS BUG: cd OLD NEW string-substitution form not implemented"]
     fn cd_two_arg_substitutes() {
         let d = tdir();
         std::fs::create_dir(d.path().join("apple")).unwrap();
@@ -137,7 +135,6 @@ mod auto_cd {
 
     /// With AUTO_CD set, typing a dir name alone cd's there.
     #[test]
-    #[ignore = "ZSHRS BUG: setopt auto_cd doesn't enable bare-dir cd"]
     fn auto_cd_bare_dirname() {
         let d = tdir();
         std::fs::create_dir(d.path().join("sub")).unwrap();

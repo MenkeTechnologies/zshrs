@@ -72,7 +72,6 @@ mod lookup {
 
     /// Key with special chars.
     #[test]
-    #[ignore = "ZSHRS BUG: assoc-array key with embedded space ('a b') doesn't roundtrip; returns empty"]
     fn lookup_key_with_space() {
         assert_parity(r#"typeset -A H; H["a b"]=value; echo "${H["a b"]}""#);
     }

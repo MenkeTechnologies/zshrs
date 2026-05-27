@@ -224,7 +224,6 @@ mod here_doc_to_fd {
 
     /// here-doc to fd 3.
     #[test]
-    #[ignore = "ZSHRS BUG: cat 0<<EOF heredoc with explicit fd-0 redirect not handled"]
     fn heredoc_to_arbitrary_fd() {
         assert_parity_in(Path::new("/tmp"),
             r#"cat 0<<EOF

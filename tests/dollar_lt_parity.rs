@@ -38,7 +38,6 @@ mod single_line {
     use super::*;
 
     #[test]
-    #[ignore = "ZSHRS BUG: nomatch on '[hello]' glob differs — zsh aborts with no-matches, zshrs treats as literal"]
     fn reads_single_line_file() {
         let d = tdir();
         std::fs::write(d.path().join("in.txt"), "hello\n").unwrap();
@@ -177,7 +176,6 @@ mod special_chars {
     /// Binary content (non-UTF8) — read as bytes.
     /// Just compare wc -c (byte count).
     #[test]
-    #[ignore = "ZSHRS BUG: $(< file) reads 1 extra byte vs zsh on binary input (off-by-one)"]
     fn binary_content_byte_count() {
         let d = tdir();
         // Write file with various byte values.

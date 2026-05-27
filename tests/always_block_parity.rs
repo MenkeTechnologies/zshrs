@@ -42,7 +42,6 @@ mod basic {
 
     /// Try succeeds → always runs.
     #[test]
-    #[ignore = "ZSHRS BUG: { try } always { finally } block parse error or exit 255 — always-clause not implemented"]
     fn always_runs_after_success() {
         assert_parity(r#"
 { echo try } always { echo finally }
@@ -77,7 +76,6 @@ mod try_block_error {
 
     /// `TRY_BLOCK_ERROR` set inside always to 0 swallows the error.
     #[test]
-    #[ignore = "ZSHRS BUG: TRY_BLOCK_ERROR=0 in always-clause should swallow error; not implemented"]
     fn try_block_error_set_to_zero_swallows() {
         assert_parity(r#"
 { false } always { TRY_BLOCK_ERROR=0 }
@@ -100,7 +98,6 @@ mod nesting {
 
     /// Nested always blocks.
     #[test]
-    #[ignore = "ZSHRS BUG: nested always-blocks fail to parse"]
     fn nested_always_blocks() {
         assert_parity(r#"
 {
@@ -158,7 +155,6 @@ mod multiple_statements {
 
     /// Multiple statements in try and always.
     #[test]
-    #[ignore = "ZSHRS BUG: multi-statement try/always blocks fail with exit 255"]
     fn multistatement_try_always() {
         assert_parity(r#"
 {
@@ -179,7 +175,6 @@ mod var_scope {
     /// Vars set inside try persist into always (same scope as outer
     /// shell — `{ }` doesn't create a new scope).
     #[test]
-    #[ignore = "ZSHRS BUG: vars assigned in try-block not visible in always-clause"]
     fn var_set_in_try_visible_in_always() {
         assert_parity(r#"
 { X=set-in-try } always { echo X=$X }
