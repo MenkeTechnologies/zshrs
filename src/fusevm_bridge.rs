@@ -3526,6 +3526,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Int(0)
         }
     });
+    vm.register_builtin(BUILTIN_NOEXEC_CHECK, |_vm, _argc| {
+        // c:Src/exec.c:1390 — `set -n` / `noexec` option: parse but
+        // don't execute. Returns Int(1) when noexec is set so the
+        // emit-side JumpIfTrue skips the statement body.
+        if opt_state_get("noexec").unwrap_or(false) {
+            Value::Int(1)
+        } else {
+            Value::Int(0)
+        }
+    });
     vm.register_builtin(BUILTIN_DEBUG_TRAP, |_vm, _argc| {
         // c:Src/signals.c:1245 dotrap(SIGDEBUG) — fires the DEBUG
         // trap body once per statement. The body sees the parent
@@ -4567,6 +4577,11 @@ pub const BUILTIN_CONTFLAG_CHECK: u16 = 602;
 /// next command. Cheap when no DEBUG trap is set (one hashmap lookup
 /// returns None and we early-out).
 pub const BUILTIN_DEBUG_TRAP: u16 = 603;
+/// `set -n` / `set -o noexec` — parse but don't execute. Returns
+/// Value::Int(1) when the noexec option is set so the caller's
+/// JumpIfTrue skips the statement body. c:Src/exec.c:1390 main loop
+/// check.
+pub const BUILTIN_NOEXEC_CHECK: u16 = 604;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;

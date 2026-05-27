@@ -246,6 +246,17 @@ impl ZshCompiler {
             0,
         );
         self.builder.emit(Op::Pop, 0);
+        // c:Src/exec.c:1390 — `set -n` (noexec option): parse but
+        // don't execute. The check runs at the start of each
+        // top-level statement; when noexec is set, jump past the
+        // statement body. set -n itself still executes (it's the
+        // command BEFORE the option is checked), allowing it to
+        // turn on noexec for subsequent statements.
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_NOEXEC_CHECK, 0),
+            0,
+        );
+        let noexec_skip = self.builder.emit(Op::JumpIfTrue(0), 0);
 
         // ZshList = sublist + flags (async / disown).
         if list.flags.async_ {
@@ -266,6 +277,9 @@ impl ZshCompiler {
         } else {
             self.compile_sublist(&list.sublist);
         }
+        // Patch the noexec skip to land here (past the statement body).
+        let after = self.builder.current_pos();
+        self.builder.patch_jump(noexec_skip, after);
     }
 
     fn compile_sublist(&mut self, sublist: &ZshSublist) {
