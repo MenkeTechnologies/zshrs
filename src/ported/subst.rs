@@ -4077,24 +4077,36 @@ pub fn paramsubst(
                     } else {
                         String::new()
                     }
-                } else if let Some(idx_n) = sub.parse::<i64>().ok().or_else(|| {
-                    // c:Src/params.c:1411-1430 — paren-wrapped subscript
-                    // expression. When the content inside the outermost
-                    // parens isn't a recognized flag-block (handled
-                    // above), C falls through to getindex's arith
-                    // evaluation path so `${arr[(-1)]}` evaluates `(-1)`
-                    // as math and returns last element. zshrs's bare
-                    // sub.parse::<i64>() couldn't handle the leading
-                    // `(`, returning empty. Strip a balanced outermost
-                    // paren pair and retry the integer parse — covers
-                    // `(N)`, `(-N)`, `(+N)`.
-                    let s = sub.trim();
-                    if s.starts_with('(') && s.ends_with(')') && s.len() >= 2 {
-                        s[1..s.len() - 1].trim().parse::<i64>().ok()
-                    } else {
-                        None
-                    }
-                }) {
+                } else if let Some(idx_n) = sub
+                    .parse::<i64>()
+                    .ok()
+                    .or_else(|| {
+                        // c:Src/params.c:1411-1430 — paren-wrapped subscript
+                        // expression. When the content inside the outermost
+                        // parens isn't a recognized flag-block (handled
+                        // above), C falls through to getindex's arith
+                        // evaluation path so `${arr[(-1)]}` evaluates `(-1)`
+                        // as math and returns last element. zshrs's bare
+                        // sub.parse::<i64>() couldn't handle the leading
+                        // `(`, returning empty. Strip a balanced outermost
+                        // paren pair and retry the integer parse — covers
+                        // `(N)`, `(-N)`, `(+N)`.
+                        let s = sub.trim();
+                        if s.starts_with('(') && s.ends_with(')') && s.len() >= 2 {
+                            s[1..s.len() - 1].trim().parse::<i64>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| {
+                        // c:Src/params.c:1419-1432 — getindex(sub) finally
+                        // calls mathevali so arith expressions in the
+                        // subscript (`${a[1+1]}`, `${a[i+1]}`, `${a[n]}`
+                        // where n is a numeric var) evaluate properly.
+                        // Parity bug: integer-only parse missed these.
+                        crate::ported::math::mathevali(sub).ok()
+                    })
+                {
                     // c:2926 (numeric index)
                     let len = arr.len() as i64;
                     // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
@@ -7748,7 +7760,20 @@ pub fn paramsubst(
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
                     let hi: i64 = hi.trim().parse().unwrap_or(arr.len() as i64); // c:1625
                     getarrvalue(&arr, lo, hi).join(" ") // c:1625
-                } else if let Ok(idx) = sub.parse::<i32>() {
+                } else if let Some(idx) = sub
+                    .parse::<i32>()
+                    .ok()
+                    .or_else(|| {
+                        // c:Src/params.c:1419-1432 — getarg routes a
+                        // numeric subscript through mathevali so
+                        // `${a[1+1]}`, `${a[i+1]}`, `${a[n]}` all
+                        // evaluate as math. Direct port of the
+                        // mathevali(sub) call inside getindex.
+                        crate::ported::math::mathevali(sub)
+                            .ok()
+                            .map(|v| v as i32)
+                    })
+                {
                     // c:1625
                     let n = arr.len() as i32; // c:1625
                                               // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
