@@ -5820,6 +5820,24 @@ pub fn doshfunc(
         }
     }
 
+    // c:Src/exec.c doshfunc → endparamscope — restore local-typeset
+    // params installed during the body. In C, this is called inside
+    // runshfunc (c:6200) BEFORE control returns to doshfunc's tail —
+    // so by the time the exit_pending check runs at c:6141,
+    // locallevel has ALREADY been decremented. The c:6135-6136
+    // comment explicitly states "The endparamscope() has already
+    // happened, hence the +1 here."
+    //
+    // The previous Rust ordering placed endparamscope AFTER the
+    // exit_pending check, which compared exit_level against the
+    // un-decremented locallevel. For `foo() { exit 7; }; foo`:
+    //   exit_level=1, cur_locallevel=1 (pre-decrement)
+    //   check: exit_level >= cur_locallevel + 1 ⟹ 1 >= 2 = false
+    // The function returned cleanly without triggering zexit, and
+    // the shell exited 0 instead of 7. Moving endparamscope before
+    // the check matches C and makes the off-by-one resolve.
+    endparamscope();
+
     // c:6128 — `unqueue_signals();`
     unqueue_signals();
 
@@ -5849,10 +5867,6 @@ pub fn doshfunc(
             // c:6152
         }
     }
-
-    // c:Src/exec.c doshfunc → endparamscope — restore local-typeset
-    // params installed during the body. (Function-local scope.)
-    endparamscope();
 
     ret // c:6157 return ret
 }
