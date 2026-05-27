@@ -559,10 +559,27 @@ pub fn execbuiltin(
     // c:424 — `argc -= argv - argarr;` — subtract consumed flag args.
     argc -= argv as i32; // c:424
 
-    // c:426-429 — errflag check.
+    // c:426-429 — errflag check. C zsh clears here because the
+    // *outer* execcmd_exec (Src/exec.c:3468) already bailed without
+    // calling the builtin when errflag was set after prefork; the
+    // clear at c:427 is paired with an earlier-arrived-at builtin
+    // entry (signal-driven, not prefork-driven).
+    //
+    // zshrs's bytecode flow always reaches the builtin call site
+    // even when arg expansion set errflag (the c:3468 pre-dispatch
+    // gate has no equivalent in the bytecode). Clearing errflag
+    // here would swallow the prefork error and let the post-command
+    // ERREXIT_CHECK pass — `set -u; echo $undefined; echo done`
+    // would run `echo done` instead of aborting.
+    //
+    // Non-interactive shells must preserve errflag so the
+    // immediately-following ERREXIT_CHECK aborts the script (c:Src/
+    // init.c:234 `((!interact || sourcelevel) && errflag)` break).
     let ef = errflag.load(Relaxed);
     if (ef & ERRFLAG_ERROR) != 0 {
-        // c:426
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
+            return 1;
+        }
         errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:427
         return 1; // c:428
     }
