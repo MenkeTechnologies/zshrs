@@ -699,7 +699,21 @@ impl ZshCompiler {
                 for r in redirs {
                     self.compile_redir(r);
                 }
+                // c:Src/exec.c — if any redirect failed (e.g.
+                // `{ … } < /nonexistent`), zsh aborts the entire body
+                // and sets $? = 1. Check the flag after opening all
+                // redirects: on failure, skip body and SetStatus(1).
+                // Without this, only the first statement in the body
+                // bailed (consumed by its builtin dispatch); the rest
+                // ran with the fds in an inconsistent state.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_REDIRECT_FAILED_CHECK, 0),
+                    0,
+                );
+                let skip_body = self.builder.emit(Op::JumpIfTrue(0), 0);
                 self.compile_command(inner);
+                let body_end = self.builder.current_pos();
+                self.builder.patch_jump(skip_body, body_end);
                 self.builder.emit(Op::WithRedirectsEnd, 0);
             }
             ZshCommand::Time(maybe_sublist) => {
