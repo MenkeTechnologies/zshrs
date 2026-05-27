@@ -3,10 +3,10 @@
 //!
 //! Each test is anchored to a concrete divergence — both the script
 //! and the observed outputs are documented in the test body comments.
-//! All tests are `#[ignore = "ZSHRS BUG: ..."]` per the established
-//! pin-then-fix workflow: the test bodies are correct (call
-//! `assert_parity`), they simply fail today because of the bug.
-//! Removing the `#[ignore]` should be the proof the bug is closed.
+//! Originally all tests in this file were ignored pending fixes; the
+//! bugs have since been closed (all tests now pass, no ignore attrs
+//! remain). The file is kept as a regression pin so future drift in
+//! any of these areas trips a parity failure.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
