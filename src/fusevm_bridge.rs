@@ -5274,6 +5274,23 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn exec(&mut self, args: Vec<String>) -> i32 {
+        // c:Src/exec.c — when the command word evaluates to an empty
+        // string (e.g. `"$nonexistent"` with the var unset), zsh
+        // attempts exec(2) which returns EACCES → "permission
+        // denied". Match by emitting the diagnostic and returning
+        // 126. Without this, an empty command word silently returned
+        // 0 and the calling script continued unaware.
+        if args.is_empty() || args[0].is_empty() {
+            let script_name = crate::ported::utils::scriptname_get()
+                .unwrap_or_else(|| "zshrs".to_string());
+            let lineno: u64 = with_executor(|exec| {
+                exec.scalar("LINENO")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+            });
+            eprintln!("{}:{}: permission denied: ", script_name, lineno);
+            return 126;
+        }
         // c:Src/exec.c — when any redirect in the current scope
         // failed (e.g. noclobber blocked a `>` overwrite), zsh
         // refuses to execute the command and exits with status 1.
@@ -5362,6 +5379,23 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<String>) -> Option<i32> {
+        // c:Src/exec.c — when the command word is empty (e.g. `""`
+        // or `"$nonexistent"`), zsh attempts the exec(2) which
+        // returns EACCES ("permission denied") and exits 126. The
+        // Rust port silently treated empty as a no-op (status 0).
+        // Match zsh by emitting the diagnostic and returning 126.
+        if name.is_empty() {
+            let script_name = crate::ported::utils::scriptname_get()
+                .unwrap_or_else(|| "zshrs".to_string());
+            let lineno: u64 = with_executor(|exec| {
+                exec.scalar("LINENO")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+            });
+            eprintln!("{}:{}: permission denied: ", script_name, lineno);
+            with_executor(|exec| exec.set_last_status(126));
+            return Some(126);
+        }
         // c:Src/exec.c — redirect failure in this scope means the
         // command should NOT run. The Host::exec path already has
         // this gate (at fn exec above); call_function takes external
