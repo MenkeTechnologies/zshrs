@@ -302,10 +302,16 @@ impl ZshCompiler {
         // form patches each connector to jump just past the next pipe.
         let mut pipes: Vec<&ZshPipe> = vec![&sublist.pipe];
         let mut ops: Vec<SublistOp> = Vec::new();
+        // Per-pipe `!` flags. `pipes[i]`'s negate flag is `pipe_nots[i]`.
+        // For chained sublists like `true && ! false`, the parser nests
+        // each `!` in its own ZshSublist node — flattening must capture
+        // each one or the inner negate is silently dropped.
+        let mut pipe_nots: Vec<bool> = vec![sublist.flags.not];
         let mut next_link = sublist.next.as_ref();
         while let Some((op, next_sublist)) = next_link {
             ops.push(*op);
             pipes.push(&next_sublist.pipe);
+            pipe_nots.push(next_sublist.flags.not);
             next_link = next_sublist.next.as_ref();
         }
 
@@ -351,7 +357,7 @@ impl ZshCompiler {
         // pops at the end. This way `a && b && c` shows "cmdand" on
         // pipe[1]'s trace and "cmdand cmdand" on pipe[2]'s, matching
         // zsh -x byte-for-byte.
-        let has_chain_or_negate = sublist.flags.not || !ops.is_empty();
+        let has_chain_or_negate = pipe_nots.iter().any(|&n| n) || !ops.is_empty();
         if has_chain_or_negate {
             self.errexit_suppress_depth += 1;
         }
@@ -378,6 +384,13 @@ impl ZshCompiler {
                 SublistOp::Or => self.builder.emit(Op::JumpIfTrue(0), 0),
             };
             self.compile_pipe(pipes[i + 1]);
+            // Apply this pipe's `!` flag (parser nested it on the next
+            // ZshSublist). `true && ! false` parses as
+            //   ZshSublist{ true, And, ZshSublist{ !false, not=true } }
+            // so the inner `!` must invert pipes[i+1]'s status here.
+            if pipe_nots[i + 1] {
+                self.emit_negate_status();
+            }
             self.builder.patch_jump(skip, self.builder.current_pos());
         }
         // Bulk-pop the chain pushes (mirrors `cmdsp = csp` restore).
