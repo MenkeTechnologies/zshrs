@@ -4963,7 +4963,15 @@ pub fn paramsubst(
                 let is_array_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"))
                     || subscript.as_deref().map_or(false, |s| s.contains(','));
                 let has_subscript = subscript.is_some() && !is_array_subscript;
-                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript) {
+                // c:Src/subst.c:3317 — under qt (DQ context) without an
+                // explicit @/*-style subscript, the array sepjoins to
+                // a scalar BEFORE the filter applies. `"${a:#two}"`
+                // tests the joined "one two three" once, not each
+                // element. Parity bug: zshrs filtered per-element in
+                // DQ too, returning "one three" instead of leaving
+                // the joined scalar untouched.
+                let per_element_array = !has_subscript && (!qt || is_array_subscript);
+                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
                     let kept: Vec<String> = arr
                         .into_iter() // c:3540
                         .filter(|elem| {
