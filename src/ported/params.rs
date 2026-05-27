@@ -7587,13 +7587,34 @@ pub fn zputenv(str: &str) -> i32 {
         // c:5353-5355 — write `\0` at `=`, setenv(name, value), restore.
         let name = &str[..ptr];
         let value = &str[ptr + 1..];
-        env::set_var(name, value);
+        // c:Src/params.c:5354 — `setenv(name, value, 1)` uses libc
+        // setenv which treats the value as a NUL-terminated C string.
+        // An embedded NUL byte ends the value there. Rust's
+        // std::env::set_var PANICS on NUL in value; emulate C's
+        // truncate-at-NUL semantics so shell params holding raw NUL
+        // bytes (e.g. `X=$'a\0b\0c'` for `${(ps:\0:)X}` splits) can
+        // still propagate the leading portion to env. The full
+        // raw value lives in the canonical param table; this is
+        // just the libc-env mirror.
+        let safe_value: &str = match value.find('\0') {
+            Some(n) => &value[..n],
+            None => value,
+        };
+        if name.as_bytes().contains(&b'\0') {
+            // c: setenv on a name with NUL is malformed — C's libc
+            // rejects, we silently drop the env mirror.
+            return 1;
+        }
+        env::set_var(name, safe_value);
         0
     } else {
         // c:5355 else
         // c:5356 — DPUTS(1, "bad environment string").
         // With no `=`, treat `str` as a bare name with empty value.
         DPUTS!(true, "bad environment string"); // c:5356
+        if str.as_bytes().contains(&b'\0') {
+            return 1;
+        }
         env::set_var(str, ""); // c:5357
         0
     }

@@ -47,7 +47,6 @@ mod any_positive_int {
 
     /// `file<->` matches file1, file2, ... but not fileabc.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob <-> not implemented"]
     fn dash_matches_any_integer_suffix() {
         let d = tdir();
         make_files(d.path(), &["file1", "file2", "file10", "fileabc", "file"]);
@@ -56,7 +55,6 @@ mod any_positive_int {
 
     /// `<->` standalone matches any integer-named file.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob <-> not implemented"]
     fn standalone_dash_matches_integer_names() {
         let d = tdir();
         make_files(d.path(), &["1", "2", "10", "100", "abc"]);
@@ -65,7 +63,6 @@ mod any_positive_int {
 
     /// Empty match → no file expansion error (with -f, nomatch active).
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob <-> not implemented; no nomatch behavior"]
     fn no_integer_files_nomatch_error() {
         let d = tdir();
         make_files(d.path(), &["abc", "def"]);
@@ -78,7 +75,6 @@ mod closed_range {
 
     /// `<5-10>` matches 5..10 only.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob <N-M> closed range not implemented"]
     fn closed_range_5_to_10() {
         let d = tdir();
         make_files(d.path(), &["3", "5", "7", "10", "11"]);
@@ -87,7 +83,6 @@ mod closed_range {
 
     /// Range with prefix.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob a<N-M> with prefix not implemented"]
     fn closed_range_with_prefix() {
         let d = tdir();
         make_files(d.path(), &["a1", "a3", "a5", "a10", "a99"]);
@@ -96,7 +91,6 @@ mod closed_range {
 
     /// Range with suffix.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob <N-M>.txt with suffix not implemented"]
     fn closed_range_with_suffix() {
         let d = tdir();
         make_files(d.path(), &["1.txt", "5.txt", "10.txt", "100.txt"]);
@@ -109,7 +103,6 @@ mod open_range_upper {
 
     /// `<5->` matches 5, 6, 7, ... any int >= 5.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob <N-> open-upper not implemented"]
     fn open_upper_5_and_above() {
         let d = tdir();
         make_files(d.path(), &["3", "5", "7", "100", "1000"]);
@@ -122,7 +115,6 @@ mod open_range_lower {
 
     /// `<-10>` matches anything <= 10.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob <-N> open-lower not implemented"]
     fn open_lower_le_10() {
         let d = tdir();
         make_files(d.path(), &["1", "5", "10", "11", "50"]);
@@ -135,7 +127,6 @@ mod single_number {
 
     /// `<5-5>` matches only "5".
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob <N-N> single-value range not implemented"]
     fn single_value_range() {
         let d = tdir();
         make_files(d.path(), &["4", "5", "6"]);
@@ -148,7 +139,6 @@ mod combined_with_other_globs {
 
     /// `file*<1-5>.log` combines * and numeric.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob combined with * not implemented"]
     fn star_then_numeric_range() {
         let d = tdir();
         make_files(d.path(), &["fileA1.log", "fileB3.log", "fileC10.log", "fileD5.log"]);
@@ -161,7 +151,6 @@ mod negation {
 
     /// With EXTENDED_GLOB: `^<1-5>` files NOT in numeric range.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob in extended_glob negation not implemented"]
     fn extended_glob_negation_with_range() {
         let d = tdir();
         make_files(d.path(), &["1", "2", "3", "10", "20", "100"]);
@@ -174,7 +163,6 @@ mod leading_zeros {
 
     /// `<1-10>` matches "07" too? zsh interprets as numeric.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob with leading-zero filenames not implemented"]
     fn leading_zero_in_filename() {
         let d = tdir();
         make_files(d.path(), &["07", "8", "10"]);
@@ -187,7 +175,6 @@ mod negative_number_excluded {
 
     /// `<->` doesn't match "-5".
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob <-> doesn't filter negatives (not implemented)"]
     fn negative_number_not_matched() {
         let d = tdir();
         make_files(d.path(), &["1", "5", "-5", "abc"]);
@@ -200,7 +187,6 @@ mod large_numbers {
 
     /// `<1000-2000>` works for large ranges.
     #[test]
-    #[ignore = "ZSHRS BUG: numeric glob with large ranges not implemented"]
     fn large_range_thousand() {
         let d = tdir();
         make_files(d.path(), &["999", "1000", "1500", "2000", "2001"]);
