@@ -3686,6 +3686,15 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(i_slot), 0);
 
+        // c:Src/loop.c — POSIX/zsh: a `for` loop that never iterates
+        // exits with status 0 regardless of the prior $?. Reset
+        // before the loop so the body's final iteration (if any)
+        // overwrites; if the iteration count is 0, the reset persists.
+        // Without this, `false; for i in; do :; done; echo $?`
+        // printed 1 instead of 0.
+        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::SetStatus, 0);
+
         let loop_top = self.builder.current_pos();
         self.builder.emit(Op::GetSlot(i_slot), 0);
         self.builder.emit(Op::GetSlot(len_slot), 0);
@@ -3792,6 +3801,15 @@ impl ZshCompiler {
 
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(i_slot), 0);
+
+        // c:Src/loop.c — POSIX/zsh: a `for` loop that never iterates
+        // exits with status 0 regardless of the prior $?. Reset
+        // before the loop so the body's final iteration (if any)
+        // overwrites; if the iteration count is 0, the reset persists.
+        // Without this, `false; for i in; do :; done; echo $?`
+        // printed 1 instead of 0.
+        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::SetStatus, 0);
 
         let loop_top = self.builder.current_pos();
         self.builder.emit(Op::GetSlot(i_slot), 0);
@@ -3976,6 +3994,13 @@ impl ZshCompiler {
         // cmdstack: direct port of Src/loop.c:615 `cmdpush(CS_CASE);`
         // wrapping the whole case statement.
         self.emit_cmd_push(crate::ported::zsh_h::CS_CASE as u8);
+        // c:Src/loop.c — `case ... esac` with no matching arm OR with
+        // an empty arm body (`x) ;;`) exits with status 0. Without
+        // this reset, the case statement preserved the prior $? when
+        // it produced no command — `false; case x in x) ;; esac;
+        // echo $?` printed 1 instead of 0.
+        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::SetStatus, 0);
         // Word goes onto a slot for repeated comparison.
         self.compile_word_str(&c.word);
         let word_slot = self.next_slot;
