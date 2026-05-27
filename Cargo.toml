@@ -27,7 +27,7 @@ exclude = [
 
 
 [workspace.package]
-version = "0.11.16"
+version = "0.11.17"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies"]
@@ -181,7 +181,7 @@ fusevm = { path = "../fusevm" }
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-zshrs-daemon = { path = "daemon", version = "0.11.13" }
+zshrs-daemon = { path = "daemon", version = "0.11.17" }
 
 [profile.release]
 opt-level = 3
