@@ -18,16 +18,24 @@ if [ ! -x "$R" ]; then
   R="$MANIFEST_DIR/target/debug/zshrs"
 fi
 
-# round 11 -> av; round 101 -> eh; round 200 -> ic
+# round 11 -> av; round 101 -> eh; round 601 -> aaa (3-letter; avoids xn..xm clash at 596-600)
 round_suffix() {
   round=$1
   awk -v r="$round" 'BEGIN {
+    if (r >= 601) {
+      t = r - 601
+      a = int(t / 676)
+      b = int((t % 676) / 26)
+      c = t % 26
+      printf "%c%c%c", 97 + a, 97 + b, 97 + c
+      exit
+    }
     idx = r - 11
     if (idx < 5) { printf "a%c", 118 + idx; exit }
     pair = idx - 5
-  g = int(pair / 26)
-  s = pair % 26
-  printf "%c%c", 98 + g, 97 + s
+    g = int(pair / 26)
+    s = pair % 26
+    printf "%c%c", 98 + g, 97 + s
   }'
 }
 
