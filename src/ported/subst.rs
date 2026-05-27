@@ -5035,8 +5035,10 @@ pub fn paramsubst(
                     // with the default so the splat emits it. Mirror
                     // C subst.c:3193 case '-' which stores the result
                     // back into val/aval, making the c:4245 splat
-                    // see the substituted shape.
-                    if isarr != 0 && split_parts.is_none() {
+                    // see the substituted shape. Skip the seed when
+                    // value is empty so the Nularg sentinel `¡`
+                    // doesn't leak out of `${a:-}` on empty arrays.
+                    if isarr != 0 && split_parts.is_none() && !value.is_empty() {
                         split_parts = Some(vec![value.clone()]);
                     }
                 }
@@ -5159,7 +5161,11 @@ pub fn paramsubst(
                 // alternate "yes" because auto_splat fell back to
                 // arrays_get(var_name). Mirror C subst.c:3296 which
                 // writes val back into the v->str/aval slot.
-                if isarr != 0 && split_parts.is_none() {
+                // Only seed when there's an actual replacement value —
+                // an empty result must NOT emit the Nularg sentinel
+                // node `¡` (no-array-element marker) that splat-of-
+                // (vec![""]) would produce.
+                if isarr != 0 && split_parts.is_none() && !value.is_empty() {
                     split_parts = Some(vec![value.clone()]);
                 }
             } else if let Some(alt) = r.strip_prefix('+') {
@@ -5169,7 +5175,7 @@ pub fn paramsubst(
                 } else {
                     value = String::new();
                 }
-                if isarr != 0 && split_parts.is_none() {
+                if isarr != 0 && split_parts.is_none() && !value.is_empty() {
                     split_parts = Some(vec![value.clone()]);
                 }
             } else if let Some(msg) = r.strip_prefix(":?") {
