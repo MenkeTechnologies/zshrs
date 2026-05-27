@@ -27,7 +27,41 @@ fn run_zshrs_in(d: &Path, s: &str) -> R {
 }
 fn assert_parity_in(d: &Path, s: &str) {
     if !zsh_available() { return; }
+    // Snapshot the dir's file contents BEFORE running so zsh + zshrs
+    // each start with the same state. Without this, redirect-append
+    // tests (`echo more >> file`) saw the first shell's append
+    // persist into the second shell's run, causing false divergence.
+    fn snapshot(d: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(d) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Ok(data) = std::fs::read(&path) {
+                        out.push((path, data));
+                    }
+                }
+            }
+        }
+        out
+    }
+    fn restore(d: &Path, snap: &[(std::path::PathBuf, Vec<u8>)]) {
+        // Remove any new files that weren't in the snapshot.
+        if let Ok(entries) = std::fs::read_dir(d) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && !snap.iter().any(|(p, _)| p == &path) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+        for (path, data) in snap {
+            let _ = std::fs::write(path, data);
+        }
+    }
+    let snap = snapshot(d);
     let z = run_zsh_in(d, s);
+    restore(d, &snap);
     let r = run_zshrs_in(d, s);
     assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{s}\n--- zsh ---\n{:?}\n--- zshrs ---\n{:?}", z.stdout, r.stdout);
     assert_eq!(z.exit, r.exit);
@@ -82,7 +116,6 @@ mod noclobber_on {
 
     /// `>>` append still works under NO_CLOBBER (file exists).
     #[test]
-    #[ignore = "ZSHRS BUG: `>> file` under no_clobber appends content twice (cat output duplicates last write)"]
     fn noclobber_append_existing_works() {
         let d = tdir();
         std::fs::write(d.path().join("exists.txt"), "old\n").unwrap();

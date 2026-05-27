@@ -212,7 +212,6 @@ f
 
     /// Nested functions stack.
     #[test]
-    #[ignore = "ZSHRS BUG: $funcstack[N] inside nested functions returns empty entries"]
     fn funcstack_nested() {
         assert_parity(r#"
 inner() { echo "stack: ${funcstack[1]}/${funcstack[2]}"; }
