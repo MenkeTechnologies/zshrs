@@ -1,5 +1,5 @@
 #!/bin/sh
-# Generate corpus_dash_fc_bulk_{xn..aai} for rounds 601-700 (wrapper).
+# Generate corpus_dash_fc_bulk_{aaa..adv} for rounds 601-700 (wrapper).
 
 set -e
 dir=$(dirname "$0")

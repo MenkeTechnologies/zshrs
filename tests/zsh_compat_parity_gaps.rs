@@ -14,7 +14,7 @@
 //! `corpus_dash_fc_bulk_h`, `corpus_dash_fc_bulk_i`, `corpus_dash_fc_bulk_j`, `corpus_dash_fc_bulk_k`, `corpus_dash_fc_bulk_l`,
 //! `corpus_dash_fc_bulk_m`, `corpus_dash_fc_bulk_n`, `corpus_dash_fc_bulk_o`, `corpus_dash_fc_bulk_p`,
 //! `corpus_dash_fc_bulk_q`, `corpus_dash_fc_bulk_r`, `corpus_dash_fc_bulk_s`, `corpus_dash_fc_bulk_t`, `corpus_dash_fc_bulk_u`, `corpus_dash_fc_bulk_v`,
-//! `corpus_dash_fc_bulk_w` … `corpus_dash_fc_bulk_ak`, rounds 1–700: `corpus_dash_fc_bulk_al` … `corpus_dash_fc_bulk_aai` (48 zsh-probed `-fc` pins/round; `al`=1, `eg`=100, `ic`=200, `ly`=300, `pu`=400, `tq`=500, `xm`=600, `aai`=700). Pass/fail is **stdout + exit** only (see `assert_parity`).
+//! `corpus_dash_fc_bulk_w` … `corpus_dash_fc_bulk_ak`, rounds 1–700: `corpus_dash_fc_bulk_al` … `corpus_dash_fc_bulk_adv` (48 zsh-probed `-fc` pins/round; `al`=1, `eg`=100, `ic`=200, `ly`=300, `pu`=400, `tq`=500, `xm`=600, `aaa`=601, `adv`=700). Pass/fail is **stdout + exit** only (see `assert_parity`).
 
 #![allow(non_snake_case)]
 
@@ -36190,5063 +36190,58 @@ mod corpus_dash_fc_bulk_xm {
     }
 }
 
-mod corpus_dash_fc_bulk_xn {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xn_fc_row_001 => (r#"bulk xn 001"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_xn_fc_row_002 => (r#"bulk xn 002"#, r###"print -r ${(t)x}; x=hello"###);
-        bulk_xn_fc_row_003 => (r#"bulk xn 003"#, r###"unset y; print -r ${+y}"###);
-        bulk_xn_fc_row_004 => (r#"bulk xn 004"#, r###"x=hello; print -r ${+x}"###);
-        bulk_xn_fc_row_005 => (r#"bulk xn 005"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_xn_fc_row_006 => (r#"bulk xn 006"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-        bulk_xn_fc_row_007 => (r#"bulk xn 007"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
-        bulk_xn_fc_row_008 => (r#"bulk xn 008"#, r###"x=abc; print -r ${x/#a/z}"###);
-        bulk_xn_fc_row_009 => (r#"bulk xn 009"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_xn_fc_row_010 => (r#"bulk xn 010"#, r###"print -r ${(j::)a}; a=(x y)"###);
-        bulk_xn_fc_row_011 => (r#"bulk xn 011"#, r###"print -r ${(pj::)a}; a=(x y)"###);
-        bulk_xn_fc_row_012 => (r#"bulk xn 012"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
-        bulk_xn_fc_row_013 => (r#"bulk xn 013"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_xn_fc_row_014 => (r#"bulk xn 014"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_xn_fc_row_015 => (r#"bulk xn 015"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_xn_fc_row_016 => (r#"bulk xn 016"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_xn_fc_row_017 => (r#"bulk xn 017"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_xn_fc_row_018 => (r#"bulk xn 018"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_xn_fc_row_019 => (r#"bulk xn 019"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_xn_fc_row_020 => (r#"bulk xn 020"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_xn_fc_row_021 => (r#"bulk xn 021"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_xn_fc_row_022 => (r#"bulk xn 022"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_xn_fc_row_023 => (r#"bulk xn 023"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_xn_fc_row_024 => (r#"bulk xn 024"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_xn_fc_row_025 => (r#"bulk xn 025"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_xn_fc_row_026 => (r#"bulk xn 026"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_xn_fc_row_027 => (r#"bulk xn 027"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_xn_fc_row_028 => (r#"bulk xn 028"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_xn_fc_row_029 => (r#"bulk xn 029"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_xn_fc_row_030 => (r#"bulk xn 030"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_xn_fc_row_031 => (r#"bulk xn 031"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_xn_fc_row_032 => (r#"bulk xn 032"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_xn_fc_row_033 => (r#"bulk xn 033"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_xn_fc_row_034 => (r#"bulk xn 034"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_xn_fc_row_035 => (r#"bulk xn 035"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_xn_fc_row_036 => (r#"bulk xn 036"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_xn_fc_row_037 => (r#"bulk xn 037"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_xn_fc_row_038 => (r#"bulk xn 038"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_xn_fc_row_039 => (r#"bulk xn 039"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_xn_fc_row_040 => (r#"bulk xn 040"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_xn_fc_row_041 => (r#"bulk xn 041"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_xn_fc_row_042 => (r#"bulk xn 042"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_xn_fc_row_043 => (r#"bulk xn 043"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_xn_fc_row_044 => (r#"bulk xn 044"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_xn_fc_row_045 => (r#"bulk xn 045"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_xn_fc_row_046 => (r#"bulk xn 046"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_xn_fc_row_047 => (r#"bulk xn 047"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_xn_fc_row_048 => (r#"bulk xn 048"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xo {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xo_fc_row_001 => (r#"bulk xo 001"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_xo_fc_row_002 => (r#"bulk xo 002"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_xo_fc_row_003 => (r#"bulk xo 003"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_xo_fc_row_004 => (r#"bulk xo 004"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_xo_fc_row_005 => (r#"bulk xo 005"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_xo_fc_row_006 => (r#"bulk xo 006"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_xo_fc_row_007 => (r#"bulk xo 007"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_xo_fc_row_008 => (r#"bulk xo 008"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_xo_fc_row_009 => (r#"bulk xo 009"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_xo_fc_row_010 => (r#"bulk xo 010"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_xo_fc_row_011 => (r#"bulk xo 011"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_xo_fc_row_012 => (r#"bulk xo 012"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_xo_fc_row_013 => (r#"bulk xo 013"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_xo_fc_row_014 => (r#"bulk xo 014"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_xo_fc_row_015 => (r#"bulk xo 015"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_xo_fc_row_016 => (r#"bulk xo 016"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_xo_fc_row_017 => (r#"bulk xo 017"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_xo_fc_row_018 => (r#"bulk xo 018"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_xo_fc_row_019 => (r#"bulk xo 019"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_xo_fc_row_020 => (r#"bulk xo 020"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_xo_fc_row_021 => (r#"bulk xo 021"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_xo_fc_row_022 => (r#"bulk xo 022"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_xo_fc_row_023 => (r#"bulk xo 023"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_xo_fc_row_024 => (r#"bulk xo 024"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_xo_fc_row_025 => (r#"bulk xo 025"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_xo_fc_row_026 => (r#"bulk xo 026"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_xo_fc_row_027 => (r#"bulk xo 027"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_xo_fc_row_028 => (r#"bulk xo 028"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_xo_fc_row_029 => (r#"bulk xo 029"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_xo_fc_row_030 => (r#"bulk xo 030"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_xo_fc_row_031 => (r#"bulk xo 031"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_xo_fc_row_032 => (r#"bulk xo 032"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_xo_fc_row_033 => (r#"bulk xo 033"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_xo_fc_row_034 => (r#"bulk xo 034"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_xo_fc_row_035 => (r#"bulk xo 035"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_xo_fc_row_036 => (r#"bulk xo 036"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_xo_fc_row_037 => (r#"bulk xo 037"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_xo_fc_row_038 => (r#"bulk xo 038"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_xo_fc_row_039 => (r#"bulk xo 039"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_xo_fc_row_040 => (r#"bulk xo 040"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_xo_fc_row_041 => (r#"bulk xo 041"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_xo_fc_row_042 => (r#"bulk xo 042"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_xo_fc_row_043 => (r#"bulk xo 043"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_xo_fc_row_044 => (r#"bulk xo 044"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_xo_fc_row_045 => (r#"bulk xo 045"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_xo_fc_row_046 => (r#"bulk xo 046"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_xo_fc_row_047 => (r#"bulk xo 047"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_xo_fc_row_048 => (r#"bulk xo 048"#, r###"a=(x y); print -r ${^a}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xp {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xp_fc_row_001 => (r#"bulk xp 001"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_xp_fc_row_002 => (r#"bulk xp 002"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_xp_fc_row_003 => (r#"bulk xp 003"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_xp_fc_row_004 => (r#"bulk xp 004"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_xp_fc_row_005 => (r#"bulk xp 005"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_xp_fc_row_006 => (r#"bulk xp 006"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_xp_fc_row_007 => (r#"bulk xp 007"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_xp_fc_row_008 => (r#"bulk xp 008"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_xp_fc_row_009 => (r#"bulk xp 009"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_xp_fc_row_010 => (r#"bulk xp 010"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_xp_fc_row_011 => (r#"bulk xp 011"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_xp_fc_row_012 => (r#"bulk xp 012"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_xp_fc_row_013 => (r#"bulk xp 013"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_xp_fc_row_014 => (r#"bulk xp 014"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_xp_fc_row_015 => (r#"bulk xp 015"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_xp_fc_row_016 => (r#"bulk xp 016"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_xp_fc_row_017 => (r#"bulk xp 017"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_xp_fc_row_018 => (r#"bulk xp 018"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_xp_fc_row_019 => (r#"bulk xp 019"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_xp_fc_row_020 => (r#"bulk xp 020"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_xp_fc_row_021 => (r#"bulk xp 021"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_xp_fc_row_022 => (r#"bulk xp 022"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_xp_fc_row_023 => (r#"bulk xp 023"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_xp_fc_row_024 => (r#"bulk xp 024"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_xp_fc_row_025 => (r#"bulk xp 025"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_xp_fc_row_026 => (r#"bulk xp 026"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_xp_fc_row_027 => (r#"bulk xp 027"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_xp_fc_row_028 => (r#"bulk xp 028"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_xp_fc_row_029 => (r#"bulk xp 029"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_xp_fc_row_030 => (r#"bulk xp 030"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_xp_fc_row_031 => (r#"bulk xp 031"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_xp_fc_row_032 => (r#"bulk xp 032"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_xp_fc_row_033 => (r#"bulk xp 033"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_xp_fc_row_034 => (r#"bulk xp 034"#, r###"print -r {1..3}"###);
-        bulk_xp_fc_row_035 => (r#"bulk xp 035"#, r###"print -r {01..03}"###);
-        bulk_xp_fc_row_036 => (r#"bulk xp 036"#, r###"print -r {a..c}"###);
-        bulk_xp_fc_row_037 => (r#"bulk xp 037"#, r###"print -r {1..4..2}"###);
-        bulk_xp_fc_row_038 => (r#"bulk xp 038"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_xp_fc_row_039 => (r#"bulk xp 039"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_xp_fc_row_040 => (r#"bulk xp 040"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_xp_fc_row_041 => (r#"bulk xp 041"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_xp_fc_row_042 => (r#"bulk xp 042"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_xp_fc_row_043 => (r#"bulk xp 043"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_xp_fc_row_044 => (r#"bulk xp 044"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_xp_fc_row_045 => (r#"bulk xp 045"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_xp_fc_row_046 => (r#"bulk xp 046"#, r###"(( 1 )); print -r $?"###);
-        bulk_xp_fc_row_047 => (r#"bulk xp 047"#, r###"(( 0 )); print -r $?"###);
-        bulk_xp_fc_row_048 => (r#"bulk xp 048"#, r###": $(( 0 )) || print -r z"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xq {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xq_fc_row_001 => (r#"bulk xq 001"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_xq_fc_row_002 => (r#"bulk xq 002"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_xq_fc_row_003 => (r#"bulk xq 003"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_xq_fc_row_004 => (r#"bulk xq 004"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_xq_fc_row_005 => (r#"bulk xq 005"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_xq_fc_row_006 => (r#"bulk xq 006"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_xq_fc_row_007 => (r#"bulk xq 007"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_xq_fc_row_008 => (r#"bulk xq 008"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_xq_fc_row_009 => (r#"bulk xq 009"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_xq_fc_row_010 => (r#"bulk xq 010"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_xq_fc_row_011 => (r#"bulk xq 011"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_xq_fc_row_012 => (r#"bulk xq 012"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_xq_fc_row_013 => (r#"bulk xq 013"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_xq_fc_row_014 => (r#"bulk xq 014"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_xq_fc_row_015 => (r#"bulk xq 015"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_xq_fc_row_016 => (r#"bulk xq 016"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_xq_fc_row_017 => (r#"bulk xq 017"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_xq_fc_row_018 => (r#"bulk xq 018"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_xq_fc_row_019 => (r#"bulk xq 019"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_xq_fc_row_020 => (r#"bulk xq 020"#, r###"print -r {1..3}"###);
-        bulk_xq_fc_row_021 => (r#"bulk xq 021"#, r###"print -r {01..03}"###);
-        bulk_xq_fc_row_022 => (r#"bulk xq 022"#, r###"print -r {a..c}"###);
-        bulk_xq_fc_row_023 => (r#"bulk xq 023"#, r###"print -r {1..4..2}"###);
-        bulk_xq_fc_row_024 => (r#"bulk xq 024"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_xq_fc_row_025 => (r#"bulk xq 025"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_xq_fc_row_026 => (r#"bulk xq 026"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_xq_fc_row_027 => (r#"bulk xq 027"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_xq_fc_row_028 => (r#"bulk xq 028"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_xq_fc_row_029 => (r#"bulk xq 029"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_xq_fc_row_030 => (r#"bulk xq 030"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_xq_fc_row_031 => (r#"bulk xq 031"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_xq_fc_row_032 => (r#"bulk xq 032"#, r###"(( 1 )); print -r $?"###);
-        bulk_xq_fc_row_033 => (r#"bulk xq 033"#, r###"(( 0 )); print -r $?"###);
-        bulk_xq_fc_row_034 => (r#"bulk xq 034"#, r###": $(( 0 )) || print -r z"###);
-        bulk_xq_fc_row_035 => (r#"bulk xq 035"#, r###": $(( 1 )) && print -r y"###);
-        bulk_xq_fc_row_036 => (r#"bulk xq 036"#, r###"let x=2+2; print -r $x"###);
-        bulk_xq_fc_row_037 => (r#"bulk xq 037"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_xq_fc_row_038 => (r#"bulk xq 038"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_xq_fc_row_039 => (r#"bulk xq 039"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_xq_fc_row_040 => (r#"bulk xq 040"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_xq_fc_row_041 => (r#"bulk xq 041"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_xq_fc_row_042 => (r#"bulk xq 042"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_xq_fc_row_043 => (r#"bulk xq 043"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_xq_fc_row_044 => (r#"bulk xq 044"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_xq_fc_row_045 => (r#"bulk xq 045"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_xq_fc_row_046 => (r#"bulk xq 046"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_xq_fc_row_047 => (r#"bulk xq 047"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_xq_fc_row_048 => (r#"bulk xq 048"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xr {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xr_fc_row_001 => (r#"bulk xr 001"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_xr_fc_row_002 => (r#"bulk xr 002"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_xr_fc_row_003 => (r#"bulk xr 003"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_xr_fc_row_004 => (r#"bulk xr 004"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_xr_fc_row_005 => (r#"bulk xr 005"#, r###"print -r {1..3}"###);
-        bulk_xr_fc_row_006 => (r#"bulk xr 006"#, r###"print -r {01..03}"###);
-        bulk_xr_fc_row_007 => (r#"bulk xr 007"#, r###"print -r {a..c}"###);
-        bulk_xr_fc_row_008 => (r#"bulk xr 008"#, r###"print -r {1..4..2}"###);
-        bulk_xr_fc_row_009 => (r#"bulk xr 009"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_xr_fc_row_010 => (r#"bulk xr 010"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_xr_fc_row_011 => (r#"bulk xr 011"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_xr_fc_row_012 => (r#"bulk xr 012"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_xr_fc_row_013 => (r#"bulk xr 013"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_xr_fc_row_014 => (r#"bulk xr 014"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_xr_fc_row_015 => (r#"bulk xr 015"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_xr_fc_row_016 => (r#"bulk xr 016"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_xr_fc_row_017 => (r#"bulk xr 017"#, r###"(( 1 )); print -r $?"###);
-        bulk_xr_fc_row_018 => (r#"bulk xr 018"#, r###"(( 0 )); print -r $?"###);
-        bulk_xr_fc_row_019 => (r#"bulk xr 019"#, r###": $(( 0 )) || print -r z"###);
-        bulk_xr_fc_row_020 => (r#"bulk xr 020"#, r###": $(( 1 )) && print -r y"###);
-        bulk_xr_fc_row_021 => (r#"bulk xr 021"#, r###"let x=2+2; print -r $x"###);
-        bulk_xr_fc_row_022 => (r#"bulk xr 022"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_xr_fc_row_023 => (r#"bulk xr 023"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_xr_fc_row_024 => (r#"bulk xr 024"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_xr_fc_row_025 => (r#"bulk xr 025"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_xr_fc_row_026 => (r#"bulk xr 026"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_xr_fc_row_027 => (r#"bulk xr 027"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_xr_fc_row_028 => (r#"bulk xr 028"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_xr_fc_row_029 => (r#"bulk xr 029"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_xr_fc_row_030 => (r#"bulk xr 030"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_xr_fc_row_031 => (r#"bulk xr 031"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_xr_fc_row_032 => (r#"bulk xr 032"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_xr_fc_row_033 => (r#"bulk xr 033"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_xr_fc_row_034 => (r#"bulk xr 034"#, r###"local a; a=1; print -r $a"###);
-        bulk_xr_fc_row_035 => (r#"bulk xr 035"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_xr_fc_row_036 => (r#"bulk xr 036"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_xr_fc_row_037 => (r#"bulk xr 037"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_xr_fc_row_038 => (r#"bulk xr 038"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_xr_fc_row_039 => (r#"bulk xr 039"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_xr_fc_row_040 => (r#"bulk xr 040"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_xr_fc_row_041 => (r#"bulk xr 041"#, r###"setopt localoptions; print -r $?"###);
-        bulk_xr_fc_row_042 => (r#"bulk xr 042"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_xr_fc_row_043 => (r#"bulk xr 043"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_xr_fc_row_044 => (r#"bulk xr 044"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_xr_fc_row_045 => (r#"bulk xr 045"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_xr_fc_row_046 => (r#"bulk xr 046"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_xr_fc_row_047 => (r#"bulk xr 047"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_xr_fc_row_048 => (r#"bulk xr 048"#, r###"setopt shwordsplit; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xs {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xs_fc_row_001 => (r#"bulk xs 001"#, r###"(( 1 )); print -r $?"###);
-        bulk_xs_fc_row_002 => (r#"bulk xs 002"#, r###"(( 0 )); print -r $?"###);
-        bulk_xs_fc_row_003 => (r#"bulk xs 003"#, r###": $(( 0 )) || print -r z"###);
-        bulk_xs_fc_row_004 => (r#"bulk xs 004"#, r###": $(( 1 )) && print -r y"###);
-        bulk_xs_fc_row_005 => (r#"bulk xs 005"#, r###"let x=2+2; print -r $x"###);
-        bulk_xs_fc_row_006 => (r#"bulk xs 006"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_xs_fc_row_007 => (r#"bulk xs 007"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_xs_fc_row_008 => (r#"bulk xs 008"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_xs_fc_row_009 => (r#"bulk xs 009"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_xs_fc_row_010 => (r#"bulk xs 010"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_xs_fc_row_011 => (r#"bulk xs 011"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_xs_fc_row_012 => (r#"bulk xs 012"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_xs_fc_row_013 => (r#"bulk xs 013"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_xs_fc_row_014 => (r#"bulk xs 014"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_xs_fc_row_015 => (r#"bulk xs 015"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_xs_fc_row_016 => (r#"bulk xs 016"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_xs_fc_row_017 => (r#"bulk xs 017"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_xs_fc_row_018 => (r#"bulk xs 018"#, r###"local a; a=1; print -r $a"###);
-        bulk_xs_fc_row_019 => (r#"bulk xs 019"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_xs_fc_row_020 => (r#"bulk xs 020"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_xs_fc_row_021 => (r#"bulk xs 021"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_xs_fc_row_022 => (r#"bulk xs 022"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_xs_fc_row_023 => (r#"bulk xs 023"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_xs_fc_row_024 => (r#"bulk xs 024"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_xs_fc_row_025 => (r#"bulk xs 025"#, r###"setopt localoptions; print -r $?"###);
-        bulk_xs_fc_row_026 => (r#"bulk xs 026"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_xs_fc_row_027 => (r#"bulk xs 027"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_xs_fc_row_028 => (r#"bulk xs 028"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_xs_fc_row_029 => (r#"bulk xs 029"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_xs_fc_row_030 => (r#"bulk xs 030"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_xs_fc_row_031 => (r#"bulk xs 031"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_xs_fc_row_032 => (r#"bulk xs 032"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_xs_fc_row_033 => (r#"bulk xs 033"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_xs_fc_row_034 => (r#"bulk xs 034"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_xs_fc_row_035 => (r#"bulk xs 035"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_xs_fc_row_036 => (r#"bulk xs 036"#, r###"setopt multios; print -r $?"###);
-        bulk_xs_fc_row_037 => (r#"bulk xs 037"#, r###"setopt noclobber; print -r $?"###);
-        bulk_xs_fc_row_038 => (r#"bulk xs 038"#, r###"setopt clobber; print -r $?"###);
-        bulk_xs_fc_row_039 => (r#"bulk xs 039"#, r###"setopt histexpand; print -r $?"###);
-        bulk_xs_fc_row_040 => (r#"bulk xs 040"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_xs_fc_row_041 => (r#"bulk xs 041"#, r###"setopt banghist; print -r $?"###);
-        bulk_xs_fc_row_042 => (r#"bulk xs 042"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_xs_fc_row_043 => (r#"bulk xs 043"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_xs_fc_row_044 => (r#"bulk xs 044"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_xs_fc_row_045 => (r#"bulk xs 045"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_xs_fc_row_046 => (r#"bulk xs 046"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_xs_fc_row_047 => (r#"bulk xs 047"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_xs_fc_row_048 => (r#"bulk xs 048"#, r###"setopt histverify; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xt {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xt_fc_row_001 => (r#"bulk xt 001"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_xt_fc_row_002 => (r#"bulk xt 002"#, r###"local a; a=1; print -r $a"###);
-        bulk_xt_fc_row_003 => (r#"bulk xt 003"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_xt_fc_row_004 => (r#"bulk xt 004"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_xt_fc_row_005 => (r#"bulk xt 005"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_xt_fc_row_006 => (r#"bulk xt 006"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_xt_fc_row_007 => (r#"bulk xt 007"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_xt_fc_row_008 => (r#"bulk xt 008"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_xt_fc_row_009 => (r#"bulk xt 009"#, r###"setopt localoptions; print -r $?"###);
-        bulk_xt_fc_row_010 => (r#"bulk xt 010"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_xt_fc_row_011 => (r#"bulk xt 011"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_xt_fc_row_012 => (r#"bulk xt 012"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_xt_fc_row_013 => (r#"bulk xt 013"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_xt_fc_row_014 => (r#"bulk xt 014"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_xt_fc_row_015 => (r#"bulk xt 015"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_xt_fc_row_016 => (r#"bulk xt 016"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_xt_fc_row_017 => (r#"bulk xt 017"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_xt_fc_row_018 => (r#"bulk xt 018"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_xt_fc_row_019 => (r#"bulk xt 019"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_xt_fc_row_020 => (r#"bulk xt 020"#, r###"setopt multios; print -r $?"###);
-        bulk_xt_fc_row_021 => (r#"bulk xt 021"#, r###"setopt noclobber; print -r $?"###);
-        bulk_xt_fc_row_022 => (r#"bulk xt 022"#, r###"setopt clobber; print -r $?"###);
-        bulk_xt_fc_row_023 => (r#"bulk xt 023"#, r###"setopt histexpand; print -r $?"###);
-        bulk_xt_fc_row_024 => (r#"bulk xt 024"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_xt_fc_row_025 => (r#"bulk xt 025"#, r###"setopt banghist; print -r $?"###);
-        bulk_xt_fc_row_026 => (r#"bulk xt 026"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_xt_fc_row_027 => (r#"bulk xt 027"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_xt_fc_row_028 => (r#"bulk xt 028"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_xt_fc_row_029 => (r#"bulk xt 029"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_xt_fc_row_030 => (r#"bulk xt 030"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_xt_fc_row_031 => (r#"bulk xt 031"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_xt_fc_row_032 => (r#"bulk xt 032"#, r###"setopt histverify; print -r $?"###);
-        bulk_xt_fc_row_033 => (r#"bulk xt 033"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_xt_fc_row_034 => (r#"bulk xt 034"#, r###"setopt no_beep; print -r $?"###);
-        bulk_xt_fc_row_035 => (r#"bulk xt 035"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_xt_fc_row_036 => (r#"bulk xt 036"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_xt_fc_row_037 => (r#"bulk xt 037"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_xt_fc_row_038 => (r#"bulk xt 038"#, r###"setopt correct; print -r $?"###);
-        bulk_xt_fc_row_039 => (r#"bulk xt 039"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_xt_fc_row_040 => (r#"bulk xt 040"#, r###"setopt completealiases; print -r $?"###);
-        bulk_xt_fc_row_041 => (r#"bulk xt 041"#, r###"setopt globdots; print -r $?"###);
-        bulk_xt_fc_row_042 => (r#"bulk xt 042"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_xt_fc_row_043 => (r#"bulk xt 043"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_xt_fc_row_044 => (r#"bulk xt 044"#, r###"setopt markdirs; print -r $?"###);
-        bulk_xt_fc_row_045 => (r#"bulk xt 045"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_xt_fc_row_046 => (r#"bulk xt 046"#, r###"setopt chase_links; print -r $?"###);
-        bulk_xt_fc_row_047 => (r#"bulk xt 047"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_xt_fc_row_048 => (r#"bulk xt 048"#, r###"setopt pushdignoredups; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xu {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xu_fc_row_001 => (r#"bulk xu 001"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_xu_fc_row_002 => (r#"bulk xu 002"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_xu_fc_row_003 => (r#"bulk xu 003"#, r###"setopt multios; print -r $?"###);
-        bulk_xu_fc_row_004 => (r#"bulk xu 004"#, r###"setopt noclobber; print -r $?"###);
-        bulk_xu_fc_row_005 => (r#"bulk xu 005"#, r###"setopt clobber; print -r $?"###);
-        bulk_xu_fc_row_006 => (r#"bulk xu 006"#, r###"setopt histexpand; print -r $?"###);
-        bulk_xu_fc_row_007 => (r#"bulk xu 007"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_xu_fc_row_008 => (r#"bulk xu 008"#, r###"setopt banghist; print -r $?"###);
-        bulk_xu_fc_row_009 => (r#"bulk xu 009"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_xu_fc_row_010 => (r#"bulk xu 010"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_xu_fc_row_011 => (r#"bulk xu 011"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_xu_fc_row_012 => (r#"bulk xu 012"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_xu_fc_row_013 => (r#"bulk xu 013"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_xu_fc_row_014 => (r#"bulk xu 014"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_xu_fc_row_015 => (r#"bulk xu 015"#, r###"setopt histverify; print -r $?"###);
-        bulk_xu_fc_row_016 => (r#"bulk xu 016"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_xu_fc_row_017 => (r#"bulk xu 017"#, r###"setopt no_beep; print -r $?"###);
-        bulk_xu_fc_row_018 => (r#"bulk xu 018"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_xu_fc_row_019 => (r#"bulk xu 019"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_xu_fc_row_020 => (r#"bulk xu 020"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_xu_fc_row_021 => (r#"bulk xu 021"#, r###"setopt correct; print -r $?"###);
-        bulk_xu_fc_row_022 => (r#"bulk xu 022"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_xu_fc_row_023 => (r#"bulk xu 023"#, r###"setopt completealiases; print -r $?"###);
-        bulk_xu_fc_row_024 => (r#"bulk xu 024"#, r###"setopt globdots; print -r $?"###);
-        bulk_xu_fc_row_025 => (r#"bulk xu 025"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_xu_fc_row_026 => (r#"bulk xu 026"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_xu_fc_row_027 => (r#"bulk xu 027"#, r###"setopt markdirs; print -r $?"###);
-        bulk_xu_fc_row_028 => (r#"bulk xu 028"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_xu_fc_row_029 => (r#"bulk xu 029"#, r###"setopt chase_links; print -r $?"###);
-        bulk_xu_fc_row_030 => (r#"bulk xu 030"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_xu_fc_row_031 => (r#"bulk xu 031"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_xu_fc_row_032 => (r#"bulk xu 032"#, r###"setopt pushdsilent; print -r $?"###);
-        bulk_xu_fc_row_033 => (r#"bulk xu 033"#, r###"setopt pushdtohome; print -r $?"###);
-        bulk_xu_fc_row_034 => (r#"bulk xu 034"#, r###"setopt autopushd; print -r $?"###);
-        bulk_xu_fc_row_035 => (r#"bulk xu 035"#, r###"setopt pushdminus; print -r $?"###);
-        bulk_xu_fc_row_036 => (r#"bulk xu 036"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_xu_fc_row_037 => (r#"bulk xu 037"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
-        bulk_xu_fc_row_038 => (r#"bulk xu 038"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
-        bulk_xu_fc_row_039 => (r#"bulk xu 039"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-        bulk_xu_fc_row_040 => (r#"bulk xu 040"#, r###"print -r $PWD"###);
-        bulk_xu_fc_row_041 => (r#"bulk xu 041"#, r###"print -r ${PWD:h}"###);
-        bulk_xu_fc_row_042 => (r#"bulk xu 042"#, r###"print -r ${PWD:t}"###);
-        bulk_xu_fc_row_043 => (r#"bulk xu 043"#, r###"print -r ${PWD:r}"###);
-        bulk_xu_fc_row_044 => (r#"bulk xu 044"#, r###"print -r ${PWD:e}"###);
-        bulk_xu_fc_row_045 => (r#"bulk xu 045"#, r###"print -r ${PWD:a}"###);
-        bulk_xu_fc_row_046 => (r#"bulk xu 046"#, r###"print -r ${PWD:A}"###);
-        bulk_xu_fc_row_047 => (r#"bulk xu 047"#, r###"read -r line <<< 'one'; print -r $line"###);
-        bulk_xu_fc_row_048 => (r#"bulk xu 048"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xv {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xv_fc_row_001 => (r#"bulk xv 001"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_xv_fc_row_002 => (r#"bulk xv 002"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_xv_fc_row_003 => (r#"bulk xv 003"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_xv_fc_row_004 => (r#"bulk xv 004"#, r###"setopt correct; print -r $?"###);
-        bulk_xv_fc_row_005 => (r#"bulk xv 005"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_xv_fc_row_006 => (r#"bulk xv 006"#, r###"setopt completealiases; print -r $?"###);
-        bulk_xv_fc_row_007 => (r#"bulk xv 007"#, r###"setopt globdots; print -r $?"###);
-        bulk_xv_fc_row_008 => (r#"bulk xv 008"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_xv_fc_row_009 => (r#"bulk xv 009"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_xv_fc_row_010 => (r#"bulk xv 010"#, r###"setopt markdirs; print -r $?"###);
-        bulk_xv_fc_row_011 => (r#"bulk xv 011"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_xv_fc_row_012 => (r#"bulk xv 012"#, r###"setopt chase_links; print -r $?"###);
-        bulk_xv_fc_row_013 => (r#"bulk xv 013"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_xv_fc_row_014 => (r#"bulk xv 014"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_xv_fc_row_015 => (r#"bulk xv 015"#, r###"setopt pushdsilent; print -r $?"###);
-        bulk_xv_fc_row_016 => (r#"bulk xv 016"#, r###"setopt pushdtohome; print -r $?"###);
-        bulk_xv_fc_row_017 => (r#"bulk xv 017"#, r###"setopt autopushd; print -r $?"###);
-        bulk_xv_fc_row_018 => (r#"bulk xv 018"#, r###"setopt pushdminus; print -r $?"###);
-        bulk_xv_fc_row_019 => (r#"bulk xv 019"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_xv_fc_row_020 => (r#"bulk xv 020"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
-        bulk_xv_fc_row_021 => (r#"bulk xv 021"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
-        bulk_xv_fc_row_022 => (r#"bulk xv 022"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-        bulk_xv_fc_row_023 => (r#"bulk xv 023"#, r###"print -r $PWD"###);
-        bulk_xv_fc_row_024 => (r#"bulk xv 024"#, r###"print -r ${PWD:h}"###);
-        bulk_xv_fc_row_025 => (r#"bulk xv 025"#, r###"print -r ${PWD:t}"###);
-        bulk_xv_fc_row_026 => (r#"bulk xv 026"#, r###"print -r ${PWD:r}"###);
-        bulk_xv_fc_row_027 => (r#"bulk xv 027"#, r###"print -r ${PWD:e}"###);
-        bulk_xv_fc_row_028 => (r#"bulk xv 028"#, r###"print -r ${PWD:a}"###);
-        bulk_xv_fc_row_029 => (r#"bulk xv 029"#, r###"print -r ${PWD:A}"###);
-        bulk_xv_fc_row_030 => (r#"bulk xv 030"#, r###"read -r line <<< 'one'; print -r $line"###);
-        bulk_xv_fc_row_031 => (r#"bulk xv 031"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
-        bulk_xv_fc_row_032 => (r#"bulk xv 032"#, r###"print -r $'tab\there'"###);
-        bulk_xv_fc_row_033 => (r#"bulk xv 033"#, r###"print -r $'line1\nline2'"###);
-        bulk_xv_fc_row_034 => (r#"bulk xv 034"#, r###"printf '%q\n' 'a b'"###);
-        bulk_xv_fc_row_035 => (r#"bulk xv 035"#, r###"printf '%s\n' ok"###);
-        bulk_xv_fc_row_036 => (r#"bulk xv 036"#, r###"print -rn -- end"###);
-        bulk_xv_fc_row_037 => (r#"bulk xv 037"#, r###"print -rl -- a b"###);
-        bulk_xv_fc_row_038 => (r#"bulk xv 038"#, r###"print -fc '%s\n' hi"###);
-        bulk_xv_fc_row_039 => (r#"bulk xv 039"#, r###"whence -w print 2>/dev/null; print -r $?"###);
-        bulk_xv_fc_row_040 => (r#"bulk xv 040"#, r###"whence -c print 2>/dev/null; print -r $?"###);
-        bulk_xv_fc_row_041 => (r#"bulk xv 041"#, r###"which print 2>/dev/null; print -r $?"###);
-        bulk_xv_fc_row_042 => (r#"bulk xv 042"#, r###"command -v print 2>/dev/null; print -r $?"###);
-        bulk_xv_fc_row_043 => (r#"bulk xv 043"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_xv_fc_row_044 => (r#"bulk xv 044"#, r###"rehash 2>/dev/null; print -r $?"###);
-        bulk_xv_fc_row_045 => (r#"bulk xv 045"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
-        bulk_xv_fc_row_046 => (r#"bulk xv 046"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
-        bulk_xv_fc_row_047 => (r#"bulk xv 047"#, r###"export ZA=1; print -r $ZA"###);
-        bulk_xv_fc_row_048 => (r#"bulk xv 048"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xw {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xw_fc_row_001 => (r#"bulk xw 001"#, r###"setopt pushdminus; print -r $?"###);
-        bulk_xw_fc_row_002 => (r#"bulk xw 002"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_xw_fc_row_003 => (r#"bulk xw 003"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
-        bulk_xw_fc_row_004 => (r#"bulk xw 004"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_005 => (r#"bulk xw 005"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_006 => (r#"bulk xw 006"#, r###"print -r $PWD"###);
-        bulk_xw_fc_row_007 => (r#"bulk xw 007"#, r###"print -r ${PWD:h}"###);
-        bulk_xw_fc_row_008 => (r#"bulk xw 008"#, r###"print -r ${PWD:t}"###);
-        bulk_xw_fc_row_009 => (r#"bulk xw 009"#, r###"print -r ${PWD:r}"###);
-        bulk_xw_fc_row_010 => (r#"bulk xw 010"#, r###"print -r ${PWD:e}"###);
-        bulk_xw_fc_row_011 => (r#"bulk xw 011"#, r###"print -r ${PWD:a}"###);
-        bulk_xw_fc_row_012 => (r#"bulk xw 012"#, r###"print -r ${PWD:A}"###);
-        bulk_xw_fc_row_013 => (r#"bulk xw 013"#, r###"read -r line <<< 'one'; print -r $line"###);
-        bulk_xw_fc_row_014 => (r#"bulk xw 014"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
-        bulk_xw_fc_row_015 => (r#"bulk xw 015"#, r###"print -r $'tab\there'"###);
-        bulk_xw_fc_row_016 => (r#"bulk xw 016"#, r###"print -r $'line1\nline2'"###);
-        bulk_xw_fc_row_017 => (r#"bulk xw 017"#, r###"printf '%q\n' 'a b'"###);
-        bulk_xw_fc_row_018 => (r#"bulk xw 018"#, r###"printf '%s\n' ok"###);
-        bulk_xw_fc_row_019 => (r#"bulk xw 019"#, r###"print -rn -- end"###);
-        bulk_xw_fc_row_020 => (r#"bulk xw 020"#, r###"print -rl -- a b"###);
-        bulk_xw_fc_row_021 => (r#"bulk xw 021"#, r###"print -fc '%s\n' hi"###);
-        bulk_xw_fc_row_022 => (r#"bulk xw 022"#, r###"whence -w print 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_023 => (r#"bulk xw 023"#, r###"whence -c print 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_024 => (r#"bulk xw 024"#, r###"which print 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_025 => (r#"bulk xw 025"#, r###"command -v print 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_026 => (r#"bulk xw 026"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_027 => (r#"bulk xw 027"#, r###"rehash 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_028 => (r#"bulk xw 028"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
-        bulk_xw_fc_row_029 => (r#"bulk xw 029"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
-        bulk_xw_fc_row_030 => (r#"bulk xw 030"#, r###"export ZA=1; print -r $ZA"###);
-        bulk_xw_fc_row_031 => (r#"bulk xw 031"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
-        bulk_xw_fc_row_032 => (r#"bulk xw 032"#, r###"typeset -x ZB=2; print -r $ZB"###);
-        bulk_xw_fc_row_033 => (r#"bulk xw 033"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
-        bulk_xw_fc_row_034 => (r#"bulk xw 034"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
-        bulk_xw_fc_row_035 => (r#"bulk xw 035"#, r###"shift; print -r $1; set -- a b c"###);
-        bulk_xw_fc_row_036 => (r#"bulk xw 036"#, r###"(( $# )); print -r $#"###);
-        bulk_xw_fc_row_037 => (r#"bulk xw 037"#, r###"print -r ${argv[1]}"###);
-        bulk_xw_fc_row_038 => (r#"bulk xw 038"#, r###"print -r ${*[1]}"###);
-        bulk_xw_fc_row_039 => (r#"bulk xw 039"#, r###"print -r $@[1]"###);
-        bulk_xw_fc_row_040 => (r#"bulk xw 040"#, r###"print -r ${@:2}"###);
-        bulk_xw_fc_row_041 => (r#"bulk xw 041"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
-        bulk_xw_fc_row_042 => (r#"bulk xw 042"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_043 => (r#"bulk xw 043"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
-        bulk_xw_fc_row_044 => (r#"bulk xw 044"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
-        bulk_xw_fc_row_045 => (r#"bulk xw 045"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
-        bulk_xw_fc_row_046 => (r#"bulk xw 046"#, r###"str=%n; print -r ${(%)str}"###);
-        bulk_xw_fc_row_047 => (r#"bulk xw 047"#, r###"str=%N; print -r ${(%)str}"###);
-        bulk_xw_fc_row_048 => (r#"bulk xw 048"#, r###"str=%~; print -r ${(%)str}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xx {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xx_fc_row_001 => (r#"bulk xx 001"#, r###"print -r $'line1\nline2'"###);
-        bulk_xx_fc_row_002 => (r#"bulk xx 002"#, r###"printf '%q\n' 'a b'"###);
-        bulk_xx_fc_row_003 => (r#"bulk xx 003"#, r###"printf '%s\n' ok"###);
-        bulk_xx_fc_row_004 => (r#"bulk xx 004"#, r###"print -rn -- end"###);
-        bulk_xx_fc_row_005 => (r#"bulk xx 005"#, r###"print -rl -- a b"###);
-        bulk_xx_fc_row_006 => (r#"bulk xx 006"#, r###"print -fc '%s\n' hi"###);
-        bulk_xx_fc_row_007 => (r#"bulk xx 007"#, r###"whence -w print 2>/dev/null; print -r $?"###);
-        bulk_xx_fc_row_008 => (r#"bulk xx 008"#, r###"whence -c print 2>/dev/null; print -r $?"###);
-        bulk_xx_fc_row_009 => (r#"bulk xx 009"#, r###"which print 2>/dev/null; print -r $?"###);
-        bulk_xx_fc_row_010 => (r#"bulk xx 010"#, r###"command -v print 2>/dev/null; print -r $?"###);
-        bulk_xx_fc_row_011 => (r#"bulk xx 011"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_xx_fc_row_012 => (r#"bulk xx 012"#, r###"rehash 2>/dev/null; print -r $?"###);
-        bulk_xx_fc_row_013 => (r#"bulk xx 013"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
-        bulk_xx_fc_row_014 => (r#"bulk xx 014"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
-        bulk_xx_fc_row_015 => (r#"bulk xx 015"#, r###"export ZA=1; print -r $ZA"###);
-        bulk_xx_fc_row_016 => (r#"bulk xx 016"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
-        bulk_xx_fc_row_017 => (r#"bulk xx 017"#, r###"typeset -x ZB=2; print -r $ZB"###);
-        bulk_xx_fc_row_018 => (r#"bulk xx 018"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
-        bulk_xx_fc_row_019 => (r#"bulk xx 019"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
-        bulk_xx_fc_row_020 => (r#"bulk xx 020"#, r###"shift; print -r $1; set -- a b c"###);
-        bulk_xx_fc_row_021 => (r#"bulk xx 021"#, r###"(( $# )); print -r $#"###);
-        bulk_xx_fc_row_022 => (r#"bulk xx 022"#, r###"print -r ${argv[1]}"###);
-        bulk_xx_fc_row_023 => (r#"bulk xx 023"#, r###"print -r ${*[1]}"###);
-        bulk_xx_fc_row_024 => (r#"bulk xx 024"#, r###"print -r $@[1]"###);
-        bulk_xx_fc_row_025 => (r#"bulk xx 025"#, r###"print -r ${@:2}"###);
-        bulk_xx_fc_row_026 => (r#"bulk xx 026"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
-        bulk_xx_fc_row_027 => (r#"bulk xx 027"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
-        bulk_xx_fc_row_028 => (r#"bulk xx 028"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
-        bulk_xx_fc_row_029 => (r#"bulk xx 029"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
-        bulk_xx_fc_row_030 => (r#"bulk xx 030"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
-        bulk_xx_fc_row_031 => (r#"bulk xx 031"#, r###"str=%n; print -r ${(%)str}"###);
-        bulk_xx_fc_row_032 => (r#"bulk xx 032"#, r###"str=%N; print -r ${(%)str}"###);
-        bulk_xx_fc_row_033 => (r#"bulk xx 033"#, r###"str=%~; print -r ${(%)str}"###);
-        bulk_xx_fc_row_034 => (r#"bulk xx 034"#, r###"str=%d; print -r ${(%)str}"###);
-        bulk_xx_fc_row_035 => (r#"bulk xx 035"#, r###"str=%m; print -r ${(%)str}"###);
-        bulk_xx_fc_row_036 => (r#"bulk xx 036"#, r###"str=%#; print -r ${(%)str}"###);
-        bulk_xx_fc_row_037 => (r#"bulk xx 037"#, r###"str=%?; print -r ${(%)str}"###);
-        bulk_xx_fc_row_038 => (r#"bulk xx 038"#, r###"str=%_; print -r ${(%)str}"###);
-        bulk_xx_fc_row_039 => (r#"bulk xx 039"#, r###"str=%h; print -r ${(%)str}"###);
-        bulk_xx_fc_row_040 => (r#"bulk xx 040"#, r###"str=%!; print -r ${(%)str}"###);
-        bulk_xx_fc_row_041 => (r#"bulk xx 041"#, r###"str=%i; print -r ${(%)str}"###);
-        bulk_xx_fc_row_042 => (r#"bulk xx 042"#, r###"str=%I; print -r ${(%)str}"###);
-        bulk_xx_fc_row_043 => (r#"bulk xx 043"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_xx_fc_row_044 => (r#"bulk xx 044"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_xx_fc_row_045 => (r#"bulk xx 045"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_xx_fc_row_046 => (r#"bulk xx 046"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_xx_fc_row_047 => (r#"bulk xx 047"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_xx_fc_row_048 => (r#"bulk xx 048"#, r###"str=%*; print -r ${(%)str}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xy {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xy_fc_row_001 => (r#"bulk xy 001"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
-        bulk_xy_fc_row_002 => (r#"bulk xy 002"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
-        bulk_xy_fc_row_003 => (r#"bulk xy 003"#, r###"shift; print -r $1; set -- a b c"###);
-        bulk_xy_fc_row_004 => (r#"bulk xy 004"#, r###"(( $# )); print -r $#"###);
-        bulk_xy_fc_row_005 => (r#"bulk xy 005"#, r###"print -r ${argv[1]}"###);
-        bulk_xy_fc_row_006 => (r#"bulk xy 006"#, r###"print -r ${*[1]}"###);
-        bulk_xy_fc_row_007 => (r#"bulk xy 007"#, r###"print -r $@[1]"###);
-        bulk_xy_fc_row_008 => (r#"bulk xy 008"#, r###"print -r ${@:2}"###);
-        bulk_xy_fc_row_009 => (r#"bulk xy 009"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
-        bulk_xy_fc_row_010 => (r#"bulk xy 010"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
-        bulk_xy_fc_row_011 => (r#"bulk xy 011"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
-        bulk_xy_fc_row_012 => (r#"bulk xy 012"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
-        bulk_xy_fc_row_013 => (r#"bulk xy 013"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
-        bulk_xy_fc_row_014 => (r#"bulk xy 014"#, r###"str=%n; print -r ${(%)str}"###);
-        bulk_xy_fc_row_015 => (r#"bulk xy 015"#, r###"str=%N; print -r ${(%)str}"###);
-        bulk_xy_fc_row_016 => (r#"bulk xy 016"#, r###"str=%~; print -r ${(%)str}"###);
-        bulk_xy_fc_row_017 => (r#"bulk xy 017"#, r###"str=%d; print -r ${(%)str}"###);
-        bulk_xy_fc_row_018 => (r#"bulk xy 018"#, r###"str=%m; print -r ${(%)str}"###);
-        bulk_xy_fc_row_019 => (r#"bulk xy 019"#, r###"str=%#; print -r ${(%)str}"###);
-        bulk_xy_fc_row_020 => (r#"bulk xy 020"#, r###"str=%?; print -r ${(%)str}"###);
-        bulk_xy_fc_row_021 => (r#"bulk xy 021"#, r###"str=%_; print -r ${(%)str}"###);
-        bulk_xy_fc_row_022 => (r#"bulk xy 022"#, r###"str=%h; print -r ${(%)str}"###);
-        bulk_xy_fc_row_023 => (r#"bulk xy 023"#, r###"str=%!; print -r ${(%)str}"###);
-        bulk_xy_fc_row_024 => (r#"bulk xy 024"#, r###"str=%i; print -r ${(%)str}"###);
-        bulk_xy_fc_row_025 => (r#"bulk xy 025"#, r###"str=%I; print -r ${(%)str}"###);
-        bulk_xy_fc_row_026 => (r#"bulk xy 026"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_xy_fc_row_027 => (r#"bulk xy 027"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_xy_fc_row_028 => (r#"bulk xy 028"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_xy_fc_row_029 => (r#"bulk xy 029"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_xy_fc_row_030 => (r#"bulk xy 030"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_xy_fc_row_031 => (r#"bulk xy 031"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_xy_fc_row_032 => (r#"bulk xy 032"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_xy_fc_row_033 => (r#"bulk xy 033"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_xy_fc_row_034 => (r#"bulk xy 034"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_xy_fc_row_035 => (r#"bulk xy 035"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_xy_fc_row_036 => (r#"bulk xy 036"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_xy_fc_row_037 => (r#"bulk xy 037"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_xy_fc_row_038 => (r#"bulk xy 038"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_xy_fc_row_039 => (r#"bulk xy 039"#, r###"true; print -r $?"###);
-        bulk_xy_fc_row_040 => (r#"bulk xy 040"#, r###"false; print -r $?"###);
-        bulk_xy_fc_row_041 => (r#"bulk xy 041"#, r###"print -r hello"###);
-        bulk_xy_fc_row_042 => (r#"bulk xy 042"#, r###"echo one two"###);
-        bulk_xy_fc_row_043 => (r#"bulk xy 043"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_xy_fc_row_044 => (r#"bulk xy 044"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_xy_fc_row_045 => (r#"bulk xy 045"#, r###"command true; print -r $?"###);
-        bulk_xy_fc_row_046 => (r#"bulk xy 046"#, r###"builtin true; print -r $?"###);
-        bulk_xy_fc_row_047 => (r#"bulk xy 047"#, r###"if true; then echo t; fi"###);
-        bulk_xy_fc_row_048 => (r#"bulk xy 048"#, r###"if false; then echo e; else echo f; fi"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_xz {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_xz_fc_row_001 => (r#"bulk xz 001"#, r###"str=%~; print -r ${(%)str}"###);
-        bulk_xz_fc_row_002 => (r#"bulk xz 002"#, r###"str=%d; print -r ${(%)str}"###);
-        bulk_xz_fc_row_003 => (r#"bulk xz 003"#, r###"str=%m; print -r ${(%)str}"###);
-        bulk_xz_fc_row_004 => (r#"bulk xz 004"#, r###"str=%#; print -r ${(%)str}"###);
-        bulk_xz_fc_row_005 => (r#"bulk xz 005"#, r###"str=%?; print -r ${(%)str}"###);
-        bulk_xz_fc_row_006 => (r#"bulk xz 006"#, r###"str=%_; print -r ${(%)str}"###);
-        bulk_xz_fc_row_007 => (r#"bulk xz 007"#, r###"str=%h; print -r ${(%)str}"###);
-        bulk_xz_fc_row_008 => (r#"bulk xz 008"#, r###"str=%!; print -r ${(%)str}"###);
-        bulk_xz_fc_row_009 => (r#"bulk xz 009"#, r###"str=%i; print -r ${(%)str}"###);
-        bulk_xz_fc_row_010 => (r#"bulk xz 010"#, r###"str=%I; print -r ${(%)str}"###);
-        bulk_xz_fc_row_011 => (r#"bulk xz 011"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_xz_fc_row_012 => (r#"bulk xz 012"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_xz_fc_row_013 => (r#"bulk xz 013"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_xz_fc_row_014 => (r#"bulk xz 014"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_xz_fc_row_015 => (r#"bulk xz 015"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_xz_fc_row_016 => (r#"bulk xz 016"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_xz_fc_row_017 => (r#"bulk xz 017"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_xz_fc_row_018 => (r#"bulk xz 018"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_xz_fc_row_019 => (r#"bulk xz 019"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_xz_fc_row_020 => (r#"bulk xz 020"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_xz_fc_row_021 => (r#"bulk xz 021"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_xz_fc_row_022 => (r#"bulk xz 022"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_xz_fc_row_023 => (r#"bulk xz 023"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_xz_fc_row_024 => (r#"bulk xz 024"#, r###"true; print -r $?"###);
-        bulk_xz_fc_row_025 => (r#"bulk xz 025"#, r###"false; print -r $?"###);
-        bulk_xz_fc_row_026 => (r#"bulk xz 026"#, r###"print -r hello"###);
-        bulk_xz_fc_row_027 => (r#"bulk xz 027"#, r###"echo one two"###);
-        bulk_xz_fc_row_028 => (r#"bulk xz 028"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_xz_fc_row_029 => (r#"bulk xz 029"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_xz_fc_row_030 => (r#"bulk xz 030"#, r###"command true; print -r $?"###);
-        bulk_xz_fc_row_031 => (r#"bulk xz 031"#, r###"builtin true; print -r $?"###);
-        bulk_xz_fc_row_032 => (r#"bulk xz 032"#, r###"if true; then echo t; fi"###);
-        bulk_xz_fc_row_033 => (r#"bulk xz 033"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_xz_fc_row_034 => (r#"bulk xz 034"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_xz_fc_row_035 => (r#"bulk xz 035"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_xz_fc_row_036 => (r#"bulk xz 036"#, r###"repeat 2; do print -r r; done"###);
-        bulk_xz_fc_row_037 => (r#"bulk xz 037"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_xz_fc_row_038 => (r#"bulk xz 038"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_xz_fc_row_039 => (r#"bulk xz 039"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_xz_fc_row_040 => (r#"bulk xz 040"#, r###"{ echo a; echo b; }"###);
-        bulk_xz_fc_row_041 => (r#"bulk xz 041"#, r###"(echo sub)"###);
-        bulk_xz_fc_row_042 => (r#"bulk xz 042"#, r###"(( 1 )) || echo no"###);
-        bulk_xz_fc_row_043 => (r#"bulk xz 043"#, r###"(( 0 )) && echo no"###);
-        bulk_xz_fc_row_044 => (r#"bulk xz 044"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_xz_fc_row_045 => (r#"bulk xz 045"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_xz_fc_row_046 => (r#"bulk xz 046"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_xz_fc_row_047 => (r#"bulk xz 047"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_xz_fc_row_048 => (r#"bulk xz 048"#, r###"print -r $(( !0 ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_ya {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_ya_fc_row_001 => (r#"bulk ya 001"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_ya_fc_row_002 => (r#"bulk ya 002"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_ya_fc_row_003 => (r#"bulk ya 003"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_ya_fc_row_004 => (r#"bulk ya 004"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_ya_fc_row_005 => (r#"bulk ya 005"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ya_fc_row_006 => (r#"bulk ya 006"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_ya_fc_row_007 => (r#"bulk ya 007"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_ya_fc_row_008 => (r#"bulk ya 008"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_ya_fc_row_009 => (r#"bulk ya 009"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_ya_fc_row_010 => (r#"bulk ya 010"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_ya_fc_row_011 => (r#"bulk ya 011"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_ya_fc_row_012 => (r#"bulk ya 012"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_ya_fc_row_013 => (r#"bulk ya 013"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_ya_fc_row_014 => (r#"bulk ya 014"#, r###"true; print -r $?"###);
-        bulk_ya_fc_row_015 => (r#"bulk ya 015"#, r###"false; print -r $?"###);
-        bulk_ya_fc_row_016 => (r#"bulk ya 016"#, r###"print -r hello"###);
-        bulk_ya_fc_row_017 => (r#"bulk ya 017"#, r###"echo one two"###);
-        bulk_ya_fc_row_018 => (r#"bulk ya 018"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_ya_fc_row_019 => (r#"bulk ya 019"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_ya_fc_row_020 => (r#"bulk ya 020"#, r###"command true; print -r $?"###);
-        bulk_ya_fc_row_021 => (r#"bulk ya 021"#, r###"builtin true; print -r $?"###);
-        bulk_ya_fc_row_022 => (r#"bulk ya 022"#, r###"if true; then echo t; fi"###);
-        bulk_ya_fc_row_023 => (r#"bulk ya 023"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_ya_fc_row_024 => (r#"bulk ya 024"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_ya_fc_row_025 => (r#"bulk ya 025"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_ya_fc_row_026 => (r#"bulk ya 026"#, r###"repeat 2; do print -r r; done"###);
-        bulk_ya_fc_row_027 => (r#"bulk ya 027"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_ya_fc_row_028 => (r#"bulk ya 028"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_ya_fc_row_029 => (r#"bulk ya 029"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_ya_fc_row_030 => (r#"bulk ya 030"#, r###"{ echo a; echo b; }"###);
-        bulk_ya_fc_row_031 => (r#"bulk ya 031"#, r###"(echo sub)"###);
-        bulk_ya_fc_row_032 => (r#"bulk ya 032"#, r###"(( 1 )) || echo no"###);
-        bulk_ya_fc_row_033 => (r#"bulk ya 033"#, r###"(( 0 )) && echo no"###);
-        bulk_ya_fc_row_034 => (r#"bulk ya 034"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_ya_fc_row_035 => (r#"bulk ya 035"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_ya_fc_row_036 => (r#"bulk ya 036"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_ya_fc_row_037 => (r#"bulk ya 037"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_ya_fc_row_038 => (r#"bulk ya 038"#, r###"print -r $(( !0 ))"###);
-        bulk_ya_fc_row_039 => (r#"bulk ya 039"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_ya_fc_row_040 => (r#"bulk ya 040"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_ya_fc_row_041 => (r#"bulk ya 041"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_ya_fc_row_042 => (r#"bulk ya 042"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_ya_fc_row_043 => (r#"bulk ya 043"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_ya_fc_row_044 => (r#"bulk ya 044"#, r###"print -r $(( true ))"###);
-        bulk_ya_fc_row_045 => (r#"bulk ya 045"#, r###"print -r $(( false ))"###);
-        bulk_ya_fc_row_046 => (r#"bulk ya 046"#, r###"[[ -e / ]]; print -r $?"###);
-        bulk_ya_fc_row_047 => (r#"bulk ya 047"#, r###"[[ -d /tmp ]]; print -r $?"###);
-        bulk_ya_fc_row_048 => (r#"bulk ya 048"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yb {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yb_fc_row_001 => (r#"bulk yb 001"#, r###"print -r hello"###);
-        bulk_yb_fc_row_002 => (r#"bulk yb 002"#, r###"echo one two"###);
-        bulk_yb_fc_row_003 => (r#"bulk yb 003"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_yb_fc_row_004 => (r#"bulk yb 004"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_yb_fc_row_005 => (r#"bulk yb 005"#, r###"command true; print -r $?"###);
-        bulk_yb_fc_row_006 => (r#"bulk yb 006"#, r###"builtin true; print -r $?"###);
-        bulk_yb_fc_row_007 => (r#"bulk yb 007"#, r###"if true; then echo t; fi"###);
-        bulk_yb_fc_row_008 => (r#"bulk yb 008"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_yb_fc_row_009 => (r#"bulk yb 009"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_yb_fc_row_010 => (r#"bulk yb 010"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_yb_fc_row_011 => (r#"bulk yb 011"#, r###"repeat 2; do print -r r; done"###);
-        bulk_yb_fc_row_012 => (r#"bulk yb 012"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_yb_fc_row_013 => (r#"bulk yb 013"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_yb_fc_row_014 => (r#"bulk yb 014"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_yb_fc_row_015 => (r#"bulk yb 015"#, r###"{ echo a; echo b; }"###);
-        bulk_yb_fc_row_016 => (r#"bulk yb 016"#, r###"(echo sub)"###);
-        bulk_yb_fc_row_017 => (r#"bulk yb 017"#, r###"(( 1 )) || echo no"###);
-        bulk_yb_fc_row_018 => (r#"bulk yb 018"#, r###"(( 0 )) && echo no"###);
-        bulk_yb_fc_row_019 => (r#"bulk yb 019"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_yb_fc_row_020 => (r#"bulk yb 020"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_yb_fc_row_021 => (r#"bulk yb 021"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_yb_fc_row_022 => (r#"bulk yb 022"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_yb_fc_row_023 => (r#"bulk yb 023"#, r###"print -r $(( !0 ))"###);
-        bulk_yb_fc_row_024 => (r#"bulk yb 024"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_yb_fc_row_025 => (r#"bulk yb 025"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_yb_fc_row_026 => (r#"bulk yb 026"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_yb_fc_row_027 => (r#"bulk yb 027"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_yb_fc_row_028 => (r#"bulk yb 028"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_yb_fc_row_029 => (r#"bulk yb 029"#, r###"print -r $(( true ))"###);
-        bulk_yb_fc_row_030 => (r#"bulk yb 030"#, r###"print -r $(( false ))"###);
-        bulk_yb_fc_row_031 => (r#"bulk yb 031"#, r###"[[ -e / ]]; print -r $?"###);
-        bulk_yb_fc_row_032 => (r#"bulk yb 032"#, r###"[[ -d /tmp ]]; print -r $?"###);
-        bulk_yb_fc_row_033 => (r#"bulk yb 033"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
-        bulk_yb_fc_row_034 => (r#"bulk yb 034"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
-        bulk_yb_fc_row_035 => (r#"bulk yb 035"#, r###"[[ -w /tmp ]]; print -r $?"###);
-        bulk_yb_fc_row_036 => (r#"bulk yb 036"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
-        bulk_yb_fc_row_037 => (r#"bulk yb 037"#, r###"[[ 42 = <-> ]]; print -r $?"###);
-        bulk_yb_fc_row_038 => (r#"bulk yb 038"#, r###"[[ abc = <-> ]]; print -r $?"###);
-        bulk_yb_fc_row_039 => (r#"bulk yb 039"#, r####"[[ host = ##host ]]; print -r $?"####);
-        bulk_yb_fc_row_040 => (r#"bulk yb 040"#, r###"[[ -v x ]]; print -r $?; x=1"###);
-        bulk_yb_fc_row_041 => (r#"bulk yb 041"#, r###"unset y; [[ -v y ]]; print -r $?"###);
-        bulk_yb_fc_row_042 => (r#"bulk yb 042"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
-        bulk_yb_fc_row_043 => (r#"bulk yb 043"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
-        bulk_yb_fc_row_044 => (r#"bulk yb 044"#, r###"[[ abc = a* ]]; print -r $?"###);
-        bulk_yb_fc_row_045 => (r#"bulk yb 045"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
-        bulk_yb_fc_row_046 => (r#"bulk yb 046"#, r###"[[ -z '' ]]; print -r $?"###);
-        bulk_yb_fc_row_047 => (r#"bulk yb 047"#, r###"[[ -n abc ]]; print -r $?"###);
-        bulk_yb_fc_row_048 => (r#"bulk yb 048"#, r###"typeset -i n=10; print -r $n"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yc {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yc_fc_row_001 => (r#"bulk yc 001"#, r###"(( 0 )) && echo no"###);
-        bulk_yc_fc_row_002 => (r#"bulk yc 002"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_yc_fc_row_003 => (r#"bulk yc 003"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_yc_fc_row_004 => (r#"bulk yc 004"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_yc_fc_row_005 => (r#"bulk yc 005"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_yc_fc_row_006 => (r#"bulk yc 006"#, r###"print -r $(( !0 ))"###);
-        bulk_yc_fc_row_007 => (r#"bulk yc 007"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_yc_fc_row_008 => (r#"bulk yc 008"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_yc_fc_row_009 => (r#"bulk yc 009"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_yc_fc_row_010 => (r#"bulk yc 010"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_yc_fc_row_011 => (r#"bulk yc 011"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_yc_fc_row_012 => (r#"bulk yc 012"#, r###"print -r $(( true ))"###);
-        bulk_yc_fc_row_013 => (r#"bulk yc 013"#, r###"print -r $(( false ))"###);
-        bulk_yc_fc_row_014 => (r#"bulk yc 014"#, r###"[[ -e / ]]; print -r $?"###);
-        bulk_yc_fc_row_015 => (r#"bulk yc 015"#, r###"[[ -d /tmp ]]; print -r $?"###);
-        bulk_yc_fc_row_016 => (r#"bulk yc 016"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
-        bulk_yc_fc_row_017 => (r#"bulk yc 017"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
-        bulk_yc_fc_row_018 => (r#"bulk yc 018"#, r###"[[ -w /tmp ]]; print -r $?"###);
-        bulk_yc_fc_row_019 => (r#"bulk yc 019"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
-        bulk_yc_fc_row_020 => (r#"bulk yc 020"#, r###"[[ 42 = <-> ]]; print -r $?"###);
-        bulk_yc_fc_row_021 => (r#"bulk yc 021"#, r###"[[ abc = <-> ]]; print -r $?"###);
-        bulk_yc_fc_row_022 => (r#"bulk yc 022"#, r####"[[ host = ##host ]]; print -r $?"####);
-        bulk_yc_fc_row_023 => (r#"bulk yc 023"#, r###"[[ -v x ]]; print -r $?; x=1"###);
-        bulk_yc_fc_row_024 => (r#"bulk yc 024"#, r###"unset y; [[ -v y ]]; print -r $?"###);
-        bulk_yc_fc_row_025 => (r#"bulk yc 025"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
-        bulk_yc_fc_row_026 => (r#"bulk yc 026"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
-        bulk_yc_fc_row_027 => (r#"bulk yc 027"#, r###"[[ abc = a* ]]; print -r $?"###);
-        bulk_yc_fc_row_028 => (r#"bulk yc 028"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
-        bulk_yc_fc_row_029 => (r#"bulk yc 029"#, r###"[[ -z '' ]]; print -r $?"###);
-        bulk_yc_fc_row_030 => (r#"bulk yc 030"#, r###"[[ -n abc ]]; print -r $?"###);
-        bulk_yc_fc_row_031 => (r#"bulk yc 031"#, r###"typeset -i n=10; print -r $n"###);
-        bulk_yc_fc_row_032 => (r#"bulk yc 032"#, r###"typeset -l n=AbC; print -r $n"###);
-        bulk_yc_fc_row_033 => (r#"bulk yc 033"#, r###"typeset -u n=xy; print -r $n"###);
-        bulk_yc_fc_row_034 => (r#"bulk yc 034"#, r###"typeset -Z5 n=7; print -r $n"###);
-        bulk_yc_fc_row_035 => (r#"bulk yc 035"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
-        bulk_yc_fc_row_036 => (r#"bulk yc 036"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
-        bulk_yc_fc_row_037 => (r#"bulk yc 037"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
-        bulk_yc_fc_row_038 => (r#"bulk yc 038"#, r###"unset v; print -r ${v:-def}"###);
-        bulk_yc_fc_row_039 => (r#"bulk yc 039"#, r###"v=set; print -r ${v:+yes}"###);
-        bulk_yc_fc_row_040 => (r#"bulk yc 040"#, r###"unset v; : ${v::=def}; print -r $v"###);
-        bulk_yc_fc_row_041 => (r#"bulk yc 041"#, r###"print -r ${PWD:h}"###);
-        bulk_yc_fc_row_042 => (r#"bulk yc 042"#, r###"print -r ${PWD:t}"###);
-        bulk_yc_fc_row_043 => (r#"bulk yc 043"#, r###"true | true; print -r $?"###);
-        bulk_yc_fc_row_044 => (r#"bulk yc 044"#, r###"true | false; print -r $?"###);
-        bulk_yc_fc_row_045 => (r#"bulk yc 045"#, r###"print -r ${pipestatus[1]}; true | false"###);
-        bulk_yc_fc_row_046 => (r#"bulk yc 046"#, r###"print -r ${#pipestatus}; true | true | true"###);
-        bulk_yc_fc_row_047 => (r#"bulk yc 047"#, r###"set -- a b c; shift; print -r $1"###);
-        bulk_yc_fc_row_048 => (r#"bulk yc 048"#, r###"set -- a b c; shift 2; print -r $#"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yd {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yd_fc_row_001 => (r#"bulk yd 001"#, r###"[[ -w /tmp ]]; print -r $?"###);
-        bulk_yd_fc_row_002 => (r#"bulk yd 002"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
-        bulk_yd_fc_row_003 => (r#"bulk yd 003"#, r###"[[ 42 = <-> ]]; print -r $?"###);
-        bulk_yd_fc_row_004 => (r#"bulk yd 004"#, r###"[[ abc = <-> ]]; print -r $?"###);
-        bulk_yd_fc_row_005 => (r#"bulk yd 005"#, r####"[[ host = ##host ]]; print -r $?"####);
-        bulk_yd_fc_row_006 => (r#"bulk yd 006"#, r###"[[ -v x ]]; print -r $?; x=1"###);
-        bulk_yd_fc_row_007 => (r#"bulk yd 007"#, r###"unset y; [[ -v y ]]; print -r $?"###);
-        bulk_yd_fc_row_008 => (r#"bulk yd 008"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
-        bulk_yd_fc_row_009 => (r#"bulk yd 009"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
-        bulk_yd_fc_row_010 => (r#"bulk yd 010"#, r###"[[ abc = a* ]]; print -r $?"###);
-        bulk_yd_fc_row_011 => (r#"bulk yd 011"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
-        bulk_yd_fc_row_012 => (r#"bulk yd 012"#, r###"[[ -z '' ]]; print -r $?"###);
-        bulk_yd_fc_row_013 => (r#"bulk yd 013"#, r###"[[ -n abc ]]; print -r $?"###);
-        bulk_yd_fc_row_014 => (r#"bulk yd 014"#, r###"typeset -i n=10; print -r $n"###);
-        bulk_yd_fc_row_015 => (r#"bulk yd 015"#, r###"typeset -l n=AbC; print -r $n"###);
-        bulk_yd_fc_row_016 => (r#"bulk yd 016"#, r###"typeset -u n=xy; print -r $n"###);
-        bulk_yd_fc_row_017 => (r#"bulk yd 017"#, r###"typeset -Z5 n=7; print -r $n"###);
-        bulk_yd_fc_row_018 => (r#"bulk yd 018"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
-        bulk_yd_fc_row_019 => (r#"bulk yd 019"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
-        bulk_yd_fc_row_020 => (r#"bulk yd 020"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
-        bulk_yd_fc_row_021 => (r#"bulk yd 021"#, r###"unset v; print -r ${v:-def}"###);
-        bulk_yd_fc_row_022 => (r#"bulk yd 022"#, r###"v=set; print -r ${v:+yes}"###);
-        bulk_yd_fc_row_023 => (r#"bulk yd 023"#, r###"unset v; : ${v::=def}; print -r $v"###);
-        bulk_yd_fc_row_024 => (r#"bulk yd 024"#, r###"print -r ${PWD:h}"###);
-        bulk_yd_fc_row_025 => (r#"bulk yd 025"#, r###"print -r ${PWD:t}"###);
-        bulk_yd_fc_row_026 => (r#"bulk yd 026"#, r###"true | true; print -r $?"###);
-        bulk_yd_fc_row_027 => (r#"bulk yd 027"#, r###"true | false; print -r $?"###);
-        bulk_yd_fc_row_028 => (r#"bulk yd 028"#, r###"print -r ${pipestatus[1]}; true | false"###);
-        bulk_yd_fc_row_029 => (r#"bulk yd 029"#, r###"print -r ${#pipestatus}; true | true | true"###);
-        bulk_yd_fc_row_030 => (r#"bulk yd 030"#, r###"set -- a b c; shift; print -r $1"###);
-        bulk_yd_fc_row_031 => (r#"bulk yd 031"#, r###"set -- a b c; shift 2; print -r $#"###);
-        bulk_yd_fc_row_032 => (r#"bulk yd 032"#, r###"fn(){ print -r $1; }; fn x"###);
-        bulk_yd_fc_row_033 => (r#"bulk yd 033"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
-        bulk_yd_fc_row_034 => (r#"bulk yd 034"#, r###"fn(){ return 2; }; fn; print -r $?"###);
-        bulk_yd_fc_row_035 => (r#"bulk yd 035"#, r###"print -r ${(q)x}; x=hi"###);
-        bulk_yd_fc_row_036 => (r#"bulk yd 036"#, r###"print -r ${(qq)x}; x=hi"###);
-        bulk_yd_fc_row_037 => (r#"bulk yd 037"#, r###"x=hi; print -r ${(q-)x}"###);
-        bulk_yd_fc_row_038 => (r#"bulk yd 038"#, r###"x=hi; print -r ${(q+)x}"###);
-        bulk_yd_fc_row_039 => (r#"bulk yd 039"#, r###"print -r ${(w)w}; w=a b c"###);
-        bulk_yd_fc_row_040 => (r#"bulk yd 040"#, r###"print -r ${(u)a}; a=(a a b)"###);
-        bulk_yd_fc_row_041 => (r#"bulk yd 041"#, r###"print -r ${(o)a}; a=(c b a)"###);
-        bulk_yd_fc_row_042 => (r#"bulk yd 042"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
-        bulk_yd_fc_row_043 => (r#"bulk yd 043"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
-        bulk_yd_fc_row_044 => (r#"bulk yd 044"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
-        bulk_yd_fc_row_045 => (r#"bulk yd 045"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
-        bulk_yd_fc_row_046 => (r#"bulk yd 046"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
-        bulk_yd_fc_row_047 => (r#"bulk yd 047"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
-        bulk_yd_fc_row_048 => (r#"bulk yd 048"#, r###"print -r ${+options}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_ye {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_ye_fc_row_001 => (r#"bulk ye 001"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
-        bulk_ye_fc_row_002 => (r#"bulk ye 002"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
-        bulk_ye_fc_row_003 => (r#"bulk ye 003"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
-        bulk_ye_fc_row_004 => (r#"bulk ye 004"#, r###"unset v; print -r ${v:-def}"###);
-        bulk_ye_fc_row_005 => (r#"bulk ye 005"#, r###"v=set; print -r ${v:+yes}"###);
-        bulk_ye_fc_row_006 => (r#"bulk ye 006"#, r###"unset v; : ${v::=def}; print -r $v"###);
-        bulk_ye_fc_row_007 => (r#"bulk ye 007"#, r###"print -r ${PWD:h}"###);
-        bulk_ye_fc_row_008 => (r#"bulk ye 008"#, r###"print -r ${PWD:t}"###);
-        bulk_ye_fc_row_009 => (r#"bulk ye 009"#, r###"true | true; print -r $?"###);
-        bulk_ye_fc_row_010 => (r#"bulk ye 010"#, r###"true | false; print -r $?"###);
-        bulk_ye_fc_row_011 => (r#"bulk ye 011"#, r###"print -r ${pipestatus[1]}; true | false"###);
-        bulk_ye_fc_row_012 => (r#"bulk ye 012"#, r###"print -r ${#pipestatus}; true | true | true"###);
-        bulk_ye_fc_row_013 => (r#"bulk ye 013"#, r###"set -- a b c; shift; print -r $1"###);
-        bulk_ye_fc_row_014 => (r#"bulk ye 014"#, r###"set -- a b c; shift 2; print -r $#"###);
-        bulk_ye_fc_row_015 => (r#"bulk ye 015"#, r###"fn(){ print -r $1; }; fn x"###);
-        bulk_ye_fc_row_016 => (r#"bulk ye 016"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
-        bulk_ye_fc_row_017 => (r#"bulk ye 017"#, r###"fn(){ return 2; }; fn; print -r $?"###);
-        bulk_ye_fc_row_018 => (r#"bulk ye 018"#, r###"print -r ${(q)x}; x=hi"###);
-        bulk_ye_fc_row_019 => (r#"bulk ye 019"#, r###"print -r ${(qq)x}; x=hi"###);
-        bulk_ye_fc_row_020 => (r#"bulk ye 020"#, r###"x=hi; print -r ${(q-)x}"###);
-        bulk_ye_fc_row_021 => (r#"bulk ye 021"#, r###"x=hi; print -r ${(q+)x}"###);
-        bulk_ye_fc_row_022 => (r#"bulk ye 022"#, r###"print -r ${(w)w}; w=a b c"###);
-        bulk_ye_fc_row_023 => (r#"bulk ye 023"#, r###"print -r ${(u)a}; a=(a a b)"###);
-        bulk_ye_fc_row_024 => (r#"bulk ye 024"#, r###"print -r ${(o)a}; a=(c b a)"###);
-        bulk_ye_fc_row_025 => (r#"bulk ye 025"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
-        bulk_ye_fc_row_026 => (r#"bulk ye 026"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
-        bulk_ye_fc_row_027 => (r#"bulk ye 027"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
-        bulk_ye_fc_row_028 => (r#"bulk ye 028"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
-        bulk_ye_fc_row_029 => (r#"bulk ye 029"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
-        bulk_ye_fc_row_030 => (r#"bulk ye 030"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
-        bulk_ye_fc_row_031 => (r#"bulk ye 031"#, r###"print -r ${+options}"###);
-        bulk_ye_fc_row_032 => (r#"bulk ye 032"#, r###"print -r ${+parameters}"###);
-        bulk_ye_fc_row_033 => (r#"bulk ye 033"#, r###"print -r ${+aliases}"###);
-        bulk_ye_fc_row_034 => (r#"bulk ye 034"#, r###"print -r ${+functions}"###);
-        bulk_ye_fc_row_035 => (r#"bulk ye 035"#, r###"print -r $ZSH_NAME"###);
-        bulk_ye_fc_row_036 => (r#"bulk ye 036"#, r###"print -r ${ZSH_VERSION%%.*}"###);
-        bulk_ye_fc_row_037 => (r#"bulk ye 037"#, r###"whence -w print"###);
-        bulk_ye_fc_row_038 => (r#"bulk ye 038"#, r###"command -v true"###);
-        bulk_ye_fc_row_039 => (r#"bulk ye 039"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_ye_fc_row_040 => (r#"bulk ye 040"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
-        bulk_ye_fc_row_041 => (r#"bulk ye 041"#, r###"read -r line <<< 'one two'; print -r $line"###);
-        bulk_ye_fc_row_042 => (r#"bulk ye 042"#, r###"cat <<< 'herestring'"###);
-        bulk_ye_fc_row_043 => (r#"bulk ye 043"#, r###"echo hello 2>/dev/null"###);
-        bulk_ye_fc_row_044 => (r#"bulk ye 044"#, r###"printf '%s\n' a b c | head -1"###);
-        bulk_ye_fc_row_045 => (r#"bulk ye 045"#, r###"true && echo yes"###);
-        bulk_ye_fc_row_046 => (r#"bulk ye 046"#, r###"false || echo yes"###);
-        bulk_ye_fc_row_047 => (r#"bulk ye 047"#, r###"(exit 3); print -r $?"###);
-        bulk_ye_fc_row_048 => (r#"bulk ye 048"#, r###"print -r ${status}; (exit 4)"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yf {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yf_fc_row_001 => (r#"bulk yf 001"#, r###"print -r ${(q)x}; x=hi"###);
-        bulk_yf_fc_row_002 => (r#"bulk yf 002"#, r###"print -r ${(qq)x}; x=hi"###);
-        bulk_yf_fc_row_003 => (r#"bulk yf 003"#, r###"x=hi; print -r ${(q-)x}"###);
-        bulk_yf_fc_row_004 => (r#"bulk yf 004"#, r###"x=hi; print -r ${(q+)x}"###);
-        bulk_yf_fc_row_005 => (r#"bulk yf 005"#, r###"print -r ${(w)w}; w=a b c"###);
-        bulk_yf_fc_row_006 => (r#"bulk yf 006"#, r###"print -r ${(u)a}; a=(a a b)"###);
-        bulk_yf_fc_row_007 => (r#"bulk yf 007"#, r###"print -r ${(o)a}; a=(c b a)"###);
-        bulk_yf_fc_row_008 => (r#"bulk yf 008"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
-        bulk_yf_fc_row_009 => (r#"bulk yf 009"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
-        bulk_yf_fc_row_010 => (r#"bulk yf 010"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
-        bulk_yf_fc_row_011 => (r#"bulk yf 011"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
-        bulk_yf_fc_row_012 => (r#"bulk yf 012"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
-        bulk_yf_fc_row_013 => (r#"bulk yf 013"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
-        bulk_yf_fc_row_014 => (r#"bulk yf 014"#, r###"print -r ${+options}"###);
-        bulk_yf_fc_row_015 => (r#"bulk yf 015"#, r###"print -r ${+parameters}"###);
-        bulk_yf_fc_row_016 => (r#"bulk yf 016"#, r###"print -r ${+aliases}"###);
-        bulk_yf_fc_row_017 => (r#"bulk yf 017"#, r###"print -r ${+functions}"###);
-        bulk_yf_fc_row_018 => (r#"bulk yf 018"#, r###"print -r $ZSH_NAME"###);
-        bulk_yf_fc_row_019 => (r#"bulk yf 019"#, r###"print -r ${ZSH_VERSION%%.*}"###);
-        bulk_yf_fc_row_020 => (r#"bulk yf 020"#, r###"whence -w print"###);
-        bulk_yf_fc_row_021 => (r#"bulk yf 021"#, r###"command -v true"###);
-        bulk_yf_fc_row_022 => (r#"bulk yf 022"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_yf_fc_row_023 => (r#"bulk yf 023"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
-        bulk_yf_fc_row_024 => (r#"bulk yf 024"#, r###"read -r line <<< 'one two'; print -r $line"###);
-        bulk_yf_fc_row_025 => (r#"bulk yf 025"#, r###"cat <<< 'herestring'"###);
-        bulk_yf_fc_row_026 => (r#"bulk yf 026"#, r###"echo hello 2>/dev/null"###);
-        bulk_yf_fc_row_027 => (r#"bulk yf 027"#, r###"printf '%s\n' a b c | head -1"###);
-        bulk_yf_fc_row_028 => (r#"bulk yf 028"#, r###"true && echo yes"###);
-        bulk_yf_fc_row_029 => (r#"bulk yf 029"#, r###"false || echo yes"###);
-        bulk_yf_fc_row_030 => (r#"bulk yf 030"#, r###"(exit 3); print -r $?"###);
-        bulk_yf_fc_row_031 => (r#"bulk yf 031"#, r###"print -r ${status}; (exit 4)"###);
-        bulk_yf_fc_row_032 => (r#"bulk yf 032"#, r###"print -r $(( 1_000 + 1 ))"###);
-        bulk_yf_fc_row_033 => (r#"bulk yf 033"#, r###"print -r $(( 5#101 ))"###);
-        bulk_yf_fc_row_034 => (r#"bulk yf 034"#, r###"print -r $(( 0b1111 ))"###);
-        bulk_yf_fc_row_035 => (r#"bulk yf 035"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
-        bulk_yf_fc_row_036 => (r#"bulk yf 036"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
-        bulk_yf_fc_row_037 => (r#"bulk yf 037"#, r###"typeset -F2 f=3.14; print -r $f"###);
-        bulk_yf_fc_row_038 => (r#"bulk yf 038"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
-        bulk_yf_fc_row_039 => (r#"bulk yf 039"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
-        bulk_yf_fc_row_040 => (r#"bulk yf 040"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
-        bulk_yf_fc_row_041 => (r#"bulk yf 041"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
-        bulk_yf_fc_row_042 => (r#"bulk yf 042"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
-        bulk_yf_fc_row_043 => (r#"bulk yf 043"#, r###"print -r ${#x}; x=hello"###);
-        bulk_yf_fc_row_044 => (r#"bulk yf 044"#, r###"print -r ${#a}; a=(a b c)"###);
-        bulk_yf_fc_row_045 => (r#"bulk yf 045"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
-        bulk_yf_fc_row_046 => (r#"bulk yf 046"#, r###"print -r ${(b)x}; x=hi"###);
-        bulk_yf_fc_row_047 => (r#"bulk yf 047"#, r###"print -r ${(e):-2+2}"###);
-        bulk_yf_fc_row_048 => (r#"bulk yf 048"#, r###"print -r ${(P)r}; r=HOME"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yg {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yg_fc_row_001 => (r#"bulk yg 001"#, r###"print -r ${+aliases}"###);
-        bulk_yg_fc_row_002 => (r#"bulk yg 002"#, r###"print -r ${+functions}"###);
-        bulk_yg_fc_row_003 => (r#"bulk yg 003"#, r###"print -r $ZSH_NAME"###);
-        bulk_yg_fc_row_004 => (r#"bulk yg 004"#, r###"print -r ${ZSH_VERSION%%.*}"###);
-        bulk_yg_fc_row_005 => (r#"bulk yg 005"#, r###"whence -w print"###);
-        bulk_yg_fc_row_006 => (r#"bulk yg 006"#, r###"command -v true"###);
-        bulk_yg_fc_row_007 => (r#"bulk yg 007"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_yg_fc_row_008 => (r#"bulk yg 008"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
-        bulk_yg_fc_row_009 => (r#"bulk yg 009"#, r###"read -r line <<< 'one two'; print -r $line"###);
-        bulk_yg_fc_row_010 => (r#"bulk yg 010"#, r###"cat <<< 'herestring'"###);
-        bulk_yg_fc_row_011 => (r#"bulk yg 011"#, r###"echo hello 2>/dev/null"###);
-        bulk_yg_fc_row_012 => (r#"bulk yg 012"#, r###"printf '%s\n' a b c | head -1"###);
-        bulk_yg_fc_row_013 => (r#"bulk yg 013"#, r###"true && echo yes"###);
-        bulk_yg_fc_row_014 => (r#"bulk yg 014"#, r###"false || echo yes"###);
-        bulk_yg_fc_row_015 => (r#"bulk yg 015"#, r###"(exit 3); print -r $?"###);
-        bulk_yg_fc_row_016 => (r#"bulk yg 016"#, r###"print -r ${status}; (exit 4)"###);
-        bulk_yg_fc_row_017 => (r#"bulk yg 017"#, r###"print -r $(( 1_000 + 1 ))"###);
-        bulk_yg_fc_row_018 => (r#"bulk yg 018"#, r###"print -r $(( 5#101 ))"###);
-        bulk_yg_fc_row_019 => (r#"bulk yg 019"#, r###"print -r $(( 0b1111 ))"###);
-        bulk_yg_fc_row_020 => (r#"bulk yg 020"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
-        bulk_yg_fc_row_021 => (r#"bulk yg 021"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
-        bulk_yg_fc_row_022 => (r#"bulk yg 022"#, r###"typeset -F2 f=3.14; print -r $f"###);
-        bulk_yg_fc_row_023 => (r#"bulk yg 023"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
-        bulk_yg_fc_row_024 => (r#"bulk yg 024"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
-        bulk_yg_fc_row_025 => (r#"bulk yg 025"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
-        bulk_yg_fc_row_026 => (r#"bulk yg 026"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
-        bulk_yg_fc_row_027 => (r#"bulk yg 027"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
-        bulk_yg_fc_row_028 => (r#"bulk yg 028"#, r###"print -r ${#x}; x=hello"###);
-        bulk_yg_fc_row_029 => (r#"bulk yg 029"#, r###"print -r ${#a}; a=(a b c)"###);
-        bulk_yg_fc_row_030 => (r#"bulk yg 030"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
-        bulk_yg_fc_row_031 => (r#"bulk yg 031"#, r###"print -r ${(b)x}; x=hi"###);
-        bulk_yg_fc_row_032 => (r#"bulk yg 032"#, r###"print -r ${(e):-2+2}"###);
-        bulk_yg_fc_row_033 => (r#"bulk yg 033"#, r###"print -r ${(P)r}; r=HOME"###);
-        bulk_yg_fc_row_034 => (r#"bulk yg 034"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
-        bulk_yg_fc_row_035 => (r#"bulk yg 035"#, r###"print -r ${(eu)n}; n=(a A b)"###);
-        bulk_yg_fc_row_036 => (r#"bulk yg 036"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
-        bulk_yg_fc_row_037 => (r#"bulk yg 037"#, r###"typeset -h hv=1; print -r ${+hv}"###);
-        bulk_yg_fc_row_038 => (r#"bulk yg 038"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
-        bulk_yg_fc_row_039 => (r#"bulk yg 039"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
-        bulk_yg_fc_row_040 => (r#"bulk yg 040"#, r###"while :; do break; print -r n; done; print -r after"###);
-        bulk_yg_fc_row_041 => (r#"bulk yg 041"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
-        bulk_yg_fc_row_042 => (r#"bulk yg 042"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
-        bulk_yg_fc_row_043 => (r#"bulk yg 043"#, r###"print -r ${argv[1]}; set -- p q"###);
-        bulk_yg_fc_row_044 => (r#"bulk yg 044"#, r###"print -r $ARGC; set -- a b"###);
-        bulk_yg_fc_row_045 => (r#"bulk yg 045"#, r###"print -r ${dirstack[1]:-empty}"###);
-        bulk_yg_fc_row_046 => (r#"bulk yg 046"#, r###"print -r ${+pipestatus}"###);
-        bulk_yg_fc_row_047 => (r#"bulk yg 047"#, r###"print -r ${+history}"###);
-        bulk_yg_fc_row_048 => (r#"bulk yg 048"#, r###"print -r ${+commands}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yh {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yh_fc_row_001 => (r#"bulk yh 001"#, r###"print -r $(( 5#101 ))"###);
-        bulk_yh_fc_row_002 => (r#"bulk yh 002"#, r###"print -r $(( 0b1111 ))"###);
-        bulk_yh_fc_row_003 => (r#"bulk yh 003"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
-        bulk_yh_fc_row_004 => (r#"bulk yh 004"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
-        bulk_yh_fc_row_005 => (r#"bulk yh 005"#, r###"typeset -F2 f=3.14; print -r $f"###);
-        bulk_yh_fc_row_006 => (r#"bulk yh 006"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
-        bulk_yh_fc_row_007 => (r#"bulk yh 007"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
-        bulk_yh_fc_row_008 => (r#"bulk yh 008"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
-        bulk_yh_fc_row_009 => (r#"bulk yh 009"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
-        bulk_yh_fc_row_010 => (r#"bulk yh 010"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
-        bulk_yh_fc_row_011 => (r#"bulk yh 011"#, r###"print -r ${#x}; x=hello"###);
-        bulk_yh_fc_row_012 => (r#"bulk yh 012"#, r###"print -r ${#a}; a=(a b c)"###);
-        bulk_yh_fc_row_013 => (r#"bulk yh 013"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
-        bulk_yh_fc_row_014 => (r#"bulk yh 014"#, r###"print -r ${(b)x}; x=hi"###);
-        bulk_yh_fc_row_015 => (r#"bulk yh 015"#, r###"print -r ${(e):-2+2}"###);
-        bulk_yh_fc_row_016 => (r#"bulk yh 016"#, r###"print -r ${(P)r}; r=HOME"###);
-        bulk_yh_fc_row_017 => (r#"bulk yh 017"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
-        bulk_yh_fc_row_018 => (r#"bulk yh 018"#, r###"print -r ${(eu)n}; n=(a A b)"###);
-        bulk_yh_fc_row_019 => (r#"bulk yh 019"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
-        bulk_yh_fc_row_020 => (r#"bulk yh 020"#, r###"typeset -h hv=1; print -r ${+hv}"###);
-        bulk_yh_fc_row_021 => (r#"bulk yh 021"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
-        bulk_yh_fc_row_022 => (r#"bulk yh 022"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
-        bulk_yh_fc_row_023 => (r#"bulk yh 023"#, r###"while :; do break; print -r n; done; print -r after"###);
-        bulk_yh_fc_row_024 => (r#"bulk yh 024"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
-        bulk_yh_fc_row_025 => (r#"bulk yh 025"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
-        bulk_yh_fc_row_026 => (r#"bulk yh 026"#, r###"print -r ${argv[1]}; set -- p q"###);
-        bulk_yh_fc_row_027 => (r#"bulk yh 027"#, r###"print -r $ARGC; set -- a b"###);
-        bulk_yh_fc_row_028 => (r#"bulk yh 028"#, r###"print -r ${dirstack[1]:-empty}"###);
-        bulk_yh_fc_row_029 => (r#"bulk yh 029"#, r###"print -r ${+pipestatus}"###);
-        bulk_yh_fc_row_030 => (r#"bulk yh 030"#, r###"print -r ${+history}"###);
-        bulk_yh_fc_row_031 => (r#"bulk yh 031"#, r###"print -r ${+commands}"###);
-        bulk_yh_fc_row_032 => (r#"bulk yh 032"#, r###"print -r ${+builtins}"###);
-        bulk_yh_fc_row_033 => (r#"bulk yh 033"#, r###"print -r ${+widgets}"###);
-        bulk_yh_fc_row_034 => (r#"bulk yh 034"#, r###"print -r ${+terminfo}"###);
-        bulk_yh_fc_row_035 => (r#"bulk yh 035"#, r###"print -r ${+modules}"###);
-        bulk_yh_fc_row_036 => (r#"bulk yh 036"#, r###"print -r ${+patchars}"###);
-        bulk_yh_fc_row_037 => (r#"bulk yh 037"#, r###"print -r ${+reswords}"###);
-        bulk_yh_fc_row_038 => (r#"bulk yh 038"#, r###"print -r ${+dis_aliases}"###);
-        bulk_yh_fc_row_039 => (r#"bulk yh 039"#, r###"print -r ${+dis_functions}"###);
-        bulk_yh_fc_row_040 => (r#"bulk yh 040"#, r###"print -r ${+parameters[(I)PATH]}"###);
-        bulk_yh_fc_row_041 => (r#"bulk yh 041"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
-        bulk_yh_fc_row_042 => (r#"bulk yh 042"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
-        bulk_yh_fc_row_043 => (r#"bulk yh 043"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
-        bulk_yh_fc_row_044 => (r#"bulk yh 044"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
-        bulk_yh_fc_row_045 => (r#"bulk yh 045"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
-        bulk_yh_fc_row_046 => (r#"bulk yh 046"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
-        bulk_yh_fc_row_047 => (r#"bulk yh 047"#, r###"print -r $(( 128 >> 2 ))"###);
-        bulk_yh_fc_row_048 => (r#"bulk yh 048"#, r###"print -r $(( ~(255) & 0xff ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yi {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yi_fc_row_001 => (r#"bulk yi 001"#, r###"print -r ${(eu)n}; n=(a A b)"###);
-        bulk_yi_fc_row_002 => (r#"bulk yi 002"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
-        bulk_yi_fc_row_003 => (r#"bulk yi 003"#, r###"typeset -h hv=1; print -r ${+hv}"###);
-        bulk_yi_fc_row_004 => (r#"bulk yi 004"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
-        bulk_yi_fc_row_005 => (r#"bulk yi 005"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
-        bulk_yi_fc_row_006 => (r#"bulk yi 006"#, r###"while :; do break; print -r n; done; print -r after"###);
-        bulk_yi_fc_row_007 => (r#"bulk yi 007"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
-        bulk_yi_fc_row_008 => (r#"bulk yi 008"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
-        bulk_yi_fc_row_009 => (r#"bulk yi 009"#, r###"print -r ${argv[1]}; set -- p q"###);
-        bulk_yi_fc_row_010 => (r#"bulk yi 010"#, r###"print -r $ARGC; set -- a b"###);
-        bulk_yi_fc_row_011 => (r#"bulk yi 011"#, r###"print -r ${dirstack[1]:-empty}"###);
-        bulk_yi_fc_row_012 => (r#"bulk yi 012"#, r###"print -r ${+pipestatus}"###);
-        bulk_yi_fc_row_013 => (r#"bulk yi 013"#, r###"print -r ${+history}"###);
-        bulk_yi_fc_row_014 => (r#"bulk yi 014"#, r###"print -r ${+commands}"###);
-        bulk_yi_fc_row_015 => (r#"bulk yi 015"#, r###"print -r ${+builtins}"###);
-        bulk_yi_fc_row_016 => (r#"bulk yi 016"#, r###"print -r ${+widgets}"###);
-        bulk_yi_fc_row_017 => (r#"bulk yi 017"#, r###"print -r ${+terminfo}"###);
-        bulk_yi_fc_row_018 => (r#"bulk yi 018"#, r###"print -r ${+modules}"###);
-        bulk_yi_fc_row_019 => (r#"bulk yi 019"#, r###"print -r ${+patchars}"###);
-        bulk_yi_fc_row_020 => (r#"bulk yi 020"#, r###"print -r ${+reswords}"###);
-        bulk_yi_fc_row_021 => (r#"bulk yi 021"#, r###"print -r ${+dis_aliases}"###);
-        bulk_yi_fc_row_022 => (r#"bulk yi 022"#, r###"print -r ${+dis_functions}"###);
-        bulk_yi_fc_row_023 => (r#"bulk yi 023"#, r###"print -r ${+parameters[(I)PATH]}"###);
-        bulk_yi_fc_row_024 => (r#"bulk yi 024"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
-        bulk_yi_fc_row_025 => (r#"bulk yi 025"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
-        bulk_yi_fc_row_026 => (r#"bulk yi 026"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
-        bulk_yi_fc_row_027 => (r#"bulk yi 027"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
-        bulk_yi_fc_row_028 => (r#"bulk yi 028"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
-        bulk_yi_fc_row_029 => (r#"bulk yi 029"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
-        bulk_yi_fc_row_030 => (r#"bulk yi 030"#, r###"print -r $(( 128 >> 2 ))"###);
-        bulk_yi_fc_row_031 => (r#"bulk yi 031"#, r###"print -r $(( ~(255) & 0xff ))"###);
-        bulk_yi_fc_row_032 => (r#"bulk yi 032"#, r###"print -r $(( 3 <|> 5 ))"###);
-        bulk_yi_fc_row_033 => (r#"bulk yi 033"#, r###"print -r $(( 3 <> 5 ))"###);
-        bulk_yi_fc_row_034 => (r#"bulk yi 034"#, r###"(( 5#11 )); print -r $?"###);
-        bulk_yi_fc_row_035 => (r#"bulk yi 035"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
-        bulk_yi_fc_row_036 => (r#"bulk yi 036"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
-        bulk_yi_fc_row_037 => (r#"bulk yi 037"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
-        bulk_yi_fc_row_038 => (r#"bulk yi 038"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
-        bulk_yi_fc_row_039 => (r#"bulk yi 039"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
-        bulk_yi_fc_row_040 => (r#"bulk yi 040"#, r###"typeset -i8 n=10; print -r $n"###);
-        bulk_yi_fc_row_041 => (r#"bulk yi 041"#, r###"typeset -i16 n=255; print -r $n"###);
-        bulk_yi_fc_row_042 => (r#"bulk yi 042"#, r###"typeset -E2 n=4000; print -r $n"###);
-        bulk_yi_fc_row_043 => (r#"bulk yi 043"#, r###"typeset -R4 n=hi; print -r $n"###);
-        bulk_yi_fc_row_044 => (r#"bulk yi 044"#, r###"typeset +L n=Ab; print -r $n"###);
-        bulk_yi_fc_row_045 => (r#"bulk yi 045"#, r###"typeset +U n=xy; print -r $n"###);
-        bulk_yi_fc_row_046 => (r#"bulk yi 046"#, r###"typeset +i n=4; print -r $n"###);
-        bulk_yi_fc_row_047 => (r#"bulk yi 047"#, r###"export EX=1; print -r $EX; unset EX"###);
-        bulk_yi_fc_row_048 => (r#"bulk yi 048"#, r###"readonly ro=5; print -r $ro"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yj {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yj_fc_row_001 => (r#"bulk yj 001"#, r###"print -r ${+terminfo}"###);
-        bulk_yj_fc_row_002 => (r#"bulk yj 002"#, r###"print -r ${+modules}"###);
-        bulk_yj_fc_row_003 => (r#"bulk yj 003"#, r###"print -r ${+patchars}"###);
-        bulk_yj_fc_row_004 => (r#"bulk yj 004"#, r###"print -r ${+reswords}"###);
-        bulk_yj_fc_row_005 => (r#"bulk yj 005"#, r###"print -r ${+dis_aliases}"###);
-        bulk_yj_fc_row_006 => (r#"bulk yj 006"#, r###"print -r ${+dis_functions}"###);
-        bulk_yj_fc_row_007 => (r#"bulk yj 007"#, r###"print -r ${+parameters[(I)PATH]}"###);
-        bulk_yj_fc_row_008 => (r#"bulk yj 008"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
-        bulk_yj_fc_row_009 => (r#"bulk yj 009"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
-        bulk_yj_fc_row_010 => (r#"bulk yj 010"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
-        bulk_yj_fc_row_011 => (r#"bulk yj 011"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
-        bulk_yj_fc_row_012 => (r#"bulk yj 012"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
-        bulk_yj_fc_row_013 => (r#"bulk yj 013"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
-        bulk_yj_fc_row_014 => (r#"bulk yj 014"#, r###"print -r $(( 128 >> 2 ))"###);
-        bulk_yj_fc_row_015 => (r#"bulk yj 015"#, r###"print -r $(( ~(255) & 0xff ))"###);
-        bulk_yj_fc_row_016 => (r#"bulk yj 016"#, r###"print -r $(( 3 <|> 5 ))"###);
-        bulk_yj_fc_row_017 => (r#"bulk yj 017"#, r###"print -r $(( 3 <> 5 ))"###);
-        bulk_yj_fc_row_018 => (r#"bulk yj 018"#, r###"(( 5#11 )); print -r $?"###);
-        bulk_yj_fc_row_019 => (r#"bulk yj 019"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
-        bulk_yj_fc_row_020 => (r#"bulk yj 020"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
-        bulk_yj_fc_row_021 => (r#"bulk yj 021"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
-        bulk_yj_fc_row_022 => (r#"bulk yj 022"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
-        bulk_yj_fc_row_023 => (r#"bulk yj 023"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
-        bulk_yj_fc_row_024 => (r#"bulk yj 024"#, r###"typeset -i8 n=10; print -r $n"###);
-        bulk_yj_fc_row_025 => (r#"bulk yj 025"#, r###"typeset -i16 n=255; print -r $n"###);
-        bulk_yj_fc_row_026 => (r#"bulk yj 026"#, r###"typeset -E2 n=4000; print -r $n"###);
-        bulk_yj_fc_row_027 => (r#"bulk yj 027"#, r###"typeset -R4 n=hi; print -r $n"###);
-        bulk_yj_fc_row_028 => (r#"bulk yj 028"#, r###"typeset +L n=Ab; print -r $n"###);
-        bulk_yj_fc_row_029 => (r#"bulk yj 029"#, r###"typeset +U n=xy; print -r $n"###);
-        bulk_yj_fc_row_030 => (r#"bulk yj 030"#, r###"typeset +i n=4; print -r $n"###);
-        bulk_yj_fc_row_031 => (r#"bulk yj 031"#, r###"export EX=1; print -r $EX; unset EX"###);
-        bulk_yj_fc_row_032 => (r#"bulk yj 032"#, r###"readonly ro=5; print -r $ro"###);
-        bulk_yj_fc_row_033 => (r#"bulk yj 033"#, r###"print -r ${${v:-fb}}; unset v"###);
-        bulk_yj_fc_row_034 => (r#"bulk yj 034"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
-        bulk_yj_fc_row_035 => (r#"bulk yj 035"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
-        bulk_yj_fc_row_036 => (r#"bulk yj 036"#, r###"word=  hi  ; print -r ${(W)word}"###);
-        bulk_yj_fc_row_037 => (r#"bulk yj 037"#, r###"print -r ${(z)word}; word=a b c"###);
-        bulk_yj_fc_row_038 => (r#"bulk yj 038"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
-        bulk_yj_fc_row_039 => (r#"bulk yj 039"#, r###"print -r ${(A)x}; x=1 2"###);
-        bulk_yj_fc_row_040 => (r#"bulk yj 040"#, r###"print -r ${(aa)x}; x=(1 2)"###);
-        bulk_yj_fc_row_041 => (r#"bulk yj 041"#, r###"print -r ${(%)2}"###);
-        bulk_yj_fc_row_042 => (r#"bulk yj 042"#, r###"o=8; print -r ${(0)o}"###);
-        bulk_yj_fc_row_043 => (r#"bulk yj 043"#, r###"str=abc.def; print -r ${str:r}"###);
-        bulk_yj_fc_row_044 => (r#"bulk yj 044"#, r###"str=abc.def; print -r ${str:e}"###);
-        bulk_yj_fc_row_045 => (r#"bulk yj 045"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
-        bulk_yj_fc_row_046 => (r#"bulk yj 046"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
-        bulk_yj_fc_row_047 => (r#"bulk yj 047"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
-        bulk_yj_fc_row_048 => (r#"bulk yj 048"#, r###"[[ -G / ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yk {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yk_fc_row_001 => (r#"bulk yk 001"#, r###"print -r $(( 3 <|> 5 ))"###);
-        bulk_yk_fc_row_002 => (r#"bulk yk 002"#, r###"print -r $(( 3 <> 5 ))"###);
-        bulk_yk_fc_row_003 => (r#"bulk yk 003"#, r###"(( 5#11 )); print -r $?"###);
-        bulk_yk_fc_row_004 => (r#"bulk yk 004"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
-        bulk_yk_fc_row_005 => (r#"bulk yk 005"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
-        bulk_yk_fc_row_006 => (r#"bulk yk 006"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
-        bulk_yk_fc_row_007 => (r#"bulk yk 007"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
-        bulk_yk_fc_row_008 => (r#"bulk yk 008"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
-        bulk_yk_fc_row_009 => (r#"bulk yk 009"#, r###"typeset -i8 n=10; print -r $n"###);
-        bulk_yk_fc_row_010 => (r#"bulk yk 010"#, r###"typeset -i16 n=255; print -r $n"###);
-        bulk_yk_fc_row_011 => (r#"bulk yk 011"#, r###"typeset -E2 n=4000; print -r $n"###);
-        bulk_yk_fc_row_012 => (r#"bulk yk 012"#, r###"typeset -R4 n=hi; print -r $n"###);
-        bulk_yk_fc_row_013 => (r#"bulk yk 013"#, r###"typeset +L n=Ab; print -r $n"###);
-        bulk_yk_fc_row_014 => (r#"bulk yk 014"#, r###"typeset +U n=xy; print -r $n"###);
-        bulk_yk_fc_row_015 => (r#"bulk yk 015"#, r###"typeset +i n=4; print -r $n"###);
-        bulk_yk_fc_row_016 => (r#"bulk yk 016"#, r###"export EX=1; print -r $EX; unset EX"###);
-        bulk_yk_fc_row_017 => (r#"bulk yk 017"#, r###"readonly ro=5; print -r $ro"###);
-        bulk_yk_fc_row_018 => (r#"bulk yk 018"#, r###"print -r ${${v:-fb}}; unset v"###);
-        bulk_yk_fc_row_019 => (r#"bulk yk 019"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
-        bulk_yk_fc_row_020 => (r#"bulk yk 020"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
-        bulk_yk_fc_row_021 => (r#"bulk yk 021"#, r###"word=  hi  ; print -r ${(W)word}"###);
-        bulk_yk_fc_row_022 => (r#"bulk yk 022"#, r###"print -r ${(z)word}; word=a b c"###);
-        bulk_yk_fc_row_023 => (r#"bulk yk 023"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
-        bulk_yk_fc_row_024 => (r#"bulk yk 024"#, r###"print -r ${(A)x}; x=1 2"###);
-        bulk_yk_fc_row_025 => (r#"bulk yk 025"#, r###"print -r ${(aa)x}; x=(1 2)"###);
-        bulk_yk_fc_row_026 => (r#"bulk yk 026"#, r###"print -r ${(%)2}"###);
-        bulk_yk_fc_row_027 => (r#"bulk yk 027"#, r###"o=8; print -r ${(0)o}"###);
-        bulk_yk_fc_row_028 => (r#"bulk yk 028"#, r###"str=abc.def; print -r ${str:r}"###);
-        bulk_yk_fc_row_029 => (r#"bulk yk 029"#, r###"str=abc.def; print -r ${str:e}"###);
-        bulk_yk_fc_row_030 => (r#"bulk yk 030"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
-        bulk_yk_fc_row_031 => (r#"bulk yk 031"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
-        bulk_yk_fc_row_032 => (r#"bulk yk 032"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
-        bulk_yk_fc_row_033 => (r#"bulk yk 033"#, r###"[[ -G / ]]; print -r $?"###);
-        bulk_yk_fc_row_034 => (r#"bulk yk 034"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
-        bulk_yk_fc_row_035 => (r#"bulk yk 035"#, r###"[[ bee = *ee* ]]; print -r $?"###);
-        bulk_yk_fc_row_036 => (r#"bulk yk 036"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
-        bulk_yk_fc_row_037 => (r#"bulk yk 037"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
-        bulk_yk_fc_row_038 => (r#"bulk yk 038"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
-        bulk_yk_fc_row_039 => (r#"bulk yk 039"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
-        bulk_yk_fc_row_040 => (r#"bulk yk 040"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
-        bulk_yk_fc_row_041 => (r#"bulk yk 041"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
-        bulk_yk_fc_row_042 => (r#"bulk yk 042"#, r###"[[ -o nullglob ]]; print -r $?"###);
-        bulk_yk_fc_row_043 => (r#"bulk yk 043"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yk_fc_row_044 => (r#"bulk yk 044"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yk_fc_row_045 => (r#"bulk yk 045"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
-        bulk_yk_fc_row_046 => (r#"bulk yk 046"#, r###"print -r $(( 1 , 2 , 3 ))"###);
-        bulk_yk_fc_row_047 => (r#"bulk yk 047"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
-        bulk_yk_fc_row_048 => (r#"bulk yk 048"#, r###"print -r $(( 0xff & 0x0f ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yl {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yl_fc_row_001 => (r#"bulk yl 001"#, r###"print -r ${${v:-fb}}; unset v"###);
-        bulk_yl_fc_row_002 => (r#"bulk yl 002"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
-        bulk_yl_fc_row_003 => (r#"bulk yl 003"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
-        bulk_yl_fc_row_004 => (r#"bulk yl 004"#, r###"word=  hi  ; print -r ${(W)word}"###);
-        bulk_yl_fc_row_005 => (r#"bulk yl 005"#, r###"print -r ${(z)word}; word=a b c"###);
-        bulk_yl_fc_row_006 => (r#"bulk yl 006"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
-        bulk_yl_fc_row_007 => (r#"bulk yl 007"#, r###"print -r ${(A)x}; x=1 2"###);
-        bulk_yl_fc_row_008 => (r#"bulk yl 008"#, r###"print -r ${(aa)x}; x=(1 2)"###);
-        bulk_yl_fc_row_009 => (r#"bulk yl 009"#, r###"print -r ${(%)2}"###);
-        bulk_yl_fc_row_010 => (r#"bulk yl 010"#, r###"o=8; print -r ${(0)o}"###);
-        bulk_yl_fc_row_011 => (r#"bulk yl 011"#, r###"str=abc.def; print -r ${str:r}"###);
-        bulk_yl_fc_row_012 => (r#"bulk yl 012"#, r###"str=abc.def; print -r ${str:e}"###);
-        bulk_yl_fc_row_013 => (r#"bulk yl 013"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
-        bulk_yl_fc_row_014 => (r#"bulk yl 014"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
-        bulk_yl_fc_row_015 => (r#"bulk yl 015"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
-        bulk_yl_fc_row_016 => (r#"bulk yl 016"#, r###"[[ -G / ]]; print -r $?"###);
-        bulk_yl_fc_row_017 => (r#"bulk yl 017"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
-        bulk_yl_fc_row_018 => (r#"bulk yl 018"#, r###"[[ bee = *ee* ]]; print -r $?"###);
-        bulk_yl_fc_row_019 => (r#"bulk yl 019"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
-        bulk_yl_fc_row_020 => (r#"bulk yl 020"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
-        bulk_yl_fc_row_021 => (r#"bulk yl 021"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
-        bulk_yl_fc_row_022 => (r#"bulk yl 022"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
-        bulk_yl_fc_row_023 => (r#"bulk yl 023"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
-        bulk_yl_fc_row_024 => (r#"bulk yl 024"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
-        bulk_yl_fc_row_025 => (r#"bulk yl 025"#, r###"[[ -o nullglob ]]; print -r $?"###);
-        bulk_yl_fc_row_026 => (r#"bulk yl 026"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yl_fc_row_027 => (r#"bulk yl 027"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yl_fc_row_028 => (r#"bulk yl 028"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
-        bulk_yl_fc_row_029 => (r#"bulk yl 029"#, r###"print -r $(( 1 , 2 , 3 ))"###);
-        bulk_yl_fc_row_030 => (r#"bulk yl 030"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
-        bulk_yl_fc_row_031 => (r#"bulk yl 031"#, r###"print -r $(( 0xff & 0x0f ))"###);
-        bulk_yl_fc_row_032 => (r#"bulk yl 032"#, r###"print -r $(( 1 << 4 ))"###);
-        bulk_yl_fc_row_033 => (r#"bulk yl 033"#, r###"print -r $(( 16 >> 2 ))"###);
-        bulk_yl_fc_row_034 => (r#"bulk yl 034"#, r###"print -r $(( -1 >> 1 ))"###);
-        bulk_yl_fc_row_035 => (r#"bulk yl 035"#, r###"print -r $(( 8#17 ))"###);
-        bulk_yl_fc_row_036 => (r#"bulk yl 036"#, r###"print -r $(( 16#ff ))"###);
-        bulk_yl_fc_row_037 => (r#"bulk yl 037"#, r###"print -r $(( 2#1010 ))"###);
-        bulk_yl_fc_row_038 => (r#"bulk yl 038"#, r###"print -r $(( 0b1010 ))"###);
-        bulk_yl_fc_row_039 => (r#"bulk yl 039"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
-        bulk_yl_fc_row_040 => (r#"bulk yl 040"#, r###"print -r $(( 4 % 2 == 0 ))"###);
-        bulk_yl_fc_row_041 => (r#"bulk yl 041"#, r###"print -r $(( 0 - 1 == -1 ))"###);
-        bulk_yl_fc_row_042 => (r#"bulk yl 042"#, r###"print -r $(( 72 / 8 / 3 ))"###);
-        bulk_yl_fc_row_043 => (r#"bulk yl 043"#, r###"print -r $(( 24 % 5 % 3 ))"###);
-        bulk_yl_fc_row_044 => (r#"bulk yl 044"#, r###"print -r $(( 2 | 4 | 8 ))"###);
-        bulk_yl_fc_row_045 => (r#"bulk yl 045"#, r###"print -r $(( 15 ^ 9 ))"###);
-        bulk_yl_fc_row_046 => (r#"bulk yl 046"#, r###"print -r $(( 0 || 0 || 7 ))"###);
-        bulk_yl_fc_row_047 => (r#"bulk yl 047"#, r###"print -r $(( 1 || -1 ))"###);
-        bulk_yl_fc_row_048 => (r#"bulk yl 048"#, r###"print -r $(( (1>0) + (0>0) ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_ym {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_ym_fc_row_001 => (r#"bulk ym 001"#, r###"[[ bee = *ee* ]]; print -r $?"###);
-        bulk_ym_fc_row_002 => (r#"bulk ym 002"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
-        bulk_ym_fc_row_003 => (r#"bulk ym 003"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
-        bulk_ym_fc_row_004 => (r#"bulk ym 004"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
-        bulk_ym_fc_row_005 => (r#"bulk ym 005"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
-        bulk_ym_fc_row_006 => (r#"bulk ym 006"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
-        bulk_ym_fc_row_007 => (r#"bulk ym 007"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
-        bulk_ym_fc_row_008 => (r#"bulk ym 008"#, r###"[[ -o nullglob ]]; print -r $?"###);
-        bulk_ym_fc_row_009 => (r#"bulk ym 009"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_ym_fc_row_010 => (r#"bulk ym 010"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_ym_fc_row_011 => (r#"bulk ym 011"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
-        bulk_ym_fc_row_012 => (r#"bulk ym 012"#, r###"print -r $(( 1 , 2 , 3 ))"###);
-        bulk_ym_fc_row_013 => (r#"bulk ym 013"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
-        bulk_ym_fc_row_014 => (r#"bulk ym 014"#, r###"print -r $(( 0xff & 0x0f ))"###);
-        bulk_ym_fc_row_015 => (r#"bulk ym 015"#, r###"print -r $(( 1 << 4 ))"###);
-        bulk_ym_fc_row_016 => (r#"bulk ym 016"#, r###"print -r $(( 16 >> 2 ))"###);
-        bulk_ym_fc_row_017 => (r#"bulk ym 017"#, r###"print -r $(( -1 >> 1 ))"###);
-        bulk_ym_fc_row_018 => (r#"bulk ym 018"#, r###"print -r $(( 8#17 ))"###);
-        bulk_ym_fc_row_019 => (r#"bulk ym 019"#, r###"print -r $(( 16#ff ))"###);
-        bulk_ym_fc_row_020 => (r#"bulk ym 020"#, r###"print -r $(( 2#1010 ))"###);
-        bulk_ym_fc_row_021 => (r#"bulk ym 021"#, r###"print -r $(( 0b1010 ))"###);
-        bulk_ym_fc_row_022 => (r#"bulk ym 022"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
-        bulk_ym_fc_row_023 => (r#"bulk ym 023"#, r###"print -r $(( 4 % 2 == 0 ))"###);
-        bulk_ym_fc_row_024 => (r#"bulk ym 024"#, r###"print -r $(( 0 - 1 == -1 ))"###);
-        bulk_ym_fc_row_025 => (r#"bulk ym 025"#, r###"print -r $(( 72 / 8 / 3 ))"###);
-        bulk_ym_fc_row_026 => (r#"bulk ym 026"#, r###"print -r $(( 24 % 5 % 3 ))"###);
-        bulk_ym_fc_row_027 => (r#"bulk ym 027"#, r###"print -r $(( 2 | 4 | 8 ))"###);
-        bulk_ym_fc_row_028 => (r#"bulk ym 028"#, r###"print -r $(( 15 ^ 9 ))"###);
-        bulk_ym_fc_row_029 => (r#"bulk ym 029"#, r###"print -r $(( 0 || 0 || 7 ))"###);
-        bulk_ym_fc_row_030 => (r#"bulk ym 030"#, r###"print -r $(( 1 || -1 ))"###);
-        bulk_ym_fc_row_031 => (r#"bulk ym 031"#, r###"print -r $(( (1>0) + (0>0) ))"###);
-        bulk_ym_fc_row_032 => (r#"bulk ym 032"#, r###"print -r $(( 3 > 2 > 1 ))"###);
-        bulk_ym_fc_row_033 => (r#"bulk ym 033"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
-        bulk_ym_fc_row_034 => (r#"bulk ym 034"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
-        bulk_ym_fc_row_035 => (r#"bulk ym 035"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
-        bulk_ym_fc_row_036 => (r#"bulk ym 036"#, r###"print -r $(( 100 / 20 / 5 ))"###);
-        bulk_ym_fc_row_037 => (r#"bulk ym 037"#, r###"print -r $(( 2#101 & 2#010 ))"###);
-        bulk_ym_fc_row_038 => (r#"bulk ym 038"#, r###"print -r $(( 0x80 >> 4 ))"###);
-        bulk_ym_fc_row_039 => (r#"bulk ym 039"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
-        bulk_ym_fc_row_040 => (r#"bulk ym 040"#, r###"print -r $(( -(-(-5)) ))"###);
-        bulk_ym_fc_row_041 => (r#"bulk ym 041"#, r###"print -r $(( (1+2)*(3+4) ))"###);
-        bulk_ym_fc_row_042 => (r#"bulk ym 042"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
-        bulk_ym_fc_row_043 => (r#"bulk ym 043"#, r###"[[ "" != x ]]; print -r $?"###);
-        bulk_ym_fc_row_044 => (r#"bulk ym 044"#, r###"[[ -n /dev/null ]]; print -r $?"###);
-        bulk_ym_fc_row_045 => (r#"bulk ym 045"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
-        bulk_ym_fc_row_046 => (r#"bulk ym 046"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
-        bulk_ym_fc_row_047 => (r#"bulk ym 047"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
-        bulk_ym_fc_row_048 => (r#"bulk ym 048"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yn {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yn_fc_row_001 => (r#"bulk yn 001"#, r###"print -r $(( 8#17 ))"###);
-        bulk_yn_fc_row_002 => (r#"bulk yn 002"#, r###"print -r $(( 16#ff ))"###);
-        bulk_yn_fc_row_003 => (r#"bulk yn 003"#, r###"print -r $(( 2#1010 ))"###);
-        bulk_yn_fc_row_004 => (r#"bulk yn 004"#, r###"print -r $(( 0b1010 ))"###);
-        bulk_yn_fc_row_005 => (r#"bulk yn 005"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
-        bulk_yn_fc_row_006 => (r#"bulk yn 006"#, r###"print -r $(( 4 % 2 == 0 ))"###);
-        bulk_yn_fc_row_007 => (r#"bulk yn 007"#, r###"print -r $(( 0 - 1 == -1 ))"###);
-        bulk_yn_fc_row_008 => (r#"bulk yn 008"#, r###"print -r $(( 72 / 8 / 3 ))"###);
-        bulk_yn_fc_row_009 => (r#"bulk yn 009"#, r###"print -r $(( 24 % 5 % 3 ))"###);
-        bulk_yn_fc_row_010 => (r#"bulk yn 010"#, r###"print -r $(( 2 | 4 | 8 ))"###);
-        bulk_yn_fc_row_011 => (r#"bulk yn 011"#, r###"print -r $(( 15 ^ 9 ))"###);
-        bulk_yn_fc_row_012 => (r#"bulk yn 012"#, r###"print -r $(( 0 || 0 || 7 ))"###);
-        bulk_yn_fc_row_013 => (r#"bulk yn 013"#, r###"print -r $(( 1 || -1 ))"###);
-        bulk_yn_fc_row_014 => (r#"bulk yn 014"#, r###"print -r $(( (1>0) + (0>0) ))"###);
-        bulk_yn_fc_row_015 => (r#"bulk yn 015"#, r###"print -r $(( 3 > 2 > 1 ))"###);
-        bulk_yn_fc_row_016 => (r#"bulk yn 016"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
-        bulk_yn_fc_row_017 => (r#"bulk yn 017"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
-        bulk_yn_fc_row_018 => (r#"bulk yn 018"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
-        bulk_yn_fc_row_019 => (r#"bulk yn 019"#, r###"print -r $(( 100 / 20 / 5 ))"###);
-        bulk_yn_fc_row_020 => (r#"bulk yn 020"#, r###"print -r $(( 2#101 & 2#010 ))"###);
-        bulk_yn_fc_row_021 => (r#"bulk yn 021"#, r###"print -r $(( 0x80 >> 4 ))"###);
-        bulk_yn_fc_row_022 => (r#"bulk yn 022"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
-        bulk_yn_fc_row_023 => (r#"bulk yn 023"#, r###"print -r $(( -(-(-5)) ))"###);
-        bulk_yn_fc_row_024 => (r#"bulk yn 024"#, r###"print -r $(( (1+2)*(3+4) ))"###);
-        bulk_yn_fc_row_025 => (r#"bulk yn 025"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
-        bulk_yn_fc_row_026 => (r#"bulk yn 026"#, r###"[[ "" != x ]]; print -r $?"###);
-        bulk_yn_fc_row_027 => (r#"bulk yn 027"#, r###"[[ -n /dev/null ]]; print -r $?"###);
-        bulk_yn_fc_row_028 => (r#"bulk yn 028"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
-        bulk_yn_fc_row_029 => (r#"bulk yn 029"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
-        bulk_yn_fc_row_030 => (r#"bulk yn 030"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
-        bulk_yn_fc_row_031 => (r#"bulk yn 031"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
-        bulk_yn_fc_row_032 => (r#"bulk yn 032"#, r###"[[ abc < abd ]]; print -r $?"###);
-        bulk_yn_fc_row_033 => (r#"bulk yn 033"#, r###"[[ abc > abb ]]; print -r $?"###);
-        bulk_yn_fc_row_034 => (r#"bulk yn 034"#, r###"[[ abc != def ]]; print -r $?"###);
-        bulk_yn_fc_row_035 => (r#"bulk yn 035"#, r###"[[ abc == abc ]]; print -r $?"###);
-        bulk_yn_fc_row_036 => (r#"bulk yn 036"#, r###"print -r ${(L)@}; set -- MIXED"###);
-        bulk_yn_fc_row_037 => (r#"bulk yn 037"#, r###"slice=abcdef; print -r $slice[3,5]"###);
-        bulk_yn_fc_row_038 => (r#"bulk yn 038"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
-        bulk_yn_fc_row_039 => (r#"bulk yn 039"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
-        bulk_yn_fc_row_040 => (r#"bulk yn 040"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
-        bulk_yn_fc_row_041 => (r#"bulk yn 041"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
-        bulk_yn_fc_row_042 => (r#"bulk yn 042"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_yn_fc_row_043 => (r#"bulk yn 043"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
-        bulk_yn_fc_row_044 => (r#"bulk yn 044"#, r###"whence -v print 2>/dev/null; print -r $?"###);
-        bulk_yn_fc_row_045 => (r#"bulk yn 045"#, r###"whence -p ls 2>/dev/null | head -1"###);
-        bulk_yn_fc_row_046 => (r#"bulk yn 046"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yn_fc_row_047 => (r#"bulk yn 047"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yn_fc_row_048 => (r#"bulk yn 048"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yo {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yo_fc_row_001 => (r#"bulk yo 001"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
-        bulk_yo_fc_row_002 => (r#"bulk yo 002"#, r###"print -r $(( 100 / 20 / 5 ))"###);
-        bulk_yo_fc_row_003 => (r#"bulk yo 003"#, r###"print -r $(( 2#101 & 2#010 ))"###);
-        bulk_yo_fc_row_004 => (r#"bulk yo 004"#, r###"print -r $(( 0x80 >> 4 ))"###);
-        bulk_yo_fc_row_005 => (r#"bulk yo 005"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
-        bulk_yo_fc_row_006 => (r#"bulk yo 006"#, r###"print -r $(( -(-(-5)) ))"###);
-        bulk_yo_fc_row_007 => (r#"bulk yo 007"#, r###"print -r $(( (1+2)*(3+4) ))"###);
-        bulk_yo_fc_row_008 => (r#"bulk yo 008"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
-        bulk_yo_fc_row_009 => (r#"bulk yo 009"#, r###"[[ "" != x ]]; print -r $?"###);
-        bulk_yo_fc_row_010 => (r#"bulk yo 010"#, r###"[[ -n /dev/null ]]; print -r $?"###);
-        bulk_yo_fc_row_011 => (r#"bulk yo 011"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
-        bulk_yo_fc_row_012 => (r#"bulk yo 012"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
-        bulk_yo_fc_row_013 => (r#"bulk yo 013"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
-        bulk_yo_fc_row_014 => (r#"bulk yo 014"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
-        bulk_yo_fc_row_015 => (r#"bulk yo 015"#, r###"[[ abc < abd ]]; print -r $?"###);
-        bulk_yo_fc_row_016 => (r#"bulk yo 016"#, r###"[[ abc > abb ]]; print -r $?"###);
-        bulk_yo_fc_row_017 => (r#"bulk yo 017"#, r###"[[ abc != def ]]; print -r $?"###);
-        bulk_yo_fc_row_018 => (r#"bulk yo 018"#, r###"[[ abc == abc ]]; print -r $?"###);
-        bulk_yo_fc_row_019 => (r#"bulk yo 019"#, r###"print -r ${(L)@}; set -- MIXED"###);
-        bulk_yo_fc_row_020 => (r#"bulk yo 020"#, r###"slice=abcdef; print -r $slice[3,5]"###);
-        bulk_yo_fc_row_021 => (r#"bulk yo 021"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
-        bulk_yo_fc_row_022 => (r#"bulk yo 022"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
-        bulk_yo_fc_row_023 => (r#"bulk yo 023"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
-        bulk_yo_fc_row_024 => (r#"bulk yo 024"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
-        bulk_yo_fc_row_025 => (r#"bulk yo 025"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_yo_fc_row_026 => (r#"bulk yo 026"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
-        bulk_yo_fc_row_027 => (r#"bulk yo 027"#, r###"whence -v print 2>/dev/null; print -r $?"###);
-        bulk_yo_fc_row_028 => (r#"bulk yo 028"#, r###"whence -p ls 2>/dev/null | head -1"###);
-        bulk_yo_fc_row_029 => (r#"bulk yo 029"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yo_fc_row_030 => (r#"bulk yo 030"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yo_fc_row_031 => (r#"bulk yo 031"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
-        bulk_yo_fc_row_032 => (r#"bulk yo 032"#, r###"print -r ${aliases[za]:-none}"###);
-        bulk_yo_fc_row_033 => (r#"bulk yo 033"#, r###"print -r ${(t)parameters[PATH]}"###);
-        bulk_yo_fc_row_034 => (r#"bulk yo 034"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
-        bulk_yo_fc_row_035 => (r#"bulk yo 035"#, r###"print -r ${+parameters[PATH]}"###);
-        bulk_yo_fc_row_036 => (r#"bulk yo 036"#, r###"print -r ${+functions[fn]}; fn(){}"###);
-        bulk_yo_fc_row_037 => (r#"bulk yo 037"#, r###"print -r ${+commands[print]}"###);
-        bulk_yo_fc_row_038 => (r#"bulk yo 038"#, r###"print -r ${+zsh_eval_context}"###);
-        bulk_yo_fc_row_039 => (r#"bulk yo 039"#, r###"print -r ${+functrace}"###);
-        bulk_yo_fc_row_040 => (r#"bulk yo 040"#, r###"print -r ${+funcstack}"###);
-        bulk_yo_fc_row_041 => (r#"bulk yo 041"#, r###"print -r ${+funcfiletrace}"###);
-        bulk_yo_fc_row_042 => (r#"bulk yo 042"#, r###"print -r ${+jobstates}"###);
-        bulk_yo_fc_row_043 => (r#"bulk yo 043"#, r###"print -r ${+jobtexts}"###);
-        bulk_yo_fc_row_044 => (r#"bulk yo 044"#, r###"print -r ${+jobdirs}"###);
-        bulk_yo_fc_row_045 => (r#"bulk yo 045"#, r###"print -r ${+historywords}"###);
-        bulk_yo_fc_row_046 => (r#"bulk yo 046"#, r###"print -r ${+usergroups}"###);
-        bulk_yo_fc_row_047 => (r#"bulk yo 047"#, r###"print -r ${+dis_builtins}"###);
-        bulk_yo_fc_row_048 => (r#"bulk yo 048"#, r###"print -r ${+dis_widgets}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yp {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yp_fc_row_001 => (r#"bulk yp 001"#, r###"[[ abc == abc ]]; print -r $?"###);
-        bulk_yp_fc_row_002 => (r#"bulk yp 002"#, r###"print -r ${(L)@}; set -- MIXED"###);
-        bulk_yp_fc_row_003 => (r#"bulk yp 003"#, r###"slice=abcdef; print -r $slice[3,5]"###);
-        bulk_yp_fc_row_004 => (r#"bulk yp 004"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
-        bulk_yp_fc_row_005 => (r#"bulk yp 005"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
-        bulk_yp_fc_row_006 => (r#"bulk yp 006"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
-        bulk_yp_fc_row_007 => (r#"bulk yp 007"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
-        bulk_yp_fc_row_008 => (r#"bulk yp 008"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_yp_fc_row_009 => (r#"bulk yp 009"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
-        bulk_yp_fc_row_010 => (r#"bulk yp 010"#, r###"whence -v print 2>/dev/null; print -r $?"###);
-        bulk_yp_fc_row_011 => (r#"bulk yp 011"#, r###"whence -p ls 2>/dev/null | head -1"###);
-        bulk_yp_fc_row_012 => (r#"bulk yp 012"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yp_fc_row_013 => (r#"bulk yp 013"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yp_fc_row_014 => (r#"bulk yp 014"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
-        bulk_yp_fc_row_015 => (r#"bulk yp 015"#, r###"print -r ${aliases[za]:-none}"###);
-        bulk_yp_fc_row_016 => (r#"bulk yp 016"#, r###"print -r ${(t)parameters[PATH]}"###);
-        bulk_yp_fc_row_017 => (r#"bulk yp 017"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
-        bulk_yp_fc_row_018 => (r#"bulk yp 018"#, r###"print -r ${+parameters[PATH]}"###);
-        bulk_yp_fc_row_019 => (r#"bulk yp 019"#, r###"print -r ${+functions[fn]}; fn(){}"###);
-        bulk_yp_fc_row_020 => (r#"bulk yp 020"#, r###"print -r ${+commands[print]}"###);
-        bulk_yp_fc_row_021 => (r#"bulk yp 021"#, r###"print -r ${+zsh_eval_context}"###);
-        bulk_yp_fc_row_022 => (r#"bulk yp 022"#, r###"print -r ${+functrace}"###);
-        bulk_yp_fc_row_023 => (r#"bulk yp 023"#, r###"print -r ${+funcstack}"###);
-        bulk_yp_fc_row_024 => (r#"bulk yp 024"#, r###"print -r ${+funcfiletrace}"###);
-        bulk_yp_fc_row_025 => (r#"bulk yp 025"#, r###"print -r ${+jobstates}"###);
-        bulk_yp_fc_row_026 => (r#"bulk yp 026"#, r###"print -r ${+jobtexts}"###);
-        bulk_yp_fc_row_027 => (r#"bulk yp 027"#, r###"print -r ${+jobdirs}"###);
-        bulk_yp_fc_row_028 => (r#"bulk yp 028"#, r###"print -r ${+historywords}"###);
-        bulk_yp_fc_row_029 => (r#"bulk yp 029"#, r###"print -r ${+usergroups}"###);
-        bulk_yp_fc_row_030 => (r#"bulk yp 030"#, r###"print -r ${+dis_builtins}"###);
-        bulk_yp_fc_row_031 => (r#"bulk yp 031"#, r###"print -r ${+dis_widgets}"###);
-        bulk_yp_fc_row_032 => (r#"bulk yp 032"#, r###"print -r ${+dis_reswords}"###);
-        bulk_yp_fc_row_033 => (r#"bulk yp 033"#, r###"print -r ${+dis_patchars}"###);
-        bulk_yp_fc_row_034 => (r#"bulk yp 034"#, r###"print -r ${+dis_commands}"###);
-        bulk_yp_fc_row_035 => (r#"bulk yp 035"#, r###"print -r ${+module_path}"###);
-        bulk_yp_fc_row_036 => (r#"bulk yp 036"#, r###"print -r ${+functrace}"###);
-        bulk_yp_fc_row_037 => (r#"bulk yp 037"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
-        bulk_yp_fc_row_038 => (r#"bulk yp 038"#, r###"{ true; false; }; print -r $?"###);
-        bulk_yp_fc_row_039 => (r#"bulk yp 039"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
-        bulk_yp_fc_row_040 => (r#"bulk yp 040"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
-        bulk_yp_fc_row_041 => (r#"bulk yp 041"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
-        bulk_yp_fc_row_042 => (r#"bulk yp 042"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
-        bulk_yp_fc_row_043 => (r#"bulk yp 043"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
-        bulk_yp_fc_row_044 => (r#"bulk yp 044"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
-        bulk_yp_fc_row_045 => (r#"bulk yp 045"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
-        bulk_yp_fc_row_046 => (r#"bulk yp 046"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
-        bulk_yp_fc_row_047 => (r#"bulk yp 047"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_yp_fc_row_048 => (r#"bulk yp 048"#, r###"print -r ${(t)x}; x=hello"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yq {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yq_fc_row_001 => (r#"bulk yq 001"#, r###"print -r ${+parameters[PATH]}"###);
-        bulk_yq_fc_row_002 => (r#"bulk yq 002"#, r###"print -r ${+functions[fn]}; fn(){}"###);
-        bulk_yq_fc_row_003 => (r#"bulk yq 003"#, r###"print -r ${+commands[print]}"###);
-        bulk_yq_fc_row_004 => (r#"bulk yq 004"#, r###"print -r ${+zsh_eval_context}"###);
-        bulk_yq_fc_row_005 => (r#"bulk yq 005"#, r###"print -r ${+functrace}"###);
-        bulk_yq_fc_row_006 => (r#"bulk yq 006"#, r###"print -r ${+funcstack}"###);
-        bulk_yq_fc_row_007 => (r#"bulk yq 007"#, r###"print -r ${+funcfiletrace}"###);
-        bulk_yq_fc_row_008 => (r#"bulk yq 008"#, r###"print -r ${+jobstates}"###);
-        bulk_yq_fc_row_009 => (r#"bulk yq 009"#, r###"print -r ${+jobtexts}"###);
-        bulk_yq_fc_row_010 => (r#"bulk yq 010"#, r###"print -r ${+jobdirs}"###);
-        bulk_yq_fc_row_011 => (r#"bulk yq 011"#, r###"print -r ${+historywords}"###);
-        bulk_yq_fc_row_012 => (r#"bulk yq 012"#, r###"print -r ${+usergroups}"###);
-        bulk_yq_fc_row_013 => (r#"bulk yq 013"#, r###"print -r ${+dis_builtins}"###);
-        bulk_yq_fc_row_014 => (r#"bulk yq 014"#, r###"print -r ${+dis_widgets}"###);
-        bulk_yq_fc_row_015 => (r#"bulk yq 015"#, r###"print -r ${+dis_reswords}"###);
-        bulk_yq_fc_row_016 => (r#"bulk yq 016"#, r###"print -r ${+dis_patchars}"###);
-        bulk_yq_fc_row_017 => (r#"bulk yq 017"#, r###"print -r ${+dis_commands}"###);
-        bulk_yq_fc_row_018 => (r#"bulk yq 018"#, r###"print -r ${+module_path}"###);
-        bulk_yq_fc_row_019 => (r#"bulk yq 019"#, r###"print -r ${+functrace}"###);
-        bulk_yq_fc_row_020 => (r#"bulk yq 020"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
-        bulk_yq_fc_row_021 => (r#"bulk yq 021"#, r###"{ true; false; }; print -r $?"###);
-        bulk_yq_fc_row_022 => (r#"bulk yq 022"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
-        bulk_yq_fc_row_023 => (r#"bulk yq 023"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
-        bulk_yq_fc_row_024 => (r#"bulk yq 024"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
-        bulk_yq_fc_row_025 => (r#"bulk yq 025"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
-        bulk_yq_fc_row_026 => (r#"bulk yq 026"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
-        bulk_yq_fc_row_027 => (r#"bulk yq 027"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
-        bulk_yq_fc_row_028 => (r#"bulk yq 028"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
-        bulk_yq_fc_row_029 => (r#"bulk yq 029"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
-        bulk_yq_fc_row_030 => (r#"bulk yq 030"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_yq_fc_row_031 => (r#"bulk yq 031"#, r###"print -r ${(t)x}; x=hello"###);
-        bulk_yq_fc_row_032 => (r#"bulk yq 032"#, r###"unset y; print -r ${+y}"###);
-        bulk_yq_fc_row_033 => (r#"bulk yq 033"#, r###"x=hello; print -r ${+x}"###);
-        bulk_yq_fc_row_034 => (r#"bulk yq 034"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_yq_fc_row_035 => (r#"bulk yq 035"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-        bulk_yq_fc_row_036 => (r#"bulk yq 036"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
-        bulk_yq_fc_row_037 => (r#"bulk yq 037"#, r###"x=abc; print -r ${x/#a/z}"###);
-        bulk_yq_fc_row_038 => (r#"bulk yq 038"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_yq_fc_row_039 => (r#"bulk yq 039"#, r###"print -r ${(j::)a}; a=(x y)"###);
-        bulk_yq_fc_row_040 => (r#"bulk yq 040"#, r###"print -r ${(pj::)a}; a=(x y)"###);
-        bulk_yq_fc_row_041 => (r#"bulk yq 041"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
-        bulk_yq_fc_row_042 => (r#"bulk yq 042"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_yq_fc_row_043 => (r#"bulk yq 043"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_yq_fc_row_044 => (r#"bulk yq 044"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_yq_fc_row_045 => (r#"bulk yq 045"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_yq_fc_row_046 => (r#"bulk yq 046"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_yq_fc_row_047 => (r#"bulk yq 047"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_yq_fc_row_048 => (r#"bulk yq 048"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yr {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yr_fc_row_001 => (r#"bulk yr 001"#, r###"print -r ${+module_path}"###);
-        bulk_yr_fc_row_002 => (r#"bulk yr 002"#, r###"print -r ${+functrace}"###);
-        bulk_yr_fc_row_003 => (r#"bulk yr 003"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
-        bulk_yr_fc_row_004 => (r#"bulk yr 004"#, r###"{ true; false; }; print -r $?"###);
-        bulk_yr_fc_row_005 => (r#"bulk yr 005"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
-        bulk_yr_fc_row_006 => (r#"bulk yr 006"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
-        bulk_yr_fc_row_007 => (r#"bulk yr 007"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
-        bulk_yr_fc_row_008 => (r#"bulk yr 008"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
-        bulk_yr_fc_row_009 => (r#"bulk yr 009"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
-        bulk_yr_fc_row_010 => (r#"bulk yr 010"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
-        bulk_yr_fc_row_011 => (r#"bulk yr 011"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
-        bulk_yr_fc_row_012 => (r#"bulk yr 012"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
-        bulk_yr_fc_row_013 => (r#"bulk yr 013"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_yr_fc_row_014 => (r#"bulk yr 014"#, r###"print -r ${(t)x}; x=hello"###);
-        bulk_yr_fc_row_015 => (r#"bulk yr 015"#, r###"unset y; print -r ${+y}"###);
-        bulk_yr_fc_row_016 => (r#"bulk yr 016"#, r###"x=hello; print -r ${+x}"###);
-        bulk_yr_fc_row_017 => (r#"bulk yr 017"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_yr_fc_row_018 => (r#"bulk yr 018"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-        bulk_yr_fc_row_019 => (r#"bulk yr 019"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
-        bulk_yr_fc_row_020 => (r#"bulk yr 020"#, r###"x=abc; print -r ${x/#a/z}"###);
-        bulk_yr_fc_row_021 => (r#"bulk yr 021"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_yr_fc_row_022 => (r#"bulk yr 022"#, r###"print -r ${(j::)a}; a=(x y)"###);
-        bulk_yr_fc_row_023 => (r#"bulk yr 023"#, r###"print -r ${(pj::)a}; a=(x y)"###);
-        bulk_yr_fc_row_024 => (r#"bulk yr 024"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
-        bulk_yr_fc_row_025 => (r#"bulk yr 025"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_yr_fc_row_026 => (r#"bulk yr 026"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_yr_fc_row_027 => (r#"bulk yr 027"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_yr_fc_row_028 => (r#"bulk yr 028"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_yr_fc_row_029 => (r#"bulk yr 029"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_yr_fc_row_030 => (r#"bulk yr 030"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_yr_fc_row_031 => (r#"bulk yr 031"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_yr_fc_row_032 => (r#"bulk yr 032"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_yr_fc_row_033 => (r#"bulk yr 033"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_yr_fc_row_034 => (r#"bulk yr 034"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_yr_fc_row_035 => (r#"bulk yr 035"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_yr_fc_row_036 => (r#"bulk yr 036"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_yr_fc_row_037 => (r#"bulk yr 037"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_yr_fc_row_038 => (r#"bulk yr 038"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_yr_fc_row_039 => (r#"bulk yr 039"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_yr_fc_row_040 => (r#"bulk yr 040"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_yr_fc_row_041 => (r#"bulk yr 041"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_yr_fc_row_042 => (r#"bulk yr 042"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_yr_fc_row_043 => (r#"bulk yr 043"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_yr_fc_row_044 => (r#"bulk yr 044"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_yr_fc_row_045 => (r#"bulk yr 045"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_yr_fc_row_046 => (r#"bulk yr 046"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_yr_fc_row_047 => (r#"bulk yr 047"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_yr_fc_row_048 => (r#"bulk yr 048"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_ys {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_ys_fc_row_001 => (r#"bulk ys 001"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_ys_fc_row_002 => (r#"bulk ys 002"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-        bulk_ys_fc_row_003 => (r#"bulk ys 003"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
-        bulk_ys_fc_row_004 => (r#"bulk ys 004"#, r###"x=abc; print -r ${x/#a/z}"###);
-        bulk_ys_fc_row_005 => (r#"bulk ys 005"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_ys_fc_row_006 => (r#"bulk ys 006"#, r###"print -r ${(j::)a}; a=(x y)"###);
-        bulk_ys_fc_row_007 => (r#"bulk ys 007"#, r###"print -r ${(pj::)a}; a=(x y)"###);
-        bulk_ys_fc_row_008 => (r#"bulk ys 008"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
-        bulk_ys_fc_row_009 => (r#"bulk ys 009"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_ys_fc_row_010 => (r#"bulk ys 010"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_ys_fc_row_011 => (r#"bulk ys 011"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_ys_fc_row_012 => (r#"bulk ys 012"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_ys_fc_row_013 => (r#"bulk ys 013"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_ys_fc_row_014 => (r#"bulk ys 014"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_ys_fc_row_015 => (r#"bulk ys 015"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_ys_fc_row_016 => (r#"bulk ys 016"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_ys_fc_row_017 => (r#"bulk ys 017"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_ys_fc_row_018 => (r#"bulk ys 018"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_ys_fc_row_019 => (r#"bulk ys 019"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_ys_fc_row_020 => (r#"bulk ys 020"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_ys_fc_row_021 => (r#"bulk ys 021"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_ys_fc_row_022 => (r#"bulk ys 022"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_ys_fc_row_023 => (r#"bulk ys 023"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_ys_fc_row_024 => (r#"bulk ys 024"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_ys_fc_row_025 => (r#"bulk ys 025"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_ys_fc_row_026 => (r#"bulk ys 026"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_ys_fc_row_027 => (r#"bulk ys 027"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_ys_fc_row_028 => (r#"bulk ys 028"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_ys_fc_row_029 => (r#"bulk ys 029"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_ys_fc_row_030 => (r#"bulk ys 030"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_ys_fc_row_031 => (r#"bulk ys 031"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_ys_fc_row_032 => (r#"bulk ys 032"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_ys_fc_row_033 => (r#"bulk ys 033"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_ys_fc_row_034 => (r#"bulk ys 034"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_ys_fc_row_035 => (r#"bulk ys 035"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_ys_fc_row_036 => (r#"bulk ys 036"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_ys_fc_row_037 => (r#"bulk ys 037"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_ys_fc_row_038 => (r#"bulk ys 038"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_ys_fc_row_039 => (r#"bulk ys 039"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_ys_fc_row_040 => (r#"bulk ys 040"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_ys_fc_row_041 => (r#"bulk ys 041"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_ys_fc_row_042 => (r#"bulk ys 042"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_ys_fc_row_043 => (r#"bulk ys 043"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_ys_fc_row_044 => (r#"bulk ys 044"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_ys_fc_row_045 => (r#"bulk ys 045"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_ys_fc_row_046 => (r#"bulk ys 046"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_ys_fc_row_047 => (r#"bulk ys 047"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_ys_fc_row_048 => (r#"bulk ys 048"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yt {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yt_fc_row_001 => (r#"bulk yt 001"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_yt_fc_row_002 => (r#"bulk yt 002"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_yt_fc_row_003 => (r#"bulk yt 003"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_yt_fc_row_004 => (r#"bulk yt 004"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_yt_fc_row_005 => (r#"bulk yt 005"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_yt_fc_row_006 => (r#"bulk yt 006"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_yt_fc_row_007 => (r#"bulk yt 007"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_yt_fc_row_008 => (r#"bulk yt 008"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_yt_fc_row_009 => (r#"bulk yt 009"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_yt_fc_row_010 => (r#"bulk yt 010"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_yt_fc_row_011 => (r#"bulk yt 011"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_yt_fc_row_012 => (r#"bulk yt 012"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_yt_fc_row_013 => (r#"bulk yt 013"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_yt_fc_row_014 => (r#"bulk yt 014"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_yt_fc_row_015 => (r#"bulk yt 015"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_yt_fc_row_016 => (r#"bulk yt 016"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_yt_fc_row_017 => (r#"bulk yt 017"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_yt_fc_row_018 => (r#"bulk yt 018"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_yt_fc_row_019 => (r#"bulk yt 019"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_yt_fc_row_020 => (r#"bulk yt 020"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_yt_fc_row_021 => (r#"bulk yt 021"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_yt_fc_row_022 => (r#"bulk yt 022"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_yt_fc_row_023 => (r#"bulk yt 023"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_yt_fc_row_024 => (r#"bulk yt 024"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_yt_fc_row_025 => (r#"bulk yt 025"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_yt_fc_row_026 => (r#"bulk yt 026"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_yt_fc_row_027 => (r#"bulk yt 027"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_yt_fc_row_028 => (r#"bulk yt 028"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_yt_fc_row_029 => (r#"bulk yt 029"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_yt_fc_row_030 => (r#"bulk yt 030"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_yt_fc_row_031 => (r#"bulk yt 031"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_yt_fc_row_032 => (r#"bulk yt 032"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_yt_fc_row_033 => (r#"bulk yt 033"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_yt_fc_row_034 => (r#"bulk yt 034"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_yt_fc_row_035 => (r#"bulk yt 035"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_yt_fc_row_036 => (r#"bulk yt 036"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_yt_fc_row_037 => (r#"bulk yt 037"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_yt_fc_row_038 => (r#"bulk yt 038"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_yt_fc_row_039 => (r#"bulk yt 039"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_yt_fc_row_040 => (r#"bulk yt 040"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_yt_fc_row_041 => (r#"bulk yt 041"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_yt_fc_row_042 => (r#"bulk yt 042"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_yt_fc_row_043 => (r#"bulk yt 043"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_yt_fc_row_044 => (r#"bulk yt 044"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_yt_fc_row_045 => (r#"bulk yt 045"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_yt_fc_row_046 => (r#"bulk yt 046"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_yt_fc_row_047 => (r#"bulk yt 047"#, r###"print -r {1..3}"###);
-        bulk_yt_fc_row_048 => (r#"bulk yt 048"#, r###"print -r {01..03}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yu {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yu_fc_row_001 => (r#"bulk yu 001"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_yu_fc_row_002 => (r#"bulk yu 002"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_yu_fc_row_003 => (r#"bulk yu 003"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_yu_fc_row_004 => (r#"bulk yu 004"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_yu_fc_row_005 => (r#"bulk yu 005"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_yu_fc_row_006 => (r#"bulk yu 006"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_yu_fc_row_007 => (r#"bulk yu 007"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_yu_fc_row_008 => (r#"bulk yu 008"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_yu_fc_row_009 => (r#"bulk yu 009"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_yu_fc_row_010 => (r#"bulk yu 010"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_yu_fc_row_011 => (r#"bulk yu 011"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_yu_fc_row_012 => (r#"bulk yu 012"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_yu_fc_row_013 => (r#"bulk yu 013"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_yu_fc_row_014 => (r#"bulk yu 014"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_yu_fc_row_015 => (r#"bulk yu 015"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_yu_fc_row_016 => (r#"bulk yu 016"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_yu_fc_row_017 => (r#"bulk yu 017"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_yu_fc_row_018 => (r#"bulk yu 018"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_yu_fc_row_019 => (r#"bulk yu 019"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_yu_fc_row_020 => (r#"bulk yu 020"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_yu_fc_row_021 => (r#"bulk yu 021"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_yu_fc_row_022 => (r#"bulk yu 022"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_yu_fc_row_023 => (r#"bulk yu 023"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_yu_fc_row_024 => (r#"bulk yu 024"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_yu_fc_row_025 => (r#"bulk yu 025"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_yu_fc_row_026 => (r#"bulk yu 026"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_yu_fc_row_027 => (r#"bulk yu 027"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_yu_fc_row_028 => (r#"bulk yu 028"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_yu_fc_row_029 => (r#"bulk yu 029"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_yu_fc_row_030 => (r#"bulk yu 030"#, r###"print -r {1..3}"###);
-        bulk_yu_fc_row_031 => (r#"bulk yu 031"#, r###"print -r {01..03}"###);
-        bulk_yu_fc_row_032 => (r#"bulk yu 032"#, r###"print -r {a..c}"###);
-        bulk_yu_fc_row_033 => (r#"bulk yu 033"#, r###"print -r {1..4..2}"###);
-        bulk_yu_fc_row_034 => (r#"bulk yu 034"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_yu_fc_row_035 => (r#"bulk yu 035"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_yu_fc_row_036 => (r#"bulk yu 036"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_yu_fc_row_037 => (r#"bulk yu 037"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_yu_fc_row_038 => (r#"bulk yu 038"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_yu_fc_row_039 => (r#"bulk yu 039"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_yu_fc_row_040 => (r#"bulk yu 040"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_yu_fc_row_041 => (r#"bulk yu 041"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_yu_fc_row_042 => (r#"bulk yu 042"#, r###"(( 1 )); print -r $?"###);
-        bulk_yu_fc_row_043 => (r#"bulk yu 043"#, r###"(( 0 )); print -r $?"###);
-        bulk_yu_fc_row_044 => (r#"bulk yu 044"#, r###": $(( 0 )) || print -r z"###);
-        bulk_yu_fc_row_045 => (r#"bulk yu 045"#, r###": $(( 1 )) && print -r y"###);
-        bulk_yu_fc_row_046 => (r#"bulk yu 046"#, r###"let x=2+2; print -r $x"###);
-        bulk_yu_fc_row_047 => (r#"bulk yu 047"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_yu_fc_row_048 => (r#"bulk yu 048"#, r###"typeset -F f=2.5; print -r $f"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yv {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yv_fc_row_001 => (r#"bulk yv 001"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_yv_fc_row_002 => (r#"bulk yv 002"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_yv_fc_row_003 => (r#"bulk yv 003"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_yv_fc_row_004 => (r#"bulk yv 004"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_yv_fc_row_005 => (r#"bulk yv 005"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_yv_fc_row_006 => (r#"bulk yv 006"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_yv_fc_row_007 => (r#"bulk yv 007"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_yv_fc_row_008 => (r#"bulk yv 008"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_yv_fc_row_009 => (r#"bulk yv 009"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_yv_fc_row_010 => (r#"bulk yv 010"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_yv_fc_row_011 => (r#"bulk yv 011"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_yv_fc_row_012 => (r#"bulk yv 012"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_yv_fc_row_013 => (r#"bulk yv 013"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_yv_fc_row_014 => (r#"bulk yv 014"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_yv_fc_row_015 => (r#"bulk yv 015"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_yv_fc_row_016 => (r#"bulk yv 016"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_yv_fc_row_017 => (r#"bulk yv 017"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_yv_fc_row_018 => (r#"bulk yv 018"#, r###"print -r {1..3}"###);
-        bulk_yv_fc_row_019 => (r#"bulk yv 019"#, r###"print -r {01..03}"###);
-        bulk_yv_fc_row_020 => (r#"bulk yv 020"#, r###"print -r {a..c}"###);
-        bulk_yv_fc_row_021 => (r#"bulk yv 021"#, r###"print -r {1..4..2}"###);
-        bulk_yv_fc_row_022 => (r#"bulk yv 022"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_yv_fc_row_023 => (r#"bulk yv 023"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_yv_fc_row_024 => (r#"bulk yv 024"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_yv_fc_row_025 => (r#"bulk yv 025"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_yv_fc_row_026 => (r#"bulk yv 026"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_yv_fc_row_027 => (r#"bulk yv 027"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_yv_fc_row_028 => (r#"bulk yv 028"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_yv_fc_row_029 => (r#"bulk yv 029"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_yv_fc_row_030 => (r#"bulk yv 030"#, r###"(( 1 )); print -r $?"###);
-        bulk_yv_fc_row_031 => (r#"bulk yv 031"#, r###"(( 0 )); print -r $?"###);
-        bulk_yv_fc_row_032 => (r#"bulk yv 032"#, r###": $(( 0 )) || print -r z"###);
-        bulk_yv_fc_row_033 => (r#"bulk yv 033"#, r###": $(( 1 )) && print -r y"###);
-        bulk_yv_fc_row_034 => (r#"bulk yv 034"#, r###"let x=2+2; print -r $x"###);
-        bulk_yv_fc_row_035 => (r#"bulk yv 035"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_yv_fc_row_036 => (r#"bulk yv 036"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_yv_fc_row_037 => (r#"bulk yv 037"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_yv_fc_row_038 => (r#"bulk yv 038"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_yv_fc_row_039 => (r#"bulk yv 039"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_yv_fc_row_040 => (r#"bulk yv 040"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_yv_fc_row_041 => (r#"bulk yv 041"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_yv_fc_row_042 => (r#"bulk yv 042"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_yv_fc_row_043 => (r#"bulk yv 043"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_yv_fc_row_044 => (r#"bulk yv 044"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_yv_fc_row_045 => (r#"bulk yv 045"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_yv_fc_row_046 => (r#"bulk yv 046"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_yv_fc_row_047 => (r#"bulk yv 047"#, r###"local a; a=1; print -r $a"###);
-        bulk_yv_fc_row_048 => (r#"bulk yv 048"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yw {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yw_fc_row_001 => (r#"bulk yw 001"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_yw_fc_row_002 => (r#"bulk yw 002"#, r###"print -r {1..3}"###);
-        bulk_yw_fc_row_003 => (r#"bulk yw 003"#, r###"print -r {01..03}"###);
-        bulk_yw_fc_row_004 => (r#"bulk yw 004"#, r###"print -r {a..c}"###);
-        bulk_yw_fc_row_005 => (r#"bulk yw 005"#, r###"print -r {1..4..2}"###);
-        bulk_yw_fc_row_006 => (r#"bulk yw 006"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_yw_fc_row_007 => (r#"bulk yw 007"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_yw_fc_row_008 => (r#"bulk yw 008"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_yw_fc_row_009 => (r#"bulk yw 009"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_yw_fc_row_010 => (r#"bulk yw 010"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_yw_fc_row_011 => (r#"bulk yw 011"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_yw_fc_row_012 => (r#"bulk yw 012"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_yw_fc_row_013 => (r#"bulk yw 013"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_yw_fc_row_014 => (r#"bulk yw 014"#, r###"(( 1 )); print -r $?"###);
-        bulk_yw_fc_row_015 => (r#"bulk yw 015"#, r###"(( 0 )); print -r $?"###);
-        bulk_yw_fc_row_016 => (r#"bulk yw 016"#, r###": $(( 0 )) || print -r z"###);
-        bulk_yw_fc_row_017 => (r#"bulk yw 017"#, r###": $(( 1 )) && print -r y"###);
-        bulk_yw_fc_row_018 => (r#"bulk yw 018"#, r###"let x=2+2; print -r $x"###);
-        bulk_yw_fc_row_019 => (r#"bulk yw 019"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_yw_fc_row_020 => (r#"bulk yw 020"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_yw_fc_row_021 => (r#"bulk yw 021"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_yw_fc_row_022 => (r#"bulk yw 022"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_yw_fc_row_023 => (r#"bulk yw 023"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_yw_fc_row_024 => (r#"bulk yw 024"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_yw_fc_row_025 => (r#"bulk yw 025"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_yw_fc_row_026 => (r#"bulk yw 026"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_yw_fc_row_027 => (r#"bulk yw 027"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_yw_fc_row_028 => (r#"bulk yw 028"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_yw_fc_row_029 => (r#"bulk yw 029"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_yw_fc_row_030 => (r#"bulk yw 030"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_yw_fc_row_031 => (r#"bulk yw 031"#, r###"local a; a=1; print -r $a"###);
-        bulk_yw_fc_row_032 => (r#"bulk yw 032"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_yw_fc_row_033 => (r#"bulk yw 033"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_yw_fc_row_034 => (r#"bulk yw 034"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_yw_fc_row_035 => (r#"bulk yw 035"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_yw_fc_row_036 => (r#"bulk yw 036"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_yw_fc_row_037 => (r#"bulk yw 037"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_yw_fc_row_038 => (r#"bulk yw 038"#, r###"setopt localoptions; print -r $?"###);
-        bulk_yw_fc_row_039 => (r#"bulk yw 039"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_yw_fc_row_040 => (r#"bulk yw 040"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_yw_fc_row_041 => (r#"bulk yw 041"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_yw_fc_row_042 => (r#"bulk yw 042"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yw_fc_row_043 => (r#"bulk yw 043"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yw_fc_row_044 => (r#"bulk yw 044"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_yw_fc_row_045 => (r#"bulk yw 045"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_yw_fc_row_046 => (r#"bulk yw 046"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_yw_fc_row_047 => (r#"bulk yw 047"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_yw_fc_row_048 => (r#"bulk yw 048"#, r###"setopt no_interactivecomments; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yx {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yx_fc_row_001 => (r#"bulk yx 001"#, r###"let x=2+2; print -r $x"###);
-        bulk_yx_fc_row_002 => (r#"bulk yx 002"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_yx_fc_row_003 => (r#"bulk yx 003"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_yx_fc_row_004 => (r#"bulk yx 004"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_yx_fc_row_005 => (r#"bulk yx 005"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_yx_fc_row_006 => (r#"bulk yx 006"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_yx_fc_row_007 => (r#"bulk yx 007"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_yx_fc_row_008 => (r#"bulk yx 008"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_yx_fc_row_009 => (r#"bulk yx 009"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_yx_fc_row_010 => (r#"bulk yx 010"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_yx_fc_row_011 => (r#"bulk yx 011"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_yx_fc_row_012 => (r#"bulk yx 012"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_yx_fc_row_013 => (r#"bulk yx 013"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_yx_fc_row_014 => (r#"bulk yx 014"#, r###"local a; a=1; print -r $a"###);
-        bulk_yx_fc_row_015 => (r#"bulk yx 015"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_yx_fc_row_016 => (r#"bulk yx 016"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_yx_fc_row_017 => (r#"bulk yx 017"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_yx_fc_row_018 => (r#"bulk yx 018"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_yx_fc_row_019 => (r#"bulk yx 019"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_yx_fc_row_020 => (r#"bulk yx 020"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_yx_fc_row_021 => (r#"bulk yx 021"#, r###"setopt localoptions; print -r $?"###);
-        bulk_yx_fc_row_022 => (r#"bulk yx 022"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_yx_fc_row_023 => (r#"bulk yx 023"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_yx_fc_row_024 => (r#"bulk yx 024"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_yx_fc_row_025 => (r#"bulk yx 025"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yx_fc_row_026 => (r#"bulk yx 026"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yx_fc_row_027 => (r#"bulk yx 027"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_yx_fc_row_028 => (r#"bulk yx 028"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_yx_fc_row_029 => (r#"bulk yx 029"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_yx_fc_row_030 => (r#"bulk yx 030"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_yx_fc_row_031 => (r#"bulk yx 031"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_yx_fc_row_032 => (r#"bulk yx 032"#, r###"setopt multios; print -r $?"###);
-        bulk_yx_fc_row_033 => (r#"bulk yx 033"#, r###"setopt noclobber; print -r $?"###);
-        bulk_yx_fc_row_034 => (r#"bulk yx 034"#, r###"setopt clobber; print -r $?"###);
-        bulk_yx_fc_row_035 => (r#"bulk yx 035"#, r###"setopt histexpand; print -r $?"###);
-        bulk_yx_fc_row_036 => (r#"bulk yx 036"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_yx_fc_row_037 => (r#"bulk yx 037"#, r###"setopt banghist; print -r $?"###);
-        bulk_yx_fc_row_038 => (r#"bulk yx 038"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_yx_fc_row_039 => (r#"bulk yx 039"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_yx_fc_row_040 => (r#"bulk yx 040"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_yx_fc_row_041 => (r#"bulk yx 041"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_yx_fc_row_042 => (r#"bulk yx 042"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_yx_fc_row_043 => (r#"bulk yx 043"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_yx_fc_row_044 => (r#"bulk yx 044"#, r###"setopt histverify; print -r $?"###);
-        bulk_yx_fc_row_045 => (r#"bulk yx 045"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_yx_fc_row_046 => (r#"bulk yx 046"#, r###"setopt no_beep; print -r $?"###);
-        bulk_yx_fc_row_047 => (r#"bulk yx 047"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_yx_fc_row_048 => (r#"bulk yx 048"#, r###"setopt auto_cd; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yy {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yy_fc_row_001 => (r#"bulk yy 001"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_yy_fc_row_002 => (r#"bulk yy 002"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_yy_fc_row_003 => (r#"bulk yy 003"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_yy_fc_row_004 => (r#"bulk yy 004"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_yy_fc_row_005 => (r#"bulk yy 005"#, r###"setopt localoptions; print -r $?"###);
-        bulk_yy_fc_row_006 => (r#"bulk yy 006"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_yy_fc_row_007 => (r#"bulk yy 007"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_yy_fc_row_008 => (r#"bulk yy 008"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_yy_fc_row_009 => (r#"bulk yy 009"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yy_fc_row_010 => (r#"bulk yy 010"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yy_fc_row_011 => (r#"bulk yy 011"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_yy_fc_row_012 => (r#"bulk yy 012"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_yy_fc_row_013 => (r#"bulk yy 013"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_yy_fc_row_014 => (r#"bulk yy 014"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_yy_fc_row_015 => (r#"bulk yy 015"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_yy_fc_row_016 => (r#"bulk yy 016"#, r###"setopt multios; print -r $?"###);
-        bulk_yy_fc_row_017 => (r#"bulk yy 017"#, r###"setopt noclobber; print -r $?"###);
-        bulk_yy_fc_row_018 => (r#"bulk yy 018"#, r###"setopt clobber; print -r $?"###);
-        bulk_yy_fc_row_019 => (r#"bulk yy 019"#, r###"setopt histexpand; print -r $?"###);
-        bulk_yy_fc_row_020 => (r#"bulk yy 020"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_yy_fc_row_021 => (r#"bulk yy 021"#, r###"setopt banghist; print -r $?"###);
-        bulk_yy_fc_row_022 => (r#"bulk yy 022"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_yy_fc_row_023 => (r#"bulk yy 023"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_yy_fc_row_024 => (r#"bulk yy 024"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_yy_fc_row_025 => (r#"bulk yy 025"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_yy_fc_row_026 => (r#"bulk yy 026"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_yy_fc_row_027 => (r#"bulk yy 027"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_yy_fc_row_028 => (r#"bulk yy 028"#, r###"setopt histverify; print -r $?"###);
-        bulk_yy_fc_row_029 => (r#"bulk yy 029"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_yy_fc_row_030 => (r#"bulk yy 030"#, r###"setopt no_beep; print -r $?"###);
-        bulk_yy_fc_row_031 => (r#"bulk yy 031"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_yy_fc_row_032 => (r#"bulk yy 032"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_yy_fc_row_033 => (r#"bulk yy 033"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_yy_fc_row_034 => (r#"bulk yy 034"#, r###"setopt correct; print -r $?"###);
-        bulk_yy_fc_row_035 => (r#"bulk yy 035"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_yy_fc_row_036 => (r#"bulk yy 036"#, r###"setopt completealiases; print -r $?"###);
-        bulk_yy_fc_row_037 => (r#"bulk yy 037"#, r###"setopt globdots; print -r $?"###);
-        bulk_yy_fc_row_038 => (r#"bulk yy 038"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_yy_fc_row_039 => (r#"bulk yy 039"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_yy_fc_row_040 => (r#"bulk yy 040"#, r###"setopt markdirs; print -r $?"###);
-        bulk_yy_fc_row_041 => (r#"bulk yy 041"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_yy_fc_row_042 => (r#"bulk yy 042"#, r###"setopt chase_links; print -r $?"###);
-        bulk_yy_fc_row_043 => (r#"bulk yy 043"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_yy_fc_row_044 => (r#"bulk yy 044"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_yy_fc_row_045 => (r#"bulk yy 045"#, r###"setopt pushdsilent; print -r $?"###);
-        bulk_yy_fc_row_046 => (r#"bulk yy 046"#, r###"setopt pushdtohome; print -r $?"###);
-        bulk_yy_fc_row_047 => (r#"bulk yy 047"#, r###"setopt autopushd; print -r $?"###);
-        bulk_yy_fc_row_048 => (r#"bulk yy 048"#, r###"setopt pushdminus; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yz {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yz_fc_row_001 => (r#"bulk yz 001"#, r###"setopt clobber; print -r $?"###);
-        bulk_yz_fc_row_002 => (r#"bulk yz 002"#, r###"setopt histexpand; print -r $?"###);
-        bulk_yz_fc_row_003 => (r#"bulk yz 003"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_yz_fc_row_004 => (r#"bulk yz 004"#, r###"setopt banghist; print -r $?"###);
-        bulk_yz_fc_row_005 => (r#"bulk yz 005"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_yz_fc_row_006 => (r#"bulk yz 006"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_yz_fc_row_007 => (r#"bulk yz 007"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_yz_fc_row_008 => (r#"bulk yz 008"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_yz_fc_row_009 => (r#"bulk yz 009"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_yz_fc_row_010 => (r#"bulk yz 010"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_yz_fc_row_011 => (r#"bulk yz 011"#, r###"setopt histverify; print -r $?"###);
-        bulk_yz_fc_row_012 => (r#"bulk yz 012"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_yz_fc_row_013 => (r#"bulk yz 013"#, r###"setopt no_beep; print -r $?"###);
-        bulk_yz_fc_row_014 => (r#"bulk yz 014"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_yz_fc_row_015 => (r#"bulk yz 015"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_yz_fc_row_016 => (r#"bulk yz 016"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_yz_fc_row_017 => (r#"bulk yz 017"#, r###"setopt correct; print -r $?"###);
-        bulk_yz_fc_row_018 => (r#"bulk yz 018"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_yz_fc_row_019 => (r#"bulk yz 019"#, r###"setopt completealiases; print -r $?"###);
-        bulk_yz_fc_row_020 => (r#"bulk yz 020"#, r###"setopt globdots; print -r $?"###);
-        bulk_yz_fc_row_021 => (r#"bulk yz 021"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_yz_fc_row_022 => (r#"bulk yz 022"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_yz_fc_row_023 => (r#"bulk yz 023"#, r###"setopt markdirs; print -r $?"###);
-        bulk_yz_fc_row_024 => (r#"bulk yz 024"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_yz_fc_row_025 => (r#"bulk yz 025"#, r###"setopt chase_links; print -r $?"###);
-        bulk_yz_fc_row_026 => (r#"bulk yz 026"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_yz_fc_row_027 => (r#"bulk yz 027"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_yz_fc_row_028 => (r#"bulk yz 028"#, r###"setopt pushdsilent; print -r $?"###);
-        bulk_yz_fc_row_029 => (r#"bulk yz 029"#, r###"setopt pushdtohome; print -r $?"###);
-        bulk_yz_fc_row_030 => (r#"bulk yz 030"#, r###"setopt autopushd; print -r $?"###);
-        bulk_yz_fc_row_031 => (r#"bulk yz 031"#, r###"setopt pushdminus; print -r $?"###);
-        bulk_yz_fc_row_032 => (r#"bulk yz 032"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_yz_fc_row_033 => (r#"bulk yz 033"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
-        bulk_yz_fc_row_034 => (r#"bulk yz 034"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
-        bulk_yz_fc_row_035 => (r#"bulk yz 035"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-        bulk_yz_fc_row_036 => (r#"bulk yz 036"#, r###"print -r $PWD"###);
-        bulk_yz_fc_row_037 => (r#"bulk yz 037"#, r###"print -r ${PWD:h}"###);
-        bulk_yz_fc_row_038 => (r#"bulk yz 038"#, r###"print -r ${PWD:t}"###);
-        bulk_yz_fc_row_039 => (r#"bulk yz 039"#, r###"print -r ${PWD:r}"###);
-        bulk_yz_fc_row_040 => (r#"bulk yz 040"#, r###"print -r ${PWD:e}"###);
-        bulk_yz_fc_row_041 => (r#"bulk yz 041"#, r###"print -r ${PWD:a}"###);
-        bulk_yz_fc_row_042 => (r#"bulk yz 042"#, r###"print -r ${PWD:A}"###);
-        bulk_yz_fc_row_043 => (r#"bulk yz 043"#, r###"read -r line <<< 'one'; print -r $line"###);
-        bulk_yz_fc_row_044 => (r#"bulk yz 044"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
-        bulk_yz_fc_row_045 => (r#"bulk yz 045"#, r###"print -r $'tab\there'"###);
-        bulk_yz_fc_row_046 => (r#"bulk yz 046"#, r###"print -r $'line1\nline2'"###);
-        bulk_yz_fc_row_047 => (r#"bulk yz 047"#, r###"printf '%q\n' 'a b'"###);
-        bulk_yz_fc_row_048 => (r#"bulk yz 048"#, r###"printf '%s\n' ok"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_za {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_za_fc_row_001 => (r#"bulk za 001"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_za_fc_row_002 => (r#"bulk za 002"#, r###"setopt completealiases; print -r $?"###);
-        bulk_za_fc_row_003 => (r#"bulk za 003"#, r###"setopt globdots; print -r $?"###);
-        bulk_za_fc_row_004 => (r#"bulk za 004"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_za_fc_row_005 => (r#"bulk za 005"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_za_fc_row_006 => (r#"bulk za 006"#, r###"setopt markdirs; print -r $?"###);
-        bulk_za_fc_row_007 => (r#"bulk za 007"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_za_fc_row_008 => (r#"bulk za 008"#, r###"setopt chase_links; print -r $?"###);
-        bulk_za_fc_row_009 => (r#"bulk za 009"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_za_fc_row_010 => (r#"bulk za 010"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_za_fc_row_011 => (r#"bulk za 011"#, r###"setopt pushdsilent; print -r $?"###);
-        bulk_za_fc_row_012 => (r#"bulk za 012"#, r###"setopt pushdtohome; print -r $?"###);
-        bulk_za_fc_row_013 => (r#"bulk za 013"#, r###"setopt autopushd; print -r $?"###);
-        bulk_za_fc_row_014 => (r#"bulk za 014"#, r###"setopt pushdminus; print -r $?"###);
-        bulk_za_fc_row_015 => (r#"bulk za 015"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_za_fc_row_016 => (r#"bulk za 016"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
-        bulk_za_fc_row_017 => (r#"bulk za 017"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
-        bulk_za_fc_row_018 => (r#"bulk za 018"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-        bulk_za_fc_row_019 => (r#"bulk za 019"#, r###"print -r $PWD"###);
-        bulk_za_fc_row_020 => (r#"bulk za 020"#, r###"print -r ${PWD:h}"###);
-        bulk_za_fc_row_021 => (r#"bulk za 021"#, r###"print -r ${PWD:t}"###);
-        bulk_za_fc_row_022 => (r#"bulk za 022"#, r###"print -r ${PWD:r}"###);
-        bulk_za_fc_row_023 => (r#"bulk za 023"#, r###"print -r ${PWD:e}"###);
-        bulk_za_fc_row_024 => (r#"bulk za 024"#, r###"print -r ${PWD:a}"###);
-        bulk_za_fc_row_025 => (r#"bulk za 025"#, r###"print -r ${PWD:A}"###);
-        bulk_za_fc_row_026 => (r#"bulk za 026"#, r###"read -r line <<< 'one'; print -r $line"###);
-        bulk_za_fc_row_027 => (r#"bulk za 027"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
-        bulk_za_fc_row_028 => (r#"bulk za 028"#, r###"print -r $'tab\there'"###);
-        bulk_za_fc_row_029 => (r#"bulk za 029"#, r###"print -r $'line1\nline2'"###);
-        bulk_za_fc_row_030 => (r#"bulk za 030"#, r###"printf '%q\n' 'a b'"###);
-        bulk_za_fc_row_031 => (r#"bulk za 031"#, r###"printf '%s\n' ok"###);
-        bulk_za_fc_row_032 => (r#"bulk za 032"#, r###"print -rn -- end"###);
-        bulk_za_fc_row_033 => (r#"bulk za 033"#, r###"print -rl -- a b"###);
-        bulk_za_fc_row_034 => (r#"bulk za 034"#, r###"print -fc '%s\n' hi"###);
-        bulk_za_fc_row_035 => (r#"bulk za 035"#, r###"whence -w print 2>/dev/null; print -r $?"###);
-        bulk_za_fc_row_036 => (r#"bulk za 036"#, r###"whence -c print 2>/dev/null; print -r $?"###);
-        bulk_za_fc_row_037 => (r#"bulk za 037"#, r###"which print 2>/dev/null; print -r $?"###);
-        bulk_za_fc_row_038 => (r#"bulk za 038"#, r###"command -v print 2>/dev/null; print -r $?"###);
-        bulk_za_fc_row_039 => (r#"bulk za 039"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_za_fc_row_040 => (r#"bulk za 040"#, r###"rehash 2>/dev/null; print -r $?"###);
-        bulk_za_fc_row_041 => (r#"bulk za 041"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
-        bulk_za_fc_row_042 => (r#"bulk za 042"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
-        bulk_za_fc_row_043 => (r#"bulk za 043"#, r###"export ZA=1; print -r $ZA"###);
-        bulk_za_fc_row_044 => (r#"bulk za 044"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
-        bulk_za_fc_row_045 => (r#"bulk za 045"#, r###"typeset -x ZB=2; print -r $ZB"###);
-        bulk_za_fc_row_046 => (r#"bulk za 046"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
-        bulk_za_fc_row_047 => (r#"bulk za 047"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
-        bulk_za_fc_row_048 => (r#"bulk za 048"#, r###"shift; print -r $1; set -- a b c"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zb {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zb_fc_row_001 => (r#"bulk zb 001"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-        bulk_zb_fc_row_002 => (r#"bulk zb 002"#, r###"print -r $PWD"###);
-        bulk_zb_fc_row_003 => (r#"bulk zb 003"#, r###"print -r ${PWD:h}"###);
-        bulk_zb_fc_row_004 => (r#"bulk zb 004"#, r###"print -r ${PWD:t}"###);
-        bulk_zb_fc_row_005 => (r#"bulk zb 005"#, r###"print -r ${PWD:r}"###);
-        bulk_zb_fc_row_006 => (r#"bulk zb 006"#, r###"print -r ${PWD:e}"###);
-        bulk_zb_fc_row_007 => (r#"bulk zb 007"#, r###"print -r ${PWD:a}"###);
-        bulk_zb_fc_row_008 => (r#"bulk zb 008"#, r###"print -r ${PWD:A}"###);
-        bulk_zb_fc_row_009 => (r#"bulk zb 009"#, r###"read -r line <<< 'one'; print -r $line"###);
-        bulk_zb_fc_row_010 => (r#"bulk zb 010"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
-        bulk_zb_fc_row_011 => (r#"bulk zb 011"#, r###"print -r $'tab\there'"###);
-        bulk_zb_fc_row_012 => (r#"bulk zb 012"#, r###"print -r $'line1\nline2'"###);
-        bulk_zb_fc_row_013 => (r#"bulk zb 013"#, r###"printf '%q\n' 'a b'"###);
-        bulk_zb_fc_row_014 => (r#"bulk zb 014"#, r###"printf '%s\n' ok"###);
-        bulk_zb_fc_row_015 => (r#"bulk zb 015"#, r###"print -rn -- end"###);
-        bulk_zb_fc_row_016 => (r#"bulk zb 016"#, r###"print -rl -- a b"###);
-        bulk_zb_fc_row_017 => (r#"bulk zb 017"#, r###"print -fc '%s\n' hi"###);
-        bulk_zb_fc_row_018 => (r#"bulk zb 018"#, r###"whence -w print 2>/dev/null; print -r $?"###);
-        bulk_zb_fc_row_019 => (r#"bulk zb 019"#, r###"whence -c print 2>/dev/null; print -r $?"###);
-        bulk_zb_fc_row_020 => (r#"bulk zb 020"#, r###"which print 2>/dev/null; print -r $?"###);
-        bulk_zb_fc_row_021 => (r#"bulk zb 021"#, r###"command -v print 2>/dev/null; print -r $?"###);
-        bulk_zb_fc_row_022 => (r#"bulk zb 022"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_zb_fc_row_023 => (r#"bulk zb 023"#, r###"rehash 2>/dev/null; print -r $?"###);
-        bulk_zb_fc_row_024 => (r#"bulk zb 024"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
-        bulk_zb_fc_row_025 => (r#"bulk zb 025"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
-        bulk_zb_fc_row_026 => (r#"bulk zb 026"#, r###"export ZA=1; print -r $ZA"###);
-        bulk_zb_fc_row_027 => (r#"bulk zb 027"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
-        bulk_zb_fc_row_028 => (r#"bulk zb 028"#, r###"typeset -x ZB=2; print -r $ZB"###);
-        bulk_zb_fc_row_029 => (r#"bulk zb 029"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
-        bulk_zb_fc_row_030 => (r#"bulk zb 030"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
-        bulk_zb_fc_row_031 => (r#"bulk zb 031"#, r###"shift; print -r $1; set -- a b c"###);
-        bulk_zb_fc_row_032 => (r#"bulk zb 032"#, r###"(( $# )); print -r $#"###);
-        bulk_zb_fc_row_033 => (r#"bulk zb 033"#, r###"print -r ${argv[1]}"###);
-        bulk_zb_fc_row_034 => (r#"bulk zb 034"#, r###"print -r ${*[1]}"###);
-        bulk_zb_fc_row_035 => (r#"bulk zb 035"#, r###"print -r $@[1]"###);
-        bulk_zb_fc_row_036 => (r#"bulk zb 036"#, r###"print -r ${@:2}"###);
-        bulk_zb_fc_row_037 => (r#"bulk zb 037"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
-        bulk_zb_fc_row_038 => (r#"bulk zb 038"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
-        bulk_zb_fc_row_039 => (r#"bulk zb 039"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
-        bulk_zb_fc_row_040 => (r#"bulk zb 040"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
-        bulk_zb_fc_row_041 => (r#"bulk zb 041"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
-        bulk_zb_fc_row_042 => (r#"bulk zb 042"#, r###"str=%n; print -r ${(%)str}"###);
-        bulk_zb_fc_row_043 => (r#"bulk zb 043"#, r###"str=%N; print -r ${(%)str}"###);
-        bulk_zb_fc_row_044 => (r#"bulk zb 044"#, r###"str=%~; print -r ${(%)str}"###);
-        bulk_zb_fc_row_045 => (r#"bulk zb 045"#, r###"str=%d; print -r ${(%)str}"###);
-        bulk_zb_fc_row_046 => (r#"bulk zb 046"#, r###"str=%m; print -r ${(%)str}"###);
-        bulk_zb_fc_row_047 => (r#"bulk zb 047"#, r###"str=%#; print -r ${(%)str}"###);
-        bulk_zb_fc_row_048 => (r#"bulk zb 048"#, r###"str=%?; print -r ${(%)str}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zc {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zc_fc_row_001 => (r#"bulk zc 001"#, r###"print -rl -- a b"###);
-        bulk_zc_fc_row_002 => (r#"bulk zc 002"#, r###"print -fc '%s\n' hi"###);
-        bulk_zc_fc_row_003 => (r#"bulk zc 003"#, r###"whence -w print 2>/dev/null; print -r $?"###);
-        bulk_zc_fc_row_004 => (r#"bulk zc 004"#, r###"whence -c print 2>/dev/null; print -r $?"###);
-        bulk_zc_fc_row_005 => (r#"bulk zc 005"#, r###"which print 2>/dev/null; print -r $?"###);
-        bulk_zc_fc_row_006 => (r#"bulk zc 006"#, r###"command -v print 2>/dev/null; print -r $?"###);
-        bulk_zc_fc_row_007 => (r#"bulk zc 007"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_zc_fc_row_008 => (r#"bulk zc 008"#, r###"rehash 2>/dev/null; print -r $?"###);
-        bulk_zc_fc_row_009 => (r#"bulk zc 009"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
-        bulk_zc_fc_row_010 => (r#"bulk zc 010"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
-        bulk_zc_fc_row_011 => (r#"bulk zc 011"#, r###"export ZA=1; print -r $ZA"###);
-        bulk_zc_fc_row_012 => (r#"bulk zc 012"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
-        bulk_zc_fc_row_013 => (r#"bulk zc 013"#, r###"typeset -x ZB=2; print -r $ZB"###);
-        bulk_zc_fc_row_014 => (r#"bulk zc 014"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
-        bulk_zc_fc_row_015 => (r#"bulk zc 015"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
-        bulk_zc_fc_row_016 => (r#"bulk zc 016"#, r###"shift; print -r $1; set -- a b c"###);
-        bulk_zc_fc_row_017 => (r#"bulk zc 017"#, r###"(( $# )); print -r $#"###);
-        bulk_zc_fc_row_018 => (r#"bulk zc 018"#, r###"print -r ${argv[1]}"###);
-        bulk_zc_fc_row_019 => (r#"bulk zc 019"#, r###"print -r ${*[1]}"###);
-        bulk_zc_fc_row_020 => (r#"bulk zc 020"#, r###"print -r $@[1]"###);
-        bulk_zc_fc_row_021 => (r#"bulk zc 021"#, r###"print -r ${@:2}"###);
-        bulk_zc_fc_row_022 => (r#"bulk zc 022"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
-        bulk_zc_fc_row_023 => (r#"bulk zc 023"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
-        bulk_zc_fc_row_024 => (r#"bulk zc 024"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
-        bulk_zc_fc_row_025 => (r#"bulk zc 025"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
-        bulk_zc_fc_row_026 => (r#"bulk zc 026"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
-        bulk_zc_fc_row_027 => (r#"bulk zc 027"#, r###"str=%n; print -r ${(%)str}"###);
-        bulk_zc_fc_row_028 => (r#"bulk zc 028"#, r###"str=%N; print -r ${(%)str}"###);
-        bulk_zc_fc_row_029 => (r#"bulk zc 029"#, r###"str=%~; print -r ${(%)str}"###);
-        bulk_zc_fc_row_030 => (r#"bulk zc 030"#, r###"str=%d; print -r ${(%)str}"###);
-        bulk_zc_fc_row_031 => (r#"bulk zc 031"#, r###"str=%m; print -r ${(%)str}"###);
-        bulk_zc_fc_row_032 => (r#"bulk zc 032"#, r###"str=%#; print -r ${(%)str}"###);
-        bulk_zc_fc_row_033 => (r#"bulk zc 033"#, r###"str=%?; print -r ${(%)str}"###);
-        bulk_zc_fc_row_034 => (r#"bulk zc 034"#, r###"str=%_; print -r ${(%)str}"###);
-        bulk_zc_fc_row_035 => (r#"bulk zc 035"#, r###"str=%h; print -r ${(%)str}"###);
-        bulk_zc_fc_row_036 => (r#"bulk zc 036"#, r###"str=%!; print -r ${(%)str}"###);
-        bulk_zc_fc_row_037 => (r#"bulk zc 037"#, r###"str=%i; print -r ${(%)str}"###);
-        bulk_zc_fc_row_038 => (r#"bulk zc 038"#, r###"str=%I; print -r ${(%)str}"###);
-        bulk_zc_fc_row_039 => (r#"bulk zc 039"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_zc_fc_row_040 => (r#"bulk zc 040"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_zc_fc_row_041 => (r#"bulk zc 041"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_zc_fc_row_042 => (r#"bulk zc 042"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_zc_fc_row_043 => (r#"bulk zc 043"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_zc_fc_row_044 => (r#"bulk zc 044"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_zc_fc_row_045 => (r#"bulk zc 045"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_zc_fc_row_046 => (r#"bulk zc 046"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_zc_fc_row_047 => (r#"bulk zc 047"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_zc_fc_row_048 => (r#"bulk zc 048"#, r###"str=%y; print -r ${(%)str}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zd {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zd_fc_row_001 => (r#"bulk zd 001"#, r###"(( $# )); print -r $#"###);
-        bulk_zd_fc_row_002 => (r#"bulk zd 002"#, r###"print -r ${argv[1]}"###);
-        bulk_zd_fc_row_003 => (r#"bulk zd 003"#, r###"print -r ${*[1]}"###);
-        bulk_zd_fc_row_004 => (r#"bulk zd 004"#, r###"print -r $@[1]"###);
-        bulk_zd_fc_row_005 => (r#"bulk zd 005"#, r###"print -r ${@:2}"###);
-        bulk_zd_fc_row_006 => (r#"bulk zd 006"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
-        bulk_zd_fc_row_007 => (r#"bulk zd 007"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
-        bulk_zd_fc_row_008 => (r#"bulk zd 008"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
-        bulk_zd_fc_row_009 => (r#"bulk zd 009"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
-        bulk_zd_fc_row_010 => (r#"bulk zd 010"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
-        bulk_zd_fc_row_011 => (r#"bulk zd 011"#, r###"str=%n; print -r ${(%)str}"###);
-        bulk_zd_fc_row_012 => (r#"bulk zd 012"#, r###"str=%N; print -r ${(%)str}"###);
-        bulk_zd_fc_row_013 => (r#"bulk zd 013"#, r###"str=%~; print -r ${(%)str}"###);
-        bulk_zd_fc_row_014 => (r#"bulk zd 014"#, r###"str=%d; print -r ${(%)str}"###);
-        bulk_zd_fc_row_015 => (r#"bulk zd 015"#, r###"str=%m; print -r ${(%)str}"###);
-        bulk_zd_fc_row_016 => (r#"bulk zd 016"#, r###"str=%#; print -r ${(%)str}"###);
-        bulk_zd_fc_row_017 => (r#"bulk zd 017"#, r###"str=%?; print -r ${(%)str}"###);
-        bulk_zd_fc_row_018 => (r#"bulk zd 018"#, r###"str=%_; print -r ${(%)str}"###);
-        bulk_zd_fc_row_019 => (r#"bulk zd 019"#, r###"str=%h; print -r ${(%)str}"###);
-        bulk_zd_fc_row_020 => (r#"bulk zd 020"#, r###"str=%!; print -r ${(%)str}"###);
-        bulk_zd_fc_row_021 => (r#"bulk zd 021"#, r###"str=%i; print -r ${(%)str}"###);
-        bulk_zd_fc_row_022 => (r#"bulk zd 022"#, r###"str=%I; print -r ${(%)str}"###);
-        bulk_zd_fc_row_023 => (r#"bulk zd 023"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_zd_fc_row_024 => (r#"bulk zd 024"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_zd_fc_row_025 => (r#"bulk zd 025"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_zd_fc_row_026 => (r#"bulk zd 026"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_zd_fc_row_027 => (r#"bulk zd 027"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_zd_fc_row_028 => (r#"bulk zd 028"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_zd_fc_row_029 => (r#"bulk zd 029"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_zd_fc_row_030 => (r#"bulk zd 030"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_zd_fc_row_031 => (r#"bulk zd 031"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_zd_fc_row_032 => (r#"bulk zd 032"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_zd_fc_row_033 => (r#"bulk zd 033"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_zd_fc_row_034 => (r#"bulk zd 034"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_zd_fc_row_035 => (r#"bulk zd 035"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_zd_fc_row_036 => (r#"bulk zd 036"#, r###"true; print -r $?"###);
-        bulk_zd_fc_row_037 => (r#"bulk zd 037"#, r###"false; print -r $?"###);
-        bulk_zd_fc_row_038 => (r#"bulk zd 038"#, r###"print -r hello"###);
-        bulk_zd_fc_row_039 => (r#"bulk zd 039"#, r###"echo one two"###);
-        bulk_zd_fc_row_040 => (r#"bulk zd 040"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_zd_fc_row_041 => (r#"bulk zd 041"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_zd_fc_row_042 => (r#"bulk zd 042"#, r###"command true; print -r $?"###);
-        bulk_zd_fc_row_043 => (r#"bulk zd 043"#, r###"builtin true; print -r $?"###);
-        bulk_zd_fc_row_044 => (r#"bulk zd 044"#, r###"if true; then echo t; fi"###);
-        bulk_zd_fc_row_045 => (r#"bulk zd 045"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_zd_fc_row_046 => (r#"bulk zd 046"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_zd_fc_row_047 => (r#"bulk zd 047"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_zd_fc_row_048 => (r#"bulk zd 048"#, r###"repeat 2; do print -r r; done"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_ze {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_ze_fc_row_001 => (r#"bulk ze 001"#, r###"str=%?; print -r ${(%)str}"###);
-        bulk_ze_fc_row_002 => (r#"bulk ze 002"#, r###"str=%_; print -r ${(%)str}"###);
-        bulk_ze_fc_row_003 => (r#"bulk ze 003"#, r###"str=%h; print -r ${(%)str}"###);
-        bulk_ze_fc_row_004 => (r#"bulk ze 004"#, r###"str=%!; print -r ${(%)str}"###);
-        bulk_ze_fc_row_005 => (r#"bulk ze 005"#, r###"str=%i; print -r ${(%)str}"###);
-        bulk_ze_fc_row_006 => (r#"bulk ze 006"#, r###"str=%I; print -r ${(%)str}"###);
-        bulk_ze_fc_row_007 => (r#"bulk ze 007"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_ze_fc_row_008 => (r#"bulk ze 008"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_ze_fc_row_009 => (r#"bulk ze 009"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_ze_fc_row_010 => (r#"bulk ze 010"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_ze_fc_row_011 => (r#"bulk ze 011"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ze_fc_row_012 => (r#"bulk ze 012"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_ze_fc_row_013 => (r#"bulk ze 013"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_ze_fc_row_014 => (r#"bulk ze 014"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_ze_fc_row_015 => (r#"bulk ze 015"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_ze_fc_row_016 => (r#"bulk ze 016"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_ze_fc_row_017 => (r#"bulk ze 017"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_ze_fc_row_018 => (r#"bulk ze 018"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_ze_fc_row_019 => (r#"bulk ze 019"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_ze_fc_row_020 => (r#"bulk ze 020"#, r###"true; print -r $?"###);
-        bulk_ze_fc_row_021 => (r#"bulk ze 021"#, r###"false; print -r $?"###);
-        bulk_ze_fc_row_022 => (r#"bulk ze 022"#, r###"print -r hello"###);
-        bulk_ze_fc_row_023 => (r#"bulk ze 023"#, r###"echo one two"###);
-        bulk_ze_fc_row_024 => (r#"bulk ze 024"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_ze_fc_row_025 => (r#"bulk ze 025"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_ze_fc_row_026 => (r#"bulk ze 026"#, r###"command true; print -r $?"###);
-        bulk_ze_fc_row_027 => (r#"bulk ze 027"#, r###"builtin true; print -r $?"###);
-        bulk_ze_fc_row_028 => (r#"bulk ze 028"#, r###"if true; then echo t; fi"###);
-        bulk_ze_fc_row_029 => (r#"bulk ze 029"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_ze_fc_row_030 => (r#"bulk ze 030"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_ze_fc_row_031 => (r#"bulk ze 031"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_ze_fc_row_032 => (r#"bulk ze 032"#, r###"repeat 2; do print -r r; done"###);
-        bulk_ze_fc_row_033 => (r#"bulk ze 033"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_ze_fc_row_034 => (r#"bulk ze 034"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_ze_fc_row_035 => (r#"bulk ze 035"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_ze_fc_row_036 => (r#"bulk ze 036"#, r###"{ echo a; echo b; }"###);
-        bulk_ze_fc_row_037 => (r#"bulk ze 037"#, r###"(echo sub)"###);
-        bulk_ze_fc_row_038 => (r#"bulk ze 038"#, r###"(( 1 )) || echo no"###);
-        bulk_ze_fc_row_039 => (r#"bulk ze 039"#, r###"(( 0 )) && echo no"###);
-        bulk_ze_fc_row_040 => (r#"bulk ze 040"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_ze_fc_row_041 => (r#"bulk ze 041"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_ze_fc_row_042 => (r#"bulk ze 042"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_ze_fc_row_043 => (r#"bulk ze 043"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_ze_fc_row_044 => (r#"bulk ze 044"#, r###"print -r $(( !0 ))"###);
-        bulk_ze_fc_row_045 => (r#"bulk ze 045"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_ze_fc_row_046 => (r#"bulk ze 046"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_ze_fc_row_047 => (r#"bulk ze 047"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_ze_fc_row_048 => (r#"bulk ze 048"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zf {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zf_fc_row_001 => (r#"bulk zf 001"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_zf_fc_row_002 => (r#"bulk zf 002"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_zf_fc_row_003 => (r#"bulk zf 003"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_zf_fc_row_004 => (r#"bulk zf 004"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_zf_fc_row_005 => (r#"bulk zf 005"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_zf_fc_row_006 => (r#"bulk zf 006"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_zf_fc_row_007 => (r#"bulk zf 007"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_zf_fc_row_008 => (r#"bulk zf 008"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_zf_fc_row_009 => (r#"bulk zf 009"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_zf_fc_row_010 => (r#"bulk zf 010"#, r###"true; print -r $?"###);
-        bulk_zf_fc_row_011 => (r#"bulk zf 011"#, r###"false; print -r $?"###);
-        bulk_zf_fc_row_012 => (r#"bulk zf 012"#, r###"print -r hello"###);
-        bulk_zf_fc_row_013 => (r#"bulk zf 013"#, r###"echo one two"###);
-        bulk_zf_fc_row_014 => (r#"bulk zf 014"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_zf_fc_row_015 => (r#"bulk zf 015"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_zf_fc_row_016 => (r#"bulk zf 016"#, r###"command true; print -r $?"###);
-        bulk_zf_fc_row_017 => (r#"bulk zf 017"#, r###"builtin true; print -r $?"###);
-        bulk_zf_fc_row_018 => (r#"bulk zf 018"#, r###"if true; then echo t; fi"###);
-        bulk_zf_fc_row_019 => (r#"bulk zf 019"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_zf_fc_row_020 => (r#"bulk zf 020"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_zf_fc_row_021 => (r#"bulk zf 021"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_zf_fc_row_022 => (r#"bulk zf 022"#, r###"repeat 2; do print -r r; done"###);
-        bulk_zf_fc_row_023 => (r#"bulk zf 023"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_zf_fc_row_024 => (r#"bulk zf 024"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_zf_fc_row_025 => (r#"bulk zf 025"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_zf_fc_row_026 => (r#"bulk zf 026"#, r###"{ echo a; echo b; }"###);
-        bulk_zf_fc_row_027 => (r#"bulk zf 027"#, r###"(echo sub)"###);
-        bulk_zf_fc_row_028 => (r#"bulk zf 028"#, r###"(( 1 )) || echo no"###);
-        bulk_zf_fc_row_029 => (r#"bulk zf 029"#, r###"(( 0 )) && echo no"###);
-        bulk_zf_fc_row_030 => (r#"bulk zf 030"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_zf_fc_row_031 => (r#"bulk zf 031"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_zf_fc_row_032 => (r#"bulk zf 032"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_zf_fc_row_033 => (r#"bulk zf 033"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_zf_fc_row_034 => (r#"bulk zf 034"#, r###"print -r $(( !0 ))"###);
-        bulk_zf_fc_row_035 => (r#"bulk zf 035"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_zf_fc_row_036 => (r#"bulk zf 036"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_zf_fc_row_037 => (r#"bulk zf 037"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_zf_fc_row_038 => (r#"bulk zf 038"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_zf_fc_row_039 => (r#"bulk zf 039"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_zf_fc_row_040 => (r#"bulk zf 040"#, r###"print -r $(( true ))"###);
-        bulk_zf_fc_row_041 => (r#"bulk zf 041"#, r###"print -r $(( false ))"###);
-        bulk_zf_fc_row_042 => (r#"bulk zf 042"#, r###"[[ -e / ]]; print -r $?"###);
-        bulk_zf_fc_row_043 => (r#"bulk zf 043"#, r###"[[ -d /tmp ]]; print -r $?"###);
-        bulk_zf_fc_row_044 => (r#"bulk zf 044"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
-        bulk_zf_fc_row_045 => (r#"bulk zf 045"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
-        bulk_zf_fc_row_046 => (r#"bulk zf 046"#, r###"[[ -w /tmp ]]; print -r $?"###);
-        bulk_zf_fc_row_047 => (r#"bulk zf 047"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
-        bulk_zf_fc_row_048 => (r#"bulk zf 048"#, r###"[[ 42 = <-> ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zg {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zg_fc_row_001 => (r#"bulk zg 001"#, r###"command true; print -r $?"###);
-        bulk_zg_fc_row_002 => (r#"bulk zg 002"#, r###"builtin true; print -r $?"###);
-        bulk_zg_fc_row_003 => (r#"bulk zg 003"#, r###"if true; then echo t; fi"###);
-        bulk_zg_fc_row_004 => (r#"bulk zg 004"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_zg_fc_row_005 => (r#"bulk zg 005"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_zg_fc_row_006 => (r#"bulk zg 006"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_zg_fc_row_007 => (r#"bulk zg 007"#, r###"repeat 2; do print -r r; done"###);
-        bulk_zg_fc_row_008 => (r#"bulk zg 008"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_zg_fc_row_009 => (r#"bulk zg 009"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_zg_fc_row_010 => (r#"bulk zg 010"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_zg_fc_row_011 => (r#"bulk zg 011"#, r###"{ echo a; echo b; }"###);
-        bulk_zg_fc_row_012 => (r#"bulk zg 012"#, r###"(echo sub)"###);
-        bulk_zg_fc_row_013 => (r#"bulk zg 013"#, r###"(( 1 )) || echo no"###);
-        bulk_zg_fc_row_014 => (r#"bulk zg 014"#, r###"(( 0 )) && echo no"###);
-        bulk_zg_fc_row_015 => (r#"bulk zg 015"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_zg_fc_row_016 => (r#"bulk zg 016"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_zg_fc_row_017 => (r#"bulk zg 017"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_zg_fc_row_018 => (r#"bulk zg 018"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_zg_fc_row_019 => (r#"bulk zg 019"#, r###"print -r $(( !0 ))"###);
-        bulk_zg_fc_row_020 => (r#"bulk zg 020"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_zg_fc_row_021 => (r#"bulk zg 021"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_zg_fc_row_022 => (r#"bulk zg 022"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_zg_fc_row_023 => (r#"bulk zg 023"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_zg_fc_row_024 => (r#"bulk zg 024"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_zg_fc_row_025 => (r#"bulk zg 025"#, r###"print -r $(( true ))"###);
-        bulk_zg_fc_row_026 => (r#"bulk zg 026"#, r###"print -r $(( false ))"###);
-        bulk_zg_fc_row_027 => (r#"bulk zg 027"#, r###"[[ -e / ]]; print -r $?"###);
-        bulk_zg_fc_row_028 => (r#"bulk zg 028"#, r###"[[ -d /tmp ]]; print -r $?"###);
-        bulk_zg_fc_row_029 => (r#"bulk zg 029"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
-        bulk_zg_fc_row_030 => (r#"bulk zg 030"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
-        bulk_zg_fc_row_031 => (r#"bulk zg 031"#, r###"[[ -w /tmp ]]; print -r $?"###);
-        bulk_zg_fc_row_032 => (r#"bulk zg 032"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
-        bulk_zg_fc_row_033 => (r#"bulk zg 033"#, r###"[[ 42 = <-> ]]; print -r $?"###);
-        bulk_zg_fc_row_034 => (r#"bulk zg 034"#, r###"[[ abc = <-> ]]; print -r $?"###);
-        bulk_zg_fc_row_035 => (r#"bulk zg 035"#, r####"[[ host = ##host ]]; print -r $?"####);
-        bulk_zg_fc_row_036 => (r#"bulk zg 036"#, r###"[[ -v x ]]; print -r $?; x=1"###);
-        bulk_zg_fc_row_037 => (r#"bulk zg 037"#, r###"unset y; [[ -v y ]]; print -r $?"###);
-        bulk_zg_fc_row_038 => (r#"bulk zg 038"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
-        bulk_zg_fc_row_039 => (r#"bulk zg 039"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
-        bulk_zg_fc_row_040 => (r#"bulk zg 040"#, r###"[[ abc = a* ]]; print -r $?"###);
-        bulk_zg_fc_row_041 => (r#"bulk zg 041"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
-        bulk_zg_fc_row_042 => (r#"bulk zg 042"#, r###"[[ -z '' ]]; print -r $?"###);
-        bulk_zg_fc_row_043 => (r#"bulk zg 043"#, r###"[[ -n abc ]]; print -r $?"###);
-        bulk_zg_fc_row_044 => (r#"bulk zg 044"#, r###"typeset -i n=10; print -r $n"###);
-        bulk_zg_fc_row_045 => (r#"bulk zg 045"#, r###"typeset -l n=AbC; print -r $n"###);
-        bulk_zg_fc_row_046 => (r#"bulk zg 046"#, r###"typeset -u n=xy; print -r $n"###);
-        bulk_zg_fc_row_047 => (r#"bulk zg 047"#, r###"typeset -Z5 n=7; print -r $n"###);
-        bulk_zg_fc_row_048 => (r#"bulk zg 048"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zh {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zh_fc_row_001 => (r#"bulk zh 001"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_zh_fc_row_002 => (r#"bulk zh 002"#, r###"print -r $(( !0 ))"###);
-        bulk_zh_fc_row_003 => (r#"bulk zh 003"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_zh_fc_row_004 => (r#"bulk zh 004"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_zh_fc_row_005 => (r#"bulk zh 005"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_zh_fc_row_006 => (r#"bulk zh 006"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_zh_fc_row_007 => (r#"bulk zh 007"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_zh_fc_row_008 => (r#"bulk zh 008"#, r###"print -r $(( true ))"###);
-        bulk_zh_fc_row_009 => (r#"bulk zh 009"#, r###"print -r $(( false ))"###);
-        bulk_zh_fc_row_010 => (r#"bulk zh 010"#, r###"[[ -e / ]]; print -r $?"###);
-        bulk_zh_fc_row_011 => (r#"bulk zh 011"#, r###"[[ -d /tmp ]]; print -r $?"###);
-        bulk_zh_fc_row_012 => (r#"bulk zh 012"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
-        bulk_zh_fc_row_013 => (r#"bulk zh 013"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
-        bulk_zh_fc_row_014 => (r#"bulk zh 014"#, r###"[[ -w /tmp ]]; print -r $?"###);
-        bulk_zh_fc_row_015 => (r#"bulk zh 015"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
-        bulk_zh_fc_row_016 => (r#"bulk zh 016"#, r###"[[ 42 = <-> ]]; print -r $?"###);
-        bulk_zh_fc_row_017 => (r#"bulk zh 017"#, r###"[[ abc = <-> ]]; print -r $?"###);
-        bulk_zh_fc_row_018 => (r#"bulk zh 018"#, r####"[[ host = ##host ]]; print -r $?"####);
-        bulk_zh_fc_row_019 => (r#"bulk zh 019"#, r###"[[ -v x ]]; print -r $?; x=1"###);
-        bulk_zh_fc_row_020 => (r#"bulk zh 020"#, r###"unset y; [[ -v y ]]; print -r $?"###);
-        bulk_zh_fc_row_021 => (r#"bulk zh 021"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
-        bulk_zh_fc_row_022 => (r#"bulk zh 022"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
-        bulk_zh_fc_row_023 => (r#"bulk zh 023"#, r###"[[ abc = a* ]]; print -r $?"###);
-        bulk_zh_fc_row_024 => (r#"bulk zh 024"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
-        bulk_zh_fc_row_025 => (r#"bulk zh 025"#, r###"[[ -z '' ]]; print -r $?"###);
-        bulk_zh_fc_row_026 => (r#"bulk zh 026"#, r###"[[ -n abc ]]; print -r $?"###);
-        bulk_zh_fc_row_027 => (r#"bulk zh 027"#, r###"typeset -i n=10; print -r $n"###);
-        bulk_zh_fc_row_028 => (r#"bulk zh 028"#, r###"typeset -l n=AbC; print -r $n"###);
-        bulk_zh_fc_row_029 => (r#"bulk zh 029"#, r###"typeset -u n=xy; print -r $n"###);
-        bulk_zh_fc_row_030 => (r#"bulk zh 030"#, r###"typeset -Z5 n=7; print -r $n"###);
-        bulk_zh_fc_row_031 => (r#"bulk zh 031"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
-        bulk_zh_fc_row_032 => (r#"bulk zh 032"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
-        bulk_zh_fc_row_033 => (r#"bulk zh 033"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
-        bulk_zh_fc_row_034 => (r#"bulk zh 034"#, r###"unset v; print -r ${v:-def}"###);
-        bulk_zh_fc_row_035 => (r#"bulk zh 035"#, r###"v=set; print -r ${v:+yes}"###);
-        bulk_zh_fc_row_036 => (r#"bulk zh 036"#, r###"unset v; : ${v::=def}; print -r $v"###);
-        bulk_zh_fc_row_037 => (r#"bulk zh 037"#, r###"print -r ${PWD:h}"###);
-        bulk_zh_fc_row_038 => (r#"bulk zh 038"#, r###"print -r ${PWD:t}"###);
-        bulk_zh_fc_row_039 => (r#"bulk zh 039"#, r###"true | true; print -r $?"###);
-        bulk_zh_fc_row_040 => (r#"bulk zh 040"#, r###"true | false; print -r $?"###);
-        bulk_zh_fc_row_041 => (r#"bulk zh 041"#, r###"print -r ${pipestatus[1]}; true | false"###);
-        bulk_zh_fc_row_042 => (r#"bulk zh 042"#, r###"print -r ${#pipestatus}; true | true | true"###);
-        bulk_zh_fc_row_043 => (r#"bulk zh 043"#, r###"set -- a b c; shift; print -r $1"###);
-        bulk_zh_fc_row_044 => (r#"bulk zh 044"#, r###"set -- a b c; shift 2; print -r $#"###);
-        bulk_zh_fc_row_045 => (r#"bulk zh 045"#, r###"fn(){ print -r $1; }; fn x"###);
-        bulk_zh_fc_row_046 => (r#"bulk zh 046"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
-        bulk_zh_fc_row_047 => (r#"bulk zh 047"#, r###"fn(){ return 2; }; fn; print -r $?"###);
-        bulk_zh_fc_row_048 => (r#"bulk zh 048"#, r###"print -r ${(q)x}; x=hi"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zi {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zi_fc_row_001 => (r#"bulk zi 001"#, r####"[[ host = ##host ]]; print -r $?"####);
-        bulk_zi_fc_row_002 => (r#"bulk zi 002"#, r###"[[ -v x ]]; print -r $?; x=1"###);
-        bulk_zi_fc_row_003 => (r#"bulk zi 003"#, r###"unset y; [[ -v y ]]; print -r $?"###);
-        bulk_zi_fc_row_004 => (r#"bulk zi 004"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
-        bulk_zi_fc_row_005 => (r#"bulk zi 005"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
-        bulk_zi_fc_row_006 => (r#"bulk zi 006"#, r###"[[ abc = a* ]]; print -r $?"###);
-        bulk_zi_fc_row_007 => (r#"bulk zi 007"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
-        bulk_zi_fc_row_008 => (r#"bulk zi 008"#, r###"[[ -z '' ]]; print -r $?"###);
-        bulk_zi_fc_row_009 => (r#"bulk zi 009"#, r###"[[ -n abc ]]; print -r $?"###);
-        bulk_zi_fc_row_010 => (r#"bulk zi 010"#, r###"typeset -i n=10; print -r $n"###);
-        bulk_zi_fc_row_011 => (r#"bulk zi 011"#, r###"typeset -l n=AbC; print -r $n"###);
-        bulk_zi_fc_row_012 => (r#"bulk zi 012"#, r###"typeset -u n=xy; print -r $n"###);
-        bulk_zi_fc_row_013 => (r#"bulk zi 013"#, r###"typeset -Z5 n=7; print -r $n"###);
-        bulk_zi_fc_row_014 => (r#"bulk zi 014"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
-        bulk_zi_fc_row_015 => (r#"bulk zi 015"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
-        bulk_zi_fc_row_016 => (r#"bulk zi 016"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
-        bulk_zi_fc_row_017 => (r#"bulk zi 017"#, r###"unset v; print -r ${v:-def}"###);
-        bulk_zi_fc_row_018 => (r#"bulk zi 018"#, r###"v=set; print -r ${v:+yes}"###);
-        bulk_zi_fc_row_019 => (r#"bulk zi 019"#, r###"unset v; : ${v::=def}; print -r $v"###);
-        bulk_zi_fc_row_020 => (r#"bulk zi 020"#, r###"print -r ${PWD:h}"###);
-        bulk_zi_fc_row_021 => (r#"bulk zi 021"#, r###"print -r ${PWD:t}"###);
-        bulk_zi_fc_row_022 => (r#"bulk zi 022"#, r###"true | true; print -r $?"###);
-        bulk_zi_fc_row_023 => (r#"bulk zi 023"#, r###"true | false; print -r $?"###);
-        bulk_zi_fc_row_024 => (r#"bulk zi 024"#, r###"print -r ${pipestatus[1]}; true | false"###);
-        bulk_zi_fc_row_025 => (r#"bulk zi 025"#, r###"print -r ${#pipestatus}; true | true | true"###);
-        bulk_zi_fc_row_026 => (r#"bulk zi 026"#, r###"set -- a b c; shift; print -r $1"###);
-        bulk_zi_fc_row_027 => (r#"bulk zi 027"#, r###"set -- a b c; shift 2; print -r $#"###);
-        bulk_zi_fc_row_028 => (r#"bulk zi 028"#, r###"fn(){ print -r $1; }; fn x"###);
-        bulk_zi_fc_row_029 => (r#"bulk zi 029"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
-        bulk_zi_fc_row_030 => (r#"bulk zi 030"#, r###"fn(){ return 2; }; fn; print -r $?"###);
-        bulk_zi_fc_row_031 => (r#"bulk zi 031"#, r###"print -r ${(q)x}; x=hi"###);
-        bulk_zi_fc_row_032 => (r#"bulk zi 032"#, r###"print -r ${(qq)x}; x=hi"###);
-        bulk_zi_fc_row_033 => (r#"bulk zi 033"#, r###"x=hi; print -r ${(q-)x}"###);
-        bulk_zi_fc_row_034 => (r#"bulk zi 034"#, r###"x=hi; print -r ${(q+)x}"###);
-        bulk_zi_fc_row_035 => (r#"bulk zi 035"#, r###"print -r ${(w)w}; w=a b c"###);
-        bulk_zi_fc_row_036 => (r#"bulk zi 036"#, r###"print -r ${(u)a}; a=(a a b)"###);
-        bulk_zi_fc_row_037 => (r#"bulk zi 037"#, r###"print -r ${(o)a}; a=(c b a)"###);
-        bulk_zi_fc_row_038 => (r#"bulk zi 038"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
-        bulk_zi_fc_row_039 => (r#"bulk zi 039"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
-        bulk_zi_fc_row_040 => (r#"bulk zi 040"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
-        bulk_zi_fc_row_041 => (r#"bulk zi 041"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
-        bulk_zi_fc_row_042 => (r#"bulk zi 042"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
-        bulk_zi_fc_row_043 => (r#"bulk zi 043"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
-        bulk_zi_fc_row_044 => (r#"bulk zi 044"#, r###"print -r ${+options}"###);
-        bulk_zi_fc_row_045 => (r#"bulk zi 045"#, r###"print -r ${+parameters}"###);
-        bulk_zi_fc_row_046 => (r#"bulk zi 046"#, r###"print -r ${+aliases}"###);
-        bulk_zi_fc_row_047 => (r#"bulk zi 047"#, r###"print -r ${+functions}"###);
-        bulk_zi_fc_row_048 => (r#"bulk zi 048"#, r###"print -r $ZSH_NAME"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zj {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zj_fc_row_001 => (r#"bulk zj 001"#, r###"v=set; print -r ${v:+yes}"###);
-        bulk_zj_fc_row_002 => (r#"bulk zj 002"#, r###"unset v; : ${v::=def}; print -r $v"###);
-        bulk_zj_fc_row_003 => (r#"bulk zj 003"#, r###"print -r ${PWD:h}"###);
-        bulk_zj_fc_row_004 => (r#"bulk zj 004"#, r###"print -r ${PWD:t}"###);
-        bulk_zj_fc_row_005 => (r#"bulk zj 005"#, r###"true | true; print -r $?"###);
-        bulk_zj_fc_row_006 => (r#"bulk zj 006"#, r###"true | false; print -r $?"###);
-        bulk_zj_fc_row_007 => (r#"bulk zj 007"#, r###"print -r ${pipestatus[1]}; true | false"###);
-        bulk_zj_fc_row_008 => (r#"bulk zj 008"#, r###"print -r ${#pipestatus}; true | true | true"###);
-        bulk_zj_fc_row_009 => (r#"bulk zj 009"#, r###"set -- a b c; shift; print -r $1"###);
-        bulk_zj_fc_row_010 => (r#"bulk zj 010"#, r###"set -- a b c; shift 2; print -r $#"###);
-        bulk_zj_fc_row_011 => (r#"bulk zj 011"#, r###"fn(){ print -r $1; }; fn x"###);
-        bulk_zj_fc_row_012 => (r#"bulk zj 012"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
-        bulk_zj_fc_row_013 => (r#"bulk zj 013"#, r###"fn(){ return 2; }; fn; print -r $?"###);
-        bulk_zj_fc_row_014 => (r#"bulk zj 014"#, r###"print -r ${(q)x}; x=hi"###);
-        bulk_zj_fc_row_015 => (r#"bulk zj 015"#, r###"print -r ${(qq)x}; x=hi"###);
-        bulk_zj_fc_row_016 => (r#"bulk zj 016"#, r###"x=hi; print -r ${(q-)x}"###);
-        bulk_zj_fc_row_017 => (r#"bulk zj 017"#, r###"x=hi; print -r ${(q+)x}"###);
-        bulk_zj_fc_row_018 => (r#"bulk zj 018"#, r###"print -r ${(w)w}; w=a b c"###);
-        bulk_zj_fc_row_019 => (r#"bulk zj 019"#, r###"print -r ${(u)a}; a=(a a b)"###);
-        bulk_zj_fc_row_020 => (r#"bulk zj 020"#, r###"print -r ${(o)a}; a=(c b a)"###);
-        bulk_zj_fc_row_021 => (r#"bulk zj 021"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
-        bulk_zj_fc_row_022 => (r#"bulk zj 022"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
-        bulk_zj_fc_row_023 => (r#"bulk zj 023"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
-        bulk_zj_fc_row_024 => (r#"bulk zj 024"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
-        bulk_zj_fc_row_025 => (r#"bulk zj 025"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
-        bulk_zj_fc_row_026 => (r#"bulk zj 026"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
-        bulk_zj_fc_row_027 => (r#"bulk zj 027"#, r###"print -r ${+options}"###);
-        bulk_zj_fc_row_028 => (r#"bulk zj 028"#, r###"print -r ${+parameters}"###);
-        bulk_zj_fc_row_029 => (r#"bulk zj 029"#, r###"print -r ${+aliases}"###);
-        bulk_zj_fc_row_030 => (r#"bulk zj 030"#, r###"print -r ${+functions}"###);
-        bulk_zj_fc_row_031 => (r#"bulk zj 031"#, r###"print -r $ZSH_NAME"###);
-        bulk_zj_fc_row_032 => (r#"bulk zj 032"#, r###"print -r ${ZSH_VERSION%%.*}"###);
-        bulk_zj_fc_row_033 => (r#"bulk zj 033"#, r###"whence -w print"###);
-        bulk_zj_fc_row_034 => (r#"bulk zj 034"#, r###"command -v true"###);
-        bulk_zj_fc_row_035 => (r#"bulk zj 035"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_zj_fc_row_036 => (r#"bulk zj 036"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
-        bulk_zj_fc_row_037 => (r#"bulk zj 037"#, r###"read -r line <<< 'one two'; print -r $line"###);
-        bulk_zj_fc_row_038 => (r#"bulk zj 038"#, r###"cat <<< 'herestring'"###);
-        bulk_zj_fc_row_039 => (r#"bulk zj 039"#, r###"echo hello 2>/dev/null"###);
-        bulk_zj_fc_row_040 => (r#"bulk zj 040"#, r###"printf '%s\n' a b c | head -1"###);
-        bulk_zj_fc_row_041 => (r#"bulk zj 041"#, r###"true && echo yes"###);
-        bulk_zj_fc_row_042 => (r#"bulk zj 042"#, r###"false || echo yes"###);
-        bulk_zj_fc_row_043 => (r#"bulk zj 043"#, r###"(exit 3); print -r $?"###);
-        bulk_zj_fc_row_044 => (r#"bulk zj 044"#, r###"print -r ${status}; (exit 4)"###);
-        bulk_zj_fc_row_045 => (r#"bulk zj 045"#, r###"print -r $(( 1_000 + 1 ))"###);
-        bulk_zj_fc_row_046 => (r#"bulk zj 046"#, r###"print -r $(( 5#101 ))"###);
-        bulk_zj_fc_row_047 => (r#"bulk zj 047"#, r###"print -r $(( 0b1111 ))"###);
-        bulk_zj_fc_row_048 => (r#"bulk zj 048"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zk {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zk_fc_row_001 => (r#"bulk zk 001"#, r###"print -r ${(w)w}; w=a b c"###);
-        bulk_zk_fc_row_002 => (r#"bulk zk 002"#, r###"print -r ${(u)a}; a=(a a b)"###);
-        bulk_zk_fc_row_003 => (r#"bulk zk 003"#, r###"print -r ${(o)a}; a=(c b a)"###);
-        bulk_zk_fc_row_004 => (r#"bulk zk 004"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
-        bulk_zk_fc_row_005 => (r#"bulk zk 005"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
-        bulk_zk_fc_row_006 => (r#"bulk zk 006"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
-        bulk_zk_fc_row_007 => (r#"bulk zk 007"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
-        bulk_zk_fc_row_008 => (r#"bulk zk 008"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
-        bulk_zk_fc_row_009 => (r#"bulk zk 009"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
-        bulk_zk_fc_row_010 => (r#"bulk zk 010"#, r###"print -r ${+options}"###);
-        bulk_zk_fc_row_011 => (r#"bulk zk 011"#, r###"print -r ${+parameters}"###);
-        bulk_zk_fc_row_012 => (r#"bulk zk 012"#, r###"print -r ${+aliases}"###);
-        bulk_zk_fc_row_013 => (r#"bulk zk 013"#, r###"print -r ${+functions}"###);
-        bulk_zk_fc_row_014 => (r#"bulk zk 014"#, r###"print -r $ZSH_NAME"###);
-        bulk_zk_fc_row_015 => (r#"bulk zk 015"#, r###"print -r ${ZSH_VERSION%%.*}"###);
-        bulk_zk_fc_row_016 => (r#"bulk zk 016"#, r###"whence -w print"###);
-        bulk_zk_fc_row_017 => (r#"bulk zk 017"#, r###"command -v true"###);
-        bulk_zk_fc_row_018 => (r#"bulk zk 018"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_zk_fc_row_019 => (r#"bulk zk 019"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
-        bulk_zk_fc_row_020 => (r#"bulk zk 020"#, r###"read -r line <<< 'one two'; print -r $line"###);
-        bulk_zk_fc_row_021 => (r#"bulk zk 021"#, r###"cat <<< 'herestring'"###);
-        bulk_zk_fc_row_022 => (r#"bulk zk 022"#, r###"echo hello 2>/dev/null"###);
-        bulk_zk_fc_row_023 => (r#"bulk zk 023"#, r###"printf '%s\n' a b c | head -1"###);
-        bulk_zk_fc_row_024 => (r#"bulk zk 024"#, r###"true && echo yes"###);
-        bulk_zk_fc_row_025 => (r#"bulk zk 025"#, r###"false || echo yes"###);
-        bulk_zk_fc_row_026 => (r#"bulk zk 026"#, r###"(exit 3); print -r $?"###);
-        bulk_zk_fc_row_027 => (r#"bulk zk 027"#, r###"print -r ${status}; (exit 4)"###);
-        bulk_zk_fc_row_028 => (r#"bulk zk 028"#, r###"print -r $(( 1_000 + 1 ))"###);
-        bulk_zk_fc_row_029 => (r#"bulk zk 029"#, r###"print -r $(( 5#101 ))"###);
-        bulk_zk_fc_row_030 => (r#"bulk zk 030"#, r###"print -r $(( 0b1111 ))"###);
-        bulk_zk_fc_row_031 => (r#"bulk zk 031"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
-        bulk_zk_fc_row_032 => (r#"bulk zk 032"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
-        bulk_zk_fc_row_033 => (r#"bulk zk 033"#, r###"typeset -F2 f=3.14; print -r $f"###);
-        bulk_zk_fc_row_034 => (r#"bulk zk 034"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
-        bulk_zk_fc_row_035 => (r#"bulk zk 035"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
-        bulk_zk_fc_row_036 => (r#"bulk zk 036"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
-        bulk_zk_fc_row_037 => (r#"bulk zk 037"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
-        bulk_zk_fc_row_038 => (r#"bulk zk 038"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
-        bulk_zk_fc_row_039 => (r#"bulk zk 039"#, r###"print -r ${#x}; x=hello"###);
-        bulk_zk_fc_row_040 => (r#"bulk zk 040"#, r###"print -r ${#a}; a=(a b c)"###);
-        bulk_zk_fc_row_041 => (r#"bulk zk 041"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
-        bulk_zk_fc_row_042 => (r#"bulk zk 042"#, r###"print -r ${(b)x}; x=hi"###);
-        bulk_zk_fc_row_043 => (r#"bulk zk 043"#, r###"print -r ${(e):-2+2}"###);
-        bulk_zk_fc_row_044 => (r#"bulk zk 044"#, r###"print -r ${(P)r}; r=HOME"###);
-        bulk_zk_fc_row_045 => (r#"bulk zk 045"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
-        bulk_zk_fc_row_046 => (r#"bulk zk 046"#, r###"print -r ${(eu)n}; n=(a A b)"###);
-        bulk_zk_fc_row_047 => (r#"bulk zk 047"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
-        bulk_zk_fc_row_048 => (r#"bulk zk 048"#, r###"typeset -h hv=1; print -r ${+hv}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zl {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zl_fc_row_001 => (r#"bulk zl 001"#, r###"whence -w print"###);
-        bulk_zl_fc_row_002 => (r#"bulk zl 002"#, r###"command -v true"###);
-        bulk_zl_fc_row_003 => (r#"bulk zl 003"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_zl_fc_row_004 => (r#"bulk zl 004"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
-        bulk_zl_fc_row_005 => (r#"bulk zl 005"#, r###"read -r line <<< 'one two'; print -r $line"###);
-        bulk_zl_fc_row_006 => (r#"bulk zl 006"#, r###"cat <<< 'herestring'"###);
-        bulk_zl_fc_row_007 => (r#"bulk zl 007"#, r###"echo hello 2>/dev/null"###);
-        bulk_zl_fc_row_008 => (r#"bulk zl 008"#, r###"printf '%s\n' a b c | head -1"###);
-        bulk_zl_fc_row_009 => (r#"bulk zl 009"#, r###"true && echo yes"###);
-        bulk_zl_fc_row_010 => (r#"bulk zl 010"#, r###"false || echo yes"###);
-        bulk_zl_fc_row_011 => (r#"bulk zl 011"#, r###"(exit 3); print -r $?"###);
-        bulk_zl_fc_row_012 => (r#"bulk zl 012"#, r###"print -r ${status}; (exit 4)"###);
-        bulk_zl_fc_row_013 => (r#"bulk zl 013"#, r###"print -r $(( 1_000 + 1 ))"###);
-        bulk_zl_fc_row_014 => (r#"bulk zl 014"#, r###"print -r $(( 5#101 ))"###);
-        bulk_zl_fc_row_015 => (r#"bulk zl 015"#, r###"print -r $(( 0b1111 ))"###);
-        bulk_zl_fc_row_016 => (r#"bulk zl 016"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
-        bulk_zl_fc_row_017 => (r#"bulk zl 017"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
-        bulk_zl_fc_row_018 => (r#"bulk zl 018"#, r###"typeset -F2 f=3.14; print -r $f"###);
-        bulk_zl_fc_row_019 => (r#"bulk zl 019"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
-        bulk_zl_fc_row_020 => (r#"bulk zl 020"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
-        bulk_zl_fc_row_021 => (r#"bulk zl 021"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
-        bulk_zl_fc_row_022 => (r#"bulk zl 022"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
-        bulk_zl_fc_row_023 => (r#"bulk zl 023"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
-        bulk_zl_fc_row_024 => (r#"bulk zl 024"#, r###"print -r ${#x}; x=hello"###);
-        bulk_zl_fc_row_025 => (r#"bulk zl 025"#, r###"print -r ${#a}; a=(a b c)"###);
-        bulk_zl_fc_row_026 => (r#"bulk zl 026"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
-        bulk_zl_fc_row_027 => (r#"bulk zl 027"#, r###"print -r ${(b)x}; x=hi"###);
-        bulk_zl_fc_row_028 => (r#"bulk zl 028"#, r###"print -r ${(e):-2+2}"###);
-        bulk_zl_fc_row_029 => (r#"bulk zl 029"#, r###"print -r ${(P)r}; r=HOME"###);
-        bulk_zl_fc_row_030 => (r#"bulk zl 030"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
-        bulk_zl_fc_row_031 => (r#"bulk zl 031"#, r###"print -r ${(eu)n}; n=(a A b)"###);
-        bulk_zl_fc_row_032 => (r#"bulk zl 032"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
-        bulk_zl_fc_row_033 => (r#"bulk zl 033"#, r###"typeset -h hv=1; print -r ${+hv}"###);
-        bulk_zl_fc_row_034 => (r#"bulk zl 034"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
-        bulk_zl_fc_row_035 => (r#"bulk zl 035"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
-        bulk_zl_fc_row_036 => (r#"bulk zl 036"#, r###"while :; do break; print -r n; done; print -r after"###);
-        bulk_zl_fc_row_037 => (r#"bulk zl 037"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
-        bulk_zl_fc_row_038 => (r#"bulk zl 038"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
-        bulk_zl_fc_row_039 => (r#"bulk zl 039"#, r###"print -r ${argv[1]}; set -- p q"###);
-        bulk_zl_fc_row_040 => (r#"bulk zl 040"#, r###"print -r $ARGC; set -- a b"###);
-        bulk_zl_fc_row_041 => (r#"bulk zl 041"#, r###"print -r ${dirstack[1]:-empty}"###);
-        bulk_zl_fc_row_042 => (r#"bulk zl 042"#, r###"print -r ${+pipestatus}"###);
-        bulk_zl_fc_row_043 => (r#"bulk zl 043"#, r###"print -r ${+history}"###);
-        bulk_zl_fc_row_044 => (r#"bulk zl 044"#, r###"print -r ${+commands}"###);
-        bulk_zl_fc_row_045 => (r#"bulk zl 045"#, r###"print -r ${+builtins}"###);
-        bulk_zl_fc_row_046 => (r#"bulk zl 046"#, r###"print -r ${+widgets}"###);
-        bulk_zl_fc_row_047 => (r#"bulk zl 047"#, r###"print -r ${+terminfo}"###);
-        bulk_zl_fc_row_048 => (r#"bulk zl 048"#, r###"print -r ${+modules}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zm {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zm_fc_row_001 => (r#"bulk zm 001"#, r###"typeset -F2 f=3.14; print -r $f"###);
-        bulk_zm_fc_row_002 => (r#"bulk zm 002"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
-        bulk_zm_fc_row_003 => (r#"bulk zm 003"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
-        bulk_zm_fc_row_004 => (r#"bulk zm 004"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
-        bulk_zm_fc_row_005 => (r#"bulk zm 005"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
-        bulk_zm_fc_row_006 => (r#"bulk zm 006"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
-        bulk_zm_fc_row_007 => (r#"bulk zm 007"#, r###"print -r ${#x}; x=hello"###);
-        bulk_zm_fc_row_008 => (r#"bulk zm 008"#, r###"print -r ${#a}; a=(a b c)"###);
-        bulk_zm_fc_row_009 => (r#"bulk zm 009"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
-        bulk_zm_fc_row_010 => (r#"bulk zm 010"#, r###"print -r ${(b)x}; x=hi"###);
-        bulk_zm_fc_row_011 => (r#"bulk zm 011"#, r###"print -r ${(e):-2+2}"###);
-        bulk_zm_fc_row_012 => (r#"bulk zm 012"#, r###"print -r ${(P)r}; r=HOME"###);
-        bulk_zm_fc_row_013 => (r#"bulk zm 013"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
-        bulk_zm_fc_row_014 => (r#"bulk zm 014"#, r###"print -r ${(eu)n}; n=(a A b)"###);
-        bulk_zm_fc_row_015 => (r#"bulk zm 015"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
-        bulk_zm_fc_row_016 => (r#"bulk zm 016"#, r###"typeset -h hv=1; print -r ${+hv}"###);
-        bulk_zm_fc_row_017 => (r#"bulk zm 017"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
-        bulk_zm_fc_row_018 => (r#"bulk zm 018"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
-        bulk_zm_fc_row_019 => (r#"bulk zm 019"#, r###"while :; do break; print -r n; done; print -r after"###);
-        bulk_zm_fc_row_020 => (r#"bulk zm 020"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
-        bulk_zm_fc_row_021 => (r#"bulk zm 021"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
-        bulk_zm_fc_row_022 => (r#"bulk zm 022"#, r###"print -r ${argv[1]}; set -- p q"###);
-        bulk_zm_fc_row_023 => (r#"bulk zm 023"#, r###"print -r $ARGC; set -- a b"###);
-        bulk_zm_fc_row_024 => (r#"bulk zm 024"#, r###"print -r ${dirstack[1]:-empty}"###);
-        bulk_zm_fc_row_025 => (r#"bulk zm 025"#, r###"print -r ${+pipestatus}"###);
-        bulk_zm_fc_row_026 => (r#"bulk zm 026"#, r###"print -r ${+history}"###);
-        bulk_zm_fc_row_027 => (r#"bulk zm 027"#, r###"print -r ${+commands}"###);
-        bulk_zm_fc_row_028 => (r#"bulk zm 028"#, r###"print -r ${+builtins}"###);
-        bulk_zm_fc_row_029 => (r#"bulk zm 029"#, r###"print -r ${+widgets}"###);
-        bulk_zm_fc_row_030 => (r#"bulk zm 030"#, r###"print -r ${+terminfo}"###);
-        bulk_zm_fc_row_031 => (r#"bulk zm 031"#, r###"print -r ${+modules}"###);
-        bulk_zm_fc_row_032 => (r#"bulk zm 032"#, r###"print -r ${+patchars}"###);
-        bulk_zm_fc_row_033 => (r#"bulk zm 033"#, r###"print -r ${+reswords}"###);
-        bulk_zm_fc_row_034 => (r#"bulk zm 034"#, r###"print -r ${+dis_aliases}"###);
-        bulk_zm_fc_row_035 => (r#"bulk zm 035"#, r###"print -r ${+dis_functions}"###);
-        bulk_zm_fc_row_036 => (r#"bulk zm 036"#, r###"print -r ${+parameters[(I)PATH]}"###);
-        bulk_zm_fc_row_037 => (r#"bulk zm 037"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
-        bulk_zm_fc_row_038 => (r#"bulk zm 038"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
-        bulk_zm_fc_row_039 => (r#"bulk zm 039"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
-        bulk_zm_fc_row_040 => (r#"bulk zm 040"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
-        bulk_zm_fc_row_041 => (r#"bulk zm 041"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
-        bulk_zm_fc_row_042 => (r#"bulk zm 042"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
-        bulk_zm_fc_row_043 => (r#"bulk zm 043"#, r###"print -r $(( 128 >> 2 ))"###);
-        bulk_zm_fc_row_044 => (r#"bulk zm 044"#, r###"print -r $(( ~(255) & 0xff ))"###);
-        bulk_zm_fc_row_045 => (r#"bulk zm 045"#, r###"print -r $(( 3 <|> 5 ))"###);
-        bulk_zm_fc_row_046 => (r#"bulk zm 046"#, r###"print -r $(( 3 <> 5 ))"###);
-        bulk_zm_fc_row_047 => (r#"bulk zm 047"#, r###"(( 5#11 )); print -r $?"###);
-        bulk_zm_fc_row_048 => (r#"bulk zm 048"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zn {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zn_fc_row_001 => (r#"bulk zn 001"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
-        bulk_zn_fc_row_002 => (r#"bulk zn 002"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
-        bulk_zn_fc_row_003 => (r#"bulk zn 003"#, r###"while :; do break; print -r n; done; print -r after"###);
-        bulk_zn_fc_row_004 => (r#"bulk zn 004"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
-        bulk_zn_fc_row_005 => (r#"bulk zn 005"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
-        bulk_zn_fc_row_006 => (r#"bulk zn 006"#, r###"print -r ${argv[1]}; set -- p q"###);
-        bulk_zn_fc_row_007 => (r#"bulk zn 007"#, r###"print -r $ARGC; set -- a b"###);
-        bulk_zn_fc_row_008 => (r#"bulk zn 008"#, r###"print -r ${dirstack[1]:-empty}"###);
-        bulk_zn_fc_row_009 => (r#"bulk zn 009"#, r###"print -r ${+pipestatus}"###);
-        bulk_zn_fc_row_010 => (r#"bulk zn 010"#, r###"print -r ${+history}"###);
-        bulk_zn_fc_row_011 => (r#"bulk zn 011"#, r###"print -r ${+commands}"###);
-        bulk_zn_fc_row_012 => (r#"bulk zn 012"#, r###"print -r ${+builtins}"###);
-        bulk_zn_fc_row_013 => (r#"bulk zn 013"#, r###"print -r ${+widgets}"###);
-        bulk_zn_fc_row_014 => (r#"bulk zn 014"#, r###"print -r ${+terminfo}"###);
-        bulk_zn_fc_row_015 => (r#"bulk zn 015"#, r###"print -r ${+modules}"###);
-        bulk_zn_fc_row_016 => (r#"bulk zn 016"#, r###"print -r ${+patchars}"###);
-        bulk_zn_fc_row_017 => (r#"bulk zn 017"#, r###"print -r ${+reswords}"###);
-        bulk_zn_fc_row_018 => (r#"bulk zn 018"#, r###"print -r ${+dis_aliases}"###);
-        bulk_zn_fc_row_019 => (r#"bulk zn 019"#, r###"print -r ${+dis_functions}"###);
-        bulk_zn_fc_row_020 => (r#"bulk zn 020"#, r###"print -r ${+parameters[(I)PATH]}"###);
-        bulk_zn_fc_row_021 => (r#"bulk zn 021"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
-        bulk_zn_fc_row_022 => (r#"bulk zn 022"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
-        bulk_zn_fc_row_023 => (r#"bulk zn 023"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
-        bulk_zn_fc_row_024 => (r#"bulk zn 024"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
-        bulk_zn_fc_row_025 => (r#"bulk zn 025"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
-        bulk_zn_fc_row_026 => (r#"bulk zn 026"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
-        bulk_zn_fc_row_027 => (r#"bulk zn 027"#, r###"print -r $(( 128 >> 2 ))"###);
-        bulk_zn_fc_row_028 => (r#"bulk zn 028"#, r###"print -r $(( ~(255) & 0xff ))"###);
-        bulk_zn_fc_row_029 => (r#"bulk zn 029"#, r###"print -r $(( 3 <|> 5 ))"###);
-        bulk_zn_fc_row_030 => (r#"bulk zn 030"#, r###"print -r $(( 3 <> 5 ))"###);
-        bulk_zn_fc_row_031 => (r#"bulk zn 031"#, r###"(( 5#11 )); print -r $?"###);
-        bulk_zn_fc_row_032 => (r#"bulk zn 032"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
-        bulk_zn_fc_row_033 => (r#"bulk zn 033"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
-        bulk_zn_fc_row_034 => (r#"bulk zn 034"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
-        bulk_zn_fc_row_035 => (r#"bulk zn 035"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
-        bulk_zn_fc_row_036 => (r#"bulk zn 036"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
-        bulk_zn_fc_row_037 => (r#"bulk zn 037"#, r###"typeset -i8 n=10; print -r $n"###);
-        bulk_zn_fc_row_038 => (r#"bulk zn 038"#, r###"typeset -i16 n=255; print -r $n"###);
-        bulk_zn_fc_row_039 => (r#"bulk zn 039"#, r###"typeset -E2 n=4000; print -r $n"###);
-        bulk_zn_fc_row_040 => (r#"bulk zn 040"#, r###"typeset -R4 n=hi; print -r $n"###);
-        bulk_zn_fc_row_041 => (r#"bulk zn 041"#, r###"typeset +L n=Ab; print -r $n"###);
-        bulk_zn_fc_row_042 => (r#"bulk zn 042"#, r###"typeset +U n=xy; print -r $n"###);
-        bulk_zn_fc_row_043 => (r#"bulk zn 043"#, r###"typeset +i n=4; print -r $n"###);
-        bulk_zn_fc_row_044 => (r#"bulk zn 044"#, r###"export EX=1; print -r $EX; unset EX"###);
-        bulk_zn_fc_row_045 => (r#"bulk zn 045"#, r###"readonly ro=5; print -r $ro"###);
-        bulk_zn_fc_row_046 => (r#"bulk zn 046"#, r###"print -r ${${v:-fb}}; unset v"###);
-        bulk_zn_fc_row_047 => (r#"bulk zn 047"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
-        bulk_zn_fc_row_048 => (r#"bulk zn 048"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zo {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zo_fc_row_001 => (r#"bulk zo 001"#, r###"print -r ${+dis_aliases}"###);
-        bulk_zo_fc_row_002 => (r#"bulk zo 002"#, r###"print -r ${+dis_functions}"###);
-        bulk_zo_fc_row_003 => (r#"bulk zo 003"#, r###"print -r ${+parameters[(I)PATH]}"###);
-        bulk_zo_fc_row_004 => (r#"bulk zo 004"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
-        bulk_zo_fc_row_005 => (r#"bulk zo 005"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
-        bulk_zo_fc_row_006 => (r#"bulk zo 006"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
-        bulk_zo_fc_row_007 => (r#"bulk zo 007"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
-        bulk_zo_fc_row_008 => (r#"bulk zo 008"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
-        bulk_zo_fc_row_009 => (r#"bulk zo 009"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
-        bulk_zo_fc_row_010 => (r#"bulk zo 010"#, r###"print -r $(( 128 >> 2 ))"###);
-        bulk_zo_fc_row_011 => (r#"bulk zo 011"#, r###"print -r $(( ~(255) & 0xff ))"###);
-        bulk_zo_fc_row_012 => (r#"bulk zo 012"#, r###"print -r $(( 3 <|> 5 ))"###);
-        bulk_zo_fc_row_013 => (r#"bulk zo 013"#, r###"print -r $(( 3 <> 5 ))"###);
-        bulk_zo_fc_row_014 => (r#"bulk zo 014"#, r###"(( 5#11 )); print -r $?"###);
-        bulk_zo_fc_row_015 => (r#"bulk zo 015"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
-        bulk_zo_fc_row_016 => (r#"bulk zo 016"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
-        bulk_zo_fc_row_017 => (r#"bulk zo 017"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
-        bulk_zo_fc_row_018 => (r#"bulk zo 018"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
-        bulk_zo_fc_row_019 => (r#"bulk zo 019"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
-        bulk_zo_fc_row_020 => (r#"bulk zo 020"#, r###"typeset -i8 n=10; print -r $n"###);
-        bulk_zo_fc_row_021 => (r#"bulk zo 021"#, r###"typeset -i16 n=255; print -r $n"###);
-        bulk_zo_fc_row_022 => (r#"bulk zo 022"#, r###"typeset -E2 n=4000; print -r $n"###);
-        bulk_zo_fc_row_023 => (r#"bulk zo 023"#, r###"typeset -R4 n=hi; print -r $n"###);
-        bulk_zo_fc_row_024 => (r#"bulk zo 024"#, r###"typeset +L n=Ab; print -r $n"###);
-        bulk_zo_fc_row_025 => (r#"bulk zo 025"#, r###"typeset +U n=xy; print -r $n"###);
-        bulk_zo_fc_row_026 => (r#"bulk zo 026"#, r###"typeset +i n=4; print -r $n"###);
-        bulk_zo_fc_row_027 => (r#"bulk zo 027"#, r###"export EX=1; print -r $EX; unset EX"###);
-        bulk_zo_fc_row_028 => (r#"bulk zo 028"#, r###"readonly ro=5; print -r $ro"###);
-        bulk_zo_fc_row_029 => (r#"bulk zo 029"#, r###"print -r ${${v:-fb}}; unset v"###);
-        bulk_zo_fc_row_030 => (r#"bulk zo 030"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
-        bulk_zo_fc_row_031 => (r#"bulk zo 031"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
-        bulk_zo_fc_row_032 => (r#"bulk zo 032"#, r###"word=  hi  ; print -r ${(W)word}"###);
-        bulk_zo_fc_row_033 => (r#"bulk zo 033"#, r###"print -r ${(z)word}; word=a b c"###);
-        bulk_zo_fc_row_034 => (r#"bulk zo 034"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
-        bulk_zo_fc_row_035 => (r#"bulk zo 035"#, r###"print -r ${(A)x}; x=1 2"###);
-        bulk_zo_fc_row_036 => (r#"bulk zo 036"#, r###"print -r ${(aa)x}; x=(1 2)"###);
-        bulk_zo_fc_row_037 => (r#"bulk zo 037"#, r###"print -r ${(%)2}"###);
-        bulk_zo_fc_row_038 => (r#"bulk zo 038"#, r###"o=8; print -r ${(0)o}"###);
-        bulk_zo_fc_row_039 => (r#"bulk zo 039"#, r###"str=abc.def; print -r ${str:r}"###);
-        bulk_zo_fc_row_040 => (r#"bulk zo 040"#, r###"str=abc.def; print -r ${str:e}"###);
-        bulk_zo_fc_row_041 => (r#"bulk zo 041"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
-        bulk_zo_fc_row_042 => (r#"bulk zo 042"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
-        bulk_zo_fc_row_043 => (r#"bulk zo 043"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
-        bulk_zo_fc_row_044 => (r#"bulk zo 044"#, r###"[[ -G / ]]; print -r $?"###);
-        bulk_zo_fc_row_045 => (r#"bulk zo 045"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
-        bulk_zo_fc_row_046 => (r#"bulk zo 046"#, r###"[[ bee = *ee* ]]; print -r $?"###);
-        bulk_zo_fc_row_047 => (r#"bulk zo 047"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
-        bulk_zo_fc_row_048 => (r#"bulk zo 048"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zp {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zp_fc_row_001 => (r#"bulk zp 001"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
-        bulk_zp_fc_row_002 => (r#"bulk zp 002"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
-        bulk_zp_fc_row_003 => (r#"bulk zp 003"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
-        bulk_zp_fc_row_004 => (r#"bulk zp 004"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
-        bulk_zp_fc_row_005 => (r#"bulk zp 005"#, r###"typeset -i8 n=10; print -r $n"###);
-        bulk_zp_fc_row_006 => (r#"bulk zp 006"#, r###"typeset -i16 n=255; print -r $n"###);
-        bulk_zp_fc_row_007 => (r#"bulk zp 007"#, r###"typeset -E2 n=4000; print -r $n"###);
-        bulk_zp_fc_row_008 => (r#"bulk zp 008"#, r###"typeset -R4 n=hi; print -r $n"###);
-        bulk_zp_fc_row_009 => (r#"bulk zp 009"#, r###"typeset +L n=Ab; print -r $n"###);
-        bulk_zp_fc_row_010 => (r#"bulk zp 010"#, r###"typeset +U n=xy; print -r $n"###);
-        bulk_zp_fc_row_011 => (r#"bulk zp 011"#, r###"typeset +i n=4; print -r $n"###);
-        bulk_zp_fc_row_012 => (r#"bulk zp 012"#, r###"export EX=1; print -r $EX; unset EX"###);
-        bulk_zp_fc_row_013 => (r#"bulk zp 013"#, r###"readonly ro=5; print -r $ro"###);
-        bulk_zp_fc_row_014 => (r#"bulk zp 014"#, r###"print -r ${${v:-fb}}; unset v"###);
-        bulk_zp_fc_row_015 => (r#"bulk zp 015"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
-        bulk_zp_fc_row_016 => (r#"bulk zp 016"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
-        bulk_zp_fc_row_017 => (r#"bulk zp 017"#, r###"word=  hi  ; print -r ${(W)word}"###);
-        bulk_zp_fc_row_018 => (r#"bulk zp 018"#, r###"print -r ${(z)word}; word=a b c"###);
-        bulk_zp_fc_row_019 => (r#"bulk zp 019"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
-        bulk_zp_fc_row_020 => (r#"bulk zp 020"#, r###"print -r ${(A)x}; x=1 2"###);
-        bulk_zp_fc_row_021 => (r#"bulk zp 021"#, r###"print -r ${(aa)x}; x=(1 2)"###);
-        bulk_zp_fc_row_022 => (r#"bulk zp 022"#, r###"print -r ${(%)2}"###);
-        bulk_zp_fc_row_023 => (r#"bulk zp 023"#, r###"o=8; print -r ${(0)o}"###);
-        bulk_zp_fc_row_024 => (r#"bulk zp 024"#, r###"str=abc.def; print -r ${str:r}"###);
-        bulk_zp_fc_row_025 => (r#"bulk zp 025"#, r###"str=abc.def; print -r ${str:e}"###);
-        bulk_zp_fc_row_026 => (r#"bulk zp 026"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
-        bulk_zp_fc_row_027 => (r#"bulk zp 027"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
-        bulk_zp_fc_row_028 => (r#"bulk zp 028"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
-        bulk_zp_fc_row_029 => (r#"bulk zp 029"#, r###"[[ -G / ]]; print -r $?"###);
-        bulk_zp_fc_row_030 => (r#"bulk zp 030"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
-        bulk_zp_fc_row_031 => (r#"bulk zp 031"#, r###"[[ bee = *ee* ]]; print -r $?"###);
-        bulk_zp_fc_row_032 => (r#"bulk zp 032"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
-        bulk_zp_fc_row_033 => (r#"bulk zp 033"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
-        bulk_zp_fc_row_034 => (r#"bulk zp 034"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
-        bulk_zp_fc_row_035 => (r#"bulk zp 035"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
-        bulk_zp_fc_row_036 => (r#"bulk zp 036"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
-        bulk_zp_fc_row_037 => (r#"bulk zp 037"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
-        bulk_zp_fc_row_038 => (r#"bulk zp 038"#, r###"[[ -o nullglob ]]; print -r $?"###);
-        bulk_zp_fc_row_039 => (r#"bulk zp 039"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_zp_fc_row_040 => (r#"bulk zp 040"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_zp_fc_row_041 => (r#"bulk zp 041"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
-        bulk_zp_fc_row_042 => (r#"bulk zp 042"#, r###"print -r $(( 1 , 2 , 3 ))"###);
-        bulk_zp_fc_row_043 => (r#"bulk zp 043"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
-        bulk_zp_fc_row_044 => (r#"bulk zp 044"#, r###"print -r $(( 0xff & 0x0f ))"###);
-        bulk_zp_fc_row_045 => (r#"bulk zp 045"#, r###"print -r $(( 1 << 4 ))"###);
-        bulk_zp_fc_row_046 => (r#"bulk zp 046"#, r###"print -r $(( 16 >> 2 ))"###);
-        bulk_zp_fc_row_047 => (r#"bulk zp 047"#, r###"print -r $(( -1 >> 1 ))"###);
-        bulk_zp_fc_row_048 => (r#"bulk zp 048"#, r###"print -r $(( 8#17 ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zq {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zq_fc_row_001 => (r#"bulk zq 001"#, r###"print -r ${(z)word}; word=a b c"###);
-        bulk_zq_fc_row_002 => (r#"bulk zq 002"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
-        bulk_zq_fc_row_003 => (r#"bulk zq 003"#, r###"print -r ${(A)x}; x=1 2"###);
-        bulk_zq_fc_row_004 => (r#"bulk zq 004"#, r###"print -r ${(aa)x}; x=(1 2)"###);
-        bulk_zq_fc_row_005 => (r#"bulk zq 005"#, r###"print -r ${(%)2}"###);
-        bulk_zq_fc_row_006 => (r#"bulk zq 006"#, r###"o=8; print -r ${(0)o}"###);
-        bulk_zq_fc_row_007 => (r#"bulk zq 007"#, r###"str=abc.def; print -r ${str:r}"###);
-        bulk_zq_fc_row_008 => (r#"bulk zq 008"#, r###"str=abc.def; print -r ${str:e}"###);
-        bulk_zq_fc_row_009 => (r#"bulk zq 009"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
-        bulk_zq_fc_row_010 => (r#"bulk zq 010"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
-        bulk_zq_fc_row_011 => (r#"bulk zq 011"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
-        bulk_zq_fc_row_012 => (r#"bulk zq 012"#, r###"[[ -G / ]]; print -r $?"###);
-        bulk_zq_fc_row_013 => (r#"bulk zq 013"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
-        bulk_zq_fc_row_014 => (r#"bulk zq 014"#, r###"[[ bee = *ee* ]]; print -r $?"###);
-        bulk_zq_fc_row_015 => (r#"bulk zq 015"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
-        bulk_zq_fc_row_016 => (r#"bulk zq 016"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
-        bulk_zq_fc_row_017 => (r#"bulk zq 017"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
-        bulk_zq_fc_row_018 => (r#"bulk zq 018"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
-        bulk_zq_fc_row_019 => (r#"bulk zq 019"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
-        bulk_zq_fc_row_020 => (r#"bulk zq 020"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
-        bulk_zq_fc_row_021 => (r#"bulk zq 021"#, r###"[[ -o nullglob ]]; print -r $?"###);
-        bulk_zq_fc_row_022 => (r#"bulk zq 022"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_zq_fc_row_023 => (r#"bulk zq 023"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_zq_fc_row_024 => (r#"bulk zq 024"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
-        bulk_zq_fc_row_025 => (r#"bulk zq 025"#, r###"print -r $(( 1 , 2 , 3 ))"###);
-        bulk_zq_fc_row_026 => (r#"bulk zq 026"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
-        bulk_zq_fc_row_027 => (r#"bulk zq 027"#, r###"print -r $(( 0xff & 0x0f ))"###);
-        bulk_zq_fc_row_028 => (r#"bulk zq 028"#, r###"print -r $(( 1 << 4 ))"###);
-        bulk_zq_fc_row_029 => (r#"bulk zq 029"#, r###"print -r $(( 16 >> 2 ))"###);
-        bulk_zq_fc_row_030 => (r#"bulk zq 030"#, r###"print -r $(( -1 >> 1 ))"###);
-        bulk_zq_fc_row_031 => (r#"bulk zq 031"#, r###"print -r $(( 8#17 ))"###);
-        bulk_zq_fc_row_032 => (r#"bulk zq 032"#, r###"print -r $(( 16#ff ))"###);
-        bulk_zq_fc_row_033 => (r#"bulk zq 033"#, r###"print -r $(( 2#1010 ))"###);
-        bulk_zq_fc_row_034 => (r#"bulk zq 034"#, r###"print -r $(( 0b1010 ))"###);
-        bulk_zq_fc_row_035 => (r#"bulk zq 035"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
-        bulk_zq_fc_row_036 => (r#"bulk zq 036"#, r###"print -r $(( 4 % 2 == 0 ))"###);
-        bulk_zq_fc_row_037 => (r#"bulk zq 037"#, r###"print -r $(( 0 - 1 == -1 ))"###);
-        bulk_zq_fc_row_038 => (r#"bulk zq 038"#, r###"print -r $(( 72 / 8 / 3 ))"###);
-        bulk_zq_fc_row_039 => (r#"bulk zq 039"#, r###"print -r $(( 24 % 5 % 3 ))"###);
-        bulk_zq_fc_row_040 => (r#"bulk zq 040"#, r###"print -r $(( 2 | 4 | 8 ))"###);
-        bulk_zq_fc_row_041 => (r#"bulk zq 041"#, r###"print -r $(( 15 ^ 9 ))"###);
-        bulk_zq_fc_row_042 => (r#"bulk zq 042"#, r###"print -r $(( 0 || 0 || 7 ))"###);
-        bulk_zq_fc_row_043 => (r#"bulk zq 043"#, r###"print -r $(( 1 || -1 ))"###);
-        bulk_zq_fc_row_044 => (r#"bulk zq 044"#, r###"print -r $(( (1>0) + (0>0) ))"###);
-        bulk_zq_fc_row_045 => (r#"bulk zq 045"#, r###"print -r $(( 3 > 2 > 1 ))"###);
-        bulk_zq_fc_row_046 => (r#"bulk zq 046"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
-        bulk_zq_fc_row_047 => (r#"bulk zq 047"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
-        bulk_zq_fc_row_048 => (r#"bulk zq 048"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zr {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zr_fc_row_001 => (r#"bulk zr 001"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
-        bulk_zr_fc_row_002 => (r#"bulk zr 002"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
-        bulk_zr_fc_row_003 => (r#"bulk zr 003"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
-        bulk_zr_fc_row_004 => (r#"bulk zr 004"#, r###"[[ -o nullglob ]]; print -r $?"###);
-        bulk_zr_fc_row_005 => (r#"bulk zr 005"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_zr_fc_row_006 => (r#"bulk zr 006"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_zr_fc_row_007 => (r#"bulk zr 007"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
-        bulk_zr_fc_row_008 => (r#"bulk zr 008"#, r###"print -r $(( 1 , 2 , 3 ))"###);
-        bulk_zr_fc_row_009 => (r#"bulk zr 009"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
-        bulk_zr_fc_row_010 => (r#"bulk zr 010"#, r###"print -r $(( 0xff & 0x0f ))"###);
-        bulk_zr_fc_row_011 => (r#"bulk zr 011"#, r###"print -r $(( 1 << 4 ))"###);
-        bulk_zr_fc_row_012 => (r#"bulk zr 012"#, r###"print -r $(( 16 >> 2 ))"###);
-        bulk_zr_fc_row_013 => (r#"bulk zr 013"#, r###"print -r $(( -1 >> 1 ))"###);
-        bulk_zr_fc_row_014 => (r#"bulk zr 014"#, r###"print -r $(( 8#17 ))"###);
-        bulk_zr_fc_row_015 => (r#"bulk zr 015"#, r###"print -r $(( 16#ff ))"###);
-        bulk_zr_fc_row_016 => (r#"bulk zr 016"#, r###"print -r $(( 2#1010 ))"###);
-        bulk_zr_fc_row_017 => (r#"bulk zr 017"#, r###"print -r $(( 0b1010 ))"###);
-        bulk_zr_fc_row_018 => (r#"bulk zr 018"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
-        bulk_zr_fc_row_019 => (r#"bulk zr 019"#, r###"print -r $(( 4 % 2 == 0 ))"###);
-        bulk_zr_fc_row_020 => (r#"bulk zr 020"#, r###"print -r $(( 0 - 1 == -1 ))"###);
-        bulk_zr_fc_row_021 => (r#"bulk zr 021"#, r###"print -r $(( 72 / 8 / 3 ))"###);
-        bulk_zr_fc_row_022 => (r#"bulk zr 022"#, r###"print -r $(( 24 % 5 % 3 ))"###);
-        bulk_zr_fc_row_023 => (r#"bulk zr 023"#, r###"print -r $(( 2 | 4 | 8 ))"###);
-        bulk_zr_fc_row_024 => (r#"bulk zr 024"#, r###"print -r $(( 15 ^ 9 ))"###);
-        bulk_zr_fc_row_025 => (r#"bulk zr 025"#, r###"print -r $(( 0 || 0 || 7 ))"###);
-        bulk_zr_fc_row_026 => (r#"bulk zr 026"#, r###"print -r $(( 1 || -1 ))"###);
-        bulk_zr_fc_row_027 => (r#"bulk zr 027"#, r###"print -r $(( (1>0) + (0>0) ))"###);
-        bulk_zr_fc_row_028 => (r#"bulk zr 028"#, r###"print -r $(( 3 > 2 > 1 ))"###);
-        bulk_zr_fc_row_029 => (r#"bulk zr 029"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
-        bulk_zr_fc_row_030 => (r#"bulk zr 030"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
-        bulk_zr_fc_row_031 => (r#"bulk zr 031"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
-        bulk_zr_fc_row_032 => (r#"bulk zr 032"#, r###"print -r $(( 100 / 20 / 5 ))"###);
-        bulk_zr_fc_row_033 => (r#"bulk zr 033"#, r###"print -r $(( 2#101 & 2#010 ))"###);
-        bulk_zr_fc_row_034 => (r#"bulk zr 034"#, r###"print -r $(( 0x80 >> 4 ))"###);
-        bulk_zr_fc_row_035 => (r#"bulk zr 035"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
-        bulk_zr_fc_row_036 => (r#"bulk zr 036"#, r###"print -r $(( -(-(-5)) ))"###);
-        bulk_zr_fc_row_037 => (r#"bulk zr 037"#, r###"print -r $(( (1+2)*(3+4) ))"###);
-        bulk_zr_fc_row_038 => (r#"bulk zr 038"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
-        bulk_zr_fc_row_039 => (r#"bulk zr 039"#, r###"[[ "" != x ]]; print -r $?"###);
-        bulk_zr_fc_row_040 => (r#"bulk zr 040"#, r###"[[ -n /dev/null ]]; print -r $?"###);
-        bulk_zr_fc_row_041 => (r#"bulk zr 041"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
-        bulk_zr_fc_row_042 => (r#"bulk zr 042"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
-        bulk_zr_fc_row_043 => (r#"bulk zr 043"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
-        bulk_zr_fc_row_044 => (r#"bulk zr 044"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
-        bulk_zr_fc_row_045 => (r#"bulk zr 045"#, r###"[[ abc < abd ]]; print -r $?"###);
-        bulk_zr_fc_row_046 => (r#"bulk zr 046"#, r###"[[ abc > abb ]]; print -r $?"###);
-        bulk_zr_fc_row_047 => (r#"bulk zr 047"#, r###"[[ abc != def ]]; print -r $?"###);
-        bulk_zr_fc_row_048 => (r#"bulk zr 048"#, r###"[[ abc == abc ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zs {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zs_fc_row_001 => (r#"bulk zs 001"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
-        bulk_zs_fc_row_002 => (r#"bulk zs 002"#, r###"print -r $(( 4 % 2 == 0 ))"###);
-        bulk_zs_fc_row_003 => (r#"bulk zs 003"#, r###"print -r $(( 0 - 1 == -1 ))"###);
-        bulk_zs_fc_row_004 => (r#"bulk zs 004"#, r###"print -r $(( 72 / 8 / 3 ))"###);
-        bulk_zs_fc_row_005 => (r#"bulk zs 005"#, r###"print -r $(( 24 % 5 % 3 ))"###);
-        bulk_zs_fc_row_006 => (r#"bulk zs 006"#, r###"print -r $(( 2 | 4 | 8 ))"###);
-        bulk_zs_fc_row_007 => (r#"bulk zs 007"#, r###"print -r $(( 15 ^ 9 ))"###);
-        bulk_zs_fc_row_008 => (r#"bulk zs 008"#, r###"print -r $(( 0 || 0 || 7 ))"###);
-        bulk_zs_fc_row_009 => (r#"bulk zs 009"#, r###"print -r $(( 1 || -1 ))"###);
-        bulk_zs_fc_row_010 => (r#"bulk zs 010"#, r###"print -r $(( (1>0) + (0>0) ))"###);
-        bulk_zs_fc_row_011 => (r#"bulk zs 011"#, r###"print -r $(( 3 > 2 > 1 ))"###);
-        bulk_zs_fc_row_012 => (r#"bulk zs 012"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
-        bulk_zs_fc_row_013 => (r#"bulk zs 013"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
-        bulk_zs_fc_row_014 => (r#"bulk zs 014"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
-        bulk_zs_fc_row_015 => (r#"bulk zs 015"#, r###"print -r $(( 100 / 20 / 5 ))"###);
-        bulk_zs_fc_row_016 => (r#"bulk zs 016"#, r###"print -r $(( 2#101 & 2#010 ))"###);
-        bulk_zs_fc_row_017 => (r#"bulk zs 017"#, r###"print -r $(( 0x80 >> 4 ))"###);
-        bulk_zs_fc_row_018 => (r#"bulk zs 018"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
-        bulk_zs_fc_row_019 => (r#"bulk zs 019"#, r###"print -r $(( -(-(-5)) ))"###);
-        bulk_zs_fc_row_020 => (r#"bulk zs 020"#, r###"print -r $(( (1+2)*(3+4) ))"###);
-        bulk_zs_fc_row_021 => (r#"bulk zs 021"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
-        bulk_zs_fc_row_022 => (r#"bulk zs 022"#, r###"[[ "" != x ]]; print -r $?"###);
-        bulk_zs_fc_row_023 => (r#"bulk zs 023"#, r###"[[ -n /dev/null ]]; print -r $?"###);
-        bulk_zs_fc_row_024 => (r#"bulk zs 024"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
-        bulk_zs_fc_row_025 => (r#"bulk zs 025"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
-        bulk_zs_fc_row_026 => (r#"bulk zs 026"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
-        bulk_zs_fc_row_027 => (r#"bulk zs 027"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
-        bulk_zs_fc_row_028 => (r#"bulk zs 028"#, r###"[[ abc < abd ]]; print -r $?"###);
-        bulk_zs_fc_row_029 => (r#"bulk zs 029"#, r###"[[ abc > abb ]]; print -r $?"###);
-        bulk_zs_fc_row_030 => (r#"bulk zs 030"#, r###"[[ abc != def ]]; print -r $?"###);
-        bulk_zs_fc_row_031 => (r#"bulk zs 031"#, r###"[[ abc == abc ]]; print -r $?"###);
-        bulk_zs_fc_row_032 => (r#"bulk zs 032"#, r###"print -r ${(L)@}; set -- MIXED"###);
-        bulk_zs_fc_row_033 => (r#"bulk zs 033"#, r###"slice=abcdef; print -r $slice[3,5]"###);
-        bulk_zs_fc_row_034 => (r#"bulk zs 034"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
-        bulk_zs_fc_row_035 => (r#"bulk zs 035"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
-        bulk_zs_fc_row_036 => (r#"bulk zs 036"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
-        bulk_zs_fc_row_037 => (r#"bulk zs 037"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
-        bulk_zs_fc_row_038 => (r#"bulk zs 038"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_zs_fc_row_039 => (r#"bulk zs 039"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
-        bulk_zs_fc_row_040 => (r#"bulk zs 040"#, r###"whence -v print 2>/dev/null; print -r $?"###);
-        bulk_zs_fc_row_041 => (r#"bulk zs 041"#, r###"whence -p ls 2>/dev/null | head -1"###);
-        bulk_zs_fc_row_042 => (r#"bulk zs 042"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_zs_fc_row_043 => (r#"bulk zs 043"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_zs_fc_row_044 => (r#"bulk zs 044"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
-        bulk_zs_fc_row_045 => (r#"bulk zs 045"#, r###"print -r ${aliases[za]:-none}"###);
-        bulk_zs_fc_row_046 => (r#"bulk zs 046"#, r###"print -r ${(t)parameters[PATH]}"###);
-        bulk_zs_fc_row_047 => (r#"bulk zs 047"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
-        bulk_zs_fc_row_048 => (r#"bulk zs 048"#, r###"print -r ${+parameters[PATH]}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zt {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zt_fc_row_001 => (r#"bulk zt 001"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
-        bulk_zt_fc_row_002 => (r#"bulk zt 002"#, r###"print -r $(( -(-(-5)) ))"###);
-        bulk_zt_fc_row_003 => (r#"bulk zt 003"#, r###"print -r $(( (1+2)*(3+4) ))"###);
-        bulk_zt_fc_row_004 => (r#"bulk zt 004"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
-        bulk_zt_fc_row_005 => (r#"bulk zt 005"#, r###"[[ "" != x ]]; print -r $?"###);
-        bulk_zt_fc_row_006 => (r#"bulk zt 006"#, r###"[[ -n /dev/null ]]; print -r $?"###);
-        bulk_zt_fc_row_007 => (r#"bulk zt 007"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
-        bulk_zt_fc_row_008 => (r#"bulk zt 008"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
-        bulk_zt_fc_row_009 => (r#"bulk zt 009"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
-        bulk_zt_fc_row_010 => (r#"bulk zt 010"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
-        bulk_zt_fc_row_011 => (r#"bulk zt 011"#, r###"[[ abc < abd ]]; print -r $?"###);
-        bulk_zt_fc_row_012 => (r#"bulk zt 012"#, r###"[[ abc > abb ]]; print -r $?"###);
-        bulk_zt_fc_row_013 => (r#"bulk zt 013"#, r###"[[ abc != def ]]; print -r $?"###);
-        bulk_zt_fc_row_014 => (r#"bulk zt 014"#, r###"[[ abc == abc ]]; print -r $?"###);
-        bulk_zt_fc_row_015 => (r#"bulk zt 015"#, r###"print -r ${(L)@}; set -- MIXED"###);
-        bulk_zt_fc_row_016 => (r#"bulk zt 016"#, r###"slice=abcdef; print -r $slice[3,5]"###);
-        bulk_zt_fc_row_017 => (r#"bulk zt 017"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
-        bulk_zt_fc_row_018 => (r#"bulk zt 018"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
-        bulk_zt_fc_row_019 => (r#"bulk zt 019"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
-        bulk_zt_fc_row_020 => (r#"bulk zt 020"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
-        bulk_zt_fc_row_021 => (r#"bulk zt 021"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_zt_fc_row_022 => (r#"bulk zt 022"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
-        bulk_zt_fc_row_023 => (r#"bulk zt 023"#, r###"whence -v print 2>/dev/null; print -r $?"###);
-        bulk_zt_fc_row_024 => (r#"bulk zt 024"#, r###"whence -p ls 2>/dev/null | head -1"###);
-        bulk_zt_fc_row_025 => (r#"bulk zt 025"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_zt_fc_row_026 => (r#"bulk zt 026"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_zt_fc_row_027 => (r#"bulk zt 027"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
-        bulk_zt_fc_row_028 => (r#"bulk zt 028"#, r###"print -r ${aliases[za]:-none}"###);
-        bulk_zt_fc_row_029 => (r#"bulk zt 029"#, r###"print -r ${(t)parameters[PATH]}"###);
-        bulk_zt_fc_row_030 => (r#"bulk zt 030"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
-        bulk_zt_fc_row_031 => (r#"bulk zt 031"#, r###"print -r ${+parameters[PATH]}"###);
-        bulk_zt_fc_row_032 => (r#"bulk zt 032"#, r###"print -r ${+functions[fn]}; fn(){}"###);
-        bulk_zt_fc_row_033 => (r#"bulk zt 033"#, r###"print -r ${+commands[print]}"###);
-        bulk_zt_fc_row_034 => (r#"bulk zt 034"#, r###"print -r ${+zsh_eval_context}"###);
-        bulk_zt_fc_row_035 => (r#"bulk zt 035"#, r###"print -r ${+functrace}"###);
-        bulk_zt_fc_row_036 => (r#"bulk zt 036"#, r###"print -r ${+funcstack}"###);
-        bulk_zt_fc_row_037 => (r#"bulk zt 037"#, r###"print -r ${+funcfiletrace}"###);
-        bulk_zt_fc_row_038 => (r#"bulk zt 038"#, r###"print -r ${+jobstates}"###);
-        bulk_zt_fc_row_039 => (r#"bulk zt 039"#, r###"print -r ${+jobtexts}"###);
-        bulk_zt_fc_row_040 => (r#"bulk zt 040"#, r###"print -r ${+jobdirs}"###);
-        bulk_zt_fc_row_041 => (r#"bulk zt 041"#, r###"print -r ${+historywords}"###);
-        bulk_zt_fc_row_042 => (r#"bulk zt 042"#, r###"print -r ${+usergroups}"###);
-        bulk_zt_fc_row_043 => (r#"bulk zt 043"#, r###"print -r ${+dis_builtins}"###);
-        bulk_zt_fc_row_044 => (r#"bulk zt 044"#, r###"print -r ${+dis_widgets}"###);
-        bulk_zt_fc_row_045 => (r#"bulk zt 045"#, r###"print -r ${+dis_reswords}"###);
-        bulk_zt_fc_row_046 => (r#"bulk zt 046"#, r###"print -r ${+dis_patchars}"###);
-        bulk_zt_fc_row_047 => (r#"bulk zt 047"#, r###"print -r ${+dis_commands}"###);
-        bulk_zt_fc_row_048 => (r#"bulk zt 048"#, r###"print -r ${+module_path}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zu {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zu_fc_row_001 => (r#"bulk zu 001"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
-        bulk_zu_fc_row_002 => (r#"bulk zu 002"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
-        bulk_zu_fc_row_003 => (r#"bulk zu 003"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
-        bulk_zu_fc_row_004 => (r#"bulk zu 004"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_zu_fc_row_005 => (r#"bulk zu 005"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
-        bulk_zu_fc_row_006 => (r#"bulk zu 006"#, r###"whence -v print 2>/dev/null; print -r $?"###);
-        bulk_zu_fc_row_007 => (r#"bulk zu 007"#, r###"whence -p ls 2>/dev/null | head -1"###);
-        bulk_zu_fc_row_008 => (r#"bulk zu 008"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_zu_fc_row_009 => (r#"bulk zu 009"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_zu_fc_row_010 => (r#"bulk zu 010"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
-        bulk_zu_fc_row_011 => (r#"bulk zu 011"#, r###"print -r ${aliases[za]:-none}"###);
-        bulk_zu_fc_row_012 => (r#"bulk zu 012"#, r###"print -r ${(t)parameters[PATH]}"###);
-        bulk_zu_fc_row_013 => (r#"bulk zu 013"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
-        bulk_zu_fc_row_014 => (r#"bulk zu 014"#, r###"print -r ${+parameters[PATH]}"###);
-        bulk_zu_fc_row_015 => (r#"bulk zu 015"#, r###"print -r ${+functions[fn]}; fn(){}"###);
-        bulk_zu_fc_row_016 => (r#"bulk zu 016"#, r###"print -r ${+commands[print]}"###);
-        bulk_zu_fc_row_017 => (r#"bulk zu 017"#, r###"print -r ${+zsh_eval_context}"###);
-        bulk_zu_fc_row_018 => (r#"bulk zu 018"#, r###"print -r ${+functrace}"###);
-        bulk_zu_fc_row_019 => (r#"bulk zu 019"#, r###"print -r ${+funcstack}"###);
-        bulk_zu_fc_row_020 => (r#"bulk zu 020"#, r###"print -r ${+funcfiletrace}"###);
-        bulk_zu_fc_row_021 => (r#"bulk zu 021"#, r###"print -r ${+jobstates}"###);
-        bulk_zu_fc_row_022 => (r#"bulk zu 022"#, r###"print -r ${+jobtexts}"###);
-        bulk_zu_fc_row_023 => (r#"bulk zu 023"#, r###"print -r ${+jobdirs}"###);
-        bulk_zu_fc_row_024 => (r#"bulk zu 024"#, r###"print -r ${+historywords}"###);
-        bulk_zu_fc_row_025 => (r#"bulk zu 025"#, r###"print -r ${+usergroups}"###);
-        bulk_zu_fc_row_026 => (r#"bulk zu 026"#, r###"print -r ${+dis_builtins}"###);
-        bulk_zu_fc_row_027 => (r#"bulk zu 027"#, r###"print -r ${+dis_widgets}"###);
-        bulk_zu_fc_row_028 => (r#"bulk zu 028"#, r###"print -r ${+dis_reswords}"###);
-        bulk_zu_fc_row_029 => (r#"bulk zu 029"#, r###"print -r ${+dis_patchars}"###);
-        bulk_zu_fc_row_030 => (r#"bulk zu 030"#, r###"print -r ${+dis_commands}"###);
-        bulk_zu_fc_row_031 => (r#"bulk zu 031"#, r###"print -r ${+module_path}"###);
-        bulk_zu_fc_row_032 => (r#"bulk zu 032"#, r###"print -r ${+functrace}"###);
-        bulk_zu_fc_row_033 => (r#"bulk zu 033"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
-        bulk_zu_fc_row_034 => (r#"bulk zu 034"#, r###"{ true; false; }; print -r $?"###);
-        bulk_zu_fc_row_035 => (r#"bulk zu 035"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
-        bulk_zu_fc_row_036 => (r#"bulk zu 036"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
-        bulk_zu_fc_row_037 => (r#"bulk zu 037"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
-        bulk_zu_fc_row_038 => (r#"bulk zu 038"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
-        bulk_zu_fc_row_039 => (r#"bulk zu 039"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
-        bulk_zu_fc_row_040 => (r#"bulk zu 040"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
-        bulk_zu_fc_row_041 => (r#"bulk zu 041"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
-        bulk_zu_fc_row_042 => (r#"bulk zu 042"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
-        bulk_zu_fc_row_043 => (r#"bulk zu 043"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_zu_fc_row_044 => (r#"bulk zu 044"#, r###"print -r ${(t)x}; x=hello"###);
-        bulk_zu_fc_row_045 => (r#"bulk zu 045"#, r###"unset y; print -r ${+y}"###);
-        bulk_zu_fc_row_046 => (r#"bulk zu 046"#, r###"x=hello; print -r ${+x}"###);
-        bulk_zu_fc_row_047 => (r#"bulk zu 047"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_zu_fc_row_048 => (r#"bulk zu 048"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zv {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zv_fc_row_001 => (r#"bulk zv 001"#, r###"print -r ${+functrace}"###);
-        bulk_zv_fc_row_002 => (r#"bulk zv 002"#, r###"print -r ${+funcstack}"###);
-        bulk_zv_fc_row_003 => (r#"bulk zv 003"#, r###"print -r ${+funcfiletrace}"###);
-        bulk_zv_fc_row_004 => (r#"bulk zv 004"#, r###"print -r ${+jobstates}"###);
-        bulk_zv_fc_row_005 => (r#"bulk zv 005"#, r###"print -r ${+jobtexts}"###);
-        bulk_zv_fc_row_006 => (r#"bulk zv 006"#, r###"print -r ${+jobdirs}"###);
-        bulk_zv_fc_row_007 => (r#"bulk zv 007"#, r###"print -r ${+historywords}"###);
-        bulk_zv_fc_row_008 => (r#"bulk zv 008"#, r###"print -r ${+usergroups}"###);
-        bulk_zv_fc_row_009 => (r#"bulk zv 009"#, r###"print -r ${+dis_builtins}"###);
-        bulk_zv_fc_row_010 => (r#"bulk zv 010"#, r###"print -r ${+dis_widgets}"###);
-        bulk_zv_fc_row_011 => (r#"bulk zv 011"#, r###"print -r ${+dis_reswords}"###);
-        bulk_zv_fc_row_012 => (r#"bulk zv 012"#, r###"print -r ${+dis_patchars}"###);
-        bulk_zv_fc_row_013 => (r#"bulk zv 013"#, r###"print -r ${+dis_commands}"###);
-        bulk_zv_fc_row_014 => (r#"bulk zv 014"#, r###"print -r ${+module_path}"###);
-        bulk_zv_fc_row_015 => (r#"bulk zv 015"#, r###"print -r ${+functrace}"###);
-        bulk_zv_fc_row_016 => (r#"bulk zv 016"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
-        bulk_zv_fc_row_017 => (r#"bulk zv 017"#, r###"{ true; false; }; print -r $?"###);
-        bulk_zv_fc_row_018 => (r#"bulk zv 018"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
-        bulk_zv_fc_row_019 => (r#"bulk zv 019"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
-        bulk_zv_fc_row_020 => (r#"bulk zv 020"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
-        bulk_zv_fc_row_021 => (r#"bulk zv 021"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
-        bulk_zv_fc_row_022 => (r#"bulk zv 022"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
-        bulk_zv_fc_row_023 => (r#"bulk zv 023"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
-        bulk_zv_fc_row_024 => (r#"bulk zv 024"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
-        bulk_zv_fc_row_025 => (r#"bulk zv 025"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
-        bulk_zv_fc_row_026 => (r#"bulk zv 026"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_zv_fc_row_027 => (r#"bulk zv 027"#, r###"print -r ${(t)x}; x=hello"###);
-        bulk_zv_fc_row_028 => (r#"bulk zv 028"#, r###"unset y; print -r ${+y}"###);
-        bulk_zv_fc_row_029 => (r#"bulk zv 029"#, r###"x=hello; print -r ${+x}"###);
-        bulk_zv_fc_row_030 => (r#"bulk zv 030"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_zv_fc_row_031 => (r#"bulk zv 031"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-        bulk_zv_fc_row_032 => (r#"bulk zv 032"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
-        bulk_zv_fc_row_033 => (r#"bulk zv 033"#, r###"x=abc; print -r ${x/#a/z}"###);
-        bulk_zv_fc_row_034 => (r#"bulk zv 034"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_zv_fc_row_035 => (r#"bulk zv 035"#, r###"print -r ${(j::)a}; a=(x y)"###);
-        bulk_zv_fc_row_036 => (r#"bulk zv 036"#, r###"print -r ${(pj::)a}; a=(x y)"###);
-        bulk_zv_fc_row_037 => (r#"bulk zv 037"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
-        bulk_zv_fc_row_038 => (r#"bulk zv 038"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_zv_fc_row_039 => (r#"bulk zv 039"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_zv_fc_row_040 => (r#"bulk zv 040"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_zv_fc_row_041 => (r#"bulk zv 041"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_zv_fc_row_042 => (r#"bulk zv 042"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_zv_fc_row_043 => (r#"bulk zv 043"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_zv_fc_row_044 => (r#"bulk zv 044"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_zv_fc_row_045 => (r#"bulk zv 045"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_zv_fc_row_046 => (r#"bulk zv 046"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_zv_fc_row_047 => (r#"bulk zv 047"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_zv_fc_row_048 => (r#"bulk zv 048"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zw {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zw_fc_row_001 => (r#"bulk zw 001"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
-        bulk_zw_fc_row_002 => (r#"bulk zw 002"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
-        bulk_zw_fc_row_003 => (r#"bulk zw 003"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
-        bulk_zw_fc_row_004 => (r#"bulk zw 004"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
-        bulk_zw_fc_row_005 => (r#"bulk zw 005"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
-        bulk_zw_fc_row_006 => (r#"bulk zw 006"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
-        bulk_zw_fc_row_007 => (r#"bulk zw 007"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
-        bulk_zw_fc_row_008 => (r#"bulk zw 008"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
-        bulk_zw_fc_row_009 => (r#"bulk zw 009"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_zw_fc_row_010 => (r#"bulk zw 010"#, r###"print -r ${(t)x}; x=hello"###);
-        bulk_zw_fc_row_011 => (r#"bulk zw 011"#, r###"unset y; print -r ${+y}"###);
-        bulk_zw_fc_row_012 => (r#"bulk zw 012"#, r###"x=hello; print -r ${+x}"###);
-        bulk_zw_fc_row_013 => (r#"bulk zw 013"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_zw_fc_row_014 => (r#"bulk zw 014"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-        bulk_zw_fc_row_015 => (r#"bulk zw 015"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
-        bulk_zw_fc_row_016 => (r#"bulk zw 016"#, r###"x=abc; print -r ${x/#a/z}"###);
-        bulk_zw_fc_row_017 => (r#"bulk zw 017"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_zw_fc_row_018 => (r#"bulk zw 018"#, r###"print -r ${(j::)a}; a=(x y)"###);
-        bulk_zw_fc_row_019 => (r#"bulk zw 019"#, r###"print -r ${(pj::)a}; a=(x y)"###);
-        bulk_zw_fc_row_020 => (r#"bulk zw 020"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
-        bulk_zw_fc_row_021 => (r#"bulk zw 021"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_zw_fc_row_022 => (r#"bulk zw 022"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_zw_fc_row_023 => (r#"bulk zw 023"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_zw_fc_row_024 => (r#"bulk zw 024"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_zw_fc_row_025 => (r#"bulk zw 025"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_zw_fc_row_026 => (r#"bulk zw 026"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_zw_fc_row_027 => (r#"bulk zw 027"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_zw_fc_row_028 => (r#"bulk zw 028"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_zw_fc_row_029 => (r#"bulk zw 029"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_zw_fc_row_030 => (r#"bulk zw 030"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_zw_fc_row_031 => (r#"bulk zw 031"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_zw_fc_row_032 => (r#"bulk zw 032"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_zw_fc_row_033 => (r#"bulk zw 033"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_zw_fc_row_034 => (r#"bulk zw 034"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_zw_fc_row_035 => (r#"bulk zw 035"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_zw_fc_row_036 => (r#"bulk zw 036"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_zw_fc_row_037 => (r#"bulk zw 037"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_zw_fc_row_038 => (r#"bulk zw 038"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_zw_fc_row_039 => (r#"bulk zw 039"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_zw_fc_row_040 => (r#"bulk zw 040"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_zw_fc_row_041 => (r#"bulk zw 041"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_zw_fc_row_042 => (r#"bulk zw 042"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_zw_fc_row_043 => (r#"bulk zw 043"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_zw_fc_row_044 => (r#"bulk zw 044"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_zw_fc_row_045 => (r#"bulk zw 045"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_zw_fc_row_046 => (r#"bulk zw 046"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_zw_fc_row_047 => (r#"bulk zw 047"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_zw_fc_row_048 => (r#"bulk zw 048"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zx {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zx_fc_row_001 => (r#"bulk zx 001"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_zx_fc_row_002 => (r#"bulk zx 002"#, r###"print -r ${(j::)a}; a=(x y)"###);
-        bulk_zx_fc_row_003 => (r#"bulk zx 003"#, r###"print -r ${(pj::)a}; a=(x y)"###);
-        bulk_zx_fc_row_004 => (r#"bulk zx 004"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
-        bulk_zx_fc_row_005 => (r#"bulk zx 005"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_zx_fc_row_006 => (r#"bulk zx 006"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_zx_fc_row_007 => (r#"bulk zx 007"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_zx_fc_row_008 => (r#"bulk zx 008"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_zx_fc_row_009 => (r#"bulk zx 009"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_zx_fc_row_010 => (r#"bulk zx 010"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_zx_fc_row_011 => (r#"bulk zx 011"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_zx_fc_row_012 => (r#"bulk zx 012"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_zx_fc_row_013 => (r#"bulk zx 013"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_zx_fc_row_014 => (r#"bulk zx 014"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_zx_fc_row_015 => (r#"bulk zx 015"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_zx_fc_row_016 => (r#"bulk zx 016"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_zx_fc_row_017 => (r#"bulk zx 017"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_zx_fc_row_018 => (r#"bulk zx 018"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_zx_fc_row_019 => (r#"bulk zx 019"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_zx_fc_row_020 => (r#"bulk zx 020"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_zx_fc_row_021 => (r#"bulk zx 021"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_zx_fc_row_022 => (r#"bulk zx 022"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_zx_fc_row_023 => (r#"bulk zx 023"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_zx_fc_row_024 => (r#"bulk zx 024"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_zx_fc_row_025 => (r#"bulk zx 025"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_zx_fc_row_026 => (r#"bulk zx 026"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_zx_fc_row_027 => (r#"bulk zx 027"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_zx_fc_row_028 => (r#"bulk zx 028"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_zx_fc_row_029 => (r#"bulk zx 029"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_zx_fc_row_030 => (r#"bulk zx 030"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_zx_fc_row_031 => (r#"bulk zx 031"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_zx_fc_row_032 => (r#"bulk zx 032"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_zx_fc_row_033 => (r#"bulk zx 033"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_zx_fc_row_034 => (r#"bulk zx 034"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_zx_fc_row_035 => (r#"bulk zx 035"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_zx_fc_row_036 => (r#"bulk zx 036"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_zx_fc_row_037 => (r#"bulk zx 037"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_zx_fc_row_038 => (r#"bulk zx 038"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_zx_fc_row_039 => (r#"bulk zx 039"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_zx_fc_row_040 => (r#"bulk zx 040"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_zx_fc_row_041 => (r#"bulk zx 041"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_zx_fc_row_042 => (r#"bulk zx 042"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_zx_fc_row_043 => (r#"bulk zx 043"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_zx_fc_row_044 => (r#"bulk zx 044"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_zx_fc_row_045 => (r#"bulk zx 045"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_zx_fc_row_046 => (r#"bulk zx 046"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_zx_fc_row_047 => (r#"bulk zx 047"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_zx_fc_row_048 => (r#"bulk zx 048"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zy {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zy_fc_row_001 => (r#"bulk zy 001"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_zy_fc_row_002 => (r#"bulk zy 002"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_zy_fc_row_003 => (r#"bulk zy 003"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_zy_fc_row_004 => (r#"bulk zy 004"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_zy_fc_row_005 => (r#"bulk zy 005"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_zy_fc_row_006 => (r#"bulk zy 006"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_zy_fc_row_007 => (r#"bulk zy 007"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_zy_fc_row_008 => (r#"bulk zy 008"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_zy_fc_row_009 => (r#"bulk zy 009"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_zy_fc_row_010 => (r#"bulk zy 010"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_zy_fc_row_011 => (r#"bulk zy 011"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_zy_fc_row_012 => (r#"bulk zy 012"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_zy_fc_row_013 => (r#"bulk zy 013"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_zy_fc_row_014 => (r#"bulk zy 014"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_zy_fc_row_015 => (r#"bulk zy 015"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_zy_fc_row_016 => (r#"bulk zy 016"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_zy_fc_row_017 => (r#"bulk zy 017"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_zy_fc_row_018 => (r#"bulk zy 018"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_zy_fc_row_019 => (r#"bulk zy 019"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_zy_fc_row_020 => (r#"bulk zy 020"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_zy_fc_row_021 => (r#"bulk zy 021"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_zy_fc_row_022 => (r#"bulk zy 022"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_zy_fc_row_023 => (r#"bulk zy 023"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_zy_fc_row_024 => (r#"bulk zy 024"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_zy_fc_row_025 => (r#"bulk zy 025"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_zy_fc_row_026 => (r#"bulk zy 026"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_zy_fc_row_027 => (r#"bulk zy 027"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_zy_fc_row_028 => (r#"bulk zy 028"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_zy_fc_row_029 => (r#"bulk zy 029"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_zy_fc_row_030 => (r#"bulk zy 030"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_zy_fc_row_031 => (r#"bulk zy 031"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_zy_fc_row_032 => (r#"bulk zy 032"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_zy_fc_row_033 => (r#"bulk zy 033"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_zy_fc_row_034 => (r#"bulk zy 034"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_zy_fc_row_035 => (r#"bulk zy 035"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_zy_fc_row_036 => (r#"bulk zy 036"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_zy_fc_row_037 => (r#"bulk zy 037"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_zy_fc_row_038 => (r#"bulk zy 038"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_zy_fc_row_039 => (r#"bulk zy 039"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_zy_fc_row_040 => (r#"bulk zy 040"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_zy_fc_row_041 => (r#"bulk zy 041"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_zy_fc_row_042 => (r#"bulk zy 042"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_zy_fc_row_043 => (r#"bulk zy 043"#, r###"print -r {1..3}"###);
-        bulk_zy_fc_row_044 => (r#"bulk zy 044"#, r###"print -r {01..03}"###);
-        bulk_zy_fc_row_045 => (r#"bulk zy 045"#, r###"print -r {a..c}"###);
-        bulk_zy_fc_row_046 => (r#"bulk zy 046"#, r###"print -r {1..4..2}"###);
-        bulk_zy_fc_row_047 => (r#"bulk zy 047"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_zy_fc_row_048 => (r#"bulk zy 048"#, r###"integer x=3; (( x++ )); print -r $x"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_zz {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_zz_fc_row_001 => (r#"bulk zz 001"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_zz_fc_row_002 => (r#"bulk zz 002"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_zz_fc_row_003 => (r#"bulk zz 003"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_zz_fc_row_004 => (r#"bulk zz 004"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_zz_fc_row_005 => (r#"bulk zz 005"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_zz_fc_row_006 => (r#"bulk zz 006"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_zz_fc_row_007 => (r#"bulk zz 007"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_zz_fc_row_008 => (r#"bulk zz 008"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_zz_fc_row_009 => (r#"bulk zz 009"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_zz_fc_row_010 => (r#"bulk zz 010"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_zz_fc_row_011 => (r#"bulk zz 011"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_zz_fc_row_012 => (r#"bulk zz 012"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_zz_fc_row_013 => (r#"bulk zz 013"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_zz_fc_row_014 => (r#"bulk zz 014"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_zz_fc_row_015 => (r#"bulk zz 015"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_zz_fc_row_016 => (r#"bulk zz 016"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_zz_fc_row_017 => (r#"bulk zz 017"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_zz_fc_row_018 => (r#"bulk zz 018"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_zz_fc_row_019 => (r#"bulk zz 019"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_zz_fc_row_020 => (r#"bulk zz 020"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_zz_fc_row_021 => (r#"bulk zz 021"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_zz_fc_row_022 => (r#"bulk zz 022"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_zz_fc_row_023 => (r#"bulk zz 023"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_zz_fc_row_024 => (r#"bulk zz 024"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_zz_fc_row_025 => (r#"bulk zz 025"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_zz_fc_row_026 => (r#"bulk zz 026"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_zz_fc_row_027 => (r#"bulk zz 027"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_zz_fc_row_028 => (r#"bulk zz 028"#, r###"print -r {1..3}"###);
-        bulk_zz_fc_row_029 => (r#"bulk zz 029"#, r###"print -r {01..03}"###);
-        bulk_zz_fc_row_030 => (r#"bulk zz 030"#, r###"print -r {a..c}"###);
-        bulk_zz_fc_row_031 => (r#"bulk zz 031"#, r###"print -r {1..4..2}"###);
-        bulk_zz_fc_row_032 => (r#"bulk zz 032"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_zz_fc_row_033 => (r#"bulk zz 033"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_zz_fc_row_034 => (r#"bulk zz 034"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_zz_fc_row_035 => (r#"bulk zz 035"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_zz_fc_row_036 => (r#"bulk zz 036"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_zz_fc_row_037 => (r#"bulk zz 037"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_zz_fc_row_038 => (r#"bulk zz 038"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_zz_fc_row_039 => (r#"bulk zz 039"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_zz_fc_row_040 => (r#"bulk zz 040"#, r###"(( 1 )); print -r $?"###);
-        bulk_zz_fc_row_041 => (r#"bulk zz 041"#, r###"(( 0 )); print -r $?"###);
-        bulk_zz_fc_row_042 => (r#"bulk zz 042"#, r###": $(( 0 )) || print -r z"###);
-        bulk_zz_fc_row_043 => (r#"bulk zz 043"#, r###": $(( 1 )) && print -r y"###);
-        bulk_zz_fc_row_044 => (r#"bulk zz 044"#, r###"let x=2+2; print -r $x"###);
-        bulk_zz_fc_row_045 => (r#"bulk zz 045"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_zz_fc_row_046 => (r#"bulk zz 046"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_zz_fc_row_047 => (r#"bulk zz 047"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_zz_fc_row_048 => (r#"bulk zz 048"#, r###"typeset -i n=07; print -r $n"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_ya {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_ya_fc_row_001 => (r#"bulk ya 001"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_ya_fc_row_002 => (r#"bulk ya 002"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_ya_fc_row_003 => (r#"bulk ya 003"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_ya_fc_row_004 => (r#"bulk ya 004"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_ya_fc_row_005 => (r#"bulk ya 005"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_ya_fc_row_006 => (r#"bulk ya 006"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_ya_fc_row_007 => (r#"bulk ya 007"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_ya_fc_row_008 => (r#"bulk ya 008"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_ya_fc_row_009 => (r#"bulk ya 009"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_ya_fc_row_010 => (r#"bulk ya 010"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_ya_fc_row_011 => (r#"bulk ya 011"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_ya_fc_row_012 => (r#"bulk ya 012"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_ya_fc_row_013 => (r#"bulk ya 013"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_ya_fc_row_014 => (r#"bulk ya 014"#, r###"print -r {1..3}"###);
-        bulk_ya_fc_row_015 => (r#"bulk ya 015"#, r###"print -r {01..03}"###);
-        bulk_ya_fc_row_016 => (r#"bulk ya 016"#, r###"print -r {a..c}"###);
-        bulk_ya_fc_row_017 => (r#"bulk ya 017"#, r###"print -r {1..4..2}"###);
-        bulk_ya_fc_row_018 => (r#"bulk ya 018"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_ya_fc_row_019 => (r#"bulk ya 019"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_ya_fc_row_020 => (r#"bulk ya 020"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_ya_fc_row_021 => (r#"bulk ya 021"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_ya_fc_row_022 => (r#"bulk ya 022"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_ya_fc_row_023 => (r#"bulk ya 023"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_ya_fc_row_024 => (r#"bulk ya 024"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_ya_fc_row_025 => (r#"bulk ya 025"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_ya_fc_row_026 => (r#"bulk ya 026"#, r###"(( 1 )); print -r $?"###);
-        bulk_ya_fc_row_027 => (r#"bulk ya 027"#, r###"(( 0 )); print -r $?"###);
-        bulk_ya_fc_row_028 => (r#"bulk ya 028"#, r###": $(( 0 )) || print -r z"###);
-        bulk_ya_fc_row_029 => (r#"bulk ya 029"#, r###": $(( 1 )) && print -r y"###);
-        bulk_ya_fc_row_030 => (r#"bulk ya 030"#, r###"let x=2+2; print -r $x"###);
-        bulk_ya_fc_row_031 => (r#"bulk ya 031"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_ya_fc_row_032 => (r#"bulk ya 032"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_ya_fc_row_033 => (r#"bulk ya 033"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_ya_fc_row_034 => (r#"bulk ya 034"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_ya_fc_row_035 => (r#"bulk ya 035"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_ya_fc_row_036 => (r#"bulk ya 036"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_ya_fc_row_037 => (r#"bulk ya 037"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_ya_fc_row_038 => (r#"bulk ya 038"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_ya_fc_row_039 => (r#"bulk ya 039"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_ya_fc_row_040 => (r#"bulk ya 040"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_ya_fc_row_041 => (r#"bulk ya 041"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_ya_fc_row_042 => (r#"bulk ya 042"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_ya_fc_row_043 => (r#"bulk ya 043"#, r###"local a; a=1; print -r $a"###);
-        bulk_ya_fc_row_044 => (r#"bulk ya 044"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_ya_fc_row_045 => (r#"bulk ya 045"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_ya_fc_row_046 => (r#"bulk ya 046"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_ya_fc_row_047 => (r#"bulk ya 047"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_ya_fc_row_048 => (r#"bulk ya 048"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yb {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yb_fc_row_001 => (r#"bulk yb 001"#, r###"print -r {1..4..2}"###);
-        bulk_yb_fc_row_002 => (r#"bulk yb 002"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_yb_fc_row_003 => (r#"bulk yb 003"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_yb_fc_row_004 => (r#"bulk yb 004"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_yb_fc_row_005 => (r#"bulk yb 005"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_yb_fc_row_006 => (r#"bulk yb 006"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_yb_fc_row_007 => (r#"bulk yb 007"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_yb_fc_row_008 => (r#"bulk yb 008"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_yb_fc_row_009 => (r#"bulk yb 009"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_yb_fc_row_010 => (r#"bulk yb 010"#, r###"(( 1 )); print -r $?"###);
-        bulk_yb_fc_row_011 => (r#"bulk yb 011"#, r###"(( 0 )); print -r $?"###);
-        bulk_yb_fc_row_012 => (r#"bulk yb 012"#, r###": $(( 0 )) || print -r z"###);
-        bulk_yb_fc_row_013 => (r#"bulk yb 013"#, r###": $(( 1 )) && print -r y"###);
-        bulk_yb_fc_row_014 => (r#"bulk yb 014"#, r###"let x=2+2; print -r $x"###);
-        bulk_yb_fc_row_015 => (r#"bulk yb 015"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_yb_fc_row_016 => (r#"bulk yb 016"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_yb_fc_row_017 => (r#"bulk yb 017"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_yb_fc_row_018 => (r#"bulk yb 018"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_yb_fc_row_019 => (r#"bulk yb 019"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_yb_fc_row_020 => (r#"bulk yb 020"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_yb_fc_row_021 => (r#"bulk yb 021"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_yb_fc_row_022 => (r#"bulk yb 022"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_yb_fc_row_023 => (r#"bulk yb 023"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_yb_fc_row_024 => (r#"bulk yb 024"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_yb_fc_row_025 => (r#"bulk yb 025"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_yb_fc_row_026 => (r#"bulk yb 026"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_yb_fc_row_027 => (r#"bulk yb 027"#, r###"local a; a=1; print -r $a"###);
-        bulk_yb_fc_row_028 => (r#"bulk yb 028"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_yb_fc_row_029 => (r#"bulk yb 029"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_yb_fc_row_030 => (r#"bulk yb 030"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_yb_fc_row_031 => (r#"bulk yb 031"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_yb_fc_row_032 => (r#"bulk yb 032"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_yb_fc_row_033 => (r#"bulk yb 033"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_yb_fc_row_034 => (r#"bulk yb 034"#, r###"setopt localoptions; print -r $?"###);
-        bulk_yb_fc_row_035 => (r#"bulk yb 035"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_yb_fc_row_036 => (r#"bulk yb 036"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_yb_fc_row_037 => (r#"bulk yb 037"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_yb_fc_row_038 => (r#"bulk yb 038"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yb_fc_row_039 => (r#"bulk yb 039"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yb_fc_row_040 => (r#"bulk yb 040"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_yb_fc_row_041 => (r#"bulk yb 041"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_yb_fc_row_042 => (r#"bulk yb 042"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_yb_fc_row_043 => (r#"bulk yb 043"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_yb_fc_row_044 => (r#"bulk yb 044"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_yb_fc_row_045 => (r#"bulk yb 045"#, r###"setopt multios; print -r $?"###);
-        bulk_yb_fc_row_046 => (r#"bulk yb 046"#, r###"setopt noclobber; print -r $?"###);
-        bulk_yb_fc_row_047 => (r#"bulk yb 047"#, r###"setopt clobber; print -r $?"###);
-        bulk_yb_fc_row_048 => (r#"bulk yb 048"#, r###"setopt histexpand; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yc {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yc_fc_row_001 => (r#"bulk yc 001"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_yc_fc_row_002 => (r#"bulk yc 002"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_yc_fc_row_003 => (r#"bulk yc 003"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_yc_fc_row_004 => (r#"bulk yc 004"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_yc_fc_row_005 => (r#"bulk yc 005"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_yc_fc_row_006 => (r#"bulk yc 006"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_yc_fc_row_007 => (r#"bulk yc 007"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_yc_fc_row_008 => (r#"bulk yc 008"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_yc_fc_row_009 => (r#"bulk yc 009"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_yc_fc_row_010 => (r#"bulk yc 010"#, r###"local a; a=1; print -r $a"###);
-        bulk_yc_fc_row_011 => (r#"bulk yc 011"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_yc_fc_row_012 => (r#"bulk yc 012"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_yc_fc_row_013 => (r#"bulk yc 013"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_yc_fc_row_014 => (r#"bulk yc 014"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_yc_fc_row_015 => (r#"bulk yc 015"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_yc_fc_row_016 => (r#"bulk yc 016"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_yc_fc_row_017 => (r#"bulk yc 017"#, r###"setopt localoptions; print -r $?"###);
-        bulk_yc_fc_row_018 => (r#"bulk yc 018"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_yc_fc_row_019 => (r#"bulk yc 019"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_yc_fc_row_020 => (r#"bulk yc 020"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_yc_fc_row_021 => (r#"bulk yc 021"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yc_fc_row_022 => (r#"bulk yc 022"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yc_fc_row_023 => (r#"bulk yc 023"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_yc_fc_row_024 => (r#"bulk yc 024"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_yc_fc_row_025 => (r#"bulk yc 025"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_yc_fc_row_026 => (r#"bulk yc 026"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_yc_fc_row_027 => (r#"bulk yc 027"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_yc_fc_row_028 => (r#"bulk yc 028"#, r###"setopt multios; print -r $?"###);
-        bulk_yc_fc_row_029 => (r#"bulk yc 029"#, r###"setopt noclobber; print -r $?"###);
-        bulk_yc_fc_row_030 => (r#"bulk yc 030"#, r###"setopt clobber; print -r $?"###);
-        bulk_yc_fc_row_031 => (r#"bulk yc 031"#, r###"setopt histexpand; print -r $?"###);
-        bulk_yc_fc_row_032 => (r#"bulk yc 032"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_yc_fc_row_033 => (r#"bulk yc 033"#, r###"setopt banghist; print -r $?"###);
-        bulk_yc_fc_row_034 => (r#"bulk yc 034"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_yc_fc_row_035 => (r#"bulk yc 035"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_yc_fc_row_036 => (r#"bulk yc 036"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_yc_fc_row_037 => (r#"bulk yc 037"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_yc_fc_row_038 => (r#"bulk yc 038"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_yc_fc_row_039 => (r#"bulk yc 039"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_yc_fc_row_040 => (r#"bulk yc 040"#, r###"setopt histverify; print -r $?"###);
-        bulk_yc_fc_row_041 => (r#"bulk yc 041"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_yc_fc_row_042 => (r#"bulk yc 042"#, r###"setopt no_beep; print -r $?"###);
-        bulk_yc_fc_row_043 => (r#"bulk yc 043"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_yc_fc_row_044 => (r#"bulk yc 044"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_yc_fc_row_045 => (r#"bulk yc 045"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_yc_fc_row_046 => (r#"bulk yc 046"#, r###"setopt correct; print -r $?"###);
-        bulk_yc_fc_row_047 => (r#"bulk yc 047"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_yc_fc_row_048 => (r#"bulk yc 048"#, r###"setopt completealiases; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yd {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yd_fc_row_001 => (r#"bulk yd 001"#, r###"setopt localoptions; print -r $?"###);
-        bulk_yd_fc_row_002 => (r#"bulk yd 002"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_yd_fc_row_003 => (r#"bulk yd 003"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_yd_fc_row_004 => (r#"bulk yd 004"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_yd_fc_row_005 => (r#"bulk yd 005"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yd_fc_row_006 => (r#"bulk yd 006"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_yd_fc_row_007 => (r#"bulk yd 007"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_yd_fc_row_008 => (r#"bulk yd 008"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_yd_fc_row_009 => (r#"bulk yd 009"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_yd_fc_row_010 => (r#"bulk yd 010"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_yd_fc_row_011 => (r#"bulk yd 011"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_yd_fc_row_012 => (r#"bulk yd 012"#, r###"setopt multios; print -r $?"###);
-        bulk_yd_fc_row_013 => (r#"bulk yd 013"#, r###"setopt noclobber; print -r $?"###);
-        bulk_yd_fc_row_014 => (r#"bulk yd 014"#, r###"setopt clobber; print -r $?"###);
-        bulk_yd_fc_row_015 => (r#"bulk yd 015"#, r###"setopt histexpand; print -r $?"###);
-        bulk_yd_fc_row_016 => (r#"bulk yd 016"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_yd_fc_row_017 => (r#"bulk yd 017"#, r###"setopt banghist; print -r $?"###);
-        bulk_yd_fc_row_018 => (r#"bulk yd 018"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_yd_fc_row_019 => (r#"bulk yd 019"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_yd_fc_row_020 => (r#"bulk yd 020"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_yd_fc_row_021 => (r#"bulk yd 021"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_yd_fc_row_022 => (r#"bulk yd 022"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_yd_fc_row_023 => (r#"bulk yd 023"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_yd_fc_row_024 => (r#"bulk yd 024"#, r###"setopt histverify; print -r $?"###);
-        bulk_yd_fc_row_025 => (r#"bulk yd 025"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_yd_fc_row_026 => (r#"bulk yd 026"#, r###"setopt no_beep; print -r $?"###);
-        bulk_yd_fc_row_027 => (r#"bulk yd 027"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_yd_fc_row_028 => (r#"bulk yd 028"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_yd_fc_row_029 => (r#"bulk yd 029"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_yd_fc_row_030 => (r#"bulk yd 030"#, r###"setopt correct; print -r $?"###);
-        bulk_yd_fc_row_031 => (r#"bulk yd 031"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_yd_fc_row_032 => (r#"bulk yd 032"#, r###"setopt completealiases; print -r $?"###);
-        bulk_yd_fc_row_033 => (r#"bulk yd 033"#, r###"setopt globdots; print -r $?"###);
-        bulk_yd_fc_row_034 => (r#"bulk yd 034"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_yd_fc_row_035 => (r#"bulk yd 035"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_yd_fc_row_036 => (r#"bulk yd 036"#, r###"setopt markdirs; print -r $?"###);
-        bulk_yd_fc_row_037 => (r#"bulk yd 037"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_yd_fc_row_038 => (r#"bulk yd 038"#, r###"setopt chase_links; print -r $?"###);
-        bulk_yd_fc_row_039 => (r#"bulk yd 039"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_yd_fc_row_040 => (r#"bulk yd 040"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_yd_fc_row_041 => (r#"bulk yd 041"#, r###"setopt pushdsilent; print -r $?"###);
-        bulk_yd_fc_row_042 => (r#"bulk yd 042"#, r###"setopt pushdtohome; print -r $?"###);
-        bulk_yd_fc_row_043 => (r#"bulk yd 043"#, r###"setopt autopushd; print -r $?"###);
-        bulk_yd_fc_row_044 => (r#"bulk yd 044"#, r###"setopt pushdminus; print -r $?"###);
-        bulk_yd_fc_row_045 => (r#"bulk yd 045"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_yd_fc_row_046 => (r#"bulk yd 046"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
-        bulk_yd_fc_row_047 => (r#"bulk yd 047"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
-        bulk_yd_fc_row_048 => (r#"bulk yd 048"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_ye {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_ye_fc_row_001 => (r#"bulk ye 001"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_ye_fc_row_002 => (r#"bulk ye 002"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_ye_fc_row_003 => (r#"bulk ye 003"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_ye_fc_row_004 => (r#"bulk ye 004"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_ye_fc_row_005 => (r#"bulk ye 005"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_ye_fc_row_006 => (r#"bulk ye 006"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_ye_fc_row_007 => (r#"bulk ye 007"#, r###"setopt histverify; print -r $?"###);
-        bulk_ye_fc_row_008 => (r#"bulk ye 008"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_ye_fc_row_009 => (r#"bulk ye 009"#, r###"setopt no_beep; print -r $?"###);
-        bulk_ye_fc_row_010 => (r#"bulk ye 010"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_ye_fc_row_011 => (r#"bulk ye 011"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_ye_fc_row_012 => (r#"bulk ye 012"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_ye_fc_row_013 => (r#"bulk ye 013"#, r###"setopt correct; print -r $?"###);
-        bulk_ye_fc_row_014 => (r#"bulk ye 014"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_ye_fc_row_015 => (r#"bulk ye 015"#, r###"setopt completealiases; print -r $?"###);
-        bulk_ye_fc_row_016 => (r#"bulk ye 016"#, r###"setopt globdots; print -r $?"###);
-        bulk_ye_fc_row_017 => (r#"bulk ye 017"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_ye_fc_row_018 => (r#"bulk ye 018"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_ye_fc_row_019 => (r#"bulk ye 019"#, r###"setopt markdirs; print -r $?"###);
-        bulk_ye_fc_row_020 => (r#"bulk ye 020"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_ye_fc_row_021 => (r#"bulk ye 021"#, r###"setopt chase_links; print -r $?"###);
-        bulk_ye_fc_row_022 => (r#"bulk ye 022"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_ye_fc_row_023 => (r#"bulk ye 023"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_ye_fc_row_024 => (r#"bulk ye 024"#, r###"setopt pushdsilent; print -r $?"###);
-        bulk_ye_fc_row_025 => (r#"bulk ye 025"#, r###"setopt pushdtohome; print -r $?"###);
-        bulk_ye_fc_row_026 => (r#"bulk ye 026"#, r###"setopt autopushd; print -r $?"###);
-        bulk_ye_fc_row_027 => (r#"bulk ye 027"#, r###"setopt pushdminus; print -r $?"###);
-        bulk_ye_fc_row_028 => (r#"bulk ye 028"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_ye_fc_row_029 => (r#"bulk ye 029"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
-        bulk_ye_fc_row_030 => (r#"bulk ye 030"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
-        bulk_ye_fc_row_031 => (r#"bulk ye 031"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-        bulk_ye_fc_row_032 => (r#"bulk ye 032"#, r###"print -r $PWD"###);
-        bulk_ye_fc_row_033 => (r#"bulk ye 033"#, r###"print -r ${PWD:h}"###);
-        bulk_ye_fc_row_034 => (r#"bulk ye 034"#, r###"print -r ${PWD:t}"###);
-        bulk_ye_fc_row_035 => (r#"bulk ye 035"#, r###"print -r ${PWD:r}"###);
-        bulk_ye_fc_row_036 => (r#"bulk ye 036"#, r###"print -r ${PWD:e}"###);
-        bulk_ye_fc_row_037 => (r#"bulk ye 037"#, r###"print -r ${PWD:a}"###);
-        bulk_ye_fc_row_038 => (r#"bulk ye 038"#, r###"print -r ${PWD:A}"###);
-        bulk_ye_fc_row_039 => (r#"bulk ye 039"#, r###"read -r line <<< 'one'; print -r $line"###);
-        bulk_ye_fc_row_040 => (r#"bulk ye 040"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
-        bulk_ye_fc_row_041 => (r#"bulk ye 041"#, r###"print -r $'tab\there'"###);
-        bulk_ye_fc_row_042 => (r#"bulk ye 042"#, r###"print -r $'line1\nline2'"###);
-        bulk_ye_fc_row_043 => (r#"bulk ye 043"#, r###"printf '%q\n' 'a b'"###);
-        bulk_ye_fc_row_044 => (r#"bulk ye 044"#, r###"printf '%s\n' ok"###);
-        bulk_ye_fc_row_045 => (r#"bulk ye 045"#, r###"print -rn -- end"###);
-        bulk_ye_fc_row_046 => (r#"bulk ye 046"#, r###"print -rl -- a b"###);
-        bulk_ye_fc_row_047 => (r#"bulk ye 047"#, r###"print -fc '%s\n' hi"###);
-        bulk_ye_fc_row_048 => (r#"bulk ye 048"#, r###"whence -w print 2>/dev/null; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yf {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yf_fc_row_001 => (r#"bulk yf 001"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_yf_fc_row_002 => (r#"bulk yf 002"#, r###"setopt markdirs; print -r $?"###);
-        bulk_yf_fc_row_003 => (r#"bulk yf 003"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_yf_fc_row_004 => (r#"bulk yf 004"#, r###"setopt chase_links; print -r $?"###);
-        bulk_yf_fc_row_005 => (r#"bulk yf 005"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_yf_fc_row_006 => (r#"bulk yf 006"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_yf_fc_row_007 => (r#"bulk yf 007"#, r###"setopt pushdsilent; print -r $?"###);
-        bulk_yf_fc_row_008 => (r#"bulk yf 008"#, r###"setopt pushdtohome; print -r $?"###);
-        bulk_yf_fc_row_009 => (r#"bulk yf 009"#, r###"setopt autopushd; print -r $?"###);
-        bulk_yf_fc_row_010 => (r#"bulk yf 010"#, r###"setopt pushdminus; print -r $?"###);
-        bulk_yf_fc_row_011 => (r#"bulk yf 011"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_yf_fc_row_012 => (r#"bulk yf 012"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
-        bulk_yf_fc_row_013 => (r#"bulk yf 013"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
-        bulk_yf_fc_row_014 => (r#"bulk yf 014"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-        bulk_yf_fc_row_015 => (r#"bulk yf 015"#, r###"print -r $PWD"###);
-        bulk_yf_fc_row_016 => (r#"bulk yf 016"#, r###"print -r ${PWD:h}"###);
-        bulk_yf_fc_row_017 => (r#"bulk yf 017"#, r###"print -r ${PWD:t}"###);
-        bulk_yf_fc_row_018 => (r#"bulk yf 018"#, r###"print -r ${PWD:r}"###);
-        bulk_yf_fc_row_019 => (r#"bulk yf 019"#, r###"print -r ${PWD:e}"###);
-        bulk_yf_fc_row_020 => (r#"bulk yf 020"#, r###"print -r ${PWD:a}"###);
-        bulk_yf_fc_row_021 => (r#"bulk yf 021"#, r###"print -r ${PWD:A}"###);
-        bulk_yf_fc_row_022 => (r#"bulk yf 022"#, r###"read -r line <<< 'one'; print -r $line"###);
-        bulk_yf_fc_row_023 => (r#"bulk yf 023"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
-        bulk_yf_fc_row_024 => (r#"bulk yf 024"#, r###"print -r $'tab\there'"###);
-        bulk_yf_fc_row_025 => (r#"bulk yf 025"#, r###"print -r $'line1\nline2'"###);
-        bulk_yf_fc_row_026 => (r#"bulk yf 026"#, r###"printf '%q\n' 'a b'"###);
-        bulk_yf_fc_row_027 => (r#"bulk yf 027"#, r###"printf '%s\n' ok"###);
-        bulk_yf_fc_row_028 => (r#"bulk yf 028"#, r###"print -rn -- end"###);
-        bulk_yf_fc_row_029 => (r#"bulk yf 029"#, r###"print -rl -- a b"###);
-        bulk_yf_fc_row_030 => (r#"bulk yf 030"#, r###"print -fc '%s\n' hi"###);
-        bulk_yf_fc_row_031 => (r#"bulk yf 031"#, r###"whence -w print 2>/dev/null; print -r $?"###);
-        bulk_yf_fc_row_032 => (r#"bulk yf 032"#, r###"whence -c print 2>/dev/null; print -r $?"###);
-        bulk_yf_fc_row_033 => (r#"bulk yf 033"#, r###"which print 2>/dev/null; print -r $?"###);
-        bulk_yf_fc_row_034 => (r#"bulk yf 034"#, r###"command -v print 2>/dev/null; print -r $?"###);
-        bulk_yf_fc_row_035 => (r#"bulk yf 035"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_yf_fc_row_036 => (r#"bulk yf 036"#, r###"rehash 2>/dev/null; print -r $?"###);
-        bulk_yf_fc_row_037 => (r#"bulk yf 037"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
-        bulk_yf_fc_row_038 => (r#"bulk yf 038"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
-        bulk_yf_fc_row_039 => (r#"bulk yf 039"#, r###"export ZA=1; print -r $ZA"###);
-        bulk_yf_fc_row_040 => (r#"bulk yf 040"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
-        bulk_yf_fc_row_041 => (r#"bulk yf 041"#, r###"typeset -x ZB=2; print -r $ZB"###);
-        bulk_yf_fc_row_042 => (r#"bulk yf 042"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
-        bulk_yf_fc_row_043 => (r#"bulk yf 043"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
-        bulk_yf_fc_row_044 => (r#"bulk yf 044"#, r###"shift; print -r $1; set -- a b c"###);
-        bulk_yf_fc_row_045 => (r#"bulk yf 045"#, r###"(( $# )); print -r $#"###);
-        bulk_yf_fc_row_046 => (r#"bulk yf 046"#, r###"print -r ${argv[1]}"###);
-        bulk_yf_fc_row_047 => (r#"bulk yf 047"#, r###"print -r ${*[1]}"###);
-        bulk_yf_fc_row_048 => (r#"bulk yf 048"#, r###"print -r $@[1]"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yg {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yg_fc_row_001 => (r#"bulk yg 001"#, r###"print -r ${PWD:h}"###);
-        bulk_yg_fc_row_002 => (r#"bulk yg 002"#, r###"print -r ${PWD:t}"###);
-        bulk_yg_fc_row_003 => (r#"bulk yg 003"#, r###"print -r ${PWD:r}"###);
-        bulk_yg_fc_row_004 => (r#"bulk yg 004"#, r###"print -r ${PWD:e}"###);
-        bulk_yg_fc_row_005 => (r#"bulk yg 005"#, r###"print -r ${PWD:a}"###);
-        bulk_yg_fc_row_006 => (r#"bulk yg 006"#, r###"print -r ${PWD:A}"###);
-        bulk_yg_fc_row_007 => (r#"bulk yg 007"#, r###"read -r line <<< 'one'; print -r $line"###);
-        bulk_yg_fc_row_008 => (r#"bulk yg 008"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
-        bulk_yg_fc_row_009 => (r#"bulk yg 009"#, r###"print -r $'tab\there'"###);
-        bulk_yg_fc_row_010 => (r#"bulk yg 010"#, r###"print -r $'line1\nline2'"###);
-        bulk_yg_fc_row_011 => (r#"bulk yg 011"#, r###"printf '%q\n' 'a b'"###);
-        bulk_yg_fc_row_012 => (r#"bulk yg 012"#, r###"printf '%s\n' ok"###);
-        bulk_yg_fc_row_013 => (r#"bulk yg 013"#, r###"print -rn -- end"###);
-        bulk_yg_fc_row_014 => (r#"bulk yg 014"#, r###"print -rl -- a b"###);
-        bulk_yg_fc_row_015 => (r#"bulk yg 015"#, r###"print -fc '%s\n' hi"###);
-        bulk_yg_fc_row_016 => (r#"bulk yg 016"#, r###"whence -w print 2>/dev/null; print -r $?"###);
-        bulk_yg_fc_row_017 => (r#"bulk yg 017"#, r###"whence -c print 2>/dev/null; print -r $?"###);
-        bulk_yg_fc_row_018 => (r#"bulk yg 018"#, r###"which print 2>/dev/null; print -r $?"###);
-        bulk_yg_fc_row_019 => (r#"bulk yg 019"#, r###"command -v print 2>/dev/null; print -r $?"###);
-        bulk_yg_fc_row_020 => (r#"bulk yg 020"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_yg_fc_row_021 => (r#"bulk yg 021"#, r###"rehash 2>/dev/null; print -r $?"###);
-        bulk_yg_fc_row_022 => (r#"bulk yg 022"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
-        bulk_yg_fc_row_023 => (r#"bulk yg 023"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
-        bulk_yg_fc_row_024 => (r#"bulk yg 024"#, r###"export ZA=1; print -r $ZA"###);
-        bulk_yg_fc_row_025 => (r#"bulk yg 025"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
-        bulk_yg_fc_row_026 => (r#"bulk yg 026"#, r###"typeset -x ZB=2; print -r $ZB"###);
-        bulk_yg_fc_row_027 => (r#"bulk yg 027"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
-        bulk_yg_fc_row_028 => (r#"bulk yg 028"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
-        bulk_yg_fc_row_029 => (r#"bulk yg 029"#, r###"shift; print -r $1; set -- a b c"###);
-        bulk_yg_fc_row_030 => (r#"bulk yg 030"#, r###"(( $# )); print -r $#"###);
-        bulk_yg_fc_row_031 => (r#"bulk yg 031"#, r###"print -r ${argv[1]}"###);
-        bulk_yg_fc_row_032 => (r#"bulk yg 032"#, r###"print -r ${*[1]}"###);
-        bulk_yg_fc_row_033 => (r#"bulk yg 033"#, r###"print -r $@[1]"###);
-        bulk_yg_fc_row_034 => (r#"bulk yg 034"#, r###"print -r ${@:2}"###);
-        bulk_yg_fc_row_035 => (r#"bulk yg 035"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
-        bulk_yg_fc_row_036 => (r#"bulk yg 036"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
-        bulk_yg_fc_row_037 => (r#"bulk yg 037"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
-        bulk_yg_fc_row_038 => (r#"bulk yg 038"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
-        bulk_yg_fc_row_039 => (r#"bulk yg 039"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
-        bulk_yg_fc_row_040 => (r#"bulk yg 040"#, r###"str=%n; print -r ${(%)str}"###);
-        bulk_yg_fc_row_041 => (r#"bulk yg 041"#, r###"str=%N; print -r ${(%)str}"###);
-        bulk_yg_fc_row_042 => (r#"bulk yg 042"#, r###"str=%~; print -r ${(%)str}"###);
-        bulk_yg_fc_row_043 => (r#"bulk yg 043"#, r###"str=%d; print -r ${(%)str}"###);
-        bulk_yg_fc_row_044 => (r#"bulk yg 044"#, r###"str=%m; print -r ${(%)str}"###);
-        bulk_yg_fc_row_045 => (r#"bulk yg 045"#, r###"str=%#; print -r ${(%)str}"###);
-        bulk_yg_fc_row_046 => (r#"bulk yg 046"#, r###"str=%?; print -r ${(%)str}"###);
-        bulk_yg_fc_row_047 => (r#"bulk yg 047"#, r###"str=%_; print -r ${(%)str}"###);
-        bulk_yg_fc_row_048 => (r#"bulk yg 048"#, r###"str=%h; print -r ${(%)str}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yh {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yh_fc_row_001 => (r#"bulk yh 001"#, r###"which print 2>/dev/null; print -r $?"###);
-        bulk_yh_fc_row_002 => (r#"bulk yh 002"#, r###"command -v print 2>/dev/null; print -r $?"###);
-        bulk_yh_fc_row_003 => (r#"bulk yh 003"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_yh_fc_row_004 => (r#"bulk yh 004"#, r###"rehash 2>/dev/null; print -r $?"###);
-        bulk_yh_fc_row_005 => (r#"bulk yh 005"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
-        bulk_yh_fc_row_006 => (r#"bulk yh 006"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
-        bulk_yh_fc_row_007 => (r#"bulk yh 007"#, r###"export ZA=1; print -r $ZA"###);
-        bulk_yh_fc_row_008 => (r#"bulk yh 008"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
-        bulk_yh_fc_row_009 => (r#"bulk yh 009"#, r###"typeset -x ZB=2; print -r $ZB"###);
-        bulk_yh_fc_row_010 => (r#"bulk yh 010"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
-        bulk_yh_fc_row_011 => (r#"bulk yh 011"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
-        bulk_yh_fc_row_012 => (r#"bulk yh 012"#, r###"shift; print -r $1; set -- a b c"###);
-        bulk_yh_fc_row_013 => (r#"bulk yh 013"#, r###"(( $# )); print -r $#"###);
-        bulk_yh_fc_row_014 => (r#"bulk yh 014"#, r###"print -r ${argv[1]}"###);
-        bulk_yh_fc_row_015 => (r#"bulk yh 015"#, r###"print -r ${*[1]}"###);
-        bulk_yh_fc_row_016 => (r#"bulk yh 016"#, r###"print -r $@[1]"###);
-        bulk_yh_fc_row_017 => (r#"bulk yh 017"#, r###"print -r ${@:2}"###);
-        bulk_yh_fc_row_018 => (r#"bulk yh 018"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
-        bulk_yh_fc_row_019 => (r#"bulk yh 019"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
-        bulk_yh_fc_row_020 => (r#"bulk yh 020"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
-        bulk_yh_fc_row_021 => (r#"bulk yh 021"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
-        bulk_yh_fc_row_022 => (r#"bulk yh 022"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
-        bulk_yh_fc_row_023 => (r#"bulk yh 023"#, r###"str=%n; print -r ${(%)str}"###);
-        bulk_yh_fc_row_024 => (r#"bulk yh 024"#, r###"str=%N; print -r ${(%)str}"###);
-        bulk_yh_fc_row_025 => (r#"bulk yh 025"#, r###"str=%~; print -r ${(%)str}"###);
-        bulk_yh_fc_row_026 => (r#"bulk yh 026"#, r###"str=%d; print -r ${(%)str}"###);
-        bulk_yh_fc_row_027 => (r#"bulk yh 027"#, r###"str=%m; print -r ${(%)str}"###);
-        bulk_yh_fc_row_028 => (r#"bulk yh 028"#, r###"str=%#; print -r ${(%)str}"###);
-        bulk_yh_fc_row_029 => (r#"bulk yh 029"#, r###"str=%?; print -r ${(%)str}"###);
-        bulk_yh_fc_row_030 => (r#"bulk yh 030"#, r###"str=%_; print -r ${(%)str}"###);
-        bulk_yh_fc_row_031 => (r#"bulk yh 031"#, r###"str=%h; print -r ${(%)str}"###);
-        bulk_yh_fc_row_032 => (r#"bulk yh 032"#, r###"str=%!; print -r ${(%)str}"###);
-        bulk_yh_fc_row_033 => (r#"bulk yh 033"#, r###"str=%i; print -r ${(%)str}"###);
-        bulk_yh_fc_row_034 => (r#"bulk yh 034"#, r###"str=%I; print -r ${(%)str}"###);
-        bulk_yh_fc_row_035 => (r#"bulk yh 035"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_yh_fc_row_036 => (r#"bulk yh 036"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_yh_fc_row_037 => (r#"bulk yh 037"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_yh_fc_row_038 => (r#"bulk yh 038"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_yh_fc_row_039 => (r#"bulk yh 039"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_yh_fc_row_040 => (r#"bulk yh 040"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_yh_fc_row_041 => (r#"bulk yh 041"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_yh_fc_row_042 => (r#"bulk yh 042"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_yh_fc_row_043 => (r#"bulk yh 043"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_yh_fc_row_044 => (r#"bulk yh 044"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_yh_fc_row_045 => (r#"bulk yh 045"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_yh_fc_row_046 => (r#"bulk yh 046"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_yh_fc_row_047 => (r#"bulk yh 047"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_yh_fc_row_048 => (r#"bulk yh 048"#, r###"true; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yi {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yi_fc_row_001 => (r#"bulk yi 001"#, r###"print -r ${@:2}"###);
-        bulk_yi_fc_row_002 => (r#"bulk yi 002"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
-        bulk_yi_fc_row_003 => (r#"bulk yi 003"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
-        bulk_yi_fc_row_004 => (r#"bulk yi 004"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
-        bulk_yi_fc_row_005 => (r#"bulk yi 005"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
-        bulk_yi_fc_row_006 => (r#"bulk yi 006"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
-        bulk_yi_fc_row_007 => (r#"bulk yi 007"#, r###"str=%n; print -r ${(%)str}"###);
-        bulk_yi_fc_row_008 => (r#"bulk yi 008"#, r###"str=%N; print -r ${(%)str}"###);
-        bulk_yi_fc_row_009 => (r#"bulk yi 009"#, r###"str=%~; print -r ${(%)str}"###);
-        bulk_yi_fc_row_010 => (r#"bulk yi 010"#, r###"str=%d; print -r ${(%)str}"###);
-        bulk_yi_fc_row_011 => (r#"bulk yi 011"#, r###"str=%m; print -r ${(%)str}"###);
-        bulk_yi_fc_row_012 => (r#"bulk yi 012"#, r###"str=%#; print -r ${(%)str}"###);
-        bulk_yi_fc_row_013 => (r#"bulk yi 013"#, r###"str=%?; print -r ${(%)str}"###);
-        bulk_yi_fc_row_014 => (r#"bulk yi 014"#, r###"str=%_; print -r ${(%)str}"###);
-        bulk_yi_fc_row_015 => (r#"bulk yi 015"#, r###"str=%h; print -r ${(%)str}"###);
-        bulk_yi_fc_row_016 => (r#"bulk yi 016"#, r###"str=%!; print -r ${(%)str}"###);
-        bulk_yi_fc_row_017 => (r#"bulk yi 017"#, r###"str=%i; print -r ${(%)str}"###);
-        bulk_yi_fc_row_018 => (r#"bulk yi 018"#, r###"str=%I; print -r ${(%)str}"###);
-        bulk_yi_fc_row_019 => (r#"bulk yi 019"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_yi_fc_row_020 => (r#"bulk yi 020"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_yi_fc_row_021 => (r#"bulk yi 021"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_yi_fc_row_022 => (r#"bulk yi 022"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_yi_fc_row_023 => (r#"bulk yi 023"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_yi_fc_row_024 => (r#"bulk yi 024"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_yi_fc_row_025 => (r#"bulk yi 025"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_yi_fc_row_026 => (r#"bulk yi 026"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_yi_fc_row_027 => (r#"bulk yi 027"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_yi_fc_row_028 => (r#"bulk yi 028"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_yi_fc_row_029 => (r#"bulk yi 029"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_yi_fc_row_030 => (r#"bulk yi 030"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_yi_fc_row_031 => (r#"bulk yi 031"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_yi_fc_row_032 => (r#"bulk yi 032"#, r###"true; print -r $?"###);
-        bulk_yi_fc_row_033 => (r#"bulk yi 033"#, r###"false; print -r $?"###);
-        bulk_yi_fc_row_034 => (r#"bulk yi 034"#, r###"print -r hello"###);
-        bulk_yi_fc_row_035 => (r#"bulk yi 035"#, r###"echo one two"###);
-        bulk_yi_fc_row_036 => (r#"bulk yi 036"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_yi_fc_row_037 => (r#"bulk yi 037"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_yi_fc_row_038 => (r#"bulk yi 038"#, r###"command true; print -r $?"###);
-        bulk_yi_fc_row_039 => (r#"bulk yi 039"#, r###"builtin true; print -r $?"###);
-        bulk_yi_fc_row_040 => (r#"bulk yi 040"#, r###"if true; then echo t; fi"###);
-        bulk_yi_fc_row_041 => (r#"bulk yi 041"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_yi_fc_row_042 => (r#"bulk yi 042"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_yi_fc_row_043 => (r#"bulk yi 043"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_yi_fc_row_044 => (r#"bulk yi 044"#, r###"repeat 2; do print -r r; done"###);
-        bulk_yi_fc_row_045 => (r#"bulk yi 045"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_yi_fc_row_046 => (r#"bulk yi 046"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_yi_fc_row_047 => (r#"bulk yi 047"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_yi_fc_row_048 => (r#"bulk yi 048"#, r###"{ echo a; echo b; }"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yj {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yj_fc_row_001 => (r#"bulk yj 001"#, r###"str=%i; print -r ${(%)str}"###);
-        bulk_yj_fc_row_002 => (r#"bulk yj 002"#, r###"str=%I; print -r ${(%)str}"###);
-        bulk_yj_fc_row_003 => (r#"bulk yj 003"#, r###"str=%j; print -r ${(%)str}"###);
-        bulk_yj_fc_row_004 => (r#"bulk yj 004"#, r###"str=%C; print -r ${(%)str}"###);
-        bulk_yj_fc_row_005 => (r#"bulk yj 005"#, r###"str=%c; print -r ${(%)str}"###);
-        bulk_yj_fc_row_006 => (r#"bulk yj 006"#, r###"str=%D; print -r ${(%)str}"###);
-        bulk_yj_fc_row_007 => (r#"bulk yj 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_yj_fc_row_008 => (r#"bulk yj 008"#, r###"str=%*; print -r ${(%)str}"###);
-        bulk_yj_fc_row_009 => (r#"bulk yj 009"#, r###"str=%v; print -r ${(%)str}"###);
-        bulk_yj_fc_row_010 => (r#"bulk yj 010"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_yj_fc_row_011 => (r#"bulk yj 011"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_yj_fc_row_012 => (r#"bulk yj 012"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_yj_fc_row_013 => (r#"bulk yj 013"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_yj_fc_row_014 => (r#"bulk yj 014"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_yj_fc_row_015 => (r#"bulk yj 015"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_yj_fc_row_016 => (r#"bulk yj 016"#, r###"true; print -r $?"###);
-        bulk_yj_fc_row_017 => (r#"bulk yj 017"#, r###"false; print -r $?"###);
-        bulk_yj_fc_row_018 => (r#"bulk yj 018"#, r###"print -r hello"###);
-        bulk_yj_fc_row_019 => (r#"bulk yj 019"#, r###"echo one two"###);
-        bulk_yj_fc_row_020 => (r#"bulk yj 020"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_yj_fc_row_021 => (r#"bulk yj 021"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_yj_fc_row_022 => (r#"bulk yj 022"#, r###"command true; print -r $?"###);
-        bulk_yj_fc_row_023 => (r#"bulk yj 023"#, r###"builtin true; print -r $?"###);
-        bulk_yj_fc_row_024 => (r#"bulk yj 024"#, r###"if true; then echo t; fi"###);
-        bulk_yj_fc_row_025 => (r#"bulk yj 025"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_yj_fc_row_026 => (r#"bulk yj 026"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_yj_fc_row_027 => (r#"bulk yj 027"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_yj_fc_row_028 => (r#"bulk yj 028"#, r###"repeat 2; do print -r r; done"###);
-        bulk_yj_fc_row_029 => (r#"bulk yj 029"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_yj_fc_row_030 => (r#"bulk yj 030"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_yj_fc_row_031 => (r#"bulk yj 031"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_yj_fc_row_032 => (r#"bulk yj 032"#, r###"{ echo a; echo b; }"###);
-        bulk_yj_fc_row_033 => (r#"bulk yj 033"#, r###"(echo sub)"###);
-        bulk_yj_fc_row_034 => (r#"bulk yj 034"#, r###"(( 1 )) || echo no"###);
-        bulk_yj_fc_row_035 => (r#"bulk yj 035"#, r###"(( 0 )) && echo no"###);
-        bulk_yj_fc_row_036 => (r#"bulk yj 036"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_yj_fc_row_037 => (r#"bulk yj 037"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_yj_fc_row_038 => (r#"bulk yj 038"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_yj_fc_row_039 => (r#"bulk yj 039"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_yj_fc_row_040 => (r#"bulk yj 040"#, r###"print -r $(( !0 ))"###);
-        bulk_yj_fc_row_041 => (r#"bulk yj 041"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_yj_fc_row_042 => (r#"bulk yj 042"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_yj_fc_row_043 => (r#"bulk yj 043"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_yj_fc_row_044 => (r#"bulk yj 044"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_yj_fc_row_045 => (r#"bulk yj 045"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_yj_fc_row_046 => (r#"bulk yj 046"#, r###"print -r $(( true ))"###);
-        bulk_yj_fc_row_047 => (r#"bulk yj 047"#, r###"print -r $(( false ))"###);
-        bulk_yj_fc_row_048 => (r#"bulk yj 048"#, r###"[[ -e / ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yk {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yk_fc_row_001 => (r#"bulk yk 001"#, r###"str=%L; print -r ${(%)str}"###);
-        bulk_yk_fc_row_002 => (r#"bulk yk 002"#, r###"str=%l; print -r ${(%)str}"###);
-        bulk_yk_fc_row_003 => (r#"bulk yk 003"#, r###"str=%y; print -r ${(%)str}"###);
-        bulk_yk_fc_row_004 => (r#"bulk yk 004"#, r###"str=%/; print -r ${(%)str}"###);
-        bulk_yk_fc_row_005 => (r#"bulk yk 005"#, r###"str=%<; print -r ${(%)str}"###);
-        bulk_yk_fc_row_006 => (r#"bulk yk 006"#, r###"str=%>; print -r ${(%)str}"###);
-        bulk_yk_fc_row_007 => (r#"bulk yk 007"#, r###"true; print -r $?"###);
-        bulk_yk_fc_row_008 => (r#"bulk yk 008"#, r###"false; print -r $?"###);
-        bulk_yk_fc_row_009 => (r#"bulk yk 009"#, r###"print -r hello"###);
-        bulk_yk_fc_row_010 => (r#"bulk yk 010"#, r###"echo one two"###);
-        bulk_yk_fc_row_011 => (r#"bulk yk 011"#, r###"test 1 -eq 1; print -r $?"###);
-        bulk_yk_fc_row_012 => (r#"bulk yk 012"#, r###"[ 1 -eq 1 ]; print -r $?"###);
-        bulk_yk_fc_row_013 => (r#"bulk yk 013"#, r###"command true; print -r $?"###);
-        bulk_yk_fc_row_014 => (r#"bulk yk 014"#, r###"builtin true; print -r $?"###);
-        bulk_yk_fc_row_015 => (r#"bulk yk 015"#, r###"if true; then echo t; fi"###);
-        bulk_yk_fc_row_016 => (r#"bulk yk 016"#, r###"if false; then echo e; else echo f; fi"###);
-        bulk_yk_fc_row_017 => (r#"bulk yk 017"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_yk_fc_row_018 => (r#"bulk yk 018"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_yk_fc_row_019 => (r#"bulk yk 019"#, r###"repeat 2; do print -r r; done"###);
-        bulk_yk_fc_row_020 => (r#"bulk yk 020"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_yk_fc_row_021 => (r#"bulk yk 021"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_yk_fc_row_022 => (r#"bulk yk 022"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_yk_fc_row_023 => (r#"bulk yk 023"#, r###"{ echo a; echo b; }"###);
-        bulk_yk_fc_row_024 => (r#"bulk yk 024"#, r###"(echo sub)"###);
-        bulk_yk_fc_row_025 => (r#"bulk yk 025"#, r###"(( 1 )) || echo no"###);
-        bulk_yk_fc_row_026 => (r#"bulk yk 026"#, r###"(( 0 )) && echo no"###);
-        bulk_yk_fc_row_027 => (r#"bulk yk 027"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_yk_fc_row_028 => (r#"bulk yk 028"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_yk_fc_row_029 => (r#"bulk yk 029"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_yk_fc_row_030 => (r#"bulk yk 030"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_yk_fc_row_031 => (r#"bulk yk 031"#, r###"print -r $(( !0 ))"###);
-        bulk_yk_fc_row_032 => (r#"bulk yk 032"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_yk_fc_row_033 => (r#"bulk yk 033"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_yk_fc_row_034 => (r#"bulk yk 034"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_yk_fc_row_035 => (r#"bulk yk 035"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_yk_fc_row_036 => (r#"bulk yk 036"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_yk_fc_row_037 => (r#"bulk yk 037"#, r###"print -r $(( true ))"###);
-        bulk_yk_fc_row_038 => (r#"bulk yk 038"#, r###"print -r $(( false ))"###);
-        bulk_yk_fc_row_039 => (r#"bulk yk 039"#, r###"[[ -e / ]]; print -r $?"###);
-        bulk_yk_fc_row_040 => (r#"bulk yk 040"#, r###"[[ -d /tmp ]]; print -r $?"###);
-        bulk_yk_fc_row_041 => (r#"bulk yk 041"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
-        bulk_yk_fc_row_042 => (r#"bulk yk 042"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
-        bulk_yk_fc_row_043 => (r#"bulk yk 043"#, r###"[[ -w /tmp ]]; print -r $?"###);
-        bulk_yk_fc_row_044 => (r#"bulk yk 044"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
-        bulk_yk_fc_row_045 => (r#"bulk yk 045"#, r###"[[ 42 = <-> ]]; print -r $?"###);
-        bulk_yk_fc_row_046 => (r#"bulk yk 046"#, r###"[[ abc = <-> ]]; print -r $?"###);
-        bulk_yk_fc_row_047 => (r#"bulk yk 047"#, r####"[[ host = ##host ]]; print -r $?"####);
-        bulk_yk_fc_row_048 => (r#"bulk yk 048"#, r###"[[ -v x ]]; print -r $?; x=1"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yl {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yl_fc_row_001 => (r#"bulk yl 001"#, r###"for i in a b; do print -r $i; done"###);
-        bulk_yl_fc_row_002 => (r#"bulk yl 002"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
-        bulk_yl_fc_row_003 => (r#"bulk yl 003"#, r###"repeat 2; do print -r r; done"###);
-        bulk_yl_fc_row_004 => (r#"bulk yl 004"#, r###"case x in (x) echo ok ;; esac"###);
-        bulk_yl_fc_row_005 => (r#"bulk yl 005"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
-        bulk_yl_fc_row_006 => (r#"bulk yl 006"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
-        bulk_yl_fc_row_007 => (r#"bulk yl 007"#, r###"{ echo a; echo b; }"###);
-        bulk_yl_fc_row_008 => (r#"bulk yl 008"#, r###"(echo sub)"###);
-        bulk_yl_fc_row_009 => (r#"bulk yl 009"#, r###"(( 1 )) || echo no"###);
-        bulk_yl_fc_row_010 => (r#"bulk yl 010"#, r###"(( 0 )) && echo no"###);
-        bulk_yl_fc_row_011 => (r#"bulk yl 011"#, r###"print -r $(( 1 + 2 ))"###);
-        bulk_yl_fc_row_012 => (r#"bulk yl 012"#, r###"print -r $(( 17 % 5 ))"###);
-        bulk_yl_fc_row_013 => (r#"bulk yl 013"#, r###"print -r $(( 2 ** 8 ))"###);
-        bulk_yl_fc_row_014 => (r#"bulk yl 014"#, r###"print -r $(( 1 && 0 || 2 ))"###);
-        bulk_yl_fc_row_015 => (r#"bulk yl 015"#, r###"print -r $(( !0 ))"###);
-        bulk_yl_fc_row_016 => (r#"bulk yl 016"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
-        bulk_yl_fc_row_017 => (r#"bulk yl 017"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
-        bulk_yl_fc_row_018 => (r#"bulk yl 018"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_yl_fc_row_019 => (r#"bulk yl 019"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_yl_fc_row_020 => (r#"bulk yl 020"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_yl_fc_row_021 => (r#"bulk yl 021"#, r###"print -r $(( true ))"###);
-        bulk_yl_fc_row_022 => (r#"bulk yl 022"#, r###"print -r $(( false ))"###);
-        bulk_yl_fc_row_023 => (r#"bulk yl 023"#, r###"[[ -e / ]]; print -r $?"###);
-        bulk_yl_fc_row_024 => (r#"bulk yl 024"#, r###"[[ -d /tmp ]]; print -r $?"###);
-        bulk_yl_fc_row_025 => (r#"bulk yl 025"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
-        bulk_yl_fc_row_026 => (r#"bulk yl 026"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
-        bulk_yl_fc_row_027 => (r#"bulk yl 027"#, r###"[[ -w /tmp ]]; print -r $?"###);
-        bulk_yl_fc_row_028 => (r#"bulk yl 028"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
-        bulk_yl_fc_row_029 => (r#"bulk yl 029"#, r###"[[ 42 = <-> ]]; print -r $?"###);
-        bulk_yl_fc_row_030 => (r#"bulk yl 030"#, r###"[[ abc = <-> ]]; print -r $?"###);
-        bulk_yl_fc_row_031 => (r#"bulk yl 031"#, r####"[[ host = ##host ]]; print -r $?"####);
-        bulk_yl_fc_row_032 => (r#"bulk yl 032"#, r###"[[ -v x ]]; print -r $?; x=1"###);
-        bulk_yl_fc_row_033 => (r#"bulk yl 033"#, r###"unset y; [[ -v y ]]; print -r $?"###);
-        bulk_yl_fc_row_034 => (r#"bulk yl 034"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
-        bulk_yl_fc_row_035 => (r#"bulk yl 035"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
-        bulk_yl_fc_row_036 => (r#"bulk yl 036"#, r###"[[ abc = a* ]]; print -r $?"###);
-        bulk_yl_fc_row_037 => (r#"bulk yl 037"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
-        bulk_yl_fc_row_038 => (r#"bulk yl 038"#, r###"[[ -z '' ]]; print -r $?"###);
-        bulk_yl_fc_row_039 => (r#"bulk yl 039"#, r###"[[ -n abc ]]; print -r $?"###);
-        bulk_yl_fc_row_040 => (r#"bulk yl 040"#, r###"typeset -i n=10; print -r $n"###);
-        bulk_yl_fc_row_041 => (r#"bulk yl 041"#, r###"typeset -l n=AbC; print -r $n"###);
-        bulk_yl_fc_row_042 => (r#"bulk yl 042"#, r###"typeset -u n=xy; print -r $n"###);
-        bulk_yl_fc_row_043 => (r#"bulk yl 043"#, r###"typeset -Z5 n=7; print -r $n"###);
-        bulk_yl_fc_row_044 => (r#"bulk yl 044"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
-        bulk_yl_fc_row_045 => (r#"bulk yl 045"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
-        bulk_yl_fc_row_046 => (r#"bulk yl 046"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
-        bulk_yl_fc_row_047 => (r#"bulk yl 047"#, r###"unset v; print -r ${v:-def}"###);
-        bulk_yl_fc_row_048 => (r#"bulk yl 048"#, r###"v=set; print -r ${v:+yes}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_ym {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_ym_fc_row_001 => (r#"bulk ym 001"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
-        bulk_ym_fc_row_002 => (r#"bulk ym 002"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
-        bulk_ym_fc_row_003 => (r#"bulk ym 003"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
-        bulk_ym_fc_row_004 => (r#"bulk ym 004"#, r###"print -r $(( true ))"###);
-        bulk_ym_fc_row_005 => (r#"bulk ym 005"#, r###"print -r $(( false ))"###);
-        bulk_ym_fc_row_006 => (r#"bulk ym 006"#, r###"[[ -e / ]]; print -r $?"###);
-        bulk_ym_fc_row_007 => (r#"bulk ym 007"#, r###"[[ -d /tmp ]]; print -r $?"###);
-        bulk_ym_fc_row_008 => (r#"bulk ym 008"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
-        bulk_ym_fc_row_009 => (r#"bulk ym 009"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
-        bulk_ym_fc_row_010 => (r#"bulk ym 010"#, r###"[[ -w /tmp ]]; print -r $?"###);
-        bulk_ym_fc_row_011 => (r#"bulk ym 011"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
-        bulk_ym_fc_row_012 => (r#"bulk ym 012"#, r###"[[ 42 = <-> ]]; print -r $?"###);
-        bulk_ym_fc_row_013 => (r#"bulk ym 013"#, r###"[[ abc = <-> ]]; print -r $?"###);
-        bulk_ym_fc_row_014 => (r#"bulk ym 014"#, r####"[[ host = ##host ]]; print -r $?"####);
-        bulk_ym_fc_row_015 => (r#"bulk ym 015"#, r###"[[ -v x ]]; print -r $?; x=1"###);
-        bulk_ym_fc_row_016 => (r#"bulk ym 016"#, r###"unset y; [[ -v y ]]; print -r $?"###);
-        bulk_ym_fc_row_017 => (r#"bulk ym 017"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
-        bulk_ym_fc_row_018 => (r#"bulk ym 018"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
-        bulk_ym_fc_row_019 => (r#"bulk ym 019"#, r###"[[ abc = a* ]]; print -r $?"###);
-        bulk_ym_fc_row_020 => (r#"bulk ym 020"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
-        bulk_ym_fc_row_021 => (r#"bulk ym 021"#, r###"[[ -z '' ]]; print -r $?"###);
-        bulk_ym_fc_row_022 => (r#"bulk ym 022"#, r###"[[ -n abc ]]; print -r $?"###);
-        bulk_ym_fc_row_023 => (r#"bulk ym 023"#, r###"typeset -i n=10; print -r $n"###);
-        bulk_ym_fc_row_024 => (r#"bulk ym 024"#, r###"typeset -l n=AbC; print -r $n"###);
-        bulk_ym_fc_row_025 => (r#"bulk ym 025"#, r###"typeset -u n=xy; print -r $n"###);
-        bulk_ym_fc_row_026 => (r#"bulk ym 026"#, r###"typeset -Z5 n=7; print -r $n"###);
-        bulk_ym_fc_row_027 => (r#"bulk ym 027"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
-        bulk_ym_fc_row_028 => (r#"bulk ym 028"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
-        bulk_ym_fc_row_029 => (r#"bulk ym 029"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
-        bulk_ym_fc_row_030 => (r#"bulk ym 030"#, r###"unset v; print -r ${v:-def}"###);
-        bulk_ym_fc_row_031 => (r#"bulk ym 031"#, r###"v=set; print -r ${v:+yes}"###);
-        bulk_ym_fc_row_032 => (r#"bulk ym 032"#, r###"unset v; : ${v::=def}; print -r $v"###);
-        bulk_ym_fc_row_033 => (r#"bulk ym 033"#, r###"print -r ${PWD:h}"###);
-        bulk_ym_fc_row_034 => (r#"bulk ym 034"#, r###"print -r ${PWD:t}"###);
-        bulk_ym_fc_row_035 => (r#"bulk ym 035"#, r###"true | true; print -r $?"###);
-        bulk_ym_fc_row_036 => (r#"bulk ym 036"#, r###"true | false; print -r $?"###);
-        bulk_ym_fc_row_037 => (r#"bulk ym 037"#, r###"print -r ${pipestatus[1]}; true | false"###);
-        bulk_ym_fc_row_038 => (r#"bulk ym 038"#, r###"print -r ${#pipestatus}; true | true | true"###);
-        bulk_ym_fc_row_039 => (r#"bulk ym 039"#, r###"set -- a b c; shift; print -r $1"###);
-        bulk_ym_fc_row_040 => (r#"bulk ym 040"#, r###"set -- a b c; shift 2; print -r $#"###);
-        bulk_ym_fc_row_041 => (r#"bulk ym 041"#, r###"fn(){ print -r $1; }; fn x"###);
-        bulk_ym_fc_row_042 => (r#"bulk ym 042"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
-        bulk_ym_fc_row_043 => (r#"bulk ym 043"#, r###"fn(){ return 2; }; fn; print -r $?"###);
-        bulk_ym_fc_row_044 => (r#"bulk ym 044"#, r###"print -r ${(q)x}; x=hi"###);
-        bulk_ym_fc_row_045 => (r#"bulk ym 045"#, r###"print -r ${(qq)x}; x=hi"###);
-        bulk_ym_fc_row_046 => (r#"bulk ym 046"#, r###"x=hi; print -r ${(q-)x}"###);
-        bulk_ym_fc_row_047 => (r#"bulk ym 047"#, r###"x=hi; print -r ${(q+)x}"###);
-        bulk_ym_fc_row_048 => (r#"bulk ym 048"#, r###"print -r ${(w)w}; w=a b c"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yn {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yn_fc_row_001 => (r#"bulk yn 001"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
-        bulk_yn_fc_row_002 => (r#"bulk yn 002"#, r###"[[ abc = a* ]]; print -r $?"###);
-        bulk_yn_fc_row_003 => (r#"bulk yn 003"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
-        bulk_yn_fc_row_004 => (r#"bulk yn 004"#, r###"[[ -z '' ]]; print -r $?"###);
-        bulk_yn_fc_row_005 => (r#"bulk yn 005"#, r###"[[ -n abc ]]; print -r $?"###);
-        bulk_yn_fc_row_006 => (r#"bulk yn 006"#, r###"typeset -i n=10; print -r $n"###);
-        bulk_yn_fc_row_007 => (r#"bulk yn 007"#, r###"typeset -l n=AbC; print -r $n"###);
-        bulk_yn_fc_row_008 => (r#"bulk yn 008"#, r###"typeset -u n=xy; print -r $n"###);
-        bulk_yn_fc_row_009 => (r#"bulk yn 009"#, r###"typeset -Z5 n=7; print -r $n"###);
-        bulk_yn_fc_row_010 => (r#"bulk yn 010"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
-        bulk_yn_fc_row_011 => (r#"bulk yn 011"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
-        bulk_yn_fc_row_012 => (r#"bulk yn 012"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
-        bulk_yn_fc_row_013 => (r#"bulk yn 013"#, r###"unset v; print -r ${v:-def}"###);
-        bulk_yn_fc_row_014 => (r#"bulk yn 014"#, r###"v=set; print -r ${v:+yes}"###);
-        bulk_yn_fc_row_015 => (r#"bulk yn 015"#, r###"unset v; : ${v::=def}; print -r $v"###);
-        bulk_yn_fc_row_016 => (r#"bulk yn 016"#, r###"print -r ${PWD:h}"###);
-        bulk_yn_fc_row_017 => (r#"bulk yn 017"#, r###"print -r ${PWD:t}"###);
-        bulk_yn_fc_row_018 => (r#"bulk yn 018"#, r###"true | true; print -r $?"###);
-        bulk_yn_fc_row_019 => (r#"bulk yn 019"#, r###"true | false; print -r $?"###);
-        bulk_yn_fc_row_020 => (r#"bulk yn 020"#, r###"print -r ${pipestatus[1]}; true | false"###);
-        bulk_yn_fc_row_021 => (r#"bulk yn 021"#, r###"print -r ${#pipestatus}; true | true | true"###);
-        bulk_yn_fc_row_022 => (r#"bulk yn 022"#, r###"set -- a b c; shift; print -r $1"###);
-        bulk_yn_fc_row_023 => (r#"bulk yn 023"#, r###"set -- a b c; shift 2; print -r $#"###);
-        bulk_yn_fc_row_024 => (r#"bulk yn 024"#, r###"fn(){ print -r $1; }; fn x"###);
-        bulk_yn_fc_row_025 => (r#"bulk yn 025"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
-        bulk_yn_fc_row_026 => (r#"bulk yn 026"#, r###"fn(){ return 2; }; fn; print -r $?"###);
-        bulk_yn_fc_row_027 => (r#"bulk yn 027"#, r###"print -r ${(q)x}; x=hi"###);
-        bulk_yn_fc_row_028 => (r#"bulk yn 028"#, r###"print -r ${(qq)x}; x=hi"###);
-        bulk_yn_fc_row_029 => (r#"bulk yn 029"#, r###"x=hi; print -r ${(q-)x}"###);
-        bulk_yn_fc_row_030 => (r#"bulk yn 030"#, r###"x=hi; print -r ${(q+)x}"###);
-        bulk_yn_fc_row_031 => (r#"bulk yn 031"#, r###"print -r ${(w)w}; w=a b c"###);
-        bulk_yn_fc_row_032 => (r#"bulk yn 032"#, r###"print -r ${(u)a}; a=(a a b)"###);
-        bulk_yn_fc_row_033 => (r#"bulk yn 033"#, r###"print -r ${(o)a}; a=(c b a)"###);
-        bulk_yn_fc_row_034 => (r#"bulk yn 034"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
-        bulk_yn_fc_row_035 => (r#"bulk yn 035"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
-        bulk_yn_fc_row_036 => (r#"bulk yn 036"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
-        bulk_yn_fc_row_037 => (r#"bulk yn 037"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
-        bulk_yn_fc_row_038 => (r#"bulk yn 038"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
-        bulk_yn_fc_row_039 => (r#"bulk yn 039"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
-        bulk_yn_fc_row_040 => (r#"bulk yn 040"#, r###"print -r ${+options}"###);
-        bulk_yn_fc_row_041 => (r#"bulk yn 041"#, r###"print -r ${+parameters}"###);
-        bulk_yn_fc_row_042 => (r#"bulk yn 042"#, r###"print -r ${+aliases}"###);
-        bulk_yn_fc_row_043 => (r#"bulk yn 043"#, r###"print -r ${+functions}"###);
-        bulk_yn_fc_row_044 => (r#"bulk yn 044"#, r###"print -r $ZSH_NAME"###);
-        bulk_yn_fc_row_045 => (r#"bulk yn 045"#, r###"print -r ${ZSH_VERSION%%.*}"###);
-        bulk_yn_fc_row_046 => (r#"bulk yn 046"#, r###"whence -w print"###);
-        bulk_yn_fc_row_047 => (r#"bulk yn 047"#, r###"command -v true"###);
-        bulk_yn_fc_row_048 => (r#"bulk yn 048"#, r###"emulate -L zsh; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yo {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yo_fc_row_001 => (r#"bulk yo 001"#, r###"true | true; print -r $?"###);
-        bulk_yo_fc_row_002 => (r#"bulk yo 002"#, r###"true | false; print -r $?"###);
-        bulk_yo_fc_row_003 => (r#"bulk yo 003"#, r###"print -r ${pipestatus[1]}; true | false"###);
-        bulk_yo_fc_row_004 => (r#"bulk yo 004"#, r###"print -r ${#pipestatus}; true | true | true"###);
-        bulk_yo_fc_row_005 => (r#"bulk yo 005"#, r###"set -- a b c; shift; print -r $1"###);
-        bulk_yo_fc_row_006 => (r#"bulk yo 006"#, r###"set -- a b c; shift 2; print -r $#"###);
-        bulk_yo_fc_row_007 => (r#"bulk yo 007"#, r###"fn(){ print -r $1; }; fn x"###);
-        bulk_yo_fc_row_008 => (r#"bulk yo 008"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
-        bulk_yo_fc_row_009 => (r#"bulk yo 009"#, r###"fn(){ return 2; }; fn; print -r $?"###);
-        bulk_yo_fc_row_010 => (r#"bulk yo 010"#, r###"print -r ${(q)x}; x=hi"###);
-        bulk_yo_fc_row_011 => (r#"bulk yo 011"#, r###"print -r ${(qq)x}; x=hi"###);
-        bulk_yo_fc_row_012 => (r#"bulk yo 012"#, r###"x=hi; print -r ${(q-)x}"###);
-        bulk_yo_fc_row_013 => (r#"bulk yo 013"#, r###"x=hi; print -r ${(q+)x}"###);
-        bulk_yo_fc_row_014 => (r#"bulk yo 014"#, r###"print -r ${(w)w}; w=a b c"###);
-        bulk_yo_fc_row_015 => (r#"bulk yo 015"#, r###"print -r ${(u)a}; a=(a a b)"###);
-        bulk_yo_fc_row_016 => (r#"bulk yo 016"#, r###"print -r ${(o)a}; a=(c b a)"###);
-        bulk_yo_fc_row_017 => (r#"bulk yo 017"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
-        bulk_yo_fc_row_018 => (r#"bulk yo 018"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
-        bulk_yo_fc_row_019 => (r#"bulk yo 019"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
-        bulk_yo_fc_row_020 => (r#"bulk yo 020"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
-        bulk_yo_fc_row_021 => (r#"bulk yo 021"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
-        bulk_yo_fc_row_022 => (r#"bulk yo 022"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
-        bulk_yo_fc_row_023 => (r#"bulk yo 023"#, r###"print -r ${+options}"###);
-        bulk_yo_fc_row_024 => (r#"bulk yo 024"#, r###"print -r ${+parameters}"###);
-        bulk_yo_fc_row_025 => (r#"bulk yo 025"#, r###"print -r ${+aliases}"###);
-        bulk_yo_fc_row_026 => (r#"bulk yo 026"#, r###"print -r ${+functions}"###);
-        bulk_yo_fc_row_027 => (r#"bulk yo 027"#, r###"print -r $ZSH_NAME"###);
-        bulk_yo_fc_row_028 => (r#"bulk yo 028"#, r###"print -r ${ZSH_VERSION%%.*}"###);
-        bulk_yo_fc_row_029 => (r#"bulk yo 029"#, r###"whence -w print"###);
-        bulk_yo_fc_row_030 => (r#"bulk yo 030"#, r###"command -v true"###);
-        bulk_yo_fc_row_031 => (r#"bulk yo 031"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_yo_fc_row_032 => (r#"bulk yo 032"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
-        bulk_yo_fc_row_033 => (r#"bulk yo 033"#, r###"read -r line <<< 'one two'; print -r $line"###);
-        bulk_yo_fc_row_034 => (r#"bulk yo 034"#, r###"cat <<< 'herestring'"###);
-        bulk_yo_fc_row_035 => (r#"bulk yo 035"#, r###"echo hello 2>/dev/null"###);
-        bulk_yo_fc_row_036 => (r#"bulk yo 036"#, r###"printf '%s\n' a b c | head -1"###);
-        bulk_yo_fc_row_037 => (r#"bulk yo 037"#, r###"true && echo yes"###);
-        bulk_yo_fc_row_038 => (r#"bulk yo 038"#, r###"false || echo yes"###);
-        bulk_yo_fc_row_039 => (r#"bulk yo 039"#, r###"(exit 3); print -r $?"###);
-        bulk_yo_fc_row_040 => (r#"bulk yo 040"#, r###"print -r ${status}; (exit 4)"###);
-        bulk_yo_fc_row_041 => (r#"bulk yo 041"#, r###"print -r $(( 1_000 + 1 ))"###);
-        bulk_yo_fc_row_042 => (r#"bulk yo 042"#, r###"print -r $(( 5#101 ))"###);
-        bulk_yo_fc_row_043 => (r#"bulk yo 043"#, r###"print -r $(( 0b1111 ))"###);
-        bulk_yo_fc_row_044 => (r#"bulk yo 044"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
-        bulk_yo_fc_row_045 => (r#"bulk yo 045"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
-        bulk_yo_fc_row_046 => (r#"bulk yo 046"#, r###"typeset -F2 f=3.14; print -r $f"###);
-        bulk_yo_fc_row_047 => (r#"bulk yo 047"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
-        bulk_yo_fc_row_048 => (r#"bulk yo 048"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yp {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yp_fc_row_001 => (r#"bulk yp 001"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
-        bulk_yp_fc_row_002 => (r#"bulk yp 002"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
-        bulk_yp_fc_row_003 => (r#"bulk yp 003"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
-        bulk_yp_fc_row_004 => (r#"bulk yp 004"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
-        bulk_yp_fc_row_005 => (r#"bulk yp 005"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
-        bulk_yp_fc_row_006 => (r#"bulk yp 006"#, r###"print -r ${+options}"###);
-        bulk_yp_fc_row_007 => (r#"bulk yp 007"#, r###"print -r ${+parameters}"###);
-        bulk_yp_fc_row_008 => (r#"bulk yp 008"#, r###"print -r ${+aliases}"###);
-        bulk_yp_fc_row_009 => (r#"bulk yp 009"#, r###"print -r ${+functions}"###);
-        bulk_yp_fc_row_010 => (r#"bulk yp 010"#, r###"print -r $ZSH_NAME"###);
-        bulk_yp_fc_row_011 => (r#"bulk yp 011"#, r###"print -r ${ZSH_VERSION%%.*}"###);
-        bulk_yp_fc_row_012 => (r#"bulk yp 012"#, r###"whence -w print"###);
-        bulk_yp_fc_row_013 => (r#"bulk yp 013"#, r###"command -v true"###);
-        bulk_yp_fc_row_014 => (r#"bulk yp 014"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_yp_fc_row_015 => (r#"bulk yp 015"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
-        bulk_yp_fc_row_016 => (r#"bulk yp 016"#, r###"read -r line <<< 'one two'; print -r $line"###);
-        bulk_yp_fc_row_017 => (r#"bulk yp 017"#, r###"cat <<< 'herestring'"###);
-        bulk_yp_fc_row_018 => (r#"bulk yp 018"#, r###"echo hello 2>/dev/null"###);
-        bulk_yp_fc_row_019 => (r#"bulk yp 019"#, r###"printf '%s\n' a b c | head -1"###);
-        bulk_yp_fc_row_020 => (r#"bulk yp 020"#, r###"true && echo yes"###);
-        bulk_yp_fc_row_021 => (r#"bulk yp 021"#, r###"false || echo yes"###);
-        bulk_yp_fc_row_022 => (r#"bulk yp 022"#, r###"(exit 3); print -r $?"###);
-        bulk_yp_fc_row_023 => (r#"bulk yp 023"#, r###"print -r ${status}; (exit 4)"###);
-        bulk_yp_fc_row_024 => (r#"bulk yp 024"#, r###"print -r $(( 1_000 + 1 ))"###);
-        bulk_yp_fc_row_025 => (r#"bulk yp 025"#, r###"print -r $(( 5#101 ))"###);
-        bulk_yp_fc_row_026 => (r#"bulk yp 026"#, r###"print -r $(( 0b1111 ))"###);
-        bulk_yp_fc_row_027 => (r#"bulk yp 027"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
-        bulk_yp_fc_row_028 => (r#"bulk yp 028"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
-        bulk_yp_fc_row_029 => (r#"bulk yp 029"#, r###"typeset -F2 f=3.14; print -r $f"###);
-        bulk_yp_fc_row_030 => (r#"bulk yp 030"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
-        bulk_yp_fc_row_031 => (r#"bulk yp 031"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
-        bulk_yp_fc_row_032 => (r#"bulk yp 032"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
-        bulk_yp_fc_row_033 => (r#"bulk yp 033"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
-        bulk_yp_fc_row_034 => (r#"bulk yp 034"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
-        bulk_yp_fc_row_035 => (r#"bulk yp 035"#, r###"print -r ${#x}; x=hello"###);
-        bulk_yp_fc_row_036 => (r#"bulk yp 036"#, r###"print -r ${#a}; a=(a b c)"###);
-        bulk_yp_fc_row_037 => (r#"bulk yp 037"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
-        bulk_yp_fc_row_038 => (r#"bulk yp 038"#, r###"print -r ${(b)x}; x=hi"###);
-        bulk_yp_fc_row_039 => (r#"bulk yp 039"#, r###"print -r ${(e):-2+2}"###);
-        bulk_yp_fc_row_040 => (r#"bulk yp 040"#, r###"print -r ${(P)r}; r=HOME"###);
-        bulk_yp_fc_row_041 => (r#"bulk yp 041"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
-        bulk_yp_fc_row_042 => (r#"bulk yp 042"#, r###"print -r ${(eu)n}; n=(a A b)"###);
-        bulk_yp_fc_row_043 => (r#"bulk yp 043"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
-        bulk_yp_fc_row_044 => (r#"bulk yp 044"#, r###"typeset -h hv=1; print -r ${+hv}"###);
-        bulk_yp_fc_row_045 => (r#"bulk yp 045"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
-        bulk_yp_fc_row_046 => (r#"bulk yp 046"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
-        bulk_yp_fc_row_047 => (r#"bulk yp 047"#, r###"while :; do break; print -r n; done; print -r after"###);
-        bulk_yp_fc_row_048 => (r#"bulk yp 048"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yq {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yq_fc_row_001 => (r#"bulk yq 001"#, r###"read -r line <<< 'one two'; print -r $line"###);
-        bulk_yq_fc_row_002 => (r#"bulk yq 002"#, r###"cat <<< 'herestring'"###);
-        bulk_yq_fc_row_003 => (r#"bulk yq 003"#, r###"echo hello 2>/dev/null"###);
-        bulk_yq_fc_row_004 => (r#"bulk yq 004"#, r###"printf '%s\n' a b c | head -1"###);
-        bulk_yq_fc_row_005 => (r#"bulk yq 005"#, r###"true && echo yes"###);
-        bulk_yq_fc_row_006 => (r#"bulk yq 006"#, r###"false || echo yes"###);
-        bulk_yq_fc_row_007 => (r#"bulk yq 007"#, r###"(exit 3); print -r $?"###);
-        bulk_yq_fc_row_008 => (r#"bulk yq 008"#, r###"print -r ${status}; (exit 4)"###);
-        bulk_yq_fc_row_009 => (r#"bulk yq 009"#, r###"print -r $(( 1_000 + 1 ))"###);
-        bulk_yq_fc_row_010 => (r#"bulk yq 010"#, r###"print -r $(( 5#101 ))"###);
-        bulk_yq_fc_row_011 => (r#"bulk yq 011"#, r###"print -r $(( 0b1111 ))"###);
-        bulk_yq_fc_row_012 => (r#"bulk yq 012"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
-        bulk_yq_fc_row_013 => (r#"bulk yq 013"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
-        bulk_yq_fc_row_014 => (r#"bulk yq 014"#, r###"typeset -F2 f=3.14; print -r $f"###);
-        bulk_yq_fc_row_015 => (r#"bulk yq 015"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
-        bulk_yq_fc_row_016 => (r#"bulk yq 016"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
-        bulk_yq_fc_row_017 => (r#"bulk yq 017"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
-        bulk_yq_fc_row_018 => (r#"bulk yq 018"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
-        bulk_yq_fc_row_019 => (r#"bulk yq 019"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
-        bulk_yq_fc_row_020 => (r#"bulk yq 020"#, r###"print -r ${#x}; x=hello"###);
-        bulk_yq_fc_row_021 => (r#"bulk yq 021"#, r###"print -r ${#a}; a=(a b c)"###);
-        bulk_yq_fc_row_022 => (r#"bulk yq 022"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
-        bulk_yq_fc_row_023 => (r#"bulk yq 023"#, r###"print -r ${(b)x}; x=hi"###);
-        bulk_yq_fc_row_024 => (r#"bulk yq 024"#, r###"print -r ${(e):-2+2}"###);
-        bulk_yq_fc_row_025 => (r#"bulk yq 025"#, r###"print -r ${(P)r}; r=HOME"###);
-        bulk_yq_fc_row_026 => (r#"bulk yq 026"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
-        bulk_yq_fc_row_027 => (r#"bulk yq 027"#, r###"print -r ${(eu)n}; n=(a A b)"###);
-        bulk_yq_fc_row_028 => (r#"bulk yq 028"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
-        bulk_yq_fc_row_029 => (r#"bulk yq 029"#, r###"typeset -h hv=1; print -r ${+hv}"###);
-        bulk_yq_fc_row_030 => (r#"bulk yq 030"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
-        bulk_yq_fc_row_031 => (r#"bulk yq 031"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
-        bulk_yq_fc_row_032 => (r#"bulk yq 032"#, r###"while :; do break; print -r n; done; print -r after"###);
-        bulk_yq_fc_row_033 => (r#"bulk yq 033"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
-        bulk_yq_fc_row_034 => (r#"bulk yq 034"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
-        bulk_yq_fc_row_035 => (r#"bulk yq 035"#, r###"print -r ${argv[1]}; set -- p q"###);
-        bulk_yq_fc_row_036 => (r#"bulk yq 036"#, r###"print -r $ARGC; set -- a b"###);
-        bulk_yq_fc_row_037 => (r#"bulk yq 037"#, r###"print -r ${dirstack[1]:-empty}"###);
-        bulk_yq_fc_row_038 => (r#"bulk yq 038"#, r###"print -r ${+pipestatus}"###);
-        bulk_yq_fc_row_039 => (r#"bulk yq 039"#, r###"print -r ${+history}"###);
-        bulk_yq_fc_row_040 => (r#"bulk yq 040"#, r###"print -r ${+commands}"###);
-        bulk_yq_fc_row_041 => (r#"bulk yq 041"#, r###"print -r ${+builtins}"###);
-        bulk_yq_fc_row_042 => (r#"bulk yq 042"#, r###"print -r ${+widgets}"###);
-        bulk_yq_fc_row_043 => (r#"bulk yq 043"#, r###"print -r ${+terminfo}"###);
-        bulk_yq_fc_row_044 => (r#"bulk yq 044"#, r###"print -r ${+modules}"###);
-        bulk_yq_fc_row_045 => (r#"bulk yq 045"#, r###"print -r ${+patchars}"###);
-        bulk_yq_fc_row_046 => (r#"bulk yq 046"#, r###"print -r ${+reswords}"###);
-        bulk_yq_fc_row_047 => (r#"bulk yq 047"#, r###"print -r ${+dis_aliases}"###);
-        bulk_yq_fc_row_048 => (r#"bulk yq 048"#, r###"print -r ${+dis_functions}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yr {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yr_fc_row_001 => (r#"bulk yr 001"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
-        bulk_yr_fc_row_002 => (r#"bulk yr 002"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
-        bulk_yr_fc_row_003 => (r#"bulk yr 003"#, r###"print -r ${#x}; x=hello"###);
-        bulk_yr_fc_row_004 => (r#"bulk yr 004"#, r###"print -r ${#a}; a=(a b c)"###);
-        bulk_yr_fc_row_005 => (r#"bulk yr 005"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
-        bulk_yr_fc_row_006 => (r#"bulk yr 006"#, r###"print -r ${(b)x}; x=hi"###);
-        bulk_yr_fc_row_007 => (r#"bulk yr 007"#, r###"print -r ${(e):-2+2}"###);
-        bulk_yr_fc_row_008 => (r#"bulk yr 008"#, r###"print -r ${(P)r}; r=HOME"###);
-        bulk_yr_fc_row_009 => (r#"bulk yr 009"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
-        bulk_yr_fc_row_010 => (r#"bulk yr 010"#, r###"print -r ${(eu)n}; n=(a A b)"###);
-        bulk_yr_fc_row_011 => (r#"bulk yr 011"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
-        bulk_yr_fc_row_012 => (r#"bulk yr 012"#, r###"typeset -h hv=1; print -r ${+hv}"###);
-        bulk_yr_fc_row_013 => (r#"bulk yr 013"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
-        bulk_yr_fc_row_014 => (r#"bulk yr 014"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
-        bulk_yr_fc_row_015 => (r#"bulk yr 015"#, r###"while :; do break; print -r n; done; print -r after"###);
-        bulk_yr_fc_row_016 => (r#"bulk yr 016"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
-        bulk_yr_fc_row_017 => (r#"bulk yr 017"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
-        bulk_yr_fc_row_018 => (r#"bulk yr 018"#, r###"print -r ${argv[1]}; set -- p q"###);
-        bulk_yr_fc_row_019 => (r#"bulk yr 019"#, r###"print -r $ARGC; set -- a b"###);
-        bulk_yr_fc_row_020 => (r#"bulk yr 020"#, r###"print -r ${dirstack[1]:-empty}"###);
-        bulk_yr_fc_row_021 => (r#"bulk yr 021"#, r###"print -r ${+pipestatus}"###);
-        bulk_yr_fc_row_022 => (r#"bulk yr 022"#, r###"print -r ${+history}"###);
-        bulk_yr_fc_row_023 => (r#"bulk yr 023"#, r###"print -r ${+commands}"###);
-        bulk_yr_fc_row_024 => (r#"bulk yr 024"#, r###"print -r ${+builtins}"###);
-        bulk_yr_fc_row_025 => (r#"bulk yr 025"#, r###"print -r ${+widgets}"###);
-        bulk_yr_fc_row_026 => (r#"bulk yr 026"#, r###"print -r ${+terminfo}"###);
-        bulk_yr_fc_row_027 => (r#"bulk yr 027"#, r###"print -r ${+modules}"###);
-        bulk_yr_fc_row_028 => (r#"bulk yr 028"#, r###"print -r ${+patchars}"###);
-        bulk_yr_fc_row_029 => (r#"bulk yr 029"#, r###"print -r ${+reswords}"###);
-        bulk_yr_fc_row_030 => (r#"bulk yr 030"#, r###"print -r ${+dis_aliases}"###);
-        bulk_yr_fc_row_031 => (r#"bulk yr 031"#, r###"print -r ${+dis_functions}"###);
-        bulk_yr_fc_row_032 => (r#"bulk yr 032"#, r###"print -r ${+parameters[(I)PATH]}"###);
-        bulk_yr_fc_row_033 => (r#"bulk yr 033"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
-        bulk_yr_fc_row_034 => (r#"bulk yr 034"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
-        bulk_yr_fc_row_035 => (r#"bulk yr 035"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
-        bulk_yr_fc_row_036 => (r#"bulk yr 036"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
-        bulk_yr_fc_row_037 => (r#"bulk yr 037"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
-        bulk_yr_fc_row_038 => (r#"bulk yr 038"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
-        bulk_yr_fc_row_039 => (r#"bulk yr 039"#, r###"print -r $(( 128 >> 2 ))"###);
-        bulk_yr_fc_row_040 => (r#"bulk yr 040"#, r###"print -r $(( ~(255) & 0xff ))"###);
-        bulk_yr_fc_row_041 => (r#"bulk yr 041"#, r###"print -r $(( 3 <|> 5 ))"###);
-        bulk_yr_fc_row_042 => (r#"bulk yr 042"#, r###"print -r $(( 3 <> 5 ))"###);
-        bulk_yr_fc_row_043 => (r#"bulk yr 043"#, r###"(( 5#11 )); print -r $?"###);
-        bulk_yr_fc_row_044 => (r#"bulk yr 044"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
-        bulk_yr_fc_row_045 => (r#"bulk yr 045"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
-        bulk_yr_fc_row_046 => (r#"bulk yr 046"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
-        bulk_yr_fc_row_047 => (r#"bulk yr 047"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
-        bulk_yr_fc_row_048 => (r#"bulk yr 048"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_ys {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_ys_fc_row_001 => (r#"bulk ys 001"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
-        bulk_ys_fc_row_002 => (r#"bulk ys 002"#, r###"print -r ${argv[1]}; set -- p q"###);
-        bulk_ys_fc_row_003 => (r#"bulk ys 003"#, r###"print -r $ARGC; set -- a b"###);
-        bulk_ys_fc_row_004 => (r#"bulk ys 004"#, r###"print -r ${dirstack[1]:-empty}"###);
-        bulk_ys_fc_row_005 => (r#"bulk ys 005"#, r###"print -r ${+pipestatus}"###);
-        bulk_ys_fc_row_006 => (r#"bulk ys 006"#, r###"print -r ${+history}"###);
-        bulk_ys_fc_row_007 => (r#"bulk ys 007"#, r###"print -r ${+commands}"###);
-        bulk_ys_fc_row_008 => (r#"bulk ys 008"#, r###"print -r ${+builtins}"###);
-        bulk_ys_fc_row_009 => (r#"bulk ys 009"#, r###"print -r ${+widgets}"###);
-        bulk_ys_fc_row_010 => (r#"bulk ys 010"#, r###"print -r ${+terminfo}"###);
-        bulk_ys_fc_row_011 => (r#"bulk ys 011"#, r###"print -r ${+modules}"###);
-        bulk_ys_fc_row_012 => (r#"bulk ys 012"#, r###"print -r ${+patchars}"###);
-        bulk_ys_fc_row_013 => (r#"bulk ys 013"#, r###"print -r ${+reswords}"###);
-        bulk_ys_fc_row_014 => (r#"bulk ys 014"#, r###"print -r ${+dis_aliases}"###);
-        bulk_ys_fc_row_015 => (r#"bulk ys 015"#, r###"print -r ${+dis_functions}"###);
-        bulk_ys_fc_row_016 => (r#"bulk ys 016"#, r###"print -r ${+parameters[(I)PATH]}"###);
-        bulk_ys_fc_row_017 => (r#"bulk ys 017"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
-        bulk_ys_fc_row_018 => (r#"bulk ys 018"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
-        bulk_ys_fc_row_019 => (r#"bulk ys 019"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
-        bulk_ys_fc_row_020 => (r#"bulk ys 020"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
-        bulk_ys_fc_row_021 => (r#"bulk ys 021"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
-        bulk_ys_fc_row_022 => (r#"bulk ys 022"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
-        bulk_ys_fc_row_023 => (r#"bulk ys 023"#, r###"print -r $(( 128 >> 2 ))"###);
-        bulk_ys_fc_row_024 => (r#"bulk ys 024"#, r###"print -r $(( ~(255) & 0xff ))"###);
-        bulk_ys_fc_row_025 => (r#"bulk ys 025"#, r###"print -r $(( 3 <|> 5 ))"###);
-        bulk_ys_fc_row_026 => (r#"bulk ys 026"#, r###"print -r $(( 3 <> 5 ))"###);
-        bulk_ys_fc_row_027 => (r#"bulk ys 027"#, r###"(( 5#11 )); print -r $?"###);
-        bulk_ys_fc_row_028 => (r#"bulk ys 028"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
-        bulk_ys_fc_row_029 => (r#"bulk ys 029"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
-        bulk_ys_fc_row_030 => (r#"bulk ys 030"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
-        bulk_ys_fc_row_031 => (r#"bulk ys 031"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
-        bulk_ys_fc_row_032 => (r#"bulk ys 032"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
-        bulk_ys_fc_row_033 => (r#"bulk ys 033"#, r###"typeset -i8 n=10; print -r $n"###);
-        bulk_ys_fc_row_034 => (r#"bulk ys 034"#, r###"typeset -i16 n=255; print -r $n"###);
-        bulk_ys_fc_row_035 => (r#"bulk ys 035"#, r###"typeset -E2 n=4000; print -r $n"###);
-        bulk_ys_fc_row_036 => (r#"bulk ys 036"#, r###"typeset -R4 n=hi; print -r $n"###);
-        bulk_ys_fc_row_037 => (r#"bulk ys 037"#, r###"typeset +L n=Ab; print -r $n"###);
-        bulk_ys_fc_row_038 => (r#"bulk ys 038"#, r###"typeset +U n=xy; print -r $n"###);
-        bulk_ys_fc_row_039 => (r#"bulk ys 039"#, r###"typeset +i n=4; print -r $n"###);
-        bulk_ys_fc_row_040 => (r#"bulk ys 040"#, r###"export EX=1; print -r $EX; unset EX"###);
-        bulk_ys_fc_row_041 => (r#"bulk ys 041"#, r###"readonly ro=5; print -r $ro"###);
-        bulk_ys_fc_row_042 => (r#"bulk ys 042"#, r###"print -r ${${v:-fb}}; unset v"###);
-        bulk_ys_fc_row_043 => (r#"bulk ys 043"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
-        bulk_ys_fc_row_044 => (r#"bulk ys 044"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
-        bulk_ys_fc_row_045 => (r#"bulk ys 045"#, r###"word=  hi  ; print -r ${(W)word}"###);
-        bulk_ys_fc_row_046 => (r#"bulk ys 046"#, r###"print -r ${(z)word}; word=a b c"###);
-        bulk_ys_fc_row_047 => (r#"bulk ys 047"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
-        bulk_ys_fc_row_048 => (r#"bulk ys 048"#, r###"print -r ${(A)x}; x=1 2"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yt {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yt_fc_row_001 => (r#"bulk yt 001"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
-        bulk_yt_fc_row_002 => (r#"bulk yt 002"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
-        bulk_yt_fc_row_003 => (r#"bulk yt 003"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
-        bulk_yt_fc_row_004 => (r#"bulk yt 004"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
-        bulk_yt_fc_row_005 => (r#"bulk yt 005"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
-        bulk_yt_fc_row_006 => (r#"bulk yt 006"#, r###"print -r $(( 128 >> 2 ))"###);
-        bulk_yt_fc_row_007 => (r#"bulk yt 007"#, r###"print -r $(( ~(255) & 0xff ))"###);
-        bulk_yt_fc_row_008 => (r#"bulk yt 008"#, r###"print -r $(( 3 <|> 5 ))"###);
-        bulk_yt_fc_row_009 => (r#"bulk yt 009"#, r###"print -r $(( 3 <> 5 ))"###);
-        bulk_yt_fc_row_010 => (r#"bulk yt 010"#, r###"(( 5#11 )); print -r $?"###);
-        bulk_yt_fc_row_011 => (r#"bulk yt 011"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
-        bulk_yt_fc_row_012 => (r#"bulk yt 012"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
-        bulk_yt_fc_row_013 => (r#"bulk yt 013"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
-        bulk_yt_fc_row_014 => (r#"bulk yt 014"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
-        bulk_yt_fc_row_015 => (r#"bulk yt 015"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
-        bulk_yt_fc_row_016 => (r#"bulk yt 016"#, r###"typeset -i8 n=10; print -r $n"###);
-        bulk_yt_fc_row_017 => (r#"bulk yt 017"#, r###"typeset -i16 n=255; print -r $n"###);
-        bulk_yt_fc_row_018 => (r#"bulk yt 018"#, r###"typeset -E2 n=4000; print -r $n"###);
-        bulk_yt_fc_row_019 => (r#"bulk yt 019"#, r###"typeset -R4 n=hi; print -r $n"###);
-        bulk_yt_fc_row_020 => (r#"bulk yt 020"#, r###"typeset +L n=Ab; print -r $n"###);
-        bulk_yt_fc_row_021 => (r#"bulk yt 021"#, r###"typeset +U n=xy; print -r $n"###);
-        bulk_yt_fc_row_022 => (r#"bulk yt 022"#, r###"typeset +i n=4; print -r $n"###);
-        bulk_yt_fc_row_023 => (r#"bulk yt 023"#, r###"export EX=1; print -r $EX; unset EX"###);
-        bulk_yt_fc_row_024 => (r#"bulk yt 024"#, r###"readonly ro=5; print -r $ro"###);
-        bulk_yt_fc_row_025 => (r#"bulk yt 025"#, r###"print -r ${${v:-fb}}; unset v"###);
-        bulk_yt_fc_row_026 => (r#"bulk yt 026"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
-        bulk_yt_fc_row_027 => (r#"bulk yt 027"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
-        bulk_yt_fc_row_028 => (r#"bulk yt 028"#, r###"word=  hi  ; print -r ${(W)word}"###);
-        bulk_yt_fc_row_029 => (r#"bulk yt 029"#, r###"print -r ${(z)word}; word=a b c"###);
-        bulk_yt_fc_row_030 => (r#"bulk yt 030"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
-        bulk_yt_fc_row_031 => (r#"bulk yt 031"#, r###"print -r ${(A)x}; x=1 2"###);
-        bulk_yt_fc_row_032 => (r#"bulk yt 032"#, r###"print -r ${(aa)x}; x=(1 2)"###);
-        bulk_yt_fc_row_033 => (r#"bulk yt 033"#, r###"print -r ${(%)2}"###);
-        bulk_yt_fc_row_034 => (r#"bulk yt 034"#, r###"o=8; print -r ${(0)o}"###);
-        bulk_yt_fc_row_035 => (r#"bulk yt 035"#, r###"str=abc.def; print -r ${str:r}"###);
-        bulk_yt_fc_row_036 => (r#"bulk yt 036"#, r###"str=abc.def; print -r ${str:e}"###);
-        bulk_yt_fc_row_037 => (r#"bulk yt 037"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
-        bulk_yt_fc_row_038 => (r#"bulk yt 038"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
-        bulk_yt_fc_row_039 => (r#"bulk yt 039"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
-        bulk_yt_fc_row_040 => (r#"bulk yt 040"#, r###"[[ -G / ]]; print -r $?"###);
-        bulk_yt_fc_row_041 => (r#"bulk yt 041"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
-        bulk_yt_fc_row_042 => (r#"bulk yt 042"#, r###"[[ bee = *ee* ]]; print -r $?"###);
-        bulk_yt_fc_row_043 => (r#"bulk yt 043"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
-        bulk_yt_fc_row_044 => (r#"bulk yt 044"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
-        bulk_yt_fc_row_045 => (r#"bulk yt 045"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
-        bulk_yt_fc_row_046 => (r#"bulk yt 046"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
-        bulk_yt_fc_row_047 => (r#"bulk yt 047"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
-        bulk_yt_fc_row_048 => (r#"bulk yt 048"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yu {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yu_fc_row_001 => (r#"bulk yu 001"#, r###"typeset -i8 n=10; print -r $n"###);
-        bulk_yu_fc_row_002 => (r#"bulk yu 002"#, r###"typeset -i16 n=255; print -r $n"###);
-        bulk_yu_fc_row_003 => (r#"bulk yu 003"#, r###"typeset -E2 n=4000; print -r $n"###);
-        bulk_yu_fc_row_004 => (r#"bulk yu 004"#, r###"typeset -R4 n=hi; print -r $n"###);
-        bulk_yu_fc_row_005 => (r#"bulk yu 005"#, r###"typeset +L n=Ab; print -r $n"###);
-        bulk_yu_fc_row_006 => (r#"bulk yu 006"#, r###"typeset +U n=xy; print -r $n"###);
-        bulk_yu_fc_row_007 => (r#"bulk yu 007"#, r###"typeset +i n=4; print -r $n"###);
-        bulk_yu_fc_row_008 => (r#"bulk yu 008"#, r###"export EX=1; print -r $EX; unset EX"###);
-        bulk_yu_fc_row_009 => (r#"bulk yu 009"#, r###"readonly ro=5; print -r $ro"###);
-        bulk_yu_fc_row_010 => (r#"bulk yu 010"#, r###"print -r ${${v:-fb}}; unset v"###);
-        bulk_yu_fc_row_011 => (r#"bulk yu 011"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
-        bulk_yu_fc_row_012 => (r#"bulk yu 012"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
-        bulk_yu_fc_row_013 => (r#"bulk yu 013"#, r###"word=  hi  ; print -r ${(W)word}"###);
-        bulk_yu_fc_row_014 => (r#"bulk yu 014"#, r###"print -r ${(z)word}; word=a b c"###);
-        bulk_yu_fc_row_015 => (r#"bulk yu 015"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
-        bulk_yu_fc_row_016 => (r#"bulk yu 016"#, r###"print -r ${(A)x}; x=1 2"###);
-        bulk_yu_fc_row_017 => (r#"bulk yu 017"#, r###"print -r ${(aa)x}; x=(1 2)"###);
-        bulk_yu_fc_row_018 => (r#"bulk yu 018"#, r###"print -r ${(%)2}"###);
-        bulk_yu_fc_row_019 => (r#"bulk yu 019"#, r###"o=8; print -r ${(0)o}"###);
-        bulk_yu_fc_row_020 => (r#"bulk yu 020"#, r###"str=abc.def; print -r ${str:r}"###);
-        bulk_yu_fc_row_021 => (r#"bulk yu 021"#, r###"str=abc.def; print -r ${str:e}"###);
-        bulk_yu_fc_row_022 => (r#"bulk yu 022"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
-        bulk_yu_fc_row_023 => (r#"bulk yu 023"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
-        bulk_yu_fc_row_024 => (r#"bulk yu 024"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
-        bulk_yu_fc_row_025 => (r#"bulk yu 025"#, r###"[[ -G / ]]; print -r $?"###);
-        bulk_yu_fc_row_026 => (r#"bulk yu 026"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
-        bulk_yu_fc_row_027 => (r#"bulk yu 027"#, r###"[[ bee = *ee* ]]; print -r $?"###);
-        bulk_yu_fc_row_028 => (r#"bulk yu 028"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
-        bulk_yu_fc_row_029 => (r#"bulk yu 029"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
-        bulk_yu_fc_row_030 => (r#"bulk yu 030"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
-        bulk_yu_fc_row_031 => (r#"bulk yu 031"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
-        bulk_yu_fc_row_032 => (r#"bulk yu 032"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
-        bulk_yu_fc_row_033 => (r#"bulk yu 033"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
-        bulk_yu_fc_row_034 => (r#"bulk yu 034"#, r###"[[ -o nullglob ]]; print -r $?"###);
-        bulk_yu_fc_row_035 => (r#"bulk yu 035"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yu_fc_row_036 => (r#"bulk yu 036"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yu_fc_row_037 => (r#"bulk yu 037"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
-        bulk_yu_fc_row_038 => (r#"bulk yu 038"#, r###"print -r $(( 1 , 2 , 3 ))"###);
-        bulk_yu_fc_row_039 => (r#"bulk yu 039"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
-        bulk_yu_fc_row_040 => (r#"bulk yu 040"#, r###"print -r $(( 0xff & 0x0f ))"###);
-        bulk_yu_fc_row_041 => (r#"bulk yu 041"#, r###"print -r $(( 1 << 4 ))"###);
-        bulk_yu_fc_row_042 => (r#"bulk yu 042"#, r###"print -r $(( 16 >> 2 ))"###);
-        bulk_yu_fc_row_043 => (r#"bulk yu 043"#, r###"print -r $(( -1 >> 1 ))"###);
-        bulk_yu_fc_row_044 => (r#"bulk yu 044"#, r###"print -r $(( 8#17 ))"###);
-        bulk_yu_fc_row_045 => (r#"bulk yu 045"#, r###"print -r $(( 16#ff ))"###);
-        bulk_yu_fc_row_046 => (r#"bulk yu 046"#, r###"print -r $(( 2#1010 ))"###);
-        bulk_yu_fc_row_047 => (r#"bulk yu 047"#, r###"print -r $(( 0b1010 ))"###);
-        bulk_yu_fc_row_048 => (r#"bulk yu 048"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yv {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yv_fc_row_001 => (r#"bulk yv 001"#, r###"print -r ${(%)2}"###);
-        bulk_yv_fc_row_002 => (r#"bulk yv 002"#, r###"o=8; print -r ${(0)o}"###);
-        bulk_yv_fc_row_003 => (r#"bulk yv 003"#, r###"str=abc.def; print -r ${str:r}"###);
-        bulk_yv_fc_row_004 => (r#"bulk yv 004"#, r###"str=abc.def; print -r ${str:e}"###);
-        bulk_yv_fc_row_005 => (r#"bulk yv 005"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
-        bulk_yv_fc_row_006 => (r#"bulk yv 006"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
-        bulk_yv_fc_row_007 => (r#"bulk yv 007"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
-        bulk_yv_fc_row_008 => (r#"bulk yv 008"#, r###"[[ -G / ]]; print -r $?"###);
-        bulk_yv_fc_row_009 => (r#"bulk yv 009"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
-        bulk_yv_fc_row_010 => (r#"bulk yv 010"#, r###"[[ bee = *ee* ]]; print -r $?"###);
-        bulk_yv_fc_row_011 => (r#"bulk yv 011"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
-        bulk_yv_fc_row_012 => (r#"bulk yv 012"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
-        bulk_yv_fc_row_013 => (r#"bulk yv 013"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
-        bulk_yv_fc_row_014 => (r#"bulk yv 014"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
-        bulk_yv_fc_row_015 => (r#"bulk yv 015"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
-        bulk_yv_fc_row_016 => (r#"bulk yv 016"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
-        bulk_yv_fc_row_017 => (r#"bulk yv 017"#, r###"[[ -o nullglob ]]; print -r $?"###);
-        bulk_yv_fc_row_018 => (r#"bulk yv 018"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yv_fc_row_019 => (r#"bulk yv 019"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yv_fc_row_020 => (r#"bulk yv 020"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
-        bulk_yv_fc_row_021 => (r#"bulk yv 021"#, r###"print -r $(( 1 , 2 , 3 ))"###);
-        bulk_yv_fc_row_022 => (r#"bulk yv 022"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
-        bulk_yv_fc_row_023 => (r#"bulk yv 023"#, r###"print -r $(( 0xff & 0x0f ))"###);
-        bulk_yv_fc_row_024 => (r#"bulk yv 024"#, r###"print -r $(( 1 << 4 ))"###);
-        bulk_yv_fc_row_025 => (r#"bulk yv 025"#, r###"print -r $(( 16 >> 2 ))"###);
-        bulk_yv_fc_row_026 => (r#"bulk yv 026"#, r###"print -r $(( -1 >> 1 ))"###);
-        bulk_yv_fc_row_027 => (r#"bulk yv 027"#, r###"print -r $(( 8#17 ))"###);
-        bulk_yv_fc_row_028 => (r#"bulk yv 028"#, r###"print -r $(( 16#ff ))"###);
-        bulk_yv_fc_row_029 => (r#"bulk yv 029"#, r###"print -r $(( 2#1010 ))"###);
-        bulk_yv_fc_row_030 => (r#"bulk yv 030"#, r###"print -r $(( 0b1010 ))"###);
-        bulk_yv_fc_row_031 => (r#"bulk yv 031"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
-        bulk_yv_fc_row_032 => (r#"bulk yv 032"#, r###"print -r $(( 4 % 2 == 0 ))"###);
-        bulk_yv_fc_row_033 => (r#"bulk yv 033"#, r###"print -r $(( 0 - 1 == -1 ))"###);
-        bulk_yv_fc_row_034 => (r#"bulk yv 034"#, r###"print -r $(( 72 / 8 / 3 ))"###);
-        bulk_yv_fc_row_035 => (r#"bulk yv 035"#, r###"print -r $(( 24 % 5 % 3 ))"###);
-        bulk_yv_fc_row_036 => (r#"bulk yv 036"#, r###"print -r $(( 2 | 4 | 8 ))"###);
-        bulk_yv_fc_row_037 => (r#"bulk yv 037"#, r###"print -r $(( 15 ^ 9 ))"###);
-        bulk_yv_fc_row_038 => (r#"bulk yv 038"#, r###"print -r $(( 0 || 0 || 7 ))"###);
-        bulk_yv_fc_row_039 => (r#"bulk yv 039"#, r###"print -r $(( 1 || -1 ))"###);
-        bulk_yv_fc_row_040 => (r#"bulk yv 040"#, r###"print -r $(( (1>0) + (0>0) ))"###);
-        bulk_yv_fc_row_041 => (r#"bulk yv 041"#, r###"print -r $(( 3 > 2 > 1 ))"###);
-        bulk_yv_fc_row_042 => (r#"bulk yv 042"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
-        bulk_yv_fc_row_043 => (r#"bulk yv 043"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
-        bulk_yv_fc_row_044 => (r#"bulk yv 044"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
-        bulk_yv_fc_row_045 => (r#"bulk yv 045"#, r###"print -r $(( 100 / 20 / 5 ))"###);
-        bulk_yv_fc_row_046 => (r#"bulk yv 046"#, r###"print -r $(( 2#101 & 2#010 ))"###);
-        bulk_yv_fc_row_047 => (r#"bulk yv 047"#, r###"print -r $(( 0x80 >> 4 ))"###);
-        bulk_yv_fc_row_048 => (r#"bulk yv 048"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yw {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yw_fc_row_001 => (r#"bulk yw 001"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yw_fc_row_002 => (r#"bulk yw 002"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
-        bulk_yw_fc_row_003 => (r#"bulk yw 003"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
-        bulk_yw_fc_row_004 => (r#"bulk yw 004"#, r###"print -r $(( 1 , 2 , 3 ))"###);
-        bulk_yw_fc_row_005 => (r#"bulk yw 005"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
-        bulk_yw_fc_row_006 => (r#"bulk yw 006"#, r###"print -r $(( 0xff & 0x0f ))"###);
-        bulk_yw_fc_row_007 => (r#"bulk yw 007"#, r###"print -r $(( 1 << 4 ))"###);
-        bulk_yw_fc_row_008 => (r#"bulk yw 008"#, r###"print -r $(( 16 >> 2 ))"###);
-        bulk_yw_fc_row_009 => (r#"bulk yw 009"#, r###"print -r $(( -1 >> 1 ))"###);
-        bulk_yw_fc_row_010 => (r#"bulk yw 010"#, r###"print -r $(( 8#17 ))"###);
-        bulk_yw_fc_row_011 => (r#"bulk yw 011"#, r###"print -r $(( 16#ff ))"###);
-        bulk_yw_fc_row_012 => (r#"bulk yw 012"#, r###"print -r $(( 2#1010 ))"###);
-        bulk_yw_fc_row_013 => (r#"bulk yw 013"#, r###"print -r $(( 0b1010 ))"###);
-        bulk_yw_fc_row_014 => (r#"bulk yw 014"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
-        bulk_yw_fc_row_015 => (r#"bulk yw 015"#, r###"print -r $(( 4 % 2 == 0 ))"###);
-        bulk_yw_fc_row_016 => (r#"bulk yw 016"#, r###"print -r $(( 0 - 1 == -1 ))"###);
-        bulk_yw_fc_row_017 => (r#"bulk yw 017"#, r###"print -r $(( 72 / 8 / 3 ))"###);
-        bulk_yw_fc_row_018 => (r#"bulk yw 018"#, r###"print -r $(( 24 % 5 % 3 ))"###);
-        bulk_yw_fc_row_019 => (r#"bulk yw 019"#, r###"print -r $(( 2 | 4 | 8 ))"###);
-        bulk_yw_fc_row_020 => (r#"bulk yw 020"#, r###"print -r $(( 15 ^ 9 ))"###);
-        bulk_yw_fc_row_021 => (r#"bulk yw 021"#, r###"print -r $(( 0 || 0 || 7 ))"###);
-        bulk_yw_fc_row_022 => (r#"bulk yw 022"#, r###"print -r $(( 1 || -1 ))"###);
-        bulk_yw_fc_row_023 => (r#"bulk yw 023"#, r###"print -r $(( (1>0) + (0>0) ))"###);
-        bulk_yw_fc_row_024 => (r#"bulk yw 024"#, r###"print -r $(( 3 > 2 > 1 ))"###);
-        bulk_yw_fc_row_025 => (r#"bulk yw 025"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
-        bulk_yw_fc_row_026 => (r#"bulk yw 026"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
-        bulk_yw_fc_row_027 => (r#"bulk yw 027"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
-        bulk_yw_fc_row_028 => (r#"bulk yw 028"#, r###"print -r $(( 100 / 20 / 5 ))"###);
-        bulk_yw_fc_row_029 => (r#"bulk yw 029"#, r###"print -r $(( 2#101 & 2#010 ))"###);
-        bulk_yw_fc_row_030 => (r#"bulk yw 030"#, r###"print -r $(( 0x80 >> 4 ))"###);
-        bulk_yw_fc_row_031 => (r#"bulk yw 031"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
-        bulk_yw_fc_row_032 => (r#"bulk yw 032"#, r###"print -r $(( -(-(-5)) ))"###);
-        bulk_yw_fc_row_033 => (r#"bulk yw 033"#, r###"print -r $(( (1+2)*(3+4) ))"###);
-        bulk_yw_fc_row_034 => (r#"bulk yw 034"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
-        bulk_yw_fc_row_035 => (r#"bulk yw 035"#, r###"[[ "" != x ]]; print -r $?"###);
-        bulk_yw_fc_row_036 => (r#"bulk yw 036"#, r###"[[ -n /dev/null ]]; print -r $?"###);
-        bulk_yw_fc_row_037 => (r#"bulk yw 037"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
-        bulk_yw_fc_row_038 => (r#"bulk yw 038"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
-        bulk_yw_fc_row_039 => (r#"bulk yw 039"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
-        bulk_yw_fc_row_040 => (r#"bulk yw 040"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
-        bulk_yw_fc_row_041 => (r#"bulk yw 041"#, r###"[[ abc < abd ]]; print -r $?"###);
-        bulk_yw_fc_row_042 => (r#"bulk yw 042"#, r###"[[ abc > abb ]]; print -r $?"###);
-        bulk_yw_fc_row_043 => (r#"bulk yw 043"#, r###"[[ abc != def ]]; print -r $?"###);
-        bulk_yw_fc_row_044 => (r#"bulk yw 044"#, r###"[[ abc == abc ]]; print -r $?"###);
-        bulk_yw_fc_row_045 => (r#"bulk yw 045"#, r###"print -r ${(L)@}; set -- MIXED"###);
-        bulk_yw_fc_row_046 => (r#"bulk yw 046"#, r###"slice=abcdef; print -r $slice[3,5]"###);
-        bulk_yw_fc_row_047 => (r#"bulk yw 047"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
-        bulk_yw_fc_row_048 => (r#"bulk yw 048"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yx {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yx_fc_row_001 => (r#"bulk yx 001"#, r###"print -r $(( 24 % 5 % 3 ))"###);
-        bulk_yx_fc_row_002 => (r#"bulk yx 002"#, r###"print -r $(( 2 | 4 | 8 ))"###);
-        bulk_yx_fc_row_003 => (r#"bulk yx 003"#, r###"print -r $(( 15 ^ 9 ))"###);
-        bulk_yx_fc_row_004 => (r#"bulk yx 004"#, r###"print -r $(( 0 || 0 || 7 ))"###);
-        bulk_yx_fc_row_005 => (r#"bulk yx 005"#, r###"print -r $(( 1 || -1 ))"###);
-        bulk_yx_fc_row_006 => (r#"bulk yx 006"#, r###"print -r $(( (1>0) + (0>0) ))"###);
-        bulk_yx_fc_row_007 => (r#"bulk yx 007"#, r###"print -r $(( 3 > 2 > 1 ))"###);
-        bulk_yx_fc_row_008 => (r#"bulk yx 008"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
-        bulk_yx_fc_row_009 => (r#"bulk yx 009"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
-        bulk_yx_fc_row_010 => (r#"bulk yx 010"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
-        bulk_yx_fc_row_011 => (r#"bulk yx 011"#, r###"print -r $(( 100 / 20 / 5 ))"###);
-        bulk_yx_fc_row_012 => (r#"bulk yx 012"#, r###"print -r $(( 2#101 & 2#010 ))"###);
-        bulk_yx_fc_row_013 => (r#"bulk yx 013"#, r###"print -r $(( 0x80 >> 4 ))"###);
-        bulk_yx_fc_row_014 => (r#"bulk yx 014"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
-        bulk_yx_fc_row_015 => (r#"bulk yx 015"#, r###"print -r $(( -(-(-5)) ))"###);
-        bulk_yx_fc_row_016 => (r#"bulk yx 016"#, r###"print -r $(( (1+2)*(3+4) ))"###);
-        bulk_yx_fc_row_017 => (r#"bulk yx 017"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
-        bulk_yx_fc_row_018 => (r#"bulk yx 018"#, r###"[[ "" != x ]]; print -r $?"###);
-        bulk_yx_fc_row_019 => (r#"bulk yx 019"#, r###"[[ -n /dev/null ]]; print -r $?"###);
-        bulk_yx_fc_row_020 => (r#"bulk yx 020"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
-        bulk_yx_fc_row_021 => (r#"bulk yx 021"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
-        bulk_yx_fc_row_022 => (r#"bulk yx 022"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
-        bulk_yx_fc_row_023 => (r#"bulk yx 023"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
-        bulk_yx_fc_row_024 => (r#"bulk yx 024"#, r###"[[ abc < abd ]]; print -r $?"###);
-        bulk_yx_fc_row_025 => (r#"bulk yx 025"#, r###"[[ abc > abb ]]; print -r $?"###);
-        bulk_yx_fc_row_026 => (r#"bulk yx 026"#, r###"[[ abc != def ]]; print -r $?"###);
-        bulk_yx_fc_row_027 => (r#"bulk yx 027"#, r###"[[ abc == abc ]]; print -r $?"###);
-        bulk_yx_fc_row_028 => (r#"bulk yx 028"#, r###"print -r ${(L)@}; set -- MIXED"###);
-        bulk_yx_fc_row_029 => (r#"bulk yx 029"#, r###"slice=abcdef; print -r $slice[3,5]"###);
-        bulk_yx_fc_row_030 => (r#"bulk yx 030"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
-        bulk_yx_fc_row_031 => (r#"bulk yx 031"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
-        bulk_yx_fc_row_032 => (r#"bulk yx 032"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
-        bulk_yx_fc_row_033 => (r#"bulk yx 033"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
-        bulk_yx_fc_row_034 => (r#"bulk yx 034"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_yx_fc_row_035 => (r#"bulk yx 035"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
-        bulk_yx_fc_row_036 => (r#"bulk yx 036"#, r###"whence -v print 2>/dev/null; print -r $?"###);
-        bulk_yx_fc_row_037 => (r#"bulk yx 037"#, r###"whence -p ls 2>/dev/null | head -1"###);
-        bulk_yx_fc_row_038 => (r#"bulk yx 038"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yx_fc_row_039 => (r#"bulk yx 039"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yx_fc_row_040 => (r#"bulk yx 040"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
-        bulk_yx_fc_row_041 => (r#"bulk yx 041"#, r###"print -r ${aliases[za]:-none}"###);
-        bulk_yx_fc_row_042 => (r#"bulk yx 042"#, r###"print -r ${(t)parameters[PATH]}"###);
-        bulk_yx_fc_row_043 => (r#"bulk yx 043"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
-        bulk_yx_fc_row_044 => (r#"bulk yx 044"#, r###"print -r ${+parameters[PATH]}"###);
-        bulk_yx_fc_row_045 => (r#"bulk yx 045"#, r###"print -r ${+functions[fn]}; fn(){}"###);
-        bulk_yx_fc_row_046 => (r#"bulk yx 046"#, r###"print -r ${+commands[print]}"###);
-        bulk_yx_fc_row_047 => (r#"bulk yx 047"#, r###"print -r ${+zsh_eval_context}"###);
-        bulk_yx_fc_row_048 => (r#"bulk yx 048"#, r###"print -r ${+functrace}"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yy {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yy_fc_row_001 => (r#"bulk yy 001"#, r###"[[ "" != x ]]; print -r $?"###);
-        bulk_yy_fc_row_002 => (r#"bulk yy 002"#, r###"[[ -n /dev/null ]]; print -r $?"###);
-        bulk_yy_fc_row_003 => (r#"bulk yy 003"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
-        bulk_yy_fc_row_004 => (r#"bulk yy 004"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
-        bulk_yy_fc_row_005 => (r#"bulk yy 005"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
-        bulk_yy_fc_row_006 => (r#"bulk yy 006"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
-        bulk_yy_fc_row_007 => (r#"bulk yy 007"#, r###"[[ abc < abd ]]; print -r $?"###);
-        bulk_yy_fc_row_008 => (r#"bulk yy 008"#, r###"[[ abc > abb ]]; print -r $?"###);
-        bulk_yy_fc_row_009 => (r#"bulk yy 009"#, r###"[[ abc != def ]]; print -r $?"###);
-        bulk_yy_fc_row_010 => (r#"bulk yy 010"#, r###"[[ abc == abc ]]; print -r $?"###);
-        bulk_yy_fc_row_011 => (r#"bulk yy 011"#, r###"print -r ${(L)@}; set -- MIXED"###);
-        bulk_yy_fc_row_012 => (r#"bulk yy 012"#, r###"slice=abcdef; print -r $slice[3,5]"###);
-        bulk_yy_fc_row_013 => (r#"bulk yy 013"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
-        bulk_yy_fc_row_014 => (r#"bulk yy 014"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
-        bulk_yy_fc_row_015 => (r#"bulk yy 015"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
-        bulk_yy_fc_row_016 => (r#"bulk yy 016"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
-        bulk_yy_fc_row_017 => (r#"bulk yy 017"#, r###"hash -r 2>/dev/null; print -r $?"###);
-        bulk_yy_fc_row_018 => (r#"bulk yy 018"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
-        bulk_yy_fc_row_019 => (r#"bulk yy 019"#, r###"whence -v print 2>/dev/null; print -r $?"###);
-        bulk_yy_fc_row_020 => (r#"bulk yy 020"#, r###"whence -p ls 2>/dev/null | head -1"###);
-        bulk_yy_fc_row_021 => (r#"bulk yy 021"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yy_fc_row_022 => (r#"bulk yy 022"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yy_fc_row_023 => (r#"bulk yy 023"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
-        bulk_yy_fc_row_024 => (r#"bulk yy 024"#, r###"print -r ${aliases[za]:-none}"###);
-        bulk_yy_fc_row_025 => (r#"bulk yy 025"#, r###"print -r ${(t)parameters[PATH]}"###);
-        bulk_yy_fc_row_026 => (r#"bulk yy 026"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
-        bulk_yy_fc_row_027 => (r#"bulk yy 027"#, r###"print -r ${+parameters[PATH]}"###);
-        bulk_yy_fc_row_028 => (r#"bulk yy 028"#, r###"print -r ${+functions[fn]}; fn(){}"###);
-        bulk_yy_fc_row_029 => (r#"bulk yy 029"#, r###"print -r ${+commands[print]}"###);
-        bulk_yy_fc_row_030 => (r#"bulk yy 030"#, r###"print -r ${+zsh_eval_context}"###);
-        bulk_yy_fc_row_031 => (r#"bulk yy 031"#, r###"print -r ${+functrace}"###);
-        bulk_yy_fc_row_032 => (r#"bulk yy 032"#, r###"print -r ${+funcstack}"###);
-        bulk_yy_fc_row_033 => (r#"bulk yy 033"#, r###"print -r ${+funcfiletrace}"###);
-        bulk_yy_fc_row_034 => (r#"bulk yy 034"#, r###"print -r ${+jobstates}"###);
-        bulk_yy_fc_row_035 => (r#"bulk yy 035"#, r###"print -r ${+jobtexts}"###);
-        bulk_yy_fc_row_036 => (r#"bulk yy 036"#, r###"print -r ${+jobdirs}"###);
-        bulk_yy_fc_row_037 => (r#"bulk yy 037"#, r###"print -r ${+historywords}"###);
-        bulk_yy_fc_row_038 => (r#"bulk yy 038"#, r###"print -r ${+usergroups}"###);
-        bulk_yy_fc_row_039 => (r#"bulk yy 039"#, r###"print -r ${+dis_builtins}"###);
-        bulk_yy_fc_row_040 => (r#"bulk yy 040"#, r###"print -r ${+dis_widgets}"###);
-        bulk_yy_fc_row_041 => (r#"bulk yy 041"#, r###"print -r ${+dis_reswords}"###);
-        bulk_yy_fc_row_042 => (r#"bulk yy 042"#, r###"print -r ${+dis_patchars}"###);
-        bulk_yy_fc_row_043 => (r#"bulk yy 043"#, r###"print -r ${+dis_commands}"###);
-        bulk_yy_fc_row_044 => (r#"bulk yy 044"#, r###"print -r ${+module_path}"###);
-        bulk_yy_fc_row_045 => (r#"bulk yy 045"#, r###"print -r ${+functrace}"###);
-        bulk_yy_fc_row_046 => (r#"bulk yy 046"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
-        bulk_yy_fc_row_047 => (r#"bulk yy 047"#, r###"{ true; false; }; print -r $?"###);
-        bulk_yy_fc_row_048 => (r#"bulk yy 048"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
-    }
-}
-
-mod corpus_dash_fc_bulk_yz {
-    use super::*;
-
-    parity_gap_tests! {
-        bulk_yz_fc_row_001 => (r#"bulk yz 001"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
-        bulk_yz_fc_row_002 => (r#"bulk yz 002"#, r###"whence -v print 2>/dev/null; print -r $?"###);
-        bulk_yz_fc_row_003 => (r#"bulk yz 003"#, r###"whence -p ls 2>/dev/null | head -1"###);
-        bulk_yz_fc_row_004 => (r#"bulk yz 004"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yz_fc_row_005 => (r#"bulk yz 005"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
-        bulk_yz_fc_row_006 => (r#"bulk yz 006"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
-        bulk_yz_fc_row_007 => (r#"bulk yz 007"#, r###"print -r ${aliases[za]:-none}"###);
-        bulk_yz_fc_row_008 => (r#"bulk yz 008"#, r###"print -r ${(t)parameters[PATH]}"###);
-        bulk_yz_fc_row_009 => (r#"bulk yz 009"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
-        bulk_yz_fc_row_010 => (r#"bulk yz 010"#, r###"print -r ${+parameters[PATH]}"###);
-        bulk_yz_fc_row_011 => (r#"bulk yz 011"#, r###"print -r ${+functions[fn]}; fn(){}"###);
-        bulk_yz_fc_row_012 => (r#"bulk yz 012"#, r###"print -r ${+commands[print]}"###);
-        bulk_yz_fc_row_013 => (r#"bulk yz 013"#, r###"print -r ${+zsh_eval_context}"###);
-        bulk_yz_fc_row_014 => (r#"bulk yz 014"#, r###"print -r ${+functrace}"###);
-        bulk_yz_fc_row_015 => (r#"bulk yz 015"#, r###"print -r ${+funcstack}"###);
-        bulk_yz_fc_row_016 => (r#"bulk yz 016"#, r###"print -r ${+funcfiletrace}"###);
-        bulk_yz_fc_row_017 => (r#"bulk yz 017"#, r###"print -r ${+jobstates}"###);
-        bulk_yz_fc_row_018 => (r#"bulk yz 018"#, r###"print -r ${+jobtexts}"###);
-        bulk_yz_fc_row_019 => (r#"bulk yz 019"#, r###"print -r ${+jobdirs}"###);
-        bulk_yz_fc_row_020 => (r#"bulk yz 020"#, r###"print -r ${+historywords}"###);
-        bulk_yz_fc_row_021 => (r#"bulk yz 021"#, r###"print -r ${+usergroups}"###);
-        bulk_yz_fc_row_022 => (r#"bulk yz 022"#, r###"print -r ${+dis_builtins}"###);
-        bulk_yz_fc_row_023 => (r#"bulk yz 023"#, r###"print -r ${+dis_widgets}"###);
-        bulk_yz_fc_row_024 => (r#"bulk yz 024"#, r###"print -r ${+dis_reswords}"###);
-        bulk_yz_fc_row_025 => (r#"bulk yz 025"#, r###"print -r ${+dis_patchars}"###);
-        bulk_yz_fc_row_026 => (r#"bulk yz 026"#, r###"print -r ${+dis_commands}"###);
-        bulk_yz_fc_row_027 => (r#"bulk yz 027"#, r###"print -r ${+module_path}"###);
-        bulk_yz_fc_row_028 => (r#"bulk yz 028"#, r###"print -r ${+functrace}"###);
-        bulk_yz_fc_row_029 => (r#"bulk yz 029"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
-        bulk_yz_fc_row_030 => (r#"bulk yz 030"#, r###"{ true; false; }; print -r $?"###);
-        bulk_yz_fc_row_031 => (r#"bulk yz 031"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
-        bulk_yz_fc_row_032 => (r#"bulk yz 032"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
-        bulk_yz_fc_row_033 => (r#"bulk yz 033"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
-        bulk_yz_fc_row_034 => (r#"bulk yz 034"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
-        bulk_yz_fc_row_035 => (r#"bulk yz 035"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
-        bulk_yz_fc_row_036 => (r#"bulk yz 036"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
-        bulk_yz_fc_row_037 => (r#"bulk yz 037"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
-        bulk_yz_fc_row_038 => (r#"bulk yz 038"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
-        bulk_yz_fc_row_039 => (r#"bulk yz 039"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_yz_fc_row_040 => (r#"bulk yz 040"#, r###"print -r ${(t)x}; x=hello"###);
-        bulk_yz_fc_row_041 => (r#"bulk yz 041"#, r###"unset y; print -r ${+y}"###);
-        bulk_yz_fc_row_042 => (r#"bulk yz 042"#, r###"x=hello; print -r ${+x}"###);
-        bulk_yz_fc_row_043 => (r#"bulk yz 043"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_yz_fc_row_044 => (r#"bulk yz 044"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-        bulk_yz_fc_row_045 => (r#"bulk yz 045"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
-        bulk_yz_fc_row_046 => (r#"bulk yz 046"#, r###"x=abc; print -r ${x/#a/z}"###);
-        bulk_yz_fc_row_047 => (r#"bulk yz 047"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_yz_fc_row_048 => (r#"bulk yz 048"#, r###"print -r ${(j::)a}; a=(x y)"###);
-    }
-}
-
 mod corpus_dash_fc_bulk_aaa {
     use super::*;
 
     parity_gap_tests! {
-        bulk_aaa_fc_row_001 => (r#"bulk aaa 001"#, r###"print -r ${+jobtexts}"###);
-        bulk_aaa_fc_row_002 => (r#"bulk aaa 002"#, r###"print -r ${+jobdirs}"###);
-        bulk_aaa_fc_row_003 => (r#"bulk aaa 003"#, r###"print -r ${+historywords}"###);
-        bulk_aaa_fc_row_004 => (r#"bulk aaa 004"#, r###"print -r ${+usergroups}"###);
-        bulk_aaa_fc_row_005 => (r#"bulk aaa 005"#, r###"print -r ${+dis_builtins}"###);
-        bulk_aaa_fc_row_006 => (r#"bulk aaa 006"#, r###"print -r ${+dis_widgets}"###);
-        bulk_aaa_fc_row_007 => (r#"bulk aaa 007"#, r###"print -r ${+dis_reswords}"###);
-        bulk_aaa_fc_row_008 => (r#"bulk aaa 008"#, r###"print -r ${+dis_patchars}"###);
-        bulk_aaa_fc_row_009 => (r#"bulk aaa 009"#, r###"print -r ${+dis_commands}"###);
-        bulk_aaa_fc_row_010 => (r#"bulk aaa 010"#, r###"print -r ${+module_path}"###);
-        bulk_aaa_fc_row_011 => (r#"bulk aaa 011"#, r###"print -r ${+functrace}"###);
-        bulk_aaa_fc_row_012 => (r#"bulk aaa 012"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
-        bulk_aaa_fc_row_013 => (r#"bulk aaa 013"#, r###"{ true; false; }; print -r $?"###);
-        bulk_aaa_fc_row_014 => (r#"bulk aaa 014"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
-        bulk_aaa_fc_row_015 => (r#"bulk aaa 015"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
-        bulk_aaa_fc_row_016 => (r#"bulk aaa 016"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
-        bulk_aaa_fc_row_017 => (r#"bulk aaa 017"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
-        bulk_aaa_fc_row_018 => (r#"bulk aaa 018"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
-        bulk_aaa_fc_row_019 => (r#"bulk aaa 019"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
-        bulk_aaa_fc_row_020 => (r#"bulk aaa 020"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
-        bulk_aaa_fc_row_021 => (r#"bulk aaa 021"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
-        bulk_aaa_fc_row_022 => (r#"bulk aaa 022"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_aaa_fc_row_023 => (r#"bulk aaa 023"#, r###"print -r ${(t)x}; x=hello"###);
-        bulk_aaa_fc_row_024 => (r#"bulk aaa 024"#, r###"unset y; print -r ${+y}"###);
-        bulk_aaa_fc_row_025 => (r#"bulk aaa 025"#, r###"x=hello; print -r ${+x}"###);
-        bulk_aaa_fc_row_026 => (r#"bulk aaa 026"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_aaa_fc_row_027 => (r#"bulk aaa 027"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-        bulk_aaa_fc_row_028 => (r#"bulk aaa 028"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
-        bulk_aaa_fc_row_029 => (r#"bulk aaa 029"#, r###"x=abc; print -r ${x/#a/z}"###);
-        bulk_aaa_fc_row_030 => (r#"bulk aaa 030"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_aaa_fc_row_031 => (r#"bulk aaa 031"#, r###"print -r ${(j::)a}; a=(x y)"###);
-        bulk_aaa_fc_row_032 => (r#"bulk aaa 032"#, r###"print -r ${(pj::)a}; a=(x y)"###);
-        bulk_aaa_fc_row_033 => (r#"bulk aaa 033"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
-        bulk_aaa_fc_row_034 => (r#"bulk aaa 034"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_aaa_fc_row_035 => (r#"bulk aaa 035"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_aaa_fc_row_036 => (r#"bulk aaa 036"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_aaa_fc_row_037 => (r#"bulk aaa 037"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_aaa_fc_row_038 => (r#"bulk aaa 038"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_aaa_fc_row_039 => (r#"bulk aaa 039"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_aaa_fc_row_040 => (r#"bulk aaa 040"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_aaa_fc_row_041 => (r#"bulk aaa 041"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_aaa_fc_row_042 => (r#"bulk aaa 042"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_aaa_fc_row_043 => (r#"bulk aaa 043"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_aaa_fc_row_044 => (r#"bulk aaa 044"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_aaa_fc_row_045 => (r#"bulk aaa 045"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_aaa_fc_row_046 => (r#"bulk aaa 046"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_aaa_fc_row_047 => (r#"bulk aaa 047"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_aaa_fc_row_048 => (r#"bulk aaa 048"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_aaa_fc_row_001 => (r#"bulk aaa 001"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_aaa_fc_row_002 => (r#"bulk aaa 002"#, r###"print -r ${(t)x}; x=hello"###);
+        bulk_aaa_fc_row_003 => (r#"bulk aaa 003"#, r###"unset y; print -r ${+y}"###);
+        bulk_aaa_fc_row_004 => (r#"bulk aaa 004"#, r###"x=hello; print -r ${+x}"###);
+        bulk_aaa_fc_row_005 => (r#"bulk aaa 005"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_aaa_fc_row_006 => (r#"bulk aaa 006"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+        bulk_aaa_fc_row_007 => (r#"bulk aaa 007"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
+        bulk_aaa_fc_row_008 => (r#"bulk aaa 008"#, r###"x=abc; print -r ${x/#a/z}"###);
+        bulk_aaa_fc_row_009 => (r#"bulk aaa 009"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_aaa_fc_row_010 => (r#"bulk aaa 010"#, r###"print -r ${(j::)a}; a=(x y)"###);
+        bulk_aaa_fc_row_011 => (r#"bulk aaa 011"#, r###"print -r ${(pj::)a}; a=(x y)"###);
+        bulk_aaa_fc_row_012 => (r#"bulk aaa 012"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
+        bulk_aaa_fc_row_013 => (r#"bulk aaa 013"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_aaa_fc_row_014 => (r#"bulk aaa 014"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_aaa_fc_row_015 => (r#"bulk aaa 015"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_aaa_fc_row_016 => (r#"bulk aaa 016"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_aaa_fc_row_017 => (r#"bulk aaa 017"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_aaa_fc_row_018 => (r#"bulk aaa 018"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_aaa_fc_row_019 => (r#"bulk aaa 019"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_aaa_fc_row_020 => (r#"bulk aaa 020"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_aaa_fc_row_021 => (r#"bulk aaa 021"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_aaa_fc_row_022 => (r#"bulk aaa 022"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_aaa_fc_row_023 => (r#"bulk aaa 023"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_aaa_fc_row_024 => (r#"bulk aaa 024"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_aaa_fc_row_025 => (r#"bulk aaa 025"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_aaa_fc_row_026 => (r#"bulk aaa 026"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_aaa_fc_row_027 => (r#"bulk aaa 027"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_aaa_fc_row_028 => (r#"bulk aaa 028"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_aaa_fc_row_029 => (r#"bulk aaa 029"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_aaa_fc_row_030 => (r#"bulk aaa 030"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_aaa_fc_row_031 => (r#"bulk aaa 031"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_aaa_fc_row_032 => (r#"bulk aaa 032"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_aaa_fc_row_033 => (r#"bulk aaa 033"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_aaa_fc_row_034 => (r#"bulk aaa 034"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_aaa_fc_row_035 => (r#"bulk aaa 035"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_aaa_fc_row_036 => (r#"bulk aaa 036"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_aaa_fc_row_037 => (r#"bulk aaa 037"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_aaa_fc_row_038 => (r#"bulk aaa 038"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_aaa_fc_row_039 => (r#"bulk aaa 039"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_aaa_fc_row_040 => (r#"bulk aaa 040"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_aaa_fc_row_041 => (r#"bulk aaa 041"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_aaa_fc_row_042 => (r#"bulk aaa 042"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_aaa_fc_row_043 => (r#"bulk aaa 043"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_aaa_fc_row_044 => (r#"bulk aaa 044"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_aaa_fc_row_045 => (r#"bulk aaa 045"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_aaa_fc_row_046 => (r#"bulk aaa 046"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_aaa_fc_row_047 => (r#"bulk aaa 047"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_aaa_fc_row_048 => (r#"bulk aaa 048"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
     }
 }
 
@@ -41254,54 +36249,54 @@ mod corpus_dash_fc_bulk_aab {
     use super::*;
 
     parity_gap_tests! {
-        bulk_aab_fc_row_001 => (r#"bulk aab 001"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
-        bulk_aab_fc_row_002 => (r#"bulk aab 002"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
-        bulk_aab_fc_row_003 => (r#"bulk aab 003"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
-        bulk_aab_fc_row_004 => (r#"bulk aab 004"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
-        bulk_aab_fc_row_005 => (r#"bulk aab 005"#, r###"print -r ${(w)#w}; w=a b c"###);
-        bulk_aab_fc_row_006 => (r#"bulk aab 006"#, r###"print -r ${(t)x}; x=hello"###);
-        bulk_aab_fc_row_007 => (r#"bulk aab 007"#, r###"unset y; print -r ${+y}"###);
-        bulk_aab_fc_row_008 => (r#"bulk aab 008"#, r###"x=hello; print -r ${+x}"###);
-        bulk_aab_fc_row_009 => (r#"bulk aab 009"#, r###"print -r ${(q+)x}; x=hi"###);
-        bulk_aab_fc_row_010 => (r#"bulk aab 010"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
-        bulk_aab_fc_row_011 => (r#"bulk aab 011"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
-        bulk_aab_fc_row_012 => (r#"bulk aab 012"#, r###"x=abc; print -r ${x/#a/z}"###);
-        bulk_aab_fc_row_013 => (r#"bulk aab 013"#, r###"x=abc; print -r ${x/%c/z}"###);
-        bulk_aab_fc_row_014 => (r#"bulk aab 014"#, r###"print -r ${(j::)a}; a=(x y)"###);
-        bulk_aab_fc_row_015 => (r#"bulk aab 015"#, r###"print -r ${(pj::)a}; a=(x y)"###);
-        bulk_aab_fc_row_016 => (r#"bulk aab 016"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
-        bulk_aab_fc_row_017 => (r#"bulk aab 017"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_aab_fc_row_018 => (r#"bulk aab 018"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_aab_fc_row_019 => (r#"bulk aab 019"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_aab_fc_row_020 => (r#"bulk aab 020"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_aab_fc_row_021 => (r#"bulk aab 021"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_aab_fc_row_022 => (r#"bulk aab 022"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_aab_fc_row_023 => (r#"bulk aab 023"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_aab_fc_row_024 => (r#"bulk aab 024"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_aab_fc_row_025 => (r#"bulk aab 025"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_aab_fc_row_026 => (r#"bulk aab 026"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_aab_fc_row_027 => (r#"bulk aab 027"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_aab_fc_row_028 => (r#"bulk aab 028"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_aab_fc_row_029 => (r#"bulk aab 029"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_aab_fc_row_030 => (r#"bulk aab 030"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_aab_fc_row_031 => (r#"bulk aab 031"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_aab_fc_row_032 => (r#"bulk aab 032"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_aab_fc_row_033 => (r#"bulk aab 033"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_aab_fc_row_034 => (r#"bulk aab 034"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_aab_fc_row_035 => (r#"bulk aab 035"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_aab_fc_row_036 => (r#"bulk aab 036"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_aab_fc_row_037 => (r#"bulk aab 037"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_aab_fc_row_038 => (r#"bulk aab 038"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_aab_fc_row_039 => (r#"bulk aab 039"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_aab_fc_row_040 => (r#"bulk aab 040"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_aab_fc_row_041 => (r#"bulk aab 041"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_aab_fc_row_042 => (r#"bulk aab 042"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_aab_fc_row_043 => (r#"bulk aab 043"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_aab_fc_row_044 => (r#"bulk aab 044"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_aab_fc_row_045 => (r#"bulk aab 045"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_aab_fc_row_046 => (r#"bulk aab 046"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_aab_fc_row_047 => (r#"bulk aab 047"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_aab_fc_row_048 => (r#"bulk aab 048"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_aab_fc_row_001 => (r#"bulk aab 001"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_aab_fc_row_002 => (r#"bulk aab 002"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_aab_fc_row_003 => (r#"bulk aab 003"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_aab_fc_row_004 => (r#"bulk aab 004"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_aab_fc_row_005 => (r#"bulk aab 005"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_aab_fc_row_006 => (r#"bulk aab 006"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_aab_fc_row_007 => (r#"bulk aab 007"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_aab_fc_row_008 => (r#"bulk aab 008"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_aab_fc_row_009 => (r#"bulk aab 009"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_aab_fc_row_010 => (r#"bulk aab 010"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_aab_fc_row_011 => (r#"bulk aab 011"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_aab_fc_row_012 => (r#"bulk aab 012"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_aab_fc_row_013 => (r#"bulk aab 013"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_aab_fc_row_014 => (r#"bulk aab 014"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_aab_fc_row_015 => (r#"bulk aab 015"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_aab_fc_row_016 => (r#"bulk aab 016"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_aab_fc_row_017 => (r#"bulk aab 017"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_aab_fc_row_018 => (r#"bulk aab 018"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_aab_fc_row_019 => (r#"bulk aab 019"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_aab_fc_row_020 => (r#"bulk aab 020"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_aab_fc_row_021 => (r#"bulk aab 021"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_aab_fc_row_022 => (r#"bulk aab 022"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_aab_fc_row_023 => (r#"bulk aab 023"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_aab_fc_row_024 => (r#"bulk aab 024"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_aab_fc_row_025 => (r#"bulk aab 025"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_aab_fc_row_026 => (r#"bulk aab 026"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_aab_fc_row_027 => (r#"bulk aab 027"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_aab_fc_row_028 => (r#"bulk aab 028"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_aab_fc_row_029 => (r#"bulk aab 029"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_aab_fc_row_030 => (r#"bulk aab 030"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_aab_fc_row_031 => (r#"bulk aab 031"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_aab_fc_row_032 => (r#"bulk aab 032"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_aab_fc_row_033 => (r#"bulk aab 033"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_aab_fc_row_034 => (r#"bulk aab 034"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_aab_fc_row_035 => (r#"bulk aab 035"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_aab_fc_row_036 => (r#"bulk aab 036"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_aab_fc_row_037 => (r#"bulk aab 037"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_aab_fc_row_038 => (r#"bulk aab 038"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_aab_fc_row_039 => (r#"bulk aab 039"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_aab_fc_row_040 => (r#"bulk aab 040"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_aab_fc_row_041 => (r#"bulk aab 041"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_aab_fc_row_042 => (r#"bulk aab 042"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_aab_fc_row_043 => (r#"bulk aab 043"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_aab_fc_row_044 => (r#"bulk aab 044"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_aab_fc_row_045 => (r#"bulk aab 045"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_aab_fc_row_046 => (r#"bulk aab 046"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_aab_fc_row_047 => (r#"bulk aab 047"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_aab_fc_row_048 => (r#"bulk aab 048"#, r###"a=(x y); print -r ${^a}"###);
     }
 }
 
@@ -41309,54 +36304,54 @@ mod corpus_dash_fc_bulk_aac {
     use super::*;
 
     parity_gap_tests! {
-        bulk_aac_fc_row_001 => (r#"bulk aac 001"#, r###"print -r ${(e)x}; x=$'2+2'"###);
-        bulk_aac_fc_row_002 => (r#"bulk aac 002"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
-        bulk_aac_fc_row_003 => (r#"bulk aac 003"#, r###"print -r $(( 1<<0 ))"###);
-        bulk_aac_fc_row_004 => (r#"bulk aac 004"#, r###"print -r $(( 1<<10 ))"###);
-        bulk_aac_fc_row_005 => (r#"bulk aac 005"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
-        bulk_aac_fc_row_006 => (r#"bulk aac 006"#, r###"print -r $(( 1000003 % 97 ))"###);
-        bulk_aac_fc_row_007 => (r#"bulk aac 007"#, r###"print -r $(( 63 & 31 | 15 ))"###);
-        bulk_aac_fc_row_008 => (r#"bulk aac 008"#, r###"print -r $(( 0x10001 % 256 ))"###);
-        bulk_aac_fc_row_009 => (r#"bulk aac 009"#, r###"print -r $(( 2*2*2*2 ))"###);
-        bulk_aac_fc_row_010 => (r#"bulk aac 010"#, r###"print -r $(( (1==1)+(0==1) ))"###);
-        bulk_aac_fc_row_011 => (r#"bulk aac 011"#, r###"print -r $(( 1 && (0 || 1) ))"###);
-        bulk_aac_fc_row_012 => (r#"bulk aac 012"#, r###"[[ zero = <-> ]]; print -r $?"###);
-        bulk_aac_fc_row_013 => (r#"bulk aac 013"#, r###"[[ . = . ]]; print -r $?"###);
-        bulk_aac_fc_row_014 => (r#"bulk aac 014"#, r###"[[ a -lt b ]]; print -r $?"###);
-        bulk_aac_fc_row_015 => (r#"bulk aac 015"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
-        bulk_aac_fc_row_016 => (r#"bulk aac 016"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
-        bulk_aac_fc_row_017 => (r#"bulk aac 017"#, r###"[[ bot = *ot* ]]; print -r $?"###);
-        bulk_aac_fc_row_018 => (r#"bulk aac 018"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_aac_fc_row_019 => (r#"bulk aac 019"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_aac_fc_row_020 => (r#"bulk aac 020"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_aac_fc_row_021 => (r#"bulk aac 021"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_aac_fc_row_022 => (r#"bulk aac 022"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_aac_fc_row_023 => (r#"bulk aac 023"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_aac_fc_row_024 => (r#"bulk aac 024"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_aac_fc_row_025 => (r#"bulk aac 025"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_aac_fc_row_026 => (r#"bulk aac 026"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_aac_fc_row_027 => (r#"bulk aac 027"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_aac_fc_row_028 => (r#"bulk aac 028"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_aac_fc_row_029 => (r#"bulk aac 029"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_aac_fc_row_030 => (r#"bulk aac 030"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_aac_fc_row_031 => (r#"bulk aac 031"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_aac_fc_row_032 => (r#"bulk aac 032"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_aac_fc_row_033 => (r#"bulk aac 033"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_aac_fc_row_034 => (r#"bulk aac 034"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_aac_fc_row_035 => (r#"bulk aac 035"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_aac_fc_row_036 => (r#"bulk aac 036"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_aac_fc_row_037 => (r#"bulk aac 037"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_aac_fc_row_038 => (r#"bulk aac 038"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_aac_fc_row_039 => (r#"bulk aac 039"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_aac_fc_row_040 => (r#"bulk aac 040"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_aac_fc_row_041 => (r#"bulk aac 041"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_aac_fc_row_042 => (r#"bulk aac 042"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_aac_fc_row_043 => (r#"bulk aac 043"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_aac_fc_row_044 => (r#"bulk aac 044"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_aac_fc_row_045 => (r#"bulk aac 045"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_aac_fc_row_046 => (r#"bulk aac 046"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_aac_fc_row_047 => (r#"bulk aac 047"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_aac_fc_row_048 => (r#"bulk aac 048"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_aac_fc_row_001 => (r#"bulk aac 001"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_aac_fc_row_002 => (r#"bulk aac 002"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_aac_fc_row_003 => (r#"bulk aac 003"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_aac_fc_row_004 => (r#"bulk aac 004"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_aac_fc_row_005 => (r#"bulk aac 005"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_aac_fc_row_006 => (r#"bulk aac 006"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_aac_fc_row_007 => (r#"bulk aac 007"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_aac_fc_row_008 => (r#"bulk aac 008"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_aac_fc_row_009 => (r#"bulk aac 009"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_aac_fc_row_010 => (r#"bulk aac 010"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_aac_fc_row_011 => (r#"bulk aac 011"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_aac_fc_row_012 => (r#"bulk aac 012"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_aac_fc_row_013 => (r#"bulk aac 013"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_aac_fc_row_014 => (r#"bulk aac 014"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_aac_fc_row_015 => (r#"bulk aac 015"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_aac_fc_row_016 => (r#"bulk aac 016"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_aac_fc_row_017 => (r#"bulk aac 017"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_aac_fc_row_018 => (r#"bulk aac 018"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_aac_fc_row_019 => (r#"bulk aac 019"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_aac_fc_row_020 => (r#"bulk aac 020"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_aac_fc_row_021 => (r#"bulk aac 021"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_aac_fc_row_022 => (r#"bulk aac 022"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_aac_fc_row_023 => (r#"bulk aac 023"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_aac_fc_row_024 => (r#"bulk aac 024"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_aac_fc_row_025 => (r#"bulk aac 025"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_aac_fc_row_026 => (r#"bulk aac 026"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_aac_fc_row_027 => (r#"bulk aac 027"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_aac_fc_row_028 => (r#"bulk aac 028"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_aac_fc_row_029 => (r#"bulk aac 029"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_aac_fc_row_030 => (r#"bulk aac 030"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_aac_fc_row_031 => (r#"bulk aac 031"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_aac_fc_row_032 => (r#"bulk aac 032"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_aac_fc_row_033 => (r#"bulk aac 033"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_aac_fc_row_034 => (r#"bulk aac 034"#, r###"print -r {1..3}"###);
+        bulk_aac_fc_row_035 => (r#"bulk aac 035"#, r###"print -r {01..03}"###);
+        bulk_aac_fc_row_036 => (r#"bulk aac 036"#, r###"print -r {a..c}"###);
+        bulk_aac_fc_row_037 => (r#"bulk aac 037"#, r###"print -r {1..4..2}"###);
+        bulk_aac_fc_row_038 => (r#"bulk aac 038"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_aac_fc_row_039 => (r#"bulk aac 039"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_aac_fc_row_040 => (r#"bulk aac 040"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_aac_fc_row_041 => (r#"bulk aac 041"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_aac_fc_row_042 => (r#"bulk aac 042"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_aac_fc_row_043 => (r#"bulk aac 043"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_aac_fc_row_044 => (r#"bulk aac 044"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_aac_fc_row_045 => (r#"bulk aac 045"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_aac_fc_row_046 => (r#"bulk aac 046"#, r###"(( 1 )); print -r $?"###);
+        bulk_aac_fc_row_047 => (r#"bulk aac 047"#, r###"(( 0 )); print -r $?"###);
+        bulk_aac_fc_row_048 => (r#"bulk aac 048"#, r###": $(( 0 )) || print -r z"###);
     }
 }
 
@@ -41364,54 +36359,54 @@ mod corpus_dash_fc_bulk_aad {
     use super::*;
 
     parity_gap_tests! {
-        bulk_aad_fc_row_001 => (r#"bulk aad 001"#, r###"[[ -e /dev/null ]]; print -r $?"###);
-        bulk_aad_fc_row_002 => (r#"bulk aad 002"#, r###"[[ -s /dev/null ]]; print -r $?"###);
-        bulk_aad_fc_row_003 => (r#"bulk aad 003"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
-        bulk_aad_fc_row_004 => (r#"bulk aad 004"#, r###"[[ -g / ]]; print -r $?"###);
-        bulk_aad_fc_row_005 => (r#"bulk aad 005"#, r###"[[ -k /tmp ]]; print -r $?"###);
-        bulk_aad_fc_row_006 => (r#"bulk aad 006"#, r###"[[ -b /dev/null ]]; print -r $?"###);
-        bulk_aad_fc_row_007 => (r#"bulk aad 007"#, r###"[[ -c /dev/null ]]; print -r $?"###);
-        bulk_aad_fc_row_008 => (r#"bulk aad 008"#, r###"print -r ${(l:5::0:)n}; n=42"###);
-        bulk_aad_fc_row_009 => (r#"bulk aad 009"#, r###"print -r ${(r:5::0:)n}; n=42"###);
-        bulk_aad_fc_row_010 => (r#"bulk aad 010"#, r###"print -r ${(c)str}; str=hello"###);
-        bulk_aad_fc_row_011 => (r#"bulk aad 011"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
-        bulk_aad_fc_row_012 => (r#"bulk aad 012"#, r###"print -r ${(L)str}; str=HELLO"###);
-        bulk_aad_fc_row_013 => (r#"bulk aad 013"#, r###"print -r ${(U)str}; str=hello"###);
-        bulk_aad_fc_row_014 => (r#"bulk aad 014"#, r###"print -r ${(C)str}; str=hello world"###);
-        bulk_aad_fc_row_015 => (r#"bulk aad 015"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
-        bulk_aad_fc_row_016 => (r#"bulk aad 016"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_aad_fc_row_017 => (r#"bulk aad 017"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_aad_fc_row_018 => (r#"bulk aad 018"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_aad_fc_row_019 => (r#"bulk aad 019"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_aad_fc_row_020 => (r#"bulk aad 020"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_aad_fc_row_021 => (r#"bulk aad 021"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_aad_fc_row_022 => (r#"bulk aad 022"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_aad_fc_row_023 => (r#"bulk aad 023"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_aad_fc_row_024 => (r#"bulk aad 024"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_aad_fc_row_025 => (r#"bulk aad 025"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_aad_fc_row_026 => (r#"bulk aad 026"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_aad_fc_row_027 => (r#"bulk aad 027"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_aad_fc_row_028 => (r#"bulk aad 028"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_aad_fc_row_029 => (r#"bulk aad 029"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_aad_fc_row_030 => (r#"bulk aad 030"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_aad_fc_row_031 => (r#"bulk aad 031"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_aad_fc_row_032 => (r#"bulk aad 032"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_aad_fc_row_033 => (r#"bulk aad 033"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_aad_fc_row_034 => (r#"bulk aad 034"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_aad_fc_row_035 => (r#"bulk aad 035"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_aad_fc_row_036 => (r#"bulk aad 036"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_aad_fc_row_037 => (r#"bulk aad 037"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_aad_fc_row_038 => (r#"bulk aad 038"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_aad_fc_row_039 => (r#"bulk aad 039"#, r###"print -r {1..3}"###);
-        bulk_aad_fc_row_040 => (r#"bulk aad 040"#, r###"print -r {01..03}"###);
-        bulk_aad_fc_row_041 => (r#"bulk aad 041"#, r###"print -r {a..c}"###);
-        bulk_aad_fc_row_042 => (r#"bulk aad 042"#, r###"print -r {1..4..2}"###);
-        bulk_aad_fc_row_043 => (r#"bulk aad 043"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_aad_fc_row_044 => (r#"bulk aad 044"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_aad_fc_row_045 => (r#"bulk aad 045"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_aad_fc_row_046 => (r#"bulk aad 046"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_aad_fc_row_047 => (r#"bulk aad 047"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_aad_fc_row_048 => (r#"bulk aad 048"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_aad_fc_row_001 => (r#"bulk aad 001"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_aad_fc_row_002 => (r#"bulk aad 002"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_aad_fc_row_003 => (r#"bulk aad 003"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_aad_fc_row_004 => (r#"bulk aad 004"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_aad_fc_row_005 => (r#"bulk aad 005"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_aad_fc_row_006 => (r#"bulk aad 006"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_aad_fc_row_007 => (r#"bulk aad 007"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_aad_fc_row_008 => (r#"bulk aad 008"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_aad_fc_row_009 => (r#"bulk aad 009"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_aad_fc_row_010 => (r#"bulk aad 010"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_aad_fc_row_011 => (r#"bulk aad 011"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_aad_fc_row_012 => (r#"bulk aad 012"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_aad_fc_row_013 => (r#"bulk aad 013"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_aad_fc_row_014 => (r#"bulk aad 014"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_aad_fc_row_015 => (r#"bulk aad 015"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_aad_fc_row_016 => (r#"bulk aad 016"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_aad_fc_row_017 => (r#"bulk aad 017"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_aad_fc_row_018 => (r#"bulk aad 018"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_aad_fc_row_019 => (r#"bulk aad 019"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_aad_fc_row_020 => (r#"bulk aad 020"#, r###"print -r {1..3}"###);
+        bulk_aad_fc_row_021 => (r#"bulk aad 021"#, r###"print -r {01..03}"###);
+        bulk_aad_fc_row_022 => (r#"bulk aad 022"#, r###"print -r {a..c}"###);
+        bulk_aad_fc_row_023 => (r#"bulk aad 023"#, r###"print -r {1..4..2}"###);
+        bulk_aad_fc_row_024 => (r#"bulk aad 024"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_aad_fc_row_025 => (r#"bulk aad 025"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_aad_fc_row_026 => (r#"bulk aad 026"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_aad_fc_row_027 => (r#"bulk aad 027"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_aad_fc_row_028 => (r#"bulk aad 028"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_aad_fc_row_029 => (r#"bulk aad 029"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_aad_fc_row_030 => (r#"bulk aad 030"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_aad_fc_row_031 => (r#"bulk aad 031"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_aad_fc_row_032 => (r#"bulk aad 032"#, r###"(( 1 )); print -r $?"###);
+        bulk_aad_fc_row_033 => (r#"bulk aad 033"#, r###"(( 0 )); print -r $?"###);
+        bulk_aad_fc_row_034 => (r#"bulk aad 034"#, r###": $(( 0 )) || print -r z"###);
+        bulk_aad_fc_row_035 => (r#"bulk aad 035"#, r###": $(( 1 )) && print -r y"###);
+        bulk_aad_fc_row_036 => (r#"bulk aad 036"#, r###"let x=2+2; print -r $x"###);
+        bulk_aad_fc_row_037 => (r#"bulk aad 037"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_aad_fc_row_038 => (r#"bulk aad 038"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_aad_fc_row_039 => (r#"bulk aad 039"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_aad_fc_row_040 => (r#"bulk aad 040"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_aad_fc_row_041 => (r#"bulk aad 041"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_aad_fc_row_042 => (r#"bulk aad 042"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_aad_fc_row_043 => (r#"bulk aad 043"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_aad_fc_row_044 => (r#"bulk aad 044"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_aad_fc_row_045 => (r#"bulk aad 045"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_aad_fc_row_046 => (r#"bulk aad 046"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_aad_fc_row_047 => (r#"bulk aad 047"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_aad_fc_row_048 => (r#"bulk aad 048"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
     }
 }
 
@@ -41419,54 +36414,54 @@ mod corpus_dash_fc_bulk_aae {
     use super::*;
 
     parity_gap_tests! {
-        bulk_aae_fc_row_001 => (r#"bulk aae 001"#, r###"print -r ${(qq)str}; str=hi"###);
-        bulk_aae_fc_row_002 => (r#"bulk aae 002"#, r###"print -r ${(V)str}; str=hi"###);
-        bulk_aae_fc_row_003 => (r#"bulk aae 003"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
-        bulk_aae_fc_row_004 => (r#"bulk aae 004"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
-        bulk_aae_fc_row_005 => (r#"bulk aae 005"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
-        bulk_aae_fc_row_006 => (r#"bulk aae 006"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
-        bulk_aae_fc_row_007 => (r#"bulk aae 007"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
-        bulk_aae_fc_row_008 => (r#"bulk aae 008"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
-        bulk_aae_fc_row_009 => (r#"bulk aae 009"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
-        bulk_aae_fc_row_010 => (r#"bulk aae 010"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
-        bulk_aae_fc_row_011 => (r#"bulk aae 011"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
-        bulk_aae_fc_row_012 => (r#"bulk aae 012"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
-        bulk_aae_fc_row_013 => (r#"bulk aae 013"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
-        bulk_aae_fc_row_014 => (r#"bulk aae 014"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
-        bulk_aae_fc_row_015 => (r#"bulk aae 015"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_aae_fc_row_016 => (r#"bulk aae 016"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_aae_fc_row_017 => (r#"bulk aae 017"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_aae_fc_row_018 => (r#"bulk aae 018"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_aae_fc_row_019 => (r#"bulk aae 019"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_aae_fc_row_020 => (r#"bulk aae 020"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_aae_fc_row_021 => (r#"bulk aae 021"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_aae_fc_row_022 => (r#"bulk aae 022"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_aae_fc_row_023 => (r#"bulk aae 023"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_aae_fc_row_024 => (r#"bulk aae 024"#, r###"print -r {1..3}"###);
-        bulk_aae_fc_row_025 => (r#"bulk aae 025"#, r###"print -r {01..03}"###);
-        bulk_aae_fc_row_026 => (r#"bulk aae 026"#, r###"print -r {a..c}"###);
-        bulk_aae_fc_row_027 => (r#"bulk aae 027"#, r###"print -r {1..4..2}"###);
-        bulk_aae_fc_row_028 => (r#"bulk aae 028"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_aae_fc_row_029 => (r#"bulk aae 029"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_aae_fc_row_030 => (r#"bulk aae 030"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_aae_fc_row_031 => (r#"bulk aae 031"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_aae_fc_row_032 => (r#"bulk aae 032"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_aae_fc_row_033 => (r#"bulk aae 033"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_aae_fc_row_034 => (r#"bulk aae 034"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_aae_fc_row_035 => (r#"bulk aae 035"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_aae_fc_row_036 => (r#"bulk aae 036"#, r###"(( 1 )); print -r $?"###);
-        bulk_aae_fc_row_037 => (r#"bulk aae 037"#, r###"(( 0 )); print -r $?"###);
-        bulk_aae_fc_row_038 => (r#"bulk aae 038"#, r###": $(( 0 )) || print -r z"###);
-        bulk_aae_fc_row_039 => (r#"bulk aae 039"#, r###": $(( 1 )) && print -r y"###);
-        bulk_aae_fc_row_040 => (r#"bulk aae 040"#, r###"let x=2+2; print -r $x"###);
-        bulk_aae_fc_row_041 => (r#"bulk aae 041"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_aae_fc_row_042 => (r#"bulk aae 042"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_aae_fc_row_043 => (r#"bulk aae 043"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_aae_fc_row_044 => (r#"bulk aae 044"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_aae_fc_row_045 => (r#"bulk aae 045"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_aae_fc_row_046 => (r#"bulk aae 046"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_aae_fc_row_047 => (r#"bulk aae 047"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_aae_fc_row_048 => (r#"bulk aae 048"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_aae_fc_row_001 => (r#"bulk aae 001"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_aae_fc_row_002 => (r#"bulk aae 002"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_aae_fc_row_003 => (r#"bulk aae 003"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_aae_fc_row_004 => (r#"bulk aae 004"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_aae_fc_row_005 => (r#"bulk aae 005"#, r###"print -r {1..3}"###);
+        bulk_aae_fc_row_006 => (r#"bulk aae 006"#, r###"print -r {01..03}"###);
+        bulk_aae_fc_row_007 => (r#"bulk aae 007"#, r###"print -r {a..c}"###);
+        bulk_aae_fc_row_008 => (r#"bulk aae 008"#, r###"print -r {1..4..2}"###);
+        bulk_aae_fc_row_009 => (r#"bulk aae 009"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_aae_fc_row_010 => (r#"bulk aae 010"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_aae_fc_row_011 => (r#"bulk aae 011"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_aae_fc_row_012 => (r#"bulk aae 012"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_aae_fc_row_013 => (r#"bulk aae 013"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_aae_fc_row_014 => (r#"bulk aae 014"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_aae_fc_row_015 => (r#"bulk aae 015"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_aae_fc_row_016 => (r#"bulk aae 016"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_aae_fc_row_017 => (r#"bulk aae 017"#, r###"(( 1 )); print -r $?"###);
+        bulk_aae_fc_row_018 => (r#"bulk aae 018"#, r###"(( 0 )); print -r $?"###);
+        bulk_aae_fc_row_019 => (r#"bulk aae 019"#, r###": $(( 0 )) || print -r z"###);
+        bulk_aae_fc_row_020 => (r#"bulk aae 020"#, r###": $(( 1 )) && print -r y"###);
+        bulk_aae_fc_row_021 => (r#"bulk aae 021"#, r###"let x=2+2; print -r $x"###);
+        bulk_aae_fc_row_022 => (r#"bulk aae 022"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_aae_fc_row_023 => (r#"bulk aae 023"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_aae_fc_row_024 => (r#"bulk aae 024"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_aae_fc_row_025 => (r#"bulk aae 025"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_aae_fc_row_026 => (r#"bulk aae 026"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_aae_fc_row_027 => (r#"bulk aae 027"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_aae_fc_row_028 => (r#"bulk aae 028"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_aae_fc_row_029 => (r#"bulk aae 029"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_aae_fc_row_030 => (r#"bulk aae 030"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_aae_fc_row_031 => (r#"bulk aae 031"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_aae_fc_row_032 => (r#"bulk aae 032"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_aae_fc_row_033 => (r#"bulk aae 033"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_aae_fc_row_034 => (r#"bulk aae 034"#, r###"local a; a=1; print -r $a"###);
+        bulk_aae_fc_row_035 => (r#"bulk aae 035"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_aae_fc_row_036 => (r#"bulk aae 036"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_aae_fc_row_037 => (r#"bulk aae 037"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_aae_fc_row_038 => (r#"bulk aae 038"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_aae_fc_row_039 => (r#"bulk aae 039"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_aae_fc_row_040 => (r#"bulk aae 040"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_aae_fc_row_041 => (r#"bulk aae 041"#, r###"setopt localoptions; print -r $?"###);
+        bulk_aae_fc_row_042 => (r#"bulk aae 042"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_aae_fc_row_043 => (r#"bulk aae 043"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_aae_fc_row_044 => (r#"bulk aae 044"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_aae_fc_row_045 => (r#"bulk aae 045"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_aae_fc_row_046 => (r#"bulk aae 046"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_aae_fc_row_047 => (r#"bulk aae 047"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_aae_fc_row_048 => (r#"bulk aae 048"#, r###"setopt shwordsplit; print -r $?"###);
     }
 }
 
@@ -41474,54 +36469,54 @@ mod corpus_dash_fc_bulk_aaf {
     use super::*;
 
     parity_gap_tests! {
-        bulk_aaf_fc_row_001 => (r#"bulk aaf 001"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
-        bulk_aaf_fc_row_002 => (r#"bulk aaf 002"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
-        bulk_aaf_fc_row_003 => (r#"bulk aaf 003"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
-        bulk_aaf_fc_row_004 => (r#"bulk aaf 004"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
-        bulk_aaf_fc_row_005 => (r#"bulk aaf 005"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
-        bulk_aaf_fc_row_006 => (r#"bulk aaf 006"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
-        bulk_aaf_fc_row_007 => (r#"bulk aaf 007"#, r###"a=(x y); print -r ${^a}"###);
-        bulk_aaf_fc_row_008 => (r#"bulk aaf 008"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
-        bulk_aaf_fc_row_009 => (r#"bulk aaf 009"#, r###"setopt braceccl; print -r {a,b}"###);
-        bulk_aaf_fc_row_010 => (r#"bulk aaf 010"#, r###"print -r {1..3}"###);
-        bulk_aaf_fc_row_011 => (r#"bulk aaf 011"#, r###"print -r {01..03}"###);
-        bulk_aaf_fc_row_012 => (r#"bulk aaf 012"#, r###"print -r {a..c}"###);
-        bulk_aaf_fc_row_013 => (r#"bulk aaf 013"#, r###"print -r {1..4..2}"###);
-        bulk_aaf_fc_row_014 => (r#"bulk aaf 014"#, r###"print -r ${~pattern}; pattern='*'; :"###);
-        bulk_aaf_fc_row_015 => (r#"bulk aaf 015"#, r###"integer x=3; (( x++ )); print -r $x"###);
-        bulk_aaf_fc_row_016 => (r#"bulk aaf 016"#, r###"integer x=3; (( ++x )); print -r $x"###);
-        bulk_aaf_fc_row_017 => (r#"bulk aaf 017"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_aaf_fc_row_018 => (r#"bulk aaf 018"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_aaf_fc_row_019 => (r#"bulk aaf 019"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_aaf_fc_row_020 => (r#"bulk aaf 020"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_aaf_fc_row_021 => (r#"bulk aaf 021"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_aaf_fc_row_022 => (r#"bulk aaf 022"#, r###"(( 1 )); print -r $?"###);
-        bulk_aaf_fc_row_023 => (r#"bulk aaf 023"#, r###"(( 0 )); print -r $?"###);
-        bulk_aaf_fc_row_024 => (r#"bulk aaf 024"#, r###": $(( 0 )) || print -r z"###);
-        bulk_aaf_fc_row_025 => (r#"bulk aaf 025"#, r###": $(( 1 )) && print -r y"###);
-        bulk_aaf_fc_row_026 => (r#"bulk aaf 026"#, r###"let x=2+2; print -r $x"###);
-        bulk_aaf_fc_row_027 => (r#"bulk aaf 027"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_aaf_fc_row_028 => (r#"bulk aaf 028"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_aaf_fc_row_029 => (r#"bulk aaf 029"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_aaf_fc_row_030 => (r#"bulk aaf 030"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_aaf_fc_row_031 => (r#"bulk aaf 031"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_aaf_fc_row_032 => (r#"bulk aaf 032"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_aaf_fc_row_033 => (r#"bulk aaf 033"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_aaf_fc_row_034 => (r#"bulk aaf 034"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_aaf_fc_row_035 => (r#"bulk aaf 035"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_aaf_fc_row_036 => (r#"bulk aaf 036"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_aaf_fc_row_037 => (r#"bulk aaf 037"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_aaf_fc_row_038 => (r#"bulk aaf 038"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_aaf_fc_row_039 => (r#"bulk aaf 039"#, r###"local a; a=1; print -r $a"###);
-        bulk_aaf_fc_row_040 => (r#"bulk aaf 040"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_aaf_fc_row_041 => (r#"bulk aaf 041"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_aaf_fc_row_042 => (r#"bulk aaf 042"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_aaf_fc_row_043 => (r#"bulk aaf 043"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_aaf_fc_row_044 => (r#"bulk aaf 044"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_aaf_fc_row_045 => (r#"bulk aaf 045"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_aaf_fc_row_046 => (r#"bulk aaf 046"#, r###"setopt localoptions; print -r $?"###);
-        bulk_aaf_fc_row_047 => (r#"bulk aaf 047"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_aaf_fc_row_048 => (r#"bulk aaf 048"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_aaf_fc_row_001 => (r#"bulk aaf 001"#, r###"(( 1 )); print -r $?"###);
+        bulk_aaf_fc_row_002 => (r#"bulk aaf 002"#, r###"(( 0 )); print -r $?"###);
+        bulk_aaf_fc_row_003 => (r#"bulk aaf 003"#, r###": $(( 0 )) || print -r z"###);
+        bulk_aaf_fc_row_004 => (r#"bulk aaf 004"#, r###": $(( 1 )) && print -r y"###);
+        bulk_aaf_fc_row_005 => (r#"bulk aaf 005"#, r###"let x=2+2; print -r $x"###);
+        bulk_aaf_fc_row_006 => (r#"bulk aaf 006"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_aaf_fc_row_007 => (r#"bulk aaf 007"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_aaf_fc_row_008 => (r#"bulk aaf 008"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_aaf_fc_row_009 => (r#"bulk aaf 009"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_aaf_fc_row_010 => (r#"bulk aaf 010"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_aaf_fc_row_011 => (r#"bulk aaf 011"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_aaf_fc_row_012 => (r#"bulk aaf 012"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_aaf_fc_row_013 => (r#"bulk aaf 013"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_aaf_fc_row_014 => (r#"bulk aaf 014"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_aaf_fc_row_015 => (r#"bulk aaf 015"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_aaf_fc_row_016 => (r#"bulk aaf 016"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_aaf_fc_row_017 => (r#"bulk aaf 017"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_aaf_fc_row_018 => (r#"bulk aaf 018"#, r###"local a; a=1; print -r $a"###);
+        bulk_aaf_fc_row_019 => (r#"bulk aaf 019"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_aaf_fc_row_020 => (r#"bulk aaf 020"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_aaf_fc_row_021 => (r#"bulk aaf 021"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_aaf_fc_row_022 => (r#"bulk aaf 022"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_aaf_fc_row_023 => (r#"bulk aaf 023"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_aaf_fc_row_024 => (r#"bulk aaf 024"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_aaf_fc_row_025 => (r#"bulk aaf 025"#, r###"setopt localoptions; print -r $?"###);
+        bulk_aaf_fc_row_026 => (r#"bulk aaf 026"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_aaf_fc_row_027 => (r#"bulk aaf 027"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_aaf_fc_row_028 => (r#"bulk aaf 028"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_aaf_fc_row_029 => (r#"bulk aaf 029"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_aaf_fc_row_030 => (r#"bulk aaf 030"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_aaf_fc_row_031 => (r#"bulk aaf 031"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_aaf_fc_row_032 => (r#"bulk aaf 032"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_aaf_fc_row_033 => (r#"bulk aaf 033"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_aaf_fc_row_034 => (r#"bulk aaf 034"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_aaf_fc_row_035 => (r#"bulk aaf 035"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_aaf_fc_row_036 => (r#"bulk aaf 036"#, r###"setopt multios; print -r $?"###);
+        bulk_aaf_fc_row_037 => (r#"bulk aaf 037"#, r###"setopt noclobber; print -r $?"###);
+        bulk_aaf_fc_row_038 => (r#"bulk aaf 038"#, r###"setopt clobber; print -r $?"###);
+        bulk_aaf_fc_row_039 => (r#"bulk aaf 039"#, r###"setopt histexpand; print -r $?"###);
+        bulk_aaf_fc_row_040 => (r#"bulk aaf 040"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_aaf_fc_row_041 => (r#"bulk aaf 041"#, r###"setopt banghist; print -r $?"###);
+        bulk_aaf_fc_row_042 => (r#"bulk aaf 042"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_aaf_fc_row_043 => (r#"bulk aaf 043"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_aaf_fc_row_044 => (r#"bulk aaf 044"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_aaf_fc_row_045 => (r#"bulk aaf 045"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_aaf_fc_row_046 => (r#"bulk aaf 046"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_aaf_fc_row_047 => (r#"bulk aaf 047"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_aaf_fc_row_048 => (r#"bulk aaf 048"#, r###"setopt histverify; print -r $?"###);
     }
 }
 
@@ -41529,54 +36524,54 @@ mod corpus_dash_fc_bulk_aag {
     use super::*;
 
     parity_gap_tests! {
-        bulk_aag_fc_row_001 => (r#"bulk aag 001"#, r###"integer x=3; (( x-- )); print -r $x"###);
-        bulk_aag_fc_row_002 => (r#"bulk aag 002"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
-        bulk_aag_fc_row_003 => (r#"bulk aag 003"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
-        bulk_aag_fc_row_004 => (r#"bulk aag 004"#, r###"print -r $(( 7 / 2 ))"###);
-        bulk_aag_fc_row_005 => (r#"bulk aag 005"#, r###"print -r $(( 7.0 / 2 ))"###);
-        bulk_aag_fc_row_006 => (r#"bulk aag 006"#, r###"(( 1 )); print -r $?"###);
-        bulk_aag_fc_row_007 => (r#"bulk aag 007"#, r###"(( 0 )); print -r $?"###);
-        bulk_aag_fc_row_008 => (r#"bulk aag 008"#, r###": $(( 0 )) || print -r z"###);
-        bulk_aag_fc_row_009 => (r#"bulk aag 009"#, r###": $(( 1 )) && print -r y"###);
-        bulk_aag_fc_row_010 => (r#"bulk aag 010"#, r###"let x=2+2; print -r $x"###);
-        bulk_aag_fc_row_011 => (r#"bulk aag 011"#, r###"(( x = 5 )); print -r $x"###);
-        bulk_aag_fc_row_012 => (r#"bulk aag 012"#, r###"typeset -F f=2.5; print -r $f"###);
-        bulk_aag_fc_row_013 => (r#"bulk aag 013"#, r###"typeset -E e=2.5; print -r $e"###);
-        bulk_aag_fc_row_014 => (r#"bulk aag 014"#, r###"typeset -i n=07; print -r $n"###);
-        bulk_aag_fc_row_015 => (r#"bulk aag 015"#, r###"typeset -l s=ABC; print -r $s"###);
-        bulk_aag_fc_row_016 => (r#"bulk aag 016"#, r###"typeset -u s=abc; print -r $s"###);
-        bulk_aag_fc_row_017 => (r#"bulk aag 017"#, r###"typeset -r x=1; x=2; print -r $x"###);
-        bulk_aag_fc_row_018 => (r#"bulk aag 018"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_aag_fc_row_019 => (r#"bulk aag 019"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_aag_fc_row_020 => (r#"bulk aag 020"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_aag_fc_row_021 => (r#"bulk aag 021"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_aag_fc_row_022 => (r#"bulk aag 022"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_aag_fc_row_023 => (r#"bulk aag 023"#, r###"local a; a=1; print -r $a"###);
-        bulk_aag_fc_row_024 => (r#"bulk aag 024"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_aag_fc_row_025 => (r#"bulk aag 025"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_aag_fc_row_026 => (r#"bulk aag 026"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_aag_fc_row_027 => (r#"bulk aag 027"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_aag_fc_row_028 => (r#"bulk aag 028"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_aag_fc_row_029 => (r#"bulk aag 029"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_aag_fc_row_030 => (r#"bulk aag 030"#, r###"setopt localoptions; print -r $?"###);
-        bulk_aag_fc_row_031 => (r#"bulk aag 031"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_aag_fc_row_032 => (r#"bulk aag 032"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_aag_fc_row_033 => (r#"bulk aag 033"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_aag_fc_row_034 => (r#"bulk aag 034"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_aag_fc_row_035 => (r#"bulk aag 035"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_aag_fc_row_036 => (r#"bulk aag 036"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_aag_fc_row_037 => (r#"bulk aag 037"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_aag_fc_row_038 => (r#"bulk aag 038"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_aag_fc_row_039 => (r#"bulk aag 039"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_aag_fc_row_040 => (r#"bulk aag 040"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_aag_fc_row_041 => (r#"bulk aag 041"#, r###"setopt multios; print -r $?"###);
-        bulk_aag_fc_row_042 => (r#"bulk aag 042"#, r###"setopt noclobber; print -r $?"###);
-        bulk_aag_fc_row_043 => (r#"bulk aag 043"#, r###"setopt clobber; print -r $?"###);
-        bulk_aag_fc_row_044 => (r#"bulk aag 044"#, r###"setopt histexpand; print -r $?"###);
-        bulk_aag_fc_row_045 => (r#"bulk aag 045"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_aag_fc_row_046 => (r#"bulk aag 046"#, r###"setopt banghist; print -r $?"###);
-        bulk_aag_fc_row_047 => (r#"bulk aag 047"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_aag_fc_row_048 => (r#"bulk aag 048"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_aag_fc_row_001 => (r#"bulk aag 001"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_aag_fc_row_002 => (r#"bulk aag 002"#, r###"local a; a=1; print -r $a"###);
+        bulk_aag_fc_row_003 => (r#"bulk aag 003"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_aag_fc_row_004 => (r#"bulk aag 004"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_aag_fc_row_005 => (r#"bulk aag 005"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_aag_fc_row_006 => (r#"bulk aag 006"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_aag_fc_row_007 => (r#"bulk aag 007"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_aag_fc_row_008 => (r#"bulk aag 008"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_aag_fc_row_009 => (r#"bulk aag 009"#, r###"setopt localoptions; print -r $?"###);
+        bulk_aag_fc_row_010 => (r#"bulk aag 010"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_aag_fc_row_011 => (r#"bulk aag 011"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_aag_fc_row_012 => (r#"bulk aag 012"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_aag_fc_row_013 => (r#"bulk aag 013"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_aag_fc_row_014 => (r#"bulk aag 014"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_aag_fc_row_015 => (r#"bulk aag 015"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_aag_fc_row_016 => (r#"bulk aag 016"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_aag_fc_row_017 => (r#"bulk aag 017"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_aag_fc_row_018 => (r#"bulk aag 018"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_aag_fc_row_019 => (r#"bulk aag 019"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_aag_fc_row_020 => (r#"bulk aag 020"#, r###"setopt multios; print -r $?"###);
+        bulk_aag_fc_row_021 => (r#"bulk aag 021"#, r###"setopt noclobber; print -r $?"###);
+        bulk_aag_fc_row_022 => (r#"bulk aag 022"#, r###"setopt clobber; print -r $?"###);
+        bulk_aag_fc_row_023 => (r#"bulk aag 023"#, r###"setopt histexpand; print -r $?"###);
+        bulk_aag_fc_row_024 => (r#"bulk aag 024"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_aag_fc_row_025 => (r#"bulk aag 025"#, r###"setopt banghist; print -r $?"###);
+        bulk_aag_fc_row_026 => (r#"bulk aag 026"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_aag_fc_row_027 => (r#"bulk aag 027"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_aag_fc_row_028 => (r#"bulk aag 028"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_aag_fc_row_029 => (r#"bulk aag 029"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_aag_fc_row_030 => (r#"bulk aag 030"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_aag_fc_row_031 => (r#"bulk aag 031"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_aag_fc_row_032 => (r#"bulk aag 032"#, r###"setopt histverify; print -r $?"###);
+        bulk_aag_fc_row_033 => (r#"bulk aag 033"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_aag_fc_row_034 => (r#"bulk aag 034"#, r###"setopt no_beep; print -r $?"###);
+        bulk_aag_fc_row_035 => (r#"bulk aag 035"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_aag_fc_row_036 => (r#"bulk aag 036"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_aag_fc_row_037 => (r#"bulk aag 037"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_aag_fc_row_038 => (r#"bulk aag 038"#, r###"setopt correct; print -r $?"###);
+        bulk_aag_fc_row_039 => (r#"bulk aag 039"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_aag_fc_row_040 => (r#"bulk aag 040"#, r###"setopt completealiases; print -r $?"###);
+        bulk_aag_fc_row_041 => (r#"bulk aag 041"#, r###"setopt globdots; print -r $?"###);
+        bulk_aag_fc_row_042 => (r#"bulk aag 042"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_aag_fc_row_043 => (r#"bulk aag 043"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_aag_fc_row_044 => (r#"bulk aag 044"#, r###"setopt markdirs; print -r $?"###);
+        bulk_aag_fc_row_045 => (r#"bulk aag 045"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_aag_fc_row_046 => (r#"bulk aag 046"#, r###"setopt chase_links; print -r $?"###);
+        bulk_aag_fc_row_047 => (r#"bulk aag 047"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_aag_fc_row_048 => (r#"bulk aag 048"#, r###"setopt pushdignoredups; print -r $?"###);
     }
 }
 
@@ -41584,54 +36579,54 @@ mod corpus_dash_fc_bulk_aah {
     use super::*;
 
     parity_gap_tests! {
-        bulk_aah_fc_row_001 => (r#"bulk aah 001"#, r###"typeset -h s; s=abc; print -r $s"###);
-        bulk_aah_fc_row_002 => (r#"bulk aah 002"#, r###"typeset -H s; s=abc; print -r $s"###);
-        bulk_aah_fc_row_003 => (r#"bulk aah 003"#, r###"typeset -b n=255; print -r $n"###);
-        bulk_aah_fc_row_004 => (r#"bulk aah 004"#, r###"typeset -o n=7; print -r $n"###);
-        bulk_aah_fc_row_005 => (r#"bulk aah 005"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
-        bulk_aah_fc_row_006 => (r#"bulk aah 006"#, r###"local a; a=1; print -r $a"###);
-        bulk_aah_fc_row_007 => (r#"bulk aah 007"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
-        bulk_aah_fc_row_008 => (r#"bulk aah 008"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
-        bulk_aah_fc_row_009 => (r#"bulk aah 009"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
-        bulk_aah_fc_row_010 => (r#"bulk aah 010"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
-        bulk_aah_fc_row_011 => (r#"bulk aah 011"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
-        bulk_aah_fc_row_012 => (r#"bulk aah 012"#, r###"emulate -L zsh; print -r $?"###);
-        bulk_aah_fc_row_013 => (r#"bulk aah 013"#, r###"setopt localoptions; print -r $?"###);
-        bulk_aah_fc_row_014 => (r#"bulk aah 014"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
-        bulk_aah_fc_row_015 => (r#"bulk aah 015"#, r###"setopt pipefail; false | true; print -r $?"###);
-        bulk_aah_fc_row_016 => (r#"bulk aah 016"#, r###"setopt no_pipefail; false | true; print -r $?"###);
-        bulk_aah_fc_row_017 => (r#"bulk aah 017"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_aah_fc_row_018 => (r#"bulk aah 018"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_aah_fc_row_019 => (r#"bulk aah 019"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_aah_fc_row_020 => (r#"bulk aah 020"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_aah_fc_row_021 => (r#"bulk aah 021"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_aah_fc_row_022 => (r#"bulk aah 022"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_aah_fc_row_023 => (r#"bulk aah 023"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_aah_fc_row_024 => (r#"bulk aah 024"#, r###"setopt multios; print -r $?"###);
-        bulk_aah_fc_row_025 => (r#"bulk aah 025"#, r###"setopt noclobber; print -r $?"###);
-        bulk_aah_fc_row_026 => (r#"bulk aah 026"#, r###"setopt clobber; print -r $?"###);
-        bulk_aah_fc_row_027 => (r#"bulk aah 027"#, r###"setopt histexpand; print -r $?"###);
-        bulk_aah_fc_row_028 => (r#"bulk aah 028"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_aah_fc_row_029 => (r#"bulk aah 029"#, r###"setopt banghist; print -r $?"###);
-        bulk_aah_fc_row_030 => (r#"bulk aah 030"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_aah_fc_row_031 => (r#"bulk aah 031"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_aah_fc_row_032 => (r#"bulk aah 032"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_aah_fc_row_033 => (r#"bulk aah 033"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_aah_fc_row_034 => (r#"bulk aah 034"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_aah_fc_row_035 => (r#"bulk aah 035"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_aah_fc_row_036 => (r#"bulk aah 036"#, r###"setopt histverify; print -r $?"###);
-        bulk_aah_fc_row_037 => (r#"bulk aah 037"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_aah_fc_row_038 => (r#"bulk aah 038"#, r###"setopt no_beep; print -r $?"###);
-        bulk_aah_fc_row_039 => (r#"bulk aah 039"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_aah_fc_row_040 => (r#"bulk aah 040"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_aah_fc_row_041 => (r#"bulk aah 041"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_aah_fc_row_042 => (r#"bulk aah 042"#, r###"setopt correct; print -r $?"###);
-        bulk_aah_fc_row_043 => (r#"bulk aah 043"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_aah_fc_row_044 => (r#"bulk aah 044"#, r###"setopt completealiases; print -r $?"###);
-        bulk_aah_fc_row_045 => (r#"bulk aah 045"#, r###"setopt globdots; print -r $?"###);
-        bulk_aah_fc_row_046 => (r#"bulk aah 046"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_aah_fc_row_047 => (r#"bulk aah 047"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_aah_fc_row_048 => (r#"bulk aah 048"#, r###"setopt markdirs; print -r $?"###);
+        bulk_aah_fc_row_001 => (r#"bulk aah 001"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_aah_fc_row_002 => (r#"bulk aah 002"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_aah_fc_row_003 => (r#"bulk aah 003"#, r###"setopt multios; print -r $?"###);
+        bulk_aah_fc_row_004 => (r#"bulk aah 004"#, r###"setopt noclobber; print -r $?"###);
+        bulk_aah_fc_row_005 => (r#"bulk aah 005"#, r###"setopt clobber; print -r $?"###);
+        bulk_aah_fc_row_006 => (r#"bulk aah 006"#, r###"setopt histexpand; print -r $?"###);
+        bulk_aah_fc_row_007 => (r#"bulk aah 007"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_aah_fc_row_008 => (r#"bulk aah 008"#, r###"setopt banghist; print -r $?"###);
+        bulk_aah_fc_row_009 => (r#"bulk aah 009"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_aah_fc_row_010 => (r#"bulk aah 010"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_aah_fc_row_011 => (r#"bulk aah 011"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_aah_fc_row_012 => (r#"bulk aah 012"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_aah_fc_row_013 => (r#"bulk aah 013"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_aah_fc_row_014 => (r#"bulk aah 014"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_aah_fc_row_015 => (r#"bulk aah 015"#, r###"setopt histverify; print -r $?"###);
+        bulk_aah_fc_row_016 => (r#"bulk aah 016"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_aah_fc_row_017 => (r#"bulk aah 017"#, r###"setopt no_beep; print -r $?"###);
+        bulk_aah_fc_row_018 => (r#"bulk aah 018"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_aah_fc_row_019 => (r#"bulk aah 019"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_aah_fc_row_020 => (r#"bulk aah 020"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_aah_fc_row_021 => (r#"bulk aah 021"#, r###"setopt correct; print -r $?"###);
+        bulk_aah_fc_row_022 => (r#"bulk aah 022"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_aah_fc_row_023 => (r#"bulk aah 023"#, r###"setopt completealiases; print -r $?"###);
+        bulk_aah_fc_row_024 => (r#"bulk aah 024"#, r###"setopt globdots; print -r $?"###);
+        bulk_aah_fc_row_025 => (r#"bulk aah 025"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_aah_fc_row_026 => (r#"bulk aah 026"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_aah_fc_row_027 => (r#"bulk aah 027"#, r###"setopt markdirs; print -r $?"###);
+        bulk_aah_fc_row_028 => (r#"bulk aah 028"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_aah_fc_row_029 => (r#"bulk aah 029"#, r###"setopt chase_links; print -r $?"###);
+        bulk_aah_fc_row_030 => (r#"bulk aah 030"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_aah_fc_row_031 => (r#"bulk aah 031"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_aah_fc_row_032 => (r#"bulk aah 032"#, r###"setopt pushdsilent; print -r $?"###);
+        bulk_aah_fc_row_033 => (r#"bulk aah 033"#, r###"setopt pushdtohome; print -r $?"###);
+        bulk_aah_fc_row_034 => (r#"bulk aah 034"#, r###"setopt autopushd; print -r $?"###);
+        bulk_aah_fc_row_035 => (r#"bulk aah 035"#, r###"setopt pushdminus; print -r $?"###);
+        bulk_aah_fc_row_036 => (r#"bulk aah 036"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_aah_fc_row_037 => (r#"bulk aah 037"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
+        bulk_aah_fc_row_038 => (r#"bulk aah 038"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
+        bulk_aah_fc_row_039 => (r#"bulk aah 039"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+        bulk_aah_fc_row_040 => (r#"bulk aah 040"#, r###"print -r $PWD"###);
+        bulk_aah_fc_row_041 => (r#"bulk aah 041"#, r###"print -r ${PWD:h}"###);
+        bulk_aah_fc_row_042 => (r#"bulk aah 042"#, r###"print -r ${PWD:t}"###);
+        bulk_aah_fc_row_043 => (r#"bulk aah 043"#, r###"print -r ${PWD:r}"###);
+        bulk_aah_fc_row_044 => (r#"bulk aah 044"#, r###"print -r ${PWD:e}"###);
+        bulk_aah_fc_row_045 => (r#"bulk aah 045"#, r###"print -r ${PWD:a}"###);
+        bulk_aah_fc_row_046 => (r#"bulk aah 046"#, r###"print -r ${PWD:A}"###);
+        bulk_aah_fc_row_047 => (r#"bulk aah 047"#, r###"read -r line <<< 'one'; print -r $line"###);
+        bulk_aah_fc_row_048 => (r#"bulk aah 048"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
     }
 }
 
@@ -41639,53 +36634,5058 @@ mod corpus_dash_fc_bulk_aai {
     use super::*;
 
     parity_gap_tests! {
-        bulk_aai_fc_row_001 => (r#"bulk aai 001"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_aai_fc_row_002 => (r#"bulk aai 002"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
-        bulk_aai_fc_row_003 => (r#"bulk aai 003"#, r###"setopt extendedglob; print -r $?"###);
-        bulk_aai_fc_row_004 => (r#"bulk aai 004"#, r###"setopt shwordsplit; print -r $?"###);
-        bulk_aai_fc_row_005 => (r#"bulk aai 005"#, r###"setopt no_shwordsplit; print -r $?"###);
-        bulk_aai_fc_row_006 => (r#"bulk aai 006"#, r###"setopt interactivecomments; print -r $?"###);
-        bulk_aai_fc_row_007 => (r#"bulk aai 007"#, r###"setopt no_interactivecomments; print -r $?"###);
-        bulk_aai_fc_row_008 => (r#"bulk aai 008"#, r###"setopt multios; print -r $?"###);
-        bulk_aai_fc_row_009 => (r#"bulk aai 009"#, r###"setopt noclobber; print -r $?"###);
-        bulk_aai_fc_row_010 => (r#"bulk aai 010"#, r###"setopt clobber; print -r $?"###);
-        bulk_aai_fc_row_011 => (r#"bulk aai 011"#, r###"setopt histexpand; print -r $?"###);
-        bulk_aai_fc_row_012 => (r#"bulk aai 012"#, r###"setopt no_histexpand; print -r $?"###);
-        bulk_aai_fc_row_013 => (r#"bulk aai 013"#, r###"setopt banghist; print -r $?"###);
-        bulk_aai_fc_row_014 => (r#"bulk aai 014"#, r###"setopt sharehistory; print -r $?"###);
-        bulk_aai_fc_row_015 => (r#"bulk aai 015"#, r###"setopt incappendhistory; print -r $?"###);
-        bulk_aai_fc_row_016 => (r#"bulk aai 016"#, r###"setopt extendedhistory; print -r $?"###);
-        bulk_aai_fc_row_017 => (r#"bulk aai 017"#, r###"setopt histignoredups; print -r $?"###);
-        bulk_aai_fc_row_018 => (r#"bulk aai 018"#, r###"setopt histignorespace; print -r $?"###);
-        bulk_aai_fc_row_019 => (r#"bulk aai 019"#, r###"setopt histreduceblanks; print -r $?"###);
-        bulk_aai_fc_row_020 => (r#"bulk aai 020"#, r###"setopt histverify; print -r $?"###);
-        bulk_aai_fc_row_021 => (r#"bulk aai 021"#, r###"setopt appendhistory; print -r $?"###);
-        bulk_aai_fc_row_022 => (r#"bulk aai 022"#, r###"setopt no_beep; print -r $?"###);
-        bulk_aai_fc_row_023 => (r#"bulk aai 023"#, r###"setopt no_listbeep; print -r $?"###);
-        bulk_aai_fc_row_024 => (r#"bulk aai 024"#, r###"setopt auto_cd; print -r $?"###);
-        bulk_aai_fc_row_025 => (r#"bulk aai 025"#, r###"setopt no_auto_cd; print -r $?"###);
-        bulk_aai_fc_row_026 => (r#"bulk aai 026"#, r###"setopt correct; print -r $?"###);
-        bulk_aai_fc_row_027 => (r#"bulk aai 027"#, r###"setopt nocorrect; print -r $?"###);
-        bulk_aai_fc_row_028 => (r#"bulk aai 028"#, r###"setopt completealiases; print -r $?"###);
-        bulk_aai_fc_row_029 => (r#"bulk aai 029"#, r###"setopt globdots; print -r $?"###);
-        bulk_aai_fc_row_030 => (r#"bulk aai 030"#, r###"setopt noglobdots; print -r $?"###);
-        bulk_aai_fc_row_031 => (r#"bulk aai 031"#, r###"setopt numericglobsort; print -r $?"###);
-        bulk_aai_fc_row_032 => (r#"bulk aai 032"#, r###"setopt markdirs; print -r $?"###);
-        bulk_aai_fc_row_033 => (r#"bulk aai 033"#, r###"setopt nomarkdirs; print -r $?"###);
-        bulk_aai_fc_row_034 => (r#"bulk aai 034"#, r###"setopt chase_links; print -r $?"###);
-        bulk_aai_fc_row_035 => (r#"bulk aai 035"#, r###"setopt no_chase_links; print -r $?"###);
-        bulk_aai_fc_row_036 => (r#"bulk aai 036"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_aai_fc_row_037 => (r#"bulk aai 037"#, r###"setopt pushdsilent; print -r $?"###);
-        bulk_aai_fc_row_038 => (r#"bulk aai 038"#, r###"setopt pushdtohome; print -r $?"###);
-        bulk_aai_fc_row_039 => (r#"bulk aai 039"#, r###"setopt autopushd; print -r $?"###);
-        bulk_aai_fc_row_040 => (r#"bulk aai 040"#, r###"setopt pushdminus; print -r $?"###);
-        bulk_aai_fc_row_041 => (r#"bulk aai 041"#, r###"setopt pushdignoredups; print -r $?"###);
-        bulk_aai_fc_row_042 => (r#"bulk aai 042"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
-        bulk_aai_fc_row_043 => (r#"bulk aai 043"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
-        bulk_aai_fc_row_044 => (r#"bulk aai 044"#, r###"cd -q / 2>/dev/null; print -r $?"###);
-        bulk_aai_fc_row_045 => (r#"bulk aai 045"#, r###"print -r $PWD"###);
-        bulk_aai_fc_row_046 => (r#"bulk aai 046"#, r###"print -r ${PWD:h}"###);
-        bulk_aai_fc_row_047 => (r#"bulk aai 047"#, r###"print -r ${PWD:t}"###);
-        bulk_aai_fc_row_048 => (r#"bulk aai 048"#, r###"print -r ${PWD:r}"###);
+        bulk_aai_fc_row_001 => (r#"bulk aai 001"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_aai_fc_row_002 => (r#"bulk aai 002"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_aai_fc_row_003 => (r#"bulk aai 003"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_aai_fc_row_004 => (r#"bulk aai 004"#, r###"setopt correct; print -r $?"###);
+        bulk_aai_fc_row_005 => (r#"bulk aai 005"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_aai_fc_row_006 => (r#"bulk aai 006"#, r###"setopt completealiases; print -r $?"###);
+        bulk_aai_fc_row_007 => (r#"bulk aai 007"#, r###"setopt globdots; print -r $?"###);
+        bulk_aai_fc_row_008 => (r#"bulk aai 008"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_aai_fc_row_009 => (r#"bulk aai 009"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_aai_fc_row_010 => (r#"bulk aai 010"#, r###"setopt markdirs; print -r $?"###);
+        bulk_aai_fc_row_011 => (r#"bulk aai 011"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_aai_fc_row_012 => (r#"bulk aai 012"#, r###"setopt chase_links; print -r $?"###);
+        bulk_aai_fc_row_013 => (r#"bulk aai 013"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_aai_fc_row_014 => (r#"bulk aai 014"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_aai_fc_row_015 => (r#"bulk aai 015"#, r###"setopt pushdsilent; print -r $?"###);
+        bulk_aai_fc_row_016 => (r#"bulk aai 016"#, r###"setopt pushdtohome; print -r $?"###);
+        bulk_aai_fc_row_017 => (r#"bulk aai 017"#, r###"setopt autopushd; print -r $?"###);
+        bulk_aai_fc_row_018 => (r#"bulk aai 018"#, r###"setopt pushdminus; print -r $?"###);
+        bulk_aai_fc_row_019 => (r#"bulk aai 019"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_aai_fc_row_020 => (r#"bulk aai 020"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
+        bulk_aai_fc_row_021 => (r#"bulk aai 021"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
+        bulk_aai_fc_row_022 => (r#"bulk aai 022"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+        bulk_aai_fc_row_023 => (r#"bulk aai 023"#, r###"print -r $PWD"###);
+        bulk_aai_fc_row_024 => (r#"bulk aai 024"#, r###"print -r ${PWD:h}"###);
+        bulk_aai_fc_row_025 => (r#"bulk aai 025"#, r###"print -r ${PWD:t}"###);
+        bulk_aai_fc_row_026 => (r#"bulk aai 026"#, r###"print -r ${PWD:r}"###);
+        bulk_aai_fc_row_027 => (r#"bulk aai 027"#, r###"print -r ${PWD:e}"###);
+        bulk_aai_fc_row_028 => (r#"bulk aai 028"#, r###"print -r ${PWD:a}"###);
+        bulk_aai_fc_row_029 => (r#"bulk aai 029"#, r###"print -r ${PWD:A}"###);
+        bulk_aai_fc_row_030 => (r#"bulk aai 030"#, r###"read -r line <<< 'one'; print -r $line"###);
+        bulk_aai_fc_row_031 => (r#"bulk aai 031"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
+        bulk_aai_fc_row_032 => (r#"bulk aai 032"#, r###"print -r $'tab\there'"###);
+        bulk_aai_fc_row_033 => (r#"bulk aai 033"#, r###"print -r $'line1\nline2'"###);
+        bulk_aai_fc_row_034 => (r#"bulk aai 034"#, r###"printf '%q\n' 'a b'"###);
+        bulk_aai_fc_row_035 => (r#"bulk aai 035"#, r###"printf '%s\n' ok"###);
+        bulk_aai_fc_row_036 => (r#"bulk aai 036"#, r###"print -rn -- end"###);
+        bulk_aai_fc_row_037 => (r#"bulk aai 037"#, r###"print -rl -- a b"###);
+        bulk_aai_fc_row_038 => (r#"bulk aai 038"#, r###"print -fc '%s\n' hi"###);
+        bulk_aai_fc_row_039 => (r#"bulk aai 039"#, r###"whence -w print 2>/dev/null; print -r $?"###);
+        bulk_aai_fc_row_040 => (r#"bulk aai 040"#, r###"whence -c print 2>/dev/null; print -r $?"###);
+        bulk_aai_fc_row_041 => (r#"bulk aai 041"#, r###"which print 2>/dev/null; print -r $?"###);
+        bulk_aai_fc_row_042 => (r#"bulk aai 042"#, r###"command -v print 2>/dev/null; print -r $?"###);
+        bulk_aai_fc_row_043 => (r#"bulk aai 043"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_aai_fc_row_044 => (r#"bulk aai 044"#, r###"rehash 2>/dev/null; print -r $?"###);
+        bulk_aai_fc_row_045 => (r#"bulk aai 045"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
+        bulk_aai_fc_row_046 => (r#"bulk aai 046"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
+        bulk_aai_fc_row_047 => (r#"bulk aai 047"#, r###"export ZA=1; print -r $ZA"###);
+        bulk_aai_fc_row_048 => (r#"bulk aai 048"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aaj {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aaj_fc_row_001 => (r#"bulk aaj 001"#, r###"setopt pushdminus; print -r $?"###);
+        bulk_aaj_fc_row_002 => (r#"bulk aaj 002"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_aaj_fc_row_003 => (r#"bulk aaj 003"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
+        bulk_aaj_fc_row_004 => (r#"bulk aaj 004"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_005 => (r#"bulk aaj 005"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_006 => (r#"bulk aaj 006"#, r###"print -r $PWD"###);
+        bulk_aaj_fc_row_007 => (r#"bulk aaj 007"#, r###"print -r ${PWD:h}"###);
+        bulk_aaj_fc_row_008 => (r#"bulk aaj 008"#, r###"print -r ${PWD:t}"###);
+        bulk_aaj_fc_row_009 => (r#"bulk aaj 009"#, r###"print -r ${PWD:r}"###);
+        bulk_aaj_fc_row_010 => (r#"bulk aaj 010"#, r###"print -r ${PWD:e}"###);
+        bulk_aaj_fc_row_011 => (r#"bulk aaj 011"#, r###"print -r ${PWD:a}"###);
+        bulk_aaj_fc_row_012 => (r#"bulk aaj 012"#, r###"print -r ${PWD:A}"###);
+        bulk_aaj_fc_row_013 => (r#"bulk aaj 013"#, r###"read -r line <<< 'one'; print -r $line"###);
+        bulk_aaj_fc_row_014 => (r#"bulk aaj 014"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
+        bulk_aaj_fc_row_015 => (r#"bulk aaj 015"#, r###"print -r $'tab\there'"###);
+        bulk_aaj_fc_row_016 => (r#"bulk aaj 016"#, r###"print -r $'line1\nline2'"###);
+        bulk_aaj_fc_row_017 => (r#"bulk aaj 017"#, r###"printf '%q\n' 'a b'"###);
+        bulk_aaj_fc_row_018 => (r#"bulk aaj 018"#, r###"printf '%s\n' ok"###);
+        bulk_aaj_fc_row_019 => (r#"bulk aaj 019"#, r###"print -rn -- end"###);
+        bulk_aaj_fc_row_020 => (r#"bulk aaj 020"#, r###"print -rl -- a b"###);
+        bulk_aaj_fc_row_021 => (r#"bulk aaj 021"#, r###"print -fc '%s\n' hi"###);
+        bulk_aaj_fc_row_022 => (r#"bulk aaj 022"#, r###"whence -w print 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_023 => (r#"bulk aaj 023"#, r###"whence -c print 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_024 => (r#"bulk aaj 024"#, r###"which print 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_025 => (r#"bulk aaj 025"#, r###"command -v print 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_026 => (r#"bulk aaj 026"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_027 => (r#"bulk aaj 027"#, r###"rehash 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_028 => (r#"bulk aaj 028"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
+        bulk_aaj_fc_row_029 => (r#"bulk aaj 029"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
+        bulk_aaj_fc_row_030 => (r#"bulk aaj 030"#, r###"export ZA=1; print -r $ZA"###);
+        bulk_aaj_fc_row_031 => (r#"bulk aaj 031"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
+        bulk_aaj_fc_row_032 => (r#"bulk aaj 032"#, r###"typeset -x ZB=2; print -r $ZB"###);
+        bulk_aaj_fc_row_033 => (r#"bulk aaj 033"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
+        bulk_aaj_fc_row_034 => (r#"bulk aaj 034"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
+        bulk_aaj_fc_row_035 => (r#"bulk aaj 035"#, r###"shift; print -r $1; set -- a b c"###);
+        bulk_aaj_fc_row_036 => (r#"bulk aaj 036"#, r###"(( $# )); print -r $#"###);
+        bulk_aaj_fc_row_037 => (r#"bulk aaj 037"#, r###"print -r ${argv[1]}"###);
+        bulk_aaj_fc_row_038 => (r#"bulk aaj 038"#, r###"print -r ${*[1]}"###);
+        bulk_aaj_fc_row_039 => (r#"bulk aaj 039"#, r###"print -r $@[1]"###);
+        bulk_aaj_fc_row_040 => (r#"bulk aaj 040"#, r###"print -r ${@:2}"###);
+        bulk_aaj_fc_row_041 => (r#"bulk aaj 041"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
+        bulk_aaj_fc_row_042 => (r#"bulk aaj 042"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_043 => (r#"bulk aaj 043"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
+        bulk_aaj_fc_row_044 => (r#"bulk aaj 044"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
+        bulk_aaj_fc_row_045 => (r#"bulk aaj 045"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
+        bulk_aaj_fc_row_046 => (r#"bulk aaj 046"#, r###"str=%n; print -r ${(%)str}"###);
+        bulk_aaj_fc_row_047 => (r#"bulk aaj 047"#, r###"str=%N; print -r ${(%)str}"###);
+        bulk_aaj_fc_row_048 => (r#"bulk aaj 048"#, r###"str=%~; print -r ${(%)str}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aak {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aak_fc_row_001 => (r#"bulk aak 001"#, r###"print -r $'line1\nline2'"###);
+        bulk_aak_fc_row_002 => (r#"bulk aak 002"#, r###"printf '%q\n' 'a b'"###);
+        bulk_aak_fc_row_003 => (r#"bulk aak 003"#, r###"printf '%s\n' ok"###);
+        bulk_aak_fc_row_004 => (r#"bulk aak 004"#, r###"print -rn -- end"###);
+        bulk_aak_fc_row_005 => (r#"bulk aak 005"#, r###"print -rl -- a b"###);
+        bulk_aak_fc_row_006 => (r#"bulk aak 006"#, r###"print -fc '%s\n' hi"###);
+        bulk_aak_fc_row_007 => (r#"bulk aak 007"#, r###"whence -w print 2>/dev/null; print -r $?"###);
+        bulk_aak_fc_row_008 => (r#"bulk aak 008"#, r###"whence -c print 2>/dev/null; print -r $?"###);
+        bulk_aak_fc_row_009 => (r#"bulk aak 009"#, r###"which print 2>/dev/null; print -r $?"###);
+        bulk_aak_fc_row_010 => (r#"bulk aak 010"#, r###"command -v print 2>/dev/null; print -r $?"###);
+        bulk_aak_fc_row_011 => (r#"bulk aak 011"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_aak_fc_row_012 => (r#"bulk aak 012"#, r###"rehash 2>/dev/null; print -r $?"###);
+        bulk_aak_fc_row_013 => (r#"bulk aak 013"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
+        bulk_aak_fc_row_014 => (r#"bulk aak 014"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
+        bulk_aak_fc_row_015 => (r#"bulk aak 015"#, r###"export ZA=1; print -r $ZA"###);
+        bulk_aak_fc_row_016 => (r#"bulk aak 016"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
+        bulk_aak_fc_row_017 => (r#"bulk aak 017"#, r###"typeset -x ZB=2; print -r $ZB"###);
+        bulk_aak_fc_row_018 => (r#"bulk aak 018"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
+        bulk_aak_fc_row_019 => (r#"bulk aak 019"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
+        bulk_aak_fc_row_020 => (r#"bulk aak 020"#, r###"shift; print -r $1; set -- a b c"###);
+        bulk_aak_fc_row_021 => (r#"bulk aak 021"#, r###"(( $# )); print -r $#"###);
+        bulk_aak_fc_row_022 => (r#"bulk aak 022"#, r###"print -r ${argv[1]}"###);
+        bulk_aak_fc_row_023 => (r#"bulk aak 023"#, r###"print -r ${*[1]}"###);
+        bulk_aak_fc_row_024 => (r#"bulk aak 024"#, r###"print -r $@[1]"###);
+        bulk_aak_fc_row_025 => (r#"bulk aak 025"#, r###"print -r ${@:2}"###);
+        bulk_aak_fc_row_026 => (r#"bulk aak 026"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
+        bulk_aak_fc_row_027 => (r#"bulk aak 027"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
+        bulk_aak_fc_row_028 => (r#"bulk aak 028"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
+        bulk_aak_fc_row_029 => (r#"bulk aak 029"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
+        bulk_aak_fc_row_030 => (r#"bulk aak 030"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
+        bulk_aak_fc_row_031 => (r#"bulk aak 031"#, r###"str=%n; print -r ${(%)str}"###);
+        bulk_aak_fc_row_032 => (r#"bulk aak 032"#, r###"str=%N; print -r ${(%)str}"###);
+        bulk_aak_fc_row_033 => (r#"bulk aak 033"#, r###"str=%~; print -r ${(%)str}"###);
+        bulk_aak_fc_row_034 => (r#"bulk aak 034"#, r###"str=%d; print -r ${(%)str}"###);
+        bulk_aak_fc_row_035 => (r#"bulk aak 035"#, r###"str=%m; print -r ${(%)str}"###);
+        bulk_aak_fc_row_036 => (r#"bulk aak 036"#, r###"str=%#; print -r ${(%)str}"###);
+        bulk_aak_fc_row_037 => (r#"bulk aak 037"#, r###"str=%?; print -r ${(%)str}"###);
+        bulk_aak_fc_row_038 => (r#"bulk aak 038"#, r###"str=%_; print -r ${(%)str}"###);
+        bulk_aak_fc_row_039 => (r#"bulk aak 039"#, r###"str=%h; print -r ${(%)str}"###);
+        bulk_aak_fc_row_040 => (r#"bulk aak 040"#, r###"str=%!; print -r ${(%)str}"###);
+        bulk_aak_fc_row_041 => (r#"bulk aak 041"#, r###"str=%i; print -r ${(%)str}"###);
+        bulk_aak_fc_row_042 => (r#"bulk aak 042"#, r###"str=%I; print -r ${(%)str}"###);
+        bulk_aak_fc_row_043 => (r#"bulk aak 043"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_aak_fc_row_044 => (r#"bulk aak 044"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_aak_fc_row_045 => (r#"bulk aak 045"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_aak_fc_row_046 => (r#"bulk aak 046"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_aak_fc_row_047 => (r#"bulk aak 047"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_aak_fc_row_048 => (r#"bulk aak 048"#, r###"str=%*; print -r ${(%)str}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aal {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aal_fc_row_001 => (r#"bulk aal 001"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
+        bulk_aal_fc_row_002 => (r#"bulk aal 002"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
+        bulk_aal_fc_row_003 => (r#"bulk aal 003"#, r###"shift; print -r $1; set -- a b c"###);
+        bulk_aal_fc_row_004 => (r#"bulk aal 004"#, r###"(( $# )); print -r $#"###);
+        bulk_aal_fc_row_005 => (r#"bulk aal 005"#, r###"print -r ${argv[1]}"###);
+        bulk_aal_fc_row_006 => (r#"bulk aal 006"#, r###"print -r ${*[1]}"###);
+        bulk_aal_fc_row_007 => (r#"bulk aal 007"#, r###"print -r $@[1]"###);
+        bulk_aal_fc_row_008 => (r#"bulk aal 008"#, r###"print -r ${@:2}"###);
+        bulk_aal_fc_row_009 => (r#"bulk aal 009"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
+        bulk_aal_fc_row_010 => (r#"bulk aal 010"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
+        bulk_aal_fc_row_011 => (r#"bulk aal 011"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
+        bulk_aal_fc_row_012 => (r#"bulk aal 012"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
+        bulk_aal_fc_row_013 => (r#"bulk aal 013"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
+        bulk_aal_fc_row_014 => (r#"bulk aal 014"#, r###"str=%n; print -r ${(%)str}"###);
+        bulk_aal_fc_row_015 => (r#"bulk aal 015"#, r###"str=%N; print -r ${(%)str}"###);
+        bulk_aal_fc_row_016 => (r#"bulk aal 016"#, r###"str=%~; print -r ${(%)str}"###);
+        bulk_aal_fc_row_017 => (r#"bulk aal 017"#, r###"str=%d; print -r ${(%)str}"###);
+        bulk_aal_fc_row_018 => (r#"bulk aal 018"#, r###"str=%m; print -r ${(%)str}"###);
+        bulk_aal_fc_row_019 => (r#"bulk aal 019"#, r###"str=%#; print -r ${(%)str}"###);
+        bulk_aal_fc_row_020 => (r#"bulk aal 020"#, r###"str=%?; print -r ${(%)str}"###);
+        bulk_aal_fc_row_021 => (r#"bulk aal 021"#, r###"str=%_; print -r ${(%)str}"###);
+        bulk_aal_fc_row_022 => (r#"bulk aal 022"#, r###"str=%h; print -r ${(%)str}"###);
+        bulk_aal_fc_row_023 => (r#"bulk aal 023"#, r###"str=%!; print -r ${(%)str}"###);
+        bulk_aal_fc_row_024 => (r#"bulk aal 024"#, r###"str=%i; print -r ${(%)str}"###);
+        bulk_aal_fc_row_025 => (r#"bulk aal 025"#, r###"str=%I; print -r ${(%)str}"###);
+        bulk_aal_fc_row_026 => (r#"bulk aal 026"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_aal_fc_row_027 => (r#"bulk aal 027"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_aal_fc_row_028 => (r#"bulk aal 028"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_aal_fc_row_029 => (r#"bulk aal 029"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_aal_fc_row_030 => (r#"bulk aal 030"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_aal_fc_row_031 => (r#"bulk aal 031"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aal_fc_row_032 => (r#"bulk aal 032"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_aal_fc_row_033 => (r#"bulk aal 033"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_aal_fc_row_034 => (r#"bulk aal 034"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_aal_fc_row_035 => (r#"bulk aal 035"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_aal_fc_row_036 => (r#"bulk aal 036"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_aal_fc_row_037 => (r#"bulk aal 037"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_aal_fc_row_038 => (r#"bulk aal 038"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_aal_fc_row_039 => (r#"bulk aal 039"#, r###"true; print -r $?"###);
+        bulk_aal_fc_row_040 => (r#"bulk aal 040"#, r###"false; print -r $?"###);
+        bulk_aal_fc_row_041 => (r#"bulk aal 041"#, r###"print -r hello"###);
+        bulk_aal_fc_row_042 => (r#"bulk aal 042"#, r###"echo one two"###);
+        bulk_aal_fc_row_043 => (r#"bulk aal 043"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_aal_fc_row_044 => (r#"bulk aal 044"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_aal_fc_row_045 => (r#"bulk aal 045"#, r###"command true; print -r $?"###);
+        bulk_aal_fc_row_046 => (r#"bulk aal 046"#, r###"builtin true; print -r $?"###);
+        bulk_aal_fc_row_047 => (r#"bulk aal 047"#, r###"if true; then echo t; fi"###);
+        bulk_aal_fc_row_048 => (r#"bulk aal 048"#, r###"if false; then echo e; else echo f; fi"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aam {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aam_fc_row_001 => (r#"bulk aam 001"#, r###"str=%~; print -r ${(%)str}"###);
+        bulk_aam_fc_row_002 => (r#"bulk aam 002"#, r###"str=%d; print -r ${(%)str}"###);
+        bulk_aam_fc_row_003 => (r#"bulk aam 003"#, r###"str=%m; print -r ${(%)str}"###);
+        bulk_aam_fc_row_004 => (r#"bulk aam 004"#, r###"str=%#; print -r ${(%)str}"###);
+        bulk_aam_fc_row_005 => (r#"bulk aam 005"#, r###"str=%?; print -r ${(%)str}"###);
+        bulk_aam_fc_row_006 => (r#"bulk aam 006"#, r###"str=%_; print -r ${(%)str}"###);
+        bulk_aam_fc_row_007 => (r#"bulk aam 007"#, r###"str=%h; print -r ${(%)str}"###);
+        bulk_aam_fc_row_008 => (r#"bulk aam 008"#, r###"str=%!; print -r ${(%)str}"###);
+        bulk_aam_fc_row_009 => (r#"bulk aam 009"#, r###"str=%i; print -r ${(%)str}"###);
+        bulk_aam_fc_row_010 => (r#"bulk aam 010"#, r###"str=%I; print -r ${(%)str}"###);
+        bulk_aam_fc_row_011 => (r#"bulk aam 011"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_aam_fc_row_012 => (r#"bulk aam 012"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_aam_fc_row_013 => (r#"bulk aam 013"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_aam_fc_row_014 => (r#"bulk aam 014"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_aam_fc_row_015 => (r#"bulk aam 015"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_aam_fc_row_016 => (r#"bulk aam 016"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aam_fc_row_017 => (r#"bulk aam 017"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_aam_fc_row_018 => (r#"bulk aam 018"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_aam_fc_row_019 => (r#"bulk aam 019"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_aam_fc_row_020 => (r#"bulk aam 020"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_aam_fc_row_021 => (r#"bulk aam 021"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_aam_fc_row_022 => (r#"bulk aam 022"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_aam_fc_row_023 => (r#"bulk aam 023"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_aam_fc_row_024 => (r#"bulk aam 024"#, r###"true; print -r $?"###);
+        bulk_aam_fc_row_025 => (r#"bulk aam 025"#, r###"false; print -r $?"###);
+        bulk_aam_fc_row_026 => (r#"bulk aam 026"#, r###"print -r hello"###);
+        bulk_aam_fc_row_027 => (r#"bulk aam 027"#, r###"echo one two"###);
+        bulk_aam_fc_row_028 => (r#"bulk aam 028"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_aam_fc_row_029 => (r#"bulk aam 029"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_aam_fc_row_030 => (r#"bulk aam 030"#, r###"command true; print -r $?"###);
+        bulk_aam_fc_row_031 => (r#"bulk aam 031"#, r###"builtin true; print -r $?"###);
+        bulk_aam_fc_row_032 => (r#"bulk aam 032"#, r###"if true; then echo t; fi"###);
+        bulk_aam_fc_row_033 => (r#"bulk aam 033"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_aam_fc_row_034 => (r#"bulk aam 034"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_aam_fc_row_035 => (r#"bulk aam 035"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_aam_fc_row_036 => (r#"bulk aam 036"#, r###"repeat 2; do print -r r; done"###);
+        bulk_aam_fc_row_037 => (r#"bulk aam 037"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_aam_fc_row_038 => (r#"bulk aam 038"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_aam_fc_row_039 => (r#"bulk aam 039"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_aam_fc_row_040 => (r#"bulk aam 040"#, r###"{ echo a; echo b; }"###);
+        bulk_aam_fc_row_041 => (r#"bulk aam 041"#, r###"(echo sub)"###);
+        bulk_aam_fc_row_042 => (r#"bulk aam 042"#, r###"(( 1 )) || echo no"###);
+        bulk_aam_fc_row_043 => (r#"bulk aam 043"#, r###"(( 0 )) && echo no"###);
+        bulk_aam_fc_row_044 => (r#"bulk aam 044"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_aam_fc_row_045 => (r#"bulk aam 045"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_aam_fc_row_046 => (r#"bulk aam 046"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_aam_fc_row_047 => (r#"bulk aam 047"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_aam_fc_row_048 => (r#"bulk aam 048"#, r###"print -r $(( !0 ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aan {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aan_fc_row_001 => (r#"bulk aan 001"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_aan_fc_row_002 => (r#"bulk aan 002"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_aan_fc_row_003 => (r#"bulk aan 003"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_aan_fc_row_004 => (r#"bulk aan 004"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_aan_fc_row_005 => (r#"bulk aan 005"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_aan_fc_row_006 => (r#"bulk aan 006"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aan_fc_row_007 => (r#"bulk aan 007"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_aan_fc_row_008 => (r#"bulk aan 008"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_aan_fc_row_009 => (r#"bulk aan 009"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_aan_fc_row_010 => (r#"bulk aan 010"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_aan_fc_row_011 => (r#"bulk aan 011"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_aan_fc_row_012 => (r#"bulk aan 012"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_aan_fc_row_013 => (r#"bulk aan 013"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_aan_fc_row_014 => (r#"bulk aan 014"#, r###"true; print -r $?"###);
+        bulk_aan_fc_row_015 => (r#"bulk aan 015"#, r###"false; print -r $?"###);
+        bulk_aan_fc_row_016 => (r#"bulk aan 016"#, r###"print -r hello"###);
+        bulk_aan_fc_row_017 => (r#"bulk aan 017"#, r###"echo one two"###);
+        bulk_aan_fc_row_018 => (r#"bulk aan 018"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_aan_fc_row_019 => (r#"bulk aan 019"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_aan_fc_row_020 => (r#"bulk aan 020"#, r###"command true; print -r $?"###);
+        bulk_aan_fc_row_021 => (r#"bulk aan 021"#, r###"builtin true; print -r $?"###);
+        bulk_aan_fc_row_022 => (r#"bulk aan 022"#, r###"if true; then echo t; fi"###);
+        bulk_aan_fc_row_023 => (r#"bulk aan 023"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_aan_fc_row_024 => (r#"bulk aan 024"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_aan_fc_row_025 => (r#"bulk aan 025"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_aan_fc_row_026 => (r#"bulk aan 026"#, r###"repeat 2; do print -r r; done"###);
+        bulk_aan_fc_row_027 => (r#"bulk aan 027"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_aan_fc_row_028 => (r#"bulk aan 028"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_aan_fc_row_029 => (r#"bulk aan 029"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_aan_fc_row_030 => (r#"bulk aan 030"#, r###"{ echo a; echo b; }"###);
+        bulk_aan_fc_row_031 => (r#"bulk aan 031"#, r###"(echo sub)"###);
+        bulk_aan_fc_row_032 => (r#"bulk aan 032"#, r###"(( 1 )) || echo no"###);
+        bulk_aan_fc_row_033 => (r#"bulk aan 033"#, r###"(( 0 )) && echo no"###);
+        bulk_aan_fc_row_034 => (r#"bulk aan 034"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_aan_fc_row_035 => (r#"bulk aan 035"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_aan_fc_row_036 => (r#"bulk aan 036"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_aan_fc_row_037 => (r#"bulk aan 037"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_aan_fc_row_038 => (r#"bulk aan 038"#, r###"print -r $(( !0 ))"###);
+        bulk_aan_fc_row_039 => (r#"bulk aan 039"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_aan_fc_row_040 => (r#"bulk aan 040"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_aan_fc_row_041 => (r#"bulk aan 041"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_aan_fc_row_042 => (r#"bulk aan 042"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_aan_fc_row_043 => (r#"bulk aan 043"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_aan_fc_row_044 => (r#"bulk aan 044"#, r###"print -r $(( true ))"###);
+        bulk_aan_fc_row_045 => (r#"bulk aan 045"#, r###"print -r $(( false ))"###);
+        bulk_aan_fc_row_046 => (r#"bulk aan 046"#, r###"[[ -e / ]]; print -r $?"###);
+        bulk_aan_fc_row_047 => (r#"bulk aan 047"#, r###"[[ -d /tmp ]]; print -r $?"###);
+        bulk_aan_fc_row_048 => (r#"bulk aan 048"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aao {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aao_fc_row_001 => (r#"bulk aao 001"#, r###"print -r hello"###);
+        bulk_aao_fc_row_002 => (r#"bulk aao 002"#, r###"echo one two"###);
+        bulk_aao_fc_row_003 => (r#"bulk aao 003"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_aao_fc_row_004 => (r#"bulk aao 004"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_aao_fc_row_005 => (r#"bulk aao 005"#, r###"command true; print -r $?"###);
+        bulk_aao_fc_row_006 => (r#"bulk aao 006"#, r###"builtin true; print -r $?"###);
+        bulk_aao_fc_row_007 => (r#"bulk aao 007"#, r###"if true; then echo t; fi"###);
+        bulk_aao_fc_row_008 => (r#"bulk aao 008"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_aao_fc_row_009 => (r#"bulk aao 009"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_aao_fc_row_010 => (r#"bulk aao 010"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_aao_fc_row_011 => (r#"bulk aao 011"#, r###"repeat 2; do print -r r; done"###);
+        bulk_aao_fc_row_012 => (r#"bulk aao 012"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_aao_fc_row_013 => (r#"bulk aao 013"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_aao_fc_row_014 => (r#"bulk aao 014"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_aao_fc_row_015 => (r#"bulk aao 015"#, r###"{ echo a; echo b; }"###);
+        bulk_aao_fc_row_016 => (r#"bulk aao 016"#, r###"(echo sub)"###);
+        bulk_aao_fc_row_017 => (r#"bulk aao 017"#, r###"(( 1 )) || echo no"###);
+        bulk_aao_fc_row_018 => (r#"bulk aao 018"#, r###"(( 0 )) && echo no"###);
+        bulk_aao_fc_row_019 => (r#"bulk aao 019"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_aao_fc_row_020 => (r#"bulk aao 020"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_aao_fc_row_021 => (r#"bulk aao 021"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_aao_fc_row_022 => (r#"bulk aao 022"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_aao_fc_row_023 => (r#"bulk aao 023"#, r###"print -r $(( !0 ))"###);
+        bulk_aao_fc_row_024 => (r#"bulk aao 024"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_aao_fc_row_025 => (r#"bulk aao 025"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_aao_fc_row_026 => (r#"bulk aao 026"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_aao_fc_row_027 => (r#"bulk aao 027"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_aao_fc_row_028 => (r#"bulk aao 028"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_aao_fc_row_029 => (r#"bulk aao 029"#, r###"print -r $(( true ))"###);
+        bulk_aao_fc_row_030 => (r#"bulk aao 030"#, r###"print -r $(( false ))"###);
+        bulk_aao_fc_row_031 => (r#"bulk aao 031"#, r###"[[ -e / ]]; print -r $?"###);
+        bulk_aao_fc_row_032 => (r#"bulk aao 032"#, r###"[[ -d /tmp ]]; print -r $?"###);
+        bulk_aao_fc_row_033 => (r#"bulk aao 033"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
+        bulk_aao_fc_row_034 => (r#"bulk aao 034"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
+        bulk_aao_fc_row_035 => (r#"bulk aao 035"#, r###"[[ -w /tmp ]]; print -r $?"###);
+        bulk_aao_fc_row_036 => (r#"bulk aao 036"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
+        bulk_aao_fc_row_037 => (r#"bulk aao 037"#, r###"[[ 42 = <-> ]]; print -r $?"###);
+        bulk_aao_fc_row_038 => (r#"bulk aao 038"#, r###"[[ abc = <-> ]]; print -r $?"###);
+        bulk_aao_fc_row_039 => (r#"bulk aao 039"#, r####"[[ host = ##host ]]; print -r $?"####);
+        bulk_aao_fc_row_040 => (r#"bulk aao 040"#, r###"[[ -v x ]]; print -r $?; x=1"###);
+        bulk_aao_fc_row_041 => (r#"bulk aao 041"#, r###"unset y; [[ -v y ]]; print -r $?"###);
+        bulk_aao_fc_row_042 => (r#"bulk aao 042"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
+        bulk_aao_fc_row_043 => (r#"bulk aao 043"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
+        bulk_aao_fc_row_044 => (r#"bulk aao 044"#, r###"[[ abc = a* ]]; print -r $?"###);
+        bulk_aao_fc_row_045 => (r#"bulk aao 045"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
+        bulk_aao_fc_row_046 => (r#"bulk aao 046"#, r###"[[ -z '' ]]; print -r $?"###);
+        bulk_aao_fc_row_047 => (r#"bulk aao 047"#, r###"[[ -n abc ]]; print -r $?"###);
+        bulk_aao_fc_row_048 => (r#"bulk aao 048"#, r###"typeset -i n=10; print -r $n"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aap {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aap_fc_row_001 => (r#"bulk aap 001"#, r###"(( 0 )) && echo no"###);
+        bulk_aap_fc_row_002 => (r#"bulk aap 002"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_aap_fc_row_003 => (r#"bulk aap 003"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_aap_fc_row_004 => (r#"bulk aap 004"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_aap_fc_row_005 => (r#"bulk aap 005"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_aap_fc_row_006 => (r#"bulk aap 006"#, r###"print -r $(( !0 ))"###);
+        bulk_aap_fc_row_007 => (r#"bulk aap 007"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_aap_fc_row_008 => (r#"bulk aap 008"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_aap_fc_row_009 => (r#"bulk aap 009"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_aap_fc_row_010 => (r#"bulk aap 010"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_aap_fc_row_011 => (r#"bulk aap 011"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_aap_fc_row_012 => (r#"bulk aap 012"#, r###"print -r $(( true ))"###);
+        bulk_aap_fc_row_013 => (r#"bulk aap 013"#, r###"print -r $(( false ))"###);
+        bulk_aap_fc_row_014 => (r#"bulk aap 014"#, r###"[[ -e / ]]; print -r $?"###);
+        bulk_aap_fc_row_015 => (r#"bulk aap 015"#, r###"[[ -d /tmp ]]; print -r $?"###);
+        bulk_aap_fc_row_016 => (r#"bulk aap 016"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
+        bulk_aap_fc_row_017 => (r#"bulk aap 017"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
+        bulk_aap_fc_row_018 => (r#"bulk aap 018"#, r###"[[ -w /tmp ]]; print -r $?"###);
+        bulk_aap_fc_row_019 => (r#"bulk aap 019"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
+        bulk_aap_fc_row_020 => (r#"bulk aap 020"#, r###"[[ 42 = <-> ]]; print -r $?"###);
+        bulk_aap_fc_row_021 => (r#"bulk aap 021"#, r###"[[ abc = <-> ]]; print -r $?"###);
+        bulk_aap_fc_row_022 => (r#"bulk aap 022"#, r####"[[ host = ##host ]]; print -r $?"####);
+        bulk_aap_fc_row_023 => (r#"bulk aap 023"#, r###"[[ -v x ]]; print -r $?; x=1"###);
+        bulk_aap_fc_row_024 => (r#"bulk aap 024"#, r###"unset y; [[ -v y ]]; print -r $?"###);
+        bulk_aap_fc_row_025 => (r#"bulk aap 025"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
+        bulk_aap_fc_row_026 => (r#"bulk aap 026"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
+        bulk_aap_fc_row_027 => (r#"bulk aap 027"#, r###"[[ abc = a* ]]; print -r $?"###);
+        bulk_aap_fc_row_028 => (r#"bulk aap 028"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
+        bulk_aap_fc_row_029 => (r#"bulk aap 029"#, r###"[[ -z '' ]]; print -r $?"###);
+        bulk_aap_fc_row_030 => (r#"bulk aap 030"#, r###"[[ -n abc ]]; print -r $?"###);
+        bulk_aap_fc_row_031 => (r#"bulk aap 031"#, r###"typeset -i n=10; print -r $n"###);
+        bulk_aap_fc_row_032 => (r#"bulk aap 032"#, r###"typeset -l n=AbC; print -r $n"###);
+        bulk_aap_fc_row_033 => (r#"bulk aap 033"#, r###"typeset -u n=xy; print -r $n"###);
+        bulk_aap_fc_row_034 => (r#"bulk aap 034"#, r###"typeset -Z5 n=7; print -r $n"###);
+        bulk_aap_fc_row_035 => (r#"bulk aap 035"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
+        bulk_aap_fc_row_036 => (r#"bulk aap 036"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
+        bulk_aap_fc_row_037 => (r#"bulk aap 037"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
+        bulk_aap_fc_row_038 => (r#"bulk aap 038"#, r###"unset v; print -r ${v:-def}"###);
+        bulk_aap_fc_row_039 => (r#"bulk aap 039"#, r###"v=set; print -r ${v:+yes}"###);
+        bulk_aap_fc_row_040 => (r#"bulk aap 040"#, r###"unset v; : ${v::=def}; print -r $v"###);
+        bulk_aap_fc_row_041 => (r#"bulk aap 041"#, r###"print -r ${PWD:h}"###);
+        bulk_aap_fc_row_042 => (r#"bulk aap 042"#, r###"print -r ${PWD:t}"###);
+        bulk_aap_fc_row_043 => (r#"bulk aap 043"#, r###"true | true; print -r $?"###);
+        bulk_aap_fc_row_044 => (r#"bulk aap 044"#, r###"true | false; print -r $?"###);
+        bulk_aap_fc_row_045 => (r#"bulk aap 045"#, r###"print -r ${pipestatus[1]}; true | false"###);
+        bulk_aap_fc_row_046 => (r#"bulk aap 046"#, r###"print -r ${#pipestatus}; true | true | true"###);
+        bulk_aap_fc_row_047 => (r#"bulk aap 047"#, r###"set -- a b c; shift; print -r $1"###);
+        bulk_aap_fc_row_048 => (r#"bulk aap 048"#, r###"set -- a b c; shift 2; print -r $#"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aaq {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aaq_fc_row_001 => (r#"bulk aaq 001"#, r###"[[ -w /tmp ]]; print -r $?"###);
+        bulk_aaq_fc_row_002 => (r#"bulk aaq 002"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
+        bulk_aaq_fc_row_003 => (r#"bulk aaq 003"#, r###"[[ 42 = <-> ]]; print -r $?"###);
+        bulk_aaq_fc_row_004 => (r#"bulk aaq 004"#, r###"[[ abc = <-> ]]; print -r $?"###);
+        bulk_aaq_fc_row_005 => (r#"bulk aaq 005"#, r####"[[ host = ##host ]]; print -r $?"####);
+        bulk_aaq_fc_row_006 => (r#"bulk aaq 006"#, r###"[[ -v x ]]; print -r $?; x=1"###);
+        bulk_aaq_fc_row_007 => (r#"bulk aaq 007"#, r###"unset y; [[ -v y ]]; print -r $?"###);
+        bulk_aaq_fc_row_008 => (r#"bulk aaq 008"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
+        bulk_aaq_fc_row_009 => (r#"bulk aaq 009"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
+        bulk_aaq_fc_row_010 => (r#"bulk aaq 010"#, r###"[[ abc = a* ]]; print -r $?"###);
+        bulk_aaq_fc_row_011 => (r#"bulk aaq 011"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
+        bulk_aaq_fc_row_012 => (r#"bulk aaq 012"#, r###"[[ -z '' ]]; print -r $?"###);
+        bulk_aaq_fc_row_013 => (r#"bulk aaq 013"#, r###"[[ -n abc ]]; print -r $?"###);
+        bulk_aaq_fc_row_014 => (r#"bulk aaq 014"#, r###"typeset -i n=10; print -r $n"###);
+        bulk_aaq_fc_row_015 => (r#"bulk aaq 015"#, r###"typeset -l n=AbC; print -r $n"###);
+        bulk_aaq_fc_row_016 => (r#"bulk aaq 016"#, r###"typeset -u n=xy; print -r $n"###);
+        bulk_aaq_fc_row_017 => (r#"bulk aaq 017"#, r###"typeset -Z5 n=7; print -r $n"###);
+        bulk_aaq_fc_row_018 => (r#"bulk aaq 018"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
+        bulk_aaq_fc_row_019 => (r#"bulk aaq 019"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
+        bulk_aaq_fc_row_020 => (r#"bulk aaq 020"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
+        bulk_aaq_fc_row_021 => (r#"bulk aaq 021"#, r###"unset v; print -r ${v:-def}"###);
+        bulk_aaq_fc_row_022 => (r#"bulk aaq 022"#, r###"v=set; print -r ${v:+yes}"###);
+        bulk_aaq_fc_row_023 => (r#"bulk aaq 023"#, r###"unset v; : ${v::=def}; print -r $v"###);
+        bulk_aaq_fc_row_024 => (r#"bulk aaq 024"#, r###"print -r ${PWD:h}"###);
+        bulk_aaq_fc_row_025 => (r#"bulk aaq 025"#, r###"print -r ${PWD:t}"###);
+        bulk_aaq_fc_row_026 => (r#"bulk aaq 026"#, r###"true | true; print -r $?"###);
+        bulk_aaq_fc_row_027 => (r#"bulk aaq 027"#, r###"true | false; print -r $?"###);
+        bulk_aaq_fc_row_028 => (r#"bulk aaq 028"#, r###"print -r ${pipestatus[1]}; true | false"###);
+        bulk_aaq_fc_row_029 => (r#"bulk aaq 029"#, r###"print -r ${#pipestatus}; true | true | true"###);
+        bulk_aaq_fc_row_030 => (r#"bulk aaq 030"#, r###"set -- a b c; shift; print -r $1"###);
+        bulk_aaq_fc_row_031 => (r#"bulk aaq 031"#, r###"set -- a b c; shift 2; print -r $#"###);
+        bulk_aaq_fc_row_032 => (r#"bulk aaq 032"#, r###"fn(){ print -r $1; }; fn x"###);
+        bulk_aaq_fc_row_033 => (r#"bulk aaq 033"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
+        bulk_aaq_fc_row_034 => (r#"bulk aaq 034"#, r###"fn(){ return 2; }; fn; print -r $?"###);
+        bulk_aaq_fc_row_035 => (r#"bulk aaq 035"#, r###"print -r ${(q)x}; x=hi"###);
+        bulk_aaq_fc_row_036 => (r#"bulk aaq 036"#, r###"print -r ${(qq)x}; x=hi"###);
+        bulk_aaq_fc_row_037 => (r#"bulk aaq 037"#, r###"x=hi; print -r ${(q-)x}"###);
+        bulk_aaq_fc_row_038 => (r#"bulk aaq 038"#, r###"x=hi; print -r ${(q+)x}"###);
+        bulk_aaq_fc_row_039 => (r#"bulk aaq 039"#, r###"print -r ${(w)w}; w=a b c"###);
+        bulk_aaq_fc_row_040 => (r#"bulk aaq 040"#, r###"print -r ${(u)a}; a=(a a b)"###);
+        bulk_aaq_fc_row_041 => (r#"bulk aaq 041"#, r###"print -r ${(o)a}; a=(c b a)"###);
+        bulk_aaq_fc_row_042 => (r#"bulk aaq 042"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
+        bulk_aaq_fc_row_043 => (r#"bulk aaq 043"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
+        bulk_aaq_fc_row_044 => (r#"bulk aaq 044"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
+        bulk_aaq_fc_row_045 => (r#"bulk aaq 045"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
+        bulk_aaq_fc_row_046 => (r#"bulk aaq 046"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
+        bulk_aaq_fc_row_047 => (r#"bulk aaq 047"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
+        bulk_aaq_fc_row_048 => (r#"bulk aaq 048"#, r###"print -r ${+options}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aar {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aar_fc_row_001 => (r#"bulk aar 001"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
+        bulk_aar_fc_row_002 => (r#"bulk aar 002"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
+        bulk_aar_fc_row_003 => (r#"bulk aar 003"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
+        bulk_aar_fc_row_004 => (r#"bulk aar 004"#, r###"unset v; print -r ${v:-def}"###);
+        bulk_aar_fc_row_005 => (r#"bulk aar 005"#, r###"v=set; print -r ${v:+yes}"###);
+        bulk_aar_fc_row_006 => (r#"bulk aar 006"#, r###"unset v; : ${v::=def}; print -r $v"###);
+        bulk_aar_fc_row_007 => (r#"bulk aar 007"#, r###"print -r ${PWD:h}"###);
+        bulk_aar_fc_row_008 => (r#"bulk aar 008"#, r###"print -r ${PWD:t}"###);
+        bulk_aar_fc_row_009 => (r#"bulk aar 009"#, r###"true | true; print -r $?"###);
+        bulk_aar_fc_row_010 => (r#"bulk aar 010"#, r###"true | false; print -r $?"###);
+        bulk_aar_fc_row_011 => (r#"bulk aar 011"#, r###"print -r ${pipestatus[1]}; true | false"###);
+        bulk_aar_fc_row_012 => (r#"bulk aar 012"#, r###"print -r ${#pipestatus}; true | true | true"###);
+        bulk_aar_fc_row_013 => (r#"bulk aar 013"#, r###"set -- a b c; shift; print -r $1"###);
+        bulk_aar_fc_row_014 => (r#"bulk aar 014"#, r###"set -- a b c; shift 2; print -r $#"###);
+        bulk_aar_fc_row_015 => (r#"bulk aar 015"#, r###"fn(){ print -r $1; }; fn x"###);
+        bulk_aar_fc_row_016 => (r#"bulk aar 016"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
+        bulk_aar_fc_row_017 => (r#"bulk aar 017"#, r###"fn(){ return 2; }; fn; print -r $?"###);
+        bulk_aar_fc_row_018 => (r#"bulk aar 018"#, r###"print -r ${(q)x}; x=hi"###);
+        bulk_aar_fc_row_019 => (r#"bulk aar 019"#, r###"print -r ${(qq)x}; x=hi"###);
+        bulk_aar_fc_row_020 => (r#"bulk aar 020"#, r###"x=hi; print -r ${(q-)x}"###);
+        bulk_aar_fc_row_021 => (r#"bulk aar 021"#, r###"x=hi; print -r ${(q+)x}"###);
+        bulk_aar_fc_row_022 => (r#"bulk aar 022"#, r###"print -r ${(w)w}; w=a b c"###);
+        bulk_aar_fc_row_023 => (r#"bulk aar 023"#, r###"print -r ${(u)a}; a=(a a b)"###);
+        bulk_aar_fc_row_024 => (r#"bulk aar 024"#, r###"print -r ${(o)a}; a=(c b a)"###);
+        bulk_aar_fc_row_025 => (r#"bulk aar 025"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
+        bulk_aar_fc_row_026 => (r#"bulk aar 026"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
+        bulk_aar_fc_row_027 => (r#"bulk aar 027"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
+        bulk_aar_fc_row_028 => (r#"bulk aar 028"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
+        bulk_aar_fc_row_029 => (r#"bulk aar 029"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
+        bulk_aar_fc_row_030 => (r#"bulk aar 030"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
+        bulk_aar_fc_row_031 => (r#"bulk aar 031"#, r###"print -r ${+options}"###);
+        bulk_aar_fc_row_032 => (r#"bulk aar 032"#, r###"print -r ${+parameters}"###);
+        bulk_aar_fc_row_033 => (r#"bulk aar 033"#, r###"print -r ${+aliases}"###);
+        bulk_aar_fc_row_034 => (r#"bulk aar 034"#, r###"print -r ${+functions}"###);
+        bulk_aar_fc_row_035 => (r#"bulk aar 035"#, r###"print -r $ZSH_NAME"###);
+        bulk_aar_fc_row_036 => (r#"bulk aar 036"#, r###"print -r ${ZSH_VERSION%%.*}"###);
+        bulk_aar_fc_row_037 => (r#"bulk aar 037"#, r###"whence -w print"###);
+        bulk_aar_fc_row_038 => (r#"bulk aar 038"#, r###"command -v true"###);
+        bulk_aar_fc_row_039 => (r#"bulk aar 039"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_aar_fc_row_040 => (r#"bulk aar 040"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
+        bulk_aar_fc_row_041 => (r#"bulk aar 041"#, r###"read -r line <<< 'one two'; print -r $line"###);
+        bulk_aar_fc_row_042 => (r#"bulk aar 042"#, r###"cat <<< 'herestring'"###);
+        bulk_aar_fc_row_043 => (r#"bulk aar 043"#, r###"echo hello 2>/dev/null"###);
+        bulk_aar_fc_row_044 => (r#"bulk aar 044"#, r###"printf '%s\n' a b c | head -1"###);
+        bulk_aar_fc_row_045 => (r#"bulk aar 045"#, r###"true && echo yes"###);
+        bulk_aar_fc_row_046 => (r#"bulk aar 046"#, r###"false || echo yes"###);
+        bulk_aar_fc_row_047 => (r#"bulk aar 047"#, r###"(exit 3); print -r $?"###);
+        bulk_aar_fc_row_048 => (r#"bulk aar 048"#, r###"print -r ${status}; (exit 4)"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aas {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aas_fc_row_001 => (r#"bulk aas 001"#, r###"print -r ${(q)x}; x=hi"###);
+        bulk_aas_fc_row_002 => (r#"bulk aas 002"#, r###"print -r ${(qq)x}; x=hi"###);
+        bulk_aas_fc_row_003 => (r#"bulk aas 003"#, r###"x=hi; print -r ${(q-)x}"###);
+        bulk_aas_fc_row_004 => (r#"bulk aas 004"#, r###"x=hi; print -r ${(q+)x}"###);
+        bulk_aas_fc_row_005 => (r#"bulk aas 005"#, r###"print -r ${(w)w}; w=a b c"###);
+        bulk_aas_fc_row_006 => (r#"bulk aas 006"#, r###"print -r ${(u)a}; a=(a a b)"###);
+        bulk_aas_fc_row_007 => (r#"bulk aas 007"#, r###"print -r ${(o)a}; a=(c b a)"###);
+        bulk_aas_fc_row_008 => (r#"bulk aas 008"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
+        bulk_aas_fc_row_009 => (r#"bulk aas 009"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
+        bulk_aas_fc_row_010 => (r#"bulk aas 010"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
+        bulk_aas_fc_row_011 => (r#"bulk aas 011"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
+        bulk_aas_fc_row_012 => (r#"bulk aas 012"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
+        bulk_aas_fc_row_013 => (r#"bulk aas 013"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
+        bulk_aas_fc_row_014 => (r#"bulk aas 014"#, r###"print -r ${+options}"###);
+        bulk_aas_fc_row_015 => (r#"bulk aas 015"#, r###"print -r ${+parameters}"###);
+        bulk_aas_fc_row_016 => (r#"bulk aas 016"#, r###"print -r ${+aliases}"###);
+        bulk_aas_fc_row_017 => (r#"bulk aas 017"#, r###"print -r ${+functions}"###);
+        bulk_aas_fc_row_018 => (r#"bulk aas 018"#, r###"print -r $ZSH_NAME"###);
+        bulk_aas_fc_row_019 => (r#"bulk aas 019"#, r###"print -r ${ZSH_VERSION%%.*}"###);
+        bulk_aas_fc_row_020 => (r#"bulk aas 020"#, r###"whence -w print"###);
+        bulk_aas_fc_row_021 => (r#"bulk aas 021"#, r###"command -v true"###);
+        bulk_aas_fc_row_022 => (r#"bulk aas 022"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_aas_fc_row_023 => (r#"bulk aas 023"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
+        bulk_aas_fc_row_024 => (r#"bulk aas 024"#, r###"read -r line <<< 'one two'; print -r $line"###);
+        bulk_aas_fc_row_025 => (r#"bulk aas 025"#, r###"cat <<< 'herestring'"###);
+        bulk_aas_fc_row_026 => (r#"bulk aas 026"#, r###"echo hello 2>/dev/null"###);
+        bulk_aas_fc_row_027 => (r#"bulk aas 027"#, r###"printf '%s\n' a b c | head -1"###);
+        bulk_aas_fc_row_028 => (r#"bulk aas 028"#, r###"true && echo yes"###);
+        bulk_aas_fc_row_029 => (r#"bulk aas 029"#, r###"false || echo yes"###);
+        bulk_aas_fc_row_030 => (r#"bulk aas 030"#, r###"(exit 3); print -r $?"###);
+        bulk_aas_fc_row_031 => (r#"bulk aas 031"#, r###"print -r ${status}; (exit 4)"###);
+        bulk_aas_fc_row_032 => (r#"bulk aas 032"#, r###"print -r $(( 1_000 + 1 ))"###);
+        bulk_aas_fc_row_033 => (r#"bulk aas 033"#, r###"print -r $(( 5#101 ))"###);
+        bulk_aas_fc_row_034 => (r#"bulk aas 034"#, r###"print -r $(( 0b1111 ))"###);
+        bulk_aas_fc_row_035 => (r#"bulk aas 035"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
+        bulk_aas_fc_row_036 => (r#"bulk aas 036"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
+        bulk_aas_fc_row_037 => (r#"bulk aas 037"#, r###"typeset -F2 f=3.14; print -r $f"###);
+        bulk_aas_fc_row_038 => (r#"bulk aas 038"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
+        bulk_aas_fc_row_039 => (r#"bulk aas 039"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
+        bulk_aas_fc_row_040 => (r#"bulk aas 040"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
+        bulk_aas_fc_row_041 => (r#"bulk aas 041"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
+        bulk_aas_fc_row_042 => (r#"bulk aas 042"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
+        bulk_aas_fc_row_043 => (r#"bulk aas 043"#, r###"print -r ${#x}; x=hello"###);
+        bulk_aas_fc_row_044 => (r#"bulk aas 044"#, r###"print -r ${#a}; a=(a b c)"###);
+        bulk_aas_fc_row_045 => (r#"bulk aas 045"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
+        bulk_aas_fc_row_046 => (r#"bulk aas 046"#, r###"print -r ${(b)x}; x=hi"###);
+        bulk_aas_fc_row_047 => (r#"bulk aas 047"#, r###"print -r ${(e):-2+2}"###);
+        bulk_aas_fc_row_048 => (r#"bulk aas 048"#, r###"print -r ${(P)r}; r=HOME"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aat {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aat_fc_row_001 => (r#"bulk aat 001"#, r###"print -r ${+aliases}"###);
+        bulk_aat_fc_row_002 => (r#"bulk aat 002"#, r###"print -r ${+functions}"###);
+        bulk_aat_fc_row_003 => (r#"bulk aat 003"#, r###"print -r $ZSH_NAME"###);
+        bulk_aat_fc_row_004 => (r#"bulk aat 004"#, r###"print -r ${ZSH_VERSION%%.*}"###);
+        bulk_aat_fc_row_005 => (r#"bulk aat 005"#, r###"whence -w print"###);
+        bulk_aat_fc_row_006 => (r#"bulk aat 006"#, r###"command -v true"###);
+        bulk_aat_fc_row_007 => (r#"bulk aat 007"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_aat_fc_row_008 => (r#"bulk aat 008"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
+        bulk_aat_fc_row_009 => (r#"bulk aat 009"#, r###"read -r line <<< 'one two'; print -r $line"###);
+        bulk_aat_fc_row_010 => (r#"bulk aat 010"#, r###"cat <<< 'herestring'"###);
+        bulk_aat_fc_row_011 => (r#"bulk aat 011"#, r###"echo hello 2>/dev/null"###);
+        bulk_aat_fc_row_012 => (r#"bulk aat 012"#, r###"printf '%s\n' a b c | head -1"###);
+        bulk_aat_fc_row_013 => (r#"bulk aat 013"#, r###"true && echo yes"###);
+        bulk_aat_fc_row_014 => (r#"bulk aat 014"#, r###"false || echo yes"###);
+        bulk_aat_fc_row_015 => (r#"bulk aat 015"#, r###"(exit 3); print -r $?"###);
+        bulk_aat_fc_row_016 => (r#"bulk aat 016"#, r###"print -r ${status}; (exit 4)"###);
+        bulk_aat_fc_row_017 => (r#"bulk aat 017"#, r###"print -r $(( 1_000 + 1 ))"###);
+        bulk_aat_fc_row_018 => (r#"bulk aat 018"#, r###"print -r $(( 5#101 ))"###);
+        bulk_aat_fc_row_019 => (r#"bulk aat 019"#, r###"print -r $(( 0b1111 ))"###);
+        bulk_aat_fc_row_020 => (r#"bulk aat 020"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
+        bulk_aat_fc_row_021 => (r#"bulk aat 021"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
+        bulk_aat_fc_row_022 => (r#"bulk aat 022"#, r###"typeset -F2 f=3.14; print -r $f"###);
+        bulk_aat_fc_row_023 => (r#"bulk aat 023"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
+        bulk_aat_fc_row_024 => (r#"bulk aat 024"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
+        bulk_aat_fc_row_025 => (r#"bulk aat 025"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
+        bulk_aat_fc_row_026 => (r#"bulk aat 026"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
+        bulk_aat_fc_row_027 => (r#"bulk aat 027"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
+        bulk_aat_fc_row_028 => (r#"bulk aat 028"#, r###"print -r ${#x}; x=hello"###);
+        bulk_aat_fc_row_029 => (r#"bulk aat 029"#, r###"print -r ${#a}; a=(a b c)"###);
+        bulk_aat_fc_row_030 => (r#"bulk aat 030"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
+        bulk_aat_fc_row_031 => (r#"bulk aat 031"#, r###"print -r ${(b)x}; x=hi"###);
+        bulk_aat_fc_row_032 => (r#"bulk aat 032"#, r###"print -r ${(e):-2+2}"###);
+        bulk_aat_fc_row_033 => (r#"bulk aat 033"#, r###"print -r ${(P)r}; r=HOME"###);
+        bulk_aat_fc_row_034 => (r#"bulk aat 034"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
+        bulk_aat_fc_row_035 => (r#"bulk aat 035"#, r###"print -r ${(eu)n}; n=(a A b)"###);
+        bulk_aat_fc_row_036 => (r#"bulk aat 036"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
+        bulk_aat_fc_row_037 => (r#"bulk aat 037"#, r###"typeset -h hv=1; print -r ${+hv}"###);
+        bulk_aat_fc_row_038 => (r#"bulk aat 038"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
+        bulk_aat_fc_row_039 => (r#"bulk aat 039"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
+        bulk_aat_fc_row_040 => (r#"bulk aat 040"#, r###"while :; do break; print -r n; done; print -r after"###);
+        bulk_aat_fc_row_041 => (r#"bulk aat 041"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
+        bulk_aat_fc_row_042 => (r#"bulk aat 042"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
+        bulk_aat_fc_row_043 => (r#"bulk aat 043"#, r###"print -r ${argv[1]}; set -- p q"###);
+        bulk_aat_fc_row_044 => (r#"bulk aat 044"#, r###"print -r $ARGC; set -- a b"###);
+        bulk_aat_fc_row_045 => (r#"bulk aat 045"#, r###"print -r ${dirstack[1]:-empty}"###);
+        bulk_aat_fc_row_046 => (r#"bulk aat 046"#, r###"print -r ${+pipestatus}"###);
+        bulk_aat_fc_row_047 => (r#"bulk aat 047"#, r###"print -r ${+history}"###);
+        bulk_aat_fc_row_048 => (r#"bulk aat 048"#, r###"print -r ${+commands}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aau {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aau_fc_row_001 => (r#"bulk aau 001"#, r###"print -r $(( 5#101 ))"###);
+        bulk_aau_fc_row_002 => (r#"bulk aau 002"#, r###"print -r $(( 0b1111 ))"###);
+        bulk_aau_fc_row_003 => (r#"bulk aau 003"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
+        bulk_aau_fc_row_004 => (r#"bulk aau 004"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
+        bulk_aau_fc_row_005 => (r#"bulk aau 005"#, r###"typeset -F2 f=3.14; print -r $f"###);
+        bulk_aau_fc_row_006 => (r#"bulk aau 006"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
+        bulk_aau_fc_row_007 => (r#"bulk aau 007"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
+        bulk_aau_fc_row_008 => (r#"bulk aau 008"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
+        bulk_aau_fc_row_009 => (r#"bulk aau 009"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
+        bulk_aau_fc_row_010 => (r#"bulk aau 010"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
+        bulk_aau_fc_row_011 => (r#"bulk aau 011"#, r###"print -r ${#x}; x=hello"###);
+        bulk_aau_fc_row_012 => (r#"bulk aau 012"#, r###"print -r ${#a}; a=(a b c)"###);
+        bulk_aau_fc_row_013 => (r#"bulk aau 013"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
+        bulk_aau_fc_row_014 => (r#"bulk aau 014"#, r###"print -r ${(b)x}; x=hi"###);
+        bulk_aau_fc_row_015 => (r#"bulk aau 015"#, r###"print -r ${(e):-2+2}"###);
+        bulk_aau_fc_row_016 => (r#"bulk aau 016"#, r###"print -r ${(P)r}; r=HOME"###);
+        bulk_aau_fc_row_017 => (r#"bulk aau 017"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
+        bulk_aau_fc_row_018 => (r#"bulk aau 018"#, r###"print -r ${(eu)n}; n=(a A b)"###);
+        bulk_aau_fc_row_019 => (r#"bulk aau 019"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
+        bulk_aau_fc_row_020 => (r#"bulk aau 020"#, r###"typeset -h hv=1; print -r ${+hv}"###);
+        bulk_aau_fc_row_021 => (r#"bulk aau 021"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
+        bulk_aau_fc_row_022 => (r#"bulk aau 022"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
+        bulk_aau_fc_row_023 => (r#"bulk aau 023"#, r###"while :; do break; print -r n; done; print -r after"###);
+        bulk_aau_fc_row_024 => (r#"bulk aau 024"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
+        bulk_aau_fc_row_025 => (r#"bulk aau 025"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
+        bulk_aau_fc_row_026 => (r#"bulk aau 026"#, r###"print -r ${argv[1]}; set -- p q"###);
+        bulk_aau_fc_row_027 => (r#"bulk aau 027"#, r###"print -r $ARGC; set -- a b"###);
+        bulk_aau_fc_row_028 => (r#"bulk aau 028"#, r###"print -r ${dirstack[1]:-empty}"###);
+        bulk_aau_fc_row_029 => (r#"bulk aau 029"#, r###"print -r ${+pipestatus}"###);
+        bulk_aau_fc_row_030 => (r#"bulk aau 030"#, r###"print -r ${+history}"###);
+        bulk_aau_fc_row_031 => (r#"bulk aau 031"#, r###"print -r ${+commands}"###);
+        bulk_aau_fc_row_032 => (r#"bulk aau 032"#, r###"print -r ${+builtins}"###);
+        bulk_aau_fc_row_033 => (r#"bulk aau 033"#, r###"print -r ${+widgets}"###);
+        bulk_aau_fc_row_034 => (r#"bulk aau 034"#, r###"print -r ${+terminfo}"###);
+        bulk_aau_fc_row_035 => (r#"bulk aau 035"#, r###"print -r ${+modules}"###);
+        bulk_aau_fc_row_036 => (r#"bulk aau 036"#, r###"print -r ${+patchars}"###);
+        bulk_aau_fc_row_037 => (r#"bulk aau 037"#, r###"print -r ${+reswords}"###);
+        bulk_aau_fc_row_038 => (r#"bulk aau 038"#, r###"print -r ${+dis_aliases}"###);
+        bulk_aau_fc_row_039 => (r#"bulk aau 039"#, r###"print -r ${+dis_functions}"###);
+        bulk_aau_fc_row_040 => (r#"bulk aau 040"#, r###"print -r ${+parameters[(I)PATH]}"###);
+        bulk_aau_fc_row_041 => (r#"bulk aau 041"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
+        bulk_aau_fc_row_042 => (r#"bulk aau 042"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
+        bulk_aau_fc_row_043 => (r#"bulk aau 043"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
+        bulk_aau_fc_row_044 => (r#"bulk aau 044"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
+        bulk_aau_fc_row_045 => (r#"bulk aau 045"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
+        bulk_aau_fc_row_046 => (r#"bulk aau 046"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
+        bulk_aau_fc_row_047 => (r#"bulk aau 047"#, r###"print -r $(( 128 >> 2 ))"###);
+        bulk_aau_fc_row_048 => (r#"bulk aau 048"#, r###"print -r $(( ~(255) & 0xff ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aav {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aav_fc_row_001 => (r#"bulk aav 001"#, r###"print -r ${(eu)n}; n=(a A b)"###);
+        bulk_aav_fc_row_002 => (r#"bulk aav 002"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
+        bulk_aav_fc_row_003 => (r#"bulk aav 003"#, r###"typeset -h hv=1; print -r ${+hv}"###);
+        bulk_aav_fc_row_004 => (r#"bulk aav 004"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
+        bulk_aav_fc_row_005 => (r#"bulk aav 005"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
+        bulk_aav_fc_row_006 => (r#"bulk aav 006"#, r###"while :; do break; print -r n; done; print -r after"###);
+        bulk_aav_fc_row_007 => (r#"bulk aav 007"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
+        bulk_aav_fc_row_008 => (r#"bulk aav 008"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
+        bulk_aav_fc_row_009 => (r#"bulk aav 009"#, r###"print -r ${argv[1]}; set -- p q"###);
+        bulk_aav_fc_row_010 => (r#"bulk aav 010"#, r###"print -r $ARGC; set -- a b"###);
+        bulk_aav_fc_row_011 => (r#"bulk aav 011"#, r###"print -r ${dirstack[1]:-empty}"###);
+        bulk_aav_fc_row_012 => (r#"bulk aav 012"#, r###"print -r ${+pipestatus}"###);
+        bulk_aav_fc_row_013 => (r#"bulk aav 013"#, r###"print -r ${+history}"###);
+        bulk_aav_fc_row_014 => (r#"bulk aav 014"#, r###"print -r ${+commands}"###);
+        bulk_aav_fc_row_015 => (r#"bulk aav 015"#, r###"print -r ${+builtins}"###);
+        bulk_aav_fc_row_016 => (r#"bulk aav 016"#, r###"print -r ${+widgets}"###);
+        bulk_aav_fc_row_017 => (r#"bulk aav 017"#, r###"print -r ${+terminfo}"###);
+        bulk_aav_fc_row_018 => (r#"bulk aav 018"#, r###"print -r ${+modules}"###);
+        bulk_aav_fc_row_019 => (r#"bulk aav 019"#, r###"print -r ${+patchars}"###);
+        bulk_aav_fc_row_020 => (r#"bulk aav 020"#, r###"print -r ${+reswords}"###);
+        bulk_aav_fc_row_021 => (r#"bulk aav 021"#, r###"print -r ${+dis_aliases}"###);
+        bulk_aav_fc_row_022 => (r#"bulk aav 022"#, r###"print -r ${+dis_functions}"###);
+        bulk_aav_fc_row_023 => (r#"bulk aav 023"#, r###"print -r ${+parameters[(I)PATH]}"###);
+        bulk_aav_fc_row_024 => (r#"bulk aav 024"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
+        bulk_aav_fc_row_025 => (r#"bulk aav 025"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
+        bulk_aav_fc_row_026 => (r#"bulk aav 026"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
+        bulk_aav_fc_row_027 => (r#"bulk aav 027"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
+        bulk_aav_fc_row_028 => (r#"bulk aav 028"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
+        bulk_aav_fc_row_029 => (r#"bulk aav 029"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
+        bulk_aav_fc_row_030 => (r#"bulk aav 030"#, r###"print -r $(( 128 >> 2 ))"###);
+        bulk_aav_fc_row_031 => (r#"bulk aav 031"#, r###"print -r $(( ~(255) & 0xff ))"###);
+        bulk_aav_fc_row_032 => (r#"bulk aav 032"#, r###"print -r $(( 3 <|> 5 ))"###);
+        bulk_aav_fc_row_033 => (r#"bulk aav 033"#, r###"print -r $(( 3 <> 5 ))"###);
+        bulk_aav_fc_row_034 => (r#"bulk aav 034"#, r###"(( 5#11 )); print -r $?"###);
+        bulk_aav_fc_row_035 => (r#"bulk aav 035"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
+        bulk_aav_fc_row_036 => (r#"bulk aav 036"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
+        bulk_aav_fc_row_037 => (r#"bulk aav 037"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
+        bulk_aav_fc_row_038 => (r#"bulk aav 038"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
+        bulk_aav_fc_row_039 => (r#"bulk aav 039"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
+        bulk_aav_fc_row_040 => (r#"bulk aav 040"#, r###"typeset -i8 n=10; print -r $n"###);
+        bulk_aav_fc_row_041 => (r#"bulk aav 041"#, r###"typeset -i16 n=255; print -r $n"###);
+        bulk_aav_fc_row_042 => (r#"bulk aav 042"#, r###"typeset -E2 n=4000; print -r $n"###);
+        bulk_aav_fc_row_043 => (r#"bulk aav 043"#, r###"typeset -R4 n=hi; print -r $n"###);
+        bulk_aav_fc_row_044 => (r#"bulk aav 044"#, r###"typeset +L n=Ab; print -r $n"###);
+        bulk_aav_fc_row_045 => (r#"bulk aav 045"#, r###"typeset +U n=xy; print -r $n"###);
+        bulk_aav_fc_row_046 => (r#"bulk aav 046"#, r###"typeset +i n=4; print -r $n"###);
+        bulk_aav_fc_row_047 => (r#"bulk aav 047"#, r###"export EX=1; print -r $EX; unset EX"###);
+        bulk_aav_fc_row_048 => (r#"bulk aav 048"#, r###"readonly ro=5; print -r $ro"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aaw {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aaw_fc_row_001 => (r#"bulk aaw 001"#, r###"print -r ${+terminfo}"###);
+        bulk_aaw_fc_row_002 => (r#"bulk aaw 002"#, r###"print -r ${+modules}"###);
+        bulk_aaw_fc_row_003 => (r#"bulk aaw 003"#, r###"print -r ${+patchars}"###);
+        bulk_aaw_fc_row_004 => (r#"bulk aaw 004"#, r###"print -r ${+reswords}"###);
+        bulk_aaw_fc_row_005 => (r#"bulk aaw 005"#, r###"print -r ${+dis_aliases}"###);
+        bulk_aaw_fc_row_006 => (r#"bulk aaw 006"#, r###"print -r ${+dis_functions}"###);
+        bulk_aaw_fc_row_007 => (r#"bulk aaw 007"#, r###"print -r ${+parameters[(I)PATH]}"###);
+        bulk_aaw_fc_row_008 => (r#"bulk aaw 008"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
+        bulk_aaw_fc_row_009 => (r#"bulk aaw 009"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
+        bulk_aaw_fc_row_010 => (r#"bulk aaw 010"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
+        bulk_aaw_fc_row_011 => (r#"bulk aaw 011"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
+        bulk_aaw_fc_row_012 => (r#"bulk aaw 012"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
+        bulk_aaw_fc_row_013 => (r#"bulk aaw 013"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
+        bulk_aaw_fc_row_014 => (r#"bulk aaw 014"#, r###"print -r $(( 128 >> 2 ))"###);
+        bulk_aaw_fc_row_015 => (r#"bulk aaw 015"#, r###"print -r $(( ~(255) & 0xff ))"###);
+        bulk_aaw_fc_row_016 => (r#"bulk aaw 016"#, r###"print -r $(( 3 <|> 5 ))"###);
+        bulk_aaw_fc_row_017 => (r#"bulk aaw 017"#, r###"print -r $(( 3 <> 5 ))"###);
+        bulk_aaw_fc_row_018 => (r#"bulk aaw 018"#, r###"(( 5#11 )); print -r $?"###);
+        bulk_aaw_fc_row_019 => (r#"bulk aaw 019"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
+        bulk_aaw_fc_row_020 => (r#"bulk aaw 020"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
+        bulk_aaw_fc_row_021 => (r#"bulk aaw 021"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
+        bulk_aaw_fc_row_022 => (r#"bulk aaw 022"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
+        bulk_aaw_fc_row_023 => (r#"bulk aaw 023"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
+        bulk_aaw_fc_row_024 => (r#"bulk aaw 024"#, r###"typeset -i8 n=10; print -r $n"###);
+        bulk_aaw_fc_row_025 => (r#"bulk aaw 025"#, r###"typeset -i16 n=255; print -r $n"###);
+        bulk_aaw_fc_row_026 => (r#"bulk aaw 026"#, r###"typeset -E2 n=4000; print -r $n"###);
+        bulk_aaw_fc_row_027 => (r#"bulk aaw 027"#, r###"typeset -R4 n=hi; print -r $n"###);
+        bulk_aaw_fc_row_028 => (r#"bulk aaw 028"#, r###"typeset +L n=Ab; print -r $n"###);
+        bulk_aaw_fc_row_029 => (r#"bulk aaw 029"#, r###"typeset +U n=xy; print -r $n"###);
+        bulk_aaw_fc_row_030 => (r#"bulk aaw 030"#, r###"typeset +i n=4; print -r $n"###);
+        bulk_aaw_fc_row_031 => (r#"bulk aaw 031"#, r###"export EX=1; print -r $EX; unset EX"###);
+        bulk_aaw_fc_row_032 => (r#"bulk aaw 032"#, r###"readonly ro=5; print -r $ro"###);
+        bulk_aaw_fc_row_033 => (r#"bulk aaw 033"#, r###"print -r ${${v:-fb}}; unset v"###);
+        bulk_aaw_fc_row_034 => (r#"bulk aaw 034"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
+        bulk_aaw_fc_row_035 => (r#"bulk aaw 035"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
+        bulk_aaw_fc_row_036 => (r#"bulk aaw 036"#, r###"word=  hi  ; print -r ${(W)word}"###);
+        bulk_aaw_fc_row_037 => (r#"bulk aaw 037"#, r###"print -r ${(z)word}; word=a b c"###);
+        bulk_aaw_fc_row_038 => (r#"bulk aaw 038"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
+        bulk_aaw_fc_row_039 => (r#"bulk aaw 039"#, r###"print -r ${(A)x}; x=1 2"###);
+        bulk_aaw_fc_row_040 => (r#"bulk aaw 040"#, r###"print -r ${(aa)x}; x=(1 2)"###);
+        bulk_aaw_fc_row_041 => (r#"bulk aaw 041"#, r###"print -r ${(%)2}"###);
+        bulk_aaw_fc_row_042 => (r#"bulk aaw 042"#, r###"o=8; print -r ${(0)o}"###);
+        bulk_aaw_fc_row_043 => (r#"bulk aaw 043"#, r###"str=abc.def; print -r ${str:r}"###);
+        bulk_aaw_fc_row_044 => (r#"bulk aaw 044"#, r###"str=abc.def; print -r ${str:e}"###);
+        bulk_aaw_fc_row_045 => (r#"bulk aaw 045"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
+        bulk_aaw_fc_row_046 => (r#"bulk aaw 046"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
+        bulk_aaw_fc_row_047 => (r#"bulk aaw 047"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
+        bulk_aaw_fc_row_048 => (r#"bulk aaw 048"#, r###"[[ -G / ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aax {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aax_fc_row_001 => (r#"bulk aax 001"#, r###"print -r $(( 3 <|> 5 ))"###);
+        bulk_aax_fc_row_002 => (r#"bulk aax 002"#, r###"print -r $(( 3 <> 5 ))"###);
+        bulk_aax_fc_row_003 => (r#"bulk aax 003"#, r###"(( 5#11 )); print -r $?"###);
+        bulk_aax_fc_row_004 => (r#"bulk aax 004"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
+        bulk_aax_fc_row_005 => (r#"bulk aax 005"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
+        bulk_aax_fc_row_006 => (r#"bulk aax 006"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
+        bulk_aax_fc_row_007 => (r#"bulk aax 007"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
+        bulk_aax_fc_row_008 => (r#"bulk aax 008"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
+        bulk_aax_fc_row_009 => (r#"bulk aax 009"#, r###"typeset -i8 n=10; print -r $n"###);
+        bulk_aax_fc_row_010 => (r#"bulk aax 010"#, r###"typeset -i16 n=255; print -r $n"###);
+        bulk_aax_fc_row_011 => (r#"bulk aax 011"#, r###"typeset -E2 n=4000; print -r $n"###);
+        bulk_aax_fc_row_012 => (r#"bulk aax 012"#, r###"typeset -R4 n=hi; print -r $n"###);
+        bulk_aax_fc_row_013 => (r#"bulk aax 013"#, r###"typeset +L n=Ab; print -r $n"###);
+        bulk_aax_fc_row_014 => (r#"bulk aax 014"#, r###"typeset +U n=xy; print -r $n"###);
+        bulk_aax_fc_row_015 => (r#"bulk aax 015"#, r###"typeset +i n=4; print -r $n"###);
+        bulk_aax_fc_row_016 => (r#"bulk aax 016"#, r###"export EX=1; print -r $EX; unset EX"###);
+        bulk_aax_fc_row_017 => (r#"bulk aax 017"#, r###"readonly ro=5; print -r $ro"###);
+        bulk_aax_fc_row_018 => (r#"bulk aax 018"#, r###"print -r ${${v:-fb}}; unset v"###);
+        bulk_aax_fc_row_019 => (r#"bulk aax 019"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
+        bulk_aax_fc_row_020 => (r#"bulk aax 020"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
+        bulk_aax_fc_row_021 => (r#"bulk aax 021"#, r###"word=  hi  ; print -r ${(W)word}"###);
+        bulk_aax_fc_row_022 => (r#"bulk aax 022"#, r###"print -r ${(z)word}; word=a b c"###);
+        bulk_aax_fc_row_023 => (r#"bulk aax 023"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
+        bulk_aax_fc_row_024 => (r#"bulk aax 024"#, r###"print -r ${(A)x}; x=1 2"###);
+        bulk_aax_fc_row_025 => (r#"bulk aax 025"#, r###"print -r ${(aa)x}; x=(1 2)"###);
+        bulk_aax_fc_row_026 => (r#"bulk aax 026"#, r###"print -r ${(%)2}"###);
+        bulk_aax_fc_row_027 => (r#"bulk aax 027"#, r###"o=8; print -r ${(0)o}"###);
+        bulk_aax_fc_row_028 => (r#"bulk aax 028"#, r###"str=abc.def; print -r ${str:r}"###);
+        bulk_aax_fc_row_029 => (r#"bulk aax 029"#, r###"str=abc.def; print -r ${str:e}"###);
+        bulk_aax_fc_row_030 => (r#"bulk aax 030"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
+        bulk_aax_fc_row_031 => (r#"bulk aax 031"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
+        bulk_aax_fc_row_032 => (r#"bulk aax 032"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
+        bulk_aax_fc_row_033 => (r#"bulk aax 033"#, r###"[[ -G / ]]; print -r $?"###);
+        bulk_aax_fc_row_034 => (r#"bulk aax 034"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
+        bulk_aax_fc_row_035 => (r#"bulk aax 035"#, r###"[[ bee = *ee* ]]; print -r $?"###);
+        bulk_aax_fc_row_036 => (r#"bulk aax 036"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
+        bulk_aax_fc_row_037 => (r#"bulk aax 037"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
+        bulk_aax_fc_row_038 => (r#"bulk aax 038"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
+        bulk_aax_fc_row_039 => (r#"bulk aax 039"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
+        bulk_aax_fc_row_040 => (r#"bulk aax 040"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
+        bulk_aax_fc_row_041 => (r#"bulk aax 041"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
+        bulk_aax_fc_row_042 => (r#"bulk aax 042"#, r###"[[ -o nullglob ]]; print -r $?"###);
+        bulk_aax_fc_row_043 => (r#"bulk aax 043"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_aax_fc_row_044 => (r#"bulk aax 044"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_aax_fc_row_045 => (r#"bulk aax 045"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
+        bulk_aax_fc_row_046 => (r#"bulk aax 046"#, r###"print -r $(( 1 , 2 , 3 ))"###);
+        bulk_aax_fc_row_047 => (r#"bulk aax 047"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
+        bulk_aax_fc_row_048 => (r#"bulk aax 048"#, r###"print -r $(( 0xff & 0x0f ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aay {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aay_fc_row_001 => (r#"bulk aay 001"#, r###"print -r ${${v:-fb}}; unset v"###);
+        bulk_aay_fc_row_002 => (r#"bulk aay 002"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
+        bulk_aay_fc_row_003 => (r#"bulk aay 003"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
+        bulk_aay_fc_row_004 => (r#"bulk aay 004"#, r###"word=  hi  ; print -r ${(W)word}"###);
+        bulk_aay_fc_row_005 => (r#"bulk aay 005"#, r###"print -r ${(z)word}; word=a b c"###);
+        bulk_aay_fc_row_006 => (r#"bulk aay 006"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
+        bulk_aay_fc_row_007 => (r#"bulk aay 007"#, r###"print -r ${(A)x}; x=1 2"###);
+        bulk_aay_fc_row_008 => (r#"bulk aay 008"#, r###"print -r ${(aa)x}; x=(1 2)"###);
+        bulk_aay_fc_row_009 => (r#"bulk aay 009"#, r###"print -r ${(%)2}"###);
+        bulk_aay_fc_row_010 => (r#"bulk aay 010"#, r###"o=8; print -r ${(0)o}"###);
+        bulk_aay_fc_row_011 => (r#"bulk aay 011"#, r###"str=abc.def; print -r ${str:r}"###);
+        bulk_aay_fc_row_012 => (r#"bulk aay 012"#, r###"str=abc.def; print -r ${str:e}"###);
+        bulk_aay_fc_row_013 => (r#"bulk aay 013"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
+        bulk_aay_fc_row_014 => (r#"bulk aay 014"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
+        bulk_aay_fc_row_015 => (r#"bulk aay 015"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
+        bulk_aay_fc_row_016 => (r#"bulk aay 016"#, r###"[[ -G / ]]; print -r $?"###);
+        bulk_aay_fc_row_017 => (r#"bulk aay 017"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
+        bulk_aay_fc_row_018 => (r#"bulk aay 018"#, r###"[[ bee = *ee* ]]; print -r $?"###);
+        bulk_aay_fc_row_019 => (r#"bulk aay 019"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
+        bulk_aay_fc_row_020 => (r#"bulk aay 020"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
+        bulk_aay_fc_row_021 => (r#"bulk aay 021"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
+        bulk_aay_fc_row_022 => (r#"bulk aay 022"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
+        bulk_aay_fc_row_023 => (r#"bulk aay 023"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
+        bulk_aay_fc_row_024 => (r#"bulk aay 024"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
+        bulk_aay_fc_row_025 => (r#"bulk aay 025"#, r###"[[ -o nullglob ]]; print -r $?"###);
+        bulk_aay_fc_row_026 => (r#"bulk aay 026"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_aay_fc_row_027 => (r#"bulk aay 027"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_aay_fc_row_028 => (r#"bulk aay 028"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
+        bulk_aay_fc_row_029 => (r#"bulk aay 029"#, r###"print -r $(( 1 , 2 , 3 ))"###);
+        bulk_aay_fc_row_030 => (r#"bulk aay 030"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
+        bulk_aay_fc_row_031 => (r#"bulk aay 031"#, r###"print -r $(( 0xff & 0x0f ))"###);
+        bulk_aay_fc_row_032 => (r#"bulk aay 032"#, r###"print -r $(( 1 << 4 ))"###);
+        bulk_aay_fc_row_033 => (r#"bulk aay 033"#, r###"print -r $(( 16 >> 2 ))"###);
+        bulk_aay_fc_row_034 => (r#"bulk aay 034"#, r###"print -r $(( -1 >> 1 ))"###);
+        bulk_aay_fc_row_035 => (r#"bulk aay 035"#, r###"print -r $(( 8#17 ))"###);
+        bulk_aay_fc_row_036 => (r#"bulk aay 036"#, r###"print -r $(( 16#ff ))"###);
+        bulk_aay_fc_row_037 => (r#"bulk aay 037"#, r###"print -r $(( 2#1010 ))"###);
+        bulk_aay_fc_row_038 => (r#"bulk aay 038"#, r###"print -r $(( 0b1010 ))"###);
+        bulk_aay_fc_row_039 => (r#"bulk aay 039"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
+        bulk_aay_fc_row_040 => (r#"bulk aay 040"#, r###"print -r $(( 4 % 2 == 0 ))"###);
+        bulk_aay_fc_row_041 => (r#"bulk aay 041"#, r###"print -r $(( 0 - 1 == -1 ))"###);
+        bulk_aay_fc_row_042 => (r#"bulk aay 042"#, r###"print -r $(( 72 / 8 / 3 ))"###);
+        bulk_aay_fc_row_043 => (r#"bulk aay 043"#, r###"print -r $(( 24 % 5 % 3 ))"###);
+        bulk_aay_fc_row_044 => (r#"bulk aay 044"#, r###"print -r $(( 2 | 4 | 8 ))"###);
+        bulk_aay_fc_row_045 => (r#"bulk aay 045"#, r###"print -r $(( 15 ^ 9 ))"###);
+        bulk_aay_fc_row_046 => (r#"bulk aay 046"#, r###"print -r $(( 0 || 0 || 7 ))"###);
+        bulk_aay_fc_row_047 => (r#"bulk aay 047"#, r###"print -r $(( 1 || -1 ))"###);
+        bulk_aay_fc_row_048 => (r#"bulk aay 048"#, r###"print -r $(( (1>0) + (0>0) ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aaz {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aaz_fc_row_001 => (r#"bulk aaz 001"#, r###"[[ bee = *ee* ]]; print -r $?"###);
+        bulk_aaz_fc_row_002 => (r#"bulk aaz 002"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
+        bulk_aaz_fc_row_003 => (r#"bulk aaz 003"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
+        bulk_aaz_fc_row_004 => (r#"bulk aaz 004"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
+        bulk_aaz_fc_row_005 => (r#"bulk aaz 005"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
+        bulk_aaz_fc_row_006 => (r#"bulk aaz 006"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
+        bulk_aaz_fc_row_007 => (r#"bulk aaz 007"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
+        bulk_aaz_fc_row_008 => (r#"bulk aaz 008"#, r###"[[ -o nullglob ]]; print -r $?"###);
+        bulk_aaz_fc_row_009 => (r#"bulk aaz 009"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_aaz_fc_row_010 => (r#"bulk aaz 010"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_aaz_fc_row_011 => (r#"bulk aaz 011"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
+        bulk_aaz_fc_row_012 => (r#"bulk aaz 012"#, r###"print -r $(( 1 , 2 , 3 ))"###);
+        bulk_aaz_fc_row_013 => (r#"bulk aaz 013"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
+        bulk_aaz_fc_row_014 => (r#"bulk aaz 014"#, r###"print -r $(( 0xff & 0x0f ))"###);
+        bulk_aaz_fc_row_015 => (r#"bulk aaz 015"#, r###"print -r $(( 1 << 4 ))"###);
+        bulk_aaz_fc_row_016 => (r#"bulk aaz 016"#, r###"print -r $(( 16 >> 2 ))"###);
+        bulk_aaz_fc_row_017 => (r#"bulk aaz 017"#, r###"print -r $(( -1 >> 1 ))"###);
+        bulk_aaz_fc_row_018 => (r#"bulk aaz 018"#, r###"print -r $(( 8#17 ))"###);
+        bulk_aaz_fc_row_019 => (r#"bulk aaz 019"#, r###"print -r $(( 16#ff ))"###);
+        bulk_aaz_fc_row_020 => (r#"bulk aaz 020"#, r###"print -r $(( 2#1010 ))"###);
+        bulk_aaz_fc_row_021 => (r#"bulk aaz 021"#, r###"print -r $(( 0b1010 ))"###);
+        bulk_aaz_fc_row_022 => (r#"bulk aaz 022"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
+        bulk_aaz_fc_row_023 => (r#"bulk aaz 023"#, r###"print -r $(( 4 % 2 == 0 ))"###);
+        bulk_aaz_fc_row_024 => (r#"bulk aaz 024"#, r###"print -r $(( 0 - 1 == -1 ))"###);
+        bulk_aaz_fc_row_025 => (r#"bulk aaz 025"#, r###"print -r $(( 72 / 8 / 3 ))"###);
+        bulk_aaz_fc_row_026 => (r#"bulk aaz 026"#, r###"print -r $(( 24 % 5 % 3 ))"###);
+        bulk_aaz_fc_row_027 => (r#"bulk aaz 027"#, r###"print -r $(( 2 | 4 | 8 ))"###);
+        bulk_aaz_fc_row_028 => (r#"bulk aaz 028"#, r###"print -r $(( 15 ^ 9 ))"###);
+        bulk_aaz_fc_row_029 => (r#"bulk aaz 029"#, r###"print -r $(( 0 || 0 || 7 ))"###);
+        bulk_aaz_fc_row_030 => (r#"bulk aaz 030"#, r###"print -r $(( 1 || -1 ))"###);
+        bulk_aaz_fc_row_031 => (r#"bulk aaz 031"#, r###"print -r $(( (1>0) + (0>0) ))"###);
+        bulk_aaz_fc_row_032 => (r#"bulk aaz 032"#, r###"print -r $(( 3 > 2 > 1 ))"###);
+        bulk_aaz_fc_row_033 => (r#"bulk aaz 033"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
+        bulk_aaz_fc_row_034 => (r#"bulk aaz 034"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
+        bulk_aaz_fc_row_035 => (r#"bulk aaz 035"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
+        bulk_aaz_fc_row_036 => (r#"bulk aaz 036"#, r###"print -r $(( 100 / 20 / 5 ))"###);
+        bulk_aaz_fc_row_037 => (r#"bulk aaz 037"#, r###"print -r $(( 2#101 & 2#010 ))"###);
+        bulk_aaz_fc_row_038 => (r#"bulk aaz 038"#, r###"print -r $(( 0x80 >> 4 ))"###);
+        bulk_aaz_fc_row_039 => (r#"bulk aaz 039"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
+        bulk_aaz_fc_row_040 => (r#"bulk aaz 040"#, r###"print -r $(( -(-(-5)) ))"###);
+        bulk_aaz_fc_row_041 => (r#"bulk aaz 041"#, r###"print -r $(( (1+2)*(3+4) ))"###);
+        bulk_aaz_fc_row_042 => (r#"bulk aaz 042"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
+        bulk_aaz_fc_row_043 => (r#"bulk aaz 043"#, r###"[[ "" != x ]]; print -r $?"###);
+        bulk_aaz_fc_row_044 => (r#"bulk aaz 044"#, r###"[[ -n /dev/null ]]; print -r $?"###);
+        bulk_aaz_fc_row_045 => (r#"bulk aaz 045"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
+        bulk_aaz_fc_row_046 => (r#"bulk aaz 046"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
+        bulk_aaz_fc_row_047 => (r#"bulk aaz 047"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
+        bulk_aaz_fc_row_048 => (r#"bulk aaz 048"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aba {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aba_fc_row_001 => (r#"bulk aba 001"#, r###"print -r $(( 8#17 ))"###);
+        bulk_aba_fc_row_002 => (r#"bulk aba 002"#, r###"print -r $(( 16#ff ))"###);
+        bulk_aba_fc_row_003 => (r#"bulk aba 003"#, r###"print -r $(( 2#1010 ))"###);
+        bulk_aba_fc_row_004 => (r#"bulk aba 004"#, r###"print -r $(( 0b1010 ))"###);
+        bulk_aba_fc_row_005 => (r#"bulk aba 005"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
+        bulk_aba_fc_row_006 => (r#"bulk aba 006"#, r###"print -r $(( 4 % 2 == 0 ))"###);
+        bulk_aba_fc_row_007 => (r#"bulk aba 007"#, r###"print -r $(( 0 - 1 == -1 ))"###);
+        bulk_aba_fc_row_008 => (r#"bulk aba 008"#, r###"print -r $(( 72 / 8 / 3 ))"###);
+        bulk_aba_fc_row_009 => (r#"bulk aba 009"#, r###"print -r $(( 24 % 5 % 3 ))"###);
+        bulk_aba_fc_row_010 => (r#"bulk aba 010"#, r###"print -r $(( 2 | 4 | 8 ))"###);
+        bulk_aba_fc_row_011 => (r#"bulk aba 011"#, r###"print -r $(( 15 ^ 9 ))"###);
+        bulk_aba_fc_row_012 => (r#"bulk aba 012"#, r###"print -r $(( 0 || 0 || 7 ))"###);
+        bulk_aba_fc_row_013 => (r#"bulk aba 013"#, r###"print -r $(( 1 || -1 ))"###);
+        bulk_aba_fc_row_014 => (r#"bulk aba 014"#, r###"print -r $(( (1>0) + (0>0) ))"###);
+        bulk_aba_fc_row_015 => (r#"bulk aba 015"#, r###"print -r $(( 3 > 2 > 1 ))"###);
+        bulk_aba_fc_row_016 => (r#"bulk aba 016"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
+        bulk_aba_fc_row_017 => (r#"bulk aba 017"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
+        bulk_aba_fc_row_018 => (r#"bulk aba 018"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
+        bulk_aba_fc_row_019 => (r#"bulk aba 019"#, r###"print -r $(( 100 / 20 / 5 ))"###);
+        bulk_aba_fc_row_020 => (r#"bulk aba 020"#, r###"print -r $(( 2#101 & 2#010 ))"###);
+        bulk_aba_fc_row_021 => (r#"bulk aba 021"#, r###"print -r $(( 0x80 >> 4 ))"###);
+        bulk_aba_fc_row_022 => (r#"bulk aba 022"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
+        bulk_aba_fc_row_023 => (r#"bulk aba 023"#, r###"print -r $(( -(-(-5)) ))"###);
+        bulk_aba_fc_row_024 => (r#"bulk aba 024"#, r###"print -r $(( (1+2)*(3+4) ))"###);
+        bulk_aba_fc_row_025 => (r#"bulk aba 025"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
+        bulk_aba_fc_row_026 => (r#"bulk aba 026"#, r###"[[ "" != x ]]; print -r $?"###);
+        bulk_aba_fc_row_027 => (r#"bulk aba 027"#, r###"[[ -n /dev/null ]]; print -r $?"###);
+        bulk_aba_fc_row_028 => (r#"bulk aba 028"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
+        bulk_aba_fc_row_029 => (r#"bulk aba 029"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
+        bulk_aba_fc_row_030 => (r#"bulk aba 030"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
+        bulk_aba_fc_row_031 => (r#"bulk aba 031"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
+        bulk_aba_fc_row_032 => (r#"bulk aba 032"#, r###"[[ abc < abd ]]; print -r $?"###);
+        bulk_aba_fc_row_033 => (r#"bulk aba 033"#, r###"[[ abc > abb ]]; print -r $?"###);
+        bulk_aba_fc_row_034 => (r#"bulk aba 034"#, r###"[[ abc != def ]]; print -r $?"###);
+        bulk_aba_fc_row_035 => (r#"bulk aba 035"#, r###"[[ abc == abc ]]; print -r $?"###);
+        bulk_aba_fc_row_036 => (r#"bulk aba 036"#, r###"print -r ${(L)@}; set -- MIXED"###);
+        bulk_aba_fc_row_037 => (r#"bulk aba 037"#, r###"slice=abcdef; print -r $slice[3,5]"###);
+        bulk_aba_fc_row_038 => (r#"bulk aba 038"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
+        bulk_aba_fc_row_039 => (r#"bulk aba 039"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
+        bulk_aba_fc_row_040 => (r#"bulk aba 040"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
+        bulk_aba_fc_row_041 => (r#"bulk aba 041"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
+        bulk_aba_fc_row_042 => (r#"bulk aba 042"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_aba_fc_row_043 => (r#"bulk aba 043"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
+        bulk_aba_fc_row_044 => (r#"bulk aba 044"#, r###"whence -v print 2>/dev/null; print -r $?"###);
+        bulk_aba_fc_row_045 => (r#"bulk aba 045"#, r###"whence -p ls 2>/dev/null | head -1"###);
+        bulk_aba_fc_row_046 => (r#"bulk aba 046"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_aba_fc_row_047 => (r#"bulk aba 047"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_aba_fc_row_048 => (r#"bulk aba 048"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abb {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abb_fc_row_001 => (r#"bulk abb 001"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
+        bulk_abb_fc_row_002 => (r#"bulk abb 002"#, r###"print -r $(( 100 / 20 / 5 ))"###);
+        bulk_abb_fc_row_003 => (r#"bulk abb 003"#, r###"print -r $(( 2#101 & 2#010 ))"###);
+        bulk_abb_fc_row_004 => (r#"bulk abb 004"#, r###"print -r $(( 0x80 >> 4 ))"###);
+        bulk_abb_fc_row_005 => (r#"bulk abb 005"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
+        bulk_abb_fc_row_006 => (r#"bulk abb 006"#, r###"print -r $(( -(-(-5)) ))"###);
+        bulk_abb_fc_row_007 => (r#"bulk abb 007"#, r###"print -r $(( (1+2)*(3+4) ))"###);
+        bulk_abb_fc_row_008 => (r#"bulk abb 008"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
+        bulk_abb_fc_row_009 => (r#"bulk abb 009"#, r###"[[ "" != x ]]; print -r $?"###);
+        bulk_abb_fc_row_010 => (r#"bulk abb 010"#, r###"[[ -n /dev/null ]]; print -r $?"###);
+        bulk_abb_fc_row_011 => (r#"bulk abb 011"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
+        bulk_abb_fc_row_012 => (r#"bulk abb 012"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
+        bulk_abb_fc_row_013 => (r#"bulk abb 013"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
+        bulk_abb_fc_row_014 => (r#"bulk abb 014"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
+        bulk_abb_fc_row_015 => (r#"bulk abb 015"#, r###"[[ abc < abd ]]; print -r $?"###);
+        bulk_abb_fc_row_016 => (r#"bulk abb 016"#, r###"[[ abc > abb ]]; print -r $?"###);
+        bulk_abb_fc_row_017 => (r#"bulk abb 017"#, r###"[[ abc != def ]]; print -r $?"###);
+        bulk_abb_fc_row_018 => (r#"bulk abb 018"#, r###"[[ abc == abc ]]; print -r $?"###);
+        bulk_abb_fc_row_019 => (r#"bulk abb 019"#, r###"print -r ${(L)@}; set -- MIXED"###);
+        bulk_abb_fc_row_020 => (r#"bulk abb 020"#, r###"slice=abcdef; print -r $slice[3,5]"###);
+        bulk_abb_fc_row_021 => (r#"bulk abb 021"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
+        bulk_abb_fc_row_022 => (r#"bulk abb 022"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
+        bulk_abb_fc_row_023 => (r#"bulk abb 023"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
+        bulk_abb_fc_row_024 => (r#"bulk abb 024"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
+        bulk_abb_fc_row_025 => (r#"bulk abb 025"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_abb_fc_row_026 => (r#"bulk abb 026"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
+        bulk_abb_fc_row_027 => (r#"bulk abb 027"#, r###"whence -v print 2>/dev/null; print -r $?"###);
+        bulk_abb_fc_row_028 => (r#"bulk abb 028"#, r###"whence -p ls 2>/dev/null | head -1"###);
+        bulk_abb_fc_row_029 => (r#"bulk abb 029"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_abb_fc_row_030 => (r#"bulk abb 030"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_abb_fc_row_031 => (r#"bulk abb 031"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
+        bulk_abb_fc_row_032 => (r#"bulk abb 032"#, r###"print -r ${aliases[za]:-none}"###);
+        bulk_abb_fc_row_033 => (r#"bulk abb 033"#, r###"print -r ${(t)parameters[PATH]}"###);
+        bulk_abb_fc_row_034 => (r#"bulk abb 034"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
+        bulk_abb_fc_row_035 => (r#"bulk abb 035"#, r###"print -r ${+parameters[PATH]}"###);
+        bulk_abb_fc_row_036 => (r#"bulk abb 036"#, r###"print -r ${+functions[fn]}; fn(){}"###);
+        bulk_abb_fc_row_037 => (r#"bulk abb 037"#, r###"print -r ${+commands[print]}"###);
+        bulk_abb_fc_row_038 => (r#"bulk abb 038"#, r###"print -r ${+zsh_eval_context}"###);
+        bulk_abb_fc_row_039 => (r#"bulk abb 039"#, r###"print -r ${+functrace}"###);
+        bulk_abb_fc_row_040 => (r#"bulk abb 040"#, r###"print -r ${+funcstack}"###);
+        bulk_abb_fc_row_041 => (r#"bulk abb 041"#, r###"print -r ${+funcfiletrace}"###);
+        bulk_abb_fc_row_042 => (r#"bulk abb 042"#, r###"print -r ${+jobstates}"###);
+        bulk_abb_fc_row_043 => (r#"bulk abb 043"#, r###"print -r ${+jobtexts}"###);
+        bulk_abb_fc_row_044 => (r#"bulk abb 044"#, r###"print -r ${+jobdirs}"###);
+        bulk_abb_fc_row_045 => (r#"bulk abb 045"#, r###"print -r ${+historywords}"###);
+        bulk_abb_fc_row_046 => (r#"bulk abb 046"#, r###"print -r ${+usergroups}"###);
+        bulk_abb_fc_row_047 => (r#"bulk abb 047"#, r###"print -r ${+dis_builtins}"###);
+        bulk_abb_fc_row_048 => (r#"bulk abb 048"#, r###"print -r ${+dis_widgets}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abc {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abc_fc_row_001 => (r#"bulk abc 001"#, r###"[[ abc == abc ]]; print -r $?"###);
+        bulk_abc_fc_row_002 => (r#"bulk abc 002"#, r###"print -r ${(L)@}; set -- MIXED"###);
+        bulk_abc_fc_row_003 => (r#"bulk abc 003"#, r###"slice=abcdef; print -r $slice[3,5]"###);
+        bulk_abc_fc_row_004 => (r#"bulk abc 004"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
+        bulk_abc_fc_row_005 => (r#"bulk abc 005"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
+        bulk_abc_fc_row_006 => (r#"bulk abc 006"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
+        bulk_abc_fc_row_007 => (r#"bulk abc 007"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
+        bulk_abc_fc_row_008 => (r#"bulk abc 008"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_abc_fc_row_009 => (r#"bulk abc 009"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
+        bulk_abc_fc_row_010 => (r#"bulk abc 010"#, r###"whence -v print 2>/dev/null; print -r $?"###);
+        bulk_abc_fc_row_011 => (r#"bulk abc 011"#, r###"whence -p ls 2>/dev/null | head -1"###);
+        bulk_abc_fc_row_012 => (r#"bulk abc 012"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_abc_fc_row_013 => (r#"bulk abc 013"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_abc_fc_row_014 => (r#"bulk abc 014"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
+        bulk_abc_fc_row_015 => (r#"bulk abc 015"#, r###"print -r ${aliases[za]:-none}"###);
+        bulk_abc_fc_row_016 => (r#"bulk abc 016"#, r###"print -r ${(t)parameters[PATH]}"###);
+        bulk_abc_fc_row_017 => (r#"bulk abc 017"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
+        bulk_abc_fc_row_018 => (r#"bulk abc 018"#, r###"print -r ${+parameters[PATH]}"###);
+        bulk_abc_fc_row_019 => (r#"bulk abc 019"#, r###"print -r ${+functions[fn]}; fn(){}"###);
+        bulk_abc_fc_row_020 => (r#"bulk abc 020"#, r###"print -r ${+commands[print]}"###);
+        bulk_abc_fc_row_021 => (r#"bulk abc 021"#, r###"print -r ${+zsh_eval_context}"###);
+        bulk_abc_fc_row_022 => (r#"bulk abc 022"#, r###"print -r ${+functrace}"###);
+        bulk_abc_fc_row_023 => (r#"bulk abc 023"#, r###"print -r ${+funcstack}"###);
+        bulk_abc_fc_row_024 => (r#"bulk abc 024"#, r###"print -r ${+funcfiletrace}"###);
+        bulk_abc_fc_row_025 => (r#"bulk abc 025"#, r###"print -r ${+jobstates}"###);
+        bulk_abc_fc_row_026 => (r#"bulk abc 026"#, r###"print -r ${+jobtexts}"###);
+        bulk_abc_fc_row_027 => (r#"bulk abc 027"#, r###"print -r ${+jobdirs}"###);
+        bulk_abc_fc_row_028 => (r#"bulk abc 028"#, r###"print -r ${+historywords}"###);
+        bulk_abc_fc_row_029 => (r#"bulk abc 029"#, r###"print -r ${+usergroups}"###);
+        bulk_abc_fc_row_030 => (r#"bulk abc 030"#, r###"print -r ${+dis_builtins}"###);
+        bulk_abc_fc_row_031 => (r#"bulk abc 031"#, r###"print -r ${+dis_widgets}"###);
+        bulk_abc_fc_row_032 => (r#"bulk abc 032"#, r###"print -r ${+dis_reswords}"###);
+        bulk_abc_fc_row_033 => (r#"bulk abc 033"#, r###"print -r ${+dis_patchars}"###);
+        bulk_abc_fc_row_034 => (r#"bulk abc 034"#, r###"print -r ${+dis_commands}"###);
+        bulk_abc_fc_row_035 => (r#"bulk abc 035"#, r###"print -r ${+module_path}"###);
+        bulk_abc_fc_row_036 => (r#"bulk abc 036"#, r###"print -r ${+functrace}"###);
+        bulk_abc_fc_row_037 => (r#"bulk abc 037"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
+        bulk_abc_fc_row_038 => (r#"bulk abc 038"#, r###"{ true; false; }; print -r $?"###);
+        bulk_abc_fc_row_039 => (r#"bulk abc 039"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
+        bulk_abc_fc_row_040 => (r#"bulk abc 040"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
+        bulk_abc_fc_row_041 => (r#"bulk abc 041"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
+        bulk_abc_fc_row_042 => (r#"bulk abc 042"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
+        bulk_abc_fc_row_043 => (r#"bulk abc 043"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
+        bulk_abc_fc_row_044 => (r#"bulk abc 044"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
+        bulk_abc_fc_row_045 => (r#"bulk abc 045"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
+        bulk_abc_fc_row_046 => (r#"bulk abc 046"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
+        bulk_abc_fc_row_047 => (r#"bulk abc 047"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_abc_fc_row_048 => (r#"bulk abc 048"#, r###"print -r ${(t)x}; x=hello"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abd {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abd_fc_row_001 => (r#"bulk abd 001"#, r###"print -r ${+parameters[PATH]}"###);
+        bulk_abd_fc_row_002 => (r#"bulk abd 002"#, r###"print -r ${+functions[fn]}; fn(){}"###);
+        bulk_abd_fc_row_003 => (r#"bulk abd 003"#, r###"print -r ${+commands[print]}"###);
+        bulk_abd_fc_row_004 => (r#"bulk abd 004"#, r###"print -r ${+zsh_eval_context}"###);
+        bulk_abd_fc_row_005 => (r#"bulk abd 005"#, r###"print -r ${+functrace}"###);
+        bulk_abd_fc_row_006 => (r#"bulk abd 006"#, r###"print -r ${+funcstack}"###);
+        bulk_abd_fc_row_007 => (r#"bulk abd 007"#, r###"print -r ${+funcfiletrace}"###);
+        bulk_abd_fc_row_008 => (r#"bulk abd 008"#, r###"print -r ${+jobstates}"###);
+        bulk_abd_fc_row_009 => (r#"bulk abd 009"#, r###"print -r ${+jobtexts}"###);
+        bulk_abd_fc_row_010 => (r#"bulk abd 010"#, r###"print -r ${+jobdirs}"###);
+        bulk_abd_fc_row_011 => (r#"bulk abd 011"#, r###"print -r ${+historywords}"###);
+        bulk_abd_fc_row_012 => (r#"bulk abd 012"#, r###"print -r ${+usergroups}"###);
+        bulk_abd_fc_row_013 => (r#"bulk abd 013"#, r###"print -r ${+dis_builtins}"###);
+        bulk_abd_fc_row_014 => (r#"bulk abd 014"#, r###"print -r ${+dis_widgets}"###);
+        bulk_abd_fc_row_015 => (r#"bulk abd 015"#, r###"print -r ${+dis_reswords}"###);
+        bulk_abd_fc_row_016 => (r#"bulk abd 016"#, r###"print -r ${+dis_patchars}"###);
+        bulk_abd_fc_row_017 => (r#"bulk abd 017"#, r###"print -r ${+dis_commands}"###);
+        bulk_abd_fc_row_018 => (r#"bulk abd 018"#, r###"print -r ${+module_path}"###);
+        bulk_abd_fc_row_019 => (r#"bulk abd 019"#, r###"print -r ${+functrace}"###);
+        bulk_abd_fc_row_020 => (r#"bulk abd 020"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
+        bulk_abd_fc_row_021 => (r#"bulk abd 021"#, r###"{ true; false; }; print -r $?"###);
+        bulk_abd_fc_row_022 => (r#"bulk abd 022"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
+        bulk_abd_fc_row_023 => (r#"bulk abd 023"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
+        bulk_abd_fc_row_024 => (r#"bulk abd 024"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
+        bulk_abd_fc_row_025 => (r#"bulk abd 025"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
+        bulk_abd_fc_row_026 => (r#"bulk abd 026"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
+        bulk_abd_fc_row_027 => (r#"bulk abd 027"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
+        bulk_abd_fc_row_028 => (r#"bulk abd 028"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
+        bulk_abd_fc_row_029 => (r#"bulk abd 029"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
+        bulk_abd_fc_row_030 => (r#"bulk abd 030"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_abd_fc_row_031 => (r#"bulk abd 031"#, r###"print -r ${(t)x}; x=hello"###);
+        bulk_abd_fc_row_032 => (r#"bulk abd 032"#, r###"unset y; print -r ${+y}"###);
+        bulk_abd_fc_row_033 => (r#"bulk abd 033"#, r###"x=hello; print -r ${+x}"###);
+        bulk_abd_fc_row_034 => (r#"bulk abd 034"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_abd_fc_row_035 => (r#"bulk abd 035"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+        bulk_abd_fc_row_036 => (r#"bulk abd 036"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
+        bulk_abd_fc_row_037 => (r#"bulk abd 037"#, r###"x=abc; print -r ${x/#a/z}"###);
+        bulk_abd_fc_row_038 => (r#"bulk abd 038"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_abd_fc_row_039 => (r#"bulk abd 039"#, r###"print -r ${(j::)a}; a=(x y)"###);
+        bulk_abd_fc_row_040 => (r#"bulk abd 040"#, r###"print -r ${(pj::)a}; a=(x y)"###);
+        bulk_abd_fc_row_041 => (r#"bulk abd 041"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
+        bulk_abd_fc_row_042 => (r#"bulk abd 042"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_abd_fc_row_043 => (r#"bulk abd 043"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_abd_fc_row_044 => (r#"bulk abd 044"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_abd_fc_row_045 => (r#"bulk abd 045"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_abd_fc_row_046 => (r#"bulk abd 046"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_abd_fc_row_047 => (r#"bulk abd 047"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_abd_fc_row_048 => (r#"bulk abd 048"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abe {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abe_fc_row_001 => (r#"bulk abe 001"#, r###"print -r ${+module_path}"###);
+        bulk_abe_fc_row_002 => (r#"bulk abe 002"#, r###"print -r ${+functrace}"###);
+        bulk_abe_fc_row_003 => (r#"bulk abe 003"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
+        bulk_abe_fc_row_004 => (r#"bulk abe 004"#, r###"{ true; false; }; print -r $?"###);
+        bulk_abe_fc_row_005 => (r#"bulk abe 005"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
+        bulk_abe_fc_row_006 => (r#"bulk abe 006"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
+        bulk_abe_fc_row_007 => (r#"bulk abe 007"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
+        bulk_abe_fc_row_008 => (r#"bulk abe 008"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
+        bulk_abe_fc_row_009 => (r#"bulk abe 009"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
+        bulk_abe_fc_row_010 => (r#"bulk abe 010"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
+        bulk_abe_fc_row_011 => (r#"bulk abe 011"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
+        bulk_abe_fc_row_012 => (r#"bulk abe 012"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
+        bulk_abe_fc_row_013 => (r#"bulk abe 013"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_abe_fc_row_014 => (r#"bulk abe 014"#, r###"print -r ${(t)x}; x=hello"###);
+        bulk_abe_fc_row_015 => (r#"bulk abe 015"#, r###"unset y; print -r ${+y}"###);
+        bulk_abe_fc_row_016 => (r#"bulk abe 016"#, r###"x=hello; print -r ${+x}"###);
+        bulk_abe_fc_row_017 => (r#"bulk abe 017"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_abe_fc_row_018 => (r#"bulk abe 018"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+        bulk_abe_fc_row_019 => (r#"bulk abe 019"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
+        bulk_abe_fc_row_020 => (r#"bulk abe 020"#, r###"x=abc; print -r ${x/#a/z}"###);
+        bulk_abe_fc_row_021 => (r#"bulk abe 021"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_abe_fc_row_022 => (r#"bulk abe 022"#, r###"print -r ${(j::)a}; a=(x y)"###);
+        bulk_abe_fc_row_023 => (r#"bulk abe 023"#, r###"print -r ${(pj::)a}; a=(x y)"###);
+        bulk_abe_fc_row_024 => (r#"bulk abe 024"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
+        bulk_abe_fc_row_025 => (r#"bulk abe 025"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_abe_fc_row_026 => (r#"bulk abe 026"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_abe_fc_row_027 => (r#"bulk abe 027"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_abe_fc_row_028 => (r#"bulk abe 028"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_abe_fc_row_029 => (r#"bulk abe 029"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_abe_fc_row_030 => (r#"bulk abe 030"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_abe_fc_row_031 => (r#"bulk abe 031"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_abe_fc_row_032 => (r#"bulk abe 032"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_abe_fc_row_033 => (r#"bulk abe 033"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_abe_fc_row_034 => (r#"bulk abe 034"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_abe_fc_row_035 => (r#"bulk abe 035"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_abe_fc_row_036 => (r#"bulk abe 036"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_abe_fc_row_037 => (r#"bulk abe 037"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_abe_fc_row_038 => (r#"bulk abe 038"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_abe_fc_row_039 => (r#"bulk abe 039"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_abe_fc_row_040 => (r#"bulk abe 040"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_abe_fc_row_041 => (r#"bulk abe 041"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_abe_fc_row_042 => (r#"bulk abe 042"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_abe_fc_row_043 => (r#"bulk abe 043"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_abe_fc_row_044 => (r#"bulk abe 044"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_abe_fc_row_045 => (r#"bulk abe 045"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_abe_fc_row_046 => (r#"bulk abe 046"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_abe_fc_row_047 => (r#"bulk abe 047"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_abe_fc_row_048 => (r#"bulk abe 048"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abf {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abf_fc_row_001 => (r#"bulk abf 001"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_abf_fc_row_002 => (r#"bulk abf 002"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+        bulk_abf_fc_row_003 => (r#"bulk abf 003"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
+        bulk_abf_fc_row_004 => (r#"bulk abf 004"#, r###"x=abc; print -r ${x/#a/z}"###);
+        bulk_abf_fc_row_005 => (r#"bulk abf 005"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_abf_fc_row_006 => (r#"bulk abf 006"#, r###"print -r ${(j::)a}; a=(x y)"###);
+        bulk_abf_fc_row_007 => (r#"bulk abf 007"#, r###"print -r ${(pj::)a}; a=(x y)"###);
+        bulk_abf_fc_row_008 => (r#"bulk abf 008"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
+        bulk_abf_fc_row_009 => (r#"bulk abf 009"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_abf_fc_row_010 => (r#"bulk abf 010"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_abf_fc_row_011 => (r#"bulk abf 011"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_abf_fc_row_012 => (r#"bulk abf 012"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_abf_fc_row_013 => (r#"bulk abf 013"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_abf_fc_row_014 => (r#"bulk abf 014"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_abf_fc_row_015 => (r#"bulk abf 015"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_abf_fc_row_016 => (r#"bulk abf 016"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_abf_fc_row_017 => (r#"bulk abf 017"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_abf_fc_row_018 => (r#"bulk abf 018"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_abf_fc_row_019 => (r#"bulk abf 019"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_abf_fc_row_020 => (r#"bulk abf 020"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_abf_fc_row_021 => (r#"bulk abf 021"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_abf_fc_row_022 => (r#"bulk abf 022"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_abf_fc_row_023 => (r#"bulk abf 023"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_abf_fc_row_024 => (r#"bulk abf 024"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_abf_fc_row_025 => (r#"bulk abf 025"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_abf_fc_row_026 => (r#"bulk abf 026"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_abf_fc_row_027 => (r#"bulk abf 027"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_abf_fc_row_028 => (r#"bulk abf 028"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_abf_fc_row_029 => (r#"bulk abf 029"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_abf_fc_row_030 => (r#"bulk abf 030"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_abf_fc_row_031 => (r#"bulk abf 031"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_abf_fc_row_032 => (r#"bulk abf 032"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_abf_fc_row_033 => (r#"bulk abf 033"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_abf_fc_row_034 => (r#"bulk abf 034"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_abf_fc_row_035 => (r#"bulk abf 035"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_abf_fc_row_036 => (r#"bulk abf 036"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_abf_fc_row_037 => (r#"bulk abf 037"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_abf_fc_row_038 => (r#"bulk abf 038"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_abf_fc_row_039 => (r#"bulk abf 039"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_abf_fc_row_040 => (r#"bulk abf 040"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_abf_fc_row_041 => (r#"bulk abf 041"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_abf_fc_row_042 => (r#"bulk abf 042"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_abf_fc_row_043 => (r#"bulk abf 043"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_abf_fc_row_044 => (r#"bulk abf 044"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_abf_fc_row_045 => (r#"bulk abf 045"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_abf_fc_row_046 => (r#"bulk abf 046"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_abf_fc_row_047 => (r#"bulk abf 047"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_abf_fc_row_048 => (r#"bulk abf 048"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abg {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abg_fc_row_001 => (r#"bulk abg 001"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_abg_fc_row_002 => (r#"bulk abg 002"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_abg_fc_row_003 => (r#"bulk abg 003"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_abg_fc_row_004 => (r#"bulk abg 004"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_abg_fc_row_005 => (r#"bulk abg 005"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_abg_fc_row_006 => (r#"bulk abg 006"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_abg_fc_row_007 => (r#"bulk abg 007"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_abg_fc_row_008 => (r#"bulk abg 008"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_abg_fc_row_009 => (r#"bulk abg 009"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_abg_fc_row_010 => (r#"bulk abg 010"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_abg_fc_row_011 => (r#"bulk abg 011"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_abg_fc_row_012 => (r#"bulk abg 012"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_abg_fc_row_013 => (r#"bulk abg 013"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_abg_fc_row_014 => (r#"bulk abg 014"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_abg_fc_row_015 => (r#"bulk abg 015"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_abg_fc_row_016 => (r#"bulk abg 016"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_abg_fc_row_017 => (r#"bulk abg 017"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_abg_fc_row_018 => (r#"bulk abg 018"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_abg_fc_row_019 => (r#"bulk abg 019"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_abg_fc_row_020 => (r#"bulk abg 020"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_abg_fc_row_021 => (r#"bulk abg 021"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_abg_fc_row_022 => (r#"bulk abg 022"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_abg_fc_row_023 => (r#"bulk abg 023"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_abg_fc_row_024 => (r#"bulk abg 024"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_abg_fc_row_025 => (r#"bulk abg 025"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_abg_fc_row_026 => (r#"bulk abg 026"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_abg_fc_row_027 => (r#"bulk abg 027"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_abg_fc_row_028 => (r#"bulk abg 028"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_abg_fc_row_029 => (r#"bulk abg 029"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_abg_fc_row_030 => (r#"bulk abg 030"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_abg_fc_row_031 => (r#"bulk abg 031"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_abg_fc_row_032 => (r#"bulk abg 032"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_abg_fc_row_033 => (r#"bulk abg 033"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_abg_fc_row_034 => (r#"bulk abg 034"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_abg_fc_row_035 => (r#"bulk abg 035"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_abg_fc_row_036 => (r#"bulk abg 036"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_abg_fc_row_037 => (r#"bulk abg 037"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_abg_fc_row_038 => (r#"bulk abg 038"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_abg_fc_row_039 => (r#"bulk abg 039"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_abg_fc_row_040 => (r#"bulk abg 040"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_abg_fc_row_041 => (r#"bulk abg 041"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_abg_fc_row_042 => (r#"bulk abg 042"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_abg_fc_row_043 => (r#"bulk abg 043"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_abg_fc_row_044 => (r#"bulk abg 044"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_abg_fc_row_045 => (r#"bulk abg 045"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_abg_fc_row_046 => (r#"bulk abg 046"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_abg_fc_row_047 => (r#"bulk abg 047"#, r###"print -r {1..3}"###);
+        bulk_abg_fc_row_048 => (r#"bulk abg 048"#, r###"print -r {01..03}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abh {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abh_fc_row_001 => (r#"bulk abh 001"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_abh_fc_row_002 => (r#"bulk abh 002"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_abh_fc_row_003 => (r#"bulk abh 003"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_abh_fc_row_004 => (r#"bulk abh 004"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_abh_fc_row_005 => (r#"bulk abh 005"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_abh_fc_row_006 => (r#"bulk abh 006"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_abh_fc_row_007 => (r#"bulk abh 007"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_abh_fc_row_008 => (r#"bulk abh 008"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_abh_fc_row_009 => (r#"bulk abh 009"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_abh_fc_row_010 => (r#"bulk abh 010"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_abh_fc_row_011 => (r#"bulk abh 011"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_abh_fc_row_012 => (r#"bulk abh 012"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_abh_fc_row_013 => (r#"bulk abh 013"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_abh_fc_row_014 => (r#"bulk abh 014"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_abh_fc_row_015 => (r#"bulk abh 015"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_abh_fc_row_016 => (r#"bulk abh 016"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_abh_fc_row_017 => (r#"bulk abh 017"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_abh_fc_row_018 => (r#"bulk abh 018"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_abh_fc_row_019 => (r#"bulk abh 019"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_abh_fc_row_020 => (r#"bulk abh 020"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_abh_fc_row_021 => (r#"bulk abh 021"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_abh_fc_row_022 => (r#"bulk abh 022"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_abh_fc_row_023 => (r#"bulk abh 023"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_abh_fc_row_024 => (r#"bulk abh 024"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_abh_fc_row_025 => (r#"bulk abh 025"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_abh_fc_row_026 => (r#"bulk abh 026"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_abh_fc_row_027 => (r#"bulk abh 027"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_abh_fc_row_028 => (r#"bulk abh 028"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_abh_fc_row_029 => (r#"bulk abh 029"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_abh_fc_row_030 => (r#"bulk abh 030"#, r###"print -r {1..3}"###);
+        bulk_abh_fc_row_031 => (r#"bulk abh 031"#, r###"print -r {01..03}"###);
+        bulk_abh_fc_row_032 => (r#"bulk abh 032"#, r###"print -r {a..c}"###);
+        bulk_abh_fc_row_033 => (r#"bulk abh 033"#, r###"print -r {1..4..2}"###);
+        bulk_abh_fc_row_034 => (r#"bulk abh 034"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_abh_fc_row_035 => (r#"bulk abh 035"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_abh_fc_row_036 => (r#"bulk abh 036"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_abh_fc_row_037 => (r#"bulk abh 037"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_abh_fc_row_038 => (r#"bulk abh 038"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_abh_fc_row_039 => (r#"bulk abh 039"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_abh_fc_row_040 => (r#"bulk abh 040"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_abh_fc_row_041 => (r#"bulk abh 041"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_abh_fc_row_042 => (r#"bulk abh 042"#, r###"(( 1 )); print -r $?"###);
+        bulk_abh_fc_row_043 => (r#"bulk abh 043"#, r###"(( 0 )); print -r $?"###);
+        bulk_abh_fc_row_044 => (r#"bulk abh 044"#, r###": $(( 0 )) || print -r z"###);
+        bulk_abh_fc_row_045 => (r#"bulk abh 045"#, r###": $(( 1 )) && print -r y"###);
+        bulk_abh_fc_row_046 => (r#"bulk abh 046"#, r###"let x=2+2; print -r $x"###);
+        bulk_abh_fc_row_047 => (r#"bulk abh 047"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_abh_fc_row_048 => (r#"bulk abh 048"#, r###"typeset -F f=2.5; print -r $f"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abi {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abi_fc_row_001 => (r#"bulk abi 001"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_abi_fc_row_002 => (r#"bulk abi 002"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_abi_fc_row_003 => (r#"bulk abi 003"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_abi_fc_row_004 => (r#"bulk abi 004"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_abi_fc_row_005 => (r#"bulk abi 005"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_abi_fc_row_006 => (r#"bulk abi 006"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_abi_fc_row_007 => (r#"bulk abi 007"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_abi_fc_row_008 => (r#"bulk abi 008"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_abi_fc_row_009 => (r#"bulk abi 009"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_abi_fc_row_010 => (r#"bulk abi 010"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_abi_fc_row_011 => (r#"bulk abi 011"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_abi_fc_row_012 => (r#"bulk abi 012"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_abi_fc_row_013 => (r#"bulk abi 013"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_abi_fc_row_014 => (r#"bulk abi 014"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_abi_fc_row_015 => (r#"bulk abi 015"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_abi_fc_row_016 => (r#"bulk abi 016"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_abi_fc_row_017 => (r#"bulk abi 017"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_abi_fc_row_018 => (r#"bulk abi 018"#, r###"print -r {1..3}"###);
+        bulk_abi_fc_row_019 => (r#"bulk abi 019"#, r###"print -r {01..03}"###);
+        bulk_abi_fc_row_020 => (r#"bulk abi 020"#, r###"print -r {a..c}"###);
+        bulk_abi_fc_row_021 => (r#"bulk abi 021"#, r###"print -r {1..4..2}"###);
+        bulk_abi_fc_row_022 => (r#"bulk abi 022"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_abi_fc_row_023 => (r#"bulk abi 023"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_abi_fc_row_024 => (r#"bulk abi 024"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_abi_fc_row_025 => (r#"bulk abi 025"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_abi_fc_row_026 => (r#"bulk abi 026"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_abi_fc_row_027 => (r#"bulk abi 027"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_abi_fc_row_028 => (r#"bulk abi 028"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_abi_fc_row_029 => (r#"bulk abi 029"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_abi_fc_row_030 => (r#"bulk abi 030"#, r###"(( 1 )); print -r $?"###);
+        bulk_abi_fc_row_031 => (r#"bulk abi 031"#, r###"(( 0 )); print -r $?"###);
+        bulk_abi_fc_row_032 => (r#"bulk abi 032"#, r###": $(( 0 )) || print -r z"###);
+        bulk_abi_fc_row_033 => (r#"bulk abi 033"#, r###": $(( 1 )) && print -r y"###);
+        bulk_abi_fc_row_034 => (r#"bulk abi 034"#, r###"let x=2+2; print -r $x"###);
+        bulk_abi_fc_row_035 => (r#"bulk abi 035"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_abi_fc_row_036 => (r#"bulk abi 036"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_abi_fc_row_037 => (r#"bulk abi 037"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_abi_fc_row_038 => (r#"bulk abi 038"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_abi_fc_row_039 => (r#"bulk abi 039"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_abi_fc_row_040 => (r#"bulk abi 040"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_abi_fc_row_041 => (r#"bulk abi 041"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_abi_fc_row_042 => (r#"bulk abi 042"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_abi_fc_row_043 => (r#"bulk abi 043"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_abi_fc_row_044 => (r#"bulk abi 044"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_abi_fc_row_045 => (r#"bulk abi 045"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_abi_fc_row_046 => (r#"bulk abi 046"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_abi_fc_row_047 => (r#"bulk abi 047"#, r###"local a; a=1; print -r $a"###);
+        bulk_abi_fc_row_048 => (r#"bulk abi 048"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abj {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abj_fc_row_001 => (r#"bulk abj 001"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_abj_fc_row_002 => (r#"bulk abj 002"#, r###"print -r {1..3}"###);
+        bulk_abj_fc_row_003 => (r#"bulk abj 003"#, r###"print -r {01..03}"###);
+        bulk_abj_fc_row_004 => (r#"bulk abj 004"#, r###"print -r {a..c}"###);
+        bulk_abj_fc_row_005 => (r#"bulk abj 005"#, r###"print -r {1..4..2}"###);
+        bulk_abj_fc_row_006 => (r#"bulk abj 006"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_abj_fc_row_007 => (r#"bulk abj 007"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_abj_fc_row_008 => (r#"bulk abj 008"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_abj_fc_row_009 => (r#"bulk abj 009"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_abj_fc_row_010 => (r#"bulk abj 010"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_abj_fc_row_011 => (r#"bulk abj 011"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_abj_fc_row_012 => (r#"bulk abj 012"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_abj_fc_row_013 => (r#"bulk abj 013"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_abj_fc_row_014 => (r#"bulk abj 014"#, r###"(( 1 )); print -r $?"###);
+        bulk_abj_fc_row_015 => (r#"bulk abj 015"#, r###"(( 0 )); print -r $?"###);
+        bulk_abj_fc_row_016 => (r#"bulk abj 016"#, r###": $(( 0 )) || print -r z"###);
+        bulk_abj_fc_row_017 => (r#"bulk abj 017"#, r###": $(( 1 )) && print -r y"###);
+        bulk_abj_fc_row_018 => (r#"bulk abj 018"#, r###"let x=2+2; print -r $x"###);
+        bulk_abj_fc_row_019 => (r#"bulk abj 019"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_abj_fc_row_020 => (r#"bulk abj 020"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_abj_fc_row_021 => (r#"bulk abj 021"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_abj_fc_row_022 => (r#"bulk abj 022"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_abj_fc_row_023 => (r#"bulk abj 023"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_abj_fc_row_024 => (r#"bulk abj 024"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_abj_fc_row_025 => (r#"bulk abj 025"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_abj_fc_row_026 => (r#"bulk abj 026"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_abj_fc_row_027 => (r#"bulk abj 027"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_abj_fc_row_028 => (r#"bulk abj 028"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_abj_fc_row_029 => (r#"bulk abj 029"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_abj_fc_row_030 => (r#"bulk abj 030"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_abj_fc_row_031 => (r#"bulk abj 031"#, r###"local a; a=1; print -r $a"###);
+        bulk_abj_fc_row_032 => (r#"bulk abj 032"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_abj_fc_row_033 => (r#"bulk abj 033"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_abj_fc_row_034 => (r#"bulk abj 034"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_abj_fc_row_035 => (r#"bulk abj 035"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_abj_fc_row_036 => (r#"bulk abj 036"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_abj_fc_row_037 => (r#"bulk abj 037"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_abj_fc_row_038 => (r#"bulk abj 038"#, r###"setopt localoptions; print -r $?"###);
+        bulk_abj_fc_row_039 => (r#"bulk abj 039"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_abj_fc_row_040 => (r#"bulk abj 040"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_abj_fc_row_041 => (r#"bulk abj 041"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_abj_fc_row_042 => (r#"bulk abj 042"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_abj_fc_row_043 => (r#"bulk abj 043"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_abj_fc_row_044 => (r#"bulk abj 044"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_abj_fc_row_045 => (r#"bulk abj 045"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_abj_fc_row_046 => (r#"bulk abj 046"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_abj_fc_row_047 => (r#"bulk abj 047"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_abj_fc_row_048 => (r#"bulk abj 048"#, r###"setopt no_interactivecomments; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abk {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abk_fc_row_001 => (r#"bulk abk 001"#, r###"let x=2+2; print -r $x"###);
+        bulk_abk_fc_row_002 => (r#"bulk abk 002"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_abk_fc_row_003 => (r#"bulk abk 003"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_abk_fc_row_004 => (r#"bulk abk 004"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_abk_fc_row_005 => (r#"bulk abk 005"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_abk_fc_row_006 => (r#"bulk abk 006"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_abk_fc_row_007 => (r#"bulk abk 007"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_abk_fc_row_008 => (r#"bulk abk 008"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_abk_fc_row_009 => (r#"bulk abk 009"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_abk_fc_row_010 => (r#"bulk abk 010"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_abk_fc_row_011 => (r#"bulk abk 011"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_abk_fc_row_012 => (r#"bulk abk 012"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_abk_fc_row_013 => (r#"bulk abk 013"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_abk_fc_row_014 => (r#"bulk abk 014"#, r###"local a; a=1; print -r $a"###);
+        bulk_abk_fc_row_015 => (r#"bulk abk 015"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_abk_fc_row_016 => (r#"bulk abk 016"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_abk_fc_row_017 => (r#"bulk abk 017"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_abk_fc_row_018 => (r#"bulk abk 018"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_abk_fc_row_019 => (r#"bulk abk 019"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_abk_fc_row_020 => (r#"bulk abk 020"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_abk_fc_row_021 => (r#"bulk abk 021"#, r###"setopt localoptions; print -r $?"###);
+        bulk_abk_fc_row_022 => (r#"bulk abk 022"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_abk_fc_row_023 => (r#"bulk abk 023"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_abk_fc_row_024 => (r#"bulk abk 024"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_abk_fc_row_025 => (r#"bulk abk 025"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_abk_fc_row_026 => (r#"bulk abk 026"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_abk_fc_row_027 => (r#"bulk abk 027"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_abk_fc_row_028 => (r#"bulk abk 028"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_abk_fc_row_029 => (r#"bulk abk 029"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_abk_fc_row_030 => (r#"bulk abk 030"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_abk_fc_row_031 => (r#"bulk abk 031"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_abk_fc_row_032 => (r#"bulk abk 032"#, r###"setopt multios; print -r $?"###);
+        bulk_abk_fc_row_033 => (r#"bulk abk 033"#, r###"setopt noclobber; print -r $?"###);
+        bulk_abk_fc_row_034 => (r#"bulk abk 034"#, r###"setopt clobber; print -r $?"###);
+        bulk_abk_fc_row_035 => (r#"bulk abk 035"#, r###"setopt histexpand; print -r $?"###);
+        bulk_abk_fc_row_036 => (r#"bulk abk 036"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_abk_fc_row_037 => (r#"bulk abk 037"#, r###"setopt banghist; print -r $?"###);
+        bulk_abk_fc_row_038 => (r#"bulk abk 038"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_abk_fc_row_039 => (r#"bulk abk 039"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_abk_fc_row_040 => (r#"bulk abk 040"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_abk_fc_row_041 => (r#"bulk abk 041"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_abk_fc_row_042 => (r#"bulk abk 042"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_abk_fc_row_043 => (r#"bulk abk 043"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_abk_fc_row_044 => (r#"bulk abk 044"#, r###"setopt histverify; print -r $?"###);
+        bulk_abk_fc_row_045 => (r#"bulk abk 045"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_abk_fc_row_046 => (r#"bulk abk 046"#, r###"setopt no_beep; print -r $?"###);
+        bulk_abk_fc_row_047 => (r#"bulk abk 047"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_abk_fc_row_048 => (r#"bulk abk 048"#, r###"setopt auto_cd; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abl {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abl_fc_row_001 => (r#"bulk abl 001"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_abl_fc_row_002 => (r#"bulk abl 002"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_abl_fc_row_003 => (r#"bulk abl 003"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_abl_fc_row_004 => (r#"bulk abl 004"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_abl_fc_row_005 => (r#"bulk abl 005"#, r###"setopt localoptions; print -r $?"###);
+        bulk_abl_fc_row_006 => (r#"bulk abl 006"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_abl_fc_row_007 => (r#"bulk abl 007"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_abl_fc_row_008 => (r#"bulk abl 008"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_abl_fc_row_009 => (r#"bulk abl 009"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_abl_fc_row_010 => (r#"bulk abl 010"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_abl_fc_row_011 => (r#"bulk abl 011"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_abl_fc_row_012 => (r#"bulk abl 012"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_abl_fc_row_013 => (r#"bulk abl 013"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_abl_fc_row_014 => (r#"bulk abl 014"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_abl_fc_row_015 => (r#"bulk abl 015"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_abl_fc_row_016 => (r#"bulk abl 016"#, r###"setopt multios; print -r $?"###);
+        bulk_abl_fc_row_017 => (r#"bulk abl 017"#, r###"setopt noclobber; print -r $?"###);
+        bulk_abl_fc_row_018 => (r#"bulk abl 018"#, r###"setopt clobber; print -r $?"###);
+        bulk_abl_fc_row_019 => (r#"bulk abl 019"#, r###"setopt histexpand; print -r $?"###);
+        bulk_abl_fc_row_020 => (r#"bulk abl 020"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_abl_fc_row_021 => (r#"bulk abl 021"#, r###"setopt banghist; print -r $?"###);
+        bulk_abl_fc_row_022 => (r#"bulk abl 022"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_abl_fc_row_023 => (r#"bulk abl 023"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_abl_fc_row_024 => (r#"bulk abl 024"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_abl_fc_row_025 => (r#"bulk abl 025"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_abl_fc_row_026 => (r#"bulk abl 026"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_abl_fc_row_027 => (r#"bulk abl 027"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_abl_fc_row_028 => (r#"bulk abl 028"#, r###"setopt histverify; print -r $?"###);
+        bulk_abl_fc_row_029 => (r#"bulk abl 029"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_abl_fc_row_030 => (r#"bulk abl 030"#, r###"setopt no_beep; print -r $?"###);
+        bulk_abl_fc_row_031 => (r#"bulk abl 031"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_abl_fc_row_032 => (r#"bulk abl 032"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_abl_fc_row_033 => (r#"bulk abl 033"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_abl_fc_row_034 => (r#"bulk abl 034"#, r###"setopt correct; print -r $?"###);
+        bulk_abl_fc_row_035 => (r#"bulk abl 035"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_abl_fc_row_036 => (r#"bulk abl 036"#, r###"setopt completealiases; print -r $?"###);
+        bulk_abl_fc_row_037 => (r#"bulk abl 037"#, r###"setopt globdots; print -r $?"###);
+        bulk_abl_fc_row_038 => (r#"bulk abl 038"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_abl_fc_row_039 => (r#"bulk abl 039"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_abl_fc_row_040 => (r#"bulk abl 040"#, r###"setopt markdirs; print -r $?"###);
+        bulk_abl_fc_row_041 => (r#"bulk abl 041"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_abl_fc_row_042 => (r#"bulk abl 042"#, r###"setopt chase_links; print -r $?"###);
+        bulk_abl_fc_row_043 => (r#"bulk abl 043"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_abl_fc_row_044 => (r#"bulk abl 044"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_abl_fc_row_045 => (r#"bulk abl 045"#, r###"setopt pushdsilent; print -r $?"###);
+        bulk_abl_fc_row_046 => (r#"bulk abl 046"#, r###"setopt pushdtohome; print -r $?"###);
+        bulk_abl_fc_row_047 => (r#"bulk abl 047"#, r###"setopt autopushd; print -r $?"###);
+        bulk_abl_fc_row_048 => (r#"bulk abl 048"#, r###"setopt pushdminus; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abm {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abm_fc_row_001 => (r#"bulk abm 001"#, r###"setopt clobber; print -r $?"###);
+        bulk_abm_fc_row_002 => (r#"bulk abm 002"#, r###"setopt histexpand; print -r $?"###);
+        bulk_abm_fc_row_003 => (r#"bulk abm 003"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_abm_fc_row_004 => (r#"bulk abm 004"#, r###"setopt banghist; print -r $?"###);
+        bulk_abm_fc_row_005 => (r#"bulk abm 005"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_abm_fc_row_006 => (r#"bulk abm 006"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_abm_fc_row_007 => (r#"bulk abm 007"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_abm_fc_row_008 => (r#"bulk abm 008"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_abm_fc_row_009 => (r#"bulk abm 009"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_abm_fc_row_010 => (r#"bulk abm 010"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_abm_fc_row_011 => (r#"bulk abm 011"#, r###"setopt histverify; print -r $?"###);
+        bulk_abm_fc_row_012 => (r#"bulk abm 012"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_abm_fc_row_013 => (r#"bulk abm 013"#, r###"setopt no_beep; print -r $?"###);
+        bulk_abm_fc_row_014 => (r#"bulk abm 014"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_abm_fc_row_015 => (r#"bulk abm 015"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_abm_fc_row_016 => (r#"bulk abm 016"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_abm_fc_row_017 => (r#"bulk abm 017"#, r###"setopt correct; print -r $?"###);
+        bulk_abm_fc_row_018 => (r#"bulk abm 018"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_abm_fc_row_019 => (r#"bulk abm 019"#, r###"setopt completealiases; print -r $?"###);
+        bulk_abm_fc_row_020 => (r#"bulk abm 020"#, r###"setopt globdots; print -r $?"###);
+        bulk_abm_fc_row_021 => (r#"bulk abm 021"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_abm_fc_row_022 => (r#"bulk abm 022"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_abm_fc_row_023 => (r#"bulk abm 023"#, r###"setopt markdirs; print -r $?"###);
+        bulk_abm_fc_row_024 => (r#"bulk abm 024"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_abm_fc_row_025 => (r#"bulk abm 025"#, r###"setopt chase_links; print -r $?"###);
+        bulk_abm_fc_row_026 => (r#"bulk abm 026"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_abm_fc_row_027 => (r#"bulk abm 027"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_abm_fc_row_028 => (r#"bulk abm 028"#, r###"setopt pushdsilent; print -r $?"###);
+        bulk_abm_fc_row_029 => (r#"bulk abm 029"#, r###"setopt pushdtohome; print -r $?"###);
+        bulk_abm_fc_row_030 => (r#"bulk abm 030"#, r###"setopt autopushd; print -r $?"###);
+        bulk_abm_fc_row_031 => (r#"bulk abm 031"#, r###"setopt pushdminus; print -r $?"###);
+        bulk_abm_fc_row_032 => (r#"bulk abm 032"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_abm_fc_row_033 => (r#"bulk abm 033"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
+        bulk_abm_fc_row_034 => (r#"bulk abm 034"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
+        bulk_abm_fc_row_035 => (r#"bulk abm 035"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+        bulk_abm_fc_row_036 => (r#"bulk abm 036"#, r###"print -r $PWD"###);
+        bulk_abm_fc_row_037 => (r#"bulk abm 037"#, r###"print -r ${PWD:h}"###);
+        bulk_abm_fc_row_038 => (r#"bulk abm 038"#, r###"print -r ${PWD:t}"###);
+        bulk_abm_fc_row_039 => (r#"bulk abm 039"#, r###"print -r ${PWD:r}"###);
+        bulk_abm_fc_row_040 => (r#"bulk abm 040"#, r###"print -r ${PWD:e}"###);
+        bulk_abm_fc_row_041 => (r#"bulk abm 041"#, r###"print -r ${PWD:a}"###);
+        bulk_abm_fc_row_042 => (r#"bulk abm 042"#, r###"print -r ${PWD:A}"###);
+        bulk_abm_fc_row_043 => (r#"bulk abm 043"#, r###"read -r line <<< 'one'; print -r $line"###);
+        bulk_abm_fc_row_044 => (r#"bulk abm 044"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
+        bulk_abm_fc_row_045 => (r#"bulk abm 045"#, r###"print -r $'tab\there'"###);
+        bulk_abm_fc_row_046 => (r#"bulk abm 046"#, r###"print -r $'line1\nline2'"###);
+        bulk_abm_fc_row_047 => (r#"bulk abm 047"#, r###"printf '%q\n' 'a b'"###);
+        bulk_abm_fc_row_048 => (r#"bulk abm 048"#, r###"printf '%s\n' ok"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abn {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abn_fc_row_001 => (r#"bulk abn 001"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_abn_fc_row_002 => (r#"bulk abn 002"#, r###"setopt completealiases; print -r $?"###);
+        bulk_abn_fc_row_003 => (r#"bulk abn 003"#, r###"setopt globdots; print -r $?"###);
+        bulk_abn_fc_row_004 => (r#"bulk abn 004"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_abn_fc_row_005 => (r#"bulk abn 005"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_abn_fc_row_006 => (r#"bulk abn 006"#, r###"setopt markdirs; print -r $?"###);
+        bulk_abn_fc_row_007 => (r#"bulk abn 007"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_abn_fc_row_008 => (r#"bulk abn 008"#, r###"setopt chase_links; print -r $?"###);
+        bulk_abn_fc_row_009 => (r#"bulk abn 009"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_abn_fc_row_010 => (r#"bulk abn 010"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_abn_fc_row_011 => (r#"bulk abn 011"#, r###"setopt pushdsilent; print -r $?"###);
+        bulk_abn_fc_row_012 => (r#"bulk abn 012"#, r###"setopt pushdtohome; print -r $?"###);
+        bulk_abn_fc_row_013 => (r#"bulk abn 013"#, r###"setopt autopushd; print -r $?"###);
+        bulk_abn_fc_row_014 => (r#"bulk abn 014"#, r###"setopt pushdminus; print -r $?"###);
+        bulk_abn_fc_row_015 => (r#"bulk abn 015"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_abn_fc_row_016 => (r#"bulk abn 016"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
+        bulk_abn_fc_row_017 => (r#"bulk abn 017"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
+        bulk_abn_fc_row_018 => (r#"bulk abn 018"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+        bulk_abn_fc_row_019 => (r#"bulk abn 019"#, r###"print -r $PWD"###);
+        bulk_abn_fc_row_020 => (r#"bulk abn 020"#, r###"print -r ${PWD:h}"###);
+        bulk_abn_fc_row_021 => (r#"bulk abn 021"#, r###"print -r ${PWD:t}"###);
+        bulk_abn_fc_row_022 => (r#"bulk abn 022"#, r###"print -r ${PWD:r}"###);
+        bulk_abn_fc_row_023 => (r#"bulk abn 023"#, r###"print -r ${PWD:e}"###);
+        bulk_abn_fc_row_024 => (r#"bulk abn 024"#, r###"print -r ${PWD:a}"###);
+        bulk_abn_fc_row_025 => (r#"bulk abn 025"#, r###"print -r ${PWD:A}"###);
+        bulk_abn_fc_row_026 => (r#"bulk abn 026"#, r###"read -r line <<< 'one'; print -r $line"###);
+        bulk_abn_fc_row_027 => (r#"bulk abn 027"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
+        bulk_abn_fc_row_028 => (r#"bulk abn 028"#, r###"print -r $'tab\there'"###);
+        bulk_abn_fc_row_029 => (r#"bulk abn 029"#, r###"print -r $'line1\nline2'"###);
+        bulk_abn_fc_row_030 => (r#"bulk abn 030"#, r###"printf '%q\n' 'a b'"###);
+        bulk_abn_fc_row_031 => (r#"bulk abn 031"#, r###"printf '%s\n' ok"###);
+        bulk_abn_fc_row_032 => (r#"bulk abn 032"#, r###"print -rn -- end"###);
+        bulk_abn_fc_row_033 => (r#"bulk abn 033"#, r###"print -rl -- a b"###);
+        bulk_abn_fc_row_034 => (r#"bulk abn 034"#, r###"print -fc '%s\n' hi"###);
+        bulk_abn_fc_row_035 => (r#"bulk abn 035"#, r###"whence -w print 2>/dev/null; print -r $?"###);
+        bulk_abn_fc_row_036 => (r#"bulk abn 036"#, r###"whence -c print 2>/dev/null; print -r $?"###);
+        bulk_abn_fc_row_037 => (r#"bulk abn 037"#, r###"which print 2>/dev/null; print -r $?"###);
+        bulk_abn_fc_row_038 => (r#"bulk abn 038"#, r###"command -v print 2>/dev/null; print -r $?"###);
+        bulk_abn_fc_row_039 => (r#"bulk abn 039"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_abn_fc_row_040 => (r#"bulk abn 040"#, r###"rehash 2>/dev/null; print -r $?"###);
+        bulk_abn_fc_row_041 => (r#"bulk abn 041"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
+        bulk_abn_fc_row_042 => (r#"bulk abn 042"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
+        bulk_abn_fc_row_043 => (r#"bulk abn 043"#, r###"export ZA=1; print -r $ZA"###);
+        bulk_abn_fc_row_044 => (r#"bulk abn 044"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
+        bulk_abn_fc_row_045 => (r#"bulk abn 045"#, r###"typeset -x ZB=2; print -r $ZB"###);
+        bulk_abn_fc_row_046 => (r#"bulk abn 046"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
+        bulk_abn_fc_row_047 => (r#"bulk abn 047"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
+        bulk_abn_fc_row_048 => (r#"bulk abn 048"#, r###"shift; print -r $1; set -- a b c"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abo {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abo_fc_row_001 => (r#"bulk abo 001"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+        bulk_abo_fc_row_002 => (r#"bulk abo 002"#, r###"print -r $PWD"###);
+        bulk_abo_fc_row_003 => (r#"bulk abo 003"#, r###"print -r ${PWD:h}"###);
+        bulk_abo_fc_row_004 => (r#"bulk abo 004"#, r###"print -r ${PWD:t}"###);
+        bulk_abo_fc_row_005 => (r#"bulk abo 005"#, r###"print -r ${PWD:r}"###);
+        bulk_abo_fc_row_006 => (r#"bulk abo 006"#, r###"print -r ${PWD:e}"###);
+        bulk_abo_fc_row_007 => (r#"bulk abo 007"#, r###"print -r ${PWD:a}"###);
+        bulk_abo_fc_row_008 => (r#"bulk abo 008"#, r###"print -r ${PWD:A}"###);
+        bulk_abo_fc_row_009 => (r#"bulk abo 009"#, r###"read -r line <<< 'one'; print -r $line"###);
+        bulk_abo_fc_row_010 => (r#"bulk abo 010"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
+        bulk_abo_fc_row_011 => (r#"bulk abo 011"#, r###"print -r $'tab\there'"###);
+        bulk_abo_fc_row_012 => (r#"bulk abo 012"#, r###"print -r $'line1\nline2'"###);
+        bulk_abo_fc_row_013 => (r#"bulk abo 013"#, r###"printf '%q\n' 'a b'"###);
+        bulk_abo_fc_row_014 => (r#"bulk abo 014"#, r###"printf '%s\n' ok"###);
+        bulk_abo_fc_row_015 => (r#"bulk abo 015"#, r###"print -rn -- end"###);
+        bulk_abo_fc_row_016 => (r#"bulk abo 016"#, r###"print -rl -- a b"###);
+        bulk_abo_fc_row_017 => (r#"bulk abo 017"#, r###"print -fc '%s\n' hi"###);
+        bulk_abo_fc_row_018 => (r#"bulk abo 018"#, r###"whence -w print 2>/dev/null; print -r $?"###);
+        bulk_abo_fc_row_019 => (r#"bulk abo 019"#, r###"whence -c print 2>/dev/null; print -r $?"###);
+        bulk_abo_fc_row_020 => (r#"bulk abo 020"#, r###"which print 2>/dev/null; print -r $?"###);
+        bulk_abo_fc_row_021 => (r#"bulk abo 021"#, r###"command -v print 2>/dev/null; print -r $?"###);
+        bulk_abo_fc_row_022 => (r#"bulk abo 022"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_abo_fc_row_023 => (r#"bulk abo 023"#, r###"rehash 2>/dev/null; print -r $?"###);
+        bulk_abo_fc_row_024 => (r#"bulk abo 024"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
+        bulk_abo_fc_row_025 => (r#"bulk abo 025"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
+        bulk_abo_fc_row_026 => (r#"bulk abo 026"#, r###"export ZA=1; print -r $ZA"###);
+        bulk_abo_fc_row_027 => (r#"bulk abo 027"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
+        bulk_abo_fc_row_028 => (r#"bulk abo 028"#, r###"typeset -x ZB=2; print -r $ZB"###);
+        bulk_abo_fc_row_029 => (r#"bulk abo 029"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
+        bulk_abo_fc_row_030 => (r#"bulk abo 030"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
+        bulk_abo_fc_row_031 => (r#"bulk abo 031"#, r###"shift; print -r $1; set -- a b c"###);
+        bulk_abo_fc_row_032 => (r#"bulk abo 032"#, r###"(( $# )); print -r $#"###);
+        bulk_abo_fc_row_033 => (r#"bulk abo 033"#, r###"print -r ${argv[1]}"###);
+        bulk_abo_fc_row_034 => (r#"bulk abo 034"#, r###"print -r ${*[1]}"###);
+        bulk_abo_fc_row_035 => (r#"bulk abo 035"#, r###"print -r $@[1]"###);
+        bulk_abo_fc_row_036 => (r#"bulk abo 036"#, r###"print -r ${@:2}"###);
+        bulk_abo_fc_row_037 => (r#"bulk abo 037"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
+        bulk_abo_fc_row_038 => (r#"bulk abo 038"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
+        bulk_abo_fc_row_039 => (r#"bulk abo 039"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
+        bulk_abo_fc_row_040 => (r#"bulk abo 040"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
+        bulk_abo_fc_row_041 => (r#"bulk abo 041"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
+        bulk_abo_fc_row_042 => (r#"bulk abo 042"#, r###"str=%n; print -r ${(%)str}"###);
+        bulk_abo_fc_row_043 => (r#"bulk abo 043"#, r###"str=%N; print -r ${(%)str}"###);
+        bulk_abo_fc_row_044 => (r#"bulk abo 044"#, r###"str=%~; print -r ${(%)str}"###);
+        bulk_abo_fc_row_045 => (r#"bulk abo 045"#, r###"str=%d; print -r ${(%)str}"###);
+        bulk_abo_fc_row_046 => (r#"bulk abo 046"#, r###"str=%m; print -r ${(%)str}"###);
+        bulk_abo_fc_row_047 => (r#"bulk abo 047"#, r###"str=%#; print -r ${(%)str}"###);
+        bulk_abo_fc_row_048 => (r#"bulk abo 048"#, r###"str=%?; print -r ${(%)str}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abp {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abp_fc_row_001 => (r#"bulk abp 001"#, r###"print -rl -- a b"###);
+        bulk_abp_fc_row_002 => (r#"bulk abp 002"#, r###"print -fc '%s\n' hi"###);
+        bulk_abp_fc_row_003 => (r#"bulk abp 003"#, r###"whence -w print 2>/dev/null; print -r $?"###);
+        bulk_abp_fc_row_004 => (r#"bulk abp 004"#, r###"whence -c print 2>/dev/null; print -r $?"###);
+        bulk_abp_fc_row_005 => (r#"bulk abp 005"#, r###"which print 2>/dev/null; print -r $?"###);
+        bulk_abp_fc_row_006 => (r#"bulk abp 006"#, r###"command -v print 2>/dev/null; print -r $?"###);
+        bulk_abp_fc_row_007 => (r#"bulk abp 007"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_abp_fc_row_008 => (r#"bulk abp 008"#, r###"rehash 2>/dev/null; print -r $?"###);
+        bulk_abp_fc_row_009 => (r#"bulk abp 009"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
+        bulk_abp_fc_row_010 => (r#"bulk abp 010"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
+        bulk_abp_fc_row_011 => (r#"bulk abp 011"#, r###"export ZA=1; print -r $ZA"###);
+        bulk_abp_fc_row_012 => (r#"bulk abp 012"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
+        bulk_abp_fc_row_013 => (r#"bulk abp 013"#, r###"typeset -x ZB=2; print -r $ZB"###);
+        bulk_abp_fc_row_014 => (r#"bulk abp 014"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
+        bulk_abp_fc_row_015 => (r#"bulk abp 015"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
+        bulk_abp_fc_row_016 => (r#"bulk abp 016"#, r###"shift; print -r $1; set -- a b c"###);
+        bulk_abp_fc_row_017 => (r#"bulk abp 017"#, r###"(( $# )); print -r $#"###);
+        bulk_abp_fc_row_018 => (r#"bulk abp 018"#, r###"print -r ${argv[1]}"###);
+        bulk_abp_fc_row_019 => (r#"bulk abp 019"#, r###"print -r ${*[1]}"###);
+        bulk_abp_fc_row_020 => (r#"bulk abp 020"#, r###"print -r $@[1]"###);
+        bulk_abp_fc_row_021 => (r#"bulk abp 021"#, r###"print -r ${@:2}"###);
+        bulk_abp_fc_row_022 => (r#"bulk abp 022"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
+        bulk_abp_fc_row_023 => (r#"bulk abp 023"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
+        bulk_abp_fc_row_024 => (r#"bulk abp 024"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
+        bulk_abp_fc_row_025 => (r#"bulk abp 025"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
+        bulk_abp_fc_row_026 => (r#"bulk abp 026"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
+        bulk_abp_fc_row_027 => (r#"bulk abp 027"#, r###"str=%n; print -r ${(%)str}"###);
+        bulk_abp_fc_row_028 => (r#"bulk abp 028"#, r###"str=%N; print -r ${(%)str}"###);
+        bulk_abp_fc_row_029 => (r#"bulk abp 029"#, r###"str=%~; print -r ${(%)str}"###);
+        bulk_abp_fc_row_030 => (r#"bulk abp 030"#, r###"str=%d; print -r ${(%)str}"###);
+        bulk_abp_fc_row_031 => (r#"bulk abp 031"#, r###"str=%m; print -r ${(%)str}"###);
+        bulk_abp_fc_row_032 => (r#"bulk abp 032"#, r###"str=%#; print -r ${(%)str}"###);
+        bulk_abp_fc_row_033 => (r#"bulk abp 033"#, r###"str=%?; print -r ${(%)str}"###);
+        bulk_abp_fc_row_034 => (r#"bulk abp 034"#, r###"str=%_; print -r ${(%)str}"###);
+        bulk_abp_fc_row_035 => (r#"bulk abp 035"#, r###"str=%h; print -r ${(%)str}"###);
+        bulk_abp_fc_row_036 => (r#"bulk abp 036"#, r###"str=%!; print -r ${(%)str}"###);
+        bulk_abp_fc_row_037 => (r#"bulk abp 037"#, r###"str=%i; print -r ${(%)str}"###);
+        bulk_abp_fc_row_038 => (r#"bulk abp 038"#, r###"str=%I; print -r ${(%)str}"###);
+        bulk_abp_fc_row_039 => (r#"bulk abp 039"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_abp_fc_row_040 => (r#"bulk abp 040"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_abp_fc_row_041 => (r#"bulk abp 041"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_abp_fc_row_042 => (r#"bulk abp 042"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_abp_fc_row_043 => (r#"bulk abp 043"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_abp_fc_row_044 => (r#"bulk abp 044"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_abp_fc_row_045 => (r#"bulk abp 045"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_abp_fc_row_046 => (r#"bulk abp 046"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_abp_fc_row_047 => (r#"bulk abp 047"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_abp_fc_row_048 => (r#"bulk abp 048"#, r###"str=%y; print -r ${(%)str}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abq {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abq_fc_row_001 => (r#"bulk abq 001"#, r###"(( $# )); print -r $#"###);
+        bulk_abq_fc_row_002 => (r#"bulk abq 002"#, r###"print -r ${argv[1]}"###);
+        bulk_abq_fc_row_003 => (r#"bulk abq 003"#, r###"print -r ${*[1]}"###);
+        bulk_abq_fc_row_004 => (r#"bulk abq 004"#, r###"print -r $@[1]"###);
+        bulk_abq_fc_row_005 => (r#"bulk abq 005"#, r###"print -r ${@:2}"###);
+        bulk_abq_fc_row_006 => (r#"bulk abq 006"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
+        bulk_abq_fc_row_007 => (r#"bulk abq 007"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
+        bulk_abq_fc_row_008 => (r#"bulk abq 008"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
+        bulk_abq_fc_row_009 => (r#"bulk abq 009"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
+        bulk_abq_fc_row_010 => (r#"bulk abq 010"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
+        bulk_abq_fc_row_011 => (r#"bulk abq 011"#, r###"str=%n; print -r ${(%)str}"###);
+        bulk_abq_fc_row_012 => (r#"bulk abq 012"#, r###"str=%N; print -r ${(%)str}"###);
+        bulk_abq_fc_row_013 => (r#"bulk abq 013"#, r###"str=%~; print -r ${(%)str}"###);
+        bulk_abq_fc_row_014 => (r#"bulk abq 014"#, r###"str=%d; print -r ${(%)str}"###);
+        bulk_abq_fc_row_015 => (r#"bulk abq 015"#, r###"str=%m; print -r ${(%)str}"###);
+        bulk_abq_fc_row_016 => (r#"bulk abq 016"#, r###"str=%#; print -r ${(%)str}"###);
+        bulk_abq_fc_row_017 => (r#"bulk abq 017"#, r###"str=%?; print -r ${(%)str}"###);
+        bulk_abq_fc_row_018 => (r#"bulk abq 018"#, r###"str=%_; print -r ${(%)str}"###);
+        bulk_abq_fc_row_019 => (r#"bulk abq 019"#, r###"str=%h; print -r ${(%)str}"###);
+        bulk_abq_fc_row_020 => (r#"bulk abq 020"#, r###"str=%!; print -r ${(%)str}"###);
+        bulk_abq_fc_row_021 => (r#"bulk abq 021"#, r###"str=%i; print -r ${(%)str}"###);
+        bulk_abq_fc_row_022 => (r#"bulk abq 022"#, r###"str=%I; print -r ${(%)str}"###);
+        bulk_abq_fc_row_023 => (r#"bulk abq 023"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_abq_fc_row_024 => (r#"bulk abq 024"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_abq_fc_row_025 => (r#"bulk abq 025"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_abq_fc_row_026 => (r#"bulk abq 026"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_abq_fc_row_027 => (r#"bulk abq 027"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_abq_fc_row_028 => (r#"bulk abq 028"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_abq_fc_row_029 => (r#"bulk abq 029"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_abq_fc_row_030 => (r#"bulk abq 030"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_abq_fc_row_031 => (r#"bulk abq 031"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_abq_fc_row_032 => (r#"bulk abq 032"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_abq_fc_row_033 => (r#"bulk abq 033"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_abq_fc_row_034 => (r#"bulk abq 034"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_abq_fc_row_035 => (r#"bulk abq 035"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_abq_fc_row_036 => (r#"bulk abq 036"#, r###"true; print -r $?"###);
+        bulk_abq_fc_row_037 => (r#"bulk abq 037"#, r###"false; print -r $?"###);
+        bulk_abq_fc_row_038 => (r#"bulk abq 038"#, r###"print -r hello"###);
+        bulk_abq_fc_row_039 => (r#"bulk abq 039"#, r###"echo one two"###);
+        bulk_abq_fc_row_040 => (r#"bulk abq 040"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_abq_fc_row_041 => (r#"bulk abq 041"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_abq_fc_row_042 => (r#"bulk abq 042"#, r###"command true; print -r $?"###);
+        bulk_abq_fc_row_043 => (r#"bulk abq 043"#, r###"builtin true; print -r $?"###);
+        bulk_abq_fc_row_044 => (r#"bulk abq 044"#, r###"if true; then echo t; fi"###);
+        bulk_abq_fc_row_045 => (r#"bulk abq 045"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_abq_fc_row_046 => (r#"bulk abq 046"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_abq_fc_row_047 => (r#"bulk abq 047"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_abq_fc_row_048 => (r#"bulk abq 048"#, r###"repeat 2; do print -r r; done"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abr {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abr_fc_row_001 => (r#"bulk abr 001"#, r###"str=%?; print -r ${(%)str}"###);
+        bulk_abr_fc_row_002 => (r#"bulk abr 002"#, r###"str=%_; print -r ${(%)str}"###);
+        bulk_abr_fc_row_003 => (r#"bulk abr 003"#, r###"str=%h; print -r ${(%)str}"###);
+        bulk_abr_fc_row_004 => (r#"bulk abr 004"#, r###"str=%!; print -r ${(%)str}"###);
+        bulk_abr_fc_row_005 => (r#"bulk abr 005"#, r###"str=%i; print -r ${(%)str}"###);
+        bulk_abr_fc_row_006 => (r#"bulk abr 006"#, r###"str=%I; print -r ${(%)str}"###);
+        bulk_abr_fc_row_007 => (r#"bulk abr 007"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_abr_fc_row_008 => (r#"bulk abr 008"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_abr_fc_row_009 => (r#"bulk abr 009"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_abr_fc_row_010 => (r#"bulk abr 010"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_abr_fc_row_011 => (r#"bulk abr 011"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_abr_fc_row_012 => (r#"bulk abr 012"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_abr_fc_row_013 => (r#"bulk abr 013"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_abr_fc_row_014 => (r#"bulk abr 014"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_abr_fc_row_015 => (r#"bulk abr 015"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_abr_fc_row_016 => (r#"bulk abr 016"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_abr_fc_row_017 => (r#"bulk abr 017"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_abr_fc_row_018 => (r#"bulk abr 018"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_abr_fc_row_019 => (r#"bulk abr 019"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_abr_fc_row_020 => (r#"bulk abr 020"#, r###"true; print -r $?"###);
+        bulk_abr_fc_row_021 => (r#"bulk abr 021"#, r###"false; print -r $?"###);
+        bulk_abr_fc_row_022 => (r#"bulk abr 022"#, r###"print -r hello"###);
+        bulk_abr_fc_row_023 => (r#"bulk abr 023"#, r###"echo one two"###);
+        bulk_abr_fc_row_024 => (r#"bulk abr 024"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_abr_fc_row_025 => (r#"bulk abr 025"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_abr_fc_row_026 => (r#"bulk abr 026"#, r###"command true; print -r $?"###);
+        bulk_abr_fc_row_027 => (r#"bulk abr 027"#, r###"builtin true; print -r $?"###);
+        bulk_abr_fc_row_028 => (r#"bulk abr 028"#, r###"if true; then echo t; fi"###);
+        bulk_abr_fc_row_029 => (r#"bulk abr 029"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_abr_fc_row_030 => (r#"bulk abr 030"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_abr_fc_row_031 => (r#"bulk abr 031"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_abr_fc_row_032 => (r#"bulk abr 032"#, r###"repeat 2; do print -r r; done"###);
+        bulk_abr_fc_row_033 => (r#"bulk abr 033"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_abr_fc_row_034 => (r#"bulk abr 034"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_abr_fc_row_035 => (r#"bulk abr 035"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_abr_fc_row_036 => (r#"bulk abr 036"#, r###"{ echo a; echo b; }"###);
+        bulk_abr_fc_row_037 => (r#"bulk abr 037"#, r###"(echo sub)"###);
+        bulk_abr_fc_row_038 => (r#"bulk abr 038"#, r###"(( 1 )) || echo no"###);
+        bulk_abr_fc_row_039 => (r#"bulk abr 039"#, r###"(( 0 )) && echo no"###);
+        bulk_abr_fc_row_040 => (r#"bulk abr 040"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_abr_fc_row_041 => (r#"bulk abr 041"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_abr_fc_row_042 => (r#"bulk abr 042"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_abr_fc_row_043 => (r#"bulk abr 043"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_abr_fc_row_044 => (r#"bulk abr 044"#, r###"print -r $(( !0 ))"###);
+        bulk_abr_fc_row_045 => (r#"bulk abr 045"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_abr_fc_row_046 => (r#"bulk abr 046"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_abr_fc_row_047 => (r#"bulk abr 047"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_abr_fc_row_048 => (r#"bulk abr 048"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abs {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abs_fc_row_001 => (r#"bulk abs 001"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_abs_fc_row_002 => (r#"bulk abs 002"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_abs_fc_row_003 => (r#"bulk abs 003"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_abs_fc_row_004 => (r#"bulk abs 004"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_abs_fc_row_005 => (r#"bulk abs 005"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_abs_fc_row_006 => (r#"bulk abs 006"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_abs_fc_row_007 => (r#"bulk abs 007"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_abs_fc_row_008 => (r#"bulk abs 008"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_abs_fc_row_009 => (r#"bulk abs 009"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_abs_fc_row_010 => (r#"bulk abs 010"#, r###"true; print -r $?"###);
+        bulk_abs_fc_row_011 => (r#"bulk abs 011"#, r###"false; print -r $?"###);
+        bulk_abs_fc_row_012 => (r#"bulk abs 012"#, r###"print -r hello"###);
+        bulk_abs_fc_row_013 => (r#"bulk abs 013"#, r###"echo one two"###);
+        bulk_abs_fc_row_014 => (r#"bulk abs 014"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_abs_fc_row_015 => (r#"bulk abs 015"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_abs_fc_row_016 => (r#"bulk abs 016"#, r###"command true; print -r $?"###);
+        bulk_abs_fc_row_017 => (r#"bulk abs 017"#, r###"builtin true; print -r $?"###);
+        bulk_abs_fc_row_018 => (r#"bulk abs 018"#, r###"if true; then echo t; fi"###);
+        bulk_abs_fc_row_019 => (r#"bulk abs 019"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_abs_fc_row_020 => (r#"bulk abs 020"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_abs_fc_row_021 => (r#"bulk abs 021"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_abs_fc_row_022 => (r#"bulk abs 022"#, r###"repeat 2; do print -r r; done"###);
+        bulk_abs_fc_row_023 => (r#"bulk abs 023"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_abs_fc_row_024 => (r#"bulk abs 024"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_abs_fc_row_025 => (r#"bulk abs 025"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_abs_fc_row_026 => (r#"bulk abs 026"#, r###"{ echo a; echo b; }"###);
+        bulk_abs_fc_row_027 => (r#"bulk abs 027"#, r###"(echo sub)"###);
+        bulk_abs_fc_row_028 => (r#"bulk abs 028"#, r###"(( 1 )) || echo no"###);
+        bulk_abs_fc_row_029 => (r#"bulk abs 029"#, r###"(( 0 )) && echo no"###);
+        bulk_abs_fc_row_030 => (r#"bulk abs 030"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_abs_fc_row_031 => (r#"bulk abs 031"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_abs_fc_row_032 => (r#"bulk abs 032"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_abs_fc_row_033 => (r#"bulk abs 033"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_abs_fc_row_034 => (r#"bulk abs 034"#, r###"print -r $(( !0 ))"###);
+        bulk_abs_fc_row_035 => (r#"bulk abs 035"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_abs_fc_row_036 => (r#"bulk abs 036"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_abs_fc_row_037 => (r#"bulk abs 037"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_abs_fc_row_038 => (r#"bulk abs 038"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_abs_fc_row_039 => (r#"bulk abs 039"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_abs_fc_row_040 => (r#"bulk abs 040"#, r###"print -r $(( true ))"###);
+        bulk_abs_fc_row_041 => (r#"bulk abs 041"#, r###"print -r $(( false ))"###);
+        bulk_abs_fc_row_042 => (r#"bulk abs 042"#, r###"[[ -e / ]]; print -r $?"###);
+        bulk_abs_fc_row_043 => (r#"bulk abs 043"#, r###"[[ -d /tmp ]]; print -r $?"###);
+        bulk_abs_fc_row_044 => (r#"bulk abs 044"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
+        bulk_abs_fc_row_045 => (r#"bulk abs 045"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
+        bulk_abs_fc_row_046 => (r#"bulk abs 046"#, r###"[[ -w /tmp ]]; print -r $?"###);
+        bulk_abs_fc_row_047 => (r#"bulk abs 047"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
+        bulk_abs_fc_row_048 => (r#"bulk abs 048"#, r###"[[ 42 = <-> ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abt {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abt_fc_row_001 => (r#"bulk abt 001"#, r###"command true; print -r $?"###);
+        bulk_abt_fc_row_002 => (r#"bulk abt 002"#, r###"builtin true; print -r $?"###);
+        bulk_abt_fc_row_003 => (r#"bulk abt 003"#, r###"if true; then echo t; fi"###);
+        bulk_abt_fc_row_004 => (r#"bulk abt 004"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_abt_fc_row_005 => (r#"bulk abt 005"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_abt_fc_row_006 => (r#"bulk abt 006"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_abt_fc_row_007 => (r#"bulk abt 007"#, r###"repeat 2; do print -r r; done"###);
+        bulk_abt_fc_row_008 => (r#"bulk abt 008"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_abt_fc_row_009 => (r#"bulk abt 009"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_abt_fc_row_010 => (r#"bulk abt 010"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_abt_fc_row_011 => (r#"bulk abt 011"#, r###"{ echo a; echo b; }"###);
+        bulk_abt_fc_row_012 => (r#"bulk abt 012"#, r###"(echo sub)"###);
+        bulk_abt_fc_row_013 => (r#"bulk abt 013"#, r###"(( 1 )) || echo no"###);
+        bulk_abt_fc_row_014 => (r#"bulk abt 014"#, r###"(( 0 )) && echo no"###);
+        bulk_abt_fc_row_015 => (r#"bulk abt 015"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_abt_fc_row_016 => (r#"bulk abt 016"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_abt_fc_row_017 => (r#"bulk abt 017"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_abt_fc_row_018 => (r#"bulk abt 018"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_abt_fc_row_019 => (r#"bulk abt 019"#, r###"print -r $(( !0 ))"###);
+        bulk_abt_fc_row_020 => (r#"bulk abt 020"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_abt_fc_row_021 => (r#"bulk abt 021"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_abt_fc_row_022 => (r#"bulk abt 022"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_abt_fc_row_023 => (r#"bulk abt 023"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_abt_fc_row_024 => (r#"bulk abt 024"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_abt_fc_row_025 => (r#"bulk abt 025"#, r###"print -r $(( true ))"###);
+        bulk_abt_fc_row_026 => (r#"bulk abt 026"#, r###"print -r $(( false ))"###);
+        bulk_abt_fc_row_027 => (r#"bulk abt 027"#, r###"[[ -e / ]]; print -r $?"###);
+        bulk_abt_fc_row_028 => (r#"bulk abt 028"#, r###"[[ -d /tmp ]]; print -r $?"###);
+        bulk_abt_fc_row_029 => (r#"bulk abt 029"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
+        bulk_abt_fc_row_030 => (r#"bulk abt 030"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
+        bulk_abt_fc_row_031 => (r#"bulk abt 031"#, r###"[[ -w /tmp ]]; print -r $?"###);
+        bulk_abt_fc_row_032 => (r#"bulk abt 032"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
+        bulk_abt_fc_row_033 => (r#"bulk abt 033"#, r###"[[ 42 = <-> ]]; print -r $?"###);
+        bulk_abt_fc_row_034 => (r#"bulk abt 034"#, r###"[[ abc = <-> ]]; print -r $?"###);
+        bulk_abt_fc_row_035 => (r#"bulk abt 035"#, r####"[[ host = ##host ]]; print -r $?"####);
+        bulk_abt_fc_row_036 => (r#"bulk abt 036"#, r###"[[ -v x ]]; print -r $?; x=1"###);
+        bulk_abt_fc_row_037 => (r#"bulk abt 037"#, r###"unset y; [[ -v y ]]; print -r $?"###);
+        bulk_abt_fc_row_038 => (r#"bulk abt 038"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
+        bulk_abt_fc_row_039 => (r#"bulk abt 039"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
+        bulk_abt_fc_row_040 => (r#"bulk abt 040"#, r###"[[ abc = a* ]]; print -r $?"###);
+        bulk_abt_fc_row_041 => (r#"bulk abt 041"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
+        bulk_abt_fc_row_042 => (r#"bulk abt 042"#, r###"[[ -z '' ]]; print -r $?"###);
+        bulk_abt_fc_row_043 => (r#"bulk abt 043"#, r###"[[ -n abc ]]; print -r $?"###);
+        bulk_abt_fc_row_044 => (r#"bulk abt 044"#, r###"typeset -i n=10; print -r $n"###);
+        bulk_abt_fc_row_045 => (r#"bulk abt 045"#, r###"typeset -l n=AbC; print -r $n"###);
+        bulk_abt_fc_row_046 => (r#"bulk abt 046"#, r###"typeset -u n=xy; print -r $n"###);
+        bulk_abt_fc_row_047 => (r#"bulk abt 047"#, r###"typeset -Z5 n=7; print -r $n"###);
+        bulk_abt_fc_row_048 => (r#"bulk abt 048"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abu {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abu_fc_row_001 => (r#"bulk abu 001"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_abu_fc_row_002 => (r#"bulk abu 002"#, r###"print -r $(( !0 ))"###);
+        bulk_abu_fc_row_003 => (r#"bulk abu 003"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_abu_fc_row_004 => (r#"bulk abu 004"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_abu_fc_row_005 => (r#"bulk abu 005"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_abu_fc_row_006 => (r#"bulk abu 006"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_abu_fc_row_007 => (r#"bulk abu 007"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_abu_fc_row_008 => (r#"bulk abu 008"#, r###"print -r $(( true ))"###);
+        bulk_abu_fc_row_009 => (r#"bulk abu 009"#, r###"print -r $(( false ))"###);
+        bulk_abu_fc_row_010 => (r#"bulk abu 010"#, r###"[[ -e / ]]; print -r $?"###);
+        bulk_abu_fc_row_011 => (r#"bulk abu 011"#, r###"[[ -d /tmp ]]; print -r $?"###);
+        bulk_abu_fc_row_012 => (r#"bulk abu 012"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
+        bulk_abu_fc_row_013 => (r#"bulk abu 013"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
+        bulk_abu_fc_row_014 => (r#"bulk abu 014"#, r###"[[ -w /tmp ]]; print -r $?"###);
+        bulk_abu_fc_row_015 => (r#"bulk abu 015"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
+        bulk_abu_fc_row_016 => (r#"bulk abu 016"#, r###"[[ 42 = <-> ]]; print -r $?"###);
+        bulk_abu_fc_row_017 => (r#"bulk abu 017"#, r###"[[ abc = <-> ]]; print -r $?"###);
+        bulk_abu_fc_row_018 => (r#"bulk abu 018"#, r####"[[ host = ##host ]]; print -r $?"####);
+        bulk_abu_fc_row_019 => (r#"bulk abu 019"#, r###"[[ -v x ]]; print -r $?; x=1"###);
+        bulk_abu_fc_row_020 => (r#"bulk abu 020"#, r###"unset y; [[ -v y ]]; print -r $?"###);
+        bulk_abu_fc_row_021 => (r#"bulk abu 021"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
+        bulk_abu_fc_row_022 => (r#"bulk abu 022"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
+        bulk_abu_fc_row_023 => (r#"bulk abu 023"#, r###"[[ abc = a* ]]; print -r $?"###);
+        bulk_abu_fc_row_024 => (r#"bulk abu 024"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
+        bulk_abu_fc_row_025 => (r#"bulk abu 025"#, r###"[[ -z '' ]]; print -r $?"###);
+        bulk_abu_fc_row_026 => (r#"bulk abu 026"#, r###"[[ -n abc ]]; print -r $?"###);
+        bulk_abu_fc_row_027 => (r#"bulk abu 027"#, r###"typeset -i n=10; print -r $n"###);
+        bulk_abu_fc_row_028 => (r#"bulk abu 028"#, r###"typeset -l n=AbC; print -r $n"###);
+        bulk_abu_fc_row_029 => (r#"bulk abu 029"#, r###"typeset -u n=xy; print -r $n"###);
+        bulk_abu_fc_row_030 => (r#"bulk abu 030"#, r###"typeset -Z5 n=7; print -r $n"###);
+        bulk_abu_fc_row_031 => (r#"bulk abu 031"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
+        bulk_abu_fc_row_032 => (r#"bulk abu 032"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
+        bulk_abu_fc_row_033 => (r#"bulk abu 033"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
+        bulk_abu_fc_row_034 => (r#"bulk abu 034"#, r###"unset v; print -r ${v:-def}"###);
+        bulk_abu_fc_row_035 => (r#"bulk abu 035"#, r###"v=set; print -r ${v:+yes}"###);
+        bulk_abu_fc_row_036 => (r#"bulk abu 036"#, r###"unset v; : ${v::=def}; print -r $v"###);
+        bulk_abu_fc_row_037 => (r#"bulk abu 037"#, r###"print -r ${PWD:h}"###);
+        bulk_abu_fc_row_038 => (r#"bulk abu 038"#, r###"print -r ${PWD:t}"###);
+        bulk_abu_fc_row_039 => (r#"bulk abu 039"#, r###"true | true; print -r $?"###);
+        bulk_abu_fc_row_040 => (r#"bulk abu 040"#, r###"true | false; print -r $?"###);
+        bulk_abu_fc_row_041 => (r#"bulk abu 041"#, r###"print -r ${pipestatus[1]}; true | false"###);
+        bulk_abu_fc_row_042 => (r#"bulk abu 042"#, r###"print -r ${#pipestatus}; true | true | true"###);
+        bulk_abu_fc_row_043 => (r#"bulk abu 043"#, r###"set -- a b c; shift; print -r $1"###);
+        bulk_abu_fc_row_044 => (r#"bulk abu 044"#, r###"set -- a b c; shift 2; print -r $#"###);
+        bulk_abu_fc_row_045 => (r#"bulk abu 045"#, r###"fn(){ print -r $1; }; fn x"###);
+        bulk_abu_fc_row_046 => (r#"bulk abu 046"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
+        bulk_abu_fc_row_047 => (r#"bulk abu 047"#, r###"fn(){ return 2; }; fn; print -r $?"###);
+        bulk_abu_fc_row_048 => (r#"bulk abu 048"#, r###"print -r ${(q)x}; x=hi"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abv {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abv_fc_row_001 => (r#"bulk abv 001"#, r####"[[ host = ##host ]]; print -r $?"####);
+        bulk_abv_fc_row_002 => (r#"bulk abv 002"#, r###"[[ -v x ]]; print -r $?; x=1"###);
+        bulk_abv_fc_row_003 => (r#"bulk abv 003"#, r###"unset y; [[ -v y ]]; print -r $?"###);
+        bulk_abv_fc_row_004 => (r#"bulk abv 004"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
+        bulk_abv_fc_row_005 => (r#"bulk abv 005"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
+        bulk_abv_fc_row_006 => (r#"bulk abv 006"#, r###"[[ abc = a* ]]; print -r $?"###);
+        bulk_abv_fc_row_007 => (r#"bulk abv 007"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
+        bulk_abv_fc_row_008 => (r#"bulk abv 008"#, r###"[[ -z '' ]]; print -r $?"###);
+        bulk_abv_fc_row_009 => (r#"bulk abv 009"#, r###"[[ -n abc ]]; print -r $?"###);
+        bulk_abv_fc_row_010 => (r#"bulk abv 010"#, r###"typeset -i n=10; print -r $n"###);
+        bulk_abv_fc_row_011 => (r#"bulk abv 011"#, r###"typeset -l n=AbC; print -r $n"###);
+        bulk_abv_fc_row_012 => (r#"bulk abv 012"#, r###"typeset -u n=xy; print -r $n"###);
+        bulk_abv_fc_row_013 => (r#"bulk abv 013"#, r###"typeset -Z5 n=7; print -r $n"###);
+        bulk_abv_fc_row_014 => (r#"bulk abv 014"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
+        bulk_abv_fc_row_015 => (r#"bulk abv 015"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
+        bulk_abv_fc_row_016 => (r#"bulk abv 016"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
+        bulk_abv_fc_row_017 => (r#"bulk abv 017"#, r###"unset v; print -r ${v:-def}"###);
+        bulk_abv_fc_row_018 => (r#"bulk abv 018"#, r###"v=set; print -r ${v:+yes}"###);
+        bulk_abv_fc_row_019 => (r#"bulk abv 019"#, r###"unset v; : ${v::=def}; print -r $v"###);
+        bulk_abv_fc_row_020 => (r#"bulk abv 020"#, r###"print -r ${PWD:h}"###);
+        bulk_abv_fc_row_021 => (r#"bulk abv 021"#, r###"print -r ${PWD:t}"###);
+        bulk_abv_fc_row_022 => (r#"bulk abv 022"#, r###"true | true; print -r $?"###);
+        bulk_abv_fc_row_023 => (r#"bulk abv 023"#, r###"true | false; print -r $?"###);
+        bulk_abv_fc_row_024 => (r#"bulk abv 024"#, r###"print -r ${pipestatus[1]}; true | false"###);
+        bulk_abv_fc_row_025 => (r#"bulk abv 025"#, r###"print -r ${#pipestatus}; true | true | true"###);
+        bulk_abv_fc_row_026 => (r#"bulk abv 026"#, r###"set -- a b c; shift; print -r $1"###);
+        bulk_abv_fc_row_027 => (r#"bulk abv 027"#, r###"set -- a b c; shift 2; print -r $#"###);
+        bulk_abv_fc_row_028 => (r#"bulk abv 028"#, r###"fn(){ print -r $1; }; fn x"###);
+        bulk_abv_fc_row_029 => (r#"bulk abv 029"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
+        bulk_abv_fc_row_030 => (r#"bulk abv 030"#, r###"fn(){ return 2; }; fn; print -r $?"###);
+        bulk_abv_fc_row_031 => (r#"bulk abv 031"#, r###"print -r ${(q)x}; x=hi"###);
+        bulk_abv_fc_row_032 => (r#"bulk abv 032"#, r###"print -r ${(qq)x}; x=hi"###);
+        bulk_abv_fc_row_033 => (r#"bulk abv 033"#, r###"x=hi; print -r ${(q-)x}"###);
+        bulk_abv_fc_row_034 => (r#"bulk abv 034"#, r###"x=hi; print -r ${(q+)x}"###);
+        bulk_abv_fc_row_035 => (r#"bulk abv 035"#, r###"print -r ${(w)w}; w=a b c"###);
+        bulk_abv_fc_row_036 => (r#"bulk abv 036"#, r###"print -r ${(u)a}; a=(a a b)"###);
+        bulk_abv_fc_row_037 => (r#"bulk abv 037"#, r###"print -r ${(o)a}; a=(c b a)"###);
+        bulk_abv_fc_row_038 => (r#"bulk abv 038"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
+        bulk_abv_fc_row_039 => (r#"bulk abv 039"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
+        bulk_abv_fc_row_040 => (r#"bulk abv 040"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
+        bulk_abv_fc_row_041 => (r#"bulk abv 041"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
+        bulk_abv_fc_row_042 => (r#"bulk abv 042"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
+        bulk_abv_fc_row_043 => (r#"bulk abv 043"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
+        bulk_abv_fc_row_044 => (r#"bulk abv 044"#, r###"print -r ${+options}"###);
+        bulk_abv_fc_row_045 => (r#"bulk abv 045"#, r###"print -r ${+parameters}"###);
+        bulk_abv_fc_row_046 => (r#"bulk abv 046"#, r###"print -r ${+aliases}"###);
+        bulk_abv_fc_row_047 => (r#"bulk abv 047"#, r###"print -r ${+functions}"###);
+        bulk_abv_fc_row_048 => (r#"bulk abv 048"#, r###"print -r $ZSH_NAME"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abw {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abw_fc_row_001 => (r#"bulk abw 001"#, r###"v=set; print -r ${v:+yes}"###);
+        bulk_abw_fc_row_002 => (r#"bulk abw 002"#, r###"unset v; : ${v::=def}; print -r $v"###);
+        bulk_abw_fc_row_003 => (r#"bulk abw 003"#, r###"print -r ${PWD:h}"###);
+        bulk_abw_fc_row_004 => (r#"bulk abw 004"#, r###"print -r ${PWD:t}"###);
+        bulk_abw_fc_row_005 => (r#"bulk abw 005"#, r###"true | true; print -r $?"###);
+        bulk_abw_fc_row_006 => (r#"bulk abw 006"#, r###"true | false; print -r $?"###);
+        bulk_abw_fc_row_007 => (r#"bulk abw 007"#, r###"print -r ${pipestatus[1]}; true | false"###);
+        bulk_abw_fc_row_008 => (r#"bulk abw 008"#, r###"print -r ${#pipestatus}; true | true | true"###);
+        bulk_abw_fc_row_009 => (r#"bulk abw 009"#, r###"set -- a b c; shift; print -r $1"###);
+        bulk_abw_fc_row_010 => (r#"bulk abw 010"#, r###"set -- a b c; shift 2; print -r $#"###);
+        bulk_abw_fc_row_011 => (r#"bulk abw 011"#, r###"fn(){ print -r $1; }; fn x"###);
+        bulk_abw_fc_row_012 => (r#"bulk abw 012"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
+        bulk_abw_fc_row_013 => (r#"bulk abw 013"#, r###"fn(){ return 2; }; fn; print -r $?"###);
+        bulk_abw_fc_row_014 => (r#"bulk abw 014"#, r###"print -r ${(q)x}; x=hi"###);
+        bulk_abw_fc_row_015 => (r#"bulk abw 015"#, r###"print -r ${(qq)x}; x=hi"###);
+        bulk_abw_fc_row_016 => (r#"bulk abw 016"#, r###"x=hi; print -r ${(q-)x}"###);
+        bulk_abw_fc_row_017 => (r#"bulk abw 017"#, r###"x=hi; print -r ${(q+)x}"###);
+        bulk_abw_fc_row_018 => (r#"bulk abw 018"#, r###"print -r ${(w)w}; w=a b c"###);
+        bulk_abw_fc_row_019 => (r#"bulk abw 019"#, r###"print -r ${(u)a}; a=(a a b)"###);
+        bulk_abw_fc_row_020 => (r#"bulk abw 020"#, r###"print -r ${(o)a}; a=(c b a)"###);
+        bulk_abw_fc_row_021 => (r#"bulk abw 021"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
+        bulk_abw_fc_row_022 => (r#"bulk abw 022"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
+        bulk_abw_fc_row_023 => (r#"bulk abw 023"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
+        bulk_abw_fc_row_024 => (r#"bulk abw 024"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
+        bulk_abw_fc_row_025 => (r#"bulk abw 025"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
+        bulk_abw_fc_row_026 => (r#"bulk abw 026"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
+        bulk_abw_fc_row_027 => (r#"bulk abw 027"#, r###"print -r ${+options}"###);
+        bulk_abw_fc_row_028 => (r#"bulk abw 028"#, r###"print -r ${+parameters}"###);
+        bulk_abw_fc_row_029 => (r#"bulk abw 029"#, r###"print -r ${+aliases}"###);
+        bulk_abw_fc_row_030 => (r#"bulk abw 030"#, r###"print -r ${+functions}"###);
+        bulk_abw_fc_row_031 => (r#"bulk abw 031"#, r###"print -r $ZSH_NAME"###);
+        bulk_abw_fc_row_032 => (r#"bulk abw 032"#, r###"print -r ${ZSH_VERSION%%.*}"###);
+        bulk_abw_fc_row_033 => (r#"bulk abw 033"#, r###"whence -w print"###);
+        bulk_abw_fc_row_034 => (r#"bulk abw 034"#, r###"command -v true"###);
+        bulk_abw_fc_row_035 => (r#"bulk abw 035"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_abw_fc_row_036 => (r#"bulk abw 036"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
+        bulk_abw_fc_row_037 => (r#"bulk abw 037"#, r###"read -r line <<< 'one two'; print -r $line"###);
+        bulk_abw_fc_row_038 => (r#"bulk abw 038"#, r###"cat <<< 'herestring'"###);
+        bulk_abw_fc_row_039 => (r#"bulk abw 039"#, r###"echo hello 2>/dev/null"###);
+        bulk_abw_fc_row_040 => (r#"bulk abw 040"#, r###"printf '%s\n' a b c | head -1"###);
+        bulk_abw_fc_row_041 => (r#"bulk abw 041"#, r###"true && echo yes"###);
+        bulk_abw_fc_row_042 => (r#"bulk abw 042"#, r###"false || echo yes"###);
+        bulk_abw_fc_row_043 => (r#"bulk abw 043"#, r###"(exit 3); print -r $?"###);
+        bulk_abw_fc_row_044 => (r#"bulk abw 044"#, r###"print -r ${status}; (exit 4)"###);
+        bulk_abw_fc_row_045 => (r#"bulk abw 045"#, r###"print -r $(( 1_000 + 1 ))"###);
+        bulk_abw_fc_row_046 => (r#"bulk abw 046"#, r###"print -r $(( 5#101 ))"###);
+        bulk_abw_fc_row_047 => (r#"bulk abw 047"#, r###"print -r $(( 0b1111 ))"###);
+        bulk_abw_fc_row_048 => (r#"bulk abw 048"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abx {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abx_fc_row_001 => (r#"bulk abx 001"#, r###"print -r ${(w)w}; w=a b c"###);
+        bulk_abx_fc_row_002 => (r#"bulk abx 002"#, r###"print -r ${(u)a}; a=(a a b)"###);
+        bulk_abx_fc_row_003 => (r#"bulk abx 003"#, r###"print -r ${(o)a}; a=(c b a)"###);
+        bulk_abx_fc_row_004 => (r#"bulk abx 004"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
+        bulk_abx_fc_row_005 => (r#"bulk abx 005"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
+        bulk_abx_fc_row_006 => (r#"bulk abx 006"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
+        bulk_abx_fc_row_007 => (r#"bulk abx 007"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
+        bulk_abx_fc_row_008 => (r#"bulk abx 008"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
+        bulk_abx_fc_row_009 => (r#"bulk abx 009"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
+        bulk_abx_fc_row_010 => (r#"bulk abx 010"#, r###"print -r ${+options}"###);
+        bulk_abx_fc_row_011 => (r#"bulk abx 011"#, r###"print -r ${+parameters}"###);
+        bulk_abx_fc_row_012 => (r#"bulk abx 012"#, r###"print -r ${+aliases}"###);
+        bulk_abx_fc_row_013 => (r#"bulk abx 013"#, r###"print -r ${+functions}"###);
+        bulk_abx_fc_row_014 => (r#"bulk abx 014"#, r###"print -r $ZSH_NAME"###);
+        bulk_abx_fc_row_015 => (r#"bulk abx 015"#, r###"print -r ${ZSH_VERSION%%.*}"###);
+        bulk_abx_fc_row_016 => (r#"bulk abx 016"#, r###"whence -w print"###);
+        bulk_abx_fc_row_017 => (r#"bulk abx 017"#, r###"command -v true"###);
+        bulk_abx_fc_row_018 => (r#"bulk abx 018"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_abx_fc_row_019 => (r#"bulk abx 019"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
+        bulk_abx_fc_row_020 => (r#"bulk abx 020"#, r###"read -r line <<< 'one two'; print -r $line"###);
+        bulk_abx_fc_row_021 => (r#"bulk abx 021"#, r###"cat <<< 'herestring'"###);
+        bulk_abx_fc_row_022 => (r#"bulk abx 022"#, r###"echo hello 2>/dev/null"###);
+        bulk_abx_fc_row_023 => (r#"bulk abx 023"#, r###"printf '%s\n' a b c | head -1"###);
+        bulk_abx_fc_row_024 => (r#"bulk abx 024"#, r###"true && echo yes"###);
+        bulk_abx_fc_row_025 => (r#"bulk abx 025"#, r###"false || echo yes"###);
+        bulk_abx_fc_row_026 => (r#"bulk abx 026"#, r###"(exit 3); print -r $?"###);
+        bulk_abx_fc_row_027 => (r#"bulk abx 027"#, r###"print -r ${status}; (exit 4)"###);
+        bulk_abx_fc_row_028 => (r#"bulk abx 028"#, r###"print -r $(( 1_000 + 1 ))"###);
+        bulk_abx_fc_row_029 => (r#"bulk abx 029"#, r###"print -r $(( 5#101 ))"###);
+        bulk_abx_fc_row_030 => (r#"bulk abx 030"#, r###"print -r $(( 0b1111 ))"###);
+        bulk_abx_fc_row_031 => (r#"bulk abx 031"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
+        bulk_abx_fc_row_032 => (r#"bulk abx 032"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
+        bulk_abx_fc_row_033 => (r#"bulk abx 033"#, r###"typeset -F2 f=3.14; print -r $f"###);
+        bulk_abx_fc_row_034 => (r#"bulk abx 034"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
+        bulk_abx_fc_row_035 => (r#"bulk abx 035"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
+        bulk_abx_fc_row_036 => (r#"bulk abx 036"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
+        bulk_abx_fc_row_037 => (r#"bulk abx 037"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
+        bulk_abx_fc_row_038 => (r#"bulk abx 038"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
+        bulk_abx_fc_row_039 => (r#"bulk abx 039"#, r###"print -r ${#x}; x=hello"###);
+        bulk_abx_fc_row_040 => (r#"bulk abx 040"#, r###"print -r ${#a}; a=(a b c)"###);
+        bulk_abx_fc_row_041 => (r#"bulk abx 041"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
+        bulk_abx_fc_row_042 => (r#"bulk abx 042"#, r###"print -r ${(b)x}; x=hi"###);
+        bulk_abx_fc_row_043 => (r#"bulk abx 043"#, r###"print -r ${(e):-2+2}"###);
+        bulk_abx_fc_row_044 => (r#"bulk abx 044"#, r###"print -r ${(P)r}; r=HOME"###);
+        bulk_abx_fc_row_045 => (r#"bulk abx 045"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
+        bulk_abx_fc_row_046 => (r#"bulk abx 046"#, r###"print -r ${(eu)n}; n=(a A b)"###);
+        bulk_abx_fc_row_047 => (r#"bulk abx 047"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
+        bulk_abx_fc_row_048 => (r#"bulk abx 048"#, r###"typeset -h hv=1; print -r ${+hv}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aby {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aby_fc_row_001 => (r#"bulk aby 001"#, r###"whence -w print"###);
+        bulk_aby_fc_row_002 => (r#"bulk aby 002"#, r###"command -v true"###);
+        bulk_aby_fc_row_003 => (r#"bulk aby 003"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_aby_fc_row_004 => (r#"bulk aby 004"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
+        bulk_aby_fc_row_005 => (r#"bulk aby 005"#, r###"read -r line <<< 'one two'; print -r $line"###);
+        bulk_aby_fc_row_006 => (r#"bulk aby 006"#, r###"cat <<< 'herestring'"###);
+        bulk_aby_fc_row_007 => (r#"bulk aby 007"#, r###"echo hello 2>/dev/null"###);
+        bulk_aby_fc_row_008 => (r#"bulk aby 008"#, r###"printf '%s\n' a b c | head -1"###);
+        bulk_aby_fc_row_009 => (r#"bulk aby 009"#, r###"true && echo yes"###);
+        bulk_aby_fc_row_010 => (r#"bulk aby 010"#, r###"false || echo yes"###);
+        bulk_aby_fc_row_011 => (r#"bulk aby 011"#, r###"(exit 3); print -r $?"###);
+        bulk_aby_fc_row_012 => (r#"bulk aby 012"#, r###"print -r ${status}; (exit 4)"###);
+        bulk_aby_fc_row_013 => (r#"bulk aby 013"#, r###"print -r $(( 1_000 + 1 ))"###);
+        bulk_aby_fc_row_014 => (r#"bulk aby 014"#, r###"print -r $(( 5#101 ))"###);
+        bulk_aby_fc_row_015 => (r#"bulk aby 015"#, r###"print -r $(( 0b1111 ))"###);
+        bulk_aby_fc_row_016 => (r#"bulk aby 016"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
+        bulk_aby_fc_row_017 => (r#"bulk aby 017"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
+        bulk_aby_fc_row_018 => (r#"bulk aby 018"#, r###"typeset -F2 f=3.14; print -r $f"###);
+        bulk_aby_fc_row_019 => (r#"bulk aby 019"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
+        bulk_aby_fc_row_020 => (r#"bulk aby 020"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
+        bulk_aby_fc_row_021 => (r#"bulk aby 021"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
+        bulk_aby_fc_row_022 => (r#"bulk aby 022"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
+        bulk_aby_fc_row_023 => (r#"bulk aby 023"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
+        bulk_aby_fc_row_024 => (r#"bulk aby 024"#, r###"print -r ${#x}; x=hello"###);
+        bulk_aby_fc_row_025 => (r#"bulk aby 025"#, r###"print -r ${#a}; a=(a b c)"###);
+        bulk_aby_fc_row_026 => (r#"bulk aby 026"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
+        bulk_aby_fc_row_027 => (r#"bulk aby 027"#, r###"print -r ${(b)x}; x=hi"###);
+        bulk_aby_fc_row_028 => (r#"bulk aby 028"#, r###"print -r ${(e):-2+2}"###);
+        bulk_aby_fc_row_029 => (r#"bulk aby 029"#, r###"print -r ${(P)r}; r=HOME"###);
+        bulk_aby_fc_row_030 => (r#"bulk aby 030"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
+        bulk_aby_fc_row_031 => (r#"bulk aby 031"#, r###"print -r ${(eu)n}; n=(a A b)"###);
+        bulk_aby_fc_row_032 => (r#"bulk aby 032"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
+        bulk_aby_fc_row_033 => (r#"bulk aby 033"#, r###"typeset -h hv=1; print -r ${+hv}"###);
+        bulk_aby_fc_row_034 => (r#"bulk aby 034"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
+        bulk_aby_fc_row_035 => (r#"bulk aby 035"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
+        bulk_aby_fc_row_036 => (r#"bulk aby 036"#, r###"while :; do break; print -r n; done; print -r after"###);
+        bulk_aby_fc_row_037 => (r#"bulk aby 037"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
+        bulk_aby_fc_row_038 => (r#"bulk aby 038"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
+        bulk_aby_fc_row_039 => (r#"bulk aby 039"#, r###"print -r ${argv[1]}; set -- p q"###);
+        bulk_aby_fc_row_040 => (r#"bulk aby 040"#, r###"print -r $ARGC; set -- a b"###);
+        bulk_aby_fc_row_041 => (r#"bulk aby 041"#, r###"print -r ${dirstack[1]:-empty}"###);
+        bulk_aby_fc_row_042 => (r#"bulk aby 042"#, r###"print -r ${+pipestatus}"###);
+        bulk_aby_fc_row_043 => (r#"bulk aby 043"#, r###"print -r ${+history}"###);
+        bulk_aby_fc_row_044 => (r#"bulk aby 044"#, r###"print -r ${+commands}"###);
+        bulk_aby_fc_row_045 => (r#"bulk aby 045"#, r###"print -r ${+builtins}"###);
+        bulk_aby_fc_row_046 => (r#"bulk aby 046"#, r###"print -r ${+widgets}"###);
+        bulk_aby_fc_row_047 => (r#"bulk aby 047"#, r###"print -r ${+terminfo}"###);
+        bulk_aby_fc_row_048 => (r#"bulk aby 048"#, r###"print -r ${+modules}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_abz {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_abz_fc_row_001 => (r#"bulk abz 001"#, r###"typeset -F2 f=3.14; print -r $f"###);
+        bulk_abz_fc_row_002 => (r#"bulk abz 002"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
+        bulk_abz_fc_row_003 => (r#"bulk abz 003"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
+        bulk_abz_fc_row_004 => (r#"bulk abz 004"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
+        bulk_abz_fc_row_005 => (r#"bulk abz 005"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
+        bulk_abz_fc_row_006 => (r#"bulk abz 006"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
+        bulk_abz_fc_row_007 => (r#"bulk abz 007"#, r###"print -r ${#x}; x=hello"###);
+        bulk_abz_fc_row_008 => (r#"bulk abz 008"#, r###"print -r ${#a}; a=(a b c)"###);
+        bulk_abz_fc_row_009 => (r#"bulk abz 009"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
+        bulk_abz_fc_row_010 => (r#"bulk abz 010"#, r###"print -r ${(b)x}; x=hi"###);
+        bulk_abz_fc_row_011 => (r#"bulk abz 011"#, r###"print -r ${(e):-2+2}"###);
+        bulk_abz_fc_row_012 => (r#"bulk abz 012"#, r###"print -r ${(P)r}; r=HOME"###);
+        bulk_abz_fc_row_013 => (r#"bulk abz 013"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
+        bulk_abz_fc_row_014 => (r#"bulk abz 014"#, r###"print -r ${(eu)n}; n=(a A b)"###);
+        bulk_abz_fc_row_015 => (r#"bulk abz 015"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
+        bulk_abz_fc_row_016 => (r#"bulk abz 016"#, r###"typeset -h hv=1; print -r ${+hv}"###);
+        bulk_abz_fc_row_017 => (r#"bulk abz 017"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
+        bulk_abz_fc_row_018 => (r#"bulk abz 018"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
+        bulk_abz_fc_row_019 => (r#"bulk abz 019"#, r###"while :; do break; print -r n; done; print -r after"###);
+        bulk_abz_fc_row_020 => (r#"bulk abz 020"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
+        bulk_abz_fc_row_021 => (r#"bulk abz 021"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
+        bulk_abz_fc_row_022 => (r#"bulk abz 022"#, r###"print -r ${argv[1]}; set -- p q"###);
+        bulk_abz_fc_row_023 => (r#"bulk abz 023"#, r###"print -r $ARGC; set -- a b"###);
+        bulk_abz_fc_row_024 => (r#"bulk abz 024"#, r###"print -r ${dirstack[1]:-empty}"###);
+        bulk_abz_fc_row_025 => (r#"bulk abz 025"#, r###"print -r ${+pipestatus}"###);
+        bulk_abz_fc_row_026 => (r#"bulk abz 026"#, r###"print -r ${+history}"###);
+        bulk_abz_fc_row_027 => (r#"bulk abz 027"#, r###"print -r ${+commands}"###);
+        bulk_abz_fc_row_028 => (r#"bulk abz 028"#, r###"print -r ${+builtins}"###);
+        bulk_abz_fc_row_029 => (r#"bulk abz 029"#, r###"print -r ${+widgets}"###);
+        bulk_abz_fc_row_030 => (r#"bulk abz 030"#, r###"print -r ${+terminfo}"###);
+        bulk_abz_fc_row_031 => (r#"bulk abz 031"#, r###"print -r ${+modules}"###);
+        bulk_abz_fc_row_032 => (r#"bulk abz 032"#, r###"print -r ${+patchars}"###);
+        bulk_abz_fc_row_033 => (r#"bulk abz 033"#, r###"print -r ${+reswords}"###);
+        bulk_abz_fc_row_034 => (r#"bulk abz 034"#, r###"print -r ${+dis_aliases}"###);
+        bulk_abz_fc_row_035 => (r#"bulk abz 035"#, r###"print -r ${+dis_functions}"###);
+        bulk_abz_fc_row_036 => (r#"bulk abz 036"#, r###"print -r ${+parameters[(I)PATH]}"###);
+        bulk_abz_fc_row_037 => (r#"bulk abz 037"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
+        bulk_abz_fc_row_038 => (r#"bulk abz 038"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
+        bulk_abz_fc_row_039 => (r#"bulk abz 039"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
+        bulk_abz_fc_row_040 => (r#"bulk abz 040"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
+        bulk_abz_fc_row_041 => (r#"bulk abz 041"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
+        bulk_abz_fc_row_042 => (r#"bulk abz 042"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
+        bulk_abz_fc_row_043 => (r#"bulk abz 043"#, r###"print -r $(( 128 >> 2 ))"###);
+        bulk_abz_fc_row_044 => (r#"bulk abz 044"#, r###"print -r $(( ~(255) & 0xff ))"###);
+        bulk_abz_fc_row_045 => (r#"bulk abz 045"#, r###"print -r $(( 3 <|> 5 ))"###);
+        bulk_abz_fc_row_046 => (r#"bulk abz 046"#, r###"print -r $(( 3 <> 5 ))"###);
+        bulk_abz_fc_row_047 => (r#"bulk abz 047"#, r###"(( 5#11 )); print -r $?"###);
+        bulk_abz_fc_row_048 => (r#"bulk abz 048"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aca {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aca_fc_row_001 => (r#"bulk aca 001"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
+        bulk_aca_fc_row_002 => (r#"bulk aca 002"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
+        bulk_aca_fc_row_003 => (r#"bulk aca 003"#, r###"while :; do break; print -r n; done; print -r after"###);
+        bulk_aca_fc_row_004 => (r#"bulk aca 004"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
+        bulk_aca_fc_row_005 => (r#"bulk aca 005"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
+        bulk_aca_fc_row_006 => (r#"bulk aca 006"#, r###"print -r ${argv[1]}; set -- p q"###);
+        bulk_aca_fc_row_007 => (r#"bulk aca 007"#, r###"print -r $ARGC; set -- a b"###);
+        bulk_aca_fc_row_008 => (r#"bulk aca 008"#, r###"print -r ${dirstack[1]:-empty}"###);
+        bulk_aca_fc_row_009 => (r#"bulk aca 009"#, r###"print -r ${+pipestatus}"###);
+        bulk_aca_fc_row_010 => (r#"bulk aca 010"#, r###"print -r ${+history}"###);
+        bulk_aca_fc_row_011 => (r#"bulk aca 011"#, r###"print -r ${+commands}"###);
+        bulk_aca_fc_row_012 => (r#"bulk aca 012"#, r###"print -r ${+builtins}"###);
+        bulk_aca_fc_row_013 => (r#"bulk aca 013"#, r###"print -r ${+widgets}"###);
+        bulk_aca_fc_row_014 => (r#"bulk aca 014"#, r###"print -r ${+terminfo}"###);
+        bulk_aca_fc_row_015 => (r#"bulk aca 015"#, r###"print -r ${+modules}"###);
+        bulk_aca_fc_row_016 => (r#"bulk aca 016"#, r###"print -r ${+patchars}"###);
+        bulk_aca_fc_row_017 => (r#"bulk aca 017"#, r###"print -r ${+reswords}"###);
+        bulk_aca_fc_row_018 => (r#"bulk aca 018"#, r###"print -r ${+dis_aliases}"###);
+        bulk_aca_fc_row_019 => (r#"bulk aca 019"#, r###"print -r ${+dis_functions}"###);
+        bulk_aca_fc_row_020 => (r#"bulk aca 020"#, r###"print -r ${+parameters[(I)PATH]}"###);
+        bulk_aca_fc_row_021 => (r#"bulk aca 021"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
+        bulk_aca_fc_row_022 => (r#"bulk aca 022"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
+        bulk_aca_fc_row_023 => (r#"bulk aca 023"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
+        bulk_aca_fc_row_024 => (r#"bulk aca 024"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
+        bulk_aca_fc_row_025 => (r#"bulk aca 025"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
+        bulk_aca_fc_row_026 => (r#"bulk aca 026"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
+        bulk_aca_fc_row_027 => (r#"bulk aca 027"#, r###"print -r $(( 128 >> 2 ))"###);
+        bulk_aca_fc_row_028 => (r#"bulk aca 028"#, r###"print -r $(( ~(255) & 0xff ))"###);
+        bulk_aca_fc_row_029 => (r#"bulk aca 029"#, r###"print -r $(( 3 <|> 5 ))"###);
+        bulk_aca_fc_row_030 => (r#"bulk aca 030"#, r###"print -r $(( 3 <> 5 ))"###);
+        bulk_aca_fc_row_031 => (r#"bulk aca 031"#, r###"(( 5#11 )); print -r $?"###);
+        bulk_aca_fc_row_032 => (r#"bulk aca 032"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
+        bulk_aca_fc_row_033 => (r#"bulk aca 033"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
+        bulk_aca_fc_row_034 => (r#"bulk aca 034"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
+        bulk_aca_fc_row_035 => (r#"bulk aca 035"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
+        bulk_aca_fc_row_036 => (r#"bulk aca 036"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
+        bulk_aca_fc_row_037 => (r#"bulk aca 037"#, r###"typeset -i8 n=10; print -r $n"###);
+        bulk_aca_fc_row_038 => (r#"bulk aca 038"#, r###"typeset -i16 n=255; print -r $n"###);
+        bulk_aca_fc_row_039 => (r#"bulk aca 039"#, r###"typeset -E2 n=4000; print -r $n"###);
+        bulk_aca_fc_row_040 => (r#"bulk aca 040"#, r###"typeset -R4 n=hi; print -r $n"###);
+        bulk_aca_fc_row_041 => (r#"bulk aca 041"#, r###"typeset +L n=Ab; print -r $n"###);
+        bulk_aca_fc_row_042 => (r#"bulk aca 042"#, r###"typeset +U n=xy; print -r $n"###);
+        bulk_aca_fc_row_043 => (r#"bulk aca 043"#, r###"typeset +i n=4; print -r $n"###);
+        bulk_aca_fc_row_044 => (r#"bulk aca 044"#, r###"export EX=1; print -r $EX; unset EX"###);
+        bulk_aca_fc_row_045 => (r#"bulk aca 045"#, r###"readonly ro=5; print -r $ro"###);
+        bulk_aca_fc_row_046 => (r#"bulk aca 046"#, r###"print -r ${${v:-fb}}; unset v"###);
+        bulk_aca_fc_row_047 => (r#"bulk aca 047"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
+        bulk_aca_fc_row_048 => (r#"bulk aca 048"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acb {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acb_fc_row_001 => (r#"bulk acb 001"#, r###"print -r ${+dis_aliases}"###);
+        bulk_acb_fc_row_002 => (r#"bulk acb 002"#, r###"print -r ${+dis_functions}"###);
+        bulk_acb_fc_row_003 => (r#"bulk acb 003"#, r###"print -r ${+parameters[(I)PATH]}"###);
+        bulk_acb_fc_row_004 => (r#"bulk acb 004"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
+        bulk_acb_fc_row_005 => (r#"bulk acb 005"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
+        bulk_acb_fc_row_006 => (r#"bulk acb 006"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
+        bulk_acb_fc_row_007 => (r#"bulk acb 007"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
+        bulk_acb_fc_row_008 => (r#"bulk acb 008"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
+        bulk_acb_fc_row_009 => (r#"bulk acb 009"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
+        bulk_acb_fc_row_010 => (r#"bulk acb 010"#, r###"print -r $(( 128 >> 2 ))"###);
+        bulk_acb_fc_row_011 => (r#"bulk acb 011"#, r###"print -r $(( ~(255) & 0xff ))"###);
+        bulk_acb_fc_row_012 => (r#"bulk acb 012"#, r###"print -r $(( 3 <|> 5 ))"###);
+        bulk_acb_fc_row_013 => (r#"bulk acb 013"#, r###"print -r $(( 3 <> 5 ))"###);
+        bulk_acb_fc_row_014 => (r#"bulk acb 014"#, r###"(( 5#11 )); print -r $?"###);
+        bulk_acb_fc_row_015 => (r#"bulk acb 015"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
+        bulk_acb_fc_row_016 => (r#"bulk acb 016"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
+        bulk_acb_fc_row_017 => (r#"bulk acb 017"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
+        bulk_acb_fc_row_018 => (r#"bulk acb 018"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
+        bulk_acb_fc_row_019 => (r#"bulk acb 019"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
+        bulk_acb_fc_row_020 => (r#"bulk acb 020"#, r###"typeset -i8 n=10; print -r $n"###);
+        bulk_acb_fc_row_021 => (r#"bulk acb 021"#, r###"typeset -i16 n=255; print -r $n"###);
+        bulk_acb_fc_row_022 => (r#"bulk acb 022"#, r###"typeset -E2 n=4000; print -r $n"###);
+        bulk_acb_fc_row_023 => (r#"bulk acb 023"#, r###"typeset -R4 n=hi; print -r $n"###);
+        bulk_acb_fc_row_024 => (r#"bulk acb 024"#, r###"typeset +L n=Ab; print -r $n"###);
+        bulk_acb_fc_row_025 => (r#"bulk acb 025"#, r###"typeset +U n=xy; print -r $n"###);
+        bulk_acb_fc_row_026 => (r#"bulk acb 026"#, r###"typeset +i n=4; print -r $n"###);
+        bulk_acb_fc_row_027 => (r#"bulk acb 027"#, r###"export EX=1; print -r $EX; unset EX"###);
+        bulk_acb_fc_row_028 => (r#"bulk acb 028"#, r###"readonly ro=5; print -r $ro"###);
+        bulk_acb_fc_row_029 => (r#"bulk acb 029"#, r###"print -r ${${v:-fb}}; unset v"###);
+        bulk_acb_fc_row_030 => (r#"bulk acb 030"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
+        bulk_acb_fc_row_031 => (r#"bulk acb 031"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
+        bulk_acb_fc_row_032 => (r#"bulk acb 032"#, r###"word=  hi  ; print -r ${(W)word}"###);
+        bulk_acb_fc_row_033 => (r#"bulk acb 033"#, r###"print -r ${(z)word}; word=a b c"###);
+        bulk_acb_fc_row_034 => (r#"bulk acb 034"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
+        bulk_acb_fc_row_035 => (r#"bulk acb 035"#, r###"print -r ${(A)x}; x=1 2"###);
+        bulk_acb_fc_row_036 => (r#"bulk acb 036"#, r###"print -r ${(aa)x}; x=(1 2)"###);
+        bulk_acb_fc_row_037 => (r#"bulk acb 037"#, r###"print -r ${(%)2}"###);
+        bulk_acb_fc_row_038 => (r#"bulk acb 038"#, r###"o=8; print -r ${(0)o}"###);
+        bulk_acb_fc_row_039 => (r#"bulk acb 039"#, r###"str=abc.def; print -r ${str:r}"###);
+        bulk_acb_fc_row_040 => (r#"bulk acb 040"#, r###"str=abc.def; print -r ${str:e}"###);
+        bulk_acb_fc_row_041 => (r#"bulk acb 041"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
+        bulk_acb_fc_row_042 => (r#"bulk acb 042"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
+        bulk_acb_fc_row_043 => (r#"bulk acb 043"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
+        bulk_acb_fc_row_044 => (r#"bulk acb 044"#, r###"[[ -G / ]]; print -r $?"###);
+        bulk_acb_fc_row_045 => (r#"bulk acb 045"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
+        bulk_acb_fc_row_046 => (r#"bulk acb 046"#, r###"[[ bee = *ee* ]]; print -r $?"###);
+        bulk_acb_fc_row_047 => (r#"bulk acb 047"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
+        bulk_acb_fc_row_048 => (r#"bulk acb 048"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acc {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acc_fc_row_001 => (r#"bulk acc 001"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
+        bulk_acc_fc_row_002 => (r#"bulk acc 002"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
+        bulk_acc_fc_row_003 => (r#"bulk acc 003"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
+        bulk_acc_fc_row_004 => (r#"bulk acc 004"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
+        bulk_acc_fc_row_005 => (r#"bulk acc 005"#, r###"typeset -i8 n=10; print -r $n"###);
+        bulk_acc_fc_row_006 => (r#"bulk acc 006"#, r###"typeset -i16 n=255; print -r $n"###);
+        bulk_acc_fc_row_007 => (r#"bulk acc 007"#, r###"typeset -E2 n=4000; print -r $n"###);
+        bulk_acc_fc_row_008 => (r#"bulk acc 008"#, r###"typeset -R4 n=hi; print -r $n"###);
+        bulk_acc_fc_row_009 => (r#"bulk acc 009"#, r###"typeset +L n=Ab; print -r $n"###);
+        bulk_acc_fc_row_010 => (r#"bulk acc 010"#, r###"typeset +U n=xy; print -r $n"###);
+        bulk_acc_fc_row_011 => (r#"bulk acc 011"#, r###"typeset +i n=4; print -r $n"###);
+        bulk_acc_fc_row_012 => (r#"bulk acc 012"#, r###"export EX=1; print -r $EX; unset EX"###);
+        bulk_acc_fc_row_013 => (r#"bulk acc 013"#, r###"readonly ro=5; print -r $ro"###);
+        bulk_acc_fc_row_014 => (r#"bulk acc 014"#, r###"print -r ${${v:-fb}}; unset v"###);
+        bulk_acc_fc_row_015 => (r#"bulk acc 015"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
+        bulk_acc_fc_row_016 => (r#"bulk acc 016"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
+        bulk_acc_fc_row_017 => (r#"bulk acc 017"#, r###"word=  hi  ; print -r ${(W)word}"###);
+        bulk_acc_fc_row_018 => (r#"bulk acc 018"#, r###"print -r ${(z)word}; word=a b c"###);
+        bulk_acc_fc_row_019 => (r#"bulk acc 019"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
+        bulk_acc_fc_row_020 => (r#"bulk acc 020"#, r###"print -r ${(A)x}; x=1 2"###);
+        bulk_acc_fc_row_021 => (r#"bulk acc 021"#, r###"print -r ${(aa)x}; x=(1 2)"###);
+        bulk_acc_fc_row_022 => (r#"bulk acc 022"#, r###"print -r ${(%)2}"###);
+        bulk_acc_fc_row_023 => (r#"bulk acc 023"#, r###"o=8; print -r ${(0)o}"###);
+        bulk_acc_fc_row_024 => (r#"bulk acc 024"#, r###"str=abc.def; print -r ${str:r}"###);
+        bulk_acc_fc_row_025 => (r#"bulk acc 025"#, r###"str=abc.def; print -r ${str:e}"###);
+        bulk_acc_fc_row_026 => (r#"bulk acc 026"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
+        bulk_acc_fc_row_027 => (r#"bulk acc 027"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
+        bulk_acc_fc_row_028 => (r#"bulk acc 028"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
+        bulk_acc_fc_row_029 => (r#"bulk acc 029"#, r###"[[ -G / ]]; print -r $?"###);
+        bulk_acc_fc_row_030 => (r#"bulk acc 030"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
+        bulk_acc_fc_row_031 => (r#"bulk acc 031"#, r###"[[ bee = *ee* ]]; print -r $?"###);
+        bulk_acc_fc_row_032 => (r#"bulk acc 032"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
+        bulk_acc_fc_row_033 => (r#"bulk acc 033"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
+        bulk_acc_fc_row_034 => (r#"bulk acc 034"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
+        bulk_acc_fc_row_035 => (r#"bulk acc 035"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
+        bulk_acc_fc_row_036 => (r#"bulk acc 036"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
+        bulk_acc_fc_row_037 => (r#"bulk acc 037"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
+        bulk_acc_fc_row_038 => (r#"bulk acc 038"#, r###"[[ -o nullglob ]]; print -r $?"###);
+        bulk_acc_fc_row_039 => (r#"bulk acc 039"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_acc_fc_row_040 => (r#"bulk acc 040"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_acc_fc_row_041 => (r#"bulk acc 041"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
+        bulk_acc_fc_row_042 => (r#"bulk acc 042"#, r###"print -r $(( 1 , 2 , 3 ))"###);
+        bulk_acc_fc_row_043 => (r#"bulk acc 043"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
+        bulk_acc_fc_row_044 => (r#"bulk acc 044"#, r###"print -r $(( 0xff & 0x0f ))"###);
+        bulk_acc_fc_row_045 => (r#"bulk acc 045"#, r###"print -r $(( 1 << 4 ))"###);
+        bulk_acc_fc_row_046 => (r#"bulk acc 046"#, r###"print -r $(( 16 >> 2 ))"###);
+        bulk_acc_fc_row_047 => (r#"bulk acc 047"#, r###"print -r $(( -1 >> 1 ))"###);
+        bulk_acc_fc_row_048 => (r#"bulk acc 048"#, r###"print -r $(( 8#17 ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acd {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acd_fc_row_001 => (r#"bulk acd 001"#, r###"print -r ${(z)word}; word=a b c"###);
+        bulk_acd_fc_row_002 => (r#"bulk acd 002"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
+        bulk_acd_fc_row_003 => (r#"bulk acd 003"#, r###"print -r ${(A)x}; x=1 2"###);
+        bulk_acd_fc_row_004 => (r#"bulk acd 004"#, r###"print -r ${(aa)x}; x=(1 2)"###);
+        bulk_acd_fc_row_005 => (r#"bulk acd 005"#, r###"print -r ${(%)2}"###);
+        bulk_acd_fc_row_006 => (r#"bulk acd 006"#, r###"o=8; print -r ${(0)o}"###);
+        bulk_acd_fc_row_007 => (r#"bulk acd 007"#, r###"str=abc.def; print -r ${str:r}"###);
+        bulk_acd_fc_row_008 => (r#"bulk acd 008"#, r###"str=abc.def; print -r ${str:e}"###);
+        bulk_acd_fc_row_009 => (r#"bulk acd 009"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
+        bulk_acd_fc_row_010 => (r#"bulk acd 010"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
+        bulk_acd_fc_row_011 => (r#"bulk acd 011"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
+        bulk_acd_fc_row_012 => (r#"bulk acd 012"#, r###"[[ -G / ]]; print -r $?"###);
+        bulk_acd_fc_row_013 => (r#"bulk acd 013"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
+        bulk_acd_fc_row_014 => (r#"bulk acd 014"#, r###"[[ bee = *ee* ]]; print -r $?"###);
+        bulk_acd_fc_row_015 => (r#"bulk acd 015"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
+        bulk_acd_fc_row_016 => (r#"bulk acd 016"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
+        bulk_acd_fc_row_017 => (r#"bulk acd 017"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
+        bulk_acd_fc_row_018 => (r#"bulk acd 018"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
+        bulk_acd_fc_row_019 => (r#"bulk acd 019"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
+        bulk_acd_fc_row_020 => (r#"bulk acd 020"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
+        bulk_acd_fc_row_021 => (r#"bulk acd 021"#, r###"[[ -o nullglob ]]; print -r $?"###);
+        bulk_acd_fc_row_022 => (r#"bulk acd 022"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_acd_fc_row_023 => (r#"bulk acd 023"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_acd_fc_row_024 => (r#"bulk acd 024"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
+        bulk_acd_fc_row_025 => (r#"bulk acd 025"#, r###"print -r $(( 1 , 2 , 3 ))"###);
+        bulk_acd_fc_row_026 => (r#"bulk acd 026"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
+        bulk_acd_fc_row_027 => (r#"bulk acd 027"#, r###"print -r $(( 0xff & 0x0f ))"###);
+        bulk_acd_fc_row_028 => (r#"bulk acd 028"#, r###"print -r $(( 1 << 4 ))"###);
+        bulk_acd_fc_row_029 => (r#"bulk acd 029"#, r###"print -r $(( 16 >> 2 ))"###);
+        bulk_acd_fc_row_030 => (r#"bulk acd 030"#, r###"print -r $(( -1 >> 1 ))"###);
+        bulk_acd_fc_row_031 => (r#"bulk acd 031"#, r###"print -r $(( 8#17 ))"###);
+        bulk_acd_fc_row_032 => (r#"bulk acd 032"#, r###"print -r $(( 16#ff ))"###);
+        bulk_acd_fc_row_033 => (r#"bulk acd 033"#, r###"print -r $(( 2#1010 ))"###);
+        bulk_acd_fc_row_034 => (r#"bulk acd 034"#, r###"print -r $(( 0b1010 ))"###);
+        bulk_acd_fc_row_035 => (r#"bulk acd 035"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
+        bulk_acd_fc_row_036 => (r#"bulk acd 036"#, r###"print -r $(( 4 % 2 == 0 ))"###);
+        bulk_acd_fc_row_037 => (r#"bulk acd 037"#, r###"print -r $(( 0 - 1 == -1 ))"###);
+        bulk_acd_fc_row_038 => (r#"bulk acd 038"#, r###"print -r $(( 72 / 8 / 3 ))"###);
+        bulk_acd_fc_row_039 => (r#"bulk acd 039"#, r###"print -r $(( 24 % 5 % 3 ))"###);
+        bulk_acd_fc_row_040 => (r#"bulk acd 040"#, r###"print -r $(( 2 | 4 | 8 ))"###);
+        bulk_acd_fc_row_041 => (r#"bulk acd 041"#, r###"print -r $(( 15 ^ 9 ))"###);
+        bulk_acd_fc_row_042 => (r#"bulk acd 042"#, r###"print -r $(( 0 || 0 || 7 ))"###);
+        bulk_acd_fc_row_043 => (r#"bulk acd 043"#, r###"print -r $(( 1 || -1 ))"###);
+        bulk_acd_fc_row_044 => (r#"bulk acd 044"#, r###"print -r $(( (1>0) + (0>0) ))"###);
+        bulk_acd_fc_row_045 => (r#"bulk acd 045"#, r###"print -r $(( 3 > 2 > 1 ))"###);
+        bulk_acd_fc_row_046 => (r#"bulk acd 046"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
+        bulk_acd_fc_row_047 => (r#"bulk acd 047"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
+        bulk_acd_fc_row_048 => (r#"bulk acd 048"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_ace {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_ace_fc_row_001 => (r#"bulk ace 001"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
+        bulk_ace_fc_row_002 => (r#"bulk ace 002"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
+        bulk_ace_fc_row_003 => (r#"bulk ace 003"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
+        bulk_ace_fc_row_004 => (r#"bulk ace 004"#, r###"[[ -o nullglob ]]; print -r $?"###);
+        bulk_ace_fc_row_005 => (r#"bulk ace 005"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_ace_fc_row_006 => (r#"bulk ace 006"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_ace_fc_row_007 => (r#"bulk ace 007"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
+        bulk_ace_fc_row_008 => (r#"bulk ace 008"#, r###"print -r $(( 1 , 2 , 3 ))"###);
+        bulk_ace_fc_row_009 => (r#"bulk ace 009"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
+        bulk_ace_fc_row_010 => (r#"bulk ace 010"#, r###"print -r $(( 0xff & 0x0f ))"###);
+        bulk_ace_fc_row_011 => (r#"bulk ace 011"#, r###"print -r $(( 1 << 4 ))"###);
+        bulk_ace_fc_row_012 => (r#"bulk ace 012"#, r###"print -r $(( 16 >> 2 ))"###);
+        bulk_ace_fc_row_013 => (r#"bulk ace 013"#, r###"print -r $(( -1 >> 1 ))"###);
+        bulk_ace_fc_row_014 => (r#"bulk ace 014"#, r###"print -r $(( 8#17 ))"###);
+        bulk_ace_fc_row_015 => (r#"bulk ace 015"#, r###"print -r $(( 16#ff ))"###);
+        bulk_ace_fc_row_016 => (r#"bulk ace 016"#, r###"print -r $(( 2#1010 ))"###);
+        bulk_ace_fc_row_017 => (r#"bulk ace 017"#, r###"print -r $(( 0b1010 ))"###);
+        bulk_ace_fc_row_018 => (r#"bulk ace 018"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
+        bulk_ace_fc_row_019 => (r#"bulk ace 019"#, r###"print -r $(( 4 % 2 == 0 ))"###);
+        bulk_ace_fc_row_020 => (r#"bulk ace 020"#, r###"print -r $(( 0 - 1 == -1 ))"###);
+        bulk_ace_fc_row_021 => (r#"bulk ace 021"#, r###"print -r $(( 72 / 8 / 3 ))"###);
+        bulk_ace_fc_row_022 => (r#"bulk ace 022"#, r###"print -r $(( 24 % 5 % 3 ))"###);
+        bulk_ace_fc_row_023 => (r#"bulk ace 023"#, r###"print -r $(( 2 | 4 | 8 ))"###);
+        bulk_ace_fc_row_024 => (r#"bulk ace 024"#, r###"print -r $(( 15 ^ 9 ))"###);
+        bulk_ace_fc_row_025 => (r#"bulk ace 025"#, r###"print -r $(( 0 || 0 || 7 ))"###);
+        bulk_ace_fc_row_026 => (r#"bulk ace 026"#, r###"print -r $(( 1 || -1 ))"###);
+        bulk_ace_fc_row_027 => (r#"bulk ace 027"#, r###"print -r $(( (1>0) + (0>0) ))"###);
+        bulk_ace_fc_row_028 => (r#"bulk ace 028"#, r###"print -r $(( 3 > 2 > 1 ))"###);
+        bulk_ace_fc_row_029 => (r#"bulk ace 029"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
+        bulk_ace_fc_row_030 => (r#"bulk ace 030"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
+        bulk_ace_fc_row_031 => (r#"bulk ace 031"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
+        bulk_ace_fc_row_032 => (r#"bulk ace 032"#, r###"print -r $(( 100 / 20 / 5 ))"###);
+        bulk_ace_fc_row_033 => (r#"bulk ace 033"#, r###"print -r $(( 2#101 & 2#010 ))"###);
+        bulk_ace_fc_row_034 => (r#"bulk ace 034"#, r###"print -r $(( 0x80 >> 4 ))"###);
+        bulk_ace_fc_row_035 => (r#"bulk ace 035"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
+        bulk_ace_fc_row_036 => (r#"bulk ace 036"#, r###"print -r $(( -(-(-5)) ))"###);
+        bulk_ace_fc_row_037 => (r#"bulk ace 037"#, r###"print -r $(( (1+2)*(3+4) ))"###);
+        bulk_ace_fc_row_038 => (r#"bulk ace 038"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
+        bulk_ace_fc_row_039 => (r#"bulk ace 039"#, r###"[[ "" != x ]]; print -r $?"###);
+        bulk_ace_fc_row_040 => (r#"bulk ace 040"#, r###"[[ -n /dev/null ]]; print -r $?"###);
+        bulk_ace_fc_row_041 => (r#"bulk ace 041"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
+        bulk_ace_fc_row_042 => (r#"bulk ace 042"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
+        bulk_ace_fc_row_043 => (r#"bulk ace 043"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
+        bulk_ace_fc_row_044 => (r#"bulk ace 044"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
+        bulk_ace_fc_row_045 => (r#"bulk ace 045"#, r###"[[ abc < abd ]]; print -r $?"###);
+        bulk_ace_fc_row_046 => (r#"bulk ace 046"#, r###"[[ abc > abb ]]; print -r $?"###);
+        bulk_ace_fc_row_047 => (r#"bulk ace 047"#, r###"[[ abc != def ]]; print -r $?"###);
+        bulk_ace_fc_row_048 => (r#"bulk ace 048"#, r###"[[ abc == abc ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acf {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acf_fc_row_001 => (r#"bulk acf 001"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
+        bulk_acf_fc_row_002 => (r#"bulk acf 002"#, r###"print -r $(( 4 % 2 == 0 ))"###);
+        bulk_acf_fc_row_003 => (r#"bulk acf 003"#, r###"print -r $(( 0 - 1 == -1 ))"###);
+        bulk_acf_fc_row_004 => (r#"bulk acf 004"#, r###"print -r $(( 72 / 8 / 3 ))"###);
+        bulk_acf_fc_row_005 => (r#"bulk acf 005"#, r###"print -r $(( 24 % 5 % 3 ))"###);
+        bulk_acf_fc_row_006 => (r#"bulk acf 006"#, r###"print -r $(( 2 | 4 | 8 ))"###);
+        bulk_acf_fc_row_007 => (r#"bulk acf 007"#, r###"print -r $(( 15 ^ 9 ))"###);
+        bulk_acf_fc_row_008 => (r#"bulk acf 008"#, r###"print -r $(( 0 || 0 || 7 ))"###);
+        bulk_acf_fc_row_009 => (r#"bulk acf 009"#, r###"print -r $(( 1 || -1 ))"###);
+        bulk_acf_fc_row_010 => (r#"bulk acf 010"#, r###"print -r $(( (1>0) + (0>0) ))"###);
+        bulk_acf_fc_row_011 => (r#"bulk acf 011"#, r###"print -r $(( 3 > 2 > 1 ))"###);
+        bulk_acf_fc_row_012 => (r#"bulk acf 012"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
+        bulk_acf_fc_row_013 => (r#"bulk acf 013"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
+        bulk_acf_fc_row_014 => (r#"bulk acf 014"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
+        bulk_acf_fc_row_015 => (r#"bulk acf 015"#, r###"print -r $(( 100 / 20 / 5 ))"###);
+        bulk_acf_fc_row_016 => (r#"bulk acf 016"#, r###"print -r $(( 2#101 & 2#010 ))"###);
+        bulk_acf_fc_row_017 => (r#"bulk acf 017"#, r###"print -r $(( 0x80 >> 4 ))"###);
+        bulk_acf_fc_row_018 => (r#"bulk acf 018"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
+        bulk_acf_fc_row_019 => (r#"bulk acf 019"#, r###"print -r $(( -(-(-5)) ))"###);
+        bulk_acf_fc_row_020 => (r#"bulk acf 020"#, r###"print -r $(( (1+2)*(3+4) ))"###);
+        bulk_acf_fc_row_021 => (r#"bulk acf 021"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
+        bulk_acf_fc_row_022 => (r#"bulk acf 022"#, r###"[[ "" != x ]]; print -r $?"###);
+        bulk_acf_fc_row_023 => (r#"bulk acf 023"#, r###"[[ -n /dev/null ]]; print -r $?"###);
+        bulk_acf_fc_row_024 => (r#"bulk acf 024"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
+        bulk_acf_fc_row_025 => (r#"bulk acf 025"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
+        bulk_acf_fc_row_026 => (r#"bulk acf 026"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
+        bulk_acf_fc_row_027 => (r#"bulk acf 027"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
+        bulk_acf_fc_row_028 => (r#"bulk acf 028"#, r###"[[ abc < abd ]]; print -r $?"###);
+        bulk_acf_fc_row_029 => (r#"bulk acf 029"#, r###"[[ abc > abb ]]; print -r $?"###);
+        bulk_acf_fc_row_030 => (r#"bulk acf 030"#, r###"[[ abc != def ]]; print -r $?"###);
+        bulk_acf_fc_row_031 => (r#"bulk acf 031"#, r###"[[ abc == abc ]]; print -r $?"###);
+        bulk_acf_fc_row_032 => (r#"bulk acf 032"#, r###"print -r ${(L)@}; set -- MIXED"###);
+        bulk_acf_fc_row_033 => (r#"bulk acf 033"#, r###"slice=abcdef; print -r $slice[3,5]"###);
+        bulk_acf_fc_row_034 => (r#"bulk acf 034"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
+        bulk_acf_fc_row_035 => (r#"bulk acf 035"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
+        bulk_acf_fc_row_036 => (r#"bulk acf 036"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
+        bulk_acf_fc_row_037 => (r#"bulk acf 037"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
+        bulk_acf_fc_row_038 => (r#"bulk acf 038"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_acf_fc_row_039 => (r#"bulk acf 039"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
+        bulk_acf_fc_row_040 => (r#"bulk acf 040"#, r###"whence -v print 2>/dev/null; print -r $?"###);
+        bulk_acf_fc_row_041 => (r#"bulk acf 041"#, r###"whence -p ls 2>/dev/null | head -1"###);
+        bulk_acf_fc_row_042 => (r#"bulk acf 042"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_acf_fc_row_043 => (r#"bulk acf 043"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_acf_fc_row_044 => (r#"bulk acf 044"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
+        bulk_acf_fc_row_045 => (r#"bulk acf 045"#, r###"print -r ${aliases[za]:-none}"###);
+        bulk_acf_fc_row_046 => (r#"bulk acf 046"#, r###"print -r ${(t)parameters[PATH]}"###);
+        bulk_acf_fc_row_047 => (r#"bulk acf 047"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
+        bulk_acf_fc_row_048 => (r#"bulk acf 048"#, r###"print -r ${+parameters[PATH]}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acg {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acg_fc_row_001 => (r#"bulk acg 001"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
+        bulk_acg_fc_row_002 => (r#"bulk acg 002"#, r###"print -r $(( -(-(-5)) ))"###);
+        bulk_acg_fc_row_003 => (r#"bulk acg 003"#, r###"print -r $(( (1+2)*(3+4) ))"###);
+        bulk_acg_fc_row_004 => (r#"bulk acg 004"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
+        bulk_acg_fc_row_005 => (r#"bulk acg 005"#, r###"[[ "" != x ]]; print -r $?"###);
+        bulk_acg_fc_row_006 => (r#"bulk acg 006"#, r###"[[ -n /dev/null ]]; print -r $?"###);
+        bulk_acg_fc_row_007 => (r#"bulk acg 007"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
+        bulk_acg_fc_row_008 => (r#"bulk acg 008"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
+        bulk_acg_fc_row_009 => (r#"bulk acg 009"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
+        bulk_acg_fc_row_010 => (r#"bulk acg 010"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
+        bulk_acg_fc_row_011 => (r#"bulk acg 011"#, r###"[[ abc < abd ]]; print -r $?"###);
+        bulk_acg_fc_row_012 => (r#"bulk acg 012"#, r###"[[ abc > abb ]]; print -r $?"###);
+        bulk_acg_fc_row_013 => (r#"bulk acg 013"#, r###"[[ abc != def ]]; print -r $?"###);
+        bulk_acg_fc_row_014 => (r#"bulk acg 014"#, r###"[[ abc == abc ]]; print -r $?"###);
+        bulk_acg_fc_row_015 => (r#"bulk acg 015"#, r###"print -r ${(L)@}; set -- MIXED"###);
+        bulk_acg_fc_row_016 => (r#"bulk acg 016"#, r###"slice=abcdef; print -r $slice[3,5]"###);
+        bulk_acg_fc_row_017 => (r#"bulk acg 017"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
+        bulk_acg_fc_row_018 => (r#"bulk acg 018"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
+        bulk_acg_fc_row_019 => (r#"bulk acg 019"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
+        bulk_acg_fc_row_020 => (r#"bulk acg 020"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
+        bulk_acg_fc_row_021 => (r#"bulk acg 021"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_acg_fc_row_022 => (r#"bulk acg 022"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
+        bulk_acg_fc_row_023 => (r#"bulk acg 023"#, r###"whence -v print 2>/dev/null; print -r $?"###);
+        bulk_acg_fc_row_024 => (r#"bulk acg 024"#, r###"whence -p ls 2>/dev/null | head -1"###);
+        bulk_acg_fc_row_025 => (r#"bulk acg 025"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_acg_fc_row_026 => (r#"bulk acg 026"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_acg_fc_row_027 => (r#"bulk acg 027"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
+        bulk_acg_fc_row_028 => (r#"bulk acg 028"#, r###"print -r ${aliases[za]:-none}"###);
+        bulk_acg_fc_row_029 => (r#"bulk acg 029"#, r###"print -r ${(t)parameters[PATH]}"###);
+        bulk_acg_fc_row_030 => (r#"bulk acg 030"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
+        bulk_acg_fc_row_031 => (r#"bulk acg 031"#, r###"print -r ${+parameters[PATH]}"###);
+        bulk_acg_fc_row_032 => (r#"bulk acg 032"#, r###"print -r ${+functions[fn]}; fn(){}"###);
+        bulk_acg_fc_row_033 => (r#"bulk acg 033"#, r###"print -r ${+commands[print]}"###);
+        bulk_acg_fc_row_034 => (r#"bulk acg 034"#, r###"print -r ${+zsh_eval_context}"###);
+        bulk_acg_fc_row_035 => (r#"bulk acg 035"#, r###"print -r ${+functrace}"###);
+        bulk_acg_fc_row_036 => (r#"bulk acg 036"#, r###"print -r ${+funcstack}"###);
+        bulk_acg_fc_row_037 => (r#"bulk acg 037"#, r###"print -r ${+funcfiletrace}"###);
+        bulk_acg_fc_row_038 => (r#"bulk acg 038"#, r###"print -r ${+jobstates}"###);
+        bulk_acg_fc_row_039 => (r#"bulk acg 039"#, r###"print -r ${+jobtexts}"###);
+        bulk_acg_fc_row_040 => (r#"bulk acg 040"#, r###"print -r ${+jobdirs}"###);
+        bulk_acg_fc_row_041 => (r#"bulk acg 041"#, r###"print -r ${+historywords}"###);
+        bulk_acg_fc_row_042 => (r#"bulk acg 042"#, r###"print -r ${+usergroups}"###);
+        bulk_acg_fc_row_043 => (r#"bulk acg 043"#, r###"print -r ${+dis_builtins}"###);
+        bulk_acg_fc_row_044 => (r#"bulk acg 044"#, r###"print -r ${+dis_widgets}"###);
+        bulk_acg_fc_row_045 => (r#"bulk acg 045"#, r###"print -r ${+dis_reswords}"###);
+        bulk_acg_fc_row_046 => (r#"bulk acg 046"#, r###"print -r ${+dis_patchars}"###);
+        bulk_acg_fc_row_047 => (r#"bulk acg 047"#, r###"print -r ${+dis_commands}"###);
+        bulk_acg_fc_row_048 => (r#"bulk acg 048"#, r###"print -r ${+module_path}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_ach {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_ach_fc_row_001 => (r#"bulk ach 001"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
+        bulk_ach_fc_row_002 => (r#"bulk ach 002"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
+        bulk_ach_fc_row_003 => (r#"bulk ach 003"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
+        bulk_ach_fc_row_004 => (r#"bulk ach 004"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_ach_fc_row_005 => (r#"bulk ach 005"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
+        bulk_ach_fc_row_006 => (r#"bulk ach 006"#, r###"whence -v print 2>/dev/null; print -r $?"###);
+        bulk_ach_fc_row_007 => (r#"bulk ach 007"#, r###"whence -p ls 2>/dev/null | head -1"###);
+        bulk_ach_fc_row_008 => (r#"bulk ach 008"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_ach_fc_row_009 => (r#"bulk ach 009"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_ach_fc_row_010 => (r#"bulk ach 010"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
+        bulk_ach_fc_row_011 => (r#"bulk ach 011"#, r###"print -r ${aliases[za]:-none}"###);
+        bulk_ach_fc_row_012 => (r#"bulk ach 012"#, r###"print -r ${(t)parameters[PATH]}"###);
+        bulk_ach_fc_row_013 => (r#"bulk ach 013"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
+        bulk_ach_fc_row_014 => (r#"bulk ach 014"#, r###"print -r ${+parameters[PATH]}"###);
+        bulk_ach_fc_row_015 => (r#"bulk ach 015"#, r###"print -r ${+functions[fn]}; fn(){}"###);
+        bulk_ach_fc_row_016 => (r#"bulk ach 016"#, r###"print -r ${+commands[print]}"###);
+        bulk_ach_fc_row_017 => (r#"bulk ach 017"#, r###"print -r ${+zsh_eval_context}"###);
+        bulk_ach_fc_row_018 => (r#"bulk ach 018"#, r###"print -r ${+functrace}"###);
+        bulk_ach_fc_row_019 => (r#"bulk ach 019"#, r###"print -r ${+funcstack}"###);
+        bulk_ach_fc_row_020 => (r#"bulk ach 020"#, r###"print -r ${+funcfiletrace}"###);
+        bulk_ach_fc_row_021 => (r#"bulk ach 021"#, r###"print -r ${+jobstates}"###);
+        bulk_ach_fc_row_022 => (r#"bulk ach 022"#, r###"print -r ${+jobtexts}"###);
+        bulk_ach_fc_row_023 => (r#"bulk ach 023"#, r###"print -r ${+jobdirs}"###);
+        bulk_ach_fc_row_024 => (r#"bulk ach 024"#, r###"print -r ${+historywords}"###);
+        bulk_ach_fc_row_025 => (r#"bulk ach 025"#, r###"print -r ${+usergroups}"###);
+        bulk_ach_fc_row_026 => (r#"bulk ach 026"#, r###"print -r ${+dis_builtins}"###);
+        bulk_ach_fc_row_027 => (r#"bulk ach 027"#, r###"print -r ${+dis_widgets}"###);
+        bulk_ach_fc_row_028 => (r#"bulk ach 028"#, r###"print -r ${+dis_reswords}"###);
+        bulk_ach_fc_row_029 => (r#"bulk ach 029"#, r###"print -r ${+dis_patchars}"###);
+        bulk_ach_fc_row_030 => (r#"bulk ach 030"#, r###"print -r ${+dis_commands}"###);
+        bulk_ach_fc_row_031 => (r#"bulk ach 031"#, r###"print -r ${+module_path}"###);
+        bulk_ach_fc_row_032 => (r#"bulk ach 032"#, r###"print -r ${+functrace}"###);
+        bulk_ach_fc_row_033 => (r#"bulk ach 033"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
+        bulk_ach_fc_row_034 => (r#"bulk ach 034"#, r###"{ true; false; }; print -r $?"###);
+        bulk_ach_fc_row_035 => (r#"bulk ach 035"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
+        bulk_ach_fc_row_036 => (r#"bulk ach 036"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
+        bulk_ach_fc_row_037 => (r#"bulk ach 037"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
+        bulk_ach_fc_row_038 => (r#"bulk ach 038"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
+        bulk_ach_fc_row_039 => (r#"bulk ach 039"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
+        bulk_ach_fc_row_040 => (r#"bulk ach 040"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
+        bulk_ach_fc_row_041 => (r#"bulk ach 041"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
+        bulk_ach_fc_row_042 => (r#"bulk ach 042"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
+        bulk_ach_fc_row_043 => (r#"bulk ach 043"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_ach_fc_row_044 => (r#"bulk ach 044"#, r###"print -r ${(t)x}; x=hello"###);
+        bulk_ach_fc_row_045 => (r#"bulk ach 045"#, r###"unset y; print -r ${+y}"###);
+        bulk_ach_fc_row_046 => (r#"bulk ach 046"#, r###"x=hello; print -r ${+x}"###);
+        bulk_ach_fc_row_047 => (r#"bulk ach 047"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_ach_fc_row_048 => (r#"bulk ach 048"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aci {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aci_fc_row_001 => (r#"bulk aci 001"#, r###"print -r ${+functrace}"###);
+        bulk_aci_fc_row_002 => (r#"bulk aci 002"#, r###"print -r ${+funcstack}"###);
+        bulk_aci_fc_row_003 => (r#"bulk aci 003"#, r###"print -r ${+funcfiletrace}"###);
+        bulk_aci_fc_row_004 => (r#"bulk aci 004"#, r###"print -r ${+jobstates}"###);
+        bulk_aci_fc_row_005 => (r#"bulk aci 005"#, r###"print -r ${+jobtexts}"###);
+        bulk_aci_fc_row_006 => (r#"bulk aci 006"#, r###"print -r ${+jobdirs}"###);
+        bulk_aci_fc_row_007 => (r#"bulk aci 007"#, r###"print -r ${+historywords}"###);
+        bulk_aci_fc_row_008 => (r#"bulk aci 008"#, r###"print -r ${+usergroups}"###);
+        bulk_aci_fc_row_009 => (r#"bulk aci 009"#, r###"print -r ${+dis_builtins}"###);
+        bulk_aci_fc_row_010 => (r#"bulk aci 010"#, r###"print -r ${+dis_widgets}"###);
+        bulk_aci_fc_row_011 => (r#"bulk aci 011"#, r###"print -r ${+dis_reswords}"###);
+        bulk_aci_fc_row_012 => (r#"bulk aci 012"#, r###"print -r ${+dis_patchars}"###);
+        bulk_aci_fc_row_013 => (r#"bulk aci 013"#, r###"print -r ${+dis_commands}"###);
+        bulk_aci_fc_row_014 => (r#"bulk aci 014"#, r###"print -r ${+module_path}"###);
+        bulk_aci_fc_row_015 => (r#"bulk aci 015"#, r###"print -r ${+functrace}"###);
+        bulk_aci_fc_row_016 => (r#"bulk aci 016"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
+        bulk_aci_fc_row_017 => (r#"bulk aci 017"#, r###"{ true; false; }; print -r $?"###);
+        bulk_aci_fc_row_018 => (r#"bulk aci 018"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
+        bulk_aci_fc_row_019 => (r#"bulk aci 019"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
+        bulk_aci_fc_row_020 => (r#"bulk aci 020"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
+        bulk_aci_fc_row_021 => (r#"bulk aci 021"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
+        bulk_aci_fc_row_022 => (r#"bulk aci 022"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
+        bulk_aci_fc_row_023 => (r#"bulk aci 023"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
+        bulk_aci_fc_row_024 => (r#"bulk aci 024"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
+        bulk_aci_fc_row_025 => (r#"bulk aci 025"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
+        bulk_aci_fc_row_026 => (r#"bulk aci 026"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_aci_fc_row_027 => (r#"bulk aci 027"#, r###"print -r ${(t)x}; x=hello"###);
+        bulk_aci_fc_row_028 => (r#"bulk aci 028"#, r###"unset y; print -r ${+y}"###);
+        bulk_aci_fc_row_029 => (r#"bulk aci 029"#, r###"x=hello; print -r ${+x}"###);
+        bulk_aci_fc_row_030 => (r#"bulk aci 030"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_aci_fc_row_031 => (r#"bulk aci 031"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+        bulk_aci_fc_row_032 => (r#"bulk aci 032"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
+        bulk_aci_fc_row_033 => (r#"bulk aci 033"#, r###"x=abc; print -r ${x/#a/z}"###);
+        bulk_aci_fc_row_034 => (r#"bulk aci 034"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_aci_fc_row_035 => (r#"bulk aci 035"#, r###"print -r ${(j::)a}; a=(x y)"###);
+        bulk_aci_fc_row_036 => (r#"bulk aci 036"#, r###"print -r ${(pj::)a}; a=(x y)"###);
+        bulk_aci_fc_row_037 => (r#"bulk aci 037"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
+        bulk_aci_fc_row_038 => (r#"bulk aci 038"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_aci_fc_row_039 => (r#"bulk aci 039"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_aci_fc_row_040 => (r#"bulk aci 040"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_aci_fc_row_041 => (r#"bulk aci 041"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_aci_fc_row_042 => (r#"bulk aci 042"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_aci_fc_row_043 => (r#"bulk aci 043"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_aci_fc_row_044 => (r#"bulk aci 044"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_aci_fc_row_045 => (r#"bulk aci 045"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_aci_fc_row_046 => (r#"bulk aci 046"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_aci_fc_row_047 => (r#"bulk aci 047"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_aci_fc_row_048 => (r#"bulk aci 048"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acj {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acj_fc_row_001 => (r#"bulk acj 001"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
+        bulk_acj_fc_row_002 => (r#"bulk acj 002"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
+        bulk_acj_fc_row_003 => (r#"bulk acj 003"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
+        bulk_acj_fc_row_004 => (r#"bulk acj 004"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
+        bulk_acj_fc_row_005 => (r#"bulk acj 005"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
+        bulk_acj_fc_row_006 => (r#"bulk acj 006"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
+        bulk_acj_fc_row_007 => (r#"bulk acj 007"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
+        bulk_acj_fc_row_008 => (r#"bulk acj 008"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
+        bulk_acj_fc_row_009 => (r#"bulk acj 009"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_acj_fc_row_010 => (r#"bulk acj 010"#, r###"print -r ${(t)x}; x=hello"###);
+        bulk_acj_fc_row_011 => (r#"bulk acj 011"#, r###"unset y; print -r ${+y}"###);
+        bulk_acj_fc_row_012 => (r#"bulk acj 012"#, r###"x=hello; print -r ${+x}"###);
+        bulk_acj_fc_row_013 => (r#"bulk acj 013"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_acj_fc_row_014 => (r#"bulk acj 014"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+        bulk_acj_fc_row_015 => (r#"bulk acj 015"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
+        bulk_acj_fc_row_016 => (r#"bulk acj 016"#, r###"x=abc; print -r ${x/#a/z}"###);
+        bulk_acj_fc_row_017 => (r#"bulk acj 017"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_acj_fc_row_018 => (r#"bulk acj 018"#, r###"print -r ${(j::)a}; a=(x y)"###);
+        bulk_acj_fc_row_019 => (r#"bulk acj 019"#, r###"print -r ${(pj::)a}; a=(x y)"###);
+        bulk_acj_fc_row_020 => (r#"bulk acj 020"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
+        bulk_acj_fc_row_021 => (r#"bulk acj 021"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_acj_fc_row_022 => (r#"bulk acj 022"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_acj_fc_row_023 => (r#"bulk acj 023"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_acj_fc_row_024 => (r#"bulk acj 024"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_acj_fc_row_025 => (r#"bulk acj 025"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_acj_fc_row_026 => (r#"bulk acj 026"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_acj_fc_row_027 => (r#"bulk acj 027"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_acj_fc_row_028 => (r#"bulk acj 028"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_acj_fc_row_029 => (r#"bulk acj 029"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_acj_fc_row_030 => (r#"bulk acj 030"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_acj_fc_row_031 => (r#"bulk acj 031"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_acj_fc_row_032 => (r#"bulk acj 032"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_acj_fc_row_033 => (r#"bulk acj 033"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_acj_fc_row_034 => (r#"bulk acj 034"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_acj_fc_row_035 => (r#"bulk acj 035"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_acj_fc_row_036 => (r#"bulk acj 036"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_acj_fc_row_037 => (r#"bulk acj 037"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_acj_fc_row_038 => (r#"bulk acj 038"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_acj_fc_row_039 => (r#"bulk acj 039"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_acj_fc_row_040 => (r#"bulk acj 040"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_acj_fc_row_041 => (r#"bulk acj 041"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_acj_fc_row_042 => (r#"bulk acj 042"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_acj_fc_row_043 => (r#"bulk acj 043"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_acj_fc_row_044 => (r#"bulk acj 044"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_acj_fc_row_045 => (r#"bulk acj 045"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_acj_fc_row_046 => (r#"bulk acj 046"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_acj_fc_row_047 => (r#"bulk acj 047"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_acj_fc_row_048 => (r#"bulk acj 048"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_ack {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_ack_fc_row_001 => (r#"bulk ack 001"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_ack_fc_row_002 => (r#"bulk ack 002"#, r###"print -r ${(j::)a}; a=(x y)"###);
+        bulk_ack_fc_row_003 => (r#"bulk ack 003"#, r###"print -r ${(pj::)a}; a=(x y)"###);
+        bulk_ack_fc_row_004 => (r#"bulk ack 004"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
+        bulk_ack_fc_row_005 => (r#"bulk ack 005"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_ack_fc_row_006 => (r#"bulk ack 006"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_ack_fc_row_007 => (r#"bulk ack 007"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_ack_fc_row_008 => (r#"bulk ack 008"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_ack_fc_row_009 => (r#"bulk ack 009"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_ack_fc_row_010 => (r#"bulk ack 010"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_ack_fc_row_011 => (r#"bulk ack 011"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_ack_fc_row_012 => (r#"bulk ack 012"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_ack_fc_row_013 => (r#"bulk ack 013"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_ack_fc_row_014 => (r#"bulk ack 014"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_ack_fc_row_015 => (r#"bulk ack 015"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_ack_fc_row_016 => (r#"bulk ack 016"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_ack_fc_row_017 => (r#"bulk ack 017"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_ack_fc_row_018 => (r#"bulk ack 018"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_ack_fc_row_019 => (r#"bulk ack 019"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_ack_fc_row_020 => (r#"bulk ack 020"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_ack_fc_row_021 => (r#"bulk ack 021"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_ack_fc_row_022 => (r#"bulk ack 022"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_ack_fc_row_023 => (r#"bulk ack 023"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_ack_fc_row_024 => (r#"bulk ack 024"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_ack_fc_row_025 => (r#"bulk ack 025"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_ack_fc_row_026 => (r#"bulk ack 026"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_ack_fc_row_027 => (r#"bulk ack 027"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_ack_fc_row_028 => (r#"bulk ack 028"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_ack_fc_row_029 => (r#"bulk ack 029"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_ack_fc_row_030 => (r#"bulk ack 030"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_ack_fc_row_031 => (r#"bulk ack 031"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_ack_fc_row_032 => (r#"bulk ack 032"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_ack_fc_row_033 => (r#"bulk ack 033"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_ack_fc_row_034 => (r#"bulk ack 034"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_ack_fc_row_035 => (r#"bulk ack 035"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_ack_fc_row_036 => (r#"bulk ack 036"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_ack_fc_row_037 => (r#"bulk ack 037"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_ack_fc_row_038 => (r#"bulk ack 038"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_ack_fc_row_039 => (r#"bulk ack 039"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_ack_fc_row_040 => (r#"bulk ack 040"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_ack_fc_row_041 => (r#"bulk ack 041"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_ack_fc_row_042 => (r#"bulk ack 042"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_ack_fc_row_043 => (r#"bulk ack 043"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_ack_fc_row_044 => (r#"bulk ack 044"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_ack_fc_row_045 => (r#"bulk ack 045"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_ack_fc_row_046 => (r#"bulk ack 046"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_ack_fc_row_047 => (r#"bulk ack 047"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_ack_fc_row_048 => (r#"bulk ack 048"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acl {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acl_fc_row_001 => (r#"bulk acl 001"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_acl_fc_row_002 => (r#"bulk acl 002"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_acl_fc_row_003 => (r#"bulk acl 003"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_acl_fc_row_004 => (r#"bulk acl 004"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_acl_fc_row_005 => (r#"bulk acl 005"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_acl_fc_row_006 => (r#"bulk acl 006"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_acl_fc_row_007 => (r#"bulk acl 007"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_acl_fc_row_008 => (r#"bulk acl 008"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_acl_fc_row_009 => (r#"bulk acl 009"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_acl_fc_row_010 => (r#"bulk acl 010"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_acl_fc_row_011 => (r#"bulk acl 011"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_acl_fc_row_012 => (r#"bulk acl 012"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_acl_fc_row_013 => (r#"bulk acl 013"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_acl_fc_row_014 => (r#"bulk acl 014"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_acl_fc_row_015 => (r#"bulk acl 015"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_acl_fc_row_016 => (r#"bulk acl 016"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_acl_fc_row_017 => (r#"bulk acl 017"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_acl_fc_row_018 => (r#"bulk acl 018"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_acl_fc_row_019 => (r#"bulk acl 019"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_acl_fc_row_020 => (r#"bulk acl 020"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_acl_fc_row_021 => (r#"bulk acl 021"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_acl_fc_row_022 => (r#"bulk acl 022"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_acl_fc_row_023 => (r#"bulk acl 023"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_acl_fc_row_024 => (r#"bulk acl 024"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_acl_fc_row_025 => (r#"bulk acl 025"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_acl_fc_row_026 => (r#"bulk acl 026"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_acl_fc_row_027 => (r#"bulk acl 027"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_acl_fc_row_028 => (r#"bulk acl 028"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_acl_fc_row_029 => (r#"bulk acl 029"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_acl_fc_row_030 => (r#"bulk acl 030"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_acl_fc_row_031 => (r#"bulk acl 031"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_acl_fc_row_032 => (r#"bulk acl 032"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_acl_fc_row_033 => (r#"bulk acl 033"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_acl_fc_row_034 => (r#"bulk acl 034"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_acl_fc_row_035 => (r#"bulk acl 035"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_acl_fc_row_036 => (r#"bulk acl 036"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_acl_fc_row_037 => (r#"bulk acl 037"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_acl_fc_row_038 => (r#"bulk acl 038"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_acl_fc_row_039 => (r#"bulk acl 039"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_acl_fc_row_040 => (r#"bulk acl 040"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_acl_fc_row_041 => (r#"bulk acl 041"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_acl_fc_row_042 => (r#"bulk acl 042"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_acl_fc_row_043 => (r#"bulk acl 043"#, r###"print -r {1..3}"###);
+        bulk_acl_fc_row_044 => (r#"bulk acl 044"#, r###"print -r {01..03}"###);
+        bulk_acl_fc_row_045 => (r#"bulk acl 045"#, r###"print -r {a..c}"###);
+        bulk_acl_fc_row_046 => (r#"bulk acl 046"#, r###"print -r {1..4..2}"###);
+        bulk_acl_fc_row_047 => (r#"bulk acl 047"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_acl_fc_row_048 => (r#"bulk acl 048"#, r###"integer x=3; (( x++ )); print -r $x"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acm {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acm_fc_row_001 => (r#"bulk acm 001"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_acm_fc_row_002 => (r#"bulk acm 002"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_acm_fc_row_003 => (r#"bulk acm 003"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_acm_fc_row_004 => (r#"bulk acm 004"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_acm_fc_row_005 => (r#"bulk acm 005"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_acm_fc_row_006 => (r#"bulk acm 006"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_acm_fc_row_007 => (r#"bulk acm 007"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_acm_fc_row_008 => (r#"bulk acm 008"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_acm_fc_row_009 => (r#"bulk acm 009"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_acm_fc_row_010 => (r#"bulk acm 010"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_acm_fc_row_011 => (r#"bulk acm 011"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_acm_fc_row_012 => (r#"bulk acm 012"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_acm_fc_row_013 => (r#"bulk acm 013"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_acm_fc_row_014 => (r#"bulk acm 014"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_acm_fc_row_015 => (r#"bulk acm 015"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_acm_fc_row_016 => (r#"bulk acm 016"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_acm_fc_row_017 => (r#"bulk acm 017"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_acm_fc_row_018 => (r#"bulk acm 018"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_acm_fc_row_019 => (r#"bulk acm 019"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_acm_fc_row_020 => (r#"bulk acm 020"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_acm_fc_row_021 => (r#"bulk acm 021"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_acm_fc_row_022 => (r#"bulk acm 022"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_acm_fc_row_023 => (r#"bulk acm 023"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_acm_fc_row_024 => (r#"bulk acm 024"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_acm_fc_row_025 => (r#"bulk acm 025"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_acm_fc_row_026 => (r#"bulk acm 026"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_acm_fc_row_027 => (r#"bulk acm 027"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_acm_fc_row_028 => (r#"bulk acm 028"#, r###"print -r {1..3}"###);
+        bulk_acm_fc_row_029 => (r#"bulk acm 029"#, r###"print -r {01..03}"###);
+        bulk_acm_fc_row_030 => (r#"bulk acm 030"#, r###"print -r {a..c}"###);
+        bulk_acm_fc_row_031 => (r#"bulk acm 031"#, r###"print -r {1..4..2}"###);
+        bulk_acm_fc_row_032 => (r#"bulk acm 032"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_acm_fc_row_033 => (r#"bulk acm 033"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_acm_fc_row_034 => (r#"bulk acm 034"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_acm_fc_row_035 => (r#"bulk acm 035"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_acm_fc_row_036 => (r#"bulk acm 036"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_acm_fc_row_037 => (r#"bulk acm 037"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_acm_fc_row_038 => (r#"bulk acm 038"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_acm_fc_row_039 => (r#"bulk acm 039"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_acm_fc_row_040 => (r#"bulk acm 040"#, r###"(( 1 )); print -r $?"###);
+        bulk_acm_fc_row_041 => (r#"bulk acm 041"#, r###"(( 0 )); print -r $?"###);
+        bulk_acm_fc_row_042 => (r#"bulk acm 042"#, r###": $(( 0 )) || print -r z"###);
+        bulk_acm_fc_row_043 => (r#"bulk acm 043"#, r###": $(( 1 )) && print -r y"###);
+        bulk_acm_fc_row_044 => (r#"bulk acm 044"#, r###"let x=2+2; print -r $x"###);
+        bulk_acm_fc_row_045 => (r#"bulk acm 045"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_acm_fc_row_046 => (r#"bulk acm 046"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_acm_fc_row_047 => (r#"bulk acm 047"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_acm_fc_row_048 => (r#"bulk acm 048"#, r###"typeset -i n=07; print -r $n"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acn {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acn_fc_row_001 => (r#"bulk acn 001"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_acn_fc_row_002 => (r#"bulk acn 002"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_acn_fc_row_003 => (r#"bulk acn 003"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_acn_fc_row_004 => (r#"bulk acn 004"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_acn_fc_row_005 => (r#"bulk acn 005"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_acn_fc_row_006 => (r#"bulk acn 006"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_acn_fc_row_007 => (r#"bulk acn 007"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_acn_fc_row_008 => (r#"bulk acn 008"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_acn_fc_row_009 => (r#"bulk acn 009"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_acn_fc_row_010 => (r#"bulk acn 010"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_acn_fc_row_011 => (r#"bulk acn 011"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_acn_fc_row_012 => (r#"bulk acn 012"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_acn_fc_row_013 => (r#"bulk acn 013"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_acn_fc_row_014 => (r#"bulk acn 014"#, r###"print -r {1..3}"###);
+        bulk_acn_fc_row_015 => (r#"bulk acn 015"#, r###"print -r {01..03}"###);
+        bulk_acn_fc_row_016 => (r#"bulk acn 016"#, r###"print -r {a..c}"###);
+        bulk_acn_fc_row_017 => (r#"bulk acn 017"#, r###"print -r {1..4..2}"###);
+        bulk_acn_fc_row_018 => (r#"bulk acn 018"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_acn_fc_row_019 => (r#"bulk acn 019"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_acn_fc_row_020 => (r#"bulk acn 020"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_acn_fc_row_021 => (r#"bulk acn 021"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_acn_fc_row_022 => (r#"bulk acn 022"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_acn_fc_row_023 => (r#"bulk acn 023"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_acn_fc_row_024 => (r#"bulk acn 024"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_acn_fc_row_025 => (r#"bulk acn 025"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_acn_fc_row_026 => (r#"bulk acn 026"#, r###"(( 1 )); print -r $?"###);
+        bulk_acn_fc_row_027 => (r#"bulk acn 027"#, r###"(( 0 )); print -r $?"###);
+        bulk_acn_fc_row_028 => (r#"bulk acn 028"#, r###": $(( 0 )) || print -r z"###);
+        bulk_acn_fc_row_029 => (r#"bulk acn 029"#, r###": $(( 1 )) && print -r y"###);
+        bulk_acn_fc_row_030 => (r#"bulk acn 030"#, r###"let x=2+2; print -r $x"###);
+        bulk_acn_fc_row_031 => (r#"bulk acn 031"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_acn_fc_row_032 => (r#"bulk acn 032"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_acn_fc_row_033 => (r#"bulk acn 033"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_acn_fc_row_034 => (r#"bulk acn 034"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_acn_fc_row_035 => (r#"bulk acn 035"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_acn_fc_row_036 => (r#"bulk acn 036"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_acn_fc_row_037 => (r#"bulk acn 037"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_acn_fc_row_038 => (r#"bulk acn 038"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_acn_fc_row_039 => (r#"bulk acn 039"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_acn_fc_row_040 => (r#"bulk acn 040"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_acn_fc_row_041 => (r#"bulk acn 041"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_acn_fc_row_042 => (r#"bulk acn 042"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_acn_fc_row_043 => (r#"bulk acn 043"#, r###"local a; a=1; print -r $a"###);
+        bulk_acn_fc_row_044 => (r#"bulk acn 044"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_acn_fc_row_045 => (r#"bulk acn 045"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_acn_fc_row_046 => (r#"bulk acn 046"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_acn_fc_row_047 => (r#"bulk acn 047"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_acn_fc_row_048 => (r#"bulk acn 048"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_aco {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_aco_fc_row_001 => (r#"bulk aco 001"#, r###"print -r {1..4..2}"###);
+        bulk_aco_fc_row_002 => (r#"bulk aco 002"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_aco_fc_row_003 => (r#"bulk aco 003"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_aco_fc_row_004 => (r#"bulk aco 004"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_aco_fc_row_005 => (r#"bulk aco 005"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_aco_fc_row_006 => (r#"bulk aco 006"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_aco_fc_row_007 => (r#"bulk aco 007"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_aco_fc_row_008 => (r#"bulk aco 008"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_aco_fc_row_009 => (r#"bulk aco 009"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_aco_fc_row_010 => (r#"bulk aco 010"#, r###"(( 1 )); print -r $?"###);
+        bulk_aco_fc_row_011 => (r#"bulk aco 011"#, r###"(( 0 )); print -r $?"###);
+        bulk_aco_fc_row_012 => (r#"bulk aco 012"#, r###": $(( 0 )) || print -r z"###);
+        bulk_aco_fc_row_013 => (r#"bulk aco 013"#, r###": $(( 1 )) && print -r y"###);
+        bulk_aco_fc_row_014 => (r#"bulk aco 014"#, r###"let x=2+2; print -r $x"###);
+        bulk_aco_fc_row_015 => (r#"bulk aco 015"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_aco_fc_row_016 => (r#"bulk aco 016"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_aco_fc_row_017 => (r#"bulk aco 017"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_aco_fc_row_018 => (r#"bulk aco 018"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_aco_fc_row_019 => (r#"bulk aco 019"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_aco_fc_row_020 => (r#"bulk aco 020"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_aco_fc_row_021 => (r#"bulk aco 021"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_aco_fc_row_022 => (r#"bulk aco 022"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_aco_fc_row_023 => (r#"bulk aco 023"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_aco_fc_row_024 => (r#"bulk aco 024"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_aco_fc_row_025 => (r#"bulk aco 025"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_aco_fc_row_026 => (r#"bulk aco 026"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_aco_fc_row_027 => (r#"bulk aco 027"#, r###"local a; a=1; print -r $a"###);
+        bulk_aco_fc_row_028 => (r#"bulk aco 028"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_aco_fc_row_029 => (r#"bulk aco 029"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_aco_fc_row_030 => (r#"bulk aco 030"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_aco_fc_row_031 => (r#"bulk aco 031"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_aco_fc_row_032 => (r#"bulk aco 032"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_aco_fc_row_033 => (r#"bulk aco 033"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_aco_fc_row_034 => (r#"bulk aco 034"#, r###"setopt localoptions; print -r $?"###);
+        bulk_aco_fc_row_035 => (r#"bulk aco 035"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_aco_fc_row_036 => (r#"bulk aco 036"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_aco_fc_row_037 => (r#"bulk aco 037"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_aco_fc_row_038 => (r#"bulk aco 038"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_aco_fc_row_039 => (r#"bulk aco 039"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_aco_fc_row_040 => (r#"bulk aco 040"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_aco_fc_row_041 => (r#"bulk aco 041"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_aco_fc_row_042 => (r#"bulk aco 042"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_aco_fc_row_043 => (r#"bulk aco 043"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_aco_fc_row_044 => (r#"bulk aco 044"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_aco_fc_row_045 => (r#"bulk aco 045"#, r###"setopt multios; print -r $?"###);
+        bulk_aco_fc_row_046 => (r#"bulk aco 046"#, r###"setopt noclobber; print -r $?"###);
+        bulk_aco_fc_row_047 => (r#"bulk aco 047"#, r###"setopt clobber; print -r $?"###);
+        bulk_aco_fc_row_048 => (r#"bulk aco 048"#, r###"setopt histexpand; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acp {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acp_fc_row_001 => (r#"bulk acp 001"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_acp_fc_row_002 => (r#"bulk acp 002"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_acp_fc_row_003 => (r#"bulk acp 003"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_acp_fc_row_004 => (r#"bulk acp 004"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_acp_fc_row_005 => (r#"bulk acp 005"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_acp_fc_row_006 => (r#"bulk acp 006"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_acp_fc_row_007 => (r#"bulk acp 007"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_acp_fc_row_008 => (r#"bulk acp 008"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_acp_fc_row_009 => (r#"bulk acp 009"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_acp_fc_row_010 => (r#"bulk acp 010"#, r###"local a; a=1; print -r $a"###);
+        bulk_acp_fc_row_011 => (r#"bulk acp 011"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_acp_fc_row_012 => (r#"bulk acp 012"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_acp_fc_row_013 => (r#"bulk acp 013"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_acp_fc_row_014 => (r#"bulk acp 014"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_acp_fc_row_015 => (r#"bulk acp 015"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_acp_fc_row_016 => (r#"bulk acp 016"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_acp_fc_row_017 => (r#"bulk acp 017"#, r###"setopt localoptions; print -r $?"###);
+        bulk_acp_fc_row_018 => (r#"bulk acp 018"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_acp_fc_row_019 => (r#"bulk acp 019"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_acp_fc_row_020 => (r#"bulk acp 020"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_acp_fc_row_021 => (r#"bulk acp 021"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_acp_fc_row_022 => (r#"bulk acp 022"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_acp_fc_row_023 => (r#"bulk acp 023"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_acp_fc_row_024 => (r#"bulk acp 024"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_acp_fc_row_025 => (r#"bulk acp 025"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_acp_fc_row_026 => (r#"bulk acp 026"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_acp_fc_row_027 => (r#"bulk acp 027"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_acp_fc_row_028 => (r#"bulk acp 028"#, r###"setopt multios; print -r $?"###);
+        bulk_acp_fc_row_029 => (r#"bulk acp 029"#, r###"setopt noclobber; print -r $?"###);
+        bulk_acp_fc_row_030 => (r#"bulk acp 030"#, r###"setopt clobber; print -r $?"###);
+        bulk_acp_fc_row_031 => (r#"bulk acp 031"#, r###"setopt histexpand; print -r $?"###);
+        bulk_acp_fc_row_032 => (r#"bulk acp 032"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_acp_fc_row_033 => (r#"bulk acp 033"#, r###"setopt banghist; print -r $?"###);
+        bulk_acp_fc_row_034 => (r#"bulk acp 034"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_acp_fc_row_035 => (r#"bulk acp 035"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_acp_fc_row_036 => (r#"bulk acp 036"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_acp_fc_row_037 => (r#"bulk acp 037"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_acp_fc_row_038 => (r#"bulk acp 038"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_acp_fc_row_039 => (r#"bulk acp 039"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_acp_fc_row_040 => (r#"bulk acp 040"#, r###"setopt histverify; print -r $?"###);
+        bulk_acp_fc_row_041 => (r#"bulk acp 041"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_acp_fc_row_042 => (r#"bulk acp 042"#, r###"setopt no_beep; print -r $?"###);
+        bulk_acp_fc_row_043 => (r#"bulk acp 043"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_acp_fc_row_044 => (r#"bulk acp 044"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_acp_fc_row_045 => (r#"bulk acp 045"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_acp_fc_row_046 => (r#"bulk acp 046"#, r###"setopt correct; print -r $?"###);
+        bulk_acp_fc_row_047 => (r#"bulk acp 047"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_acp_fc_row_048 => (r#"bulk acp 048"#, r###"setopt completealiases; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acq {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acq_fc_row_001 => (r#"bulk acq 001"#, r###"setopt localoptions; print -r $?"###);
+        bulk_acq_fc_row_002 => (r#"bulk acq 002"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_acq_fc_row_003 => (r#"bulk acq 003"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_acq_fc_row_004 => (r#"bulk acq 004"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_acq_fc_row_005 => (r#"bulk acq 005"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_acq_fc_row_006 => (r#"bulk acq 006"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_acq_fc_row_007 => (r#"bulk acq 007"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_acq_fc_row_008 => (r#"bulk acq 008"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_acq_fc_row_009 => (r#"bulk acq 009"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_acq_fc_row_010 => (r#"bulk acq 010"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_acq_fc_row_011 => (r#"bulk acq 011"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_acq_fc_row_012 => (r#"bulk acq 012"#, r###"setopt multios; print -r $?"###);
+        bulk_acq_fc_row_013 => (r#"bulk acq 013"#, r###"setopt noclobber; print -r $?"###);
+        bulk_acq_fc_row_014 => (r#"bulk acq 014"#, r###"setopt clobber; print -r $?"###);
+        bulk_acq_fc_row_015 => (r#"bulk acq 015"#, r###"setopt histexpand; print -r $?"###);
+        bulk_acq_fc_row_016 => (r#"bulk acq 016"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_acq_fc_row_017 => (r#"bulk acq 017"#, r###"setopt banghist; print -r $?"###);
+        bulk_acq_fc_row_018 => (r#"bulk acq 018"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_acq_fc_row_019 => (r#"bulk acq 019"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_acq_fc_row_020 => (r#"bulk acq 020"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_acq_fc_row_021 => (r#"bulk acq 021"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_acq_fc_row_022 => (r#"bulk acq 022"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_acq_fc_row_023 => (r#"bulk acq 023"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_acq_fc_row_024 => (r#"bulk acq 024"#, r###"setopt histverify; print -r $?"###);
+        bulk_acq_fc_row_025 => (r#"bulk acq 025"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_acq_fc_row_026 => (r#"bulk acq 026"#, r###"setopt no_beep; print -r $?"###);
+        bulk_acq_fc_row_027 => (r#"bulk acq 027"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_acq_fc_row_028 => (r#"bulk acq 028"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_acq_fc_row_029 => (r#"bulk acq 029"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_acq_fc_row_030 => (r#"bulk acq 030"#, r###"setopt correct; print -r $?"###);
+        bulk_acq_fc_row_031 => (r#"bulk acq 031"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_acq_fc_row_032 => (r#"bulk acq 032"#, r###"setopt completealiases; print -r $?"###);
+        bulk_acq_fc_row_033 => (r#"bulk acq 033"#, r###"setopt globdots; print -r $?"###);
+        bulk_acq_fc_row_034 => (r#"bulk acq 034"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_acq_fc_row_035 => (r#"bulk acq 035"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_acq_fc_row_036 => (r#"bulk acq 036"#, r###"setopt markdirs; print -r $?"###);
+        bulk_acq_fc_row_037 => (r#"bulk acq 037"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_acq_fc_row_038 => (r#"bulk acq 038"#, r###"setopt chase_links; print -r $?"###);
+        bulk_acq_fc_row_039 => (r#"bulk acq 039"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_acq_fc_row_040 => (r#"bulk acq 040"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_acq_fc_row_041 => (r#"bulk acq 041"#, r###"setopt pushdsilent; print -r $?"###);
+        bulk_acq_fc_row_042 => (r#"bulk acq 042"#, r###"setopt pushdtohome; print -r $?"###);
+        bulk_acq_fc_row_043 => (r#"bulk acq 043"#, r###"setopt autopushd; print -r $?"###);
+        bulk_acq_fc_row_044 => (r#"bulk acq 044"#, r###"setopt pushdminus; print -r $?"###);
+        bulk_acq_fc_row_045 => (r#"bulk acq 045"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_acq_fc_row_046 => (r#"bulk acq 046"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
+        bulk_acq_fc_row_047 => (r#"bulk acq 047"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
+        bulk_acq_fc_row_048 => (r#"bulk acq 048"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acr {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acr_fc_row_001 => (r#"bulk acr 001"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_acr_fc_row_002 => (r#"bulk acr 002"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_acr_fc_row_003 => (r#"bulk acr 003"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_acr_fc_row_004 => (r#"bulk acr 004"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_acr_fc_row_005 => (r#"bulk acr 005"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_acr_fc_row_006 => (r#"bulk acr 006"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_acr_fc_row_007 => (r#"bulk acr 007"#, r###"setopt histverify; print -r $?"###);
+        bulk_acr_fc_row_008 => (r#"bulk acr 008"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_acr_fc_row_009 => (r#"bulk acr 009"#, r###"setopt no_beep; print -r $?"###);
+        bulk_acr_fc_row_010 => (r#"bulk acr 010"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_acr_fc_row_011 => (r#"bulk acr 011"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_acr_fc_row_012 => (r#"bulk acr 012"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_acr_fc_row_013 => (r#"bulk acr 013"#, r###"setopt correct; print -r $?"###);
+        bulk_acr_fc_row_014 => (r#"bulk acr 014"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_acr_fc_row_015 => (r#"bulk acr 015"#, r###"setopt completealiases; print -r $?"###);
+        bulk_acr_fc_row_016 => (r#"bulk acr 016"#, r###"setopt globdots; print -r $?"###);
+        bulk_acr_fc_row_017 => (r#"bulk acr 017"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_acr_fc_row_018 => (r#"bulk acr 018"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_acr_fc_row_019 => (r#"bulk acr 019"#, r###"setopt markdirs; print -r $?"###);
+        bulk_acr_fc_row_020 => (r#"bulk acr 020"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_acr_fc_row_021 => (r#"bulk acr 021"#, r###"setopt chase_links; print -r $?"###);
+        bulk_acr_fc_row_022 => (r#"bulk acr 022"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_acr_fc_row_023 => (r#"bulk acr 023"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_acr_fc_row_024 => (r#"bulk acr 024"#, r###"setopt pushdsilent; print -r $?"###);
+        bulk_acr_fc_row_025 => (r#"bulk acr 025"#, r###"setopt pushdtohome; print -r $?"###);
+        bulk_acr_fc_row_026 => (r#"bulk acr 026"#, r###"setopt autopushd; print -r $?"###);
+        bulk_acr_fc_row_027 => (r#"bulk acr 027"#, r###"setopt pushdminus; print -r $?"###);
+        bulk_acr_fc_row_028 => (r#"bulk acr 028"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_acr_fc_row_029 => (r#"bulk acr 029"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
+        bulk_acr_fc_row_030 => (r#"bulk acr 030"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
+        bulk_acr_fc_row_031 => (r#"bulk acr 031"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+        bulk_acr_fc_row_032 => (r#"bulk acr 032"#, r###"print -r $PWD"###);
+        bulk_acr_fc_row_033 => (r#"bulk acr 033"#, r###"print -r ${PWD:h}"###);
+        bulk_acr_fc_row_034 => (r#"bulk acr 034"#, r###"print -r ${PWD:t}"###);
+        bulk_acr_fc_row_035 => (r#"bulk acr 035"#, r###"print -r ${PWD:r}"###);
+        bulk_acr_fc_row_036 => (r#"bulk acr 036"#, r###"print -r ${PWD:e}"###);
+        bulk_acr_fc_row_037 => (r#"bulk acr 037"#, r###"print -r ${PWD:a}"###);
+        bulk_acr_fc_row_038 => (r#"bulk acr 038"#, r###"print -r ${PWD:A}"###);
+        bulk_acr_fc_row_039 => (r#"bulk acr 039"#, r###"read -r line <<< 'one'; print -r $line"###);
+        bulk_acr_fc_row_040 => (r#"bulk acr 040"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
+        bulk_acr_fc_row_041 => (r#"bulk acr 041"#, r###"print -r $'tab\there'"###);
+        bulk_acr_fc_row_042 => (r#"bulk acr 042"#, r###"print -r $'line1\nline2'"###);
+        bulk_acr_fc_row_043 => (r#"bulk acr 043"#, r###"printf '%q\n' 'a b'"###);
+        bulk_acr_fc_row_044 => (r#"bulk acr 044"#, r###"printf '%s\n' ok"###);
+        bulk_acr_fc_row_045 => (r#"bulk acr 045"#, r###"print -rn -- end"###);
+        bulk_acr_fc_row_046 => (r#"bulk acr 046"#, r###"print -rl -- a b"###);
+        bulk_acr_fc_row_047 => (r#"bulk acr 047"#, r###"print -fc '%s\n' hi"###);
+        bulk_acr_fc_row_048 => (r#"bulk acr 048"#, r###"whence -w print 2>/dev/null; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acs {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acs_fc_row_001 => (r#"bulk acs 001"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_acs_fc_row_002 => (r#"bulk acs 002"#, r###"setopt markdirs; print -r $?"###);
+        bulk_acs_fc_row_003 => (r#"bulk acs 003"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_acs_fc_row_004 => (r#"bulk acs 004"#, r###"setopt chase_links; print -r $?"###);
+        bulk_acs_fc_row_005 => (r#"bulk acs 005"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_acs_fc_row_006 => (r#"bulk acs 006"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_acs_fc_row_007 => (r#"bulk acs 007"#, r###"setopt pushdsilent; print -r $?"###);
+        bulk_acs_fc_row_008 => (r#"bulk acs 008"#, r###"setopt pushdtohome; print -r $?"###);
+        bulk_acs_fc_row_009 => (r#"bulk acs 009"#, r###"setopt autopushd; print -r $?"###);
+        bulk_acs_fc_row_010 => (r#"bulk acs 010"#, r###"setopt pushdminus; print -r $?"###);
+        bulk_acs_fc_row_011 => (r#"bulk acs 011"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_acs_fc_row_012 => (r#"bulk acs 012"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
+        bulk_acs_fc_row_013 => (r#"bulk acs 013"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
+        bulk_acs_fc_row_014 => (r#"bulk acs 014"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+        bulk_acs_fc_row_015 => (r#"bulk acs 015"#, r###"print -r $PWD"###);
+        bulk_acs_fc_row_016 => (r#"bulk acs 016"#, r###"print -r ${PWD:h}"###);
+        bulk_acs_fc_row_017 => (r#"bulk acs 017"#, r###"print -r ${PWD:t}"###);
+        bulk_acs_fc_row_018 => (r#"bulk acs 018"#, r###"print -r ${PWD:r}"###);
+        bulk_acs_fc_row_019 => (r#"bulk acs 019"#, r###"print -r ${PWD:e}"###);
+        bulk_acs_fc_row_020 => (r#"bulk acs 020"#, r###"print -r ${PWD:a}"###);
+        bulk_acs_fc_row_021 => (r#"bulk acs 021"#, r###"print -r ${PWD:A}"###);
+        bulk_acs_fc_row_022 => (r#"bulk acs 022"#, r###"read -r line <<< 'one'; print -r $line"###);
+        bulk_acs_fc_row_023 => (r#"bulk acs 023"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
+        bulk_acs_fc_row_024 => (r#"bulk acs 024"#, r###"print -r $'tab\there'"###);
+        bulk_acs_fc_row_025 => (r#"bulk acs 025"#, r###"print -r $'line1\nline2'"###);
+        bulk_acs_fc_row_026 => (r#"bulk acs 026"#, r###"printf '%q\n' 'a b'"###);
+        bulk_acs_fc_row_027 => (r#"bulk acs 027"#, r###"printf '%s\n' ok"###);
+        bulk_acs_fc_row_028 => (r#"bulk acs 028"#, r###"print -rn -- end"###);
+        bulk_acs_fc_row_029 => (r#"bulk acs 029"#, r###"print -rl -- a b"###);
+        bulk_acs_fc_row_030 => (r#"bulk acs 030"#, r###"print -fc '%s\n' hi"###);
+        bulk_acs_fc_row_031 => (r#"bulk acs 031"#, r###"whence -w print 2>/dev/null; print -r $?"###);
+        bulk_acs_fc_row_032 => (r#"bulk acs 032"#, r###"whence -c print 2>/dev/null; print -r $?"###);
+        bulk_acs_fc_row_033 => (r#"bulk acs 033"#, r###"which print 2>/dev/null; print -r $?"###);
+        bulk_acs_fc_row_034 => (r#"bulk acs 034"#, r###"command -v print 2>/dev/null; print -r $?"###);
+        bulk_acs_fc_row_035 => (r#"bulk acs 035"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_acs_fc_row_036 => (r#"bulk acs 036"#, r###"rehash 2>/dev/null; print -r $?"###);
+        bulk_acs_fc_row_037 => (r#"bulk acs 037"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
+        bulk_acs_fc_row_038 => (r#"bulk acs 038"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
+        bulk_acs_fc_row_039 => (r#"bulk acs 039"#, r###"export ZA=1; print -r $ZA"###);
+        bulk_acs_fc_row_040 => (r#"bulk acs 040"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
+        bulk_acs_fc_row_041 => (r#"bulk acs 041"#, r###"typeset -x ZB=2; print -r $ZB"###);
+        bulk_acs_fc_row_042 => (r#"bulk acs 042"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
+        bulk_acs_fc_row_043 => (r#"bulk acs 043"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
+        bulk_acs_fc_row_044 => (r#"bulk acs 044"#, r###"shift; print -r $1; set -- a b c"###);
+        bulk_acs_fc_row_045 => (r#"bulk acs 045"#, r###"(( $# )); print -r $#"###);
+        bulk_acs_fc_row_046 => (r#"bulk acs 046"#, r###"print -r ${argv[1]}"###);
+        bulk_acs_fc_row_047 => (r#"bulk acs 047"#, r###"print -r ${*[1]}"###);
+        bulk_acs_fc_row_048 => (r#"bulk acs 048"#, r###"print -r $@[1]"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_act {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_act_fc_row_001 => (r#"bulk act 001"#, r###"print -r ${PWD:h}"###);
+        bulk_act_fc_row_002 => (r#"bulk act 002"#, r###"print -r ${PWD:t}"###);
+        bulk_act_fc_row_003 => (r#"bulk act 003"#, r###"print -r ${PWD:r}"###);
+        bulk_act_fc_row_004 => (r#"bulk act 004"#, r###"print -r ${PWD:e}"###);
+        bulk_act_fc_row_005 => (r#"bulk act 005"#, r###"print -r ${PWD:a}"###);
+        bulk_act_fc_row_006 => (r#"bulk act 006"#, r###"print -r ${PWD:A}"###);
+        bulk_act_fc_row_007 => (r#"bulk act 007"#, r###"read -r line <<< 'one'; print -r $line"###);
+        bulk_act_fc_row_008 => (r#"bulk act 008"#, r###"read -r a b <<< 'x y'; print -r $a-$b"###);
+        bulk_act_fc_row_009 => (r#"bulk act 009"#, r###"print -r $'tab\there'"###);
+        bulk_act_fc_row_010 => (r#"bulk act 010"#, r###"print -r $'line1\nline2'"###);
+        bulk_act_fc_row_011 => (r#"bulk act 011"#, r###"printf '%q\n' 'a b'"###);
+        bulk_act_fc_row_012 => (r#"bulk act 012"#, r###"printf '%s\n' ok"###);
+        bulk_act_fc_row_013 => (r#"bulk act 013"#, r###"print -rn -- end"###);
+        bulk_act_fc_row_014 => (r#"bulk act 014"#, r###"print -rl -- a b"###);
+        bulk_act_fc_row_015 => (r#"bulk act 015"#, r###"print -fc '%s\n' hi"###);
+        bulk_act_fc_row_016 => (r#"bulk act 016"#, r###"whence -w print 2>/dev/null; print -r $?"###);
+        bulk_act_fc_row_017 => (r#"bulk act 017"#, r###"whence -c print 2>/dev/null; print -r $?"###);
+        bulk_act_fc_row_018 => (r#"bulk act 018"#, r###"which print 2>/dev/null; print -r $?"###);
+        bulk_act_fc_row_019 => (r#"bulk act 019"#, r###"command -v print 2>/dev/null; print -r $?"###);
+        bulk_act_fc_row_020 => (r#"bulk act 020"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_act_fc_row_021 => (r#"bulk act 021"#, r###"rehash 2>/dev/null; print -r $?"###);
+        bulk_act_fc_row_022 => (r#"bulk act 022"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
+        bulk_act_fc_row_023 => (r#"bulk act 023"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
+        bulk_act_fc_row_024 => (r#"bulk act 024"#, r###"export ZA=1; print -r $ZA"###);
+        bulk_act_fc_row_025 => (r#"bulk act 025"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
+        bulk_act_fc_row_026 => (r#"bulk act 026"#, r###"typeset -x ZB=2; print -r $ZB"###);
+        bulk_act_fc_row_027 => (r#"bulk act 027"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
+        bulk_act_fc_row_028 => (r#"bulk act 028"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
+        bulk_act_fc_row_029 => (r#"bulk act 029"#, r###"shift; print -r $1; set -- a b c"###);
+        bulk_act_fc_row_030 => (r#"bulk act 030"#, r###"(( $# )); print -r $#"###);
+        bulk_act_fc_row_031 => (r#"bulk act 031"#, r###"print -r ${argv[1]}"###);
+        bulk_act_fc_row_032 => (r#"bulk act 032"#, r###"print -r ${*[1]}"###);
+        bulk_act_fc_row_033 => (r#"bulk act 033"#, r###"print -r $@[1]"###);
+        bulk_act_fc_row_034 => (r#"bulk act 034"#, r###"print -r ${@:2}"###);
+        bulk_act_fc_row_035 => (r#"bulk act 035"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
+        bulk_act_fc_row_036 => (r#"bulk act 036"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
+        bulk_act_fc_row_037 => (r#"bulk act 037"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
+        bulk_act_fc_row_038 => (r#"bulk act 038"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
+        bulk_act_fc_row_039 => (r#"bulk act 039"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
+        bulk_act_fc_row_040 => (r#"bulk act 040"#, r###"str=%n; print -r ${(%)str}"###);
+        bulk_act_fc_row_041 => (r#"bulk act 041"#, r###"str=%N; print -r ${(%)str}"###);
+        bulk_act_fc_row_042 => (r#"bulk act 042"#, r###"str=%~; print -r ${(%)str}"###);
+        bulk_act_fc_row_043 => (r#"bulk act 043"#, r###"str=%d; print -r ${(%)str}"###);
+        bulk_act_fc_row_044 => (r#"bulk act 044"#, r###"str=%m; print -r ${(%)str}"###);
+        bulk_act_fc_row_045 => (r#"bulk act 045"#, r###"str=%#; print -r ${(%)str}"###);
+        bulk_act_fc_row_046 => (r#"bulk act 046"#, r###"str=%?; print -r ${(%)str}"###);
+        bulk_act_fc_row_047 => (r#"bulk act 047"#, r###"str=%_; print -r ${(%)str}"###);
+        bulk_act_fc_row_048 => (r#"bulk act 048"#, r###"str=%h; print -r ${(%)str}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acu {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acu_fc_row_001 => (r#"bulk acu 001"#, r###"which print 2>/dev/null; print -r $?"###);
+        bulk_acu_fc_row_002 => (r#"bulk acu 002"#, r###"command -v print 2>/dev/null; print -r $?"###);
+        bulk_acu_fc_row_003 => (r#"bulk acu 003"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_acu_fc_row_004 => (r#"bulk acu 004"#, r###"rehash 2>/dev/null; print -r $?"###);
+        bulk_acu_fc_row_005 => (r#"bulk acu 005"#, r###"unalias za 2>/dev/null; alias za=1; unalias za; print -r $?"###);
+        bulk_acu_fc_row_006 => (r#"bulk acu 006"#, r###"alias -L za 2>/dev/null; alias za=z; print -r $?"###);
+        bulk_acu_fc_row_007 => (r#"bulk acu 007"#, r###"export ZA=1; print -r $ZA"###);
+        bulk_acu_fc_row_008 => (r#"bulk acu 008"#, r###"typeset +Z ZA; ZA=1; print -r $ZA"###);
+        bulk_acu_fc_row_009 => (r#"bulk acu 009"#, r###"typeset -x ZB=2; print -r $ZB"###);
+        bulk_acu_fc_row_010 => (r#"bulk acu 010"#, r###"unset ZC; ZC=1; unset ZC; print -r ${+ZC}"###);
+        bulk_acu_fc_row_011 => (r#"bulk acu 011"#, r###"typeset -tH hx; hx=ff; print -r $hx"###);
+        bulk_acu_fc_row_012 => (r#"bulk acu 012"#, r###"shift; print -r $1; set -- a b c"###);
+        bulk_acu_fc_row_013 => (r#"bulk acu 013"#, r###"(( $# )); print -r $#"###);
+        bulk_acu_fc_row_014 => (r#"bulk acu 014"#, r###"print -r ${argv[1]}"###);
+        bulk_acu_fc_row_015 => (r#"bulk acu 015"#, r###"print -r ${*[1]}"###);
+        bulk_acu_fc_row_016 => (r#"bulk acu 016"#, r###"print -r $@[1]"###);
+        bulk_acu_fc_row_017 => (r#"bulk acu 017"#, r###"print -r ${@:2}"###);
+        bulk_acu_fc_row_018 => (r#"bulk acu 018"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
+        bulk_acu_fc_row_019 => (r#"bulk acu 019"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
+        bulk_acu_fc_row_020 => (r#"bulk acu 020"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
+        bulk_acu_fc_row_021 => (r#"bulk acu 021"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
+        bulk_acu_fc_row_022 => (r#"bulk acu 022"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
+        bulk_acu_fc_row_023 => (r#"bulk acu 023"#, r###"str=%n; print -r ${(%)str}"###);
+        bulk_acu_fc_row_024 => (r#"bulk acu 024"#, r###"str=%N; print -r ${(%)str}"###);
+        bulk_acu_fc_row_025 => (r#"bulk acu 025"#, r###"str=%~; print -r ${(%)str}"###);
+        bulk_acu_fc_row_026 => (r#"bulk acu 026"#, r###"str=%d; print -r ${(%)str}"###);
+        bulk_acu_fc_row_027 => (r#"bulk acu 027"#, r###"str=%m; print -r ${(%)str}"###);
+        bulk_acu_fc_row_028 => (r#"bulk acu 028"#, r###"str=%#; print -r ${(%)str}"###);
+        bulk_acu_fc_row_029 => (r#"bulk acu 029"#, r###"str=%?; print -r ${(%)str}"###);
+        bulk_acu_fc_row_030 => (r#"bulk acu 030"#, r###"str=%_; print -r ${(%)str}"###);
+        bulk_acu_fc_row_031 => (r#"bulk acu 031"#, r###"str=%h; print -r ${(%)str}"###);
+        bulk_acu_fc_row_032 => (r#"bulk acu 032"#, r###"str=%!; print -r ${(%)str}"###);
+        bulk_acu_fc_row_033 => (r#"bulk acu 033"#, r###"str=%i; print -r ${(%)str}"###);
+        bulk_acu_fc_row_034 => (r#"bulk acu 034"#, r###"str=%I; print -r ${(%)str}"###);
+        bulk_acu_fc_row_035 => (r#"bulk acu 035"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_acu_fc_row_036 => (r#"bulk acu 036"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_acu_fc_row_037 => (r#"bulk acu 037"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_acu_fc_row_038 => (r#"bulk acu 038"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_acu_fc_row_039 => (r#"bulk acu 039"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_acu_fc_row_040 => (r#"bulk acu 040"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_acu_fc_row_041 => (r#"bulk acu 041"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_acu_fc_row_042 => (r#"bulk acu 042"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_acu_fc_row_043 => (r#"bulk acu 043"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_acu_fc_row_044 => (r#"bulk acu 044"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_acu_fc_row_045 => (r#"bulk acu 045"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_acu_fc_row_046 => (r#"bulk acu 046"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_acu_fc_row_047 => (r#"bulk acu 047"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_acu_fc_row_048 => (r#"bulk acu 048"#, r###"true; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acv {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acv_fc_row_001 => (r#"bulk acv 001"#, r###"print -r ${@:2}"###);
+        bulk_acv_fc_row_002 => (r#"bulk acv 002"#, r###"select x in a b; do print -r $x; break; done <<< ''"###);
+        bulk_acv_fc_row_003 => (r#"bulk acv 003"#, r###"zmodload zsh/zutil 2>/dev/null; print -r $?"###);
+        bulk_acv_fc_row_004 => (r#"bulk acv 004"#, r###"zmodload -l 2>/dev/null | head -1; print -r $?"###);
+        bulk_acv_fc_row_005 => (r#"bulk acv 005"#, r###"getconf PATH 2>/dev/null | head -c 1; print -r $?"###);
+        bulk_acv_fc_row_006 => (r#"bulk acv 006"#, r###"getconf ARG_MAX 2>/dev/null; print -r $?"###);
+        bulk_acv_fc_row_007 => (r#"bulk acv 007"#, r###"str=%n; print -r ${(%)str}"###);
+        bulk_acv_fc_row_008 => (r#"bulk acv 008"#, r###"str=%N; print -r ${(%)str}"###);
+        bulk_acv_fc_row_009 => (r#"bulk acv 009"#, r###"str=%~; print -r ${(%)str}"###);
+        bulk_acv_fc_row_010 => (r#"bulk acv 010"#, r###"str=%d; print -r ${(%)str}"###);
+        bulk_acv_fc_row_011 => (r#"bulk acv 011"#, r###"str=%m; print -r ${(%)str}"###);
+        bulk_acv_fc_row_012 => (r#"bulk acv 012"#, r###"str=%#; print -r ${(%)str}"###);
+        bulk_acv_fc_row_013 => (r#"bulk acv 013"#, r###"str=%?; print -r ${(%)str}"###);
+        bulk_acv_fc_row_014 => (r#"bulk acv 014"#, r###"str=%_; print -r ${(%)str}"###);
+        bulk_acv_fc_row_015 => (r#"bulk acv 015"#, r###"str=%h; print -r ${(%)str}"###);
+        bulk_acv_fc_row_016 => (r#"bulk acv 016"#, r###"str=%!; print -r ${(%)str}"###);
+        bulk_acv_fc_row_017 => (r#"bulk acv 017"#, r###"str=%i; print -r ${(%)str}"###);
+        bulk_acv_fc_row_018 => (r#"bulk acv 018"#, r###"str=%I; print -r ${(%)str}"###);
+        bulk_acv_fc_row_019 => (r#"bulk acv 019"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_acv_fc_row_020 => (r#"bulk acv 020"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_acv_fc_row_021 => (r#"bulk acv 021"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_acv_fc_row_022 => (r#"bulk acv 022"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_acv_fc_row_023 => (r#"bulk acv 023"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_acv_fc_row_024 => (r#"bulk acv 024"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_acv_fc_row_025 => (r#"bulk acv 025"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_acv_fc_row_026 => (r#"bulk acv 026"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_acv_fc_row_027 => (r#"bulk acv 027"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_acv_fc_row_028 => (r#"bulk acv 028"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_acv_fc_row_029 => (r#"bulk acv 029"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_acv_fc_row_030 => (r#"bulk acv 030"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_acv_fc_row_031 => (r#"bulk acv 031"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_acv_fc_row_032 => (r#"bulk acv 032"#, r###"true; print -r $?"###);
+        bulk_acv_fc_row_033 => (r#"bulk acv 033"#, r###"false; print -r $?"###);
+        bulk_acv_fc_row_034 => (r#"bulk acv 034"#, r###"print -r hello"###);
+        bulk_acv_fc_row_035 => (r#"bulk acv 035"#, r###"echo one two"###);
+        bulk_acv_fc_row_036 => (r#"bulk acv 036"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_acv_fc_row_037 => (r#"bulk acv 037"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_acv_fc_row_038 => (r#"bulk acv 038"#, r###"command true; print -r $?"###);
+        bulk_acv_fc_row_039 => (r#"bulk acv 039"#, r###"builtin true; print -r $?"###);
+        bulk_acv_fc_row_040 => (r#"bulk acv 040"#, r###"if true; then echo t; fi"###);
+        bulk_acv_fc_row_041 => (r#"bulk acv 041"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_acv_fc_row_042 => (r#"bulk acv 042"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_acv_fc_row_043 => (r#"bulk acv 043"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_acv_fc_row_044 => (r#"bulk acv 044"#, r###"repeat 2; do print -r r; done"###);
+        bulk_acv_fc_row_045 => (r#"bulk acv 045"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_acv_fc_row_046 => (r#"bulk acv 046"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_acv_fc_row_047 => (r#"bulk acv 047"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_acv_fc_row_048 => (r#"bulk acv 048"#, r###"{ echo a; echo b; }"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acw {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acw_fc_row_001 => (r#"bulk acw 001"#, r###"str=%i; print -r ${(%)str}"###);
+        bulk_acw_fc_row_002 => (r#"bulk acw 002"#, r###"str=%I; print -r ${(%)str}"###);
+        bulk_acw_fc_row_003 => (r#"bulk acw 003"#, r###"str=%j; print -r ${(%)str}"###);
+        bulk_acw_fc_row_004 => (r#"bulk acw 004"#, r###"str=%C; print -r ${(%)str}"###);
+        bulk_acw_fc_row_005 => (r#"bulk acw 005"#, r###"str=%c; print -r ${(%)str}"###);
+        bulk_acw_fc_row_006 => (r#"bulk acw 006"#, r###"str=%D; print -r ${(%)str}"###);
+        bulk_acw_fc_row_007 => (r#"bulk acw 007"#, r###"str=%W; print -r ${(%)str}"###);
+        bulk_acw_fc_row_008 => (r#"bulk acw 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_acw_fc_row_009 => (r#"bulk acw 009"#, r###"str=%v; print -r ${(%)str}"###);
+        bulk_acw_fc_row_010 => (r#"bulk acw 010"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_acw_fc_row_011 => (r#"bulk acw 011"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_acw_fc_row_012 => (r#"bulk acw 012"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_acw_fc_row_013 => (r#"bulk acw 013"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_acw_fc_row_014 => (r#"bulk acw 014"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_acw_fc_row_015 => (r#"bulk acw 015"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_acw_fc_row_016 => (r#"bulk acw 016"#, r###"true; print -r $?"###);
+        bulk_acw_fc_row_017 => (r#"bulk acw 017"#, r###"false; print -r $?"###);
+        bulk_acw_fc_row_018 => (r#"bulk acw 018"#, r###"print -r hello"###);
+        bulk_acw_fc_row_019 => (r#"bulk acw 019"#, r###"echo one two"###);
+        bulk_acw_fc_row_020 => (r#"bulk acw 020"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_acw_fc_row_021 => (r#"bulk acw 021"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_acw_fc_row_022 => (r#"bulk acw 022"#, r###"command true; print -r $?"###);
+        bulk_acw_fc_row_023 => (r#"bulk acw 023"#, r###"builtin true; print -r $?"###);
+        bulk_acw_fc_row_024 => (r#"bulk acw 024"#, r###"if true; then echo t; fi"###);
+        bulk_acw_fc_row_025 => (r#"bulk acw 025"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_acw_fc_row_026 => (r#"bulk acw 026"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_acw_fc_row_027 => (r#"bulk acw 027"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_acw_fc_row_028 => (r#"bulk acw 028"#, r###"repeat 2; do print -r r; done"###);
+        bulk_acw_fc_row_029 => (r#"bulk acw 029"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_acw_fc_row_030 => (r#"bulk acw 030"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_acw_fc_row_031 => (r#"bulk acw 031"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_acw_fc_row_032 => (r#"bulk acw 032"#, r###"{ echo a; echo b; }"###);
+        bulk_acw_fc_row_033 => (r#"bulk acw 033"#, r###"(echo sub)"###);
+        bulk_acw_fc_row_034 => (r#"bulk acw 034"#, r###"(( 1 )) || echo no"###);
+        bulk_acw_fc_row_035 => (r#"bulk acw 035"#, r###"(( 0 )) && echo no"###);
+        bulk_acw_fc_row_036 => (r#"bulk acw 036"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_acw_fc_row_037 => (r#"bulk acw 037"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_acw_fc_row_038 => (r#"bulk acw 038"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_acw_fc_row_039 => (r#"bulk acw 039"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_acw_fc_row_040 => (r#"bulk acw 040"#, r###"print -r $(( !0 ))"###);
+        bulk_acw_fc_row_041 => (r#"bulk acw 041"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_acw_fc_row_042 => (r#"bulk acw 042"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_acw_fc_row_043 => (r#"bulk acw 043"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_acw_fc_row_044 => (r#"bulk acw 044"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_acw_fc_row_045 => (r#"bulk acw 045"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_acw_fc_row_046 => (r#"bulk acw 046"#, r###"print -r $(( true ))"###);
+        bulk_acw_fc_row_047 => (r#"bulk acw 047"#, r###"print -r $(( false ))"###);
+        bulk_acw_fc_row_048 => (r#"bulk acw 048"#, r###"[[ -e / ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acx {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acx_fc_row_001 => (r#"bulk acx 001"#, r###"str=%L; print -r ${(%)str}"###);
+        bulk_acx_fc_row_002 => (r#"bulk acx 002"#, r###"str=%l; print -r ${(%)str}"###);
+        bulk_acx_fc_row_003 => (r#"bulk acx 003"#, r###"str=%y; print -r ${(%)str}"###);
+        bulk_acx_fc_row_004 => (r#"bulk acx 004"#, r###"str=%/; print -r ${(%)str}"###);
+        bulk_acx_fc_row_005 => (r#"bulk acx 005"#, r###"str=%<; print -r ${(%)str}"###);
+        bulk_acx_fc_row_006 => (r#"bulk acx 006"#, r###"str=%>; print -r ${(%)str}"###);
+        bulk_acx_fc_row_007 => (r#"bulk acx 007"#, r###"true; print -r $?"###);
+        bulk_acx_fc_row_008 => (r#"bulk acx 008"#, r###"false; print -r $?"###);
+        bulk_acx_fc_row_009 => (r#"bulk acx 009"#, r###"print -r hello"###);
+        bulk_acx_fc_row_010 => (r#"bulk acx 010"#, r###"echo one two"###);
+        bulk_acx_fc_row_011 => (r#"bulk acx 011"#, r###"test 1 -eq 1; print -r $?"###);
+        bulk_acx_fc_row_012 => (r#"bulk acx 012"#, r###"[ 1 -eq 1 ]; print -r $?"###);
+        bulk_acx_fc_row_013 => (r#"bulk acx 013"#, r###"command true; print -r $?"###);
+        bulk_acx_fc_row_014 => (r#"bulk acx 014"#, r###"builtin true; print -r $?"###);
+        bulk_acx_fc_row_015 => (r#"bulk acx 015"#, r###"if true; then echo t; fi"###);
+        bulk_acx_fc_row_016 => (r#"bulk acx 016"#, r###"if false; then echo e; else echo f; fi"###);
+        bulk_acx_fc_row_017 => (r#"bulk acx 017"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_acx_fc_row_018 => (r#"bulk acx 018"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_acx_fc_row_019 => (r#"bulk acx 019"#, r###"repeat 2; do print -r r; done"###);
+        bulk_acx_fc_row_020 => (r#"bulk acx 020"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_acx_fc_row_021 => (r#"bulk acx 021"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_acx_fc_row_022 => (r#"bulk acx 022"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_acx_fc_row_023 => (r#"bulk acx 023"#, r###"{ echo a; echo b; }"###);
+        bulk_acx_fc_row_024 => (r#"bulk acx 024"#, r###"(echo sub)"###);
+        bulk_acx_fc_row_025 => (r#"bulk acx 025"#, r###"(( 1 )) || echo no"###);
+        bulk_acx_fc_row_026 => (r#"bulk acx 026"#, r###"(( 0 )) && echo no"###);
+        bulk_acx_fc_row_027 => (r#"bulk acx 027"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_acx_fc_row_028 => (r#"bulk acx 028"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_acx_fc_row_029 => (r#"bulk acx 029"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_acx_fc_row_030 => (r#"bulk acx 030"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_acx_fc_row_031 => (r#"bulk acx 031"#, r###"print -r $(( !0 ))"###);
+        bulk_acx_fc_row_032 => (r#"bulk acx 032"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_acx_fc_row_033 => (r#"bulk acx 033"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_acx_fc_row_034 => (r#"bulk acx 034"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_acx_fc_row_035 => (r#"bulk acx 035"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_acx_fc_row_036 => (r#"bulk acx 036"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_acx_fc_row_037 => (r#"bulk acx 037"#, r###"print -r $(( true ))"###);
+        bulk_acx_fc_row_038 => (r#"bulk acx 038"#, r###"print -r $(( false ))"###);
+        bulk_acx_fc_row_039 => (r#"bulk acx 039"#, r###"[[ -e / ]]; print -r $?"###);
+        bulk_acx_fc_row_040 => (r#"bulk acx 040"#, r###"[[ -d /tmp ]]; print -r $?"###);
+        bulk_acx_fc_row_041 => (r#"bulk acx 041"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
+        bulk_acx_fc_row_042 => (r#"bulk acx 042"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
+        bulk_acx_fc_row_043 => (r#"bulk acx 043"#, r###"[[ -w /tmp ]]; print -r $?"###);
+        bulk_acx_fc_row_044 => (r#"bulk acx 044"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
+        bulk_acx_fc_row_045 => (r#"bulk acx 045"#, r###"[[ 42 = <-> ]]; print -r $?"###);
+        bulk_acx_fc_row_046 => (r#"bulk acx 046"#, r###"[[ abc = <-> ]]; print -r $?"###);
+        bulk_acx_fc_row_047 => (r#"bulk acx 047"#, r####"[[ host = ##host ]]; print -r $?"####);
+        bulk_acx_fc_row_048 => (r#"bulk acx 048"#, r###"[[ -v x ]]; print -r $?; x=1"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acy {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acy_fc_row_001 => (r#"bulk acy 001"#, r###"for i in a b; do print -r $i; done"###);
+        bulk_acy_fc_row_002 => (r#"bulk acy 002"#, r###"i=0; while (( i < 2 )); do print -r $i; (( i++ )); done"###);
+        bulk_acy_fc_row_003 => (r#"bulk acy 003"#, r###"repeat 2; do print -r r; done"###);
+        bulk_acy_fc_row_004 => (r#"bulk acy 004"#, r###"case x in (x) echo ok ;; esac"###);
+        bulk_acy_fc_row_005 => (r#"bulk acy 005"#, r###"[[ 1 -eq 1 ]] && echo and || echo or"###);
+        bulk_acy_fc_row_006 => (r#"bulk acy 006"#, r###"[[ 1 -eq 2 ]] || echo orbranch"###);
+        bulk_acy_fc_row_007 => (r#"bulk acy 007"#, r###"{ echo a; echo b; }"###);
+        bulk_acy_fc_row_008 => (r#"bulk acy 008"#, r###"(echo sub)"###);
+        bulk_acy_fc_row_009 => (r#"bulk acy 009"#, r###"(( 1 )) || echo no"###);
+        bulk_acy_fc_row_010 => (r#"bulk acy 010"#, r###"(( 0 )) && echo no"###);
+        bulk_acy_fc_row_011 => (r#"bulk acy 011"#, r###"print -r $(( 1 + 2 ))"###);
+        bulk_acy_fc_row_012 => (r#"bulk acy 012"#, r###"print -r $(( 17 % 5 ))"###);
+        bulk_acy_fc_row_013 => (r#"bulk acy 013"#, r###"print -r $(( 2 ** 8 ))"###);
+        bulk_acy_fc_row_014 => (r#"bulk acy 014"#, r###"print -r $(( 1 && 0 || 2 ))"###);
+        bulk_acy_fc_row_015 => (r#"bulk acy 015"#, r###"print -r $(( !0 ))"###);
+        bulk_acy_fc_row_016 => (r#"bulk acy 016"#, r###"integer n=5; (( n += 2 )); print -r $n"###);
+        bulk_acy_fc_row_017 => (r#"bulk acy 017"#, r###"integer n=5; (( n -= 1 )); print -r $n"###);
+        bulk_acy_fc_row_018 => (r#"bulk acy 018"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_acy_fc_row_019 => (r#"bulk acy 019"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_acy_fc_row_020 => (r#"bulk acy 020"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_acy_fc_row_021 => (r#"bulk acy 021"#, r###"print -r $(( true ))"###);
+        bulk_acy_fc_row_022 => (r#"bulk acy 022"#, r###"print -r $(( false ))"###);
+        bulk_acy_fc_row_023 => (r#"bulk acy 023"#, r###"[[ -e / ]]; print -r $?"###);
+        bulk_acy_fc_row_024 => (r#"bulk acy 024"#, r###"[[ -d /tmp ]]; print -r $?"###);
+        bulk_acy_fc_row_025 => (r#"bulk acy 025"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
+        bulk_acy_fc_row_026 => (r#"bulk acy 026"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
+        bulk_acy_fc_row_027 => (r#"bulk acy 027"#, r###"[[ -w /tmp ]]; print -r $?"###);
+        bulk_acy_fc_row_028 => (r#"bulk acy 028"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
+        bulk_acy_fc_row_029 => (r#"bulk acy 029"#, r###"[[ 42 = <-> ]]; print -r $?"###);
+        bulk_acy_fc_row_030 => (r#"bulk acy 030"#, r###"[[ abc = <-> ]]; print -r $?"###);
+        bulk_acy_fc_row_031 => (r#"bulk acy 031"#, r####"[[ host = ##host ]]; print -r $?"####);
+        bulk_acy_fc_row_032 => (r#"bulk acy 032"#, r###"[[ -v x ]]; print -r $?; x=1"###);
+        bulk_acy_fc_row_033 => (r#"bulk acy 033"#, r###"unset y; [[ -v y ]]; print -r $?"###);
+        bulk_acy_fc_row_034 => (r#"bulk acy 034"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
+        bulk_acy_fc_row_035 => (r#"bulk acy 035"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
+        bulk_acy_fc_row_036 => (r#"bulk acy 036"#, r###"[[ abc = a* ]]; print -r $?"###);
+        bulk_acy_fc_row_037 => (r#"bulk acy 037"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
+        bulk_acy_fc_row_038 => (r#"bulk acy 038"#, r###"[[ -z '' ]]; print -r $?"###);
+        bulk_acy_fc_row_039 => (r#"bulk acy 039"#, r###"[[ -n abc ]]; print -r $?"###);
+        bulk_acy_fc_row_040 => (r#"bulk acy 040"#, r###"typeset -i n=10; print -r $n"###);
+        bulk_acy_fc_row_041 => (r#"bulk acy 041"#, r###"typeset -l n=AbC; print -r $n"###);
+        bulk_acy_fc_row_042 => (r#"bulk acy 042"#, r###"typeset -u n=xy; print -r $n"###);
+        bulk_acy_fc_row_043 => (r#"bulk acy 043"#, r###"typeset -Z5 n=7; print -r $n"###);
+        bulk_acy_fc_row_044 => (r#"bulk acy 044"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
+        bulk_acy_fc_row_045 => (r#"bulk acy 045"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
+        bulk_acy_fc_row_046 => (r#"bulk acy 046"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
+        bulk_acy_fc_row_047 => (r#"bulk acy 047"#, r###"unset v; print -r ${v:-def}"###);
+        bulk_acy_fc_row_048 => (r#"bulk acy 048"#, r###"v=set; print -r ${v:+yes}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_acz {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_acz_fc_row_001 => (r#"bulk acz 001"#, r###"integer n=5; (( n *= 2 )); print -r $n"###);
+        bulk_acz_fc_row_002 => (r#"bulk acz 002"#, r###"integer n=5; (( n |= 3 )); print -r $n"###);
+        bulk_acz_fc_row_003 => (r#"bulk acz 003"#, r###"integer n=5; (( n &= 3 )); print -r $n"###);
+        bulk_acz_fc_row_004 => (r#"bulk acz 004"#, r###"print -r $(( true ))"###);
+        bulk_acz_fc_row_005 => (r#"bulk acz 005"#, r###"print -r $(( false ))"###);
+        bulk_acz_fc_row_006 => (r#"bulk acz 006"#, r###"[[ -e / ]]; print -r $?"###);
+        bulk_acz_fc_row_007 => (r#"bulk acz 007"#, r###"[[ -d /tmp ]]; print -r $?"###);
+        bulk_acz_fc_row_008 => (r#"bulk acz 008"#, r###"[[ -f /etc/hosts ]]; print -r $?"###);
+        bulk_acz_fc_row_009 => (r#"bulk acz 009"#, r###"[[ -r /etc/hosts ]]; print -r $?"###);
+        bulk_acz_fc_row_010 => (r#"bulk acz 010"#, r###"[[ -w /tmp ]]; print -r $?"###);
+        bulk_acz_fc_row_011 => (r#"bulk acz 011"#, r###"[[ -x /bin/sh ]]; print -r $?"###);
+        bulk_acz_fc_row_012 => (r#"bulk acz 012"#, r###"[[ 42 = <-> ]]; print -r $?"###);
+        bulk_acz_fc_row_013 => (r#"bulk acz 013"#, r###"[[ abc = <-> ]]; print -r $?"###);
+        bulk_acz_fc_row_014 => (r#"bulk acz 014"#, r####"[[ host = ##host ]]; print -r $?"####);
+        bulk_acz_fc_row_015 => (r#"bulk acz 015"#, r###"[[ -v x ]]; print -r $?; x=1"###);
+        bulk_acz_fc_row_016 => (r#"bulk acz 016"#, r###"unset y; [[ -v y ]]; print -r $?"###);
+        bulk_acz_fc_row_017 => (r#"bulk acz 017"#, r###"setopt extendedglob; [[ abc = (#i)ABC ]]; print -r $?"###);
+        bulk_acz_fc_row_018 => (r#"bulk acz 018"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
+        bulk_acz_fc_row_019 => (r#"bulk acz 019"#, r###"[[ abc = a* ]]; print -r $?"###);
+        bulk_acz_fc_row_020 => (r#"bulk acz 020"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
+        bulk_acz_fc_row_021 => (r#"bulk acz 021"#, r###"[[ -z '' ]]; print -r $?"###);
+        bulk_acz_fc_row_022 => (r#"bulk acz 022"#, r###"[[ -n abc ]]; print -r $?"###);
+        bulk_acz_fc_row_023 => (r#"bulk acz 023"#, r###"typeset -i n=10; print -r $n"###);
+        bulk_acz_fc_row_024 => (r#"bulk acz 024"#, r###"typeset -l n=AbC; print -r $n"###);
+        bulk_acz_fc_row_025 => (r#"bulk acz 025"#, r###"typeset -u n=xy; print -r $n"###);
+        bulk_acz_fc_row_026 => (r#"bulk acz 026"#, r###"typeset -Z5 n=7; print -r $n"###);
+        bulk_acz_fc_row_027 => (r#"bulk acz 027"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
+        bulk_acz_fc_row_028 => (r#"bulk acz 028"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
+        bulk_acz_fc_row_029 => (r#"bulk acz 029"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
+        bulk_acz_fc_row_030 => (r#"bulk acz 030"#, r###"unset v; print -r ${v:-def}"###);
+        bulk_acz_fc_row_031 => (r#"bulk acz 031"#, r###"v=set; print -r ${v:+yes}"###);
+        bulk_acz_fc_row_032 => (r#"bulk acz 032"#, r###"unset v; : ${v::=def}; print -r $v"###);
+        bulk_acz_fc_row_033 => (r#"bulk acz 033"#, r###"print -r ${PWD:h}"###);
+        bulk_acz_fc_row_034 => (r#"bulk acz 034"#, r###"print -r ${PWD:t}"###);
+        bulk_acz_fc_row_035 => (r#"bulk acz 035"#, r###"true | true; print -r $?"###);
+        bulk_acz_fc_row_036 => (r#"bulk acz 036"#, r###"true | false; print -r $?"###);
+        bulk_acz_fc_row_037 => (r#"bulk acz 037"#, r###"print -r ${pipestatus[1]}; true | false"###);
+        bulk_acz_fc_row_038 => (r#"bulk acz 038"#, r###"print -r ${#pipestatus}; true | true | true"###);
+        bulk_acz_fc_row_039 => (r#"bulk acz 039"#, r###"set -- a b c; shift; print -r $1"###);
+        bulk_acz_fc_row_040 => (r#"bulk acz 040"#, r###"set -- a b c; shift 2; print -r $#"###);
+        bulk_acz_fc_row_041 => (r#"bulk acz 041"#, r###"fn(){ print -r $1; }; fn x"###);
+        bulk_acz_fc_row_042 => (r#"bulk acz 042"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
+        bulk_acz_fc_row_043 => (r#"bulk acz 043"#, r###"fn(){ return 2; }; fn; print -r $?"###);
+        bulk_acz_fc_row_044 => (r#"bulk acz 044"#, r###"print -r ${(q)x}; x=hi"###);
+        bulk_acz_fc_row_045 => (r#"bulk acz 045"#, r###"print -r ${(qq)x}; x=hi"###);
+        bulk_acz_fc_row_046 => (r#"bulk acz 046"#, r###"x=hi; print -r ${(q-)x}"###);
+        bulk_acz_fc_row_047 => (r#"bulk acz 047"#, r###"x=hi; print -r ${(q+)x}"###);
+        bulk_acz_fc_row_048 => (r#"bulk acz 048"#, r###"print -r ${(w)w}; w=a b c"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_ada {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_ada_fc_row_001 => (r#"bulk ada 001"#, r###"setopt extendedglob; [[ foo = (#b)oo ]]; print -r $?"###);
+        bulk_ada_fc_row_002 => (r#"bulk ada 002"#, r###"[[ abc = a* ]]; print -r $?"###);
+        bulk_ada_fc_row_003 => (r#"bulk ada 003"#, r###"[[ abc =~ ^a ]]; print -r $?"###);
+        bulk_ada_fc_row_004 => (r#"bulk ada 004"#, r###"[[ -z '' ]]; print -r $?"###);
+        bulk_ada_fc_row_005 => (r#"bulk ada 005"#, r###"[[ -n abc ]]; print -r $?"###);
+        bulk_ada_fc_row_006 => (r#"bulk ada 006"#, r###"typeset -i n=10; print -r $n"###);
+        bulk_ada_fc_row_007 => (r#"bulk ada 007"#, r###"typeset -l n=AbC; print -r $n"###);
+        bulk_ada_fc_row_008 => (r#"bulk ada 008"#, r###"typeset -u n=xy; print -r $n"###);
+        bulk_ada_fc_row_009 => (r#"bulk ada 009"#, r###"typeset -Z5 n=7; print -r $n"###);
+        bulk_ada_fc_row_010 => (r#"bulk ada 010"#, r###"typeset -a a=(x y); print -r ${a[2]}"###);
+        bulk_ada_fc_row_011 => (r#"bulk ada 011"#, r###"arr=(1 2); arr+=3; print -r ${arr[@]}"###);
+        bulk_ada_fc_row_012 => (r#"bulk ada 012"#, r###"arr=(1); arr[1]+=2; print -r ${arr[1]}"###);
+        bulk_ada_fc_row_013 => (r#"bulk ada 013"#, r###"unset v; print -r ${v:-def}"###);
+        bulk_ada_fc_row_014 => (r#"bulk ada 014"#, r###"v=set; print -r ${v:+yes}"###);
+        bulk_ada_fc_row_015 => (r#"bulk ada 015"#, r###"unset v; : ${v::=def}; print -r $v"###);
+        bulk_ada_fc_row_016 => (r#"bulk ada 016"#, r###"print -r ${PWD:h}"###);
+        bulk_ada_fc_row_017 => (r#"bulk ada 017"#, r###"print -r ${PWD:t}"###);
+        bulk_ada_fc_row_018 => (r#"bulk ada 018"#, r###"true | true; print -r $?"###);
+        bulk_ada_fc_row_019 => (r#"bulk ada 019"#, r###"true | false; print -r $?"###);
+        bulk_ada_fc_row_020 => (r#"bulk ada 020"#, r###"print -r ${pipestatus[1]}; true | false"###);
+        bulk_ada_fc_row_021 => (r#"bulk ada 021"#, r###"print -r ${#pipestatus}; true | true | true"###);
+        bulk_ada_fc_row_022 => (r#"bulk ada 022"#, r###"set -- a b c; shift; print -r $1"###);
+        bulk_ada_fc_row_023 => (r#"bulk ada 023"#, r###"set -- a b c; shift 2; print -r $#"###);
+        bulk_ada_fc_row_024 => (r#"bulk ada 024"#, r###"fn(){ print -r $1; }; fn x"###);
+        bulk_ada_fc_row_025 => (r#"bulk ada 025"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
+        bulk_ada_fc_row_026 => (r#"bulk ada 026"#, r###"fn(){ return 2; }; fn; print -r $?"###);
+        bulk_ada_fc_row_027 => (r#"bulk ada 027"#, r###"print -r ${(q)x}; x=hi"###);
+        bulk_ada_fc_row_028 => (r#"bulk ada 028"#, r###"print -r ${(qq)x}; x=hi"###);
+        bulk_ada_fc_row_029 => (r#"bulk ada 029"#, r###"x=hi; print -r ${(q-)x}"###);
+        bulk_ada_fc_row_030 => (r#"bulk ada 030"#, r###"x=hi; print -r ${(q+)x}"###);
+        bulk_ada_fc_row_031 => (r#"bulk ada 031"#, r###"print -r ${(w)w}; w=a b c"###);
+        bulk_ada_fc_row_032 => (r#"bulk ada 032"#, r###"print -r ${(u)a}; a=(a a b)"###);
+        bulk_ada_fc_row_033 => (r#"bulk ada 033"#, r###"print -r ${(o)a}; a=(c b a)"###);
+        bulk_ada_fc_row_034 => (r#"bulk ada 034"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
+        bulk_ada_fc_row_035 => (r#"bulk ada 035"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
+        bulk_ada_fc_row_036 => (r#"bulk ada 036"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
+        bulk_ada_fc_row_037 => (r#"bulk ada 037"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
+        bulk_ada_fc_row_038 => (r#"bulk ada 038"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
+        bulk_ada_fc_row_039 => (r#"bulk ada 039"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
+        bulk_ada_fc_row_040 => (r#"bulk ada 040"#, r###"print -r ${+options}"###);
+        bulk_ada_fc_row_041 => (r#"bulk ada 041"#, r###"print -r ${+parameters}"###);
+        bulk_ada_fc_row_042 => (r#"bulk ada 042"#, r###"print -r ${+aliases}"###);
+        bulk_ada_fc_row_043 => (r#"bulk ada 043"#, r###"print -r ${+functions}"###);
+        bulk_ada_fc_row_044 => (r#"bulk ada 044"#, r###"print -r $ZSH_NAME"###);
+        bulk_ada_fc_row_045 => (r#"bulk ada 045"#, r###"print -r ${ZSH_VERSION%%.*}"###);
+        bulk_ada_fc_row_046 => (r#"bulk ada 046"#, r###"whence -w print"###);
+        bulk_ada_fc_row_047 => (r#"bulk ada 047"#, r###"command -v true"###);
+        bulk_ada_fc_row_048 => (r#"bulk ada 048"#, r###"emulate -L zsh; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adb {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adb_fc_row_001 => (r#"bulk adb 001"#, r###"true | true; print -r $?"###);
+        bulk_adb_fc_row_002 => (r#"bulk adb 002"#, r###"true | false; print -r $?"###);
+        bulk_adb_fc_row_003 => (r#"bulk adb 003"#, r###"print -r ${pipestatus[1]}; true | false"###);
+        bulk_adb_fc_row_004 => (r#"bulk adb 004"#, r###"print -r ${#pipestatus}; true | true | true"###);
+        bulk_adb_fc_row_005 => (r#"bulk adb 005"#, r###"set -- a b c; shift; print -r $1"###);
+        bulk_adb_fc_row_006 => (r#"bulk adb 006"#, r###"set -- a b c; shift 2; print -r $#"###);
+        bulk_adb_fc_row_007 => (r#"bulk adb 007"#, r###"fn(){ print -r $1; }; fn x"###);
+        bulk_adb_fc_row_008 => (r#"bulk adb 008"#, r###"fn(){ local x=2; print -r $x; }; fn"###);
+        bulk_adb_fc_row_009 => (r#"bulk adb 009"#, r###"fn(){ return 2; }; fn; print -r $?"###);
+        bulk_adb_fc_row_010 => (r#"bulk adb 010"#, r###"print -r ${(q)x}; x=hi"###);
+        bulk_adb_fc_row_011 => (r#"bulk adb 011"#, r###"print -r ${(qq)x}; x=hi"###);
+        bulk_adb_fc_row_012 => (r#"bulk adb 012"#, r###"x=hi; print -r ${(q-)x}"###);
+        bulk_adb_fc_row_013 => (r#"bulk adb 013"#, r###"x=hi; print -r ${(q+)x}"###);
+        bulk_adb_fc_row_014 => (r#"bulk adb 014"#, r###"print -r ${(w)w}; w=a b c"###);
+        bulk_adb_fc_row_015 => (r#"bulk adb 015"#, r###"print -r ${(u)a}; a=(a a b)"###);
+        bulk_adb_fc_row_016 => (r#"bulk adb 016"#, r###"print -r ${(o)a}; a=(c b a)"###);
+        bulk_adb_fc_row_017 => (r#"bulk adb 017"#, r###"print -r ${(j:,:)a}; a=(x y)"###);
+        bulk_adb_fc_row_018 => (r#"bulk adb 018"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
+        bulk_adb_fc_row_019 => (r#"bulk adb 019"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
+        bulk_adb_fc_row_020 => (r#"bulk adb 020"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
+        bulk_adb_fc_row_021 => (r#"bulk adb 021"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
+        bulk_adb_fc_row_022 => (r#"bulk adb 022"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
+        bulk_adb_fc_row_023 => (r#"bulk adb 023"#, r###"print -r ${+options}"###);
+        bulk_adb_fc_row_024 => (r#"bulk adb 024"#, r###"print -r ${+parameters}"###);
+        bulk_adb_fc_row_025 => (r#"bulk adb 025"#, r###"print -r ${+aliases}"###);
+        bulk_adb_fc_row_026 => (r#"bulk adb 026"#, r###"print -r ${+functions}"###);
+        bulk_adb_fc_row_027 => (r#"bulk adb 027"#, r###"print -r $ZSH_NAME"###);
+        bulk_adb_fc_row_028 => (r#"bulk adb 028"#, r###"print -r ${ZSH_VERSION%%.*}"###);
+        bulk_adb_fc_row_029 => (r#"bulk adb 029"#, r###"whence -w print"###);
+        bulk_adb_fc_row_030 => (r#"bulk adb 030"#, r###"command -v true"###);
+        bulk_adb_fc_row_031 => (r#"bulk adb 031"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_adb_fc_row_032 => (r#"bulk adb 032"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
+        bulk_adb_fc_row_033 => (r#"bulk adb 033"#, r###"read -r line <<< 'one two'; print -r $line"###);
+        bulk_adb_fc_row_034 => (r#"bulk adb 034"#, r###"cat <<< 'herestring'"###);
+        bulk_adb_fc_row_035 => (r#"bulk adb 035"#, r###"echo hello 2>/dev/null"###);
+        bulk_adb_fc_row_036 => (r#"bulk adb 036"#, r###"printf '%s\n' a b c | head -1"###);
+        bulk_adb_fc_row_037 => (r#"bulk adb 037"#, r###"true && echo yes"###);
+        bulk_adb_fc_row_038 => (r#"bulk adb 038"#, r###"false || echo yes"###);
+        bulk_adb_fc_row_039 => (r#"bulk adb 039"#, r###"(exit 3); print -r $?"###);
+        bulk_adb_fc_row_040 => (r#"bulk adb 040"#, r###"print -r ${status}; (exit 4)"###);
+        bulk_adb_fc_row_041 => (r#"bulk adb 041"#, r###"print -r $(( 1_000 + 1 ))"###);
+        bulk_adb_fc_row_042 => (r#"bulk adb 042"#, r###"print -r $(( 5#101 ))"###);
+        bulk_adb_fc_row_043 => (r#"bulk adb 043"#, r###"print -r $(( 0b1111 ))"###);
+        bulk_adb_fc_row_044 => (r#"bulk adb 044"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
+        bulk_adb_fc_row_045 => (r#"bulk adb 045"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
+        bulk_adb_fc_row_046 => (r#"bulk adb 046"#, r###"typeset -F2 f=3.14; print -r $f"###);
+        bulk_adb_fc_row_047 => (r#"bulk adb 047"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
+        bulk_adb_fc_row_048 => (r#"bulk adb 048"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adc {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adc_fc_row_001 => (r#"bulk adc 001"#, r###"arr=(a b c); print -r ${arr[(I)b]}"###);
+        bulk_adc_fc_row_002 => (r#"bulk adc 002"#, r###"arr=(a b c); print -r ${arr[(R)b]}"###);
+        bulk_adc_fc_row_003 => (r#"bulk adc 003"#, r###"arr=(9 8 7); print -r ${arr[-2,-1]}"###);
+        bulk_adc_fc_row_004 => (r#"bulk adc 004"#, r###"typeset -A h; h=(k v); print -r ${(k)h}"###);
+        bulk_adc_fc_row_005 => (r#"bulk adc 005"#, r###"typeset -A h; h=(a 1 b 2); print -r ${(kv)h}"###);
+        bulk_adc_fc_row_006 => (r#"bulk adc 006"#, r###"print -r ${+options}"###);
+        bulk_adc_fc_row_007 => (r#"bulk adc 007"#, r###"print -r ${+parameters}"###);
+        bulk_adc_fc_row_008 => (r#"bulk adc 008"#, r###"print -r ${+aliases}"###);
+        bulk_adc_fc_row_009 => (r#"bulk adc 009"#, r###"print -r ${+functions}"###);
+        bulk_adc_fc_row_010 => (r#"bulk adc 010"#, r###"print -r $ZSH_NAME"###);
+        bulk_adc_fc_row_011 => (r#"bulk adc 011"#, r###"print -r ${ZSH_VERSION%%.*}"###);
+        bulk_adc_fc_row_012 => (r#"bulk adc 012"#, r###"whence -w print"###);
+        bulk_adc_fc_row_013 => (r#"bulk adc 013"#, r###"command -v true"###);
+        bulk_adc_fc_row_014 => (r#"bulk adc 014"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_adc_fc_row_015 => (r#"bulk adc 015"#, r###"alias za='echo z'; za; unalias za 2>/dev/null"###);
+        bulk_adc_fc_row_016 => (r#"bulk adc 016"#, r###"read -r line <<< 'one two'; print -r $line"###);
+        bulk_adc_fc_row_017 => (r#"bulk adc 017"#, r###"cat <<< 'herestring'"###);
+        bulk_adc_fc_row_018 => (r#"bulk adc 018"#, r###"echo hello 2>/dev/null"###);
+        bulk_adc_fc_row_019 => (r#"bulk adc 019"#, r###"printf '%s\n' a b c | head -1"###);
+        bulk_adc_fc_row_020 => (r#"bulk adc 020"#, r###"true && echo yes"###);
+        bulk_adc_fc_row_021 => (r#"bulk adc 021"#, r###"false || echo yes"###);
+        bulk_adc_fc_row_022 => (r#"bulk adc 022"#, r###"(exit 3); print -r $?"###);
+        bulk_adc_fc_row_023 => (r#"bulk adc 023"#, r###"print -r ${status}; (exit 4)"###);
+        bulk_adc_fc_row_024 => (r#"bulk adc 024"#, r###"print -r $(( 1_000 + 1 ))"###);
+        bulk_adc_fc_row_025 => (r#"bulk adc 025"#, r###"print -r $(( 5#101 ))"###);
+        bulk_adc_fc_row_026 => (r#"bulk adc 026"#, r###"print -r $(( 0b1111 ))"###);
+        bulk_adc_fc_row_027 => (r#"bulk adc 027"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
+        bulk_adc_fc_row_028 => (r#"bulk adc 028"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
+        bulk_adc_fc_row_029 => (r#"bulk adc 029"#, r###"typeset -F2 f=3.14; print -r $f"###);
+        bulk_adc_fc_row_030 => (r#"bulk adc 030"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
+        bulk_adc_fc_row_031 => (r#"bulk adc 031"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
+        bulk_adc_fc_row_032 => (r#"bulk adc 032"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
+        bulk_adc_fc_row_033 => (r#"bulk adc 033"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
+        bulk_adc_fc_row_034 => (r#"bulk adc 034"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
+        bulk_adc_fc_row_035 => (r#"bulk adc 035"#, r###"print -r ${#x}; x=hello"###);
+        bulk_adc_fc_row_036 => (r#"bulk adc 036"#, r###"print -r ${#a}; a=(a b c)"###);
+        bulk_adc_fc_row_037 => (r#"bulk adc 037"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
+        bulk_adc_fc_row_038 => (r#"bulk adc 038"#, r###"print -r ${(b)x}; x=hi"###);
+        bulk_adc_fc_row_039 => (r#"bulk adc 039"#, r###"print -r ${(e):-2+2}"###);
+        bulk_adc_fc_row_040 => (r#"bulk adc 040"#, r###"print -r ${(P)r}; r=HOME"###);
+        bulk_adc_fc_row_041 => (r#"bulk adc 041"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
+        bulk_adc_fc_row_042 => (r#"bulk adc 042"#, r###"print -r ${(eu)n}; n=(a A b)"###);
+        bulk_adc_fc_row_043 => (r#"bulk adc 043"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
+        bulk_adc_fc_row_044 => (r#"bulk adc 044"#, r###"typeset -h hv=1; print -r ${+hv}"###);
+        bulk_adc_fc_row_045 => (r#"bulk adc 045"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
+        bulk_adc_fc_row_046 => (r#"bulk adc 046"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
+        bulk_adc_fc_row_047 => (r#"bulk adc 047"#, r###"while :; do break; print -r n; done; print -r after"###);
+        bulk_adc_fc_row_048 => (r#"bulk adc 048"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_add {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_add_fc_row_001 => (r#"bulk add 001"#, r###"read -r line <<< 'one two'; print -r $line"###);
+        bulk_add_fc_row_002 => (r#"bulk add 002"#, r###"cat <<< 'herestring'"###);
+        bulk_add_fc_row_003 => (r#"bulk add 003"#, r###"echo hello 2>/dev/null"###);
+        bulk_add_fc_row_004 => (r#"bulk add 004"#, r###"printf '%s\n' a b c | head -1"###);
+        bulk_add_fc_row_005 => (r#"bulk add 005"#, r###"true && echo yes"###);
+        bulk_add_fc_row_006 => (r#"bulk add 006"#, r###"false || echo yes"###);
+        bulk_add_fc_row_007 => (r#"bulk add 007"#, r###"(exit 3); print -r $?"###);
+        bulk_add_fc_row_008 => (r#"bulk add 008"#, r###"print -r ${status}; (exit 4)"###);
+        bulk_add_fc_row_009 => (r#"bulk add 009"#, r###"print -r $(( 1_000 + 1 ))"###);
+        bulk_add_fc_row_010 => (r#"bulk add 010"#, r###"print -r $(( 5#101 ))"###);
+        bulk_add_fc_row_011 => (r#"bulk add 011"#, r###"print -r $(( 0b1111 ))"###);
+        bulk_add_fc_row_012 => (r#"bulk add 012"#, r###"print -r $(( 2 ** 3 ** 2 ))"###);
+        bulk_add_fc_row_013 => (r#"bulk add 013"#, r###"float f=1.5; print -r $(( f * 2 ))"###);
+        bulk_add_fc_row_014 => (r#"bulk add 014"#, r###"typeset -F2 f=3.14; print -r $f"###);
+        bulk_add_fc_row_015 => (r#"bulk add 015"#, r###"[[ /etc/hosts -nt /tmp ]]; print -r $?"###);
+        bulk_add_fc_row_016 => (r#"bulk add 016"#, r###"[[ /tmp -ot /etc/hosts ]]; print -r $?"###);
+        bulk_add_fc_row_017 => (r#"bulk add 017"#, r###"[[ /etc/hosts -ef /etc/hosts ]]; print -r $?"###);
+        bulk_add_fc_row_018 => (r#"bulk add 018"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
+        bulk_add_fc_row_019 => (r#"bulk add 019"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
+        bulk_add_fc_row_020 => (r#"bulk add 020"#, r###"print -r ${#x}; x=hello"###);
+        bulk_add_fc_row_021 => (r#"bulk add 021"#, r###"print -r ${#a}; a=(a b c)"###);
+        bulk_add_fc_row_022 => (r#"bulk add 022"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
+        bulk_add_fc_row_023 => (r#"bulk add 023"#, r###"print -r ${(b)x}; x=hi"###);
+        bulk_add_fc_row_024 => (r#"bulk add 024"#, r###"print -r ${(e):-2+2}"###);
+        bulk_add_fc_row_025 => (r#"bulk add 025"#, r###"print -r ${(P)r}; r=HOME"###);
+        bulk_add_fc_row_026 => (r#"bulk add 026"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
+        bulk_add_fc_row_027 => (r#"bulk add 027"#, r###"print -r ${(eu)n}; n=(a A b)"###);
+        bulk_add_fc_row_028 => (r#"bulk add 028"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
+        bulk_add_fc_row_029 => (r#"bulk add 029"#, r###"typeset -h hv=1; print -r ${+hv}"###);
+        bulk_add_fc_row_030 => (r#"bulk add 030"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
+        bulk_add_fc_row_031 => (r#"bulk add 031"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
+        bulk_add_fc_row_032 => (r#"bulk add 032"#, r###"while :; do break; print -r n; done; print -r after"###);
+        bulk_add_fc_row_033 => (r#"bulk add 033"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
+        bulk_add_fc_row_034 => (r#"bulk add 034"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
+        bulk_add_fc_row_035 => (r#"bulk add 035"#, r###"print -r ${argv[1]}; set -- p q"###);
+        bulk_add_fc_row_036 => (r#"bulk add 036"#, r###"print -r $ARGC; set -- a b"###);
+        bulk_add_fc_row_037 => (r#"bulk add 037"#, r###"print -r ${dirstack[1]:-empty}"###);
+        bulk_add_fc_row_038 => (r#"bulk add 038"#, r###"print -r ${+pipestatus}"###);
+        bulk_add_fc_row_039 => (r#"bulk add 039"#, r###"print -r ${+history}"###);
+        bulk_add_fc_row_040 => (r#"bulk add 040"#, r###"print -r ${+commands}"###);
+        bulk_add_fc_row_041 => (r#"bulk add 041"#, r###"print -r ${+builtins}"###);
+        bulk_add_fc_row_042 => (r#"bulk add 042"#, r###"print -r ${+widgets}"###);
+        bulk_add_fc_row_043 => (r#"bulk add 043"#, r###"print -r ${+terminfo}"###);
+        bulk_add_fc_row_044 => (r#"bulk add 044"#, r###"print -r ${+modules}"###);
+        bulk_add_fc_row_045 => (r#"bulk add 045"#, r###"print -r ${+patchars}"###);
+        bulk_add_fc_row_046 => (r#"bulk add 046"#, r###"print -r ${+reswords}"###);
+        bulk_add_fc_row_047 => (r#"bulk add 047"#, r###"print -r ${+dis_aliases}"###);
+        bulk_add_fc_row_048 => (r#"bulk add 048"#, r###"print -r ${+dis_functions}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_ade {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_ade_fc_row_001 => (r#"bulk ade 001"#, r####"setopt extendedglob; [[ abc = [a-z]## ]]; print -r $?"####);
+        bulk_ade_fc_row_002 => (r#"bulk ade 002"#, r###"print -r ${(L)${(U)m}}; m=aBc"###);
+        bulk_ade_fc_row_003 => (r#"bulk ade 003"#, r###"print -r ${#x}; x=hello"###);
+        bulk_ade_fc_row_004 => (r#"bulk ade 004"#, r###"print -r ${#a}; a=(a b c)"###);
+        bulk_ade_fc_row_005 => (r#"bulk ade 005"#, r###"print -r ${(c)#a}; a=(ab cd)"###);
+        bulk_ade_fc_row_006 => (r#"bulk ade 006"#, r###"print -r ${(b)x}; x=hi"###);
+        bulk_ade_fc_row_007 => (r#"bulk ade 007"#, r###"print -r ${(e):-2+2}"###);
+        bulk_ade_fc_row_008 => (r#"bulk ade 008"#, r###"print -r ${(P)r}; r=HOME"###);
+        bulk_ade_fc_row_009 => (r#"bulk ade 009"#, r###"print -r ${(on)n}; n=(10 2 1)"###);
+        bulk_ade_fc_row_010 => (r#"bulk ade 010"#, r###"print -r ${(eu)n}; n=(a A b)"###);
+        bulk_ade_fc_row_011 => (r#"bulk ade 011"#, r###"typeset -aU u=(a a b); print -r ${#u}"###);
+        bulk_ade_fc_row_012 => (r#"bulk ade 012"#, r###"typeset -h hv=1; print -r ${+hv}"###);
+        bulk_ade_fc_row_013 => (r#"bulk ade 013"#, r###"x=a1a2; p=a; print -r ${x//p/r}"###);
+        bulk_ade_fc_row_014 => (r#"bulk ade 014"#, r###"for i in 1 2 3; do (( i == 2 )) && continue; print -r $i; done"###);
+        bulk_ade_fc_row_015 => (r#"bulk ade 015"#, r###"while :; do break; print -r n; done; print -r after"###);
+        bulk_ade_fc_row_016 => (r#"bulk ade 016"#, r###"case w in (a|b) echo ab ;; *) echo star ;; esac"###);
+        bulk_ade_fc_row_017 => (r#"bulk ade 017"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
+        bulk_ade_fc_row_018 => (r#"bulk ade 018"#, r###"print -r ${argv[1]}; set -- p q"###);
+        bulk_ade_fc_row_019 => (r#"bulk ade 019"#, r###"print -r $ARGC; set -- a b"###);
+        bulk_ade_fc_row_020 => (r#"bulk ade 020"#, r###"print -r ${dirstack[1]:-empty}"###);
+        bulk_ade_fc_row_021 => (r#"bulk ade 021"#, r###"print -r ${+pipestatus}"###);
+        bulk_ade_fc_row_022 => (r#"bulk ade 022"#, r###"print -r ${+history}"###);
+        bulk_ade_fc_row_023 => (r#"bulk ade 023"#, r###"print -r ${+commands}"###);
+        bulk_ade_fc_row_024 => (r#"bulk ade 024"#, r###"print -r ${+builtins}"###);
+        bulk_ade_fc_row_025 => (r#"bulk ade 025"#, r###"print -r ${+widgets}"###);
+        bulk_ade_fc_row_026 => (r#"bulk ade 026"#, r###"print -r ${+terminfo}"###);
+        bulk_ade_fc_row_027 => (r#"bulk ade 027"#, r###"print -r ${+modules}"###);
+        bulk_ade_fc_row_028 => (r#"bulk ade 028"#, r###"print -r ${+patchars}"###);
+        bulk_ade_fc_row_029 => (r#"bulk ade 029"#, r###"print -r ${+reswords}"###);
+        bulk_ade_fc_row_030 => (r#"bulk ade 030"#, r###"print -r ${+dis_aliases}"###);
+        bulk_ade_fc_row_031 => (r#"bulk ade 031"#, r###"print -r ${+dis_functions}"###);
+        bulk_ade_fc_row_032 => (r#"bulk ade 032"#, r###"print -r ${+parameters[(I)PATH]}"###);
+        bulk_ade_fc_row_033 => (r#"bulk ade 033"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
+        bulk_ade_fc_row_034 => (r#"bulk ade 034"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
+        bulk_ade_fc_row_035 => (r#"bulk ade 035"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
+        bulk_ade_fc_row_036 => (r#"bulk ade 036"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
+        bulk_ade_fc_row_037 => (r#"bulk ade 037"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
+        bulk_ade_fc_row_038 => (r#"bulk ade 038"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
+        bulk_ade_fc_row_039 => (r#"bulk ade 039"#, r###"print -r $(( 128 >> 2 ))"###);
+        bulk_ade_fc_row_040 => (r#"bulk ade 040"#, r###"print -r $(( ~(255) & 0xff ))"###);
+        bulk_ade_fc_row_041 => (r#"bulk ade 041"#, r###"print -r $(( 3 <|> 5 ))"###);
+        bulk_ade_fc_row_042 => (r#"bulk ade 042"#, r###"print -r $(( 3 <> 5 ))"###);
+        bulk_ade_fc_row_043 => (r#"bulk ade 043"#, r###"(( 5#11 )); print -r $?"###);
+        bulk_ade_fc_row_044 => (r#"bulk ade 044"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
+        bulk_ade_fc_row_045 => (r#"bulk ade 045"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
+        bulk_ade_fc_row_046 => (r#"bulk ade 046"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
+        bulk_ade_fc_row_047 => (r#"bulk ade 047"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
+        bulk_ade_fc_row_048 => (r#"bulk ade 048"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adf {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adf_fc_row_001 => (r#"bulk adf 001"#, r###"if [[ -n '' ]]; then echo y; else echo n; fi"###);
+        bulk_adf_fc_row_002 => (r#"bulk adf 002"#, r###"print -r ${argv[1]}; set -- p q"###);
+        bulk_adf_fc_row_003 => (r#"bulk adf 003"#, r###"print -r $ARGC; set -- a b"###);
+        bulk_adf_fc_row_004 => (r#"bulk adf 004"#, r###"print -r ${dirstack[1]:-empty}"###);
+        bulk_adf_fc_row_005 => (r#"bulk adf 005"#, r###"print -r ${+pipestatus}"###);
+        bulk_adf_fc_row_006 => (r#"bulk adf 006"#, r###"print -r ${+history}"###);
+        bulk_adf_fc_row_007 => (r#"bulk adf 007"#, r###"print -r ${+commands}"###);
+        bulk_adf_fc_row_008 => (r#"bulk adf 008"#, r###"print -r ${+builtins}"###);
+        bulk_adf_fc_row_009 => (r#"bulk adf 009"#, r###"print -r ${+widgets}"###);
+        bulk_adf_fc_row_010 => (r#"bulk adf 010"#, r###"print -r ${+terminfo}"###);
+        bulk_adf_fc_row_011 => (r#"bulk adf 011"#, r###"print -r ${+modules}"###);
+        bulk_adf_fc_row_012 => (r#"bulk adf 012"#, r###"print -r ${+patchars}"###);
+        bulk_adf_fc_row_013 => (r#"bulk adf 013"#, r###"print -r ${+reswords}"###);
+        bulk_adf_fc_row_014 => (r#"bulk adf 014"#, r###"print -r ${+dis_aliases}"###);
+        bulk_adf_fc_row_015 => (r#"bulk adf 015"#, r###"print -r ${+dis_functions}"###);
+        bulk_adf_fc_row_016 => (r#"bulk adf 016"#, r###"print -r ${+parameters[(I)PATH]}"###);
+        bulk_adf_fc_row_017 => (r#"bulk adf 017"#, r###"arr=(a b c d); print -r ${arr[2,3]}"###);
+        bulk_adf_fc_row_018 => (r#"bulk adf 018"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
+        bulk_adf_fc_row_019 => (r#"bulk adf 019"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
+        bulk_adf_fc_row_020 => (r#"bulk adf 020"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
+        bulk_adf_fc_row_021 => (r#"bulk adf 021"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
+        bulk_adf_fc_row_022 => (r#"bulk adf 022"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
+        bulk_adf_fc_row_023 => (r#"bulk adf 023"#, r###"print -r $(( 128 >> 2 ))"###);
+        bulk_adf_fc_row_024 => (r#"bulk adf 024"#, r###"print -r $(( ~(255) & 0xff ))"###);
+        bulk_adf_fc_row_025 => (r#"bulk adf 025"#, r###"print -r $(( 3 <|> 5 ))"###);
+        bulk_adf_fc_row_026 => (r#"bulk adf 026"#, r###"print -r $(( 3 <> 5 ))"###);
+        bulk_adf_fc_row_027 => (r#"bulk adf 027"#, r###"(( 5#11 )); print -r $?"###);
+        bulk_adf_fc_row_028 => (r#"bulk adf 028"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
+        bulk_adf_fc_row_029 => (r#"bulk adf 029"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
+        bulk_adf_fc_row_030 => (r#"bulk adf 030"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
+        bulk_adf_fc_row_031 => (r#"bulk adf 031"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
+        bulk_adf_fc_row_032 => (r#"bulk adf 032"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
+        bulk_adf_fc_row_033 => (r#"bulk adf 033"#, r###"typeset -i8 n=10; print -r $n"###);
+        bulk_adf_fc_row_034 => (r#"bulk adf 034"#, r###"typeset -i16 n=255; print -r $n"###);
+        bulk_adf_fc_row_035 => (r#"bulk adf 035"#, r###"typeset -E2 n=4000; print -r $n"###);
+        bulk_adf_fc_row_036 => (r#"bulk adf 036"#, r###"typeset -R4 n=hi; print -r $n"###);
+        bulk_adf_fc_row_037 => (r#"bulk adf 037"#, r###"typeset +L n=Ab; print -r $n"###);
+        bulk_adf_fc_row_038 => (r#"bulk adf 038"#, r###"typeset +U n=xy; print -r $n"###);
+        bulk_adf_fc_row_039 => (r#"bulk adf 039"#, r###"typeset +i n=4; print -r $n"###);
+        bulk_adf_fc_row_040 => (r#"bulk adf 040"#, r###"export EX=1; print -r $EX; unset EX"###);
+        bulk_adf_fc_row_041 => (r#"bulk adf 041"#, r###"readonly ro=5; print -r $ro"###);
+        bulk_adf_fc_row_042 => (r#"bulk adf 042"#, r###"print -r ${${v:-fb}}; unset v"###);
+        bulk_adf_fc_row_043 => (r#"bulk adf 043"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
+        bulk_adf_fc_row_044 => (r#"bulk adf 044"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
+        bulk_adf_fc_row_045 => (r#"bulk adf 045"#, r###"word=  hi  ; print -r ${(W)word}"###);
+        bulk_adf_fc_row_046 => (r#"bulk adf 046"#, r###"print -r ${(z)word}; word=a b c"###);
+        bulk_adf_fc_row_047 => (r#"bulk adf 047"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
+        bulk_adf_fc_row_048 => (r#"bulk adf 048"#, r###"print -r ${(A)x}; x=1 2"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adg {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adg_fc_row_001 => (r#"bulk adg 001"#, r###"arr=(1 2 3); print -r ${arr[1,-1]}"###);
+        bulk_adg_fc_row_002 => (r#"bulk adg 002"#, r###"s=barfooxyz; print -r ${s[(i)foo]}"###);
+        bulk_adg_fc_row_003 => (r#"bulk adg 003"#, r###"typeset -A h; h=(k v); print -r ${h[(R)v]}"###);
+        bulk_adg_fc_row_004 => (r#"bulk adg 004"#, r###"typeset -A h; h=(a 1 b 2); print -r ${h[(r)2]}"###);
+        bulk_adg_fc_row_005 => (r#"bulk adg 005"#, r###"print -r $(( 9 & 6 ^ 3 ))"###);
+        bulk_adg_fc_row_006 => (r#"bulk adg 006"#, r###"print -r $(( 128 >> 2 ))"###);
+        bulk_adg_fc_row_007 => (r#"bulk adg 007"#, r###"print -r $(( ~(255) & 0xff ))"###);
+        bulk_adg_fc_row_008 => (r#"bulk adg 008"#, r###"print -r $(( 3 <|> 5 ))"###);
+        bulk_adg_fc_row_009 => (r#"bulk adg 009"#, r###"print -r $(( 3 <> 5 ))"###);
+        bulk_adg_fc_row_010 => (r#"bulk adg 010"#, r###"(( 5#11 )); print -r $?"###);
+        bulk_adg_fc_row_011 => (r#"bulk adg 011"#, r###"integer n=5; (( n ^= 3 )); print -r $n"###);
+        bulk_adg_fc_row_012 => (r#"bulk adg 012"#, r###"integer n=5; (( n <<= 1 )); print -r $n"###);
+        bulk_adg_fc_row_013 => (r#"bulk adg 013"#, r###"integer n=5; (( n >>= 1 )); print -r $n"###);
+        bulk_adg_fc_row_014 => (r#"bulk adg 014"#, r###"integer n=5; (( n /= 2 )); print -r $n"###);
+        bulk_adg_fc_row_015 => (r#"bulk adg 015"#, r###"integer n=5; (( n %= 3 )); print -r $n"###);
+        bulk_adg_fc_row_016 => (r#"bulk adg 016"#, r###"typeset -i8 n=10; print -r $n"###);
+        bulk_adg_fc_row_017 => (r#"bulk adg 017"#, r###"typeset -i16 n=255; print -r $n"###);
+        bulk_adg_fc_row_018 => (r#"bulk adg 018"#, r###"typeset -E2 n=4000; print -r $n"###);
+        bulk_adg_fc_row_019 => (r#"bulk adg 019"#, r###"typeset -R4 n=hi; print -r $n"###);
+        bulk_adg_fc_row_020 => (r#"bulk adg 020"#, r###"typeset +L n=Ab; print -r $n"###);
+        bulk_adg_fc_row_021 => (r#"bulk adg 021"#, r###"typeset +U n=xy; print -r $n"###);
+        bulk_adg_fc_row_022 => (r#"bulk adg 022"#, r###"typeset +i n=4; print -r $n"###);
+        bulk_adg_fc_row_023 => (r#"bulk adg 023"#, r###"export EX=1; print -r $EX; unset EX"###);
+        bulk_adg_fc_row_024 => (r#"bulk adg 024"#, r###"readonly ro=5; print -r $ro"###);
+        bulk_adg_fc_row_025 => (r#"bulk adg 025"#, r###"print -r ${${v:-fb}}; unset v"###);
+        bulk_adg_fc_row_026 => (r#"bulk adg 026"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
+        bulk_adg_fc_row_027 => (r#"bulk adg 027"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
+        bulk_adg_fc_row_028 => (r#"bulk adg 028"#, r###"word=  hi  ; print -r ${(W)word}"###);
+        bulk_adg_fc_row_029 => (r#"bulk adg 029"#, r###"print -r ${(z)word}; word=a b c"###);
+        bulk_adg_fc_row_030 => (r#"bulk adg 030"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
+        bulk_adg_fc_row_031 => (r#"bulk adg 031"#, r###"print -r ${(A)x}; x=1 2"###);
+        bulk_adg_fc_row_032 => (r#"bulk adg 032"#, r###"print -r ${(aa)x}; x=(1 2)"###);
+        bulk_adg_fc_row_033 => (r#"bulk adg 033"#, r###"print -r ${(%)2}"###);
+        bulk_adg_fc_row_034 => (r#"bulk adg 034"#, r###"o=8; print -r ${(0)o}"###);
+        bulk_adg_fc_row_035 => (r#"bulk adg 035"#, r###"str=abc.def; print -r ${str:r}"###);
+        bulk_adg_fc_row_036 => (r#"bulk adg 036"#, r###"str=abc.def; print -r ${str:e}"###);
+        bulk_adg_fc_row_037 => (r#"bulk adg 037"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
+        bulk_adg_fc_row_038 => (r#"bulk adg 038"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
+        bulk_adg_fc_row_039 => (r#"bulk adg 039"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
+        bulk_adg_fc_row_040 => (r#"bulk adg 040"#, r###"[[ -G / ]]; print -r $?"###);
+        bulk_adg_fc_row_041 => (r#"bulk adg 041"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
+        bulk_adg_fc_row_042 => (r#"bulk adg 042"#, r###"[[ bee = *ee* ]]; print -r $?"###);
+        bulk_adg_fc_row_043 => (r#"bulk adg 043"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
+        bulk_adg_fc_row_044 => (r#"bulk adg 044"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
+        bulk_adg_fc_row_045 => (r#"bulk adg 045"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
+        bulk_adg_fc_row_046 => (r#"bulk adg 046"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
+        bulk_adg_fc_row_047 => (r#"bulk adg 047"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
+        bulk_adg_fc_row_048 => (r#"bulk adg 048"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adh {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adh_fc_row_001 => (r#"bulk adh 001"#, r###"typeset -i8 n=10; print -r $n"###);
+        bulk_adh_fc_row_002 => (r#"bulk adh 002"#, r###"typeset -i16 n=255; print -r $n"###);
+        bulk_adh_fc_row_003 => (r#"bulk adh 003"#, r###"typeset -E2 n=4000; print -r $n"###);
+        bulk_adh_fc_row_004 => (r#"bulk adh 004"#, r###"typeset -R4 n=hi; print -r $n"###);
+        bulk_adh_fc_row_005 => (r#"bulk adh 005"#, r###"typeset +L n=Ab; print -r $n"###);
+        bulk_adh_fc_row_006 => (r#"bulk adh 006"#, r###"typeset +U n=xy; print -r $n"###);
+        bulk_adh_fc_row_007 => (r#"bulk adh 007"#, r###"typeset +i n=4; print -r $n"###);
+        bulk_adh_fc_row_008 => (r#"bulk adh 008"#, r###"export EX=1; print -r $EX; unset EX"###);
+        bulk_adh_fc_row_009 => (r#"bulk adh 009"#, r###"readonly ro=5; print -r $ro"###);
+        bulk_adh_fc_row_010 => (r#"bulk adh 010"#, r###"print -r ${${v:-fb}}; unset v"###);
+        bulk_adh_fc_row_011 => (r#"bulk adh 011"#, r###"print -r ${${v:+set}:-unset}; unset v"###);
+        bulk_adh_fc_row_012 => (r#"bulk adh 012"#, r###"word=$'l1\nl2'; print -r ${(@f)word}"###);
+        bulk_adh_fc_row_013 => (r#"bulk adh 013"#, r###"word=  hi  ; print -r ${(W)word}"###);
+        bulk_adh_fc_row_014 => (r#"bulk adh 014"#, r###"print -r ${(z)word}; word=a b c"###);
+        bulk_adh_fc_row_015 => (r#"bulk adh 015"#, r###"print -r ${(F)x}; x=$'p\nq'"###);
+        bulk_adh_fc_row_016 => (r#"bulk adh 016"#, r###"print -r ${(A)x}; x=1 2"###);
+        bulk_adh_fc_row_017 => (r#"bulk adh 017"#, r###"print -r ${(aa)x}; x=(1 2)"###);
+        bulk_adh_fc_row_018 => (r#"bulk adh 018"#, r###"print -r ${(%)2}"###);
+        bulk_adh_fc_row_019 => (r#"bulk adh 019"#, r###"o=8; print -r ${(0)o}"###);
+        bulk_adh_fc_row_020 => (r#"bulk adh 020"#, r###"str=abc.def; print -r ${str:r}"###);
+        bulk_adh_fc_row_021 => (r#"bulk adh 021"#, r###"str=abc.def; print -r ${str:e}"###);
+        bulk_adh_fc_row_022 => (r#"bulk adh 022"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
+        bulk_adh_fc_row_023 => (r#"bulk adh 023"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
+        bulk_adh_fc_row_024 => (r#"bulk adh 024"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
+        bulk_adh_fc_row_025 => (r#"bulk adh 025"#, r###"[[ -G / ]]; print -r $?"###);
+        bulk_adh_fc_row_026 => (r#"bulk adh 026"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
+        bulk_adh_fc_row_027 => (r#"bulk adh 027"#, r###"[[ bee = *ee* ]]; print -r $?"###);
+        bulk_adh_fc_row_028 => (r#"bulk adh 028"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
+        bulk_adh_fc_row_029 => (r#"bulk adh 029"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
+        bulk_adh_fc_row_030 => (r#"bulk adh 030"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
+        bulk_adh_fc_row_031 => (r#"bulk adh 031"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
+        bulk_adh_fc_row_032 => (r#"bulk adh 032"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
+        bulk_adh_fc_row_033 => (r#"bulk adh 033"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
+        bulk_adh_fc_row_034 => (r#"bulk adh 034"#, r###"[[ -o nullglob ]]; print -r $?"###);
+        bulk_adh_fc_row_035 => (r#"bulk adh 035"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_adh_fc_row_036 => (r#"bulk adh 036"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_adh_fc_row_037 => (r#"bulk adh 037"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
+        bulk_adh_fc_row_038 => (r#"bulk adh 038"#, r###"print -r $(( 1 , 2 , 3 ))"###);
+        bulk_adh_fc_row_039 => (r#"bulk adh 039"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
+        bulk_adh_fc_row_040 => (r#"bulk adh 040"#, r###"print -r $(( 0xff & 0x0f ))"###);
+        bulk_adh_fc_row_041 => (r#"bulk adh 041"#, r###"print -r $(( 1 << 4 ))"###);
+        bulk_adh_fc_row_042 => (r#"bulk adh 042"#, r###"print -r $(( 16 >> 2 ))"###);
+        bulk_adh_fc_row_043 => (r#"bulk adh 043"#, r###"print -r $(( -1 >> 1 ))"###);
+        bulk_adh_fc_row_044 => (r#"bulk adh 044"#, r###"print -r $(( 8#17 ))"###);
+        bulk_adh_fc_row_045 => (r#"bulk adh 045"#, r###"print -r $(( 16#ff ))"###);
+        bulk_adh_fc_row_046 => (r#"bulk adh 046"#, r###"print -r $(( 2#1010 ))"###);
+        bulk_adh_fc_row_047 => (r#"bulk adh 047"#, r###"print -r $(( 0b1010 ))"###);
+        bulk_adh_fc_row_048 => (r#"bulk adh 048"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adi {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adi_fc_row_001 => (r#"bulk adi 001"#, r###"print -r ${(%)2}"###);
+        bulk_adi_fc_row_002 => (r#"bulk adi 002"#, r###"o=8; print -r ${(0)o}"###);
+        bulk_adi_fc_row_003 => (r#"bulk adi 003"#, r###"str=abc.def; print -r ${str:r}"###);
+        bulk_adi_fc_row_004 => (r#"bulk adi 004"#, r###"str=abc.def; print -r ${str:e}"###);
+        bulk_adi_fc_row_005 => (r#"bulk adi 005"#, r###"[[ -h /dev/stdin ]]; print -r $?"###);
+        bulk_adi_fc_row_006 => (r#"bulk adi 006"#, r###"[[ -p /dev/fd/0 ]]; print -r $?"###);
+        bulk_adi_fc_row_007 => (r#"bulk adi 007"#, r###"[[ -O /etc/hosts ]]; print -r $?"###);
+        bulk_adi_fc_row_008 => (r#"bulk adi 008"#, r###"[[ -G / ]]; print -r $?"###);
+        bulk_adi_fc_row_009 => (r#"bulk adi 009"#, r###"[[ -a /etc/hosts ]]; print -r $?"###);
+        bulk_adi_fc_row_010 => (r#"bulk adi 010"#, r###"[[ bee = *ee* ]]; print -r $?"###);
+        bulk_adi_fc_row_011 => (r#"bulk adi 011"#, r###"[[ 1 -eq 1 ]]; print -r $?"###);
+        bulk_adi_fc_row_012 => (r#"bulk adi 012"#, r###"[[ 1 -ne 2 ]]; print -r $?"###);
+        bulk_adi_fc_row_013 => (r#"bulk adi 013"#, r###"[[ 3 -lt 5 ]]; print -r $?"###);
+        bulk_adi_fc_row_014 => (r#"bulk adi 014"#, r###"[[ 5 -le 5 ]]; print -r $?"###);
+        bulk_adi_fc_row_015 => (r#"bulk adi 015"#, r###"[[ 5 -gt 3 ]]; print -r $?"###);
+        bulk_adi_fc_row_016 => (r#"bulk adi 016"#, r###"[[ 5 -ge 5 ]]; print -r $?"###);
+        bulk_adi_fc_row_017 => (r#"bulk adi 017"#, r###"[[ -o nullglob ]]; print -r $?"###);
+        bulk_adi_fc_row_018 => (r#"bulk adi 018"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_adi_fc_row_019 => (r#"bulk adi 019"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_adi_fc_row_020 => (r#"bulk adi 020"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
+        bulk_adi_fc_row_021 => (r#"bulk adi 021"#, r###"print -r $(( 1 , 2 , 3 ))"###);
+        bulk_adi_fc_row_022 => (r#"bulk adi 022"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
+        bulk_adi_fc_row_023 => (r#"bulk adi 023"#, r###"print -r $(( 0xff & 0x0f ))"###);
+        bulk_adi_fc_row_024 => (r#"bulk adi 024"#, r###"print -r $(( 1 << 4 ))"###);
+        bulk_adi_fc_row_025 => (r#"bulk adi 025"#, r###"print -r $(( 16 >> 2 ))"###);
+        bulk_adi_fc_row_026 => (r#"bulk adi 026"#, r###"print -r $(( -1 >> 1 ))"###);
+        bulk_adi_fc_row_027 => (r#"bulk adi 027"#, r###"print -r $(( 8#17 ))"###);
+        bulk_adi_fc_row_028 => (r#"bulk adi 028"#, r###"print -r $(( 16#ff ))"###);
+        bulk_adi_fc_row_029 => (r#"bulk adi 029"#, r###"print -r $(( 2#1010 ))"###);
+        bulk_adi_fc_row_030 => (r#"bulk adi 030"#, r###"print -r $(( 0b1010 ))"###);
+        bulk_adi_fc_row_031 => (r#"bulk adi 031"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
+        bulk_adi_fc_row_032 => (r#"bulk adi 032"#, r###"print -r $(( 4 % 2 == 0 ))"###);
+        bulk_adi_fc_row_033 => (r#"bulk adi 033"#, r###"print -r $(( 0 - 1 == -1 ))"###);
+        bulk_adi_fc_row_034 => (r#"bulk adi 034"#, r###"print -r $(( 72 / 8 / 3 ))"###);
+        bulk_adi_fc_row_035 => (r#"bulk adi 035"#, r###"print -r $(( 24 % 5 % 3 ))"###);
+        bulk_adi_fc_row_036 => (r#"bulk adi 036"#, r###"print -r $(( 2 | 4 | 8 ))"###);
+        bulk_adi_fc_row_037 => (r#"bulk adi 037"#, r###"print -r $(( 15 ^ 9 ))"###);
+        bulk_adi_fc_row_038 => (r#"bulk adi 038"#, r###"print -r $(( 0 || 0 || 7 ))"###);
+        bulk_adi_fc_row_039 => (r#"bulk adi 039"#, r###"print -r $(( 1 || -1 ))"###);
+        bulk_adi_fc_row_040 => (r#"bulk adi 040"#, r###"print -r $(( (1>0) + (0>0) ))"###);
+        bulk_adi_fc_row_041 => (r#"bulk adi 041"#, r###"print -r $(( 3 > 2 > 1 ))"###);
+        bulk_adi_fc_row_042 => (r#"bulk adi 042"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
+        bulk_adi_fc_row_043 => (r#"bulk adi 043"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
+        bulk_adi_fc_row_044 => (r#"bulk adi 044"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
+        bulk_adi_fc_row_045 => (r#"bulk adi 045"#, r###"print -r $(( 100 / 20 / 5 ))"###);
+        bulk_adi_fc_row_046 => (r#"bulk adi 046"#, r###"print -r $(( 2#101 & 2#010 ))"###);
+        bulk_adi_fc_row_047 => (r#"bulk adi 047"#, r###"print -r $(( 0x80 >> 4 ))"###);
+        bulk_adi_fc_row_048 => (r#"bulk adi 048"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adj {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adj_fc_row_001 => (r#"bulk adj 001"#, r###"unsetopt extendedglob 2>/dev/null; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_adj_fc_row_002 => (r#"bulk adj 002"#, r###"setopt extendedglob; [[ -o extendedglob ]]; print -r $?"###);
+        bulk_adj_fc_row_003 => (r#"bulk adj 003"#, r###"[[ -o no_extendedglob ]]; print -r $?"###);
+        bulk_adj_fc_row_004 => (r#"bulk adj 004"#, r###"print -r $(( 1 , 2 , 3 ))"###);
+        bulk_adj_fc_row_005 => (r#"bulk adj 005"#, r###"print -r $(( 3 < 5 ? 1 : 0 ))"###);
+        bulk_adj_fc_row_006 => (r#"bulk adj 006"#, r###"print -r $(( 0xff & 0x0f ))"###);
+        bulk_adj_fc_row_007 => (r#"bulk adj 007"#, r###"print -r $(( 1 << 4 ))"###);
+        bulk_adj_fc_row_008 => (r#"bulk adj 008"#, r###"print -r $(( 16 >> 2 ))"###);
+        bulk_adj_fc_row_009 => (r#"bulk adj 009"#, r###"print -r $(( -1 >> 1 ))"###);
+        bulk_adj_fc_row_010 => (r#"bulk adj 010"#, r###"print -r $(( 8#17 ))"###);
+        bulk_adj_fc_row_011 => (r#"bulk adj 011"#, r###"print -r $(( 16#ff ))"###);
+        bulk_adj_fc_row_012 => (r#"bulk adj 012"#, r###"print -r $(( 2#1010 ))"###);
+        bulk_adj_fc_row_013 => (r#"bulk adj 013"#, r###"print -r $(( 0b1010 ))"###);
+        bulk_adj_fc_row_014 => (r#"bulk adj 014"#, r###"typeset -F1 c=1.05; print -r $(( c > 1 ))"###);
+        bulk_adj_fc_row_015 => (r#"bulk adj 015"#, r###"print -r $(( 4 % 2 == 0 ))"###);
+        bulk_adj_fc_row_016 => (r#"bulk adj 016"#, r###"print -r $(( 0 - 1 == -1 ))"###);
+        bulk_adj_fc_row_017 => (r#"bulk adj 017"#, r###"print -r $(( 72 / 8 / 3 ))"###);
+        bulk_adj_fc_row_018 => (r#"bulk adj 018"#, r###"print -r $(( 24 % 5 % 3 ))"###);
+        bulk_adj_fc_row_019 => (r#"bulk adj 019"#, r###"print -r $(( 2 | 4 | 8 ))"###);
+        bulk_adj_fc_row_020 => (r#"bulk adj 020"#, r###"print -r $(( 15 ^ 9 ))"###);
+        bulk_adj_fc_row_021 => (r#"bulk adj 021"#, r###"print -r $(( 0 || 0 || 7 ))"###);
+        bulk_adj_fc_row_022 => (r#"bulk adj 022"#, r###"print -r $(( 1 || -1 ))"###);
+        bulk_adj_fc_row_023 => (r#"bulk adj 023"#, r###"print -r $(( (1>0) + (0>0) ))"###);
+        bulk_adj_fc_row_024 => (r#"bulk adj 024"#, r###"print -r $(( 3 > 2 > 1 ))"###);
+        bulk_adj_fc_row_025 => (r#"bulk adj 025"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
+        bulk_adj_fc_row_026 => (r#"bulk adj 026"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
+        bulk_adj_fc_row_027 => (r#"bulk adj 027"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
+        bulk_adj_fc_row_028 => (r#"bulk adj 028"#, r###"print -r $(( 100 / 20 / 5 ))"###);
+        bulk_adj_fc_row_029 => (r#"bulk adj 029"#, r###"print -r $(( 2#101 & 2#010 ))"###);
+        bulk_adj_fc_row_030 => (r#"bulk adj 030"#, r###"print -r $(( 0x80 >> 4 ))"###);
+        bulk_adj_fc_row_031 => (r#"bulk adj 031"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
+        bulk_adj_fc_row_032 => (r#"bulk adj 032"#, r###"print -r $(( -(-(-5)) ))"###);
+        bulk_adj_fc_row_033 => (r#"bulk adj 033"#, r###"print -r $(( (1+2)*(3+4) ))"###);
+        bulk_adj_fc_row_034 => (r#"bulk adj 034"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
+        bulk_adj_fc_row_035 => (r#"bulk adj 035"#, r###"[[ "" != x ]]; print -r $?"###);
+        bulk_adj_fc_row_036 => (r#"bulk adj 036"#, r###"[[ -n /dev/null ]]; print -r $?"###);
+        bulk_adj_fc_row_037 => (r#"bulk adj 037"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
+        bulk_adj_fc_row_038 => (r#"bulk adj 038"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
+        bulk_adj_fc_row_039 => (r#"bulk adj 039"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
+        bulk_adj_fc_row_040 => (r#"bulk adj 040"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
+        bulk_adj_fc_row_041 => (r#"bulk adj 041"#, r###"[[ abc < abd ]]; print -r $?"###);
+        bulk_adj_fc_row_042 => (r#"bulk adj 042"#, r###"[[ abc > abb ]]; print -r $?"###);
+        bulk_adj_fc_row_043 => (r#"bulk adj 043"#, r###"[[ abc != def ]]; print -r $?"###);
+        bulk_adj_fc_row_044 => (r#"bulk adj 044"#, r###"[[ abc == abc ]]; print -r $?"###);
+        bulk_adj_fc_row_045 => (r#"bulk adj 045"#, r###"print -r ${(L)@}; set -- MIXED"###);
+        bulk_adj_fc_row_046 => (r#"bulk adj 046"#, r###"slice=abcdef; print -r $slice[3,5]"###);
+        bulk_adj_fc_row_047 => (r#"bulk adj 047"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
+        bulk_adj_fc_row_048 => (r#"bulk adj 048"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adk {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adk_fc_row_001 => (r#"bulk adk 001"#, r###"print -r $(( 24 % 5 % 3 ))"###);
+        bulk_adk_fc_row_002 => (r#"bulk adk 002"#, r###"print -r $(( 2 | 4 | 8 ))"###);
+        bulk_adk_fc_row_003 => (r#"bulk adk 003"#, r###"print -r $(( 15 ^ 9 ))"###);
+        bulk_adk_fc_row_004 => (r#"bulk adk 004"#, r###"print -r $(( 0 || 0 || 7 ))"###);
+        bulk_adk_fc_row_005 => (r#"bulk adk 005"#, r###"print -r $(( 1 || -1 ))"###);
+        bulk_adk_fc_row_006 => (r#"bulk adk 006"#, r###"print -r $(( (1>0) + (0>0) ))"###);
+        bulk_adk_fc_row_007 => (r#"bulk adk 007"#, r###"print -r $(( 3 > 2 > 1 ))"###);
+        bulk_adk_fc_row_008 => (r#"bulk adk 008"#, r###"print -r $(( (9>8)>>(1<0) ))"###);
+        bulk_adk_fc_row_009 => (r#"bulk adk 009"#, r###"print -r $(( 5 ** 2 % 7 ))"###);
+        bulk_adk_fc_row_010 => (r#"bulk adk 010"#, r###"print -r $(( 11 ** 2 % 50 ))"###);
+        bulk_adk_fc_row_011 => (r#"bulk adk 011"#, r###"print -r $(( 100 / 20 / 5 ))"###);
+        bulk_adk_fc_row_012 => (r#"bulk adk 012"#, r###"print -r $(( 2#101 & 2#010 ))"###);
+        bulk_adk_fc_row_013 => (r#"bulk adk 013"#, r###"print -r $(( 0x80 >> 4 ))"###);
+        bulk_adk_fc_row_014 => (r#"bulk adk 014"#, r###"print -r $(( 5 ** 0 ** 3 ))"###);
+        bulk_adk_fc_row_015 => (r#"bulk adk 015"#, r###"print -r $(( -(-(-5)) ))"###);
+        bulk_adk_fc_row_016 => (r#"bulk adk 016"#, r###"print -r $(( (1+2)*(3+4) ))"###);
+        bulk_adk_fc_row_017 => (r#"bulk adk 017"#, r###"v1=v1; [[ v1 -ef v1 ]]; print -r $?"###);
+        bulk_adk_fc_row_018 => (r#"bulk adk 018"#, r###"[[ "" != x ]]; print -r $?"###);
+        bulk_adk_fc_row_019 => (r#"bulk adk 019"#, r###"[[ -n /dev/null ]]; print -r $?"###);
+        bulk_adk_fc_row_020 => (r#"bulk adk 020"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
+        bulk_adk_fc_row_021 => (r#"bulk adk 021"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
+        bulk_adk_fc_row_022 => (r#"bulk adk 022"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
+        bulk_adk_fc_row_023 => (r#"bulk adk 023"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
+        bulk_adk_fc_row_024 => (r#"bulk adk 024"#, r###"[[ abc < abd ]]; print -r $?"###);
+        bulk_adk_fc_row_025 => (r#"bulk adk 025"#, r###"[[ abc > abb ]]; print -r $?"###);
+        bulk_adk_fc_row_026 => (r#"bulk adk 026"#, r###"[[ abc != def ]]; print -r $?"###);
+        bulk_adk_fc_row_027 => (r#"bulk adk 027"#, r###"[[ abc == abc ]]; print -r $?"###);
+        bulk_adk_fc_row_028 => (r#"bulk adk 028"#, r###"print -r ${(L)@}; set -- MIXED"###);
+        bulk_adk_fc_row_029 => (r#"bulk adk 029"#, r###"slice=abcdef; print -r $slice[3,5]"###);
+        bulk_adk_fc_row_030 => (r#"bulk adk 030"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
+        bulk_adk_fc_row_031 => (r#"bulk adk 031"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
+        bulk_adk_fc_row_032 => (r#"bulk adk 032"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
+        bulk_adk_fc_row_033 => (r#"bulk adk 033"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
+        bulk_adk_fc_row_034 => (r#"bulk adk 034"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_adk_fc_row_035 => (r#"bulk adk 035"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
+        bulk_adk_fc_row_036 => (r#"bulk adk 036"#, r###"whence -v print 2>/dev/null; print -r $?"###);
+        bulk_adk_fc_row_037 => (r#"bulk adk 037"#, r###"whence -p ls 2>/dev/null | head -1"###);
+        bulk_adk_fc_row_038 => (r#"bulk adk 038"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_adk_fc_row_039 => (r#"bulk adk 039"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_adk_fc_row_040 => (r#"bulk adk 040"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
+        bulk_adk_fc_row_041 => (r#"bulk adk 041"#, r###"print -r ${aliases[za]:-none}"###);
+        bulk_adk_fc_row_042 => (r#"bulk adk 042"#, r###"print -r ${(t)parameters[PATH]}"###);
+        bulk_adk_fc_row_043 => (r#"bulk adk 043"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
+        bulk_adk_fc_row_044 => (r#"bulk adk 044"#, r###"print -r ${+parameters[PATH]}"###);
+        bulk_adk_fc_row_045 => (r#"bulk adk 045"#, r###"print -r ${+functions[fn]}; fn(){}"###);
+        bulk_adk_fc_row_046 => (r#"bulk adk 046"#, r###"print -r ${+commands[print]}"###);
+        bulk_adk_fc_row_047 => (r#"bulk adk 047"#, r###"print -r ${+zsh_eval_context}"###);
+        bulk_adk_fc_row_048 => (r#"bulk adk 048"#, r###"print -r ${+functrace}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adl {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adl_fc_row_001 => (r#"bulk adl 001"#, r###"[[ "" != x ]]; print -r $?"###);
+        bulk_adl_fc_row_002 => (r#"bulk adl 002"#, r###"[[ -n /dev/null ]]; print -r $?"###);
+        bulk_adl_fc_row_003 => (r#"bulk adl 003"#, r###"setopt extendedglob; [[ mix = [[:digit:]]# ]]; print -r $?"###);
+        bulk_adl_fc_row_004 => (r#"bulk adl 004"#, r####"setopt extendedglob; [[ tag = (#m)[a-z]##_t ]]; print -r $?"####);
+        bulk_adl_fc_row_005 => (r#"bulk adl 005"#, r###"setopt extendedglob; [[ foo = fo(#e) ]]; print -r $?"###);
+        bulk_adl_fc_row_006 => (r#"bulk adl 006"#, r###"setopt extendedglob; [[ foo = (#s)fo ]]; print -r $?"###);
+        bulk_adl_fc_row_007 => (r#"bulk adl 007"#, r###"[[ abc < abd ]]; print -r $?"###);
+        bulk_adl_fc_row_008 => (r#"bulk adl 008"#, r###"[[ abc > abb ]]; print -r $?"###);
+        bulk_adl_fc_row_009 => (r#"bulk adl 009"#, r###"[[ abc != def ]]; print -r $?"###);
+        bulk_adl_fc_row_010 => (r#"bulk adl 010"#, r###"[[ abc == abc ]]; print -r $?"###);
+        bulk_adl_fc_row_011 => (r#"bulk adl 011"#, r###"print -r ${(L)@}; set -- MIXED"###);
+        bulk_adl_fc_row_012 => (r#"bulk adl 012"#, r###"slice=abcdef; print -r $slice[3,5]"###);
+        bulk_adl_fc_row_013 => (r#"bulk adl 013"#, r###"typeset -aS ary=x y; print -r $ary[2]"###);
+        bulk_adl_fc_row_014 => (r#"bulk adl 014"#, r###"pushd /tmp >/dev/null 2>&1; popd >/dev/null 2>&1; print -r $?"###);
+        bulk_adl_fc_row_015 => (r#"bulk adl 015"#, r###"builtin cd -q / 2>/dev/null; print -r $?"###);
+        bulk_adl_fc_row_016 => (r#"bulk adl 016"#, r###"cd /tmp 2>/dev/null; print -r ${PWD:t}"###);
+        bulk_adl_fc_row_017 => (r#"bulk adl 017"#, r###"hash -r 2>/dev/null; print -r $?"###);
+        bulk_adl_fc_row_018 => (r#"bulk adl 018"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
+        bulk_adl_fc_row_019 => (r#"bulk adl 019"#, r###"whence -v print 2>/dev/null; print -r $?"###);
+        bulk_adl_fc_row_020 => (r#"bulk adl 020"#, r###"whence -p ls 2>/dev/null | head -1"###);
+        bulk_adl_fc_row_021 => (r#"bulk adl 021"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_adl_fc_row_022 => (r#"bulk adl 022"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_adl_fc_row_023 => (r#"bulk adl 023"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
+        bulk_adl_fc_row_024 => (r#"bulk adl 024"#, r###"print -r ${aliases[za]:-none}"###);
+        bulk_adl_fc_row_025 => (r#"bulk adl 025"#, r###"print -r ${(t)parameters[PATH]}"###);
+        bulk_adl_fc_row_026 => (r#"bulk adl 026"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
+        bulk_adl_fc_row_027 => (r#"bulk adl 027"#, r###"print -r ${+parameters[PATH]}"###);
+        bulk_adl_fc_row_028 => (r#"bulk adl 028"#, r###"print -r ${+functions[fn]}; fn(){}"###);
+        bulk_adl_fc_row_029 => (r#"bulk adl 029"#, r###"print -r ${+commands[print]}"###);
+        bulk_adl_fc_row_030 => (r#"bulk adl 030"#, r###"print -r ${+zsh_eval_context}"###);
+        bulk_adl_fc_row_031 => (r#"bulk adl 031"#, r###"print -r ${+functrace}"###);
+        bulk_adl_fc_row_032 => (r#"bulk adl 032"#, r###"print -r ${+funcstack}"###);
+        bulk_adl_fc_row_033 => (r#"bulk adl 033"#, r###"print -r ${+funcfiletrace}"###);
+        bulk_adl_fc_row_034 => (r#"bulk adl 034"#, r###"print -r ${+jobstates}"###);
+        bulk_adl_fc_row_035 => (r#"bulk adl 035"#, r###"print -r ${+jobtexts}"###);
+        bulk_adl_fc_row_036 => (r#"bulk adl 036"#, r###"print -r ${+jobdirs}"###);
+        bulk_adl_fc_row_037 => (r#"bulk adl 037"#, r###"print -r ${+historywords}"###);
+        bulk_adl_fc_row_038 => (r#"bulk adl 038"#, r###"print -r ${+usergroups}"###);
+        bulk_adl_fc_row_039 => (r#"bulk adl 039"#, r###"print -r ${+dis_builtins}"###);
+        bulk_adl_fc_row_040 => (r#"bulk adl 040"#, r###"print -r ${+dis_widgets}"###);
+        bulk_adl_fc_row_041 => (r#"bulk adl 041"#, r###"print -r ${+dis_reswords}"###);
+        bulk_adl_fc_row_042 => (r#"bulk adl 042"#, r###"print -r ${+dis_patchars}"###);
+        bulk_adl_fc_row_043 => (r#"bulk adl 043"#, r###"print -r ${+dis_commands}"###);
+        bulk_adl_fc_row_044 => (r#"bulk adl 044"#, r###"print -r ${+module_path}"###);
+        bulk_adl_fc_row_045 => (r#"bulk adl 045"#, r###"print -r ${+functrace}"###);
+        bulk_adl_fc_row_046 => (r#"bulk adl 046"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
+        bulk_adl_fc_row_047 => (r#"bulk adl 047"#, r###"{ true; false; }; print -r $?"###);
+        bulk_adl_fc_row_048 => (r#"bulk adl 048"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adm {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adm_fc_row_001 => (r#"bulk adm 001"#, r###"autoload -Uz is-at-least 2>/dev/null; print -r $?"###);
+        bulk_adm_fc_row_002 => (r#"bulk adm 002"#, r###"whence -v print 2>/dev/null; print -r $?"###);
+        bulk_adm_fc_row_003 => (r#"bulk adm 003"#, r###"whence -p ls 2>/dev/null | head -1"###);
+        bulk_adm_fc_row_004 => (r#"bulk adm 004"#, r###"typeset -f fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_adm_fc_row_005 => (r#"bulk adm 005"#, r###"functions fn 2>/dev/null; fn(){ :; }; print -r $?"###);
+        bulk_adm_fc_row_006 => (r#"bulk adm 006"#, r###"unfunction fn 2>/dev/null; fn(){ :; }; unfunction fn; print -r $?"###);
+        bulk_adm_fc_row_007 => (r#"bulk adm 007"#, r###"print -r ${aliases[za]:-none}"###);
+        bulk_adm_fc_row_008 => (r#"bulk adm 008"#, r###"print -r ${(t)parameters[PATH]}"###);
+        bulk_adm_fc_row_009 => (r#"bulk adm 009"#, r###"print -r ${(k)parameters[(I)PATH]}"###);
+        bulk_adm_fc_row_010 => (r#"bulk adm 010"#, r###"print -r ${+parameters[PATH]}"###);
+        bulk_adm_fc_row_011 => (r#"bulk adm 011"#, r###"print -r ${+functions[fn]}; fn(){}"###);
+        bulk_adm_fc_row_012 => (r#"bulk adm 012"#, r###"print -r ${+commands[print]}"###);
+        bulk_adm_fc_row_013 => (r#"bulk adm 013"#, r###"print -r ${+zsh_eval_context}"###);
+        bulk_adm_fc_row_014 => (r#"bulk adm 014"#, r###"print -r ${+functrace}"###);
+        bulk_adm_fc_row_015 => (r#"bulk adm 015"#, r###"print -r ${+funcstack}"###);
+        bulk_adm_fc_row_016 => (r#"bulk adm 016"#, r###"print -r ${+funcfiletrace}"###);
+        bulk_adm_fc_row_017 => (r#"bulk adm 017"#, r###"print -r ${+jobstates}"###);
+        bulk_adm_fc_row_018 => (r#"bulk adm 018"#, r###"print -r ${+jobtexts}"###);
+        bulk_adm_fc_row_019 => (r#"bulk adm 019"#, r###"print -r ${+jobdirs}"###);
+        bulk_adm_fc_row_020 => (r#"bulk adm 020"#, r###"print -r ${+historywords}"###);
+        bulk_adm_fc_row_021 => (r#"bulk adm 021"#, r###"print -r ${+usergroups}"###);
+        bulk_adm_fc_row_022 => (r#"bulk adm 022"#, r###"print -r ${+dis_builtins}"###);
+        bulk_adm_fc_row_023 => (r#"bulk adm 023"#, r###"print -r ${+dis_widgets}"###);
+        bulk_adm_fc_row_024 => (r#"bulk adm 024"#, r###"print -r ${+dis_reswords}"###);
+        bulk_adm_fc_row_025 => (r#"bulk adm 025"#, r###"print -r ${+dis_patchars}"###);
+        bulk_adm_fc_row_026 => (r#"bulk adm 026"#, r###"print -r ${+dis_commands}"###);
+        bulk_adm_fc_row_027 => (r#"bulk adm 027"#, r###"print -r ${+module_path}"###);
+        bulk_adm_fc_row_028 => (r#"bulk adm 028"#, r###"print -r ${+functrace}"###);
+        bulk_adm_fc_row_029 => (r#"bulk adm 029"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
+        bulk_adm_fc_row_030 => (r#"bulk adm 030"#, r###"{ true; false; }; print -r $?"###);
+        bulk_adm_fc_row_031 => (r#"bulk adm 031"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
+        bulk_adm_fc_row_032 => (r#"bulk adm 032"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
+        bulk_adm_fc_row_033 => (r#"bulk adm 033"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
+        bulk_adm_fc_row_034 => (r#"bulk adm 034"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
+        bulk_adm_fc_row_035 => (r#"bulk adm 035"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
+        bulk_adm_fc_row_036 => (r#"bulk adm 036"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
+        bulk_adm_fc_row_037 => (r#"bulk adm 037"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
+        bulk_adm_fc_row_038 => (r#"bulk adm 038"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
+        bulk_adm_fc_row_039 => (r#"bulk adm 039"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_adm_fc_row_040 => (r#"bulk adm 040"#, r###"print -r ${(t)x}; x=hello"###);
+        bulk_adm_fc_row_041 => (r#"bulk adm 041"#, r###"unset y; print -r ${+y}"###);
+        bulk_adm_fc_row_042 => (r#"bulk adm 042"#, r###"x=hello; print -r ${+x}"###);
+        bulk_adm_fc_row_043 => (r#"bulk adm 043"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_adm_fc_row_044 => (r#"bulk adm 044"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+        bulk_adm_fc_row_045 => (r#"bulk adm 045"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
+        bulk_adm_fc_row_046 => (r#"bulk adm 046"#, r###"x=abc; print -r ${x/#a/z}"###);
+        bulk_adm_fc_row_047 => (r#"bulk adm 047"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_adm_fc_row_048 => (r#"bulk adm 048"#, r###"print -r ${(j::)a}; a=(x y)"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adn {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adn_fc_row_001 => (r#"bulk adn 001"#, r###"print -r ${+jobtexts}"###);
+        bulk_adn_fc_row_002 => (r#"bulk adn 002"#, r###"print -r ${+jobdirs}"###);
+        bulk_adn_fc_row_003 => (r#"bulk adn 003"#, r###"print -r ${+historywords}"###);
+        bulk_adn_fc_row_004 => (r#"bulk adn 004"#, r###"print -r ${+usergroups}"###);
+        bulk_adn_fc_row_005 => (r#"bulk adn 005"#, r###"print -r ${+dis_builtins}"###);
+        bulk_adn_fc_row_006 => (r#"bulk adn 006"#, r###"print -r ${+dis_widgets}"###);
+        bulk_adn_fc_row_007 => (r#"bulk adn 007"#, r###"print -r ${+dis_reswords}"###);
+        bulk_adn_fc_row_008 => (r#"bulk adn 008"#, r###"print -r ${+dis_patchars}"###);
+        bulk_adn_fc_row_009 => (r#"bulk adn 009"#, r###"print -r ${+dis_commands}"###);
+        bulk_adn_fc_row_010 => (r#"bulk adn 010"#, r###"print -r ${+module_path}"###);
+        bulk_adn_fc_row_011 => (r#"bulk adn 011"#, r###"print -r ${+functrace}"###);
+        bulk_adn_fc_row_012 => (r#"bulk adn 012"#, r###"true | true | false; print -r ${pipestatus[3]}"###);
+        bulk_adn_fc_row_013 => (r#"bulk adn 013"#, r###"{ true; false; }; print -r $?"###);
+        bulk_adn_fc_row_014 => (r#"bulk adn 014"#, r###"fn(){ typeset -a la=(x y); print -r ${#la}; }; fn"###);
+        bulk_adn_fc_row_015 => (r#"bulk adn 015"#, r###"print -r ${arr[@]:1:2}; arr=(a b c d)"###);
+        bulk_adn_fc_row_016 => (r#"bulk adn 016"#, r###"print -r ${(pj:,:)a}; a=(x y)"###);
+        bulk_adn_fc_row_017 => (r#"bulk adn 017"#, r###"print -r ${(Mk)h}; typeset -A h; h=(x 1 y 2)"###);
+        bulk_adn_fc_row_018 => (r#"bulk adn 018"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
+        bulk_adn_fc_row_019 => (r#"bulk adn 019"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
+        bulk_adn_fc_row_020 => (r#"bulk adn 020"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
+        bulk_adn_fc_row_021 => (r#"bulk adn 021"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
+        bulk_adn_fc_row_022 => (r#"bulk adn 022"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_adn_fc_row_023 => (r#"bulk adn 023"#, r###"print -r ${(t)x}; x=hello"###);
+        bulk_adn_fc_row_024 => (r#"bulk adn 024"#, r###"unset y; print -r ${+y}"###);
+        bulk_adn_fc_row_025 => (r#"bulk adn 025"#, r###"x=hello; print -r ${+x}"###);
+        bulk_adn_fc_row_026 => (r#"bulk adn 026"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_adn_fc_row_027 => (r#"bulk adn 027"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+        bulk_adn_fc_row_028 => (r#"bulk adn 028"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
+        bulk_adn_fc_row_029 => (r#"bulk adn 029"#, r###"x=abc; print -r ${x/#a/z}"###);
+        bulk_adn_fc_row_030 => (r#"bulk adn 030"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_adn_fc_row_031 => (r#"bulk adn 031"#, r###"print -r ${(j::)a}; a=(x y)"###);
+        bulk_adn_fc_row_032 => (r#"bulk adn 032"#, r###"print -r ${(pj::)a}; a=(x y)"###);
+        bulk_adn_fc_row_033 => (r#"bulk adn 033"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
+        bulk_adn_fc_row_034 => (r#"bulk adn 034"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_adn_fc_row_035 => (r#"bulk adn 035"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_adn_fc_row_036 => (r#"bulk adn 036"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_adn_fc_row_037 => (r#"bulk adn 037"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_adn_fc_row_038 => (r#"bulk adn 038"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_adn_fc_row_039 => (r#"bulk adn 039"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_adn_fc_row_040 => (r#"bulk adn 040"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_adn_fc_row_041 => (r#"bulk adn 041"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_adn_fc_row_042 => (r#"bulk adn 042"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_adn_fc_row_043 => (r#"bulk adn 043"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_adn_fc_row_044 => (r#"bulk adn 044"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_adn_fc_row_045 => (r#"bulk adn 045"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_adn_fc_row_046 => (r#"bulk adn 046"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_adn_fc_row_047 => (r#"bulk adn 047"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_adn_fc_row_048 => (r#"bulk adn 048"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+    }
+}
+
+mod corpus_dash_fc_bulk_ado {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_ado_fc_row_001 => (r#"bulk ado 001"#, r###"print -r ${(oa)n}; n=(10 2 1)"###);
+        bulk_ado_fc_row_002 => (r#"bulk ado 002"#, r###"print -r ${(On)n}; n=(10 2 1)"###);
+        bulk_ado_fc_row_003 => (r#"bulk ado 003"#, r###"print -r ${(n)a}; a=(1 2 3)"###);
+        bulk_ado_fc_row_004 => (r#"bulk ado 004"#, r###"print -r ${(N)a}; a=(1 2 3)"###);
+        bulk_ado_fc_row_005 => (r#"bulk ado 005"#, r###"print -r ${(w)#w}; w=a b c"###);
+        bulk_ado_fc_row_006 => (r#"bulk ado 006"#, r###"print -r ${(t)x}; x=hello"###);
+        bulk_ado_fc_row_007 => (r#"bulk ado 007"#, r###"unset y; print -r ${+y}"###);
+        bulk_ado_fc_row_008 => (r#"bulk ado 008"#, r###"x=hello; print -r ${+x}"###);
+        bulk_ado_fc_row_009 => (r#"bulk ado 009"#, r###"print -r ${(q+)x}; x=hi"###);
+        bulk_ado_fc_row_010 => (r#"bulk ado 010"#, r###"x=foo; print -r ${x:s/foo/bar/}"###);
+        bulk_ado_fc_row_011 => (r#"bulk ado 011"#, r###"x=foofoo; print -r ${x//foo/bar}"###);
+        bulk_ado_fc_row_012 => (r#"bulk ado 012"#, r###"x=abc; print -r ${x/#a/z}"###);
+        bulk_ado_fc_row_013 => (r#"bulk ado 013"#, r###"x=abc; print -r ${x/%c/z}"###);
+        bulk_ado_fc_row_014 => (r#"bulk ado 014"#, r###"print -r ${(j::)a}; a=(x y)"###);
+        bulk_ado_fc_row_015 => (r#"bulk ado 015"#, r###"print -r ${(pj::)a}; a=(x y)"###);
+        bulk_ado_fc_row_016 => (r#"bulk ado 016"#, r###"print -r ${(ps:\n:)x}; x=$'a\nb'"###);
+        bulk_ado_fc_row_017 => (r#"bulk ado 017"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_ado_fc_row_018 => (r#"bulk ado 018"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_ado_fc_row_019 => (r#"bulk ado 019"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_ado_fc_row_020 => (r#"bulk ado 020"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_ado_fc_row_021 => (r#"bulk ado 021"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_ado_fc_row_022 => (r#"bulk ado 022"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_ado_fc_row_023 => (r#"bulk ado 023"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_ado_fc_row_024 => (r#"bulk ado 024"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_ado_fc_row_025 => (r#"bulk ado 025"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_ado_fc_row_026 => (r#"bulk ado 026"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_ado_fc_row_027 => (r#"bulk ado 027"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_ado_fc_row_028 => (r#"bulk ado 028"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_ado_fc_row_029 => (r#"bulk ado 029"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_ado_fc_row_030 => (r#"bulk ado 030"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_ado_fc_row_031 => (r#"bulk ado 031"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_ado_fc_row_032 => (r#"bulk ado 032"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_ado_fc_row_033 => (r#"bulk ado 033"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_ado_fc_row_034 => (r#"bulk ado 034"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_ado_fc_row_035 => (r#"bulk ado 035"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_ado_fc_row_036 => (r#"bulk ado 036"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_ado_fc_row_037 => (r#"bulk ado 037"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_ado_fc_row_038 => (r#"bulk ado 038"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_ado_fc_row_039 => (r#"bulk ado 039"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_ado_fc_row_040 => (r#"bulk ado 040"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_ado_fc_row_041 => (r#"bulk ado 041"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_ado_fc_row_042 => (r#"bulk ado 042"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_ado_fc_row_043 => (r#"bulk ado 043"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_ado_fc_row_044 => (r#"bulk ado 044"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_ado_fc_row_045 => (r#"bulk ado 045"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_ado_fc_row_046 => (r#"bulk ado 046"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_ado_fc_row_047 => (r#"bulk ado 047"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_ado_fc_row_048 => (r#"bulk ado 048"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adp {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adp_fc_row_001 => (r#"bulk adp 001"#, r###"print -r ${(e)x}; x=$'2+2'"###);
+        bulk_adp_fc_row_002 => (r#"bulk adp 002"#, r###"integer co=0; : $(( co=6 )); print -r $co"###);
+        bulk_adp_fc_row_003 => (r#"bulk adp 003"#, r###"print -r $(( 1<<0 ))"###);
+        bulk_adp_fc_row_004 => (r#"bulk adp 004"#, r###"print -r $(( 1<<10 ))"###);
+        bulk_adp_fc_row_005 => (r#"bulk adp 005"#, r###"print -r $(( 0x7fffffff & 0 ))"###);
+        bulk_adp_fc_row_006 => (r#"bulk adp 006"#, r###"print -r $(( 1000003 % 97 ))"###);
+        bulk_adp_fc_row_007 => (r#"bulk adp 007"#, r###"print -r $(( 63 & 31 | 15 ))"###);
+        bulk_adp_fc_row_008 => (r#"bulk adp 008"#, r###"print -r $(( 0x10001 % 256 ))"###);
+        bulk_adp_fc_row_009 => (r#"bulk adp 009"#, r###"print -r $(( 2*2*2*2 ))"###);
+        bulk_adp_fc_row_010 => (r#"bulk adp 010"#, r###"print -r $(( (1==1)+(0==1) ))"###);
+        bulk_adp_fc_row_011 => (r#"bulk adp 011"#, r###"print -r $(( 1 && (0 || 1) ))"###);
+        bulk_adp_fc_row_012 => (r#"bulk adp 012"#, r###"[[ zero = <-> ]]; print -r $?"###);
+        bulk_adp_fc_row_013 => (r#"bulk adp 013"#, r###"[[ . = . ]]; print -r $?"###);
+        bulk_adp_fc_row_014 => (r#"bulk adp 014"#, r###"[[ a -lt b ]]; print -r $?"###);
+        bulk_adp_fc_row_015 => (r#"bulk adp 015"#, r####"[[ ABC = [A-Z]## ]]; print -r $?"####);
+        bulk_adp_fc_row_016 => (r#"bulk adp 016"#, r###"[[ AAA =~ ^A+ ]]; print -r $?"###);
+        bulk_adp_fc_row_017 => (r#"bulk adp 017"#, r###"[[ bot = *ot* ]]; print -r $?"###);
+        bulk_adp_fc_row_018 => (r#"bulk adp 018"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_adp_fc_row_019 => (r#"bulk adp 019"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_adp_fc_row_020 => (r#"bulk adp 020"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_adp_fc_row_021 => (r#"bulk adp 021"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_adp_fc_row_022 => (r#"bulk adp 022"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_adp_fc_row_023 => (r#"bulk adp 023"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_adp_fc_row_024 => (r#"bulk adp 024"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_adp_fc_row_025 => (r#"bulk adp 025"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_adp_fc_row_026 => (r#"bulk adp 026"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_adp_fc_row_027 => (r#"bulk adp 027"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_adp_fc_row_028 => (r#"bulk adp 028"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_adp_fc_row_029 => (r#"bulk adp 029"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_adp_fc_row_030 => (r#"bulk adp 030"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_adp_fc_row_031 => (r#"bulk adp 031"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_adp_fc_row_032 => (r#"bulk adp 032"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_adp_fc_row_033 => (r#"bulk adp 033"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_adp_fc_row_034 => (r#"bulk adp 034"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_adp_fc_row_035 => (r#"bulk adp 035"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_adp_fc_row_036 => (r#"bulk adp 036"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_adp_fc_row_037 => (r#"bulk adp 037"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_adp_fc_row_038 => (r#"bulk adp 038"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_adp_fc_row_039 => (r#"bulk adp 039"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_adp_fc_row_040 => (r#"bulk adp 040"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_adp_fc_row_041 => (r#"bulk adp 041"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_adp_fc_row_042 => (r#"bulk adp 042"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_adp_fc_row_043 => (r#"bulk adp 043"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_adp_fc_row_044 => (r#"bulk adp 044"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_adp_fc_row_045 => (r#"bulk adp 045"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_adp_fc_row_046 => (r#"bulk adp 046"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_adp_fc_row_047 => (r#"bulk adp 047"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_adp_fc_row_048 => (r#"bulk adp 048"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adq {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adq_fc_row_001 => (r#"bulk adq 001"#, r###"[[ -e /dev/null ]]; print -r $?"###);
+        bulk_adq_fc_row_002 => (r#"bulk adq 002"#, r###"[[ -s /dev/null ]]; print -r $?"###);
+        bulk_adq_fc_row_003 => (r#"bulk adq 003"#, r###"[[ -u /etc/hosts ]]; print -r $?"###);
+        bulk_adq_fc_row_004 => (r#"bulk adq 004"#, r###"[[ -g / ]]; print -r $?"###);
+        bulk_adq_fc_row_005 => (r#"bulk adq 005"#, r###"[[ -k /tmp ]]; print -r $?"###);
+        bulk_adq_fc_row_006 => (r#"bulk adq 006"#, r###"[[ -b /dev/null ]]; print -r $?"###);
+        bulk_adq_fc_row_007 => (r#"bulk adq 007"#, r###"[[ -c /dev/null ]]; print -r $?"###);
+        bulk_adq_fc_row_008 => (r#"bulk adq 008"#, r###"print -r ${(l:5::0:)n}; n=42"###);
+        bulk_adq_fc_row_009 => (r#"bulk adq 009"#, r###"print -r ${(r:5::0:)n}; n=42"###);
+        bulk_adq_fc_row_010 => (r#"bulk adq 010"#, r###"print -r ${(c)str}; str=hello"###);
+        bulk_adq_fc_row_011 => (r#"bulk adq 011"#, r###"print -r ${(u)arr}; arr=(a A b)"###);
+        bulk_adq_fc_row_012 => (r#"bulk adq 012"#, r###"print -r ${(L)str}; str=HELLO"###);
+        bulk_adq_fc_row_013 => (r#"bulk adq 013"#, r###"print -r ${(U)str}; str=hello"###);
+        bulk_adq_fc_row_014 => (r#"bulk adq 014"#, r###"print -r ${(C)str}; str=hello world"###);
+        bulk_adq_fc_row_015 => (r#"bulk adq 015"#, r###"print -r ${(Q)str}; str=$'a\nb'"###);
+        bulk_adq_fc_row_016 => (r#"bulk adq 016"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_adq_fc_row_017 => (r#"bulk adq 017"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_adq_fc_row_018 => (r#"bulk adq 018"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_adq_fc_row_019 => (r#"bulk adq 019"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_adq_fc_row_020 => (r#"bulk adq 020"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_adq_fc_row_021 => (r#"bulk adq 021"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_adq_fc_row_022 => (r#"bulk adq 022"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_adq_fc_row_023 => (r#"bulk adq 023"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_adq_fc_row_024 => (r#"bulk adq 024"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_adq_fc_row_025 => (r#"bulk adq 025"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_adq_fc_row_026 => (r#"bulk adq 026"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_adq_fc_row_027 => (r#"bulk adq 027"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_adq_fc_row_028 => (r#"bulk adq 028"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_adq_fc_row_029 => (r#"bulk adq 029"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_adq_fc_row_030 => (r#"bulk adq 030"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_adq_fc_row_031 => (r#"bulk adq 031"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_adq_fc_row_032 => (r#"bulk adq 032"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_adq_fc_row_033 => (r#"bulk adq 033"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_adq_fc_row_034 => (r#"bulk adq 034"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_adq_fc_row_035 => (r#"bulk adq 035"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_adq_fc_row_036 => (r#"bulk adq 036"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_adq_fc_row_037 => (r#"bulk adq 037"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_adq_fc_row_038 => (r#"bulk adq 038"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_adq_fc_row_039 => (r#"bulk adq 039"#, r###"print -r {1..3}"###);
+        bulk_adq_fc_row_040 => (r#"bulk adq 040"#, r###"print -r {01..03}"###);
+        bulk_adq_fc_row_041 => (r#"bulk adq 041"#, r###"print -r {a..c}"###);
+        bulk_adq_fc_row_042 => (r#"bulk adq 042"#, r###"print -r {1..4..2}"###);
+        bulk_adq_fc_row_043 => (r#"bulk adq 043"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_adq_fc_row_044 => (r#"bulk adq 044"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_adq_fc_row_045 => (r#"bulk adq 045"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_adq_fc_row_046 => (r#"bulk adq 046"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_adq_fc_row_047 => (r#"bulk adq 047"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_adq_fc_row_048 => (r#"bulk adq 048"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adr {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adr_fc_row_001 => (r#"bulk adr 001"#, r###"print -r ${(qq)str}; str=hi"###);
+        bulk_adr_fc_row_002 => (r#"bulk adr 002"#, r###"print -r ${(V)str}; str=hi"###);
+        bulk_adr_fc_row_003 => (r#"bulk adr 003"#, r###"print -r ${(Z)str}; str=$'a\nb'"###);
+        bulk_adr_fc_row_004 => (r#"bulk adr 004"#, r###"print -r ${(z)str}; str=$'a\0b'"###);
+        bulk_adr_fc_row_005 => (r#"bulk adr 005"#, r###"print -r ${(j:-:)a}; a=(x y)"###);
+        bulk_adr_fc_row_006 => (r#"bulk adr 006"#, r###"print -r ${(pj:-:)a}; a=(x y)"###);
+        bulk_adr_fc_row_007 => (r#"bulk adr 007"#, r###"a=(1 2 3); print -r ${a[1,-1]}"###);
+        bulk_adr_fc_row_008 => (r#"bulk adr 008"#, r###"a=(1 2 3); print -r ${a[1,2]}"###);
+        bulk_adr_fc_row_009 => (r#"bulk adr 009"#, r###"a=(1 2 3); print -r ${a[-1]}"###);
+        bulk_adr_fc_row_010 => (r#"bulk adr 010"#, r###"a=(1 2 3); print -r ${a[(i)2]}"###);
+        bulk_adr_fc_row_011 => (r#"bulk adr 011"#, r###"a=(1 2 3); print -r ${a[(I)2]}"###);
+        bulk_adr_fc_row_012 => (r#"bulk adr 012"#, r###"a=(1 2 3); print -r ${a[(R)9]}"###);
+        bulk_adr_fc_row_013 => (r#"bulk adr 013"#, r###"a=(1 2 3); print -r ${a[(r)2]}"###);
+        bulk_adr_fc_row_014 => (r#"bulk adr 014"#, r###"typeset -A m; m=(k v); print -r ${m[k]}"###);
+        bulk_adr_fc_row_015 => (r#"bulk adr 015"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_adr_fc_row_016 => (r#"bulk adr 016"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_adr_fc_row_017 => (r#"bulk adr 017"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_adr_fc_row_018 => (r#"bulk adr 018"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_adr_fc_row_019 => (r#"bulk adr 019"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_adr_fc_row_020 => (r#"bulk adr 020"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_adr_fc_row_021 => (r#"bulk adr 021"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_adr_fc_row_022 => (r#"bulk adr 022"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_adr_fc_row_023 => (r#"bulk adr 023"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_adr_fc_row_024 => (r#"bulk adr 024"#, r###"print -r {1..3}"###);
+        bulk_adr_fc_row_025 => (r#"bulk adr 025"#, r###"print -r {01..03}"###);
+        bulk_adr_fc_row_026 => (r#"bulk adr 026"#, r###"print -r {a..c}"###);
+        bulk_adr_fc_row_027 => (r#"bulk adr 027"#, r###"print -r {1..4..2}"###);
+        bulk_adr_fc_row_028 => (r#"bulk adr 028"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_adr_fc_row_029 => (r#"bulk adr 029"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_adr_fc_row_030 => (r#"bulk adr 030"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_adr_fc_row_031 => (r#"bulk adr 031"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_adr_fc_row_032 => (r#"bulk adr 032"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_adr_fc_row_033 => (r#"bulk adr 033"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_adr_fc_row_034 => (r#"bulk adr 034"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_adr_fc_row_035 => (r#"bulk adr 035"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_adr_fc_row_036 => (r#"bulk adr 036"#, r###"(( 1 )); print -r $?"###);
+        bulk_adr_fc_row_037 => (r#"bulk adr 037"#, r###"(( 0 )); print -r $?"###);
+        bulk_adr_fc_row_038 => (r#"bulk adr 038"#, r###": $(( 0 )) || print -r z"###);
+        bulk_adr_fc_row_039 => (r#"bulk adr 039"#, r###": $(( 1 )) && print -r y"###);
+        bulk_adr_fc_row_040 => (r#"bulk adr 040"#, r###"let x=2+2; print -r $x"###);
+        bulk_adr_fc_row_041 => (r#"bulk adr 041"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_adr_fc_row_042 => (r#"bulk adr 042"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_adr_fc_row_043 => (r#"bulk adr 043"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_adr_fc_row_044 => (r#"bulk adr 044"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_adr_fc_row_045 => (r#"bulk adr 045"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_adr_fc_row_046 => (r#"bulk adr 046"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_adr_fc_row_047 => (r#"bulk adr 047"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_adr_fc_row_048 => (r#"bulk adr 048"#, r###"typeset -h s; s=abc; print -r $s"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_ads {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_ads_fc_row_001 => (r#"bulk ads 001"#, r###"typeset -A m; m=(k v); print -r ${(k)m}"###);
+        bulk_ads_fc_row_002 => (r#"bulk ads 002"#, r###"typeset -A m; m=(k v); print -r ${(v)m}"###);
+        bulk_ads_fc_row_003 => (r#"bulk ads 003"#, r###"typeset -A m; m=(a 1 b 2); print -r ${(kv)m}"###);
+        bulk_ads_fc_row_004 => (r#"bulk ads 004"#, r###"print -r ${(o)lst}; lst=(z a m)"###);
+        bulk_ads_fc_row_005 => (r#"bulk ads 005"#, r###"print -r ${(O)lst}; lst=(z a m)"###);
+        bulk_ads_fc_row_006 => (r#"bulk ads 006"#, r###"print -r ${(i)lst}; lst=(z a m)"###);
+        bulk_ads_fc_row_007 => (r#"bulk ads 007"#, r###"a=(x y); print -r ${^a}"###);
+        bulk_ads_fc_row_008 => (r#"bulk ads 008"#, r###"a=(1 2); b=(a b); print -r ${^a}${^b}"###);
+        bulk_ads_fc_row_009 => (r#"bulk ads 009"#, r###"setopt braceccl; print -r {a,b}"###);
+        bulk_ads_fc_row_010 => (r#"bulk ads 010"#, r###"print -r {1..3}"###);
+        bulk_ads_fc_row_011 => (r#"bulk ads 011"#, r###"print -r {01..03}"###);
+        bulk_ads_fc_row_012 => (r#"bulk ads 012"#, r###"print -r {a..c}"###);
+        bulk_ads_fc_row_013 => (r#"bulk ads 013"#, r###"print -r {1..4..2}"###);
+        bulk_ads_fc_row_014 => (r#"bulk ads 014"#, r###"print -r ${~pattern}; pattern='*'; :"###);
+        bulk_ads_fc_row_015 => (r#"bulk ads 015"#, r###"integer x=3; (( x++ )); print -r $x"###);
+        bulk_ads_fc_row_016 => (r#"bulk ads 016"#, r###"integer x=3; (( ++x )); print -r $x"###);
+        bulk_ads_fc_row_017 => (r#"bulk ads 017"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_ads_fc_row_018 => (r#"bulk ads 018"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_ads_fc_row_019 => (r#"bulk ads 019"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_ads_fc_row_020 => (r#"bulk ads 020"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_ads_fc_row_021 => (r#"bulk ads 021"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_ads_fc_row_022 => (r#"bulk ads 022"#, r###"(( 1 )); print -r $?"###);
+        bulk_ads_fc_row_023 => (r#"bulk ads 023"#, r###"(( 0 )); print -r $?"###);
+        bulk_ads_fc_row_024 => (r#"bulk ads 024"#, r###": $(( 0 )) || print -r z"###);
+        bulk_ads_fc_row_025 => (r#"bulk ads 025"#, r###": $(( 1 )) && print -r y"###);
+        bulk_ads_fc_row_026 => (r#"bulk ads 026"#, r###"let x=2+2; print -r $x"###);
+        bulk_ads_fc_row_027 => (r#"bulk ads 027"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_ads_fc_row_028 => (r#"bulk ads 028"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_ads_fc_row_029 => (r#"bulk ads 029"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_ads_fc_row_030 => (r#"bulk ads 030"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_ads_fc_row_031 => (r#"bulk ads 031"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_ads_fc_row_032 => (r#"bulk ads 032"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_ads_fc_row_033 => (r#"bulk ads 033"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_ads_fc_row_034 => (r#"bulk ads 034"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_ads_fc_row_035 => (r#"bulk ads 035"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_ads_fc_row_036 => (r#"bulk ads 036"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_ads_fc_row_037 => (r#"bulk ads 037"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_ads_fc_row_038 => (r#"bulk ads 038"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_ads_fc_row_039 => (r#"bulk ads 039"#, r###"local a; a=1; print -r $a"###);
+        bulk_ads_fc_row_040 => (r#"bulk ads 040"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_ads_fc_row_041 => (r#"bulk ads 041"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_ads_fc_row_042 => (r#"bulk ads 042"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_ads_fc_row_043 => (r#"bulk ads 043"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_ads_fc_row_044 => (r#"bulk ads 044"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_ads_fc_row_045 => (r#"bulk ads 045"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_ads_fc_row_046 => (r#"bulk ads 046"#, r###"setopt localoptions; print -r $?"###);
+        bulk_ads_fc_row_047 => (r#"bulk ads 047"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_ads_fc_row_048 => (r#"bulk ads 048"#, r###"setopt pipefail; false | true; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adt {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adt_fc_row_001 => (r#"bulk adt 001"#, r###"integer x=3; (( x-- )); print -r $x"###);
+        bulk_adt_fc_row_002 => (r#"bulk adt 002"#, r###"integer x=3; print -r $(( x ** 2 ))"###);
+        bulk_adt_fc_row_003 => (r#"bulk adt 003"#, r###"float f=1.5; print -r $(( f + 1 ))"###);
+        bulk_adt_fc_row_004 => (r#"bulk adt 004"#, r###"print -r $(( 7 / 2 ))"###);
+        bulk_adt_fc_row_005 => (r#"bulk adt 005"#, r###"print -r $(( 7.0 / 2 ))"###);
+        bulk_adt_fc_row_006 => (r#"bulk adt 006"#, r###"(( 1 )); print -r $?"###);
+        bulk_adt_fc_row_007 => (r#"bulk adt 007"#, r###"(( 0 )); print -r $?"###);
+        bulk_adt_fc_row_008 => (r#"bulk adt 008"#, r###": $(( 0 )) || print -r z"###);
+        bulk_adt_fc_row_009 => (r#"bulk adt 009"#, r###": $(( 1 )) && print -r y"###);
+        bulk_adt_fc_row_010 => (r#"bulk adt 010"#, r###"let x=2+2; print -r $x"###);
+        bulk_adt_fc_row_011 => (r#"bulk adt 011"#, r###"(( x = 5 )); print -r $x"###);
+        bulk_adt_fc_row_012 => (r#"bulk adt 012"#, r###"typeset -F f=2.5; print -r $f"###);
+        bulk_adt_fc_row_013 => (r#"bulk adt 013"#, r###"typeset -E e=2.5; print -r $e"###);
+        bulk_adt_fc_row_014 => (r#"bulk adt 014"#, r###"typeset -i n=07; print -r $n"###);
+        bulk_adt_fc_row_015 => (r#"bulk adt 015"#, r###"typeset -l s=ABC; print -r $s"###);
+        bulk_adt_fc_row_016 => (r#"bulk adt 016"#, r###"typeset -u s=abc; print -r $s"###);
+        bulk_adt_fc_row_017 => (r#"bulk adt 017"#, r###"typeset -r x=1; x=2; print -r $x"###);
+        bulk_adt_fc_row_018 => (r#"bulk adt 018"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_adt_fc_row_019 => (r#"bulk adt 019"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_adt_fc_row_020 => (r#"bulk adt 020"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_adt_fc_row_021 => (r#"bulk adt 021"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_adt_fc_row_022 => (r#"bulk adt 022"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_adt_fc_row_023 => (r#"bulk adt 023"#, r###"local a; a=1; print -r $a"###);
+        bulk_adt_fc_row_024 => (r#"bulk adt 024"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_adt_fc_row_025 => (r#"bulk adt 025"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_adt_fc_row_026 => (r#"bulk adt 026"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_adt_fc_row_027 => (r#"bulk adt 027"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_adt_fc_row_028 => (r#"bulk adt 028"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_adt_fc_row_029 => (r#"bulk adt 029"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_adt_fc_row_030 => (r#"bulk adt 030"#, r###"setopt localoptions; print -r $?"###);
+        bulk_adt_fc_row_031 => (r#"bulk adt 031"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_adt_fc_row_032 => (r#"bulk adt 032"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_adt_fc_row_033 => (r#"bulk adt 033"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_adt_fc_row_034 => (r#"bulk adt 034"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_adt_fc_row_035 => (r#"bulk adt 035"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_adt_fc_row_036 => (r#"bulk adt 036"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_adt_fc_row_037 => (r#"bulk adt 037"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_adt_fc_row_038 => (r#"bulk adt 038"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_adt_fc_row_039 => (r#"bulk adt 039"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_adt_fc_row_040 => (r#"bulk adt 040"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_adt_fc_row_041 => (r#"bulk adt 041"#, r###"setopt multios; print -r $?"###);
+        bulk_adt_fc_row_042 => (r#"bulk adt 042"#, r###"setopt noclobber; print -r $?"###);
+        bulk_adt_fc_row_043 => (r#"bulk adt 043"#, r###"setopt clobber; print -r $?"###);
+        bulk_adt_fc_row_044 => (r#"bulk adt 044"#, r###"setopt histexpand; print -r $?"###);
+        bulk_adt_fc_row_045 => (r#"bulk adt 045"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_adt_fc_row_046 => (r#"bulk adt 046"#, r###"setopt banghist; print -r $?"###);
+        bulk_adt_fc_row_047 => (r#"bulk adt 047"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_adt_fc_row_048 => (r#"bulk adt 048"#, r###"setopt incappendhistory; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adu {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adu_fc_row_001 => (r#"bulk adu 001"#, r###"typeset -h s; s=abc; print -r $s"###);
+        bulk_adu_fc_row_002 => (r#"bulk adu 002"#, r###"typeset -H s; s=abc; print -r $s"###);
+        bulk_adu_fc_row_003 => (r#"bulk adu 003"#, r###"typeset -b n=255; print -r $n"###);
+        bulk_adu_fc_row_004 => (r#"bulk adu 004"#, r###"typeset -o n=7; print -r $n"###);
+        bulk_adu_fc_row_005 => (r#"bulk adu 005"#, r###"typeset -aU u; u=(a a b); print -r ${(j:,:)u}"###);
+        bulk_adu_fc_row_006 => (r#"bulk adu 006"#, r###"local a; a=1; print -r $a"###);
+        bulk_adu_fc_row_007 => (r#"bulk adu 007"#, r###"local -i n=5; print -r $(( n * 2 ))"###);
+        bulk_adu_fc_row_008 => (r#"bulk adu 008"#, r###"local -a arr; arr=(x); print -r $arr[1]"###);
+        bulk_adu_fc_row_009 => (r#"bulk adu 009"#, r###"fn(){ local x=1; print -r $x; }; fn"###);
+        bulk_adu_fc_row_010 => (r#"bulk adu 010"#, r###"fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn"###);
+        bulk_adu_fc_row_011 => (r#"bulk adu 011"#, r###"autoload -Uz add-zsh-hook 2>/dev/null; print -r $?"###);
+        bulk_adu_fc_row_012 => (r#"bulk adu 012"#, r###"emulate -L zsh; print -r $?"###);
+        bulk_adu_fc_row_013 => (r#"bulk adu 013"#, r###"setopt localoptions; print -r $?"###);
+        bulk_adu_fc_row_014 => (r#"bulk adu 014"#, r###"unsetopt localoptions 2>/dev/null; print -r $?"###);
+        bulk_adu_fc_row_015 => (r#"bulk adu 015"#, r###"setopt pipefail; false | true; print -r $?"###);
+        bulk_adu_fc_row_016 => (r#"bulk adu 016"#, r###"setopt no_pipefail; false | true; print -r $?"###);
+        bulk_adu_fc_row_017 => (r#"bulk adu 017"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_adu_fc_row_018 => (r#"bulk adu 018"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_adu_fc_row_019 => (r#"bulk adu 019"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_adu_fc_row_020 => (r#"bulk adu 020"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_adu_fc_row_021 => (r#"bulk adu 021"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_adu_fc_row_022 => (r#"bulk adu 022"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_adu_fc_row_023 => (r#"bulk adu 023"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_adu_fc_row_024 => (r#"bulk adu 024"#, r###"setopt multios; print -r $?"###);
+        bulk_adu_fc_row_025 => (r#"bulk adu 025"#, r###"setopt noclobber; print -r $?"###);
+        bulk_adu_fc_row_026 => (r#"bulk adu 026"#, r###"setopt clobber; print -r $?"###);
+        bulk_adu_fc_row_027 => (r#"bulk adu 027"#, r###"setopt histexpand; print -r $?"###);
+        bulk_adu_fc_row_028 => (r#"bulk adu 028"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_adu_fc_row_029 => (r#"bulk adu 029"#, r###"setopt banghist; print -r $?"###);
+        bulk_adu_fc_row_030 => (r#"bulk adu 030"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_adu_fc_row_031 => (r#"bulk adu 031"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_adu_fc_row_032 => (r#"bulk adu 032"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_adu_fc_row_033 => (r#"bulk adu 033"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_adu_fc_row_034 => (r#"bulk adu 034"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_adu_fc_row_035 => (r#"bulk adu 035"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_adu_fc_row_036 => (r#"bulk adu 036"#, r###"setopt histverify; print -r $?"###);
+        bulk_adu_fc_row_037 => (r#"bulk adu 037"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_adu_fc_row_038 => (r#"bulk adu 038"#, r###"setopt no_beep; print -r $?"###);
+        bulk_adu_fc_row_039 => (r#"bulk adu 039"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_adu_fc_row_040 => (r#"bulk adu 040"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_adu_fc_row_041 => (r#"bulk adu 041"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_adu_fc_row_042 => (r#"bulk adu 042"#, r###"setopt correct; print -r $?"###);
+        bulk_adu_fc_row_043 => (r#"bulk adu 043"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_adu_fc_row_044 => (r#"bulk adu 044"#, r###"setopt completealiases; print -r $?"###);
+        bulk_adu_fc_row_045 => (r#"bulk adu 045"#, r###"setopt globdots; print -r $?"###);
+        bulk_adu_fc_row_046 => (r#"bulk adu 046"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_adu_fc_row_047 => (r#"bulk adu 047"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_adu_fc_row_048 => (r#"bulk adu 048"#, r###"setopt markdirs; print -r $?"###);
+    }
+}
+
+mod corpus_dash_fc_bulk_adv {
+    use super::*;
+
+    parity_gap_tests! {
+        bulk_adv_fc_row_001 => (r#"bulk adv 001"#, r###"setopt nullglob; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_adv_fc_row_002 => (r#"bulk adv 002"#, r###"setopt nonomatch; print -r ${#files}; files=(/no/such/*)"###);
+        bulk_adv_fc_row_003 => (r#"bulk adv 003"#, r###"setopt extendedglob; print -r $?"###);
+        bulk_adv_fc_row_004 => (r#"bulk adv 004"#, r###"setopt shwordsplit; print -r $?"###);
+        bulk_adv_fc_row_005 => (r#"bulk adv 005"#, r###"setopt no_shwordsplit; print -r $?"###);
+        bulk_adv_fc_row_006 => (r#"bulk adv 006"#, r###"setopt interactivecomments; print -r $?"###);
+        bulk_adv_fc_row_007 => (r#"bulk adv 007"#, r###"setopt no_interactivecomments; print -r $?"###);
+        bulk_adv_fc_row_008 => (r#"bulk adv 008"#, r###"setopt multios; print -r $?"###);
+        bulk_adv_fc_row_009 => (r#"bulk adv 009"#, r###"setopt noclobber; print -r $?"###);
+        bulk_adv_fc_row_010 => (r#"bulk adv 010"#, r###"setopt clobber; print -r $?"###);
+        bulk_adv_fc_row_011 => (r#"bulk adv 011"#, r###"setopt histexpand; print -r $?"###);
+        bulk_adv_fc_row_012 => (r#"bulk adv 012"#, r###"setopt no_histexpand; print -r $?"###);
+        bulk_adv_fc_row_013 => (r#"bulk adv 013"#, r###"setopt banghist; print -r $?"###);
+        bulk_adv_fc_row_014 => (r#"bulk adv 014"#, r###"setopt sharehistory; print -r $?"###);
+        bulk_adv_fc_row_015 => (r#"bulk adv 015"#, r###"setopt incappendhistory; print -r $?"###);
+        bulk_adv_fc_row_016 => (r#"bulk adv 016"#, r###"setopt extendedhistory; print -r $?"###);
+        bulk_adv_fc_row_017 => (r#"bulk adv 017"#, r###"setopt histignoredups; print -r $?"###);
+        bulk_adv_fc_row_018 => (r#"bulk adv 018"#, r###"setopt histignorespace; print -r $?"###);
+        bulk_adv_fc_row_019 => (r#"bulk adv 019"#, r###"setopt histreduceblanks; print -r $?"###);
+        bulk_adv_fc_row_020 => (r#"bulk adv 020"#, r###"setopt histverify; print -r $?"###);
+        bulk_adv_fc_row_021 => (r#"bulk adv 021"#, r###"setopt appendhistory; print -r $?"###);
+        bulk_adv_fc_row_022 => (r#"bulk adv 022"#, r###"setopt no_beep; print -r $?"###);
+        bulk_adv_fc_row_023 => (r#"bulk adv 023"#, r###"setopt no_listbeep; print -r $?"###);
+        bulk_adv_fc_row_024 => (r#"bulk adv 024"#, r###"setopt auto_cd; print -r $?"###);
+        bulk_adv_fc_row_025 => (r#"bulk adv 025"#, r###"setopt no_auto_cd; print -r $?"###);
+        bulk_adv_fc_row_026 => (r#"bulk adv 026"#, r###"setopt correct; print -r $?"###);
+        bulk_adv_fc_row_027 => (r#"bulk adv 027"#, r###"setopt nocorrect; print -r $?"###);
+        bulk_adv_fc_row_028 => (r#"bulk adv 028"#, r###"setopt completealiases; print -r $?"###);
+        bulk_adv_fc_row_029 => (r#"bulk adv 029"#, r###"setopt globdots; print -r $?"###);
+        bulk_adv_fc_row_030 => (r#"bulk adv 030"#, r###"setopt noglobdots; print -r $?"###);
+        bulk_adv_fc_row_031 => (r#"bulk adv 031"#, r###"setopt numericglobsort; print -r $?"###);
+        bulk_adv_fc_row_032 => (r#"bulk adv 032"#, r###"setopt markdirs; print -r $?"###);
+        bulk_adv_fc_row_033 => (r#"bulk adv 033"#, r###"setopt nomarkdirs; print -r $?"###);
+        bulk_adv_fc_row_034 => (r#"bulk adv 034"#, r###"setopt chase_links; print -r $?"###);
+        bulk_adv_fc_row_035 => (r#"bulk adv 035"#, r###"setopt no_chase_links; print -r $?"###);
+        bulk_adv_fc_row_036 => (r#"bulk adv 036"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_adv_fc_row_037 => (r#"bulk adv 037"#, r###"setopt pushdsilent; print -r $?"###);
+        bulk_adv_fc_row_038 => (r#"bulk adv 038"#, r###"setopt pushdtohome; print -r $?"###);
+        bulk_adv_fc_row_039 => (r#"bulk adv 039"#, r###"setopt autopushd; print -r $?"###);
+        bulk_adv_fc_row_040 => (r#"bulk adv 040"#, r###"setopt pushdminus; print -r $?"###);
+        bulk_adv_fc_row_041 => (r#"bulk adv 041"#, r###"setopt pushdignoredups; print -r $?"###);
+        bulk_adv_fc_row_042 => (r#"bulk adv 042"#, r###"dirs -p 2>/dev/null | head -1; print -r $?"###);
+        bulk_adv_fc_row_043 => (r#"bulk adv 043"#, r###"pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?"###);
+        bulk_adv_fc_row_044 => (r#"bulk adv 044"#, r###"cd -q / 2>/dev/null; print -r $?"###);
+        bulk_adv_fc_row_045 => (r#"bulk adv 045"#, r###"print -r $PWD"###);
+        bulk_adv_fc_row_046 => (r#"bulk adv 046"#, r###"print -r ${PWD:h}"###);
+        bulk_adv_fc_row_047 => (r#"bulk adv 047"#, r###"print -r ${PWD:t}"###);
+        bulk_adv_fc_row_048 => (r#"bulk adv 048"#, r###"print -r ${PWD:r}"###);
     }
 }
