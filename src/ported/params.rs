@@ -8596,12 +8596,24 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
             }
         }
         // c:6172-6176 — `scanhashtable + ht->printnode` walks every
-        // entry emitting `key value` pairs. Rust uses paramtab_hashed_
-        // storage (HashMap<name, IndexMap<key, val>>) — read by name.
+        // entry. The per-entry printnode (printparamnode recurse)
+        // formats as `[key]=value` when PRINT_KV_PAIR is set (the
+        // typeset-listing path) or as plain `key value` otherwise
+        // (the `set` no-arg path). zshrs's port emitted the
+        // unbracketed form unconditionally, so `typeset -p h` for
+        // an assoc returned `( k v )` instead of `( [k]=v )` — a
+        // syntactically incorrect declaration that wouldn't round-trip
+        // through eval. Mirror the C dispatch on PRINT_TYPESET / PRINT_KV_PAIR.
+        // Rust uses paramtab_hashed_storage (HashMap<name,
+        // IndexMap<key, val>>) — read by name. Sort keys for
+        // deterministic output matching scanhashtable's SORT flag (1).
+        let kv_pair_form = (printflags & (PRINT_TYPESET | PRINT_KV_PAIR)) != 0;
         if let Ok(stor) = paramtab_hashed_storage().lock() {
             if let Some(map) = stor.get(&p.node.nam) {
+                let mut entries: Vec<(&String, &String)> = map.iter().collect();
+                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
                 let mut first = true;
-                for (k, v) in map {
+                for (k, v) in entries {
                     if first {
                         first = false;
                     } else if (printflags & PRINT_LINE) != 0 {
@@ -8609,10 +8621,15 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
                     } else {
                         print!(" ");
                     }
-                    // C: `quotedzputs(key); putc(' '); quotedzputs(val);`
-                    // Static-link path: emit name + value verbatim
-                    // (the typeset-listing caller controls quoting).
-                    print!("{} {}", k, v);
+                    if kv_pair_form {
+                        // c:6292-6299 — `[key]=value` form under
+                        // PRINT_KV_PAIR / PRINT_TYPESET.
+                        print!("[{}]={}", k, quotedzputs(v));
+                    } else {
+                        // Static-link path: emit name + value verbatim
+                        // (the typeset-listing caller controls quoting).
+                        print!("{} {}", k, v);
+                    }
                 }
             }
         }
