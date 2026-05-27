@@ -773,3 +773,17 @@ mod special_params {
         assert_parity("echo $#");
     }
 }
+
+mod round_pins {
+    use super::*;
+
+    #[test]
+    fn substring_offset_length() {
+        assert_parity("x=abc; print -r ${x:1:2}");
+    }
+
+    #[test]
+    fn array_reverse_match() {
+        assert_parity("a=(1 2 3); print -r ${a[(r)2]}");
+    }
+}

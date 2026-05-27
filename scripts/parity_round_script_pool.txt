@@ -321,3 +321,203 @@ print -r $(( 1 && (0 || 1) ))
 [[ -k /tmp ]]; print -r $?
 [[ -b /dev/null ]]; print -r $?
 [[ -c /dev/null ]]; print -r $?
+print -r ${(l:5::0:)n}; n=42
+print -r ${(r:5::0:)n}; n=42
+print -r ${(c)str}; str=hello
+print -r ${(s.:.)str}; str=a.b.c
+print -r ${(f)str}; str=$'a\nb'
+print -r ${(u)arr}; arr=(a A b)
+print -r ${(L)str}; str=HELLO
+print -r ${(U)str}; str=hello
+print -r ${(C)str}; str=hello world
+print -r ${(Q)str}; str=$'a\nb'
+print -r ${(qq)str}; str=hi
+print -r ${(V)str}; str=hi
+print -r ${(Z)str}; str=$'a\nb'
+print -r ${(z)str}; str=$'a\0b'
+print -r ${(s:-:)a}; a=(x y)
+print -r ${(j:-:)a}; a=(x y)
+print -r ${(pj:-:)a}; a=(x y)
+print -r ${(s: :)w}; w='a b c'
+print -r ${(s:-:)w}; w='a b'
+a=(1 2 3); print -r ${a[1,-1]}
+a=(1 2 3); print -r ${a[1,2]}
+a=(1 2 3); print -r ${a[-1]}
+a=(1 2 3); print -r ${a[(i)2]}
+a=(1 2 3); print -r ${a[(I)2]}
+a=(1 2 3); print -r ${a[(R)9]}
+a=(1 2 3); print -r ${a[(r)2]}
+typeset -A m; m=(k v); print -r ${m[k]}
+typeset -A m; m=(k v); print -r ${(k)m}
+typeset -A m; m=(k v); print -r ${(v)m}
+typeset -A m; m=(a 1 b 2); print -r ${(kv)m}
+print -r ${(o)lst}; lst=(z a m)
+print -r ${(O)lst}; lst=(z a m)
+print -r ${(i)lst}; lst=(z a m)
+print -r ${(I)lst}; lst=(z a m)
+a=(x y); print -r ${^a}
+a=(1 2); b=(a b); print -r ${^a}${^b}
+setopt braceccl; print -r {a,b}
+print -r {1..3}
+print -r {01..03}
+print -r {a..c}
+print -r {1..4..2}
+print -r ${~pattern}; pattern='*'; :
+integer x=3; (( x++ )); print -r $x
+integer x=3; (( ++x )); print -r $x
+integer x=3; (( x-- )); print -r $x
+integer x=3; print -r $(( x ** 2 ))
+float f=1.5; print -r $(( f + 1 ))
+print -r $(( 7 / 2 ))
+print -r $(( 7.0 / 2 ))
+(( 1 )); print -r $?
+(( 0 )); print -r $?
+: $(( 0 )) || print -r z
+: $(( 1 )) && print -r y
+let x=2+2; print -r $x
+(( x = 5 )); print -r $x
+typeset -F f=2.5; print -r $f
+typeset -E e=2.5; print -r $e
+typeset -i n=07; print -r $n
+typeset -l s=ABC; print -r $s
+typeset -u s=abc; print -r $s
+typeset -r x=1; x=2; print -r $x
+typeset -h s; s=abc; print -r $s
+typeset -H s; s=abc; print -r $s
+typeset -b n=255; print -r $n
+typeset -o n=7; print -r $n
+typeset -A h; h=([a]=1); print -r $h[a]
+typeset -aU u; u=(a a b); print -r ${(j:,:)u}
+local a; a=1; print -r $a
+local -i n=5; print -r $(( n * 2 ))
+local -a arr; arr=(x); print -r $arr[1]
+fn(){ local x=1; print -r $x; }; fn
+fn(){ typeset -a a; a=(1); print -r ${#a}; }; fn
+autoload -Uz add-zsh-hook 2>/dev/null; print -r $?
+emulate -L zsh; print -r $?
+setopt localoptions; print -r $?
+unsetopt localoptions 2>/dev/null; print -r $?
+setopt pipefail; false | true; print -r $?
+setopt no_pipefail; false | true; print -r $?
+setopt nullglob; print -r ${#files}; files=(/no/such/*)
+setopt nonomatch; print -r ${#files}; files=(/no/such/*)
+setopt extendedglob; print -r $?
+setopt shwordsplit; print -r $?
+setopt no_shwordsplit; print -r $?
+setopt interactivecomments; print -r $?
+setopt no_interactivecomments; print -r $?
+setopt multios; print -r $?
+setopt noclobber; print -r $?
+setopt clobber; print -r $?
+setopt histexpand; print -r $?
+setopt no_histexpand; print -r $?
+setopt banghist; print -r $?
+setopt sharehistory; print -r $?
+setopt incappendhistory; print -r $?
+setopt extendedhistory; print -r $?
+setopt histignoredups; print -r $?
+setopt histignorespace; print -r $?
+setopt histreduceblanks; print -r $?
+setopt histverify; print -r $?
+setopt appendhistory; print -r $?
+setopt no_beep; print -r $?
+setopt no_listbeep; print -r $?
+setopt auto_cd; print -r $?
+setopt no_auto_cd; print -r $?
+setopt correct; print -r $?
+setopt nocorrect; print -r $?
+setopt completealiases; print -r $?
+setopt globdots; print -r $?
+setopt noglobdots; print -r $?
+setopt numericglobsort; print -r $?
+setopt markdirs; print -r $?
+setopt nomarkdirs; print -r $?
+setopt chase_links; print -r $?
+setopt no_chase_links; print -r $?
+setopt pushdignoredups; print -r $?
+setopt pushdsilent; print -r $?
+setopt pushdtohome; print -r $?
+setopt autopushd; print -r $?
+setopt pushdminus; print -r $?
+setopt pushdignoredups; print -r $?
+dirs -p 2>/dev/null | head -1; print -r $?
+pushd /tmp 2>/dev/null; popd 2>/dev/null; print -r $?
+cd - 2>/dev/null; print -r $?
+cd -q / 2>/dev/null; print -r $?
+print -r $PWD
+print -r $OLDPWD
+print -r ${PWD:h}
+print -r ${PWD:t}
+print -r ${PWD:r}
+print -r ${PWD:e}
+print -r ${PWD:a}
+print -r ${PWD:A}
+read -r line <<< 'one'; print -r $line
+read -r a b <<< 'x y'; print -r $a-$b
+print -r $'tab\there'
+print -r $'line1\nline2'
+printf '%q\n' 'a b'
+printf '%s\n' ok
+print -rn -- end
+print -rl -- a b
+print -fc '%s\n' hi
+whence -w print 2>/dev/null; print -r $?
+whence -c print 2>/dev/null; print -r $?
+which print 2>/dev/null; print -r $?
+command -v print 2>/dev/null; print -r $?
+hash -r 2>/dev/null; print -r $?
+rehash 2>/dev/null; print -r $?
+unalias za 2>/dev/null; alias za=1; unalias za; print -r $?
+alias -L za 2>/dev/null; alias za=z; print -r $?
+export ZA=1; print -r $ZA
+typeset +Z ZA; ZA=1; print -r $ZA
+typeset -x ZB=2; print -r $ZB
+unset ZC; ZC=1; unset ZC; print -r ${+ZC}
+typeset -T TX x y; x=1; y=2; print -r $TX
+typeset -tH hx; hx=ff; print -r $hx
+shift; print -r $1; set -- a b c
+(( $# )); print -r $#
+print -r ${argv[1]}
+print -r ${*[1]}
+print -r $@[1]
+print -r ${@:2}
+print -r ${@:S/x/y/}
+select x in a b; do print -r $x; break; done <<< ''
+zmodload zsh/zutil 2>/dev/null; print -r $?
+zmodload -l 2>/dev/null | head -1; print -r $?
+getconf PATH 2>/dev/null | head -c 1; print -r $?
+getconf ARG_MAX 2>/dev/null; print -r $?
+str=%n; print -r ${(%)str}
+str=%N; print -r ${(%)str}
+str=%~; print -r ${(%)str}
+str=%d; print -r ${(%)str}
+str=%m; print -r ${(%)str}
+str=%#; print -r ${(%)str}
+str=%?; print -r ${(%)str}
+str=%_; print -r ${(%)str}
+str=%h; print -r ${(%)str}
+str=%!; print -r ${(%)str}
+str=%B%b; print -r ${(%)str}
+str=%F{red}%f; print -r ${(%)str}
+str=%K{blue}%k; print -r ${(%)str}
+str=%S%s; print -r ${(%)str}
+str=%U%u; print -r ${(%)str}
+str=%{; print -r ${(%)str}
+str=%G; print -r ${(%)str}
+str=%i; print -r ${(%)str}
+str=%I; print -r ${(%)str}
+str=%j; print -r ${(%)str}
+str=%C; print -r ${(%)str}
+str=%c; print -r ${(%)str}
+str=%D; print -r ${(%)str}
+str=%W; print -r ${(%)str}
+str=%*; print -r ${(%)str}
+str=%v; print -r ${(%)str}
+str=%V; print -r ${(%)str}
+str=%L; print -r ${(%)str}
+str=%l; print -r ${(%)str}
+str=%y; print -r ${(%)str}
+str=%/; print -r ${(%)str}
+str=%<; print -r ${(%)str}
+str=%>; print -r ${(%)str}
+str=%$; print -r ${(%)str}

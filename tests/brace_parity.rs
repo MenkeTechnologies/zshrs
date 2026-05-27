@@ -255,6 +255,35 @@ mod nested {
     }
 }
 
+mod round_pins {
+    use super::*;
+
+    #[test]
+    fn numeric_step_range() {
+        assert_parity("print -r {1..5..2}");
+    }
+
+    #[test]
+    fn alpha_range() {
+        assert_parity("print -r {a..d}");
+    }
+
+    #[test]
+    fn zero_padded_range() {
+        assert_parity("print -r {01..05}");
+    }
+
+    #[test]
+    fn leading_comma_empty_first() {
+        assert_parity("print -r {,a}");
+    }
+
+    #[test]
+    fn trailing_comma_suffix() {
+        assert_parity("print -r a{,b}");
+    }
+}
+
 mod combinations {
     use super::*;
 

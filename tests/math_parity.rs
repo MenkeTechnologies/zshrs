@@ -618,3 +618,32 @@ mod with_parameters {
         assert_parity("X=5; echo $(($((X)) * 2))");
     }
 }
+
+mod round_pins {
+    use super::*;
+
+    #[test]
+    fn hex_add() {
+        assert_parity("print -r $(( 0x10 + 0x20 ))");
+    }
+
+    #[test]
+    fn binary_add() {
+        assert_parity("print -r $(( 2#101 + 1 ))");
+    }
+
+    #[test]
+    fn compound_shift_left() {
+        assert_parity("integer x=3; (( x <<= 1 )); print -r $x");
+    }
+
+    #[test]
+    fn compound_shift_right() {
+        assert_parity("integer x=5; (( x >>= 1 )); print -r $x");
+    }
+
+    #[test]
+    fn c_style_for_loop() {
+        assert_parity("for ((i=1;i<=3;i++)); do print -r $i; done");
+    }
+}
