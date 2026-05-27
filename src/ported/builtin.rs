@@ -8013,6 +8013,7 @@ pub fn bin_read(
 ) -> i32 {
     let args = args.to_vec();
     let mut nchars: i32 = 1; // c:6415
+    let mut partial_eof = false;
 
     // c:6432-6438 — `-k N` raw-char count.
     if OPT_HASARG(ops, b'k') {
@@ -8160,16 +8161,54 @@ pub fn bin_read(
             return 1; // EOF without any input
         }
     } else {
-        // Read a line (default behaviour).
-        match io::stdin().read_line(&mut buf) {
-            Ok(0) => return 1, // EOF
-            Ok(_) => {
-                if buf.ends_with('\n') {
-                    buf.pop();
-                } // strip \n
+        // Read a line (default behaviour). c:Src/builtin.c:6505
+        // — without `-r`, backslash-X eats the backslash and keeps
+        // the literal X (backslash-newline is line continuation).
+        let raw_mode = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R');
+        let mut buf_bytes = Vec::<u8>::new();
+        let mut got_any = false;
+        let mut saw_newline = false;
+        let stdin = io::stdin();
+        let mut guard = stdin.lock();
+        loop {
+            let mut b = [0u8; 1];
+            let n = guard.read(&mut b);
+            match n {
+                Ok(1) => {
+                    got_any = true;
+                    if !raw_mode && b[0] == b'\\' {
+                        let mut nxt = [0u8; 1];
+                        match guard.read(&mut nxt) {
+                            Ok(1) => {
+                                if nxt[0] == b'\n' {
+                                    // Line continuation — drop both.
+                                    continue;
+                                }
+                                buf_bytes.push(nxt[0]);
+                                continue;
+                            }
+                            Ok(_) => {
+                                buf_bytes.push(b'\\');
+                                break;
+                            }
+                            Err(_) => return 2,
+                        }
+                    }
+                    if b[0] == b'\n' {
+                        saw_newline = true;
+                        break;
+                    }
+                    buf_bytes.push(b[0]);
+                }
+                Ok(_) => break,
+                Err(_) => return 2,
             }
-            Err(_) => return 2,
         }
+        if !got_any {
+            return 1;
+        }
+        buf = String::from_utf8_lossy(&buf_bytes).into_owned();
+        partial_eof = !saw_newline;
     }
 
     // Assign to scalar reply, multi-var split, or array.
@@ -8266,6 +8305,10 @@ pub fn bin_read(
         }
     } else {
         setsparam(&reply, &buf);
+    }
+    // c:Src/builtin.c:6534 — partial-EOF post-assign exit.
+    if partial_eof {
+        return 1;
     }
     0
 }
