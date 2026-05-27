@@ -222,7 +222,6 @@ mod special_zsh_options {
 
     /// `setopt bsd_echo` makes echo NOT interpret escapes (BSD style).
     #[test]
-    #[ignore = "ZSHRS BUG: setopt bsd_echo doesn't disable escape interpretation in echo"]
     fn bsd_echo_disables_escapes() {
         assert_parity(r#"setopt bsd_echo; echo 'a\nb'"#);
     }
