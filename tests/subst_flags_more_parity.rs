@@ -127,6 +127,13 @@ mod M_match_only_strip {
     fn M_with_suffix_strip() {
         assert_parity(r#"X='foo.txt.bak'; echo "${(M)X%.*}""#);
     }
+
+    /// `${(Ms)X##pat}` — zsh errors in some -fc contexts; pin for subst fix.
+    #[test]
+    #[ignore = "ZSHRS BUG: ${(Ms)x##pat} match-only strip diverges from zsh"]
+    fn Ms_longest_prefix_match_only() {
+        assert_parity(r#"x=aba; echo "${(Ms)x##a}""#);
+    }
 }
 
 mod hash_length_flag {
@@ -251,5 +258,109 @@ mod sentinel_slash_pat_globally {
     #[test]
     fn double_slash_with_percent_anchor() {
         assert_parity(r#"X=foofoo; echo "${X//%foo/X}""#);
+    }
+}
+
+mod w_words_and_padding {
+    use super::*;
+
+    #[test]
+    fn w_shell_words_from_scalar() {
+        assert_parity(r#"word="a  b   c"; echo "${(w)word}""#);
+    }
+
+    #[test]
+    fn percent_pad_to_width() {
+        assert_parity(r#"echo "${(%)3}""#);
+    }
+
+    #[test]
+    fn zero_flag_octal_display() {
+        assert_parity(r#"o=8; echo "${(0)o}""#);
+    }
+}
+
+mod b_byte_and_assoc_match {
+    use super::*;
+
+    #[test]
+    fn b_byte_count() {
+        assert_parity(r#"x=hi; echo "${(b)x}""#);
+    }
+
+    #[test]
+    fn Mk_assoc_keys_matching() {
+        assert_parity(r#"typeset -A h; h=(x 1 y 2); print -l "${(@Mk)h}" | sort"#);
+    }
+
+    #[test]
+    fn Mv_assoc_values_matching() {
+        assert_parity(r#"typeset -A h; h=(x 1 y 2); print -l "${(@Mv)h}" | sort"#);
+    }
+
+    #[test]
+    fn assoc_reverse_find_key_R() {
+        assert_parity(r#"typeset -A h; h=(k v); echo "${h[(R)v]}""#);
+    }
+
+    #[test]
+    fn assoc_reverse_find_value_r() {
+        assert_parity(r#"typeset -A h; h=(a 1 b 2); echo "${h[(r)2]}""#);
+    }
+}
+
+mod n_N_length_flags {
+    use super::*;
+
+    #[test]
+    fn n_array_length() {
+        assert_parity(r#"a=(1 2 3); echo "${(n)a}""#);
+    }
+
+    #[test]
+    fn N_array_length() {
+        assert_parity(r#"a=(1 2 3); echo "${(N)a}""#);
+    }
+}
+
+mod sort_flags_on {
+    use super::*;
+
+    #[test]
+    fn on_numeric_ascending() {
+        assert_parity(r#"nums=(10 2 100); print -l "${(@on)nums}""#);
+    }
+
+    #[test]
+    fn oa_alpha_ascending() {
+        assert_parity(r#"nums=(10 2 100); print -l "${(@oa)nums}""#);
+    }
+
+    #[test]
+    fn eu_unique_ignore_case() {
+        assert_parity(r#"nums=(a A b B); print -l "${(@eu)nums}""#);
+    }
+
+    #[test]
+    fn L_at_lowercase_words() {
+        assert_parity(r#"nums=(a B c); print -l "${(@L)nums}""#);
+    }
+}
+
+mod R_subscript_on_scalar {
+    use super::*;
+
+    /// `${s[(r)pat]}` on scalar — zsh returns char after match (`f`);
+    /// zshrs currently returns the matched substring (`foo`).
+    #[test]
+    #[ignore = "ZSHRS BUG: scalar ${s[(r)pat]} match span differs from zsh"]
+    fn scalar_reverse_find_substring() {
+        assert_parity(r#"s=barfooxyz; echo "${s[(r)foo]}""#);
+    }
+
+    /// `${arr[(R)pat]}` on array — reverse-find index.
+    #[test]
+    fn array_reverse_find_index() {
+        assert_parity(r#"arr=(a b c b d); echo "${arr[(R)b]}""#);
     }
 }

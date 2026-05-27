@@ -256,3 +256,65 @@ mod typeset_listing {
         assert_parity("X=hello; typeset X >/dev/null; echo $?");
     }
 }
+
+mod zero_pad_and_exponent {
+    use super::*;
+
+    #[test]
+    fn typeset_Z_width() {
+        assert_parity("typeset -Z5 z=7; echo $z");
+    }
+
+    #[test]
+    fn typeset_Z2_integer() {
+        assert_parity("typeset -Z2 zi=4; echo $zi");
+    }
+
+    #[test]
+    fn typeset_E_scientific() {
+        assert_parity("typeset -E2 e=4000; echo $e");
+    }
+
+    #[test]
+    fn typeset_i8_octal_input() {
+        assert_parity("typeset -i8 o=10; echo $o");
+    }
+
+    #[test]
+    fn typeset_i16_hex_input() {
+        assert_parity("typeset -i16 x=0xff; echo $x");
+    }
+}
+
+mod tied_case_flags {
+    use super::*;
+
+    #[test]
+    fn typeset_plus_L_lowercase() {
+        assert_parity("typeset +L L=AbCd; echo $L");
+    }
+
+    #[test]
+    fn typeset_plus_U_uppercase() {
+        assert_parity("typeset +U U=xy; echo $U");
+    }
+
+    #[test]
+    fn typeset_plus_i_unset_integer_attr() {
+        assert_parity("typeset +i pi=4; echo $pi");
+    }
+}
+
+mod right_align_and_single_array {
+    use super::*;
+
+    #[test]
+    fn typeset_R_width() {
+        assert_parity(r#"typeset -R4 r=hi; echo "$r""#);
+    }
+
+    #[test]
+    fn typeset_aS_single_string_array() {
+        assert_parity(r#"typeset -aS ary="x y"; echo "$#ary $ary[2]""#);
+    }
+}

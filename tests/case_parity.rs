@@ -287,3 +287,22 @@ mod patterns_with_quotes {
         assert_parity(r#"case '?' in '?') echo literal-q;; *) echo any;; esac"#);
     }
 }
+
+mod round_al_pins {
+    use super::*;
+
+    #[test]
+    fn pipe_pattern_alternation() {
+        assert_parity(r#"case word in (w|x) echo wx;; *) echo star;; esac"#);
+    }
+
+    #[test]
+    fn multi_branch_numeric() {
+        assert_parity(r#"case 1 in 1) echo one;; 2) echo two;; esac"#);
+    }
+
+    #[test]
+    fn function_return_status() {
+        assert_parity(r#"fn(){ return 3; }; fn; echo $?"#);
+    }
+}

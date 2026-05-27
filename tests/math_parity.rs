@@ -416,6 +416,180 @@ mod arith_command_exit {
     }
 }
 
+mod literals_and_bases {
+    use super::*;
+
+    #[test]
+    fn underscore_in_integer_literal() {
+        assert_parity("echo $((1_000 + 2_000))");
+    }
+
+    #[test]
+    fn base_indicator_hash_hash_a() {
+        assert_parity("echo $((##a))");
+    }
+
+    #[test]
+    fn assign_with_hash_base() {
+        assert_parity("(( x = 5#101 )); echo $x");
+    }
+
+    #[test]
+    fn print_base_five_value() {
+        assert_parity("echo $((5#101))");
+    }
+
+    #[test]
+    fn base_twelve_nine_b() {
+        assert_parity("echo $((12#9b))");
+    }
+
+    #[test]
+    fn binary_literal_0b() {
+        assert_parity("echo $((0b101010))");
+    }
+}
+
+mod power_and_bitwise {
+    use super::*;
+
+    #[test]
+    fn power_right_associative() {
+        assert_parity("echo $((2 ** 3 ** 2))");
+    }
+
+    #[test]
+    fn bitand_then_xor() {
+        assert_parity("echo $((9 & 6 ^ 3))");
+    }
+
+    #[test]
+    fn chained_shift_right() {
+        assert_parity("echo $((128 >> 4 >> 1))");
+    }
+
+    #[test]
+    fn complement_and_mask() {
+        assert_parity("echo $((~(255) & 0xff))");
+    }
+
+    #[test]
+    fn hex_mask() {
+        assert_parity("echo $((0xabc & 0xf0))");
+    }
+}
+
+mod float_in_arith {
+    use super::*;
+
+    #[test]
+    fn float_multiply() {
+        assert_parity("float f1=1.5 f2=2; echo $((f1 * f2))");
+    }
+
+    #[test]
+    fn typeset_F_precision() {
+        assert_parity("typeset -F2 f=3.14159; echo $f");
+    }
+
+    #[test]
+    fn typeset_F1_compare() {
+        assert_parity("typeset -F1 cmp=1.05; echo $((cmp > 1))");
+    }
+}
+
+mod compound_assign {
+    use super::*;
+
+    #[test]
+    fn or_assign() {
+        assert_parity("integer i=5; (( i |= 3 )); echo $i");
+    }
+
+    #[test]
+    fn and_assign() {
+        assert_parity("integer i=5; (( i &= 3 )); echo $i");
+    }
+
+    #[test]
+    fn xor_assign() {
+        assert_parity("integer i=5; (( i ^= 3 )); echo $i");
+    }
+
+    #[test]
+    fn shl_assign() {
+        assert_parity("integer i=5; (( i <<= 1 )); echo $i");
+    }
+
+    #[test]
+    fn shr_assign() {
+        assert_parity("integer i=5; (( i >>= 1 )); echo $i");
+    }
+
+    #[test]
+    fn add_assign() {
+        assert_parity("integer i=5; (( i += 3 )); echo $i");
+    }
+
+    #[test]
+    fn sub_assign() {
+        assert_parity("integer i=5; (( i -= 2 )); echo $i");
+    }
+
+    #[test]
+    fn mul_assign() {
+        assert_parity("integer i=5; (( i *= 2 )); echo $i");
+    }
+
+    #[test]
+    fn div_assign() {
+        assert_parity("integer i=5; (( i /= 2 )); echo $i");
+    }
+
+    #[test]
+    fn mod_assign() {
+        assert_parity("integer i=5; (( i %= 3 )); echo $i");
+    }
+}
+
+mod true_false_in_arith {
+    use super::*;
+
+    #[test]
+    fn true_is_one() {
+        assert_parity("echo $((true))");
+    }
+
+    #[test]
+    fn false_is_zero() {
+        assert_parity("echo $((false))");
+    }
+}
+
+mod base_indicators {
+    use super::*;
+
+    #[test]
+    fn hash_hash_Z() {
+        assert_parity("echo $((##Z))");
+    }
+
+    #[test]
+    fn hash_hash_b() {
+        assert_parity("echo $((##b))");
+    }
+
+    #[test]
+    fn binary_0b_literal() {
+        assert_parity("echo $((0b1111))");
+    }
+
+    #[test]
+    fn hex_mixed_case() {
+        assert_parity("echo $((0xffFF))");
+    }
+}
+
 mod with_parameters {
     use super::*;
 

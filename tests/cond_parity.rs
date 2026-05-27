@@ -366,6 +366,133 @@ mod var_existence {
     }
 }
 
+mod glob_numeric {
+    use super::*;
+
+    /// `<->` matches any non-negative integer (zsh glob in `[[ = ]]`).
+    #[test]
+    fn numeric_glob_angle_digits() {
+        assert_parity(r#"[[ 42 = <-> ]]; echo $?"#);
+    }
+
+    #[test]
+    fn numeric_glob_rejects_alpha() {
+        assert_parity(r#"[[ abc = <-> ]]; echo $?"#);
+    }
+}
+
+mod glob_anchors {
+    use super::*;
+
+    #[test]
+    fn hash_hash_prefix_anchor() {
+        assert_parity(r#"[[ host = ##host ]]; echo $?"#);
+    }
+
+    #[test]
+    fn hash_hash_suffix_anchor() {
+        assert_parity(r#"[[ host = host## ]]; echo $?"#);
+    }
+
+    #[test]
+    fn extendedglob_repeat_hash() {
+        assert_parity(r#"setopt extendedglob; [[ abc = [a-z]## ]]; echo $?"#);
+    }
+
+    #[test]
+    fn extendedglob_case_insensitive_hash_i() {
+        assert_parity(r#"setopt extendedglob; [[ abc = (#i)ABC ]]; echo $?"#);
+    }
+}
+
+mod var_set_test {
+    use super::*;
+
+    #[test]
+    fn dash_v_set_true() {
+        assert_parity(r#"x=1; [[ -v x ]]; echo $?"#);
+    }
+
+    #[test]
+    fn dash_v_unset_false() {
+        assert_parity(r#"unset y; [[ -v y ]]; echo $?"#);
+    }
+}
+
+mod file_tests_extra {
+    use super::*;
+
+    #[test]
+    fn h_flag_symlink() {
+        assert_parity(r#"[[ -h /dev/stdin ]]; echo $?"#);
+    }
+
+    #[test]
+    fn p_flag_fifo() {
+        assert_parity(r#"[[ -p /dev/fd/0 ]]; echo $?"#);
+    }
+
+    #[test]
+    fn O_flag_owned_by_euid() {
+        assert_parity(r#"[[ -O /etc/hosts ]]; echo $?"#);
+    }
+
+    #[test]
+    fn G_flag_group_owned() {
+        assert_parity(r#"[[ -G / ]]; echo $?"#);
+    }
+
+    #[test]
+    fn ef_same_string_var() {
+        assert_parity(r#"[[ v1 -ef v1 ]]; echo $?"#);
+    }
+}
+
+mod extendedglob_anchors {
+    use super::*;
+
+    #[test]
+    fn hash_m_sets_match_var() {
+        assert_parity(
+            r#"setopt extendedglob; [[ abc = (#m)[a-z]## ]]; print -r "$MATCH""#,
+        );
+    }
+
+    #[test]
+    fn hash_b_capture_group() {
+        assert_parity(r#"setopt extendedglob; [[ foo = (#b)oo ]]; echo $?"#);
+    }
+
+    #[test]
+    fn hash_s_start_anchor() {
+        assert_parity(r#"setopt extendedglob; [[ foo = (#s)fo ]]; echo $?"#);
+    }
+
+    #[test]
+    fn hash_e_end_anchor() {
+        assert_parity(r#"setopt extendedglob; [[ foo = fo(#e) ]]; echo $?"#);
+    }
+}
+
+mod file_compare {
+    use super::*;
+
+    #[test]
+    fn ef_same_path() {
+        assert_parity(r#"[[ /etc/hosts -ef /etc/hosts ]]; echo $?"#);
+    }
+
+    #[test]
+    fn nt_newer_than() {
+        assert_parity(r#"[[ /etc/hosts -nt /tmp ]]; echo $?"#);
+    }
+
+    #[test]
+    fn ot_older_than() {
+        assert_parity(r#"[[ /tmp -ot /etc/hosts ]]; echo $?"#);
+    }
+}
+
 mod options {
     use super::*;
 

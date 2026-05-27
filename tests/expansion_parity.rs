@@ -616,6 +616,137 @@ mod nested {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Array subscript search flags — (I) (i) (R) (r) (Ie), ranges
+// ═══════════════════════════════════════════════════════════════════════════
+
+mod array_subscript_search {
+    use super::*;
+
+    #[test]
+    fn reverse_find_value_r() {
+        assert_parity(r#"arr=(alpha beta gamma); echo "${arr[(r)beta]}""#);
+    }
+
+    #[test]
+    fn reverse_find_index_R() {
+        assert_parity(r#"arr=(alpha beta gamma); echo "${arr[(R)beta]}""#);
+    }
+
+    #[test]
+    fn forward_find_index_I() {
+        assert_parity(r#"arr=(alpha beta gamma); echo "${arr[(I)beta]}""#);
+    }
+
+    #[test]
+    fn forward_find_value_i() {
+        assert_parity(r#"arr=(alpha beta gamma); echo "${arr[(i)beta]}""#);
+    }
+
+    #[test]
+    fn exact_match_index_Ie() {
+        assert_parity(r#"arr=(1 2 3); echo "${arr[(Ie)2]}""#);
+    }
+
+    #[test]
+    fn range_subscript_slice() {
+        assert_parity(r#"arr=(a b c d e); echo "${arr[2,4]}""#);
+    }
+
+    #[test]
+    fn range_subscript_through_end() {
+        assert_parity(r#"arr=(1 2 3); echo "${arr[1,-1]}""#);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Assign-default and nested ${${...}}}
+// ═══════════════════════════════════════════════════════════════════════════
+
+mod scalar_assign_default {
+    use super::*;
+
+    #[test]
+    fn assign_default_colon_equals() {
+        assert_parity(r#"unset y; : ${y::=default}; echo "$y""#);
+    }
+
+    #[test]
+    fn nested_default_expansion() {
+        assert_parity(r#"unset x; echo "${${x:-fallback}}""#);
+    }
+
+    #[test]
+    fn nested_plus_and_default() {
+        assert_parity(r#"unset x; echo "${${x:+set}:-unset}""#);
+    }
+
+    #[test]
+    fn scalar_root_extension_on_dotted_name() {
+        assert_parity(r#"str=abc.def; echo "${str:r}:${str:e}""#);
+    }
+
+    #[test]
+    fn array_elem_plus_assign() {
+        assert_parity(r#"arr=(1); arr[1]+=2; echo "${arr[1]}""#);
+    }
+
+    #[test]
+    fn array_slice_from_offset() {
+        assert_parity(r#"arr=(a b c); echo "${arr[@]:1}""#);
+    }
+
+    #[test]
+    fn array_negative_range() {
+        assert_parity(r#"arr=(9 8 7); echo "${arr[-3,-2]}""#);
+    }
+
+    #[test]
+    fn replace_with_var_pattern() {
+        assert_parity(r#"x=a1a2; pat=a; echo "${x//pat/repl}""#);
+    }
+
+    #[test]
+    fn replace_prefix_with_var() {
+        assert_parity(r#"x=abc; pat=a; echo "${x/#pat/repl}""#);
+    }
+
+    #[test]
+    fn replace_suffix_with_var() {
+        assert_parity(r#"x=abc; pat=c; echo "${x/%pat/repl}""#);
+    }
+
+    #[test]
+    fn join_empty_delim() {
+        assert_parity(r#"a=(x y); echo "${(j::)a}""#);
+    }
+
+    #[test]
+    fn word_count_subscript_w() {
+        assert_parity(r#"arr=(a b c); echo "${arr[(w)2]}""#);
+    }
+
+    #[test]
+    fn collapse_words_W_on_scalar() {
+        assert_parity(r#"word="  hi  "; echo "${(W)word}""#);
+    }
+
+    #[test]
+    fn exact_ie_subscript() {
+        assert_parity(r#"arr=(a b c); echo "${arr[(ie)b]}""#);
+    }
+
+    #[test]
+    fn at_lines_from_scalar() {
+        assert_parity(r#"word=$'l1\nl2'; print -l "${(@f)word}""#);
+    }
+
+    #[test]
+    fn z_words_from_scalar() {
+        assert_parity(r#"word="a b c"; print -l "${(z)word}""#);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // $? exit status, $$ pid, $! background, $- options
 // ═══════════════════════════════════════════════════════════════════════════
 

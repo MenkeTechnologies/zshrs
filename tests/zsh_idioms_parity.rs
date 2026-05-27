@@ -731,3 +731,89 @@ mod string_count {
         assert_parity(r#"x="a b c d"; echo "${(w)#x}""#);
     }
 }
+
+// ───────────────────────── arith / typeset pins ─────────────────
+
+mod arith_typeset_pins {
+    use super::*;
+
+    #[test]
+    fn underscore_integer_literals() {
+        assert_parity(r#"echo $((1_000 + 2_000))"#);
+    }
+
+    #[test]
+    fn arith_base_indicator() {
+        assert_parity(r#"echo $((##a))"#);
+    }
+
+    #[test]
+    fn power_right_associative() {
+        assert_parity(r#"echo $((2 ** 3 ** 2))"#);
+    }
+
+    #[test]
+    fn typeset_zero_pad() {
+        assert_parity(r#"typeset -Z5 z=7; echo $z"#);
+    }
+
+    #[test]
+    fn assign_default_colon_equals() {
+        assert_parity(r#"unset y; : ${y::=def}; echo $y"#);
+    }
+}
+
+// ───────────────────────── cond glob pins ───────────────────────
+
+mod cond_glob_pins {
+    use super::*;
+
+    #[test]
+    fn numeric_glob_match() {
+        assert_parity(r#"[[ 42 = <-> ]]; echo $?"#);
+    }
+
+    #[test]
+    fn prefix_anchor_hash_hash() {
+        assert_parity(r#"[[ host = ##host ]]; echo $?"#);
+    }
+
+    #[test]
+    fn extendedglob_case_insensitive() {
+        assert_parity(r#"setopt extendedglob; [[ abc = (#i)ABC ]]; echo $?"#);
+    }
+
+    #[test]
+    fn file_newer_than() {
+        assert_parity(r#"[[ /etc/hosts -nt /tmp ]]; echo $?"#);
+    }
+
+    #[test]
+    fn dash_v_set_test() {
+        assert_parity(r#"x=1; [[ -v x ]]; echo $?"#);
+    }
+
+    #[test]
+    fn extendedglob_hash_b_anchor() {
+        assert_parity(r#"setopt extendedglob; [[ foo = (#b)oo ]]; echo $?"#);
+    }
+}
+
+mod arith_assign_pins {
+    use super::*;
+
+    #[test]
+    fn compound_or_assign() {
+        assert_parity(r#"integer i=5; (( i |= 3 )); echo $i"#);
+    }
+
+    #[test]
+    fn true_false_in_arith() {
+        assert_parity(r#"echo $((true)) $((false))"#);
+    }
+
+    #[test]
+    fn base_indicator_Z() {
+        assert_parity(r#"echo $((##Z))"#);
+    }
+}
