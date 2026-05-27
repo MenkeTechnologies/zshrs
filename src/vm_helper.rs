@@ -1712,9 +1712,44 @@ impl ShellExecutor {
                 // started with $?==0 regardless of the parent's
                 // last command.
                 vm.last_status = self.last_status();
+                // `exit N` inside a cmd-subst should terminate ONLY
+                // the sub-shell (C zsh: cmd-subst forks, the child
+                // `_exit(N)`s; status reaches the parent as
+                // cmd-subst exit). zshrs runs in-process, so we
+                // route through the SUBSHELL_DEPTH-gated deferred
+                // path inside zexit (builtin.rs:7713): bump
+                // SUBSHELL_DEPTH so `exit` sets EXIT_PENDING/
+                // EXIT_VAL instead of calling realexit (which would
+                // process::exit and kill the parent shell). After
+                // the sub-VM returns, harvest EXIT_PENDING/EXIT_VAL
+                // as the cmd-subst's status, then restore the
+                // parent's flags so the outer VM continues normally.
+                use std::sync::atomic::Ordering::Relaxed;
+                use crate::ported::builtin::{BREAKS, EXIT_PENDING, EXIT_VAL, RETFLAG, SHELL_EXITING, SUBSHELL_DEPTH};
+                let saved_exit_pending = EXIT_PENDING.swap(0, Relaxed);
+                let saved_exit_val = EXIT_VAL.swap(0, Relaxed);
+                let saved_shell_exiting = SHELL_EXITING.swap(0, Relaxed);
+                let saved_retflag = RETFLAG.swap(0, Relaxed);
+                let saved_breaks = BREAKS.swap(0, Relaxed);
+                SUBSHELL_DEPTH.fetch_add(1, Relaxed);
                 let _ctx = ExecutorContext::enter(self);
                 let _ = vm.run();
-                cmd_status = Some(vm.last_status);
+                let inner_exit_pending = EXIT_PENDING.load(Relaxed);
+                let inner_exit_val = EXIT_VAL.load(Relaxed);
+                let inner_status = if inner_exit_pending != 0 {
+                    inner_exit_val & 0xFF
+                } else {
+                    vm.last_status
+                };
+                cmd_status = Some(inner_status);
+                SUBSHELL_DEPTH.fetch_sub(1, Relaxed);
+                // Restore parent's exit / loop / function-return
+                // state so the outer VM continues normally.
+                EXIT_PENDING.store(saved_exit_pending, Relaxed);
+                EXIT_VAL.store(saved_exit_val, Relaxed);
+                SHELL_EXITING.store(saved_shell_exiting, Relaxed);
+                RETFLAG.store(saved_retflag, Relaxed);
+                BREAKS.store(saved_breaks, Relaxed);
                 // Restore parent state. The inner cmd-subst's stdout
                 // (the captured pipe contents) is the only thing
                 // that leaks out.
