@@ -1853,6 +1853,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
             other => vec![other.to_str()],
         };
+        // c:Src/glob.c:1872 — honour `setopt noglob` / `noglob CMD`
+        // precommand. When the option is on, the word stays literal
+        // (zsh skips the glob expansion entirely). Without this, the
+        // segment-fast-path BUILTIN_GLOB_EXPAND fired even after
+        // `noglob` set the option, so `noglob echo *.xyz` saw the
+        // NOMATCH error instead of the literal pass-through.
+        let noglob = opt_state_get("noglob").unwrap_or(false)
+            || !opt_state_get("glob").unwrap_or(true);
+        if noglob {
+            return if patterns.is_empty() {
+                Value::Array(Vec::new())
+            } else if patterns.len() == 1 {
+                Value::str(patterns.into_iter().next().unwrap())
+            } else {
+                Value::Array(patterns.into_iter().map(Value::str).collect())
+            };
+        }
         let mut out: Vec<String> = Vec::with_capacity(patterns.len());
         for pattern in &patterns {
             let matches = with_executor(|exec| exec.expand_glob(pattern));
@@ -1908,13 +1925,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SET_RAW_OPT, |vm, _argc| {
         let on = vm.pop().to_int() != 0;
         let opt = vm.pop().to_str();
-        with_executor(|exec| {
-            if on {
-                crate::ported::options::opt_state_set(&opt, true);
-            } else {
-                crate::ported::options::opt_state_unset(&opt);
-            }
-        });
+        // Pure passthru: canonical port lives in
+        // src/ported/options.rs::opt_state_set_via_alias and
+        // handles negation-alias resolution per c:Src/options.c.
+        crate::ported::options::opt_state_set_via_alias(&opt, on);
         Value::Status(0)
     });
 
