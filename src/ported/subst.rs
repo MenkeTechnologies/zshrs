@@ -5178,7 +5178,20 @@ pub fn paramsubst(
                     (pat_buf, String::new())
                 };
                 let (raw_pat, raw_repl) = split_unescaped(rep);
-                let pat = singsub(&raw_pat);
+                // c:Src/subst.c — `${X//#pat/repl}` start-anchor
+                // and `${X//%pat/repl}` end-anchor variants for the
+                // global-replace form. The leading `#`/`%` peel off
+                // the pattern and constrain where matches may fire:
+                //   `#` — only at position 0 (start of string).
+                //   `%` — only at the very end (longest tail match).
+                let (pat_anchor, pat_after_anchor) = if let Some(rest) = raw_pat.strip_prefix('#') {
+                    ('#', rest.to_string())
+                } else if let Some(rest) = raw_pat.strip_prefix('%') {
+                    ('%', rest.to_string())
+                } else {
+                    ('\0', raw_pat.clone())
+                };
+                let pat = singsub(&pat_after_anchor);
                 // Replacement: per C subst.c around line 3354,
                 // `prefork(replstr, ...)` runs with SUB_FLAG|SKIP_FILESUB
                 // — tilde / file expansion is suppressed in the
@@ -5221,6 +5234,44 @@ pub fn paramsubst(
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
                     let mut o = String::with_capacity(val.len());
+                    // c:Src/subst.c — `#` anchor: match only at
+                    // start; `%` anchor: match only at end (longest
+                    // tail). Without an anchor, the global sliding
+                    // window runs across every position.
+                    if pat_anchor == '#' {
+                        let mut matched: Option<usize> = None;
+                        for end in (1..=nn).rev() {
+                            let cand: String = cv[..end].iter().collect();
+                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
+                                matched = Some(end);
+                                break;
+                            }
+                        }
+                        if let Some(e) = matched {
+                            o.push_str(&repl);
+                            o.push_str(&cv[e..].iter().collect::<String>());
+                        } else {
+                            o.push_str(val);
+                        }
+                        return o;
+                    }
+                    if pat_anchor == '%' {
+                        let mut matched: Option<usize> = None;
+                        for start in 0..=nn {
+                            let cand: String = cv[start..].iter().collect();
+                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
+                                matched = Some(start);
+                                break;
+                            }
+                        }
+                        if let Some(s) = matched {
+                            o.push_str(&cv[..s].iter().collect::<String>());
+                            o.push_str(&repl);
+                        } else {
+                            o.push_str(val);
+                        }
+                        return o;
+                    }
                     let mut q = 0_usize;
                     while q < nn {
                         let mut m: Option<usize> = None;
@@ -5272,38 +5323,10 @@ pub fn paramsubst(
                     // arm requires the guard.
                     let _ = handled_array;
                 } else {
-                    // Glob-aware sliding-window replace. Was literal-only
-                    // (.replace) which broke \${path//*.tmp/.bak}-style
-                    // idioms. Direct port of subst.c:3870 SUB_GLOBAL arm
-                    // routing through patmatch.
-                    let chars_v: Vec<char> = raw_value.chars().collect(); // c:3870
-                    let n = chars_v.len(); // c:3870
-                    let mut out = String::with_capacity(raw_value.len()); // c:3870
-                    let mut p = 0_usize; // c:3870
-                    while p < n {
-                        // c:3870
-                        // Try longest-first match from position p.
-                        let mut matched: Option<usize> = None; // c:3870
-                        for end in (p + 1..=n).rev() {
-                            // c:3870
-                            let cand: String = chars_v[p..end].iter().collect(); // c:3870
-                            if patcompile(&pat, PAT_HEAPDUP as i32, None).map_or(false, |__p| pattry(&__p, &cand)) {
-                                // c:3870
-                                matched = Some(end); // c:3870
-                                break; // c:3870
-                            } // c:3870
-                        } // c:3870
-                        if let Some(end) = matched {
-                            // c:3870
-                            out.push_str(&repl); // c:3870
-                            p = if end == p { p + 1 } else { end }; // c:3870 (avoid infinite loop on empty match)
-                        } else {
-                            // c:3870
-                            out.push(chars_v[p]); // c:3870
-                            p += 1; // c:3870
-                        } // c:3870
-                    } // c:3870
-                    value = out; // c:3870
+                    // c:3870 — `${X//pat/repl}` SUB_GLOBAL on scalar.
+                    // Use the same replace_global closure so anchor
+                    // (#/%) semantics stay in one place.
+                    value = replace_global(&raw_value);
                 } // close handled_array else block
             } else if let Some(rep) = r.strip_prefix('/') {
                 // c:3870 (single replace)
