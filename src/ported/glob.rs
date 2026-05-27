@@ -3178,14 +3178,21 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // trailing component, so we filter + re-add the suffix here at emit
     // time. `/` is never a glob metachar so a literal trailing-slash
     // check on the raw pattern is sufficient.
-    let trailing_slash = pattern.ends_with('/') && pattern.len() > 1;
+    // Use the qualifier-stripped `pat` for the trailing-slash check.
+    // For `*/(N)` the original `pattern` ends with `)`, so the check
+    // on `pattern` returned false and the trailing-slash directory-
+    // filter was skipped — `*/(N)` then matched every file, not just
+    // directories. The qualifier-stripped `pat` is `*/` which still
+    // carries the trailing `/`.
+    let trailing_slash = pat.ends_with('/') && pat.len() > 1;
     // c:Src/glob.c — preserve user-typed `./` / `../` prefix in
     // output. glob_emit_path strips CurDir uniformly so the
     // leading `./` would be lost. Detect the source prefix here
-    // and re-prepend after emit.
-    let leading_dot_prefix: &str = if pattern.starts_with("../") {
+    // and re-prepend after emit. Same `pat` (post-qualifier) — the
+    // prefix is on the path part, not the qualifier.
+    let leading_dot_prefix: &str = if pat.starts_with("../") {
         "../"
-    } else if pattern.starts_with("./") {
+    } else if pat.starts_with("./") {
         "./"
     } else {
         ""
