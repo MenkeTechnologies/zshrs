@@ -82,6 +82,14 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         rhre.to_string()
     };
 
+    // c:Src/Modules/regex.c regcomp — POSIX ERE rejects an empty
+    // pattern with REG_EMPTY (`empty (sub)expression`). Rust's
+    // regex crate ACCEPTS an empty pattern as "matches everywhere"
+    // (POSIX-style). To match zsh, reject empty patterns explicitly.
+    if rhre.is_empty() {
+        zregex_regerrwarn("-regex-match", "failed to compile regex: empty (sub)expression");
+        return 0;
+    }
     // c:78 — regcomp(&re, rhre, rcflags).
     let re = match regex::Regex::new(&pat_for_compile) {
         Ok(r) => r,

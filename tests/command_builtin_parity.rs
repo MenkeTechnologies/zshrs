@@ -148,7 +148,6 @@ mod dash_p {
 
     /// `command -p` uses default PATH for lookup.
     #[test]
-    #[ignore = "ZSHRS BUG: command -p doesn't use default PATH; exits 127 instead of finding /bin/ls"]
     fn dash_p_resets_path_search() {
         assert_parity(r#"PATH=""; command -p ls /tmp >/dev/null 2>&1; echo exit=$?"#);
     }

@@ -153,7 +153,6 @@ mod common_options_behavior {
 
     /// `setopt err_exit` then false → script aborts (in subshell).
     #[test]
-    #[ignore = "ZSHRS BUG: set -e doesn't trigger exit (covered in options_parity.rs)"]
     fn errexit_aborts_on_false() {
         assert_parity(r#"(set -e; false; echo "should not print"); echo exit=$?"#);
     }

@@ -124,8 +124,12 @@ impl ZshCompiler {
     }
 
     /// Emit a runtime errexit check. The host examines `set -e` and the
-    /// last command's status; if both fire and we're at the top level
-    /// (no enclosing conditional/pipeline LHS/etc.), `exit($status)`.
+    /// last command's status; the BUILTIN pushes Int(1) when the
+    /// enclosing scope (subshell / function / top-level chunk) should
+    /// short-circuit to its return-patch landing, Int(0) otherwise.
+    /// We pair the BUILTIN with a JumpIfTrue → return_patches pattern
+    /// so the abort path drains cmd_stack and jumps; the no-abort
+    /// path falls through.
     fn emit_errexit_check(&mut self) {
         if self.errexit_suppress_depth > 0 {
             return;
@@ -134,7 +138,16 @@ impl ZshCompiler {
             Op::CallBuiltin(crate::vm_helper::BUILTIN_ERREXIT_CHECK, 0),
             0,
         );
-        self.builder.emit(Op::Pop, 0);
+        // JumpIfFalse over the drain+jump (i.e. the BUILTIN pushed
+        // 0 → continue normally). On Int(1) we fall through to drain
+        // cmd_stack and emit the scope-exit Jump tracked by
+        // return_patches.
+        let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+        self.emit_cmd_stack_drain();
+        let j = self.builder.emit(Op::Jump(0), 0);
+        self.return_patches.push(j);
+        let after = self.builder.current_pos();
+        self.builder.patch_jump(skip, after);
     }
 
     /// Emit `cmdpush(token)` — direct port of Src/prompt.c:1623.
