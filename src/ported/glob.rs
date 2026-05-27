@@ -596,6 +596,35 @@ fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) 
 
     match &components[0] {
         PatternComponent::Pattern(pat) => {
+            // c:Src/glob.c — literal `.` / `..` path components are
+            // navigations, not pattern matches against dir entries.
+            // `./*` parses as [Pattern("."), Pattern("*")]; scan_pattern
+            // would try to read_dir match `.` against entries (which
+            // don't include `.` itself) and fail. Mirror C's path-walk
+            // by appending the literal segment to pathbuf and
+            // recursing with the rest.
+            //
+            // The leading `./` must be preserved in output (zsh:
+            // \`print -l ./*\` → "./a\n./b"), so resolve via the
+            // current dir but prepend `./` to each match path
+            // after globbing.
+            if pat == "." || pat == ".." {
+                let saved_pathbuf = state.pathbuf.clone();
+                let saved_pathpos = state.pathpos;
+                if !state.pathbuf.is_empty() && !state.pathbuf.ends_with('/') {
+                    state.pathbuf.push('/');
+                }
+                state.pathbuf.push_str(pat);
+                state.pathbuf.push('/');
+                state.pathpos = state.pathbuf.len();
+                scanner(state, &components[1..], depth);
+                // Output preservation of `./` / `../` happens in
+                // globdata_glob's emit loop via the
+                // `leading_dot_prefix` re-prepend pass.
+                state.pathbuf = saved_pathbuf;
+                state.pathpos = saved_pathpos;
+                return;
+            }
             scan_pattern(state, &base_path, pat, &components[1..], depth);
         }
         PatternComponent::Recursive { follow_links } => {
@@ -3125,6 +3154,17 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // time. `/` is never a glob metachar so a literal trailing-slash
     // check on the raw pattern is sufficient.
     let trailing_slash = pattern.ends_with('/') && pattern.len() > 1;
+    // c:Src/glob.c — preserve user-typed `./` / `../` prefix in
+    // output. glob_emit_path strips CurDir uniformly so the
+    // leading `./` would be lost. Detect the source prefix here
+    // and re-prepend after emit.
+    let leading_dot_prefix: &str = if pattern.starts_with("../") {
+        "../"
+    } else if pattern.starts_with("./") {
+        "./"
+    } else {
+        ""
+    };
     let mut results: Vec<String> = state
         .matches
         .iter()
@@ -3134,6 +3174,9 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         })
         .map(|m| {
             let mut s = glob_emit_path(&m.path);
+            if !leading_dot_prefix.is_empty() && !s.starts_with(leading_dot_prefix) && !s.starts_with('/') {
+                s = format!("{}{}", leading_dot_prefix, s);
+            }
             if trailing_slash && !s.ends_with('/') {
                 s.push('/');
             }
