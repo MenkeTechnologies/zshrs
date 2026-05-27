@@ -332,6 +332,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if let Some(s) = try_user_fn_override($name, &args) {
                     return Value::Status(s);
                 }
+                // c:Src/exec.c — redirect failure in the current
+                // scope means the command must NOT run. coreutils
+                // shadows (cat / head / tail / etc.) take a separate
+                // dispatch path from dispatch_builtin, so they need
+                // their own gate. Without this `cat <&3` after a
+                // closed-fd diagnostic still ran the shadow and
+                // overwrote $? from the forced 1.
+                let redir_failed = with_executor(|exec| {
+                    let f = exec.redirect_failed;
+                    exec.redirect_failed = false;
+                    f
+                });
+                if redir_failed {
+                    return Value::Status(1);
+                }
                 // `[builtins].coreutils_shadows = off` in
                 // ~/.zshrs/zshrs.toml (or `ZSHRS_NO_COREUTILS_SHADOWS=1`
                 // env override) bypasses the in-process shadow and
@@ -5340,6 +5355,23 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<String>) -> Option<i32> {
+        // c:Src/exec.c — redirect failure in this scope means the
+        // command should NOT run. The Host::exec path already has
+        // this gate (at fn exec above); call_function takes external
+        // commands like `cat <&3` through a different code path, so
+        // gate here too. Without this, bad-fd redirects produced
+        // the diagnostic but the external command still ran, so $?
+        // came out from the command's natural exit instead of the
+        // forced 1.
+        let redir_failed = with_executor(|exec| {
+            let f = exec.redirect_failed;
+            exec.redirect_failed = false;
+            f
+        });
+        if redir_failed {
+            with_executor(|exec| exec.set_last_status(1));
+            return Some(1);
+        }
         // zsh-bundled rename helpers + zcalc: short-circuit BEFORE the
         // function/autoload lookup so the autoloaded zsh source (which
         // can hang zshrs's parser on zsh-specific syntax) never runs.
@@ -5520,6 +5552,28 @@ impl ShellExecutor {
         } else {
             fd as i32
         };
+        // c:Src/exec.c — for DUP_READ / DUP_WRITE forms (<&N / >&N),
+        // validate the source fd is open BEFORE the save-and-dup
+        // dance below. The save's `dup(fd)` reclaims the lowest free
+        // fd, which on closed-fd reuse would let dup2(src=N, …)
+        // succeed against the freshly-claimed slot — masking the
+        // user's "bad file descriptor" error. Check src_fd first.
+        if matches!(op_byte, r::DUP_READ | r::DUP_WRITE) {
+            let n_check = target.trim_start_matches('&');
+            if n_check != "-" {
+                if let Ok(src_fd) = n_check.parse::<i32>() {
+                    if unsafe { libc::fcntl(src_fd, libc::F_GETFD) } == -1 {
+                        eprintln!(
+                            "zshrs:1: {}: bad file descriptor",
+                            src_fd
+                        );
+                        self.set_last_status(1);
+                        self.redirect_failed = true;
+                        return;
+                    }
+                }
+            }
+        }
         let saved = unsafe { libc::dup(fd) };
         if saved >= 0 {
             if let Some(top) = self.redirect_scope_stack.last_mut() {
@@ -5640,7 +5694,8 @@ impl ShellExecutor {
                 // Target is a numeric fd reference like `&3`. The parser
                 // strips the `&` prefix before we get here in some paths,
                 // others retain it — accept both. Also support `-` for
-                // close-fd (`<&-` / `>&-`) per POSIX.
+                // close-fd (`<&-` / `>&-`) per POSIX. The src_fd
+                // validity check ran above before the save-and-dup.
                 let n = target.trim_start_matches('&');
                 if n == "-" {
                     unsafe { libc::close(fd) };

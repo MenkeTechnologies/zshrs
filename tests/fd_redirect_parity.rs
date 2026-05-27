@@ -133,7 +133,6 @@ mod close_fd {
 
     /// `exec 3<&-` closes fd 3.
     #[test]
-    #[ignore = "ZSHRS BUG: cat <&3 after exec 3<&- close doesn't report bad-fd error"]
     fn close_fd_after_open() {
         let d = tdir();
         std::fs::write(d.path().join("in.txt"), "data\n").unwrap();
