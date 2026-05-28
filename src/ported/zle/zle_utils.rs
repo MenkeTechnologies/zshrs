@@ -775,39 +775,52 @@ mod tests_bindkey_format {
     fn bind_ztrdup_emits_caret_form_for_control_chars() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        // Ctrl-A → "^A". Mirrors zsh's bindkey -L line for `bindkey '^A'`.
-        assert_eq!(bindztrdup(b"\x01"), "^A");
+        // Ctrl-A → `"^A"` (control-form `^A` wrapped by dquotedztrdup
+        // per c:1267). Mirrors `bindkey -L` line "^A" beginning-of-line.
+        assert_eq!(bindztrdup(b"\x01"), "\"^A\"");
         // Ctrl-_ → "^_".
-        assert_eq!(bindztrdup(b"\x1f"), "^_");
+        assert_eq!(bindztrdup(b"\x1f"), "\"^_\"");
         // DEL (0x7f) → "^?".
-        assert_eq!(bindztrdup(b"\x7f"), "^?");
+        assert_eq!(bindztrdup(b"\x7f"), "\"^?\"");
     }
 
     #[test]
     fn bind_ztrdup_escapes_backslash_and_caret() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        // '\\' → "\\\\" (escaped per C source's `c == '\\'` branch).
-        assert_eq!(bindztrdup(b"\\"), "\\\\");
-        // '^' → "\\^".
-        assert_eq!(bindztrdup(b"^"), "\\^");
+        // Literal `\` (byte 0x5C) → bindztrdup buffer holds `\\`
+        // (two backslashes from c:1261 `c == '\\'`). dquotedztrdup
+        // sees two consecutive `\`s: emits one, then on the second
+        // sees pending and emits an extra → `\\\`, then at end the
+        // pending flag triggers one more `\` → final `\\\\` (4
+        // backslashes between the wrapping quotes). Matches zsh's
+        // `bindkey -M emacs` line containing `"^\\\\"-"~" self-insert`.
+        assert_eq!(bindztrdup(b"\\"), "\"\\\\\\\\\"");
+        // Literal `^` (byte 0x5E) → bindztrdup buffer holds `\^`
+        // (one backslash + caret). dquotedztrdup: `\` not pending →
+        // emit one `\`; `^` default → emit; no final pending. Result
+        // `"\^"`.
+        assert_eq!(bindztrdup(b"^"), "\"\\^\"");
     }
 
     #[test]
     fn bind_ztrdup_handles_high_bit_as_meta() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        // Byte with bit-7 set → "\\M-X" prefix. \\xC1 = M-A.
-        assert_eq!(bindztrdup(b"\xC1"), "\\M-A");
+        // Byte 0xC1 → bindztrdup buffer `\M-A` (3 bytes: `\`, `M`,
+        // `-`, `A`). dquotedztrdup: `\` not pending → one `\`; `M`,
+        // `-`, `A` default → as-is. Result `"\M-A"`.
+        assert_eq!(bindztrdup(b"\xC1"), "\"\\M-A\"");
     }
 
     #[test]
     fn printbind_caret_form_matches_describe_key_output() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        // `^A`-style display form (distinct from bindkey's escape form).
-        assert_eq!(printbind(b"\x01"), "^A");
-        assert_eq!(printbind(b"\x1b"), "^[");
+        // `printbind` routes through `bindztrdup` (c:1283-1287) and
+        // inherits the dquotedztrdup wrapping.
+        assert_eq!(printbind(b"\x01"), "\"^A\"");
+        assert_eq!(printbind(b"\x1b"), "\"^[\"");
     }
 }
 
@@ -867,36 +880,40 @@ pub fn getzlequery() -> i32 {
 // zle_h.rs:387-393). `foredel` / `backdel` / `cuttext` now take
 // `i32 flags` matching the C signatures verbatim.
 
-/// Format a key sequence for `bindkey -L` listing.
-/// Port of `bindztrdup(char *str)` from Src/Zle/zle_utils.c:1238. Produces the
-/// dquoted-friendly form (`\C-a`, `\M-x`, escaped backslashes/carets)
-/// that the bindkey command uses for round-trippable output —
-/// distinct from `printbind` below which uses the human-readable
-/// `^A` / `^[X` form printed in describe-key-briefly etc.
+/// Direct port of `char *bindztrdup(char *str)` from
+/// `Src/Zle/zle_utils.c:1238`. Builds the bindkey-listing escape
+/// buffer (`^X` for ctrl, `\M-X` for high-bit, doubled `\\` / `\^`
+/// for literal `\` and `^`), then routes through `dquotedztrdup` for
+/// the final shell-quoted form. The returned string includes the
+/// surrounding `"..."` per `dquotedztrdup`'s contract; callers should
+/// NOT add their own quotes.
 pub fn bindztrdup(str: &[u8]) -> String {
+    // c:1238
     let mut buf = String::new();
+    // c:1248-1264 — build the unquoted escape buffer.
     for &b in str {
-        // Meta bit handling: zsh metafies bytes >= 0x80 by inserting
-        // 0x83 (Meta) before a (b ^ 0x20) byte. The C source unwinds
-        // that here; in our Rust model we don't pastebuf in storage, so
-        // we treat any byte >= 0x80 as already a M- target.
         let mut c = b;
         if c & 0x80 != 0 {
+            // c:1252-1255 — high-bit: `\M-` prefix + strip 0x80.
             buf.push('\\');
             buf.push('M');
             buf.push('-');
             c &= 0x7f;
         }
         if c < 32 || c == 0x7f {
+            // c:1257-1259 — control char: `^` prefix + XOR 0x40.
             buf.push('^');
             c ^= 64;
         }
         if c == b'\\' || c == b'^' {
+            // c:1261 — literal `\` / `^`: backslash-escape.
             buf.push('\\');
         }
         buf.push(c as char);
     }
-    buf
+    // c:1267 — `ret = dquotedztrdup(buf)`. Wraps in `"..."` and
+    // does another `\` → `\\` doubling pass.
+    crate::ported::utils::dquotedztrdup(&buf)
 }
 
 /// Port of `printbind(char *str, FILE *stream)` from zle_utils.c:1283.

@@ -10487,7 +10487,12 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             0,
-            Some("evaMldDANmrsLR"),
+            // c:Src/Zle/zle_main.c:2209 — `"evaM:ldDANmrsLRp"`. The
+            // `:` after `M` marks it as taking a required arg
+            // (`-M <keymap>`); without it the parser consumes the
+            // keymap name as a positional and `-M` falls back to
+            // "main" → wrong keymap returned for every `-M X` call.
+            Some("evaM:ldDANmrsLRp"),
             None,
         ),
         BUILTIN(

@@ -1600,13 +1600,17 @@ execcmd_exec_err_path
 # zsh_c_fn_names.txt).
 dispatch_execfuncs
 
-# zle/complete.rs — `list_matches_hook` / `invalidate_list_hook` are
-# Hookfn-shape thunks (`(Hookdef, void*) -> i32`) that bridge the
-# typed handlers `compresult::list_matches() -> i32` and
-# `compresult::invalidate_list() -> i32` to the C addhookfunc
-# registration at `Src/Zle/complete.c:1763-1764`. The typed handlers
-# are the actual C-faithful ports; the thunks exist purely because
-# Rust fn pointers can't auto-coerce between sigs.
+# zle/complete.rs — Hookfn-shape thunks (`(Hookdef, void*) -> i32`)
+# that bridge the typed handlers in `compcore.rs`/`compresult.rs` to
+# the C addhookfunc registrations at `Src/Zle/complete.c:1762-1767`.
+# The typed handlers (`do_completion`, `before_complete`,
+# `after_complete`, `list_matches`, `invalidate_list`) are the actual
+# C-faithful ports; the thunks exist purely because Rust fn pointers
+# can't auto-coerce between sigs and the C side casts the typed
+# fn ptr to `Hookfn` at registration.
+complete_hook
+before_complete_hook
+after_complete_hook
 list_matches_hook
 invalidate_list_hook
 

@@ -219,7 +219,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         if useline.load(Ordering::Relaxed) < 0 {
             // c:351
             unmetafy_line();
-            ret = selfinsert(); // c:353
+            ret = selfinsert(&[]); // c:353
             metafy_line();
         }
         return goto_compend(ret); // c:356 goto compend
@@ -252,7 +252,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     } else if useline.load(Ordering::Relaxed) < 0 {
         // c:370
         unmetafy_line();
-        ret = selfinsert(); // c:372
+        ret = selfinsert(&[]); // c:372
         metafy_line();
     } else if useline.load(Ordering::Relaxed) == 0 && uselist.load(Ordering::Relaxed) != 0 {
         // c:374
@@ -4651,7 +4651,7 @@ mod tests {
         // Force the wide-char re-derive path (lastchar_wide_valid=0 →
         // selfinsert refills it from LASTCHAR per zle_misc.c:119-122).
         LASTCHAR_WIDE_VALID.store(0, Ordering::Relaxed);
-        let rv = selfinsert();
+        let rv = selfinsert(&[]);
         assert_eq!(rv, 0);
         let buf: String = crate::ported::zle::zle_main::ZLELINE
             .lock()

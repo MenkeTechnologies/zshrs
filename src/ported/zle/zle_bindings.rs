@@ -744,9 +744,29 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "beginning-of-buffer-or-history" => Some(|_| beginningofbufferorhistory()),
         "beginning-of-line" => Some(|_| beginningofline()),
         "capitalize-word" => Some(capitalizeword),
+        // Completion widgets — `expand-or-complete` is the default
+        // Tab binding (`Src/Zle/zle_bindings.c:88 emacsbind[9]`
+        // and `:256 viinsbind[9]`); `complete-word` is the
+        // alternative widget users rebind to via
+        // `bindkey '^I' complete-word`. Both end up in
+        // `docomplete(COMP_COMPLETE)` → `do_completion` →
+        // `_main_complete`. The three menu variants share the same
+        // back-half but differ in `USEMENU` / `USEGLOB`. Before
+        // this batch the widget names existed in `IWIDGET_NAMES`
+        // but `iwidget_lookup` returned `None`, so any keymap
+        // binding to them silently no-op'd at the prompt.
+        // Direct fn pointers — C-faithful sig `fn(&[String]) -> i32`
+        // (per `Src/Zle/zle.h:189 ZleIntFunc`). No `|_| f()` wrapper
+        // because the args ARE passed through (e.g. `selfinsert(args)`
+        // in the Tab-at-indent branch, `menucomplete(args)` from
+        // `reversemenucomplete`).
+        "complete-word" => Some(completeword),
+        "menu-complete" => Some(menucomplete),
+        "menu-expand-or-complete" => Some(menuexpandorcomplete),
+        "reverse-menu-complete" => Some(reversemenucomplete),
         "copy-prev-word" => Some(|_| copyprevword()),
         "copy-region-as-kill" => Some(copyregionaskill),
-        "delete-char-or-list" => Some(|_| deletecharorlist()),
+        "delete-char-or-list" => Some(deletecharorlist),
         "digit-argument" => Some(|_| digitargument()),
         "down-case-word" => Some(downcaseword),
         "down-history" => Some(|_| downhistory()),
@@ -754,7 +774,7 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "end-of-buffer-or-history" => Some(|_| endofbufferorhistory()),
         "end-of-line" => Some(|_| endofline()),
         "expand-history" => Some(|_| expandhistory()),
-        "expand-or-complete" => Some(|_| expandorcomplete()),
+        "expand-or-complete" => Some(expandorcomplete),
         "forward-char" => Some(|_| forwardchar()),
         "forward-word" => Some(forwardword),
         "history-incremental-search-backward" => Some(|_| historyincrementalsearchbackward()),
@@ -765,8 +785,8 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "kill-line" => Some(|_| killline()),
         "kill-whole-line" => Some(|_| killwholeline()),
         "kill-word" => Some(killword),
-        "list-choices" => Some(|_| listchoices()),
-        "list-expand" => Some(|_| listexpand()),
+        "list-choices" => Some(listchoices),
+        "list-expand" => Some(listexpand),
         "neg-argument" => Some(|_| negargument()),
         "pound-insert" => Some(|_| poundinsert()),
         "push-line" => Some(|_| pushline()),
@@ -774,11 +794,11 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         "quote-region" => Some(|_| quoteregion()),
         "quoted-insert" => Some(|_| quotedinsert()),
         "redo" => Some(|_| redo()),
-        "self-insert-unmeta" => Some(|_| selfinsertunmeta()),
-        "self-insert" => Some(|_| selfinsert()),
+        "self-insert-unmeta" => Some(selfinsertunmeta),
+        "self-insert" => Some(selfinsert),
         "send-break" => Some(|_| sendbreak()),
         "set-mark-command" => Some(|_| setmarkcommand()),
-        "spell-word" => Some(|_| spellword()),
+        "spell-word" => Some(spellword),
         "transpose-chars" => Some(|_| transposechars()),
         "transpose-words" => Some(transposewords),
         "undefined-key" => Some(|_| undefinedkey()),
@@ -1003,6 +1023,33 @@ mod tests {
     fn iwidget_lookup_resolves_self_insert() {
         let _g = crate::test_util::global_state_lock();
         assert!(iwidget_lookup("self-insert").is_some());
+    }
+
+    /// `iwidget_lookup` resolves every completion widget — `Tab`
+    /// is keymap-bound to `expand-or-complete` by default
+    /// (`Src/Zle/zle_bindings.c:88` emacsbind[9] / `:256`
+    /// viinsbind[9]), and `complete-word` / `menu-complete` /
+    /// `reverse-menu-complete` / `menu-expand-or-complete` are
+    /// what users `bindkey '^I' …` to. Before all four were wired
+    /// into `iwidget_lookup`, those binds resolved to NULL fn
+    /// pointers and Tab silently no-op'd at the prompt.
+    #[test]
+    fn iwidget_lookup_resolves_every_completion_widget() {
+        let _g = crate::test_util::global_state_lock();
+        for w in [
+            "expand-or-complete",
+            "complete-word",
+            "menu-complete",
+            "menu-expand-or-complete",
+            "reverse-menu-complete",
+            "list-choices",
+            "delete-char-or-list",
+        ] {
+            assert!(
+                iwidget_lookup(w).is_some(),
+                "completion widget `{w}` is registered in IWIDGET_NAMES but has no fn pointer",
+            );
+        }
     }
 
     /// `iwidget_lookup` for unknown widget names returns None.

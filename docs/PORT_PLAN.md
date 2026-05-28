@@ -69,8 +69,37 @@ globals with no `struct executor` in C).
   `docompletion`). File-scope C globals (`compcontext`, `compfunc`,
   `usemenu`, `useglob`, `nbrbeg`, `nbrend`, `origcs`, `origll`,
   `instring`, `inbackt`, `menucmp`, `comppref`, `validlist`,
-  `showagain`, `lastambig`, `bashlistfirst`, `amenu`) carry the
-  state.
+  `showagain`, `lastambig`, `bashlistfirst`, `amenu`, `lincmd`)
+  carry the state.
+
+**Tab dispatch chain fully wired (zle_tricky / complete):**
+
+- `expandorcomplete` (the default `^I` binding per `EMACSBIND[9]`
+  / `VIINSBIND[9]` mirroring `zle_bindings.c:97,265`) → `docomplete(
+  COMP_EXPAND_COMPLETE)` → real 3-way switch on `lst` at
+  `zle_tricky.rs:497-535` mirroring C `zle_tricky.c:817-870`:
+  `COMP_SPELL` → `spckword` path, `COMP_ISEXPAND` → `doexpansion`
+  with `COMP_EXPAND_COMPLETE` fall-through to `docompletion`, else
+  → `docompletion`. Earlier versions short-circuited the entire
+  dispatch to `do_completion`, leaving `doexpansion` unreachable.
+- `doexpansion(s, lst, olst, explincmd)` and `docompletion(s, lst,
+  incmd)` are now real ports (was 1-arg / 0-arg stubs).
+- `lincmd` is now a real file-scope `AtomicI32` at
+  `zle_tricky.rs:LINCMD` (mirrors C `c:139`), set by
+  `get_comp_string` via a command-position heuristic
+  (start-of-line or first word after `;`/`\n`/`&`/`|`/`(`/`{`)
+  pending the full lexer-driven `incmdpos` substrate. Threaded
+  through `docomplete` → `compldat.incmd` per C `c:805`.
+- All six C COMPLETEHOOK Hookfns from `complete.c:1762-1767` are
+  registered via `(Hookdef, void*) -> i32` thunks in
+  `complete.rs:boot_`: `complete` → `do_completion`,
+  `before_complete` → `before_complete`, `after_complete` →
+  `after_complete`, `list_matches` → `list_matches`,
+  `invalidate_list` → `invalidate_list`. Only
+  `accept_completion` → `accept_last` remains unregistered (its
+  multi-arg sig has no compldat-style C payload struct; called
+  directly from `compresult.rs` for now). User-installed
+  `complete` Hookfns now fire correctly.
 - `zle/zle_keymap.rs` `BindState` — deleted; the C `struct bindstate`
   is only used as a stack-local in `printbinding()` /
   `scanbindings()` / `bin_bindkey -L`. Those ports model it as a

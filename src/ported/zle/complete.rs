@@ -906,6 +906,19 @@ pub fn bin_compadd(
         crate::ported::params::setaparam("_complete_help_funcs", buf);
         return 1;
     }
+    // In-editor capture shadow (Phase 0.5 of the LSP completion
+    // path — see `docs/IN_EDITOR_COMPSYS_COMPLETION.md` +
+    // `crate::compsys::in_editor::COMPADD_CAPTURE_BUFFER`).
+    // When the buffer is `Some`, every compadd call routes its
+    // proposed matches into the buffer as `CompsysMatch` records
+    // instead of into the ZLE state. The buffer's installer (the
+    // LSP / `complete_at`) drains it after `_main_complete`
+    // returns and translates each match to a `CompletionItem`.
+    // Parsing happens in `crate::compsys::in_editor` (Rust-only
+    // space) so this ported file stays a faithful C port.
+    if crate::compsys::in_editor::try_capture_compadd_argv(argv) {
+        return 0; // mimic "matches were added" status
+    }
     ret
 }
 
@@ -2445,45 +2458,75 @@ pub fn enables_(m: *const module) -> i32 {
 /// addhookfunc("list_matches",      list_matches);
 /// addhookfunc("invalidate_list",   invalidate_list);
 /// ```
-/// The Rust handlers in `compcore.rs` / `compresult.rs` currently have
-/// non-`Hookfn`-shaped signatures (`do_completion(s: &str, incmd, lst)`
-/// etc.) and direct callers in `zle_tricky.rs`. Registering them
-/// requires a follow-up that either (a) changes the handler sigs to
-/// `(*mut hookdef, *mut c_void) -> i32` and casts the void* arg back
-/// to the typed pointer inside the body — matching C's
-/// `(Hookfn) do_completion` cast at registration site — or (b) adds
-/// per-handler Hookfn-shape thunks under separate C-named symbols.
-/// The fallback handlers in zle_h.rs/compresult.rs fire when no
-/// Hookfn is registered (matching c:993-995), so leaving the
-/// registration out is observationally neutral until that follow-up
-/// lands.
+/// Each Rust handler has a non-`Hookfn`-shaped signature (typed args)
+/// and is bridged here via a per-handler `(Hookdef, void*) -> i32`
+/// thunk that casts the void* payload back to the typed pointer —
+/// matching C's `(Hookfn) do_completion` cast at registration. The
+/// `accept_completion` hook's `accept_last` carries a multi-field
+/// signature with no C-payload struct yet (its body is invoked
+/// directly from `compresult.rs` rather than via `runhookdef`), so
+/// it remains unregistered until that follow-up lands.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
     // c:1758
-    // Register the two no-arg hooks via Hookfn-shape thunks. The four
-    // typed-arg hooks (complete/before_complete/after_complete/
-    // accept_completion) carry varied signatures and require
-    // per-hook payload structs to thread through `(Hookdef, void*)` —
-    // tracked for follow-up. The fallback handlers in zle_h.rs fire
-    // when no Hookfn is registered (c:993-995), so the unregistered
-    // four remain observationally neutral.
+    let _ = crate::ported::module::addhookfunc("complete", complete_hook);
+    let _ = crate::ported::module::addhookfunc("before_complete", before_complete_hook);
+    let _ = crate::ported::module::addhookfunc("after_complete", after_complete_hook);
     let _ = crate::ported::module::addhookfunc("list_matches", list_matches_hook);
     let _ = crate::ported::module::addhookfunc("invalidate_list", invalidate_list_hook);
     0 // c:1767
+}
+
+/// Hookfn-shape thunk for `complete` — bridges the
+/// `(Hookdef, void*) -> i32` Hookfn signature to the typed
+/// `do_completion(s, incmd, lst) -> i32` handler in compcore.rs.
+/// Payload is `struct compldat *` per C `zle_tricky.c:2342-2346`.
+fn complete_hook(_h: *mut crate::ported::zsh_h::hookdef, d: *mut std::ffi::c_void) -> i32 {
+    // c:1762 — `addhookfunc("complete", do_completion);`
+    if d.is_null() {
+        return crate::ported::zle::compcore::do_completion("", 0, 0);
+    }
+    let dat = unsafe { &*(d as *const crate::ported::zle::zle_h::compldat) };
+    crate::ported::zle::compcore::do_completion(&dat.s, dat.incmd, dat.lst)
+}
+
+/// Hookfn-shape thunk for `before_complete` — payload is `int *lst`
+/// per C `zle_tricky.c:621`.
+fn before_complete_hook(_h: *mut crate::ported::zsh_h::hookdef, d: *mut std::ffi::c_void) -> i32 {
+    // c:1763 — `addhookfunc("before_complete", before_complete);`
+    if d.is_null() {
+        let mut lst = 0i32;
+        return crate::ported::zle::compcore::before_complete(&mut lst);
+    }
+    let lst_ptr = d as *mut i32;
+    crate::ported::zle::compcore::before_complete(unsafe { &mut *lst_ptr })
+}
+
+/// Hookfn-shape thunk for `after_complete` — payload is `int dat[2]`
+/// per C `zle_tricky.c:878`.
+fn after_complete_hook(_h: *mut crate::ported::zsh_h::hookdef, d: *mut std::ffi::c_void) -> i32 {
+    // c:1764 — `addhookfunc("after_complete", after_complete);`
+    if d.is_null() {
+        let mut dat = [0i32; 2];
+        return crate::ported::zle::compcore::after_complete(&mut dat);
+    }
+    let dat_ptr = d as *mut i32;
+    let dat_slice = unsafe { std::slice::from_raw_parts_mut(dat_ptr, 2) };
+    crate::ported::zle::compcore::after_complete(dat_slice)
 }
 
 /// Hookfn-shape thunk for `list_matches` — bridges the
 /// `(Hookdef, void*) -> i32` Hookfn signature to the typed
 /// `list_matches() -> i32` handler in compresult.rs.
 fn list_matches_hook(_h: *mut crate::ported::zsh_h::hookdef, _d: *mut std::ffi::c_void) -> i32 {
-    // c:1763 — `addhookfunc("list_matches", list_matches);`
+    // c:1766 — `addhookfunc("list_matches", list_matches);`
     crate::ported::zle::compresult::list_matches()
 }
 
 /// Hookfn-shape thunk for `invalidate_list` — same shape as
 /// `list_matches_hook`.
 fn invalidate_list_hook(_h: *mut crate::ported::zsh_h::hookdef, _d: *mut std::ffi::c_void) -> i32 {
-    // c:1764 — `addhookfunc("invalidate_list", invalidate_list);`
+    // c:1767 — `addhookfunc("invalidate_list", invalidate_list);`
     crate::ported::zle::compresult::invalidate_list()
 }
 
