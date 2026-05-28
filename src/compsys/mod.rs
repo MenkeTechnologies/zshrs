@@ -164,3 +164,168 @@ pub use zpwr_colors::{
     load_zpwr_config, parse_zstyles_from_config, parse_zstyles_from_content, zpwr_list_colors,
     HeaderColors, ParsedZstyle, ZstyleColors, DEFAULT_PREFIX_COLOR, MENU_SELECTION_COLOR,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === COMPSYS_FN_NAMES inventory invariants ===
+
+    #[test]
+    fn compsys_fn_names_is_nonempty() {
+        assert!(
+            !COMPSYS_FN_NAMES.is_empty(),
+            "inventory must list at least one native completer"
+        );
+        // The comment in the source enumerates ~50 entries across
+        // base / core / utility / per-command completers. Sanity
+        // floor to catch the table being accidentally truncated.
+        assert!(
+            COMPSYS_FN_NAMES.len() >= 30,
+            "expected ≥30 entries in COMPSYS_FN_NAMES, got {}",
+            COMPSYS_FN_NAMES.len()
+        );
+    }
+
+    #[test]
+    fn compsys_fn_names_all_start_with_underscore() {
+        // The compsys convention (zsh Completion/) is that every
+        // completion function name begins with `_`. Anything else
+        // here is a typo and would break dispatcher routing.
+        for name in COMPSYS_FN_NAMES {
+            assert!(
+                name.starts_with('_'),
+                "compsys function name {name:?} must start with `_`"
+            );
+        }
+    }
+
+    #[test]
+    fn compsys_fn_names_have_no_empty_entries() {
+        for name in COMPSYS_FN_NAMES {
+            assert!(!name.is_empty(), "empty entry in COMPSYS_FN_NAMES");
+            // `_` alone is also invalid — needs a body after the
+            // underscore prefix.
+            assert!(name.len() >= 2, "stub entry {name:?} too short");
+        }
+    }
+
+    #[test]
+    fn compsys_fn_names_are_unique() {
+        // The list is a source-of-truth inventory consumed by the
+        // LSP / docs. Duplicates would inflate counts and confuse
+        // the IntelliJ tool window enumeration.
+        let mut seen = std::collections::HashSet::new();
+        for name in COMPSYS_FN_NAMES {
+            assert!(
+                seen.insert(*name),
+                "duplicate entry {name:?} in COMPSYS_FN_NAMES"
+            );
+        }
+    }
+
+    #[test]
+    fn compsys_fn_names_are_sorted() {
+        // The doc says "(sorted)". A pre-sorted slice supports binary
+        // search if a hot path ever needs O(log n) lookup, and it
+        // makes the source diff stable across edits.
+        let mut sorted = COMPSYS_FN_NAMES.to_vec();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            COMPSYS_FN_NAMES.to_vec(),
+            "COMPSYS_FN_NAMES must be sorted"
+        );
+    }
+
+    #[test]
+    fn compsys_fn_names_use_only_underscore_and_alnum() {
+        // Compsys function names are valid zsh identifiers — they may
+        // contain alphanumerics and underscore only, since they are
+        // shell function names that also have native Rust impls.
+        for name in COMPSYS_FN_NAMES {
+            assert!(
+                name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "bad character in compsys function name {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn compsys_fn_names_include_core_dispatcher() {
+        // `_main_complete` is the top-level entry point for the
+        // compsys engine — it must be in the inventory or the
+        // completion path is broken.
+        assert!(
+            COMPSYS_FN_NAMES.contains(&"_main_complete"),
+            "_main_complete must be in COMPSYS_FN_NAMES"
+        );
+    }
+
+    #[test]
+    fn compsys_fn_names_include_arguments_engine() {
+        // `_arguments` is the arg-spec engine used by ~every per-tool
+        // completer. Must be in the native inventory.
+        assert!(COMPSYS_FN_NAMES.contains(&"_arguments"));
+    }
+
+    #[test]
+    fn compsys_fn_names_include_file_path_completers() {
+        // File/path completers are the most-used surface — verify
+        // they're all in the native inventory.
+        for fn_name in [
+            "_files",
+            "_directories",
+            "_path_files",
+            "_tilde_files",
+            "_canonical_paths",
+        ] {
+            assert!(
+                COMPSYS_FN_NAMES.contains(&fn_name),
+                "path completer {fn_name:?} missing from inventory"
+            );
+        }
+    }
+
+    #[test]
+    fn compsys_fn_names_include_per_command_wired_in_main() {
+        // The header comment promises these are wired by `main` —
+        // they must therefore appear in the inventory.
+        for fn_name in ["_git", "_docker", "_cargo", "_kubectl", "_terraform"] {
+            assert!(
+                COMPSYS_FN_NAMES.contains(&fn_name),
+                "per-command completer {fn_name:?} missing from inventory"
+            );
+        }
+    }
+
+    #[test]
+    fn compsys_fn_names_include_baseline_unix_stubs() {
+        // The header comment also lists baseline ls/cd/cp/mv/rm/cat/grep
+        // stubs. Verify they're all present.
+        for fn_name in ["_ls", "_cd", "_cp", "_mv", "_rm", "_cat", "_grep"] {
+            assert!(
+                COMPSYS_FN_NAMES.contains(&fn_name),
+                "baseline stub {fn_name:?} missing from inventory"
+            );
+        }
+    }
+
+    #[test]
+    fn compsys_fn_names_include_tag_machinery() {
+        // The tag manager / requested-wanted dispatch lives in
+        // `_tags` / `_requested` / `_wanted` — all in the inventory.
+        for fn_name in [
+            "_tags",
+            "_requested",
+            "_wanted",
+            "_all_labels",
+            "_next_label",
+        ] {
+            assert!(
+                COMPSYS_FN_NAMES.contains(&fn_name),
+                "tag machinery {fn_name:?} missing from inventory"
+            );
+        }
+    }
+}
