@@ -84,7 +84,7 @@
             <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           </nav>
           <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.75;">
-            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 91 C files (32 core + 24 ZLE + 33 modules + 2 Builtins) &middot; 147,233 C lines &middot; 515,077 Rust lines (all <code>.rs</code> incl. tests + <code>build.rs</code>; <code>git ls-files '*.rs' | xargs wc -l</code>) &middot; 598 <code>.rs</code> files &middot; 9,500 <code>#[test]</code> hooks (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
+            src/zsh/Src/*.c &rarr; src/ported/*.rs &middot; 91 C files (32 core + 24 ZLE + 33 modules + 2 Builtins) &middot; 147,233 C lines &middot; 515,077 Rust lines (all <code>.rs</code> incl. tests + <code>build.rs</code>; <code>git ls-files '*.rs' | xargs wc -l</code>) &middot; 598 <code>.rs</code> files &middot; 9,945 <code>#[test]</code> hooks (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) &middot; <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);">PORT.md</a> ruleset &middot; <code>tests/port_purity.rs</code> enforces strict-port purity
           </p>
         </div>
         <div class="tutorial-toolbar">
@@ -122,7 +122,7 @@
       </p>
 
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-val green">9,500</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val green">9,945</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
         <div class="stat-card"><div class="stat-val">91</div><div class="stat-label">C Files Ported</div></div>
         <div class="stat-card"><div class="stat-val accent">5,462</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
         <div class="stat-card"><div class="stat-val">598</div><div class="stat-label">Rust Source Files</div></div>
@@ -252,7 +252,7 @@
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
         <div class="stat-card"><div class="stat-val">515,077</div><div class="stat-label">Total Rust Lines</div></div>
         <div class="stat-card"><div class="stat-val accent">598</div><div class="stat-label"><code>.rs</code> Files</div></div>
-        <div class="stat-card"><div class="stat-val green">9,500</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val green">9,945</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
         <div class="stat-card"><div class="stat-val">5,462</div><div class="stat-label"><code>pub fn</code> (tracked <code>.rs</code>)</div></div>
         <div class="stat-card"><div class="stat-val">575</div><div class="stat-label"><code>pub struct</code></div></div>
         <div class="stat-card"><div class="stat-val">125</div><div class="stat-label"><code>pub enum</code></div></div>
@@ -644,12 +644,12 @@
       <!-- SECTION: GRAND TOTAL — WORKSPACE CRATES       -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&#x2261;</span>GRAND TOTAL &mdash; FULL WORKSPACE</h2>
-      <p class="tutorial-subtitle">Two Rust packages in one Cargo workspace (<code>zshrs</code> + <code>zshrs-daemon</code>; <code>compsys</code> was folded into <code>zshrs</code>). Combined: 515,077 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 5,462 <code>pub fn</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*pub fn '</code>), 575 <code>pub struct</code>, 125 <code>pub enum</code>, 9,500 <code>#[test]</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) — each <code>rg</code> over the same tracked <code>.rs</code> set as <code>wc</code>, 2026-05-27.</p>
+      <p class="tutorial-subtitle">Two Rust packages in one Cargo workspace (<code>zshrs</code> + <code>zshrs-daemon</code>; <code>compsys</code> was folded into <code>zshrs</code>). Combined: 515,077 Rust lines (<code>git ls-files '*.rs' | xargs wc -l</code>), 5,462 <code>pub fn</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*pub fn '</code>), 575 <code>pub struct</code>, 125 <code>pub enum</code>, 9,945 <code>#[test]</code> lines (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>) — each <code>rg</code> over the same tracked <code>.rs</code> set as <code>wc</code>, 2026-05-27.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
         <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">515,077</div><div class="stat-label">Total Rust Lines</div></div>
         <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">5,462</div><div class="stat-label"><code>pub fn</code> (rg)</div></div>
-        <div class="stat-card"><div class="stat-val green">9,500</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
+        <div class="stat-card"><div class="stat-val green">9,945</div><div class="stat-label"><code>#[test]</code> Hooks</div></div>
         <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">3</div><div class="stat-label">Workspace Crates</div></div>
       </div>
 
@@ -672,7 +672,7 @@
             <td>Singleton daemon: IPC + HTTP/OpenAPI, canonical shards, jobs, fsnotify, pub/sub.</td>
           </tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">515,077</td><td class="num">598</td><td class="num">5,462</td><td class="num">575</td><td class="num">125</td><td class="num">9,500</td><td></td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">515,077</td><td class="num">598</td><td class="num">5,462</td><td class="num">575</td><td class="num">125</td><td class="num">9,945</td><td></td><td></td></tr></tfoot>
       </table>
 
     </main>
