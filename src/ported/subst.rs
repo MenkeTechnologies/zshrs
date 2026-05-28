@@ -6003,7 +6003,7 @@ pub fn paramsubst(
                 let other = arrays_get(other_name)
                     .or_else(|| vars_get(other_name).map(|s| vec![s]))
                     .unwrap_or_default();
-                let zipped: Vec<String> = if qt {
+                let zipped: Vec<String> = if qt && !other.is_empty() && !arr.is_empty() {
                     let ifs0 = vars_get("IFS")
                         .unwrap_or_else(|| " \t\n\0".to_string())
                         .chars()
@@ -6011,11 +6011,11 @@ pub fn paramsubst(
                         .map(String::from)
                         .unwrap_or_default();
                     let joined = arr.join(&ifs0);
-                    let n = other.len().max(1);
+                    let n = other.len();
                     let mut z: Vec<String> = Vec::with_capacity(n * 2);
                     for i in 0..n {
                         z.push(joined.clone());
-                        z.push(other.get(i).cloned().unwrap_or_default());
+                        z.push(other[i].clone());
                     }
                     z
                 } else if arr.is_empty() {
