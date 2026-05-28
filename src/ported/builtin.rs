@@ -577,7 +577,7 @@ pub fn execbuiltin(
     // init.c:234 `((!interact || sourcelevel) && errflag)` break).
     let ef = errflag.load(Relaxed);
     if (ef & ERRFLAG_ERROR) != 0 {
-        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
+        if !isset(INTERACTIVE) {
             return 1;
         }
         errflag.fetch_and(!ERRFLAG_ERROR, Relaxed); // c:427
@@ -920,7 +920,7 @@ pub fn bin_enable(
                             .ok()
                             .and_then(|t| t.get_including_disabled(&nm).map(|a| a.text.clone()));
                         if let Some(v) = val {
-                            println!("{}={}", nm, crate::ported::utils::quotedzputs(&v));
+                            println!("{}={}", nm, quotedzputs(&v));
                         } else {
                             println!("{}", nm);
                         }
@@ -930,7 +930,7 @@ pub fn bin_enable(
                             t.get_including_disabled(&nm).map(|a| a.text.clone())
                         });
                         if let Some(v) = val {
-                            println!("{}={}", nm, crate::ported::utils::quotedzputs(&v));
+                            println!("{}={}", nm, quotedzputs(&v));
                         } else {
                             println!("{}", nm);
                         }
@@ -5541,7 +5541,7 @@ pub fn bin_unset(
                 // are NOT touched by params.rs::unsetparam so we
                 // wipe them directly here; using exec_hooks::unset_*
                 // would loop back into unsetparam.
-                crate::ported::params::unsetparam(nm);
+                unsetparam(nm);
                 let _ = crate::ported::params::paramtab_hashed_storage()
                     .lock()
                     .ok()
@@ -5825,7 +5825,7 @@ pub fn bin_whence(
                     // emit so the output order matches zsh's
                     // scanmatchtable walk.
                     let printed_path = |c: &cmdnam| -> String {
-                        if (c.node.flags & crate::ported::zsh_h::HASHED as i32) != 0 {
+                        if (c.node.flags & HASHED as i32) != 0 {
                             c.cmd.clone().unwrap_or_default()
                         } else {
                             let dir = c
@@ -7007,7 +7007,7 @@ pub fn bin_print(
     // substitution. Richer named-dir lookup belongs in a deeper
     // dirify port if more callers need it.
     if dirify_d {
-        if let Ok(home) = std::env::var("HOME") {
+        if let Ok(home) = env::var("HOME") {
             if !home.is_empty() {
                 for a in processed_args.iter_mut() {
                     if a.as_str() == home {
@@ -7397,7 +7397,7 @@ pub fn bin_getopts(
     // that was the AUTHORITY (writes to $OPTIND didn't propagate
     // back), so `OPTIND=1` between two getopts loops left zoptind at
     // the post-loop value and the second pass returned immediately.
-    let paramtab_oi = crate::ported::params::getiparam("OPTIND");
+    let paramtab_oi = getiparam("OPTIND");
     let mut zoptind = if paramtab_oi >= 1 {
         paramtab_oi as i32
     } else {
@@ -8551,7 +8551,7 @@ pub fn bin_read(
     // successive calls (matches zsh's per-byte read loop). Returns
     // Some(byte) on success, None on EOF, error sentinel on syscall
     // failure (caller maps to return 2).
-    let read_byte = |fd: i32| -> std::io::Result<Option<u8>> {
+    let read_byte = |fd: i32| -> io::Result<Option<u8>> {
         let mut b = [0u8; 1];
         loop {
             let n = unsafe { libc::read(fd, b.as_mut_ptr() as *mut libc::c_void, 1) };
@@ -8559,8 +8559,8 @@ pub fn bin_read(
                 1 => return Ok(Some(b[0])),
                 0 => return Ok(None),
                 -1 => {
-                    let err = std::io::Error::last_os_error();
-                    if err.kind() == std::io::ErrorKind::Interrupted {
+                    let err = io::Error::last_os_error();
+                    if err.kind() == io::ErrorKind::Interrupted {
                         continue;
                     }
                     return Err(err);
@@ -9195,7 +9195,7 @@ pub fn bin_trap(
         // The traps_table entry alone isn't enough — handletrap
         // gates on sigtrapped[idx] != 0.
         if sig > 0 && sig <= crate::ported::signals_h::SIGCOUNT && sig != libc::SIGCHLD as i32 {
-            crate::ported::signals::settrap(sig, None, ZSIG_FUNC);
+            settrap(sig, None, ZSIG_FUNC);
         }
     }
     trap_install_error
@@ -9267,7 +9267,7 @@ pub fn bin_let(
                 // mathevali → checkunary → zerr. Rust's matheval
                 // captures the message in Err and bin_let was
                 // discarding it via `if let Ok(...)`. Surface it.
-                crate::ported::utils::zerr(&msg);
+                zerr(&msg);
                 // Continue loop; errflag set below resets to local 2.
             }
         }
@@ -11563,7 +11563,7 @@ fn parse_int_arg(s: &str) -> i64 {
         // "no math result" fallback).
         match body.parse::<i64>() {
             Ok(n) => n,
-            Err(_) => crate::ported::math::matheval(body)
+            Err(_) => matheval(body)
                 .map(|f| f.l)
                 .unwrap_or(0),
         }
@@ -12983,7 +12983,7 @@ mod tests {
         let saved_opt = opt_state_get("cdablevars").unwrap_or(false);
         opt_state_set("cdablevars", true);
         opt_state_set("exec", true);
-        crate::ported::params::unsetparam("zshrs_cdav_proj");
+        unsetparam("zshrs_cdav_proj");
         setsparam("zshrs_cdav_proj", "/tmp/myproject");
 
         assert_eq!(
@@ -12991,7 +12991,7 @@ mod tests {
             Some("/tmp/myproject".to_string())
         );
 
-        crate::ported::params::unsetparam("zshrs_cdav_proj");
+        unsetparam("zshrs_cdav_proj");
         opt_state_set("cdablevars", saved_opt);
     }
 
@@ -13003,7 +13003,7 @@ mod tests {
         let saved_opt = opt_state_get("cdablevars").unwrap_or(false);
         opt_state_set("cdablevars", true);
         opt_state_set("exec", true);
-        crate::ported::params::unsetparam("zshrs_cdav_PROJ");
+        unsetparam("zshrs_cdav_PROJ");
         setsparam("zshrs_cdav_PROJ", "/home/user");
 
         assert_eq!(
@@ -13011,7 +13011,7 @@ mod tests {
             Some("/home/user/src".to_string())
         );
 
-        crate::ported::params::unsetparam("zshrs_cdav_PROJ");
+        unsetparam("zshrs_cdav_PROJ");
         opt_state_set("cdablevars", saved_opt);
     }
 
@@ -13021,7 +13021,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let saved_opt = opt_state_get("cdablevars").unwrap_or(false);
         opt_state_set("cdablevars", true);
-        crate::ported::params::unsetparam("zshrs_cdav_doesnt_exist");
+        unsetparam("zshrs_cdav_doesnt_exist");
 
         assert_eq!(cd_able_vars("zshrs_cdav_doesnt_exist"), None);
 
@@ -13108,11 +13108,11 @@ mod tests {
     fn builtin_corpus_bin_let_nonzero_expr_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let o = empty_opts_for_corpus();
-        crate::ported::params::unsetparam("ZL_X");
+        unsetparam("ZL_X");
         let r = bin_let("let", &["ZL_X=5".into()], &o, 0);
         assert_eq!(r, 0, "let 'x=5' assigns and returns 0 (nonzero result)");
-        assert_eq!(crate::ported::params::getiparam("ZL_X"), 5);
-        crate::ported::params::unsetparam("ZL_X");
+        assert_eq!(getiparam("ZL_X"), 5);
+        unsetparam("ZL_X");
     }
 
     /// `bin_let "x=0"` returns 1 since last expression evaluates to 0.
@@ -13120,11 +13120,11 @@ mod tests {
     fn builtin_corpus_bin_let_zero_expr_returns_one() {
         let _g = crate::test_util::global_state_lock();
         let o = empty_opts_for_corpus();
-        crate::ported::params::unsetparam("ZL_Y");
+        unsetparam("ZL_Y");
         let r = bin_let("let", &["ZL_Y=0".into()], &o, 0);
         assert_eq!(r, 1, "let 'x=0' returns 1 (zero result)");
-        assert_eq!(crate::ported::params::getiparam("ZL_Y"), 0);
-        crate::ported::params::unsetparam("ZL_Y");
+        assert_eq!(getiparam("ZL_Y"), 0);
+        unsetparam("ZL_Y");
     }
 
     /// `bin_let` walks multiple expressions, exit status from last.
@@ -13132,14 +13132,14 @@ mod tests {
     fn builtin_corpus_bin_let_multi_expr_last_wins() {
         let _g = crate::test_util::global_state_lock();
         let o = empty_opts_for_corpus();
-        crate::ported::params::unsetparam("ZL_A");
-        crate::ported::params::unsetparam("ZL_B");
+        unsetparam("ZL_A");
+        unsetparam("ZL_B");
         let r = bin_let("let", &["ZL_A=1".into(), "ZL_B=7".into()], &o, 0);
         assert_eq!(r, 0, "last expr non-zero → 0");
-        assert_eq!(crate::ported::params::getiparam("ZL_A"), 1);
-        assert_eq!(crate::ported::params::getiparam("ZL_B"), 7);
-        crate::ported::params::unsetparam("ZL_A");
-        crate::ported::params::unsetparam("ZL_B");
+        assert_eq!(getiparam("ZL_A"), 1);
+        assert_eq!(getiparam("ZL_B"), 7);
+        unsetparam("ZL_A");
+        unsetparam("ZL_B");
     }
 
     /// `bin_pwd` returns 0 on success — even without -P/-L, it should

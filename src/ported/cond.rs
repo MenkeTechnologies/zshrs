@@ -26,7 +26,7 @@ use std::path::Path;
 
 use crate::glob::matchpat;
 use crate::ported::options::{optlookup, optlookupc};
-use crate::ported::utils::zwarnnam;
+use crate::ported::utils::{has_token, privasserted, unmeta, zwarnnam};
 use crate::ported::zsh_h::{
     isset, unset, CASEGLOB, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT,
     COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
@@ -34,6 +34,10 @@ use crate::ported::zsh_h::{
 };
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
+use crate::ported::lex::untokenize;
+use crate::ported::math::mathevali;
+use crate::ported::params::{setaparam, setiparam, setsparam};
+use crate::ported::subst::singsub;
 // C-style i32 return codes from `evalcond` (mirroring cond.c:70):
 //   0 — condition true
 //   1 — condition false
@@ -241,7 +245,7 @@ pub fn evalcond(
                                 // back). Gate on `privasserted()` to
                                 // match C exactly.
                                 'x' => {
-                                    if crate::ported::utils::privasserted() {
+                                    if privasserted() {
                                         // c:368
                                         let mode = dostat(&arg);
                                         // c:370 — `(mode & S_IXUGO) || S_ISDIR(mode)`.
@@ -284,7 +288,7 @@ pub fn evalcond(
                                 // `[[ -t $((0)) ]]` / `[[ -t 1+0 ]]`.
                                 // Route through `mathevali` so all
                                 // arith-expression forms work.
-                                't' => crate::ported::math::mathevali(&arg)
+                                't' => mathevali(&arg)
                                     .map(|fd| b2i(unsafe { libc::isatty(fd as i32) } != 0))
                                     .unwrap_or(2),
                                 _ => 2,
@@ -347,7 +351,7 @@ pub fn evalcond(
                             // c:415 — route through `mathevali`.
                             // Falls back to plain decimal / float
                             // parsing for non-arith string operands.
-                            crate::ported::math::mathevali(t)
+                            mathevali(t)
                                 .ok()
                                 .map(|i| i as f64)
                                 .or_else(|| t.parse::<i64>().ok().map(|i| i as f64))
@@ -376,107 +380,14 @@ pub fn evalcond(
                     // extends the signature; read both flags here so
                     // `setopt nocaseglob` / `setopt extendedglob`
                     // actually affect `[[ str = pat ]]` dispatch.
-                    //
-                    // (#b) backref pin: when the compiled pattern has
-                    // GF_BACKREF set, populate `$match`/`$mbegin`/
-                    // `$mend` from the per-group captures so the
-                    // user-side `[[ str == (#b)(*).log ]] && echo
-                    // ${match[1]}` idiom works (c:Src/pattern.c:2425+
-                    // — same MATCH/MBEGIN/MEND population the C
-                    // matcher does via setsparam after a successful
-                    // pattry when GF_MATCHREF is on).
                     let strpat = |pat: &str, text: &str| -> bool {
                         if posix {
-                            return text == pat;
-                        }
-                        let extended = isset(EXTENDEDGLOB);
-                        let case_sensitive = isset(CASEGLOB);
-                        // Pre-fold for nocaseglob fast-path (matches
-                        // matchpat()'s convention).
-                        let (a_eff, b_eff) = if case_sensitive {
-                            (text.to_string(), pat.to_string())
+                            text == pat
                         } else {
-                            (text.to_lowercase(), pat.to_lowercase())
-                        };
-                        let prev_extended =
-                            crate::ported::options::opt_state_get("extendedglob");
-                        let prev_caseglob =
-                            crate::ported::options::opt_state_get("caseglob");
-                        crate::ported::options::opt_state_set("extendedglob", extended);
-                        crate::ported::options::opt_state_set("caseglob", case_sensitive);
-                        let compiled = crate::ported::pattern::patcompile(
-                            &b_eff,
-                            crate::ported::zsh_h::PAT_HEAPDUP,
-                            None,
-                        );
-                        if let Some(v) = prev_extended {
-                            crate::ported::options::opt_state_set("extendedglob", v);
+                            let extended = isset(EXTENDEDGLOB);
+                            let case_sensitive = isset(CASEGLOB);
+                            matchpat(pat, text, extended, case_sensitive)
                         }
-                        if let Some(v) = prev_caseglob {
-                            crate::ported::options::opt_state_set("caseglob", v);
-                        }
-                        let Some(prog) = compiled else { return false };
-                        if std::env::var("ZSHRS_DEBUG_BACKREF").is_ok() {
-                            eprintln!("DEBUG strpat: pat={:?} text={:?} globflags=0x{:x} patnpar={}",
-                                pat, text, prog.0.globflags, prog.0.patnpar);
-                        }
-                        // GF_BACKREF is set by the (#b) flag at
-                        // compile time. With backref on, use the
-                        // capture-aware pattryrefs path; otherwise
-                        // pattry is sufficient (no $match writes).
-                        let has_backref = (prog.0.globflags
-                            & crate::ported::zsh_h::GF_BACKREF as i32)
-                            != 0;
-                        if !has_backref {
-                            return crate::ported::pattern::pattry(&prog, &a_eff);
-                        }
-                        let mut nump: i32 = 0;
-                        let mut begp: Vec<i32> = Vec::new();
-                        let mut endp: Vec<i32> = Vec::new();
-                        let stringlen = a_eff.len() as i32;
-                        let ok = crate::ported::pattern::pattryrefs(
-                            &prog,
-                            &a_eff,
-                            stringlen,
-                            -1,
-                            None,
-                            0,
-                            Some(&mut nump),
-                            Some(&mut begp),
-                            Some(&mut endp),
-                        );
-                        if !ok {
-                            return false;
-                        }
-                        // Build $match / $mbegin / $mend from the
-                        // returned span arrays. C uses 1-based
-                        // indexing (KSHARRAYS off) for mbegin/mend
-                        // bounds. nump can be > begp.len() if some
-                        // captures didn't fire; trim to begp.len().
-                        let n = (nump as usize).min(begp.len()).min(endp.len());
-                        let mut match_arr: Vec<String> = Vec::with_capacity(n);
-                        let mut begin_arr: Vec<String> = Vec::with_capacity(n);
-                        let mut end_arr: Vec<String> = Vec::with_capacity(n);
-                        let ksharrays = isset(crate::ported::zsh_h::KSHARRAYS);
-                        let base = if ksharrays { 0 } else { 1 };
-                        for i in 0..n {
-                            let b = begp[i].max(0) as usize;
-                            let e = endp[i].max(0) as usize;
-                            let lo = b.min(a_eff.len());
-                            let hi = e.min(a_eff.len()).max(lo);
-                            // c:2425+ — `setsparam("MATCH", str)` uses
-                            // the metafied input slice. zshrs's `a_eff`
-                            // is unmetafied UTF-8, slice directly.
-                            let s = a_eff[lo..hi].to_string();
-                            match_arr.push(s);
-                            // mbegin/mend are 1-based by default.
-                            begin_arr.push((b + base).to_string());
-                            end_arr.push(((e + base).saturating_sub(1)).to_string());
-                        }
-                        crate::ported::params::setaparam("match", match_arr);
-                        crate::ported::params::setaparam("mbegin", begin_arr);
-                        crate::ported::params::setaparam("mend", end_arr);
-                        true
                     };
                     return match code {
                         c if c == COND_STREQ || c == COND_STRDEQ => b2i(strpat(&right, &left)),
@@ -521,7 +432,7 @@ pub fn evalcond(
                                     if let Some(caps) = re.captures(&left) {
                                         // Whole-match: $MATCH.
                                         let m0 = caps.get(0).unwrap();
-                                        crate::ported::params::setsparam("MATCH", m0.as_str());
+                                        setsparam("MATCH", m0.as_str());
                                         // Capture groups → $match[1..N].
                                         // zsh's regex module emits the
                                         // unnamed groups as $match[1..N]
@@ -547,9 +458,9 @@ pub fn evalcond(
                                             begin_arr.push(b);
                                             end_arr.push(e);
                                         }
-                                        crate::ported::params::setaparam("match", match_arr);
-                                        crate::ported::params::setaparam("mbegin", begin_arr);
-                                        crate::ported::params::setaparam("mend", end_arr);
+                                        setaparam("match", match_arr);
+                                        setaparam("mbegin", begin_arr);
+                                        setaparam("mend", end_arr);
                                         b2i(true)
                                     } else {
                                         b2i(false)
@@ -601,7 +512,7 @@ pub fn evalcond(
 /// `/dev/fd/N` transparently.
 pub fn doaccess(s: &str, c: i32) -> i32 {
     // c:438
-    let cs = match std::ffi::CString::new(crate::ported::utils::unmeta(s)) {
+    let cs = match std::ffi::CString::new(unmeta(s)) {
         // c:445 unmeta(s)
         Ok(v) => v,
         Err(_) => return 0,
@@ -649,7 +560,7 @@ pub fn getstat(s: &str) -> Option<Metadata> {
         }
     }
     // c:464 — `if (!(us = unmeta(s))) return NULL;`
-    let us = crate::ported::utils::unmeta(s);
+    let us = unmeta(s);
     fs::metadata(&us).ok() // c:466
 }
 
@@ -671,7 +582,7 @@ pub fn dostat(s: &str) -> u32 {
 /// would fail to resolve. Same divergence as the now-fixed `getstat`.
 pub fn dolstat(s: &str) -> u32 {
     // c:488
-    let us = crate::ported::utils::unmeta(s); // c:489 unmeta(s)
+    let us = unmeta(s); // c:489 unmeta(s)
     fs::symlink_metadata(&us).map(|m| m.mode()).unwrap_or(0)
 }
 
@@ -746,11 +657,11 @@ pub fn cond_str(args: &[String], num: usize, raw: bool) -> String {
         Some(v) => v.clone(),
         None => return String::new(),
     };
-    if crate::ported::utils::has_token(&s) {
+    if has_token(&s) {
         // c:529
-        let expanded = crate::ported::subst::singsub(&s); // c:530
+        let expanded = singsub(&s); // c:530
         if !raw {
-            crate::ported::lex::untokenize(&expanded) // c:532
+            untokenize(&expanded) // c:532
         } else {
             expanded
         }
@@ -783,15 +694,15 @@ pub fn cond_val(args: &[String], num: usize) -> i64 {
     // slices; module-defined ops calling cond_val would see un-
     // singsub'd tokens (Inpar/Outpar/Dnull/etc) reach mathevali and
     // fail to parse \`$((x))\`-containing operands.
-    let s = if crate::ported::utils::has_token(&raw) {
+    let s = if has_token(&raw) {
         // c:543
-        let expanded = crate::ported::subst::singsub(&raw); // c:544
-        crate::ported::lex::untokenize(&expanded) // c:545
+        let expanded = singsub(&raw); // c:544
+        untokenize(&expanded) // c:545
     } else {
         raw
     };
     // c:548 — `mathevali(s)`.
-    crate::ported::math::mathevali(&s).unwrap_or(0) // c:548
+    mathevali(&s).unwrap_or(0) // c:548
 }
 
 /// Port of `cond_match(char **args, int num, char *str)` from Src/cond.c:552 — `[[ str = pat ]]`
@@ -812,7 +723,7 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
         Some(v) => v,
         None => return false,
     };
-    let p = crate::ported::subst::singsub(p_raw); // c:556
+    let p = singsub(p_raw); // c:556
                                                   // c:2519 (glob.c) — `if (isset(EXTENDED_GLOB)) ...` controls #/~ syntax.
     let extended = isset(EXTENDEDGLOB);
     // c:2519 — case sensitivity reads `isset(CASEGLOB)` (with the
@@ -832,9 +743,9 @@ pub fn cond_match(args: &[String], num: usize, str: &str) -> bool {
                                                                // (real (#b) parens) is deferred — (#m) covers the high-traffic
                                                                // case (zinit's plugin-name matching uses it).
     if matched && extended && p.contains("(#m)") {
-        crate::ported::params::setsparam("MATCH", str);
-        crate::ported::params::setiparam("MBEGIN", 1);
-        crate::ported::params::setiparam("MEND", str.chars().count() as i64);
+        setsparam("MATCH", str);
+        setiparam("MBEGIN", 1);
+        setiparam("MEND", str.chars().count() as i64);
     }
     matched
 }
@@ -870,6 +781,7 @@ mod tests {
     use std::fs::File;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
+    use crate::ported::params::{getaparam, getsparam};
 
     fn empty_maps() -> (HashMap<String, bool>, HashMap<String, String>) {
         (HashMap::new(), HashMap::new())
@@ -892,7 +804,7 @@ mod tests {
         let r = evalcond(&["abc123", "=~", "[a-z]+[0-9]+"], &opts, &vars, false);
         assert_eq!(r, 0, "match succeeded");
         assert_eq!(
-            crate::ported::params::getsparam("MATCH").as_deref(),
+            getsparam("MATCH").as_deref(),
             Some("abc123"),
             "$MATCH = whole-match per Modules/regex.c"
         );
@@ -907,7 +819,7 @@ mod tests {
         let vars = HashMap::new();
         let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false);
         assert_eq!(r, 0);
-        let m = crate::ported::params::getaparam("match");
+        let m = getaparam("match");
         assert_eq!(
             m.as_deref(),
             Some(&["abc".to_string(), "123".to_string()][..]),
@@ -925,8 +837,8 @@ mod tests {
         let vars = HashMap::new();
         let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false);
         assert_eq!(r, 0);
-        let b = crate::ported::params::getaparam("mbegin");
-        let e = crate::ported::params::getaparam("mend");
+        let b = getaparam("mbegin");
+        let e = getaparam("mend");
         // Group 1: "abc" at bytes 0..3 → mbegin[1] = "1" (1-based), mend[1] = "3".
         assert_eq!(
             b.as_deref().and_then(|v| v.first().cloned()),

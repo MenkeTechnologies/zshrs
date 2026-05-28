@@ -17,7 +17,7 @@
 
 use std::io::Write;
 use std::sync::atomic::AtomicI32;
-
+use crate::ported::utils::{adjustcolumns, adjustlines};
 // ===========================================================
 // C `Src/loop.c` — wordcode VM helpers for control flow.
 //
@@ -145,8 +145,8 @@ pub fn selectlist(items: &[&str], start: usize) -> usize {
         longest += 1; // c:368 (+1 per digit)
     }
 
-    let zterm_columns = crate::ported::utils::adjustcolumns(); // c:zterm_columns
-    let zterm_lines = crate::ported::utils::adjustlines();
+    let zterm_columns = adjustcolumns(); // c:zterm_columns
+    let zterm_lines = adjustlines();
     let mut fct: usize = (zterm_columns.saturating_sub(1)) / (longest + 3); // c:371
     let fw: usize;
     if fct == 0 {
