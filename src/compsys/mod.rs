@@ -122,6 +122,9 @@ pub const COMPSYS_FN_NAMES: &[&str] = &[
 // `crate::ported::modules::zutil::bin_*`, `lookupstyle`, `testforstyle`
 // directly.
 pub mod cache;
+/// In-editor compsys completion entry point — see
+/// `docs/IN_EDITOR_COMPSYS_COMPLETION.md` for the design.
+pub mod in_editor;
 // completion.rs deleted — Completion/CompletionFlags/CompletionGroup
 // are dups of Cmatch/Cmgroup types in src/ported/zle/comp_h.rs.
 // menu.rs deleted — was a stub of what used to be a 3567-LOC dup of

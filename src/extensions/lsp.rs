@@ -1376,7 +1376,99 @@ fn completion(state: &State, params: &Value) -> Value {
         }
     }
 
+    // Phase 0: stage compsys dispatch behind the existing hand-table
+    // / scan-symbol path. Today this returns no extra items (stub).
+    // Phase 0.5 wires shadow-compadd capture + compdef dispatch so
+    // `git a<TAB>` / `kubectl get p<TAB>` / `_options ext<TAB>` start
+    // surfacing matches from the user's fpath. Design:
+    // `docs/IN_EDITOR_COMPSYS_COMPLETION.md`.
+    if let Some(extra) = try_compsys_completion(state, params) {
+        // Append items + propagate isIncomplete (true when a
+        // dispatch hit the deadline). Existing items keep their
+        // sortText so hand-table entries stay above compsys
+        // fallback matches.
+        if let Some(arr) = extra["items"].as_array() {
+            for item in arr {
+                items.push(item.clone());
+            }
+        }
+        let is_incomplete = extra["isIncomplete"].as_bool().unwrap_or(false);
+        return json!({ "isIncomplete": is_incomplete, "items": items });
+    }
+
     json!({ "isIncomplete": false, "items": items })
+}
+
+/// Phase-0 stub: returns `None` today. When Phase 0.5 lands this
+/// drives `crate::compsys::in_editor::complete_at` and translates
+/// the resulting `CompsysMatch`es to LSP `CompletionItem` JSON.
+/// Kept private so the LSP completion flow stays the one entry
+/// point; the public entry is the JSON-RPC `textDocument/completion`
+/// method.
+fn try_compsys_completion(state: &State, params: &Value) -> Option<Value> {
+    let uri = params["textDocument"]["uri"].as_str()?;
+    let pos = &params["position"];
+    let text = state.docs.get(uri)?;
+    let line_no = pos["line"].as_u64()? as usize;
+    let col = pos["character"].as_u64()? as usize;
+    let line_text = text.lines().nth(line_no)?;
+    // NB: Phase 0 ignores the multibyte distinction. Phase 0.5
+    // will translate the LSP `character` UTF-16 unit count to a
+    // byte index against `line_text`. Today the stub returns empty
+    // regardless of cursor position.
+    let req = crate::compsys::in_editor::CompsysRequest::new_with_default_budget(
+        line_text, col,
+    );
+    let resp = crate::compsys::in_editor::complete_at(req);
+    if resp.matches.is_empty() && !resp.is_incomplete {
+        return None;
+    }
+    let items: Vec<Value> = resp
+        .matches
+        .iter()
+        .map(|m| {
+            // Map CompsysMatch.group → LSP kind:
+            //   `options` → Field (15) — matches BuiltinFlag style
+            //   `subcommands` / `commands` → Function (3)
+            //   `values` → Value (12)
+            //   `hosts` / `files` / `directories` → File (17)
+            //   anything else → Text (1)
+            let kind: u64 = match m.group.as_deref() {
+                Some("options") => 5,                          // Field
+                Some("subcommands") | Some("commands") => 3,   // Function
+                Some("values") => 12,                          // Value
+                Some("hosts") | Some("files") | Some("directories") => 17, // File
+                _ => 1,                                        // Text
+            };
+            // sortText prefix by group so subcommands list above
+            // options list above paths, matching what zsh shows at
+            // the prompt.
+            let bucket = match m.group.as_deref() {
+                Some("subcommands") | Some("commands") => "0",
+                Some("options") => "1",
+                Some("values") => "2",
+                Some("hosts") => "3",
+                Some("files") | Some("directories") => "4",
+                _ => "5",
+            };
+            let detail = m
+                .description
+                .clone()
+                .unwrap_or_else(|| m.group.clone().unwrap_or_default());
+            json!({
+                "label": m.completion,
+                "kind": kind,
+                "detail": detail,
+                "filterText": m.completion,
+                "insertText": m.completion,
+                "sortText": format!("{bucket}_{}", m.completion),
+            })
+        })
+        .collect();
+    Some(json!({
+        "isIncomplete": resp.is_incomplete,
+        "items": items,
+    }))
 }
 
 /// Snippet templates surfaced via `textDocument/completion`. Mirrors

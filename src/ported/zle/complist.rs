@@ -3018,7 +3018,7 @@ pub fn menuselect() -> i32 {
     //                      COMP_COMPLETE then enters domenuselect()
     //                      via the menu_start hook. Without mtab[][]
     //                      we delegate to the basic menucomplete entry.
-    menucomplete()
+    menucomplete(&[])
 }
 
 /// Port of `setup_(UNUSED(Module m))` from Src/Zle/complist.c:3511.

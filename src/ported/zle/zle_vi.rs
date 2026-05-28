@@ -1156,7 +1156,7 @@ pub fn viquotedinsert() -> i32 {
     if LASTCHAR_WIDE.load(SeqCst) == ZLEEOF {
         return 1;
     }
-    selfinsert()
+    selfinsert(&[])
 }
 
 /// Port of `vidigitorbeginningofline(char **args)` from Src/Zle/zle_vi.c:1129.

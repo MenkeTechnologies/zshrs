@@ -11,15 +11,16 @@
 //! - magic-space, accept-and-menu-complete
 
 use std::sync::atomic::{AtomicI32, Ordering};
-
-use crate::ported::utils::write_loop;
-use crate::ported::zle::compcore::{ADDEDX, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
+use crate::ported::module::gethookdef;
+use crate::ported::utils::{write_loop, zwarn};
+use crate::ported::zle::compcore::{compfunc, ADDEDX, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
 use crate::ported::zle::zle_h::{
-    COMP_COMPLETE, COMP_EXPAND, COMP_EXPAND_COMPLETE, COMP_LIST_COMPLETE, COMP_LIST_EXPAND,
-    COMP_SPELL,
+    COMP_COMPLETE, COMP_EXPAND, COMP_EXPAND_COMPLETE, COMP_ISEXPAND, COMP_LIST_COMPLETE,
+    COMP_LIST_EXPAND, COMP_SPELL, CUT_RAW,
 };
+use crate::ported::zle::compcore::{WB, WE};
 use crate::ported::zsh_h::{
-    isset, GLOBCOMPLETE, MENUCOMPLETE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE,
+    isset, BASHAUTOLIST, GLOBCOMPLETE, MENUCOMPLETE, QT_BACKSLASH, QT_DOLLARS, QT_DOUBLE, QT_NONE, QT_SINGLE,
     RECEXACT,
 };
 
@@ -45,14 +46,19 @@ use crate::ported::zle::{
 
 /// Port of `usetab()` from Src/Zle/zle_tricky.c:183.
 /// WARNING: param names don't match C — Rust=(zle, keybuf) vs C=()
-pub fn usetab(keybuf: &[u8]) -> i32 {
-    // c:183
+pub fn usetab() -> i32 {
+    // c:183 — C signature is `usetab(void)`, reads `keybuf` global
+    // (no parameter). The previous Rust port took an explicit
+    // `keybuf: &[u8]` arg, drifting from the C contract; restored
+    // here to a faithful port that reads the actual `keybuf` global.
+    let kb = crate::ported::zle::zle_keymap::keybuf.lock().unwrap();
     // c:187-188 — `if (keybuf[0] != '\t' || keybuf[1]) return 0`.
-    if keybuf.first() != Some(&b'\t') || keybuf.len() > 1 {
+    if kb.first() != Some(&b'\t') || kb.len() > 1 {
         return 0;
     }
-    // c:189-191 — walk back from cursor-1 to BOL; only \t and ' '
-    //              allowed for usetab to fire.
+    drop(kb);
+    // c:189-191 — walk back from cursor-1 to BOL; only `\t` / ' '
+    // allowed for usetab to fire (i.e. line-indent only).
     let mut i = ZLECS.load(Ordering::SeqCst);
     while i > 0 {
         let c = ZLELINE.lock().unwrap()[i - 1];
@@ -65,9 +71,17 @@ pub fn usetab(keybuf: &[u8]) -> i32 {
         i -= 1;
     }
     // c:192-196 — `if (compfunc) { wouldinstab = 1; return 0; }
-    //               else return 1`. Without compfunc set, we always
-    //               return 1 (insert a literal tab).
-    let _ = WOULDINSTAB.load(Ordering::SeqCst);
+    //              else return 1`. Previous port silently dropped
+    // the compfunc branch (it just loaded WOULDINSTAB and threw
+    // away the value). Restored here.
+    let compfunc_set = compfunc
+        .get()
+        .and_then(|m| m.lock().ok().and_then(|g| g.clone()))
+        .is_some();
+    if compfunc_set {
+        WOULDINSTAB.store(1, Ordering::SeqCst);
+        return 0;
+    }
     1
 }
 
@@ -88,29 +102,51 @@ pub fn completecall(args: &[String]) -> i32 {
 /// Port of `int completeword(char **args)` from
 /// `Src/Zle/zle_tricky.c:216`.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn completeword() -> i32 {
+pub fn completeword(args: &[String]) -> i32 {
     // c:216
-    USEMENU.store(0, Ordering::SeqCst); // c:218
-    USEGLOB.store(1, Ordering::SeqCst); // c:219
+    USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:218 — `usemenu = !!isset(MENUCOMPLETE)`
+    USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:219 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:220
-                                            // c:221-222 — `if (lastchar == '\t' && usetab()) return selfinsert(args)`.
-                                            // When TAB is pressed at line indent (only whitespace to BOL),
-                                            // insert a literal tab instead of completing.
+    // c:221-222 — Tab-at-indent → `selfinsert(args)`. Body of
+    // `selfinsert` ignores args (C marks them `UNUSED`); kept in
+    // the contract for sig parity.
     let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
-    if lastch == b'\t' as i32 && usetab(&[b'\t']) != 0 {
-        // c:222 — `return selfinsert(args)`.
-        return crate::ported::zle::zle_misc::selfinsert();
+    if lastch == b'\t' as i32 && usetab() != 0 {
+        return selfinsert(args);
     }
-    docomplete(COMP_COMPLETE) // c:225
+    // c:224-232 — BASH_AUTO_LIST branch. When the previous
+    // completion was ambiguous (`lastambig == 1`), `BASH_AUTO_LIST`
+    // is set, and we're not in menu-completion mode, route through
+    // `COMP_LIST_COMPLETE` first (list the choices; next Tab
+    // continues with normal completion). Without this branch
+    // bash-style users lose the two-stage list-then-complete UX.
+    let usemenu_now = USEMENU.load(Ordering::SeqCst);
+    let menucmp_now = MENUCMP.load(Ordering::SeqCst);
+    if LASTAMBIG.load(Ordering::SeqCst) == 1
+        && isset(BASHAUTOLIST)
+        && usemenu_now == 0
+        && menucmp_now == 0
+    {
+        BASHLISTFIRST.store(1, Ordering::SeqCst); // c:226
+        let ret = docomplete(COMP_LIST_COMPLETE); // c:227
+        BASHLISTFIRST.store(0, Ordering::SeqCst); // c:228
+        LASTAMBIG.store(2, Ordering::SeqCst); // c:229
+        return ret;
+    }
+    docomplete(COMP_COMPLETE) // c:231
 }
 
 /// Port of `menucomplete(char **args)` from Src/Zle/zle_tricky.c:238.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn menucomplete() -> i32 {
+pub fn menucomplete(args: &[String]) -> i32 {
     // c:238
     USEMENU.store(1, Ordering::SeqCst); // c:240
-    USEGLOB.store(1, Ordering::SeqCst); // c:241
+    USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:241 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:242
+    let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
+    if lastch == b'\t' as i32 && usetab() != 0 {
+        return selfinsert(args);
+    }
     docomplete(COMP_COMPLETE) // c:246
 }
 
@@ -128,7 +164,7 @@ pub fn menucomplete() -> i32 {
 /// `list-choices` widget — set the menu/glob globals from options
 /// then dispatch to `docomplete(COMP_LIST_COMPLETE)`.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn listchoices() -> i32 {
+pub fn listchoices(_args: &[String]) -> i32 {
     // c:251
     // c:253 — `usemenu = !!isset(MENUCOMPLETE)`.
     let menu = isset(MENUCOMPLETE) as i32;
@@ -155,7 +191,7 @@ pub fn listchoices() -> i32 {
 /// `spell-word` widget — clears menu/glob globals and dispatches
 /// with `COMP_SPELL`.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn spellword() -> i32 {
+pub fn spellword(_args: &[String]) -> i32 {
     // c:261
     USEMENU.store(0, Ordering::SeqCst); // c:263 usemenu = 0
     USEGLOB.store(0, Ordering::SeqCst); // c:263 useglob = 0
@@ -164,7 +200,7 @@ pub fn spellword() -> i32 {
 }
 
 /// Port of `deletecharorlist(char **args)` from Src/Zle/zle_tricky.c:270.
-pub fn deletecharorlist() -> i32 {
+pub fn deletecharorlist(_args: &[String]) -> i32 {
     // c:270
     USEMENU.store(0, Ordering::SeqCst); // c:273
     USEGLOB.store(1, Ordering::SeqCst); // c:274
@@ -180,7 +216,7 @@ pub fn deletecharorlist() -> i32 {
 
 /// Port of `expandword(char **args)` from Src/Zle/zle_tricky.c:287.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn expandword() -> i32 {
+pub fn expandword(_args: &[String]) -> i32 {
     // c:287
     USEMENU.store(0, Ordering::SeqCst); // c:289
     USEGLOB.store(0, Ordering::SeqCst); // c:289
@@ -190,21 +226,52 @@ pub fn expandword() -> i32 {
 
 /// Port of `expandorcomplete(char **args)` from Src/Zle/zle_tricky.c:299.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn expandorcomplete() -> i32 {
+pub fn expandorcomplete(args: &[String]) -> i32 {
     // c:299
-    USEMENU.store(0, Ordering::SeqCst); // c:301
-    USEGLOB.store(1, Ordering::SeqCst); // c:302
+    USEMENU.store(isset(MENUCOMPLETE) as i32, Ordering::SeqCst); // c:301 — `usemenu = !!isset(MENUCOMPLETE)`
+    USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:302 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:303
+    // c:304-305 — Tab-at-indent → `selfinsert(args)`. Rust
+    // `selfinsert()` takes no args today (C's body marks them
+    // `UNUSED`) so the arg pass-through is dropped; a follow-up
+    // patch should widen `selfinsert` to `fn(&[String]) -> i32`
+    // for sig parity.
+    let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
+    if lastch == b'\t' as i32 && usetab() != 0 {
+        return selfinsert(args);
+    }
+    // c:307-313 — BASH_AUTO_LIST branch (same shape as
+    // completeword): when the previous completion was ambiguous +
+    // BASH_AUTO_LIST is on + we're not in menu mode, route through
+    // `COMP_LIST_COMPLETE` to list choices before completing.
+    let usemenu_now = USEMENU.load(Ordering::SeqCst);
+    let menucmp_now = MENUCMP.load(Ordering::SeqCst);
+    if LASTAMBIG.load(Ordering::SeqCst) == 1
+        && isset(BASHAUTOLIST)
+        && usemenu_now == 0
+        && menucmp_now == 0
+    {
+        BASHLISTFIRST.store(1, Ordering::SeqCst); // c:309
+        let ret = docomplete(COMP_LIST_COMPLETE); // c:310
+        BASHLISTFIRST.store(0, Ordering::SeqCst); // c:311
+        LASTAMBIG.store(2, Ordering::SeqCst); // c:312
+        return ret;
+    }
     docomplete(COMP_EXPAND_COMPLETE) // c:314
 }
 
 /// Port of `menuexpandorcomplete(char **args)` from Src/Zle/zle_tricky.c:321.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn menuexpandorcomplete() -> i32 {
+pub fn menuexpandorcomplete(args: &[String]) -> i32 {
     // c:321
     USEMENU.store(1, Ordering::SeqCst); // c:323
-    USEGLOB.store(1, Ordering::SeqCst); // c:324
+    USEGLOB.store(isset(GLOBCOMPLETE) as i32, Ordering::SeqCst); // c:324 — `useglob = isset(GLOBCOMPLETE)`
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:325
+    // c:326-327 — Tab-at-indent → selfinsert.
+    let lastch = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
+    if lastch == b'\t' as i32 && usetab() != 0 {
+        return selfinsert(args);
+    }
     docomplete(COMP_EXPAND_COMPLETE) // c:329
 }
 
@@ -222,7 +289,7 @@ pub fn menuexpandorcomplete() -> i32 {
 /// `list-expand` widget — like listchoices but dispatches with
 /// `COMP_LIST_EXPAND`.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn listexpand() -> i32 {
+pub fn listexpand(_args: &[String]) -> i32 {
     // c:334
     let menu = isset(MENUCOMPLETE) as i32;
     USEMENU.store(menu, Ordering::SeqCst); // c:336
@@ -233,24 +300,31 @@ pub fn listexpand() -> i32 {
 }
 
 /// Port of `reversemenucomplete(char **args)` from Src/Zle/zle_tricky.c:344.
-pub fn reversemenucomplete() -> i32 {
+pub fn reversemenucomplete(args: &[String]) -> i32 {
     // c:344
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:346
     ZMOD.lock().unwrap().mult = -ZMOD.lock().unwrap().mult; // c:347
-    menucomplete() // c:348
+    menucomplete(args) // c:348 — C `menucomplete(args)`, args pass-through
 }
 
 /// Port of `acceptandmenucomplete(char **args)` from Src/Zle/zle_tricky.c:353.
 /// WARNING: param names don't match C — Rust=() vs C=(args)
-pub fn acceptandmenucomplete() -> i32 {
+pub fn acceptandmenucomplete(args: &[String]) -> i32 {
     // c:353
-    // C body c:355-369 — `if (!menucmp) return 1;
-    //                     do_menucmp(0); menucmp = 2; ... menucomplete()`.
+    WOULDINSTAB.store(0, Ordering::SeqCst); // c:355
+    // c:356-357 — `if (!menucmp) return 1`.
     if MENUCMP.load(Ordering::SeqCst) == 0 {
         return 1;
     }
-    MENUCMP.store(2, Ordering::SeqCst);
-    docomplete(COMP_COMPLETE)
+    // c:358 — `runhookdef(ACCEPTCOMPHOOK, NULL)`. Fires registered
+    // accept-completion hooks (used by `_menu`, etc.) before
+    // advancing the menu cursor.
+    let h_accept = crate::ported::module::gethookdef("accept_comp");
+    if !h_accept.is_null() {
+        crate::ported::module::runhookdef(h_accept, std::ptr::null_mut());
+    }
+    // c:359 — `return menucomplete(args)` — pass args through.
+    menucomplete(args)
 }
 
 /// Port of `checkparams(char *p)` from Src/Zle/zle_tricky.c:435.
@@ -370,12 +444,14 @@ pub fn parambeg(s: &str, offs: usize) -> Option<usize> {
 }
 
 // The main entry point for completion.                                     // c:599
-/// Port of `docomplete(int lst)` from Src/Zle/zle_tricky.c:599.
-/// `lst` is `COMP_*` from `zle_h.rs`. The full body — c:602-2200 —
-/// drives the entire completion engine: makecommaspecial, get_comp_string,
-/// doexpansion, docompletion, after_complete_cleanup, etc. Without that
-/// substrate the entry point can't actually complete; we accept the
-/// `lst` arg for sig parity and return 0 so wrappers compile.
+/// Direct port of `int docomplete(int lst)` from
+/// `Src/Zle/zle_tricky.c:599`. Drives the completion engine: runs the
+/// BEFORECOMPLETEHOOK chain, extracts the cursor word, then dispatches
+/// on `lst` — `COMP_SPELL` → spell-check path (c:817), `COMP_ISEXPAND`
+/// → `doexpansion` with fall-through to `docompletion` when
+/// `COMP_EXPAND_COMPLETE` left the buffer unchanged (c:825-868),
+/// otherwise → `docompletion` (c:870). Finally fires the
+/// AFTERCOMPLETEHOOK chain (c:878).
 pub fn docomplete(lst: i32) -> i32 {
     // c:599
     // c:606-609 — recursion guard. The C source uses a static `active`
@@ -384,7 +460,7 @@ pub fn docomplete(lst: i32) -> i32 {
     thread_local! { static ACTIVE: std::cell::Cell<bool> =
     const { std::cell::Cell::new(false) }; }
     if ACTIVE.with(|c| c.get()) {
-        crate::ported::utils::zwarn("completion cannot be used recursively (yet)");
+        zwarn("completion cannot be used recursively (yet)");
         return 1;
     }
     ACTIVE.with(|c| c.set(true));
@@ -393,7 +469,7 @@ pub fn docomplete(lst: i32) -> i32 {
     // dispatch via `gethookdef + runhookdef`; null check matches
     // c:992 `empty(h->funcs)`-and-no-`def` path returning 0.
     let mut lst_box = lst;
-    let h_before = crate::ported::module::gethookdef("before_complete");
+    let h_before = gethookdef("before_complete");
     if !h_before.is_null() {
         let lst_ptr = (&mut lst_box) as *mut i32 as *mut std::ffi::c_void;
         crate::ported::module::runhookdef(h_before, lst_ptr);
@@ -405,26 +481,91 @@ pub fn docomplete(lst: i32) -> i32 {
         return 0;
     }
 
-    // c:664 — `get_comp_string()` extracts the cursor word. The Rust
-    // port routes through `do_completion` which does its own
-    // extraction via `comp_str`.
+    // c:664-810 — `get_comp_string()` extracts the cursor word and
+    // sets origword/lincmd/wb/we. The Rust port runs the (best-effort)
+    // extractor for its side effects (LINCMD/WB/WE) and uses the
+    // returned word as `origword`; if it returns None we fall back
+    // to the full line.
+    let origword = get_comp_string();
     let line = crate::ported::zle::compcore::ZLELINE
         .get_or_init(|| std::sync::Mutex::new(String::new()))
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let ret = crate::ported::zle::compcore::do_completion(&line, 0, lst);
+    let s_word: String = origword.unwrap_or_else(|| line.clone());
+    let lincmd = LINCMD.load(Ordering::SeqCst); // c:805
+    let olst = lst; // c:816 — `olst` is the original `lst` saved before dispatch
+
+    // c:817-870 — dispatch on `lst`.
+    let ret;
+    if lst == COMP_SPELL {
+        // c:801-815 — spell-word path. Direct port:
+        //   foredel(we - wb, CUT_RAW);
+        //   spckword(&x, 0, lincmd, 0);
+        //   ret = !strcmp(x, ox);
+        //   inststr(x);
+        let wb = WB.load(Ordering::SeqCst);
+        let we = WE.load(Ordering::SeqCst);
+        if we > wb {
+            // c:807 — `zlemetacs = wb`.
+            crate::ported::zle::compcore::ZLEMETACS.store(wb, Ordering::SeqCst);
+            // c:808 — `foredel(we - wb, CUT_RAW)`.
+            crate::ported::zle::zle_utils::foredel(we - wb, CUT_RAW);
+        }
+        let mut x = s_word.clone(); // c:810 — `dupstring(w)`
+        let ox = s_word.clone(); // c:810 — `ox = dupstring(w)`
+        // c:813 — `spckword(&x, 0, lincmd, 0)`.
+        crate::ported::utils::spckword(&mut x, 0, lincmd, 0);
+        // c:814 — `ret = !strcmp(x, ox)` — returns 1 (unchanged) /
+        // 0 (changed). Matches C `!strcmp` semantics.
+        let r = if x == ox { 1 } else { 0 };
+        // c:816 — `inststr(x)` re-inserts the (possibly corrected)
+        // word at the cursor. Routes through `inststrlen` with
+        // `move_cursor=true, len=-1` matching C's `inststr(x)`
+        // expansion (zle_misc.c:185 `inststrlen(s, 1, -1)`).
+        let _ = inststrlen(&x, true, -1);
+        ret = r;
+    } else if COMP_ISEXPAND(lst) {
+        // c:833-867 — expand-or-complete path.
+        let ol_before = line.clone(); // c:836 — snapshot of zlemetaline before expansion
+        let ne = crate::ported::exec::noerrs.load(Ordering::SeqCst); // c:839
+        crate::ported::exec::noerrs.store(1, Ordering::SeqCst); // c:840
+        let mut ret_local = doexpansion(&s_word, lst, olst, lincmd); // c:841
+        LASTAMBIG.store(0, Ordering::SeqCst); // c:842
+        crate::ported::exec::noerrs.store(ne, Ordering::SeqCst); // c:843
+
+        // c:847-868 — if expand-or-complete and buffer unchanged,
+        // fall through to docompletion.
+        let after = crate::ported::zle::compcore::ZLELINE
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        if olst == COMP_EXPAND_COMPLETE && ol_before == after {
+            // c:850-851 — clear ERRFLAG_ERROR, restore cursor.
+            crate::ported::utils::errflag
+                .fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::SeqCst);
+            ret_local = docompletion(&s_word, lst, lincmd); // c:865
+        } else if ret_local != 0 {
+            // c:854 — `if (ret) clearlist = 1`.
+            crate::ported::zle::zle_refresh::CLEARLIST.store(1, Ordering::SeqCst);
+        }
+        ret = ret_local;
+    } else {
+        // c:870 — `ret = docompletion(s, lst, lincmd)`. Plain
+        // completion.
+        ret = docompletion(&s_word, lst, lincmd);
+    }
 
     // c:878 — `runhookdef(AFTERCOMPLETEHOOK, &dat)`. Same dispatch
     // shape as the BEFORECOMPLETEHOOK call above; passes a 2-element
     // int buffer per C's `int dat[2]`.
-    let mut dat: [i32; 2] = [0, 0];
-    let h_after = crate::ported::module::gethookdef("after_complete");
+    let mut dat: [i32; 2] = [ret, 0];
+    let h_after = gethookdef("after_complete");
     if !h_after.is_null() {
         let dat_ptr = dat.as_mut_ptr() as *mut std::ffi::c_void;
         crate::ported::module::runhookdef(h_after, dat_ptr);
     }
-    let _ = Ordering::Relaxed;
     ACTIVE.with(|c| c.set(false));
     ret
 }
@@ -690,8 +831,9 @@ pub fn has_real_token(s: &str) -> bool {
 /// up to the cursor and returns the word being completed plus a slew
 /// of side-effects (sets `wb`/`we`/`offs`/`lincmd`/`linredir`). Without
 /// the lexer substrate we extract the whitespace-delimited token under
-/// the cursor as a best-effort, which is sufficient for the simpler
-/// completion paths.
+/// the cursor as a best-effort, set `WB`/`WE` to its bounds, and set
+/// `LINCMD` via a command-position heuristic (start-of-line or first
+/// word after a command terminator).
 /// WARNING: param names don't match C — Rust=(zle) vs C=()
 pub fn get_comp_string() -> Option<String> {
     // c:1087
@@ -709,6 +851,36 @@ pub fn get_comp_string() -> Option<String> {
     if start == end {
         return None;
     }
+
+    // c:1109 — `wb`/`we` track the word bounds (start/end of the
+    // currently-completing word). The C source sets them as byte
+    // offsets into zlemetaline.
+    WB.store(start as i32, Ordering::SeqCst);
+    WE.store(end as i32, Ordering::SeqCst);
+
+    // Command-position heuristic for `lincmd` (C `c:139` global, set
+    // throughout `get_comp_string` at c:1238/c:1419 based on lexer
+    // state: incmdpos/inalmore/dquote/etc.). Pre-lexer substrate, we
+    // approximate: scan backwards from `start`, skipping whitespace.
+    // The word is in command position iff the previous non-blank byte
+    // is one of zsh's command terminators or we hit start-of-line.
+    let mut p = start;
+    while p > 0 && bytes[p - 1].is_ascii_whitespace() {
+        p -= 1;
+    }
+    let in_cmdpos = if p == 0 {
+        true
+    } else {
+        let prev = bytes[p - 1];
+        // c:1238 — `incmdpos` is set after `;`, `\n`, `&`, `|` (incl.
+        // `&&` / `||` since both end in `|` / `&`), `(`, `{`, and the
+        // implicit start-of-block tokens `do`/`then`/`else`/etc.
+        // The single-char terminators cover the bytecode-level case;
+        // reserved words need lexer state we don't yet have.
+        matches!(prev, b';' | b'\n' | b'&' | b'|' | b'(' | b'{')
+    };
+    LINCMD.store(in_cmdpos as i32, Ordering::SeqCst);
+
     Some(snap[start..end].to_string())
 }
 
@@ -786,38 +958,219 @@ pub fn inststrlen(
     len // c:2257 return len
 }
 
-/// !!! WARNING: PARTIAL PORT — stub. C `doexpansion(char *s, int lst,
-/// int olst, int explincmd)` at Src/Zle/zle_tricky.c:2263 is the
-/// 58-line driver for `expand-or-complete`: it parses `s` for
-/// history (`!`), glob, alias, and process expansions via the
-/// pushheap → dupstring → DnullSnull-swap → expand_dynamic → newlinklist
-/// pipeline at c:2269-2316, then inserts the result via foredel +
-/// inststr.
+/// Port of `int doexpansion(char *s, int lst, int olst, int explincmd)`
+/// from `Src/Zle/zle_tricky.c:2263`.
 ///
-/// Zero Rust callers reach this fn; the live expand-or-complete
-/// widget routes through `docomplete(COMP_EXPAND)` instead, which
-/// dispatches to the Cmatch pipeline in `docompletion` below.
-/// Faithful port needs the Cmatch/Cstrlist substrate.
-pub fn doexpansion() -> i32 {
-    // c:2263 — see WARNING above; stub returns 0.
-    0
+/// Drives the expansion phase of `expand-or-complete` (and the bare
+/// `expand-word` widget). Pipeline:
+///   1. Push a fresh heap (`pushheap`).
+///   2. Build a 1-element LinkList with a heap-dup of `s`.
+///   3. Swap literal `"`/`'` to `Dnull`/`Snull` so prefork treats
+///      them as tokens, not characters (matches `get_comp_string`'s
+///      output convention).
+///   4. `prefork(vl, 0, NULL)` — runs history/alias/parameter
+///      expansion in place.
+///   5. For `COMP_LIST_EXPAND` / `COMP_EXPAND`: temporarily set
+///      `NULLGLOB` and run `globlist(vl, PREFORK_NO_UNTOK)` so
+///      glob non-matches don't error out.
+///   6. If expansion produced no change (peekfirst == ss) OR a
+///      tilde-only expansion that `filesubstr` would have done
+///      anyway, fall through:
+///         * For `COMP_EXPAND_COMPLETE` recurse into `docompletion`.
+///         * Otherwise just return 1 (caller beeps).
+///   7. For `COMP_LIST_EXPAND`: restore the original buffer and
+///      hand the list to `listlist` for menu display.
+///   8. Otherwise: delete the current word from the buffer and
+///      splice each expansion in, quoting + untokenizing each.
+///   9. Pop heap and return.
+pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
+    // c:2265 — `int ret = 1, first = 1;`
+    let mut ret: i32 = 1;
+    let mut first = true;
+    // c:2266 — `LinkList vl; char *ss, *ts;` (decls)
+
+    // c:2269 — `pushheap()`.
+    crate::ported::mem::pushheap();
+
+    // c:2270 — `vl = newlinklist()`.
+    let mut vl: crate::ported::linklist::LinkList<String> =
+        crate::ported::linklist::newlinklist();
+    // c:2271 — `ss = dupstring(s)`.
+    let ss = crate::ported::string::dupstring(s);
+    // c:2274-2278 — swap "/' → Dnull/Snull. C walks `ts` byte-by-
+    // byte; in Rust we rebuild the string from chars since `Dnull`/
+    // `Snull` are non-ASCII char constants (0x9e / 0x9d).
+    let ss: String = ss
+        .chars()
+        .map(|c| match c {
+            '"' => crate::ported::zle::compctl::Dnull,
+            '\'' => crate::ported::zle::compctl::Snull,
+            c => c,
+        })
+        .collect();
+    // c:2279 — `addlinknode(vl, ss)`. Rust API: push_back.
+    vl.push_back(ss.clone());
+    // c:2280 — `prefork(vl, 0, NULL)`. Rust port takes a ret-flags
+    // out-param; pass a throwaway.
+    let mut ret_flags = 0i32;
+    crate::ported::subst::prefork(&mut vl, 0, &mut ret_flags);
+    // c:2281-2282 — `if (errflag) goto end`.
+    let _result: i32 = (|| -> i32 {
+        if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
+            return ret;
+        }
+        // c:2283-2289 — for COMP_LIST_EXPAND / COMP_EXPAND wrap
+        // `globlist` between `opts[NULLGLOB]` toggles so glob
+        // misses don't error.
+        if lst == COMP_LIST_EXPAND || lst == COMP_EXPAND {
+            let ng = crate::ported::options::opt_state_get("NULL_GLOB").unwrap_or(false);
+            crate::ported::options::opt_state_set("NULL_GLOB", true);
+            crate::ported::subst::globlist(
+                &mut vl,
+                crate::ported::zsh_h::PREFORK_NO_UNTOK,
+            );
+            crate::ported::options::opt_state_set("NULL_GLOB", ng);
+        }
+        // c:2290-2291 — `if (errflag) goto end`.
+        if crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
+            return ret;
+        }
+        // c:2292-2293 — `if (empty(vl) || !*(char *)peekfirst(vl))
+        //                goto end`.
+        if vl.empty() {
+            return ret;
+        }
+        let first_item = vl.front().cloned().unwrap_or_default();
+        if first_item.is_empty() {
+            return ret;
+        }
+        // c:2294-2299 — no-change check. If the first item still
+        // equals `ss` (no real expansion happened), OR the only
+        // change was tilde-expansion that `filesubstr` would do
+        // (and the caller asked for `COMP_EXPAND_COMPLETE`), fall
+        // through to completion.
+        let len_vl = {
+            let mut n = 0;
+            let mut cur = vl.firstnode();
+            while cur.is_some() {
+                n += 1;
+                cur = cur.and_then(|i| vl.nextnode(i));
+            }
+            n
+        };
+        let no_change = first_item == ss;
+        let tilde_only = olst == COMP_EXPAND_COMPLETE
+            && len_vl == 1
+            && s.starts_with(crate::ported::zsh_h::Tilde)
+            && crate::ported::subst::filesubstr(s, false)
+                .map(|exp| exp == first_item)
+                .unwrap_or(false);
+        if no_change || tilde_only {
+            // c:2300-2304 — recurse into docompletion if asked.
+            if lst == COMP_EXPAND_COMPLETE {
+                docompletion(s, COMP_COMPLETE, explincmd);
+            }
+            return ret;
+        }
+        // c:2306-2316 — `COMP_LIST_EXPAND` path: restore the
+        // original line and display the expansions as a list.
+        if lst == COMP_LIST_EXPAND {
+            crate::ported::zle::compcore::ZLEMETACS.store(0, Ordering::SeqCst);
+            crate::ported::zle::zle_utils::foredel(
+                crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst),
+                CUT_RAW,
+            );
+            crate::ported::zle::zle_utils::spaceinline(ORIGLL.load(Ordering::SeqCst));
+            if let (Some(metabuf), Some(orig)) = (
+                crate::ported::zle::compcore::ZLEMETALINE.get(),
+                ORIGLINE.get(),
+            ) {
+                if let (Ok(mut m), Ok(o)) = (metabuf.lock(), orig.lock()) {
+                    *m = o.clone();
+                }
+            }
+            crate::ported::zle::compcore::ZLEMETACS
+                .store(ORIGCS.load(Ordering::SeqCst), Ordering::SeqCst);
+            // Drain vl into a Vec<String> for listlist's slice arg.
+            let mut items: Vec<String> = Vec::new();
+            while let Some(x) = crate::ported::linklist::ugetnode(&mut vl) {
+                items.push(x);
+            }
+            ret = listlist(&items, 0);
+            crate::ported::zle::zle_refresh::SHOWINGLIST.store(0, Ordering::SeqCst);
+            return ret;
+        }
+        // c:2319-2332 — splice expansions into the buffer at the
+        // current word position (wb..we).
+        let wb = WB.load(Ordering::SeqCst);
+        let we = WE.load(Ordering::SeqCst);
+        crate::ported::zle::compcore::ZLEMETACS.store(wb, Ordering::SeqCst);
+        crate::ported::zle::zle_utils::foredel(we - wb, CUT_RAW);
+        while let Some(node) = crate::ported::linklist::ugetnode(&mut vl) {
+            ret = 0;
+            // c:2324 — `ss = quotename(ss); untokenize(ss); inststr(ss);`
+            let quoted = quotename(&node, 0);
+            let unt = crate::ported::lex::untokenize(&quoted);
+            inststr(&unt);
+            // c:2326-2330 — between items, insert a space.
+            if !vl.empty() || !first {
+                crate::ported::zle::zle_utils::spaceinline(1);
+                let pos = crate::ported::zle::compcore::ZLEMETACS.load(Ordering::SeqCst);
+                if let Some(metabuf) = crate::ported::zle::compcore::ZLEMETALINE.get() {
+                    if let Ok(mut m) = metabuf.lock() {
+                        if (pos as usize) < m.len() {
+                            // C: `zlemetaline[zlemetacs++] = ' '`.
+                            // Rust String mutation: replace one
+                            // char at byte offset pos.
+                            let mut bytes = m.as_bytes().to_vec();
+                            if (pos as usize) < bytes.len() {
+                                bytes[pos as usize] = b' ';
+                                *m = String::from_utf8_lossy(&bytes).into_owned();
+                            }
+                        }
+                        crate::ported::zle::compcore::ZLEMETACS
+                            .store(pos + 1, Ordering::SeqCst);
+                    }
+                }
+            }
+            first = false;
+        }
+        ret
+    })();
+
+    // c:2334-2336 — `end: popheap(); return ret`.
+    crate::ported::mem::popheap();
+    _result
 }
 
-/// Port of `docompletion(char *s, int lst, int incmd)` from Src/Zle/zle_tricky.c:2339.
-/// Direct port of `int docompletion(...)` from
-/// `Src/Zle/zle_tricky.c:2339`. Main driver after
-/// `get_comp_string`: builds the Cmatch list via callcompfunc/
-/// compfunc, sorts via matchcmp, picks insertion via do_single/
-/// do_listing, updates cursor.
-///
-/// Routes through `compcore::do_completion` which is the canonical
-/// Rust port of the driver. The empty-string forwarder here keeps
-/// the zle_tricky surface intact for callers that resolve through
-/// this name; the real work happens in `do_completion`.
-/// WARNING: param names don't match C — Rust=() vs C=(s, lst, incmd)
-pub fn docompletion() -> i32 {
+/// Direct port of `static int docompletion(char *s, int lst, int incmd)`
+/// from `Src/Zle/zle_tricky.c:2339`. Wraps `(s, lst, incmd)` in a
+/// `compldat` struct and fires the COMPLETEHOOK chain via
+/// `runhookdef`. When no Hookfn is registered (matching the C
+/// `complete.c:boot_` `addhookfunc("complete", do_completion)` chain
+/// that the Rust port has not yet wired through `Hookfn` thunks), we
+/// fall through to the canonical handler in `compcore::do_completion`
+/// — same observational behavior as C's `def` fallback at
+/// `module.c:993-994`.
+pub fn docompletion(s: &str, lst: i32, incmd: i32) -> i32 {
     // c:2339
-    crate::ported::zle::compcore::do_completion("", 0, COMP_LIST_COMPLETE)
+    let mut dat = crate::ported::zle::zle_h::compldat {
+        // c:2342-2344
+        s: s.to_string(),
+        lst,
+        incmd,
+    };
+    let h = crate::ported::module::gethookdef("complete");
+    if !h.is_null() {
+        // c:2346 — `runhookdef(COMPLETEHOOK, &dat)`.
+        let dat_ptr = (&mut dat) as *mut crate::ported::zle::zle_h::compldat
+            as *mut std::ffi::c_void;
+        return crate::ported::module::runhookdef(h, dat_ptr);
+    }
+    // Fallback to the canonical Rust handler (matches the C
+    // `addhookfunc("complete", do_completion)` registration that the
+    // Rust port lowers to a direct call here).
+    crate::ported::zle::compcore::do_completion(s, incmd, lst)
 }
 
 /// Get length of common prefix
@@ -1178,10 +1531,10 @@ pub fn expandcmdpath() -> i32 {
 }
 
 /// Port of `expandorcompleteprefix(char **args)` from Src/Zle/zle_tricky.c:3041.
-pub fn expandorcompleteprefix() -> i32 {
+pub fn expandorcompleteprefix(args: &[String]) -> i32 {
     // c:3041
     COMPPREF.store(1, Ordering::SeqCst); // c:3045
-    let ret = expandorcomplete(); // c:3046
+    let ret = expandorcomplete(args); // c:3046 — `expandorcomplete(args)` args pass-through
     if ZLECS.load(Ordering::SeqCst) > 0
         && ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst) - 1] == ' '
     {
@@ -1294,6 +1647,13 @@ pub static LASTAMBIG: AtomicI32 = AtomicI32::new(0); // c:157
 /// Port of `mod_export int bashlistfirst` from
 /// `Src/Zle/zle_tricky.c:157`. Sets the listing style.
 pub static BASHLISTFIRST: AtomicI32 = AtomicI32::new(0); // c:157
+
+/// Port of `int lincmd` from `Src/Zle/zle_tricky.c:139`. Set by
+/// `get_comp_string` to indicate the cursor word is in command
+/// position (start of line, after `;`/`|`/`&`/`&&`/`||`/`(`/etc.).
+/// Threaded into the COMPLETEHOOK payload as `compldat.incmd` — drives
+/// `_command_names` selection in `_main_complete`.
+pub static LINCMD: AtomicI32 = AtomicI32::new(0); // c:139
 
 /// Port of `mod_export int amenu` from `Src/Zle/zle_tricky.c`. Set
 /// non-zero while a menu-completion is in progress — drives the
@@ -1621,7 +1981,7 @@ mod tests {
         USEMENU.store(99, Ordering::SeqCst);
         USEGLOB.store(99, Ordering::SeqCst);
         WOULDINSTAB.store(99, Ordering::SeqCst);
-        let _r = spellword();
+        let _r = spellword(&[]);
         // c:265 — `return docomplete(COMP_SPELL)`. docomplete now
         // routes through the real before/after hook chain + do_completion;
         // its return value depends on completion-state side-effects
@@ -1635,8 +1995,16 @@ mod tests {
     }
 
     // ─── zsh-corpus pins for usetab ────────────────────────────────
+    //
+    // `usetab(void)` reads `keybuf` global (`Src/Zle/zle_tricky.c:183`),
+    // not a parameter. Tests set `keybuf` directly via the same Mutex
+    // the production code reads from.
 
-    /// `usetab(b"\t")` after empty line returns 1 (insert literal tab).
+    fn set_keybuf(bytes: &[u8]) {
+        *crate::ported::zle::zle_keymap::keybuf.lock().unwrap() = bytes.to_vec();
+    }
+
+    /// `usetab` after empty line + keybuf=`\t` returns 1 (insert literal tab).
     #[test]
     fn zle_tricky_corpus_usetab_at_bol_returns_one() {
         let _g = crate::test_util::global_state_lock();
@@ -1644,7 +2012,8 @@ mod tests {
         ZLECS.store(0, Ordering::SeqCst);
         *ZLELINE.lock().unwrap() = Vec::new();
         ZLELL.store(0, Ordering::SeqCst);
-        assert_eq!(usetab(b"\t"), 1, "tab at BOL = literal");
+        set_keybuf(b"\t");
+        assert_eq!(usetab(), 1, "tab at BOL = literal");
     }
 
     /// `usetab` returns 0 when keybuf is not just `\t`.
@@ -1652,8 +2021,10 @@ mod tests {
     fn zle_tricky_corpus_usetab_non_tab_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        assert_eq!(usetab(b"a"), 0, "non-tab byte = 0");
-        assert_eq!(usetab(b""), 0, "empty buf = 0");
+        set_keybuf(b"a");
+        assert_eq!(usetab(), 0, "non-tab byte = 0");
+        set_keybuf(b"");
+        assert_eq!(usetab(), 0, "empty buf = 0");
     }
 
     /// `usetab` returns 0 when keybuf has more than one byte.
@@ -1661,8 +2032,10 @@ mod tests {
     fn zle_tricky_corpus_usetab_multibyte_returns_zero() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        assert_eq!(usetab(b"\t\t"), 0, "more than one byte = 0");
-        assert_eq!(usetab(b"\tx"), 0);
+        set_keybuf(b"\t\t");
+        assert_eq!(usetab(), 0, "more than one byte = 0");
+        set_keybuf(b"\tx");
+        assert_eq!(usetab(), 0);
     }
 
     /// `usetab` returns 0 when cursor follows a non-whitespace char.
@@ -1673,11 +2046,8 @@ mod tests {
         *ZLELINE.lock().unwrap() = "abc".chars().collect();
         ZLELL.store(3, Ordering::SeqCst);
         ZLECS.store(3, Ordering::SeqCst);
-        assert_eq!(
-            usetab(b"\t"),
-            0,
-            "cursor after non-WS char → no literal tab (need completion)"
-        );
+        set_keybuf(b"\t");
+        assert_eq!(usetab(), 0, "cursor after non-WS char → no literal tab");
     }
 
     /// `usetab` returns 1 when cursor follows only spaces/tabs at BOL.
@@ -1688,6 +2058,7 @@ mod tests {
         *ZLELINE.lock().unwrap() = "   ".chars().collect();
         ZLELL.store(3, Ordering::SeqCst);
         ZLECS.store(3, Ordering::SeqCst);
-        assert_eq!(usetab(b"\t"), 1, "after pure-WS indent, tab = literal");
+        set_keybuf(b"\t");
+        assert_eq!(usetab(), 1, "after pure-WS indent, tab = literal");
     }
 }

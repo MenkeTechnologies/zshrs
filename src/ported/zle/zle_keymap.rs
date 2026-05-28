@@ -34,7 +34,7 @@ use crate::ported::zle::{
     deltochar::*, textobjects::*, zle_hist::*, zle_main::*, zle_misc::*, zle_move::*,
     zle_params::*, zle_refresh::*, zle_tricky::*, zle_utils::*, zle_vi::*, zle_word::*,
 };
-use crate::ported::zsh_h::options;
+use crate::ported::zsh_h::{options, OPT_ISSET};
 use crate::ported::ztype_h::imeta;
 
 /// Port of `KMN_IMMORTAL` from `Src/Zle/zle_keymap.c:62`. Marks a
@@ -61,12 +61,35 @@ pub const KMN_IMMORTAL: i32 = 1 << 1; // c:62
 /// keymap that can't have its bindings modified.
 pub const KM_IMMUTABLE: i32 = 1 << 1; // c:83
 
-// `BindState` / `BindStateFlags` deleted — the C `struct bindstate`
-// at zle_keymap.c:95 is only used as a local in `printbinding()`/
-// `scanbindings()`/`bin_bindkey -L`; ports of those ported will model
-// it as a stack-local struct when they land. The previous Rust
-// declaration had no callers (dead code) and used a fake bitflags
-// wrapper over a single int field.
+/// Port of `struct bindstate` from `Src/Zle/zle_keymap.c:95-104`.
+/// Closure state for `scanbindlist` / `bindlistout` — threads the
+/// keymap-listing accumulator through `scankeymap`'s per-binding
+/// callback. C definition:
+/// ```c
+/// struct bindstate {
+///     int flags;
+///     char *kmname;
+///     char *firstseq;
+///     char *lastseq;
+///     Thingy bind;
+///     char *str;
+///     char *prefix;
+///     int prefixlen;
+/// };
+/// ```
+#[derive(Debug, Clone)]
+#[allow(non_camel_case_types)]
+pub struct bindstate {
+    // c:95
+    pub flags: i32,             // c:96
+    pub kmname: String,         // c:97
+    pub firstseq: Vec<u8>,      // c:98
+    pub lastseq: Vec<u8>,       // c:99
+    pub bind: Option<Thingy>,   // c:100 — None ≡ C `t_undefinedkey`
+    pub str: Option<String>,    // c:101 — None ≡ C `NULL`
+    pub prefix: Option<Vec<u8>>, // c:102 — None ≡ C `NULL`
+    pub prefixlen: usize,       // c:103
+}
 
 /// Port of `struct remprefstate` from `Src/Zle/zle_keymap.c:108`.
 /// Closure state for `scanremoveprefix` — removes every multi-char
@@ -543,33 +566,98 @@ pub fn deletekeymap(km: Arc<Keymap>) { // c:364
 /// multi-byte `multi` entries. `sort != 0` lex-sorts the multi-byte
 /// keys before yielding. The Rust port returns a `Vec<Vec<u8>>` of
 /// the sequences; callers iterate.
-pub fn scankeymap(km: &Keymap, sort: i32) -> Vec<Vec<u8>> {
+pub fn scankeymap(
+    km: &Keymap,
+    sort: i32,
+    func: &mut dyn FnMut(&[u8], Option<&Thingy>, Option<&str>),
+) {
     // c:381
-    let mut seqs: Vec<Vec<u8>> = Vec::new();
-    // c:383-395 — first[i] single-byte entries.
-    for (i, t) in km.first.iter().enumerate() {
-        if t.is_some() {
-            seqs.push(vec![i as u8]);
-        }
-    }
-    // c:404-401 — multi-byte bindings via scanhashtable.
-    let mut multi_keys: Vec<Vec<u8>> = km.multi.keys().cloned().collect();
+    // c:386 — `skm_km = km; skm_last = sort ? -1 : 255;
+    //          skm_func = func; skm_magic = magic;`
+    // Rust models the four file-statics as captured state in the
+    // `scankeys` closure call sequence below.
+    let mut skm_last: i32 = if sort != 0 { -1 } else { 255 };
+
+    // c:390 — `scanhashtable(km->multi, sort, 0, 0, scankeys, 0)`.
+    // Walk the multi-byte hash in lex order (when sort != 0),
+    // interleaving any single-byte entries whose byte value is less
+    // than the current multi-key's first byte. The C `scankeys`
+    // callback at c:402 is inlined here as the per-iteration body.
+    let mut multi_keys: Vec<&Vec<u8>> = km.multi.keys().collect();
     if sort != 0 {
-        // c:404 sort flag
+        // c:381 sort flag
         multi_keys.sort();
     }
-    seqs.extend(multi_keys);
-    seqs
+    for k_nam in multi_keys {
+        let kb = km.multi.get(k_nam).expect("key from iter");
+        // c:390 — `scanhashtable(km->multi, sort, 0, 0, scankeys, 0)`
+        // calls `scankeys` per multi-byte node; we drive that loop
+        // directly here because the Rust port has no scanhashtable.
+        scankeys(
+            k_nam,
+            kb.bind.as_ref(),
+            kb.str.as_deref(),
+            km,
+            &mut skm_last,
+            func,
+        );
+    }
+
+    // c:392 — `if (!sort) skm_last = -1`. Already sorted-or-not above;
+    // for the unsorted path we reset and walk all 0..255 in order.
+    if sort == 0 {
+        skm_last = -1;
+    }
+    // c:393-401 — flush remaining single-byte slots.
+    while skm_last < 255 {
+        skm_last += 1;
+        if let Some(t) = &km.first[skm_last as usize] {
+            let m = [skm_last as u8];
+            func(&m, Some(t), None);
+        }
+    }
 }
 
-/// Port of `scankeys(HashNode hn, UNUSED(int flags))` from Src/Zle/zle_keymap.c:404.
-/// WARNING: param names don't match C — Rust=(_kb) vs C=(hn, flags)
-pub fn scankeys(_kb: &KeyBinding) -> Vec<u8> {
+/// Direct port of `static void scankeys(HashNode hn, UNUSED(int flags))`
+/// from `Src/Zle/zle_keymap.c:404`. Per-multi-byte-binding callback
+/// driven by `scankeymap`. Walks `km.first[]` slots whose byte
+/// value is < the current multi-key's first byte, emitting each
+/// non-undefined single-byte binding before the multi-byte binding
+/// itself.
+///
+/// C uses the module-static globals `skm_km`, `skm_last`, `skm_func`,
+/// `skm_magic` to plumb state through `scanhashtable`'s
+/// `(HashNode, int) -> void` callback signature. Rust passes them
+/// in explicitly because Rust closures express the same lifetime
+/// without the global indirection.
+/// WARNING: param names don't match C — Rust=(k_nam, k_bind, k_str,
+/// km, skm_last, func) vs C=(hn, flags).
+fn scankeys(
+    k_nam: &[u8],
+    k_bind: Option<&Thingy>,
+    k_str: Option<&str>,
+    km: &Keymap,
+    skm_last: &mut i32,
+    func: &mut dyn FnMut(&[u8], Option<&Thingy>, Option<&str>),
+) {
     // c:404
-    // C body (c:406-426): per-node callback used by scankeymap; calls
-    // skm_func per multi-byte binding. Returns the seq bytes here so
-    // callers can collect.
-    Vec::new()
+    // c:407-408 — `f = (k->nam[0] == Meta ? k->nam[1]^32 : k->nam[0])`.
+    // Rust storage is raw bytes, so the Meta-decoded first byte is
+    // just the first byte (high-bit values represent themselves).
+    let f = k_nam[0] as i32;
+    // c:412-419 — flush every single-byte slot with byte < f.
+    while *skm_last < f {
+        *skm_last += 1;
+        if *skm_last > 255 {
+            break;
+        }
+        if let Some(t) = &km.first[*skm_last as usize] {
+            let m = [*skm_last as u8];
+            func(&m, Some(t), None);
+        }
+    }
+    // c:420 — `skm_func(k->nam, k->bind, k->str, skm_magic)`.
+    func(k_nam, k_bind, k_str);
 }
 
 /// Port of `openkeymap(char *name)` from Src/Zle/zle_keymap.c:428.
@@ -1030,71 +1118,108 @@ pub fn bin_bindkey(
     }
 }
 
-/// Port of `bin_bindkey_lsmaps(char *name, UNUSED(char *kmname),
-/// UNUSED(Keymap km), char **argv, Options ops, UNUSED(char func))`
-/// from Src/Zle/zle_keymap.c:834.
-///
-/// Print every registered keymap (one per line, with `-> alias`
-/// suffix for entries that share the underlying keymap).
+/// Direct port of `static int bin_bindkey_lsmaps(char *name,
+///                                                 UNUSED(char *kmname),
+///                                                 UNUSED(Keymap km),
+///                                                 char **argv, Options ops,
+///                                                 UNUSED(char func))`
+/// from `Src/Zle/zle_keymap.c:834`. Dispatches per-keymap via
+/// `scanlistmaps`. With argv: iterate the named keymaps. Without:
+/// walk all via scanhashtable.
 pub fn bin_bindkey_lsmaps(
-    _name: &str,
+    name: &str,
     _kmname: Option<&str>,
     _km: Option<&Keymap>,
-    _argv: &[String],
-    _ops: &options,
+    argv: &[String],
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:834
-    // c:856-873 — `scanhashtable(keymapnamtab, 1, ..., scanlistmaps, 0)`.
-    // Walk every keymap-name entry and emit `name -> alias` when the
-    // keymap is shared with another name (i.e. when openkeymap returned
-    // the same Arc as the keymap's primary name).
-    let snapshot: Vec<(String, std::sync::Arc<Keymap>)> = {
-        let g = keymapnamtab().lock().unwrap();
-        g.iter()
-            .map(|(n, k)| (n.clone(), k.keymap.clone()))
-            .collect()
-    };
-    // First pass: pick the primary name for each unique Arc<Keymap>.
-    let mut primary_for: std::collections::HashMap<usize, String> =
-        std::collections::HashMap::new();
-    for (name, arc) in &snapshot {
-        let id = std::sync::Arc::as_ptr(arc) as usize;
-        // c:865 — `if (!km->primary || ...)`: pick the first-seen
-        // name as the primary unless the kmn carries an explicit
-        // primary tag. Our Keymap.primary field, when set, names
-        // the canonical owner.
-        if let Some(p) = &arc.primary {
-            primary_for.insert(id, p.clone());
-        } else {
-            primary_for.entry(id).or_insert_with(|| name.clone());
+    let list_verbose = OPT_ISSET(ops, b'L');
+    let mut ret = 0;
+    if !argv.is_empty() {
+        // c:838-849 — per-arg lookup + per-arg scanlistmaps.
+        for a in argv {
+            // c:840 — `kmn = keymapnamtab->getnode(keymapnamtab, *argv)`.
+            let kmn = {
+                let g = keymapnamtab().lock().unwrap();
+                g.get(a).cloned()
+            };
+            match kmn {
+                None => {
+                    eprintln!("{}: no such keymap: `{}'", name, a);
+                    ret = 1;
+                }
+                Some(kmn) => {
+                    scanlistmaps(&kmn, a, list_verbose);
+                }
+            }
+        }
+    } else {
+        // c:851 — `scanhashtable(keymapnamtab, 1, 0, 0, scanlistmaps, ...)`.
+        // Walk in lex-sorted order.
+        let snapshot: Vec<(String, KeymapName)> = {
+            let g = keymapnamtab().lock().unwrap();
+            g.iter().map(|(n, k)| (n.clone(), k.clone())).collect()
+        };
+        let mut names: Vec<(String, KeymapName)> = snapshot;
+        names.sort_by(|a, b| a.0.cmp(&b.0));
+        for (n, kmn) in &names {
+            scanlistmaps(kmn, n, list_verbose);
         }
     }
-    // c:866-872 — emit `name` for primary, `name -> primary` for aliases.
-    let mut names: Vec<(String, std::sync::Arc<Keymap>)> = snapshot;
-    names.sort_by(|a, b| a.0.cmp(&b.0));
-    for (name, arc) in &names {
-        let id = std::sync::Arc::as_ptr(arc) as usize;
-        let p = primary_for
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| name.clone());
-        if p == *name {
-            println!("{}", name); // c:866
-        } else {
-            println!("{} -> {}", name, p); // c:868
-        }
-    }
-    0
+    ret
 }
 
-/// Port of `scanlistmaps(HashNode hn, int list_verbose)` from Src/Zle/zle_keymap.c:856.
-/// WARNING: param names don't match C — Rust=() vs C=(hn, list_verbose)
-pub fn scanlistmaps() -> Vec<String> {
+/// Direct port of `static void scanlistmaps(HashNode hn,
+///                                            int list_verbose)`
+/// from `Src/Zle/zle_keymap.c:856`. Emits one line per keymap-name
+/// entry. With `list_verbose` (= `bindkey -L`): formats as
+/// `bindkey -A primary name` (alias) or `bindkey -N name` (new).
+/// Without: just the name.
+/// WARNING: param names don't match C — Rust=(kmn, n_nam, list_verbose)
+/// vs C=(hn, list_verbose); the C source reads `n->nam` off the
+/// HashNode, we pass the name separately because Rust's
+/// KeymapName struct doesn't carry its own owned name.
+pub fn scanlistmaps(kmn: &KeymapName, n_nam: &str, list_verbose: bool) {
     // c:856
-    // C body (c:858-873): walk keymapnamtab printing each name with
-    // primary-name annotation. Returns just the name list here.
-    keymapnamtab().lock().unwrap().keys().cloned().collect()
+    if list_verbose {
+        // c:864 — `if (!strcmp(n->nam, ".safe")) return`.
+        if n_nam == ".safe" {
+            return;
+        }
+        // c:866 — `fputs("bindkey -", stdout)`.
+        print!("bindkey -");
+        // c:867-878 — `if (km->primary && km->primary != n)` →
+        // alias form (`-A primary name`); else → new form (`-N name`).
+        let primary_name = kmn.keymap.primary.as_deref();
+        let is_alias = primary_name.is_some() && primary_name != Some(n_nam);
+        if is_alias {
+            // c:870 — `fputs("A ", stdout)`.
+            print!("A ");
+            let pn = primary_name.unwrap();
+            // c:872 — `if (pn->nam[0] == '-') fputs("-- ", stdout)`.
+            if pn.starts_with('-') {
+                print!("-- ");
+            }
+            // c:874 — `quotedzputs(pn->nam, stdout)`.
+            print!("{} ", pn);
+        } else {
+            // c:877 — `fputs("N ", stdout)`.
+            print!("N ");
+            // c:879 — `if (n->nam[0] == '-') fputs("-- ", stdout)`.
+            if n_nam.starts_with('-') {
+                print!("-- ");
+            }
+        }
+        // c:881 — `quotedzputs(n->nam, stdout)`.
+        print!("{}", n_nam);
+    } else {
+        // c:884 — `nicezputs(n->nam, stdout)`.
+        print!("{}", n_nam);
+    }
+    // c:886 — `putchar('\n')`.
+    println!();
 }
 
 /// Port of `bin_bindkey_delall(UNUSED(char *name), UNUSED(char *kmname),
@@ -1423,93 +1548,211 @@ pub fn scanremoveprefix(km: &mut Keymap, prefix: &[u8]) {
 /// stdout, matching the C output format.
 pub fn bin_bindkey_list(
     name: &str,
-    _kmname: Option<&str>,
+    kmname: Option<&str>,
     _km: Option<&Keymap>,
-    _argv: &[String],
-    _ops: &options,
+    argv: &[String],
+    ops: &options,
     _func: i32,
 ) -> i32 {
     // c:1094
-    let Some(km) = openkeymap(name) else {
+    // C signature receives `km` already-resolved by the dispatcher
+    // at c:794-799. Our dispatcher passes None; resolve here from
+    // `kmname` (falling back to `curkeymapname` when `-M` was not
+    // given — matches C's `kmname = "main"` default).
+    let resolved_name: String = kmname
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| curkeymapname().clone());
+    let Some(km) = openkeymap(&resolved_name) else {
+        eprintln!("{}: no such keymap `{}'", name, resolved_name);
         return 1;
-    }; // c:1098
-    let mut stdout = std::io::stdout().lock();
+    };
 
-    // c:1115-1140 — print single-byte first[256] bindings.
-    for (i, slot) in km.first.iter().enumerate() {
-        if let Some(t) = slot {
-            let _ = write!(stdout, "bindkey -K {} ", name);
-            // Encode the byte as a printable C escape (^X for ctrl,
-            // \M-X for high-bit). Match C's nicechar() output.
-            if i < 0x20 {
-                let _ = write!(stdout, "\"^{}\"", (i as u8 + b'@') as char);
-            } else if i == 0x7f {
-                let _ = write!(stdout, "\"^?\"");
-            } else if i < 0x80 {
-                let _ = write!(stdout, "\"{}\"", i as u8 as char);
-            } else {
-                let _ = write!(stdout, "\"\\M-{}\"", (i as u8 ^ 0x80) as char);
-            }
-            let _ = writeln!(stdout, " {}", t.nam);
-        }
+    // c:1096-1099 — `bs.flags = OPT_ISSET(ops,'L') ? BS_LIST : 0;
+    //                bs.kmname = kmname;`
+    let mut bs = bindstate {
+        flags: if OPT_ISSET(ops, b'L') { BS_LIST } else { 0 },
+        kmname: resolved_name.clone(),
+        firstseq: Vec::new(),
+        lastseq: Vec::new(),
+        bind: None,
+        str: None,
+        prefix: None,
+        prefixlen: 0,
+    };
+
+    // c:1100-1110 — single-sequence lookup path (`argv[0] && !-p`).
+    if !argv.is_empty() && !OPT_ISSET(ops, b'p') {
+        // c:1102-1107 — `seq = getkeystring(argv[0], &len,
+        //                  GETKEYS_BINDKEY, NULL); seq = metafy(...)`.
+        // The Rust seq storage is raw bytes; `getkeystring` parses
+        // user-typed `\C-X`/`^X`/`\M-X` etc. → raw byte sequence.
+        let seq = crate::ported::zle::zle_bindings::getkeystring(&argv[0]);
+        // c:1108-1109 — `bs.flags |= BS_ALL; bs.firstseq = bs.lastseq = seq;`
+        bs.flags |= BS_ALL;
+        bs.firstseq = seq.clone();
+        bs.lastseq = seq.clone();
+        // c:1110 — `bs.bind = keybind(km, seq, &bs.str)`.
+        let (bind, str_out) = keybind(&km, &seq);
+        bs.bind = bind;
+        bs.str = str_out;
+        // c:1113 — `bindlistout(&bs)`.
+        bindlistout(&bs);
+        return 0;
     }
-    // c:1150-1170 — print multi-byte bindings.
-    for (seq, kb) in km.multi.iter() {
-        let _ = write!(stdout, "bindkey -K {} \"", name);
-        for &b in seq {
-            if b < 0x20 {
-                let _ = write!(stdout, "^{}", (b + b'@') as char);
-            } else if b == 0x7f {
-                let _ = write!(stdout, "^?");
-            } else if b < 0x80 {
-                let _ = write!(stdout, "{}", b as char);
-            } else {
-                let _ = write!(stdout, "\\M-{}", (b ^ 0x80) as char);
-            }
+
+    // c:1115-1125 — `-p` prefix-only path.
+    if OPT_ISSET(ops, b'p') {
+        let arg0 = argv.first().map(|s| s.as_str()).unwrap_or("");
+        if arg0.is_empty() {
+            eprintln!("{}: option -p requires a prefix string", name);
+            return 1;
         }
-        let _ = write!(stdout, "\" ");
-        if let Some(t) = &kb.bind {
-            let _ = writeln!(stdout, "{}", t.nam);
-        } else if let Some(s) = &kb.str {
-            let _ = writeln!(stdout, "\"{}\"", s);
-        } else {
-            let _ = writeln!(stdout, "undefined-key");
-        }
+        let pfx = crate::ported::zle::zle_bindings::getkeystring(arg0);
+        bs.prefixlen = pfx.len();
+        bs.prefix = Some(pfx);
     }
+    // c:1130-1137 — initialise bs for the scankeymap walk.
+    bs.firstseq = Vec::new();
+    bs.lastseq = Vec::new();
+    bs.bind = None;
+    bs.str = None;
+    // c:1138 — `scankeymap(km, 1, scanbindlist, &bs)`.
+    scankeymap(&km, 1, &mut |seq, bind, s| {
+        scanbindlist(seq, bind, s, &mut bs);
+    });
+    // c:1139 — `bindlistout(&bs)` — flush the final accumulated range.
+    bindlistout(&bs);
     0 // c:1173
 }
 
 /// Direct port of `static void scanbindlist(char *seq, Thingy bind,
-///                                          char *str, void *magic)`
-/// from `Src/Zle/zle_keymap.c:1141`. Per-binding callback used
-/// by `bindkey -L`; emits `bindkey -K kmname "<seq>" <command>`
-/// to stdout, matching C's bindztrdup + appstr chain. Rust returns
-/// the formatted line so callers can collect.
-pub fn scanbindlist(kb: &KeyBinding) -> Option<String> {
+///                                           char *str, void *magic)`
+/// from `Src/Zle/zle_keymap.c:1141`. Per-binding callback used by
+/// `bin_bindkey_list` via `scankeymap`. Coalesces consecutive
+/// single-character bindings into ranges; flushes via `bindlistout`
+/// otherwise.
+pub fn scanbindlist(
+    seq: &[u8],
+    bind: Option<&Thingy>,
+    str: Option<&str>,
+    bs: &mut bindstate,
+) {
     // c:1141
-    let mut out = String::new();
-    // c:1145 — `kmname` prefix is handled by the caller (bindkey -L
-    // emits one header line). Per-binding we just produce the
-    // sequence + command.
-    out.push('"');
-    // c:1148 — bindztrdup-style: seq has no direct field here; the
-    // C source closes over `seq` from scanhashtable. The Rust
-    // signature gets the KeyBinding directly. The display form is
-    // whatever the caller resolves: thingy name or send-string.
-    out.push('"');
-    out.push(' ');
-    if let Some(t) = &kb.bind {
-        // c:1156
-        out.push_str(&t.nam);
-    } else if let Some(s) = &kb.str {
-        // c:1160
-        out.push('"');
-        out.push_str(s);
-        out.push('"');
-    } else {
-        out.push_str("undefined-key");
+    // c:1145-1148 — prefix filter: if `bs->prefix` is set and either
+    // (a) seq doesn't start with prefix or (b) seq equals prefix
+    // exactly, drop the binding.
+    if bs.prefixlen > 0 {
+        if let Some(p) = &bs.prefix {
+            if !seq.starts_with(p) || seq.len() == p.len() {
+                return;
+            }
+        }
     }
-    Some(out) // c:1168
+
+    // c:1150-1160 — range-collapse: same bind/str AND both seqs are
+    // single-character (ztrlen == 1) AND new byte = last byte + 1.
+    let bind_eq = match (bind, &bs.bind) {
+        (Some(t1), Some(t2)) => t1.nam == t2.nam,
+        (None, None) => str == bs.str.as_deref(),
+        _ => false,
+    };
+    if bind_eq && seq.len() == 1 && bs.lastseq.len() == 1 {
+        let l = bs.lastseq[0] as i32;
+        let t = seq[0] as i32;
+        if t == l + 1 {
+            // c:1157 — extend the range; replace lastseq with seq.
+            bs.lastseq = seq.to_vec();
+            return;
+        }
+    }
+
+    // c:1162-1168 — flush current range; start a new one.
+    bindlistout(bs);
+    bs.firstseq = seq.to_vec();
+    bs.lastseq = seq.to_vec();
+    bs.bind = bind.cloned();
+    bs.str = str.map(|s| s.to_string());
+}
+
+/// Direct port of `static void bindlistout(struct bindstate *bs)`
+/// from `Src/Zle/zle_keymap.c:1172`. Emits one bindkey-listing line
+/// (or one `bindkey ...` command line when `BS_LIST` is set) for
+/// the accumulated `(firstseq..lastseq, bind, str)` range.
+pub fn bindlistout(bs: &bindstate) {
+    // c:1172
+    use std::io::Write;
+
+    // c:1177 — `if(bs->bind == t_undefinedkey && !(bs->flags & BS_ALL)) return;`.
+    // C compares against the sentinel `t_undefinedkey` Thingy; the
+    // Rust port stores it by name (`"undefined-key"`). When bs.str
+    // is None AND bs.bind is either None or the undefined-key
+    // thingy, skip (unless BS_ALL is set).
+    let is_undefined = bs.str.is_none()
+        && match &bs.bind {
+            None => true,
+            Some(t) => t.nam == "undefined-key",
+        };
+    if is_undefined && (bs.flags & BS_ALL) == 0 {
+        return;
+    }
+    // c:1179 — `range = strcmp(bs->firstseq, bs->lastseq)`.
+    let range = bs.firstseq != bs.lastseq;
+    let mut out = std::io::stdout().lock();
+    let mut nodash = true;
+
+    // c:1180-1199 — BS_LIST: emit `bindkey [-R][-s][-M km|-a] `.
+    if (bs.flags & BS_LIST) != 0 {
+        let _ = write!(out, "bindkey ");
+        if range {
+            let _ = write!(out, "-R ");
+        }
+        if bs.bind.is_none() {
+            let _ = write!(out, "-s ");
+        }
+        if bs.kmname == "main" {
+            // c:1188 — main → no keymap flag
+        } else if bs.kmname == "vicmd" {
+            let _ = write!(out, "-a ");
+        } else {
+            let _ = write!(out, "-M {} ", bs.kmname);
+            nodash = false;
+        }
+        // c:1196 — `if(nodash && bs->firstseq[0] == '-') fputs("-- ", stdout);`
+        if nodash && bs.firstseq.first() == Some(&b'-') {
+            let _ = write!(out, "-- ");
+        }
+    }
+
+    // c:1202 — `printbind(bs->firstseq, stdout)`. `bindztrdup`
+    // already includes the surrounding `"..."` via dquotedztrdup.
+    let _ = write!(
+        out,
+        "{}",
+        crate::ported::zle::zle_utils::bindztrdup(&bs.firstseq),
+    );
+    // c:1203-1206 — range: `-` + `printbind(lastseq)`.
+    if range {
+        let _ = write!(
+            out,
+            "-{}",
+            crate::ported::zle::zle_utils::bindztrdup(&bs.lastseq),
+        );
+    }
+    let _ = write!(out, " ");
+    // c:1208-1214 — emit `bind->nam` or `printbind(str)`.
+    if let Some(t) = &bs.bind {
+        let _ = writeln!(out, "{}", t.nam);
+    } else if let Some(s) = &bs.str {
+        let _ = writeln!(
+            out,
+            "{}",
+            crate::ported::zle::zle_utils::bindztrdup(s.as_bytes()),
+        );
+    } else {
+        // c:1177 already filtered undefined-key when !BS_ALL; here
+        // we hit only with BS_ALL.
+        let _ = writeln!(out, "undefined-key");
+    }
 }
 
 /// Port of `add_cursor_char(int c)` from Src/Zle/zle_keymap.c:1248.

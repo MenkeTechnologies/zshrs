@@ -174,16 +174,35 @@ pub fn doinsert(zstr: &[char]) {
 ///    tmp = LASTFULLCHAR;
 ///    doinsert(&tmp, 1);
 ///    return 0;`
-pub fn selfinsert() -> i32 {
+pub fn selfinsert(_args: &[String]) -> i32 {
     // c:113
+    // c:117-122 — MULTIBYTE_SUPPORT block. When `lastchar_wide_valid`
+    // is false, the C code calls `getrestchar(lastchar, NULL, NULL)`
+    // to re-assemble a wide char from `lastchar` + buffered
+    // continuation bytes; on WEOF (zshrs port: -1), C returns 1
+    // immediately. Previous Rust port silently faked this branch by
+    // promoting `lastchar` straight into `lastchar_wide` and
+    // marking it valid — that suppressed the C error path and
+    // left invalid byte sequences as if they'd round-tripped
+    // successfully.
     if LASTCHAR_WIDE_VALID.load(SeqCst) == 0 {
-        // c:119 lastchar_wide_valid check
-        LASTCHAR_WIDE.store(LASTCHAR.load(SeqCst), SeqCst);
-        LASTCHAR_WIDE_VALID.store(1, SeqCst);
+        let lc = LASTCHAR.load(SeqCst);
+        if crate::ported::zle::zle_main::getrestchar(lc) == -1 {
+            // c:121 — `if (getrestchar(...) == WEOF) return 1`.
+            return 1;
+        }
     }
-    if let Some(c) = char::from_u32(LASTCHAR_WIDE.load(SeqCst) as u32) {
-        self_insert(c);
-    } // c:123 LASTFULLCHAR + doinsert
+    // c:123 — `tmp = LASTFULLCHAR;` where
+    // `#define LASTFULLCHAR lastchar_wide` (zle.h).
+    let tmp = LASTCHAR_WIDE.load(SeqCst);
+    // c:124 — `doinsert(&tmp, 1);` insert a single wide char.
+    // Rust `doinsert(&[char])` requires a valid `char`; an
+    // invalid codepoint (surrogate / > 0x10FFFF) falls back to
+    // U+FFFD REPLACEMENT CHARACTER so the insert still happens —
+    // C would have written the raw int into the buffer, which
+    // Rust strings can't represent.
+    let ch = char::from_u32(tmp as u32).unwrap_or('\u{FFFD}');
+    doinsert(&[ch]);
     0 // c:125
 }
 
@@ -203,11 +222,12 @@ pub fn fixunmeta() {
 }
 
 /// Port of `selfinsertunmeta(char **args)` from Src/Zle/zle_misc.c:149.
-pub fn selfinsertunmeta() -> i32 {
+pub fn selfinsertunmeta(args: &[String]) -> i32 {
     // c:149
-    // c:149-152 — `fixunmeta(); return selfinsert()`.
+    // c:151-152 — `fixunmeta(); return selfinsert(args)`. Args
+    // pass through to mirror the C call.
     fixunmeta();
-    selfinsert()
+    selfinsert(args)
 }
 
 /// Port of `deletechar(char **args)` from Src/Zle/zle_misc.c:157.
@@ -1139,7 +1159,7 @@ pub fn quotedinsert() -> i32 {
         // c:919 LASTFULLCHAR == ZLEEOF
         return 1;
     }
-    selfinsert() // c:922
+    selfinsert(&[]) // c:922
 }
 
 /// Port of `parsedigit(int inkey)` from Src/Zle/zle_misc.c:919.
@@ -2874,7 +2894,7 @@ mod tests {
         ZLECS.store(1, SeqCst);
         LASTCHAR.store((b'X' as i32) as i32, SeqCst);
         LASTCHAR_WIDE_VALID.store(0, SeqCst);
-        selfinsert();
+        selfinsert(&[]);
         let s: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "aXbc");
     }
@@ -2888,7 +2908,7 @@ mod tests {
         ZLECS.store(1, SeqCst);
         LASTCHAR.store((0x80 | b'X' as i32) as i32, SeqCst);
         LASTCHAR_WIDE_VALID.store(0, SeqCst);
-        selfinsertunmeta();
+        selfinsertunmeta(&[]);
         let s: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "aXb");
     }
