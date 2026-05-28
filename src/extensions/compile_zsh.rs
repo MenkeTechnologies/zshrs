@@ -7244,9 +7244,17 @@ fn decode_ansi_c(body: &str) -> String {
                     out.push(b as char);
                 }
             }
-            Some('u') | Some('U') => {
-                let n = if c == 'u' { 4 } else { 8 };
-                let _ = c;
+            Some(uu @ ('u' | 'U')) => {
+                // c:Src/utils.c:6915 — `\u` reads up to 4 hex digits,
+                // `\U` reads up to 8. The outer `c` here is the
+                // backslash, so the old `c == 'u'` test always
+                // resolved to false and `Ab` decoded the FIVE
+                // chars `0041b` (the loop ran 8 iterations and
+                // pulled in the trailing `b` as a hex digit), giving
+                // U+041B (Л) instead of U+0041 (A) followed by a
+                // literal `b`. Bind the inner match value to `uu` so
+                // the digit-count gate reads it.
+                let n = if uu == 'u' { 4 } else { 8 };
                 let mut val: u32 = 0;
                 for _ in 0..n {
                     if let Some(&h) = chars.peek() {
