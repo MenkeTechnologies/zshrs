@@ -2316,15 +2316,32 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let v = exec.get_variable(&name);
             // For nounset detection: a name is "known" when it has a
             // paramtab/array/assoc/env entry. Special chars ($?, $#,
-            // $@ etc.) and pure-digit positional params always count
-            // as known regardless of value.
+            // $@, $*, $-, $$, $!, $_, $0) always count as known
+            // regardless of value. Pure-digit positional params
+            // count as known iff index <= $# (set -- has populated
+            // that slot). c:Src/subst.c:1689 — NOUNSET fires on
+            // unset positional param too: `set --; echo "$1"` with
+            // nounset must diagnose.
+            let is_special_single = name.len() == 1
+                && matches!(
+                    name.chars().next().unwrap(),
+                    '?' | '#' | '@' | '*' | '-' | '$' | '!' | '_' | '0'
+                );
+            let is_pure_digit = !name.is_empty() && name.chars().all(|c| c.is_ascii_digit());
+            let positional_known = if is_pure_digit {
+                let idx: usize = name.parse().unwrap_or(0);
+                if idx == 0 {
+                    true // $0 always set
+                } else {
+                    idx <= exec.pparams().len()
+                }
+            } else {
+                false
+            };
             let known = !v.is_empty()
                 || name.is_empty()
-                || name
-                    .chars()
-                    .next()
-                    .map(|c| !c.is_alphabetic() && c != '_')
-                    .unwrap_or(true)
+                || is_special_single
+                || positional_known
                 || crate::ported::params::paramtab()
                     .read()
                     .ok()
