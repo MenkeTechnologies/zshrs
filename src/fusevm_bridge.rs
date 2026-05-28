@@ -2508,6 +2508,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // echo \$X` → `16#FF`). Scalar `X=val` and `$((expr))`
         // assignments still take the setsparam path below.
         let int_assign = matches!(value_raw, Some(fusevm::Value::Int(_)));
+        let float_assign = matches!(value_raw, Some(fusevm::Value::Float(_)));
         with_executor(|exec| {
             // Inline-assignment frame tracking (`X=foo cmd` reverts on
             // command return).
@@ -2523,10 +2524,37 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Canonical setsparam handles readonly, integer math, case
             // fold, GSU dispatch. For Int values (arith assigns) route
             // through setiparam so the param is PM_INTEGER + inherits
-            // the math layer's lastbase for display formatting.
+            // the math layer's lastbase for display formatting. For
+            // Float (arith assigns producing MN_FLOAT) route through
+            // setnparam so the param is PM_FFLOAT — `(( b = a * 2 ))`
+            // with scalar `a="3.14"` should create b as typeset -F,
+            // not a scalar holding "6.28".
             if int_assign {
                 if let Some(fusevm::Value::Int(i)) = value_raw {
                     crate::ported::params::setiparam(&name, i);
+                } else {
+                    crate::ported::params::setsparam(&name, &value);
+                }
+            } else if float_assign {
+                if let Some(fusevm::Value::Float(f)) = value_raw {
+                    // ArithCompiler returns Value::Float whenever any
+                    // operand came through Str (BUILTIN_GET_VAR yields
+                    // Value::Str even for integer-shaped scalars). To
+                    // avoid forcing every `(( b = a + 3 ))` to PM_FFLOAT
+                    // when `a="5"` (integer-shaped), detect integer-
+                    // valued floats and route through setiparam instead.
+                    // True floats (non-integral) reach setnparam →
+                    // PM_FFLOAT so `typeset -p b` shows `typeset -F …`.
+                    if f.fract() == 0.0 && f.is_finite() && f.abs() <= i64::MAX as f64 {
+                        crate::ported::params::setiparam(&name, f as i64);
+                    } else {
+                        let mnval = crate::ported::math::mnumber {
+                            l: 0,
+                            d: f,
+                            type_: crate::ported::math::MN_FLOAT,
+                        };
+                        crate::ported::params::setnparam(&name, mnval);
+                    }
                 } else {
                     crate::ported::params::setsparam(&name, &value);
                 }
