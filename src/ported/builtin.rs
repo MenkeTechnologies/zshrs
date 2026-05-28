@@ -3794,9 +3794,7 @@ pub fn bin_typeset(
                 for re in raw_elems {
                     if crate::ported::pattern::haswilds(&re) {
                         let expanded = crate::ported::glob::glob_path(&re);
-                        if expanded.is_empty()
-                            || (expanded.len() == 1 && expanded[0] == re)
-                        {
+                        if expanded.is_empty() || (expanded.len() == 1 && expanded[0] == re) {
                             elems.push(re);
                         } else {
                             elems.extend(expanded);
@@ -11336,10 +11334,7 @@ fn parse_int_arg(s: &str) -> i64 {
         (false, t)
     };
     // Hex: 0x.. / 0X..
-    let parsed: i64 = if let Some(h) = body
-        .strip_prefix("0x")
-        .or_else(|| body.strip_prefix("0X"))
-    {
+    let parsed: i64 = if let Some(h) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
         i64::from_str_radix(h, 16).unwrap_or(0)
     // BASE#NNN
     } else if let Some(idx) = body.find('#') {
@@ -11357,7 +11352,11 @@ fn parse_int_arg(s: &str) -> i64 {
     } else {
         body.parse().unwrap_or(0)
     };
-    if neg { -parsed } else { parsed }
+    if neg {
+        -parsed
+    } else {
+        parsed
+    }
 }
 
 fn format_spec_int(spec: &str, n: i64) -> String {

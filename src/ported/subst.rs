@@ -4153,10 +4153,13 @@ pub fn paramsubst(
                     // indexing is 1-based and `arr[0]` falls through to
                     // KSHZEROSUBSCRIPT semantics (returns first element
                     // when that option is set, else empty).
-                    let ksh_arrays =
-                        crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+                    let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
                     let i = if ksh_arrays {
-                        if idx_n < 0 { len + idx_n } else { idx_n }
+                        if idx_n < 0 {
+                            len + idx_n
+                        } else {
+                            idx_n
+                        }
                     } else if idx_n == 0 {
                         if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
                             0 // c:2140
@@ -4557,8 +4560,7 @@ pub fn paramsubst(
                     if n == 0 {
                         vars_get("0").is_some()
                     } else {
-                        arrays_get("@")
-                            .map_or(false, |a| n <= a.len())
+                        arrays_get("@").map_or(false, |a| n <= a.len())
                     }
                 });
             used_subexp
@@ -5706,14 +5708,11 @@ pub fn paramsubst(
                     // explicit @/* subscript OR the (@) flag
                     // (nojoin == 2 means the (@) flag set up the
                     // word-array shape upstream at subst.c:1817).
-                    let is_at_star_subscript = matches!(
-                        subscript.as_deref(),
-                        Some("@") | Some("*")
-                    );
+                    let is_at_star_subscript =
+                        matches!(subscript.as_deref(), Some("@") | Some("*"));
                     let array_shape = is_at_star_subscript || nojoin == 2;
                     if array_shape {
-                        let new_arr: Vec<String> =
-                            arr.iter().map(|e| replace_one(e)).collect();
+                        let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
                         value = new_arr.join(" "); // c:3870 per-element
                         split_parts = Some(new_arr);
                     } else {
@@ -5754,10 +5753,7 @@ pub fn paramsubst(
                     .unwrap_or(false);
                 // c:Src/subst.c:3317 — under qt without @/*-subscript
                 // and without (@) flag, sepjoin first.
-                let is_at_star = matches!(
-                    subscript.as_deref(),
-                    Some("@") | Some("*")
-                );
+                let is_at_star = matches!(subscript.as_deref(), Some("@") | Some("*"));
                 let per_element_array = !has_scalar_sub && (!qt || is_at_star || nojoin == 2);
                 // Strip-one helper. op: 0=#, 1=##, 2=%, 3=%%.
                 // Direct port of subst.c:3540 patmatch dispatch.
@@ -5816,10 +5812,7 @@ pub fn paramsubst(
                 // strip applies. \`"\${a#pat}"\` strips the joined
                 // "a b c" once, not per element. Parity bug: zshrs
                 // applied per-element in DQ too.
-                let is_at_star = matches!(
-                    subscript.as_deref(),
-                    Some("@") | Some("*")
-                );
+                let is_at_star = matches!(subscript.as_deref(), Some("@") | Some("*"));
                 let per_element_array = !has_scalar_sub && (!qt || is_at_star || nojoin == 2);
                 // c:Src/subst.c:3176 — SUB_MATCH inverts strip semantics:
                 // default returns the rest (after the match); with (M)
@@ -5872,10 +5865,7 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
-                let is_at_star = matches!(
-                    subscript.as_deref(),
-                    Some("@") | Some("*")
-                );
+                let is_at_star = matches!(subscript.as_deref(), Some("@") | Some("*"));
                 let per_element_array = !has_scalar_sub && (!qt || is_at_star || nojoin == 2);
                 // c:Src/subst.c:3176 — SUB_MATCH for `%%` (longest suffix).
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
@@ -5921,10 +5911,7 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
-                let is_at_star = matches!(
-                    subscript.as_deref(),
-                    Some("@") | Some("*")
-                );
+                let is_at_star = matches!(subscript.as_deref(), Some("@") | Some("*"));
                 let per_element_array = !has_scalar_sub && (!qt || is_at_star || nojoin == 2);
                 // c:Src/subst.c:3176 — SUB_MATCH for `%` (shortest suffix).
                 let match_only = (sub_flags_get() & SUB_MATCH) != 0;
@@ -6077,11 +6064,11 @@ pub fn paramsubst(
                 // so `${a:^a}` with scalar `a=hello` was both-unset →
                 // empty result. Fall back to vars_get for the scalar
                 // single-element case.
-                let arr_opt = arrays_get(&var_name)
-                    .or_else(|| vars_get(&var_name).map(|s| vec![s]));
+                let arr_opt =
+                    arrays_get(&var_name).or_else(|| vars_get(&var_name).map(|s| vec![s]));
                 let other_name = rhs.trim();
-                let other_opt = arrays_get(other_name)
-                    .or_else(|| vars_get(other_name).map(|s| vec![s]));
+                let other_opt =
+                    arrays_get(other_name).or_else(|| vars_get(other_name).map(|s| vec![s]));
                 let arr_unset = arr_opt.is_none();
                 let other_unset = other_opt.is_none();
                 let arr = arr_opt.unwrap_or_default();
@@ -6198,13 +6185,8 @@ pub fn paramsubst(
                     // subscript — the lexer pre-tokenizes `*` in
                     // some unquoted contexts.
                     let is_at = subscript.as_deref() == Some("@");
-                    let is_star = matches!(
-                        subscript.as_deref(),
-                        Some("*") | Some("\u{87}")
-                    );
-                    let is_range = subscript
-                        .as_deref()
-                        .map_or(false, |s| s.contains(','));
+                    let is_star = matches!(subscript.as_deref(), Some("*") | Some("\u{87}"));
+                    let is_range = subscript.as_deref().map_or(false, |s| s.contains(','));
                     // Per-element mode: `[@]` always; `[*]` only
                     // outside DQ; slice only outside DQ. Anything
                     // else is scalar (single index, named key,
@@ -6249,9 +6231,8 @@ pub fn paramsubst(
                             // would have captured it normally; do the
                             // narrowing here when it didn't).
                             let narrowed: Vec<String> = if is_range {
-                                if let Some((lo_s, hi_s)) = subscript
-                                    .as_deref()
-                                    .and_then(|s| s.split_once(','))
+                                if let Some((lo_s, hi_s)) =
+                                    subscript.as_deref().and_then(|s| s.split_once(','))
                                 {
                                     let lo: i64 = lo_s.trim().parse().unwrap_or(1);
                                     let hi: i64 = hi_s.trim().parse().unwrap_or(arr.len() as i64);
@@ -6262,7 +6243,8 @@ pub fn paramsubst(
                             } else {
                                 arr.clone()
                             };
-                            let new_arr: Vec<String> = narrowed.iter().map(|s| mod_one(s)).collect();
+                            let new_arr: Vec<String> =
+                                narrowed.iter().map(|s| mod_one(s)).collect();
                             value = new_arr.join(" ");
                             split_parts = Some(new_arr);
                         } else {
@@ -8025,20 +8007,14 @@ pub fn paramsubst(
                     let lo: i64 = lo.trim().parse().unwrap_or(1); // c:1625
                     let hi: i64 = hi.trim().parse().unwrap_or(arr.len() as i64); // c:1625
                     getarrvalue(&arr, lo, hi).join(" ") // c:1625
-                } else if let Some(idx) = sub
-                    .parse::<i32>()
-                    .ok()
-                    .or_else(|| {
-                        // c:Src/params.c:1419-1432 — getarg routes a
-                        // numeric subscript through mathevali so
-                        // `${a[1+1]}`, `${a[i+1]}`, `${a[n]}` all
-                        // evaluate as math. Direct port of the
-                        // mathevali(sub) call inside getindex.
-                        crate::ported::math::mathevali(sub)
-                            .ok()
-                            .map(|v| v as i32)
-                    })
-                {
+                } else if let Some(idx) = sub.parse::<i32>().ok().or_else(|| {
+                    // c:Src/params.c:1419-1432 — getarg routes a
+                    // numeric subscript through mathevali so
+                    // `${a[1+1]}`, `${a[i+1]}`, `${a[n]}` all
+                    // evaluate as math. Direct port of the
+                    // mathevali(sub) call inside getindex.
+                    crate::ported::math::mathevali(sub).ok().map(|v| v as i32)
+                }) {
                     // c:1625
                     let n = arr.len() as i32; // c:1625
                                               // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
@@ -8840,94 +8816,95 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 } else {
                     None
                 };
-            result = if anchor_head {
-                // c:4665
-                if use_glob {
-                    let cv: Vec<char> = result.chars().collect();
-                    let n = cv.len();
-                    let mut found: Option<usize> = None;
-                    for end in 0..=n {
-                        let span: String = cv[..end].iter().collect();
-                        if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |__p| pattry(&__p, &span))
-                        {
-                            found = Some(cv[..end].iter().map(|c| c.len_utf8()).sum());
-                            break;
-                        }
-                    }
-                    if let Some(be) = found {
-                        format!("{}{}", repl, &result[be..])
-                    } else {
-                        result
-                    }
-                } else if result.starts_with(&eff_pat) {
+                result = if anchor_head {
                     // c:4665
-                    format!("{}{}", repl, &result[eff_pat.len()..]) // c:4665
-                } else {
-                    result
-                } // c:4665
-            } else if anchor_tail {
-                // c:4665
-                if use_glob {
-                    let cv: Vec<char> = result.chars().collect();
-                    let n = cv.len();
-                    let mut found: Option<usize> = None;
-                    for start in 0..=n {
-                        let span: String = cv[start..].iter().collect();
-                        if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |__p| pattry(&__p, &span))
-                        {
-                            found = Some(cv[..start].iter().map(|c| c.len_utf8()).sum());
-                            break;
+                    if use_glob {
+                        let cv: Vec<char> = result.chars().collect();
+                        let n = cv.len();
+                        let mut found: Option<usize> = None;
+                        for end in 0..=n {
+                            let span: String = cv[..end].iter().collect();
+                            if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, &span))
+                            {
+                                found = Some(cv[..end].iter().map(|c| c.len_utf8()).sum());
+                                break;
+                            }
                         }
-                    }
-                    if let Some(bs) = found {
-                        format!("{}{}", &result[..bs], repl)
-                    } else {
-                        result
-                    }
-                } else if result.ends_with(&eff_pat) {
-                    // c:4665
-                    format!("{}{}", &result[..result.len() - eff_pat.len()], repl)
-                // c:4665
-                } else {
-                    result
-                } // c:4665
-            } else if gbal {
-                // c:4665
-                if use_glob {
-                    let mut out = String::with_capacity(result.len());
-                    let mut rem = result.as_str();
-                    while let Some((s, e)) = do_match(rem) {
-                        out.push_str(&rem[..s]);
-                        out.push_str(&repl);
-                        if e == s {
-                            // Empty match — advance one char to
-                            // avoid infinite loop, mirroring zsh's
-                            // SUB_GLOBAL safeguard.
-                            let mut chars = rem[s..].char_indices();
-                            chars.next();
-                            let next_s = s + chars.next().map(|(b, _)| b).unwrap_or(rem.len() - s);
-                            out.push_str(&rem[s..next_s]);
-                            rem = &rem[next_s..];
+                        if let Some(be) = found {
+                            format!("{}{}", repl, &result[be..])
                         } else {
-                            rem = &rem[e..];
+                            result
                         }
+                    } else if result.starts_with(&eff_pat) {
+                        // c:4665
+                        format!("{}{}", repl, &result[eff_pat.len()..]) // c:4665
+                    } else {
+                        result
+                    } // c:4665
+                } else if anchor_tail {
+                    // c:4665
+                    if use_glob {
+                        let cv: Vec<char> = result.chars().collect();
+                        let n = cv.len();
+                        let mut found: Option<usize> = None;
+                        for start in 0..=n {
+                            let span: String = cv[start..].iter().collect();
+                            if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
+                                .map_or(false, |__p| pattry(&__p, &span))
+                            {
+                                found = Some(cv[..start].iter().map(|c| c.len_utf8()).sum());
+                                break;
+                            }
+                        }
+                        if let Some(bs) = found {
+                            format!("{}{}", &result[..bs], repl)
+                        } else {
+                            result
+                        }
+                    } else if result.ends_with(&eff_pat) {
+                        // c:4665
+                        format!("{}{}", &result[..result.len() - eff_pat.len()], repl)
+                    // c:4665
+                    } else {
+                        result
+                    } // c:4665
+                } else if gbal {
+                    // c:4665
+                    if use_glob {
+                        let mut out = String::with_capacity(result.len());
+                        let mut rem = result.as_str();
+                        while let Some((s, e)) = do_match(rem) {
+                            out.push_str(&rem[..s]);
+                            out.push_str(&repl);
+                            if e == s {
+                                // Empty match — advance one char to
+                                // avoid infinite loop, mirroring zsh's
+                                // SUB_GLOBAL safeguard.
+                                let mut chars = rem[s..].char_indices();
+                                chars.next();
+                                let next_s =
+                                    s + chars.next().map(|(b, _)| b).unwrap_or(rem.len() - s);
+                                out.push_str(&rem[s..next_s]);
+                                rem = &rem[next_s..];
+                            } else {
+                                rem = &rem[e..];
+                            }
+                        }
+                        out.push_str(rem);
+                        out
+                    } else {
+                        result.replace(eff_pat.as_str(), repl.as_str())
                     }
-                    out.push_str(rem);
-                    out
+                } else if use_glob {
+                    if let Some((s, e)) = do_match(&result) {
+                        format!("{}{}{}", &result[..s], repl, &result[e..])
+                    } else {
+                        result
+                    }
                 } else {
-                    result.replace(eff_pat.as_str(), repl.as_str())
-                }
-            } else if use_glob {
-                if let Some((s, e)) = do_match(&result) {
-                    format!("{}{}{}", &result[..s], repl, &result[e..])
-                } else {
-                    result
-                }
-            } else {
-                result.replacen(eff_pat.as_str(), repl.as_str(), 1)
-            };
+                    result.replacen(eff_pat.as_str(), repl.as_str(), 1)
+                };
                 __iters += 1;
                 if __iters >= __limit {
                     break;
