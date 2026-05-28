@@ -3620,9 +3620,18 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     // (flag, first-line-desc). Used by the 25 builtins whose docs
     // have proper bullet lists (print, typeset, read, compadd,
     // stat, whence, bindkey, fc, zparseopts, zcompile, zmv, …).
-    let re_bullet =
-        regex::Regex::new(r"(?m)^\s*-\s+\*\*`(-[A-Za-z+])(?:\s+[^`]*)?`\*\*[^A-Za-z\n]*([^\n]+)")
-            .unwrap();
+    // Two-shape bullet body: inline `- **`-X`** — desc` OR next-line
+    // `- **`-X`** —\ndesc`. The yodl source uses both freely (often
+    // the same builtin mixes them — `print`'s `-b` and `-m` are
+    // inline, every other flag's desc lives on the next line).
+    // `[ \t]*` (no newline) bounds the em-dash junk to the bullet
+    // line; the optional single `\n` lets us cross exactly one line
+    // boundary to the description, so we don't accidentally pick up
+    // prose paragraphs that separate flag clusters.
+    let re_bullet = regex::Regex::new(
+        r"(?m)^\s*-\s+\*\*`(-[A-Za-z+])(?:\s+[^`]*)?`\*\*[ \t]*[^A-Za-z\n]*[ \t]*(?:\n[ \t]*)?([A-Z][^\n]+)",
+    )
+    .unwrap();
     for cap in re_bullet.captures_iter(&body) {
         let flag = cap.get(1).unwrap().as_str().to_string();
         let raw_desc = cap.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -9478,5 +9487,54 @@ mod tests {
         });
         let r = prepare_rename(&state, &params);
         assert!(r.is_null(), "prepareRename in comment must reject");
+    }
+
+    #[test]
+    fn print_flag_descriptions_present_for_next_line_desc_pattern() {
+        // Regression for the JetBrains-plugin screenshot: `print -<TAB>`
+        // showed `-a`, `-c`, `-D`, `-i`, `-l`, `-n`, `-o`, `-p`, `-r`,
+        // `-s`, `-z` etc. with NO description, only `-b` and `-m` had
+        // text. Root cause: the bullet regex stopped at the EOL right
+        // after `**`, so it captured a single trailing mojibake byte
+        // instead of the next-line description. Every flag must
+        // surface its real prose now.
+        let flags = extract_builtin_flags("print");
+        let by: std::collections::HashMap<&str, &str> =
+            flags.iter().map(|(f, d)| (f.as_str(), d.as_str())).collect();
+
+        // Inline-desc flags — these always worked, keep as canary.
+        assert!(
+            by.get("-b").is_some_and(|d| d.contains("Recognize")),
+            "-b should describe escape sequence recognition, got {:?}",
+            by.get("-b"),
+        );
+        assert!(
+            by.get("-m").is_some_and(|d| d.contains("Take the first argument")),
+            "-m should describe pattern matching, got {:?}",
+            by.get("-m"),
+        );
+
+        // Next-line-desc flags — these were silently empty before.
+        // Spot-check a representative subset.
+        let expectations: &[(&str, &str)] = &[
+            ("-a", "Print arguments with the column"),
+            ("-c", "Print the arguments in columns"),
+            ("-D", "Treat the arguments as paths"),
+            ("-l", "Print the arguments separated by newlines"),
+            ("-n", "Do not add a newline"),
+            ("-o", "Print the arguments sorted in ascending"),
+            ("-r", "Ignore the escape conventions"),
+            ("-s", "Place the results in the history list"),
+            ("-z", "Push the arguments onto the editing buffer"),
+        ];
+        for (flag, needle) in expectations {
+            let got = by.get(flag).copied().unwrap_or("<missing>");
+            assert!(
+                got.contains(needle),
+                "flag {flag} description should contain {:?}, got {:?}",
+                needle,
+                got,
+            );
+        }
     }
 }
