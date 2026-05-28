@@ -1255,6 +1255,30 @@ impl ZshCompiler {
         //   - `exec`:    replace shell process
         if simple.words.len() >= 2 {
             let first = crate::lex::untokenize(&simple.words[0]);
+            // c:Src/exec.c::execcmd_exec — `builtin <prefix> args` where
+            // <prefix> is another BINF_PREFIX precmd (`command`,
+            // `builtin`, `exec`, `noglob`, `-`) chains the prefixes:
+            // each outer prefix forces builtin lookup of the next one,
+            // and since each prefix's table entry has no handlerfunc,
+            // dispatch_builtin_raw would return 1 from the inner call.
+            // Strip the outer `builtin` so the inner prefix's normal
+            // compile-time path handles its semantics. Without this,
+            // `builtin command echo hi` silently failed with $?=1.
+            if first == "builtin" && simple.words.len() >= 3 {
+                let second = crate::lex::untokenize(&simple.words[1]);
+                if matches!(
+                    second.as_str(),
+                    "command" | "builtin" | "exec" | "noglob" | "-"
+                ) {
+                    let inner = crate::parse::ZshSimple {
+                        assigns: simple.assigns.clone(),
+                        words: simple.words[1..].to_vec(),
+                        redirs: simple.redirs.clone(),
+                    };
+                    self.compile_simple(&inner);
+                    return;
+                }
+            }
             let opcode = match first.as_str() {
                 "builtin" => Some(fusevm::shell_builtins::BUILTIN_BUILTIN),
                 "command" => Some(fusevm::shell_builtins::BUILTIN_COMMAND),
