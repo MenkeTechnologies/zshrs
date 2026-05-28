@@ -2093,6 +2093,37 @@ pub fn createparam(
         // c:1157
         assigngetset(&mut pm); // c:1158
     }
+    // c:Src/params.c:1146 — when shadowing a special parameter
+    // (e.g. `local IFS=...` inside a function), the new pm must
+    // inherit the canonical special-var GSU (ifssetfn etc.) so
+    // writes route through the global storage that `$IFS`
+    // expansion reads. Without this, the shadow's setfn was the
+    // generic strsetfn and `local IFS=:` updated paramtab.u_str
+    // but NOT the canonical `ifs` global — `$IFS` expansion in
+    // the same function read the default value through ifsgetfn.
+    //
+    // Detect special-var names and override the gsu_s + stamp
+    // PM_SPECIAL. Mirrors the back-fill at assignsparam:4981 but
+    // covers the create-time path (local / typeset of fresh
+    // shadow), not just the assign-existing path.
+    if !name.is_empty() {
+        let special_gsu: Option<Box<gsu_scalar>> = match name {
+            "HOME" => Some(Box::new(HOME_GSU.clone())),
+            "IFS" => Some(Box::new(IFS_GSU.clone())),
+            "TERM" => Some(Box::new(TERM_GSU.clone())),
+            "TERMINFO" => Some(Box::new(TERMINFO_GSU.clone())),
+            "TERMINFO_DIRS" => Some(Box::new(TERMINFODIRS_GSU.clone())),
+            "WORDCHARS" => Some(Box::new(WORDCHARS_GSU.clone())),
+            "USERNAME" => Some(Box::new(USERNAME_GSU.clone())),
+            "KEYBOARD_HACK" => Some(Box::new(KEYBOARDHACK_GSU.clone())),
+            "HISTCHARS" | "histchars" => Some(Box::new(HISTCHARS_GSU.clone())),
+            _ => None,
+        };
+        if let Some(gsu) = special_gsu {
+            pm.gsu_s = Some(gsu);
+            pm.node.flags |= PM_SPECIAL as i32;
+        }
+    }
     // c:1146 `paramtab->addnode(paramtab, ztrdup(name), pm)`. For
     // the reuse arm this overwrites the same entry; for the shadow
     // arm it installs the new chained pm on top of the (now-
