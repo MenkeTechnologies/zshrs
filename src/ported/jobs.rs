@@ -2830,6 +2830,26 @@ pub fn bin_fg(
             unqueue_signals();
             return 0;
         }
+        if func == BIN_WAIT {
+            // c:Src/jobs.c bin_fg BIN_WAIT branch — `wait` with no
+            // args blocks until ALL active background jobs complete.
+            // Loop waitpid(-1) draining children; ECHILD ends the loop.
+            #[cfg(unix)]
+            loop {
+                let mut status: libc::c_int = 0;
+                let pid = unsafe { libc::waitpid(-1, &mut status, 0) };
+                if pid > 0 {
+                    let t = table.clone();
+                    if let Ok(mut tab) = t.lock() {
+                        update_bg_job(&mut tab, pid, status);
+                    }
+                } else {
+                    break;
+                }
+            }
+            unqueue_signals();
+            return 0;
+        }
         unqueue_signals();
         return 0;
     }
