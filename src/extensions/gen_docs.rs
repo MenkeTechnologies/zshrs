@@ -351,4 +351,196 @@ mod tests {
         let md = generate_markdown("foo.zsh", src);
         assert!(md.contains("### `foo`"), "{}", md);
     }
+
+    // ========================================================
+    // derive_module_title — file-stem extraction
+    // ========================================================
+
+    #[test]
+    fn module_title_strips_zsh_extension() {
+        assert_eq!(derive_module_title("foo.zsh"), "foo");
+        assert_eq!(derive_module_title("path/to/bar.sh"), "bar");
+    }
+
+    #[test]
+    fn module_title_handles_no_extension() {
+        assert_eq!(derive_module_title(".zshrc"), ".zshrc");
+        assert_eq!(derive_module_title("noext"), "noext");
+    }
+
+    #[test]
+    fn module_title_handles_double_extension() {
+        // file_stem strips only the final extension.
+        assert_eq!(derive_module_title("foo.test.zsh"), "foo.test");
+    }
+
+    // ========================================================
+    // is_simple_identifier — function-name validation
+    // ========================================================
+
+    #[test]
+    fn simple_identifier_accepts_typical_names() {
+        assert!(is_simple_identifier("foo"));
+        assert!(is_simple_identifier("foo_bar"));
+        assert!(is_simple_identifier("Foo123"));
+        assert!(is_simple_identifier("ns:func"));
+        assert!(is_simple_identifier("a-b"));
+        assert!(is_simple_identifier("ns.sub"));
+        assert!(is_simple_identifier("with+plus"));
+        assert!(is_simple_identifier("with@at"));
+    }
+
+    #[test]
+    fn simple_identifier_rejects_empty_and_spaced() {
+        assert!(!is_simple_identifier(""));
+        assert!(!is_simple_identifier("has space"));
+        assert!(!is_simple_identifier("has\ttab"));
+        assert!(!is_simple_identifier("paren("));
+        assert!(!is_simple_identifier("dollar$sign"));
+    }
+
+    // ========================================================
+    // first_fn_name — name extraction from "function NAME ..."
+    // ========================================================
+
+    #[test]
+    fn first_fn_name_extracts_alphanumeric_run() {
+        assert_eq!(first_fn_name("foo {").as_deref(), Some("foo"));
+        assert_eq!(first_fn_name("foo()").as_deref(), Some("foo"));
+        assert_eq!(first_fn_name("ns:func {").as_deref(), Some("ns:func"));
+    }
+
+    #[test]
+    fn first_fn_name_strips_leading_whitespace() {
+        assert_eq!(first_fn_name("   bar {").as_deref(), Some("bar"));
+    }
+
+    #[test]
+    fn first_fn_name_returns_none_on_immediate_separator() {
+        assert!(first_fn_name(" ").is_none());
+        assert!(first_fn_name("{").is_none());
+    }
+
+    #[test]
+    fn first_fn_name_handles_dash_and_dot() {
+        // Hyphens and dots are valid in shell function names.
+        assert_eq!(first_fn_name("git-foo {").as_deref(), Some("git-foo"));
+        assert_eq!(first_fn_name("ns.sub {").as_deref(), Some("ns.sub"));
+    }
+
+    // ========================================================
+    // leading_module_doc — header-block extraction
+    // ========================================================
+
+    #[test]
+    fn leading_doc_returns_consecutive_double_hash_lines() {
+        let src: Vec<&str> = "## one\n## two\n## three\necho\n".lines().collect();
+        let doc = leading_module_doc(&src).unwrap();
+        assert_eq!(doc, "one\ntwo\nthree");
+    }
+
+    #[test]
+    fn leading_doc_skips_shebang() {
+        let src: Vec<&str> = "#!/usr/bin/env zsh\n## hello\n## world\n".lines().collect();
+        let doc = leading_module_doc(&src).unwrap();
+        assert_eq!(doc, "hello\nworld");
+    }
+
+    #[test]
+    fn leading_doc_returns_none_when_no_double_hash() {
+        let src: Vec<&str> = "echo hi\n".lines().collect();
+        assert!(leading_module_doc(&src).is_none());
+    }
+
+    #[test]
+    fn leading_doc_terminates_on_blank_after_block() {
+        // Blank line after a `##` block ends the header.
+        let src: Vec<&str> = "## header\n\n## not part of header\n".lines().collect();
+        let doc = leading_module_doc(&src).unwrap();
+        assert_eq!(doc, "header");
+    }
+
+    // ========================================================
+    // extract_doc_above — per-decl doc-comment lookup
+    // ========================================================
+
+    #[test]
+    fn extract_doc_above_walks_contiguous_double_hash_run() {
+        let src: Vec<&str> = "## line a\n## line b\ngreet() {\n".lines().collect();
+        let doc = extract_doc_above(&src, 3);
+        assert_eq!(doc, "line a\nline b");
+    }
+
+    #[test]
+    fn extract_doc_above_returns_empty_when_no_doc_block() {
+        let src: Vec<&str> = "echo above\ngreet() {\n".lines().collect();
+        assert!(extract_doc_above(&src, 2).is_empty());
+    }
+
+    #[test]
+    fn extract_doc_above_stops_at_blank_line() {
+        // Blank line breaks the doc-block — only contiguous `##` lines count.
+        let src: Vec<&str> = "## stray\n\n## attached\ngreet() {\n".lines().collect();
+        assert_eq!(extract_doc_above(&src, 4), "attached");
+    }
+
+    // ========================================================
+    // is_shell_source — file extension and dotfile recognition
+    // ========================================================
+
+    #[test]
+    fn shell_source_recognizes_zsh_sh_bash_ksh() {
+        assert!(is_shell_source(Path::new("/x/foo.zsh")));
+        assert!(is_shell_source(Path::new("/x/foo.sh")));
+        assert!(is_shell_source(Path::new("/x/foo.bash")));
+        assert!(is_shell_source(Path::new("/x/foo.ksh")));
+    }
+
+    #[test]
+    fn shell_source_recognizes_canonical_dotfiles() {
+        assert!(is_shell_source(Path::new("/home/u/.zshrc")));
+        assert!(is_shell_source(Path::new("/home/u/.zshenv")));
+        assert!(is_shell_source(Path::new("/home/u/.bashrc")));
+        assert!(is_shell_source(Path::new("/home/u/.profile")));
+    }
+
+    #[test]
+    fn shell_source_rejects_unrelated_extensions() {
+        assert!(!is_shell_source(Path::new("/x/foo.rs")));
+        assert!(!is_shell_source(Path::new("/x/foo.py")));
+        assert!(!is_shell_source(Path::new("/x/Makefile")));
+    }
+
+    // ========================================================
+    // generate_markdown — end-to-end behavior
+    // ========================================================
+
+    #[test]
+    fn aliases_with_no_funcs_still_render_section() {
+        let src = "alias l='ls -CF'\nalias g=git\n";
+        let md = generate_markdown("aliases.zsh", src);
+        assert!(md.contains("## Aliases"), "{}", md);
+        assert!(md.contains("- `l` = `'ls -CF'`"), "{}", md);
+        assert!(md.contains("- `g` = `git`"), "{}", md);
+        // No function section when there are no functions.
+        assert!(!md.contains("## Functions"), "{}", md);
+    }
+
+    #[test]
+    fn exports_section_lists_export_typeset_readonly() {
+        let src = "export FOO=1\nreadonly BAR=2\ntypeset -gx BAZ=3\n";
+        let md = generate_markdown("env.zsh", src);
+        assert!(md.contains("## Exports / Constants"), "{}", md);
+        assert!(md.contains("- `FOO` (export)"), "{}", md);
+        assert!(md.contains("- `BAR` (readonly)"), "{}", md);
+        assert!(md.contains("- `BAZ` (typeset -gx)"), "{}", md);
+    }
+
+    #[test]
+    fn function_without_doc_block_marks_line_number() {
+        let src = "\n\nfoo() {\n  :\n}\n";
+        let md = generate_markdown("x.zsh", src);
+        assert!(md.contains("### `foo`"), "{}", md);
+        assert!(md.contains("_Defined at line 3._"), "{}", md);
+    }
 }
