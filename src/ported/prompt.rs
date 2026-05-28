@@ -3804,14 +3804,22 @@ mod tests {
         );
     }
 
-    /// `%S` / `%s` — standout / reverse. Should produce SGR `[7m`/`[27m`.
-    /// (Per terminfo `smso` = reverse video; zsh emits SGR 7.)
+    /// `%S` / `%s` — standout / reverse. zsh defers to terminfo
+    /// `smso` for the actual sequence; on macOS terminfo (xterm-256color
+    /// etc.) `smso` = SGR italic (`\e[3m`) NOT reverse video. Confirmed
+    /// with `zsh -fc 'print -P "%S"'` → `\e[3m`. Pin: zshrs must
+    /// emit the same sequence as bare zsh on the same host. Either
+    /// SGR 3 (italic, current macOS) or SGR 7 (reverse, classic) is
+    /// acceptable depending on the term's smso.
     #[test]
     fn promptexpand_corpus_standout_emits_sgr() {
         let out = expand("%Stext%s");
         assert!(
-            out.contains("\x1b[7m") || out.contains("\x1b[07m"),
-            "%S should emit SGR standout-on, got {out:?}",
+            out.contains("\x1b[3m")
+                || out.contains("\x1b[03m")
+                || out.contains("\x1b[7m")
+                || out.contains("\x1b[07m"),
+            "%S should emit terminfo `smso` SGR (italic or reverse), got {out:?}",
         );
     }
 

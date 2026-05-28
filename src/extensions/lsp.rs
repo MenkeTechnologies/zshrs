@@ -9537,4 +9537,71 @@ mod tests {
             );
         }
     }
+
+    // Coverage audit — eprintln only, never fails. Run with
+    //   cargo test -p zshrs --lib audit_all_builtin_flag_coverage -- --nocapture
+    // to see which builtins still have empty / near-empty descriptions
+    // after the bullet regex fix.
+    #[test]
+    fn audit_all_builtin_flag_coverage() {
+        let mut all_names: Vec<String> = Vec::new();
+        for b in crate::ported::builtin::BUILTINS.iter() {
+            all_names.push(b.node.nam.to_string());
+        }
+        for n in crate::ext_builtins::EXT_BUILTIN_NAMES.iter() {
+            all_names.push(n.to_string());
+        }
+        for n in crate::compsys::COMPSYS_FN_NAMES.iter() {
+            all_names.push(n.to_string());
+        }
+        all_names.sort();
+        all_names.dedup();
+
+        let mut total_flags = 0usize;
+        let mut empty_descs = 0usize;
+        let mut builtins_with_any_flag = 0usize;
+        let mut builtins_with_empty: Vec<(String, usize, usize)> = Vec::new();
+        // A description is "useful" when it has at least 3 ASCII
+        // letters somewhere in it. Pure mojibake (`Â`, `â `), bare
+        // em-dashes, or punctuation-only strings fail this.
+        fn useful(d: &str) -> bool {
+            let letters = d.chars().filter(|c| c.is_ascii_alphabetic()).count();
+            letters >= 3
+        }
+        for name in &all_names {
+            let flags = extract_builtin_flags(name);
+            if flags.is_empty() {
+                continue;
+            }
+            builtins_with_any_flag += 1;
+            let total = flags.len();
+            let empty = flags.iter().filter(|(_, d)| !useful(d)).count();
+            total_flags += total;
+            empty_descs += empty;
+            if empty > 0 {
+                let preview: Vec<String> = flags
+                    .iter()
+                    .filter(|(_, d)| !useful(d))
+                    .take(3)
+                    .map(|(f, d)| format!("{f}={:?}", d))
+                    .collect();
+                builtins_with_empty.push((
+                    format!("{name}  [{}]", preview.join(", ")),
+                    empty,
+                    total,
+                ));
+            }
+        }
+        eprintln!(
+            "audit: {} builtins with flags, {} total flag entries, {} empty desc ({:.1}%)",
+            builtins_with_any_flag,
+            total_flags,
+            empty_descs,
+            100.0 * empty_descs as f64 / total_flags.max(1) as f64,
+        );
+        builtins_with_empty.sort_by(|a, b| b.1.cmp(&a.1));
+        for (name, empty, total) in builtins_with_empty.iter().take(40) {
+            eprintln!("  {name} : {empty}/{total} empty");
+        }
+    }
 }
