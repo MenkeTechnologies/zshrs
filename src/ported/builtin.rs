@@ -1120,14 +1120,18 @@ pub fn bin_set(
                 sort = if action { 1 } else { -1 }; // c:660
             } else {
                 // c:662-666 — short-option letter: optlookupc + dosetopt.
+                // c:Src/builtin.c — zerrnam(nam, ...) prefixes the
+                // builtin's name into the error tag ("zsh:set:1:" vs
+                // bare "zsh:1:"). Use zerrnam to match zsh's exact
+                // error format for `set -X 2>&1`.
                 let optno = crate::ported::options::optlookupc(c); // c:663
                 if optno == 0 {
                     // c:663
-                    zerr(&format!("bad option: -{}", c)); // c:663
+                    zerrnam(nam, &format!("bad option: -{}", c)); // c:663
                 } else if dosetopt(optno, if action { 1 } else { 0 }, 0) != 0
                 // c:664
                 {
-                    zerr(&format!("can't change option: -{}", c)); // c:664
+                    zerrnam(nam, &format!("can't change option: -{}", c)); // c:664
                 }
             }
             ci += 1;
