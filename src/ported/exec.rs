@@ -7140,6 +7140,40 @@ pub fn execautofn_basic(state: &mut estate, _do_exec: i32) -> i32 {
     LASTVAL.load(Ordering::Relaxed) // c:5630
 }
 
+/// Port of `static int execautofn(Estate state, UNUSED(int do_exec))`
+/// from `Src/exec.c:5635-5644`. The autoload-aware dispatch entry
+/// for `WC_AUTOFN`: fault the function body in via `loadautofn`,
+/// then hand off to `execautofn_basic` to actually run it.
+///
+/// C body:
+/// ```c
+/// static int
+/// execautofn(Estate state, UNUSED(int do_exec))
+/// {
+///     Shfunc shf;
+///     if (!(shf = loadautofn(state->prog->shf, 1, 0, 0)))
+///         return 1;
+///     state->prog->shf = shf;
+///     return execautofn_basic(state, 0);
+/// }
+/// ```
+///
+/// Rust port: `loadautofn` mutates the `shfunc` in place via a raw
+/// pointer and returns 0/1 (success/failure), so the explicit
+/// `state->prog->shf = shf` assignment in C is implicit here.
+pub fn execautofn(state: &mut estate, _do_exec: i32) -> i32 {
+    // c:5638-5640 — `if (!(shf = loadautofn(state->prog->shf, 1, 0, 0))) return 1;`
+    let shf_ptr: *mut shfunc = match state.prog.shf.as_mut() {
+        Some(b) => &mut **b as *mut shfunc,
+        None => return 1,
+    };
+    if loadautofn(shf_ptr, 1, 0, 0) != 0 {
+        return 1;
+    }
+    // c:5643 — `return execautofn_basic(state, 0);`
+    execautofn_basic(state, 0)
+}
+
 /// Port of `execpline2(Estate state, wordcode pcode, int how, int input,
 /// int output, int last1)` from `Src/exec.c:1989-2040`. Recursive
 /// multi-stage pipe walker: at each step, analyse the current
@@ -10318,11 +10352,189 @@ fn dispatch_execfuncs(state: &mut estate, typ: i32, do_exec: i32) -> i32 {
         x if x == WC_ARITH => execarith(state, do_exec),
         x if x == WC_TRY => exectry(state, do_exec),
         x if x == WC_FUNCDEF => execfuncdef(state, None),
-        x if x == WC_AUTOFN => execautofn_basic(state, do_exec),
+        // c:272 — execfuncs[] table dispatches `WC_AUTOFN` to
+        // `execautofn` (the loadautofn-then-basic wrapper), not
+        // `execautofn_basic` directly.
+        x if x == WC_AUTOFN => execautofn(state, do_exec),
         x if x == WC_TIMED => exectime(state, do_exec),
         x if x == WC_SUBSH => execcursh(state, do_exec), // c:269 — same handler.
         _ => 0,
     }
+}
+
+/// Port of `Eprog stripkshdef(Eprog prog, char *name)` from
+/// `Src/exec.c:6286-6364`. Given an Eprog read from an autoload
+/// file plus the function name being defined, check whether the
+/// file consists of *exactly* one `function NAME { … }` definition
+/// for that name. If so, return a new Eprog whose `prog`/`strs`/
+/// `pats` slice out just the function body (so calling code can
+/// invoke the body directly instead of re-parsing). Otherwise
+/// return the input untouched.
+///
+/// Header word layout consumed (matches C `pc[…]` reads):
+///   pc[0] = WC_LIST with `Z_SYNC|Z_END|Z_SIMPLE` flags
+///   pc[1] = (sublist header, skipped)
+///   pc[2] = WC_FUNCDEF
+///   pc[3] = 1                       (single-name funcdef)
+///   pc[4] = name-string slot        (compared to `name`)
+///   pc[5] = sbeg  (offset into strs table)
+///   pc[6] = nstrs (bytes of strs to copy)
+///   pc[7] = npats (number of pattern slots to allocate)
+///   pc[8] = WC_FUNCDEF_SKIP target  (end-of-funcdef pc)
+///   pc[9] = (unused header word — `pc += 6` lands here as the
+///           start of the body wordcode stream)
+///
+/// Returns `None` only when the input was `None` (matches C
+/// `return NULL`). Equivalence between the original `prog` and a
+/// successfully stripped `prog` is *not* preserved at the pointer
+/// level (C may return the original Eprog when the file fails the
+/// single-funcdef shape check; this Rust port does the same by
+/// passing the box back through).
+///
+/// `EF_MAP` (`zcompile`d / mmap'd Eprog) path: C mutates the
+/// existing Eprog in place, swapping its `prog` / `strs` /
+/// `pats` to slice into the funcdef body. Rust mirrors this on
+/// the moved-in `Box<eprog>` (no separate `free()` needed —
+/// `Vec` drop handles the old `pats`).
+pub fn stripkshdef(
+    prog: Option<crate::ported::zsh_h::Eprog>,
+    name: &str,
+) -> Option<crate::ported::zsh_h::Eprog> {
+    use crate::ported::parse::ecrawstr;
+    use crate::ported::zsh_h::{
+        wc_code, wordcode, Dash, WC_FUNCDEF, WC_FUNCDEF_SKIP, WC_LIST, WC_LIST_TYPE, EF_HEAP,
+        EF_MAP, Z_END, Z_SIMPLE, Z_SYNC,
+    };
+
+    // c:6300 — `if (!prog) return NULL;`
+    let mut prog = prog?;
+
+    // c:6302-6306 — first word must be WC_LIST with all of
+    // Z_SYNC|Z_END|Z_SIMPLE set (i.e. the trivial "single simple
+    // sublist" wrapper around the funcdef).
+    if prog.prog.len() < 3 {
+        return Some(prog);
+    }
+    let code0: wordcode = prog.prog[0];
+    if wc_code(code0) != WC_LIST
+        || (WC_LIST_TYPE(code0) & (Z_SYNC | Z_END | Z_SIMPLE) as wordcode)
+            != (Z_SYNC | Z_END | Z_SIMPLE) as wordcode
+    {
+        return Some(prog);
+    }
+    // c:6307 — `pc++;` (skip the sublist header word at pc[1]).
+    // c:6308 — `code = *pc++;` lands `code` on pc[2], leaving the
+    // walking cursor at pc[3] which is read directly below.
+    let code: wordcode = prog.prog[2];
+    let pc_after_code: usize = 3;
+    if wc_code(code) != WC_FUNCDEF || prog.prog[pc_after_code] != 1 {
+        return Some(prog);
+    }
+
+    // c:6320 — `ptr2 = ecrawstr(prog, pc + 1, NULL);` (note: C's
+    // `pc` is already past `code`, so `pc + 1` lands on pc[4] —
+    // the name-string slot).
+    let name_slot = pc_after_code + 1; // == 4
+    let name_in_def = ecrawstr(&prog, name_slot, None);
+
+    // c:6320-6328 — name match, tolerating Dash-tokenised hyphens
+    // on either side.
+    let n1 = name.as_bytes();
+    let n2 = name_in_def.as_bytes();
+    let mut i = 0usize;
+    let mut j = 0usize;
+    while i < n1.len() && j < n2.len() {
+        let c1 = n1[i] as char;
+        let c2 = n2[j] as char;
+        if c1 != c2 && c1 != Dash && c1 != '-' && c2 != Dash && c2 != '-' {
+            break;
+        }
+        i += 1;
+        j += 1;
+    }
+    // c:6329 — `if (*ptr1 || *ptr2) return prog;` (any unmatched
+    // tail on either side → not the right funcdef).
+    if i < n1.len() || j < n2.len() {
+        return Some(prog);
+    }
+
+    // c:6332-6362 — slice the funcdef body out. Layout:
+    //   sbeg  = pc[2] (in C, == prog.prog[pc_after_code + 2] == [5])
+    //   nstrs = pc[3] (== [6])
+    //   npats = pc[4] (== [7])
+    //   end   = pc + WC_FUNCDEF_SKIP(code)   (== pc_after_code + skip)
+    //   pc   += 6  (body wordcode begins at pc_after_code + 6 == [9])
+    let sbeg = prog.prog[pc_after_code + 2] as usize;
+    let nstrs = prog.prog[pc_after_code + 3] as usize;
+    let npats = prog.prog[pc_after_code + 4] as i32;
+    let skip = WC_FUNCDEF_SKIP(code) as usize;
+    let end_pc = pc_after_code + skip;
+    let body_start = pc_after_code + 6;
+    if end_pc < body_start || end_pc > prog.prog.len() {
+        // Defensive: malformed header — return input untouched so
+        // the caller's parse-eprog fallback re-reads from source.
+        return Some(prog);
+    }
+    let nprg = end_pc - body_start;
+    let plen = nprg * std::mem::size_of::<wordcode>();
+    let len = plen + (npats as usize) * std::mem::size_of::<usize>() + nstrs;
+
+    // Build the new pats slice — `dummy_patprog1` slots in C; the
+    // Rust convention (mirrors `dupeprog` at parse.rs:2716) is to
+    // synthesize zero-initialised patprog placeholders that
+    // pattern compile-on-first-use will overwrite.
+    let dummy_pat = || {
+        Box::new(crate::ported::zsh_h::patprog {
+            startoff: 0,
+            size: 0,
+            mustoff: 0,
+            patmlen: 0,
+            globflags: 0,
+            globend: 0,
+            flags: 0,
+            patnpar: 0,
+            patstartch: 0,
+        })
+    };
+    let new_pats: Vec<crate::ported::zsh_h::Patprog> =
+        (0..npats.max(0)).map(|_| dummy_pat()).collect();
+
+    // c:6353 — `ret->strs = prog->strs + sbeg;` (EF_MAP) or
+    // c:6359 — `memcpy(ret->strs, prog->strs + sbeg, nstrs);` (heap).
+    let old_strs = prog.strs.take().unwrap_or_default();
+    let old_bytes = old_strs.as_bytes();
+    let new_strs = if sbeg + nstrs <= old_bytes.len() {
+        Some(String::from_utf8_lossy(&old_bytes[sbeg..sbeg + nstrs]).into_owned())
+    } else {
+        Some(String::new())
+    };
+
+    let new_prog: Vec<wordcode> = prog.prog[body_start..end_pc].to_vec();
+
+    if (prog.flags & EF_MAP) != 0 {
+        // c:6349-6354 — in-place EF_MAP path.
+        prog.pats = new_pats;
+        prog.prog = new_prog;
+        prog.strs = new_strs;
+        prog.len = len as i32;
+        prog.npats = npats;
+        prog.shf = None;
+        return Some(prog);
+    }
+
+    // c:6356-6361 — heap-allocated new Eprog.
+    let ret = Box::new(crate::ported::zsh_h::eprog {
+        flags: EF_HEAP,
+        len: len as i32,
+        npats,
+        nref: -1, // c:6363 (heap path → never refcount-freed).
+        pats: new_pats,
+        prog: new_prog,
+        strs: new_strs,
+        shf: None, // c:6363
+        dump: None,
+    });
+    Some(ret)
 }
 
 #[cfg(test)]
@@ -10414,5 +10626,49 @@ mod tests {
         if std::path::Path::new("/bin/sh").exists() {
             assert!(iscom("/bin/sh"), "/bin/sh is a real executable");
         }
+    }
+
+    // ─── stripkshdef (Src/exec.c:6286) early-return paths ──────────
+
+    /// `stripkshdef(None, "foo")` → `None` (matches C `if (!prog)
+    /// return NULL;` at exec.c:6300).
+    #[test]
+    fn exec_corpus_stripkshdef_null_input_returns_none() {
+        assert!(stripkshdef(None, "foo").is_none());
+    }
+
+    /// `stripkshdef` on an empty/degenerate Eprog returns the same
+    /// Eprog unchanged (no funcdef-shape to strip).
+    #[test]
+    fn exec_corpus_stripkshdef_empty_prog_returns_input() {
+        let prog = Box::new(crate::ported::zsh_h::eprog {
+            prog: vec![],
+            ..Default::default()
+        });
+        let out = stripkshdef(Some(prog), "foo");
+        assert!(out.is_some(), "empty prog → returned unchanged");
+        assert!(out.unwrap().prog.is_empty(), "no mutation");
+    }
+
+    /// `stripkshdef` on a non-WC_LIST head returns the input
+    /// untouched (early return at exec.c:6304-6306).
+    #[test]
+    fn exec_corpus_stripkshdef_non_list_head_returns_input() {
+        use crate::ported::zsh_h::{wc_bld, WC_SUBLIST};
+        let prog = Box::new(crate::ported::zsh_h::eprog {
+            prog: vec![wc_bld(WC_SUBLIST, 0), 0, 0],
+            ..Default::default()
+        });
+        let out = stripkshdef(Some(prog), "foo");
+        assert!(out.is_some());
+        // first word is the WC_SUBLIST sentinel we passed in,
+        // unchanged (the function bailed before doing any slicing).
+        let p = out.unwrap();
+        use crate::ported::zsh_h::wc_code;
+        assert_eq!(
+            wc_code(p.prog[0]),
+            WC_SUBLIST,
+            "header word preserved verbatim"
+        );
     }
 }

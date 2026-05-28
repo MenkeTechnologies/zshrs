@@ -240,7 +240,6 @@ echo "${H[(I)b*]}"
 
     /// `${(M)H[(I)*a*]}` match-only modifier.
     #[test]
-    #[ignore = "ZSHRS BUG: (I) pattern-key lookup may differ from zsh"]
     fn flag_I_returns_all_matches() {
         assert_parity(
             r#"

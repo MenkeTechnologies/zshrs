@@ -158,7 +158,6 @@ mod hash_b_backref {
 
     /// `(#b)pat` populates $match[] array with capture groups.
     #[test]
-    #[ignore = "ZSHRS BUG: (#b) doesn't populate $match[] array"]
     fn hash_b_captures_into_match_array() {
         assert_parity(
             r#"
@@ -169,7 +168,6 @@ setopt EXTENDED_GLOB
     }
 
     #[test]
-    #[ignore = "ZSHRS BUG: (#b) doesn't populate $match[] for three captures"]
     fn hash_b_three_captures() {
         assert_parity(
             r#"
@@ -185,7 +183,6 @@ mod caret_negation {
 
     /// `^pat` — matches anything NOT matching pat (zsh ext-glob).
     #[test]
-    #[ignore = "ZSHRS BUG: ^pat negation doesn't match non-matching strings"]
     fn caret_negation_matches_non_matching() {
         assert_parity(r#"setopt EXTENDED_GLOB; [[ "bar" == ^foo ]]; echo $?"#);
     }
@@ -202,7 +199,6 @@ mod tilde_exclusion {
     /// `pat~excl` — match pat but exclude excl.
     /// e.g. `*~*.bak` = all files except those ending in `.bak`.
     #[test]
-    #[ignore = "ZSHRS BUG: pat~excl exclusion form doesn't accept non-excluded matches"]
     fn tilde_excludes_subset() {
         assert_parity(r#"setopt EXTENDED_GLOB; [[ "foo.txt" == *~*.bak ]]; echo $?"#);
     }
@@ -244,7 +240,6 @@ mod combined {
 
     /// `(#b)(*).log` capture with extension match.
     #[test]
-    #[ignore = "ZSHRS BUG: (#b) capture in combined form doesn't populate $match[]"]
     fn hash_b_with_extension_match() {
         assert_parity(
             r#"setopt EXTENDED_GLOB; [[ "access.log" == (#b)(*).log ]] && echo "name=${match[1]}""#,

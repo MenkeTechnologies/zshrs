@@ -849,7 +849,6 @@ mod tests {
 
     /// `get_contents` preserves UTF-8 content.
     #[test]
-    #[ignore = "ZSHRS BUG: mapfile get_contents mangles UTF-8 via metafy encode pipeline"]
     fn mapfile_corpus_get_contents_preserves_multibyte() {
         let _g = crate::test_util::global_state_lock();
         let dir = tempfile::tempdir().unwrap();

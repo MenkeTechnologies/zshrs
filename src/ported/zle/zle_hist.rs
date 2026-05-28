@@ -2638,7 +2638,6 @@ mod tests {
     /// returns None when starting from pos 0 with this needle. Pin
     /// the actual contract rather than expectation.
     #[test]
-    #[ignore = "ZSHRS BUG: zlinefind from pos 0 returns None instead of Some(needle_offset)"]
     fn zle_hist_corpus_zlinefind_forward_finds_substring() {
         let _g = crate::test_util::global_state_lock();
         let r = zlinefind("hello world", 0, "world", 1, 0);

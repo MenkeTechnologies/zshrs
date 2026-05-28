@@ -11750,7 +11750,6 @@ mod tests {
     /// (#b) backref payload — requires subst.rs to wire pattern
     /// captures through to `$match[]` after `${var%%(#b)pat}`.
     #[test]
-    #[ignore = "ZSHRS BUG: ${var%%(#b)pat} does not populate $match[] in subst.rs"]
     fn paramsubst_pound_b_backref_populates_match_array() {
         let _g = crate::test_util::global_state_lock();
         let _ = psubst_one(
@@ -11770,7 +11769,6 @@ mod tests {
     /// hold the 1-based byte offsets of the capture. For "look for a
     /// match in here", "match" is at bytes 12-16 (1-based).
     #[test]
-    #[ignore = "ZSHRS BUG: $mbegin/$mend not populated after ${var%%(#b)pat}"]
     fn paramsubst_pound_b_populates_mbegin_mend() {
         let _g = crate::test_util::global_state_lock();
         let _ = psubst_one(
@@ -11800,7 +11798,6 @@ mod tests {
     ///
     /// (S) — substring mode (vs prefix/suffix), so the match floats.
     #[test]
-    #[ignore = "ZSHRS BUG: ${(S)var%%(#m)pat} substring strip with (#m) not wired"]
     fn paramsubst_pound_m_flag_strip_anchored_to_zsh() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -11826,7 +11823,6 @@ mod tests {
     /// 11` (the `s` char and its 1-based byte positions). Expected
     /// output: "this 4 4 is 7 7 a s 11 11tring".
     #[test]
-    #[ignore = "ZSHRS BUG: ${var//(#m)pat/$MATCH...} substitution with (#m) refs not wired"]
     fn paramsubst_pound_m_substitution_with_match_refs() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -11848,7 +11844,6 @@ mod tests {
     ///   - Replace "aleft" with `${match[1]/a/andsome}` = "andsome".
     ///   - Final result: "andsomekept".
     #[test]
-    #[ignore = "ZSHRS BUG: ${var//(#b)pat/${match[1]/...}} nested-capture not wired"]
     fn paramsubst_pound_b_nested_capture_transform() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -11869,7 +11864,6 @@ mod tests {
     /// the whole string matches → replaced with "different".
     /// `$match[1]` carries the captured whole string.
     #[test]
-    #[ignore = "ZSHRS BUG: fully-anchored ${(S)var//#%(...)/repl} with (#b) not wired"]
     fn paramsubst_pound_b_fully_anchored_must_scan_whole_string() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZP_BBA", "string", "${(S)ZP_BBA//#%((#b)(*))/different}");
@@ -11889,7 +11883,6 @@ mod tests {
     ///     anchors to end) with its uppercase version via $MATCH.
     ///   - Result: "abcdefghijklmnopqrsT" (last char uppercased).
     #[test]
-    #[ignore = "ZSHRS BUG: nested ${...//(#m)?(#e)/${(U)MATCH}} chain not wired"]
     fn paramsubst_pound_m_with_end_anchor_in_nested_subst() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -11988,7 +11981,6 @@ mod tests {
     /// and the input after the match is "s every fight".
     /// Result: "relishe" + "s every fight" = "relishes every fight".
     #[test]
-    #[ignore = "ZSHRS BUG: ${(S)var/pat/repl} substring-mode flag handling differs from zsh"]
     fn paramsubst_zsh_corpus_substring_mode_shortest_replace() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -12028,7 +12020,6 @@ mod tests {
     /// Result: "Please no this is sPlease no, sPlease no sPlease no
     /// very dull".
     #[test]
-    #[ignore = "ZSHRS BUG: ${(S)var//pat/repl} substring-mode global replace differs from zsh"]
     fn paramsubst_zsh_corpus_global_replace_substring_mode_per_char() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -12048,7 +12039,6 @@ mod tests {
     /// `\` (literal backslash) with `-`. Input `'a\string\with\
     /// backslashes'` → "a-string-with-backslashes".
     #[test]
-    #[ignore = "ZSHRS BUG: ${var//\\\\/-} backslash-as-search-pat not unescaped before paramsubst pattern compile"]
     fn paramsubst_zsh_corpus_replace_literal_backslash() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZP_BS", r"a\string\with\backslashes", r"${ZP_BS//\\/-}");
@@ -12125,7 +12115,6 @@ mod tests {
     ///   - `//(#m)*/...` replaces the whole match with `$MATCH=$MATCH`.
     ///   - $MATCH is `*`, so replacement is `*=*`.
     #[test]
-    #[ignore = "ZSHRS BUG: (#m) on tokenized `${~:-*}` chain not wired"]
     fn paramsubst_zsh_corpus_pound_m_with_tokenized_glob_input() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZP_TKM", "", "${${~:-*}//(#m)*/$MATCH=$MATCH}");
@@ -12140,7 +12129,6 @@ mod tests {
     ///     "andsome" → "andsome".
     ///   - Final: "andsome" + "kept" = "andsomekept".
     #[test]
-    #[ignore = "ZSHRS BUG: (#b) + nested ${match//pat/repl} in replacement not wired"]
     fn paramsubst_zsh_corpus_pound_b_with_nested_global_subst_on_capture() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -12281,7 +12269,6 @@ mod tests {
     /// KSH_ZERO_SUBSCRIPT is off (default). `array=(one two three four)`
     /// → `$array[0]` = "" (and length 0).
     #[test]
-    #[ignore = "ZSHRS BUG: ${arr[0]} concatenated with literal text via paramsubst returns PID"]
     fn paramsubst_zsh_corpus_array_index_zero_no_ksh_zero() {
         let _g = crate::test_util::global_state_lock();
         let (s, _) = psubst_arr("ZA_KZ0", &["one", "two", "three", "four"], "X${ZA_KZ0[0]}X");
@@ -12310,7 +12297,6 @@ mod tests {
     /// `Test/D06subscript.ztst:5,12-14` — scalar (i) flag returns first
     /// index of a substring match.
     #[test]
-    #[ignore = "ZSHRS BUG: scalar pattern subscript (i)/(I) flag not implemented"]
     fn paramsubst_zsh_corpus_scalar_subscript_i_flag_first_match() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -12324,7 +12310,6 @@ mod tests {
     /// `Test/D06subscript.ztst:31-32` — `s[(i)x]` returns `len(s)+1` for
     /// no-match.
     #[test]
-    #[ignore = "ZSHRS BUG: scalar pattern subscript (i) flag not implemented"]
     fn paramsubst_zsh_corpus_scalar_subscript_i_no_match_returns_len_plus_one() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -12391,7 +12376,6 @@ mod tests {
     /// backslash escapes. foo=`'and now' "even the pubs" \a\r\e shut.`
     /// → `and now even the pubs are shut.`
     #[test]
-    #[ignore = "ZSHRS BUG: (Q) flag dequote not implemented in paramsubst"]
     fn paramsubst_zsh_corpus_q_flag_dequotes_scalar() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one(
@@ -12408,7 +12392,6 @@ mod tests {
     /// `Test/D04parameter.ztst:452-458` — `${(q-)foo}` minimal single
     /// quoting: foo='foo' → `foo` (no quotes needed for plain word).
     #[test]
-    #[ignore = "ZSHRS BUG: (q-) minimal quoting flag not implemented"]
     fn paramsubst_zsh_corpus_q_minus_flag_no_quote_needed() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZQM_P", "foo", "${(q-)ZQM_P}");
@@ -12418,7 +12401,6 @@ mod tests {
     /// `Test/D04parameter.ztst:453-459` — `${(q-)foo}` with space:
     /// foo='foo bar' → `'foo bar'`.
     #[test]
-    #[ignore = "ZSHRS BUG: (q-) minimal quoting flag not implemented"]
     fn paramsubst_zsh_corpus_q_minus_flag_space_gets_quoted() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZQM_SP", "foo bar", "${(q-)ZQM_SP}");
@@ -12431,7 +12413,6 @@ mod tests {
     /// `Test/D04parameter.ztst:454-460` — `${(q-)foo}` with glob chars:
     /// foo='*(.)' → `'*(.)'`.
     #[test]
-    #[ignore = "ZSHRS BUG: (q-) minimal quoting flag not implemented"]
     fn paramsubst_zsh_corpus_q_minus_flag_glob_chars_quoted() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZQM_G", "*(.)", "${(q-)ZQM_G}");
@@ -12560,7 +12541,6 @@ mod tests {
     /// `l'état c'est moi` → `L'État C'Est Moi` (per zsh, capital after `'`
     /// since apostrophe is non-alphanumeric word separator).
     #[test]
-    #[ignore = "ZSHRS BUG: (C) capitalization treats ' as alphanumeric, doesn't restart word boundary"]
     fn paramsubst_zsh_corpus_c_flag_capitalizes_multibyte_with_apostrophe() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZCM", "l'état c'est moi", "${(C)ZCM}");

@@ -6535,7 +6535,6 @@ mod tests {
     /// `Test/D09brace.ztst:116-118` — unmatched closing brace after
     /// matched braces stays literal: `{1..10}{..` → `1{.. 2{.. ...`.
     #[test]
-    #[ignore = "ZSHRS BUG: unmatched trailing braces not preserved literally"]
     fn zsh_corpus_brace_unmatched_after_matched_left_literal() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(

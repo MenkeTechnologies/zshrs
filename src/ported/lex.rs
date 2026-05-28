@@ -5128,7 +5128,6 @@ mod tests {
     /// interactive-comments are on (set by default in non-interactive
     /// scripts). Pin: word before `#` survives, `#`-line dropped.
     #[test]
-    #[ignore = "ZSHRS BUG: # comment handling may differ from zsh in lexer test harness"]
     fn lex_corpus_hash_comment_dropped() {
         let _g = crate::test_util::global_state_lock();
         let _ = lex_init("cmd # comment");

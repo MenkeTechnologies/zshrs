@@ -191,7 +191,6 @@ mod close_fd {
 
     /// Close stdout via 1>&-.
     #[test]
-    #[ignore = "ZSHRS BUG: exec 1>&- closing stdout may not error correctly; skip as host-dependent"]
     fn close_stdout_then_print_errors() {
         assert_parity_in(
             Path::new("/tmp"),
@@ -297,7 +296,6 @@ mod swap_stdout_stderr {
 
     /// Classic swap: 3>&1 1>&2 2>&3.
     #[test]
-    #[ignore = "ZSHRS BUG: 3>&1 1>&2 2>&3 3>&- fd-swap idiom drops one stream"]
     fn swap_stdout_and_stderr() {
         assert_parity_in(
             Path::new("/tmp"),
