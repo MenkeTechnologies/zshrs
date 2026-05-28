@@ -1047,6 +1047,22 @@ fn completion(state: &State, params: &Value) -> Value {
                 } else {
                     "-".to_string()
                 };
+                // Explicit `textEdit` range covering the typed `-`
+                // (or stacked `-XYZ`) through the cursor. Without
+                // this, IntelliJ's LSP client treats `-` as a
+                // non-identifier character: the replacement range is
+                // empty (just at the cursor), so `insertText="-l"`
+                // gets inserted AFTER the typed `-`, producing
+                // `print --l`. `textEdit` pins the range
+                // deterministically so the typed dash is replaced
+                // along with the flag — `print -<tab>` → `print -l`.
+                // Same shape as the stryke LSP sigil_completions fix.
+                let cur_word_chars = cur_word.chars().count() as u64;
+                let dash_col = (col as u64).saturating_sub(cur_word_chars);
+                let edit_range = json!({
+                    "start": { "line": line_no, "character": dash_col },
+                    "end":   { "line": line_no, "character": col      },
+                });
                 let items: Vec<Value> = flags
                     .into_iter()
                     .map(|(flag, desc)| {
@@ -1070,7 +1086,15 @@ fn completion(state: &State, params: &Value) -> Value {
                         } else {
                             format!("**`{}`** — {}\n\n_option flag for `{}`_", flag, desc, bname)
                         };
-                        ctx_item(&label, &detail, &doc_md)
+                        let mut item = ctx_item(&label, &detail, &doc_md);
+                        if let Some(obj) = item.as_object_mut() {
+                            obj.remove("insertText");
+                            obj.insert(
+                                "textEdit".to_string(),
+                                json!({ "range": edit_range, "newText": label }),
+                            );
+                        }
+                        item
                     })
                     .collect();
                 return json!({ "isIncomplete": false, "items": items });
