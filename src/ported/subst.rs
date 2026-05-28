@@ -3914,7 +3914,6 @@ pub fn paramsubst(
             if idx > sub_start {
                 let raw_sub: String = body_chars[sub_start..idx].iter().collect();
                 // Subscript expressions can contain $vars — singsub them.
-                // Subscript expressions can contain $vars — singsub them.
                 subscript = Some(singsub(&raw_sub)); // c:2899
             }
             if idx < body_chars.len() {
@@ -8483,6 +8482,34 @@ pub fn paramsubst(
         } // c:1625
         '#' => {
             // c:1625
+            // c:Src/subst.c — bare `$#name` is shorthand for `${#name}`
+            // (length of named variable). If `#` is followed by an
+            // ident-start char (alpha or `_`), walk the name and
+            // recurse through the brace form so the length-op pipeline
+            // (paramsubst length_op handler) fires. Without this,
+            // `$#a` resolved as `$#` (positional count) + literal "a"
+            // — `${a[$#a]}` lost its index expression to "0a".
+            let next = chars.get(pos + 1).copied().unwrap_or('\0');
+            if next.is_ascii_alphabetic() || next == '_' {
+                let name_start = pos + 1;
+                let mut name_end = name_start;
+                while name_end < chars.len()
+                    && (chars[name_end].is_ascii_alphanumeric() || chars[name_end] == '_')
+                {
+                    name_end += 1;
+                }
+                let name: String = chars[name_start..name_end].iter().collect();
+                let prefix: String = chars[..start_pos].iter().collect();
+                let suffix: String = chars[name_end..].iter().collect();
+                let rewritten = format!("{}${{#{}}}{}", prefix, name, suffix);
+                return paramsubst(
+                    &rewritten,
+                    prefix.chars().count(),
+                    qt,
+                    pf_flags,
+                    ret_flags,
+                );
+            }
             let value = arrays_get("@") // c:1625
                 .map(|a| a.len().to_string()) // c:1625
                 .unwrap_or_else(|| "0".to_string()); // c:1625
