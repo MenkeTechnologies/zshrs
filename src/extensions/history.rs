@@ -776,4 +776,134 @@ mod tests {
         let results = engine.for_directory("/project", 10).unwrap();
         assert_eq!(results.len(), 2);
     }
+
+    // ========================================================
+    // format_text_line — zsh EXTENDED_HISTORY line emission
+    // ========================================================
+
+    #[test]
+    fn format_text_line_emits_canonical_prefix() {
+        let line = format_text_line(1_700_000_000, 5, "echo hi");
+        assert_eq!(line, ": 1700000000:5;echo hi\n");
+    }
+
+    #[test]
+    fn format_text_line_zero_duration_still_renders() {
+        let line = format_text_line(0, 0, "true");
+        assert_eq!(line, ": 0:0;true\n");
+    }
+
+    #[test]
+    fn format_text_line_escapes_literal_backslash() {
+        // `\` doubles so the inverse unescape recovers the original.
+        let line = format_text_line(1, 0, r"\n");
+        // Source `\n` → escaped `\\n`.
+        assert!(
+            line.ends_with(";\\\\n\n"),
+            "expected backslash-escape, got: {:?}",
+            line
+        );
+    }
+
+    #[test]
+    fn format_text_line_escapes_embedded_newline_to_backslash_newline() {
+        // Multi-line commands escape literal newlines so each
+        // logical entry stays on one disk line for read-back.
+        let line = format_text_line(2, 1, "line1\nline2");
+        // After replacement: `\\\n` = backslash then newline.
+        assert!(
+            line.contains("line1\\\nline2"),
+            "expected escaped newline, got: {:?}",
+            line
+        );
+        // Still terminates with one trailing real newline.
+        assert!(line.ends_with('\n'));
+    }
+
+    #[test]
+    fn format_text_line_handles_empty_command() {
+        let line = format_text_line(42, 7, "");
+        assert_eq!(line, ": 42:7;\n");
+    }
+
+    #[test]
+    fn format_text_line_negative_duration_round_trips() {
+        // Defensive: negative durations are unusual but represent
+        // "duration unknown" sentinels in some pre-commit paths.
+        let line = format_text_line(100, -1, "foo");
+        assert_eq!(line, ": 100:-1;foo\n");
+    }
+
+    #[test]
+    fn format_text_line_only_terminating_newline_present() {
+        // Exactly one trailing `\n` regardless of command bytes.
+        let line = format_text_line(1, 1, "abc");
+        let nls = line.matches('\n').count();
+        assert_eq!(nls, 1);
+    }
+
+    // ========================================================
+    // is_sqlite_file — magic-header sniff
+    // ========================================================
+
+    #[test]
+    fn is_sqlite_file_true_for_real_header() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join("zshrs_history_sqlite_magic.bin");
+        std::fs::write(&tmp, b"SQLite format 3\0extra junk after").unwrap();
+        assert!(is_sqlite_file(&tmp));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn is_sqlite_file_false_for_plain_text() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join("zshrs_history_text_not_db.txt");
+        std::fs::write(&tmp, b": 1700000000:5;ls -la\n").unwrap();
+        assert!(!is_sqlite_file(&tmp));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn is_sqlite_file_false_for_short_file() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join("zshrs_history_short.bin");
+        std::fs::write(&tmp, b"abc").unwrap();
+        // Less than 16 bytes — `read_exact` fails → false.
+        assert!(!is_sqlite_file(&tmp));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn is_sqlite_file_false_for_missing_path() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!is_sqlite_file(std::path::Path::new(
+            "/nonexistent/zshrs/sqlite/magic.db"
+        )));
+    }
+
+    #[test]
+    fn is_sqlite_file_false_for_almost_matching_header() {
+        // 16 bytes but not the magic — must reject.
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join("zshrs_history_fake_magic.bin");
+        std::fs::write(&tmp, b"SQLite format 4\0").unwrap();
+        assert!(!is_sqlite_file(&tmp));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ========================================================
+    // HistoryEntry / engine — semantic coverage
+    // ========================================================
+
+    #[test]
+    fn search_prefix_respects_limit() {
+        let _g = crate::test_util::global_state_lock();
+        let engine = HistoryEngine::in_memory().unwrap();
+        for n in 0..5 {
+            engine.add(&format!("git-{}", n), None).unwrap();
+        }
+        let results = engine.search_prefix("git-", 2).unwrap();
+        assert!(results.len() <= 2, "limit not honored: {}", results.len());
+    }
 }
