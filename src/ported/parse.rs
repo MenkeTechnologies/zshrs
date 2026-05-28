@@ -1734,7 +1734,12 @@ fn par_if() -> Option<ZshCommand> {
 fn par_while(until: bool) -> Option<ZshCommand> {
     zshlex(); // skip while/until
 
-    let cond = Box::new(parse_program());
+    // c:1521-1551 par_while — the condition's parser must stop at
+    // `do` or `{`. Without an explicit end-token set, parse_program
+    // consumes the brace-form body as additional condition lists,
+    // leaving parse_loop_body with nothing — `while (( i++ < 3 )) {
+    // echo $i }` silently parsed but executed nothing.
+    let cond = Box::new(parse_program_until(Some(&[DOLOOP, INBRACE_TOK])));
 
     skip_separators();
     let body = parse_loop_body(false, false)?;
