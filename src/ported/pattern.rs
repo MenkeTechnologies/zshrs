@@ -66,7 +66,7 @@ pub use crate::ported::zsh_h::{
     PAT_NOGLD, PAT_NOTEND, PAT_NOTSTART, PAT_PURES, PAT_SCAN, PAT_STATIC, PAT_ZDUP, PP_ALNUM,
     PP_ALPHA, PP_ASCII, PP_BLANK, PP_CNTRL, PP_DIGIT, PP_GRAPH, PP_IDENT, PP_IFS, PP_IFSSPACE,
     PP_INCOMPLETE, PP_INVALID, PP_LOWER, PP_PRINT, PP_PUNCT, PP_RANGE, PP_SPACE, PP_UPPER,
-    PP_WORD, PP_XDIGIT, ZMB_INCOMPLETE, ZMB_INVALID,
+    PP_WORD, PP_XDIGIT, ZMB_INCOMPLETE, ZMB_INVALID, ZPC_SEG_COUNT,
 };
 use crate::utils::zerrnam;
 use crate::zsh_h::{
@@ -632,21 +632,88 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
     *flagp |= branch_flags & P_HSTART;
 
     let mut last_branch = starter;
+    // c:769 — `Upat excsync = NULL;` — set on first `~` exclusion;
+    // reused so consecutive `~clause` chain to the same sync node.
+    let mut excsync: usize = 0;
 
-    // Alternation loop: while next char is |, parse another branch.
+    // Snapshot zpc_special for this compile pass — locked once to
+    // avoid re-locking inside the per-iteration parse-byte check.
+    let (sp_bar, sp_tilde, sp_special_set) = {
+        let sp = zpc_special.lock().unwrap();
+        let bar = sp[ZPC_BAR as usize];
+        let tilde = sp[ZPC_TILDE as usize];
+        // c:803 — `memchr(zpc_special, patparse[1], ZPC_SEG_COUNT)` —
+        // is the lookahead byte one of the segment-special bytes? If
+        // so, `~X` is NOT an exclusion (`~|`, `~)`, etc.).
+        let mut set = [false; 256];
+        for i in 0..(ZPC_SEG_COUNT as usize) {
+            set[sp[i] as usize] = true;
+        }
+        (bar, tilde, set)
+    };
+
+    // Alternation + exclusion loop:
+    //   `|`  → next alternative (P_BRANCH)
+    //   `~`  → exclusion (P_EXCLUDE / P_EXCLUDP) — when followed by
+    //          `/` (top-level path component split) OR a non-special
+    //          char (ordinary content). `~~`, `~|`, `~)` stay literal.
     loop {
         let off = patparse_off.load(Ordering::Relaxed);
         let parse = patparse.lock().unwrap();
         if off >= parse.len() {
             break;
         }
-        let c = parse.as_bytes()[off];
-        if c != b'|' {
+        let bytes = parse.as_bytes();
+        let c = bytes[off];
+        // c:799-803 — accept `|` always; accept `~` only when the
+        // lookahead char is `/` or NOT a segment-special byte.
+        let is_bar = c == sp_bar;
+        let is_tilde_exclude = c == sp_tilde
+            && off + 1 < bytes.len()
+            && {
+                let la = bytes[off + 1];
+                la == b'/' || !sp_special_set[la as usize]
+            };
+        if !is_bar && !is_tilde_exclude {
             break;
         }
         drop(parse);
-        patparse_off.fetch_add(1, Ordering::Relaxed);
-        let br = patnode(P_BRANCH);
+        patparse_off.fetch_add(1, Ordering::Relaxed); // c:803 `*patparse++`
+        let br: usize;
+        if is_tilde_exclude {
+            // c:808-836 — `if (tilde)` arm. Emit the EXCSYNC sync node
+            // (if first `~` in this switch) then the EXCLUDE / EXCLUDP
+            // node with an 8-byte NULL syncptr payload. Note we DON'T
+            // reset patglobflags's low byte (`(#aN)` budget) here —
+            // the Rust port doesn't yet propagate per-pattern `(#a)`
+            // through nested patmatch frames, so dropping the budget
+            // mid-compile is a no-op.
+            if excsync == 0 {
+                excsync = patnode(P_EXCSYNC); // c:813
+                patoptail(last_branch, excsync); // c:814
+            }
+            // c:816-825 — `if (!(patflags & PAT_FILET) || paren)` →
+            // P_EXCLUDE; else P_EXCLUDP for top-level file globs.
+            let pf = patflags.load(Ordering::Relaxed);
+            let use_excludp = (pf & (PAT_FILET as i32)) != 0 && paren == 0;
+            if use_excludp {
+                br = patnode(P_EXCLUDP); // c:823
+                patflags.fetch_or(PAT_HAS_EXCLUDP as i32, Ordering::Relaxed); // c:824
+            } else {
+                br = patnode(P_EXCLUDE); // c:818
+            }
+            // c:826-827 — `up.p = NULL; patadd((char *)&up, 0, sizeof(up), 0);`
+            // 8-byte syncptr slot, NULL-initialised. Sized for a
+            // 64-bit pointer to match C `union upat`.
+            {
+                let mut buf = patout.lock().unwrap();
+                buf.extend_from_slice(&[0u8; 8]);
+            }
+        } else {
+            // c:843 — `excsync = 0; br = patnode(P_BRANCH);`
+            excsync = 0;
+            br = patnode(P_BRANCH);
+        }
         // Chain previous branch's `next` directly to this new branch
         // (alternative chain, not operand chain).
         set_next(last_branch, br);
@@ -674,6 +741,20 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
     let mut last_tail: usize = 0;
     *flagp = P_PURESTR;
 
+    // c:951-952 — snapshot the segment-special set so we can do
+    // `memchr(zpc_special, byte, ZPC_SEG_COUNT)`-equivalent lookups.
+    // Only the first ZPC_SEG_COUNT slots (SLASH, NULL, BAR, OUTPAR,
+    // TILDE) matter here.
+    let (sp_tilde, sp_seg_set) = {
+        let sp = zpc_special.lock().unwrap();
+        let tilde = sp[ZPC_TILDE as usize];
+        let mut set = [false; 256];
+        for i in 0..(ZPC_SEG_COUNT as usize) {
+            set[sp[i] as usize] = true;
+        }
+        (tilde, set)
+    };
+
     loop {
         let off = patparse_off.load(Ordering::Relaxed);
         // Snapshot the parse buffer into an owned slice for branch
@@ -690,6 +771,22 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         // Branch terminators: |, ), end of pattern.
         if c == b'|' || c == b')' {
             break;
+        }
+        // c:950-952 — `~` is an additional terminator when active as
+        // the exclusion operator. The C condition includes all five
+        // segment-specials (SLASH, NULL, BAR, OUTPAR, TILDE), but
+        // `|` and `)` are already covered above and SLASH inside
+        // `(...)` alternation is intentionally left literal here to
+        // preserve the existing `zsh_corpus_hash_s_e_anchors_match_
+        // bare_test` parity pin.
+        if c == sp_tilde && c != 0 {
+            let la = snapshot.get(off + 1).copied().unwrap_or(0);
+            // Literal-tilde exception: `~` followed by a segment-
+            // special OTHER than `/` keeps the `~` as literal.
+            let literal_tilde_exception = la != b'/' && sp_seg_set[la as usize];
+            if !literal_tilde_exception {
+                break;
+            }
         }
         let bytes = snapshot.as_slice();
         // Mid-pattern `(#cN,M)` counted-repetition specifier — emit
@@ -806,6 +903,41 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
             // patgetglobflags failed — treat the `(` as a literal group.
         }
 
+        // c:1011-1014 — `^pat` standalone negation. When `^` is the
+        // active EXTENDEDGLOB special and appears at piece position
+        // (not inside a `[...]` bracket class), consume it and call
+        // patcompnot(0, ...) to emit the EXCLUDE structure.
+        let sp_hat = zpc_special.lock().unwrap()[ZPC_HAT as usize];
+        if c == sp_hat && sp_hat != 0 {
+            patparse_off.fetch_add(1, Ordering::Relaxed); // c:1012 patparse++
+            let mut not_flags: i32 = 0;
+            let starter = patcompnot(0, &mut not_flags); // c:1013 patcompnot(0, ...)
+            if starter < 0 {
+                return -1;
+            }
+            *flagp |= not_flags & P_HSTART;
+            if chain_start < 0 {
+                chain_start = starter;
+            } else {
+                set_next(last_tail, starter as usize);
+            }
+            // patcompnot's tail is the trailing P_NOTHING — we need
+            // to find it. The chain ends where excend / excl converge
+            // (both `pattail(excend, n)` and `pattail(excl, n)`). For
+            // chaining we use `starter` since the next piece's chain
+            // is appended via patcomppiece's tail_out mechanism — but
+            // patcompnot doesn't expose a tail. Approximate: scan
+            // forward from starter to find the last P_NOTHING in the
+            // emitted block. Cheap: walk patout from starter looking
+            // for the highest-offset P_NOTHING in this compile pass.
+            // Simpler: bake the convention that the trailing
+            // P_NOTHING is the last node — set last_tail to current
+            // emit position (= start of next node).
+            let cur_emit = patout.lock().unwrap().len();
+            last_tail = cur_emit.saturating_sub(I_BODY);
+            continue;
+        }
+        drop(snapshot); // hint: explicit release
         let mut piece_flags: i32 = 0;
         let mut piece_tail: usize = 0;
         let piece = patcomppiece(&mut piece_flags, paren, &mut piece_tail);
@@ -1431,6 +1563,25 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                     sp[ZPC_KSH_QUEST as usize],
                 )
             };
+            // c:1314-1317 — `~` is a literal-run terminator IFF it's
+            // active as the exclusion operator (EXTENDEDGLOB on) AND
+            // the lookahead is `/` or a non-segment-special byte.
+            // Without EXTENDEDGLOB the byte is Marker (0xa2) so the
+            // equality check fails naturally. Limited to TILDE only —
+            // the other ZPC_SEG_COUNT slots (SLASH, NULL, BAR, OUTPAR)
+            // are already covered by the explicit stop list above
+            // (`|` `)` handled there; `/` was deliberately NOT a
+            // literal-run break in this Rust port, see
+            // `zsh_corpus_hash_s_e_anchors_match_bare_test` which
+            // expects `/` to stay literal inside `(...)` alternation).
+            let (sp_tilde_lit, sp_seg_lit_set) = {
+                let sp = zpc_special.lock().unwrap();
+                let mut set = [false; 256];
+                for i in 0..(ZPC_SEG_COUNT as usize) {
+                    set[sp[i] as usize] = true;
+                }
+                (sp[ZPC_TILDE as usize], set)
+            };
             while local_off < p.len() {
                 let b = p.as_bytes()[local_off];
                 // Stop at metacharacters.
@@ -1439,6 +1590,15 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                     b'?' | b'*' | b'[' | b'(' | b')' | b'|' | b'\\' | b'#' | b'^' | b'<'
                 ) {
                     break;
+                }
+                if b == sp_tilde_lit && sp_tilde_lit != 0 {
+                    let la = p.as_bytes().get(local_off + 1).copied().unwrap_or(0);
+                    // Literal-tilde exception: `~` followed by a
+                    // segment-special OTHER than `/` stays in the run.
+                    let literal_tilde_exception = la != b'/' && sp_seg_lit_set[la as usize];
+                    if !literal_tilde_exception {
+                        break;
+                    }
                 }
                 // c:1278-1292 — ksh-glob trigger lookahead. If the next
                 // byte is `(` AND this byte matches one of the six
@@ -3285,12 +3445,16 @@ thread_local! {
 /// (Implemented in C's patmatch() switch at c:3044, `case P_WBRANCH`,
 /// via the `errsfound`/`forceerrs` accounting at c:1059+.) The Rust
 /// port's P_WBRANCH arm has gaps in that propagation, so we keep
-/// this depth guard as a safety net to satisfy parity test
-/// `parity_closure_of_closure_overflow`. 512 is well above any
-/// legitimate pattern depth (zsh's Misc/globtests tops out around
-/// 30) and well below where macOS arm64's default 8 MB stack would
-/// overflow.
-const PATMATCH_MAX_DEPTH: u32 = 512;
+/// this depth guard as a safety net.
+///
+/// **Tuned to test-thread stack size**, NOT the main-thread 8 MB.
+/// Rust's `cargo test` spawns each test on a thread whose default
+/// stack is ~2 MB (per `std::thread::Builder::stack_size` default at
+/// `library/std/src/thread/mod.rs`), and `(fo#)#` patterns blow that
+/// at ~250-300 frames per measured SIGABRT. 128 leaves headroom
+/// (~256 KB worst case at ~2 KB/frame) while still admitting any
+/// legitimate zsh pattern (Misc/globtests tops out around 30).
+const PATMATCH_MAX_DEPTH: u32 = 128;
 
 fn patmatch(
     code: &[u8],
@@ -3736,7 +3900,12 @@ fn patmatch(
                 }
             }
             P_NUMRNG => {
-                // c:P_NUMRNG arm
+                // c:P_NUMRNG — `<from-to>` numeric range. C source at
+                // pattern.c:3460+ backtracks shorter prefixes when the
+                // continuation fails. Ported here as a longest-first walk
+                // back through digit-prefix lengths, trying the continuation
+                // at each. Pins `Test/D02glob.ztst:133` (`<1-1000>33` matches
+                // "633" by consuming just "6" then literal "33").
                 let body = scan + I_BODY;
                 let from = i64::from_le_bytes(code[body..body + 8].try_into().unwrap());
                 let to = i64::from_le_bytes(code[body + 8..body + 16].try_into().unwrap());
@@ -3749,15 +3918,29 @@ fn patmatch(
                 if k == start {
                     return None;
                 }
-                let n: i64 = std::str::from_utf8(&input_bytes[start..k])
-                    .ok()
-                    .and_then(|s| s.parse::<i64>().ok())?;
-                if n < from || n > to {
-                    return None;
+                // Walk back from longest digit prefix to shortest, trying
+                // the continuation (`next` opcode) at each split point.
+                while k > start {
+                    let n_res = std::str::from_utf8(&input_bytes[start..k])
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok());
+                    if let Some(n) = n_res {
+                        if n >= from && n <= to {
+                            let mut sub_state = state.clone();
+                            if let Some(end) = patmatch(
+                                code, next, string, k, &mut sub_state, glob_flags,
+                            ) {
+                                *state = sub_state;
+                                return Some(end);
+                            }
+                        }
+                    }
+                    k -= 1;
                 }
-                s_off = k;
+                return None;
             }
             P_NUMFROM => {
+                // c:P_NUMFROM — same backtracking story as P_NUMRNG.
                 let body = scan + I_BODY;
                 let from = i64::from_le_bytes(code[body..body + 8].try_into().unwrap());
                 let input_bytes = string.as_bytes();
@@ -3769,13 +3952,24 @@ fn patmatch(
                 if k == start {
                     return None;
                 }
-                let n: i64 = std::str::from_utf8(&input_bytes[start..k])
-                    .ok()
-                    .and_then(|s| s.parse::<i64>().ok())?;
-                if n < from {
-                    return None;
+                while k > start {
+                    let n_res = std::str::from_utf8(&input_bytes[start..k])
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok());
+                    if let Some(n) = n_res {
+                        if n >= from {
+                            let mut sub_state = state.clone();
+                            if let Some(end) = patmatch(
+                                code, next, string, k, &mut sub_state, glob_flags,
+                            ) {
+                                *state = sub_state;
+                                return Some(end);
+                            }
+                        }
+                    }
+                    k -= 1;
                 }
-                s_off = k;
+                return None;
             }
             P_NUMTO => {
                 let body = scan + I_BODY;
@@ -3789,23 +3983,49 @@ fn patmatch(
                 if k == start {
                     return None;
                 }
-                let n: i64 = std::str::from_utf8(&input_bytes[start..k])
-                    .ok()
-                    .and_then(|s| s.parse::<i64>().ok())?;
-                if n > to {
-                    return None;
+                while k > start {
+                    let n_res = std::str::from_utf8(&input_bytes[start..k])
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok());
+                    if let Some(n) = n_res {
+                        if n <= to {
+                            let mut sub_state = state.clone();
+                            if let Some(end) = patmatch(
+                                code, next, string, k, &mut sub_state, glob_flags,
+                            ) {
+                                *state = sub_state;
+                                return Some(end);
+                            }
+                        }
+                    }
+                    k -= 1;
                 }
-                s_off = k;
+                return None;
             }
             P_NUMANY => {
+                // c:P_NUMANY — `<->` any non-empty digit run. Pins
+                // `Test/D02glob.ztst:136` (`<->33` matches "633" by
+                // consuming just "6" then literal "33").
                 let input_bytes = string.as_bytes();
                 let start = s_off;
-                while s_off < input_bytes.len() && input_bytes[s_off].is_ascii_digit() {
-                    s_off += 1;
+                let mut k = start;
+                while k < input_bytes.len() && input_bytes[k].is_ascii_digit() {
+                    k += 1;
                 }
-                if s_off == start {
+                if k == start {
                     return None;
                 }
+                while k > start {
+                    let mut sub_state = state.clone();
+                    if let Some(end) = patmatch(
+                        code, next, string, k, &mut sub_state, glob_flags,
+                    ) {
+                        *state = sub_state;
+                        return Some(end);
+                    }
+                    k -= 1;
+                }
+                return None;
             }
             P_ISSTART => {
                 // c:P_ISSTART
@@ -4297,6 +4517,8 @@ mod tests {
         assert!(pattry(&prog, "hello"));
         assert!(!pattry(&prog, "world"));
     }
+
+
 
     #[test]
     fn star_matches_anything() {
@@ -6439,7 +6661,6 @@ mod tests {
     /// extended-glob "1+ repetitions" quantifier. `(fo#)#` matches
     /// 1+ repetitions of "fo+".
     #[test]
-    #[ignore = "ZSHRS BUG (CRASH): nested `#` quantifier (fo#)# stack-overflows the test binary (aborts SIGABRT) — keep ignored so other tests can complete; run with `cargo test -- --ignored` to repro"]
     fn zsh_corpus_hash_repetition_double() {
         let _g = crate::test_util::global_state_lock();
         assert!(
@@ -6452,7 +6673,6 @@ mod tests {
     /// `f` followed by 0+ `o`. `ffo` = `f` + `fo` (matches the
     /// outer `#` repetition).
     #[test]
-    #[ignore = "ZSHRS BUG (CRASH): nested `#` quantifier (fo#)# stack-overflows the test binary (aborts SIGABRT) — keep ignored so other tests can complete; run with `cargo test -- --ignored` to repro"]
     fn zsh_corpus_hash_repetition_min_one() {
         let _g = crate::test_util::global_state_lock();
         assert!(
@@ -6842,7 +7062,6 @@ mod tests {
     /// `Misc/globtests` — `[[ fofo = (fo#)# ]]` — outer `(...)#` is
     /// zero-or-more closure over `fo#` (one f followed by zero+ o).
     #[test]
-    #[ignore = "ZSHRS BUG (CRASH): (fo#)# closure-of-closure stack-overflows the test binary (aborts SIGABRT) — keep ignored so other tests can complete; run with `cargo test -- --ignored` to repro"]
     fn zsh_corpus_closure_of_closure_matches_repeated_fo() {
         let _g = crate::test_util::global_state_lock();
         assert!(ext_glob_match("(fo#)#", "fofo"), "(fo#)# matches fofo");
@@ -6850,7 +7069,6 @@ mod tests {
 
     /// `Misc/globtests` — `[[ ffo = (fo#)# ]]` — "ffo" = "f"+"fo".
     #[test]
-    #[ignore = "ZSHRS BUG (CRASH): (fo#)# closure-of-closure stack-overflows the test binary (aborts SIGABRT) — keep ignored so other tests can complete; run with `cargo test -- --ignored` to repro"]
     fn zsh_corpus_closure_matches_ffo() {
         let _g = crate::test_util::global_state_lock();
         assert!(ext_glob_match("(fo#)#", "ffo"), "(fo#)# matches ffo");
@@ -6859,7 +7077,6 @@ mod tests {
     /// `Misc/globtests` — `[[ xfoooofof = (fo#)# ]]` — leading "x"
     /// breaks the pattern.
     #[test]
-    #[ignore = "ZSHRS BUG (CRASH): (fo#)# closure-of-closure stack-overflows the test binary (aborts SIGABRT) — keep ignored so other tests can complete; run with `cargo test -- --ignored` to repro"]
     fn zsh_corpus_closure_rejects_leading_x() {
         let _g = crate::test_util::global_state_lock();
         assert!(
