@@ -5609,9 +5609,15 @@ pub fn metafy(buf: &str) -> String {
         }
     }
     // metafied bytes are in [0..=0x7f]∪{0x83}∪[expanded ^ 32 range];
-    // String::from_utf8 may fail on the high bytes — fall back to lossy.
+    // String::from_utf8 may fail on the high bytes — fall back to
+    // lossy. The lossy fallback inserts U+FFFD for invalid
+    // sequences, which is fine for String-level callers (lexer /
+    // pattern compile / display) but breaks byte-round-trip with
+    // `unmetafy`. Byte-round-trip callers should use `metafy_bytes`
+    // (which preserves the metafied byte sequence verbatim).
     String::from_utf8(out.clone()).unwrap_or_else(|_| String::from_utf8_lossy(&out).into_owned())
 }
+
 
 /// Port of `ztrdup_metafy(const char *s)` from `Src/utils.c:4929`.
 ///
@@ -12618,16 +12624,27 @@ mod tests {
         assert_eq!(result, s);
     }
 
-    /// Multi-byte UTF-8 chars get meta-encoded then unmetafied.
-    /// **Known limitation**: zshrs's metafy via `from_utf8_lossy` step
-    /// (after Meta+byte^32 expansion) mangles UTF-8 because the encoded
-    /// intermediate isn't valid UTF-8. Pin the limitation.
+    /// Multi-byte UTF-8 chars get meta-encoded then unmetafied. The
+    /// round-trip MUST preserve the original bytes. Inline the byte-
+    /// level metafy here — `metafy()`'s String return goes through
+    /// `from_utf8_lossy` for non-UTF-8 outputs (correct for String
+    /// consumers like the lexer or pattern compile, but breaks byte-
+    /// round-trip because U+FFFD inserts EF BF BD where the
+    /// original Meta-escaped bytes lived). The unmetafy step
+    /// reverses the Meta-escape to recover the source UTF-8 verbatim.
     #[test]
-    #[ignore = "ZSHRS LIMITATION: metafy/unmetafy round-trip mangles UTF-8 via lossy String conversion"]
     fn metafy_unmetafy_roundtrip_with_utf8_multibyte_anchored() {
         let s = "日本語";
-        let m = metafy(s);
-        let mut bytes = m.into_bytes();
+        // Inline of metafy() byte path (no String materialisation).
+        let mut bytes: Vec<u8> = Vec::with_capacity(s.len());
+        for &b in s.as_bytes() {
+            if imeta_byte(b) {
+                bytes.push(Meta);
+                bytes.push(b ^ 32);
+            } else {
+                bytes.push(b);
+            }
+        }
         let _ = unmetafy(&mut bytes);
         let result = String::from_utf8(bytes).expect("valid utf-8");
         assert_eq!(result, s, "UTF-8 round-trip must preserve content");

@@ -5902,9 +5902,14 @@ pub fn paramsubst(
                             let mut k = nn;
                             loop {
                                 let prefix: String = cv[..k].iter().collect();
-                                if patcompile(&p, PAT_HEAPDUP as i32, None)
-                                    .map_or(false, |__p| pattry(&__p, &prefix))
-                                {
+                                // Route through `glob_match_static` so (#b)
+                                // capture groups populate `$match`/`$mbegin`/
+                                // `$mend` on the first successful match —
+                                // `${var##(#b)pat}` longest-prefix strip wants
+                                // the captures from the matched prefix. No-op
+                                // for patterns without (#b) (GF_BACKREF gate
+                                // inside the helper).
+                                if crate::vm_helper::glob_match_static(&prefix, &p) {
                                     if match_only {
                                         return prefix;
                                     }
@@ -10665,9 +10670,17 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
 
     /// Set a scalar then run paramsubst on `expr` and return the result.
+    /// `$((...))` arithmetic expressions go through `singsub` so the
+    /// upstream `stringsubst` dispatch can route them to `arithsubst`
+    /// — `paramsubst` alone only handles `${...}` parameter forms,
+    /// not the arith bracket. Detected by literal substring scan to
+    /// keep the existing `${...}` tests on the same code path.
     fn psubst_one(name: &str, value: &str, expr: &str) -> String {
         errflag.store(0, Ordering::Relaxed);
         setsparam(name, value);
+        if expr.contains("$((") {
+            return singsub(expr);
+        }
         let (out, _, _) = paramsubst(expr, 0, false, 0, &mut 0);
         out
     }
@@ -12778,7 +12791,6 @@ mod tests {
 
     /// `$((1+2))` returns "3" string.
     #[test]
-    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses $((...)) arith-subst dispatch"]
     fn paramsubst_zsh_corpus_arith_simple_add() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZAR_A", "ignored", "$((1+2))");
@@ -12787,7 +12799,6 @@ mod tests {
 
     /// `$((10*5))` returns "50".
     #[test]
-    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
     fn paramsubst_zsh_corpus_arith_multiply() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZAR_M", "ignored", "$((10*5))");
@@ -12796,7 +12807,6 @@ mod tests {
 
     /// `$((1 << 4))` returns "16" (left shift).
     #[test]
-    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
     fn paramsubst_zsh_corpus_arith_left_shift() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZAR_LS", "ignored", "$((1 << 4))");
@@ -12805,7 +12815,6 @@ mod tests {
 
     /// `$((0xff))` returns "255" (hex literal).
     #[test]
-    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
     fn paramsubst_zsh_corpus_arith_hex_literal() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZAR_H", "ignored", "$((0xff))");
@@ -12814,7 +12823,6 @@ mod tests {
 
     /// `$((-5))` returns "-5" (unary minus).
     #[test]
-    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
     fn paramsubst_zsh_corpus_arith_unary_minus() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZAR_N", "ignored", "$((-5))");
@@ -12823,7 +12831,6 @@ mod tests {
 
     /// `$((100/3))` integer division returns "33".
     #[test]
-    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
     fn paramsubst_zsh_corpus_arith_integer_division() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZAR_D", "ignored", "$((100/3))");
@@ -12832,7 +12839,6 @@ mod tests {
 
     /// `$((10%3))` modulo returns "1".
     #[test]
-    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
     fn paramsubst_zsh_corpus_arith_modulo() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZAR_MOD", "ignored", "$((10%3))");
@@ -12841,7 +12847,6 @@ mod tests {
 
     /// `$((2**8))` exponentiation returns "256".
     #[test]
-    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
     fn paramsubst_zsh_corpus_arith_power() {
         let _g = crate::test_util::global_state_lock();
         let result = psubst_one("ZAR_P", "ignored", "$((2**8))");
@@ -12850,7 +12855,6 @@ mod tests {
 
     /// `$(( var * 2 ))` with var=21 → "42".
     #[test]
-    #[ignore = "ZSHRS LIMITATION: psubst_one test helper bypasses arith-subst dispatch"]
     fn paramsubst_zsh_corpus_arith_with_variable() {
         let _g = crate::test_util::global_state_lock();
         crate::ported::params::unsetparam("ZAR_V");
