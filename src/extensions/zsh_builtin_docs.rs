@@ -1941,3 +1941,154 @@ pub fn lookup_builtin_doc(name: &str) -> Option<(&'static str, &'static str)> {
         .find(|(n, _)| *n == canon)
         .map(|&(n, d)| (n, d))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === lookup_builtin_doc: alias → canonical → doc resolution ===
+
+    #[test]
+    fn lookup_well_known_builtins_resolve() {
+        // Every shell-builtin a typical .zshrc relies on must resolve:
+        // command/aliases/job control/parameter declarations/etc.
+        for name in [
+            "alias",
+            "autoload",
+            "cd",
+            "echo",
+            "emulate",
+            "eval",
+            "exec",
+            "exit",
+            "export",
+            "fc",
+            "fg",
+            "bg",
+            "functions",
+            "typeset",
+            "unset",
+            "command",
+            "builtin",
+            "source",
+            "trap",
+        ] {
+            assert!(
+                lookup_builtin_doc(name).is_some(),
+                "well-known builtin {name:?} must resolve"
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_returns_canon_matching_input_for_self_aliased_names() {
+        // Most builtin aliases are identity (e.g. "alias" → "alias")
+        // because the doc body is keyed by the canonical builtin name.
+        let (canon, _) = lookup_builtin_doc("alias").expect("alias must resolve");
+        assert_eq!(canon, "alias");
+    }
+
+    #[test]
+    fn lookup_is_case_sensitive_for_builtins() {
+        // Unlike OPTION lookup which uppercases the key, BUILTIN lookup
+        // uses raw string-equal — uppercased forms must NOT resolve
+        // (zsh builtins are lowercase by convention).
+        assert!(lookup_builtin_doc("ALIAS").is_none());
+        assert!(lookup_builtin_doc("Cd").is_none());
+        assert!(lookup_builtin_doc("EXPORT").is_none());
+    }
+
+    #[test]
+    fn lookup_unknown_builtin_returns_none() {
+        assert!(lookup_builtin_doc("not_a_builtin").is_none());
+        assert!(lookup_builtin_doc("nonexistent_zsh_thing").is_none());
+    }
+
+    #[test]
+    fn lookup_empty_string_returns_none() {
+        assert!(lookup_builtin_doc("").is_none());
+    }
+
+    #[test]
+    fn lookup_dot_source_resolves() {
+        // `.` is the POSIX equivalent of source — must resolve to its
+        // own canonical entry in BUILTIN_DOCS.
+        let (canon, body) = lookup_builtin_doc(".").expect(". must resolve");
+        assert_eq!(canon, ".");
+        assert!(
+            body.to_lowercase().contains("read") || body.to_lowercase().contains("execute"),
+            ". doc body should describe sourcing semantics"
+        );
+    }
+
+    #[test]
+    fn lookup_zsh_module_builtins_resolve() {
+        // zsh modules expose builtins like zparseopts / zformat /
+        // zregexparse / zselect. Verify the generator pulled them in.
+        for name in ["zparseopts", "zformat", "zregexparse"] {
+            assert!(
+                lookup_builtin_doc(name).is_some(),
+                "zsh module builtin {name:?} must resolve"
+            );
+        }
+    }
+
+    // === BUILTIN_DOCS + BUILTIN_ALIASES table integrity ===
+
+    #[test]
+    fn builtin_docs_table_nonempty() {
+        assert!(!BUILTIN_DOCS.is_empty());
+        // Zsh ships well over 100 builtins across the core + modules.
+        assert!(
+            BUILTIN_DOCS.len() >= 100,
+            "expected ≥100 BUILTIN_DOCS entries, got {}",
+            BUILTIN_DOCS.len()
+        );
+    }
+
+    #[test]
+    fn builtin_aliases_table_nonempty() {
+        assert!(!BUILTIN_ALIASES.is_empty());
+        assert!(
+            BUILTIN_ALIASES.len() >= 100,
+            "expected ≥100 BUILTIN_ALIASES entries, got {}",
+            BUILTIN_ALIASES.len()
+        );
+    }
+
+    #[test]
+    fn builtin_docs_no_empty_bodies() {
+        for (name, body) in BUILTIN_DOCS {
+            assert!(!body.is_empty(), "empty doc body for builtin {name:?}");
+        }
+    }
+
+    #[test]
+    fn builtin_docs_no_empty_names() {
+        for (name, _) in BUILTIN_DOCS {
+            assert!(!name.is_empty(), "empty builtin name in BUILTIN_DOCS");
+        }
+    }
+
+    #[test]
+    fn every_builtin_alias_canon_target_exists_in_docs() {
+        // Aliases pointing at a missing canon would silently return
+        // None despite being matched in the alias table.
+        let doc_names: std::collections::HashSet<&str> =
+            BUILTIN_DOCS.iter().map(|(n, _)| *n).collect();
+        for (alias, canon) in BUILTIN_ALIASES {
+            assert!(
+                doc_names.contains(canon),
+                "alias {alias:?} → canon {canon:?} but canon is missing from BUILTIN_DOCS"
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_aliases_no_empty_keys() {
+        for (alias, canon) in BUILTIN_ALIASES {
+            assert!(!alias.is_empty(), "empty alias key (canon = {canon:?})");
+            assert!(!canon.is_empty(), "empty canon target (alias = {alias:?})");
+        }
+    }
+}
