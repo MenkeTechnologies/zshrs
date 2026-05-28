@@ -4871,6 +4871,13 @@ impl ZshCompiler {
             || inner_arith.contains("^=")
             || inner_arith.contains("<<=")
             || inner_arith.contains(">>=")
+            // Power-assign `**=`. ArithCompiler doesn't recognize
+            // this as compound-assign; it emits MULEQ semantics on
+            // a `**`, producing `2*=3` = 6 for `a=2; (( a **= 3 ))`
+            // instead of the correct 8 (2^3). MathEval has POWEREQ
+            // wired (math.rs:1409, 2471) and writes back through
+            // setmathvar. Verified before fix: `(( a **= 3 ))` → 6.
+            || inner_arith.contains("**=")
             // Float literals and exponents — ArithCompiler's lexer
             // can't parse them. Route through MathEval which has
             // full float support including int→float promotion on
