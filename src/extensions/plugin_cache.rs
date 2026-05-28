@@ -823,6 +823,147 @@ mod migration_tests {
             .unwrap();
         assert_eq!(exists, 0, "legacy script_bytecode must be dropped");
     }
+
+    // ========================================================
+    // default_cache_path — ZSHRS_HOME precedence
+    // ========================================================
+
+    fn with_zshrs_home<F: FnOnce()>(value: Option<&str>, f: F) {
+        let prev = std::env::var_os("ZSHRS_HOME");
+        match value {
+            Some(v) => std::env::set_var("ZSHRS_HOME", v),
+            None => std::env::remove_var("ZSHRS_HOME"),
+        }
+        f();
+        match prev {
+            Some(v) => std::env::set_var("ZSHRS_HOME", v),
+            None => std::env::remove_var("ZSHRS_HOME"),
+        }
+    }
+
+    #[test]
+    fn default_cache_path_honors_zshrs_home() {
+        let _g = crate::test_util::global_state_lock();
+        with_zshrs_home(Some("/tmp/zshrs-plugin-cache-home"), || {
+            assert_eq!(
+                default_cache_path(),
+                PathBuf::from("/tmp/zshrs-plugin-cache-home/plugins.db")
+            );
+        });
+    }
+
+    #[test]
+    fn default_cache_path_filename_is_plugins_db() {
+        let _g = crate::test_util::global_state_lock();
+        with_zshrs_home(Some("/tmp/zshrs-plugin-fname"), || {
+            assert_eq!(
+                default_cache_path().file_name().and_then(|s| s.to_str()),
+                Some("plugins.db")
+            );
+        });
+    }
+
+    #[test]
+    fn default_cache_path_falls_back_to_home_dot_zshrs() {
+        let _g = crate::test_util::global_state_lock();
+        with_zshrs_home(None, || {
+            let p = default_cache_path();
+            // Path must end in `.zshrs/plugins.db` regardless of HOME.
+            let s = p.to_string_lossy();
+            assert!(
+                s.ends_with(".zshrs/plugins.db"),
+                "expected .zshrs/plugins.db tail, got: {}",
+                s
+            );
+        });
+    }
+
+    #[test]
+    fn default_cache_path_uses_distinct_dir_per_zshrs_home_change() {
+        let _g = crate::test_util::global_state_lock();
+        with_zshrs_home(Some("/tmp/zshrs-plugin-a"), || {
+            let a = default_cache_path();
+            with_zshrs_home(Some("/tmp/zshrs-plugin-b"), || {
+                let b = default_cache_path();
+                assert_ne!(a, b, "different ZSHRS_HOME must yield different paths");
+            });
+        });
+    }
+
+    // ========================================================
+    // file_mtime — metadata sniff
+    // ========================================================
+
+    #[test]
+    fn file_mtime_returns_some_for_existing_file() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join("zshrs_plugin_cache_mtime.txt");
+        std::fs::write(&tmp, b"x").unwrap();
+        let mt = file_mtime(&tmp);
+        assert!(mt.is_some(), "existing file should produce mtime");
+        // Seconds since epoch is positive on any sane system clock.
+        let (secs, _ns) = mt.unwrap();
+        assert!(secs > 0, "mtime secs must be positive: {}", secs);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn file_mtime_returns_none_for_missing_path() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(file_mtime(Path::new("/nonexistent/zshrs/missing.bin")).is_none());
+    }
+
+    #[test]
+    fn file_mtime_secs_monotonic_after_rewrite() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join("zshrs_plugin_cache_mtime_two.txt");
+        std::fs::write(&tmp, b"a").unwrap();
+        let first = file_mtime(&tmp).unwrap();
+        // Sleep slightly to ensure mtime resolution boundary.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(&tmp, b"b").unwrap();
+        let second = file_mtime(&tmp).unwrap();
+        // Second mtime >= first mtime (clocks don't go backwards
+        // on any unit-test host we care about).
+        assert!(
+            second >= first,
+            "mtime regressed: first={:?} second={:?}",
+            first,
+            second
+        );
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn file_mtime_path_with_special_chars_resolves() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join("zshrs plugin cache (space).bin");
+        std::fs::write(&tmp, b"x").unwrap();
+        let mt = file_mtime(&tmp);
+        assert!(mt.is_some(), "spaces in filename must not block resolution");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn default_cache_path_relative_zshrs_home_taken_verbatim() {
+        let _g = crate::test_util::global_state_lock();
+        with_zshrs_home(Some("relative-dir"), || {
+            assert_eq!(
+                default_cache_path(),
+                PathBuf::from("relative-dir/plugins.db")
+            );
+        });
+    }
+
+    #[test]
+    fn default_cache_path_empty_zshrs_home_is_empty_dir_plus_db() {
+        let _g = crate::test_util::global_state_lock();
+        with_zshrs_home(Some(""), || {
+            // env::var_os("") returns Some("") — code takes the
+            // override branch and joins "" + "plugins.db" = "plugins.db".
+            assert_eq!(default_cache_path(), PathBuf::from("plugins.db"));
+        });
+    }
 }
 
 // ===========================================================
