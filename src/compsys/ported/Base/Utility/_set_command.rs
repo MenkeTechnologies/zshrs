@@ -190,4 +190,113 @@ mod tests {
         assert_eq!(getsparam("_comp_command1").as_deref(), Some("cd"));
         assert_eq!(getsparam("_comp_command").as_deref(), Some("cd"));
     }
+
+    // ========================================================
+    // is_known_builtin — recognition matrix
+    // ========================================================
+
+    #[test]
+    fn known_builtins_include_navigation_and_io() {
+        for name in ["cd", "echo", "pwd", "printf", "read"] {
+            assert!(
+                is_known_builtin(name),
+                "expected {} to register as builtin",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn known_builtins_include_set_and_unset_family() {
+        for name in ["set", "unset", "export", "alias", "unalias"] {
+            assert!(is_known_builtin(name), "{} missing from builtin set", name);
+        }
+    }
+
+    #[test]
+    fn known_builtins_include_control_flow() {
+        for name in ["return", "break", "continue", "trap"] {
+            assert!(is_known_builtin(name), "{} missing from builtin set", name);
+        }
+    }
+
+    #[test]
+    fn known_builtins_include_test_aliases() {
+        // Both `test` and the bracketed form `[` are listed.
+        assert!(is_known_builtin("test"));
+        assert!(is_known_builtin("["));
+    }
+
+    #[test]
+    fn known_builtins_includes_source_and_dot_alias() {
+        // `source` and `.` are both registered as builtin per sh:9.
+        assert!(is_known_builtin("source"));
+        assert!(is_known_builtin("."));
+    }
+
+    #[test]
+    fn unknown_command_is_not_a_builtin() {
+        assert!(!is_known_builtin("ls"));
+        assert!(!is_known_builtin("grep"));
+        assert!(!is_known_builtin(""));
+        assert!(!is_known_builtin("foo-bar-baz"));
+    }
+
+    #[test]
+    fn builtin_name_is_case_sensitive() {
+        // POSIX builtin lookup is case-sensitive — uppercase aliases
+        // are NOT auto-recognized.
+        assert!(!is_known_builtin("CD"));
+        assert!(!is_known_builtin("Echo"));
+    }
+
+    // ========================================================
+    // basename — `${command:t}` analog
+    // ========================================================
+
+    #[test]
+    fn basename_strips_leading_directory_components() {
+        assert_eq!(basename("/usr/bin/ls"), "ls");
+        assert_eq!(basename("foo/bar/baz"), "baz");
+    }
+
+    #[test]
+    fn basename_passes_through_when_no_slash() {
+        assert_eq!(basename("plain"), "plain");
+    }
+
+    #[test]
+    fn basename_empty_input_returns_empty() {
+        assert_eq!(basename(""), "");
+    }
+
+    #[test]
+    fn basename_trailing_slash_yields_empty_string() {
+        // rsplit('/').next() on `"foo/"` returns the empty tail.
+        assert_eq!(basename("foo/"), "");
+    }
+
+    #[test]
+    fn basename_handles_root_only() {
+        assert_eq!(basename("/"), "");
+    }
+
+    // ========================================================
+    // _set_command — control-flow branches
+    // ========================================================
+
+    #[test]
+    fn relative_dotdot_path_uses_pwd_prefix_and_basename() {
+        // sh:16-19  command begins with `../`
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::setsparam("PWD", "/here");
+        setaparam("words", vec!["../tools/runme".to_string()]);
+        let _ = _set_command();
+        assert_eq!(
+            getsparam("_comp_command1").as_deref(),
+            Some("/here/../tools/runme")
+        );
+        assert_eq!(getsparam("_comp_command2").as_deref(), Some("runme"));
+        assert_eq!(getsparam("_comp_command").as_deref(), Some("runme"));
+    }
 }
