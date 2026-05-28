@@ -230,14 +230,15 @@ fn audit_lsp_builtin_flags_against_man_zshall() {
         let joined: String = flags.iter().map(|c| format!("-{c}")).collect::<Vec<_>>().join(" ");
         eprintln!("  MISSING  {n:<14} {joined}");
     }
-    // Soft baseline ratchet. Current gap (37.8%) tracks the
-    // post-merge state where the body scraper covers most builtins
-    // but a long tail of module / xattr / network builtins still
-    // need hand-curated entries in `BUILTIN_FLAG_DOCS_OVERRIDE`.
-    // Tighten this threshold each time a batch of entries lands.
-    assert!(
-        pct <= 40.0,
-        "LSP regressed against `man zshall`: {:.1}% missing (baseline 40%) — see eprintln above",
-        pct,
+    // Hard contract: 0% missing. Every option letter documented in
+    // `man zshall` for a runtime-known builtin MUST surface through
+    // the LSP `extract_builtin_flags` path (body scraper + Tier 3
+    // override merge). New gaps fail this test with a precise
+    // (builtin, -X) list.
+    assert_eq!(
+        missing.len(),
+        0,
+        "LSP missing {} canonical option letters vs `man zshall` — see eprintln above",
+        missing.len(),
     );
 }

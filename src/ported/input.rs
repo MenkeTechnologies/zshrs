@@ -22,6 +22,12 @@ use crate::ported::zsh_h::{
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read, Write};
+use crate::ported::hashtable::aliastab_lock;
+use crate::ported::hist::histbackword;
+use crate::ported::lex::{zshlex_raw_back, LEX_LEXSTOP};
+use crate::ported::signals_h::{queue_signals, unqueue_signals};
+use crate::ported::utils::{unmetafy, zerr};
+use crate::ported::ztype_h::itok;
 
 /// Port of `struct instacks` from `Src/input.c:109`. One frame in
 /// the input stack — pushed by `inpush()` and popped by `inpoptop()`
@@ -279,7 +285,7 @@ pub fn ingetc() -> Option<char> {
             // `itok()` lets future `inittyptab` adjustments propagate
             // automatically with zero changes here.
             let cu32 = c as u32;
-            if cu32 < 256 && crate::ported::ztype_h::itok(cu32 as u8) {
+            if cu32 < 256 && itok(cu32 as u8) {
                 continue;
             }
 
@@ -388,7 +394,7 @@ pub fn zstuff(path: &str) -> Result<(String, i64), i32> {
     use std::io::Read;
     // c:621 — `unmeta(fn)`: de-metafy the path before open(2).
     let mut path_bytes = path.as_bytes().to_vec();
-    crate::ported::utils::unmetafy(&mut path_bytes);
+    unmetafy(&mut path_bytes);
     let real_path = String::from_utf8_lossy(&path_bytes);
     // c:621 — `fopen(unmeta(fn), "r")`. Rust File::open mirrors fopen
     // with read-only mode; failure path zerrs and returns -1.
@@ -397,13 +403,13 @@ pub fn zstuff(path: &str) -> Result<(String, i64), i32> {
         Ok(f) => f,
         Err(_) => {
             // c:622
-            crate::ported::utils::zerr(&format!("can't open {}", path)); // c:622
+            zerr(&format!("can't open {}", path)); // c:622
             return Err(-1); // c:623
         }
     };
     // c:625 — `queue_signals();` block syscalls from the trap fast path
     // for the duration of the read.
-    crate::ported::signals_h::queue_signals();
+    queue_signals();
     // c:626-628 — `fseek(end); ftell; fseek(start);` to size the file
     // without consuming the stream. Use stream metadata in Rust.
     let len = match file.metadata() {
@@ -415,11 +421,11 @@ pub fn zstuff(path: &str) -> Result<(String, i64), i32> {
                                  // c:630-635 — `fread(buf, len, 1, in)` failure arm zerrs read error.
     if file.read_to_string(&mut buf).is_err() {
         // c:630
-        crate::ported::utils::zerr(&format!("read error on {}", path)); // c:631
-        crate::ported::signals_h::unqueue_signals(); // c:633
+        zerr(&format!("read error on {}", path)); // c:631
+        unqueue_signals(); // c:633
         return Err(-1); // c:634
     }
-    crate::ported::signals_h::unqueue_signals(); // c:640
+    unqueue_signals(); // c:640
     Ok((buf, len)) // c:642
 }
 
@@ -508,7 +514,7 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {
     // ingetc (line 244); lex.rs's `LEX_LEXSTOP` gates gettok. zshrs
     // duplicates the C single `lexstop` global across two modules.
     lexstop.with(|c| c.set(false));
-    crate::ported::lex::LEX_LEXSTOP.with(|c| c.set(false));
+    LEX_LEXSTOP.with(|c| c.set(false));
 }
 
 // Remove the top element of the stack                                       // c:736
@@ -517,7 +523,7 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {
 pub fn inpoptop() {
     // c:736
     // c:738 — if (!lexstop) {
-    if !crate::ported::lex::LEX_LEXSTOP.with(|c| c.get()) {
+    if !LEX_LEXSTOP.with(|c| c.get()) {
         // c:739 — inbufflags &= ~(INP_ALCONT|INP_HISTCONT);
         inbufflags.with(|f| f.set(f.get() & !(INP_ALCONT | INP_HISTCONT)));
         // c:740-753 — drain unread bytes of the popped frame; for alias
@@ -531,7 +537,7 @@ pub fn inpoptop() {
         });
         if was_alias {
             for _ in 0..unread {
-                crate::ported::lex::zshlex_raw_back(); // c:752
+                zshlex_raw_back(); // c:752
             }
         }
     }
@@ -545,7 +551,7 @@ pub fn inpoptop() {
         //               space → inalmore=1; histbackword(); }
         if let Some(name) = &entry.alias {
             {
-                let mut tab = crate::ported::hashtable::aliastab_lock()
+                let mut tab = aliastab_lock()
                     .write()
                     .expect("aliastab poisoned");
                 if let Some(a) = tab.get_mut(name) {
@@ -557,7 +563,7 @@ pub fn inpoptop() {
             //              histbackword call alone preserves the C-visible
             //              effect on the history cursor.
             if entry.buf.ends_with(' ') {
-                crate::ported::hist::histbackword(); // c:776
+                histbackword(); // c:776
             }
         }
         inbuf.with(|b| *b.borrow_mut() = entry.buf);
@@ -655,6 +661,8 @@ fn imeta(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::ported::utils::inittyptab;
+    use crate::ported::ztype_h::TYPTAB_TEST_LOCK;
     use super::*;
 
     /// Test-only reset: clear all input statics so per-test setup
@@ -744,10 +752,10 @@ mod tests {
         // Tests must initialise the typtab — without `inittyptab()`
         // every byte's IMETA bit reads as 0. Serialise against other
         // typtab-mutating tests via the canonical lock.
-        let _g = crate::ported::ztype_h::TYPTAB_TEST_LOCK
+        let _g = TYPTAB_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        crate::ported::utils::inittyptab();
+        inittyptab();
 
         // c:4195 — '\0' is IMETA.
         assert!(imeta('\x00'));
@@ -937,7 +945,7 @@ mod tests {
         reset_input();
         // Make sure typtab is populated (without this the per-thread
         // typtab default may have ITOK bits unset).
-        crate::ported::utils::inittyptab();
+        inittyptab();
 
         let bang: char = '\u{009c}'; // Bang (LAST_NORMAL_TOK)
         let nularg: char = '\u{00a1}'; // Nularg (last ITOK byte)
@@ -972,7 +980,7 @@ mod tests {
     fn ingetc_does_not_skip_imeta_only_bytes() {
         let _g = crate::test_util::global_state_lock();
         reset_input();
-        crate::ported::utils::inittyptab();
+        inittyptab();
         let meta: char = '\u{0083}'; // Meta lead byte — IMETA only
         let marker: char = '\u{00a2}'; // Marker — IMETA only per c:4197
         let mut s = String::new();

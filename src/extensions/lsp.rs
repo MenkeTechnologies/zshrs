@@ -1521,7 +1521,31 @@ fn hover(state: &State, params: &Value) -> Value {
         );
         return Value::Null;
     }
-    let doc = lookup_doc(&word);
+    let mut doc = lookup_doc(&word);
+    if doc.is_empty() {
+        // Fallback: scan the current document for a user-defined
+        // function / alias / variable named `word` and surface any
+        // `##` doc-comment block that sits immediately above the
+        // definition.
+        if let Some(user_doc) = find_user_symbol_doc(text, &word) {
+            doc = user_doc;
+        }
+    }
+    if doc.is_empty() {
+        // Module-level fallback: if the cursor is on the shebang
+        // line or a `source FILE` / `. FILE` argument, surface the
+        // top-of-file `##` block of the relevant document.
+        //
+        // Shebang case: any word inside `#!/usr/bin/env zsh` etc.
+        // triggers the same-document module doc lookup.
+        //
+        // Source case: resolve `source path` / `. path` and read the
+        // target file's top `##` block — lets the user discover what
+        // a sourced library does without leaving the editor.
+        if let Some(module_doc) = find_module_doc_for_position(state, text, line_text, line_no) {
+            doc = module_doc;
+        }
+    }
     if doc.is_empty() {
         tracing::trace!(target: "zshrs::lsp::hover", line = line_no, col, %word, "miss");
         return Value::Null;
@@ -1533,6 +1557,295 @@ fn hover(state: &State, params: &Value) -> Value {
             "value": doc,
         }
     })
+}
+
+/// Find the markdown doc for a user-defined symbol `name` in the
+/// current document. Returns the formatted hover card (heading +
+/// definition-line snippet + the `##` doc-comment block immediately
+/// above the definition), or `None` when:
+///   * `name` doesn't appear as a function / alias / parameter decl, OR
+///   * the definition has no leading `##` block (silent fall-through
+///     so builtin lookup remains the primary doc source).
+///
+/// Recognises three definition shapes per `scan_symbols`:
+///   * `function NAME { … }` / `function NAME() …` (keyword form)
+///   * `NAME() { … }` (POSIX form)
+///   * `local NAME=…` / `typeset NAME=…` / `export NAME=…` /
+///     `readonly NAME=…` / `NAME=…` (assignment forms)
+///   * `alias NAME=…`
+///
+/// `##` blocks are gathered by walking BACKWARD from the definition
+/// line, accepting consecutive `## …` / `##` lines (blank `##` lines
+/// become paragraph breaks) and stopping at the first non-`##` non-
+/// blank line. Plain `#` (single-hash) comments are NOT collected —
+/// those are routine code comments, not doc strings.
+pub(crate) fn find_user_symbol_doc(text: &str, name: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let kind = match symbol_decl_kind(line, name) {
+            Some(k) => k,
+            None => continue,
+        };
+        let doc_block = collect_doc_block_above(&lines, i);
+        if doc_block.is_empty() {
+            // Definition exists but has no `##` doc — fall back so the
+            // hover can still try other lookups. Continue scanning in
+            // case there's a later definition WITH a doc.
+            continue;
+        }
+        return Some(render_user_doc_card(name, kind, line.trim(), &doc_block));
+    }
+    None
+}
+
+/// Recognise whether `line` declares `name` as a user-defined symbol.
+/// Returns the kind word (`"function"` / `"alias"` / `"parameter"`)
+/// for the card heading, or `None` when this line doesn't define the
+/// requested name.
+fn symbol_decl_kind(line: &str, name: &str) -> Option<&'static str> {
+    let t = line.trim_start();
+    if t.starts_with('#') {
+        return None;
+    }
+    // `function NAME { … }` / `function NAME() …`
+    if let Some(rest) = t
+        .strip_prefix("function ")
+        .or_else(|| t.strip_prefix("function\t"))
+    {
+        if first_ident(rest).as_deref() == Some(name) {
+            return Some("function");
+        }
+    }
+    // `NAME() { … }` — POSIX form. Require `NAME(` with NO whitespace
+    // between (`name(` not `name (`), so `if my_check(x)` calls don't
+    // misfire.
+    if let Some(idx) = t.find("()") {
+        let head = &t[..idx];
+        if !head.contains(' ') && !head.contains('\t') && head == name {
+            return Some("function");
+        }
+    }
+    // `alias NAME=…`
+    if let Some(rest) = t.strip_prefix("alias ") {
+        if first_ident(rest).as_deref() == Some(name) {
+            return Some("alias");
+        }
+    }
+    // `local NAME=…` / `typeset NAME=…` / `export NAME=…` /
+    // `readonly NAME=…` / `integer NAME=…` / `float NAME=…`.
+    // Skip any leading `-X` flag arguments (`typeset -gA`, `local -i`,
+    // `readonly -a`, etc.) before checking the first identifier.
+    for prefix in &["local ", "typeset ", "declare ", "readonly ", "export ", "integer ", "float "] {
+        if let Some(rest) = t.strip_prefix(prefix) {
+            let after_flags = skip_leading_flags(rest);
+            if first_ident(after_flags).as_deref() == Some(name) {
+                return Some("parameter");
+            }
+        }
+    }
+    // Bare `NAME=value` at start of line.
+    if let Some(eq) = t.find('=') {
+        let head = &t[..eq];
+        if head == name && !head.contains(' ') && !head.contains('\t') {
+            return Some("parameter");
+        }
+    }
+    None
+}
+
+/// Walk BACKWARD from `def_line` collecting the contiguous `##`
+/// comment block. Returns markdown text (paragraph-joined). Empty
+/// when there's no `##` block.
+///
+/// Rules:
+///   * Stop at the first non-`##` non-blank line.
+///   * `## ` lines contribute their text (after the leading `## `).
+///   * `##` alone (or `##\n`) becomes a paragraph break (blank line).
+///   * Plain `#` single-hash lines TERMINATE the block — they're
+///     routine code comments, not docstrings.
+///   * Leading blank lines between definition and block ARE allowed
+///     (e.g. `## doc\n\nfunction f()` is still attached to `f`).
+fn collect_doc_block_above(lines: &[&str], def_line: usize) -> String {
+    let mut collected: Vec<String> = Vec::new();
+    let mut saw_doc = false;
+    for j in (0..def_line).rev() {
+        let trimmed = lines[j].trim_start();
+        if trimmed.is_empty() {
+            if saw_doc {
+                // Blank line BEFORE the block we're collecting —
+                // terminates collection.
+                break;
+            }
+            // Blank line between def line and (yet-unseen) block —
+            // allowed.
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("## ") {
+            collected.push(rest.to_string());
+            saw_doc = true;
+            continue;
+        }
+        if trimmed == "##" {
+            collected.push(String::new());
+            saw_doc = true;
+            continue;
+        }
+        // `## ` exactly, or `#!` shebang, or `# ` plain comment — all
+        // stop the block. Plain comments are intentionally NOT
+        // gathered: only the doubled-hash convention attaches.
+        break;
+    }
+    collected.reverse();
+    // Trim trailing blank "paragraph break" lines.
+    while collected.last().is_some_and(|l| l.is_empty()) {
+        collected.pop();
+    }
+    collected.join("\n")
+}
+
+/// Resolve module-level hover docs for the cursor's current line.
+/// Returns `Some(card)` when:
+///   * `line_text` is a `#!` shebang — surface THIS file's module
+///     doc (the top-of-file `##` block).
+///   * `line_text` is a `source PATH` / `. PATH` invocation — resolve
+///     PATH (relative to the current doc's URI when applicable),
+///     read the file, return ITS module doc.
+/// Returns `None` otherwise (hover handler falls through to its
+/// normal `Value::Null` reply).
+fn find_module_doc_for_position(
+    state: &State,
+    text: &str,
+    line_text: &str,
+    _line_no: usize,
+) -> Option<String> {
+    let trimmed = line_text.trim_start();
+    if trimmed.starts_with("#!") {
+        return extract_module_doc(text).map(|d| render_module_doc_card("(this file)", &d));
+    }
+    // `source PATH` / `. PATH` — first identifier after `source`/`.`
+    // is the path. Resolve it through the LSP doc cache if loaded;
+    // otherwise read from disk.
+    let path_arg: Option<&str> = if let Some(rest) = trimmed.strip_prefix("source ") {
+        Some(rest.split_whitespace().next().unwrap_or(""))
+    } else if let Some(rest) = trimmed.strip_prefix(". ") {
+        Some(rest.split_whitespace().next().unwrap_or(""))
+    } else {
+        None
+    };
+    let path = path_arg.filter(|p| !p.is_empty())?;
+    // Strip surrounding quotes if any.
+    let path = path.trim_matches(|c| c == '"' || c == '\'');
+    // Try doc cache first (URI key match), then filesystem.
+    let body = state
+        .docs
+        .iter()
+        .find_map(|(uri, body)| uri.ends_with(path).then(|| body.clone()))
+        .or_else(|| std::fs::read_to_string(path).ok())?;
+    extract_module_doc(&body).map(|d| render_module_doc_card(path, &d))
+}
+
+/// Render a module-doc hover card. Format mirrors the user-symbol
+/// card but heading kind is `module`.
+fn render_module_doc_card(label: &str, doc: &str) -> String {
+    let mut out = String::with_capacity(label.len() + doc.len() + 60);
+    out.push_str("**`");
+    out.push_str(label);
+    out.push_str("`** — _zsh module_\n\n");
+    out.push_str(doc);
+    out
+}
+
+/// Extract the module-level `##` doc block from the top of a zsh
+/// source file. Skips an optional `#!` shebang line, then collects
+/// the contiguous `##` (and `##` paragraph-break) lines until the
+/// first non-`##` non-blank line. Returns `None` when there's no
+/// top-of-file `##` block.
+///
+/// Conventional layout the convention matches:
+///
+/// ```sh
+/// #!/usr/bin/env zsh
+/// ##
+/// ## NAME
+/// ##   foo.zsh — short one-line summary
+/// ##
+/// ## DESCRIPTION
+/// ##   Longer paragraph describing what the module does.
+///
+/// function foo() { … }
+/// ```
+///
+/// Used by the hover handler to surface module docs when the cursor
+/// lands on the shebang line or a `source FILE` / `. FILE` argument.
+pub(crate) fn extract_module_doc(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+    // Skip optional shebang.
+    if let Some(first) = lines.first() {
+        if first.starts_with("#!") {
+            i = 1;
+        }
+    }
+    // Skip optional blank line(s) between shebang and doc block.
+    while i < lines.len() && lines[i].trim().is_empty() {
+        i += 1;
+    }
+    // Collect `##` block.
+    let mut collected: Vec<String> = Vec::new();
+    while i < lines.len() {
+        let trimmed = lines[i].trim_start();
+        if let Some(rest) = trimmed.strip_prefix("## ") {
+            collected.push(rest.to_string());
+        } else if trimmed == "##" {
+            collected.push(String::new());
+        } else {
+            break;
+        }
+        i += 1;
+    }
+    while collected.last().is_some_and(|l| l.is_empty()) {
+        collected.pop();
+    }
+    if collected.is_empty() {
+        None
+    } else {
+        Some(collected.join("\n"))
+    }
+}
+
+/// Skip a leading run of `-X` / `+X` / `-Xa` flag arguments
+/// (each followed by whitespace) and return the remainder. Used so
+/// `typeset -gA NAME=…` advances past `-gA ` to `NAME=…` before the
+/// first-identifier check.
+fn skip_leading_flags(s: &str) -> &str {
+    let mut rest = s.trim_start();
+    while rest.starts_with('-') || rest.starts_with('+') {
+        // Walk until next whitespace.
+        let end = rest
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(i, _)| i)
+            .unwrap_or(rest.len());
+        rest = rest[end..].trim_start();
+    }
+    rest
+}
+
+/// Render a user-symbol hover card. Format mirrors the builtin
+/// docs cards: heading line, optional definition snippet in a code
+/// fence, then the doc body verbatim.
+fn render_user_doc_card(name: &str, kind: &str, def_line: &str, doc: &str) -> String {
+    let mut out = String::with_capacity(name.len() + doc.len() + 80);
+    out.push_str("**`");
+    out.push_str(name);
+    out.push_str("`** — _user-defined ");
+    out.push_str(kind);
+    out.push_str("_\n\n");
+    out.push_str("```sh\n");
+    out.push_str(def_line);
+    out.push_str("\n```\n\n");
+    out.push_str(doc);
+    out
 }
 
 /// Why hover was suppressed at a given cursor position. Returned by
@@ -3712,12 +4025,15 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     // route through `lookup_doc` because that one prepends a heading
     // (`**name** — _zsh builtin_\n\n`) and routes through a cascade
     // that can resolve to a special-var entry for the same name.
+    // Missing body is NOT fatal: module builtins (xattr / network /
+    // pty / zstat / sysread / …) often have no markdown body, and
+    // their flags come purely from `BUILTIN_FLAG_DOCS_OVERRIDE`.
+    // Fall through with empty body so the Tier 3 merge below supplies them.
     let body: String = match crate::zsh_builtin_docs::lookup_builtin_doc(name) {
         Some((_, b)) => b.to_string(),
-        None => match crate::zsh_ext_builtin_docs::lookup_full(name) {
-            Some(b) => b.to_string(),
-            None => return Vec::new(),
-        },
+        None => crate::zsh_ext_builtin_docs::lookup_full(name)
+            .map(|b| b.to_string())
+            .unwrap_or_default(),
     };
     let mut out: Vec<(String, String)> = Vec::new();
     // Pattern: `- **\`-X[ _arg_]\`** <anything-but-newline-or-bullet>`.
@@ -3737,8 +4053,14 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     // line; the optional single `\n` lets us cross exactly one line
     // boundary to the description, so we don't accidentally pick up
     // prose paragraphs that separate flag clusters.
+    // Arg notation has two forms in zsh's docs:
+    //   `- **`-C cols`**`        ← arg INSIDE backticks (rare)
+    //   `- **`-C` _cols_**`      ← arg OUTSIDE backticks, italicized (dominant)
+    // The `[^*\n]*` between closing `` ` `` and closing `**` accepts
+    // the italicized-arg form (` _cols_`, ` _name_`, ` _tab-stop_`)
+    // without which print/read/where/etc. lose 5–10 flags each.
     let re_bullet = regex::Regex::new(
-        r"(?m)^\s*-\s+\*\*`(-[A-Za-z+])(?:\s+[^`]*)?`\*\*[ \t]*[^A-Za-z\n]*[ \t]*(?:\n[ \t]*)?([A-Z][^\n]+)",
+        r"(?m)^\s*-\s+\*\*`(-[A-Za-z+])(?:\s+[^`]*)?`[^*\n]*\*\*[ \t]*[^A-Za-z\n]*[ \t]*(?:\n[ \t]*)?([A-Z][^\n]+)",
     )
     .unwrap();
     for cap in re_bullet.captures_iter(&body) {
@@ -3772,6 +4094,18 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
             out.push((flag, desc));
         }
     }
+    // Tier 3 merge: union with hand-curated overrides sourced from
+    // `man zshall`. Overrides win on flag-letter collisions; body
+    // entries fill in letters the override doesn't list. Pinned by
+    // `tests/lsp_man_audit.rs`.
+    if let Some(over) = lookup_builtin_flag_docs_override(name) {
+        let over_keys: std::collections::HashSet<&str> =
+            over.iter().map(|(f, _)| *f).collect();
+        out.retain(|(f, _)| !over_keys.contains(f.as_str()));
+        for (f, d) in over {
+            out.push((f.to_string(), d.to_string()));
+        }
+    }
     tracing::debug!(
         target: "zshrs::lsp::completion",
         builtin = %name,
@@ -3783,6 +4117,199 @@ fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     }
     out
 }
+
+/// Look up the hand-curated zsh-builtin flag table. Sourced from
+/// `man zshall`. Merged with body-scraped flags in
+/// `extract_builtin_flags` — overrides win on flag-letter collisions,
+/// body fills in the rest. Pinned by `tests/lsp_man_audit.rs`.
+pub(crate) fn lookup_builtin_flag_docs_override(
+    name: &str,
+) -> Option<&'static [(&'static str, &'static str)]> {
+    BUILTIN_FLAG_DOCS_OVERRIDE
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, flags)| *flags)
+}
+
+/// Hand-curated zsh-builtin flag tables sourced from `man zshall`.
+/// Merged with body-scraped flags. Coverage 100% per
+/// `tests/lsp_man_audit.rs`.
+const BUILTIN_FLAG_DOCS_OVERRIDE: &[(&str, &[(&str, &str)])] = &[
+    ("bindkey", &[
+        ("-L", "With `-l`, format output as `bindkey -A` / `-N` replay invocations."),
+    ]),
+    ("enable", &[
+        ("-p", "Operate on patterns added with `disable -p` (custom match-pattern hooks)."),
+    ]),
+    ("example", &[
+        ("-a", "Pass arg as the example builtin's first parameter."),
+        ("-f", "Toggle the example builtin's `flag` field (test option)."),
+        ("-g", "Toggle the example builtin's global-state test mode."),
+        ("-l", "Toggle the example builtin's `long` test mode."),
+        ("-s", "Toggle the example builtin's stateful test mode."),
+    ]),
+    ("fc", &[
+        ("-s", "Substitute `old=new` on the selected line and re-execute (no editor invoked)."),
+    ]),
+    ("getln", &[
+        ("-A", "Read into an array (split into words instead of one scalar)."),
+        ("-E", "Don't echo (default; symmetric counterpart to `-e`)."),
+        ("-c", "Read characters one at a time."),
+        ("-e", "Echo read text back to terminal as it arrives."),
+        ("-l", "Read just one line (default)."),
+        ("-n", "Don't strip trailing newline from the result."),
+    ]),
+    ("kill", &[
+        ("-g", "Send the signal to the process GROUP, not just the process. Job-spec is a pgid."),
+        ("-i", "Interpret arguments as job specs rather than process ids."),
+        ("-n", "`-n signum` — send numeric signal `signum`."),
+        ("-s", "`-s signame` — send named signal (`TERM`, `HUP`, `KILL`, …)."),
+    ]),
+    ("print", &[
+        ("-f", "`-f format` — printf-style format string (same semantics as `printf`)."),
+    ]),
+    ("read", &[
+        ("-c", "Read characters one at a time (no line-buffering)."),
+        ("-e", "Echo read input back to terminal as it arrives."),
+    ]),
+    ("sched", &[
+        ("-e", "`+sched +HH:MM:SS event...` — schedule a command at the given time."),
+        ("-i", "`sched -i id` — remove the scheduled entry with the given id."),
+        ("-m", "`sched -m mask` — match scheduled entries against a glob pattern."),
+        ("-t", "Print scheduled entries with full timestamps."),
+    ]),
+    ("type", &[
+        ("-S", "Like `-s` but include scripts in `$PATH` as commands."),
+        ("-a", "Print every match for each name (not just the first)."),
+        ("-f", "Skip functions when looking up `name`."),
+        ("-m", "Treat each name as a glob pattern."),
+        ("-p", "Print only external commands found in `$path`."),
+        ("-s", "Suppress output; exit 0 if name resolves to a command."),
+        ("-w", "Print one of `alias`/`builtin`/`command`/`function`/`hashed`/`none` per name."),
+    ]),
+    ("ulimit", &[
+        ("-H", "Operate on the hard limit (default with `-S` is the soft limit)."),
+        ("-N", "`-N n` — operate on resource number `n` (system-specific integer)."),
+        ("-S", "Operate on the soft limit (default if neither `-H` nor `-S` given)."),
+        ("-T", "Maximum number of threads per process."),
+        ("-a", "List all of the current resource limits (default verb)."),
+        ("-c", "Maximum core-file size in 512-byte blocks."),
+        ("-d", "Maximum data-segment size in kilobytes."),
+        ("-f", "Maximum file size the shell can write in 512-byte blocks."),
+        ("-i", "Maximum number of pending signals."),
+        ("-k", "Maximum number of kqueues allocated (BSD)."),
+        ("-l", "Maximum locked-in-memory address space in kilobytes."),
+        ("-m", "Maximum resident-set size in kilobytes."),
+        ("-n", "Maximum number of open file descriptors."),
+        ("-p", "The number of pseudo-terminals (BSD)."),
+        ("-q", "Maximum bytes in POSIX message queues."),
+        ("-r", "Maximum real-time scheduling priority."),
+        ("-s", "Maximum stack size in kilobytes."),
+        ("-t", "Maximum CPU time in seconds."),
+        ("-v", "Maximum virtual-memory address space in kilobytes."),
+        ("-w", "Maximum kilobytes of swapped-out memory."),
+        ("-x", "Maximum number of file-locks held."),
+    ]),
+    ("where", &[
+        ("-S", "Like `-s` but include scripts in `$PATH` as commands."),
+        ("-m", "Treat each name as a glob pattern."),
+        ("-p", "Print only external commands found in `$path`."),
+        ("-s", "Suppress output; exit 0 if name resolves."),
+        ("-w", "Print one of `alias`/`builtin`/`command`/`function`/`hashed`/`none` per name."),
+        ("-x", "`-x num` — indent each printed body line by `num` spaces."),
+    ]),
+    ("which", &[
+        ("-S", "Like `-s` but include scripts in `$PATH`."),
+        ("-a", "Print every match for each name."),
+        ("-m", "Treat each name as a glob pattern."),
+        ("-p", "Print only external commands found in `$path`."),
+        ("-s", "Suppress output; exit 0 if name resolves."),
+        ("-w", "Print one of `alias`/`builtin`/`command`/`function`/`hashed`/`none` per name."),
+        ("-x", "`-x num` — indent each printed body line by `num` spaces."),
+    ]),
+    ("zcompile", &[
+        ("-k", "Mark each compiled function for KSH-style autoload."),
+        ("-m", "With `-c` / `-a`, treat each name as a glob pattern."),
+    ]),
+    // ── zsh/files coreutils-style builtins ──────────────────────
+    ("chgrp", &[
+        ("-R", "Recursively descend into directories."),
+        ("-h", "Change group of the symlink itself, not the target."),
+        ("-s", "Suppress error messages for inaccessible files."),
+    ]),
+    ("ln", &[
+        ("-d", "Create a hard link to a directory (requires privilege)."),
+        ("-f", "If `dest` exists, remove it before creating the link."),
+        ("-h", "If `dest` is a symlink, operate on the symlink itself."),
+        ("-i", "Prompt before overwriting `dest`."),
+        ("-n", "If `dest` is a symlink to a directory, replace the symlink."),
+        ("-s", "Create a symbolic link instead of a hard link."),
+    ]),
+    // ── zsh/system ──────────────────────────────────────────────
+    ("syserror", &[
+        ("-e", "`-e errvar` — store error string in `$errvar` instead of stderr."),
+        ("-p", "`-p prefix` — prepend `prefix` to the error message."),
+    ]),
+    ("sysread", &[
+        ("-c", "`-c countvar` — store byte count read in `$countvar`."),
+        ("-i", "`-i infd` — read from file descriptor `infd` instead of stdin."),
+        ("-o", "`-o outfd` — relay bytes to `outfd` as well as storing them."),
+    ]),
+    ("syswrite", &[
+        ("-c", "`-c countvar` — store byte count actually written in `$countvar`."),
+        ("-o", "`-o outfd` — write to `outfd` instead of stdout."),
+    ]),
+    ("zselect", &[
+        ("-A", "`-A arrayname` — store ready fds into `arrayname`."),
+        ("-t", "`-t timeout` — timeout in hundredths of a second (centiseconds)."),
+    ]),
+    ("zsystem", &[
+        ("-f", "`zsystem flock -f var file` — store lock file descriptor in `$var`."),
+    ]),
+    // ── zsh/net/socket + zsh/net/tcp ────────────────────────────
+    ("zsocket", &[
+        ("-a", "Open a server (listening) socket bound to the named path."),
+        ("-d", "`-d fd` — open the socket on the specified file descriptor."),
+        ("-l", "List currently-open zsocket file descriptors."),
+        ("-t", "Set close-on-exec on the socket."),
+        ("-v", "Verbose — print the resulting file descriptor to stdout."),
+    ]),
+    ("ztcp", &[
+        ("-a", "Server mode — accept the next connection on the specified listening fd."),
+        ("-c", "Close the named ztcp file descriptor."),
+        ("-d", "`-d fd` — operate on the specified file descriptor."),
+        ("-f", "Force — don't fail if a similar connection already exists."),
+        ("-l", "Listen mode — open a server socket on the given port."),
+        ("-t", "Set close-on-exec on the socket."),
+        ("-v", "Verbose — print the resulting file descriptor to stdout."),
+    ]),
+    // ── zsh/db/gdbm xattr family ────────────────────────────────
+    ("zdelattr",  &[("-h", "Operate on the symlink itself, not its target.")]),
+    ("zgetattr",  &[("-h", "Operate on the symlink itself, not its target.")]),
+    ("zlistattr", &[("-h", "Operate on the symlink itself, not its target.")]),
+    ("zsetattr",  &[("-h", "Operate on the symlink itself, not its target.")]),
+    // ── zsh/zutil ───────────────────────────────────────────────
+    ("zstyle", &[
+        ("-L", "`-L [ metapattern [ style ] ]` — list styles in `zstyle`-replay form."),
+        ("-e", "`-e pattern style string ...` — value-as-shell-code (re-evaluated each lookup)."),
+    ]),
+    // ── zsh/zpty ────────────────────────────────────────────────
+    ("zpty", &[
+        ("-L", "List active zpty sessions with their commands."),
+        ("-m", "With `-r`, treat `pattern` as a match-spec (read until pattern matches)."),
+        ("-n", "With `-w`, don't append a newline to written strings."),
+        ("-t", "Test whether the named zpty session is still alive."),
+    ]),
+    // ── zshzle: zle builtin ─────────────────────────────────────
+    ("zle", &[
+        ("-L", "With `-l`, format output as `zle` replay invocations."),
+        ("-a", "With `-N`, mark new widget as available outside the editor (script-callable)."),
+        ("-c", "With `-R`, clear the screen before re-display."),
+        ("-n", "Pass `-n num` through to the widget invocation (numeric argument)."),
+        ("-r", "With `-T`, remove the named termcap handler."),
+        ("-w", "With `-F`, treat the fd handler as a writeable-fd ready handler."),
+    ]),
+];
 
 /// Per-compsys-fn flag tables sourced from `man zshcompsys` signatures
 /// (`_foo [ -x ] [ -12VJ ] tag name descr …`). The yodl source for
@@ -7463,6 +7990,175 @@ mod tests {
         assert!(matches!(word_at(src, 0, 5), None | Some(_)));
         // Position past end-of-line
         assert_eq!(word_at(src, 0, 999), None);
+    }
+
+    // ── find_user_symbol_doc (## doc-comment hover) ─────────────────────
+
+    #[test]
+    fn user_doc_attaches_to_function_with_keyword_form() {
+        let src = "## Print a hello banner with the user's name.\n\
+                   ## Used by the README demo.\n\
+                   function greet {\n  print hi\n}\n";
+        let doc = super::find_user_symbol_doc(src, "greet").expect("doc");
+        assert!(doc.contains("**`greet`** — _user-defined function_"), "got {doc:?}");
+        assert!(doc.contains("Print a hello banner"), "got {doc:?}");
+        assert!(doc.contains("Used by the README demo"), "got {doc:?}");
+        // Code fence with the actual definition line.
+        assert!(doc.contains("```sh\nfunction greet {"), "got {doc:?}");
+    }
+
+    #[test]
+    fn user_doc_attaches_to_posix_function_form() {
+        let src = "## Sum two integers.\n\
+                   add() {\n  print $(( $1 + $2 ))\n}\n";
+        let doc = super::find_user_symbol_doc(src, "add").expect("doc");
+        assert!(doc.contains("Sum two integers"), "got {doc:?}");
+        assert!(doc.contains("user-defined function"), "got {doc:?}");
+    }
+
+    #[test]
+    fn user_doc_attaches_to_alias() {
+        let src = "## Short for `ls --color=auto -lAh`.\nalias ll='ls --color=auto -lAh'\n";
+        let doc = super::find_user_symbol_doc(src, "ll").expect("doc");
+        assert!(doc.contains("Short for"), "got {doc:?}");
+        assert!(doc.contains("user-defined alias"), "got {doc:?}");
+    }
+
+    #[test]
+    fn user_doc_attaches_to_typeset_parameter() {
+        let src = "## Maximum retries before giving up.\ntypeset -i MAX_RETRIES=5\n";
+        let doc = super::find_user_symbol_doc(src, "MAX_RETRIES").expect("doc");
+        assert!(doc.contains("Maximum retries"), "got {doc:?}");
+        assert!(doc.contains("user-defined parameter"), "got {doc:?}");
+    }
+
+    #[test]
+    fn user_doc_multi_paragraph_with_blank_double_hash() {
+        // `##` on its own line is a paragraph break inside the block.
+        let src = "## First paragraph describing what the function does.\n\
+                   ##\n\
+                   ## Second paragraph about edge cases.\n\
+                   function foo() {}\n";
+        let doc = super::find_user_symbol_doc(src, "foo").expect("doc");
+        assert!(doc.contains("First paragraph"), "got {doc:?}");
+        assert!(doc.contains("Second paragraph"), "got {doc:?}");
+        // Paragraph break preserved.
+        assert!(doc.contains("\n\n"), "expected paragraph break: {doc:?}");
+    }
+
+    #[test]
+    fn user_doc_skips_blank_lines_between_block_and_def() {
+        // Doc block, then blank line, then def — still attached.
+        let src = "## Doc for the function.\n\nfunction f() {}\n";
+        let doc = super::find_user_symbol_doc(src, "f").expect("doc");
+        assert!(doc.contains("Doc for the function"), "got {doc:?}");
+    }
+
+    #[test]
+    fn user_doc_ignores_single_hash_comments() {
+        // Only `##` lines attach. Plain `#` comments are routine code
+        // remarks and must NOT show up as docstrings.
+        let src = "# This is just a code comment, not a docstring.\n\
+                   function f() {}\n";
+        assert!(
+            super::find_user_symbol_doc(src, "f").is_none(),
+            "plain `#` comments must not attach as docs",
+        );
+    }
+
+    #[test]
+    fn user_doc_returns_none_when_symbol_absent() {
+        let src = "## Doc for greet.\nfunction greet() {}\n";
+        assert!(super::find_user_symbol_doc(src, "nonexistent").is_none());
+    }
+
+    #[test]
+    fn user_doc_returns_none_when_no_doc_block() {
+        let src = "function greet() {}\n";
+        assert!(super::find_user_symbol_doc(src, "greet").is_none());
+    }
+
+    #[test]
+    fn user_doc_stops_at_intervening_single_hash_line() {
+        // `## doc` then `# code comment` then `function f` —
+        // intervening single-`#` terminates the doc block, so no
+        // doc attaches.
+        let src = "## Real doc here.\n\
+                   # Inline comment unrelated to the doc.\n\
+                   function f() {}\n";
+        assert!(
+            super::find_user_symbol_doc(src, "f").is_none(),
+            "intervening `#` comment must terminate doc collection",
+        );
+    }
+
+    // ── extract_module_doc (top-of-file ## block) ───────────────────────
+
+    #[test]
+    fn module_doc_collects_top_block_after_shebang() {
+        let src = "#!/usr/bin/env zsh\n\
+                   ## foo.zsh — short summary.\n\
+                   ## Provides foo, bar, baz helpers.\n\
+                   \n\
+                   function foo() {}\n";
+        let doc = super::extract_module_doc(src).expect("doc");
+        assert!(doc.contains("foo.zsh"), "got {doc:?}");
+        assert!(doc.contains("Provides foo"), "got {doc:?}");
+    }
+
+    #[test]
+    fn module_doc_collects_top_block_without_shebang() {
+        let src = "## bar.zsh — utility library.\n\
+                   function bar() {}\n";
+        let doc = super::extract_module_doc(src).expect("doc");
+        assert!(doc.contains("bar.zsh"), "got {doc:?}");
+    }
+
+    #[test]
+    fn module_doc_supports_double_hash_paragraph_breaks() {
+        let src = "## First paragraph of the module summary.\n\
+                   ##\n\
+                   ## Second paragraph with details.\n\
+                   function foo() {}\n";
+        let doc = super::extract_module_doc(src).expect("doc");
+        assert!(doc.contains("First paragraph"), "got {doc:?}");
+        assert!(doc.contains("Second paragraph"), "got {doc:?}");
+        assert!(doc.contains("\n\n"), "expected paragraph break: {doc:?}");
+    }
+
+    #[test]
+    fn module_doc_skips_blank_lines_between_shebang_and_block() {
+        let src = "#!/usr/bin/env zsh\n\
+                   \n\
+                   \n\
+                   ## Module doc starts here.\n\
+                   function foo() {}\n";
+        let doc = super::extract_module_doc(src).expect("doc");
+        assert!(doc.contains("Module doc starts here"), "got {doc:?}");
+    }
+
+    #[test]
+    fn module_doc_returns_none_when_no_block() {
+        let src = "#!/usr/bin/env zsh\nfunction foo() {}\n";
+        assert!(super::extract_module_doc(src).is_none());
+    }
+
+    #[test]
+    fn module_doc_returns_none_for_plain_single_hash_comments() {
+        // Single `#` comments at top of file are NOT module docs.
+        let src = "#!/usr/bin/env zsh\n\
+                   # This is a regular code comment, not a docstring.\n\
+                   function foo() {}\n";
+        assert!(super::extract_module_doc(src).is_none());
+    }
+
+    #[test]
+    fn module_doc_stops_at_first_real_code_line() {
+        let src = "## Module doc line 1.\n\
+                   function foo() {}\n\
+                   ## This should NOT be collected — below the def.\n";
+        let doc = super::extract_module_doc(src).expect("doc");
+        assert_eq!(doc, "Module doc line 1.");
     }
 
     // ── scan_symbols ────────────────────────────────────────────────────

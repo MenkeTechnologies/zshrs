@@ -1997,7 +1997,19 @@ fn patoptail(p: usize, val: usize) {
 pub struct rpat {
     pub patbeginp: [usize; NSUBEXP], // c:241 capture starts (byte offsets)
     pub patendp: [usize; NSUBEXP],   // c:242 capture ends
-    pub captures_set: u16,           // bitmask of groups successfully captured
+    /// `parsfound` from `Src/pattern.c` (per c:2957/c:2989 references).
+    /// Two-stripe bitmap: bits `0..NSUBEXP` track per-group P_OPEN
+    /// first-write (`patbeginp[i]` committed); bits `NSUBEXP..2*NSUBEXP`
+    /// track per-group P_CLOSE first-write (`patendp[i]` committed).
+    /// Bit `n-1` (open) = `1 << (n-1)`; bit `n-1+NSUBEXP` (close) =
+    /// `1 << (n-1+NSUBEXP)`. Width u32 to fit `2*NSUBEXP = 18` bits.
+    /// The prior u16 width with a single-stripe (close-only) bit
+    /// allowed P_OPEN to re-overwrite `patbeginp[i]` on every
+    /// backtrack iteration — turning the SECOND capture's start
+    /// offset into the FIRST iteration's, e.g. `(*)-(*)` against
+    /// `hello-world` returned `match[2] = "hello-world"` instead of
+    /// the right `"world"`.
+    pub captures_set: u32, // c:Src/pattern.c parsfound
     /// Port of file-static `int errsfound` from `Src/pattern.c:2046`.
     /// Cumulative edit-count for approximate-match `(#aN)`. Reset to 0
     /// at the top of each pattry, incremented on P_EXACTLY mismatches
@@ -2211,10 +2223,16 @@ pub fn pattryrefs(
         if let Some(np) = nump {
             *np = n as i32;
         }
+        // c:2425+ — emit captured offsets to begp/endp out-arrays.
+        // Check the CLOSE bit (high stripe at NSUBEXP+i) since the
+        // group is only fully captured after its P_CLOSE fired; the
+        // matching open-bit `1 << i` would be set after P_OPEN even
+        // when the rest of the match later fails to reach P_CLOSE.
         if let Some(bv) = begp {
             bv.clear();
             for i in 0..n {
-                if (state.captures_set & (1 << i)) != 0 {
+                let close_bit = 1u32 << (i + NSUBEXP);
+                if (state.captures_set & close_bit) != 0 {
                     bv.push(state.patbeginp[i] as i32);
                 } else {
                     bv.push(0);
@@ -2224,7 +2242,8 @@ pub fn pattryrefs(
         if let Some(ev) = endp {
             ev.clear();
             for i in 0..n {
-                if (state.captures_set & (1 << i)) != 0 {
+                let close_bit = 1u32 << (i + NSUBEXP);
+                if (state.captures_set & close_bit) != 0 {
                     ev.push(state.patendp[i] as i32);
                 } else {
                     ev.push(0);
@@ -4120,18 +4139,23 @@ fn patmatch(
                 let n = (op - P_OPEN) as usize;
                 let save = s_off;
                 let saved_state = state.clone();
+                // c:2957 — `if (no && !(parsfound & (1 << (no - 1))))`.
+                // Open-bit is the LOW stripe: `1 << (n-1)`.
+                let open_bit = 1u32 << (n - 1);
                 if next == 0 {
                     // No continuation — leaf P_OPEN; just commit and continue.
-                    if n > 0 && n <= NSUBEXP && (state.captures_set & (1u16 << (n - 1))) == 0 {
+                    if n > 0 && n <= NSUBEXP && (state.captures_set & open_bit) == 0 {
                         state.patbeginp[n - 1] = save;
+                        state.captures_set |= open_bit; // c:2959
                     }
                     return Some(s_off);
                 }
                 match patmatch(code, next, string, s_off, state, glob_flags) {
                     Some(end) => {
                         // c:2957-2959 — first-write commit.
-                        if n > 0 && n <= NSUBEXP && (state.captures_set & (1u16 << (n - 1))) == 0 {
+                        if n > 0 && n <= NSUBEXP && (state.captures_set & open_bit) == 0 {
                             state.patbeginp[n - 1] = save;
+                            state.captures_set |= open_bit; // c:2959
                         }
                         return Some(end);
                     }
@@ -4167,18 +4191,21 @@ fn patmatch(
                 let n = (op - P_CLOSE) as usize;
                 let save = s_off;
                 let saved_state = state.clone();
+                // c:2989 — `if (no && !(parsfound & (1 << (no+NSUBEXP-1))))`.
+                // Close-bit is the HIGH stripe: `1 << (n-1+NSUBEXP)`.
+                let close_bit = 1u32 << (n - 1 + NSUBEXP);
                 if next == 0 {
-                    if n > 0 && n <= NSUBEXP && (state.captures_set & (1u16 << (n - 1))) == 0 {
+                    if n > 0 && n <= NSUBEXP && (state.captures_set & close_bit) == 0 {
                         state.patendp[n - 1] = save;
-                        state.captures_set |= 1u16 << (n - 1);
+                        state.captures_set |= close_bit;
                     }
                     return Some(s_off);
                 }
                 match patmatch(code, next, string, s_off, state, glob_flags) {
                     Some(end) => {
-                        if n > 0 && n <= NSUBEXP && (state.captures_set & (1u16 << (n - 1))) == 0 {
+                        if n > 0 && n <= NSUBEXP && (state.captures_set & close_bit) == 0 {
                             state.patendp[n - 1] = save;
-                            state.captures_set |= 1u16 << (n - 1);
+                            state.captures_set |= close_bit;
                         }
                         return Some(end);
                     }

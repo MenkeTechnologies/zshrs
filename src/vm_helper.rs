@@ -2416,12 +2416,68 @@ impl ShellExecutor {
 /// and the VM bridge; `src/ported/*` files inline the compile+match
 /// idiom directly to preserve PORT.md Rule 1 faithfulness.
 pub fn glob_match_static(s: &str, pattern: &str) -> bool {
-    let matched = patcompile(pattern, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, s));
+    let Some(prog) = patcompile(pattern, PAT_HEAPDUP as i32, None) else {
+        return false;
+    };
+    // (#b) (GF_BACKREF) — capture-aware path. Use pattryrefs so the
+    // per-group begin/end offsets surface, then write $match /
+    // $mbegin / $mend (c:Src/pattern.c GF_BACKREF handling at
+    // c:775 + c:2417). Falls through to the basic pattry path when
+    // (#b) isn't on — that matches the previous behaviour exactly
+    // and avoids the small extra cost (state clone + Vec<i32> alloc)
+    // for the (#b)-free common case.
+    let gf = prog.0.globflags;
+    let has_backref = (gf & crate::ported::zsh_h::GF_BACKREF as i32) != 0;
+    let matched;
+    if has_backref {
+        let mut nump: i32 = 0;
+        let mut begp: Vec<i32> = Vec::new();
+        let mut endp: Vec<i32> = Vec::new();
+        matched = crate::ported::pattern::pattryrefs(
+            &prog,
+            s,
+            s.len() as i32,
+            -1,
+            None,
+            0,
+            Some(&mut nump),
+            Some(&mut begp),
+            Some(&mut endp),
+        );
+        if matched {
+            let n = (nump as usize).min(begp.len()).min(endp.len());
+            let mut match_arr: Vec<String> = Vec::with_capacity(n);
+            let mut begin_arr: Vec<String> = Vec::with_capacity(n);
+            let mut end_arr: Vec<String> = Vec::with_capacity(n);
+            // KSHARRAYS off → 1-based; on → 0-based. C path:
+            // `setiparam("MBEGIN", patoffset + !isset(KSHARRAYS))`
+            // — so the base offset added to each begin/end index.
+            let ksharrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+            let base = if ksharrays { 0 } else { 1 };
+            for i in 0..n {
+                let b = begp[i].max(0) as usize;
+                let e = endp[i].max(0) as usize;
+                let lo = b.min(s.len());
+                let hi = e.min(s.len()).max(lo);
+                match_arr.push(s[lo..hi].to_string());
+                begin_arr.push((b + base).to_string());
+                // mend is the INDEX of the last matched char (inclusive),
+                // so end - 1 + base. For an empty span use the begin
+                // offset (zsh's setiparam("MEND", mlen + patoffset + ...
+                // - 1) shape from c:2444-2446).
+                end_arr.push(((e + base).saturating_sub(1)).to_string());
+            }
+            crate::ported::params::setaparam("match", match_arr);
+            crate::ported::params::setaparam("mbegin", begin_arr);
+            crate::ported::params::setaparam("mend", end_arr);
+        }
+    } else {
+        matched = pattry(&prog, s);
+    }
     // c:Src/pattern.c GF_MATCHREF — `(#m)pat` writes the matched
     // substring to $MATCH on success. In `[[ str == pat ]]` cond
     // context the pattern matches the whole string, so on success
-    // $MATCH = the input. Capture-group (#b) is deferred; (#m) is
-    // the high-traffic case (zinit plugin-name matching).
+    // $MATCH = the input.
     if matched && pattern.contains("(#m)") {
         crate::ported::params::setsparam("MATCH", s);
         crate::ported::params::setiparam("MBEGIN", 1);
