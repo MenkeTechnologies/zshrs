@@ -5562,6 +5562,65 @@ pub fn paramsubst(
                     }
                     out
                 };
+                // c:Src/subst.c around line 3354 / glob.c:2687 —
+                // when the pattern carries `(#m)` (GF_MATCHREF), the
+                // replacement is re-evaluated per match so
+                // `${var//(#m)pat/$MATCH...}` sees the current match's
+                // $MATCH / $MBEGIN / $MEND. Without this, the pre-
+                // computed `repl` captures the pre-substitution
+                // $MATCH (empty) and every match expands to the same
+                // string. Detected via literal `(#m)` substring in
+                // the original pattern; the (#b) and (#m) tests
+                // require this re-evaluation path.
+                let pat_has_m = pat_after_anchor.contains("(#m)")
+                    || pat_after_anchor.contains("(#b)");
+                let eval_repl_for_match =
+                    |span_text: &str, span_start_byte: usize| -> String {
+                        if !pat_has_m {
+                            return repl.clone();
+                        }
+                        // Set $MATCH / $MBEGIN / $MEND so the singsub
+                        // pass below sees the current capture state.
+                        crate::ported::params::setsparam("MATCH", span_text);
+                        let base = if isset(crate::ported::zsh_h::KSHARRAYS) {
+                            0i64
+                        } else {
+                            1
+                        };
+                        crate::ported::params::setiparam(
+                            "MBEGIN",
+                            span_start_byte as i64 + base,
+                        );
+                        crate::ported::params::setiparam(
+                            "MEND",
+                            (span_start_byte as i64 + span_text.len() as i64 + base)
+                                .saturating_sub(1),
+                        );
+                        let saved_skip = SKIP_FILESUB.with(|c| c.get());
+                        SKIP_FILESUB.with(|c| c.set(true));
+                        let s = untokenize(&singsub(&raw_repl));
+                        SKIP_FILESUB.with(|c| c.set(saved_skip));
+                        // Same `\X` → `X` strip as the precomputed
+                        // path above so the two stay in sync.
+                        let mut out = String::with_capacity(s.len());
+                        let mut it = s.chars().peekable();
+                        while let Some(c) = it.next() {
+                            if c == '\\' {
+                                if let Some(&nx) = it.peek() {
+                                    if nx == '\\' {
+                                        out.push('\\');
+                                        it.next();
+                                        continue;
+                                    }
+                                    out.push(nx);
+                                    it.next();
+                                    continue;
+                                }
+                            }
+                            out.push(c);
+                        }
+                        out
+                    };
                 // Per-element replace for arrays — zsh treats each
                 // element as a separate match target, preserving the
                 // array shape. \${(@)arr//pat/repl} keeps element
@@ -5589,7 +5648,8 @@ pub fn paramsubst(
                             }
                         }
                         if let Some(e) = matched {
-                            o.push_str(&repl);
+                            let span: String = cv[..e].iter().collect();
+                            o.push_str(&eval_repl_for_match(&span, 0));
                             o.push_str(&cv[e..].iter().collect::<String>());
                         } else {
                             o.push_str(val);
@@ -5608,8 +5668,10 @@ pub fn paramsubst(
                             }
                         }
                         if let Some(s) = matched {
+                            let span_text: String = cv[s..].iter().collect();
+                            let span_byte = cv[..s].iter().map(|c| c.len_utf8()).sum();
                             o.push_str(&cv[..s].iter().collect::<String>());
-                            o.push_str(&repl);
+                            o.push_str(&eval_repl_for_match(&span_text, span_byte));
                         } else {
                             o.push_str(val);
                         }
@@ -5628,7 +5690,10 @@ pub fn paramsubst(
                             }
                         }
                         if let Some(e) = m {
-                            o.push_str(&repl);
+                            let span_text: String = cv[q..e].iter().collect();
+                            let span_byte =
+                                cv[..q].iter().map(|c| c.len_utf8()).sum::<usize>();
+                            o.push_str(&eval_repl_for_match(&span_text, span_byte));
                             q = if e == q { q + 1 } else { e };
                         } else {
                             o.push(cv[q]);
