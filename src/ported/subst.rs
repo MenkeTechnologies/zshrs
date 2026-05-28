@@ -3897,6 +3897,40 @@ pub fn paramsubst(
             } // skip ]
         }
 
+        // c:Src/subst.c:2925 getarg recursion — after the first
+        // subscript resolves an array element to a scalar, a SECOND
+        // `[…]` walks INTO that scalar as a string-subscript. zsh's
+        // `${a[N][M]}` returns char M (1-based) of array element N.
+        // The previous Rust port read only the first subscript and
+        // left the second `[…]` as opaque text in `rest`, which the
+        // operator-arm path doesn't recognize → fell through with
+        // the whole array element verbatim.
+        let mut second_subscript: Option<String> = None;
+        if idx < body_chars.len() && (body_chars[idx] == '[' || body_chars[idx] == Inbrack) {
+            idx += 1;
+            let sub2_start = idx;
+            let mut depth = 1_i32;
+            while idx < body_chars.len() && depth > 0 {
+                let bc = body_chars[idx];
+                if bc == '[' || bc == Inbrack {
+                    depth += 1;
+                } else if bc == ']' || bc == Outbrack {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                idx += 1;
+            }
+            if idx > sub2_start {
+                let raw2: String = body_chars[sub2_start..idx].iter().collect();
+                second_subscript = Some(singsub(&raw2));
+            }
+            if idx < body_chars.len() {
+                idx += 1;
+            } // skip ]
+        }
+
         // c:Src/subst.c:2899+ — the remaining operator+pattern text
         // after the name. The bridge passthru path delivers TOKEN-form
         // bytes here (Pound \u{84} for `#`, Hat \u{8a}, Equals \u{86},
@@ -4495,6 +4529,72 @@ pub fn paramsubst(
                 // through the per-name scanpm<X> handlers; falls back
                 // to empty (matches C when no special handler matches).
                 .unwrap_or_default()
+        };
+        // c:Src/subst.c:2925 — apply a chained `[N][M]` subscript to
+        // the scalar result from the first subscript. zsh's
+        // `${a[N][M]}` returns char M (1-based) of array element N.
+        let raw_value: String = if let Some(s2) = second_subscript.as_deref() {
+            // Slice form `M,P` or single index `M`. Negative indices
+            // count from the end (per zsh's 1-based-from-1 / -1-from-
+            // end convention).
+            let n = raw_value.chars().count() as i64;
+            let resolve = |k: i64| -> usize {
+                let k = if k < 0 { n + k + 1 } else { k };
+                if k < 1 {
+                    0
+                } else if k > n {
+                    n as usize
+                } else {
+                    (k - 1) as usize
+                }
+            };
+            if let Some((lo, hi)) = s2.split_once(',') {
+                let lo: i64 = lo
+                    .trim()
+                    .parse()
+                    .ok()
+                    .or_else(|| crate::ported::math::mathevali(lo.trim()).ok())
+                    .unwrap_or(1);
+                let hi: i64 = hi
+                    .trim()
+                    .parse()
+                    .ok()
+                    .or_else(|| crate::ported::math::mathevali(hi.trim()).ok())
+                    .unwrap_or(0);
+                let l = resolve(lo);
+                let h = if hi == 0 {
+                    n as usize
+                } else {
+                    let k = if hi < 0 { n + hi + 1 } else { hi };
+                    if k < 1 {
+                        0
+                    } else if k > n {
+                        n as usize
+                    } else {
+                        k as usize
+                    }
+                };
+                if l >= h {
+                    String::new()
+                } else {
+                    raw_value.chars().skip(l).take(h - l).collect()
+                }
+            } else {
+                let k: i64 = s2
+                    .trim()
+                    .parse()
+                    .ok()
+                    .or_else(|| crate::ported::math::mathevali(s2.trim()).ok())
+                    .unwrap_or(1);
+                let i = resolve(k);
+                raw_value
+                    .chars()
+                    .nth(i)
+                    .map(|c| c.to_string())
+                    .unwrap_or_default()
+            }
+        } else {
+            raw_value
         };
         // Nested subexp result counts as "set" so the outer `:-` /
         // `-` / `:?` modifiers see a real value rather than treating
