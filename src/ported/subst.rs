@@ -5963,9 +5963,8 @@ pub fn paramsubst(
                     let total = cv.len();
                     for k in 0..=total {
                         let prefix: String = cv[..k].iter().collect();
-                        if patcompile(&p, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |__p| pattry(&__p, &prefix))
-                        {
+                        // (#b) capture wiring via glob_match_static.
+                        if crate::vm_helper::glob_match_static(&prefix, &p) {
                             if match_only {
                                 return prefix;
                             }
@@ -6014,14 +6013,46 @@ pub fn paramsubst(
                     let total = cv.len();
                     let mut k = total;
                     loop {
-                        let suffix: String = cv[total - k..].iter().collect();
-                        if patcompile(&p, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |__p| pattry(&__p, &suffix))
-                        {
+                        let suffix_start_char = total - k;
+                        let suffix: String = cv[suffix_start_char..].iter().collect();
+                        // (#b) capture wiring via glob_match_static.
+                        if crate::vm_helper::glob_match_static(&suffix, &p) {
+                            // c:Src/pattern.c:2425 `setiparam("MBEGIN",
+                            // patoffset + !isset(KSHARRAYS))` — captures
+                            // come back relative to the matched substring;
+                            // user expects offsets in the ORIGINAL string,
+                            // so add the suffix's start byte offset to
+                            // every $mbegin / $mend slot.
+                            let suffix_byte_off: usize =
+                                cv[..suffix_start_char].iter().map(|c| c.len_utf8()).sum();
+                            if suffix_byte_off > 0 {
+                                if let Some(b) = crate::ported::params::getaparam("mbegin") {
+                                    let shifted: Vec<String> = b
+                                        .iter()
+                                        .map(|s| {
+                                            s.parse::<i64>()
+                                                .map(|n| (n + suffix_byte_off as i64).to_string())
+                                                .unwrap_or_else(|_| s.clone())
+                                        })
+                                        .collect();
+                                    crate::ported::params::setaparam("mbegin", shifted);
+                                }
+                                if let Some(e) = crate::ported::params::getaparam("mend") {
+                                    let shifted: Vec<String> = e
+                                        .iter()
+                                        .map(|s| {
+                                            s.parse::<i64>()
+                                                .map(|n| (n + suffix_byte_off as i64).to_string())
+                                                .unwrap_or_else(|_| s.clone())
+                                        })
+                                        .collect();
+                                    crate::ported::params::setaparam("mend", shifted);
+                                }
+                            }
                             if match_only {
                                 return suffix;
                             }
-                            return cv[..total - k].iter().collect();
+                            return cv[..suffix_start_char].iter().collect();
                         }
                         if k == 0 {
                             break;
@@ -6060,9 +6091,8 @@ pub fn paramsubst(
                     let total = cv.len();
                     for k in 0..=total {
                         let suffix: String = cv[total - k..].iter().collect();
-                        if patcompile(&p, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |__p| pattry(&__p, &suffix))
-                        {
+                        // (#b) capture wiring via glob_match_static.
+                        if crate::vm_helper::glob_match_static(&suffix, &p) {
                             if match_only {
                                 return suffix;
                             }
@@ -10670,18 +10700,38 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
 
     /// Set a scalar then run paramsubst on `expr` and return the result.
-    /// `$((...))` arithmetic expressions go through `singsub` so the
-    /// upstream `stringsubst` dispatch can route them to `arithsubst`
-    /// — `paramsubst` alone only handles `${...}` parameter forms,
-    /// not the arith bracket. Detected by literal substring scan to
-    /// keep the existing `${...}` tests on the same code path.
+    ///
+    /// `$((...))` arithmetic expressions route through `singsub` so the
+    /// upstream `stringsubst` dispatch can hand them to `arithsubst` —
+    /// `paramsubst` alone only handles `${...}` parameter forms, not
+    /// the arith bracket. Detected by literal substring scan to keep
+    /// the existing `${...}` tests on the same code path.
+    ///
+    /// `(#b)` / `(#m)` flag-prefix patterns require EXTENDEDGLOB to be
+    /// active (per `Src/pattern.c:953-957` gate). The shell pipeline
+    /// would already have set it via the test's `setopt EXTENDED_GLOB`
+    /// preamble; psubst_one short-circuits the shell so we set it
+    /// here. Saved/restored around the call.
     fn psubst_one(name: &str, value: &str, expr: &str) -> String {
         errflag.store(0, Ordering::Relaxed);
         setsparam(name, value);
-        if expr.contains("$((") {
-            return singsub(expr);
+        let needs_extglob = expr.contains("(#b)") || expr.contains("(#m)");
+        let saved_extglob = if needs_extglob {
+            let prev = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+            crate::ported::options::opt_state_set("extendedglob", true);
+            Some(prev)
+        } else {
+            None
+        };
+        let out = if expr.contains("$((") {
+            singsub(expr)
+        } else {
+            let (out, _, _) = paramsubst(expr, 0, false, 0, &mut 0);
+            out
+        };
+        if let Some(prev) = saved_extglob {
+            crate::ported::options::opt_state_set("extendedglob", prev);
         }
-        let (out, _, _) = paramsubst(expr, 0, false, 0, &mut 0);
         out
     }
 
