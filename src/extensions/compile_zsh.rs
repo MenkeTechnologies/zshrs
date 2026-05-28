@@ -5735,7 +5735,15 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             // the name lookup.
             if matches!(ch, '#' | '\u{84}') && i + 2 < chars.len() {
                 let after = chars[i + 2];
-                if matches!(after, '@' | '*' | '\u{87}') {
+                // Single-char specials terminate the `$#` walk after
+                // one trailing char: `$#?`, `$#!`, `$#-`, `$#0`, `$#$`
+                // are all `${#SPECIAL}` (length of $?, $!, $-, $0,
+                // $$). Plus tokenized forms Quest/Bang/Dash/Star/
+                // Stringg/Pound.
+                if matches!(after,
+                    '@' | '*' | '?' | '!' | '-' | '0' | '$' |
+                    '\u{87}' | '\u{97}' | '\u{96}' | '\u{9b}' | '\u{85}' | '\u{84}'
+                ) {
                     return i + 3;
                 }
                 if after == '_' || after.is_ascii_alphabetic() {
