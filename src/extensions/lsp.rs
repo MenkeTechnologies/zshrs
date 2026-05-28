@@ -1512,6 +1512,16 @@ fn hover(state: &State, params: &Value) -> Value {
     // gate honest when the cursor lands on the trailing edge of a word.
     let (word_start, word_end) = word_span_at(line_text, col).unwrap_or((col, col));
     let gate = classify_hover_position(line_text, word_start, word_end);
+    // Module-doc lookup runs BEFORE the gate: it fires on `#!`
+    // shebang lines (which the gate classifies as Comment) and on
+    // `source PATH` / `. PATH` argument hovers. When neither shape
+    // matches, gate enforcement continues below.
+    if let Some(module_doc) = find_module_doc_for_position(state, text, line_text, line_no) {
+        tracing::debug!(target: "zshrs::lsp::hover", line = line_no, col, "module_hit");
+        return json!({
+            "contents": { "kind": "markdown", "value": module_doc }
+        });
+    }
     if gate != HoverGate::Code {
         tracing::debug!(
             target: "zshrs::lsp::hover",
@@ -1735,11 +1745,15 @@ fn find_module_doc_for_position(
     let path = path_arg.filter(|p| !p.is_empty())?;
     // Strip surrounding quotes if any.
     let path = path.trim_matches(|c| c == '"' || c == '\'');
+    // Normalize: drop leading `./` so URI suffix match works (the
+    // doc cache stores `file:///proj/helpers.zsh`, the source line
+    // says `./helpers.zsh`).
+    let needle = path.strip_prefix("./").unwrap_or(path);
     // Try doc cache first (URI key match), then filesystem.
     let body = state
         .docs
         .iter()
-        .find_map(|(uri, body)| uri.ends_with(path).then(|| body.clone()))
+        .find_map(|(uri, body)| uri.ends_with(needle).then(|| body.clone()))
         .or_else(|| std::fs::read_to_string(path).ok())?;
     extract_module_doc(&body).map(|d| render_module_doc_card(path, &d))
 }
@@ -9852,6 +9866,132 @@ mod tests {
         });
         let h = hover(&state, &params);
         assert!(h.is_null(), "comment-text hover must be null, got: {h}");
+    }
+
+    #[test]
+    fn hover_on_shebang_with_module_doc_returns_module_card() {
+        // Shebang hover normally returns null, but when a `##` block
+        // follows the shebang the hover surfaces it as the module
+        // doc card. Lets users discover what a sourced library does
+        // by hovering its shebang.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///lib.zsh".into(),
+            "#!/usr/bin/env zsh\n\
+             ## libfoo.zsh — utility helpers.\n\
+             ## Provides foo / bar / baz.\n\
+             function foo() {}\n".into(),
+        );
+        // Cursor on `env` (any position on line 0 triggers the
+        // shebang-line module-doc lookup).
+        let params = json!({
+            "textDocument": { "uri": "file:///lib.zsh" },
+            "position": { "line": 0, "character": 12 },
+        });
+        let h = hover(&state, &params);
+        assert!(!h.is_null(), "shebang+##block hover should return card");
+        let body = h["contents"]["value"].as_str().unwrap_or("");
+        assert!(body.contains("libfoo.zsh"), "got {body:?}");
+        assert!(body.contains("zsh module"), "got {body:?}");
+    }
+
+    #[test]
+    fn hover_on_source_path_uri_cached_returns_target_module_doc() {
+        // `source ./other.zsh` — when other.zsh is loaded in the
+        // doc cache, hover on the path argument should surface its
+        // top-of-file `##` block.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///proj/main.zsh".into(),
+            "source ./helpers.zsh\nhelpers_init\n".into(),
+        );
+        state.docs.insert(
+            "file:///proj/helpers.zsh".into(),
+            "## helpers.zsh — shared bootstrap.\n\
+             function helpers_init() {}\n".into(),
+        );
+        // Cursor on the path argument `./helpers.zsh`.
+        let pos = "source ".len() + 2; // somewhere inside `./helpers.zsh`
+        let params = json!({
+            "textDocument": { "uri": "file:///proj/main.zsh" },
+            "position": { "line": 0, "character": pos },
+        });
+        let h = hover(&state, &params);
+        assert!(!h.is_null(), "source-path hover should return target's module doc");
+        let body = h["contents"]["value"].as_str().unwrap_or("");
+        assert!(body.contains("helpers.zsh"), "got {body:?}");
+        assert!(body.contains("shared bootstrap"), "got {body:?}");
+    }
+
+    #[test]
+    fn hover_on_dot_source_path_resolves_same_way() {
+        // POSIX dot-source form: `. PATH` is equivalent to `source PATH`.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///proj/main.zsh".into(),
+            ". ./helpers.zsh\n".into(),
+        );
+        state.docs.insert(
+            "file:///proj/helpers.zsh".into(),
+            "## dot-sourced helpers.\nfunction h() {}\n".into(),
+        );
+        let pos = ". ".len() + 2;
+        let params = json!({
+            "textDocument": { "uri": "file:///proj/main.zsh" },
+            "position": { "line": 0, "character": pos },
+        });
+        let h = hover(&state, &params);
+        assert!(!h.is_null(), ". PATH hover should resolve too");
+        let body = h["contents"]["value"].as_str().unwrap_or("");
+        assert!(body.contains("dot-sourced helpers"), "got {body:?}");
+    }
+
+    #[test]
+    fn hover_on_source_path_without_target_doc_returns_null() {
+        // `source PATH` but target file isn't loaded and doesn't
+        // exist on disk → null. (No fabrication.)
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "source /nonexistent/path/that/does/not/exist.zsh\n".into(),
+        );
+        let pos = "source ".len() + 5;
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 0, "character": pos },
+        });
+        let h = hover(&state, &params);
+        assert!(h.is_null(), "missing source target must not fabricate doc");
+    }
+
+    #[test]
+    fn hover_on_user_function_with_doc_returns_user_card() {
+        // Integration check for the prior find_user_symbol_doc path —
+        // confirm it actually surfaces through `hover()`, not just
+        // the unit test. Use a non-builtin name (`my_sum_helper`)
+        // so the builtin lookup misses and our fallback fires.
+        let _g = crate::test_util::global_state_lock();
+        let mut state = State::default();
+        state.docs.insert(
+            "file:///t.zsh".into(),
+            "## Sum two numbers and print the result.\n\
+             function my_sum_helper() { print $(( $1 + $2 )) }\n\
+             my_sum_helper 1 2\n".into(),
+        );
+        // Cursor on `my_sum_helper` at the call site (line 2).
+        let params = json!({
+            "textDocument": { "uri": "file:///t.zsh" },
+            "position": { "line": 2, "character": 0 },
+        });
+        let h = hover(&state, &params);
+        assert!(!h.is_null(), "user-fn hover should fire");
+        let body = h["contents"]["value"].as_str().unwrap_or("");
+        assert!(body.contains("Sum two numbers"), "got {body:?}");
+        assert!(body.contains("user-defined function"), "got {body:?}");
     }
 
     #[test]
