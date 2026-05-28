@@ -8523,10 +8523,22 @@ pub fn bin_read(
             }
         }
         if !got_any {
-            return 1;
+            // c:Src/builtin.c — immediate EOF (no bytes read at all).
+            // zsh clears the target variable(s) BEFORE returning 1
+            // so `while read line; do …; done < file` leaves `\$line`
+            // empty after the loop ends (not the last value).
+            // Previously zshrs returned 1 without touching the var,
+            // so the loop body's final iteration value persisted.
+            buf = String::new();
+            partial_eof = true;
+            // Fall through to the assignment block which will write
+            // "" to reply / vars / array. The trailing `if
+            // partial_eof { return 1; }` (line 8628) preserves the
+            // EOF status code.
+        } else {
+            buf = String::from_utf8_lossy(&buf_bytes).into_owned();
+            partial_eof = !saw_newline;
         }
-        buf = String::from_utf8_lossy(&buf_bytes).into_owned();
-        partial_eof = !saw_newline;
     }
 
     // Assign to scalar reply, multi-var split, or array.
