@@ -9167,6 +9167,15 @@ pub fn bin_trap(
         // that nothing else looks up.
         let canonical = if sig == 0 {
             "EXIT".to_string()
+        } else if let Some(name) = crate::ported::signals_h::sigs_name(sig) {
+            // c:Src/builtin.c — when sigarg is numeric (`trap "" 2`),
+            // the listing path must still emit the SYMBOLIC name
+            // (`INT`) so the canonical name lookup downstream works.
+            // Previously zshrs's `to_uppercase()` of "2" left the key
+            // as "2", so `trap "" 2; trap` listed `trap -- '' 2`
+            // instead of `trap -- '' INT`. Resolve to the canonical
+            // signal name via sigs_name(idx).
+            name.to_string()
         } else {
             // Strip SIG/sig prefix and uppercase so `SIGINT` / `int`
             // / `INT` all map to the same key.
