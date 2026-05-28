@@ -981,3 +981,181 @@ pub fn lookup_option_doc(name: &str) -> Option<(&'static str, &'static str)> {
         .find(|(n, _)| *n == canon)
         .map(|&(n, d)| (n, d))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === lookup_option_doc: alias-aware case-insensitive resolution ===
+
+    #[test]
+    fn lookup_canonical_option_resolves() {
+        // AUTO_CD is the canonical key in both ALIASES and DOCS.
+        let (canon, doc) = lookup_option_doc("AUTO_CD").expect("AUTO_CD must resolve");
+        assert_eq!(canon, "AUTO_CD");
+        assert!(!doc.is_empty());
+    }
+
+    #[test]
+    fn lookup_is_case_insensitive() {
+        // The helper uppercases the key before alias-table lookup —
+        // lowercase / mixed-case must hit the same canon.
+        let (c1, _) = lookup_option_doc("AUTO_CD").expect("upper must resolve");
+        let (c2, _) = lookup_option_doc("auto_cd").expect("lower must resolve");
+        let (c3, _) = lookup_option_doc("Auto_Cd").expect("mixed must resolve");
+        assert_eq!(c1, c2);
+        assert_eq!(c1, c3);
+    }
+
+    #[test]
+    fn lookup_resolves_compact_alias_form() {
+        // AUTOCD (no underscore) is the compact alias for AUTO_CD.
+        let (c1, _) = lookup_option_doc("AUTO_CD").expect("AUTO_CD must resolve");
+        let (c2, _) = lookup_option_doc("AUTOCD").expect("AUTOCD must resolve");
+        assert_eq!(c1, c2, "underscore and compact form must share canon");
+    }
+
+    #[test]
+    fn lookup_resolves_negated_alias_form() {
+        // NO_AUTO_CD / NOAUTOCD both alias to AUTO_CD (the docs body
+        // describes the option whether set or unset).
+        for neg in ["NO_AUTO_CD", "NOAUTOCD"] {
+            let (canon, _) = lookup_option_doc(neg).unwrap_or_else(|| panic!("{neg} must resolve"));
+            assert_eq!(canon, "AUTO_CD", "{neg} must resolve to AUTO_CD canon");
+        }
+    }
+
+    #[test]
+    fn lookup_unknown_option_returns_none() {
+        assert!(lookup_option_doc("NOT_A_REAL_OPTION").is_none());
+        assert!(lookup_option_doc("zzz_random_xyz").is_none());
+    }
+
+    #[test]
+    fn lookup_empty_string_returns_none() {
+        assert!(lookup_option_doc("").is_none());
+    }
+
+    #[test]
+    fn lookup_well_known_canonical_options() {
+        // Spot-check a representative slice of well-known zsh options
+        // across categories: completion, history, glob, prompt, job.
+        for opt in [
+            "AUTO_PUSHD",
+            "PUSHD_IGNORE_DUPS",
+            "EXTENDED_GLOB",
+            "HIST_IGNORE_DUPS",
+            "PROMPT_SUBST",
+            "INTERACTIVE",
+            "EMACS",
+            "VI",
+        ] {
+            assert!(
+                lookup_option_doc(opt).is_some(),
+                "well-known option {opt:?} must resolve"
+            );
+        }
+    }
+
+    // === OPTION_DOCS + OPTION_ALIASES + KSH_BASH_COMPAT_ALIASES integrity ===
+
+    #[test]
+    fn option_docs_table_nonempty() {
+        assert!(!OPTION_DOCS.is_empty());
+        // Zsh ships ~170 options; ≥100 is a sensible floor that
+        // catches generator output dropping major sections.
+        assert!(
+            OPTION_DOCS.len() >= 100,
+            "expected ≥100 OPTION_DOCS entries, got {}",
+            OPTION_DOCS.len()
+        );
+    }
+
+    #[test]
+    fn option_aliases_table_nonempty() {
+        assert!(!OPTION_ALIASES.is_empty());
+        // Each option has ~4 aliases (canon, NO_FOO, FOOBAR, NOFOOBAR).
+        assert!(
+            OPTION_ALIASES.len() >= 300,
+            "expected ≥300 OPTION_ALIASES entries, got {}",
+            OPTION_ALIASES.len()
+        );
+    }
+
+    #[test]
+    fn option_docs_no_empty_bodies() {
+        for (name, body) in OPTION_DOCS {
+            assert!(!body.is_empty(), "empty doc body for option {name:?}");
+        }
+    }
+
+    #[test]
+    fn option_docs_canonical_names_are_upper_with_underscore() {
+        // Canonical names in OPTION_DOCS are always ALL-CAPS with
+        // underscores (per zsh convention). The compact / lowercase
+        // forms only live in OPTION_ALIASES.
+        for (name, _) in OPTION_DOCS {
+            assert!(
+                name.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
+                "canonical option name {name:?} should be ALL-CAPS_WITH_UNDERSCORES"
+            );
+        }
+    }
+
+    #[test]
+    fn every_alias_canon_target_exists_in_docs() {
+        // Aliases that point at a missing canon would silently return
+        // None from lookup_option_doc despite matching in the alias
+        // table — a regression vector for any LSP / hover surface.
+        let doc_names: std::collections::HashSet<&str> =
+            OPTION_DOCS.iter().map(|(n, _)| *n).collect();
+        for (alias, canon) in OPTION_ALIASES {
+            assert!(
+                doc_names.contains(canon),
+                "alias {alias:?} → canon {canon:?} but canon is missing from OPTION_DOCS"
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_round_trips_every_canonical_option() {
+        // For every canonical name in OPTION_DOCS, lookup_option_doc
+        // must return the same body — the alias table must include
+        // at least the canonical-name → canonical-name self-mapping.
+        for (name, body) in OPTION_DOCS {
+            let (got_canon, got_body) = lookup_option_doc(name).unwrap_or_else(|| {
+                panic!("canonical name {name:?} must resolve through OPTION_ALIASES")
+            });
+            assert_eq!(got_canon, *name);
+            assert_eq!(got_body, *body);
+        }
+    }
+
+    #[test]
+    fn negated_form_resolves_to_same_canon_as_set_form() {
+        // For every option whose canon shows up in OPTION_DOCS, both
+        // FOO and NO_FOO surface names must resolve through the alias
+        // table to the same canon. Verifies the alias generator
+        // emitted both polarities for the same backing entry.
+        let mut checked = 0;
+        for (name, _) in OPTION_DOCS {
+            let no_form = format!("NO_{name}");
+            if let Some((set_canon, _)) = lookup_option_doc(name) {
+                if let Some((unset_canon, _)) = lookup_option_doc(&no_form) {
+                    assert_eq!(
+                        set_canon, unset_canon,
+                        "{name} and {no_form} must share canon"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        // Sanity: we actually exercised the loop. A zero-check pass
+        // would be silently meaningless.
+        assert!(
+            checked >= 50,
+            "expected to find ≥50 paired set/unset forms, only checked {checked}"
+        );
+    }
+}
