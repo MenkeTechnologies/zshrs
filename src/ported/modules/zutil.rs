@@ -1102,7 +1102,19 @@ pub fn bin_zstyle(
     let style = &args[1];
     let values: Vec<String> = args[2..].to_vec(); // c:949
     if let Ok(mut t) = zstyletab.lock() {
-        t.set(ctxt, style, values, false); // c:295 setstypat
+        t.set(ctxt, style, values.clone(), false); // c:295 setstypat
+    }
+    // PFA-SMR: one event per zstyle call. `rest` carries the style
+    // name + values so replay can re-emit the full setter.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() {
+        let ctx = crate::recorder::recorder_ctx_global();
+        let rest = if values.is_empty() {
+            style.clone()
+        } else {
+            format!("{} {}", style, values.join(" "))
+        };
+        crate::recorder::emit_zstyle(ctxt, &rest, ctx);
     }
     0 // c:951
 }

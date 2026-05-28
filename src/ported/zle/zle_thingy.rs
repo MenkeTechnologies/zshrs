@@ -1038,6 +1038,15 @@ pub fn bin_zle_link(_name: &str, args: &[String], _ops: &options, _func: i32) ->
         // c:574 bindwidget(...)
         return 1; // c:575
     }
+    // PFA-SMR: `zle -A SRC DST` aliases an existing widget under a
+    // new name. Record as a zle event with DST as the widget name
+    // and SRC as the implementing-function reference so replay can
+    // recreate the link.
+    #[cfg(feature = "recorder")]
+    if crate::recorder::is_enabled() {
+        let ctx = crate::recorder::recorder_ctx_global();
+        crate::recorder::emit_zle(dst, Some(src.as_str()), ctx);
+    }
     0 // c:578
 }
 
@@ -1080,6 +1089,21 @@ pub fn bin_zle_new(_name: &str, args: &[String], _ops: &options, _func: i32) -> 
     rthingy(&args[0]); // c:591 rthingy(args[0])
     if bindwidget(w.clone(), &args[0]) == 0 {
         // c:591 bindwidget(...)
+        // PFA-SMR: record widget registration. `name` is the widget
+        // identifier (args[0]); `func` is the implementing shell
+        // function (args[1] or args[0] when omitted). One event per
+        // successful `zle -N` invocation.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let ctx = crate::recorder::recorder_ctx_global();
+            let widget_name = &args[0];
+            let fn_arg = if args.len() >= 2 {
+                Some(args[1].as_str())
+            } else {
+                None
+            };
+            crate::recorder::emit_zle(widget_name, fn_arg, ctx);
+        }
         return 0; // c:592
     }
     // c:593-594 — bindwidget failed (TH_IMMORTAL) → free + warn.
