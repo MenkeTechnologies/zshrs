@@ -6523,10 +6523,42 @@ pub fn paramsubst(
             // synthesized tag from the storage table the value
             // lives in. Direct port of subst.c:2814 wantt arm
             // which checks paramtab + storage shape.
+            //
+            // PARTAB_ARRAY entries (historywords, funcstack, etc.)
+            // need the dedicated flag lookup FIRST because their
+            // paramtab stub has PM_READONLY stripped at init time
+            // (so internal writes work) — reading from paramtab
+            // would lose the readonly attribute that `(t)` must
+            // report. Check partab_array_flags first; if it hits,
+            // build the tag directly with the full implicit flags
+            // (PM_ARRAY | PM_READONLY | PM_SPECIAL | PM_HIDE |
+            // PM_HIDEVAL).
+            let partab_array_tag = crate::vm_helper::partab_array_flags(&var_name).map(|f| {
+                let mut tag = if f & PM_HASHED != 0 {
+                    "association".to_string()
+                } else if f & PM_ARRAY != 0 {
+                    "array".to_string()
+                } else if f & PM_INTEGER != 0 {
+                    "integer".to_string()
+                } else {
+                    "scalar".to_string()
+                };
+                if f & PM_READONLY != 0 { tag.push_str("-readonly"); }
+                if f & PM_TAGGED != 0   { tag.push_str("-tag"); }
+                if f & PM_TIED != 0     { tag.push_str("-tied"); }
+                if f & PM_EXPORTED != 0 { tag.push_str("-export"); }
+                if f & PM_UNIQUE != 0   { tag.push_str("-unique"); }
+                if f & PM_HIDE != 0     { tag.push_str("-hide"); }
+                if f & PM_HIDEVAL != 0  { tag.push_str("-hideval"); }
+                if f & PM_SPECIAL != 0  { tag.push_str("-special"); }
+                tag
+            });
             // c:2814 — read PM_* flags directly from paramtab and
             // synthesize the type tag. Mirrors C `pm->node.flags &
             // PM_TYPE` dispatch at subst.c:2814-2900.
-            value = paramtab()
+            value = if let Some(tag) = partab_array_tag {
+                tag
+            } else { paramtab()
                 .read() // c:2814
                 .ok() // c:2814
                 .and_then(|tab| {
@@ -6725,6 +6757,35 @@ pub fn paramsubst(
                     })
                 })
                 .unwrap_or_else(|| {
+                    // c:Src/Modules/parameter.c SPECIALPMDEF entries
+                    // (historywords / funcstack / patchars / dirstack /
+                    // …) live in PARTAB_ARRAY, NOT paramtab. Their
+                    // flags include PM_ARRAY plus the implicit
+                    // PM_SPECIAL | PM_HIDE | PM_HIDEVAL the C macro
+                    // adds at zsh.h:2123. Build the type tag from those
+                    // here so `(t)historywords` reads
+                    // `array-readonly-hide-hideval-special` matching
+                    // zsh.
+                    if let Some(f) = crate::vm_helper::partab_array_flags(&var_name) {
+                        let mut tag = if f & PM_HASHED != 0 {
+                            "association".to_string()
+                        } else if f & PM_ARRAY != 0 {
+                            "array".to_string()
+                        } else if f & PM_INTEGER != 0 {
+                            "integer".to_string()
+                        } else {
+                            "scalar".to_string()
+                        };
+                        if f & PM_READONLY != 0 { tag.push_str("-readonly"); }
+                        if f & PM_TAGGED != 0   { tag.push_str("-tag"); }
+                        if f & PM_TIED != 0     { tag.push_str("-tied"); }
+                        if f & PM_EXPORTED != 0 { tag.push_str("-export"); }
+                        if f & PM_UNIQUE != 0   { tag.push_str("-unique"); }
+                        if f & PM_HIDE != 0     { tag.push_str("-hide"); }
+                        if f & PM_HIDEVAL != 0  { tag.push_str("-hideval"); }
+                        if f & PM_SPECIAL != 0  { tag.push_str("-special"); }
+                        return tag;
+                    }
                     if assoc_contains(&var_name) {
                         "association".to_string() // c:2814
                     } else if arrays_contains(&var_name) {
@@ -6778,7 +6839,7 @@ pub fn paramsubst(
                     } else {
                         String::new()
                     }
-                });
+                })};
             // c:2882-2883 — after wantt, C clears `v = NULL; isarr = 0;`
             // so the array-splat path at c:3950 doesn't fire on the
             // type string. Without this, ${(t)arr} would splat the

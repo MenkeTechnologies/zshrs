@@ -2285,6 +2285,23 @@ pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
     None
 }
 
+/// Look up a PARTAB_ARRAY entry's flags, OR'd with the implicit
+/// PM_SPECIAL | PM_HIDE | PM_HIDEVAL the C SPECIALPMDEF macro adds
+/// (zsh.h:2123). Used by `${(t)name}` so reserved/special arrays
+/// like `historywords` / `funcstack` report
+/// `array-readonly-hide-hideval-special` matching zsh exactly.
+pub fn partab_array_flags(name: &str) -> Option<u32> {
+    for entry in PARTAB_ARRAY.iter() {
+        if entry.name == name {
+            let pm_special = crate::ported::zsh_h::PM_SPECIAL;
+            let pm_hide = crate::ported::zsh_h::PM_HIDE;
+            let pm_hideval = crate::ported::zsh_h::PM_HIDEVAL;
+            return Some(entry.flags as u32 | pm_special | pm_hide | pm_hideval);
+        }
+    }
+    None
+}
+
 /// Scan helper for `${(k)name}` — enumerates keys via canonical
 /// scanfn, collected into Vec via SCAN_KEYS thread-local.
 pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
