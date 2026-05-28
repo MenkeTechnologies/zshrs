@@ -3200,13 +3200,13 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     let mut results: Vec<String> = state
         .matches
         .iter()
-        .filter(|m| {
-            !trailing_slash
-                || fs::metadata(&m.path).map(|md| md.is_dir()).unwrap_or(false)
-        })
+        .filter(|m| !trailing_slash || fs::metadata(&m.path).map(|md| md.is_dir()).unwrap_or(false))
         .map(|m| {
             let mut s = glob_emit_path(&m.path);
-            if !leading_dot_prefix.is_empty() && !s.starts_with(leading_dot_prefix) && !s.starts_with('/') {
+            if !leading_dot_prefix.is_empty()
+                && !s.starts_with(leading_dot_prefix)
+                && !s.starts_with('/')
+            {
                 s = format!("{}{}", leading_dot_prefix, s);
             }
             if trailing_slash && !s.ends_with('/') {

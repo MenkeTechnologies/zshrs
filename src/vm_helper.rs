@@ -1724,8 +1724,10 @@ impl ShellExecutor {
                 // the sub-VM returns, harvest EXIT_PENDING/EXIT_VAL
                 // as the cmd-subst's status, then restore the
                 // parent's flags so the outer VM continues normally.
+                use crate::ported::builtin::{
+                    BREAKS, EXIT_PENDING, EXIT_VAL, RETFLAG, SHELL_EXITING, SUBSHELL_DEPTH,
+                };
                 use std::sync::atomic::Ordering::Relaxed;
-                use crate::ported::builtin::{BREAKS, EXIT_PENDING, EXIT_VAL, RETFLAG, SHELL_EXITING, SUBSHELL_DEPTH};
                 let saved_exit_pending = EXIT_PENDING.swap(0, Relaxed);
                 let saved_exit_val = EXIT_VAL.swap(0, Relaxed);
                 let saved_shell_exiting = SHELL_EXITING.swap(0, Relaxed);
@@ -1794,8 +1796,7 @@ impl ShellExecutor {
         // real exit. Without this, backtick assignments (`a=\`false\`;
         // echo $?`) reported 0 because getoutput's caller path read a
         // cmdoutval that was never updated by the in-process hook.
-        crate::ported::exec::cmdoutval
-            .store(final_status, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::exec::cmdoutval.store(final_status, std::sync::atomic::Ordering::Relaxed);
 
         // Flush any buffered Rust-side stdout so it reaches the pipe
         // before we restore.

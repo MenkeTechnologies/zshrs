@@ -453,9 +453,7 @@ mod extendedglob_anchors {
 
     #[test]
     fn hash_m_sets_match_var() {
-        assert_parity(
-            r#"setopt extendedglob; [[ abc = (#m)[a-z]## ]]; print -r "$MATCH""#,
-        );
+        assert_parity(r#"setopt extendedglob; [[ abc = (#m)[a-z]## ]]; print -r "$MATCH""#);
     }
 
     #[test]

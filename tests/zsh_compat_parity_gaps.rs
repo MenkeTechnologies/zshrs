@@ -3188,8 +3188,6 @@ mod corpus_dash_fc_bulk_ak {
     }
 }
 
-
-
 mod corpus_dash_fc_bulk_al {
     use super::*;
 
@@ -8688,7 +8686,6 @@ mod corpus_dash_fc_bulk_eg {
         bulk_eg_fc_row_048 => (r#"bulk eg 048"#, r###"[[ -G / ]]; print -r $?"###);
     }
 }
-
 
 mod corpus_dash_fc_bulk_eh {
     use super::*;
