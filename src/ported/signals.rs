@@ -1421,6 +1421,13 @@ pub fn dotrap(sig: i32) -> i32 {
     if errflag.load(Ordering::Relaxed) != 0 {
         return 0;
     }
+    // c:Src/signals.c:1244 — `if (intrap) return;` — re-entry guard.
+    // Without this, a TRAP body that itself fails (e.g. `trap "false"
+    // ERR; false`) re-enters dotrap on its own failed status and
+    // recurses indefinitely → stack overflow.
+    if intrap.load(Ordering::Relaxed) != 0 {
+        return 0;
+    }
 
     intrap.store(1, Ordering::SeqCst);
     // c:1270 — `dont_queue_signals()`. C disables signal queueing for
