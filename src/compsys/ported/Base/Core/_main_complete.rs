@@ -507,4 +507,121 @@ mod tests {
             "a:complete:c:d"
         );
     }
+
+    // ========================================================
+    // patch_completer_field — boundary cases
+    // ========================================================
+
+    #[test]
+    fn patch_completer_field_pads_short_context_to_four_fields() {
+        // 2 fields → padded with two empties → patched at idx 1.
+        assert_eq!(patch_completer_field("a:b", "x"), "a:x::");
+    }
+
+    #[test]
+    fn patch_completer_field_handles_empty_context_padded() {
+        // Empty string splits to one segment `""` → padded to 4.
+        assert_eq!(patch_completer_field("", "x"), ":x::");
+    }
+
+    #[test]
+    fn patch_completer_field_preserves_extra_fields_past_four() {
+        // 5+ fields should still patch idx 1, leave the rest alone.
+        assert_eq!(
+            patch_completer_field("a:b:c:d:e", "complete"),
+            "a:complete:c:d:e"
+        );
+    }
+
+    #[test]
+    fn patch_completer_field_overwrites_empty_completer_too() {
+        // Completer can legitimately be empty — must not be coerced.
+        assert_eq!(patch_completer_field("a:b:c:d", ""), "a::c:d");
+    }
+
+    #[test]
+    fn patch_completer_field_handles_colon_floor_three_colons() {
+        // The classic `:::` floor from sh:52.
+        assert_eq!(patch_completer_field(":::", "y"), ":y::");
+    }
+
+    // ========================================================
+    // glob_escape — regex / glob metachar quoting
+    // ========================================================
+
+    #[test]
+    fn glob_escape_quotes_each_metachar_with_backslash() {
+        // Every metachar in the impl list gets a `\` prefix.
+        let metas = "=()|~^?*[]#<>";
+        let escaped = glob_escape(metas);
+        // Each input char produces a `\X` pair → length doubles.
+        assert_eq!(
+            escaped.len(),
+            metas.len() * 2,
+            "expected every char doubled, got: {}",
+            escaped
+        );
+        // Every metachar should be preceded by a backslash.
+        for c in metas.chars() {
+            let pair = format!("\\{}", c);
+            assert!(escaped.contains(&pair), "missing {} in {}", pair, escaped);
+        }
+    }
+
+    #[test]
+    fn glob_escape_leaves_ordinary_ascii_unchanged() {
+        assert_eq!(glob_escape("hello world 123"), "hello world 123");
+    }
+
+    #[test]
+    fn glob_escape_empty_input_returns_empty() {
+        assert_eq!(glob_escape(""), "");
+    }
+
+    #[test]
+    fn glob_escape_mixed_text_escapes_only_meta_chars() {
+        let s = glob_escape("foo[bar]*baz");
+        assert_eq!(s, r"foo\[bar\]\*baz");
+    }
+
+    #[test]
+    fn glob_escape_does_not_escape_unrelated_punctuation() {
+        // `,` and `.` and `-` are NOT in the meta set.
+        let s = glob_escape("a-b.c,d");
+        assert_eq!(s, "a-b.c,d");
+    }
+
+    // ========================================================
+    // lastcomp_get — kv-array lookup
+    // ========================================================
+
+    #[test]
+    fn lastcomp_get_returns_none_when_unset() {
+        let _g = crate::test_util::global_state_lock();
+        unsetparam("_lastcomp");
+        assert!(lastcomp_get("anything").is_none());
+    }
+
+    #[test]
+    fn lastcomp_get_returns_value_when_key_present() {
+        let _g = crate::test_util::global_state_lock();
+        setaparam(
+            "_lastcomp",
+            vec![
+                "context".to_string(),
+                "a:b:c:d".to_string(),
+                "completer".to_string(),
+                "_complete".to_string(),
+            ],
+        );
+        assert_eq!(lastcomp_get("completer").as_deref(), Some("_complete"));
+        assert_eq!(lastcomp_get("context").as_deref(), Some("a:b:c:d"));
+    }
+
+    #[test]
+    fn lastcomp_get_returns_none_when_key_missing() {
+        let _g = crate::test_util::global_state_lock();
+        setaparam("_lastcomp", vec!["k1".to_string(), "v1".to_string()]);
+        assert!(lastcomp_get("never-set").is_none());
+    }
 }
