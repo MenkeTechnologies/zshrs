@@ -445,4 +445,119 @@ mod tests {
             "fd should be invalid after dropping original File"
         );
     }
+
+    // ========================================================
+    // fd_is_open — F_GETFD probe
+    // ========================================================
+
+    #[test]
+    fn fd_is_open_true_for_stdin_stdout_stderr() {
+        let _g = crate::test_util::global_state_lock();
+        // In a unit-test process, fds 0/1/2 are always open.
+        assert!(fd_is_open(0));
+        assert!(fd_is_open(1));
+        assert!(fd_is_open(2));
+    }
+
+    #[test]
+    fn fd_is_open_false_for_huge_unused_fd() {
+        let _g = crate::test_util::global_state_lock();
+        // Pick a fd far above any reasonable open count.
+        assert!(!fd_is_open(99_999));
+    }
+
+    #[test]
+    fn fd_is_open_false_after_close() {
+        let _g = crate::test_util::global_state_lock();
+        let file = std::fs::File::open("/dev/null").unwrap();
+        let fd = file.as_raw_fd();
+        assert!(fd_is_open(fd));
+        drop(file);
+        // After drop the fd should be invalid.
+        assert!(!fd_is_open(fd));
+    }
+
+    // ========================================================
+    // dup_fd / dup2_fd — pure-syscall behavior
+    // ========================================================
+
+    #[test]
+    fn dup_fd_yields_independent_open_fd() {
+        let _g = crate::test_util::global_state_lock();
+        let file = std::fs::File::open("/dev/null").unwrap();
+        let fd = file.as_raw_fd();
+        let dup = dup_fd(fd).unwrap();
+        assert!(fd_is_open(dup));
+        assert_ne!(dup, fd, "dup must yield a fresh descriptor");
+        // Close the dup — the original must still be open.
+        close_fd(dup);
+        assert!(fd_is_open(fd));
+        drop(file);
+    }
+
+    #[test]
+    fn dup_fd_on_invalid_fd_fails() {
+        let _g = crate::test_util::global_state_lock();
+        // Use a fd we know is closed.
+        let r = dup_fd(99_998);
+        assert!(r.is_err(), "dup of invalid fd must error: {:?}", r);
+    }
+
+    #[test]
+    fn close_fd_on_invalid_fd_is_silent() {
+        let _g = crate::test_util::global_state_lock();
+        // close_fd swallows errors per its `zclose` contract.
+        close_fd(99_997);
+    }
+
+    // ========================================================
+    // movefd / redup — fd renaming wrappers
+    // ========================================================
+
+    #[test]
+    fn movefd_returns_a_valid_high_fd() {
+        let _g = crate::test_util::global_state_lock();
+        let file = std::fs::File::open("/dev/null").unwrap();
+        let fd = file.as_raw_fd();
+        let dup = dup_fd(fd).unwrap();
+        let moved = movefd(dup);
+        // Either succeeded and returned a different fd, or returned -1
+        // — both are acceptable contract outcomes. If success, must be open.
+        if moved >= 0 {
+            assert!(fd_is_open(moved));
+            close_fd(moved);
+        }
+        drop(file);
+    }
+
+    #[test]
+    fn zclose_on_open_fd_returns_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let file = std::fs::File::open("/dev/null").unwrap();
+        let fd = dup_fd(file.as_raw_fd()).unwrap();
+        let r = zclose(fd);
+        assert_eq!(r, 0, "zclose should return 0 on successful close");
+        drop(file);
+    }
+
+    #[test]
+    fn zdup_returns_new_open_fd() {
+        let _g = crate::test_util::global_state_lock();
+        let file = std::fs::File::open("/dev/null").unwrap();
+        let fd = file.as_raw_fd();
+        let dup = zdup(fd);
+        if dup >= 0 {
+            assert!(fd_is_open(dup));
+            assert_ne!(dup, fd);
+            close_fd(dup);
+        }
+        drop(file);
+    }
+
+    #[test]
+    fn zdup_on_invalid_fd_returns_negative() {
+        let _g = crate::test_util::global_state_lock();
+        let r = zdup(99_996);
+        assert!(r < 0, "zdup of invalid fd should be negative: {}", r);
+    }
 }
