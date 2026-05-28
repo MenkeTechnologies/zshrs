@@ -5839,13 +5839,19 @@ pub fn paramsubst(
                     // word-array shape upstream at subst.c:1817).
                     let is_at_star_subscript =
                         matches!(subscript.as_deref(), Some("@") | Some("*"));
-                    let array_shape = is_at_star_subscript || nojoin == 2;
+                    // c:Src/subst.c:3870 — per-element replacement applies
+                    // to: `[@]`/`[*]` subscripts, `(@)` flag (nojoin==2),
+                    // AND unquoted bare `${a/p/P}` (word-splitting context
+                    // treats array as per-element). Only QUOTED bare
+                    // `"${a/p/P}"` (qt=true, no subscript, no (@) flag)
+                    // takes the "first match across whole array" path.
+                    let array_shape = is_at_star_subscript || nojoin == 2 || !qt;
                     if array_shape {
                         let new_arr: Vec<String> = arr.iter().map(|e| replace_one(e)).collect();
                         value = new_arr.join(" "); // c:3870 per-element
                         split_parts = Some(new_arr);
                     } else {
-                        // Bare array form: first match across whole.
+                        // Quoted bare form: first matching element wins.
                         let mut done = false;
                         let new_arr: Vec<String> = arr
                             .iter()
