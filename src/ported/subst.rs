@@ -6803,7 +6803,14 @@ pub fn paramsubst(
             // Per-element split when source is an array — each
             // element splits independently and the results
             // flat-concat. Direct port of subst.c's spsep arm
-            // which iterates aval per-element.
+            // which iterates aval per-element. Empties are
+            // PRESERVED here (matching C sepsplit at utils.c:3962
+            // which never reads the allownull arg); downstream
+            // "remove empty unquoted words" elides middles in
+            // unquoted contexts, while quoted `"${(@s..)…}"`
+            // keeps them. Without preserving empties, the
+            // quoted-`@` form would output `"he o"` instead of
+            // zsh's `"he  o"` (the joined-with-IFS space-pair).
             let split_one = |s: &str| -> Vec<String> {
                 if sp.is_empty() {
                     s.chars().map(|c| c.to_string()).collect()
@@ -7699,8 +7706,17 @@ pub fn paramsubst(
                 // (s::) split → splat the post-split parts
                 // regardless of source. Direct port of subst.c's
                 // ssub-then-splat where spsep promotes scalar to
-                // array via the split.
-                sp // c:3950
+                // array via the split. In UNQUOTED context, empty
+                // parts are elided (zsh's "remove empty unquoted
+                // words" applied to spsep-split arrays — visible in
+                // `b=(\${(s.l.)hello})` producing 2 elements not 3).
+                // Quoted `"\${(@s.l.)hello}"` keeps them (the @
+                // flag forces array semantics + qt preserves empties).
+                if !qt && spsep.is_some() {
+                    sp.into_iter().filter(|s| !s.is_empty()).collect()
+                } else {
+                    sp // c:3950
+                }
             } else if let Some(sub) = subscript.as_deref() {
                 // Range subscript: splat the slice elements.
                 if let Some((lo, hi)) = sub.split_once(',') {
