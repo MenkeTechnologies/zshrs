@@ -11361,7 +11361,19 @@ fn parse_int_arg(s: &str) -> i64 {
             0
         }
     } else {
-        body.parse().unwrap_or(0)
+        // c:Src/builtin.c — printf's %d arg accepts arith
+        // expressions, not just plain integers. zsh's
+        // bin_printf at c:4753 routes through mathevalarg/
+        // matheval which evaluates "1+2", "a*2", etc. Bare
+        // parse-int falls back to math.rs::mathevall on failure
+        // (returning 0 on real error, matching zsh's
+        // "no math result" fallback).
+        match body.parse::<i64>() {
+            Ok(n) => n,
+            Err(_) => crate::ported::math::matheval(body)
+                .map(|f| f.l)
+                .unwrap_or(0),
+        }
     };
     if neg {
         -parsed
