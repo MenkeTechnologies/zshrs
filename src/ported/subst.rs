@@ -3531,10 +3531,18 @@ pub fn paramsubst(
                     Some(ch) if ch.is_ascii_alphanumeric() => true,
                     Some(ch) if matches!(ch, '_' | '@' | '*' | '?' | '!' | '$' | '-' | '0') => true,
                     Some(':') if matches!(after_next, Some('-') | Some('\u{9b}')) => true,
-                    Some(ch) if ch == STRING || ch == Qstring || ch == Stringg => matches!(
-                        body_chars.get(idx + 2).copied(),
-                        Some(b) if b == Inbrace || b == '{' || b == Inpar || b == '('
-                    ),
+                    Some(ch) if ch == STRING || ch == Qstring || ch == Stringg => {
+                        // `${#${...}}` — Stringg/Qstring + `{`/`(` is a
+                        // nested-subexp length form. Length-op applies.
+                        // `${#$}` — Stringg/Qstring is the bare `$$`
+                        // special name (PID); after_next is the closing
+                        // brace (None at body-level). Length-op also
+                        // applies. Accept both.
+                        matches!(
+                            body_chars.get(idx + 2).copied(),
+                            Some(b) if b == Inbrace || b == '{' || b == Inpar || b == '('
+                        ) || after_next.is_none()
+                    }
                     Some(ch) if (ch == '#' || ch == Pound) && after_next.is_none() => true,
                     _ => false,
                 };
@@ -3651,8 +3659,19 @@ pub fn paramsubst(
           // passthru: unquoted nested `${…}` also reaches paramsubst
           // as `Stringg` (\u{85}) since the lexer emits Stringg for
           // `$` inside braces; accept it too.
+        // c:Src/subst.c:2655 — nested `${…}` / `$(…)` / `$NAME` body.
+        // BUT a bare `$` followed directly by `}` / `)` / Outbrace /
+        // Outpar is the special-parameter `$$` shape (e.g. `${#$}` =
+        // length of PID), NOT a nested subexp. Only enter the
+        // subexp path when the `$` has actual content after it.
+        let next_after_dollar = body_chars.get(idx + 1).copied();
+        let is_bare_special_dollar = matches!(
+            next_after_dollar,
+            Some('}') | Some(')') | Some(Outbrace) | Some(Outpar) | None
+        );
         let mut subexp_value: Option<String> = if idx < body_chars.len()
             && (body_chars[idx] == '$' || body_chars[idx] == Qstring || body_chars[idx] == Stringg)
+            && !is_bare_special_dollar
         // c:2649
         {
             // Walk just the nested $-form (depth-tracked over its
@@ -3774,13 +3793,15 @@ pub fn paramsubst(
                 let bc = body_chars[idx];
                 let allowed = if idx == name_start {
                     // c:Src/subst.c:2697 — `${#}` / `${@}` / `${*}` /
-                    // `${?}` / `${0}` are the single-char special
-                    // parameters. The bridge passthru path delivers
-                    // their punctuation forms as TOKENs (Pound,
-                    // Star, Quest, Bang) since the lexer tokenizes
-                    // them inside `${…}` — accept both ASCII and
-                    // TOKEN here so e.g. `${(%)#}` (length of `$#`
-                    // after the prompt flag) resolves correctly.
+                    // `${?}` / `${0}` / `${-}` / `${$}` / `${!}` are
+                    // the single-char special parameters. The bridge
+                    // passthru path delivers their punctuation forms
+                    // as TOKENs (Pound, Star, Quest, Bang, Dash) since
+                    // the lexer tokenizes them inside `${…}` — accept
+                    // both ASCII and TOKEN so e.g. `${#-}` (length of
+                    // `$-` flags string) resolves through the bridge.
+                    // Without `-` / `$` here, `${#-}` parsed as
+                    // length-of-empty-name and returned 0.
                     bc.is_ascii_alphanumeric()
                         || bc == '_'
                         || bc == '@'
@@ -3789,6 +3810,8 @@ pub fn paramsubst(
                         || bc == '?' || bc == '\u{86}' /* Quest */
                         || bc == '!' || bc == '\u{96}' /* Bang */
                         || bc == '0'
+                        || bc == '-' || bc == '\u{9b}' /* Dash */
+                        || bc == '$' || bc == Stringg
                 } else {
                     bc.is_ascii_alphanumeric() || bc == '_'
                 };
@@ -3797,11 +3820,13 @@ pub fn paramsubst(
                     // Single-char specials stop after one char
                     let first = body_chars[name_start];
                     if idx == name_start + 1
-                        && (matches!(first, '@' | '*' | '#' | '?' | '0' | '!')
+                        && (matches!(first, '@' | '*' | '#' | '?' | '0' | '!' | '-' | '$')
                             || first == Pound
                             || first == '\u{87}' /* Star */
                             || first == '\u{86}' /* Quest */
-                            || first == '\u{96}'/* Bang */)
+                            || first == '\u{96}' /* Bang */
+                            || first == '\u{9b}' /* Dash */
+                            || first == Stringg)
                     {
                         break;
                     }
