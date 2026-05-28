@@ -381,4 +381,95 @@ mod tests {
         assert_eq!(km, "vicmd");
         assert_eq!(w, "forward-word");
     }
+
+    // ========================================================
+    // parse_bindkey_value — additional edge cases
+    // ========================================================
+
+    #[test]
+    fn bindkey_value_handles_empty_keymap_brackets() {
+        let _g = crate::test_util::global_state_lock();
+        // `[] widget` → empty keymap name, widget preserved.
+        let (km, w) = parse_bindkey_value("[] do-thing");
+        assert_eq!(km, "");
+        assert_eq!(w, "do-thing");
+    }
+
+    #[test]
+    fn bindkey_value_handles_empty_widget_part() {
+        let _g = crate::test_util::global_state_lock();
+        let (km, w) = parse_bindkey_value("[viins]");
+        assert_eq!(km, "viins");
+        assert_eq!(w, "");
+    }
+
+    #[test]
+    fn bindkey_value_with_unclosed_bracket_falls_back_to_main() {
+        // `[viins` with no `]` is malformed — must not panic / slice OOB.
+        let _g = crate::test_util::global_state_lock();
+        let (km, w) = parse_bindkey_value("[viins backward-delete-char");
+        assert_eq!(km, "main");
+        assert_eq!(w, "[viins backward-delete-char");
+    }
+
+    #[test]
+    fn bindkey_value_empty_string_returns_main_and_empty() {
+        let _g = crate::test_util::global_state_lock();
+        let (km, w) = parse_bindkey_value("");
+        assert_eq!(km, "main");
+        assert_eq!(w, "");
+    }
+
+    #[test]
+    fn bindkey_value_widget_with_dashes_and_dots_preserved() {
+        let _g = crate::test_util::global_state_lock();
+        let (km, w) = parse_bindkey_value("[viins] zle-line-init");
+        assert_eq!(km, "viins");
+        assert_eq!(w, "zle-line-init");
+    }
+
+    #[test]
+    fn bindkey_value_does_not_strip_close_bracket_inside_widget() {
+        // Once we find the FIRST `]`, anything past (after trimming
+        // leading whitespace) is the widget — including stray brackets.
+        let _g = crate::test_util::global_state_lock();
+        let (km, w) = parse_bindkey_value("[viins] weird[name");
+        assert_eq!(km, "viins");
+        assert_eq!(w, "weird[name");
+    }
+
+    #[test]
+    fn bindkey_value_keymap_with_dashes() {
+        let _g = crate::test_util::global_state_lock();
+        let (km, w) = parse_bindkey_value("[my-keymap] do-thing");
+        assert_eq!(km, "my-keymap");
+        assert_eq!(w, "do-thing");
+    }
+
+    #[test]
+    fn bindkey_value_no_bracket_means_main_keymap() {
+        // Plain "widget" form (no `[...]`) → main keymap.
+        let _g = crate::test_util::global_state_lock();
+        let (km, w) = parse_bindkey_value("backward-kill-word");
+        assert_eq!(km, "main");
+        assert_eq!(w, "backward-kill-word");
+    }
+
+    #[test]
+    fn bindkey_value_widget_after_tab_whitespace() {
+        // Tab characters after `]` count as whitespace for trim_start.
+        let _g = crate::test_util::global_state_lock();
+        let (km, w) = parse_bindkey_value("[main]\tup-line-or-history");
+        assert_eq!(km, "main");
+        assert_eq!(w, "up-line-or-history");
+    }
+
+    #[test]
+    fn bindkey_value_nested_open_bracket_uses_first_close() {
+        // First `]` wins for keymap delimiter.
+        let _g = crate::test_util::global_state_lock();
+        let (km, w) = parse_bindkey_value("[ke[ymap] widget");
+        assert_eq!(km, "ke[ymap");
+        assert_eq!(w, "widget");
+    }
 }
