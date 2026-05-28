@@ -7273,7 +7273,11 @@ fn decode_ansi_c(body: &str) -> String {
                 }
             }
             Some(other) => {
-                out.push('\\');
+                // c:Src/utils.c:6915 — `$'\X'` for any X not in the
+                // recognized escape set strips the backslash and
+                // keeps X verbatim. e.g. `$'\?'` → `?`, `$'\$'` → `$`.
+                // The previous behavior preserved both chars (`\?`),
+                // which doesn't match zsh's GETKEY_DOLLAR_QUOTE flag.
                 out.push(other);
             }
             None => out.push('\\'),
