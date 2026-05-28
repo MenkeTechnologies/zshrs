@@ -72,3 +72,156 @@ pub fn lookup_full(name: &str) -> Option<&'static str> {
         .find(|(k, _)| *k == name)
         .map(|&(_, body)| body)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === lookup_full: exact-name resolution ===
+
+    #[test]
+    fn lookup_returns_body_for_known_ext_builtins() {
+        // Pick representative builtins from each rough family the
+        // generator scrapes: async/parallelism, daemon ipc, AOT,
+        // coreutils-shim, completion glue.
+        for name in [
+            "async",
+            "await",
+            "barrier",
+            "compdef",
+            "complete",
+            "compgen",
+            "compopt",
+            "doctor",
+            "dbview",
+            "base64",
+            "cksum",
+            "arch",
+            "caller",
+            "comm",
+            "dircolors",
+            "cdreplay",
+        ] {
+            let body = lookup_full(name)
+                .unwrap_or_else(|| panic!("{name} must resolve in EXT_BUILTIN_FULL_DOCS"));
+            assert!(!body.is_empty(), "empty doc body for {name}");
+        }
+    }
+
+    #[test]
+    fn lookup_is_case_sensitive() {
+        // Lookup uses `*k == name` (string-equal). Case mutations must
+        // NOT resolve.
+        assert!(lookup_full("ASYNC").is_none());
+        assert!(lookup_full("Async").is_none());
+        assert!(lookup_full("BASE64").is_none());
+    }
+
+    #[test]
+    fn lookup_unknown_returns_none() {
+        assert!(lookup_full("not_a_builtin").is_none());
+        assert!(lookup_full("git").is_none()); // external, not ext-builtin
+        assert!(lookup_full("ls").is_none()); // shell-side; not exposed via EXT_BUILTIN_FULL_DOCS
+    }
+
+    #[test]
+    fn lookup_empty_string_returns_none() {
+        assert!(lookup_full("").is_none());
+    }
+
+    #[test]
+    fn lookup_async_body_mentions_worker_pool() {
+        // Spot-check body content for the async builtin — the doc
+        // body should describe the worker-pool dispatch contract so
+        // hover surfaces show meaningful info.
+        let body = lookup_full("async").expect("async must resolve");
+        assert!(
+            body.contains("worker pool") || body.contains("await"),
+            "async doc body should mention worker pool / await pairing"
+        );
+    }
+
+    #[test]
+    fn lookup_barrier_body_mentions_parallel() {
+        // barrier docs must mention parallelism — the whole point is
+        // running N commands concurrently and joining.
+        let body = lookup_full("barrier").expect("barrier must resolve");
+        assert!(
+            body.to_lowercase().contains("parallel"),
+            "barrier doc body should mention parallel execution"
+        );
+    }
+
+    // === EXT_BUILTIN_FULL_DOCS table integrity ===
+
+    #[test]
+    fn ext_builtin_full_docs_nonempty() {
+        assert!(!EXT_BUILTIN_FULL_DOCS.is_empty());
+        // The generator scrapes /// blocks from daemon + ext_builtins —
+        // ≥30 is a sane floor given the existing surface.
+        assert!(
+            EXT_BUILTIN_FULL_DOCS.len() >= 30,
+            "expected ≥30 entries, got {}",
+            EXT_BUILTIN_FULL_DOCS.len()
+        );
+    }
+
+    #[test]
+    fn ext_builtin_full_docs_no_empty_bodies() {
+        for (name, body) in EXT_BUILTIN_FULL_DOCS {
+            assert!(!body.is_empty(), "empty doc body for {name:?}");
+        }
+    }
+
+    #[test]
+    fn ext_builtin_full_docs_no_empty_names() {
+        for (name, _) in EXT_BUILTIN_FULL_DOCS {
+            assert!(
+                !name.is_empty(),
+                "empty builtin name in EXT_BUILTIN_FULL_DOCS"
+            );
+        }
+    }
+
+    #[test]
+    fn ext_builtin_full_docs_no_duplicate_names() {
+        // The lookup returns the FIRST hit. If two entries have the
+        // same key, one is unreachable. Catch the generator emitting
+        // duplicates before they silently hide entries.
+        let mut seen = std::collections::HashSet::new();
+        for (name, _) in EXT_BUILTIN_FULL_DOCS {
+            assert!(
+                seen.insert(*name),
+                "duplicate entry for builtin {name:?} (second occurrence shadowed by first)"
+            );
+        }
+    }
+
+    #[test]
+    fn ext_builtin_full_docs_names_have_reasonable_shape() {
+        // Names should look like identifiers (or known-special tokens
+        // like `add_zsh_hook` / `compgen`). Catch the generator
+        // accidentally pulling in stray whitespace or punctuation.
+        for (name, _) in EXT_BUILTIN_FULL_DOCS {
+            assert!(
+                name.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+                "unexpected character in builtin name {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_round_trips_for_every_entry() {
+        // For every entry in the table, lookup_full must find the same
+        // body string. Guards against accidental double-lookup or
+        // table-mismatch bugs in the helper.
+        for (name, body) in EXT_BUILTIN_FULL_DOCS {
+            let got = lookup_full(name).expect("table entry must round-trip");
+            assert_eq!(
+                got, *body,
+                "lookup_full returned a different body than the table entry for {name:?}"
+            );
+        }
+    }
+}
