@@ -1307,8 +1307,30 @@ impl ZshCompiler {
                 for word in &simple.words[1..] {
                     self.compile_word_str(word);
                 }
+                // c:Src/exec.c — inline-env assigns must commit AFTER
+                // arg expansion (above) but BEFORE the precmd dispatch
+                // consumes the args, so the spawned command sees
+                // `TEST=val` in its env. Mirror the regular-dispatch
+                // path (line ~1351) for the BUILTIN_COMMAND/BUILTIN/
+                // BUILTIN_EXEC fast-path. Without this,
+                // `TEST=val command env` ran env with TEST unset.
+                if has_inline_env_scope {
+                    for assign in &simple.assigns {
+                        self.last_assign_had_cmd_subst = false;
+                        self.compile_assign(assign);
+                    }
+                }
                 self.builder.emit(Op::CallBuiltin(opcode, argc), 0);
                 self.builder.emit(Op::SetStatus, 0);
+                // Close the inline-env scope so the assigns don't leak
+                // into the caller's shell state.
+                if has_inline_env_scope {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_END_INLINE_ENV, 0),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
+                }
                 self.emit_errexit_check();
                 if has_redirects {
                     self.builder.emit(Op::WithRedirectsEnd, 0);
