@@ -6804,8 +6804,21 @@ pub fn bin_print(
 ) -> i32 {
     let nonewline = OPT_ISSET(ops, b'n'); // c:4595
     let raw = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R'); // c:4596
-    let one_per_line = OPT_ISSET(ops, b'l'); // c:4597
+    // c:4597 — `-l` puts one arg per line. `-c` is "columns" but
+    // degrades to one-per-line when stdout isn't a tty (terminal-
+    // width-aware tabular print isn't ported); accept -c here as
+    // a synonym for -l so `print -c a b c` byte-matches zsh's
+    // non-tty fallback.
+    let one_per_line = OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'c');
     let nul_sep = OPT_ISSET(ops, b'N'); // c:5114/5127/5132 — NUL separator
+    // c:Src/builtin.c — `-D` runs each arg through `dirify()`: if
+    // it matches a named dir or $HOME-prefix, abbreviate with
+    // `~`. zsh has the dircache + named-dir table behind it; for
+    // -c mode (non-interactive) the table mostly contains $HOME
+    // → "~". Apply that single rewrite for parity with the common
+    // case. The richer named-dir lookup belongs in a deeper
+    // dirify port.
+    let dirify_d = OPT_ISSET(ops, b'D');
     let _printf_mode = func == BIN_PRINTF || OPT_HASARG(ops, b'f'); // c:4604
     let echo_mode = func == BIN_ECHO;
     let _ = (name, raw);
@@ -6817,6 +6830,16 @@ pub fn bin_print(
     } else {
         None
     };
+    // c:Src/builtin.c:4828 — `-p` writes to the coprocess fd. zshrs
+    // doesn't run coprocesses, so there's never one to write to.
+    // Match zsh's exact diagnostic + exit 1 when -p is used without
+    // an active coprocess (Src/builtin.c:5050 `zwarnnam(name, "-p:
+    // no coprocess")`). Previously fell through to stdout, masking
+    // the misconfiguration.
+    if OPT_ISSET(ops, b'p') {
+        zwarnnam(name, "-p: no coprocess");
+        return 1;
+    }
     // c:4815-4851 — `-u FD` (and `-p` coprocess) dispatch. Parses FD,
     // dup's it for an owned descriptor, opens as a File for writes.
     // The previous Rust port silently dropped `-u`, so `print -u 2
@@ -6931,6 +6954,26 @@ pub fn bin_print(
     } else {
         " "
     };
+    // c:Src/builtin.c — `-D` rewrites each arg through dirify():
+    // longest-prefix-match against the named-dir table, replacing
+    // the prefix with `~name`. The full table includes user
+    // home dirs (~user) and any explicit `hash -d` entries; for
+    // the most common case (`$HOME`-prefix → `~`), apply that
+    // substitution. Richer named-dir lookup belongs in a deeper
+    // dirify port if more callers need it.
+    if dirify_d {
+        if let Ok(home) = std::env::var("HOME") {
+            if !home.is_empty() {
+                for a in processed_args.iter_mut() {
+                    if a.as_str() == home {
+                        *a = "~".to_string();
+                    } else if let Some(rest) = a.strip_prefix(&format!("{}/", home)) {
+                        *a = format!("~/{}", rest);
+                    }
+                }
+            }
+        }
+    }
     // c:4598-4600 — `-P` prompt-style percent expansion (`%n`, `%d`,
     // `%?`, `%h`, `%%`, etc.). Routes through `expand_prompt`
     // (canonical port of `Src/prompt.c:182 promptexpand`).
