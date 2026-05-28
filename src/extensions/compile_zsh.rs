@@ -1427,7 +1427,29 @@ impl ZshCompiler {
         // For non-heredoc forms, the target file/path goes via compile_word_str
         // (handles var expansion etc.). DupRead/DupWrite take a numeric fd
         // string; the runtime parses it and dup2s.
-        let op_byte = match redir.rtype {
+        // c:Src/glob.c:2174-2188 xpandredir — `>& WORD` (REDIR_MERGEOUT)
+        // splits into two cases:
+        //   - WORD is digits / "-" / "p" → fd dup (or close / coproc)
+        //   - WORD is a non-numeric filename → convert to REDIR_ERRWRITE
+        //     (`> WORD 2>&1`), which lands stdout AND stderr in WORD.
+        // The wordcode-based ported path skips xpandredir (see
+        // exec.rs:9163 "Pragmatic: skip"), so do the same conversion
+        // here at compile time when the name is a static literal that
+        // clearly isn't an fd. The dynamic case ($var-derived) still
+        // routes through DUP_WRITE — accepting that it'll be wrong for
+        // the rare `cmd >& $file` form pending a runtime hook.
+        let name_clean = crate::lex::untokenize(&redir.name);
+        let name_is_fd_like = name_clean == "-"
+            || name_clean == "p"
+            || (!name_clean.is_empty()
+                && name_clean.chars().all(|c| c.is_ascii_digit()));
+        let mut effective_rtype = redir.rtype;
+        if redir.rtype == REDIR_MERGEOUT && !name_is_fd_like {
+            // `>& FILE` → `> FILE 2>&1`. Default fd1 was 1 (set above)
+            // which matches WRITE_BOTH semantics.
+            effective_rtype = REDIR_ERRWRITE;
+        }
+        let op_byte = match effective_rtype {
             REDIR_WRITE => fusevm::op::redirect_op::WRITE,
             REDIR_WRITENOW => fusevm::op::redirect_op::CLOBBER,
             REDIR_APP => fusevm::op::redirect_op::APPEND,
