@@ -204,7 +204,6 @@ mod ansi_c_quote {
 
     /// `$''` → empty.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: empty $'' inside double-quotes — output formatting differs"]
     fn ansi_quote_empty() {
         assert_parity(r#"echo "[$'']""#);
     }

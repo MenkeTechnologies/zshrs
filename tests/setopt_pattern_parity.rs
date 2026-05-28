@@ -77,9 +77,9 @@ mod basic {
         assert_parity(r#"setopt extendedglob; [[ -o extendedglob ]]; echo $?"#);
     }
 
-    /// `[[ ! -o opt ]]` for unset option.
+    /// `[[ -o opt ]]` on an invalid option name returns $?=3 (per
+    /// zsh's `[[ -o invalid ]]` semantics — distinct from unset's $?=1).
     #[test]
-    #[ignore = "ZSHRS BUG: [[ -o invalid_opt ]] returns exit 1; zsh returns exit 3 (invalid name)"]
     fn test_o_not_set_default() {
         assert_parity(r#"[[ -o nonexistent_option_xyz ]] 2>/dev/null; echo $?"#);
     }
@@ -274,7 +274,6 @@ mod option_persist_in_subshell {
 
     /// Options set in outer visible in subshell.
     #[test]
-    #[ignore = "ZSHRS BUG: nested command-substitution loses [[ -o opt ]] exit code"]
     fn options_inherited_by_subshell() {
         assert_parity(
             r#"setopt extendedglob; (echo "[[ -o extendedglob ]] is: $([[ -o extendedglob ]]; echo $?)")"#,
