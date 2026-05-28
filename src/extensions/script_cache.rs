@@ -570,4 +570,147 @@ mod tests {
         cache.clear().unwrap();
         assert!(!cache_path.exists());
     }
+
+    // ========================================================
+    // now_secs — monotonic-ish wall-clock
+    // ========================================================
+
+    #[test]
+    fn now_secs_is_positive_and_within_realistic_range() {
+        let _g = crate::test_util::global_state_lock();
+        let n = now_secs();
+        // Year 2020 = ~1.58e9 seconds. Year 2100 = ~4.1e9 seconds.
+        assert!(
+            (1_577_836_800..4_102_444_800).contains(&n),
+            "now_secs out of plausible range: {}",
+            n
+        );
+    }
+
+    #[test]
+    fn now_secs_does_not_go_backwards_in_quick_succession() {
+        let _g = crate::test_util::global_state_lock();
+        let a = now_secs();
+        let b = now_secs();
+        assert!(b >= a, "now_secs went backwards: {} -> {}", a, b);
+    }
+
+    // ========================================================
+    // format_local_ts — human-readable timestamp
+    // ========================================================
+
+    #[test]
+    fn format_local_ts_includes_year_and_punctuation() {
+        let _g = crate::test_util::global_state_lock();
+        // 2024-01-01 = 1704067200 UTC; local timezone shifts it but
+        // the year prefix is stable regardless of TZ.
+        let s = format_local_ts(1_704_067_200);
+        assert!(s.starts_with("202"), "expected 21st century year: {}", s);
+        assert!(s.contains('-'), "expected dash separator: {}", s);
+        assert!(s.contains(':'), "expected colon separator: {}", s);
+    }
+
+    #[test]
+    fn format_local_ts_length_matches_pattern() {
+        let _g = crate::test_util::global_state_lock();
+        let s = format_local_ts(1_700_000_000);
+        // `YYYY-MM-DD HH:MM:SS` = 19 chars.
+        assert_eq!(s.len(), 19, "unexpected width: {}", s);
+    }
+
+    #[test]
+    fn format_local_ts_handles_zero_secs_via_clamp() {
+        let _g = crate::test_util::global_state_lock();
+        // 0 → 1970-01-01 in UTC, but local TZ may shift the date.
+        let s = format_local_ts(0);
+        assert_eq!(s.len(), 19);
+        assert!(s.starts_with("19"), "expected 1970-ish year: {}", s);
+    }
+
+    #[test]
+    fn format_local_ts_negative_clamped_to_zero() {
+        let _g = crate::test_util::global_state_lock();
+        // .max(0) prevents negative seconds reaching chrono.
+        let s = format_local_ts(-1_000_000);
+        assert_eq!(s.len(), 19);
+    }
+
+    // ========================================================
+    // file_mtime — pure metadata sniff
+    // ========================================================
+
+    #[test]
+    fn file_mtime_returns_some_for_real_file() {
+        let _g = crate::test_util::global_state_lock();
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("foo.zsh");
+        std::fs::write(&p, b"x").unwrap();
+        let (s, _ns) = file_mtime(&p).unwrap();
+        assert!(s > 0);
+    }
+
+    #[test]
+    fn file_mtime_returns_none_for_missing_path() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(file_mtime(Path::new("/nonexistent/zshrs/script_cache_missing.bin")).is_none());
+    }
+
+    // ========================================================
+    // default_cache_path / cache_enabled — config knobs
+    // ========================================================
+
+    #[test]
+    fn default_cache_path_ends_in_scripts_rkyv() {
+        let _g = crate::test_util::global_state_lock();
+        let p = default_cache_path();
+        assert_eq!(p.file_name().and_then(|s| s.to_str()), Some("scripts.rkyv"));
+    }
+
+    #[test]
+    fn cache_enabled_true_when_env_unset() {
+        let _g = crate::test_util::global_state_lock();
+        let prev = std::env::var_os("ZSHRS_CACHE");
+        std::env::remove_var("ZSHRS_CACHE");
+        let on = cache_enabled();
+        if let Some(v) = prev {
+            std::env::set_var("ZSHRS_CACHE", v);
+        }
+        assert!(on, "cache should be enabled when ZSHRS_CACHE is unset");
+    }
+
+    #[test]
+    fn cache_enabled_false_when_env_is_zero_false_or_no() {
+        let _g = crate::test_util::global_state_lock();
+        let prev = std::env::var_os("ZSHRS_CACHE");
+        for v in ["0", "false", "no"] {
+            std::env::set_var("ZSHRS_CACHE", v);
+            assert!(!cache_enabled(), "ZSHRS_CACHE={} must disable cache", v);
+        }
+        if let Some(v) = prev {
+            std::env::set_var("ZSHRS_CACHE", v);
+        } else {
+            std::env::remove_var("ZSHRS_CACHE");
+        }
+    }
+
+    #[test]
+    fn cache_enabled_true_for_other_env_values() {
+        // Truthiness model: only `0|false|no` disable. Anything else
+        // (including empty string) leaves the cache on.
+        let _g = crate::test_util::global_state_lock();
+        let prev = std::env::var_os("ZSHRS_CACHE");
+        for v in ["1", "true", "yes", "on", ""] {
+            std::env::set_var("ZSHRS_CACHE", v);
+            assert!(
+                cache_enabled(),
+                "ZSHRS_CACHE={:?} must NOT disable cache",
+                v
+            );
+        }
+        if let Some(v) = prev {
+            std::env::set_var("ZSHRS_CACHE", v);
+        } else {
+            std::env::remove_var("ZSHRS_CACHE");
+        }
+    }
 }
