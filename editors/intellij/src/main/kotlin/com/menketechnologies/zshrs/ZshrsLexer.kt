@@ -224,6 +224,13 @@ class ZshrsLexer : LexerBase() {
             (c == '.' || c == '+' || c == '@' || c == ':' || c == '^' || c == '-') &&
                 peek(1).let { it == '_' || it.isLetter() } ->
                 consumeWord()
+            // Long flag (`--word`) — lex as a single IDENTIFIER
+            // token so it doesn't render as two consecutive OPERATOR
+            // dashes (visually broken / often colored as BAD_CHARACTER).
+            // The third char must be a word char so we don't mis-eat
+            // `--` separators that introduce a positional-args block.
+            c == '-' && peek(1) == '-' && peek(2).let { it == '_' || it.isLetter() } ->
+                consumeLongFlag()
             isOperatorChar(c) -> emit(1, ZshrsTokenTypes.OPERATOR)
             else -> emit(1, TokenType.BAD_CHARACTER)
         }
@@ -599,6 +606,20 @@ class ZshrsLexer : LexerBase() {
         }
         tokenEnd = p; pos = p
         tokenType = ZshrsTokenTypes.NUMBER
+    }
+
+    /// Consume `--<word>` as a single IDENTIFIER token. Long-flag
+    /// arguments to `zshrs` / external commands rendered as two
+    /// individual `-` OPERATOR tokens before this branch existed,
+    /// which often surfaced as red BAD_CHARACTER coloring.
+    private fun consumeLongFlag() {
+        var p = pos + 2 // skip `--`
+        while (p < endOffset) {
+            val c = buf[p]
+            if (c.isLetterOrDigit() || c == '_' || c == '-' || c == '.') p++ else break
+        }
+        tokenEnd = p; pos = p
+        tokenType = ZshrsTokenTypes.IDENTIFIER
     }
 
     private fun consumeWord() {

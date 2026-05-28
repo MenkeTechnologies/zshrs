@@ -1760,13 +1760,12 @@ fn find_module_doc_for_position(
 
 /// Render a module-doc hover card. Format mirrors the user-symbol
 /// card but heading kind is `module`.
+/// Stryke-aligned card format: doc body first, horizontal rule,
+/// then a one-line header naming what the hover is on. Mirrors
+/// `strykelang/lsp.rs::format_with_doc_comments` so users get a
+/// consistent hover layout across both LSPs.
 fn render_module_doc_card(label: &str, doc: &str) -> String {
-    let mut out = String::with_capacity(label.len() + doc.len() + 60);
-    out.push_str("**`");
-    out.push_str(label);
-    out.push_str("`** — _zsh module_\n\n");
-    out.push_str(doc);
-    out
+    format!("{doc}\n\n---\n\nzsh module `{label}`")
 }
 
 /// Extract the module-level `##` doc block from the top of a zsh
@@ -1848,18 +1847,12 @@ fn skip_leading_flags(s: &str) -> &str {
 /// Render a user-symbol hover card. Format mirrors the builtin
 /// docs cards: heading line, optional definition snippet in a code
 /// fence, then the doc body verbatim.
-fn render_user_doc_card(name: &str, kind: &str, def_line: &str, doc: &str) -> String {
-    let mut out = String::with_capacity(name.len() + doc.len() + 80);
-    out.push_str("**`");
-    out.push_str(name);
-    out.push_str("`** — _user-defined ");
-    out.push_str(kind);
-    out.push_str("_\n\n");
-    out.push_str("```sh\n");
-    out.push_str(def_line);
-    out.push_str("\n```\n\n");
-    out.push_str(doc);
-    out
+/// Stryke-aligned card format: doc body first, horizontal rule,
+/// then a one-line header naming the symbol + kind. Drops the
+/// code-fence definition line — stryke doesn't include it and the
+/// `##` doc block usually carries the signature in prose anyway.
+fn render_user_doc_card(name: &str, kind: &str, _def_line: &str, doc: &str) -> String {
+    format!("{doc}\n\n---\n\nuser-defined {kind} `{name}`")
 }
 
 /// Why hover was suppressed at a given cursor position. Returned by
@@ -3504,6 +3497,15 @@ fn leading_command_at(line: &str, col: usize) -> Option<(String, usize)> {
             s = i + 1;
             break;
         }
+        // Subshell / command-substitution / process-substitution
+        // openers: `$(`, `<(`, `>(`, `(`, `((`. Walking back to one
+        // of these starts a fresh command region — without this,
+        // `x=$(zshrs --…)` saw `x` as the leading command instead
+        // of `zshrs`, so flag completion never fired inside `$(…)`.
+        if c == b'(' {
+            s = i + 1;
+            break;
+        }
     }
     // Skip leading whitespace.
     while s < cap && matches!(bytes[s], b' ' | b'\t') {
@@ -3820,7 +3822,24 @@ fn lsp_completion_context(line: &str, col: usize) -> LspCompletionContext {
                 }
                 return LspCompletionContext::WidgetName;
             }
-            "zle" => return LspCompletionContext::WidgetName,
+            "zle" => {
+                // `zle -<TAB>` completes the zle builtin's flags
+                // (`-l`, `-L`, `-D`, `-N`, `-A`, `-K`, `-R`, `-M`,
+                // `-U`, `-F`, `-I`, `-T`, etc.) from the hand-
+                // curated `BUILTIN_FLAG_DOCS_OVERRIDE` entry.
+                // `zle <name>` (no leading dash) keeps the existing
+                // widget-name completion.
+                let bytes = line.as_bytes();
+                let cap = col.min(bytes.len());
+                let mut j = cap;
+                while j > 0 && !matches!(bytes[j - 1], b' ' | b'\t') {
+                    j -= 1;
+                }
+                if j < cap && bytes[j] == b'-' {
+                    return LspCompletionContext::BuiltinFlag("zle".to_string());
+                }
+                return LspCompletionContext::WidgetName;
+            }
             "typeset" | "declare" | "local" | "readonly" | "integer" | "float" | "export"
             | "private" => {
                 // Surface flags only when the current arg starts with `-`.
@@ -4442,6 +4461,14 @@ const ZSHRS_SELF_LONG_FLAG_DOCS: &[(&str, &str)] = &[
     ("--dump-wordcode", "`--dump-wordcode FILE|-` — wordcode emitter output: EPROG / WORDS / WC[i] / STRS sections matching zsh's binary cache format."),
     ("--dump-zwc",      "`--dump-zwc ZWCFILE [FN]` — inspect a compiled .zwc cache. Without FN, list every function. With FN, dump only that function's wordcode."),
     ("--disasm",        "Print fusevm opcodes for each compiled unit before VM run. Does NOT suppress execution — script still runs."),
+    // Documentation generation (parallel to `stryke gen-docs`)
+    ("--gen-docs",      "`--gen-docs [PATH] [--out DIR]` — walk PATH (default `.`) collecting every `##` doc-comment block above each function / alias / parameter, render to standalone HTML in `DIR` (default `docs/`)."),
+    ("--out",           "`--out DIR` — destination directory for `--gen-docs` HTML output (default `docs/`)."),
+    ("--dump-reference-html", "Emit the standalone reference HTML the zshrs project ships at `docs/reference.html` — every builtin / keyword / option / special var as a browseable single-page reference."),
+    ("--names",         "With `--dump-reflection` or `--gen-docs`, restrict the dump / walk to a comma-separated list of NAMES instead of the full set."),
+    // Daemon / interactive runtime
+    ("--daemon",        "Run as the persistent zshrs daemon (used by the IDE / multi-shell scenarios). Holds the rkyv script cache + worker pool warm so subsequent script launches are sub-millisecond."),
+    ("--color",         "`--color WHEN` — control coloured output (`auto` / `always` / `never`). Default `auto`: respect `$TERM`, `$NO_COLOR`, and stdout TTY status."),
     // Parity modes (drop-in shell emulation)
     ("--zsh",       "Identical-behaviour drop-in for `/bin/zsh`. Caches OFF, daemon OFF — every `source` re-runs the file fresh. Used as the compat-test entrypoint."),
     ("--bash",      "Identical-behaviour drop-in for `/bin/bash`. Caches / daemon OFF; every echo / source re-fires byte-for-byte against reference bash."),
@@ -8010,15 +8037,17 @@ mod tests {
 
     #[test]
     fn user_doc_attaches_to_function_with_keyword_form() {
+        // Card format mirrors stryke's
+        // `strykelang/lsp.rs::format_with_doc_comments`:
+        //   <doc>\n\n---\n\n<one-line header>
         let src = "## Print a hello banner with the user's name.\n\
                    ## Used by the README demo.\n\
                    function greet {\n  print hi\n}\n";
         let doc = super::find_user_symbol_doc(src, "greet").expect("doc");
-        assert!(doc.contains("**`greet`** — _user-defined function_"), "got {doc:?}");
         assert!(doc.contains("Print a hello banner"), "got {doc:?}");
         assert!(doc.contains("Used by the README demo"), "got {doc:?}");
-        // Code fence with the actual definition line.
-        assert!(doc.contains("```sh\nfunction greet {"), "got {doc:?}");
+        assert!(doc.contains("\n\n---\n\n"), "missing divider: {doc:?}");
+        assert!(doc.contains("user-defined function `greet`"), "got {doc:?}");
     }
 
     #[test]
@@ -10544,6 +10573,90 @@ mod tests {
         });
         let r = prepare_rename(&state, &params);
         assert!(r.is_null(), "prepareRename in comment must reject");
+    }
+
+    #[test]
+    fn long_flag_completion_inside_command_substitution() {
+        // `x=$(zshrs --|)` — cursor inside `$(...)` after `zshrs --`.
+        // Before the `(` boundary case in `leading_command_at`, the
+        // walk-back found `x` as the leading command (because it
+        // never crossed the `$(` opener), and long-flag completion
+        // didn't fire.
+        let line = "x=$(zshrs --";
+        let ctx = super::lsp_completion_context(line, line.len());
+        assert!(
+            matches!(ctx, super::LspCompletionContext::BuiltinLongFlag(ref n) if n == "zshrs"),
+            "expected BuiltinLongFlag(zshrs) inside `$(`, got {ctx:?}",
+        );
+        // Same for `<(…)` process substitution.
+        let line = "diff <(zshrs --";
+        let ctx = super::lsp_completion_context(line, line.len());
+        assert!(
+            matches!(ctx, super::LspCompletionContext::BuiltinLongFlag(ref n) if n == "zshrs"),
+            "expected BuiltinLongFlag(zshrs) inside `<(`, got {ctx:?}",
+        );
+        // Plain `(subshell --` too.
+        let line = "(zshrs --";
+        let ctx = super::lsp_completion_context(line, line.len());
+        assert!(
+            matches!(ctx, super::LspCompletionContext::BuiltinLongFlag(ref n) if n == "zshrs"),
+            "expected BuiltinLongFlag(zshrs) inside `(`, got {ctx:?}",
+        );
+    }
+
+    #[test]
+    fn zshrs_long_flag_table_includes_gen_docs() {
+        // Regression: `zshrs --gen-d<TAB>` should surface `--gen-docs`.
+        // Tracked in `ZSHRS_SELF_LONG_FLAG_DOCS`; the wide audit
+        // didn't cover this specific entry until the user pointed it
+        // out.
+        let flags = super::extract_builtin_long_flags("zshrs");
+        let names: std::collections::HashSet<&str> =
+            flags.iter().map(|(f, _)| f.as_str()).collect();
+        for must_have in [
+            "--gen-docs", "--out", "--dump-reference-html",
+            "--names", "--daemon", "--color",
+        ] {
+            assert!(
+                names.contains(must_have),
+                "ZSHRS_SELF_LONG_FLAG_DOCS missing {must_have}",
+            );
+        }
+    }
+
+    #[test]
+    fn zle_dash_dispatches_to_builtin_flag_not_widget_name() {
+        // Regression: `zle -<TAB>` used to short-circuit to the
+        // WidgetName context because the dispatcher matched `zle`
+        // unconditionally. Now the dispatcher checks whether the
+        // current word starts with `-` and routes flag completion
+        // through `BUILTIN_FLAG_DOCS_OVERRIDE`. Without that
+        // branch the user gets a list of zle widget names where
+        // they expected flag completion.
+        let line = "zle -";
+        let ctx = super::lsp_completion_context(line, line.len());
+        assert!(
+            matches!(ctx, super::LspCompletionContext::BuiltinFlag(ref n) if n == "zle"),
+            "expected BuiltinFlag(zle) for `zle -`, got {ctx:?}",
+        );
+        // Sanity: bare `zle ` (no dash) still completes widget names.
+        let bare = "zle ";
+        let ctx2 = super::lsp_completion_context(bare, bare.len());
+        assert!(
+            matches!(ctx2, super::LspCompletionContext::WidgetName),
+            "expected WidgetName for `zle `, got {ctx2:?}",
+        );
+        // The flag table for `zle` surfaces the documented sub-
+        // commands (sample: -l list, -N declare new, -K keymap).
+        let flags = extract_builtin_flags("zle");
+        let names: std::collections::HashSet<&str> =
+            flags.iter().map(|(f, _)| f.as_str()).collect();
+        for must_have in ["-l", "-L", "-N", "-K", "-D", "-A", "-R", "-M"] {
+            assert!(
+                names.contains(must_have),
+                "zle missing flag {must_have} from BUILTIN_FLAG_DOCS_OVERRIDE",
+            );
+        }
     }
 
     #[test]

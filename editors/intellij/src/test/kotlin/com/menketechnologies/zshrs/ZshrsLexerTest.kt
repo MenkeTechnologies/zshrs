@@ -787,4 +787,56 @@ class ZshrsLexerTest {
             toks.any { it.first == ZshrsTokenTypes.DOC_COMMENT },
         )
     }
+
+    // ── Long-flag (--word) recognition ─────────────────────────────
+
+    @Test
+    fun long_flag_is_single_identifier_token_not_two_dashes() {
+        // `zshrs --version` previously lexed as IDENTIFIER + OPERATOR
+        // + OPERATOR + IDENTIFIER, which painted `--` red/badly.
+        // Now `--version` is a single IDENTIFIER spanning all 9 chars.
+        val toks = nonWs("zshrs --version")
+        val longFlag = toks.find { it.second == "--version" }
+        assertNotNull("`--version` token missing: $toks", longFlag)
+        assertEquals(
+            "expected `--version` as single IDENTIFIER",
+            ZshrsTokenTypes.IDENTIFIER as IElementType,
+            longFlag!!.first as IElementType,
+        )
+        // Sanity — no stray OPERATOR `-` tokens.
+        assertTrue(
+            "must not split `--` into two OPERATOR tokens: $toks",
+            toks.none { it.first == ZshrsTokenTypes.OPERATOR && it.second == "-" },
+        )
+    }
+
+    @Test
+    fun long_flag_with_hyphen_inside_word_stays_one_token() {
+        // `--gen-docs`, `--dump-reflection`, `--no-rcs` — hyphens
+        // INSIDE the long-flag name don't terminate the token.
+        for (flag in listOf("--gen-docs", "--dump-reflection", "--no-rcs")) {
+            val toks = nonWs("zshrs $flag")
+            val t = toks.find { it.second == flag }
+            assertNotNull("token `$flag` missing: $toks", t)
+            assertEquals(
+                "expected `$flag` as single IDENTIFIER",
+                ZshrsTokenTypes.IDENTIFIER as IElementType,
+                t!!.first as IElementType,
+            )
+        }
+    }
+
+    @Test
+    fun bare_double_dash_separator_keeps_old_operator_lex() {
+        // `--` alone (not followed by a word char) is the
+        // positional-args separator. NOT a long-flag; falls back
+        // to the operator path.
+        val toks = nonWs("foo -- bar")
+        // Should NOT have a single `--` IDENTIFIER; the two dashes
+        // remain operator tokens.
+        assertTrue(
+            "bare `--` should not lex as IDENTIFIER: $toks",
+            toks.none { it.first == ZshrsTokenTypes.IDENTIFIER && it.second == "--" },
+        )
+    }
 }
