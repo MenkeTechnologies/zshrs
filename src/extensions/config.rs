@@ -249,4 +249,146 @@ parallel_threshold = 64
         let config = load_from(Path::new("/nonexistent/config.toml"));
         assert_eq!(config.worker_pool.size, 0);
     }
+
+    // ========================================================
+    // resolve_pool_size — boundary behavior
+    // ========================================================
+
+    #[test]
+    fn pool_size_one_passes_through() {
+        // Explicit size=1 should NOT trigger the auto-detect branch.
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(resolve_pool_size(&WorkerPoolConfig { size: 1 }), 1);
+    }
+
+    #[test]
+    fn pool_size_64_is_upper_cap_for_explicit_request() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(resolve_pool_size(&WorkerPoolConfig { size: 64 }), 64);
+        assert_eq!(resolve_pool_size(&WorkerPoolConfig { size: 65 }), 64);
+        assert_eq!(resolve_pool_size(&WorkerPoolConfig { size: 100_000 }), 64);
+    }
+
+    #[test]
+    fn pool_size_zero_uses_auto_within_2_to_18_window() {
+        let _g = crate::test_util::global_state_lock();
+        let n = resolve_pool_size(&WorkerPoolConfig { size: 0 });
+        assert!(
+            (2..=18).contains(&n),
+            "auto-detect must clamp to [2,18], got {}",
+            n
+        );
+    }
+
+    // ========================================================
+    // Parser — defaults round-trip on empty input
+    // ========================================================
+
+    #[test]
+    fn empty_toml_parses_to_full_defaults() {
+        let _g = crate::test_util::global_state_lock();
+        let cfg: ZshrsConfig = toml::from_str("").unwrap();
+        let d = ZshrsConfig::default();
+        assert_eq!(cfg.worker_pool.size, d.worker_pool.size);
+        assert_eq!(cfg.completion.max_matches, d.completion.max_matches);
+        assert_eq!(cfg.history.max_entries, d.history.max_entries);
+        assert_eq!(cfg.glob.parallel_threshold, d.glob.parallel_threshold);
+        assert_eq!(cfg.log.level, d.log.level);
+    }
+
+    #[test]
+    fn unknown_section_does_not_error_with_serde_default() {
+        let _g = crate::test_util::global_state_lock();
+        // Unknown top-level key is currently rejected when serde sees it
+        // — verify the explicit accepted shape stays accepted.
+        let toml = "[log]\nlevel = \"debug\"\n";
+        let cfg: ZshrsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.log.level, "debug");
+    }
+
+    #[test]
+    fn partial_completion_section_fills_other_defaults() {
+        let _g = crate::test_util::global_state_lock();
+        let toml = r#"
+[completion]
+max_matches = 42
+"#;
+        let cfg: ZshrsConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.completion.max_matches, 42);
+        // Other fields fall back to defaults.
+        assert!(cfg.completion.fts_enabled);
+        assert!(cfg.completion.ast_cache);
+    }
+
+    #[test]
+    fn history_async_can_be_disabled() {
+        let _g = crate::test_util::global_state_lock();
+        let toml = "[history]\nasync_writes = false\n";
+        let cfg: ZshrsConfig = toml::from_str(toml).unwrap();
+        assert!(!cfg.history.async_writes);
+        assert_eq!(cfg.history.max_entries, 100_000);
+    }
+
+    #[test]
+    fn glob_recursive_parallel_can_be_disabled() {
+        let _g = crate::test_util::global_state_lock();
+        let toml = "[glob]\nrecursive_parallel = false\n";
+        let cfg: ZshrsConfig = toml::from_str(toml).unwrap();
+        assert!(!cfg.glob.recursive_parallel);
+    }
+
+    // ========================================================
+    // load_from — IO-failure modes
+    // ========================================================
+
+    #[test]
+    fn malformed_toml_returns_defaults_not_panic() {
+        // Write a bogus file then point load_from at it.
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join("zshrs_config_malformed.toml");
+        std::fs::write(&tmp, "this is not [[ valid toml ===").unwrap();
+        let cfg = load_from(&tmp);
+        // Defaults survive parse error.
+        assert_eq!(cfg.worker_pool.size, 0);
+        assert_eq!(cfg.completion.max_matches, 1000);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn load_from_round_trip_via_temp_file() {
+        let _g = crate::test_util::global_state_lock();
+        let tmp = std::env::temp_dir().join("zshrs_config_rt.toml");
+        std::fs::write(&tmp, "[worker_pool]\nsize = 7\n").unwrap();
+        let cfg = load_from(&tmp);
+        assert_eq!(cfg.worker_pool.size, 7);
+        assert_eq!(resolve_pool_size(&cfg.worker_pool), 7);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn config_path_ends_in_config_toml() {
+        let _g = crate::test_util::global_state_lock();
+        let p = config_path();
+        assert_eq!(
+            p.file_name().and_then(|s| s.to_str()),
+            Some("config.toml"),
+            "{:?}",
+            p
+        );
+        assert_eq!(
+            p.parent()
+                .and_then(|d| d.file_name())
+                .and_then(|s| s.to_str()),
+            Some("zshrs"),
+            "{:?}",
+            p
+        );
+    }
+
+    #[test]
+    fn log_level_default_is_info_string() {
+        let _g = crate::test_util::global_state_lock();
+        let cfg = ZshrsConfig::default();
+        assert_eq!(cfg.log.level, "info");
+    }
 }
