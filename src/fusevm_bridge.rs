@@ -2872,6 +2872,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
     });
+    // Tri-state `-o` for compile_cond's direct status path. Returns
+    // 0 / 1 / 3 as a Value::Int that compile_cond consumes via
+    // Op::SetStatus. Mirrors zsh's `[[ -o invalid ]]` returning $?=3.
+    vm.register_builtin(BUILTIN_OPTION_CHECK_TRISTATE, |vm, _argc| {
+        let name = vm.pop().to_str();
+        let r = crate::ported::cond::optison("test", &name); // c:cond.c:502
+        // optison itself prints the diagnostic via zwarnnam when r=3
+        // and POSIXBUILTINS is unset (the canonical path). Don't
+        // double-emit here. r is already 0/1/3.
+        Value::Int(r as i64)
+    });
 
     // BUILTIN_PARAM_FILTER — `${var:#pat}` / `${var:|name}` etc.
     // PURE PASSTHRU: rebuild `${name:#pat}` and route to paramsubst.
@@ -4808,6 +4819,13 @@ pub const BUILTIN_END_INLINE_ENV: u16 = 434;
 /// Normalizes the name (strip underscores, lowercase) and reads
 /// `exec.options`. Pushes Bool.
 pub const BUILTIN_OPTION_SET: u16 = 321;
+/// Tri-state `[[ -o NAME ]]` — same lookup as BUILTIN_OPTION_SET
+/// but returns a Value::Int (0=set, 1=unset, 3=invalid-name). The
+/// 3-state code matches zsh's `[[ -o invalid ]]` exit (Src/cond.c
+/// :502 `optison()`). Used by compile_cond's `-o` arm to skip the
+/// generic bool→status conversion and preserve the invalid-name
+/// signal in `$?`.
+pub const BUILTIN_OPTION_CHECK_TRISTATE: u16 = 609;
 
 /// `${var:#pattern}` — array filter: remove elements matching `pattern`.
 /// Stack: [name, pattern]. For scalar `var`, returns empty if it matches

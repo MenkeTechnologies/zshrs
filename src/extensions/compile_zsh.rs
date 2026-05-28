@@ -4363,6 +4363,24 @@ impl ZshCompiler {
             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
         self.emit_cmd_push(crate::ported::zsh_h::CS_COND as u8);
+        // c:Src/cond.c:502 — bare `[[ -o NAME ]]` returns tri-state
+        // 0=set / 1=unset / 3=invalid-name. The generic bool→status
+        // conversion below collapses 3 to 1 (the false case). Detect
+        // the bare -o shape and route through a status-direct path
+        // so the invalid-name signal survives.
+        if let crate::parse::ZshCond::Unary(op, arg) = c {
+            let op_clean = crate::lex::untokenize(op);
+            if op_clean == "-o" {
+                self.compile_word_str(arg);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_OPTION_CHECK_TRISTATE, 1),
+                    0,
+                );
+                self.builder.emit(Op::SetStatus, 0);
+                self.emit_cmd_pop();
+                return;
+            }
+        }
         // Result on stack: bool. Status set after this returns.
         self.compile_cond_expr(c);
         self.emit_cmd_pop();

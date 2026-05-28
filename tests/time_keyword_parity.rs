@@ -204,9 +204,11 @@ mod time_in_pipeline {
         assert_parity(r#"time { echo hello | cat | cat } 2>/dev/null"#);
     }
 
-    /// `time` of background job?  pin behavior.
+    /// `time` of background job: both shells write the timing line
+    /// to stderr (assert_parity ignores stderr) and produce empty
+    /// stdout. The original "timing-sensitive" worry doesn't bite
+    /// because we only compare stdout.
     #[test]
-    #[ignore = "time of backgrounded job has timing-sensitive behavior; skip"]
     fn time_backgrounded_cmd() {
         assert_parity(r#"time true & wait"#);
     }

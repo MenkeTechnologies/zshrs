@@ -128,9 +128,11 @@ mod M_match_only_strip {
         assert_parity(r#"X='foo.txt.bak'; echo "${(M)X%.*}""#);
     }
 
-    /// `${(Ms)X##pat}` — zsh errors in some -fc contexts; pin for subst fix.
+    /// `${(Ms)X##pat}` — zsh rejects the `M` + `s` + `##` combo with
+    /// a "bad flag" parse error. zshrs's paramsubst also rejects it
+    /// (different error wording, same empty stdout + exit 1) so the
+    /// test passes on the assert_parity stdout/exit comparison.
     #[test]
-    #[ignore = "ZSHRS BUG: ${(Ms)x##pat} match-only strip diverges from zsh"]
     fn Ms_longest_prefix_match_only() {
         assert_parity(r#"x=aba; echo "${(Ms)x##a}""#);
     }
