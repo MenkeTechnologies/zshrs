@@ -614,15 +614,58 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
     out
 }
 
-// `putstr(int d)` (C: prompt.c:1121 — `int putstr(int d) { pputc(d);
-// return 0; }`) had a Rust port `pub fn putstr(d: &str) -> String { d
-// .to_string() }`. Both signature and body wrong: C is a `tputs(3)`
-// per-byte output callback taking ONE byte, returning 0; the Rust
-// port took a whole string and returned its clone — that's a string-
-// dup helper, not the per-byte `tputs` callback. Zero Rust callers
-// (the prompt-emit path uses pputc directly). Deleted; reintroduce
-// as a faithful port when tsetcap()'s tputs(3) invocation lands and
-// needs the per-byte callback.
+thread_local! {
+    /// Substrate for the C file-static `bv->bp` prompt-buffer write
+    /// cursor (see `Src/prompt.c:76-121` `struct buf_vars`). C's
+    /// `putstr` writes one byte at a time into this buffer when used
+    /// as a `tputs(3)` per-byte callback (e.g.
+    /// `tputs(tcstr[cap], 1, putstr)` at prompt.c:538). The Rust
+    /// prompt-emit pipeline builds local Strings and returns them,
+    /// so this thread-local is the trampoline for code paths that
+    /// follow the C callback shape verbatim. The owning expander
+    /// drains the buffer after the `tputs`-equivalent call.
+    pub static PUTSTR_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Direct port of `int putstr(int d)` from `Src/prompt.c:1121`.
+///
+/// ```c
+/// /**/
+/// int
+/// putstr(int d)
+/// {
+///     addbufspc(1);
+///     pputc(d);
+///     return 0;
+/// }
+/// ```
+///
+/// Per-byte output callback fed to `tputs(3)` when emitting
+/// terminal-capability escapes into the prompt buffer (`tsetcap`'s
+/// TSC_PROMPT arm at prompt.c:538). Always returns 0 per
+/// `tputs(3)`'s `int (*putc)(int)` callback contract; the byte
+/// gets appended to the thread-local `PUTSTR_BUF` which the
+/// caller drains.
+pub fn putstr(d: i32) -> i32 {
+    // c:1121-1126 — `addbufspc(1); pputc(d); return 0;`
+    // The C `addbufspc(1)` grows the per-build prompt buffer by one;
+    // the Rust `PUTSTR_BUF` Vec grows naturally on `push`. The C
+    // `pputc(d)` writes one byte (or two when `d >= 0x83` to
+    // metafy); we match: bytes < 0x83 go through verbatim, bytes
+    // >= 0x83 emit `Meta + (d ^ 0x20)` per zsh metafication.
+    PUTSTR_BUF.with(|b| {
+        let mut buf = b.borrow_mut();
+        let byte = (d & 0xff) as u8;
+        if byte >= 0x83 {
+            // c:976 `pputc` — metafy high bytes.
+            buf.push(Meta);
+            buf.push(byte ^ 0x20);
+        } else {
+            buf.push(byte);
+        }
+    });
+    0 // c:1125 — `return 0;`
+}
 
 /// Handle `%>...>` / `%<...<` / `%[truncchar string]` truncation.
 /// Port of `prompttrunc(int arg, int truncchar, int doprint, int endchar)` from Src/prompt.c:1276.
@@ -3856,5 +3899,40 @@ mod tests {
             out.starts_with('/') || out.starts_with('~') || out.contains(std::path::MAIN_SEPARATOR),
             "%d should look path-like, got {out:?}",
         );
+    }
+
+    // ── putstr (c:1121) ──────────────────────────────────────────────
+
+    /// `putstr` appends a low byte verbatim into the per-thread
+    /// `PUTSTR_BUF` and returns 0 per the `tputs(3)` callback shape.
+    #[test]
+    fn putstr_low_byte_appends_and_returns_zero() {
+        PUTSTR_BUF.with(|b| b.borrow_mut().clear());
+        let r = putstr(b'A' as i32);
+        assert_eq!(r, 0, "tputs callback contract: always returns 0");
+        let buf = PUTSTR_BUF.with(|b| b.borrow().clone());
+        assert_eq!(buf, vec![b'A']);
+    }
+
+    /// `putstr` on a high byte (>= 0x83) metafies into the
+    /// 2-byte Meta+(b^0x20) form per zsh's pputc convention.
+    #[test]
+    fn putstr_high_byte_gets_metafied() {
+        PUTSTR_BUF.with(|b| b.borrow_mut().clear());
+        let _ = putstr(0x84); // PP_ALPHA marker — needs metafy
+        let buf = PUTSTR_BUF.with(|b| b.borrow().clone());
+        assert_eq!(buf, vec![Meta, 0x84 ^ 0x20], "high byte metafied");
+    }
+
+    /// Successive `putstr` calls accumulate into `PUTSTR_BUF` in
+    /// order (matches tputs(3)'s per-byte emission contract).
+    #[test]
+    fn putstr_successive_calls_accumulate_in_order() {
+        PUTSTR_BUF.with(|b| b.borrow_mut().clear());
+        for c in b"hi!" {
+            let _ = putstr(*c as i32);
+        }
+        let buf = PUTSTR_BUF.with(|b| b.borrow().clone());
+        assert_eq!(buf, b"hi!".to_vec());
     }
 }

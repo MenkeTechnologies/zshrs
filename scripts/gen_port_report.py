@@ -255,14 +255,21 @@ def rs_body_lines(rel_path: str, name: str) -> int:
 # at position 1. RE_C_FN above matches the line-prefix variant; the body
 # indexer wants any-position matches, so use a slightly different anchor.
 RE_C_FN_DEF = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\(", re.MULTILINE)
+# `(?:r#)?` is non-capturing so the captured name is the bare ident
+# (e.g. `fn r#loop` captures `loop`, not `r`). Without it the regex
+# stopped at the `#` after the `r` and reported `r` as the fn name —
+# making genuinely-ported functions whose C name collides with a
+# Rust keyword (loop/match/type/move/...) show up as "unported"
+# in the report, since the C-name lookup would miss `r`.
 RE_RS_FN_DEF = re.compile(
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?"
-    r"(?:extern\s+\"[^\"]+\"\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+    r"(?:extern\s+\"[^\"]+\"\s+)?fn\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\b",
     re.MULTILINE,
 )
 
 # ── Rust function & port-comment index ───────────────────────────────────────
-RE_RS_FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+\"[^\"]+\"\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+# See RE_RS_FN_DEF above re: the `(?:r#)?` raw-identifier prefix.
+RE_RS_FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+\"[^\"]+\"\s+)?fn\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\b")
 RE_PORT_COMMENT = re.compile(
     r"(?:Port(?:s|ed|ing)?\s+of|Mirrors?|Wrapper\s+for|Equivalent\s+(?:of|to)|Based\s+on|Implements?|Direct\s+port\s+of)"
     r"\s+`?([A-Za-z_][A-Za-z0-9_]*)`?\s*(?:\(\)|\b)",
