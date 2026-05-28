@@ -5436,10 +5436,33 @@ pub fn bin_unset(
                             }
                         }
                     } else if let Ok(i) = key.parse::<i32>() {
-                        if let Some(idx) = resolve(i) {
-                            arr[idx] = String::new();
-                            crate::ported::exec_hooks::set_array(nm, arr);
+                        // c:Src/params.c — single-index unset only
+                        // accepts positive subscripts and the special
+                        // -1 form (clear last element). Other negative
+                        // values are a no-op in zsh — verified
+                        // empirically: `unset arr[-2]`, `arr[-3]` etc.
+                        // leave the array unchanged.
+                        // `unset arr[0]` is invalid (unless
+                        // KSHZEROSUBSCRIPT) and emits a diagnostic.
+                        if i == 0 {
+                            zwarn(&format!(
+                                "{}: assignment to invalid subscript range",
+                                nm
+                            ));
+                            returnval = 1;
+                        } else if i == -1 {
+                            if !arr.is_empty() {
+                                let idx = arr.len() - 1;
+                                arr[idx] = String::new();
+                                crate::ported::exec_hooks::set_array(nm, arr);
+                            }
+                        } else if i > 0 {
+                            if let Some(idx) = resolve(i) {
+                                arr[idx] = String::new();
+                                crate::ported::exec_hooks::set_array(nm, arr);
+                            }
                         }
+                        // Other negative values: no-op (zsh behavior).
                     }
                 }
             }
