@@ -439,6 +439,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // `source` (Src/builtin.c c:116) wired to bin_dot via BUILTINS.
     reg_passthru!(vm, BUILTIN_SOURCE, "source");
     reg_passthru!(vm, BUILTIN_DOT, ".");
+    reg_passthru!(vm, BUILTIN_LOGOUT, "logout");
 
     vm.register_builtin(BUILTIN_EXIT, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -4780,6 +4781,12 @@ pub const BUILTIN_NULLCMD_EXEC: u16 = 607;
 /// (`zsh:.:1: …` vs source's `zsh:source:1: …`).
 /// c:Src/builtin.c:9308 — `BUILTIN(".", BINF_PSPECIAL, bin_dot, …)`.
 pub const BUILTIN_DOT: u16 = 608;
+/// `logout` — fusevm maps this to BUILTIN_EXIT alongside `exit`/`bye`,
+/// which drops the name and dispatches with BIN_EXIT funcid. zsh's
+/// `logout` outside a login shell must emit "not login shell" + exit 1,
+/// which only fires when bin_break sees BIN_LOGOUT funcid. Dedicated
+/// opcode dispatches via BUILTINS table by literal name "logout".
+pub const BUILTIN_LOGOUT: u16 = 610;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
