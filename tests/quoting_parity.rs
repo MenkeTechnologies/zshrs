@@ -260,7 +260,6 @@ mod mixed_quoting {
 
     /// ANSI-C followed by double for var expansion.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: ANSI-C + double-quote concat output differs"]
     fn ansi_then_double_concat() {
         assert_parity(r#"X=val; echo $'\t'"$X""#);
     }
