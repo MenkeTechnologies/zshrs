@@ -50,3 +50,150 @@ pub fn lookup_keyword_doc(name: &str) -> Option<(&'static str, &'static str)> {
         .find(|(n, _)| *n == name)
         .map(|&(n, d)| (n, d))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === lookup_keyword_doc: exact-match resolution ===
+
+    #[test]
+    fn lookup_known_keywords_return_canon_and_doc() {
+        // Every reserved word the parser dispatches on should resolve.
+        for kw in [
+            "if", "for", "while", "until", "case", "select", "function", "time", "repeat",
+            "always", "exec", "command", "builtin",
+        ] {
+            let (canon, doc) =
+                lookup_keyword_doc(kw).unwrap_or_else(|| panic!("{kw} must resolve"));
+            assert_eq!(canon, kw, "canon must mirror the lookup key (exact match)");
+            assert!(!doc.is_empty(), "doc body for {kw} must not be empty");
+        }
+    }
+
+    #[test]
+    fn lookup_is_case_sensitive() {
+        // Unlike option/specvar lookups, keyword lookup uses string-equal
+        // (see find() filter). Upper-case forms must NOT resolve.
+        assert!(lookup_keyword_doc("IF").is_none());
+        assert!(lookup_keyword_doc("For").is_none());
+        assert!(lookup_keyword_doc("WHILE").is_none());
+    }
+
+    #[test]
+    fn lookup_unknown_keyword_returns_none() {
+        assert!(lookup_keyword_doc("not_a_keyword").is_none());
+        assert!(lookup_keyword_doc("def").is_none());
+        assert!(lookup_keyword_doc("lambda").is_none());
+    }
+
+    #[test]
+    fn lookup_empty_string_returns_none() {
+        assert!(lookup_keyword_doc("").is_none());
+    }
+
+    #[test]
+    fn lookup_double_bracket_resolves() {
+        // `[[ ... ]]` cond keyword — verify the literal `[[` token resolves.
+        let (canon, doc) = lookup_keyword_doc("[[").expect("[[ must resolve");
+        assert_eq!(canon, "[[");
+        assert!(
+            doc.to_lowercase().contains("conditional"),
+            "[[ doc should mention conditional, got {doc:?}"
+        );
+    }
+
+    #[test]
+    fn lookup_returns_first_match_for_duplicate_keys() {
+        // KEYWORD_DOCS contains multiple `for` entries (one per parser
+        // production: word-list, c-style arith, short forms). The
+        // lookup walks linearly and returns the FIRST hit, which is
+        // load-bearing for any LSP / hover surface that calls this.
+        let (_, doc) = lookup_keyword_doc("for").expect("for must resolve");
+        // The first `for` entry covers the canonical word-list form
+        // ("Expand the list of _word_s ...").
+        assert!(
+            doc.contains("Expand the list"),
+            "expected first `for` entry (word-list form), got: {doc:?}"
+        );
+    }
+
+    #[test]
+    fn lookup_precommand_modifiers_resolve() {
+        // Precommand modifiers (`exec`, `noglob`, `nocorrect`, `command`,
+        // `builtin`, `-`) are all listed in the keyword docs table.
+        for kw in ["exec", "noglob", "nocorrect", "command", "builtin", "-"] {
+            assert!(
+                lookup_keyword_doc(kw).is_some(),
+                "precommand modifier {kw:?} should resolve"
+            );
+        }
+    }
+
+    // === KEYWORD_DOCS table integrity ===
+
+    #[test]
+    fn keyword_docs_table_is_nonempty() {
+        assert!(!KEYWORD_DOCS.is_empty());
+        // Hard floor: every reserved word listed in zsh's grammar
+        // section produces at least one entry. Set ≥15 to catch a
+        // generator that silently emits an empty body block.
+        assert!(
+            KEYWORD_DOCS.len() >= 15,
+            "expected ≥15 entries, got {}",
+            KEYWORD_DOCS.len()
+        );
+    }
+
+    #[test]
+    fn keyword_docs_no_empty_bodies() {
+        for (name, body) in KEYWORD_DOCS {
+            assert!(!body.is_empty(), "empty doc body for keyword {name:?}");
+        }
+    }
+
+    #[test]
+    fn keyword_docs_no_empty_names() {
+        for (name, _) in KEYWORD_DOCS {
+            assert!(!name.is_empty(), "empty keyword name in KEYWORD_DOCS");
+        }
+    }
+
+    #[test]
+    fn keyword_docs_contains_all_loop_constructs() {
+        // The five looping forms must all be present (for, while,
+        // until, repeat, foreach). foreach is the zsh-extension alias
+        // for for-in-word-list.
+        let names: std::collections::HashSet<&str> = KEYWORD_DOCS.iter().map(|(n, _)| *n).collect();
+        for kw in ["for", "while", "until", "repeat", "foreach"] {
+            assert!(
+                names.contains(kw),
+                "loop keyword {kw:?} missing from KEYWORD_DOCS"
+            );
+        }
+    }
+
+    #[test]
+    fn keyword_docs_contains_function_definition_form() {
+        // `function name { body }` keyword form is required for any
+        // LSP hover over a `function` declaration to surface docs.
+        let (_, body) = lookup_keyword_doc("function").expect("function must resolve");
+        assert!(
+            body.to_lowercase().contains("function"),
+            "function doc body should self-reference, got {body:?}"
+        );
+    }
+
+    #[test]
+    fn keyword_docs_lpar_subshell_form() {
+        // `LPAR` is the yodl encoding for `(` used by subshell-list
+        // grammar. The lookup keys this verbatim — verify the entry
+        // exists, even though the surface zsh keyword is `(`.
+        let (canon, body) = lookup_keyword_doc("LPAR").expect("LPAR must resolve");
+        assert_eq!(canon, "LPAR");
+        assert!(
+            body.to_lowercase().contains("subshell"),
+            "LPAR doc body should describe subshell, got {body:?}"
+        );
+    }
+}
