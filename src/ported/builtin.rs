@@ -3162,8 +3162,13 @@ pub fn bin_typeset(
     #[cfg(feature = "recorder")]
     if crate::recorder::is_enabled() {
         let ctx = crate::recorder::recorder_ctx_global();
-        // Collect option letters (`-x`/`+x` body) so ParamAttrs reflects
-        // the typeset flag set the C source sees in `on`.
+        // Collect option letters from argv `-x`/`+x` flag args AND
+        // from the BUILTIN's defopts (the auto-set option chars C
+        // applies before dispatching bin_typeset). Without the
+        // defopts, `integer count=42` (defopts="i"), `float pi=1.0`
+        // (defopts="E"), and `typeset -A h=(...)` whose `A` came
+        // from a parent shape, lost their type bits and the
+        // recorder emitted `[scalar]` for everything.
         let mut letters = String::new();
         let mut tied_mode = false;
         for a in argv {
@@ -3175,11 +3180,16 @@ pub fn bin_typeset(
                 }
             }
         }
+        // Add the option letters that defopts pre-set in `ops`.
+        for ch in [b'i', b'E', b'F', b'A', b'a', b'r', b'x', b'g', b'l', b'u'] {
+            if OPT_ISSET(&ops, ch) && !letters.contains(ch as char) {
+                letters.push(ch as char);
+            }
+        }
         // Funcid-driven attr seeding: BIN_EXPORT seeds nothing
         // (recorder uses emit_export for those), BIN_READONLY seeds
-        // SCALAR|READONLY, BIN_FLOAT seeds FLOAT, BIN_INTEGER seeds
-        // INTEGER. Otherwise pass the letter set through
-        // ParamAttrs::from_flag_chars verbatim.
+        // SCALAR|READONLY. INTEGER/FLOAT/ASSOC/ARRAY now flow via
+        // the defopts injection above into ParamAttrs::from_flag_chars.
         let mut attrs = crate::recorder::ParamAttrs::from_flag_chars(&letters);
         match func {
             crate::ported::builtin::BIN_READONLY => {
@@ -5212,6 +5222,15 @@ pub fn bin_functions(
             let new_shf_ptr = Box::into_raw(new_shf);
             let _ = mkautofn(new_shf_ptr); // c:3765
             add_autoload_function(new_shf_ptr, fname); // c:3767
+            // PFA-SMR: an `autoload NAME` registers a function stub
+            // that fires on first call. Record it as a `function`
+            // kind so replay re-registers the autoload. C zsh has
+            // no recorder hook here; emit per Rust-only schema.
+            #[cfg(feature = "recorder")]
+            if crate::recorder::is_enabled() {
+                let ctx = crate::recorder::recorder_ctx_global();
+                crate::recorder::emit_function(fname, None, ctx);
+            }
             if sigidx != -1 {
                 // c:3769
                 // c:3770 — `if (settrap(sigidx, NULL, ZSIG_FUNC)) { ... }`
@@ -6657,6 +6676,19 @@ pub fn bin_alias(
 
     // c:4521-4540 — literal args: define `name=value` or display a single name.
     queue_signals(); // c:4522
+    // PFA-SMR: capture per-definition for replay. Dispatch the
+    // right subkind (galias/salias/alias) based on the parsed
+    // flag bits set above. Same per-name loop the C code walks
+    // — one record per `name=value` argv slot. Without this,
+    // the recorder harness saw zero `alias` captures.
+    #[cfg(feature = "recorder")]
+    let recorder_active = crate::recorder::is_enabled();
+    #[cfg(feature = "recorder")]
+    let recorder_ctx = if recorder_active {
+        Some(crate::recorder::recorder_ctx_global())
+    } else {
+        None
+    };
     let mut idx = 0;
     while idx < argv.len() {
         // c:4523
@@ -6676,6 +6708,16 @@ pub fn bin_alias(
                 if let Ok(mut t) = lock.write() {
                     let a = createaliasnode(n, v, flags1); // c:4527
                     t.add(a);
+                }
+                #[cfg(feature = "recorder")]
+                if let Some(ref ctx) = recorder_ctx {
+                    if (flags1 & ALIAS_GLOBAL as u32) != 0 {
+                        crate::recorder::emit_galias(n, Some(v), ctx.clone());
+                    } else if (flags1 & ALIAS_SUFFIX as u32) != 0 {
+                        crate::recorder::emit_salias(n, Some(v), ctx.clone());
+                    } else {
+                        crate::recorder::emit_alias(n, Some(v), ctx.clone());
+                    }
                 }
                 continue;
             }

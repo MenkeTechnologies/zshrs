@@ -1295,16 +1295,21 @@ pub fn bin_bindkey_meta(
 /// old Arc (preserves C's "all sharing names see the change"
 /// semantic).
 pub fn bin_bindkey_bind(
-    name: &str,
-    _kmname: Option<&str>,
+    _name: &str,
+    kmname: Option<&str>,
     _km: Option<&Keymap>,
     argv: &[String],
     _ops: &options,
     func: i32,
 ) -> i32 {
-    // c:999
-
-    let Some(old_arc) = openkeymap(name) else {
+    // c:999 — `km` is preselected by the caller via opts/-M; fall back
+    // to "main" (zsh's default after default_bindings()) when no
+    // explicit keymap was passed. Previous Rust port mis-used the
+    // builtin name ("bindkey") as the keymap key and openkeymap
+    // returned None for every invocation → bin_bindkey exited 1 and
+    // installed nothing.
+    let lookup_name = kmname.unwrap_or("main");
+    let Some(old_arc) = openkeymap(lookup_name) else {
         return 1;
     }; // c:1002
        // c:1003-1011 — bind seq+target pairs need even argv count
@@ -1356,6 +1361,22 @@ pub fn bin_bindkey_bind(
             km.first[seq_bytes[0] as usize] = kb_value.bind.clone();
         } else {
             km.multi.insert(seq_bytes.to_vec(), kb_value); // c:1054 hashtable
+        }
+        // PFA-SMR: record the binding so replay can recreate it.
+        // Skip `bindkey -e` / `bindkey -v` mode switches (those land
+        // in the Meta op path, not Bind — but stride==2 args here are
+        // always real bindings; func_c='r' (stride 1) is unbind and
+        // is intentionally skipped per RECORDER.md surface row.
+        #[cfg(feature = "recorder")]
+        if func_c != 'r' && crate::recorder::is_enabled() {
+            let ctx = crate::recorder::recorder_ctx_global();
+            let seq_str = String::from_utf8_lossy(seq_bytes);
+            let widget_default = String::new();
+            let widget_ref: &str = match func_c {
+                's' => "send-string", // c:1030
+                _ => argv.get(i + 1).unwrap_or(&widget_default).as_str(),
+            };
+            crate::recorder::emit_bindkey(&seq_str, widget_ref, ctx);
         }
         i += stride;
     }

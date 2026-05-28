@@ -1,0 +1,37 @@
+# zshrs (shell) configuration. Lives at $ZSHRS_HOME/zshrs.toml
+# (~/.zshrs/zshrs.toml by default). Auto-seeded on first run of
+# any zshrs binary (zshrs / zshrs-daemon / zshrs-recorder / zd);
+# edit freely.
+
+[log]
+# Tracing filter directive for the SHELL side (writes to
+# zshrs.log + zshrs-recorder.log). Same syntax as $ZSHRS_LOG
+# (which always wins when set). Accepts simple levels (info /
+# debug / trace / warn / error) or per-module overrides
+# (info,zsh::exec=debug,zsh::recorder=trace).
+#
+# Default `info`. Bump to `trace` for first-pass diagnostics
+# of executor / parser / canonical_apply paths.
+level = "info"
+
+[daemon]
+# Whether the shell talks to zshrs-daemon at startup:
+#   auto     — connect if the socket is reachable, else go vanilla
+#   on       — require a daemon, fail loudly if missing
+#   off      — never connect, even if the daemon is running
+enabled = "auto"
+
+[shell]
+# Whether to skip sourcing /etc/zshenv + ~/.{zshenv,zprofile,zshrc,
+# zlogin} and rebuild executor state from the daemon's canonical
+# rkyv shard instead. Saves ~150ms on shells with heavy plugin
+# loads.
+#   auto — skip iff daemon is up AND has a recorded zshrs shard
+#   on   — always skip (config files become inert; recorder owns
+#          all state)
+#   off  — never skip (canonical state ignored even when present)
+skip_configs = "auto"
+
+# Optional: zsh script run once after dotfiles (or after canonical_apply
+# when skip_configs applies). Omit entirely if unused.
+# startup_config = "~/.zshrs/shell-init.zsh"

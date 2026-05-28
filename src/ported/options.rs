@@ -511,6 +511,19 @@ pub fn bin_setopt(
                         &format!("can't change option: {}", oname),
                     );
                     retval |= 1;
+                } else {
+                    // PFA-SMR: emit setopt/unsetopt per option name.
+                    // Without this, `setopt EXTENDED_GLOB` and
+                    // friends were invisible to the recorder.
+                    #[cfg(feature = "recorder")]
+                    if crate::recorder::is_enabled() {
+                        let ctx = crate::recorder::recorder_ctx_global();
+                        if isun == 0 {
+                            crate::recorder::emit_setopt(&oname, ctx);
+                        } else {
+                            crate::recorder::emit_unsetopt(&oname, ctx);
+                        }
+                    }
                 }
             }
         }

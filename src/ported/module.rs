@@ -3179,6 +3179,17 @@ pub fn bin_zmodload_load(table: &mut modulestab, nam: &str, args: &[String], ops
                 // c:2991
                 ret = tmpret;
             }
+            // PFA-SMR: one event per `zmodload MODULE` load form
+            // (only the bare-load path; listing/-u/-d/-A handled
+            // upstream and never reaches here). Pass empty flags
+            // since the per-feature -F path lives in
+            // bin_zmodload_features. Record even on failure so
+            // replay sees the user's intent.
+            #[cfg(feature = "recorder")]
+            if crate::recorder::is_enabled() {
+                let ctx = crate::recorder::recorder_ctx_global();
+                crate::recorder::emit_zmodload(arg, "", ctx);
+            }
         }
         ret
     }
