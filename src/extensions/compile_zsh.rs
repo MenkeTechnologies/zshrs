@@ -1785,19 +1785,55 @@ impl ZshCompiler {
         let first = s.chars().next();
         if matches!(first, Some('\u{85}') | Some('\u{8c}')) && s.len() >= 3 {
             let inner = &s[first.unwrap().len_utf8()..];
-            if inner.starts_with('\u{9d}') && inner.ends_with('\u{9d}') && inner.len() >= 6 {
-                let body_start = '\u{9d}'.len_utf8();
-                let body_end = inner.len() - '\u{9d}'.len_utf8();
-                let body_raw = &inner[body_start..body_end];
-                // Bnull → `\` so `Bnull t` becomes `\t` for the decoder.
-                let body: String = body_raw
-                    .chars()
-                    .map(|c| if c == '\u{9f}' { '\\' } else { c })
-                    .collect();
-                let decoded = decode_ansi_c(&body);
-                let idx = self.builder.add_constant(Value::str(decoded.as_str()));
-                self.builder.emit(Op::LoadConst(idx), 0);
-                return;
+            // Body region is between the leading `\u{9d}` and the FIRST
+            // matching `\u{9d}` (Bnull-escapes excluded). Walk to the
+            // close so chained `$'a'$'b'` (which has another Stringg
+            // BEFORE the trailing Snull) falls through to the segment
+            // path instead of emitting the inter-quote markers as
+            // literal text. Without this check, `inner.ends_with('\u{9d}')`
+            // matched the FINAL Snull and treated everything between
+            // as a single ANSI-C body, leaking `Snull+Stringg+Snull`
+            // bytes between the decoded `a` and `b`.
+            if inner.starts_with('\u{9d}') && inner.len() >= 6 {
+                let inner_chars: Vec<char> = inner.chars().collect();
+                let mut close_idx: Option<usize> = None;
+                let mut escaped = false;
+                let mut k = 1; // skip leading Snull
+                while k < inner_chars.len() {
+                    if escaped {
+                        escaped = false;
+                        k += 1;
+                        continue;
+                    }
+                    if inner_chars[k] == '\u{9f}' {
+                        escaped = true;
+                        k += 1;
+                        continue;
+                    }
+                    if inner_chars[k] == '\u{9d}' {
+                        close_idx = Some(k);
+                        break;
+                    }
+                    k += 1;
+                }
+                // Fast path only when the close Snull is the LAST char
+                // (i.e. the whole word is one `$'...'` span). Anything
+                // after the close means the word continues with more
+                // content — let the segment splitter handle it.
+                if close_idx == Some(inner_chars.len() - 1) {
+                    let body_start = '\u{9d}'.len_utf8();
+                    let body_end = inner.len() - '\u{9d}'.len_utf8();
+                    let body_raw = &inner[body_start..body_end];
+                    // Bnull → `\` so `Bnull t` becomes `\t` for the decoder.
+                    let body: String = body_raw
+                        .chars()
+                        .map(|c| if c == '\u{9f}' { '\\' } else { c })
+                        .collect();
+                    let decoded = decode_ansi_c(&body);
+                    let idx = self.builder.add_constant(Value::str(decoded.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    return;
+                }
             }
         }
         // Single-quoted: word contains Snull markers wrapping a literal
@@ -5508,6 +5544,37 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
     // META-$ or Qstring — look at next char
     let next = chars.get(i + 1).copied();
     match next {
+        // ANSI-C quote: $'...' lexed as `Stringg Snull <body> Snull`
+        // (`\u{85}\u{9d}…\u{9d}`). Without this arm, split_word_segments
+        // saw the lone Stringg as an "expansion" returning i+1, leaving
+        // the Stringg byte as a single-segment "$" that multsub then
+        // emitted as a literal `$`. Result: `$'\t'$X` produced
+        // `$<tab>val` instead of `<tab>val`. Walk the full Snull-
+        // delimited body so the segment is the whole `$'…'` token,
+        // dispatched by multsub's stringsubstquote arm.
+        Some('\u{9d}') => {
+            let mut j = i + 2;
+            let mut escaped = false;
+            while j < chars.len() {
+                if escaped {
+                    escaped = false;
+                    j += 1;
+                    continue;
+                }
+                if chars[j] == '\u{9f}' {
+                    // Bnull-escape: skip the literal next char
+                    escaped = true;
+                    j += 1;
+                    continue;
+                }
+                if chars[j] == '\u{9d}' {
+                    j += 1;
+                    break;
+                }
+                j += 1;
+            }
+            j
+        }
         // Inbrace: ${...}
         Some('\u{8f}') => {
             let mut depth = 1;
