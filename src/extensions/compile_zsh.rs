@@ -7823,17 +7823,20 @@ mod tests {
 
     #[test]
     fn compile_glob_expansion_compiles_without_panic() {
-        // Observation: `*.txt` lowers to LoadConst("*.txt") + arg-processing
-        // CallBuiltin chain. Glob expansion happens at runtime when the
-        // arg is processed, not via a dedicated Op::Glob at compile.
-        // Pin just that the pattern made it into the constant pool.
+        // `*.txt` lowers to LoadConst(<tokenized>) + arg-processing
+        // CallBuiltin chain. The lexer tokenizes the bare `*` to
+        // `Star` (`\u{87}`, per Src/zsh.h:162 + ported/zsh_h.rs:144);
+        // glob expansion happens at runtime through the arg-process
+        // CallBuiltin chain (un-tokenizing as it goes), not via a
+        // dedicated Op::Glob at compile. Pin just that the pattern
+        // made it into the constant pool — accept either the raw
+        // `*.txt` (untokenized) or the tokenized `\u{87}.txt`.
         let chunk = compile_src("echo *.txt");
         assert!(
-            chunk
-                .constants
-                .iter()
-                .any(|c| matches!(c, fusevm::Value::Str(s) if s.contains("*.txt"))),
-            "glob pattern *.txt must be in the constant pool"
+            chunk.constants.iter().any(|c| matches!(c,
+                fusevm::Value::Str(s) if s.contains("*.txt") || s.contains("\u{87}.txt"))),
+            "glob pattern (tokenized or literal) must be in the constant pool: {:?}",
+            chunk.constants,
         );
     }
 
@@ -7844,11 +7847,14 @@ mod tests {
         // CallBuiltin chain, not via a dedicated Op::TildeExpand at
         // compile time.
         let chunk = compile_src("echo ~/x");
+        // Lexer tokenizes the leading `~` to `Tilde` (`\u{98}`,
+        // per Src/zsh.h:179 + ported/zsh_h.rs:178). Accept either
+        // form (raw or tokenized).
         assert!(
-            chunk.constants.iter().any(
-                |c| matches!(c, fusevm::Value::Str(s) if s.contains("~/x") || s.contains("~"))
-            ),
-            "tilde literal must be in the constant pool"
+            chunk.constants.iter().any(|c| matches!(c,
+                fusevm::Value::Str(s) if s.contains("~/x") || s.contains("\u{98}/x"))),
+            "tilde pattern must be in the constant pool: {:?}",
+            chunk.constants,
         );
     }
 

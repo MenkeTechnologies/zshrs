@@ -749,4 +749,42 @@ class ZshrsLexerTest {
         val afterRest = toks.last { it.second == "rest" }
         assertEquals(ZshrsTokenTypes.IDENTIFIER, afterRest.first)
     }
+
+    // ── DOC_COMMENT (## doubled-hash) vs regular COMMENT (#) ────────
+
+    @Test
+    fun double_hash_emits_doc_comment_token() {
+        val toks = nonWs("## doc comment line\n# regular comment line\n")
+        val docs = toks.filter { it.first == ZshrsTokenTypes.DOC_COMMENT }
+        val regs = toks.filter { it.first == ZshrsTokenTypes.COMMENT }
+        assertTrue("expected DOC_COMMENT for `## …`: $toks", docs.isNotEmpty())
+        assertTrue("expected COMMENT for `# …`: $toks", regs.isNotEmpty())
+        assertTrue("doc text mismatch: ${docs[0]}", docs[0].second.startsWith("## "))
+        assertTrue("reg text mismatch: ${regs[0]}", regs[0].second.startsWith("# "))
+    }
+
+    @Test
+    fun single_hash_alone_stays_regular_comment() {
+        // `#` with no trailing content is still a regular comment.
+        val toks = nonWs("#\nfoo\n")
+        val c = toks.first {
+            it.first == ZshrsTokenTypes.COMMENT || it.first == ZshrsTokenTypes.DOC_COMMENT
+        }
+        assertEquals(ZshrsTokenTypes.COMMENT, c.first)
+    }
+
+    @Test
+    fun shebang_remains_distinct_from_doc_comment() {
+        // `#!` stays SHEBANG; the doubled-hash on the next line
+        // still becomes DOC_COMMENT independently.
+        val toks = nonWs("#!/usr/bin/env zsh\n## then a doc comment\n")
+        assertTrue(
+            "expected SHEBANG on line 1: $toks",
+            toks.any { it.first == ZshrsTokenTypes.SHEBANG },
+        )
+        assertTrue(
+            "expected DOC_COMMENT on line 2: $toks",
+            toks.any { it.first == ZshrsTokenTypes.DOC_COMMENT },
+        )
+    }
 }

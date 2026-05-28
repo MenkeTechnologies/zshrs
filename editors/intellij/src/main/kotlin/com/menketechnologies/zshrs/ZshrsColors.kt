@@ -13,6 +13,13 @@ import com.intellij.openapi.editor.colors.TextAttributesKey
  */
 object ZshrsColors {
     @JvmField val COMMENT = mk("ZSHRS_COMMENT", Defaults.LINE_COMMENT)
+    /// `##` doc comments. Distinct slot from regular `#` comments —
+    /// users typically pick a stronger color (e.g. brighter cyan) so
+    /// the LSP-attached docstring lines stand out from inline code
+    /// remarks. Defaults to `DOC_COMMENT` (IntelliJ's reserved
+    /// JavaDoc-style slot) so themes that style javadocs get an
+    /// out-of-the-box highlight.
+    @JvmField val DOC_COMMENT = mk("ZSHRS_DOC_COMMENT", Defaults.DOC_COMMENT)
     @JvmField val SHEBANG = mk("ZSHRS_SHEBANG", Defaults.LINE_COMMENT)
     @JvmField val STRING_DQ = mk("ZSHRS_STRING_DQ", Defaults.STRING)
     @JvmField val STRING_SQ = mk("ZSHRS_STRING_SQ", Defaults.STRING)
