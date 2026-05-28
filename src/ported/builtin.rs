@@ -895,11 +895,48 @@ pub fn bin_enable(
                     .unwrap_or(false),
             }
         };
-        for nm in collect_names(&tab) {
+        // c:Src/builtin.c — `scanhashtable(ht, 1, …)` walks the
+        // table in sorted order (the first arg `sorted=1`). Mirror
+        // by sorting the collected names before the per-name walk.
+        // Without this, builtin/reswd listings came out in HashMap
+        // iteration order, diverging from zsh.
+        let mut all_names = collect_names(&tab);
+        all_names.sort();
+        for nm in all_names {
             let dis = is_disabled(&nm);
             let entry_flags = if dis { DISABLED as u32 } else { 0 };
             if (entry_flags & flags1) == flags1 && (entry_flags & flags2) == 0 {
-                println!("{}", nm);
+                // c:Src/builtin.c — `ht->printnode` dispatches per
+                // table type. For alias/sufalias, printaliasnode
+                // (hashtable.rs:1477) prints `name=value`. For
+                // builtin/reswd/shfunc, just the name. Previous
+                // Rust port printed bare names for all kinds, so
+                // `enable -a` lost the alias definitions. Mirror
+                // C's printnode dispatch here.
+                match tab {
+                    Tab::Alias => {
+                        let val = aliastab_lock()
+                            .read()
+                            .ok()
+                            .and_then(|t| t.get_including_disabled(&nm).map(|a| a.text.clone()));
+                        if let Some(v) = val {
+                            println!("{}={}", nm, crate::ported::utils::quotedzputs(&v));
+                        } else {
+                            println!("{}", nm);
+                        }
+                    }
+                    Tab::SufAlias => {
+                        let val = sufaliastab_lock().read().ok().and_then(|t| {
+                            t.get_including_disabled(&nm).map(|a| a.text.clone())
+                        });
+                        if let Some(v) = val {
+                            println!("{}={}", nm, crate::ported::utils::quotedzputs(&v));
+                        } else {
+                            println!("{}", nm);
+                        }
+                    }
+                    _ => println!("{}", nm),
+                }
             }
         }
         unqueue_signals(); // c:556
