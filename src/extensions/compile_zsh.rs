@@ -928,6 +928,17 @@ impl ZshCompiler {
         // SET_VAR can stash and restore each name's prior state.
         // Direct port of zsh's addvars()-list scoping in execute_simple.
         let has_inline_env_scope = !simple.assigns.is_empty() && !simple.words.is_empty();
+        // c:Src/exec.c — prefork (arg expansion) runs BEFORE addvars
+        // (the inline-assign list) in zsh. That's how `a=1 echo "$a"`
+        // prints empty (the shell's own `a` is still unset when the
+        // args are expanded; the assigned `a=1` lives only in the
+        // child env). The previous Rust port ran compile_assign here
+        // (before word push), so the args' `$a` saw the just-set
+        // shell var and echoed `1` instead of "". Defer compile_assign
+        // until just before dispatch: the args are pushed onto the
+        // stack with PRE-assign state, then the assigns commit, then
+        // the command consumes the (pre-expanded) args from the
+        // stack with the assigns visible in env.
         if has_inline_env_scope {
             self.builder.emit(
                 Op::CallBuiltin(crate::vm_helper::BUILTIN_BEGIN_INLINE_ENV, 0),
@@ -946,11 +957,17 @@ impl ZshCompiler {
         // a `$()` in any RHS overwrote it. Mirror by leaving last_status
         // untouched per-assign and resetting once at the end.
         let mut chain_had_cmd_subst = false;
-        for assign in &simple.assigns {
-            self.last_assign_had_cmd_subst = false;
-            self.compile_assign(assign);
-            if self.last_assign_had_cmd_subst {
-                chain_had_cmd_subst = true;
+        // Inline-env case: defer compile_assign until after the word
+        // push so the args are evaluated against the pre-assign state.
+        // The bare-assign-only path (words empty) still runs the
+        // assigns inline below.
+        if !has_inline_env_scope {
+            for assign in &simple.assigns {
+                self.last_assign_had_cmd_subst = false;
+                self.compile_assign(assign);
+                if self.last_assign_had_cmd_subst {
+                    chain_had_cmd_subst = true;
+                }
             }
         }
 
@@ -1324,6 +1341,21 @@ impl ZshCompiler {
         let argc = (simple.words.len() - precmd_skip - 1) as u8;
         for word in &simple.words[precmd_skip + 1..] {
             self.compile_word_str(word);
+        }
+
+        // c:Src/exec.c — addvars runs AFTER prefork. With inline-env
+        // scope, defer the assigns until args are already pushed onto
+        // the stack so `a=1 echo "$a"` echoes "" (shell `$a` still
+        // unset when args resolved) and the assigned `a=1` lands only
+        // in the child env.
+        if has_inline_env_scope {
+            for assign in &simple.assigns {
+                self.last_assign_had_cmd_subst = false;
+                self.compile_assign(assign);
+                if self.last_assign_had_cmd_subst {
+                    chain_had_cmd_subst = true;
+                }
+            }
         }
 
         // xtrace: emit a runtime print of the EXPANDED command line
