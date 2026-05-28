@@ -268,4 +268,111 @@ mod tests {
         assert_eq!(flamegraph_enabled(), cfg!(feature = "flamegraph"));
         assert_eq!(prometheus_enabled(), cfg!(feature = "prometheus"));
     }
+
+    // ========================================================
+    // log_dir — ZSHRS_HOME precedence and fallback
+    // ========================================================
+
+    #[test]
+    fn log_dir_returns_absolute_when_zshrs_home_absolute() {
+        with_zshrs_home(Some("/var/log/zshrs"), || {
+            let d = log_dir();
+            assert!(d.is_absolute(), "log_dir should be absolute: {:?}", d);
+            assert_eq!(d, PathBuf::from("/var/log/zshrs"));
+        });
+    }
+
+    #[test]
+    fn log_dir_honors_relative_zshrs_home_verbatim() {
+        // No magic normalization — whatever ZSHRS_HOME is, log_dir
+        // returns it (with the `.zshrs` suffix replaced).
+        with_zshrs_home(Some("relative/path"), || {
+            assert_eq!(log_dir(), PathBuf::from("relative/path"));
+        });
+    }
+
+    #[test]
+    fn log_dir_distinct_from_log_path() {
+        with_zshrs_home(Some("/tmp/zshrs-distinct"), || {
+            let d = log_dir();
+            let p = log_path();
+            assert_ne!(d, p, "dir and path must differ");
+            assert_eq!(p.parent(), Some(d.as_path()));
+        });
+    }
+
+    #[test]
+    fn log_path_filename_is_zshrs_dot_log() {
+        with_zshrs_home(Some("/tmp/zshrs-fname"), || {
+            assert_eq!(
+                log_path().file_name().and_then(|s| s.to_str()),
+                Some("zshrs.log")
+            );
+        });
+    }
+
+    #[test]
+    fn log_dir_overrides_persist_for_repeated_calls() {
+        // Calling twice in sequence should return identical values
+        // — confirms there is no hidden caching that pins the first
+        // call's result.
+        with_zshrs_home(Some("/tmp/zshrs-cache-1"), || {
+            assert_eq!(log_dir(), PathBuf::from("/tmp/zshrs-cache-1"));
+        });
+        with_zshrs_home(Some("/tmp/zshrs-cache-2"), || {
+            assert_eq!(log_dir(), PathBuf::from("/tmp/zshrs-cache-2"));
+        });
+    }
+
+    #[test]
+    fn log_dir_empty_zshrs_home_is_taken_verbatim() {
+        // env::var_os returns Some("") for empty — code path uses
+        // PathBuf::from("") which still gets returned. Verify no
+        // panic / silent fallback.
+        with_zshrs_home(Some(""), || {
+            assert_eq!(log_dir(), PathBuf::from(""));
+        });
+    }
+
+    #[test]
+    fn log_dir_fallback_path_ends_with_dot_zshrs_filename_component() {
+        with_zshrs_home(None, || {
+            let d = log_dir();
+            assert_eq!(d.file_name().and_then(|s| s.to_str()), Some(".zshrs"));
+        });
+    }
+
+    #[test]
+    fn log_path_inside_zshrs_home_directory() {
+        with_zshrs_home(Some("/tmp/zshrs-inside"), || {
+            let p = log_path();
+            assert!(
+                p.starts_with("/tmp/zshrs-inside"),
+                "log_path should live inside ZSHRS_HOME: {:?}",
+                p
+            );
+        });
+    }
+
+    // ========================================================
+    // Feature-flag helpers — interaction matrix
+    // ========================================================
+
+    #[test]
+    fn feature_helpers_are_stable_within_one_call() {
+        // Two back-to-back calls produce identical output (no random
+        // toggling). Trivial sanity check, catches any future
+        // accidental side-effect inside the helpers.
+        assert_eq!(profiling_enabled(), profiling_enabled());
+        assert_eq!(flamegraph_enabled(), flamegraph_enabled());
+        assert_eq!(prometheus_enabled(), prometheus_enabled());
+    }
+
+    #[test]
+    fn flush_is_idempotent_and_returns_unit() {
+        // `flush` sleeps ~50ms but must always return cleanly. Two
+        // back-to-back calls should still be safe.
+        flush();
+        flush();
+    }
 }
