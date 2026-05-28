@@ -355,7 +355,6 @@ mod R_subscript_on_scalar {
     /// `${s[(r)pat]}` on scalar — zsh returns char after match (`f`);
     /// zshrs currently returns the matched substring (`foo`).
     #[test]
-    #[ignore = "ZSHRS BUG: scalar ${s[(r)pat]} match span differs from zsh"]
     fn scalar_reverse_find_substring() {
         assert_parity(r#"s=barfooxyz; echo "${s[(r)foo]}""#);
     }

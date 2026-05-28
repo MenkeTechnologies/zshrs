@@ -1585,7 +1585,6 @@ mod tests {
 
     /// `bin_mkdir` with no args returns non-zero (usage error).
     #[test]
-    #[ignore = "ZSHRS BUG: bin_mkdir with no args returns 0 instead of usage error per POSIX"]
     fn files_corpus_bin_mkdir_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
@@ -1595,7 +1594,6 @@ mod tests {
 
     /// `bin_rmdir` with no args returns non-zero.
     #[test]
-    #[ignore = "ZSHRS BUG: bin_rmdir with no args returns 0 instead of usage error per POSIX"]
     fn files_corpus_bin_rmdir_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
@@ -1605,7 +1603,6 @@ mod tests {
 
     /// `bin_rm` with no args returns non-zero (usage error).
     #[test]
-    #[ignore = "ZSHRS BUG: bin_rm with no args returns 0 instead of usage error per POSIX"]
     fn files_corpus_bin_rm_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();

@@ -2481,7 +2481,6 @@ mod tests {
 
     /// `emptythingytab` empties user-installed entries.
     #[test]
-    #[ignore = "ZSHRS BUG: emptythingytab does not clear user-rthingy entries"]
     fn zle_thingy_corpus_emptythingytab_clears_user_entries() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();

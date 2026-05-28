@@ -81,6 +81,14 @@
         <!-- Commenter (line comment with #) -->
         <lang.commenter language="zshrs" implementationClass="com.menketechnologies.zshrs.ZshrsCommenter"/>
 
+        <!-- Complete Current Statement (Cmd-Shift-Enter):
+             `if [[ $x ]]|` → `if [[ $x ]]; then\n    |\nfi`,
+             `function foo|` → `function foo() {\n    |\n}`,
+             `case $x|` → `case $x in\n    |\nesac`, plus bracket /
+             quote balance and bare body openers (`then` / `do` / `in`). -->
+        <lang.smartEnterProcessor language="zshrs"
+            implementationClass="com.menketechnologies.zshrs.ZshrsSmartEnterProcessor"/>
+
         <!-- Brace / quote auto-pairing -->
         <lang.braceMatcher language="zshrs" implementationClass="com.menketechnologies.zshrs.ZshrsBraceMatcher"/>
         <lang.quoteHandler language="zshrs" implementationClass="com.menketechnologies.zshrs.ZshrsQuoteHandler"/>

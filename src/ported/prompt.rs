@@ -3784,7 +3784,6 @@ mod tests {
     /// `%(?..)` ternary: `%(?.X.Y)` chooses X if `$?==0`, else Y.
     /// Zero is the default at start. Skip explicit value-setting.
     #[test]
-    #[ignore = "ZSHRS BUG: %(?..) ternary requires $? state plumbing"]
     fn promptexpand_corpus_ternary_question_zero_branch() {
         let out = expand("%(?.OK.FAIL)");
         assert_eq!(out, "OK", "default $?=0 chooses OK branch");
@@ -3808,7 +3807,6 @@ mod tests {
     /// `%S` / `%s` — standout / reverse. Should produce SGR `[7m`/`[27m`.
     /// (Per terminfo `smso` = reverse video; zsh emits SGR 7.)
     #[test]
-    #[ignore = "ZSHRS BUG: %S emits SGR italic (\\e[3m) instead of standout/reverse (\\e[7m)"]
     fn promptexpand_corpus_standout_emits_sgr() {
         let out = expand("%Stext%s");
         assert!(

@@ -13148,7 +13148,6 @@ mod tests {
 
     /// `sethparam` + `gethparam` round-trip: even-count key/value pairs.
     #[test]
-    #[ignore = "ZSHRS BUG: sethparam/gethparam round-trip drops or reshapes hash elements"]
     fn params_corpus_hash_round_trip_basic() {
         let _g = crate::test_util::global_state_lock();
         unsetparam("ZP_H");
@@ -13196,7 +13195,6 @@ mod tests {
     /// Setting a hash with empty `Vec` removes the previous key/value
     /// pairs. After empty `sethparam`, lookups find no entries.
     #[test]
-    #[ignore = "ZSHRS BUG: sethparam round-trip differs from expectation when clearing"]
     fn params_corpus_hash_set_empty_clears_entries() {
         let _g = crate::test_util::global_state_lock();
         unsetparam("ZP_HC");
