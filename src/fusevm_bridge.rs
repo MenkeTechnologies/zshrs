@@ -3597,6 +3597,68 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::ported::jobs::waitonejob(&mut synth);
         Value::Status(status)
     });
+    // c:Src/exec.c:3340-3364 — `< file` / `> file` with no command
+    // word. Resolves NULLCMD/READNULLCMD at runtime then routes
+    // through host_exec_external. Redirects are already applied by
+    // the surrounding WithRedirectsBegin scope.
+    vm.register_builtin(BUILTIN_NULLCMD_EXEC, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let is_single_read = args
+            .first()
+            .map(|s| s != "0" && !s.is_empty())
+            .unwrap_or(false);
+        // c:Src/exec.c — when the surrounding redir-open failed
+        // (e.g. `< /nonexistent`), zerr already printed the diag
+        // and set redirect_failed. Don't invoke NULLCMD — return
+        // status 1 like the wordcode path does.
+        let redir_failed = with_executor(|exec| {
+            let f = exec.redirect_failed;
+            exec.redirect_failed = false;
+            f
+        });
+        if redir_failed {
+            crate::ported::builtin::LASTVAL
+                .store(1, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(1);
+        }
+        let nullcmd = crate::ported::params::getsparam("NULLCMD");
+        let nc_str = nullcmd.as_deref().unwrap_or("");
+        let nc_empty = nc_str.is_empty();
+        // c:3340-3344 — CSHNULLCMD or no NULLCMD set → diagnostic.
+        if nc_empty || crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHNULLCMD) {
+            let script_name = crate::ported::utils::scriptname_get()
+                .unwrap_or_else(|| "zshrs".to_string());
+            let lineno: u64 = with_executor(|exec| {
+                exec.scalar("LINENO")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+            });
+            eprintln!(
+                "{}:{}: redirection with no command",
+                script_name, lineno
+            );
+            return Value::Status(1);
+        }
+        // c:3350 — SHNULLCMD → run `:`.
+        let cmd: String = if crate::ported::zsh_h::isset(crate::ported::zsh_h::SHNULLCMD) {
+            ":".to_string()
+        } else if is_single_read {
+            // c:3354-3359 — single REDIR_READ + READNULLCMD set → readnullcmd.
+            let rnc = crate::ported::params::getsparam("READNULLCMD");
+            let rnc_str = rnc.as_deref().unwrap_or("");
+            if !rnc_str.is_empty() {
+                rnc_str.to_string()
+            } else {
+                nc_str.to_string() // c:3360-3363 fallback
+            }
+        } else {
+            nc_str.to_string() // c:3360-3363
+        };
+        let status = with_executor(|exec| exec.host_exec_external(&[cmd]));
+        crate::ported::builtin::LASTVAL
+            .store(status, std::sync::atomic::Ordering::Relaxed);
+        Value::Status(status)
+    });
     vm.register_builtin(BUILTIN_DEBUG_TRAP, |_vm, _argc| {
         // c:Src/signals.c:1245 dotrap(SIGDEBUG) — fires the DEBUG
         // trap body once per statement. The body sees the parent
@@ -4666,6 +4728,13 @@ pub const BUILTIN_REDIRECT_FAILED_CHECK: u16 = 605;
 /// "permission denied" when `argv[0]` is empty, otherwise routes
 /// through executor.host_exec_external like Op::Exec did.
 pub const BUILTIN_EXEC_DYNAMIC: u16 = 606;
+/// `< file` / `> file` with no command word (NULLCMD path).
+/// Resolves NULLCMD (default "cat") / READNULLCMD (default "more")
+/// at runtime per Src/exec.c:3340-3364 and exec's it through
+/// host_exec_external. Argc is 1: the int (0 or 1) on the stack
+/// indicates whether this is a single REDIR_READ redirect
+/// (selects READNULLCMD when set + non-empty).
+pub const BUILTIN_NULLCMD_EXEC: u16 = 607;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
