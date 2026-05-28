@@ -1491,19 +1491,21 @@ impl ShellExecutor {
                     Ok(0)
                 }
                 Err(e) => {
+                    let sn = crate::ported::utils::scriptname_get()
+                        .unwrap_or_else(|| "zshrs".to_string());
                     if e.kind() == io::ErrorKind::NotFound {
                         // zsh: absolute paths emit "no such file or
                         // directory" (the OS error, since the path was
                         // tried directly), not "command not found"
                         // (which implies PATH search).
                         if cmd.starts_with('/') {
-                            eprintln!("zshrs:1: no such file or directory: {}", cmd);
+                            eprintln!("{}:1: no such file or directory: {}", sn, cmd);
                         } else {
-                            eprintln!("zshrs:1: command not found: {}", cmd);
+                            eprintln!("{}:1: command not found: {}", sn, cmd);
                         }
                         Ok(127)
                     } else {
-                        Err(format!("zshrs: {}: {}", cmd, e))
+                        Err(format!("{}: {}: {}", sn, cmd, e))
                     }
                 }
             }
@@ -1511,25 +1513,31 @@ impl ShellExecutor {
             match command.status() {
                 Ok(status) => Ok(status.code().unwrap_or(1)),
                 Err(e) => {
+                    // Use scriptname (the user-visible shell identifier
+                    // — "zsh" in --zsh mode, "zshrs" otherwise) instead
+                    // of a hardcoded "zshrs:" prefix so --zsh-mode
+                    // diagnostics byte-match C zsh's stderr format.
+                    let sn = crate::ported::utils::scriptname_get()
+                        .unwrap_or_else(|| "zshrs".to_string());
                     if e.kind() == io::ErrorKind::NotFound {
                         // zsh: absolute paths emit "no such file or
                         // directory" (the OS error, since the path was
                         // tried directly), not "command not found"
                         // (which implies PATH search).
                         if cmd.starts_with('/') {
-                            eprintln!("zshrs:1: no such file or directory: {}", cmd);
+                            eprintln!("{}:1: no such file or directory: {}", sn, cmd);
                         } else {
-                            eprintln!("zshrs:1: command not found: {}", cmd);
+                            eprintln!("{}:1: command not found: {}", sn, cmd);
                         }
                         Ok(127)
                     } else if e.kind() == io::ErrorKind::PermissionDenied {
                         // zsh: non-executable file → "permission denied"
                         // on stderr and exit 126 (POSIX "command found
                         // but not executable").
-                        eprintln!("zshrs:1: permission denied: {}", cmd);
+                        eprintln!("{}:1: permission denied: {}", sn, cmd);
                         Ok(126)
                     } else {
-                        Err(format!("zshrs: {}: {}", cmd, e))
+                        Err(format!("{}: {}: {}", sn, cmd, e))
                     }
                 }
             }
