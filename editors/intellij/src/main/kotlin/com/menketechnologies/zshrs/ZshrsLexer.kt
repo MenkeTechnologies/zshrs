@@ -248,7 +248,17 @@ class ZshrsLexer : LexerBase() {
         var p = pos
         while (p < endOffset && buf[p] != '\n') p++
         tokenEnd = p; pos = p
-        tokenType = ZshrsTokenTypes.COMMENT
+        // `##` doubled-hash → DOC_COMMENT (separate color slot,
+        // matches the LSP's docstring convention for module /
+        // function / variable docs). `#` alone → regular COMMENT.
+        // Shebang `#!` has its own consumer earlier so it doesn't
+        // reach here.
+        val len = p - tokenStart
+        tokenType = if (len >= 2 && buf[tokenStart + 1] == '#') {
+            ZshrsTokenTypes.DOC_COMMENT
+        } else {
+            ZshrsTokenTypes.COMMENT
+        }
     }
 
     private fun consumeWhitespace() {

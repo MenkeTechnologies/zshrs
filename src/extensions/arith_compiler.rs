@@ -981,8 +981,11 @@ mod tests {
 
     #[test]
     fn literal_octal() {
-        // C-style 0NNN — `017` is 15 decimal.
-        assert_eq!(eval_int("017"), 0o17);
+        // zsh DEFAULT: `017` is decimal 17, NOT octal — `setopt
+        // OCTAL_ZEROES` is required to enable C-style 0NNN octals
+        // (per Src/options.c default_opts[]). Verified against
+        // `zsh -fc 'let x=017; print $x'` → "17".
+        assert_eq!(eval_int("017"), 17);
     }
 
     #[test]

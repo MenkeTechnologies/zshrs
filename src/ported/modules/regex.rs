@@ -498,11 +498,16 @@ mod tests {
         assert_eq!(zcond_regex_match(&["xabcy", "^abc$"], ZREGEX_EXTENDED), 0,);
     }
 
-    /// Empty regex matches empty string.
+    /// POSIX ERE rejects an empty (sub)expression — zsh's regex
+    /// module bubbles the regcomp error and returns false. Verified
+    /// against `zsh -fc 'zmodload zsh/regex; [[ "" =~ "" ]]'` →
+    /// "failed to compile regex: empty (sub)expression" + exit 1.
+    /// Rust's regex crate accepts empty as "matches anywhere"; we
+    /// explicitly reject to match zsh.
     #[test]
-    fn regex_corpus_empty_pattern_matches_empty_input() {
+    fn regex_corpus_empty_pattern_rejected() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zcond_regex_match(&["", ""], ZREGEX_EXTENDED), 1);
+        assert_eq!(zcond_regex_match(&["", ""], ZREGEX_EXTENDED), 0);
     }
 
     /// `*` greedy quantifier matches zero+ chars.

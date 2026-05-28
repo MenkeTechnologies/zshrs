@@ -31,7 +31,11 @@ class ZshrsParserDefinition : ParserDefinition {
     override fun getFileNodeType(): IFileElementType = FILE
 
     override fun getCommentTokens(): TokenSet =
-        TokenSet.create(ZshrsTokenTypes.COMMENT, ZshrsTokenTypes.SHEBANG)
+        TokenSet.create(
+            ZshrsTokenTypes.COMMENT,
+            ZshrsTokenTypes.DOC_COMMENT,
+            ZshrsTokenTypes.SHEBANG,
+        )
 
     override fun getStringLiteralElements(): TokenSet = TokenSet.create(
         ZshrsTokenTypes.STRING_DQ,

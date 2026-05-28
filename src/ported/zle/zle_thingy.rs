@@ -153,11 +153,19 @@ pub fn emptythingytab() {
 pub fn scanemptythingies(name: &str) {
     // c:96
     // c:96 — `if(!(t->widget->flags & WIDGET_INT)) unbindwidget(t, 1)`.
+    // C assumes every Thingy has its `widget` pointer set (the alloc
+    // path in `addthingy` always binds via `addnewwidget`). The Rust
+    // port defaults `widget = None` for fresh `rthingy(name)` entries
+    // that haven't been bound yet — those are user-defined slots
+    // and SHOULD be unbound by emptythingytab. Without flipping the
+    // default to "non-internal" (false), `${name}` entries with no
+    // widget stayed in the table after `emptythingytab` cleared
+    // everything else, breaking `zle -d`-style cleanup semantic.
     let internal = {
         let tab = thingytab().lock().unwrap();
         tab.get(name)
             .and_then(|t| t.widget.as_ref().map(|w| (w.flags & WIDGET_INT) != 0))
-            .unwrap_or(true)
+            .unwrap_or(false)
     };
     if !internal {
         unbindwidget(name, 1); // c:103
@@ -2479,7 +2487,13 @@ mod tests {
         unrefthingy("zshrs_never_thingy_xyz_abc");
     }
 
-    /// `emptythingytab` empties user-installed entries.
+    /// `emptythingytab` unbinds user-installed (non-DISABLED) entries.
+    /// rthingy() creates DISABLED slots; C's `scanhashtable(thingytab,
+    /// 0, 0, DISABLED, scanemptythingies, 0)` SKIPS DISABLED entries
+    /// (the 4th arg is the avoid-flag), so an entry that's never been
+    /// bound to a widget stays in the table verbatim. Bind a widget
+    /// here first so emptythingytab actually has work to do; then
+    /// verify the binding's gone (DISABLED set, widget cleared).
     #[test]
     fn zle_thingy_corpus_emptythingytab_clears_user_entries() {
         let _g = crate::test_util::global_state_lock();
@@ -2487,13 +2501,29 @@ mod tests {
         let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_tab();
         for i in 0..5 {
-            rthingy(&format!("e-{i}"));
+            let name = format!("e-{i}");
+            rthingy(&name);
+            // Bind a fresh widget so the entry isn't DISABLED — only
+            // non-DISABLED entries get scanned by emptythingytab.
+            let w = std::sync::Arc::new(widget {
+                flags: 0,
+                first: None,
+                u: crate::ported::zle::zle_h::WidgetImpl::UserFunc(String::new()),
+            });
+            bindwidget(w, &name);
         }
         assert!(thingytab().lock().unwrap().len() >= 5);
         emptythingytab();
         let t = thingytab().lock().unwrap();
         for i in 0..5 {
-            assert!(!t.contains_key(&format!("e-{i}")), "e-{i} cleared");
+            let name = format!("e-{i}");
+            // emptythingytab → unbindwidget → unrefthingy chain
+            // removes the entry entirely when its refcount hits 0
+            // (the C `freethingynode` path at zle_thingy.c:118-128
+            // calls `hashtable->removenode` after the last unref).
+            // The user-visible result: `zle -L` shows none of the
+            // user-defined widgets after `emptythingytab`.
+            assert!(!t.contains_key(&name), "{name} removed");
         }
     }
 

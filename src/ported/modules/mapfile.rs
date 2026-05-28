@@ -256,9 +256,13 @@ pub fn get_contents(fname: &str) -> Option<String> {
     if size == 0 {
         // Match C: mmap(0, 0, ...) returns MAP_FAILED on most platforms,
         // which falls through to the NULL-return branch at c:184-187.
-        // Empty-file behavior: return Some(metafy("")) for usability —
-        // an empty regular file is a valid zsh string, not "unset".
-        return Some(metafy(""));
+        // Empty-file behavior: return Some("") for usability — an
+        // empty regular file is a valid zsh string, not "unset".
+        // No metafy: zshrs strings are native UTF-8, not Meta-escaped
+        // — the C `metafy` step exists because zsh's internal
+        // representation is metafied and unmetafies on display, but
+        // the Rust port stores user strings as-is.
+        return Some(String::new());
     }
 
     let fd = file.as_raw_fd();
@@ -275,27 +279,23 @@ pub fn get_contents(fname: &str) -> Option<String> {
     };
 
     if mmptr == libc::MAP_FAILED {
-        // c:199-202 — `#else /* don't USE_MMAP */` arm:
-        //   val = NULL;
-        //   if ((size = zstuff(&val, fname)) > 0)
-        //       val = metafy(val, size, META_HEAPDUP);
-        // Rust mirror via plain read.
+        // c:199-202 — `#else /* don't USE_MMAP */` arm. No metafy:
+        // zshrs strings are native UTF-8 (see empty-file comment).
         let mut contents = Vec::new();
         let mut file = file;
         if file.read_to_end(&mut contents).is_err() {
             return None;
         }
-        let raw = String::from_utf8_lossy(&contents); // c:202 metafy
-        return Some(metafy(&raw));
+        return Some(String::from_utf8_lossy(&contents).into_owned()); // c:202
     }
 
     // c:190-195 — Comment quoted: "Sadly, we need to copy the thing
     // even if metafying doesn't change it.  We just don't know when
     // we might get a chance to munmap it, otherwise."
     // val = metafy((char *)mmptr, sbuf.st_size, META_HEAPDUP);
+    // (Rust port: skip the metafy step per the empty-file comment.)
     let slice = unsafe { std::slice::from_raw_parts(mmptr as *const u8, size) };
-    let raw = String::from_utf8_lossy(slice);
-    let val = metafy(&raw);
+    let val = String::from_utf8_lossy(slice).into_owned();
 
     // c:197 — `munmap(mmptr, sbuf.st_size);`
     unsafe {
@@ -310,10 +310,10 @@ pub fn get_contents(fname: &str) -> Option<String> {
 /// `Src/Modules/mapfile.c:167`): plain read with metafy.
 #[cfg(not(unix))]
 pub fn get_contents(fname: &str) -> Option<String> {
-    // c:167
+    // c:167. No metafy: zshrs strings are native UTF-8 (see the
+    // Unix arm's empty-file comment for the full rationale).
     let fname_unmeta = unmeta(fname);
-    let raw = std::fs::read_to_string(&fname_unmeta).ok()?;
-    Some(metafy(&raw))
+    std::fs::read_to_string(&fname_unmeta).ok()
 }
 
 /// Port of `getpmmapfile(UNUSED(HashTable ht), const char *name)` from `Src/Modules/mapfile.c:217`. The

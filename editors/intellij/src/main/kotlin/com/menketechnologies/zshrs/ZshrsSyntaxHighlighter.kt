@@ -16,6 +16,7 @@ class ZshrsSyntaxHighlighter : SyntaxHighlighterBase() {
     override fun getTokenHighlights(type: IElementType): Array<TextAttributesKey> {
         val key: TextAttributesKey? = when (type) {
             ZshrsTokenTypes.COMMENT -> ZshrsColors.COMMENT
+            ZshrsTokenTypes.DOC_COMMENT -> ZshrsColors.DOC_COMMENT
             ZshrsTokenTypes.SHEBANG -> ZshrsColors.SHEBANG
             ZshrsTokenTypes.STRING_DQ -> ZshrsColors.STRING_DQ
             ZshrsTokenTypes.STRING_SQ -> ZshrsColors.STRING_SQ

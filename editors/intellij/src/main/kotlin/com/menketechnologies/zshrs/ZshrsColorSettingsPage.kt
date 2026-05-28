@@ -9,7 +9,8 @@ import javax.swing.Icon
 
 class ZshrsColorSettingsPage : ColorSettingsPage {
     private val attrs = arrayOf(
-        AttributesDescriptor("Comments//Line comment", ZshrsColors.COMMENT),
+        AttributesDescriptor("Comments//Line comment (#)", ZshrsColors.COMMENT),
+        AttributesDescriptor("Comments//Doc comment (##)", ZshrsColors.DOC_COMMENT),
         AttributesDescriptor("Comments//Shebang (#!)", ZshrsColors.SHEBANG),
         AttributesDescriptor("Strings//Double-quoted (\"…\")", ZshrsColors.STRING_DQ),
         AttributesDescriptor("Strings//Single-quoted ('…')", ZshrsColors.STRING_SQ),
@@ -72,14 +73,19 @@ class ZshrsColorSettingsPage : ColorSettingsPage {
     companion object {
         private val DEMO = """
             #!/usr/bin/env zshrs
-            # zshrs demo — every token category for color tweaking.
+            ## demo.zsh — every token category for color tweaking.
+            ## Doc comments (##) get their own color slot, distinct
+            ## from regular # remarks below.
+            # Regular code comment — uses the plain Line-comment slot.
             setopt EXTENDED_GLOB NULL_GLOB PIPE_FAIL
             autoload -Uz compinit && compinit -d ~/.cache/zshrs/zcompdump
 
+            ## Max worker count, picked up by the LSP as a parameter doc.
             typeset -gA Z_PLUGIN_CACHE
             local -i count=0
             local TIMER=${"$"}EPOCHREALTIME
 
+            ## Greet the user — attached as `greet`'s function doc.
             function greet() {
                 local name="${"$"}{1:-world}"
                 print -r -- "hello, ${"$"}name (PID=${"$"}${"$"})"

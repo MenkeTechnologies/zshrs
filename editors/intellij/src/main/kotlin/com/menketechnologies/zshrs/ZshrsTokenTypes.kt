@@ -13,6 +13,13 @@ class ZshrsTokenType(debugName: String) : IElementType(debugName, ZshrsLanguage)
 object ZshrsTokenTypes {
     // ── Trivia / literals ──────────────────────────────────────────────
     @JvmField val COMMENT = ZshrsTokenType("ZSHRS_COMMENT")
+    /// Doc-comment: `##` prefix (doubled-hash). Distinct color slot
+    /// from regular `#` so the docstring convention pops visually.
+    /// Parses to the same comment-token-set membership for IDE
+    /// features like Cmd-/ line-comment toggling. Used by the LSP
+    /// to attach module-level / per-symbol docs (see
+    /// `extract_module_doc` and `find_user_symbol_doc`).
+    @JvmField val DOC_COMMENT = ZshrsTokenType("ZSHRS_DOC_COMMENT")
     @JvmField val SHEBANG = ZshrsTokenType("ZSHRS_SHEBANG")
     @JvmField val STRING_DQ = ZshrsTokenType("ZSHRS_STRING_DQ")
     @JvmField val STRING_SQ = ZshrsTokenType("ZSHRS_STRING_SQ")
