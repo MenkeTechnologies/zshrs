@@ -3232,7 +3232,7 @@ pub fn bin_typeset(
     let mut ops = ops.clone();
     let mut on: u32 = 0; // c:2661
     let mut off: u32 = 0; // c:2661
-    let returnval: i32 = 0; // c:2664
+    let mut returnval: i32 = 0; // c:2664
     let mut printflags: i32 = PRINT_WITH_NAMESPACE; // c:2664
     let hasargs = !argv.is_empty(); // c:2665
 
@@ -3463,7 +3463,7 @@ pub fn bin_typeset(
     // three high-frequency paths inline: assoc creation (`PM_HASHED`
     // + `name=(k v k v)`), array creation (`PM_ARRAY` + `name=(a b c)`),
     // and scalar assignment.
-    let _ = (off, returnval);
+    let _ = off;
     let is_hashed = (on & PM_HASHED) != 0; // c:2655 `-A`
     let is_array = (on & PM_ARRAY) != 0; // c:2655 `-a`
                                          // c:Src/builtin.c typeset_single — when the array RHS comes from
@@ -3626,11 +3626,10 @@ pub fn bin_typeset(
             } else {
                 // c:Src/builtin.c:3110-3113 — when `typeset -p NAME`
                 // and the param doesn't exist, emit
-                // `typeset: no such variable: NAME` and continue.
-                // (C also sets returnval=1; the bin_typeset Rust
-                // port returns 0 unconditionally today, so just
-                // emit the warning to match the diagnostic.)
+                // `typeset: no such variable: NAME` and set
+                // returnval=1 so the builtin's exit status is 1.
                 zwarnnam(name, &format!("no such variable: {}", arg_name));
+                returnval = 1; // c:Src/builtin.c:3112
             }
             continue;
         }
@@ -4200,7 +4199,7 @@ pub fn bin_typeset(
         }
     }
     unqueue_signals();
-    0
+    returnval
 }
 
 /// Port of `eval_autoload(Shfunc shf, char *name, Options ops, int func)` from Src/builtin.c:3166.
