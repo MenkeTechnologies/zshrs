@@ -391,6 +391,21 @@ impl ZshCompiler {
             if pipe_nots[i + 1] {
                 self.emit_negate_status();
             }
+            // c:Src/exec.c — POSIX/zsh rule: only the LAST command in
+            // an && / || chain can trigger errexit, AND only when it
+            // was actually executed (not short-circuited). Emit the
+            // errexit check INSIDE the not-skipped branch of the FINAL
+            // connector — earlier connectors' branches contribute to
+            // the chain but aren't terminal. The check sits before the
+            // skip-jump target so `false && X` (where X is skipped)
+            // bypasses it entirely.
+            if i == ops.len() - 1 {
+                // Temporarily lift suppression so this terminal check
+                // actually fires.
+                self.errexit_suppress_depth -= 1;
+                self.emit_errexit_check();
+                self.errexit_suppress_depth += 1;
+            }
             self.builder.patch_jump(skip, self.builder.current_pos());
         }
         // Bulk-pop the chain pushes (mirrors `cmdsp = csp` restore).
