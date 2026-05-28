@@ -452,3 +452,241 @@ pub enum CaseTerminator {
     Fallthrough,
     Continue,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === Default impls for flag structs (load-bearing for parser init) ===
+
+    #[test]
+    fn list_flags_default_all_false() {
+        let f = ListFlags::default();
+        assert!(!f.async_, "default ListFlags.async_ must be false");
+        assert!(!f.disown, "default ListFlags.disown must be false");
+    }
+
+    #[test]
+    fn sublist_flags_default_all_false() {
+        let f = SublistFlags::default();
+        assert!(!f.coproc);
+        assert!(!f.not);
+    }
+
+    // === Serde round-trip: zshrs cache format must survive across versions ===
+
+    #[test]
+    fn zsh_program_empty_round_trips() {
+        // Empty program is the parse result for an empty input.
+        let p = ZshProgram { lists: vec![] };
+        let json = serde_json::to_string(&p).expect("serialize");
+        let back: ZshProgram = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.lists.len(), 0);
+    }
+
+    #[test]
+    fn zsh_simple_round_trips_with_assigns_and_redirs() {
+        // Simple command: FOO=bar BAZ=qux echo hi >out
+        let simple = ZshSimple {
+            assigns: vec![
+                ZshAssign {
+                    name: "FOO".to_string(),
+                    value: ZshAssignValue::Scalar("bar".to_string()),
+                    append: false,
+                },
+                ZshAssign {
+                    name: "BAZ".to_string(),
+                    value: ZshAssignValue::Scalar("qux".to_string()),
+                    append: true,
+                },
+            ],
+            words: vec!["echo".to_string(), "hi".to_string()],
+            redirs: vec![ZshRedir {
+                rtype: 0,
+                fd: 1,
+                name: "out".to_string(),
+                heredoc: None,
+                varid: None,
+                heredoc_idx: None,
+            }],
+        };
+        let json = serde_json::to_string(&simple).expect("serialize");
+        let back: ZshSimple = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.assigns.len(), 2);
+        assert_eq!(back.assigns[0].name, "FOO");
+        assert!(back.assigns[1].append, "+= flag must round-trip");
+        assert_eq!(back.words, vec!["echo", "hi"]);
+        assert_eq!(back.redirs.len(), 1);
+        assert_eq!(back.redirs[0].name, "out");
+    }
+
+    #[test]
+    fn assign_value_array_variant_round_trips() {
+        let v = ZshAssignValue::Array(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        let json = serde_json::to_string(&v).expect("serialize");
+        let back: ZshAssignValue = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ZshAssignValue::Array(items) => assert_eq!(items, vec!["a", "b", "c"]),
+            ZshAssignValue::Scalar(s) => panic!("expected Array, got Scalar({s:?})"),
+        }
+    }
+
+    #[test]
+    fn for_list_c_style_round_trips() {
+        let fl = ForList::CStyle {
+            init: "i=0".to_string(),
+            cond: "i<10".to_string(),
+            step: "i++".to_string(),
+        };
+        let json = serde_json::to_string(&fl).expect("serialize");
+        let back: ForList = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ForList::CStyle { init, cond, step } => {
+                assert_eq!(init, "i=0");
+                assert_eq!(cond, "i<10");
+                assert_eq!(step, "i++");
+            }
+            _ => panic!("expected CStyle variant"),
+        }
+    }
+
+    #[test]
+    fn for_list_positional_round_trips() {
+        // Positional: `for x do ... done` (no in-words clause).
+        let fl = ForList::Positional;
+        let json = serde_json::to_string(&fl).expect("serialize");
+        let back: ForList = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(back, ForList::Positional));
+    }
+
+    #[test]
+    fn case_terminator_all_variants_round_trip() {
+        // ;; / ;& / ;| terminator variants — each must survive serde.
+        for t in [CaseTerm::Break, CaseTerm::Continue, CaseTerm::TestNext] {
+            let json = serde_json::to_string(&t).expect("serialize");
+            let back: CaseTerm = serde_json::from_str(&json).expect("deserialize");
+            // CaseTerm is Copy + PartialEq, so equality is meaningful.
+            assert_eq!(back, t);
+        }
+    }
+
+    #[test]
+    fn sublist_op_round_trips_both_variants() {
+        for op in [SublistOp::And, SublistOp::Or] {
+            let json = serde_json::to_string(&op).expect("serialize");
+            let back: SublistOp = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, op);
+        }
+    }
+
+    #[test]
+    fn list_op_round_trips_all_variants() {
+        for op in [
+            ListOp::And,
+            ListOp::Or,
+            ListOp::Semi,
+            ListOp::Amp,
+            ListOp::Newline,
+        ] {
+            let json = serde_json::to_string(&op).expect("serialize");
+            let back: ListOp = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, op);
+        }
+    }
+
+    #[test]
+    fn shell_word_concat_round_trips_nested() {
+        // Concat is the AST shape used for word-internal sub-expansions —
+        // verify nesting survives.
+        let w = ShellWord::Concat(vec![
+            ShellWord::Literal("foo".to_string()),
+            ShellWord::Literal("bar".to_string()),
+            ShellWord::Concat(vec![ShellWord::Literal("baz".to_string())]),
+        ]);
+        let json = serde_json::to_string(&w).expect("serialize");
+        let back: ShellWord = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ShellWord::Concat(parts) => {
+                assert_eq!(parts.len(), 3, "outer concat must preserve element count");
+                match &parts[2] {
+                    ShellWord::Concat(inner) => assert_eq!(inner.len(), 1),
+                    _ => panic!("nested concat lost"),
+                }
+            }
+            _ => panic!("expected Concat top-level"),
+        }
+    }
+
+    #[test]
+    fn zsh_cond_nested_serialization() {
+        // [[ -f file && ! -d dir ]] type compound — verify nested
+        // And/Not survive a round-trip.
+        let c = ZshCond::And(
+            Box::new(ZshCond::Unary("-f".to_string(), "file".to_string())),
+            Box::new(ZshCond::Not(Box::new(ZshCond::Unary(
+                "-d".to_string(),
+                "dir".to_string(),
+            )))),
+        );
+        let json = serde_json::to_string(&c).expect("serialize");
+        let back: ZshCond = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ZshCond::And(lhs, rhs) => {
+                assert!(matches!(*lhs, ZshCond::Unary(_, _)));
+                assert!(matches!(*rhs, ZshCond::Not(_)));
+            }
+            _ => panic!("expected And at root"),
+        }
+    }
+
+    #[test]
+    fn redirect_op_all_variants_round_trip() {
+        for op in [
+            RedirectOp::Write,
+            RedirectOp::Append,
+            RedirectOp::Read,
+            RedirectOp::ReadWrite,
+            RedirectOp::Clobber,
+            RedirectOp::DupRead,
+            RedirectOp::DupWrite,
+            RedirectOp::HereDoc,
+            RedirectOp::HereString,
+            RedirectOp::WriteBoth,
+            RedirectOp::AppendBoth,
+        ] {
+            let json = serde_json::to_string(&op).expect("serialize");
+            let back: RedirectOp = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, op);
+        }
+    }
+
+    #[test]
+    fn zsh_funcdef_serde_default_fields() {
+        // ZshFuncDef has #[serde(default)] on auto_call_args and
+        // body_source — JSON missing those fields must still decode.
+        let json = r#"{
+            "names": ["myfn"],
+            "body": { "lists": [] },
+            "tracing": false
+        }"#;
+        let fd: ZshFuncDef = serde_json::from_str(json).expect("default fields must apply");
+        assert_eq!(fd.names, vec!["myfn"]);
+        assert!(fd.auto_call_args.is_none());
+        assert!(fd.body_source.is_none());
+        assert!(!fd.tracing);
+    }
+
+    #[test]
+    fn zsh_pipe_merge_stderr_default_when_missing() {
+        // `merge_stderr` defaults to false via #[serde(default)] —
+        // older cache entries lacking the field must still decode.
+        let json = r#"{
+            "cmd": { "Simple": { "assigns": [], "words": ["x"], "redirs": [] } },
+            "next": null,
+            "lineno": 1
+        }"#;
+        let pipe: ZshPipe = serde_json::from_str(json).expect("default must apply");
+        assert!(!pipe.merge_stderr);
+        assert_eq!(pipe.lineno, 1);
+    }
+}
