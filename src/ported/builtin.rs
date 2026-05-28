@@ -5398,14 +5398,47 @@ pub fn bin_unset(
                     map.shift_remove(key); // c:3893
                     crate::ported::exec_hooks::set_assoc(nm, map);
                 } else if let Some(mut arr) = crate::ported::exec_hooks::array(nm) {
-                    // c:3895 array subscript: `arr[N]` set to empty.
-                    if let Ok(i) = key.parse::<i32>() {
-                        if i > 0 {
-                            let idx = (i - 1) as usize;
-                            if idx < arr.len() {
-                                arr[idx] = String::new();
-                                crate::ported::exec_hooks::set_array(nm, arr);
+                    // c:3895 — array subscript: `arr[N]` sets element
+                    // N to empty; `arr[N,M]` clears the inclusive
+                    // range. The previous Rust port only handled the
+                    // single-index form; `unset arr[2,3]` was a no-op.
+                    let len_i = arr.len() as i32;
+                    let resolve = |raw: i32| -> Option<usize> {
+                        let pos = if raw < 0 { len_i + raw + 1 } else { raw };
+                        if pos >= 1 && pos as usize <= arr.len() {
+                            Some((pos - 1) as usize)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some((s, e)) = key.split_once(',') {
+                        // c:Src/params.c — `unset arr[N,M]` replaces
+                        // the N..M range with ONE empty element. For
+                        // (a b c d), `unset arr[2,3]` → (a "" d).
+                        // Negative bounds aren't supported by zsh's
+                        // unset (it leaves the array unchanged), so
+                        // restrict to positive forms.
+                        let s_i = s.trim().parse::<i32>().ok();
+                        let e_i = e.trim().parse::<i32>().ok();
+                        if let (Some(start), Some(end)) = (s_i, e_i) {
+                            if start >= 1 && end >= 1 {
+                                let from = (start - 1) as usize;
+                                let to = (end - 1) as usize;
+                                if from < arr.len() && from <= to {
+                                    let cap_to = to.min(arr.len() - 1);
+                                    let mut new_arr: Vec<String> =
+                                        Vec::with_capacity(arr.len());
+                                    new_arr.extend(arr[..from].iter().cloned());
+                                    new_arr.push(String::new());
+                                    new_arr.extend(arr[cap_to + 1..].iter().cloned());
+                                    crate::ported::exec_hooks::set_array(nm, new_arr);
+                                }
                             }
+                        }
+                    } else if let Ok(i) = key.parse::<i32>() {
+                        if let Some(idx) = resolve(i) {
+                            arr[idx] = String::new();
+                            crate::ported::exec_hooks::set_array(nm, arr);
                         }
                     }
                 }
