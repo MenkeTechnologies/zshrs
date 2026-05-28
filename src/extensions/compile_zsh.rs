@@ -1354,6 +1354,15 @@ impl ZshCompiler {
             None
         } else if dispatch_first_raw == "declare" || first_clean == "declare" {
             Some(fusevm::shell_builtins::BUILTIN_DECLARE)
+        } else if dispatch_first_raw == "." || first_clean == "." {
+            // c:Src/builtin.c:9308 — `.` and `source` both invoke
+            // bin_dot but the C source passes the actual invocation
+            // name as `name`. fusevm's name→opcode map collapses
+            // both to BUILTIN_SOURCE which dispatches with the
+            // literal "source", so a failed `. /nonex` printed
+            // `zsh:source:1:` instead of `zsh:.:1:`. Emit our
+            // BUILTIN_DOT opcode that dispatches with name=".".
+            Some(crate::vm_helper::BUILTIN_DOT)
         } else {
             // Try the raw form first (handles already-untokenized inputs
             // from internal callers); fall back to the cleaned form so
