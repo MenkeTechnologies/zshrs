@@ -82,9 +82,10 @@ use crate::ported::utils::{
 use crate::ported::zsh_h::PAT_HEAPDUP;
 #[allow(unused_imports)]
 use crate::ported::zsh_h::{
-    hashnode, isset, param, Bnull, Bnullkeep, Dnull, Equals, Hat, Inang, Inbrace, Inbrack, Inpar,
-    Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar, Outparmath, Param,
-    Pound, Qstring, Qtick, Snull, Stringg, Tick, Tilde, ALIAS_GLOBAL, ALIAS_SUFFIX, CASMOD_NONE,
+    hashnode, isset, param, Bang, Bnull, Bnullkeep, Dash, Dnull, Equals, Hat, Inang, Inbrace,
+    Inbrack, Inpar, Inparmath, Marker, Nularg, Outang, OutangProc, Outbrace, Outbrack, Outpar,
+    Outparmath, Param, Pound, Quest, Qstring, Qtick, Snull, Star, Stringg, Tick, Tilde,
+    ALIAS_GLOBAL, ALIAS_SUFFIX, CASMOD_NONE,
     DISABLED, HASHED, HISTSUBSTPATTERN, IGNOREBRACES, KSHTYPESET, LEXFLAGS_ACTIVE,
     LEXFLAGS_COMMENTS_KEEP, LEXFLAGS_COMMENTS_STRIP, LEXFLAGS_NEWLINE, MN_FLOAT, MN_UNSET,
     MULTSUB_PARAM_NAME, MULTSUB_WS_AT_END, MULTSUB_WS_AT_START, PM_ARRAY, PM_EFLOAT, PM_EXPORTED,
@@ -8480,23 +8481,45 @@ pub fn paramsubst(
             result_nodes.push(result.clone()); // c:1625
             (result, prefix.len() + value.len(), result_nodes) // c:1625
         } // c:1625
-        '#' => {
+        c if c == '#' || c == Pound => {
             // c:1625
             // c:Src/subst.c — bare `$#name` is shorthand for `${#name}`
             // (length of named variable). If `#` is followed by an
-            // ident-start char (alpha or `_`), walk the name and
+            // ident-start char (alpha or `_`) OR a single-char special
+            // (`@`, `*`, `?`, `!`, `-`, `0`, `$`), walk the name and
             // recurse through the brace form so the length-op pipeline
-            // (paramsubst length_op handler) fires. Without this,
-            // `$#a` resolved as `$#` (positional count) + literal "a"
-            // — `${a[$#a]}` lost its index expression to "0a".
+            // (paramsubst length_op handler) fires. Without this, `$#a`
+            // resolved as `$#` (positional count) + literal "a" and
+            // `$#?` as `$#` + literal "?". Accept Pound TOKEN here too
+            // since the lexer tokenizes `#` inside DQ context.
             let next = chars.get(pos + 1).copied().unwrap_or('\0');
-            if next.is_ascii_alphabetic() || next == '_' {
+            // Accept ASCII single-char specials AND their tokenized
+            // forms (Pound=#, Quest=?, Bang=!, Dash=-, Star=*, Stringg=$).
+            // The lexer tokenizes these inside double-quotes / param
+            // expansion contexts, so `$#?` arrives here with `next`
+            // being Quest (\u{97}) not ASCII '?'.
+            let next_starts_name = next.is_ascii_alphabetic()
+                || next == '_'
+                || matches!(next, '@' | '*' | '?' | '!' | '-' | '0' | '$')
+                || next == Quest
+                || next == Bang
+                || next == Dash
+                || next == Star
+                || next == Stringg
+                || next == Pound;
+            if next_starts_name {
                 let name_start = pos + 1;
-                let mut name_end = name_start;
-                while name_end < chars.len()
-                    && (chars[name_end].is_ascii_alphanumeric() || chars[name_end] == '_')
-                {
-                    name_end += 1;
+                let mut name_end = name_start + 1;
+                // Single-char specials stop after one char; identifiers
+                // walk to the end of [A-Za-z0-9_].
+                let first = chars[name_start];
+                let is_single_special = matches!(first, '@' | '*' | '?' | '!' | '-' | '0' | '$');
+                if !is_single_special {
+                    while name_end < chars.len()
+                        && (chars[name_end].is_ascii_alphanumeric() || chars[name_end] == '_')
+                    {
+                        name_end += 1;
+                    }
                 }
                 let name: String = chars[name_start..name_end].iter().collect();
                 let prefix: String = chars[..start_pos].iter().collect();
