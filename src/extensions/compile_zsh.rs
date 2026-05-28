@@ -1419,6 +1419,14 @@ impl ZshCompiler {
             // `zsh:source:1:` instead of `zsh:.:1:`. Emit our
             // BUILTIN_DOT opcode that dispatches with name=".".
             Some(crate::vm_helper::BUILTIN_DOT)
+        } else if dispatch_first_raw == "logout" || first_clean == "logout" {
+            // c:Src/builtin.c — `logout` invokes bin_break with
+            // funcid=BIN_LOGOUT. fusevm collapses `logout` into
+            // BUILTIN_EXIT (alongside `exit`/`bye`) which dispatches
+            // with BIN_EXIT funcid, so the "not login shell" check
+            // at bin_break c:5865 never fired. Route through
+            // BUILTIN_LOGOUT which dispatches by name "logout".
+            Some(crate::vm_helper::BUILTIN_LOGOUT)
         } else {
             // Try the raw form first (handles already-untokenized inputs
             // from internal callers); fall back to the cleaned form so
