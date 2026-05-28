@@ -9003,23 +9003,29 @@ pub fn bin_trap(
     // c:7404-7411 — first arg is the trap body.
     let arg = argv.remove(0); // c:7404
     if argv.is_empty() {
-        // c:7411
-        // c:7412-7417 — bad arg shape.
+        // c:7411 — when only one arg AND it looks like a signal
+        // (SIG-prefix or numeric) but didn't resolve to a real
+        // signal, emit "undefined signal". For an arbitrary string
+        // body with no following signal, zsh silently accepts and
+        // installs nothing (no diagnostic). Mirror zsh's behavior:
+        // skip "signal expected" for non-signal-shaped strings.
         if arg.starts_with("SIG") || arg.chars().next().is_some_and(|c| c.is_ascii_digit()) {
             zwarnnam(name, &format!("undefined signal: {}", arg)); // c:7413
-        } else {
-            zwarnnam(name, "signal expected"); // c:7415
+            return 1; // c:7417
         }
-        return 1; // c:7417
+        // Bare string body with no signal — zsh accepts silently.
+        return 0;
     }
 
     // c:7421-7448 — install trap on each named signal.
+    let mut trap_install_error = 0i32;
     for sigarg in &argv {
         // c:7421
         let sig = getsigidx(sigarg);
         if sig == -1 {
             // c:7426
             zwarnnam(name, &format!("undefined signal: {}", sigarg)); // c:7427
+            trap_install_error = 1; // c:7445 *argv non-NULL on break
             break; // c:7428
         }
         // c:Src/signals.c — C zsh stores traps in a fixed array
@@ -9053,7 +9059,7 @@ pub fn bin_trap(
             crate::ported::signals::settrap(sig, None, ZSIG_FUNC);
         }
     }
-    0
+    trap_install_error
 }
 
 /// Port of `bin_ttyctl(UNUSED(char *name), UNUSED(char **argv), Options ops, UNUSED(int func))` from Src/builtin.c:7454.
