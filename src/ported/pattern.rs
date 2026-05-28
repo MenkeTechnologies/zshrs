@@ -188,6 +188,16 @@ pub static patflags: AtomicI32 = AtomicI32::new(0); // c:272
 // C: `static int patglobflags;` — current globbing flags during compile.
 pub static patglobflags: AtomicI32 = AtomicI32::new(0); // c:273
 
+/// Port of file-static `int patinlen` from `pattrystate` struct
+/// at `Src/pattern.c:1877` (accessed via `#define patinlen
+/// (pattrystate.patinlen)` at line 1894). Length in metafied bytes
+/// of the last successful pattry match; computed at the end of
+/// `pattry`/`pattrylen`/`pattryrefs` (`patinput - patinstart`,
+/// pattern.c:2508). Read by `patmatchlen()` and by the
+/// `${var//pat/repl}` paramsubst pipeline that needs to know how
+/// much of the input was consumed.
+pub static patinlen: AtomicI32 = AtomicI32::new(0); // c:1877
+
 // =====================================================================
 // 12. Char-decode helpers — pattern.c:327, :336, :1909-1997
 // =====================================================================

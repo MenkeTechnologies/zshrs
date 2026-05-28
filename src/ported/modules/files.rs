@@ -140,6 +140,16 @@ pub fn bin_mkdir(
     ops: &options,
     _func: i32,
 ) -> i32 {
+    // C's `BUILTIN("mkdir", 0, bin_mkdir, 1, -1, ...)` table entry
+    // (Src/Modules/files.c:810) declares `minargs=1`; the builtin
+    // dispatcher (Src/builtin.c:430) enforces it BEFORE calling
+    // bin_mkdir. zshrs may call bin_mkdir directly (test paths /
+    // fusevm bridge), so self-validate to keep the C-observable
+    // "not enough arguments → exit 1" contract intact.
+    if args.is_empty() {
+        zwarnnam(nam, "not enough arguments"); // c:builtin.c:434
+        return 1;
+    }
     let oumask = unsafe { libc::umask(0) }; // c:65
     let mut mode: u32 = 0o777 & !(oumask as u32); // c:66
     let mut err = 0i32;
@@ -268,6 +278,12 @@ pub fn bin_rmdir(
     _ops: &options,
     _func: i32,
 ) -> i32 {
+    // C `BUILTIN("rmdir", 0, bin_rmdir, 1, -1, ...)` (files.c:813).
+    // See bin_mkdir for why the minargs self-check sits here.
+    if args.is_empty() {
+        zwarnnam(nam, "not enough arguments"); // c:builtin.c:434
+        return 1;
+    }
     let mut err = 0i32;
     for arg in args {
         // c:154
@@ -738,6 +754,12 @@ pub fn bin_rm(
     ops: &options,
     _func: i32,
 ) -> i32 {
+    // C `BUILTIN("rm", 0, bin_rm, 1, -1, ...)` (files.c:814).
+    // See bin_mkdir for why the minargs self-check sits here.
+    if args.is_empty() {
+        zwarnnam(nam, "not enough arguments"); // c:builtin.c:434
+        return 1;
+    }
     let rmm = rmmagic {
         nam,                                                 // c:621
         opt_force: if OPT_ISSET(ops, b'f') { 1 } else { 0 }, // c:622
@@ -1373,15 +1395,20 @@ mod tests {
         assert_ne!(r, 0, "mkdir (no -p) on existing dir must fail per POSIX");
     }
 
-    /// c:80-115 — `bin_mkdir` with no arguments. C just returns 0
-    /// because the per-arg loop has no iterations. Verifies the
-    /// loop guard, not an early-error branch.
+    /// c:80-115 + c:builtin.c:430-435 — `bin_mkdir` with no args.
+    /// The C body itself returns 0 (per-arg loop has no iterations),
+    /// but the BUILTIN dispatch table declares `minargs=1`
+    /// (Src/Modules/files.c:810), so the framework rejects empty
+    /// argv with "not enough arguments" → exit 1 before the body
+    /// runs. zshrs's bin_mkdir self-enforces the same minargs check
+    /// for direct-call paths (test / fusevm bridge) so the
+    /// user-visible `mkdir; echo $?` parity holds.
     #[test]
-    fn bin_mkdir_with_no_args_returns_zero() {
+    fn bin_mkdir_with_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_mkdir("mkdir", &[], &ops, 0);
-        assert_eq!(r, 0, "bin_mkdir on empty argv falls through the for loop");
+        assert_ne!(r, 0, "bin_mkdir on empty argv → minargs error");
     }
 
     /// c:80-115 — `bin_mkdir -p` should successfully create a deeply
@@ -1440,13 +1467,15 @@ mod tests {
         assert_ne!(r, 0, "rmdir of nonexistent path must report failure");
     }
 
-    /// c:150-200 — `bin_rmdir` with no args returns 0 (empty loop).
+    /// c:150-200 + c:builtin.c:430-435 — same framework minargs
+    /// story as bin_mkdir above: BUILTIN table sets `minargs=1`,
+    /// dispatch rejects empty argv → exit 1. zshrs self-enforces.
     #[test]
-    fn bin_rmdir_with_no_args_returns_zero() {
+    fn bin_rmdir_with_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_rmdir("rmdir", &[], &ops, 0);
-        assert_eq!(r, 0);
+        assert_ne!(r, 0, "rmdir empty argv → minargs error");
     }
 
     /// c:150-200 — `bin_rmdir` happy path: create then remove. Proves
@@ -1480,14 +1509,14 @@ mod tests {
         assert_eq!(finish_(null_module), 0);
     }
 
-    /// c:616 — `bin_rm` with no args returns 0 (per-arg loop never
-    /// runs; ret stays at default).
+    /// c:616 + c:builtin.c:430-435 — same framework minargs story
+    /// as bin_mkdir above. zshrs self-enforces.
     #[test]
-    fn bin_rm_no_args_returns_zero() {
+    fn bin_rm_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops();
         let r = bin_rm("rm", &[], &ops, 0);
-        assert_eq!(r, 0);
+        assert_ne!(r, 0, "rm empty argv → minargs error");
     }
 
     /// c:616 — `bin_rm` on a nonexistent path returns nonzero.

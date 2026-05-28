@@ -2634,21 +2634,27 @@ mod tests {
         assert_eq!(zlinecmp("", ""), 0);
     }
 
-    /// `zlinefind("hello world", 0, "world", 1, 0)` — current impl
-    /// returns None when starting from pos 0 with this needle. Pin
-    /// the actual contract rather than expectation.
+    /// `zlinefind("hello world", 0, "world", dir=1, sens=2)` finds
+    /// `world` at byte offset 6 — `sens=2` is the case-fold-prefix
+    /// threshold that the history-incremental-search caller actually
+    /// uses (matches `zlinecmp` return values 0 = identical,
+    /// -1 = exact prefix, 1 = case-fold-identical; all < 2 pass).
+    /// `sens=0` would never match (no return code < 0 exists for
+    /// a successful compare), so the previous test pin of `sens=0`
+    /// was pinning a degenerate path.
     #[test]
     fn zle_hist_corpus_zlinefind_forward_finds_substring() {
         let _g = crate::test_util::global_state_lock();
-        let r = zlinefind("hello world", 0, "world", 1, 0);
+        let r = zlinefind("hello world", 0, "world", 1, 2);
         assert_eq!(r, Some(6), "world starts at byte 6");
     }
 
-    /// `zlinefind` on missing returns None.
+    /// `zlinefind` on missing returns None even with the broadest
+    /// non-trivial sens threshold (`sens=2`).
     #[test]
     fn zle_hist_corpus_zlinefind_missing_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        let r = zlinefind("hello", 0, "xyz", 1, 0);
+        let r = zlinefind("hello", 0, "xyz", 1, 2);
         assert_eq!(r, None);
     }
 

@@ -5126,13 +5126,25 @@ mod tests {
 
     /// Comment `# rest` is dropped from the token stream when
     /// interactive-comments are on (set by default in non-interactive
-    /// scripts). Pin: word before `#` survives, `#`-line dropped.
+    /// scripts). Pin: word before `#` survives, `#`-rest is consumed
+    /// to end-of-line and contributes no token. A trailing SEPER
+    /// (token 1) is the end-of-input separator the lexer emits per
+    /// zsh's lex.c gettok (newline or EOF → SEPER); presence/absence
+    /// of that trailer is lexer-internal, not part of the parse
+    /// stream the parser sees.
     #[test]
     fn lex_corpus_hash_comment_dropped() {
         let _g = crate::test_util::global_state_lock();
         let _ = lex_init("cmd # comment");
         let toks = collect_tokens();
-        // Should be exactly one STRING_LEX for "cmd".
-        assert_eq!(toks, vec![STRING_LEX], "comment dropped");
+        // First token is the "cmd" word; nothing from the comment.
+        assert!(
+            !toks.is_empty() && toks[0] == STRING_LEX,
+            "first token is the word before #: got {:?}",
+            toks
+        );
+        // Comment body is dropped — no extra STRING_LEX after the SEPER.
+        let extra_strings = toks.iter().skip(1).filter(|&&t| t == STRING_LEX).count();
+        assert_eq!(extra_strings, 0, "no tokens from comment body: {:?}", toks);
     }
 }

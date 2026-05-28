@@ -13146,7 +13146,11 @@ mod tests {
 
     // ─── associative array (hash) pins ───────────────────────────────
 
-    /// `sethparam` + `gethparam` round-trip: even-count key/value pairs.
+    /// `sethparam` + `gethparam` round-trip. C `gethparam` returns
+    /// `paramvalarr(..., SCANPM_WANTVALS)` (Src/params.c:3122) — i.e.
+    /// the VALUES side of the hash, not flat k/v pairs. For
+    /// `(key1 val1 key2 val2)` that's `[val1, val2]`. Keys come from
+    /// `gethkparam` (covered by `..._hash_keys_only_returns_keys`).
     #[test]
     fn params_corpus_hash_round_trip_basic() {
         let _g = crate::test_util::global_state_lock();
@@ -13158,9 +13162,14 @@ mod tests {
         let got = gethparam("ZP_H");
         assert!(got.is_some(), "hash param set");
         let g = got.unwrap();
-        // Either flat key,value form or some preserved shape — pin only
-        // that it round-trips with same length.
-        assert_eq!(g.len(), 4, "4 elements (2 k/v pairs) preserved");
+        assert_eq!(g.len(), 2, "2 values (SCANPM_WANTVALS) preserved");
+        let mut sorted = g.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec!["val1".to_string(), "val2".to_string()],
+            "values come back regardless of hash-iter order"
+        );
         unsetparam("ZP_H");
     }
 
@@ -13193,13 +13202,15 @@ mod tests {
     }
 
     /// Setting a hash with empty `Vec` removes the previous key/value
-    /// pairs. After empty `sethparam`, lookups find no entries.
+    /// pairs. After empty `sethparam`, lookups find no entries. Note
+    /// `gethparam` returns SCANPM_WANTVALS (values only); `(a 1)` has
+    /// 1 value, not 2 — see `..._hash_round_trip_basic`.
     #[test]
     fn params_corpus_hash_set_empty_clears_entries() {
         let _g = crate::test_util::global_state_lock();
         unsetparam("ZP_HC");
         sethparam("ZP_HC", vec!["a".into(), "1".into()]);
-        assert_eq!(gethparam("ZP_HC").map(|v| v.len()), Some(2));
+        assert_eq!(gethparam("ZP_HC").map(|v| v.len()), Some(1));
         sethparam("ZP_HC", vec![]);
         // empty hash still exists (some implementations distinguish
         // empty hash from unset)

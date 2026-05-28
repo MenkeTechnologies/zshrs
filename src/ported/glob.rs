@@ -6534,13 +6534,21 @@ mod tests {
 
     /// `Test/D09brace.ztst:116-118` — unmatched closing brace after
     /// matched braces stays literal: `{1..10}{..` → `1{.. 2{.. ...`.
+    /// `xpandbraces` itself preserves TOKEN form (Inbrace=`\u{8f}`,
+    /// Outbrace=`\u{90}`) per the convention pinned by
+    /// `xpandbraces_alpha_step_unsupported_anchored_to_zsh` — the
+    /// later untokenize pass in the user-output pipeline turns
+    /// surviving brace tokens into literal `{` / `}`. This test
+    /// asserts the tokenized intermediate form.
     #[test]
     fn zsh_corpus_brace_unmatched_after_matched_left_literal() {
         let _g = crate::test_util::global_state_lock();
+        let tokb = '\u{8f}'; // Inbrace
+        let expected: Vec<String> = (1..=10).map(|n| format!("{}{}..", n, tokb)).collect();
         assert_eq!(
             xpandbraces(&tok("{1..10}{.."), false),
-            vec!["1{..", "2{..", "3{..", "4{..", "5{..", "6{..", "7{..", "8{..", "9{..", "10{..",],
-            "ztst:118 — unmatched trailing {{.. left literal",
+            expected,
+            "ztst:118 — unmatched trailing {{.. preserved as tokenized Inbrace at xpandbraces layer",
         );
     }
 
