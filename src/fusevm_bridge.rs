@@ -181,6 +181,14 @@ where
 /// lookup per zsh semantics) and by internal call sites where shadowing
 /// is unwanted. For zsh's normal name-resolution order (function shadows
 /// builtin), use `dispatch_builtin` instead.
+/// Shell-identifier prefix for diagnostic lines. Reads the canonical
+/// scriptname (`zsh` in `--zsh` parity mode, `zshrs` otherwise) so a
+/// single helper replaces hardcoded `"zshrs:"` literals across the
+/// file's eprintln paths.
+fn shname() -> String {
+    crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string())
+}
+
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     let bn_idx = crate::ported::builtin::BUILTINS
         .iter()
@@ -1422,7 +1430,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // flat (k,v) pair list internally.
             if exec.assoc(&name).is_some() {
                 if !values.len().is_multiple_of(2) {
-                    eprintln!("zshrs:1: bad set of key/value pairs for associative array");
+                    eprintln!(
+                        "{}:1: bad set of key/value pairs for associative array",
+                        shname()
+                    );
                     return true;
                 }
                 let _ = crate::ported::params::sethparam(&name, values.clone());
@@ -2867,7 +2878,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:cond.c:514 — unknown option: zwarnnam emitted by
                 // optison itself when POSIXBUILTINS is unset; mirror to
                 // stderr here for parity with the earlier diagnostic.
-                eprintln!("zshrs:1: no such option: {}", name);
+                eprintln!("{}:1: no such option: {}", shname(), name);
                 Value::Bool(false)
             }
         }
@@ -5735,7 +5746,7 @@ impl ShellExecutor {
                     std::io::ErrorKind::IsADirectory => "is a directory",
                     _ => "redirect failed",
                 };
-                eprintln!("zshrs:1: {}: {}", msg, target);
+                eprintln!("{}:1: {}: {}", shname(), msg, target);
                 *redirect_failed = true;
                 if let Ok(devnull) = fs::OpenOptions::new()
                     .read(true)
@@ -5773,7 +5784,7 @@ impl ShellExecutor {
             if n_check != "-" {
                 if let Ok(src_fd) = n_check.parse::<i32>() {
                     if unsafe { libc::fcntl(src_fd, libc::F_GETFD) } == -1 {
-                        eprintln!("zshrs:1: {}: bad file descriptor", src_fd);
+                        eprintln!("{}:1: {}: bad file descriptor", shname(), src_fd);
                         self.set_last_status(1);
                         self.redirect_failed = true;
                         return;
@@ -5814,7 +5825,7 @@ impl ShellExecutor {
                 let noclobber = opt_state_get("noclobber").unwrap_or(false)
                     || !opt_state_get("clobber").unwrap_or(true);
                 if noclobber && std::path::Path::new(target).exists() {
-                    eprintln!("zshrs:1: file exists: {}", target);
+                    eprintln!("{}:1: file exists: {}", shname(), target);
                     self.set_last_status(1);
                     // c:Src/exec.c — set redirect_failed so the scope-end
                     // hook (`with_redirects_end` in this file) forces
