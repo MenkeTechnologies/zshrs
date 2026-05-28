@@ -3657,6 +3657,13 @@ fn is_known_builtin_with_flag_docs(name: &str) -> bool {
 /// no arg name) and `desc` is the description prose. Cached per-name
 /// in `BUILTIN_FLAGS_CACHE` so a hot `print -<TAB>` doesn't re-parse
 /// the same body on every keystroke.
+
+/// Public re-entry for the man-zshall audit integration test
+/// (`tests/lsp_man_audit.rs`) — forwards to the internal scraper.
+pub fn extract_builtin_flags_for_test(name: &str) -> Vec<(String, String)> {
+    extract_builtin_flags(name)
+}
+
 fn extract_builtin_flags(name: &str) -> Vec<(String, String)> {
     use std::sync::Mutex;
     use std::sync::OnceLock;

@@ -376,14 +376,107 @@ pub fn evalcond(
                     // extends the signature; read both flags here so
                     // `setopt nocaseglob` / `setopt extendedglob`
                     // actually affect `[[ str = pat ]]` dispatch.
+                    //
+                    // (#b) backref pin: when the compiled pattern has
+                    // GF_BACKREF set, populate `$match`/`$mbegin`/
+                    // `$mend` from the per-group captures so the
+                    // user-side `[[ str == (#b)(*).log ]] && echo
+                    // ${match[1]}` idiom works (c:Src/pattern.c:2425+
+                    // — same MATCH/MBEGIN/MEND population the C
+                    // matcher does via setsparam after a successful
+                    // pattry when GF_MATCHREF is on).
                     let strpat = |pat: &str, text: &str| -> bool {
                         if posix {
-                            text == pat
-                        } else {
-                            let extended = isset(EXTENDEDGLOB);
-                            let case_sensitive = isset(CASEGLOB);
-                            matchpat(pat, text, extended, case_sensitive)
+                            return text == pat;
                         }
+                        let extended = isset(EXTENDEDGLOB);
+                        let case_sensitive = isset(CASEGLOB);
+                        // Pre-fold for nocaseglob fast-path (matches
+                        // matchpat()'s convention).
+                        let (a_eff, b_eff) = if case_sensitive {
+                            (text.to_string(), pat.to_string())
+                        } else {
+                            (text.to_lowercase(), pat.to_lowercase())
+                        };
+                        let prev_extended =
+                            crate::ported::options::opt_state_get("extendedglob");
+                        let prev_caseglob =
+                            crate::ported::options::opt_state_get("caseglob");
+                        crate::ported::options::opt_state_set("extendedglob", extended);
+                        crate::ported::options::opt_state_set("caseglob", case_sensitive);
+                        let compiled = crate::ported::pattern::patcompile(
+                            &b_eff,
+                            crate::ported::zsh_h::PAT_HEAPDUP,
+                            None,
+                        );
+                        if let Some(v) = prev_extended {
+                            crate::ported::options::opt_state_set("extendedglob", v);
+                        }
+                        if let Some(v) = prev_caseglob {
+                            crate::ported::options::opt_state_set("caseglob", v);
+                        }
+                        let Some(prog) = compiled else { return false };
+                        if std::env::var("ZSHRS_DEBUG_BACKREF").is_ok() {
+                            eprintln!("DEBUG strpat: pat={:?} text={:?} globflags=0x{:x} patnpar={}",
+                                pat, text, prog.0.globflags, prog.0.patnpar);
+                        }
+                        // GF_BACKREF is set by the (#b) flag at
+                        // compile time. With backref on, use the
+                        // capture-aware pattryrefs path; otherwise
+                        // pattry is sufficient (no $match writes).
+                        let has_backref = (prog.0.globflags
+                            & crate::ported::zsh_h::GF_BACKREF as i32)
+                            != 0;
+                        if !has_backref {
+                            return crate::ported::pattern::pattry(&prog, &a_eff);
+                        }
+                        let mut nump: i32 = 0;
+                        let mut begp: Vec<i32> = Vec::new();
+                        let mut endp: Vec<i32> = Vec::new();
+                        let stringlen = a_eff.len() as i32;
+                        let ok = crate::ported::pattern::pattryrefs(
+                            &prog,
+                            &a_eff,
+                            stringlen,
+                            -1,
+                            None,
+                            0,
+                            Some(&mut nump),
+                            Some(&mut begp),
+                            Some(&mut endp),
+                        );
+                        if !ok {
+                            return false;
+                        }
+                        // Build $match / $mbegin / $mend from the
+                        // returned span arrays. C uses 1-based
+                        // indexing (KSHARRAYS off) for mbegin/mend
+                        // bounds. nump can be > begp.len() if some
+                        // captures didn't fire; trim to begp.len().
+                        let n = (nump as usize).min(begp.len()).min(endp.len());
+                        let mut match_arr: Vec<String> = Vec::with_capacity(n);
+                        let mut begin_arr: Vec<String> = Vec::with_capacity(n);
+                        let mut end_arr: Vec<String> = Vec::with_capacity(n);
+                        let ksharrays = isset(crate::ported::zsh_h::KSHARRAYS);
+                        let base = if ksharrays { 0 } else { 1 };
+                        for i in 0..n {
+                            let b = begp[i].max(0) as usize;
+                            let e = endp[i].max(0) as usize;
+                            let lo = b.min(a_eff.len());
+                            let hi = e.min(a_eff.len()).max(lo);
+                            // c:2425+ — `setsparam("MATCH", str)` uses
+                            // the metafied input slice. zshrs's `a_eff`
+                            // is unmetafied UTF-8, slice directly.
+                            let s = a_eff[lo..hi].to_string();
+                            match_arr.push(s);
+                            // mbegin/mend are 1-based by default.
+                            begin_arr.push((b + base).to_string());
+                            end_arr.push(((e + base).saturating_sub(1)).to_string());
+                        }
+                        crate::ported::params::setaparam("match", match_arr);
+                        crate::ported::params::setaparam("mbegin", begin_arr);
+                        crate::ported::params::setaparam("mend", end_arr);
+                        true
                     };
                     return match code {
                         c if c == COND_STREQ || c == COND_STRDEQ => b2i(strpat(&right, &left)),
