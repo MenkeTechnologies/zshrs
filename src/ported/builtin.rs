@@ -5670,15 +5670,22 @@ pub fn bin_whence(
                         // `zputs(hn->nam); putchar('\n')`. Inline the
                         // print since no separate Rust callback yet
                         // exists and the body is trivial.
-                        let names: Vec<String> = reswdtab_lock()
+                        // Reserved words: collect matches + sort to
+                        // match zsh's scanmatchtable order (same logic
+                        // as the builtin walk below).
+                        let mut names: Vec<String> = reswdtab_lock()
                             .read()
-                            .map(|t| t.iter().map(|(k, _)| k.clone()).collect())
+                            .map(|t| {
+                                t.iter()
+                                    .filter(|(k, _)| pattry(&prog, k))
+                                    .map(|(k, _)| k.clone())
+                                    .collect()
+                            })
                             .unwrap_or_default();
+                        names.sort();
                         for w in &names {
-                            if pattry(&prog, w) {
-                                println!("{}", w); // c:1259 zputs + newline
-                                informed += 1; // c:4054
-                            }
+                            println!("{}", w); // c:1259 zputs + newline
+                            informed += 1; // c:4054
                         }
                         // c:4059-4061 — `scanmatchshfunc(pprog, 1, 0,
                         //   DISABLED, shfunctab->printnode, printflags,
@@ -5699,15 +5706,26 @@ pub fn bin_whence(
                         }
                         // c:4064-4066 — `scanmatchtable(builtintab, pprog,
                         //   1, 0, DISABLED, builtintab->printnode,
-                        //   printflags);`.
-                        for b in BUILTINS.iter() {
-                            if pattry(&prog, &b.node.nam) {
-                                printbuiltinnode(
-                                    &b.node as *const hashnode as *mut hashnode,
-                                    printflags,
-                                ); // c:4066
-                                informed += 1; // c:4064
-                            }
+                        //   printflags);`. C's scanmatchtable walks the
+                        // hashtable in a deterministic order that, for
+                        // the matched-against name set, happens to be
+                        // sorted alphabetically — that's what makes
+                        // `whence -m "echo*"` emit echo, echotc,
+                        // echoti. zshrs's BUILTINS Vec is in
+                        // declaration order (echo, echoti, echotc) so
+                        // the unsorted walk produced a different
+                        // ordering. Collect+sort to match.
+                        let mut bn_matches: Vec<&builtin> = BUILTINS
+                            .iter()
+                            .filter(|b| pattry(&prog, &b.node.nam))
+                            .collect();
+                        bn_matches.sort_by(|a, b| a.node.nam.cmp(&b.node.nam));
+                        for b in bn_matches {
+                            printbuiltinnode(
+                                &b.node as *const hashnode as *mut hashnode,
+                                printflags,
+                            ); // c:4066
+                            informed += 1; // c:4064
                         }
                     }
                     // c:4070-4073 — `scanmatchtable(cmdnamtab, pprog,
@@ -5717,7 +5735,14 @@ pub fn bin_whence(
                     // PATH-resident command name. Walk the canonical
                     // table (not std::fs::read_dir) so HASHED/non-
                     // HASHED distinction is preserved.
-                    let cmd_matches: Vec<(String, cmdnam)> = cmdnamtab_lock()
+                    // External cmd-name matches: sort by full path
+                    // (the same printed token) to match C zsh's
+                    // scanmatchtable iteration order. The hashtable
+                    // walk in zsh on /bin/echo + /opt/homebrew/bin/
+                    // ecpg yields /bin/echo first because `/bin` <
+                    // `/opt` lexicographically. zshrs's HashMap walks
+                    // in arbitrary order without an explicit sort.
+                    let mut cmd_matches: Vec<(String, cmdnam)> = cmdnamtab_lock()
                         .read()
                         .map(|t| {
                             t.iter()
@@ -5726,6 +5751,29 @@ pub fn bin_whence(
                                 .collect()
                         })
                         .unwrap_or_default();
+                    // printcmdnamnode emits c.value.string (the full
+                    // path) so sort on that to match the printed
+                    // order, not the bare basename `n`.
+                    // printcmdnamnode emits one of:
+                    //   - HASHED entry: cmd (the full path)
+                    //   - non-HASHED entry: name[0] + "/" + nam
+                    // Sort by the same string the print path will
+                    // emit so the output order matches zsh's
+                    // scanmatchtable walk.
+                    let printed_path = |c: &cmdnam| -> String {
+                        if (c.node.flags & crate::ported::zsh_h::HASHED as i32) != 0 {
+                            c.cmd.clone().unwrap_or_default()
+                        } else {
+                            let dir = c
+                                .name
+                                .as_ref()
+                                .and_then(|v| v.first())
+                                .cloned()
+                                .unwrap_or_default();
+                            format!("{}/{}", dir, c.node.nam)
+                        }
+                    };
+                    cmd_matches.sort_by(|a, b| printed_path(&a.1).cmp(&printed_path(&b.1)));
                     for (n, c) in &cmd_matches {
                         if all {
                             // c:4072 fetchcmdnamnode — accumulates
