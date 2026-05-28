@@ -5292,8 +5292,12 @@ pub fn paramsubst(
                 // c:3193 (:?msg)
                 if !is_set || raw_value.is_empty() {
                     let m = if msg.is_empty() {
-                        // c:3193
-                        "parameter null or not set".to_string() // c:3193
+                        // c:Src/subst.c:3337 — `zerr("%s: %s", idbeg,
+                        // "parameter not set")`. zsh uses the same
+                        // diagnostic for both ${var?} and ${var:?}
+                        // when the message is empty; only the trigger
+                        // condition (unset vs unset-or-null) differs.
+                        "parameter not set".to_string()
                     } else {
                         // c:3193
                         singsub(msg) // c:3193
